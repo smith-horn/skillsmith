@@ -9,18 +9,23 @@
 #   n          number of merged PRs before/after to sample (default 10)
 #
 # Output (stdout):
-#   markdown table — PR | sha | total_billable_ms | jobs_count
+#   markdown table — PR | sha | ci_minutes_ms | jobs_count
 #   plus before/after sums and delta in CI-minutes.
+#
+# CI-minutes per run = sum of every job's wall-clock duration. Each job runs on
+# its own runner, so summed job duration is the billed-minutes proxy. The
+# /timing endpoint's `billable` breakdown returns all-zero for this repo, so
+# per-job durations from the /jobs endpoint are used instead.
 #
 # Exit codes:
 #   0   success
-#   1   fewer than 5 timing samples on either side (insufficient signal)
+#   1   fewer than 5 valid samples on either side (insufficient signal)
 #   2   missing prerequisites (gh, jq) or bad args
 #
 # Failure modes:
-#   - GHA timing API has retention limits (typically 90 days for billable
-#     breakdown). Individual run lookups that 404 print a warning to stderr
-#     and skip that PR; full failure only if < 5 valid samples per side.
+#   - GHA jobs API has retention limits (typically 90 days). Individual run
+#     lookups that 404 print a warning to stderr and skip that PR; full
+#     failure only if < 5 valid samples per side.
 
 set -euo pipefail
 
@@ -48,7 +53,11 @@ PIVOT_ISO=$(gh api "repos/$REPO/commits/$SHA" --jq .commit.committer.date) || {
 }
 
 # List merged PRs on main, partition before/after by mergedAt.
-mapfile -t PR_LINES < <(
+# Portable array fill (no `mapfile` — macOS ships bash 3.2).
+PR_LINES=()
+while IFS= read -r line; do
+  PR_LINES+=("$line")
+done < <(
   gh pr list --repo "$REPO" --state merged --base main \
     --limit $((N * 5)) \
     --json number,mergeCommit,mergedAt \
@@ -72,7 +81,7 @@ sum_minutes() {
   local label="$1"; shift
   local total_ms=0 valid=0
   echo "## $label"
-  printf "| PR | sha | billable_ms | jobs |\n|---|---|---|---|\n"
+  printf "| PR | sha | ci_minutes_ms | jobs |\n|---|---|---|---|\n"
   for entry in "$@"; do
     pr_num="${entry%%:*}"
     pr_sha="${entry##*:}"
@@ -84,18 +93,22 @@ sum_minutes() {
       echo "warn: PR #$pr_num sha=$pr_sha — no ci.yml run found, skipping" >&2
       continue
     fi
-    timing=$(gh api "repos/$REPO/actions/runs/$run_id/timing" 2>/dev/null) || {
-      echo "warn: PR #$pr_num run=$run_id — timing unavailable, skipping" >&2
+    jobs_json=$(gh api --paginate "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" 2>/dev/null) || {
+      echo "warn: PR #$pr_num run=$run_id — jobs unavailable, skipping" >&2
       continue
     }
-    ms=$(jq -r '.run_duration_ms // 0' <<<"$timing")
-    jobs=$(gh api "repos/$REPO/actions/runs/$run_id/jobs" --jq '.jobs | length' 2>/dev/null || echo 0)
+    # CI-minutes = sum of each job's wall-clock (seconds -> ms). --paginate
+    # concatenates page objects, so slurp with `jq -s` and flatten .jobs.
+    ms=$(jq -s '([.[].jobs[] | select(.started_at != null and .completed_at != null) | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))] | add // 0) * 1000 | floor' <<<"$jobs_json")
+    jobs=$(jq -s '[.[].jobs[]] | length' <<<"$jobs_json")
     total_ms=$((total_ms + ms))
     valid=$((valid + 1))
     printf "| #%s | %s | %s | %s |\n" "$pr_num" "${pr_sha:0:8}" "$ms" "$jobs"
   done
   echo ""
-  echo "$label: $valid valid samples, total ${total_ms} ms ($(awk "BEGIN{printf \"%.1f\", $total_ms/60000}") min)"
+  local total_min
+  total_min=$(awk -v ms="$total_ms" 'BEGIN{printf "%.1f", ms/60000}')
+  echo "$label: $valid valid samples, total ${total_ms} ms (${total_min} min)"
   echo ""
   # Stash for delta calculation.
   echo "$valid:$total_ms" > "$SCRATCH/$label.txt"
