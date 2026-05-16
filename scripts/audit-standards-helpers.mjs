@@ -568,6 +568,99 @@ export const parseCiYmlJobs = (ciYmlContent) => {
   return jobs
 }
 
+// ============================================================================
+// SMI-4925: skills-recreate migration FK-cascade guard
+// ============================================================================
+//
+// SQLite fires ON DELETE CASCADE actions *immediately* when foreign_keys=ON,
+// not deferred to end of transaction. The skills-recreate pattern (DROP TABLE
+// skills + RENAME) therefore silently deletes all child rows in any table with
+// a hard `skill_id ... REFERENCES skills(id) ON DELETE CASCADE` column.
+//
+// SMI-4919 fixed this in v17 by backing `skill_categories` (the only such
+// child as of that migration) into a TEMP table before DROP TABLE skills and
+// restoring it after the RENAME — all inside one BEGIN/COMMIT.
+//
+// This helper detects any future migration that recreates the skills table
+// WITHOUT that backup/restore pair, preventing the bug from being reintroduced.
+//
+// If a new ON DELETE CASCADE child of `skills` is added to schema-sql.ts,
+// the conforming backup/restore pattern must be extended to include it, and
+// the regex below updated accordingly (the helper would still catch the
+// absence of the _skill_categories_backup pattern, which is a useful signal).
+
+/**
+ * Detect skills-table recreation migrations that do NOT include the
+ * `_skill_categories_backup` TEMP-table backup/restore pair required to
+ * preserve ON DELETE CASCADE child rows (SMI-4919 / SMI-4925).
+ *
+ * @param {Record<string, string>} migrationsByPath — map of file path →
+ *   file contents for every migration to check.
+ * @param {{ allowList: string[] }} options — basenames to skip without
+ *   flagging (e.g. `['v16-skill-source.ts']` for fix-forward allowlisting).
+ * @returns {Array<{file: string, reason: string}>}
+ */
+export const findUnsafeSkillsRecreateMigrations = (migrationsByPath, { allowList = [] } = {}) => {
+  // Matches DROP TABLE [IF EXISTS] skills — word-boundary after `skills` so
+  // `DROP TABLE skills_v17` and `DROP TABLE _skill_categories_backup` do NOT
+  // match. Case-insensitive, tolerant of extra whitespace.
+  const DROP_SKILLS_RE = /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?skills\b/i
+
+  // Both halves of the backup/restore pair must be present.
+  // Half A: CREATE TEMP TABLE _skill_categories_backup (followed by AS SELECT
+  //         ... FROM skill_categories — we only require the CREATE TEMP TABLE
+  //         prefix; the AS SELECT part is optional in the regex for robustness).
+  const BACKUP_CREATE_RE = /CREATE\s+TEMP\s+TABLE\s+_skill_categories_backup\b/i
+
+  // Half B: INSERT INTO skill_categories SELECT * FROM _skill_categories_backup
+  const BACKUP_RESTORE_RE =
+    /INSERT\s+INTO\s+skill_categories\s+SELECT\s+.*FROM\s+_skill_categories_backup\b/i
+
+  const violations = []
+
+  for (const [filePath, content] of Object.entries(migrationsByPath)) {
+    const basename = filePath.split('/').pop() ?? filePath
+
+    // Check if this migration recreates the skills table.
+    if (!DROP_SKILLS_RE.test(content)) continue
+
+    // Allow-listed files are skipped without flagging (fix-forward).
+    if (allowList.includes(basename)) continue
+
+    // A safe recreate must include BOTH halves of the backup/restore pair.
+    const hasBackupCreate = BACKUP_CREATE_RE.test(content)
+    const hasBackupRestore = BACKUP_RESTORE_RE.test(content)
+
+    if (hasBackupCreate && hasBackupRestore) continue
+
+    // Determine which halves are missing for the reason string.
+    if (!hasBackupCreate && !hasBackupRestore) {
+      violations.push({
+        file: filePath,
+        reason:
+          'recreates `skills` table (DROP TABLE skills) but is missing both halves of the ' +
+          '_skill_categories_backup TEMP-table guard (CREATE TEMP TABLE + INSERT INTO ... SELECT)',
+      })
+    } else if (!hasBackupCreate) {
+      violations.push({
+        file: filePath,
+        reason:
+          'recreates `skills` table but is missing the backup half: ' +
+          '`CREATE TEMP TABLE _skill_categories_backup AS SELECT * FROM skill_categories`',
+      })
+    } else {
+      violations.push({
+        file: filePath,
+        reason:
+          'recreates `skills` table but is missing the restore half: ' +
+          '`INSERT INTO skill_categories SELECT * FROM _skill_categories_backup`',
+      })
+    }
+  }
+
+  return violations
+}
+
 /**
  * Check pure-JS carve-out invariants on a parsed job list.
  *
