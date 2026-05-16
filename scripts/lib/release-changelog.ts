@@ -34,6 +34,70 @@ export function findLastVersionBumpCommit(): string {
 }
 
 /**
+ * Extract identity tokens from a single changelog entry line.
+ *
+ * SMI-4928: tokens are used to decide whether a carried-forward `[Unreleased]`
+ * entry already covers an auto-generated terse entry (so the terse one can be
+ * suppressed). Tokens are every `SMI-\d+` reference and every `(#\d+)` PR-ref
+ * in the line. A line with no recognizable token returns `[]` — the caller
+ * fails safe by keeping such auto-generated lines.
+ *
+ * @param line A changelog entry line (typically starting with `- `).
+ * @returns The list of identity tokens found (uppercased SMI refs + `#NN`).
+ */
+export function extractChangeTokens(line: string): string[] {
+  const tokens: string[] = []
+  for (const m of line.matchAll(/SMI-\d+/gi)) {
+    tokens.push(m[0].toUpperCase())
+  }
+  for (const m of line.matchAll(/\(#(\d+)\)/g)) {
+    tokens.push(`#${m[1]}`)
+  }
+  return tokens
+}
+
+/**
+ * Combine the auto-generated terse `## vX.Y.Z` section with the carried-forward
+ * `[Unreleased]` entry lines, suppressing auto-generated entries that a carried
+ * line already covers (SMI-4928). Caller guarantees `carried` is non-empty.
+ *
+ * @param trimmedSection Auto-generated section: `## v...` header then `- ` lines.
+ * @param carried Trimmed carried-forward `[Unreleased]` entry block.
+ * @returns The combined section body (header + kept auto lines + carried).
+ */
+function dedupeAutoSection(trimmedSection: string, carried: string): string {
+  const sectionLines = trimmedSection.split('\n')
+  // Header is everything up to (and excluding) the first `- ` entry line.
+  const firstEntryIdx = sectionLines.findIndex((l) => l.startsWith('- '))
+  if (firstEntryIdx === -1) {
+    // No auto-generated entry lines — nothing to dedupe.
+    return `${trimmedSection}\n\n${carried}`
+  }
+  const headerLines = sectionLines.slice(0, firstEntryIdx)
+  const autoEntryLines = sectionLines.slice(firstEntryIdx).filter((l) => l.startsWith('- '))
+
+  // Union token set of every carried entry line.
+  const carriedTokens = new Set<string>()
+  for (const line of carried.split('\n')) {
+    if (!line.startsWith('- ')) continue
+    for (const token of extractChangeTokens(line)) {
+      carriedTokens.add(token)
+    }
+  }
+
+  // Drop an auto-generated entry IFF its tokens intersect the carried set.
+  // Keep entries with no recognizable token (cannot prove duplicate).
+  const keptAutoLines = autoEntryLines.filter((line) => {
+    const tokens = extractChangeTokens(line)
+    if (tokens.length === 0) return true
+    return !tokens.some((t) => carriedTokens.has(t))
+  })
+
+  const header = headerLines.join('\n')
+  return `${header}\n${keptAutoLines.join('\n')}\n\n${carried}`.replace(/\n{3,}/g, '\n\n')
+}
+
+/**
  * Insert a new `## vX.Y.Z` section into a CHANGELOG body.
  *
  * SMI-4920 (Bug A): the previous implementation spliced the new section before
@@ -92,10 +156,20 @@ export function insertVersionSection(body: string, section: string): string {
     tail = afterFirstHeading.slice(nextHeading + 1) // strip the leading newline
   }
 
-  // Carry forward any entry lines that were sitting under [Unreleased] (raw
-  // append; dedupe is intentionally out of scope per SMI-4920).
+  // Carry forward any entry lines that were sitting under [Unreleased].
+  //
+  // SMI-4928: when a merged PR already wrote a detailed `[Unreleased]` entry
+  // for a change, the auto-generated terse section also contains a terse entry
+  // for the same change — producing two lines for one change in the new
+  // version section. Token-based dedupe (below) suppresses the auto-generated
+  // terse line when a carried line already covers it by identity token
+  // (`SMI-\d+` / `(#\d+)`). Auto-generated lines with no recognizable token are
+  // kept (fail safe — cannot prove a duplicate). When `carried` is empty no
+  // token logic runs and the output is byte-identical to the pre-SMI-4928
+  // behaviour.
   const carried = unreleasedBody.trim()
-  const sectionWithCarry = carried.length > 0 ? `${trimmedSection}\n\n${carried}` : trimmedSection
+  const sectionWithCarry =
+    carried.length > 0 ? dedupeAutoSection(trimmedSection, carried) : trimmedSection
 
   const tailBlock = tail.trim().length > 0 ? `\n\n${tail.trimEnd()}` : ''
   return `${before}## [Unreleased]\n\n${sectionWithCarry}${tailBlock}\n`
