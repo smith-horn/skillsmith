@@ -24,18 +24,30 @@ exist, but maturity varies. Where that matters, the text says so.
 
 ![Architecture diagram of Skillsmith showing three developer surfaces — CLI, MCP server, and VS Code extension — reading from a per-developer local SQLite database, which is synced from a hosted Supabase registry of Postgres tables and edge functions.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/enterprise-reference-architecture/01-system-overview)
 
-## Licensing, in one paragraph
+## Licensing, and what you pay for
 
 Skillsmith is source-available under the [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license).
 Every package — core, the MCP server, the CLI, the VS Code extension, and the
-enterprise package — ships under the same license. Running Skillsmith on your own
-infrastructure for your team's internal use is permitted at no charge: the
-copyright grant is royalty-free and worldwide. A paid Team or Enterprise
-subscription issues a JWT license key that unlocks the enterprise feature tier —
-it is not a license to self-host, because self-hosting for internal use is
-already granted. The one use that requires a separate commercial agreement is
-offering Skillsmith to third parties as a hosted or managed service. That is the
-whole model.
+enterprise package — ships under the same license, and running Skillsmith on your
+own infrastructure for your team's internal use is permitted at no charge: the
+copyright grant is royalty-free and worldwide. So an enterprise client pays for
+neither the software nor permission to self-host — both are already granted.
+
+What an Enterprise subscription buys is a **license key** and a **support
+commitment**. The license key — a signed JWT — unlocks the gated feature set:
+SSO/SAML, RBAC, audit logging, SIEM export, compliance reporting, the private
+registry, and advanced analytics. The support commitment is the enterprise SLA: a
+99.9% uptime target, dedicated support, custom integrations. Without the key, the
+core discovery, indexing, and installation tools still run for free; the gated
+features simply stay locked.
+
+The **API key is a separate credential** doing a different job: it authenticates
+calls to a registry — the public Skillsmith registry, or your own private
+registry — and sets their rate-limit tier. The license key decides *which
+features you have*; the API key *authenticates the calls* your deployment makes.
+The one use that needs a *separate* commercial agreement — beyond any
+subscription — is offering Skillsmith to third parties as a hosted or managed
+service. That is the whole model.
 
 ## Available today vs. designed
 
