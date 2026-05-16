@@ -749,6 +749,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # SMI-4927: packages:write for GHCR registry-cache push (cache-to on main).
+    # A job-level block fully replaces the workflow-level `contents: read`, so
+    # contents:read is re-listed here.
+    permissions:
+      contents: read
+      packages: write
+
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
       docker-cache-hit: ${{ steps.docker-image-cache.outputs.cache-hit }}
@@ -806,6 +813,18 @@ jobs:
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
+      # SMI-4927: GHCR auth for the registry BuildKit cache. Skipped on fork PRs
+      # (read-only GITHUB_TOKEN has no packages: scope) — fork PRs then cold-build
+      # via a non-fatal cache-from miss.
+      - name: Log in to ghcr.io
+        id: ghcr-login
+        if: (steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true') && github.event.pull_request.head.repo.fork != true
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
@@ -816,13 +835,13 @@ jobs:
 
       # Cache write: main only (SMI-3653)
       # PR branches read from main's cache via cache-from but don't write blobs.
-      # This prevents per-PR blob accumulation that fills the 10 GB GHA cache limit.
-      # See docs/internal/implementation/ci-cache-pressure-fix.md
+      # SMI-4927: cache lives in GHCR (type=registry), not the 10 GB GHA budget.
+      # See docs/internal/implementation/ci-cache-pressure-fix-v2.md
       - name: Set BuildKit cache-to
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "CACHE_TO=type=gha,mode=min,scope=ci" >> $GITHUB_ENV
+            echo "CACHE_TO=type=registry,ref=ghcr.io/smith-horn/skillsmith-buildcache:ci,mode=min,image-manifest=true,oci-mediatypes=true" >> $GITHUB_ENV
           fi
 
       # SMI-2194: Only build if cache miss or load failed
@@ -834,7 +853,7 @@ jobs:
           push: false
           load: true
           tags: skillsmith-ci:${{ github.sha }}
-          cache-from: type=gha,scope=ci
+          cache-from: type=registry,ref=ghcr.io/smith-horn/skillsmith-buildcache:ci
           cache-to: ${{ env.CACHE_TO }}
           target: dev
 
@@ -881,6 +900,11 @@ jobs:
             echo "### Docker Build: Cache Miss — Full Rebuild" >> $GITHUB_STEP_SUMMARY
             echo "No cached image found. Full Docker build with native module compilation (~15 min)." >> $GITHUB_STEP_SUMMARY
             echo "This is expected after lockfile, Dockerfile, or .nvmrc changes." >> $GITHUB_STEP_SUMMARY
+            # SMI-4927: surface GHCR registry-cache login status on a rebuild.
+            # 'skipped' = fork PR (expected cold build); 'failure' = GHCR package
+            # not linked to the repo (see ci-reference.md GHCR troubleshooting).
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "GHCR registry-cache login: \`${{ steps.ghcr-login.outcome }}\` — see the build log for \`importing cache manifest from ghcr.io/...\`." >> $GITHUB_STEP_SUMMARY
           fi
 
       # SMI-708 + SMI-2193 + SMI-4646: Single extract container ("extract-all") replaces the
