@@ -40,6 +40,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # SMI-4927: packages:write for GHCR registry-cache push (cache-to on main).
+    # A job-level block fully replaces the workflow-level permissions; this job
+    # only builds and uploads artifacts (no PR comments), so it does not need
+    # the workflow-level pull-requests/issues write — only contents + packages.
+    permissions:
+      contents: read
+      packages: write
+
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
 
@@ -60,6 +68,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
+      # SMI-4927: GHCR auth for the registry BuildKit cache. Skipped on fork PRs
+      # (read-only GITHUB_TOKEN has no packages: scope) — fork PRs then cold-build
+      # via a non-fatal cache-from miss.
+      - name: Log in to ghcr.io
+        id: ghcr-login
+        if: github.event.pull_request.head.repo.fork != true
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
@@ -70,11 +90,12 @@ jobs:
 
       # Cache write: main only (SMI-3653)
       # PR branches read from main's cache via cache-from but don't write blobs.
-      # See docs/internal/implementation/ci-cache-pressure-fix.md
+      # SMI-4927: cache lives in GHCR (type=registry), not the 10 GB GHA budget.
+      # See docs/internal/implementation/ci-cache-pressure-fix-v2.md
       - name: Set BuildKit cache-to
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "CACHE_TO=type=gha,mode=min,scope=e2e" >> $GITHUB_ENV
+            echo "CACHE_TO=type=registry,ref=ghcr.io/smith-horn/skillsmith-buildcache:e2e,mode=min,image-manifest=true,oci-mediatypes=true" >> $GITHUB_ENV
           fi
 
       - name: Build and cache Docker image
@@ -84,9 +105,18 @@ jobs:
           push: false
           load: true
           tags: skillsmith-e2e:${{ github.sha }}
-          cache-from: type=gha,scope=e2e
+          cache-from: type=registry,ref=ghcr.io/smith-horn/skillsmith-buildcache:e2e
           cache-to: ${{ env.CACHE_TO }}
           target: dev
+
+      # SMI-4927: surface GHCR registry-cache login status. 'skipped' = fork PR
+      # (expected cold build); 'failure' = GHCR package not linked to the repo
+      # (see ci-reference.md GHCR troubleshooting).
+      - name: GHCR cache status summary
+        if: always()
+        run: |
+          echo "### E2E Docker Build" >> $GITHUB_STEP_SUMMARY
+          echo "GHCR registry-cache login: \`${{ steps.ghcr-login.outcome }}\` — see the build log for \`importing cache manifest from ghcr.io/...\`." >> $GITHUB_STEP_SUMMARY
 
       # SMI-2240: Save image with current SHA tag for downstream jobs
       # SMI-4646: zstd -T0 -3 (parallel, level 3) is ~3x faster than gzip with similar ratio

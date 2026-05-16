@@ -245,6 +245,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
+      # SMI-4927: GHCR auth for the registry BuildKit cache. publish.yml runs
+      # only on release / workflow_dispatch (never fork-originated), so the
+      # login is unconditional.
+      - name: Log in to ghcr.io
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and cache Docker image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
@@ -252,8 +262,8 @@ jobs:
           push: false
           load: true
           tags: skillsmith-publish:${{ github.sha }}
-          cache-from: type=gha,scope=publish
-          cache-to: type=gha,mode=min,scope=publish
+          cache-from: type=registry,ref=ghcr.io/smith-horn/skillsmith-buildcache:publish
+          cache-to: type=registry,ref=ghcr.io/smith-horn/skillsmith-buildcache:publish,mode=min,image-manifest=true,oci-mediatypes=true
           target: dev
 
       - name: Save Docker image
