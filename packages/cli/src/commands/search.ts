@@ -19,7 +19,7 @@ import {
   type RegistrySkillInfo,
 } from '@skillsmith/core'
 import { openCliDatabase } from '../utils/open-database.js'
-import { autoSyncIfEmpty } from './search.helpers.js'
+import { autoSyncIfEmpty, isLocalIndexEmpty, formatEmptyIndexHint } from './search.helpers.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { type InteractiveSearchState, type SearchPhase, PAGE_SIZE } from './search-types.js'
@@ -137,12 +137,18 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
           )
         }
 
-        displayResults(filteredItems, results.total, state.offset, PAGE_SIZE)
-
         if (results.items.length === 0) {
+          // SMI-4926: distinguish an empty/unsynced local index from a no-match.
+          if (isLocalIndexEmpty(db)) {
+            console.log(formatEmptyIndexHint(db))
+          } else {
+            displayResults(filteredItems, results.total, state.offset, PAGE_SIZE)
+          }
           phase = 'exit'
           continue
         }
+
+        displayResults(filteredItems, results.total, state.offset, PAGE_SIZE)
 
         // Build action choices
         const choices: Array<{ name: string; value: string }> = []
@@ -309,6 +315,12 @@ async function runSearch(
     }
 
     const results = searchService.search(searchOptions)
+    // SMI-4926: an empty local index produces 0 results that look like a
+    // genuine no-match — surface a sync-state-aware hint instead.
+    if (results.items.length === 0 && isLocalIndexEmpty(db)) {
+      console.log(formatEmptyIndexHint(db))
+      return
+    }
     displayResults(results.items, results.total, 0, options.limit)
   } finally {
     db.close()

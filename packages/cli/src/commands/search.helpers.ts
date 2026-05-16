@@ -16,7 +16,7 @@ import {
 import { runRegistrySync } from './run-registry-sync.js'
 
 /** Skip the auto-sync if a sync attempt started within this window. */
-const AUTO_SYNC_COOLDOWN_MS = 15 * 60_000
+export const AUTO_SYNC_COOLDOWN_MS = 15 * 60_000
 
 /**
  * Bootstrap the local registry on a first-time `search` against an empty DB.
@@ -60,4 +60,48 @@ export async function autoSyncIfEmpty(db: DatabaseType): Promise<void> {
   } catch {
     spinner.warn(chalk.yellow('Could not sync — showing local results only.'))
   }
+}
+
+/**
+ * Whether the local `skills` table has no rows.
+ *
+ * SMI-4926: a 0-result search against an empty index is meaningfully different
+ * from a genuine no-match — the registry has not been synced locally yet.
+ * Reuses the same `SkillRepository.count()` that `autoSyncIfEmpty` relies on
+ * (no raw SQL).
+ *
+ * @param db - An open, schema-initialized CLI database.
+ */
+export function isLocalIndexEmpty(db: DatabaseType): boolean {
+  return new SkillRepository(db).count() === 0
+}
+
+/**
+ * Build a sync-state-aware hint for a 0-result search against an empty index.
+ *
+ * SMI-4926: `autoSyncIfEmpty` may legitimately skip the sync (anonymous user,
+ * or a sync attempted within `AUTO_SYNC_COOLDOWN_MS`), so the hint must not
+ * unconditionally claim a sync is running. If the most recent sync attempt
+ * started within the cooldown window, the user is told to retry shortly;
+ * otherwise they are told to run `skillsmith sync`.
+ *
+ * Both messages start with a literal `ℹ ` text marker so they remain
+ * distinguishable from the yellow no-match message under `NO_COLOR`, and carry
+ * leading/trailing newlines to match `displayResults` padding.
+ *
+ * @param db - An open, schema-initialized CLI database.
+ */
+export function formatEmptyIndexHint(db: DatabaseType): string {
+  const lastAttempt = new SyncHistoryRepository(db).getHistory(1)[0]
+  if (lastAttempt) {
+    const startedMs = new Date(lastAttempt.startedAt).getTime()
+    if (!Number.isNaN(startedMs) && Date.now() - startedMs < AUTO_SYNC_COOLDOWN_MS) {
+      return chalk.yellow(
+        '\nℹ Your local skill index is still being populated — a sync is in progress. Try this search again shortly.\n'
+      )
+    }
+  }
+  return chalk.yellow(
+    '\nℹ Your local skill index is empty. Run `skillsmith sync` to populate it, then search again.\n'
+  )
 }
