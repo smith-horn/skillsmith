@@ -48,7 +48,11 @@ describe('Phase 3a env-gate — SKILLSMITH_ENABLE_CODE_SEARCH (SMI-4861 Wave 1)'
     // When the env flag is unset, the code path emits a disabled marker so
     // dashboards can distinguish "ran-and-found-zero" from "not-run". See
     // SMI-4859 RCA — silent "0" was confused for a runtime regression.
-    expect(SOURCE).toContain("error: 'disabled_by_env'")
+    // SMI-4870: the marker is now selected by a ternary —
+    // `error: runPhase3 ? 'disabled_by_env' : 'skipped_phase_split'` — so the
+    // assertion matches the marker value, not the `error: '<marker>'` literal.
+    expect(SOURCE).toContain("'disabled_by_env'")
+    expect(SOURCE).toContain("'skipped_phase_split'")
   })
 
   it('does NOT thread SKILLSMITH_ENABLE_CODE_SEARCH through IndexerEnv', () => {
