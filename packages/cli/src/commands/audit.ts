@@ -19,12 +19,8 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
-import {
-  createDatabaseAsync,
-  initializeSchema,
-  AdvisoryRepository,
-  type SkillAdvisory,
-} from '@skillsmith/core'
+import { AdvisoryRepository, type SkillAdvisory } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { requireTier } from '../utils/require-tier.js'
@@ -102,8 +98,7 @@ async function runAdvisoriesAudit(options: AuditAdvisoriesOptions): Promise<void
   // Team tier required for security advisories
   await requireTier('team')
 
-  const db = await createDatabaseAsync(options.db)
-  initializeSchema(db) // SMI-4486
+  const db = await openCliDatabase(options.db)
 
   try {
     const advisoryRepo = new AdvisoryRepository(db)

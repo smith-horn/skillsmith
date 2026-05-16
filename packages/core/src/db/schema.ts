@@ -41,7 +41,8 @@ export type DatabaseType = Database
 // v13: SMI-3896 visibility and team_id for private skills
 // v14, v15: reserved (RBAC, integrations)
 // v16: SMI-4665 source column + extend trust_tier CHECK to allow 'local'
-export const SCHEMA_VERSION = 16
+// v17: SMI-4917 widen trust_tier CHECK to allow 'curated'
+export const SCHEMA_VERSION = 17
 
 /**
  * Initialize the database with the complete schema.

@@ -12,14 +12,13 @@ import ora from 'ora'
 import { mkdir } from 'fs/promises'
 import { dirname } from 'path'
 import {
-  createDatabaseAsync,
-  initializeSchema,
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
   type Skill,
   type TrustTier,
 } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { removeLinks } from '@skillsmith/core/install'
 import { sanitizeError } from '../utils/sanitize.js'
@@ -93,7 +92,7 @@ async function getSkillDiff(
   skillName: string,
   dbPath: string
 ): Promise<{ oldVersion: string | null; newVersion: string | null; changes: string[] } | null> {
-  const db = await createDatabaseAsync(dbPath)
+  const db = await openCliDatabase(dbPath)
   const skillRepo = new SkillRepository(db)
 
   try {
@@ -254,8 +253,7 @@ async function removeSkill(skillName: string, force: boolean, dbPath: string): P
 
   // Ensure database directory exists before opening
   await mkdir(dirname(dbPath), { recursive: true })
-  const db = await createDatabaseAsync(dbPath)
-  initializeSchema(db)
+  const db = await openCliDatabase(dbPath)
 
   try {
     const skillRepo = new SkillRepository(db)

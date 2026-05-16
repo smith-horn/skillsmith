@@ -18,18 +18,13 @@ import chalk from 'chalk'
 import ora from 'ora'
 import Table from 'cli-table3'
 import {
-  createDatabaseAsync,
-  initializeSchema,
-  SkillRepository,
-  createApiClient,
-  loadStoredAccessToken,
   SyncConfigRepository,
   SyncHistoryRepository,
-  SyncEngine,
-  SkillVersionRepository,
   type SyncProgress,
   type SyncFrequency,
 } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
+import { runRegistrySync } from './run-registry-sync.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { formatDuration, formatDate, formatTimeUntil } from '../utils/formatters.js'
@@ -48,32 +43,14 @@ async function runSync(options: {
 
   try {
     spinner.start('Opening database...')
-    const db = await createDatabaseAsync(options.dbPath)
-    // SMI-4486: createDatabaseAsync returns a connected DB but doesn't create
-    // tables — fresh installs would otherwise hit "no such table: skills".
-    initializeSchema(db)
+    // SMI-4917: openCliDatabase opens a connected, schema-initialized DB —
+    // fresh installs would otherwise hit "no such table: skills".
+    const db = await openCliDatabase(options.dbPath)
 
     try {
-      const skillRepo = new SkillRepository(db)
-      const syncConfigRepo = new SyncConfigRepository(db)
-      const syncHistoryRepo = new SyncHistoryRepository(db)
-      const skillVersionRepo = new SkillVersionRepository(db)
-      // SMI-4474: auto-load JWT from ~/.skillsmith/config.json so logged-in
-      // users count toward their quota instead of going anonymous.
-      const jwtToken = await loadStoredAccessToken()
-      const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
-
-      const syncEngine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        skillVersionRepo
-      )
-
       spinner.text = options.force ? 'Starting full sync...' : 'Starting differential sync...'
 
-      const result = await syncEngine.sync({
+      const result = await runRegistrySync(db, {
         force: options.force,
         dryRun: options.dryRun,
         onProgress: (progress: SyncProgress) => {
@@ -148,8 +125,7 @@ async function runSync(options: {
  */
 async function showStatus(options: { dbPath: string; json: boolean }): Promise<void> {
   try {
-    const db = await createDatabaseAsync(options.dbPath)
-    initializeSchema(db) // SMI-4486
+    const db = await openCliDatabase(options.dbPath)
 
     try {
       const syncConfigRepo = new SyncConfigRepository(db)
@@ -256,8 +232,7 @@ async function showHistory(options: {
   json: boolean
 }): Promise<void> {
   try {
-    const db = await createDatabaseAsync(options.dbPath)
-    initializeSchema(db) // SMI-4486
+    const db = await openCliDatabase(options.dbPath)
 
     try {
       const syncHistoryRepo = new SyncHistoryRepository(db)
@@ -337,8 +312,7 @@ async function configureSync(options: {
   json: boolean
 }): Promise<void> {
   try {
-    const db = await createDatabaseAsync(options.dbPath)
-    initializeSchema(db) // SMI-4486
+    const db = await openCliDatabase(options.dbPath)
 
     try {
       const syncConfigRepo = new SyncConfigRepository(db)

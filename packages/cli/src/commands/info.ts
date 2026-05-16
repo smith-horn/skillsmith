@@ -8,13 +8,8 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import {
-  createDatabaseAsync,
-  initializeSchema,
-  SkillRepository,
-  createApiClient,
-  loadStoredAccessToken,
-} from '@skillsmith/core'
+import { SkillRepository, createApiClient, loadStoredAccessToken } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { displaySkillDetails } from './search-formatters.js'
@@ -45,8 +40,7 @@ export function createInfoCommand(): Command {
       const spinner = ora('Looking up skill...').start()
 
       try {
-        const db = await createDatabaseAsync(options.db)
-        initializeSchema(db)
+        const db = await openCliDatabase(options.db)
         const skillRepo = new SkillRepository(db)
 
         // Try local DB first

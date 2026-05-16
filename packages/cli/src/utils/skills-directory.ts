@@ -8,12 +8,11 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import {
   SkillParser,
-  createDatabaseAsync,
-  initializeSchema,
   SkillVersionRepository,
   type Database,
   type TrustTier,
 } from '@skillsmith/core'
+import { openCliDatabase } from './open-database.js'
 import {
   CANONICAL_CLIENT,
   CLIENT_IDS,
@@ -77,8 +76,7 @@ export async function getSkillsFromDirectory(
   let dbConn: Database | null = null
   if (dbPath) {
     try {
-      dbConn = await createDatabaseAsync(dbPath)
-      initializeSchema(dbConn)
+      dbConn = await openCliDatabase(dbPath)
       versionRepo = new SkillVersionRepository(dbConn)
     } catch {
       // DB not available yet — fall back to hasUpdates: false

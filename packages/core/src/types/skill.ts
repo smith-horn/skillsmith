@@ -9,9 +9,9 @@ import type { DependencyDeclaration } from './dependencies.js'
  * SMI-4665: 'local' is now a first-class DB-backed tier — the skills.trust_tier
  *   CHECK constraint allows 'local' (migration v16) so filesystem-imported skills
  *   surface distinctly in search rather than being conflated with 'unknown'.
- *
- * Note: 'curated' is reserved on the type but not yet in the DB CHECK
- * (separate roadmap item — promotes high-quality community skills).
+ * SMI-2381 / SMI-4917: 'curated' (third-party publishers manually opted into the
+ *   registry) is a first-class DB-backed tier — the skills.trust_tier CHECK
+ *   constraint allows 'curated' (migration v17).
  */
 export type TrustTier = 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
 
