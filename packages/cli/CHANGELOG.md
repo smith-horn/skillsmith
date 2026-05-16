@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.1
+
+- **Fix**: SMI-4917 — repair first-time install (search crash, sync drops all skills, no self-config) (#1132)
+
 ## v0.6.0
 
 - **Feature**: SMI-4590 Wave 4 PR 5/6 — new `sklx audit collisions` subcommand runs the consumer namespace audit (mirrors the `skill_inventory_audit` MCP tool); new `sklx config get audit_mode` / `sklx config set audit_mode <preventative|power_user|governance|off>` for managing audit verbosity. Tier-revalidated: Free/Individual cannot select `power_user`/`governance`. (#950)
