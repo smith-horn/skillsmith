@@ -27,6 +27,7 @@ import {
   findUncoveredSurfacePaths,
   parseCiYmlJobs,
   checkCarveOutInvariants,
+  findUnsafeSkillsRecreateMigrations,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -3504,6 +3505,76 @@ if (!existsSync(internalRefPagesDir) && !existsSync(internalRefBlogDir)) {
     internalRefHits.forEach(({ file, line, match }) =>
       console.log(`    ${file}:${line} — ${match}`)
     )
+  }
+}
+
+// 46. Skills-recreate migration FK-cascade guard (SMI-4925)
+//
+// Background: SQLite fires ON DELETE CASCADE actions immediately when
+// `foreign_keys = ON` (the driver default). Any migration that recreates the
+// `skills` table via DROP TABLE + RENAME therefore silently deletes all rows
+// in every child table that holds a hard `skill_id REFERENCES skills(id)
+// ON DELETE CASCADE`. As of schema-sql.ts, `skill_categories` is the ONLY
+// such child; `skill_versions`, `skill_advisories`, `skill_co_installs`,
+// `skill_dependencies`, and `risk_score_history` all use soft `skill_id TEXT`
+// columns with no FK and are unaffected.
+//
+// SMI-4919 introduced the conforming pattern in v17: back `skill_categories`
+// up into `_skill_categories_backup` (TEMP table) BEFORE `DROP TABLE skills`,
+// then restore it AFTER the RENAME — all inside one BEGIN/COMMIT.
+//
+// v16 performed the same recreate WITHOUT the guard; it is allow-listed here
+// because fixing it retroactively (fix-forward) is intentional — re-applying
+// v16 on an existing DB would still trigger the cascade on the old schema where
+// `skill_categories` may be empty, and the migration is already deployed.
+//
+// EXTEND THIS CHECK if a new ON DELETE CASCADE child of `skills` is added to
+// schema-sql.ts: update the helper regex in audit-standards-helpers.mjs to
+// require backup/restore pairs for the new child table as well.
+console.log(`\n${BOLD}46. Skills-recreate migration FK-cascade guard (SMI-4925)${RESET}`)
+{
+  const coreMigrationsDir = 'packages/core/src/db/migrations'
+  if (!existsSync(coreMigrationsDir)) {
+    pass('No core migrations dir — skipping skills-recreate FK-cascade guard')
+  } else {
+    try {
+      const migrationFiles = readdirSync(coreMigrationsDir)
+        .filter((f) => f.endsWith('.ts'))
+        .map((f) => join(coreMigrationsDir, f))
+      const migrationsByPath = {}
+      for (const f of migrationFiles) migrationsByPath[f] = readFileSync(f, 'utf8')
+      const violations = findUnsafeSkillsRecreateMigrations(migrationsByPath, {
+        // v16 recreates skills without the guard; allow-listed as fix-forward
+        // (the migration is already deployed and retroactive patching is not
+        // needed — v17 introduced the conforming backup/restore pattern).
+        allowList: ['v16-skill-source.ts'],
+      })
+      const recreateCount = Object.entries(migrationsByPath).filter(([, src]) =>
+        /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?skills\b/i.test(src)
+      ).length
+      if (violations.length === 0) {
+        pass(
+          `Skills-recreate FK-cascade guard: ${recreateCount} recreate migration(s) scanned — all safe or allow-listed`
+        )
+      } else {
+        for (const v of violations) {
+          fail(
+            `Skills-recreate FK-cascade guard: ${v.file} — ${v.reason}`,
+            'Follow the v17 RECREATE_TABLE_SQL pattern in ' +
+              'packages/core/src/db/migrations/v17-curated-trust-tier.ts: ' +
+              'add `DROP TABLE IF EXISTS _skill_categories_backup; ' +
+              'CREATE TEMP TABLE _skill_categories_backup AS SELECT * FROM skill_categories;` ' +
+              'BEFORE `DROP TABLE skills`, and ' +
+              '`INSERT INTO skill_categories SELECT * FROM _skill_categories_backup; ' +
+              'DROP TABLE _skill_categories_backup;` AFTER the RENAME. ' +
+              '`skill_categories` is the only ON DELETE CASCADE child of `skills` ' +
+              'per packages/core/src/db/schema-sql.ts — re-check that file if a new cascade child is added.'
+          )
+        }
+      }
+    } catch (e) {
+      warn(`Could not check skills-recreate FK-cascade guard: ${e.message}`)
+    }
   }
 }
 
