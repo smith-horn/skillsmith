@@ -382,11 +382,15 @@ it is stale, E2E gets a cold build (~6 min).
 - `cache-to` carries `image-manifest=true,oci-mediatypes=true` (export-side
   only) — GHCR requires an OCI image manifest for the cache artifact.
 
-**GHCR package linking** (one-time, after the first main push): a GHCR package
-auto-created by `cache-to` is private and not linked to the repo. Open
+**GHCR package linking**: a package created by a workflow's `GITHUB_TOKEN` (as
+`cache-to` does on the first main push) is **auto-linked** to the source repo —
+GitHub sets the package's `repository` to `smith-horn/skillsmith` and the repo's
+Actions inherit access, so same-repo PR `cache-from` resolves with no manual
+step. The package is private; that is expected and fine for same-repo CI.
+Verified for `skillsmith-buildcache` on 2026-05-16 (SMI-4927). Manual linking is
+only a **fallback**: if `cache-from` ever 401s, open
 `github.com/orgs/smith-horn/packages/container/skillsmith-buildcache/settings`
 → "Manage Actions access" → add `smith-horn/skillsmith` with the **Write** role.
-Until linked, every PR's `cache-from` 401s and cold-builds.
 
 **GHCR cache troubleshooting**:
 
