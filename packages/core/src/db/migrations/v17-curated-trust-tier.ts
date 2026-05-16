@@ -16,12 +16,20 @@
  * set, indexes, and FTS5 triggers are copied verbatim from v16 (v17 changes only
  * the `trust_tier` CHECK list — no column added, no column dropped).
  *
- * R1 (FK inbound refs): `skill_categories`, `skill_versions`, etc. reference
- * `skills(id)`. v16 ships the identical drop/rename inside a single transaction
- * and is proven safe in production — v17 follows it exactly, with NO
- * `PRAGMA foreign_keys` toggle. SQLite defers FK enforcement to statement
- * boundaries within a transaction, so dropping and recreating `skills` in one
- * `BEGIN; ... COMMIT;` is safe even with inbound FK rows present.
+ * R1 (FK inbound refs): with `foreign_keys=ON` (the driver default), `DROP TABLE
+ * skills` fires every inbound `ON DELETE CASCADE` action *immediately* — SQLite
+ * does NOT defer cascade actions to the end of the transaction. Today
+ * `skill_categories` (`schema-sql.ts:96-100`) is the only child with a hard FK
+ * `skill_id ... REFERENCES skills(id) ON DELETE CASCADE`; its rows would be
+ * silently cascade-deleted by the recreate (SMI-4919). The recreate therefore
+ * backs `skill_categories` up into a TEMP table before `DROP TABLE skills` and
+ * restores it verbatim after the RENAME, all inside the one `BEGIN; ... COMMIT;`.
+ * (`skill_versions`, `skill_advisories`, `skill_co_installs`,
+ * `skill_dependencies`, `risk_score_history` use soft `skill_id TEXT` columns
+ * with no FK — they are unaffected.) RULE: any future `skills` table-recreate
+ * MUST back up every `ON DELETE CASCADE` child of `skills` the same way (today
+ * `skill_categories` is the only one — re-check `schema-sql.ts` before changing
+ * this dance).
  *
  * Idempotent: v17 adds no column, so the probe inspects the CHECK text itself —
  * if the `skills` DDL already contains `'curated'`, the migration is a no-op.
@@ -70,8 +78,17 @@ SELECT
   created_at, updated_at
 FROM skills;
 
+-- Back up the only ON DELETE CASCADE child of skills so DROP TABLE skills
+-- (which fires cascades immediately under foreign_keys=ON) cannot silently
+-- delete its rows. Restored verbatim after the RENAME below (SMI-4919).
+DROP TABLE IF EXISTS _skill_categories_backup;
+CREATE TEMP TABLE _skill_categories_backup AS SELECT * FROM skill_categories;
+
 DROP TABLE skills;
 ALTER TABLE skills_v17 RENAME TO skills;
+
+INSERT INTO skill_categories SELECT * FROM _skill_categories_backup;
+DROP TABLE _skill_categories_backup;
 
 CREATE INDEX IF NOT EXISTS idx_skills_author ON skills(author);
 CREATE INDEX IF NOT EXISTS idx_skills_trust_tier ON skills(trust_tier);

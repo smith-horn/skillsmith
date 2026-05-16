@@ -8,8 +8,9 @@
  *   - A `'curated'` row inserts successfully after v17.
  *   - Idempotent re-run of v17 is a no-op.
  *   - H1: the `skills` column set is byte-identical pre/post-v17.
- *   - H3: a fixture DB carrying inbound-FK rows (skill_categories) upgrades
- *     through v17 without error.
+ *   - H3: a fixture DB carrying inbound-FK rows (skill_categories) keeps those
+ *     rows, with intact skill_id links, across the v17 skills-table recreate
+ *     (SMI-4919 — DROP TABLE fires ON DELETE CASCADE; backup/restore preserves).
  *   - H2: fresh-install convergence — v1 base → migrations → v17, no double-apply.
  */
 
@@ -270,35 +271,51 @@ describe('Migration v17: widen trust_tier CHECK to allow curated', () => {
     closeDatabase(v16)
   })
 
-  it('H3: a v16 DB carrying inbound-FK rows upgrades through v17 without error', async () => {
+  it('H3: v17 preserves skill_categories rows across the skills-table recreate', async () => {
     const v16 = await fixtureAtVersion(16)
-    // A skill row referenced by skill_categories (FK skill_categories.skill_id → skills.id).
-    v16
-      .prepare(
-        "INSERT INTO skills (id, name, trust_tier, source) VALUES ('fk-skill', 'fk', 'community', 'registry')"
-      )
-      .run()
+    // Skill rows referenced by skill_categories (FK skill_categories.skill_id → skills.id).
+    const insertSkill = v16.prepare(
+      'INSERT INTO skills (id, name, trust_tier, source) VALUES (?, ?, ?, ?)'
+    )
+    insertSkill.run('fk-skill', 'fk', 'community', 'registry')
+    insertSkill.run('fk-skill-2', 'fk2', 'verified', 'registry')
     v16.prepare("INSERT INTO categories (id, name) VALUES ('cat-1', 'testing')").run()
-    v16
-      .prepare("INSERT INTO skill_categories (skill_id, category_id) VALUES ('fk-skill', 'cat-1')")
-      .run()
+    v16.prepare("INSERT INTO categories (id, name) VALUES ('cat-2', 'devops')").run()
+    const insertLink = v16.prepare(
+      'INSERT INTO skill_categories (skill_id, category_id) VALUES (?, ?)'
+    )
+    insertLink.run('fk-skill', 'cat-1')
+    insertLink.run('fk-skill', 'cat-2')
+    insertLink.run('fk-skill-2', 'cat-1')
 
-    // The v17 recreate drops & renames `skills` inside one transaction — with
-    // inbound FK rows present this must not error (mirrors v16 exactly, no
-    // `PRAGMA foreign_keys` toggle). This is the R1/H3 regression guard.
+    // The v17 recreate drops & renames `skills` inside one transaction. Under
+    // foreign_keys=ON (driver default), `DROP TABLE skills` fires the
+    // `ON DELETE CASCADE` on skill_categories immediately — the recreate must
+    // back up & restore skill_categories so its rows survive (SMI-4919).
     expect(() => applyMigrationV17(v16)).not.toThrow()
 
-    // The skill row itself survives the recreate in the new (widened) table.
-    const skill = v16.prepare("SELECT id FROM skills WHERE id = 'fk-skill'").get() as
-      | { id: string }
-      | undefined
-    expect(skill?.id).toBe('fk-skill')
+    // The skill rows themselves survive the recreate in the new (widened) table.
+    const skills = v16.prepare('SELECT id FROM skills ORDER BY id').all() as Array<{ id: string }>
+    expect(skills.map((s) => s.id)).toEqual(['fk-skill', 'fk-skill-2'])
 
-    // Note: `skill_categories` rows are cascade-deleted by `DROP TABLE skills`
-    // because `foreign_keys` is ON (the driver default) and `skill_categories`
-    // declares `ON DELETE CASCADE`. This is pre-existing v16 behavior — v16
-    // performs the identical `DROP TABLE skills` — and is intentionally NOT a
-    // v17 regression. The CLI rebuilds category links on the next `sync`.
+    // The skill_categories rows survive with intact skill_id links — they are
+    // NOT cascade-deleted. This is the SMI-4919 regression guard.
+    const links = v16
+      .prepare('SELECT skill_id, category_id FROM skill_categories ORDER BY skill_id, category_id')
+      .all() as Array<{ skill_id: string; category_id: string }>
+    expect(links).toEqual([
+      { skill_id: 'fk-skill', category_id: 'cat-1' },
+      { skill_id: 'fk-skill', category_id: 'cat-2' },
+      { skill_id: 'fk-skill-2', category_id: 'cat-1' },
+    ])
+
+    // The TEMP backup table is dropped — no leftover artifact.
+    const backup = v16
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='_skill_categories_backup'"
+      )
+      .get() as { name: string } | undefined
+    expect(backup).toBeUndefined()
     closeDatabase(v16)
   })
 
