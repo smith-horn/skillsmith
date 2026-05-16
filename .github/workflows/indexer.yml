@@ -19,9 +19,17 @@ name: Skill Indexer
 on:
   schedule:
     - cron: '0 0 * * *' # maintenance (stale cleanup, stale_days=7 per SMI-4203)
-    - cron: '0 6 * * *' # discovery
-    - cron: '0 12 * * *' # discovery
-    - cron: '0 18 * * *' # discovery
+    # SMI-4870: discovery split into 3 hourly per-phase sub-slots per 6h cycle so
+    # each phase gets a fresh GitHub primary rate-limit bucket (5000/h per-hour).
+    - cron: '0 6 * * *' # discovery - Phase 1, cycle 06
+    - cron: '0 7 * * *' # discovery - Phase 2, cycle 06
+    - cron: '0 8 * * *' # discovery - Phase 3 + finalize, cycle 06
+    - cron: '0 12 * * *' # discovery - Phase 1, cycle 12
+    - cron: '0 13 * * *' # discovery - Phase 2, cycle 12
+    - cron: '0 14 * * *' # discovery - Phase 3 + finalize, cycle 12
+    - cron: '0 18 * * *' # discovery - Phase 1, cycle 18
+    - cron: '0 19 * * *' # discovery - Phase 2, cycle 18
+    - cron: '0 20 * * *' # discovery - Phase 3 + finalize, cycle 18
   workflow_dispatch:
     inputs:
       dry_run:
@@ -42,6 +50,16 @@ on:
         options:
           - discovery
           - maintenance
+      discovery_phase:
+        description: 'Discovery phase (SMI-4870): empty = full sequential run; 1/2/3 = single phase'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - '1'
+          - '2'
+          - '3'
       stale_days:
         description: 'Days before stale quarantine (default: auto based on run_type)'
         required: false
@@ -127,8 +145,12 @@ jobs:
         run: |
           # For scheduled runs, determine run type from github.event.schedule.
           # SMI-4374: CRON_SLOT (6/12/18) feeds the discovery topic-rotation selector.
-          # Empty string on workflow_dispatch and on maintenance.
+          # SMI-4870: CRON_SLOT is the logical CYCLE (6/12/18), derived from the
+          # phase cron rather than the wall-clock hour (e.g. cron 0 7 -> CRON_SLOT 6).
+          # DISCOVERY_PHASE (1/2/3) selects a single discovery phase. Both are empty
+          # on workflow_dispatch (unless discovery_phase input set) and on maintenance.
           CRON_SLOT=""
+          DISCOVERY_PHASE=""
           if [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
               "0 0 * * *")
@@ -139,16 +161,55 @@ jobs:
                 RUN_TYPE="discovery"
                 STALE_DAYS="30"
                 CRON_SLOT="6"
+                DISCOVERY_PHASE="1"
+                ;;
+              "0 7 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="6"
+                DISCOVERY_PHASE="2"
+                ;;
+              "0 8 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="6"
+                DISCOVERY_PHASE="3"
                 ;;
               "0 12 * * *")
                 RUN_TYPE="discovery"
                 STALE_DAYS="30"
                 CRON_SLOT="12"
+                DISCOVERY_PHASE="1"
+                ;;
+              "0 13 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="12"
+                DISCOVERY_PHASE="2"
+                ;;
+              "0 14 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="12"
+                DISCOVERY_PHASE="3"
                 ;;
               "0 18 * * *")
                 RUN_TYPE="discovery"
                 STALE_DAYS="30"
                 CRON_SLOT="18"
+                DISCOVERY_PHASE="1"
+                ;;
+              "0 19 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="18"
+                DISCOVERY_PHASE="2"
+                ;;
+              "0 20 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="18"
+                DISCOVERY_PHASE="3"
                 ;;
               *)
                 RUN_TYPE="discovery"
@@ -160,9 +221,12 @@ jobs:
             RUN_TYPE="${{ github.event.client_payload.run_type || 'discovery' }}"
             STALE_DAYS="${{ github.event.client_payload.stale_days || '30' }}"
             CRON_SLOT="${{ github.event.client_payload.cron_slot || '' }}"
+            DISCOVERY_PHASE="${{ github.event.client_payload.discovery_phase || '' }}"
           else
             RUN_TYPE="${{ github.event.inputs.run_type || 'discovery' }}"
             STALE_DAYS="${{ github.event.inputs.stale_days }}"
+            # SMI-4870: empty discovery_phase input = full sequential discovery run.
+            DISCOVERY_PHASE="${{ github.event.inputs.discovery_phase || '' }}"
             if [ -z "$STALE_DAYS" ]; then
               if [ "$RUN_TYPE" = "maintenance" ]; then
                 STALE_DAYS="7"
@@ -174,7 +238,8 @@ jobs:
           echo "run_type=$RUN_TYPE" >> "$GITHUB_OUTPUT"
           echo "stale_days=$STALE_DAYS" >> "$GITHUB_OUTPUT"
           echo "cron_slot=$CRON_SLOT" >> "$GITHUB_OUTPUT"
-          echo "Run type: $RUN_TYPE, Stale days: $STALE_DAYS, Cron slot: ${CRON_SLOT:-<none>}"
+          echo "discovery_phase=$DISCOVERY_PHASE" >> "$GITHUB_OUTPUT"
+          echo "Run type: $RUN_TYPE, Stale days: $STALE_DAYS, Cron slot: ${CRON_SLOT:-<none>}, Discovery phase: ${DISCOVERY_PHASE:-<none>}"
 
       - name: Checkout
         # SHA-pinned per audit-workflow-sha-pin (Check 42 / SMI-4758). Tag = v6.
@@ -206,6 +271,8 @@ jobs:
           RUN_TYPE: ${{ steps.config.outputs.run_type }}
           STALE_DAYS: ${{ steps.config.outputs.stale_days }}
           CRON_SLOT: ${{ steps.config.outputs.cron_slot }}
+          # SMI-4870: empty = full sequential discovery; 1/2/3 = single phase.
+          DISCOVERY_PHASE: ${{ steps.config.outputs.discovery_phase }}
           CONCURRENCY: ${{ github.event.inputs.concurrency || '2' }}
           # CONCURRENCY_KILL_SWITCH inherited from the job-level env (kill-switch sources).
         run: |
