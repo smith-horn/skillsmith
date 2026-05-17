@@ -7,8 +7,48 @@
  */
 
 import chalk from 'chalk'
-import { createLocalFilesystemAdapter, type AdapterError } from '@skillsmith/core'
+import { createLocalFilesystemAdapter, type AdapterError, type SyncResult } from '@skillsmith/core'
 import { DEFAULT_SKILLS_DIR } from '../config.js'
+
+/**
+ * SMI-4482: Detect whether a failed sync was caused by exhausted/absent
+ * credentials rather than a transient network or server error.
+ *
+ * Root cause: on a fresh install (`skillsmith sync` before `skillsmith login`,
+ * no `SKILLSMITH_API_KEY`) the API client correctly falls back to the public
+ * Supabase anon key and reaches the anonymous IP-trial path. Once the per-IP
+ * free-trial limit is exhausted the `skills-search` edge function returns
+ * HTTP 401 with body `{"error":"Authentication required", ...}`. `SyncEngine`
+ * surfaces that raw string in `SyncResult.errors`, so the CLI used to print a
+ * bare `Authentication required` with `Σ Total: 0` and no next step.
+ *
+ * This matches the 401 auth signal so `sync.ts` can replace the bare error
+ * with actionable guidance.
+ *
+ * @param result - The `SyncResult` returned by the sync engine.
+ * @returns `true` when the sync failed solely because no usable credentials
+ *   were available (anonymous trial exhausted or auth rejected).
+ */
+export function isAuthFailure(result: SyncResult): boolean {
+  if (result.success || result.totalProcessed > 0) {
+    return false
+  }
+  return result.errors.some((error) => /authentication required|unauthorized/i.test(error))
+}
+
+/**
+ * SMI-4482: Actionable, multi-line guidance shown when `sync` fails because
+ * no credentials are available. Replaces the previous bare
+ * `Error: Authentication required` so the user always has a clear next step.
+ *
+ * @returns Lines to print to stderr, in order.
+ */
+export function formatAuthGuidance(): string[] {
+  return [
+    chalk.yellow('Sync requires authentication. Run: ') + chalk.cyan('skillsmith login'),
+    chalk.dim('Or set SKILLSMITH_API_KEY for headless/CI use.'),
+  ]
+}
 
 /**
  * Scan `~/.claude/skills` for non-fatal adapter warnings.
