@@ -9,6 +9,9 @@
  * not throw on a brand-new database.
  */
 import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { SearchService, SkillRepository, closeDatabase, type DatabaseType } from '@skillsmith/core'
 import { openCliDatabase } from '../src/utils/open-database.js'
 
@@ -53,5 +56,34 @@ describe('SMI-4917 Bug 1: openCliDatabase', () => {
   it('the skills table is queryable on a fresh DB', async () => {
     const db = await open()
     expect(new SkillRepository(db).count()).toBe(0)
+  })
+})
+
+describe('SMI-4484: openCliDatabase corrupt-DB self-heal', () => {
+  let tempDir: string
+
+  afterEach(() => {
+    if (tempDir && existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true })
+  })
+
+  it('recovers from a corrupt on-disk database by backing it up and rebuilding', async () => {
+    tempDir = mkdtempSync(
+      join(tmpdir(), `smi4484-cli-${Date.now()}-${Math.random().toString(36).slice(2)}-`)
+    )
+    const dbPath = join(tempDir, 'skills.db')
+    // A corrupt file the WASM driver cannot read.
+    writeFileSync(dbPath, Buffer.from('not a sqlite database — corrupt on-disk file'))
+
+    const db = await openCliDatabase(dbPath)
+    closeDatabase(db)
+
+    // The corrupt file was backed up out of the way.
+    const backups = readdirSync(tempDir).filter((f) => f.includes('.corrupt-'))
+    expect(backups.length).toBe(1)
+
+    // A fresh, schema-initialized DB was opened in its place.
+    const reopened = await openCliDatabase(dbPath)
+    expect(new SkillRepository(reopened).count()).toBe(0)
+    closeDatabase(reopened)
   })
 })

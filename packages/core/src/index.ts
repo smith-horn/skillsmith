@@ -21,6 +21,10 @@ export * from './exports/repositories.js'
 // SMI-2721 (L1): Export createDatabaseAsync for CLI + enterprise async migration
 export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
+// SMI-4484: corruption detection + self-heal helpers, reused by the CLI opener.
+export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'
+// SMI-4807: native-driver failure reason getter.
+export { getBetterSqlite3FailureReason } from './db/drivers/betterSqlite3Driver.js'
 
 // Types - All type definitions
 export * from './exports/types.js'
