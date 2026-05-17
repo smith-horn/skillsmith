@@ -86,6 +86,8 @@ export interface DiscoveryAuditLogInput {
   failed: number
   stale: number
   quality_gate_filtered: number
+  /** SMI-4842: Repos rejected as curated `awesome-*` link-lists (not skills). */
+  meta_list_filtered: number
   unchanged: number
   quarantined: number
   github_skill_count: number
@@ -150,6 +152,7 @@ export async function writeDiscoveryAuditLog(
     failed: input.failed,
     stale: input.stale,
     quality_gate_filtered: input.quality_gate_filtered,
+    meta_list_filtered: input.meta_list_filtered,
     unchanged: input.unchanged,
     quarantined: input.quarantined,
     github_skill_count: input.github_skill_count,

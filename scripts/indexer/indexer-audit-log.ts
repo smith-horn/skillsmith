@@ -60,6 +60,8 @@ export interface AuditLogParams {
   failed: number
   stale: number
   quality_gate_filtered: number
+  /** SMI-4842: Repos rejected as curated `awesome-*` link-lists. Optional — absent on maintenance runs. */
+  meta_list_filtered?: number
   unchanged: number
   quarantined: number
   github_skill_count: number
@@ -118,6 +120,7 @@ export async function writeIndexerAuditLog(
         failed: params.failed,
         stale: params.stale,
         quality_gate_filtered: params.quality_gate_filtered,
+        meta_list_filtered: params.meta_list_filtered ?? 0,
         unchanged: params.unchanged,
         dry_run: params.dryRun,
         score_distribution: {
