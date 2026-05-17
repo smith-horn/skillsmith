@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.2
+
+- **Fix**: SMI-4926 — surface an empty/unsynced local index in search instead of a bare no-match (#1144)
+
 ## v0.6.1
 
 - **Fix**: SMI-4917 — repair first-time install (search crash, sync drops all skills, no self-config) (#1132)

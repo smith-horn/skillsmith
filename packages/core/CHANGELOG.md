@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.6.3
+
+- Version bump
+
 ## v0.6.2
 
 - **Fix**: SMI-4919 — the v17 migration's `skills` table-recreate (`CREATE/INSERT/DROP/RENAME`) silently cascade-deleted every `skill_categories` row. With `foreign_keys=ON` (the driver default), `DROP TABLE skills` fires the `skill_categories.skill_id → skills(id) ON DELETE CASCADE` immediately; `SyncEngine.upsertSkills()` never repopulates `skill_categories`, so category-filtered search degraded silently after the migration. The recreate now backs `skill_categories` up into a TEMP table before the drop and restores it verbatim after the rename, inside the same transaction. The false "SQLite defers FK enforcement" header comment is corrected. (#1140)
