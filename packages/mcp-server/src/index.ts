@@ -69,6 +69,7 @@ import {
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
 import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
+import { resolveStartupFlag } from './cli-flags.js'
 
 // Package version - keep in sync with package.json
 const PACKAGE_VERSION = '0.5.1'
@@ -356,6 +357,15 @@ function runStartupDiagnostics(): void {
 
 // Start server
 async function main() {
+  // SMI-4805: --version / --help must short-circuit before diagnostics, DB
+  // init, or the stdio server start — otherwise the flag is swallowed by the
+  // MCP SDK's stdio mode and the server runs instead of printing + exiting.
+  const startupFlagOutput = resolveStartupFlag(process.argv.slice(2), PACKAGE_VERSION)
+  if (startupFlagOutput !== null) {
+    console.log(startupFlagOutput)
+    return
+  }
+
   // SMI-2163: Run startup diagnostics before anything else
   runStartupDiagnostics()
 
