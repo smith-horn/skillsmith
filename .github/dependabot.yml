@@ -95,6 +95,20 @@ updates:
       # tree-sitter 0.26.x. Re-evaluate when tree-sitter-wasms ≥ 0.2 ships.
       - dependency-name: 'web-tree-sitter'
         versions: ['>=0.26.0']
+      # SMI-4875: @opentelemetry/sdk-node <0.217.0 (GHSA-q7rr-3cgh-j5r3,
+      # Prometheus exporter process crash) is reachable ONLY via the
+      # ruflo → @claude-flow/cli → agentdb@3.0.0-alpha.11 devDependency path.
+      # ruflo is dev-only tooling (hive-mind / agent-spawning), not shipped at
+      # runtime: `npm audit --omit=dev` is clean and the CI Security Audit job
+      # already omits devDeps. agentdb pulls sdk-node transitively (it declares
+      # no direct sdk-node dep) so a Dependabot version-update PR cannot reach
+      # it; this entry is forward-defensive. Risk-accepted disposition.
+      # The version scope keeps alerts LIVE for the prod-tracked
+      # @skillsmith/core dependency (currently @opentelemetry/sdk-node@0.218.0,
+      # i.e. ≥0.217.0 — already patched). Drop this entry once @claude-flow/cli
+      # bumps agentdb's otel chain past 0.217.0.
+      - dependency-name: '@opentelemetry/sdk-node'
+        versions: ['<0.217.0']
 
   - package-ecosystem: 'github-actions'
     directory: '/'
