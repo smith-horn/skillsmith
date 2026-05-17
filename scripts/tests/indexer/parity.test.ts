@@ -161,6 +161,8 @@ const DENO_HELPERS = resolve(REPO_ROOT, 'supabase/functions/indexer/skill-proces
 const NODE_HELPERS = resolve(REPO_ROOT, 'scripts/indexer/skill-processor.helpers.ts')
 const DENO_AUTHORS = resolve(REPO_ROOT, 'supabase/functions/indexer/high-trust-authors.ts')
 const NODE_AUTHORS = resolve(REPO_ROOT, 'scripts/indexer/high-trust-authors.ts')
+const DENO_META_LIST = resolve(REPO_ROOT, 'supabase/functions/indexer/meta-list-filter.ts')
+const NODE_META_LIST = resolve(REPO_ROOT, 'scripts/indexer/meta-list-filter.ts')
 
 /**
  * SMI-4852: Skip the parity assertions when the Deno helpers are git-crypt-
@@ -211,4 +213,20 @@ describe('Deno <-> Node HIGH_TRUST_AUTHORS parity (SMI-4843 Phase 5)', () => {
       expect(node).toBe(deno)
     }
   )
+})
+
+describe('Deno <-> Node meta-list-filter parity (SMI-4842)', () => {
+  const denoEncrypted = isGitCryptEncrypted(DENO_META_LIST)
+
+  it.skipIf(denoEncrypted)('readmeLinkRatio body is byte-identical (normalized whitespace)', () => {
+    const deno = normalizeWs(extractBody(DENO_META_LIST, 'readmeLinkRatio'))
+    const node = normalizeWs(extractBody(NODE_META_LIST, 'readmeLinkRatio'))
+    expect(node).toBe(deno)
+  })
+
+  it.skipIf(denoEncrypted)('isMetaListRepo body is byte-identical (normalized whitespace)', () => {
+    const deno = normalizeWs(extractBody(DENO_META_LIST, 'isMetaListRepo'))
+    const node = normalizeWs(extractBody(NODE_META_LIST, 'isMetaListRepo'))
+    expect(node).toBe(deno)
+  })
 })

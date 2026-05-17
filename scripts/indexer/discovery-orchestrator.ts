@@ -170,6 +170,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     quarantined: 0,
     stale: 0,
     quality_gate_filtered: 0,
+    meta_list_filtered: 0,
     unchanged: 0,
     github_skill_count: 0,
     high_trust_wildcard: {
@@ -391,6 +392,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   result.quarantined = upsertResult.quarantined
   result.unchanged = upsertResult.unchanged
   result.quality_gate_filtered = upsertResult.quality_gate_filtered
+  result.meta_list_filtered = upsertResult.meta_list_filtered
   result.errors.push(...upsertResult.errors)
 
   let categorizedCount = 0
@@ -453,6 +455,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       failed: result.failed,
       stale: result.stale,
       quality_gate_filtered: result.quality_gate_filtered,
+      meta_list_filtered: result.meta_list_filtered,
       unchanged: result.unchanged,
       quarantined: result.quarantined,
       github_skill_count: result.github_skill_count,
