@@ -28,7 +28,12 @@ import { runRegistrySync } from './run-registry-sync.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { formatDuration, formatDate, formatTimeUntil } from '../utils/formatters.js'
-import { scanLocalSkillsForWarnings, formatAdapterWarnings } from './sync.helpers.js'
+import {
+  scanLocalSkillsForWarnings,
+  formatAdapterWarnings,
+  isAuthFailure,
+  formatAuthGuidance,
+} from './sync.helpers.js'
 
 /**
  * Run sync operation
@@ -76,6 +81,26 @@ async function runSync(options: {
       if (options.json) {
         spinner.stop()
         console.log(JSON.stringify(result, null, 2))
+        // SMI-4482: signal auth failure via exit code so `--json` scripts can
+        // detect "needs login" without parsing the payload.
+        if (isAuthFailure(result)) {
+          process.exitCode = 1
+        }
+        return
+      }
+
+      // SMI-4482: When sync failed because no credentials were available
+      // (anonymous IP-trial exhausted, or auth rejected), replace the bare
+      // `Authentication required` error with actionable guidance and exit
+      // non-zero — instead of printing `Σ Total: 0` with no next step.
+      if (isAuthFailure(result)) {
+        spinner.fail(chalk.yellow('Sync requires authentication'))
+        console.log()
+        for (const line of formatAuthGuidance()) {
+          console.error(line)
+        }
+        // db.close() runs in the `finally` block below before process.exit.
+        process.exitCode = 1
         return
       }
 
