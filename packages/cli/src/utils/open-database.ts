@@ -14,7 +14,14 @@
  * `openCliDatabase` makes the footgun structurally impossible: it is the one
  * unmissable way a CLI command opens a database.
  */
-import { createDatabaseAsync, initializeSchema, type DatabaseType } from '@skillsmith/core'
+import {
+  createDatabaseAsync,
+  initializeSchema,
+  isCorruptionError,
+  backupCorruptDbFile,
+  type DatabaseType,
+} from '@skillsmith/core'
+import { existsSync } from 'node:fs'
 
 /**
  * Open a CLI database with the full schema initialized and all migrations
@@ -25,7 +32,25 @@ import { createDatabaseAsync, initializeSchema, type DatabaseType } from '@skill
  * @returns A connected, schema-initialized database. Caller owns `db.close()`.
  */
 export async function openCliDatabase(path: string): Promise<DatabaseType> {
-  const db = await createDatabaseAsync(path)
-  initializeSchema(db)
-  return db
+  try {
+    const db = await createDatabaseAsync(path)
+    initializeSchema(db)
+    return db
+  } catch (err) {
+    // SMI-4484: backstop for corruption that surfaces during schema init (e.g.
+    // a corrupt page only read once the schema queries run). The sql.js driver
+    // self-heals on open, but a corrupt file opened by the native driver can
+    // still fail here. Back up the bad file and retry once on a fresh DB.
+    if (!isCorruptionError(err) || path === ':memory:' || !existsSync(path)) {
+      throw err
+    }
+    const backupPath = backupCorruptDbFile(path)
+    console.warn(
+      `[Skillsmith] The local database at ${path} was corrupt and could not be opened. ` +
+        `It has been backed up to ${backupPath} and will be rebuilt on the next sync.`
+    )
+    const db = await createDatabaseAsync(path)
+    initializeSchema(db)
+    return db
+  }
 }

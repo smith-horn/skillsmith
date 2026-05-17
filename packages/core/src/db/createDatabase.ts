@@ -21,8 +21,15 @@ import type { Database, DatabaseOptions } from './database-interface.js'
 import {
   createBetterSqlite3Database,
   isBetterSqlite3Available,
+  getBetterSqlite3FailureReason,
 } from './drivers/betterSqlite3Driver.js'
 import { createSqlJsDatabase, isSqlJsAvailable } from './drivers/sqljsDriver.js'
+
+/**
+ * SMI-4807: guard so the WASM-fallback notice is emitted at most once per
+ * process, no matter how many database connections are opened.
+ */
+let wasmFallbackNoticeEmitted = false
 
 /**
  * Driver type used for database connections
@@ -165,7 +172,19 @@ export async function createDatabaseAsync(
 
   // Fall back to sql.js WASM
   if (isSqlJsAvailable()) {
-    console.warn('[Skillsmith] Native SQLite unavailable, using WASM driver')
+    if (!wasmFallbackNoticeEmitted) {
+      wasmFallbackNoticeEmitted = true
+      let message =
+        '[Skillsmith] Using WASM SQLite driver ' +
+        '(native better-sqlite3 not loaded — expected on direct macOS/npx installs).'
+      if (process.env.SKILLSMITH_DEBUG) {
+        const reason = getBetterSqlite3FailureReason()
+        if (reason) {
+          message += ` Reason: ${reason}`
+        }
+      }
+      console.warn(message)
+    }
     return await createSqlJsDatabase(path, options)
   }
 
