@@ -32,8 +32,9 @@ import { existsSync } from 'node:fs'
  * @returns A connected, schema-initialized database. Caller owns `db.close()`.
  */
 export async function openCliDatabase(path: string): Promise<DatabaseType> {
+  let db: DatabaseType | undefined
   try {
-    const db = await createDatabaseAsync(path)
+    db = await createDatabaseAsync(path)
     initializeSchema(db)
     return db
   } catch (err) {
@@ -44,13 +45,22 @@ export async function openCliDatabase(path: string): Promise<DatabaseType> {
     if (!isCorruptionError(err) || path === ':memory:' || !existsSync(path)) {
       throw err
     }
+    // Close the handle opened before initializeSchema failed so it is not
+    // leaked before we rebuild.
+    if (db) {
+      try {
+        db.close()
+      } catch {
+        // handle already unusable — nothing more to free
+      }
+    }
     const backupPath = backupCorruptDbFile(path)
     console.warn(
       `[Skillsmith] The local database at ${path} was corrupt and could not be opened. ` +
         `It has been backed up to ${backupPath} and will be rebuilt on the next sync.`
     )
-    const db = await createDatabaseAsync(path)
-    initializeSchema(db)
-    return db
+    const fresh = await createDatabaseAsync(path)
+    initializeSchema(fresh)
+    return fresh
   }
 }

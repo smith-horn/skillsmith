@@ -394,8 +394,10 @@ export async function createSqlJsDatabase(
   // try-block so corruption is detected here rather than at an arbitrary later
   // query the caller cannot recover from.
   let db: SqlJsDatabase
+  let partialDb: SqlJsDatabase | undefined
   try {
-    db = new SQL.Database(data)
+    partialDb = new SQL.Database(data)
+    db = partialDb
     // Set default pragmas for consistency.
     // Note: WAL mode is intentionally NOT set for sql.js because:
     // 1. sql.js operates fully in-memory with manual file persistence
@@ -408,6 +410,15 @@ export async function createSqlJsDatabase(
       db.run('SELECT name FROM sqlite_master LIMIT 1')
     }
   } catch (error) {
+    // Free the partially-opened handle's WASM heap memory before we rebuild or
+    // rethrow — otherwise it leaks for the process lifetime (SMI-4484).
+    if (partialDb) {
+      try {
+        partialDb.close()
+      } catch {
+        // handle already unusable — nothing more to free
+      }
+    }
     if (!isCorruptionError(error) || path === ':memory:' || !existsSync(path)) {
       throw error
     }
