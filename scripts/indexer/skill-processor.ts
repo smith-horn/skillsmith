@@ -32,7 +32,14 @@ import type { HighTrustAuthor } from './high-trust-authors.ts'
 import type { GitHubRepository } from './topic-search.ts'
 
 // SMI-4846 + SMI-4858: helpers in skill-processor.helpers.ts (keeps this file ≤500 lines).
-import { resolveSkillName } from './skill-processor.helpers.ts'
+// SMI-2402: banded quality-score model — selectTrustTier / computeIntrinsicQuality /
+// computeQualityScore also live in the helpers file (scoring block extracted there).
+import {
+  resolveSkillName,
+  selectTrustTier,
+  computeIntrinsicQuality,
+  computeQualityScore,
+} from './skill-processor.helpers.ts'
 export * from './skill-processor.helpers.ts'
 
 /**
@@ -61,10 +68,14 @@ export interface SkillMdValidation {
 export const DEFAULT_MIN_CONTENT_LENGTH = 100
 
 /**
- * SMI-4651: Quality-score floor when Branch B promotes a repo to `curated`
- * via GitHub-verified vendor org. Two `curated` paths exist: hand-curated
- * HIGH_TRUST_AUTHORS (~0.90) vs auto-vendor (this floor, 0.80). The 0.10 gap
- * distinguishes them without splitting the tier — see plan §A Risk table.
+ * SMI-4651: Quality-score floor that once distinguished the two `curated`
+ * paths (hand-curated HIGH_TRUST_AUTHORS vs auto-vendor).
+ *
+ * SMI-2402: **Vestigial** — the banded model floors every `curated` skill at
+ * the `curated` band floor (0.70) and spreads within the band by intrinsic
+ * quality. `repositoryToSkill` no longer applies this floor. The constant is
+ * retained (it documents historical intent and is referenced by the
+ * `repositoryToSkill` matrix test); removal is a separate cleanup.
  */
 export const VENDOR_VERIFIED_FLOOR = 0.8
 
@@ -376,58 +387,17 @@ export function repositoryToSkill(
   orgIsVerified?: boolean
 ): Record<string, unknown> {
   const validationMetadata = validation?.metadata
-  let qualityScore: number
-  let trustTier: 'verified' | 'curated' | 'community' | 'experimental' | 'unknown'
-
-  if (highTrustAuthor) {
-    qualityScore = highTrustAuthor.baseQualityScore
-    trustTier = highTrustAuthor.trustTier || 'verified'
-    if (process.env.SKILLSMITH_LOG_QUALITY_SCORE === 'true') {
-      console.log(
-        `[QualityScore] HIGH-TRUST: ${repo.fullName} author=${highTrustAuthor.owner} -> score=${qualityScore}`
-      )
-    }
-  } else {
-    const flagRaw = process.env.SKILLSMITH_LOG_QUALITY_SCORE
-    const useLogScale = flagRaw?.trim().toLowerCase() === 'true'
-    if (useLogScale) {
-      console.log(`[QualityScore] Flag raw="${flagRaw}" parsed=${useLogScale}`)
-    }
-
-    let starScore: number
-    let forkScore: number
-
-    if (useLogScale) {
-      starScore = Math.min(Math.log10(repo.stars + 1) * 15, 50)
-      forkScore = Math.min(Math.log10(repo.forks + 1) * 10, 25)
-    } else {
-      starScore = Math.min(repo.stars / 10, 50)
-      forkScore = Math.min(repo.forks / 5, 25)
-    }
-    qualityScore = (starScore + forkScore + 25) / 100
-    if (useLogScale) {
-      console.log(
-        `[QualityScore] COMMUNITY: ${repo.fullName} stars=${repo.stars} forks=${repo.forks} -> score=${qualityScore.toFixed(4)}`
-      )
-    }
-
-    trustTier = 'unknown'
-    if (repo.topics.includes('claude-code-official')) {
-      trustTier = 'verified'
-    } else if (orgIsVerified === true) {
-      // SMI-4651: GitHub-verified vendor org (Stripe/Notion/Atlassian/Figma/
-      // Canva/Zapier/Cloudflare/etc.) without an explicit HIGH_TRUST_AUTHORS
-      // entry. Promote to `curated` and floor the auto-derived qualityScore
-      // at VENDOR_VERIFIED_FLOOR so a low-stars vendor repo doesn't outrank
-      // editorially curated peers. See VENDOR_VERIFIED_FLOOR doc for the
-      // dual-path (0.90 hand-curated vs 0.80 auto-vendor) rationale.
-      trustTier = 'curated'
-      qualityScore = Math.max(qualityScore, VENDOR_VERIFIED_FLOOR)
-    } else if (repo.stars >= 50) {
-      trustTier = 'community'
-    } else if (repo.stars >= 5) {
-      trustTier = 'experimental'
-    }
+  // SMI-2402: trustTier selects the score band; computeIntrinsicQuality
+  // spreads within it. Tier selection is unchanged from the prior model.
+  const trustTier = selectTrustTier(repo, highTrustAuthor, orgIsVerified)
+  const qualityScore = computeQualityScore(
+    trustTier,
+    computeIntrinsicQuality(validation?.content, validationMetadata, repo)
+  )
+  if (process.env.SKILLSMITH_LOG_QUALITY_SCORE === 'true') {
+    console.log(
+      `[QualityScore] ${repo.fullName} tier=${trustTier} stars=${repo.stars} -> score=${qualityScore.toFixed(4)}`
+    )
   }
 
   // SMI-4858: name fallback chain (see resolveSkillName).
