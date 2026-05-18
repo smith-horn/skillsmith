@@ -64,6 +64,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`skills-search` omits category + security fields** (SMI-4251): the
+  `skills-search` edge function projected neither the `skill_categories` join
+  nor the migration-039 security columns (`security_score`, `last_scanned_at`,
+  `security_findings`), so every MCP `search` result reported
+  `category: "other"` and null security fields — even though `skills-get`
+  returned them correctly. All three query branches now SELECT the security
+  columns (the FTS branch backfills them via a parallel `skills` fetch since
+  the `search_skills` RPC cannot project them), and a parallel
+  `skill_categories` fetch hydrates `categories: string[]` onto every result
+  before the JSON response. Response-additive only — no DB migration, no
+  breaking change. `skills-search` auto-deploys on merge to `main`.
 - **Native SQLite driver auto-installs on `npx`** (SMI-4563, `@skillsmith/core@0.5.8`): `better-sqlite3` is now declared as `optionalDependencies` in `@skillsmith/core`, so `npx -y @skillsmith/mcp-server` resolves and installs the native driver on every supported host. Previously the dependency was only present transitively/devDeps and every fresh `npx` consumer silently fell through to the WASM path. The WASM fallback (sql.js) remains for hosts without a C toolchain.
 - **Webhook DLQ `/retry` → `/resolve`** (SMI-4308): the `webhook-dlq` edge function's `POST /:id/retry` handler was cosmetic (no outbound delivery worker exists). Renamed to `/resolve` with explicit operator-acknowledgement semantics. Migration 077 adds `resolved_at`/`resolved_by` columns, replaces `idx_dlq_unretried` with a compound `idx_dlq_open` partial index, and back-populates rows touched by the old handler. `handleList` now filters both `retried_at IS NULL` and `resolved_at IS NULL` — resolved rows no longer appear in the DLQ view. Operator resolutions emit a team-scoped `webhook:dlq_resolved` audit log (non-fatal).
 - Restored webhook_endpoints and api_keys tables via migrations 065+066 (SMI-4123, PRs #501/#503/#504). Production deployment tracked in SMI-4135.
