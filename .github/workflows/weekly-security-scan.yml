@@ -304,3 +304,22 @@ jobs:
 
           This issue was auto-created by SMI-3335 (parity ported via SMI-4392). Close when resolved."
           fi
+
+      # SMI-4938: email alert on scheduled failure, parallel to the GH-issue
+      # alert above (SMI-3335), so failures also reach the support inbox.
+      - name: Send email alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "security_scan_failed",
+              "message": "The weekly security scan workflow failed. Check GitHub Actions for details.",
+              "workflow": "Weekly Security Scan",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' || echo "Alert notification failed (non-fatal)"
