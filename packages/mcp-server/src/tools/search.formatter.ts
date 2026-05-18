@@ -63,6 +63,10 @@ export function formatSearchResults(response: SearchResponse): string {
       )
       lines.push('   ' + skill.description)
       lines.push('   ID: ' + skill.id)
+      // SMI-4954: flag discovery-only entries so models don't try to install them
+      if (skill.installable === false) {
+        lines.push('   Installable: NO — discovery-only (install_skill cannot resolve this)')
+      }
       // SMI-2734: Surface registry install ID so models can use owner/name directly
       if (skill.installHint) {
         lines.push('   Install: ' + skill.installHint)

@@ -78,6 +78,12 @@ export interface Skill {
   description: string
   author: string
   repository?: string
+  /**
+   * SMI-4954: True when the skill has an installable source (registry `repo_url`
+   * present). When false/undefined the skill is a discovery-only entry (SMI-2723)
+   * and `install_skill` will not resolve it. Always populated by `get_skill`.
+   */
+  installable?: boolean
   version?: string
   category: SkillCategory
   trustTier: TrustTier
@@ -108,6 +114,12 @@ export interface SkillSearchResult {
   score: number
   /** GitHub repository URL (may be undefined for seed data/metadata-only skills) */
   repository?: string
+  /**
+   * SMI-4954: True when the skill is installable (registry `repo_url` present).
+   * When false the skill is a discovery-only entry (SMI-2723) and `install_skill`
+   * will not resolve it. Always populated by `search`.
+   */
+  installable?: boolean
   /** SMI-825: Security scan summary */
   security?: SecuritySummary
   /** SMI-1809: Source of the skill ('local' for ~/.claude/skills/, 'registry' for API) */

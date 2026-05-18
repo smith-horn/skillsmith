@@ -42,6 +42,13 @@ describe('Get Skill Tool', () => {
       expect(result.skill.repository).toContain('github.com')
     })
 
+    it('should set installable=true for a seeded skill with a repo_url (SMI-4954)', async () => {
+      const result = await executeGetSkill({ id: 'anthropic/commit' }, context)
+
+      // The seeded skill carries a repo_url, so it is installable.
+      expect(result.skill.installable).toBe(true)
+    })
+
     it('should throw SKILL_NOT_FOUND for invalid skill', async () => {
       try {
         await executeGetSkill({ id: 'nonexistent/skill' }, context)
