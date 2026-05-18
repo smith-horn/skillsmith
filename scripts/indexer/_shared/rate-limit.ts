@@ -211,8 +211,13 @@ export function newRateLimitTelemetry(): RateLimitTelemetry {
   }
 }
 
-/** SMI-4918: telemetry field holding the running minimum for a bucket. */
-const BUCKET_FIELD: Record<RateLimitBucket, keyof RateLimitTelemetry> = {
+/** SMI-4918: the telemetry field holding the running minimum for a bucket. */
+type BucketRemainingField =
+  | 'core_remaining_min'
+  | 'search_remaining_min'
+  | 'code_search_remaining_min'
+
+const BUCKET_FIELD: Record<RateLimitBucket, BucketRemainingField> = {
   core: 'core_remaining_min',
   search: 'search_remaining_min',
   code_search: 'code_search_remaining_min',
