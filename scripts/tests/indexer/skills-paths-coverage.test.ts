@@ -108,3 +108,51 @@ describe('Plain-path entries — no wildcard, handled by Contents API scan (SMI-
     expect(entry.skillsPaths.some((p) => p.includes('*'))).toBe(true)
   })
 })
+
+// SMI-4843 Phase 5b (2026-05-18): the 12 new publishers. Each assertion pins
+// that the configured skillsPaths (or its omission, for flat layouts) actually
+// surfaces >=1 SKILL.md given the live tree probe — the SMI-4860 quarantine
+// failure mode. Tree paths are the concrete results from
+// `gh api repos/<owner>/<repo>/git/trees/HEAD?recursive=1` (2026-05-18),
+// recorded in docs/internal/research/smi-4843-phase5b-candidates.md.
+describe('Phase 5b publishers — skillsPaths surfaces >=1 SKILL.md (SMI-4843 / SMI-4860)', () => {
+  // Explicit-skillsPaths entries — each row carries its own configured path.
+  it.each([
+    ['nextlevelbuilder', 'ui-ux-pro-max-skill', '.claude/skills', '.claude/skills/design/SKILL.md'],
+    ['sleekdotdesign', 'agent-skills', 'skills', 'skills/design-mobile-apps/SKILL.md'],
+    ['scrapegraphai', 'just-scrape', 'skills', 'skills/just-scrape/SKILL.md'],
+    ['juliusbrussee', 'caveman', 'skills', 'skills/caveman/SKILL.md'],
+    ['lllllllama', 'ai-paper-reproduction-skill', 'skills', 'skills/ai-research-explore/SKILL.md'],
+    ['arvindrk', 'extract-design-system', 'skills', 'skills/extract-design-system/SKILL.md'],
+    ['leonxlnx', 'taste-skill', 'skills', 'skills/taste-skill/SKILL.md'],
+  ])(
+    '%s/%s — configured skillsPaths ["%s"] matches a probed SKILL.md path',
+    (owner, repo, expectedPath, sampleSkillMd) => {
+      const entry = findAuthor(owner, repo)
+      expect(entry.skillsPaths).toEqual([expectedPath])
+      const regex = globToSkillMdRegex(expectedPath)
+      expect(
+        regex.test(sampleSkillMd),
+        `${owner}/${repo}: skillsPaths ["${expectedPath}"] must surface ${sampleSkillMd}`
+      ).toBe(true)
+    }
+  )
+
+  // Flat repo-root entries — skillsPaths omitted so the default ['', 'skills']
+  // root-scan reaches <skill-name>/SKILL.md. Mirrors the garrytan/gstack
+  // convention; an explicit [''] would fail the non-empty-string invariant in
+  // high-trust-authors.test.ts.
+  it.each([
+    ['squirrelscan', 'skills'],
+    ['agentspace-so', 'agent-skills'],
+    ['agentspace-so', 'runcomfy-agent-skills'],
+    ['agentspace-so', 'skills'],
+    ['currents-dev', 'playwright-best-practices-skill'],
+  ])('%s/%s — flat layout: skillsPaths omitted (default root-scan)', (owner, repo) => {
+    const entry = findAuthor(owner, repo)
+    expect(
+      entry.skillsPaths,
+      `${owner}/${repo}: flat repo-root layout must omit skillsPaths so default ['', 'skills'] applies`
+    ).toBeUndefined()
+  })
+})
