@@ -26,7 +26,8 @@ All scoped to the `e2e-staging` environment. Other workflows cannot read them.
 | `STAGING_SUPABASE_URL` | Supabase project page (staging) | `https://ovhcifugwqnzoebwfuku.supabase.co` |
 | `STAGING_SUPABASE_ANON_KEY` | Supabase project API settings (staging) | Page-side supabase-js init + sign-in |
 | `STAGING_SUPABASE_SERVICE_ROLE_KEY` | Supabase project API settings (staging) | Test reads of `device_codes` / `audit_logs` + seed |
-| `STAGING_DB_PASSWORD` | Supabase project Database settings (staging) | `psql` for migration drift preflight + defensive cleanup |
+| `STAGING_DB_PASSWORD` | Supabase project Database settings (staging) | `psql` for migration drift preflight (`device-login-roundtrip.yml`) |
+| `STAGING_POOLER_URL` | Supabase project Database settings → Connection Pooler, **Transaction** mode, port 6543 (staging) | Full `psql` connection string for the weekly `audit_logs` cleanup (`device-login-roundtrip-cleanup.yml`, SMI-4937). Copy verbatim — never hand-assemble host/region |
 | `E2E_TEST_USER_PASSWORD` | Generate via `openssl rand -base64 32` | Sign-in for the dedicated test user |
 | `E2E_TEST_USER_ID` | Output of `seed-e2e-device-login-user.ts --emit-id` | Asserted by spec to confirm correct user claimed the code |
 | `VERCEL_TOKEN` | <https://vercel.com/account/tokens> ("skillsmith-e2e-staging") | `vercel pull` + `vercel build` + `vercel dev` auth (SMI-4508) |
@@ -58,7 +59,8 @@ All scoped to the `e2e-staging` environment. Other workflows cannot read them.
 (`VSCE_PAT`, GitHub fine-grained tokens). Rotate by:
 
 1. Supabase: regenerate `service_role` and `anon` keys, regenerate the database
-   password.
+   password. Regenerating the database password also changes `STAGING_POOLER_URL`
+   (it embeds the password) — re-copy the pooler connection string.
 2. Update each secret in the `e2e-staging` GitHub Environment.
 3. Trigger the workflow once to confirm green:
    `gh workflow run device-login-roundtrip.yml`.

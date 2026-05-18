@@ -56,6 +56,15 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-05-06",
       "expiresAt": "2026-08-06"
+    },
+    {
+      "skillId": "github/dokind/qpay-skills",
+      "findingType": "sensitive_path",
+      "messagePattern": "\\.env",
+      "reason": "QPay (Mongolian QR payments) integration skill — its subject matter IS .env credential setup. SKILL.md instructs developers to gitignore .env, never log/echo secrets in plaintext, and never bundle credentials in mobile apps. The bare-keyword sensitive_path regex flags any documented '.env' string. Same class as github/RobinGase/skill-protocol-rs (allowlisted under SMI-4558). Triaged 2026-05-17 under SMI-4934 — Wave 2 sensitive_path tightening (require assignment/path context) will eliminate this class of false positive. Closes GH #1060.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-05-17",
+      "expiresAt": "2026-08-15"
     }
   ]
 }

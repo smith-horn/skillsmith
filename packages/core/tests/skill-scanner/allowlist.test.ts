@@ -384,17 +384,21 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // SMI-4765 (2026-05-06): prompt-injection-auditor added — defensive auditor
   // skill whose SKILL.md enumerates the jailbreak techniques it detects;
   // bare /jailbreak/i pattern false-positives until Wave 2 tightens.
+  // SMI-4934 (2026-05-17): qpay-skills added — QPay payment-integration skill
+  // whose subject matter is .env credential setup; bare-keyword sensitive_path
+  // regex false-positives until Wave 2 tightens.
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(6)
+    expect(parsed.allowlist.length).toBe(7)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
         'github/RENJI04/prompt-injection-auditor',
         'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
+        'github/dokind/qpay-skills',
         'github/kcmadden/claude-code-1password-skill',
         'github/rhysha/claude-security-research-skill',
         'github/straygizmo/mdium',
