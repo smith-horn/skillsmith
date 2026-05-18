@@ -115,7 +115,7 @@ export const recommendToolSchema = {
         type: 'array',
         items: { type: 'string' },
         description:
-          'Currently installed skill IDs (e.g., ["anthropic/commit", "community/jest-helper"]). If empty, auto-detects from ~/.claude/skills/',
+          'Currently installed skill IDs (e.g., ["getsentry/commit", "community/jest-helper"]). If empty, auto-detects from ~/.claude/skills/',
       },
       project_context: {
         type: 'string',
