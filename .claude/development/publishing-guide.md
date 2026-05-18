@@ -22,7 +22,7 @@ gh workflow run publish.yml -f dry_run=false
 gh run watch <run-id> --exit-status              # Monitor progress
 ```
 
-Uses `SKILLSMITH_NPM_TOKEN` secret today; SMI-4539 will flip to npm trusted-publisher OIDC (the `id-token: write` permission is already in place per SMI-4533). Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish.
+npmjs.org publishes (`@skillsmith/{core,mcp-server,cli}`) authenticate via npm trusted-publisher OIDC (SMI-4539, landed) — the `id-token: write` permission was granted in SMI-4533. The `SKILLSMITH_NPM_TOKEN` secret is retained only as an automatic in-workflow fallback: if OIDC fails, the publish job retries with the token (a loud `::warning::`, not a hard failure) so the release still ships. SMI-4540 retires the token once a real OIDC release has run clean. `@smith-horn/enterprise` publishes to GitHub Packages via `GITHUB_TOKEN` (npm trusted-publishing is npmjs.org-only). Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish.
 
 If CI fails, fix CI. Do not reach for a local publish — see [`publish-ci-recovery.md`](../../docs/internal/runbooks/publish-ci-recovery.md) for triage.
 
@@ -43,7 +43,7 @@ The previous "local fallback" recipe (`source .env && npm publish`) is **gone**.
 
 Why: every "we couldn't get CI to publish so we did it locally" commit in the changelog mapped to a regression that CI's guards would have caught. Closing this loophole forces the only path that carries our published-version history.
 
-`npm publish --ignore-scripts` skips `prepublishOnly`. The binding gate is npm trusted-publisher OIDC (SMI-4539 flips it on; SMI-4540 retires the token). Until then, the host-side guard plus token-scoped 2FA and CI-only secret access are the layers in place.
+`npm publish --ignore-scripts` skips `prepublishOnly`. The binding gate is npm trusted-publisher OIDC (SMI-4539, landed — OIDC primary, `SKILLSMITH_NPM_TOKEN` retained as an in-workflow fallback pending SMI-4540, which retires the token). The host-side guard plus token-scoped 2FA and CI-only secret access remain the layers protecting the fallback token until SMI-4540 lands.
 
 ## Break-Glass
 
