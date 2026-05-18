@@ -65,12 +65,27 @@ function filterByCompatibility(
 }
 
 /**
+ * SMI-4954: Drop discovery-only skills when `installable_only` is requested.
+ * A skill is installable when it has a registry install source (`repo_url`
+ * present) — the `installable` flag is populated by the result mappers below.
+ * This is a client-side filter applied to the merged result page, so an
+ * `installable_only` search may return fewer than the page limit.
+ */
+function filterInstallable(
+  results: SkillSearchResult[],
+  installableOnly: boolean | undefined
+): SkillSearchResult[] {
+  if (!installableOnly) return results
+  return results.filter((skill) => skill.installable === true)
+}
+
+/**
  * Search tool schema for MCP
  */
 export const searchToolSchema = {
   name: 'search',
   description:
-    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, limit, compatibility (IDE/LLM).",
+    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Each result carries an `installable` flag — discovery-only entries (installable:false) cannot be installed. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM).",
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -110,6 +125,12 @@ export const searchToolSchema = {
       safe_only: {
         type: 'boolean',
         description: 'Only show skills that passed security scan',
+      },
+      // SMI-4954: Installability filter
+      installable_only: {
+        type: 'boolean',
+        description:
+          'When true, return only installable skills — excludes discovery-only registry entries (no install source) that install_skill cannot resolve.',
       },
       max_risk: {
         type: 'number',
@@ -154,6 +175,8 @@ export interface SearchInput {
   min_score?: number
   /** SMI-825: Only show skills that passed security scan */
   safe_only?: boolean
+  /** SMI-4954: Only return installable skills (excludes discovery-only entries) */
+  installable_only?: boolean
   /** SMI-825: Maximum risk score (0-100, lower is safer) */
   max_risk?: number
   /** SMI-2760: Filter by IDE/LLM compatibility */
@@ -191,13 +214,14 @@ export async function executeSearch(
     input.trust_tier ||
     input.min_score !== undefined ||
     input.safe_only !== undefined ||
+    input.installable_only !== undefined ||
     input.max_risk !== undefined ||
     input.compatible_with !== undefined
 
   if (!hasQuery && !hasFilters) {
     throw new SkillsmithError(
       ErrorCodes.SEARCH_QUERY_EMPTY,
-      'Provide a search query or at least one filter (category, trust_tier, min_score, safe_only, max_risk)'
+      'Provide a search query or at least one filter (category, trust_tier, min_score, safe_only, installable_only, max_risk)'
     )
   }
 
@@ -290,6 +314,8 @@ export async function executeSearch(
         trustTier: mapTrustTierFromDb(item.trust_tier),
         score: Math.round((item.quality_score ?? 0) * 100),
         repository: item.repo_url || undefined,
+        // SMI-4954: installable when the registry row carries a repo_url
+        installable: Boolean(item.repo_url),
         // SMI-2734: 'author/name' install ID — valid for all registry API results
         installHint: item.author ? item.author + '/' + item.name : undefined,
         // SMI-2760: Compatibility tags (populated when API returns them)
@@ -312,15 +338,22 @@ export async function executeSearch(
       // Merge results: local skills first (since they're user's own), then registry
       // SMI-2760: Apply compatibility filter if requested
       const merged = [...localResults, ...results]
-      const mergedResults = filters.compatibleWith
+      const compatFiltered = filters.compatibleWith
         ? filterByCompatibility(merged, filters.compatibleWith)
         : merged
+      // SMI-4954: apply installable_only after compatibility filtering
+      const mergedResults = filterInstallable(compatFiltered, input.installable_only)
 
       const endTime = performance.now()
 
       const response: SearchResponse = {
         results: mergedResults.slice(0, 10), // Limit to 10 total
-        total: ((apiResponse.meta?.total as number) ?? results.length) + localResults.length,
+        // SMI-4954: when installable_only narrows the page client-side the
+        // registry grand-total no longer describes the returned set — report
+        // the filtered count instead.
+        total: input.installable_only
+          ? mergedResults.length
+          : ((apiResponse.meta?.total as number) ?? results.length) + localResults.length,
         query: input.query || '', // May be empty for filter-only searches
         filters,
         timing: {
@@ -388,6 +421,8 @@ export async function executeSearch(
     trustTier: mapTrustTierFromDb(item.skill.trustTier),
     score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
     repository: item.skill.repoUrl || undefined,
+    // SMI-4954: installable when the local DB row carries a repoUrl
+    installable: Boolean(item.skill.repoUrl),
     // SMI-2734: Only set installHint when author is a real registry owner (not 'unknown')
     installHint:
       item.skill.author && item.skill.author !== 'unknown'
@@ -418,15 +453,21 @@ export async function executeSearch(
   // Merge results: local skills first (since they're user's own), then registry
   // SMI-2760: Apply compatibility filter if requested
   const merged = [...localResults, ...results]
-  const mergedResults = filters.compatibleWith
+  const compatFiltered = filters.compatibleWith
     ? filterByCompatibility(merged, filters.compatibleWith)
     : merged
+  // SMI-4954: apply installable_only after compatibility filtering
+  const mergedResults = filterInstallable(compatFiltered, input.installable_only)
 
   const endTime = performance.now()
 
   const response: SearchResponse = {
     results: mergedResults.slice(0, 10), // Limit to 10 total
-    total: searchResults.total + localResults.length,
+    // SMI-4954: when installable_only narrows the page client-side the total
+    // no longer describes the returned set — report the filtered count.
+    total: input.installable_only
+      ? mergedResults.length
+      : searchResults.total + localResults.length,
     query: input.query || '', // May be empty for filter-only searches
     filters,
     timing: {

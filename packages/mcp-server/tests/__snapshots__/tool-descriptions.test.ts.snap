@@ -3,8 +3,8 @@
 exports[`SMI-4790: MCP tool descriptions > snapshot > all 7 descriptions match snapshot 1`] = `
 [
   {
-    "description": "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, limit, compatibility (IDE/LLM).",
-    "length": 685,
+    "description": "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Each result carries an \`installable\` flag — discovery-only entries (installable:false) cannot be installed. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM).",
+    "length": 811,
     "name": "search",
     "stage": "Discover",
   },

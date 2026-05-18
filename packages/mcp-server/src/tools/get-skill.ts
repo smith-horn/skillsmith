@@ -165,6 +165,9 @@ export async function executeGetSkill(
         description: apiSkill.description || '',
         author: apiSkill.author || 'unknown',
         repository: apiSkill.repo_url || undefined,
+        // SMI-4954: installable when the registry row carries a repo_url —
+        // discovery-only entries (repo_url null, SMI-2723) cannot be installed.
+        installable: Boolean(apiSkill.repo_url),
         version: undefined,
         // SMI-4240: Prefer the category joined from skill_categories by the API
         // (populated by the indexer's classifier) over tag-based inference.
@@ -237,6 +240,8 @@ export async function executeGetSkill(
     description: dbSkill.description || '',
     author: dbSkill.author || 'unknown',
     repository: dbSkill.repoUrl || undefined,
+    // SMI-4954: installable when the local DB row carries a repoUrl
+    installable: Boolean(dbSkill.repoUrl),
     version: undefined, // Version not stored in current schema
     category: extractCategoryFromTags(dbSkill.tags),
     trustTier: mapTrustTierFromDb(dbSkill.trustTier as import('@skillsmith/core').TrustTier),
@@ -328,6 +333,13 @@ export function formatSkillDetails(response: GetSkillResponse): string {
   lines.push('Author: ' + skill.author)
   lines.push('Version: ' + (skill.version || 'N/A'))
   lines.push('Category: ' + skill.category)
+  // SMI-4954: surface installability so callers don't try to install a
+  // discovery-only entry that install_skill cannot resolve.
+  if (skill.installable === false) {
+    lines.push('Installable: NO — discovery-only entry (install_skill will not resolve this)')
+  } else if (skill.installable === true) {
+    lines.push('Installable: yes')
+  }
   lines.push('')
 
   // Description

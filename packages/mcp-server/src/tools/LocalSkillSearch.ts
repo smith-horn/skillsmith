@@ -45,6 +45,9 @@ export function localSkillToSearchResult(skill: LocalSkill): SkillSearchResult {
     trustTier: 'local' as TrustTier,
     score: skill.qualityScore,
     source: 'local',
+    // SMI-4954: local skills already exist on disk in ~/.claude/skills/ — they
+    // are usable as-is and never discovery-only, so always installable:true.
+    installable: true,
     // SMI-2759: Surface repository link for source transparency
     repository: skill.repository || undefined,
     // SMI-2760: Compatibility tags from frontmatter
