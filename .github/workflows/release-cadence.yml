@@ -132,3 +132,22 @@ jobs:
           )" \
             --base main \
             --head "${{ steps.branch.outputs.branch }}"
+
+      # SMI-4938: email alert on scheduled failure. Before this, release-cadence
+      # had no failure signal and its "Open PR" step failed silently for weeks.
+      - name: Send alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "release_cadence_failed",
+              "message": "The weekly release-cadence workflow failed. Check GitHub Actions for details.",
+              "workflow": "Release Cadence",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' || echo "Alert notification failed (non-fatal)"

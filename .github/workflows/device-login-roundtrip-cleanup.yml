@@ -66,3 +66,22 @@ jobs:
             -v ON_ERROR_STOP=1 \
             -P pager=off \
             -c "DELETE FROM audit_logs WHERE event_type = 'auth:device_code:consumed' AND metadata->>'user_id' = '${E2E_TEST_USER_ID}' AND created_at < now() - interval '7 days';"
+
+      # SMI-4938: email alert on scheduled failure. Before this, the job had
+      # no failure signal at all and a 0/4 failure streak went unnoticed.
+      - name: Send alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "device_login_cleanup_failed",
+              "message": "The weekly device-login audit_logs cleanup workflow failed. Check GitHub Actions for details.",
+              "workflow": "Device Login Round-Trip audit_logs cleanup",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' || echo "Alert notification failed (non-fatal)"
