@@ -6,7 +6,7 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## v0.6.3
 
-- **Chore**: SMI-4539 — synthetic patch release to verify the npm trusted-publisher OIDC publish path end-to-end (PR #1171). No functional or API change; `@skillsmith/core` source is identical to v0.6.2.
+- **Chore**: SMI-4539 — synthetic patch release to verify the npm trusted-publisher OIDC publish path end-to-end (PR #1171). No functional or API change; the only source delta from v0.6.2 is the `VERSION` constant bump in `src/index.ts` (PR #1174). Published via OIDC in run 26012688904 with SLSA build provenance.
 
 ## v0.6.2
 
