@@ -32,8 +32,8 @@ const PERMISSIVE_LICENSES = new Set([
 ])
 
 describe('HIGH_TRUST_AUTHORS', () => {
-  it('contains 34 entries (16 baseline + 18 phase-5 additions)', () => {
-    expect(HIGH_TRUST_AUTHORS).toHaveLength(34)
+  it('contains 35 entries (16 baseline + 18 phase-5 additions + 1 SMI-4841 garrytan/gstack)', () => {
+    expect(HIGH_TRUST_AUTHORS).toHaveLength(35)
   })
 
   it('has no duplicate (owner, repo) pairs', () => {

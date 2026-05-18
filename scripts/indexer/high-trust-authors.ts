@@ -447,6 +447,15 @@ export const HIGH_TRUST_AUTHORS: HighTrustAuthor[] = [
     skillsPaths: ['skills'],
     description: 'Agent Skills for practical engineering work',
   },
+  // SMI-4841 (licenseChecked: 2026-05-17): garrytan/gstack — zero GitHub topics; skillsPaths omitted so default ['', 'skills'] root-scan reaches the ~48 flat root-level skills.
+  {
+    owner: 'garrytan',
+    repo: 'gstack',
+    license: 'MIT',
+    baseQualityScore: 0.88,
+    trustTier: 'curated',
+    description: "Garry Tan's gstack — Claude Code skills for planning, QA, review, and shipping",
+  },
 ]
 
 /**
