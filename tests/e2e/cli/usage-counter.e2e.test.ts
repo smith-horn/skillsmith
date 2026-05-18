@@ -50,11 +50,15 @@ import {
   type ProvisionedUser,
 } from '../fixtures/usage-counter-fixture.js'
 
-// Skill the staging registry is guaranteed to have. Falls back to env override
-// if the seed data ever rotates. `anthropic/commit` is verified-tier and has
-// been present since the initial registry seed.
+// A stable, installable staging skill used to exercise the get-skill path.
+// `anthropics/web-artifacts-builder` is a verified-tier official Anthropic skill
+// with a repo_url, resolved via the author/name lookup. Staging stores skill
+// rows under UUID ids, so getSkill() returns `id` as the UUID — the assertions
+// below check that a skill resolved, not id-equality with the input string.
+// Override with SKILLSMITH_E2E_SKILL_ID if staging seed data changes (SMI-4956).
 const STAGING_BASE_URL = process.env['STAGING_SUPABASE_URL']?.replace(/\/$/, '') + '/functions/v1'
-const STAGING_SKILL_ID = process.env['SKILLSMITH_E2E_SKILL_ID'] ?? 'anthropic/commit'
+const STAGING_SKILL_ID =
+  process.env['SKILLSMITH_E2E_SKILL_ID'] ?? 'anthropics/web-artifacts-builder'
 
 const skipIfNoCreds = stagingCredentialsAbsent()
 
@@ -80,7 +84,8 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
     })
     const res = await client.getSkill(STAGING_SKILL_ID)
     expect(res).toBeDefined()
-    expect(res.data?.id).toBe(STAGING_SKILL_ID)
+    // Staging stores UUID ids — assert a skill resolved, not id === input.
+    expect(res.data?.id).toBeTruthy()
 
     // Counter increment lands asynchronously after the response — give the
     // RPC up to ~2s to commit before reading user_api_usage.
@@ -99,13 +104,13 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
 
     // First call — populates the tier cache.
     const r1 = await client.getSkill(STAGING_SKILL_ID)
-    expect(r1.data?.id).toBe(STAGING_SKILL_ID)
+    expect(r1.data?.id).toBeTruthy()
 
     // Second call within the cache TTL — must still increment. Pre-SMI-4461,
     // the tier-cache short-circuit returned before incrementUsageCounter was
     // ever called, silently undercounting from `2` to `1`.
     const r2 = await client.getSkill(STAGING_SKILL_ID)
-    expect(r2.data?.id).toBe(STAGING_SKILL_ID)
+    expect(r2.data?.id).toBeTruthy()
 
     await waitForCounterIncrement(user.userId, 'get_count', before.get_count + 2)
     const after = await getUsageRow(user.userId)
@@ -148,7 +153,7 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
         stored ? { baseUrl: STAGING_BASE_URL, jwtToken: stored } : { baseUrl: STAGING_BASE_URL }
       )
       const res = await client.getSkill(STAGING_SKILL_ID)
-      expect(res.data?.id).toBe(STAGING_SKILL_ID)
+      expect(res.data?.id).toBeTruthy()
 
       await waitForCounterIncrement(user.userId, 'get_count', before.get_count + 1)
       const after = await getUsageRow(user.userId)
