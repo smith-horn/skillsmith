@@ -21,8 +21,6 @@
 # SMI-4948 split follow-up
 supabase/functions/_shared/ops-report-templates.ts
 # SMI-4948 split follow-up
-supabase/functions/indexer/index.subdirectory.test.ts
-# SMI-4948 split follow-up
 supabase/functions/skills-refresh-metadata/index.ts
 # SMI-4948 split follow-up
 supabase/functions/ops-report/usage-aggregators.ts
