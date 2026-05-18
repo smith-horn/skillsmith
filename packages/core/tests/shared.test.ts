@@ -51,7 +51,7 @@ function createMockResponse(options: {
       keys: () => headerMap.keys(),
       values: () => headerMap.values(),
       forEach: (callback: (value: string, key: string) => void) => headerMap.forEach(callback),
-    } as Headers,
+    } as unknown as Headers,
     text: vi.fn().mockResolvedValue(typeof body === 'string' ? body : JSON.stringify(body)),
     json: vi.fn().mockImplementation(async () => {
       if (typeof body === 'object') {
