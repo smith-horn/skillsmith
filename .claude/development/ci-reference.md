@@ -321,9 +321,12 @@ builds (~15 min for native module compilation).
 **SMI-4927**: the BuildKit cache was migrated from `type=gha` to `type=registry`
 (GHCR). The `type=gha` backend shared the 10 GB per-repo Actions cache budget;
 its blobs accumulated without bound and LRU-evicted the useful `docker-image-*`
-tarball cache. GHCR cache lives outside that budget and is bounded by
-overwrite-in-place (each main push overwrites its tag). See
-[ci-cache-pressure-fix-v2.md](../../docs/internal/implementation/ci-cache-pressure-fix-v2.md).
+tarball cache. GHCR cache lives outside that budget. Its **tagged** versions are
+bounded by overwrite-in-place (each main push moves the tag to a fresh version);
+the prior version is left **untagged, not deleted**, so untagged orphans
+accumulate and are pruned weekly by `ghcr-cache-prune.yml` (SMI-4933). See
+[ci-cache-pressure-fix-v2.md](../../docs/internal/implementation/ci-cache-pressure-fix-v2.md)
+and [ghcr-cache-retention.md](../../docs/internal/implementation/ghcr-cache-retention.md).
 
 | Workflow | GHCR cache ref | Mode | Timeout | Purpose |
 |----------|----------------|------|---------|---------|
@@ -373,8 +376,10 @@ it is stale, E2E gets a cold build (~6 min).
 **Key decisions**:
 
 - One GHCR package (`skillsmith-buildcache`), three tags (`ci`/`e2e`/`publish`)
-  isolate each workflow's cache. Each main push overwrites its tag, so steady
-  state is ~3 layer-sets regardless of run count — no pruning needed.
+  isolate each workflow's cache. Each main push moves its tag to a fresh
+  version, so the **tagged** set stays at ~3 layer-sets regardless of run count.
+  The prior version is left untagged (not deleted), so untagged orphans
+  accumulate — `ghcr-cache-prune.yml` (SMI-4933) prunes them weekly.
 - All workflows use `mode=min` (final image layers only). `mode=max` was
   trialed for CI in PR #344 (SMI-3539) but rolled back in SMI-3547 after 72h
   verification showed cache pressure. The marginal benefit (~3–5 min on ~1–2
@@ -399,6 +404,7 @@ only a **fallback**: if `cache-from` ever 401s, open
 | `401 Unauthorized` on `cache-from` | GHCR package not linked to the repo, or wrong visibility | Link the package (see "GHCR package linking" above) |
 | `cache-to` denied / `403` | Job missing `packages: write` permission | Add `packages: write` to the build job's `permissions:` block |
 | Fork PR always cold-builds | Expected — GHCR login is skipped on fork PRs | None; this is by design |
+| Untagged version count growing past ~3 | Weekly prune disabled, never ran, or 403 on missing Admin role | Check `ghcr-cache-prune.yml` Actions history; confirm the package's "Manage Actions access" grants `smith-horn/skillsmith` the Admin role; re-run via `workflow_dispatch` |
 
 **Monitoring commands**:
 
@@ -413,6 +419,11 @@ gh api "repos/smith-horn/skillsmith/actions/caches?per_page=100" --paginate \
 # GHCR BuildKit cache package — versions/tags and size
 gh api orgs/smith-horn/packages/container/skillsmith-buildcache/versions \
   --jq '.[] | {tags: .metadata.container.tags, updated: .updated_at}'
+
+# Untagged-orphan count — should stay bounded (ghcr-cache-prune.yml, SMI-4933).
+# A count growing past min-versions-to-keep means the weekly prune is not running.
+gh api orgs/smith-horn/packages/container/skillsmith-buildcache/versions --paginate \
+  --jq '[.[] | select(.metadata.container.tags == [])] | length'
 
 # One-time GHA BuildKit purge (post-migration only — run when no CI in progress).
 # IMPORTANT: purge indexes alongside blobs — orphaned indexes create poisoned

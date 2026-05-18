@@ -1,0 +1,48 @@
+# SMI-4933: Weekly prune of untagged GHCR buildcache orphans.
+#
+# SMI-4927 migrated the CI Docker BuildKit cache to a GHCR registry cache
+# (ghcr.io/smith-horn/skillsmith-buildcache, tags ci/e2e/publish). A BuildKit
+# `cache-to` export with mode=min does not mutate an image in place; it pushes
+# a NEW package version and moves the tag to it, leaving the prior version
+# untagged but NOT deleted. Untagged orphans therefore accumulate without bound;
+# GitHub offers no native retention policy for GHCR container versions.
+#
+# This workflow deletes ONLY untagged versions (delete-only-untagged-versions),
+# so the live ci/e2e/publish tags are never candidates. min-versions-to-keep: 3
+# is a redundant safety floor; orphans are inherently safe to delete because an
+# in-flight build's `cache-from` always resolves a TAG, never an orphaned digest.
+#
+# Failure visibility: no email/Linear alert (low-stakes cache hygiene). A failed
+# run shows as a red weekly run in the Actions tab; a missed prune is harmless.
+#
+# Prerequisite: the smith-horn/skillsmith repo must hold the Admin role in the
+# package's "Manage Actions access" for GITHUB_TOKEN to delete container
+# versions. See docs/internal/implementation/ghcr-cache-retention.md.
+
+name: GHCR Cache Prune
+
+on:
+  schedule:
+    # Sunday 04:00 UTC, 1h after the weekly publish window (Sun 03:00 UTC),
+    # so a release run's fresh `publish` version is already tagged.
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prune-untagged:
+    name: Prune untagged buildcache versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      packages: write
+    steps:
+      - name: Delete untagged skillsmith-buildcache versions
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
+        with:
+          package-name: skillsmith-buildcache
+          package-type: container
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 3
