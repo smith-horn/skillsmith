@@ -81,9 +81,16 @@ export async function quarantineSkill(
  * Quarantine multiple skills in batches using RPC with fallback.
  * Used by the indexer for stale skill reconciliation.
  *
+ * SMI-4431: `reason` is required and is recorded on the `quarantine_reason`
+ * column via BOTH the RPC path (the RPC sets it server-side) and the
+ * PGRST202/42883 fallback path (set explicitly on the direct `.update()`),
+ * so every quarantined skill has a machine-readable audit trail. Matches the
+ * convention of the sibling single-skill `quarantineSkill`.
+ *
  * @param supabase - Admin Supabase client
  * @param skillIds - Array of skill IDs to quarantine
  * @param finding - Finding to append to each skill's security_findings
+ * @param reason - Human-readable quarantine reason (recorded on quarantine_reason)
  * @param batchSize - Batch size for PostgREST URL limits (default: 100)
  * @returns Count of quarantined and errors
  */
@@ -91,6 +98,7 @@ export async function quarantineSkillsBatch(
   supabase: SupabaseClient,
   skillIds: string[],
   finding: QuarantineFinding,
+  reason: string,
   batchSize = 100
 ): Promise<{ quarantined: number; errors: number }> {
   let quarantined = 0
@@ -125,6 +133,7 @@ export async function quarantineSkillsBatch(
             .from('skills')
             .update({
               quarantined: true,
+              quarantine_reason: reason,
               security_findings: [...existingFindings, finding],
             })
             .eq('id', skill.id)

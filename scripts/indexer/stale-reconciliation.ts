@@ -71,10 +71,14 @@ export async function reconcileStaleSkills(
   const staleIds = (staleSkills as Array<{ id: string }>).map((s) => s.id)
 
   // Use shared quarantine batch helper (handles RPC + fallback)
+  // SMI-4431: pass 'stale' so quarantine_reason is recorded on every
+  // stale-quarantined skill (RPC path sets it server-side; fallback path
+  // sets it on the direct update).
   const { quarantined, errors: batchErrors } = await quarantineSkillsBatch(
     supabase,
     staleIds,
-    FINDING_STALE
+    FINDING_STALE,
+    'stale'
   )
 
   if (batchErrors > 0) {
