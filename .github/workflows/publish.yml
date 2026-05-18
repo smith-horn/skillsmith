@@ -596,12 +596,19 @@ jobs:
         if: steps.publish-core-oidc.outcome == 'failure' || steps.publish-core-oidc.outcome == 'success'
         run: |
           VERSION=$(jq -r .version packages/core/package.json)
-          LIVE=$(npm view "@skillsmith/core@${VERSION}" version 2>/dev/null || echo '')
-          if [ "$LIVE" != "$VERSION" ]; then
-            echo "::error::@skillsmith/core@${VERSION} is not live on npm after publish — failing the job."
-            exit 1
-          fi
-          echo "✓ @skillsmith/core@${VERSION} verified live on npm"
+          # Retry to absorb npm registry/CDN propagation lag right after publish —
+          # a single immediate `npm view` can false-negative on a real publish.
+          for attempt in 1 2 3 4 5; do
+            LIVE=$(npm view "@skillsmith/core@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "✓ @skillsmith/core@${VERSION} verified live on npm (attempt ${attempt})"
+              exit 0
+            fi
+            echo "… @skillsmith/core@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
+            sleep 6
+          done
+          echo "::error::@skillsmith/core@${VERSION} is not live on npm after publish — failing the job."
+          exit 1
 
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-mcp-server:
@@ -746,12 +753,19 @@ jobs:
         if: steps.publish-mcp-server-oidc.outcome == 'failure' || steps.publish-mcp-server-oidc.outcome == 'success'
         run: |
           VERSION=$(jq -r .version packages/mcp-server/package.json)
-          LIVE=$(npm view "@skillsmith/mcp-server@${VERSION}" version 2>/dev/null || echo '')
-          if [ "$LIVE" != "$VERSION" ]; then
-            echo "::error::@skillsmith/mcp-server@${VERSION} is not live on npm after publish — failing the job."
-            exit 1
-          fi
-          echo "✓ @skillsmith/mcp-server@${VERSION} verified live on npm"
+          # Retry to absorb npm registry/CDN propagation lag right after publish —
+          # a single immediate `npm view` can false-negative on a real publish.
+          for attempt in 1 2 3 4 5; do
+            LIVE=$(npm view "@skillsmith/mcp-server@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "✓ @skillsmith/mcp-server@${VERSION} verified live on npm (attempt ${attempt})"
+              exit 0
+            fi
+            echo "… @skillsmith/mcp-server@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
+            sleep 6
+          done
+          echo "::error::@skillsmith/mcp-server@${VERSION} is not live on npm after publish — failing the job."
+          exit 1
 
       # SMI-2158: Publish to MCP Registry after npm publish.
       # SMI-4534: pinned to a specific tag (not releases/latest) — mcp-publisher v1.6.0
@@ -969,12 +983,19 @@ jobs:
         if: steps.publish-cli-oidc.outcome == 'failure' || steps.publish-cli-oidc.outcome == 'success'
         run: |
           VERSION=$(jq -r .version packages/cli/package.json)
-          LIVE=$(npm view "@skillsmith/cli@${VERSION}" version 2>/dev/null || echo '')
-          if [ "$LIVE" != "$VERSION" ]; then
-            echo "::error::@skillsmith/cli@${VERSION} is not live on npm after publish — failing the job."
-            exit 1
-          fi
-          echo "✓ @skillsmith/cli@${VERSION} verified live on npm"
+          # Retry to absorb npm registry/CDN propagation lag right after publish —
+          # a single immediate `npm view` can false-negative on a real publish.
+          for attempt in 1 2 3 4 5; do
+            LIVE=$(npm view "@skillsmith/cli@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "✓ @skillsmith/cli@${VERSION} verified live on npm (attempt ${attempt})"
+              exit 0
+            fi
+            echo "… @skillsmith/cli@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
+            sleep 6
+          done
+          echo "::error::@skillsmith/cli@${VERSION} is not live on npm after publish — failing the job."
+          exit 1
 
   # Publish enterprise package to GitHub Packages (private)
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
