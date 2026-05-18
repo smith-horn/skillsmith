@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: SMI-4539 — track `@skillsmith/core` dependency range to `^0.6.3` (synthetic patch release verifying the npm trusted-publisher OIDC publish path, PR #1171). No functional change.
+
 ## v0.6.1
 
 - **Fix**: SMI-4917 — repair first-time install (search crash, sync drops all skills, no self-config) (#1132)
