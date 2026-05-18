@@ -41,7 +41,9 @@ const __dirname = dirname(__filename)
 // Built MCP server binary, relative to repo root.
 const MCP_SERVER_BIN = resolve(__dirname, '../../../packages/mcp-server/dist/src/index.js')
 
-const STAGING_SKILL_ID = process.env['SKILLSMITH_E2E_SKILL_ID'] ?? 'anthropic/commit'
+// Stable installable staging skill — see cli/usage-counter.e2e.test.ts (SMI-4956).
+const STAGING_SKILL_ID =
+  process.env['SKILLSMITH_E2E_SKILL_ID'] ?? 'anthropics/web-artifacts-builder'
 const STAGING_BASE_URL =
   (process.env['STAGING_SUPABASE_URL']?.replace(/\/$/, '') ?? '') + '/functions/v1'
 
