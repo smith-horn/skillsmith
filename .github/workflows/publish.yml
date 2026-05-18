@@ -462,11 +462,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate]
-    # SMI-4533: id-token: write enables npm trusted-publisher OIDC. Token-based
-    # publish remains the active path (via SKILLSMITH_NPM_TOKEN); SMI-4539 will
-    # flip this to OIDC-exclusive after the token path stabilizes for one
-    # release cycle. SMI-4540 retires the token entirely. Keeping this
-    # job-scoped (not workflow-scoped) for least privilege.
+    # SMI-4533/SMI-4539: id-token: write enables npm trusted-publisher OIDC.
+    # SMI-4539 landed the flip — OIDC is now the primary publish path; the
+    # SKILLSMITH_NPM_TOKEN remains wired only as an automatic in-workflow
+    # fallback for one release cycle. SMI-4540 retires the token entirely once
+    # a real OIDC release has run clean. Keeping this job-scoped (not
+    # workflow-scoped) for least privilege.
     permissions:
       contents: read
       id-token: write
@@ -494,6 +495,20 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
+
+      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
+      # ships 10.9.7. Pin to a fixed version so the assertion below is exact.
+      - name: Upgrade npm for OIDC publish (SMI-4539)
+        run: npm install -g npm@11.9.0
+
+      - name: Assert npm version (SMI-4539)
+        run: |
+          ACTUAL="$(npm --version)"
+          if [ "$ACTUAL" != "11.9.0" ]; then
+            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
+            exit 1
+          fi
+          echo "✓ npm $ACTUAL"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -526,11 +541,74 @@ jobs:
           VERSION=$(jq -r .version packages/core/package.json)
           node scripts/check-publish-collision.mjs @skillsmith/core "$VERSION"
 
-      - name: Publish core
+      # SMI-4539: the three steps below replace the former single `Publish core`
+      # step. They form one unit: OIDC-primary publish, token-fallback (only
+      # when OIDC fails), and a verify gate that fails the job unless the exact
+      # version is live on npm. The verify step is what prevents a green job
+      # without a real publish — the OIDC step's continue-on-error alone could
+      # otherwise let the job pass with nothing published.
+      - name: Publish core (OIDC)
+        id: publish-core-oidc
         if: steps.version-check.outputs.exists != 'true'
-        run: npm publish -w @skillsmith/core --access public
+        # audit:allow-continue-on-error — SMI-4539: unlike the SMI-4534
+        # MCP-registry markers (where the registry publish is non-load-bearing
+        # and npm publish is the binding artifact), this OIDC step IS
+        # load-bearing. continue-on-error here exists solely so the
+        # token-fallback step below can act as its hard backstop on OIDC
+        # failure; the `Verify core on npm` step still gates job success.
+        continue-on-error: true
+        run: |
+          npm publish -w @skillsmith/core --access public
+          echo "::notice::OIDC publish succeeded; token-fallback step will be skipped (expected)"
+
+      - name: Publish core (token fallback — skipped when OIDC succeeds)
+        if: steps.version-check.outputs.exists != 'true' && steps.publish-core-oidc.outcome == 'failure'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          VERSION=$(jq -r .version packages/core/package.json)
+          if npm publish -w @skillsmith/core --access public --provenance; then
+            PUBLISHED_VIA_FALLBACK=true
+          else
+            # Tolerate an "already published" race ONLY if the exact intended
+            # version is confirmed live on npm; otherwise fail the job.
+            LIVE=$(npm view "@skillsmith/core@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "::notice::npm publish reported a conflict but @skillsmith/core@${VERSION} is already live — tolerating."
+              PUBLISHED_VIA_FALLBACK=true
+            else
+              echo "::error::Token-fallback publish failed and @skillsmith/core@${VERSION} is not live on npm."
+              exit 1
+            fi
+          fi
+          if [ "${PUBLISHED_VIA_FALLBACK:-}" = "true" ]; then
+            MSG="OIDC publish failed for @skillsmith/core@${VERSION} — release SUCCEEDED via the SKILLSMITH_NPM_TOKEN fallback. Action required before SMI-4540: investigate the npmjs.com trusted-publisher config for @skillsmith/core."
+            echo "::warning::${MSG}"
+            {
+              echo "## ⚠️ @skillsmith/core published via token fallback"
+              echo ""
+              echo "${MSG}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify core on npm
+        if: steps.publish-core-oidc.outcome == 'failure' || steps.publish-core-oidc.outcome == 'success'
+        run: |
+          VERSION=$(jq -r .version packages/core/package.json)
+          # Retry to absorb npm registry/CDN propagation lag right after publish —
+          # a single immediate `npm view` can false-negative on a real publish.
+          for attempt in 1 2 3 4 5; do
+            LIVE=$(npm view "@skillsmith/core@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "✓ @skillsmith/core@${VERSION} verified live on npm (attempt ${attempt})"
+              exit 0
+            fi
+            echo "… @skillsmith/core@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
+            sleep 6
+          done
+          echo "::error::@skillsmith/core@${VERSION} is not live on npm after publish — failing the job."
+          exit 1
 
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-mcp-server:
@@ -576,6 +654,20 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
+      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
+      # ships 10.9.7. Pin to a fixed version so the assertion below is exact.
+      - name: Upgrade npm for OIDC publish (SMI-4539)
+        run: npm install -g npm@11.9.0
+
+      - name: Assert npm version (SMI-4539)
+        run: |
+          ACTUAL="$(npm --version)"
+          if [ "$ACTUAL" != "11.9.0" ]; then
+            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
+            exit 1
+          fi
+          echo "✓ npm $ACTUAL"
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -604,11 +696,76 @@ jobs:
           VERSION=$(jq -r .version packages/mcp-server/package.json)
           node scripts/check-publish-collision.mjs @skillsmith/mcp-server "$VERSION"
 
-      - name: Publish mcp-server
+      # SMI-4539: the three steps below replace the former single
+      # `Publish mcp-server` step. They form one unit: OIDC-primary publish,
+      # token-fallback (only when OIDC fails), and a verify gate that fails the
+      # job unless the exact version is live on npm. The verify step is what
+      # prevents a green job without a real publish — the OIDC step's
+      # continue-on-error alone could otherwise let the job pass with nothing
+      # published. (The MCP-registry steps further below are unrelated — they
+      # were already OIDC since SMI-4534.)
+      - name: Publish mcp-server (OIDC)
+        id: publish-mcp-server-oidc
         if: steps.version-check.outputs.exists != 'true'
-        run: npm publish -w @skillsmith/mcp-server --access public
+        # audit:allow-continue-on-error — SMI-4539: unlike the SMI-4534
+        # MCP-registry markers (where the registry publish is non-load-bearing
+        # and npm publish is the binding artifact), this OIDC step IS
+        # load-bearing. continue-on-error here exists solely so the
+        # token-fallback step below can act as its hard backstop on OIDC
+        # failure; the `Verify mcp-server on npm` step still gates job success.
+        continue-on-error: true
+        run: |
+          npm publish -w @skillsmith/mcp-server --access public
+          echo "::notice::OIDC publish succeeded; token-fallback step will be skipped (expected)"
+
+      - name: Publish mcp-server (token fallback — skipped when OIDC succeeds)
+        if: steps.version-check.outputs.exists != 'true' && steps.publish-mcp-server-oidc.outcome == 'failure'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          VERSION=$(jq -r .version packages/mcp-server/package.json)
+          if npm publish -w @skillsmith/mcp-server --access public --provenance; then
+            PUBLISHED_VIA_FALLBACK=true
+          else
+            # Tolerate an "already published" race ONLY if the exact intended
+            # version is confirmed live on npm; otherwise fail the job.
+            LIVE=$(npm view "@skillsmith/mcp-server@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "::notice::npm publish reported a conflict but @skillsmith/mcp-server@${VERSION} is already live — tolerating."
+              PUBLISHED_VIA_FALLBACK=true
+            else
+              echo "::error::Token-fallback publish failed and @skillsmith/mcp-server@${VERSION} is not live on npm."
+              exit 1
+            fi
+          fi
+          if [ "${PUBLISHED_VIA_FALLBACK:-}" = "true" ]; then
+            MSG="OIDC publish failed for @skillsmith/mcp-server@${VERSION} — release SUCCEEDED via the SKILLSMITH_NPM_TOKEN fallback. Action required before SMI-4540: investigate the npmjs.com trusted-publisher config for @skillsmith/mcp-server."
+            echo "::warning::${MSG}"
+            {
+              echo "## ⚠️ @skillsmith/mcp-server published via token fallback"
+              echo ""
+              echo "${MSG}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify mcp-server on npm
+        if: steps.publish-mcp-server-oidc.outcome == 'failure' || steps.publish-mcp-server-oidc.outcome == 'success'
+        run: |
+          VERSION=$(jq -r .version packages/mcp-server/package.json)
+          # Retry to absorb npm registry/CDN propagation lag right after publish —
+          # a single immediate `npm view` can false-negative on a real publish.
+          for attempt in 1 2 3 4 5; do
+            LIVE=$(npm view "@skillsmith/mcp-server@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "✓ @skillsmith/mcp-server@${VERSION} verified live on npm (attempt ${attempt})"
+              exit 0
+            fi
+            echo "… @skillsmith/mcp-server@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
+            sleep 6
+          done
+          echo "::error::@skillsmith/mcp-server@${VERSION} is not live on npm after publish — failing the job."
+          exit 1
 
       # SMI-2158: Publish to MCP Registry after npm publish.
       # SMI-4534: pinned to a specific tag (not releases/latest) — mcp-publisher v1.6.0
@@ -693,8 +850,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
-    # SMI-4533: id-token: write enables npm trusted-publisher OIDC. SMI-4539
-    # will flip this to OIDC-exclusive; token path remains active until then.
+    # SMI-4533/SMI-4539: id-token: write enables npm trusted-publisher OIDC.
+    # SMI-4539 landed the flip — OIDC is now the primary publish path; the
+    # SKILLSMITH_NPM_TOKEN remains wired only as an automatic in-workflow
+    # fallback for one release cycle. SMI-4540 retires the token once a real
+    # OIDC release has run clean.
     permissions:
       contents: read
       id-token: write
@@ -726,6 +886,20 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
+      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
+      # ships 10.9.7. Pin to a fixed version so the assertion below is exact.
+      - name: Upgrade npm for OIDC publish (SMI-4539)
+        run: npm install -g npm@11.9.0
+
+      - name: Assert npm version (SMI-4539)
+        run: |
+          ACTUAL="$(npm --version)"
+          if [ "$ACTUAL" != "11.9.0" ]; then
+            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
+            exit 1
+          fi
+          echo "✓ npm $ACTUAL"
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -754,11 +928,74 @@ jobs:
           VERSION=$(jq -r .version packages/cli/package.json)
           node scripts/check-publish-collision.mjs @skillsmith/cli "$VERSION"
 
-      - name: Publish cli
+      # SMI-4539: the three steps below replace the former single `Publish cli`
+      # step. They form one unit: OIDC-primary publish, token-fallback (only
+      # when OIDC fails), and a verify gate that fails the job unless the exact
+      # version is live on npm. The verify step is what prevents a green job
+      # without a real publish — the OIDC step's continue-on-error alone could
+      # otherwise let the job pass with nothing published.
+      - name: Publish cli (OIDC)
+        id: publish-cli-oidc
         if: steps.version-check.outputs.exists != 'true'
-        run: npm publish -w @skillsmith/cli --access public
+        # audit:allow-continue-on-error — SMI-4539: unlike the SMI-4534
+        # MCP-registry markers (where the registry publish is non-load-bearing
+        # and npm publish is the binding artifact), this OIDC step IS
+        # load-bearing. continue-on-error here exists solely so the
+        # token-fallback step below can act as its hard backstop on OIDC
+        # failure; the `Verify cli on npm` step still gates job success.
+        continue-on-error: true
+        run: |
+          npm publish -w @skillsmith/cli --access public
+          echo "::notice::OIDC publish succeeded; token-fallback step will be skipped (expected)"
+
+      - name: Publish cli (token fallback — skipped when OIDC succeeds)
+        if: steps.version-check.outputs.exists != 'true' && steps.publish-cli-oidc.outcome == 'failure'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          VERSION=$(jq -r .version packages/cli/package.json)
+          if npm publish -w @skillsmith/cli --access public --provenance; then
+            PUBLISHED_VIA_FALLBACK=true
+          else
+            # Tolerate an "already published" race ONLY if the exact intended
+            # version is confirmed live on npm; otherwise fail the job.
+            LIVE=$(npm view "@skillsmith/cli@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "::notice::npm publish reported a conflict but @skillsmith/cli@${VERSION} is already live — tolerating."
+              PUBLISHED_VIA_FALLBACK=true
+            else
+              echo "::error::Token-fallback publish failed and @skillsmith/cli@${VERSION} is not live on npm."
+              exit 1
+            fi
+          fi
+          if [ "${PUBLISHED_VIA_FALLBACK:-}" = "true" ]; then
+            MSG="OIDC publish failed for @skillsmith/cli@${VERSION} — release SUCCEEDED via the SKILLSMITH_NPM_TOKEN fallback. Action required before SMI-4540: investigate the npmjs.com trusted-publisher config for @skillsmith/cli."
+            echo "::warning::${MSG}"
+            {
+              echo "## ⚠️ @skillsmith/cli published via token fallback"
+              echo ""
+              echo "${MSG}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify cli on npm
+        if: steps.publish-cli-oidc.outcome == 'failure' || steps.publish-cli-oidc.outcome == 'success'
+        run: |
+          VERSION=$(jq -r .version packages/cli/package.json)
+          # Retry to absorb npm registry/CDN propagation lag right after publish —
+          # a single immediate `npm view` can false-negative on a real publish.
+          for attempt in 1 2 3 4 5; do
+            LIVE=$(npm view "@skillsmith/cli@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "✓ @skillsmith/cli@${VERSION} verified live on npm (attempt ${attempt})"
+              exit 0
+            fi
+            echo "… @skillsmith/cli@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
+            sleep 6
+          done
+          echo "::error::@skillsmith/cli@${VERSION} is not live on npm after publish — failing the job."
+          exit 1
 
   # Publish enterprise package to GitHub Packages (private)
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
@@ -767,10 +1004,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
-    # SMI-4533: id-token: write enables npm trusted-publisher OIDC. SMI-4539
-    # will flip this to OIDC-exclusive; token path remains active until then.
-    # (Enterprise publishes to GitHub Packages, not npmjs.com; OIDC support
-    # there mirrors npm's trusted-publisher pattern via GITHUB_TOKEN.)
+    # SMI-4539 deliberately left this job on GITHUB_TOKEN — npm
+    # trusted-publishing is npmjs.org-only; GitHub Packages is unaffected. This
+    # job publishes @smith-horn/enterprise to npm.pkg.github.com via the
+    # built-in GITHUB_TOKEN. id-token: write is retained (granted under
+    # SMI-4533) but is not exercised by this job's publish path.
     permissions:
       contents: read
       id-token: write
