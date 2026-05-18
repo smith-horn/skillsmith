@@ -20,7 +20,7 @@
  *   project_path: '/path/to/project',
  *   current_file: 'src/App.test.tsx',
  *   recent_commands: ['npm test'],
- *   installed_skills: ['anthropic/commit']
+ *   installed_skills: ['getsentry/commit']
  * }, toolContext);
  */
 
@@ -226,7 +226,7 @@ async function loadSkillsFromDatabase(
  *   project_path: '/path/to/project',
  *   current_file: 'src/App.test.tsx',
  *   recent_commands: ['npm test'],
- *   installed_skills: ['anthropic/commit'],
+ *   installed_skills: ['getsentry/commit'],
  *   limit: 3
  * }, toolContext);
  */

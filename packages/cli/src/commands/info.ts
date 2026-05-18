@@ -32,7 +32,7 @@ interface InfoOptions {
 export function createInfoCommand(): Command {
   return new Command('info')
     .description('Show full details and SKILL.md content for a skill')
-    .argument('<skill-id>', 'Skill ID (e.g., "anthropic/commit")')
+    .argument('<skill-id>', 'Skill ID (e.g., "getsentry/commit")')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('--raw', 'Output only SKILL.md content (no metadata)')
     .option('--json', 'Output full JSON response')

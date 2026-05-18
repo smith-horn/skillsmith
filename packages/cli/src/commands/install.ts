@@ -230,7 +230,7 @@ export function createInstallCommand(): Command {
             const errorMsg =
               'Invalid skill ID format. Expected "author/name" or a GitHub URL.\n' +
               '  Examples:\n' +
-              '    skillsmith install community/jest-helper\n' +
+              '    skillsmith install getsentry/commit\n' +
               '    skillsmith install https://github.com/owner/repo'
 
             if (jsonOutput) {
