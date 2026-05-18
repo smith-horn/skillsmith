@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: SMI-4539 — track `@skillsmith/core` dependency range to `^0.6.3` (synthetic patch release verifying the npm trusted-publisher OIDC publish path, PR #1171). No functional change.
+
 ## v0.5.1
 
 - **Feature**: SMI-4790 lifecycle-tagged tool descriptions + skill auto-install (#1022)
