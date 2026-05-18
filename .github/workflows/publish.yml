@@ -496,20 +496,6 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
-      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
-      # ships 10.9.7. Pin to a fixed version so the assertion below is exact.
-      - name: Upgrade npm for OIDC publish (SMI-4539)
-        run: npm install -g npm@11.9.0
-
-      - name: Assert npm version (SMI-4539)
-        run: |
-          ACTUAL="$(npm --version)"
-          if [ "$ACTUAL" != "11.9.0" ]; then
-            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
-            exit 1
-          fi
-          echo "✓ npm $ACTUAL"
-
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -540,6 +526,23 @@ jobs:
         run: |
           VERSION=$(jq -r .version packages/core/package.json)
           node scripts/check-publish-collision.mjs @skillsmith/core "$VERSION"
+
+      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
+      # ships 10.9.7. The upgrade runs HERE — after `npm ci` and the build —
+      # because npm 11's `npm ci` is stricter than npm 10's and rejects the
+      # repo-standard (npm 10) lockfile. Install, build and version-check run
+      # on npm 10; only `npm publish` below runs on npm 11.9.0.
+      - name: Upgrade npm for OIDC publish (SMI-4539)
+        run: npm install -g npm@11.9.0
+
+      - name: Assert npm version (SMI-4539)
+        run: |
+          ACTUAL="$(npm --version)"
+          if [ "$ACTUAL" != "11.9.0" ]; then
+            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
+            exit 1
+          fi
+          echo "✓ npm $ACTUAL"
 
       # SMI-4539: the three steps below replace the former single `Publish core`
       # step. They form one unit: OIDC-primary publish, token-fallback (only
@@ -654,20 +657,6 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
-      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
-      # ships 10.9.7. Pin to a fixed version so the assertion below is exact.
-      - name: Upgrade npm for OIDC publish (SMI-4539)
-        run: npm install -g npm@11.9.0
-
-      - name: Assert npm version (SMI-4539)
-        run: |
-          ACTUAL="$(npm --version)"
-          if [ "$ACTUAL" != "11.9.0" ]; then
-            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
-            exit 1
-          fi
-          echo "✓ npm $ACTUAL"
-
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -695,6 +684,23 @@ jobs:
         run: |
           VERSION=$(jq -r .version packages/mcp-server/package.json)
           node scripts/check-publish-collision.mjs @skillsmith/mcp-server "$VERSION"
+
+      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
+      # ships 10.9.7. The upgrade runs HERE — after `npm ci` and the build —
+      # because npm 11's `npm ci` is stricter than npm 10's and rejects the
+      # repo-standard (npm 10) lockfile. Install, build and version-check run
+      # on npm 10; only `npm publish` below runs on npm 11.9.0.
+      - name: Upgrade npm for OIDC publish (SMI-4539)
+        run: npm install -g npm@11.9.0
+
+      - name: Assert npm version (SMI-4539)
+        run: |
+          ACTUAL="$(npm --version)"
+          if [ "$ACTUAL" != "11.9.0" ]; then
+            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
+            exit 1
+          fi
+          echo "✓ npm $ACTUAL"
 
       # SMI-4539: the three steps below replace the former single
       # `Publish mcp-server` step. They form one unit: OIDC-primary publish,
@@ -886,20 +892,6 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
-      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
-      # ships 10.9.7. Pin to a fixed version so the assertion below is exact.
-      - name: Upgrade npm for OIDC publish (SMI-4539)
-        run: npm install -g npm@11.9.0
-
-      - name: Assert npm version (SMI-4539)
-        run: |
-          ACTUAL="$(npm --version)"
-          if [ "$ACTUAL" != "11.9.0" ]; then
-            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
-            exit 1
-          fi
-          echo "✓ npm $ACTUAL"
-
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -927,6 +919,23 @@ jobs:
         run: |
           VERSION=$(jq -r .version packages/cli/package.json)
           node scripts/check-publish-collision.mjs @skillsmith/cli "$VERSION"
+
+      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; the runner
+      # ships 10.9.7. The upgrade runs HERE — after `npm ci` and the build —
+      # because npm 11's `npm ci` is stricter than npm 10's and rejects the
+      # repo-standard (npm 10) lockfile. Install, build and version-check run
+      # on npm 10; only `npm publish` below runs on npm 11.9.0.
+      - name: Upgrade npm for OIDC publish (SMI-4539)
+        run: npm install -g npm@11.9.0
+
+      - name: Assert npm version (SMI-4539)
+        run: |
+          ACTUAL="$(npm --version)"
+          if [ "$ACTUAL" != "11.9.0" ]; then
+            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
+            exit 1
+          fi
+          echo "✓ npm $ACTUAL"
 
       # SMI-4539: the three steps below replace the former single `Publish cli`
       # step. They form one unit: OIDC-primary publish, token-fallback (only
