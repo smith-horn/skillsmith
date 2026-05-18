@@ -19,8 +19,6 @@
 # Do not add new files here without a corresponding split follow-up issue.
 
 # SMI-4948 split follow-up
-supabase/functions/indexer/index.test.ts
-# SMI-4948 split follow-up
 supabase/functions/_shared/ops-report-templates.ts
 # SMI-4948 split follow-up
 supabase/functions/_shared/security-scanner-edge.test.ts
