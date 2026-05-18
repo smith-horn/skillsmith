@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.6.2'
+export const VERSION = '0.6.3'
 
 // ============================================================================
 // Grouped Exports from Barrel Files
