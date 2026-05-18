@@ -139,13 +139,61 @@ export async function withBackoff<T>(fn: () => Promise<T>, opts: BackoffOptions)
 }
 
 /**
+ * SMI-4918: GitHub rate-limit buckets the indexer consumes. GitHub meters
+ * each bucket independently: `core` is the REST API (Trees, Contents) at
+ * 5000/h; `search` is the Search API at 30/min (Phase 2 topic search);
+ * `code_search` is 10/min (Phase 3a/3b). The bucket is reported on every
+ * metered response via the `x-ratelimit-resource` header.
+ */
+export type RateLimitBucket = 'core' | 'search' | 'code_search'
+
+/**
+ * SMI-4918: Classify a GitHub response by the `x-ratelimit-resource` header.
+ * An absent/unrecognized resource on an `api.github.com` response defaults
+ * to `core` — the REST bucket every non-search endpoint draws from.
+ */
+function classifyRateLimitBucket(resourceHeader: string | null): RateLimitBucket {
+  switch (resourceHeader) {
+    case 'search':
+      return 'search'
+    case 'code_search':
+      return 'code_search'
+    default:
+      return 'core'
+  }
+}
+
+/** SMI-4918: parse a request URL's host, tolerating malformed input. */
+function parseHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return ''
+  }
+}
+
+/**
  * SMI-4852: Rate-limit telemetry collector. One instance per indexer run;
  * thread through every `withRateLimitTracking` call and flush to
  * `audit_logs.metadata` in the entrypoint.
  */
 export interface RateLimitTelemetry {
-  /** Min `x-ratelimit-remaining` observed across all calls (Number.POSITIVE_INFINITY if none). */
+  /**
+   * Min `x-ratelimit-remaining` across the three GitHub API buckets
+   * (`raw.githubusercontent.com` CDN responses excluded — SMI-4918).
+   * `Number.POSITIVE_INFINITY` when no metered call was observed.
+   *
+   * Kept for backward compat: this conflates `core`/`search`/`code_search`,
+   * so a `0` here cannot tell you *which* bucket ran dry. Use the per-bucket
+   * minimums below for budget diagnosis (SMI-4918).
+   */
   rate_limit_remaining_min: number
+  /** SMI-4918: min `x-ratelimit-remaining` for the `core` bucket (REST 5000/h). */
+  core_remaining_min: number
+  /** SMI-4918: min `x-ratelimit-remaining` for the `search` bucket (30/min). */
+  search_remaining_min: number
+  /** SMI-4918: min `x-ratelimit-remaining` for the `code_search` bucket (10/min). */
+  code_search_remaining_min: number
   /** Count of HTTP 403 + 429 responses (secondary rate limit signal). */
   secondary_rate_limit_hits: number
   /** Max `retry-after` header value observed, in seconds. */
@@ -155,26 +203,42 @@ export interface RateLimitTelemetry {
 export function newRateLimitTelemetry(): RateLimitTelemetry {
   return {
     rate_limit_remaining_min: Number.POSITIVE_INFINITY,
+    core_remaining_min: Number.POSITIVE_INFINITY,
+    search_remaining_min: Number.POSITIVE_INFINITY,
+    code_search_remaining_min: Number.POSITIVE_INFINITY,
     secondary_rate_limit_hits: 0,
     retry_after_max_seconds: 0,
   }
+}
+
+/** SMI-4918: telemetry field holding the running minimum for a bucket. */
+const BUCKET_FIELD: Record<RateLimitBucket, keyof RateLimitTelemetry> = {
+  core: 'core_remaining_min',
+  search: 'search_remaining_min',
+  code_search: 'code_search_remaining_min',
 }
 
 /**
  * Convert telemetry into the shape stored in `audit_logs.metadata`.
  * Resolves the POSITIVE_INFINITY sentinel to 0 (the "no calls observed" case
  * means we never saw any remaining, which we surface as 0 — the
- * `v_indexer_health` view casts to int).
+ * `v_indexer_health` view casts to int). SMI-4918: the per-bucket minimums
+ * are resolved the same way.
  */
 export function summarizeRateLimitTelemetry(t: RateLimitTelemetry): {
   rate_limit_remaining_min: number
+  core_remaining_min: number
+  search_remaining_min: number
+  code_search_remaining_min: number
   secondary_rate_limit_hits: number
   retry_after_max_seconds: number
 } {
+  const resolve = (v: number): number => (Number.isFinite(v) ? v : 0)
   return {
-    rate_limit_remaining_min: Number.isFinite(t.rate_limit_remaining_min)
-      ? t.rate_limit_remaining_min
-      : 0,
+    rate_limit_remaining_min: resolve(t.rate_limit_remaining_min),
+    core_remaining_min: resolve(t.core_remaining_min),
+    search_remaining_min: resolve(t.search_remaining_min),
+    code_search_remaining_min: resolve(t.code_search_remaining_min),
     secondary_rate_limit_hits: t.secondary_rate_limit_hits,
     retry_after_max_seconds: t.retry_after_max_seconds,
   }
@@ -202,11 +266,24 @@ export async function withRateLimitTracking(
   const throwOnRateLimit = init?._throwOnRateLimit !== false
   const response = await fetch(url, init)
 
-  const remainingHeader = response.headers.get('x-ratelimit-remaining')
-  if (remainingHeader != null) {
-    const remaining = Number(remainingHeader)
-    if (Number.isFinite(remaining) && remaining < telemetry.rate_limit_remaining_min) {
-      telemetry.rate_limit_remaining_min = remaining
+  // SMI-4918: `raw.githubusercontent.com` is CDN-served and carries no
+  // GitHub rate-limit headers — exclude it so its responses can't pollute
+  // the minimums. For metered `api.github.com` responses, attribute the
+  // `x-ratelimit-remaining` value to its bucket via `x-ratelimit-resource`.
+  if (parseHost(url) !== 'raw.githubusercontent.com') {
+    const remainingHeader = response.headers.get('x-ratelimit-remaining')
+    if (remainingHeader != null) {
+      const remaining = Number(remainingHeader)
+      if (Number.isFinite(remaining)) {
+        if (remaining < telemetry.rate_limit_remaining_min) {
+          telemetry.rate_limit_remaining_min = remaining
+        }
+        const bucketField =
+          BUCKET_FIELD[classifyRateLimitBucket(response.headers.get('x-ratelimit-resource'))]
+        if (remaining < telemetry[bucketField]) {
+          telemetry[bucketField] = remaining
+        }
+      }
     }
   }
 

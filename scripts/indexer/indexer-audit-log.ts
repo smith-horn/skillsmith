@@ -32,6 +32,13 @@ export interface AuditLogMeta {
   request_id: string
   run_type: 'discovery' | 'maintenance'
   rate_limit_remaining_min: number
+  // SMI-4918: per-bucket GitHub rate-limit minimums. `core` is REST 5000/h,
+  // `search` 30/min, `code_search` 10/min — `rate_limit_remaining_min` above
+  // conflates all three (plus raw.* CDN noise), so it cannot answer "which
+  // budget ran dry". raw.githubusercontent.com responses are excluded.
+  core_remaining_min: number
+  search_remaining_min: number
+  code_search_remaining_min: number
   secondary_rate_limit_hits: number
   retry_after_max_seconds: number
   concurrency: number

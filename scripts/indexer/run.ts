@@ -47,6 +47,10 @@ interface RunSummary {
     request_id: string
     run_type: 'discovery' | 'maintenance'
     rate_limit_remaining_min: number
+    // SMI-4918: per-bucket GitHub rate-limit minimums (core/search/code_search).
+    core_remaining_min: number
+    search_remaining_min: number
+    code_search_remaining_min: number
     secondary_rate_limit_hits: number
     retry_after_max_seconds: number
     concurrency: number
@@ -202,6 +206,10 @@ async function main(): Promise<void> {
       request_id: requestId,
       run_type: env.RUN_TYPE,
       rate_limit_remaining_min: 0,
+      // SMI-4918: lock-skipped runs make no GitHub calls — zero every bucket.
+      core_remaining_min: 0,
+      search_remaining_min: 0,
+      code_search_remaining_min: 0,
       secondary_rate_limit_hits: 0,
       retry_after_max_seconds: 0,
       concurrency: env.concurrency,
