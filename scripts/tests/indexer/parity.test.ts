@@ -153,6 +153,36 @@ function extractArrayBody(filePath: string, constName: string): string {
   throw new Error(`array body for ${constName} not closed in ${filePath}`)
 }
 
+/**
+ * SMI-4879: Extract the body of an `export interface NAME { ... }` declaration.
+ * Returns the substring between the matching `{` and `}` braces (the member
+ * list). Analogous to `extractBody`/`extractArrayBody` but for interfaces —
+ * the AuditLogMeta envelope is a bare `interface`, not a `function` or `const`,
+ * so neither existing extractor covers it. Brace depth is tracked so nested
+ * object-type members (none today, but future-proof) don't confuse the close.
+ */
+function extractInterface(filePath: string, ifaceName: string): string {
+  const source = readFileSync(filePath, 'utf-8')
+  const declIdx = source.indexOf(`export interface ${ifaceName}`)
+  if (declIdx < 0) throw new Error(`interface ${ifaceName} not found in ${filePath}`)
+
+  const openIdx = source.indexOf('{', declIdx)
+  if (openIdx < 0) throw new Error(`opening { for ${ifaceName} not found in ${filePath}`)
+
+  let depth = 1
+  let i = openIdx + 1
+  while (i < source.length) {
+    const c = source[i]
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return source.slice(openIdx + 1, i)
+    }
+    i++
+  }
+  throw new Error(`interface body for ${ifaceName} not closed in ${filePath}`)
+}
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 // scripts/tests/indexer/parity.test.ts → repo root is 3 levels up.
@@ -163,6 +193,8 @@ const DENO_AUTHORS = resolve(REPO_ROOT, 'supabase/functions/indexer/high-trust-a
 const NODE_AUTHORS = resolve(REPO_ROOT, 'scripts/indexer/high-trust-authors.ts')
 const DENO_META_LIST = resolve(REPO_ROOT, 'supabase/functions/indexer/meta-list-filter.ts')
 const NODE_META_LIST = resolve(REPO_ROOT, 'scripts/indexer/meta-list-filter.ts')
+const DENO_AUDIT_LOG = resolve(REPO_ROOT, 'supabase/functions/indexer/indexer-audit-log.ts')
+const NODE_AUDIT_LOG = resolve(REPO_ROOT, 'scripts/indexer/indexer-audit-log.ts')
 
 /**
  * SMI-4852: Skip the parity assertions when the Deno helpers are git-crypt-
@@ -271,4 +303,23 @@ describe('Deno <-> Node meta-list-filter parity (SMI-4842)', () => {
     const node = normalizeWs(extractBody(NODE_META_LIST, 'isMetaListRepo'))
     expect(node).toBe(deno)
   })
+})
+
+describe('Deno <-> Node AuditLogMeta interface parity (SMI-4879)', () => {
+  const denoEncrypted = isGitCryptEncrypted(DENO_AUDIT_LOG)
+
+  // The `meta` envelope (rate-limit telemetry, kill-switch, tree-hash counters)
+  // is persisted to `audit_logs.metadata.meta` by both indexer trees. A field
+  // present on one side but not the other is a silent shape regression — the
+  // Edge Function indexer would write a row the Node monitors can't read (or
+  // vice versa). Pin field-for-field byte-identity until SMI-4855 decommissions
+  // the Edge Function indexer.
+  it.skipIf(denoEncrypted)(
+    'AuditLogMeta interface body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractInterface(DENO_AUDIT_LOG, 'AuditLogMeta'))
+      const node = normalizeWs(extractInterface(NODE_AUDIT_LOG, 'AuditLogMeta'))
+      expect(node).toBe(deno)
+    }
+  )
 })
