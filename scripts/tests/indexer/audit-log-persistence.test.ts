@@ -34,6 +34,9 @@ function makeMeta(overrides: Partial<AuditLogMeta> = {}): AuditLogMeta {
     request_id: 'req-test-001',
     run_type: 'discovery',
     rate_limit_remaining_min: 4823,
+    core_remaining_min: 4823,
+    search_remaining_min: 27,
+    code_search_remaining_min: 9,
     secondary_rate_limit_hits: 0,
     retry_after_max_seconds: 0,
     concurrency: 2,
@@ -264,5 +267,36 @@ describe('writeIndexerAuditLog — meta envelope persistence (SMI-4857)', () => 
     const meta = metadata.meta as AuditLogMeta
     expect(meta.tree_hash_cache_hits).toBe(0)
     expect(meta.tree_hash_cache_misses).toBe(421)
+  })
+
+  // SMI-4918: per-bucket rate-limit telemetry persistence
+  it('persists per-bucket rate-limit minimums through meta envelope (SMI-4918)', async () => {
+    const captured: CapturedInsert[] = []
+    const supabase = makeCapturingSupabase(captured)
+
+    // Models a run where the core budget is healthy but the search bucket
+    // (Phase 2 topic search, 30/min) ran dry — the case the conflated
+    // `rate_limit_remaining_min` could not distinguish.
+    await writeIndexerAuditLog(
+      supabase,
+      'success',
+      makeParams({
+        meta: makeMeta({
+          rate_limit_remaining_min: 0,
+          core_remaining_min: 4200,
+          search_remaining_min: 0,
+          code_search_remaining_min: 8,
+        }),
+      })
+    )
+
+    const metadata = captured[0].payload.metadata as Record<string, unknown>
+    const meta = metadata.meta as AuditLogMeta
+    expect(meta.core_remaining_min).toBe(4200)
+    expect(meta.search_remaining_min).toBe(0)
+    expect(meta.code_search_remaining_min).toBe(8)
+    // The conflated metric is 0 — only the per-bucket fields reveal that
+    // it was the search bucket, not the core 5000/h budget.
+    expect(meta.rate_limit_remaining_min).toBe(0)
   })
 })

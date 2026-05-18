@@ -130,6 +130,11 @@ export async function writeDiscoveryAuditLog(
     request_id: input.requestId,
     run_type: 'discovery' as const,
     rate_limit_remaining_min: rateLimitSummary.rate_limit_remaining_min,
+    // SMI-4918: per-bucket minimums so monitoring can tell which GitHub
+    // budget a sub-slot exhausted (core vs search vs code_search).
+    core_remaining_min: rateLimitSummary.core_remaining_min,
+    search_remaining_min: rateLimitSummary.search_remaining_min,
+    code_search_remaining_min: rateLimitSummary.code_search_remaining_min,
     secondary_rate_limit_hits: rateLimitSummary.secondary_rate_limit_hits,
     retry_after_max_seconds: rateLimitSummary.retry_after_max_seconds,
     concurrency: input.concurrency,
