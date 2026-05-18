@@ -214,14 +214,22 @@ export async function validateSkillMd(
       errors.push(`SKILL.md too short (${content.length} chars, minimum ${minContentLength})`)
     }
 
-    // Quality gate 3: Has markdown heading
-    const hasHeading = /^#\s+.+/m.test(content)
-    if (!hasHeading) {
-      errors.push('SKILL.md must contain a markdown heading (# Title)')
+    // Quality gate 4 parse hoisted above gate 3: the frontmatter `name` is the
+    // authoritative skill title, so gate 3 must consult it before rejecting.
+    const frontmatter = parseFrontmatter(content)
+
+    // SMI-4529: Quality gate 3 — accept a heading at ANY level (`#`..`######`)
+    // OR a non-empty frontmatter `name`. The prior `/^#\s+.+/m` regex demanded
+    // a level-1 `# H1` and ignored frontmatter, dropping valid `##`-only and
+    // frontmatter-`name`-only SKILL.md files across every author.
+    const hasHeading = /^#{1,6}\s+.+/m.test(content)
+    const hasFrontmatterName =
+      typeof frontmatter?.name === 'string' && frontmatter.name.trim().length > 0
+    if (!hasHeading && !hasFrontmatterName) {
+      errors.push('SKILL.md must contain a heading or a frontmatter "name" field')
     }
 
     // Quality gate 4: Frontmatter validation (if present or strict mode)
-    const frontmatter = parseFrontmatter(content)
 
     if (frontmatter) {
       metadata = {}
