@@ -1,6 +1,6 @@
 /**
  * Parity test (Issue #13)
- * @module scripts/indexer/tests/parity
+ * @module scripts/tests/indexer/parity
  *
  * SMI-4852: Asserts byte-identity (after whitespace normalization) for the
  * shared helpers across the Deno tree (`supabase/functions/indexer/`) and

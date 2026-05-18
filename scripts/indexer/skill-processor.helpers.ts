@@ -3,9 +3,10 @@
  * @module scripts/indexer/skill-processor.helpers
  *
  * SMI-4852: Node-flavored sibling of
- * `supabase/functions/indexer/skill-processor.helpers.ts`. Byte-identical body
- * for `repoUpdatedAtKey` and `minimalSkillPayload` — guarded by
- * `scripts/indexer/tests/parity.test.ts`.
+ * `supabase/functions/indexer/skill-processor.helpers.ts`. The exported
+ * functions must keep byte-identical bodies across both trees — enforced by
+ * `scripts/tests/indexer/parity.test.ts` (SMI-2402 added the banded
+ * quality-score helpers to that parity set).
  */
 
 import type { GitHubRepository } from './topic-search.ts'
@@ -69,8 +70,17 @@ export type TrustTier = 'verified' | 'curated' | 'community' | 'experimental' | 
  * Exposed as a function rather than a bare `const` so the Node↔Deno
  * `parity.test.ts` (`extractBody` covers `export function`s only) can assert
  * byte-identity of the band table across both trees (Review finding #1).
+ * The return type uses the named `TierBand` interface — an *inline* object
+ * type in the signature would make `extractBody` stop at the type literal's
+ * `{` instead of the body's, so the parity assertion would compare the type
+ * annotation, not the band table, and pass vacuously.
  */
-export function getTierBands(): Record<TrustTier, { floor: number; ceil: number }> {
+export interface TierBand {
+  floor: number
+  ceil: number
+}
+
+export function getTierBands(): Record<TrustTier, TierBand> {
   return {
     verified: { floor: 0.85, ceil: 1.0 },
     curated: { floor: 0.7, ceil: 0.85 },
