@@ -14,8 +14,8 @@
  * @example
  * // Compare two skills with context
  * const result = await executeCompare({
- *   skill_a: 'community/jest-helper',
- *   skill_b: 'community/vitest-helper'
+ *   skill_a: 'getsentry/commit',
+ *   skill_b: 'microsoft/playwright-cli'
  * }, context);
  * console.log(result.recommendation);
  */
@@ -61,8 +61,8 @@ export { compareInputSchema, compareToolSchema } from './compare.types.js'
  *
  * @example
  * const response = await executeCompare({
- *   skill_a: 'community/jest-helper',
- *   skill_b: 'community/vitest-helper'
+ *   skill_a: 'getsentry/commit',
+ *   skill_b: 'microsoft/playwright-cli'
  * }, context);
  * console.log(response.recommendation);
  */

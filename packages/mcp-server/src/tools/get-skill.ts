@@ -18,7 +18,7 @@
  *
  * @example
  * // Format for terminal display
- * const response = await executeGetSkill({ id: 'community/jest-helper' }, context);
+ * const response = await executeGetSkill({ id: 'microsoft/playwright-cli' }, context);
  * console.log(formatSkillDetails(response));
  */
 
@@ -55,7 +55,7 @@ export const getSkillInputSchema = z.object({
 export const getSkillToolSchema = {
   name: 'get_skill',
   description:
-    "[Skillsmith — Evaluate stage] Fetch full details for a specific Skillsmith-registry skill by ID. Use when the user wants details/info/description of a known skill — e.g. 'what does community/jest-helper do?', 'show me details for getsentry/commit', 'describe the playwright-utils skill'. Returns name, description, trust tier, quality score, dependencies, compatibility, repository URL, install count, and an `also_installed` array of co-installed skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
+    "[Skillsmith — Evaluate stage] Fetch full details for a specific Skillsmith-registry skill by ID. Use when the user wants details/info/description of a known skill — e.g. 'what does microsoft/playwright-cli do?', 'show me details for getsentry/commit', 'describe the vercel-labs/vercel-react-best-practices skill'. Returns name, description, trust tier, quality score, dependencies, compatibility, repository URL, install count, and an `also_installed` array of co-installed skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {

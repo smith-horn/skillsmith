@@ -90,17 +90,17 @@ export interface CompareResponse {
 export const compareToolSchema = {
   name: 'skill_compare',
   description:
-    "[Skillsmith — Evaluate stage] Compare two Skillsmith-registry skills side-by-side. Use when the user wants to compare/contrast/decide-between two specific skills — e.g. 'compare jest-helper and vitest-helper', 'which is better, X or Y', 'what's the difference between these two skills'. Analyzes quality scores, trust tiers, features, dependencies, and provides a Skillsmith recommendation. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
+    "[Skillsmith — Evaluate stage] Compare two Skillsmith-registry skills side-by-side. Use when the user wants to compare/contrast/decide-between two specific skills — e.g. 'compare getsentry/commit and microsoft/playwright-cli', 'which is better, X or Y', 'what's the difference between these two skills'. Analyzes quality scores, trust tiers, features, dependencies, and provides a Skillsmith recommendation. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {
       skill_a: {
         type: 'string',
-        description: 'First skill ID to compare (e.g., "community/jest-helper")',
+        description: 'First skill ID to compare (e.g., "getsentry/commit")',
       },
       skill_b: {
         type: 'string',
-        description: 'Second skill ID to compare (e.g., "community/vitest-helper")',
+        description: 'Second skill ID to compare (e.g., "microsoft/playwright-cli")',
       },
     },
     required: ['skill_a', 'skill_b'],
