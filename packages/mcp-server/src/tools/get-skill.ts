@@ -13,12 +13,12 @@
  *
  * @example
  * // Get skill by ID with context
- * const response = await executeGetSkill({ id: 'anthropic/commit' }, context);
+ * const response = await executeGetSkill({ id: 'getsentry/commit' }, context);
  * console.log(response.skill.description);
  *
  * @example
  * // Format for terminal display
- * const response = await executeGetSkill({ id: 'community/jest-helper' }, context);
+ * const response = await executeGetSkill({ id: 'microsoft/playwright-cli' }, context);
  * console.log(formatSkillDetails(response));
  */
 
@@ -55,13 +55,14 @@ export const getSkillInputSchema = z.object({
 export const getSkillToolSchema = {
   name: 'get_skill',
   description:
-    "[Skillsmith — Evaluate stage] Fetch full details for a specific Skillsmith-registry skill by ID. Use when the user wants details/info/description of a known skill — e.g. 'what does community/jest-helper do?', 'show me details for anthropic/commit', 'describe the playwright-utils skill'. Returns name, description, trust tier, quality score, dependencies, compatibility, repository URL, install count, and an `also_installed` array of co-installed skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
+    "[Skillsmith — Evaluate stage] Fetch full details for a specific Skillsmith-registry skill by ID. Use when the user wants details/info/description of a known skill — e.g. 'what does microsoft/playwright-cli do?', 'show me details for getsentry/commit', 'describe the vercel-labs/vercel-react-best-practices skill'. Returns name, description, trust tier, quality score, dependencies, compatibility, repository URL, install count, and an `also_installed` array of co-installed skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {
       id: {
         type: 'string',
-        description: 'The skill ID (e.g., "anthropic/commit" or UUID)',
+        description:
+          'The skill ID exactly as returned by `search` (e.g., "getsentry/commit" or UUID). Do not guess the author segment — use a search result.',
       },
     },
     required: ['id'],
@@ -95,7 +96,7 @@ export interface GetSkillInput {
  *
  * @example
  * // Get a verified skill
- * const response = await executeGetSkill({ id: 'anthropic/commit' }, context);
+ * const response = await executeGetSkill({ id: 'getsentry/commit' }, context);
  * console.log(response.skill.score); // 95
  */
 export async function executeGetSkill(
@@ -121,7 +122,7 @@ export async function executeGetSkill(
       {
         details: { id: input.id },
         suggestion:
-          'Skill IDs should be in format "author/skill-name" (e.g., "anthropic/commit") or a valid UUID',
+          'Skill IDs should be in format "author/skill-name" (e.g., "getsentry/commit") or a valid UUID. Use the exact id from a `search` result rather than guessing the author.',
       }
     )
   }
@@ -307,12 +308,12 @@ export async function executeGetSkill(
  * @returns Formatted string suitable for terminal output
  *
  * @example
- * const response = await executeGetSkill({ id: 'anthropic/commit' });
+ * const response = await executeGetSkill({ id: 'getsentry/commit' });
  * console.log(formatSkillDetails(response));
  * // Output:
  * // === commit ===
- * // ID: anthropic/commit
- * // Author: anthropic
+ * // ID: getsentry/commit
+ * // Author: getsentry
  * // Version: 1.2.0
  * // ...
  */
