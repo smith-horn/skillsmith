@@ -42,6 +42,12 @@ concurrency:
   group: smoke-prod-${{ github.event.workflow_run.head_sha || github.event.client_payload.sha || github.sha }}
   cancel-in-progress: false
 
+# SMI-4898: Node is pinned to the full patch version (22.22.0, not just '22')
+# so `npx @skillsmith/cli@latest` does not trip the published CLI's
+# engines.node guard. Do not relax this to '22'.
+env:
+  NODE_VERSION: '22.22.0'
+
 jobs:
   smoke:
     name: Smoke
@@ -81,7 +87,7 @@ jobs:
       # detect-release-drift.yml / device-login-roundtrip.yml.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: '22.22.0'
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Detect [skip-smoke] marker
         id: skip
