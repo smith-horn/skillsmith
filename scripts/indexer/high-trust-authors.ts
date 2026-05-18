@@ -61,7 +61,7 @@ export interface HighTrustAuthor {
   repo: string
   /** License identifier */
   license: 'Apache-2.0' | 'MIT' | 'Mixed'
-  /** Base quality score (0-1) for skills from this author */
+  /** SMI-2402: Vestigial — trustTier now selects the band. Field retained to avoid churn. */
   baseQualityScore: number
   /**
    * SMI-2381: Trust tier override. Use 'curated' for third-party publishers.

@@ -1,0 +1,77 @@
+name: Docs Folder Index Guard
+
+# SMI-4932: fail a PR when the "Folder Reference" table in docs/internal/index.md
+# is stale relative to the actual folder contents.
+#
+# docs/internal is the private submodule smith-horn/skillsmith-docs; index.md
+# lives inside it and the submodule has no CI of its own. This guard runs in the
+# main repo and triggers on PRs that touch docs/internal/** (i.e. bump the
+# submodule pointer) or .gitmodules. It detects drift retroactively on the
+# pointer-bump PR — it does not prevent submodule-internal commits from drifting
+# the table (limitation R3; rationale in the plan below).
+#
+# # audit:carveout-pure-js — see docs/internal/implementation/smi-4932-folder-index-generator.md
+# Runs `node` on the host runner: scripts/gen-docs-folder-index.mjs has zero
+# dependencies and no native modules, so no Docker dev container / npm ci is
+# needed. SMI-4647 carveout applies.
+#
+# Plan: docs/internal/implementation/smi-4932-folder-index-generator.md
+# Parent: SMI-4932.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'docs/internal/**'
+      - '.gitmodules'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-folder-index-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Folder Reference table fresh
+    # audit:carveout-pure-js — host node, zero-dep script, no Docker needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR (no submodules yet)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch docs/internal submodule (best-effort)
+        # docs/internal is a private repo requiring STRATEGY_SUBMODULE_PAT.
+        # actions/checkout treats submodule-fetch failure as fatal, so we fetch
+        # in a separate continue-on-error step — external-contributor PRs
+        # lacking the PAT degrade to the "skip" branch instead of hard-failing.
+        # audit:allow-continue-on-error — see step comment.
+        continue-on-error: true
+        env:
+          STRATEGY_SUBMODULE_PAT: ${{ secrets.STRATEGY_SUBMODULE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -n "${STRATEGY_SUBMODULE_PAT:-}" ]; then
+            git config --global url."https://x-access-token:${STRATEGY_SUBMODULE_PAT}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule update --init docs/internal || \
+            echo "::warning::docs/internal submodule fetch failed; the folder-index check will short-circuit"
+
+      - name: Verify docs/internal present
+        id: verify
+        run: |
+          set -euo pipefail
+          if [ -f docs/internal/index.md ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::docs/internal not checked out (external contributors lack PAT access). Skipping folder-index check."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Folder Reference table
+        if: steps.verify.outputs.present == 'true'
+        run: node scripts/gen-docs-folder-index.mjs --check

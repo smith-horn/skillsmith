@@ -1,6 +1,6 @@
 /**
  * Parity test (Issue #13)
- * @module scripts/indexer/tests/parity
+ * @module scripts/tests/indexer/parity
  *
  * SMI-4852: Asserts byte-identity (after whitespace normalization) for the
  * shared helpers across the Deno tree (`supabase/functions/indexer/`) and
@@ -200,6 +200,48 @@ describe('Deno <-> Node helper parity', () => {
       expect(node).toBe(deno)
     }
   )
+
+  // SMI-2402: banded quality-score helpers. `getTierBands` is exposed as a
+  // function (not a bare `const`) precisely so `extractBody` — which covers
+  // `export function`s only — can assert byte-parity of the band table.
+  it.skipIf(denoEncrypted)('getTierBands body is byte-identical (normalized whitespace)', () => {
+    const deno = normalizeWs(extractBody(DENO_HELPERS, 'getTierBands'))
+    const node = normalizeWs(extractBody(NODE_HELPERS, 'getTierBands'))
+    expect(node).toBe(deno)
+  })
+
+  it.skipIf(denoEncrypted)(
+    'computeStructureQuality body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractBody(DENO_HELPERS, 'computeStructureQuality'))
+      const node = normalizeWs(extractBody(NODE_HELPERS, 'computeStructureQuality'))
+      expect(node).toBe(deno)
+    }
+  )
+
+  it.skipIf(denoEncrypted)(
+    'computeIntrinsicQuality body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractBody(DENO_HELPERS, 'computeIntrinsicQuality'))
+      const node = normalizeWs(extractBody(NODE_HELPERS, 'computeIntrinsicQuality'))
+      expect(node).toBe(deno)
+    }
+  )
+
+  it.skipIf(denoEncrypted)(
+    'computeQualityScore body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractBody(DENO_HELPERS, 'computeQualityScore'))
+      const node = normalizeWs(extractBody(NODE_HELPERS, 'computeQualityScore'))
+      expect(node).toBe(deno)
+    }
+  )
+
+  it.skipIf(denoEncrypted)('selectTrustTier body is byte-identical (normalized whitespace)', () => {
+    const deno = normalizeWs(extractBody(DENO_HELPERS, 'selectTrustTier'))
+    const node = normalizeWs(extractBody(NODE_HELPERS, 'selectTrustTier'))
+    expect(node).toBe(deno)
+  })
 })
 
 describe('Deno <-> Node HIGH_TRUST_AUTHORS parity (SMI-4843 Phase 5)', () => {
