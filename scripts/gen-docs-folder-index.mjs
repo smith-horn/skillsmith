@@ -161,6 +161,10 @@ function main(argv) {
     return 0
   }
   const rootIdx = argv.indexOf('--root')
+  if (rootIdx !== -1 && !argv[rootIdx + 1]) {
+    console.error('✖ --root requires a path argument')
+    return 1
+  }
   const rootArg = rootIdx !== -1 ? argv[rootIdx + 1] : 'docs/internal'
   const root = join(REPO_ROOT, rootArg)
   const check = argv.includes('--check')
