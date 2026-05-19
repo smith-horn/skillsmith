@@ -27,6 +27,11 @@ supabase/functions/admin-grant-subscription/**
 supabase/functions/update-seat-count/**
 supabase/functions/webhook-dlq/**
 supabase/functions/quota-monitor/**
+# SMI-4995: coverage-report is the weekly cross-ecosystem coverage cron
+# (SMI-4963) — invoked only by .github/workflows/coverage-report.yml via
+# service-role auth. No user-facing HTTP surface; results land in
+# audit_logs and the GitHub Actions artifact.
+supabase/functions/coverage-report/**
 
 # SMI-4852: indexer-dispatch is invoked by repository_dispatch via the
 # indexer.yml workflow + manual ops; service-role-only, fires GitHub
