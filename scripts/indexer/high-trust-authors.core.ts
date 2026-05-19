@@ -30,6 +30,8 @@
  * @see https://github.com/SalesforceCommerceCloud/b2c-developer-tooling - Apache 2.0
  * @see https://github.com/mattpocock/skills - MIT (curated; individual publisher)
  * @see https://github.com/charlie947/social-media-skills - MIT (curated; individual publisher)
+ * @see https://github.com/openai/codex - Apache 2.0 (cross-ecosystem; SMI-4962)
+ * @see https://github.com/bytedance/deer-flow - MIT (cross-ecosystem; SMI-4962)
  */
 
 import type { HighTrustAuthor } from './high-trust-authors.types.ts'
@@ -213,5 +215,33 @@ export const CORE_HIGH_TRUST_AUTHORS: HighTrustAuthor[] = [
     skillsPaths: ['skills'],
     description:
       'Charlie 947 social-media skills — 17 skills for content marketing: post writing/scoring/formatting, hook generation, Gemini-powered carousels and infographics, YouTube thumbnails, profile optimization, and analytics',
+  },
+  // SMI-4962: round-N cross-ecosystem additions from the SMI-4961 skillsmp.com
+  // cross-reference — high-star verified-org repos the indexer's topic rotation
+  // never reached (topic-less or topic-mismatched). HIGH_TRUST_AUTHORS is the
+  // only entry path. License + skillsPaths probed against the live GitHub Trees
+  // API on 2026-05-19 (licenseChecked: 2026-05-19). NousResearch/hermes-agent
+  // (171 skills) is staged separately — see SMI-4962 for the Phase-1 budget
+  // rationale.
+  {
+    owner: 'openai',
+    repo: 'codex',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.94,
+    skillsPaths: ['.codex/skills'],
+    description:
+      'OpenAI Codex CLI skills — 12 skills under .codex/skills for PR review, code workflows, and agent tooling',
+  },
+  // bytedance/deer-flow — public skills live under skills/public; the single
+  // .agent/skills/smoke-test entry is an internal CI harness artifact and is
+  // excluded by scoping skillsPaths to skills/public only.
+  {
+    owner: 'bytedance',
+    repo: 'deer-flow',
+    license: 'MIT',
+    baseQualityScore: 0.93,
+    skillsPaths: ['skills/public'],
+    description:
+      'ByteDance DeerFlow skills — 21 public skills for deep-research workflows: planning, search, academic paper review, and report generation',
   },
 ]

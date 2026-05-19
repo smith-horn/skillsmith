@@ -156,3 +156,26 @@ describe('Phase 5b publishers — skillsPaths surfaces >=1 SKILL.md (SMI-4843 / 
     ).toBeUndefined()
   })
 })
+
+describe('SMI-4962 round-N cross-ecosystem publishers — skillsPaths surfaces >=1 SKILL.md', () => {
+  // skillsPaths probed against the live GitHub Trees API on 2026-05-19. Each
+  // configured path is a non-default subdirectory, so the entry must carry an
+  // explicit skillsPaths value scoped away from internal/asset directories
+  // (openai/codex: codex-rs asset samples; bytedance/deer-flow: .agent/skills
+  // smoke test).
+  it.each([
+    ['openai', 'codex', '.codex/skills', '.codex/skills/babysit-pr/SKILL.md'],
+    ['bytedance', 'deer-flow', 'skills/public', 'skills/public/academic-paper-review/SKILL.md'],
+  ])(
+    '%s/%s — configured skillsPaths ["%s"] matches a probed SKILL.md path',
+    (owner, repo, expectedPath, sampleSkillMd) => {
+      const entry = findAuthor(owner, repo)
+      expect(entry.skillsPaths).toEqual([expectedPath])
+      const regex = globToSkillMdRegex(expectedPath)
+      expect(
+        regex.test(sampleSkillMd),
+        `${owner}/${repo}: skillsPaths ["${expectedPath}"] must surface ${sampleSkillMd}`
+      ).toBe(true)
+    }
+  )
+})
