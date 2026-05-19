@@ -13,7 +13,9 @@
       "Build",
       "Markdown Lint",
       "PR Validation (Node)",
-      "PR Validation (Shell)"
+      "PR Validation (Shell)",
+      "Test (root)",
+      "Test (root colocated)"
     ]
   },
   "enforce_admins": false,

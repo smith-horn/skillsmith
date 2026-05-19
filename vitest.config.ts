@@ -41,11 +41,9 @@ export default defineConfig({
       // Website tests require Astro tsconfig which isn't resolvable from root
       // These should run via `npm test -w packages/website` if needed
       'packages/website/**',
-      // Indexer edge function tests require Deno runtime + git-crypt unlocked.
-      // Source files (e.g. high-trust-authors.ts) are git-crypt encrypted —
-      // esbuild cannot transform encrypted binary blobs in CI without keys.
-      // Run locally with git-crypt unlocked, or via deno test.
-      'supabase/functions/indexer/**',
+      // SMI-4958: the `supabase/functions/indexer/**` exclude was removed —
+      // the indexer edge-function tests are vitest-native and now run in the
+      // `Test (root)` CI job (git-crypt unlocked, Docker). See ci-reference.md.
     ],
     coverage: {
       ...coverageDefaults,
