@@ -2,12 +2,14 @@
 
 Canonical pooler queries for monitoring edge function invocation rates and attribution. Use these for ad-hoc investigation and as the basis for any scheduled alarm cron.
 
-**Linear**: [SMI-4118](https://linear.app/smith-horn-group/issue/SMI-4118) (umbrella) → [SMI-4366](https://linear.app/smith-horn-group/issue/SMI-4366) (Wave 4 attribution sub-umbrella) → [SMI-4370](https://linear.app/smith-horn-group/issue/SMI-4370) (this doc)
+**Linear**: [SMI-4118](https://linear.app/smith-horn-group/issue/SMI-4118) (umbrella) → [SMI-4366](https://linear.app/smith-horn-group/issue/SMI-4366) (Wave 4 attribution sub-umbrella) → [SMI-4370](https://linear.app/smith-horn-group/issue/SMI-4370) (this doc) → [SMI-4968](https://linear.app/smith-horn-group/issue/SMI-4968) (`search_metrics` cutover)
 **Background**: [Wave 4a retro](../../docs/internal/retros/2026-04-20-smi-4367-edge-attribution-wave4a.md)
+
+> **SMI-4968 cutover**: as of 2026-05-19 per-request edge-function telemetry is written to the dedicated partitioned **`search_metrics`** table, not `audit_logs` — the unbounded telemetry growth was depleting the Supabase Disk IO Budget. The hot attribution fields (`ip_prefix`, `user_agent`, `auth_tier`, `auth_method`) are now **real columns** on `search_metrics`, so the queries below read them directly instead of JSONB-extracting from `metadata->'attribution'`. `search_metrics` has 90-day retention (`cleanup_search_metrics()` cron); queries spanning >90 days will silently see truncated history. To query telemetry written *before* the cutover, run the legacy query against `audit_logs` (the pre-cutover form of each query — replace `search_metrics` with `audit_logs` and the promoted columns with `metadata->'attribution'->>'<field>'`).
 
 ## Purpose
 
-The `_shared/attribution.ts` helper (SMI-4367 / Wave 4a) writes per-request attribution into `audit_logs.metadata->'attribution'` for `search:metrics`, plus the Wave 4b sibling functions (`skills-get`, `skills-recommend`, `stats`, `events`). The queries below let you:
+The `_shared/attribution.ts` helper (SMI-4367 / Wave 4a) builds per-request attribution; the writers (`skills-search`, `events`) persist it to `search_metrics` (SMI-4968 — previously `audit_logs.metadata->'attribution'`). The queries below let you:
 
 1. Track 7-day / 14-day rolling invocation rates against the 1.8M/mo budget.
 2. Identify heavy callers by IP `/24` or User-Agent.
@@ -31,7 +33,7 @@ Output of each query is a `psql` table; capture as text for paste into Linear or
 
 ## Required permissions
 
-All queries are SELECT-only against `audit_logs`. Run via the prod pooler — PostgREST's 8s `statement_timeout` will reject several of these (especially #6's histogram).
+All queries are SELECT-only against `search_metrics`. Run via the prod pooler — PostgREST's 8s `statement_timeout` will reject several of these (especially #6's histogram), though `search_metrics` scans are far cheaper than the old `audit_logs` scans because the table is partitioned and lean.
 
 ```bash
 docker exec skillsmith-dev-1 varlock run -- ./scripts/pooler-psql.sh -c "<query>"
@@ -41,7 +43,7 @@ The pooler routes to the prod project (`vrcnzpmndtroqxxoqkzy`) per `SUPABASE_PRO
 
 ## auth_tier reference
 
-The `auth_tier` value in `metadata->'attribution'->>'auth_tier'` reflects the request's resolved tier as set by `_shared/attribution.ts`:
+The `auth_tier` column on `search_metrics` reflects the request's resolved tier as set by `_shared/attribution.ts`:
 
 | Value | Meaning |
 |-------|---------|
@@ -65,20 +67,20 @@ SELECT
   date_trunc('day', created_at)::date AS day,
   event_type,
   COUNT(*) AS rows,
-  COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' = 'trial')      AS trial,
-  COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' = 'community')  AS community,
-  COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' = 'individual') AS individual,
-  COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' = 'team')       AS team,
-  COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' = 'enterprise') AS enterprise,
-  COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' IS NULL)        AS no_attribution
-FROM audit_logs
+  COUNT(*) FILTER (WHERE auth_tier = 'trial')      AS trial,
+  COUNT(*) FILTER (WHERE auth_tier = 'community')  AS community,
+  COUNT(*) FILTER (WHERE auth_tier = 'individual') AS individual,
+  COUNT(*) FILTER (WHERE auth_tier = 'team')       AS team,
+  COUNT(*) FILTER (WHERE auth_tier = 'enterprise') AS enterprise,
+  COUNT(*) FILTER (WHERE auth_tier IS NULL)        AS no_attribution
+FROM search_metrics
 WHERE event_type = 'search:metrics'
   AND created_at >= NOW() - INTERVAL '14 days'
 GROUP BY 1, 2
 ORDER BY 1 DESC;
 ```
 
-**Interpretation**: `no_attribution` rows are pre-Wave-4a entries (before SMI-4367 deploy 2026-04-20) or rows from a function that hasn't yet been wired in Wave 4b. After the Wave 4b fanout completes for all sibling functions, `no_attribution` should approach zero for `event_type IN ('search:metrics', 'get:metrics', 'recommend:metrics', 'stats:metrics', 'events:metrics')` rows newer than the deploy.
+**Interpretation**: `no_attribution` rows are entries from a writer that did not populate the `auth_tier` column. Post-SMI-4968 every `search_metrics` writer (`skills-search`, `events`) sets the attribution columns, so `no_attribution` should approach zero for `event_type` `'search:metrics'` and `'telemetry:*'` rows.
 
 **Goal**: total daily `rows` should average ≤ 60,000 (≈ 1.8M/mo). As of 2026-05-11 the 14-day average is ~10,970/day (~349k/mo), 5.2x under target.
 
@@ -86,15 +88,15 @@ ORDER BY 1 DESC;
 
 ```sql
 SELECT
-  metadata->'attribution'->>'ip_prefix' AS ip_prefix,
+  ip_prefix,
   COUNT(*) AS rows,
   COUNT(DISTINCT metadata->>'request_id') AS distinct_requests,
   MIN(created_at) AS first_seen,
   MAX(created_at) AS last_seen
-FROM audit_logs
+FROM search_metrics
 WHERE event_type = 'search:metrics'
   AND created_at >= NOW() - INTERVAL '24 hours'
-  AND metadata->'attribution'->>'ip_prefix' IS NOT NULL
+  AND ip_prefix IS NOT NULL
 GROUP BY 1
 ORDER BY rows DESC
 LIMIT 20;
@@ -106,11 +108,11 @@ LIMIT 20;
 
 ```sql
 SELECT
-  COALESCE(NULLIF(metadata->'attribution'->>'user_agent', ''), '<empty>') AS user_agent,
+  COALESCE(NULLIF(user_agent, ''), '<empty>') AS user_agent,
   COUNT(*) AS rows,
-  COUNT(DISTINCT metadata->'attribution'->>'ip_prefix') AS distinct_ip_prefixes,
-  COUNT(DISTINCT metadata->'attribution'->>'auth_tier')  AS distinct_tiers
-FROM audit_logs
+  COUNT(DISTINCT ip_prefix) AS distinct_ip_prefixes,
+  COUNT(DISTINCT auth_tier)  AS distinct_tiers
+FROM search_metrics
 WHERE event_type = 'search:metrics'
   AND created_at >= NOW() - INTERVAL '24 hours'
 GROUP BY 1
@@ -125,16 +127,16 @@ LIMIT 20;
 ```sql
 WITH totals AS (
   SELECT COUNT(*)::numeric AS total
-  FROM audit_logs
+  FROM search_metrics
   WHERE event_type = 'search:metrics'
     AND created_at >= NOW() - INTERVAL '7 days'
 )
 SELECT
-  COALESCE(metadata->'attribution'->>'auth_tier', '<no_attribution>') AS auth_tier,
-  COALESCE(metadata->'attribution'->>'auth_method', '<no_attribution>') AS auth_method,
+  COALESCE(auth_tier, '<no_attribution>') AS auth_tier,
+  COALESCE(auth_method, '<no_attribution>') AS auth_method,
   COUNT(*) AS rows,
   ROUND(COUNT(*)::numeric / NULLIF((SELECT total FROM totals), 0) * 100, 2) AS pct
-FROM audit_logs
+FROM search_metrics
 WHERE event_type = 'search:metrics'
   AND created_at >= NOW() - INTERVAL '7 days'
 GROUP BY 1, 2
@@ -150,7 +152,7 @@ WITH daily AS (
   SELECT
     date_trunc('day', created_at)::date AS day,
     COUNT(*) AS rows
-  FROM audit_logs
+  FROM search_metrics
   WHERE event_type = 'search:metrics'
     AND created_at >= NOW() - INTERVAL '3 days'
     AND created_at <  date_trunc('day', NOW())
@@ -197,7 +199,7 @@ SELECT
   END AS bucket,
   COUNT(*) AS rows,
   ROUND(COUNT(*)::numeric / SUM(COUNT(*)) OVER () * 100, 1) AS pct
-FROM audit_logs
+FROM search_metrics
 WHERE event_type = 'search:metrics'
   AND created_at >= NOW() - INTERVAL '24 hours'
   AND metadata ? 'result_count'
@@ -213,30 +215,23 @@ ORDER BY 1;
 SELECT
   event_type,
   COUNT(*) AS rows,
-  COUNT(DISTINCT metadata->'attribution'->>'ip_prefix') AS distinct_ip_prefixes,
-  COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' IN ('trial', 'community')) AS community_rows,
+  COUNT(DISTINCT ip_prefix) AS distinct_ip_prefixes,
+  COUNT(*) FILTER (WHERE auth_tier IN ('trial', 'community')) AS community_rows,
   ROUND(
-    COUNT(*) FILTER (WHERE metadata->'attribution'->>'auth_tier' IN ('trial', 'community'))::numeric
+    COUNT(*) FILTER (WHERE auth_tier IN ('trial', 'community'))::numeric
     / NULLIF(COUNT(*), 0) * 100,
     1
   ) AS community_pct,
-  COUNT(*) FILTER (WHERE metadata->'attribution' IS NULL) AS no_attribution
-FROM audit_logs
-WHERE event_type IN (
-        'search:metrics',
-        'get:metrics',
-        'recommend:metrics',
-        'stats:metrics',
-        'events:metrics'
-      )
-  AND created_at >= NOW() - INTERVAL '7 days'
+  COUNT(*) FILTER (WHERE auth_tier IS NULL) AS no_attribution
+FROM search_metrics
+WHERE created_at >= NOW() - INTERVAL '7 days'
 GROUP BY 1
 ORDER BY rows DESC;
 ```
 
-**Interpretation**: After a mitigation lands on one function (e.g. PR #688 anon-rate-limit on `skills-search`), watch this table for traffic shifting to a sibling. If `skills-get` or `skills-recommend` row counts jump while `search:metrics` drops, the scraper has adapted — file a follow-up to extend the same mitigation. The `no_attribution` column flags Wave 4b coverage gaps.
+**Interpretation**: After a mitigation lands on one function (e.g. PR #688 anon-rate-limit on `skills-search`), watch this table for traffic shifting to a sibling. `search_metrics` carries `search:metrics` (skills-search) and `telemetry:*` (events) rows; the `event_type` `GROUP BY` surfaces every distinct telemetry type. The `no_attribution` column flags any writer not populating `auth_tier`.
 
-The exact `event_type` values for `skills-get`, `skills-recommend`, `stats`, `events` should match the audit-write call in each function's `index.ts`. Check `grep -n "event_type:" supabase/functions/{skills-get,skills-recommend,stats,events}/index.ts` if a column is unexpectedly empty.
+**Scope note (SMI-4968)**: only `skills-search` and `events` were repointed to `search_metrics`. The sibling functions `skills-get`, `skills-recommend`, `stats` still write their `*:metrics` rows to `audit_logs` — to compare against those, run the legacy form of this query against `audit_logs` with the explicit `event_type IN (...)` list and `metadata->'attribution'->>'<field>'` extraction.
 
 ---
 
@@ -254,7 +249,7 @@ The exact `event_type` values for `skills-get`, `skills-recommend`, `stats`, `ev
 
 ## Adding a new attributed function
 
-When a new edge function adopts attribution (per `_shared/attribution.ts`), add its `event_type` to query #7's `IN (...)` list and update the corresponding row in the cheat-sheet. The query will continue to work for existing functions even if the new event_type is misspelled — just expect a zero row for the new function until its event_type matches what `index.ts` writes.
+When a new edge function adopts attribution (per `_shared/attribution.ts`), point its telemetry insert at `search_metrics` (use the `skills-search` / `events` writer as the template — promote `ip_prefix`/`user_agent`/`auth_tier`/`auth_method` to columns), and use a distinct `event_type`. Query #7 groups by `event_type` so a new function appears automatically once it writes rows. Update the cheat-sheet row for any new operationally-significant `event_type`.
 
 ## See also
 
