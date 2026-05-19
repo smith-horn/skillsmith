@@ -17,6 +17,3 @@
 #     comment naming the Linear issue that will split the file.
 #
 # Do not add new files here without a corresponding split follow-up issue.
-
-# SMI-4948 split follow-up
-supabase/functions/ops-report/usage-aggregators.ts
