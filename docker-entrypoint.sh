@@ -44,8 +44,8 @@ MCP_DIST_ENTRY="/app/packages/mcp-server/dist/src/index.js"
 echo -e "${YELLOW}[entrypoint] Checking dist/ outputs...${NC}"
 
 # Pre-check: node_modules must be initialised before build can succeed
-if [ ! -f "/app/node_modules/.package-lock.json" ]; then
-    echo -e "${RED}  ✗ node_modules not initialised — run: npm install inside this container${NC}"
+if [ ! -f "/app/node_modules/.package-lock.json" ] || [ ! -x "/app/node_modules/.bin/turbo" ]; then
+    echo -e "${RED}  ✗ node_modules not initialised (or partial install) — run: npm install inside this container${NC}"
     exit 1
 fi
 
