@@ -178,4 +178,23 @@ describe('SMI-4962 round-N cross-ecosystem publishers — skillsPaths surfaces >
       ).toBe(true)
     }
   )
+
+  // NousResearch/hermes-agent — two-level layout under BOTH skills/ and
+  // optional-skills/ (skills/<category>/<name>/SKILL.md), so each path is a
+  // wildcard. plugins/google_meet (flat layout, 1 skill) is intentionally
+  // excluded. Samples probed 2026-05-19.
+  it('NousResearch/hermes-agent — wildcard skillsPaths surface both roots', () => {
+    const entry = findAuthor('NousResearch', 'hermes-agent')
+    expect(entry.skillsPaths).toEqual(['skills/*', 'optional-skills/*'])
+    const cases: Array<[string, string]> = [
+      ['skills/*', 'skills/apple/apple-notes/SKILL.md'],
+      ['optional-skills/*', 'optional-skills/autonomous-ai-agents/blackbox/SKILL.md'],
+    ]
+    for (const [pattern, sampleSkillMd] of cases) {
+      expect(
+        globToSkillMdRegex(pattern).test(sampleSkillMd),
+        `hermes-agent: skillsPaths ["${pattern}"] must surface ${sampleSkillMd}`
+      ).toBe(true)
+    }
+  })
 })

@@ -32,6 +32,7 @@
  * @see https://github.com/charlie947/social-media-skills - MIT (curated; individual publisher)
  * @see https://github.com/openai/codex - Apache 2.0 (cross-ecosystem; SMI-4962)
  * @see https://github.com/bytedance/deer-flow - MIT (cross-ecosystem; SMI-4962)
+ * @see https://github.com/NousResearch/hermes-agent - MIT (cross-ecosystem; SMI-4962)
  */
 
 import type { HighTrustAuthor } from './high-trust-authors.types.ts'
@@ -243,5 +244,21 @@ export const CORE_HIGH_TRUST_AUTHORS: HighTrustAuthor[] = [
     skillsPaths: ['skills/public'],
     description:
       'ByteDance DeerFlow skills — 21 public skills for deep-research workflows: planning, search, academic paper review, and report generation',
+  },
+  // NousResearch/hermes-agent — staged separately from the SMI-4962 round-N
+  // batch: 171 SKILL.md across skills/<category>/<name> (89) and
+  // optional-skills/<category>/<name> (81), both two-level layouts → wildcard
+  // skillsPaths. The single plugins/google_meet skill (flat layout) is
+  // excluded. Originally held back for the Phase-1 Edge Function indexer
+  // budget; unblocked by SMI-4852 (Tier-2 GHA-runner indexer). License + tree
+  // probed against the live GitHub Trees API on 2026-05-19 (truncated=false).
+  {
+    owner: 'NousResearch',
+    repo: 'hermes-agent',
+    license: 'MIT',
+    baseQualityScore: 0.93,
+    skillsPaths: ['skills/*', 'optional-skills/*'],
+    description:
+      'NousResearch Hermes agent skills — 170 skills across an always-on skills/ library and an opt-in optional-skills/ set covering agent workflows, tooling, and integrations',
   },
 ]
