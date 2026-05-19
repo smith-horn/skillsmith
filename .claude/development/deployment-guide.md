@@ -383,6 +383,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
 | Metadata Refresh | Every 4h :30 (SMI-4121) | `skills-refresh-metadata` |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
+| Weekly Coverage Report (SMI-4963) | Monday 10 AM UTC (`coverage-report.yml`; `schedule:` enabled via follow-up commit). Deploy: `npx supabase functions deploy coverage-report` (no `--no-verify-jwt`) | `coverage-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
 | Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
 | Quota Monitor | Every 30 min | GitHub Actions (`quota-monitor.yml`) |

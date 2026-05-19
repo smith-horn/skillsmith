@@ -1139,6 +1139,8 @@ console.log(`\n${BOLD}17. Email Consistency (SMI-2562)${RESET}`)
     'supabase/functions/alert-notify/index.ts',
     'supabase/functions/contact-submit/index.ts',
     'supabase/functions/email-inbound/index.ts',
+    // SMI-4963: coverage-report recipient lives in coverage-templates.ts.
+    'supabase/functions/coverage-report/coverage-templates.ts',
   ]
 
   for (const file of edgeFnRecipientFiles) {
