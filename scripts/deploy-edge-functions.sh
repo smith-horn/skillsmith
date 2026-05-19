@@ -5,7 +5,7 @@
 #   ./scripts/deploy-edge-functions.sh --project-ref <ref> [--functions <name1,name2,...>]
 #
 # Validates the provided ref against known refs in .env before deploying.
-# When --functions is omitted, deploys all 32 functions.
+# When --functions is omitted, deploys all 34 functions.
 # When --functions is provided, deploys only the listed functions.
 
 set -euo pipefail
@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 --project-ref <ref> [--functions <name1,name2,...>]"
       echo ""
       echo "Deploys Supabase Edge Functions to the specified project."
-      echo "When --functions is omitted, deploys all 32 functions."
+      echo "When --functions is omitted, deploys all 34 functions."
       echo "When --functions is provided, deploys only the listed functions."
       echo ""
       echo "Options:"
@@ -108,6 +108,7 @@ VERIFY_JWT_FUNCTIONS=(
   alert-notify
   auth-device-approve
   auth-device-preview
+  coverage-report
   expire-complimentary
   indexer
   indexer-dispatch
@@ -153,8 +154,9 @@ if [[ -n "$FILTER_FUNCTIONS" ]]; then
   TOTAL=$((${#NO_VERIFY_JWT_FUNCTIONS[@]} + ${#VERIFY_JWT_FUNCTIONS[@]}))
   echo "Deploying $TOTAL edge function(s) to project: $PROJECT_REF"
 else
-  TOTAL=33
-  echo "Deploying all 33 edge functions to project: $PROJECT_REF"
+  # Dynamic count — hardcoding drifts whenever a function is added (SMI-4963).
+  TOTAL=$((${#NO_VERIFY_JWT_FUNCTIONS[@]} + ${#VERIFY_JWT_FUNCTIONS[@]}))
+  echo "Deploying all $TOTAL edge functions to project: $PROJECT_REF"
 fi
 
 echo "=================================================="

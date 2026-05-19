@@ -58,6 +58,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "indexer-dispatch"
   "skills-refresh-metadata"
   "ops-report"
+  "coverage-report"
   "alert-notify"
   "email-inbound"
   "process-pending-subscription"
