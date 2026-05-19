@@ -320,7 +320,7 @@ Authoritative auth/JWT-verification table for every edge function. CLAUDE.md kee
 | `admin-grant-subscription` | Authenticated (Admin JWT) | Yes |
 | `webhook-dlq` | Authenticated (User JWT, gateway-verified for RLS) | No |
 | `update-seat-count` | Authenticated | No |
-| `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
+| `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify`, `coverage-report` | Service Role | No |
 | `process-pending-subscription` | Service Role | No |
 | `expire-complimentary` | Service Role (daily 3 AM UTC cron) | No |
 | `quota-monitor` | Service Role (every 30 min cron) | Yes |
