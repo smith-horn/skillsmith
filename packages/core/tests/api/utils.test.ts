@@ -143,16 +143,20 @@ describe('API Utils', () => {
       expect(headers['x-request-id']).toMatch(/^client-\d+-[a-z0-9]+$/)
     })
 
-    it('should include auth headers when anonKey provided', async () => {
+    it('should set apikey but NOT Authorization when anonKey provided (SMI-4971)', async () => {
       const { buildRequestHeaders } = await import('../../src/api/utils.js')
 
       const headers = buildRequestHeaders('test-anon-key')
 
-      expect(headers['Authorization']).toBe('Bearer test-anon-key')
+      // SMI-4971: buildRequestHeaders sets only the gateway `apikey` header.
+      // `Authorization` is the caller's per-auth-mode responsibility — emitting
+      // a blanket `Bearer <anonKey>` here left a stale cross-project token on
+      // the API-key path.
       expect(headers['apikey']).toBe('test-anon-key')
+      expect(headers['Authorization']).toBeUndefined()
     })
 
-    it('should not include auth headers when anonKey not provided', async () => {
+    it('should not include the apikey header when anonKey not provided', async () => {
       const { buildRequestHeaders } = await import('../../src/api/utils.js')
 
       const headers = buildRequestHeaders()

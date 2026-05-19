@@ -147,12 +147,21 @@ export class SkillsmithApiClient {
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), this.timeout)
 
-        // SMI-4402: JWT Bearer takes precedence over X-API-Key (legacy)
+        // SMI-4402: JWT Bearer takes precedence over X-API-Key (legacy).
+        // SMI-4971: `Authorization` is set explicitly per auth-mode here —
+        // `buildRequestHeaders` no longer adds a blanket `Authorization`.
+        //  - JWT mode      → Authorization: Bearer <jwtToken>
+        //  - API-key mode  → X-API-Key only, NO Authorization (a stale anon
+        //    JWT here broke downstream edge-function signature validation)
+        //  - anonymous     → Authorization: Bearer <anonKey> (restores the
+        //    header buildRequestHeaders previously added for this case)
         const authHeader: Record<string, string> = {}
         if (this.jwtToken) {
           authHeader['Authorization'] = `Bearer ${this.jwtToken}`
         } else if (this.apiKey) {
           authHeader['X-API-Key'] = this.apiKey
+        } else if (this.anonKey) {
+          authHeader['Authorization'] = `Bearer ${this.anonKey}`
         }
 
         const response = await fetch(url, {
