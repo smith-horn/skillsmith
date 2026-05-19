@@ -102,7 +102,12 @@ describe.skipIf(skipSuite)('@e2e-usage-counter MCP stdio → usage counter', () 
 
     const response = await client.callTool({
       name: 'get_skill',
-      arguments: { skill_id: stagingSkillId },
+      // SMI-4976: the tool input schema declares `id` (see
+      // packages/mcp-server/src/tools/get-skill.ts:46-69 — `getSkillInputSchema`).
+      // Sending `skill_id` here results in Zod dropping the unknown key and
+      // the required-field guard firing with 'Skill ID is required' — the
+      // call never reaches the API.
+      arguments: { id: stagingSkillId },
     })
     expect(response).toBeDefined()
     expect(response.isError).not.toBe(true)
