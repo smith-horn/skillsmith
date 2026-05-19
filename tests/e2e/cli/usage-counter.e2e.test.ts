@@ -103,14 +103,23 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
       apiKey: user.apiKey,
     })
 
-    // First call — populates the tier cache.
-    const r1 = await client.getSkill(stagingSkillId)
+    // SMI-4975: bypass the client-side responseCache so both calls actually
+    // hit the wire. `DEFAULT_TTL.getSkill = 24h` (packages/core/src/api/cache.ts:71)
+    // means a second `getSkill(sameId)` is served from in-process memory in
+    // 0ms without reaching the edge function — the test would silently pass
+    // its r2 data-shape assertion while never exercising the server's
+    // tier-cache hit path or the counter increment we're trying to validate.
+    // Per-call `{ cache: 'no-store' }` (CallCacheOptions, packages/core/src/api/client.cache.ts:17)
+    // is the public override.
+    //
+    // First call — populates the SERVER tier cache.
+    const r1 = await client.getSkill(stagingSkillId, { cache: 'no-store' })
     expect(r1.data?.id).toBeTruthy()
 
     // Second call within the cache TTL — must still increment. Pre-SMI-4461,
     // the tier-cache short-circuit returned before incrementUsageCounter was
     // ever called, silently undercounting from `2` to `1`.
-    const r2 = await client.getSkill(stagingSkillId)
+    const r2 = await client.getSkill(stagingSkillId, { cache: 'no-store' })
     expect(r2.data?.id).toBeTruthy()
 
     await waitForCounterIncrement(user.userId, 'get_count', before.get_count + 2)
