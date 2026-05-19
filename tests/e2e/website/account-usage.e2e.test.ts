@@ -97,9 +97,14 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter Website auth surface → usag
         Accept: 'application/json',
       },
     })
-    // Anonymous calls succeed under the trial limit; a 200 here is fine,
-    // a 429 also satisfies the negative assertion (no row mutation either way).
-    expect([200, 429]).toContain(res.status)
+    // Anonymous calls succeed under the trial limit (200). Once the shared
+    // staging anonymous-trial quota is used up, skills-search returns either
+    // 429 (rate-limited) or 401 ("Authentication required - Free trial
+    // exhausted"). All three satisfy the negative assertion below: the request
+    // is either served or rejected, and neither mutates the test user's row.
+    // 401 must be tolerated or this test goes red on any busy CI runner whose
+    // IP has burned its trial allowance (SMI-4970).
+    expect([200, 429, 401]).toContain(res.status)
 
     // Allow the same 1.5s window any successful counter increment would
     // need before sampling — gives a real bug a chance to surface.

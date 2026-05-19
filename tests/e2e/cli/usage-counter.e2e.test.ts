@@ -45,27 +45,28 @@ import {
   provisionTestUser,
   cleanupTestUser,
   getUsageRow,
+  resolveStagingSkillId,
   stagingCredentialsAbsent,
   waitForCounterIncrement,
   type ProvisionedUser,
 } from '../fixtures/usage-counter-fixture.js'
 
-// A stable, installable staging skill used to exercise the get-skill path.
-// `anthropics/web-artifacts-builder` is a verified-tier official Anthropic skill
-// with a repo_url, resolved via the author/name lookup. Staging stores skill
-// rows under UUID ids, so getSkill() returns `id` as the UUID — the assertions
-// below check that a skill resolved, not id-equality with the input string.
-// Override with SKILLSMITH_E2E_SKILL_ID if staging seed data changes (SMI-4956).
+// The staging skill used to exercise the get-skill path is resolved at runtime
+// via `resolveStagingSkillId()` (SMI-4970) — a hard-coded constant rotted twice
+// against staging seed-data drift. Staging stores skill rows under UUID ids, so
+// getSkill() returns `id` as the UUID — the assertions below check that a skill
+// resolved, not id-equality with the input string. Override with
+// SKILLSMITH_E2E_SKILL_ID to short-circuit discovery.
 const STAGING_BASE_URL = process.env['STAGING_SUPABASE_URL']?.replace(/\/$/, '') + '/functions/v1'
-const STAGING_SKILL_ID =
-  process.env['SKILLSMITH_E2E_SKILL_ID'] ?? 'anthropics/web-artifacts-builder'
 
 const skipIfNoCreds = stagingCredentialsAbsent()
 
 describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage counter', () => {
   let user: ProvisionedUser
+  let stagingSkillId: string
 
   beforeAll(async () => {
+    stagingSkillId = await resolveStagingSkillId()
     user = await provisionTestUser({ tier: 'community' })
   }, 30_000)
 
@@ -82,7 +83,7 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
       baseUrl: STAGING_BASE_URL,
       jwtToken: user.jwt,
     })
-    const res = await client.getSkill(STAGING_SKILL_ID)
+    const res = await client.getSkill(stagingSkillId)
     expect(res).toBeDefined()
     // Staging stores UUID ids — assert a skill resolved, not id === input.
     expect(res.data?.id).toBeTruthy()
@@ -103,13 +104,13 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
     })
 
     // First call — populates the tier cache.
-    const r1 = await client.getSkill(STAGING_SKILL_ID)
+    const r1 = await client.getSkill(stagingSkillId)
     expect(r1.data?.id).toBeTruthy()
 
     // Second call within the cache TTL — must still increment. Pre-SMI-4461,
     // the tier-cache short-circuit returned before incrementUsageCounter was
     // ever called, silently undercounting from `2` to `1`.
-    const r2 = await client.getSkill(STAGING_SKILL_ID)
+    const r2 = await client.getSkill(stagingSkillId)
     expect(r2.data?.id).toBeTruthy()
 
     await waitForCounterIncrement(user.userId, 'get_count', before.get_count + 2)
@@ -152,7 +153,7 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
       const client = createApiClient(
         stored ? { baseUrl: STAGING_BASE_URL, jwtToken: stored } : { baseUrl: STAGING_BASE_URL }
       )
-      const res = await client.getSkill(STAGING_SKILL_ID)
+      const res = await client.getSkill(stagingSkillId)
       expect(res.data?.id).toBeTruthy()
 
       await waitForCounterIncrement(user.userId, 'get_count', before.get_count + 1)

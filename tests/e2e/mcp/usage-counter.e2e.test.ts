@@ -30,6 +30,7 @@ import {
   provisionTestUser,
   cleanupTestUser,
   getUsageRow,
+  resolveStagingSkillId,
   stagingCredentialsAbsent,
   waitForCounterIncrement,
   type ProvisionedUser,
@@ -41,9 +42,7 @@ const __dirname = dirname(__filename)
 // Built MCP server binary, relative to repo root.
 const MCP_SERVER_BIN = resolve(__dirname, '../../../packages/mcp-server/dist/src/index.js')
 
-// Stable installable staging skill — see cli/usage-counter.e2e.test.ts (SMI-4956).
-const STAGING_SKILL_ID =
-  process.env['SKILLSMITH_E2E_SKILL_ID'] ?? 'anthropics/web-artifacts-builder'
+// Staging skill resolved at runtime — see cli/usage-counter.e2e.test.ts (SMI-4970).
 const STAGING_BASE_URL =
   (process.env['STAGING_SUPABASE_URL']?.replace(/\/$/, '') ?? '') + '/functions/v1'
 
@@ -58,8 +57,10 @@ describe.skipIf(skipSuite)('@e2e-usage-counter MCP stdio → usage counter', () 
   let user: ProvisionedUser
   let client: Client
   let transport: StdioClientTransport
+  let stagingSkillId: string
 
   beforeAll(async () => {
+    stagingSkillId = await resolveStagingSkillId()
     user = await provisionTestUser({ tier: 'community' })
 
     transport = new StdioClientTransport({
@@ -101,7 +102,7 @@ describe.skipIf(skipSuite)('@e2e-usage-counter MCP stdio → usage counter', () 
 
     const response = await client.callTool({
       name: 'get_skill',
-      arguments: { skill_id: STAGING_SKILL_ID },
+      arguments: { skill_id: stagingSkillId },
     })
     expect(response).toBeDefined()
     expect(response.isError).not.toBe(true)
