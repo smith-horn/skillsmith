@@ -44,7 +44,9 @@ export default defineConfig({
       // SMI-4777: exclude git-worktree directories. Both forms (dot and no-dot).
       '.worktrees/**',
       'worktrees/**',
-      'supabase/functions/indexer/**',
+      // SMI-4958: the static `supabase/functions/indexer/**` exclude was
+      // removed — those tests now run. The gitCryptLocked() guard below still
+      // skips all of supabase/functions/** on locked CI checkouts.
       // In locked CI checkouts, supabase/** is git-crypt ciphertext.
       // Pre-push and ci.yml matrix decrypt. Refs: SMI-4221, SMI-2672.
       ...encryptedPathsExcluded,
