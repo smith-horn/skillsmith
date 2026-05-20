@@ -3707,10 +3707,34 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
         // See: docs/internal/implementation/smi-5004-consumer-sync.md
         // Pure Node (no child_process): readdirSync + readFileSync + String.includes.
         const AUTH_PATH = join(FUNCTIONS_DIR, '_shared/auth.ts')
+        // SMI-5004: predicate 5 reads content from supabase/functions/**, which
+        // is git-crypt encrypted. In CI jobs that check out without the
+        // git-crypt key (e.g. the `code-review` job in ci.yml — `quality-checks`
+        // unlocks first, code-review does not), `_shared/auth.ts` is the
+        // ciphertext blob starting with \x00GITCRYPT. The @consumers regex
+        // would then fail-to-match and falsely fire "missing tag". Skip the
+        // predicate in that case — quality-checks already enforces it.
+        // Sentinel pattern mirrors vitest.config.root-tests.ts:gitCryptLocked.
+        const gitCryptLocked =
+          existsSync(AUTH_PATH) &&
+          (() => {
+            try {
+              const head = readFileSync(AUTH_PATH).subarray(0, 9).toString('binary')
+              return head.startsWith('\x00GITCRYPT')
+            } catch {
+              return false
+            }
+          })()
         if (!existsSync(AUTH_PATH)) {
           warn(
             'Check 47 predicate 5: supabase/functions/_shared/auth.ts ' +
               'missing — skipping consumer-sync'
+          )
+        } else if (gitCryptLocked) {
+          warn(
+            'Check 47 predicate 5: supabase/functions/** is git-crypt ' +
+              'locked here — skipping consumer-sync (quality-checks job ' +
+              'enforces it after unlock)'
           )
         } else {
           const authSrc = readFileSync(AUTH_PATH, 'utf-8')
