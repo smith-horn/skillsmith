@@ -85,14 +85,15 @@ while IFS= read -r workflow; do
   count=$(echo "$conclusions" | grep -cv '^$' || true)
   fails=$(echo "$conclusions" | grep -c '^failure$' || true)
   if [ "$count" -eq "$THRESHOLD" ] && [ "$fails" -eq "$THRESHOLD" ]; then
-    # SMI-5005: dedup check — fetch the current failing run's headSha
-    # and compare with the stored SHA for this workflow.
-    current_sha=$(gh run list --workflow "$workflow" --branch main --limit 1 \
-      --json headSha -q '.[0].headSha' 2>/dev/null || true)
+    # SMI-5005: dedup check — fetch the current failing run's headSha,
+    # databaseId, and url in one call, then compare headSha with stored.
+    run_info=$(gh run list --workflow "$workflow" --branch main --limit 1 \
+      --json headSha,databaseId,url -q '.[0]' 2>/dev/null || true)
+    current_sha=$(echo "$run_info" | jq -r '.headSha // ""')
     stored=$(stored_sha_for "$workflow")
 
     if [ -z "$current_sha" ]; then
-      # M-1: emit warning when dedup is bypassed (API blip / no main runs)
+      # M-1: emit warning when dedup is bypassed (gh run list API failure / empty response)
       echo "::warning::$workflow: could not fetch headSha, alerting without dedup"
     elif [ "$current_sha" = "$stored" ]; then
       echo "::notice::$workflow still failing at SHA $current_sha (already alerted) — skipping"
@@ -100,10 +101,8 @@ while IFS= read -r workflow; do
       continue
     fi
 
-    # Most recent failing run for the alert URL.
-    run_info=$(gh run list --workflow "$workflow" --branch main --limit 1 --json databaseId,url -q '.[0]')
-    run_id=$(echo "$run_info" | jq -r .databaseId)
-    run_url=$(echo "$run_info" | jq -r .url)
+    run_id=$(echo "$run_info" | jq -r '.databaseId // ""')
+    run_url=$(echo "$run_info" | jq -r '.url // ""')
     msg="\"$workflow\" has failed $THRESHOLD consecutive runs on main"
     body=$(jq -n \
       --arg msg "$msg" \

@@ -35,7 +35,7 @@ jobs:
       - name: Restore previous chronic-red state
         run: |
           mkdir -p "$STATE_DIR"
-          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts" \
             --jq '[.artifacts[] | select(.name=="chronic-red-state" and .expired==false)]
                   | sort_by(.created_at) | reverse | .[0].id // empty')
           if [ -n "$artifact_id" ]; then
@@ -43,7 +43,7 @@ jobs:
             unzip -o /tmp/state.zip -d "$STATE_DIR/"
             echo "Restored chronic-red-state from artifact $artifact_id"
             echo "::group::Restored state.json contents"
-            cat "$STATE_DIR/state.json" 2>/dev/null | jq . || echo "(no state.json in artifact)"
+            jq . "$STATE_DIR/state.json" 2>/dev/null || echo "(no state.json in artifact)"
             echo "::endgroup::"
           else
             echo "::notice::No prior chronic-red-state artifact — treating all chronic-red workflows as new"
