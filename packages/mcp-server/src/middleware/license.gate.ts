@@ -8,6 +8,7 @@ import { safeParseOrError } from '../validation.js'
 import { ApiClientError, SkillsmithError, ErrorCodes } from '@skillsmith/core'
 import type { LicenseMiddleware } from './license.js'
 import { createLicenseErrorResponse } from './license.js'
+import { resolveConsent, annotateResponseWithConsent } from './telemetry-consent.js'
 
 const COMPLETE_PROFILE_URL = 'https://skillsmith.app/complete-profile'
 
@@ -131,8 +132,16 @@ export async function withLicenseAndQuota<T>(
   const licenseInfo = await licenseMiddleware.getLicenseInfo()
   const quotaResult = await quotaMiddleware.checkAndTrack(toolName, licenseInfo)
   if (!quotaResult.allowed) return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+  // SMI-5019 W2.S4: resolve telemetry-consent state in parallel with the
+  // tool handler. The consent surface for MCP-only clients is the web
+  // dashboard at TELEMETRY_PRIVACY_URL; first call from an unrecognised
+  // anonymous_id surfaces `consent_required:true` in the response envelope.
+  // Resolution failure is fail-safe (consent required, telemetry suppressed).
+  const consentPromise = resolveConsent(toolContext.distinctId)
   try {
-    return ok(await handler(parsed.data, toolContext))
+    const handlerResult = await handler(parsed.data, toolContext)
+    const consent = await consentPromise
+    return annotateResponseWithConsent(ok(handlerResult), consent)
   } catch (err) {
     if (
       err instanceof ApiClientError &&
