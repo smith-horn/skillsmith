@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: SMI-5044 — `StripeWebhookHandler` structural interface in
+  `src/webhooks/stripe-webhook-endpoint.ts` is now re-exported from the new
+  `@skillsmith/billing-types` package instead of being declared inline. This
+  resolves the workspace cycle with `@smith-horn/enterprise`. No runtime
+  change; consumers continue to `import type { StripeWebhookHandler } from
+  '@skillsmith/mcp-server'` (the re-export is preserved). Adds
+  `@skillsmith/billing-types@^0.1.0` as a runtime dep.
+
 ## v0.5.2
 
 - **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)
