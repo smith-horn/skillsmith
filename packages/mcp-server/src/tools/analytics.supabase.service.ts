@@ -163,7 +163,10 @@ export class SupabaseAnalyticsService {
     }
 
     const supabase = client as {
-      rpc(fn: string, params: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>
+      rpc(
+        fn: string,
+        params: Record<string, unknown>
+      ): Promise<{ data: unknown; error: { message: string } | null }>
     }
 
     const { data, error } = await supabase.rpc('analytics_skill_top', {
@@ -222,7 +225,10 @@ export class SupabaseAnalyticsService {
     }
 
     const supabase = client as {
-      rpc(fn: string, params: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>
+      rpc(
+        fn: string,
+        params: Record<string, unknown>
+      ): Promise<{ data: unknown; error: { message: string } | null }>
     }
 
     const { data, error } = await supabase.rpc('analytics_skill_stale', {
@@ -275,7 +281,10 @@ export class SupabaseAnalyticsService {
     }
 
     const supabase = client as {
-      rpc(fn: string, params: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>
+      rpc(
+        fn: string,
+        params: Record<string, unknown>
+      ): Promise<{ data: unknown; error: { message: string } | null }>
     }
 
     const { data, error } = await supabase.rpc('analytics_skill_cooccurrence', {

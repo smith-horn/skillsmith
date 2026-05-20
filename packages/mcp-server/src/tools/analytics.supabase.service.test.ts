@@ -60,7 +60,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
 
   it('calls analytics_skill_top with correct params for 7d window', async () => {
     const { client, rpc } = createMockSupabase({ data: [], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     await svc.getTopSkills({ teamId: TEAM_ID, window: '7d' })
 
@@ -72,7 +74,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
 
   it('calls analytics_skill_top with 30 days for 30d window', async () => {
     const { client, rpc } = createMockSupabase({ data: [], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     await svc.getTopSkills({ teamId: TEAM_ID, window: '30d' })
 
@@ -91,7 +95,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
       framework_breakdown: { 'claude-code': 35, unknown: 7 },
     }
     const { client } = createMockSupabase({ data: [rpcRow], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getTopSkills({ teamId: TEAM_ID, window: '30d' })
 
@@ -129,7 +135,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
       },
     ]
     const { client } = createMockSupabase({ data: rows, error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getTopSkills({ teamId: TEAM_ID, window: '30d' })
 
@@ -140,7 +148,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
 
   it('includes coverage_note in response', async () => {
     const { client } = createMockSupabase({ data: [], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getTopSkills({ teamId: TEAM_ID, window: '30d' })
 
@@ -159,7 +169,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
       framework_breakdown: {},
     }))
     const { client } = createMockSupabase({ data: rpcRows, error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getTopSkills({ teamId: TEAM_ID, window: '30d', limit: 3 })
 
@@ -170,7 +182,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
 
   it('returns error envelope on RPC error — does not throw', async () => {
     const { client } = createMockSupabase({ data: null, error: { message: 'permission denied' } })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getTopSkills({ teamId: TEAM_ID, window: '30d' })
 
@@ -203,7 +217,9 @@ describe('SupabaseAnalyticsService.getTopSkills', () => {
       ],
       error: null,
     })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getTopSkills({ teamId: TEAM_ID, window: '7d' })
 
@@ -230,7 +246,9 @@ describe('SupabaseAnalyticsService.getStaleSkills', () => {
 
   it('calls analytics_skill_stale with correct params', async () => {
     const { client, rpc } = createMockSupabase({ data: [], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     await svc.getStaleSkills({ teamId: TEAM_ID, thresholdInvocations: 5, windowDays: 90 })
 
@@ -248,9 +266,15 @@ describe('SupabaseAnalyticsService.getStaleSkills', () => {
       invocation_count: 2,
     }
     const { client } = createMockSupabase({ data: [rpcRow], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
-    const result = await svc.getStaleSkills({ teamId: TEAM_ID, thresholdInvocations: 5, windowDays: 90 })
+    const result = await svc.getStaleSkills({
+      teamId: TEAM_ID,
+      thresholdInvocations: 5,
+      windowDays: 90,
+    })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -274,9 +298,15 @@ describe('SupabaseAnalyticsService.getStaleSkills', () => {
       data: [{ skill_name: 'a/dead', last_invoked: null, invocation_count: 0 }],
       error: null,
     })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
-    const result = await svc.getStaleSkills({ teamId: TEAM_ID, thresholdInvocations: 3, windowDays: 90 })
+    const result = await svc.getStaleSkills({
+      teamId: TEAM_ID,
+      thresholdInvocations: 3,
+      windowDays: 90,
+    })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -285,9 +315,15 @@ describe('SupabaseAnalyticsService.getStaleSkills', () => {
 
   it('returns error envelope on RPC error — does not throw', async () => {
     const { client } = createMockSupabase({ data: null, error: { message: 'rls violation' } })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
-    const result = await svc.getStaleSkills({ teamId: TEAM_ID, thresholdInvocations: 5, windowDays: 90 })
+    const result = await svc.getStaleSkills({
+      teamId: TEAM_ID,
+      thresholdInvocations: 5,
+      windowDays: 90,
+    })
 
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -298,7 +334,11 @@ describe('SupabaseAnalyticsService.getStaleSkills', () => {
   it('returns error envelope when getSupabaseClient throws', async () => {
     mockGetClient.mockRejectedValue(new Error('SUPABASE_ANON_KEY required'))
 
-    const result = await svc.getStaleSkills({ teamId: TEAM_ID, thresholdInvocations: 5, windowDays: 90 })
+    const result = await svc.getStaleSkills({
+      teamId: TEAM_ID,
+      thresholdInvocations: 5,
+      windowDays: 90,
+    })
 
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -310,9 +350,15 @@ describe('SupabaseAnalyticsService.getStaleSkills', () => {
       data: [{ skill_name: 'a/never-used', last_invoked: null, invocation_count: 0 }],
       error: null,
     })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
-    const result = await svc.getStaleSkills({ teamId: TEAM_ID, thresholdInvocations: 5, windowDays: 90 })
+    const result = await svc.getStaleSkills({
+      teamId: TEAM_ID,
+      thresholdInvocations: 5,
+      windowDays: 90,
+    })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -337,7 +383,9 @@ describe('SupabaseAnalyticsService.getCooccurrence', () => {
 
   it('calls analytics_skill_cooccurrence with correct params', async () => {
     const { client, rpc } = createMockSupabase({ data: [], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     await svc.getCooccurrence({ teamId: TEAM_ID, windowDays: 30 })
 
@@ -348,9 +396,15 @@ describe('SupabaseAnalyticsService.getCooccurrence', () => {
   })
 
   it('returns cooccurrence panel shape on success', async () => {
-    const rpcRow = { skill_a: 'skillsmith/linear', skill_b: 'skillsmith/ship', cooccurrence_count: 15 }
+    const rpcRow = {
+      skill_a: 'skillsmith/linear',
+      skill_b: 'skillsmith/ship',
+      cooccurrence_count: 15,
+    }
     const { client } = createMockSupabase({ data: [rpcRow], error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getCooccurrence({ teamId: TEAM_ID, windowDays: 30 })
 
@@ -373,7 +427,9 @@ describe('SupabaseAnalyticsService.getCooccurrence', () => {
       { skill_a: 'a/baz', skill_b: 'a/qux', cooccurrence_count: 2 },
     ]
     const { client } = createMockSupabase({ data: rows, error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getCooccurrence({ teamId: TEAM_ID, windowDays: 30, minCount: 5 })
 
@@ -389,7 +445,9 @@ describe('SupabaseAnalyticsService.getCooccurrence', () => {
       { skill_a: 'a/baz', skill_b: 'a/qux', cooccurrence_count: 3 },
     ]
     const { client } = createMockSupabase({ data: rows, error: null })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getCooccurrence({ teamId: TEAM_ID, windowDays: 30 })
 
@@ -400,7 +458,9 @@ describe('SupabaseAnalyticsService.getCooccurrence', () => {
 
   it('returns error envelope on RPC error — does not throw', async () => {
     const { client } = createMockSupabase({ data: null, error: { message: 'timeout' } })
-    mockGetClient.mockResolvedValue(client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>)
+    mockGetClient.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getSupabaseClient>>
+    )
 
     const result = await svc.getCooccurrence({ teamId: TEAM_ID, windowDays: 30 })
 
