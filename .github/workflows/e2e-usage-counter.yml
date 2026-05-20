@@ -91,3 +91,24 @@ jobs:
             *.log
           retention-days: 7
           if-no-files-found: ignore
+
+      - name: Alert on failure
+        if: failure()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        run: |
+          BODY=$(jq -n \
+            --arg msg "E2E Usage Counter failed on $SHA ($REF)" \
+            --arg rid "$RUN_ID" \
+            --arg url "$RUN_URL" \
+            '{type:"e2e_usage_counter_failed", message:$msg, workflow:"E2E Usage Counter", runId:$rid, runUrl:$url}')
+          curl -s -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/alert-notify" || true
