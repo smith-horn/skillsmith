@@ -44,7 +44,7 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "3.1046.0",
     "@opentelemetry/instrumentation-aws-sdk": "0.73.0",
-    "@skillsmith/core": "^0.7.0",
+    "@skillsmith/core": "^0.7.2",
     "jose": "^6.2.2",
     "stripe": "20.3.0",
     "zod": "4.2.1"

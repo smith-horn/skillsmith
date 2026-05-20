@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.7.2
+
+- **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)
+- **Chore**: SMI-5009 promote @huggingface/transformers to optionalDependency + MCP startup capability probe (#870) (#1252)
+- **Chore**: SMI-5006 move billing module to @smith-horn/enterprise + remove core shim (#867, #868) (#1246)
+
 ## v0.7.1
 
 - **Chore**: SMI-5008 — removed direct dependency on `stripe`. Billing lives in `@smith-horn/enterprise` since v0.7.0; this release completes the dependency-graph cleanup. Consumers of `@skillsmith/core` no longer pull in the ~3MB Stripe SDK or its transitive deps. (#869)
