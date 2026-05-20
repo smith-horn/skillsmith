@@ -259,7 +259,13 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
 
         try {
           // Fetch OAuth URL without immediately redirecting so we can inspect it
-          // and use it in the fallback banner if the redirect is swallowed (SMI-2757)
+          // and use it in the fallback banner if the redirect is swallowed (SMI-2757).
+          // SMI-5055 note: signInWithOAuth({skipBrowserRedirect}) in
+          // @supabase/supabase-js@2.105 builds the URL synchronously, so a
+          // withAuthTimeout wrapper here is dead code today. The actual
+          // GoTrue hop is the browser navigation below; if GoTrue is degraded
+          // (status.supabase.com), the user lands on an opaque Cloudflare
+          // 504 page and we have no client-side hook to intercept it.
           const { data, error } = await supabase.auth.signInWithOAuth({
             provider: 'github',
             options: {
