@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: SMI-5009 — `@huggingface/transformers` is now an `optionalDependency` (was a regular `dependency`). Aligns the declared graph with the actual runtime contract per ADR-009: `loadTransformersModule()` already returns `null` on import failure and `EmbeddingService` already falls back to mock embeddings (`SKILLSMITH_USE_MOCK_EMBEDDINGS=true`). Consumers installing with `npm install --no-optional` (or on hosts without prebuilt ONNX binaries) now skip the ~50 MB native install and the runtime degrades gracefully to keyword-only search. To restore real embeddings, install `@huggingface/transformers` explicitly. Companion change in `@skillsmith/mcp-server`: structured stderr warning at server boot when transformers is unavailable (was previously silent). (#870)
+
 ## v0.7.0
 
 - **BREAKING**: SMI-5006 — billing module relocated to `@smith-horn/enterprise/billing`. The `./billing` subpath export was removed (no shim was shipped), and the 27 root-level re-exports of billing symbols (`StripeClient`, `BillingService`, `StripeWebhookHandler`, `GDPRComplianceService`, `StripeReconciliationJob`, and associated types) were removed from `services.ts`. The companion enterprise feature note lands in `@smith-horn/enterprise` Unreleased.

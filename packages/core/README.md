@@ -24,6 +24,8 @@ See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 npm install @skillsmith/core
 ```
 
+`@huggingface/transformers` is an `optionalDependency` — when it cannot be installed (no prebuilt ONNX binary, `--no-optional` flag, restricted hosts) `@skillsmith/core` falls back to mock embeddings per [ADR-009](../../docs/internal/adr/009-embedding-service-fallback.md). To force the mock fallback explicitly, set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`. The `@skillsmith/mcp-server` boot logs a structured stderr warning when the fallback is engaged (SMI-5009).
+
 ## Quick Start
 
 ```typescript
