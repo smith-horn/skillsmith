@@ -116,7 +116,7 @@ Git-crypt smudge filters can silently switch branches during stash/pop (includin
 
 **All secrets via Varlock. Never expose API keys in terminal output.** Commit `.env.schema` (defines `@sensitive`) and `.env.example` (placeholders); **never** `.env`. Run with secrets: `varlock run -- npm test`. Validate: `varlock load` (masked). **Never** `echo $SECRET` or `cat .env`. Never ask users to paste secrets in chat. See [AI Agent Secret Handling](docs/internal/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956).
 
-**Supabase pooler access**: `SUPABASE_POOLER_URL` has a literal `[YOUR-PASSWORD]` placeholder. Use the canonical helper: `varlock run -- ./scripts/pooler-psql.sh`. Routes through transaction pooler (port 6543), avoiding PostgREST's 8s `statement_timeout`. Requires Docker container running. Full rationale: script header.
+**Supabase pooler access**: `SUPABASE_POOLER_URL` has a literal `[YOUR-PASSWORD]` placeholder. Two canonical helpers, both via `varlock run --` (host tool — not inside the container): `./scripts/pooler-psql.sh` (transaction pooler, port 6543) for ad-hoc queries, single-statement DDL, short writes — bypasses PostgREST's 8s `statement_timeout`. `./scripts/pooler-psql-session.sh` (session pooler, port 5432) for long-running maintenance — `VACUUM`, `REINDEX CONCURRENTLY`, stored procedures with `COMMIT` between batches, anything where the transaction pooler returns `ECHECKOUTTIMEOUT` (SMI-4968 retro / SMI-4999). Requires Docker container running. Full rationale: script headers.
 
 ---
 
