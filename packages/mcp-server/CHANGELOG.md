@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.2
+
+- **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)
+
 - **Chore**: SMI-5006 — bump `@skillsmith/core` dependency range to `^0.7.0` (BREAKING in core: billing moved to `@smith-horn/enterprise/billing`). The standalone Stripe webhook endpoint no longer imports from `@skillsmith/core/billing`; it now declares a local structural type for `StripeWebhookHandler` so production wiring (and tests) can pass in the canonical `@smith-horn/enterprise/billing` class without a workspace cycle. No runtime change for downstream MCP consumers.
 - **Feature**: SMI-5009 — startup capability probe. `main()` now calls `probeEmbeddingCapability()` before connecting the stdio transport. Probe runs `EmbeddingService.checkAvailability()` inside a `Promise.race` with a hard 2 s `Symbol` timeout sentinel and a try/catch wrapper — it can neither block nor crash server boot. On success the probe is silent; when the mock fallback is engaged (`@huggingface/transformers` absent or `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`), the probe emits a single structured stderr line including a remediation hint: `[skillsmith] embeddings: mock (transformers unavailable: <reason>; install @huggingface/transformers or set SKILLSMITH_USE_MOCK_EMBEDDINGS=true to silence)`. Logs are stderr-only to avoid corrupting the MCP stdio protocol frame. Companion to the `@skillsmith/core` optional-dep promotion in the same PR. (#870)
 - **Chore**: SMI-4539 — track `@skillsmith/core` dependency range to `^0.6.3` (synthetic patch release verifying the npm trusted-publisher OIDC publish path, PR #1171). No functional change.
