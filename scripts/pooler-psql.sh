@@ -13,6 +13,13 @@
 # audit_logs LIKE queries at statement_timeout 8s (error 57014). Transaction
 # pooler bypasses that. Do not regress away from this.
 #
+# See also: pooler-psql-session.sh — session pooler (port 5432) sibling for
+# long-running maintenance (VACUUM, REINDEX CONCURRENTLY, procedures with
+# COMMIT between batches). The transaction pooler can return FATAL:
+# (ECHECKOUTTIMEOUT) when its server-connection budget is exhausted by such
+# workloads; the session pooler holds a dedicated server connection for the
+# duration. SMI-4968 retro / SMI-4999.
+#
 # Usage:
 #   varlock run -- ./scripts/pooler-psql.sh -c 'SELECT version();'
 #   echo 'SELECT 1;' | varlock run -- ./scripts/pooler-psql.sh
