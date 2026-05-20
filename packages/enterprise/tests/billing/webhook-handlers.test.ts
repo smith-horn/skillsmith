@@ -31,7 +31,7 @@ import {
   extractSubscriptionIdFromInvoice,
   type WebhookHandlerContext,
 } from '../../src/billing/webhook-handlers.js'
-import type { Database } from '../../src/db/database-interface.js'
+import type { Database } from '@skillsmith/core'
 import type { StripeClient } from '../../src/billing/StripeClient.js'
 import type { BillingService } from '../../src/billing/BillingService.js'
 

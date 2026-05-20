@@ -1,8 +1,14 @@
 /**
- * SMI-1062: Billing Module
+ * SMI-5006: Billing module — relocated from @skillsmith/core/billing.
  *
  * Stripe billing integration for Skillsmith subscriptions.
  * Provides subscription management, checkout, and invoice handling.
+ *
+ * Import path:
+ *   import { ... } from '@smith-horn/enterprise/billing'
+ *
+ * The previous `@skillsmith/core/billing` subpath was removed in core 0.7.0
+ * (BREAKING). No shim is shipped — consumers must update imports.
  */
 
 // Types

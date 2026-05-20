@@ -5,10 +5,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { createDatabaseSync } from '../../src/db/createDatabase.js'
-import type { Database } from '../../src/db/database-interface.js'
+import { createDatabaseSync } from '@skillsmith/core'
+import type { Database } from '@skillsmith/core'
 import { GDPRComplianceService } from '../../src/billing/GDPRComplianceService.js'
-import { initializeAnalyticsSchema } from '../../src/analytics/schema.js'
+import { initializeAnalyticsSchema } from '@skillsmith/core'
 import { randomUUID } from 'crypto'
 
 /**

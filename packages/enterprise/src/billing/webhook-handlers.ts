@@ -7,8 +7,8 @@
 
 import type Stripe from 'stripe'
 import { createHash, randomUUID } from 'crypto'
-import type { Database as DatabaseType } from '../db/database-interface.js'
-import { createLogger } from '../utils/logger.js'
+import type { Database as DatabaseType } from '@skillsmith/core'
+import { createLogger } from '@skillsmith/core'
 import { StripeClient } from './StripeClient.js'
 import type { BillingService } from './BillingService.js'
 import type { LicenseTier, StripeCustomerId, StripeSubscriptionId } from './types.js'

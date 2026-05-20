@@ -8,8 +8,8 @@
  * All operations are logged for audit purposes.
  */
 
-import type { Database as DatabaseType } from '../db/database-interface.js'
-import { createLogger } from '../utils/logger.js'
+import type { Database as DatabaseType } from '@skillsmith/core'
+import { createLogger } from '@skillsmith/core'
 import type { StripeClient } from './StripeClient.js'
 import type {
   GDPRComplianceServiceConfig,

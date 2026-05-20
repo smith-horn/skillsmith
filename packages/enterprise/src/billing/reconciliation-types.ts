@@ -4,7 +4,7 @@
  * Type definitions for the reconciliation job.
  */
 
-import type { Database as DatabaseType } from '../db/database-interface.js'
+import type { Database as DatabaseType } from '@skillsmith/core'
 import type { StripeClient } from './StripeClient.js'
 
 // ============================================================================

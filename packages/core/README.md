@@ -501,6 +501,22 @@ import {
 } from '@skillsmith/core'
 ```
 
+### Billing module — relocated in 0.7.0 (BREAKING)
+
+SMI-5006 moved Stripe billing (`StripeClient`, `BillingService`, `StripeWebhookHandler`,
+`GDPRComplianceService`, `StripeReconciliationJob`) to
+[`@smith-horn/enterprise`](../enterprise/README.md). Update imports:
+
+```typescript
+// Before (core ≤ 0.6.x)
+import { StripeWebhookHandler } from '@skillsmith/core/billing'
+
+// After (core ≥ 0.7.0)
+import { StripeWebhookHandler } from '@smith-horn/enterprise/billing'
+```
+
+No back-compat shim is shipped — the `./billing` subpath export was removed.
+
 ## Requirements
 
 - Node.js >= 22.0.0

@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createDatabaseSync } from '../../src/db/createDatabase.js'
-import type { Database } from '../../src/db/database-interface.js'
+import { createDatabaseSync } from '@skillsmith/core'
+import type { Database } from '@skillsmith/core'
 import { BillingService } from '../../src/billing/BillingService.js'
 import type { StripeClient } from '../../src/billing/StripeClient.js'
 import type {
@@ -15,7 +15,7 @@ import type {
   StripeCheckoutSessionId,
   StripeEventId,
 } from '../../src/billing/types.js'
-import { initializeAnalyticsSchema } from '../../src/analytics/schema.js'
+import { initializeAnalyticsSchema } from '@skillsmith/core'
 
 // Mock StripeClient
 function createMockStripeClient(): StripeClient {

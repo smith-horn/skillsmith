@@ -18,7 +18,7 @@ import type Stripe from 'stripe'
 import { StripeWebhookHandler } from '../../src/billing/StripeWebhookHandler.js'
 import type { StripeClient } from '../../src/billing/StripeClient.js'
 import type { BillingService } from '../../src/billing/BillingService.js'
-import type { Database } from '../../src/db/database-interface.js'
+import type { Database } from '@skillsmith/core'
 import { BillingError } from '../../src/billing/types.js'
 
 // ============================================================================
