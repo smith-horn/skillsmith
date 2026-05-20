@@ -28,6 +28,7 @@ import {
   parseCiYmlJobs,
   checkCarveOutInvariants,
   findUnsafeSkillsRecreateMigrations,
+  parseBashArray,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -3637,25 +3638,8 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
         })
         .sort()
 
-      // Bash array parser — captures everything between `<NAME>=(` and the
-      // first solo `)` on its own line. Tolerates quoted/unquoted entries and
-      // line-comments. Used for the two shell scripts.
-      const parseBashArray = (src, arrayName) => {
-        const re = new RegExp(`^${arrayName}=\\(\\s*\\n([\\s\\S]*?)^\\)\\s*$`, 'm')
-        const m = src.match(re)
-        if (!m) return null
-        const body = m[1]
-        const entries = new Set()
-        for (const rawLine of body.split('\n')) {
-          // Strip inline `# ...` comments and surrounding whitespace.
-          const line = rawLine.replace(/#.*$/, '').trim()
-          if (!line) continue
-          // Each line is one entry: bare-word OR "quoted" OR 'quoted'.
-          const tok = line.match(/^["']?([a-z0-9][a-z0-9-]*)["']?$/i)
-          if (tok) entries.add(tok[1])
-        }
-        return entries
-      }
+      // parseBashArray is imported from audit-standards-helpers.mjs (Check 47,
+      // SMI-4963). Exported there so it can be unit-tested via vitest.
 
       const deploySrc = readFileSync(DEPLOY_SCRIPT, 'utf8')
       const validateSrc = readFileSync(VALIDATE_SCRIPT, 'utf8')
@@ -3674,17 +3658,43 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
             'has not changed'
         )
       } else {
-        // Parse config.toml for [functions.<name>] verify_jwt = false blocks
-        // (mirrors Check 10's regex, applied here to enforce the NO_VERIFY →
-        // config.toml predicate).
+        // Parse config.toml for [functions.<name>] verify_jwt = false blocks.
+        // Uses [^\[]*? so that any keys between the section header and
+        // verify_jwt (e.g. future service_role or timeout settings) are tolerated
+        // without causing a false-negative. Stops before the next section header.
         const configNoVerify = new Set()
-        const configRe = /\[functions\.([a-z0-9-]+)\]\s*\n\s*verify_jwt\s*=\s*false/gi
+        const configRe = /\[functions\.([a-z0-9_-]+)\][^\[]*?verify_jwt\s*=\s*false/gis
         let cMatch
         while ((cMatch = configRe.exec(configSrc)) !== null) {
           configNoVerify.add(cMatch[1])
         }
 
+        const deployableFnsSet = new Set(deployableFns)
         const failures = []
+
+        // Reverse direction: entries in deploy/validate arrays that have no
+        // corresponding supabase/functions/<name>/index.ts. A typo in an array
+        // entry (e.g. 'foobar' when the dir is 'foo-bar') would otherwise be
+        // invisible — the forward-direction loop only iterates deployableFns.
+        const allArrayEntries = new Set([
+          ...noVerifyDeploy,
+          ...verifyDeploy,
+          ...anonValidate,
+          ...authValidate,
+          ...serviceValidate,
+        ])
+        for (const entry of [...allArrayEntries].sort()) {
+          if (!deployableFnsSet.has(entry)) {
+            failures.push({
+              fn: entry,
+              problems: [
+                `  - Listed in a deploy/validate array but has no ` +
+                  `supabase/functions/${entry}/index.ts (typo or stale entry?)`,
+              ],
+            })
+          }
+        }
+
         for (const fn of deployableFns) {
           const inNoVerify = noVerifyDeploy.has(fn)
           const inVerify = verifyDeploy.has(fn)
@@ -3729,14 +3739,17 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
         if (failures.length === 0) {
           pass(
             `Check 47: ${deployableFns.length} deployable function(s) — ` +
-              `all coherently registered across deploy-script + validate-script + config.toml`
+              `all coherently registered across deploy-script + validate-script + config.toml; ` +
+              `no stale array entries`
           )
         } else {
           for (const { fn, problems } of failures) {
             fail(
-              `Check 47: ${fn} is not correctly registered\n${problems.join('\n')}\n  Note: the deploy --no-verify-jwt flag and the runtime auth model ` +
-                `are orthogonal — a function may legitimately be NO_VERIFY ` +
-                `(anonymous deploy) + SERVICE_ROLE (validates its own bearer). ` +
+              `Check 47: ${fn} is not correctly registered\n${problems.join('\n')}`,
+              `The deploy --no-verify-jwt flag and the runtime auth model are orthogonal — ` +
+                `a function may legitimately be NO_VERIFY (anonymous deploy) + SERVICE_ROLE ` +
+                `(validates its own bearer). Fix the specific gap(s) above; do not "fix" ` +
+                `perceived cross-script mismatches. ` +
                 `See .claude/development/edge-function-patterns.md § Function Auth Matrix.`
             )
           }
