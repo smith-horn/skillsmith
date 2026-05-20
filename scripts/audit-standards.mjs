@@ -3613,6 +3613,35 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
   const VALIDATE_SCRIPT = 'scripts/validate-edge-functions.sh'
   const CONFIG_TOML = 'supabase/config.toml'
 
+  // SMI-5003: predicate 4 (test-neighbor) suppression list. Each entry has
+  // a corresponding test backfill tracked by SMI-5011; entries are removed
+  // only after the test file lands. New deployable functions fail-fast —
+  // the allowlist is not extensible (CI will reject new entries via a
+  // future audit guard or code review).
+  const TEST_BACKFILL_ALLOWLIST = new Set([
+    'alert-notify',
+    'checkout',
+    'contact-submit',
+    'coverage-report',
+    'create-portal-session',
+    'early-access-signup',
+    'email-inbound',
+    'expire-complimentary',
+    'generate-license',
+    'health',
+    'list-invoices',
+    'ops-report',
+    'quota-monitor',
+    'regenerate-license',
+    'skills-outreach',
+    'skills-outreach-preferences',
+    'skills-recommend',
+    'skills-refresh-metadata',
+    'stats',
+    'stripe-webhook',
+    'update-seat-count',
+  ])
+
   if (
     !existsSync(FUNCTIONS_DIR) ||
     !existsSync(DEPLOY_SCRIPT) ||
@@ -3707,7 +3736,11 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
 
           const configMissing = inNoVerify && !configNoVerify.has(fn)
 
-          if (deployCount === 1 && validateCount === 1 && !configMissing) continue
+          const testMissing =
+            !existsSync(join(FUNCTIONS_DIR, fn, 'index.test.ts')) &&
+            !TEST_BACKFILL_ALLOWLIST.has(fn)
+
+          if (deployCount === 1 && validateCount === 1 && !configMissing && !testMissing) continue
 
           const problems = []
           if (deployCount === 0) {
@@ -3731,6 +3764,14 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
             problems.push(
               `  - In NO_VERIFY_JWT_FUNCTIONS but missing ` +
                 `[functions.${fn}] with verify_jwt = false from supabase/config.toml`
+            )
+          }
+          if (testMissing) {
+            problems.push(
+              `  - Missing sibling test file: ` +
+                `supabase/functions/${fn}/index.test.ts ` +
+                `(predicate 4 enforces file presence only; SMI-5010 will add ` +
+                `depth enforcement)`
             )
           }
           failures.push({ fn, problems })
