@@ -98,3 +98,13 @@ packages/website/src/pages/complete-profile.astro
 packages/website/src/pages/sitemap.xml.ts
 packages/website/src/pages/robots.txt.ts
 packages/website/src/pages/feed.xml.ts
+
+# SMI-4294 team invite flow — smoke verification is manual on first deploy
+# (per plan §"Smoke vs CI"). Both surfaces depend on a real authenticated
+# session + a live team_invitations row, which the current smoke harness
+# cannot synthesize without persisting test data. After the first manual
+# smoke run lands, these get moved into surfaces.json with a check that
+# exercises /invite/[token] in the not-signed-in flow + the gateway-verified
+# 401 path on team-invite-send.
+supabase/functions/team-invite-send/**
+packages/website/src/pages/invite/[token].astro

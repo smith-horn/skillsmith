@@ -4,9 +4,7 @@
  *
  * @see SMI-3897: Team Admin Dashboard (Wave 2b)
  * @see SMI-4292: Wave 5A — live member list (closes GitHub #605)
- *
- * Invite + pending-invites are descoped to SMI-4294 (team_invitations schema
- * does not exist yet — plan-review finding C2).
+ * @see SMI-4294: Wave 4 — invite flow + pending-invites list (this file).
  */
 
 export const prerender = false
@@ -14,6 +12,7 @@ export const prerender = false
 import { ClientRouter } from 'astro:transitions'
 import Footer from '../../../components/Footer.astro'
 import Nav from '../../../components/Nav.astro'
+import TeamInviteModal from '../../../components/TeamInviteModal.astro'
 import TeamNav from '../../../components/TeamNav.astro'
 import { getSupabaseConfig } from '../../../lib/supabase-config'
 
@@ -69,15 +68,15 @@ const supabaseConfig = getSupabaseConfig()
         <section class="section">
           <div class="section-header">
             <h2 id="members-heading">Members</h2>
-            <!-- Invite flow is descoped to SMI-4294 (team_invitations schema does not exist yet). -->
             <button
               class="btn btn-primary"
               id="invite-btn"
-              disabled
-              aria-label="Invite member (coming soon)"
-              title="Invite flow coming soon"
+              type="button"
+              data-action="open-invite-modal"
+              aria-haspopup="dialog"
+              aria-controls="team-invite-modal"
             >
-              Invite Member (Coming soon)
+              Invite Member
             </button>
           </div>
 
@@ -86,16 +85,12 @@ const supabaseConfig = getSupabaseConfig()
 
         <section class="section">
           <h2>Pending Invites</h2>
-          <div class="empty-state">
-            <p>Pending invites not available in this release.</p>
-            <p class="text-muted">
-              Team invitation flow is coming soon. Current seats can be adjusted from the
-              <a href="/account/subscription/">subscription page</a>.
-            </p>
-          </div>
+          <div id="pending-list" class="pending-list" aria-live="polite"></div>
         </section>
       </div>
     </main>
+
+    <TeamInviteModal />
 
     <Footer compact />
   </body>
@@ -290,12 +285,6 @@ const supabaseConfig = getSupabaseConfig()
     text-decoration: underline;
   }
 
-  .text-muted {
-    color: #6b7280;
-    font-size: 0.875rem;
-    margin-top: 0.25rem;
-  }
-
   .loading-state {
     padding: 4rem 2rem;
     text-align: center;
@@ -320,16 +309,61 @@ const supabaseConfig = getSupabaseConfig()
     margin-bottom: 1rem;
   }
 
+  .pending-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .pending-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #2a2a2f;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .pending-row:last-child {
+    border-bottom: none;
+  }
+  .pending-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+  .pending-email {
+    font-weight: 500;
+    font-size: 0.9375rem;
+  }
+  .pending-meta {
+    color: #9ca3af;
+    font-size: 0.8125rem;
+  }
+  .pending-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .pending-actions .btn {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+
   @media (max-width: 640px) {
     .section-header {
       flex-direction: column;
       align-items: flex-start;
       gap: 0.75rem;
     }
-
     .member-meta {
       width: 100%;
       justify-content: space-between;
+    }
+    .pending-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .pending-actions {
+      width: 100%;
     }
   }
 </style>
@@ -337,6 +371,7 @@ const supabaseConfig = getSupabaseConfig()
 <script>
   import { createClient } from '@supabase/supabase-js'
   import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
+  import { refreshPendingList, wireInviteFlow } from '../../../lib/team-invite-ui'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -446,6 +481,9 @@ const supabaseConfig = getSupabaseConfig()
           })
           .join('')
       }
+
+      await refreshPendingList(supabase, teamId)
+      wireInviteFlow(supabase, teamId)
 
       showState('content')
     } catch (err) {
