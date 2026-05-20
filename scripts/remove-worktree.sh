@@ -311,13 +311,14 @@ main() {
     # level. Untracked entries (??) are excluded — they're typically
     # node_modules / build artifacts and don't represent unsaved work.
     if [[ "$force_flag" != "--force" ]]; then
-        # `grep -cv` exits 1 when zero non-?? lines match. Under
-        # `set -euo pipefail`, that exit propagates through the pipe
-        # and aborts the script on a CLEAN worktree (the common case).
-        # `|| echo 0` collapses both "no match" and "grep error" to 0;
-        # any genuine dirty lines emit their count first.
+        # `grep -v '^??'` exits 1 when zero non-?? lines match. Under
+        # `set -euo pipefail`, that exit propagates through the pipe and
+        # prevents `wc -l` from running. Wrapping in `{ ... || true; }`
+        # absorbs the no-match exit so wc -l always receives input and
+        # produces a clean single-line integer — no double-output, no
+        # spurious syntax error in the -gt comparison below.
         local dirty_count
-        dirty_count=$(cd "$worktree_path" && git status --porcelain 2>/dev/null | grep -cv '^??' || echo 0)
+        dirty_count=$(cd "$worktree_path" && git status --porcelain 2>/dev/null | { grep -v '^??' || true; } | wc -l | tr -d ' ')
         if [[ "$dirty_count" -gt 0 ]]; then
             error "Worktree has $dirty_count uncommitted change(s).
 
