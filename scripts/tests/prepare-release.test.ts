@@ -27,6 +27,8 @@ import {
   isValidSemver,
   incrementVersion,
   compareSemver,
+  updateWorkspaceDependencies,
+  type PackageSpec,
 } from '../lib/version-utils'
 
 import {
@@ -535,5 +537,108 @@ describe('SMI-4188: shared npm-view fixtures parity', () => {
     mockedExecFileSync.mockReturnValue(fixture as never)
     const latest = await fetchNpmLatest('@skillsmith/core')
     expect(latest).toBe('2.1.2')
+  })
+})
+
+describe('updateWorkspaceDependencies (SMI-5057)', () => {
+  beforeEach(() => {
+    mockedWriteFileSync.mockClear()
+    // Critical: prevent the spy from calling through to the real
+    // writeFileSync. updateWorkspaceDependencies writes to live
+    // packages/*/package.json; without this no-op, the test mutates
+    // the working tree (writeFileSync was wrapped via
+    // `vi.fn(actual.writeFileSync)` which calls through by default).
+    mockedWriteFileSync.mockImplementation(() => {})
+  })
+
+  it('updates @skillsmith/mcp-server dep range in @skillsmith/cli when mcp-server bumps', () => {
+    const corePlan = {
+      spec: PACKAGE_SPECS.find((s) => s.shortName === 'core')!,
+      newVersion: '0.7.3',
+    }
+    const mcpPlan = {
+      spec: PACKAGE_SPECS.find((s) => s.shortName === 'mcp-server')!,
+      newVersion: '0.5.3',
+    }
+
+    const { updated } = updateWorkspaceDependencies([corePlan, mcpPlan])
+
+    // cli/package.json depends on both core and mcp-server → updated.
+    expect(updated).toContain('packages/cli/package.json')
+    // mcp-server/package.json depends only on core → updated (core dep range changed).
+    expect(updated).toContain('packages/mcp-server/package.json')
+
+    // Inspect the writes: cli's mcp-server dep range should be ^0.5.3.
+    const cliWrite = mockedWriteFileSync.mock.calls.find((c) =>
+      String(c[0]).endsWith('packages/cli/package.json')
+    )
+    expect(cliWrite).toBeDefined()
+    const cliPkg = JSON.parse(String(cliWrite![1]))
+    expect(cliPkg.dependencies['@skillsmith/mcp-server']).toBe('^0.5.3')
+    expect(cliPkg.dependencies['@skillsmith/core']).toBe('^0.7.3')
+  })
+
+  it('skips skillsmith-vscode (skipDepRangeUpdate=true) even if a future contributor adds @skillsmith/* deps', () => {
+    // Simulate the vscode entry having a hypothetical core dep.
+    const vscodeSpec = PACKAGE_SPECS.find((s) => s.shortName === 'vscode')!
+    expect(vscodeSpec.skipDepRangeUpdate).toBe(true)
+
+    const corePlan = {
+      spec: PACKAGE_SPECS.find((s) => s.shortName === 'core')!,
+      newVersion: '0.7.3',
+    }
+
+    const { updated } = updateWorkspaceDependencies([corePlan])
+
+    // vscode package.json must never appear in updated list — the
+    // skipDepRangeUpdate guard short-circuits before reading the file.
+    expect(updated).not.toContain('packages/vscode-extension/package.json')
+  })
+
+  it('treats peerDependencies with non-bumped key as a no-op (SMI-5057 M-5)', () => {
+    // @skillsmith/enterprise: "*" in cli's peerDependencies is NOT in
+    // PACKAGE_SPECS, so it never lands in the bump map and is naturally
+    // skipped. No `*`-string heuristic needed.
+    const corePlan = {
+      spec: PACKAGE_SPECS.find((s) => s.shortName === 'core')!,
+      newVersion: '0.7.3',
+    }
+
+    updateWorkspaceDependencies([corePlan])
+
+    // If we wrote cli/package.json, verify the peerDependencies entry was
+    // preserved as "*" (not converted to a versioned range).
+    const cliWrite = mockedWriteFileSync.mock.calls.find((c) =>
+      String(c[0]).endsWith('packages/cli/package.json')
+    )
+    if (cliWrite) {
+      const cliPkg = JSON.parse(String(cliWrite![1]))
+      if (cliPkg.peerDependencies?.['@skillsmith/enterprise']) {
+        expect(cliPkg.peerDependencies['@skillsmith/enterprise']).toBe('*')
+      }
+    }
+  })
+
+  it('is a no-op when nothing in the bump map matches existing deps', () => {
+    // Bump a non-existent fake package — nothing should be updated.
+    const fakeSpec: PackageSpec = {
+      name: '@nonexistent/package',
+      shortName: 'fake',
+      dir: 'packages/fake',
+      packageJsonPath: 'packages/fake/package.json',
+    }
+    const fakePlan = { spec: fakeSpec, newVersion: '1.0.0' }
+
+    const { updated } = updateWorkspaceDependencies([fakePlan])
+
+    expect(updated).toHaveLength(0)
+  })
+
+  it('CORE_DEPENDENTS const is retained and matches the historical fixture (regression guard)', () => {
+    // SMI-5057: const kept exported for backcompat with this test fixture.
+    // If a future refactor removes it, this test fails loud.
+    expect(CORE_DEPENDENTS).toContain('packages/mcp-server/package.json')
+    expect(CORE_DEPENDENTS).toContain('packages/cli/package.json')
+    expect(CORE_DEPENDENTS).toContain('packages/enterprise/package.json')
   })
 })

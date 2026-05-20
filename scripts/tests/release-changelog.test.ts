@@ -290,6 +290,45 @@ describe('insertVersionSection — SMI-4928 carried-forward dedupe', () => {
     expect(result).toContain('- **Fix**: SMI-4919 — detailed (#1140)')
     expect(result).not.toContain('- **Fix**: SMI-4919 terse')
   })
+
+  // SMI-5057: regression test for spurious blank line between kept auto
+  // entries and carried [Unreleased] entries. PR #1268 cli/mcp-server
+  // CHANGELOGs surfaced the bug after the SMI-4928 fix landed.
+  it('SMI-5057: kept auto + carried entries join with single newline (no blank line in middle)', () => {
+    const body = [
+      '# Changelog',
+      '',
+      '## [Unreleased]',
+      '',
+      '- **Chore**: SMI-5006 — bump core dep range (#869)',
+      '- **Chore**: SMI-4539 — track core dep range (#1171)',
+      '',
+      '## v0.5.1',
+      '',
+      '- old release',
+      '',
+    ].join('\n')
+    // Auto-generated has a different token (SMI-5008) so dedupe keeps it.
+    const autoSection = '## v0.5.2\n\n- **Chore**: SMI-5008 remove stripe SDK (#1262)'
+
+    const result = insertVersionSection(body, autoSection)
+
+    // Extract the v0.5.2 section.
+    const start = result.indexOf('## v0.5.2')
+    const end = result.indexOf('## v0.5.1')
+    const section = result.slice(start, end)
+
+    // Bullets must be contiguous — no blank line between SMI-5008 and SMI-5006.
+    expect(section).toContain('- **Chore**: SMI-5008 remove stripe SDK (#1262)')
+    expect(section).toContain('- **Chore**: SMI-5006 — bump core dep range (#869)')
+    // The exact join: SMI-5008 line, single newline, SMI-5006 line (no blank between).
+    const bulletPattern =
+      /- \*\*Chore\*\*: SMI-5008 remove stripe SDK \(#1262\)\n- \*\*Chore\*\*: SMI-5006/
+    expect(section).toMatch(bulletPattern)
+    // Pre-SMI-5057 produced `SMI-5008 (#1262)\n\n- **Chore**: SMI-5006` —
+    // the regex below is the regression marker. Must NOT appear post-fix.
+    expect(section).not.toMatch(/- \*\*Chore\*\*: SMI-5008[^\n]*\n\n- \*\*Chore\*\*: SMI-5006/)
+  })
 })
 
 describe('extractChangeTokens', () => {
