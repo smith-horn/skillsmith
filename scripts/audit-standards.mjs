@@ -3580,6 +3580,174 @@ console.log(`\n${BOLD}46. Skills-recreate migration FK-cascade guard (SMI-4925)$
   }
 }
 
+// 47. SMI-4963 retro Lesson 1: Edge-function multi-script registration coherence
+//
+// Adding a new edge function requires four coordinated edits:
+//   1. supabase/functions/<name>/index.ts (the function itself)
+//   2. scripts/deploy-edge-functions.sh — append to NO_VERIFY_JWT_FUNCTIONS xor
+//      VERIFY_JWT_FUNCTIONS (controls the --no-verify-jwt deploy flag)
+//   3. scripts/validate-edge-functions.sh — append to ANONYMOUS xor
+//      AUTHENTICATED xor SERVICE_ROLE (encodes the runtime auth model)
+//   4. supabase/config.toml — [functions.<name>] verify_jwt = false iff (2)
+//      placed it in NO_VERIFY_JWT_FUNCTIONS (Check 10 already covers config
+//      and CLAUDE.md surfaces; this check closes the gap on the two shell
+//      scripts and cross-validates against config.toml)
+//
+// PR #1213 silently broke main's deploy workflow for ~50 min by registering
+// coverage-report in the validate script but forgetting the deploy script.
+// This check enforces both registrations and the config.toml predicate.
+//
+// IMPORTANT — the two script taxonomies are ORTHOGONAL:
+//   - deploy-edge-functions.sh tracks the `--no-verify-jwt` deploy FLAG
+//   - validate-edge-functions.sh tracks the runtime AUTH MODEL
+// A function may legitimately be NO_VERIFY (anonymous deploy) AND SERVICE_ROLE
+// (validates its own service-role bearer internally), or NO_VERIFY AND
+// AUTHENTICATED (internal JWT validation in handler) — see Check 10's
+// `NO_VERIFY_JWT_FUNCTIONS` rationale comments. This check enforces per-script
+// presence and the NO_VERIFY → config.toml link, NOT cross-script consistency.
+console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET}`)
+{
+  const FUNCTIONS_DIR = 'supabase/functions'
+  const DEPLOY_SCRIPT = 'scripts/deploy-edge-functions.sh'
+  const VALIDATE_SCRIPT = 'scripts/validate-edge-functions.sh'
+  const CONFIG_TOML = 'supabase/config.toml'
+
+  if (
+    !existsSync(FUNCTIONS_DIR) ||
+    !existsSync(DEPLOY_SCRIPT) ||
+    !existsSync(VALIDATE_SCRIPT) ||
+    !existsSync(CONFIG_TOML)
+  ) {
+    warn('Check 47: required file(s) missing — skipping registration-coherence check')
+  } else {
+    try {
+      // Walk dirs with index.ts (validate-edge-functions.sh:79 idiom — _shared/
+      // has no index.ts so is excluded by the file-existence filter alone).
+      const deployableFns = readdirSync(FUNCTIONS_DIR)
+        .filter((name) => !name.startsWith('.') && !name.startsWith('_'))
+        .filter((name) => {
+          try {
+            return (
+              statSync(join(FUNCTIONS_DIR, name)).isDirectory() &&
+              existsSync(join(FUNCTIONS_DIR, name, 'index.ts'))
+            )
+          } catch {
+            return false
+          }
+        })
+        .sort()
+
+      // Bash array parser — captures everything between `<NAME>=(` and the
+      // first solo `)` on its own line. Tolerates quoted/unquoted entries and
+      // line-comments. Used for the two shell scripts.
+      const parseBashArray = (src, arrayName) => {
+        const re = new RegExp(`^${arrayName}=\\(\\s*\\n([\\s\\S]*?)^\\)\\s*$`, 'm')
+        const m = src.match(re)
+        if (!m) return null
+        const body = m[1]
+        const entries = new Set()
+        for (const rawLine of body.split('\n')) {
+          // Strip inline `# ...` comments and surrounding whitespace.
+          const line = rawLine.replace(/#.*$/, '').trim()
+          if (!line) continue
+          // Each line is one entry: bare-word OR "quoted" OR 'quoted'.
+          const tok = line.match(/^["']?([a-z0-9][a-z0-9-]*)["']?$/i)
+          if (tok) entries.add(tok[1])
+        }
+        return entries
+      }
+
+      const deploySrc = readFileSync(DEPLOY_SCRIPT, 'utf8')
+      const validateSrc = readFileSync(VALIDATE_SCRIPT, 'utf8')
+      const configSrc = readFileSync(CONFIG_TOML, 'utf8')
+
+      const noVerifyDeploy = parseBashArray(deploySrc, 'NO_VERIFY_JWT_FUNCTIONS')
+      const verifyDeploy = parseBashArray(deploySrc, 'VERIFY_JWT_FUNCTIONS')
+      const anonValidate = parseBashArray(validateSrc, 'ANONYMOUS_FUNCTIONS')
+      const authValidate = parseBashArray(validateSrc, 'AUTHENTICATED_FUNCTIONS')
+      const serviceValidate = parseBashArray(validateSrc, 'SERVICE_ROLE_FUNCTIONS')
+
+      if (!noVerifyDeploy || !verifyDeploy || !anonValidate || !authValidate || !serviceValidate) {
+        warn(
+          'Check 47: could not parse one or more bash arrays — verify the ' +
+            'NAME=(\\n...\\n) shape in scripts/{deploy,validate}-edge-functions.sh ' +
+            'has not changed'
+        )
+      } else {
+        // Parse config.toml for [functions.<name>] verify_jwt = false blocks
+        // (mirrors Check 10's regex, applied here to enforce the NO_VERIFY →
+        // config.toml predicate).
+        const configNoVerify = new Set()
+        const configRe = /\[functions\.([a-z0-9-]+)\]\s*\n\s*verify_jwt\s*=\s*false/gi
+        let cMatch
+        while ((cMatch = configRe.exec(configSrc)) !== null) {
+          configNoVerify.add(cMatch[1])
+        }
+
+        const failures = []
+        for (const fn of deployableFns) {
+          const inNoVerify = noVerifyDeploy.has(fn)
+          const inVerify = verifyDeploy.has(fn)
+          const deployCount = (inNoVerify ? 1 : 0) + (inVerify ? 1 : 0)
+
+          const inAnon = anonValidate.has(fn)
+          const inAuth = authValidate.has(fn)
+          const inService = serviceValidate.has(fn)
+          const validateCount = (inAnon ? 1 : 0) + (inAuth ? 1 : 0) + (inService ? 1 : 0)
+
+          const configMissing = inNoVerify && !configNoVerify.has(fn)
+
+          if (deployCount === 1 && validateCount === 1 && !configMissing) continue
+
+          const problems = []
+          if (deployCount === 0) {
+            problems.push(
+              `  - Missing from scripts/deploy-edge-functions.sh ` +
+                `(add to either NO_VERIFY_JWT_FUNCTIONS or VERIFY_JWT_FUNCTIONS)`
+            )
+          } else if (deployCount === 2) {
+            problems.push(`  - Listed in BOTH deploy arrays (must appear in exactly one)`)
+          }
+          if (validateCount === 0) {
+            problems.push(
+              `  - Missing from scripts/validate-edge-functions.sh ` +
+                `(add to ANONYMOUS_FUNCTIONS, AUTHENTICATED_FUNCTIONS, ` +
+                `or SERVICE_ROLE_FUNCTIONS)`
+            )
+          } else if (validateCount > 1) {
+            problems.push(`  - Listed in MULTIPLE validate arrays (must appear in exactly one)`)
+          }
+          if (configMissing) {
+            problems.push(
+              `  - In NO_VERIFY_JWT_FUNCTIONS but missing ` +
+                `[functions.${fn}] with verify_jwt = false from supabase/config.toml`
+            )
+          }
+          failures.push({ fn, problems })
+        }
+
+        if (failures.length === 0) {
+          pass(
+            `Check 47: ${deployableFns.length} deployable function(s) — ` +
+              `all coherently registered across deploy-script + validate-script + config.toml`
+          )
+        } else {
+          for (const { fn, problems } of failures) {
+            fail(
+              `Check 47: ${fn} is not correctly registered\n${problems.join('\n')}\n  Note: the deploy --no-verify-jwt flag and the runtime auth model ` +
+                `are orthogonal — a function may legitimately be NO_VERIFY ` +
+                `(anonymous deploy) + SERVICE_ROLE (validates its own bearer). ` +
+                `See .claude/development/edge-function-patterns.md § Function Auth Matrix.`
+            )
+          }
+        }
+      }
+    } catch (e) {
+      warn(`Could not run Check 47 (edge-function registration coherence): ${e.message}`)
+    }
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
