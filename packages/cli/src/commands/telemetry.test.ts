@@ -362,8 +362,6 @@ const HOOK_PATH_TEST = `${process.env['HOME'] ?? '/tmp'}/.skillsmith/hooks/skill
 // ---------------------------------------------------------------------------
 
 describe('telemetry install-hook', () => {
-  const hookPath = HOOK_PATH_TEST
-
   it('adds PreToolUse and PostToolUse Skill entries to empty settings.json', async () => {
     // Seed template in memfsSync so copyFileSync does not throw
     memfsSync['/stub/templates/skill-telemetry.sh'] = '#!/bin/sh\n'

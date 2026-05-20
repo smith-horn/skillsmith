@@ -178,13 +178,16 @@ export function rotateAnonymousId(manifest: SkillManifest): TelemetryManifest {
   const current: TelemetryManifest = manifest.telemetry ?? { enabled: false }
   const now = new Date()
   const retiredAt = new Date(now.getTime() + OVERLAP_DAYS * MS_PER_DAY)
-  return {
+  const next: TelemetryManifest = {
     ...current,
     anonymousId: generateAnonymousId(),
     anonymousIdCreatedAt: now.toISOString(),
-    previousAnonymousId: current.anonymousId,
     previousAnonymousIdRetiredAt: retiredAt.toISOString(),
   }
+  if (current.anonymousId !== undefined) {
+    next.previousAnonymousId = current.anonymousId
+  }
+  return next
 }
 
 /**

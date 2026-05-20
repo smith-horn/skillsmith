@@ -392,7 +392,9 @@ export function createTelemetryCommand(): Command {
     .action(async (options: { scope: string; endpoint?: string }) => {
       const scope = options.scope === 'project' ? 'project' : 'user'
       try {
-        await runInstallHook({ scope, endpoint: options.endpoint })
+        await runInstallHook(
+          options.endpoint !== undefined ? { scope, endpoint: options.endpoint } : { scope }
+        )
       } catch (err) {
         if (err instanceof TelemetryHookError) {
           console.error(chalk.red(`Error [${err.code}]:`))

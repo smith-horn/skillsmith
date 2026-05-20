@@ -181,8 +181,18 @@ export function removeSkillHookEntries(settings: ClaudeSettings, hookPath: strin
   }
 
   const hooks: ClaudeHooks = { ...settings.hooks }
-  hooks.PreToolUse = filterOut(hooks.PreToolUse)
-  hooks.PostToolUse = filterOut(hooks.PostToolUse)
+  const filteredPre = filterOut(hooks.PreToolUse)
+  if (filteredPre === undefined) {
+    delete hooks.PreToolUse
+  } else {
+    hooks.PreToolUse = filteredPre
+  }
+  const filteredPost = filterOut(hooks.PostToolUse)
+  if (filteredPost === undefined) {
+    delete hooks.PostToolUse
+  } else {
+    hooks.PostToolUse = filteredPost
+  }
 
   return { ...settings, hooks }
 }
