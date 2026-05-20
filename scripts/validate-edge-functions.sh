@@ -50,6 +50,7 @@ AUTHENTICATED_FUNCTIONS=(
   "webhook-dlq"
   "auth-device-approve"
   "auth-device-preview"
+  "team-invite-send"
 )
 
 # Service role functions (scheduled jobs, internal)

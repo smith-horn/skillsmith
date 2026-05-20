@@ -116,6 +116,7 @@ VERIFY_JWT_FUNCTIONS=(
   process-pending-subscription
   skills-outreach
   skills-refresh-metadata
+  team-invite-send
   update-seat-count
   webhook-dlq
 )
