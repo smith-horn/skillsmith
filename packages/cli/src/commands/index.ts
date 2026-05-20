@@ -67,3 +67,6 @@ export { createImportLocalCommand, runImportLocal } from './import-local.js'
 
 // SMI-4590 Wave 4 PR 5/6: `sklx config get/set audit_mode`
 export { createConfigCommand } from './config.js'
+
+// SMI-5021 Wave 3: telemetry management subcommands
+export { createTelemetryCommand } from './telemetry.js'

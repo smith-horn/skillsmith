@@ -48,6 +48,7 @@ import {
   createImportCommand,
   createImportLocalCommand,
   createConfigCommand,
+  createTelemetryCommand,
 } from './commands/index.js'
 import { displayStartupHeader } from './utils/license.js'
 import { checkNodeVersion } from './utils/node-version.js'
@@ -159,5 +160,8 @@ program.addCommand(createInfoCommand())
 
 // SMI-4590 Wave 4 PR 5/6: `sklx config get/set audit_mode`
 program.addCommand(createConfigCommand())
+
+// SMI-5021 Wave 3: telemetry opt-in + Claude Code hook management
+program.addCommand(createTelemetryCommand())
 
 program.parse()
