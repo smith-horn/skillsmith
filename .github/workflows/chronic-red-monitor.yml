@@ -1,0 +1,28 @@
+# SMI-4974: detect workflows that have rotted into chronic-red.
+# Inverts the burden: instead of every contributor checking every workflow's
+# badge, we hear about regressions on a 24h cadence.
+name: Chronic-Red Workflow Monitor
+
+on:
+  schedule:
+    - cron: '0 14 * * *' # 14:00 UTC daily (post-deploys, pre-business-day)
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  monitor:
+    name: Detect chronic-red workflows
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      THRESHOLD: '3'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Run chronic-red monitor
+        run: bash scripts/chronic-red-monitor.sh
