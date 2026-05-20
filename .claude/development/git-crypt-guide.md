@@ -198,6 +198,18 @@ does not work in a worktree — restoring it silently breaks the
 skillsmith MCP. If `git diff HEAD -- .mcp.json` shows a delta, that is
 expected and correct.
 
+**Prettier-formatting (SMI-5002)**: `create-worktree.sh` Step 6 also runs
+`prettier --write .mcp.json` inside the Docker container immediately after
+the jq patch, so the on-disk content matches the project's prettier style
+(`printWidth: 100` collapses jq's multi-line short args arrays back to
+single-line). Without this step, `format:check` fails on every worktree
+push (hard exit — no `continue-on-error`), forcing operators to bypass
+pre-push via `SKILLSMITH_PRE_PUSH_DOCKER=1 git push --no-verify`. If the
+container is down at create time, the prettier step warns and continues;
+the worktree remains usable but `format:check` will fail until you run
+`docker exec skillsmith-dev-1 sh -c 'cd /app/<wt-rel-path> && npx
+prettier --write .mcp.json'` manually.
+
 **`skip-worktree`, not `assume-unchanged`**: `skip-worktree` is git's
 sanctioned mechanism for "I have intentionally modified this tracked
 file and never want it staged." `assume-unchanged` is a performance

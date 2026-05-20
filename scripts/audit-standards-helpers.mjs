@@ -753,3 +753,51 @@ export function parseBashArray(src, arrayName) {
   }
   return entries
 }
+
+/**
+ * Parse the @consumers JSDoc tag from a source file's top comment block.
+ *
+ * The tag declares the in-tree consumers of a shared helper. Format:
+ *   * @consumers name-a, name-b, name-c
+ *
+ * Names are comma-separated, alphabetically sorted, lowercased kebab-case.
+ * Names must match /^[a-z0-9][a-z0-9-]*$/ — underscore-prefix is rejected by
+ * design (prevents '_shared' from being declared as a consumer; '_shared'
+ * is the helper-host, not a consumer).
+ *
+ * Sort enforcement (sorted === false fails predicate 5): makes
+ * append-without-sort merge conflicts deterministic. Two PRs that both
+ * add a consumer alphabetically-positioned conflict immediately at the
+ * same line range, surfacing the collision rather than producing
+ * silently-merging duplicates.
+ *
+ * Used by audit:standards Check 47 predicate 5 (SMI-5004).
+ *
+ * @param {string} src - Full file contents (UTF-8).
+ * @returns {{ found: boolean, names: string[], sorted: boolean } | null}
+ *   - null  → parse-failure (e.g., invalid token like 'Foo_Bar', empty value)
+ *   - { found:false, names:[], sorted:true } → tag absent
+ *   - { found:true, names, sorted } → tag present
+ */
+export function parseConsumersTag(src) {
+  // Match `@consumers` followed by optional trailing content. The capture
+  // group is greedy-but-bounded-to-EOL; allow empty so we can return null
+  // on empty-value as a parse failure (degenerate case) rather than
+  // mis-classifying it as "tag absent".
+  const m = src.match(/^\s*\*\s*@consumers\b[ \t]*(.*?)[ \t]*$/m)
+  if (!m) return { found: false, names: [], sorted: true }
+  const rawValue = m[1].trim()
+  if (!rawValue) return null
+  const tokens = rawValue
+    .split(/\s*,\s*/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+  if (tokens.length === 0) return null
+  const validRe = /^[a-z0-9][a-z0-9-]*$/
+  for (const tok of tokens) {
+    if (!validRe.test(tok)) return null
+  }
+  const sortedCopy = [...tokens].sort()
+  const sorted = tokens.every((tok, i) => tok === sortedCopy[i])
+  return { found: true, names: tokens, sorted }
+}
