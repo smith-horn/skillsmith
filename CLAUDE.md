@@ -50,6 +50,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **After pulling**: post-merge hook auto-runs `npm install` in Docker on `package-lock.json` change; if container is down, start it and run `docker exec skillsmith-dev-1 npm install && npm run build`. **Full rebuild** (native modules, major upgrades): [docker-guide.md](.claude/development/docker-guide.md#full-rebuild-thorough). **Stop**: `docker compose --profile dev down`. **Logs**: `docker logs skillsmith-dev-1`. **Submodule**: `git submodule update --init` before `docker compose up` if internal docs needed inside container.
 
+**After fresh clone or volume wipe**: run `npm install` + `npm run build` in the container before the `skillsmith` MCP server can connect. The launcher (`scripts/mcp-skillsmith-launcher.sh`, SMI-5049) prints actionable stderr in the `/mcp` panel's per-server log when `node_modules/` or `dist/` is missing — surfaced when you expand the failing entry.
+
 ---
 
 ## CI Health Requirements

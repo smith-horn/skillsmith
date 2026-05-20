@@ -257,10 +257,12 @@ If you want to recreate it, remove it first with:
 #######################################
 # Patch .mcp.json in worktree to use npx for skillsmith
 #
-# The main repo .mcp.json uses a local dist path that doesn't exist in
-# worktrees (worktrees share the git history but not build artefacts).
-# Worktrees use the published npm package instead — works on any machine
-# without requiring a local build.
+# The main repo .mcp.json invokes scripts/mcp-skillsmith-launcher.sh, which
+# pre-flight-checks for a local dist build that doesn't exist in worktrees
+# (worktrees share the git history but not build artefacts). Worktrees use
+# the published npm package instead — works on any machine without requiring
+# a local build. SMI-5049 introduced the host launcher; this worktree path
+# remains unchanged.
 #
 # @latest is intentional: worktrees are for feature development, not MCP
 # server changes. Always using the latest published version is correct.
