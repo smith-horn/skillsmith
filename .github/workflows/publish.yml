@@ -590,11 +590,23 @@ jobs:
     # check on `needs:`. Without it, when `publish-core` skips (because core is
     # already published), this job is auto-skipped before its `if:` is evaluated
     # — making the explicit `result == 'skipped'` clause below dead code.
+    #
+    # SMI-5060: gate the 'skipped' branch on the core-exists predicate. Without
+    # it, when validate fails and publish-core auto-skips because its `needs:`
+    # failed, GitHub Actions still reports `publish-core.result == 'skipped'`
+    # — letting this dependent publish despite core having neither been built
+    # nor published. `core-exists == 'true'` discriminates the legitimate skip
+    # (core was already on npm) from the failure-mode skip.
+    #
+    # Edge case retained: if `validate` is *cancelled* (not failed) and core
+    # was already on npm, this job still runs. That's intentional — manual
+    # cancellation is an operator action, not a soundness failure.
     if: |
       !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.mcp-exists != 'true' &&
-      (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
+      (needs.publish-core.result == 'success' ||
+       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))
 
     steps:
       - name: Checkout
@@ -780,11 +792,13 @@ jobs:
       contents: read
       id-token: write
     # SMI-4803: see publish-mcp-server for `!cancelled()` rationale.
+    # SMI-5060: see publish-mcp-server for the core-exists predicate rationale.
     if: |
       !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.cli-exists != 'true' &&
-      (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
+      (needs.publish-core.result == 'success' ||
+       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))
 
     steps:
       - name: Checkout
@@ -897,11 +911,13 @@ jobs:
       id-token: write
       packages: write
     # SMI-4803: see publish-mcp-server for `!cancelled()` rationale.
+    # SMI-5060: see publish-mcp-server for the core-exists predicate rationale.
     if: |
       !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.enterprise-exists != 'true' &&
-      (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
+      (needs.publish-core.result == 'success' ||
+       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))
 
     steps:
       - name: Checkout
