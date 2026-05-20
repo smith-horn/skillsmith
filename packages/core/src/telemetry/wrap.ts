@@ -20,6 +20,42 @@ import { trackSkillInvoke } from './posthog.js'
 const wrapped = new Set<Function>()
 
 // ---------------------------------------------------------------------------
+// Emission gate (SMI-5019 wire-in)
+// ---------------------------------------------------------------------------
+//
+// Default-suppress: until an emission gate is installed via `setEmissionGate`,
+// `withTelemetry` does NOT emit. Privacy-safe by construction — consumers
+// (e.g. the mcp-server license-gate middleware) MUST call `setEmissionGate`
+// during request handling to enable emission for their context.
+//
+// The alternative (default-emit) would be backwards-compatible but risks
+// emitting telemetry for an unknown anonymous_id before consent has been
+// resolved. We pick the privacy-safe default per SMI-5019; a misconfigured
+// host that forgets to install a gate simply emits no telemetry, which is
+// observable (counts stay at zero) and recoverable.
+//
+// Multi-tenancy caveat: the gate is module-scoped. For a single-tenant MCP
+// server process (the v1 shape) this is correct. A future multi-tenant
+// transport would need `AsyncLocalStorage`-backed per-request state — see
+// the matching caveat in `license.gate.ts`.
+let emissionGate: (() => boolean) | undefined
+
+/**
+ * Install (or clear) the per-process emission gate.
+ *
+ * Pass a predicate to enable telemetry only when the predicate returns true;
+ * pass `undefined` to revert to the default-suppress behaviour. Callers should
+ * always reset to `undefined` in a `finally` so a thrown handler does not
+ * leak emission permission to the next request.
+ *
+ * The predicate is evaluated once per call to a wrapped function, inside the
+ * `finally` block, so it sees the live state of any per-request resolver.
+ */
+export function setEmissionGate(gate: (() => boolean) | undefined): void {
+  emissionGate = gate
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -85,13 +121,17 @@ export function withTelemetry<F extends (...a: unknown[]) => unknown>(
       // Emit BEFORE the catch re-throw lands; swallow telemetry errors so they
       // never affect the wrapped function's observable behaviour.
       try {
-        trackSkillInvoke({
-          skillId,
-          source: opts.source,
-          framework,
-          durationMs: Date.now() - start,
-          success,
-        })
+        // SMI-5019 wire-in: consult the emission gate. Default-suppress when
+        // no gate is installed — see module-level comment for the rationale.
+        if (emissionGate && emissionGate()) {
+          trackSkillInvoke({
+            skillId,
+            source: opts.source,
+            framework,
+            durationMs: Date.now() - start,
+            success,
+          })
+        }
       } catch {
         // Intentionally swallowed — telemetry must never break user code.
       }

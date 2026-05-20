@@ -11,8 +11,8 @@
  *   - per-request framework (H4 — not memoised)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { withTelemetry, isTelemetered } from './wrap.js'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { withTelemetry, isTelemetered, setEmissionGate } from './wrap.js'
 
 // ---------------------------------------------------------------------------
 // Mock trackSkillInvoke so tests run without a live PostHog instance
@@ -27,6 +27,17 @@ const mockTrack = vi.mocked(trackSkillInvoke)
 
 beforeEach(() => {
   mockTrack.mockReset()
+  // SMI-5019 wire-in: default is now suppress-when-no-gate. Install a permissive
+  // gate so the legacy SMI-5016 tests below (which predate the consent gate)
+  // continue to assert against emit behaviour. The new emission-gate describe
+  // block at the bottom overrides this per-case.
+  setEmissionGate(() => true)
+})
+
+afterEach(() => {
+  // Reset to default-suppress so a leaked gate from one test does not flow
+  // into the next file's tests or pollute the per-process module state.
+  setEmissionGate(undefined)
 })
 
 // ---------------------------------------------------------------------------
@@ -264,5 +275,102 @@ describe('overhead gate (risk #7)', () => {
     expect(mean).toBeLessThan(0.5)
 
     expect(mockTrack).toHaveBeenCalledTimes(ITERATIONS)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. Emission gate (SMI-5019 wire-in)
+// ---------------------------------------------------------------------------
+//
+// These tests verify the privacy-safe default-suppress contract:
+//
+//   - No gate installed → withTelemetry must NOT call trackSkillInvoke
+//   - Gate returns true → emit
+//   - Gate returns false → suppress
+//   - Gate is evaluated per-call (not memoised), so a toggling predicate
+//     produces different outcomes on consecutive calls
+//
+// The outer `beforeEach` installs a permissive gate for the legacy tests;
+// these cases override that gate explicitly per-case.
+describe('emission gate (SMI-5019 wire-in)', () => {
+  beforeEach(() => {
+    // Override the outer permissive gate — start each case with no gate
+    // installed, so the default-suppress behaviour is the natural baseline.
+    setEmissionGate(undefined)
+  })
+
+  it('default-suppress: no gate installed → no emit', async () => {
+    const handler = () => 'ok'
+    const wrappedFn = withTelemetry(handler as unknown as (...a: unknown[]) => unknown, BASE_OPTS)
+
+    const result = await (wrappedFn as unknown as () => Promise<string>)()
+
+    expect(result).toBe('ok')
+    expect(mockTrack).not.toHaveBeenCalled()
+  })
+
+  it('gate returns true → emit', async () => {
+    setEmissionGate(() => true)
+
+    const handler = () => 'ok'
+    const wrappedFn = withTelemetry(handler as unknown as (...a: unknown[]) => unknown, BASE_OPTS)
+
+    await (wrappedFn as unknown as () => Promise<string>)()
+
+    expect(mockTrack).toHaveBeenCalledOnce()
+    expect(mockTrack).toHaveBeenCalledWith(
+      expect.objectContaining({ skillId: 'test/skill', success: true })
+    )
+  })
+
+  it('gate returns false → no emit', async () => {
+    setEmissionGate(() => false)
+
+    const handler = () => 'ok'
+    const wrappedFn = withTelemetry(handler as unknown as (...a: unknown[]) => unknown, BASE_OPTS)
+
+    await (wrappedFn as unknown as () => Promise<string>)()
+
+    expect(mockTrack).not.toHaveBeenCalled()
+  })
+
+  it('gate is evaluated per-call (toggling predicate produces emit then no-emit)', async () => {
+    // Toggle true → false across the two invocations. Verifies the gate is
+    // NOT memoised at install time — each call queries it fresh, matching
+    // the per-call extractFramework contract (H4).
+    let nextReturn = true
+    setEmissionGate(() => {
+      const value = nextReturn
+      nextReturn = !nextReturn
+      return value
+    })
+
+    const handler = () => 'ok'
+    const wrappedFn = withTelemetry(handler as unknown as (...a: unknown[]) => unknown, BASE_OPTS)
+
+    await (wrappedFn as unknown as () => Promise<string>)()
+    expect(mockTrack).toHaveBeenCalledOnce()
+
+    mockTrack.mockReset()
+
+    await (wrappedFn as unknown as () => Promise<string>)()
+    expect(mockTrack).not.toHaveBeenCalled()
+  })
+
+  it('gate is also consulted on throw — no emit when suppressed even if handler fails', async () => {
+    // Reinforces the privacy-safe invariant: a throwing handler must not
+    // smuggle telemetry past a suppressing gate via the finally block.
+    setEmissionGate(() => false)
+
+    const boom = (): never => {
+      throw new Error('handler exploded')
+    }
+    const wrappedBoom = withTelemetry(boom as unknown as (...a: unknown[]) => unknown, BASE_OPTS)
+
+    await expect((wrappedBoom as unknown as () => Promise<never>)()).rejects.toThrow(
+      'handler exploded'
+    )
+
+    expect(mockTrack).not.toHaveBeenCalled()
   })
 })

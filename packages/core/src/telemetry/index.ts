@@ -67,7 +67,8 @@ export {
 } from './posthog.js'
 
 // In-process HOF + registry (SMI-5016)
-export { withTelemetry, isTelemetered, type WithTelemetryOpts } from './wrap.js'
+// Emission gate (SMI-5019 wire-in) — privacy-safe default-suppress.
+export { withTelemetry, isTelemetered, setEmissionGate, type WithTelemetryOpts } from './wrap.js'
 
 /**
  * Initialize all telemetry (tracing + metrics)
