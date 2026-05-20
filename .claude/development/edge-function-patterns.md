@@ -221,6 +221,41 @@ if (!secret) {
 
 ---
 
+## External-fetch parsers: the implausible-count guard
+
+When an edge function parses HTML, CSV, or other markup fetched from an
+external service (anything you don't control end-to-end), assert that the
+parsed row/record count falls within a plausible band BEFORE acting on it.
+A markup change that silently drops your selector returns `parseCount = 0`
+(or `1`, or `N << expected`), and the downstream "scan everything we got"
+loop quietly does nothing.
+
+Caught twice in one week: SMI-4961 (`leaderboard-coverage.test.ts` skill-list
+parser) and SMI-4963 (`coverage-report` weekly leaderboard fetch) — both
+would have shipped silent no-ops to prod without the guard.
+
+```typescript
+const PLAUSIBLE_MIN = 100   // raise the floor; this is a sanity check, not a target
+const PLAUSIBLE_MAX = 2000  // ceiling; raise as the population grows
+
+const rows = parseLeaderboard(html)
+if (rows.length < PLAUSIBLE_MIN || rows.length > PLAUSIBLE_MAX) {
+  console.warn(
+    `[parser] Implausible row count ${rows.length} ` +
+      `(expected ${PLAUSIBLE_MIN}-${PLAUSIBLE_MAX}) — treating as parse failure`
+  )
+  return { rows: [], fetchFailed: true }
+}
+```
+
+Pair with a unit test that feeds the parser HTML with a deliberately-broken
+selector and asserts the implausible-count branch fires (`leaderboard-fetch.
+test.ts` has the canonical pattern). The guard is an active asset, not a
+defensive nicety — leave it on, raise the floor over time, and treat any
+"implausible" warning in prod logs as an incident, not noise.
+
+---
+
 ## Testing Edge Functions with Vitest
 
 ### The Module-Load-Time Problem
@@ -332,7 +367,9 @@ Authoritative auth/JWT-verification table for every edge function. CLAUDE.md kee
 | `auth-device-preview` | Authenticated (User JWT, gateway-verified) | No |
 | `indexer-dispatch` | Service Role (explicit bearer check + `verify_jwt=true`); invoked from cron/manual operator curl. Mints GitHub App installation token and POSTs `repository_dispatch` to GHA `indexer.yml`. (SMI-4852) | No |
 
-**Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command to `CLAUDE.md` (the deploy block is CI-pinned via `audit-standards.mjs:472` + `validate-anonymous-functions.ts`).
+**Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command to `CLAUDE.md` (the deploy block is CI-pinned via `audit-standards.mjs:472` + `validate-anonymous-functions.ts`). `audit:standards` Check 47 (SMI-4963) additionally enforces that every function appears in EXACTLY ONE of `deploy-edge-functions.sh`'s `NO_VERIFY_JWT_FUNCTIONS` / `VERIFY_JWT_FUNCTIONS` AND EXACTLY ONE of `validate-edge-functions.sh`'s `ANONYMOUS_FUNCTIONS` / `AUTHENTICATED_FUNCTIONS` / `SERVICE_ROLE_FUNCTIONS`, AND that `NO_VERIFY_JWT_FUNCTIONS` members carry a matching `[functions.<name>] verify_jwt = false` in `config.toml`.
+
+**In-handler bearer checks**: use the canonical `isServiceRoleCaller` helper from `supabase/functions/_shared/auth.ts` (reads the gateway-verified bearer's `role` claim). Never raw-string-compare against `` `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` `` — the GHA-secret value and the platform-injected edge-function env value are both service-role JWTs but need not be byte-identical (different signing rounds, independent rotation), so a string-equality check can 401 a legitimate caller. The SMI-4963 dry-run smoke surfaced exactly this: a raw compare 401'd the coverage-report workflow caller because the two values diverged by one byte.
 
 ## Project Refs (Prod vs Staging)
 
@@ -348,6 +385,38 @@ When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (unde
 ## Auto-deploy
 
 Edge functions are automatically deployed to **both** prod (`vrcnzpmndtroqxxoqkzy`) and staging (`ovhcifugwqnzoebwfuku`) when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and runs `deploy-prod` and `deploy-staging` jobs in parallel; failure of one does not block the other. `_shared/` changes trigger a full deploy of all 32 functions to both refs. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`. (SMI-4528)
+
+## Scan-all-of-X: edge function vs GHA-runner
+
+Supabase edge functions cap at a **150-second wall clock** (`IDLE_TIMEOUT`).
+Any "scan all of X" pattern — every repo, every skill, every license probe,
+every leaderboard row — eventually crosses that wall as the population grows.
+When it crosses, the function times out, the cron silently produces no data,
+and the next iteration starts from the same too-large work-set.
+
+Lineage of this lesson in Skillsmith:
+
+| SMI | Symptom | Fix |
+|-----|---------|-----|
+| SMI-4843 | Indexer started missing repos at scale | Investigated — capacity bounded |
+| SMI-4846 | Edge-function `indexer` hit 150s ceiling at ~7k skills | Diagnostic dry-run + page caps |
+| SMI-4852 | `indexer-dispatch` shim → moves `indexer` to GHA-runner (no wall clock) | Tier-2 GHA workflow + repository_dispatch |
+| SMI-4963 | `coverage-report` 150s wall (license-probe storm × 27 repos) | Soften + instrument; concurrency cap |
+| SMI-4997 | Same wall as 4963 persists post-mitigation | Pending: license-probe retry storm vs `repo_url` index vs GHA-runner |
+
+Decision checklist BEFORE picking edge-function for a scan-all workload:
+
+1. **Does N × per-item cost plausibly exceed 30s today?** (Budget: 30s gives 5× headroom against the 150s ceiling for tail variance + retries.)
+2. **Will N grow?** (Skills, repos, users, ecosystems — count anything that's been added monotonically for >6 months.)
+3. **Does the per-item op require external HTTP / retries?** (Per-item retry storms eat seconds fast; observed in SMI-4963: 3 retries × 270ms × 27 repos = 22s just for retries.)
+
+**Two or more "yes" answers** → choose the GHA-runner path from the start
+(repository_dispatch + GHA workflow + `indexer-dispatch`-style trigger
+shim). Retrofitting an edge function to a GHA runner is feasible but
+costly (3 fully-merged PRs minimum: trigger shim, GHA workflow, deploy
+plumbing); building it as GHA from day one is one PR.
+
+For Tier-2 GHA-runner pattern reference see `supabase/functions/indexer-dispatch/index.ts` + `.github/workflows/indexer.yml`.
 
 ## Related Documentation
 
