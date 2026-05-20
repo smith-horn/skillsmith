@@ -293,10 +293,20 @@ cd worktrees/<name> && git reset --hard HEAD
 ### Removing Worktrees
 
 ```bash
-./scripts/remove-worktree.sh --prune
+./scripts/remove-worktree.sh .worktrees/<name> --prune
 ```
 
-Includes Docker network cleanup. Use `--force` flag if smudge artifacts block removal.
+Includes Docker network cleanup and per-worktree submodule working-tree
+cleanup (SMI-5000). `--force` is no longer required for routine removal
+of healthy worktrees — pre-SMI-5000, `git worktree remove` refused with
+"fatal: working trees containing submodules cannot be moved or removed"
+because every worktree initializes 4 submodules (`docs/internal` + 3
+strategy mounts). The script now `rm -rf`s each submodule working tree
+before calling `git worktree remove`. Submodule pointers and init state
+in the main repo are unaffected (the worktree's `.git` is a gitlink into
+main's `.git/worktrees/<name>/`; main's submodule config is shared but
+untouched by this directory removal). Use `--force` only when the worktree
+has uncommitted/dirty work that you want to discard.
 
 ### Worktree `git reset` Footgun (SMI-3011)
 
