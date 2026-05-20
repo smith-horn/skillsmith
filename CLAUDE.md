@@ -173,7 +173,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 
 When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (under `varlock run --`) or the literal `https://vrcnzpmndtroqxxoqkzy.supabase.co`. Function-auth matrix (21 rows) and auto-deploy mechanics: see [edge-function-patterns.md § Function Auth Matrix](.claude/development/edge-function-patterns.md#function-auth-matrix).
 
-**Adding anonymous functions** (CI validates): add to `supabase/config.toml` with `verify_jwt = false`, to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and to the deploy block below. **Deploy commands** (`--no-verify-jwt` required — CI scans CLAUDE.md for these):
+**Adding anonymous functions** (CI validates): add to `supabase/config.toml` with `verify_jwt = false`, to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and to the deploy block below; `npm run audit:standards` Check 47 (SMI-4963) enforces deploy-script + validate-script + `config.toml` registration coherence. **Deploy commands** (`--no-verify-jwt` required — CI scans CLAUDE.md for these):
 
 ```bash
 npx supabase functions deploy early-access-signup --no-verify-jwt
