@@ -230,6 +230,49 @@ clear it): re-set with `git update-index --skip-worktree .mcp.json`.
 
 **Pre-commit hook behavior in worktrees (SMI-4377 + SMI-4381)**: The Docker `.:/app` bind-mount DOES cover `.worktrees/` (visible at `/app/.worktrees/<name>/` inside the container) — the original SMI-4377 diagnosis ("worktrees live outside `/app`") was wrong. `compute_container_wd` translates the host worktree path to its in-container equivalent. On macOS Docker Desktop, virtiofs cannot traverse the relative per-package `node_modules` symlinks, so worktree commits fall back to host execution (visible as `📂 Worktree on macOS — falling back to host execution (SMI-4381)`). The host fallback works correctly because `scripts/_lib.sh link_worktree_package_node_modules` symlinks each `packages/<pkg>/node_modules` so workspace-pinned deps (e.g. `zod@3.25.76` in `mcp-server`) resolve correctly. Linux Docker hosts use the in-container path. Off-tree worktrees (created outside `<repo-root>/.worktrees/`) also fall back to host. See `docs/internal/retros/2026-04-29-smi-4381-original-diagnosis-wrong.md` for the full RCA.
 
+### E2E imports of `@skillsmith/*` from worktrees (SMI-4972)
+
+A worktree's `node_modules` is a symlink to the main repo's `node_modules`
+(SMI-4377/SMI-4381 — saves 5-10 GB per worktree). Inside, each
+`@skillsmith/<pkg>` entry symlinks to the main repo's `packages/<pkg>/`.
+Any E2E code that does `import '@skillsmith/<pkg>'` would, by default,
+resolve to **main's** `packages/<pkg>/dist`, NOT the worktree's.
+
+Unit tests are not affected — vitest's `vitest.config.ts` source-transforms
+TypeScript directly and tests use relative imports (`../../src/...`).
+
+E2E tests, however, run from `vitest.e2e.config.ts` and import via the
+package name (e.g., `tests/e2e/cli/usage-counter.e2e.test.ts` imports
+from `@skillsmith/core`). To prevent silent main-vs-worktree skew,
+`vitest.e2e.config.ts` defines an explicit alias map that routes
+`@skillsmith/core`, `@skillsmith/mcp-server`, and `@skillsmith/enterprise`
+to the worktree's `packages/<pkg>/dist/src/index.js`.
+
+**Precondition**: you must build the relevant package(s) before running
+E2E from a worktree:
+
+```bash
+docker exec skillsmith-dev-1 npm run build
+# OR for a single package:
+docker exec skillsmith-dev-1 npm run build --workspace=@skillsmith/core
+```
+
+**If you forget**, the test will fail with a clear `MODULE_NOT_FOUND`
+pointing at the worktree's missing dist:
+
+```text
+Error: Cannot find module '/path/to/.worktrees/<name>/packages/core/dist/src/index.js'
+```
+
+This loud failure is by design — pre-SMI-4972, the missing-build state
+silently fell through to main's dist, masking what the worktree was
+actually testing.
+
+**Subpath imports caveat**: `import { x } from '@skillsmith/core/errors'`
+does NOT match the alias key `@skillsmith/core` and falls through to
+the node_modules symlink (i.e., main's dist). No such imports exist in
+`tests/e2e/` as of 2026-05-19; if you add one, extend the alias map.
+
 ### Manual Method
 
 ```bash
