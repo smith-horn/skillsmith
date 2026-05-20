@@ -295,6 +295,7 @@ patch_mcp_json() {
     fi
 
     local tmp_file
+    local container_rel
     tmp_file=$(mktemp)
     trap 'rm -f "$tmp_file"' EXIT  # clean up on SIGINT/SIGTERM/EXIT
 
@@ -305,6 +306,26 @@ patch_mcp_json() {
         cat "$tmp_file" > "$mcp_json"
         rm -f "$tmp_file"
         trap - EXIT
+        # SMI-5002: normalize jq's multi-line output to single-line short arrays
+        # so the project's prettier config (printWidth: 100) is satisfied.
+        # Worktree push otherwise needs --no-verify to bypass format:check
+        # (skip-worktree from SMI-4973 hides the diff from `git status` but
+        # not from prettier's content-style check). validate_args (L209-224)
+        # normalizes worktree_path to an absolute path under REPO_ROOT for
+        # relative invocations; strip the REPO_ROOT/ prefix to compute the
+        # container-relative path. The container only has REPO_ROOT mounted
+        # at /app, so out-of-tree worktrees cannot be reached via docker exec
+        # — warn-skip in that case.
+        container_rel="${worktree_path#"$REPO_ROOT/"}"
+        if [[ "$container_rel" == "$worktree_path" ]]; then
+            warn "  Prettier skip: worktree not under REPO_ROOT — manual prettier-write may be needed"
+        elif docker exec skillsmith-dev-1 sh -c \
+            "cd \"/app/$container_rel\" && npx --no-install prettier --write .mcp.json" \
+            >/dev/null; then
+            success "  Prettier-formatted .mcp.json (SMI-5002)"
+        else
+            warn "  Prettier unavailable (container down or prettier missing?); .mcp.json may fail format:check until run manually"
+        fi
         success "  Patched .mcp.json: skillsmith → npx (worktrees have no local dist)"
     else
         rm -f "$tmp_file"
