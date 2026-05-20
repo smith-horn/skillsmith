@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/core",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Core types and utilities for Skillsmith",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -92,7 +92,6 @@
     "fts5-sql-bundle": "1.0.2",
     "lru-cache": "11.3.3",
     "posthog-node": "5.29.2",
-    "stripe": "20.3.0",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "5.9.3",
     "web-tree-sitter": "0.25.10",
