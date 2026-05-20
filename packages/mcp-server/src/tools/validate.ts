@@ -26,6 +26,7 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 
 // Import types
@@ -66,7 +67,7 @@ export { validateInputSchema, validateToolSchema } from './validate.types.js'
  *   console.log('Errors:', response.errors);
  * }
  */
-export async function executeValidate(
+async function executeValidateImpl(
   input: ValidateInput,
   _context?: ToolContext
 ): Promise<ValidateResponse> {
@@ -158,6 +159,13 @@ export async function executeValidate(
     },
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeValidate = withTelemetry(executeValidateImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_validate',
+  extractFramework: () => 'unknown',
+})
 
 /**
  * Format validation results for terminal display

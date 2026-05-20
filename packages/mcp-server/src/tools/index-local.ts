@@ -19,6 +19,7 @@ import { z } from 'zod'
 import { LocalIndexer, type LocalSkill } from '../indexer/LocalIndexer.js'
 import type { ToolContext } from '../context.js'
 import { hasPathTraversal } from './validate.helpers.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 /**
  * Tool schema for MCP
@@ -110,7 +111,7 @@ export interface IndexLocalResponse {
  * const response = await executeIndexLocal({}, context);
  * console.log(`Found ${response.count} local skills`);
  */
-export async function executeIndexLocal(
+async function executeIndexLocalImpl(
   input: IndexLocalInput,
   _context: ToolContext
 ): Promise<IndexLocalResponse> {
@@ -154,6 +155,13 @@ export async function executeIndexLocal(
     fromCache: wasCached && !input.force,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeIndexLocal = withTelemetry(executeIndexLocalImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'index_local',
+  extractFramework: () => 'unknown',
+})
 
 /**
  * Format index results for terminal/CLI display.

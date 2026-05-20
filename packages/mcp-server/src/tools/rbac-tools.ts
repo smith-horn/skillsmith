@@ -15,6 +15,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type {
   RBACService,
   RbacManageResult,
@@ -172,7 +173,7 @@ export function setRBACService(svc: RBACService): void {
 // Handlers
 // ============================================================================
 
-export async function executeRbacManage(
+async function executeRbacManageImpl(
   input: RbacManageInput,
   _context: ToolContext
 ): Promise<RbacManageResult> {
@@ -233,7 +234,7 @@ export async function executeRbacManage(
   }
 }
 
-export async function executeRbacAssignRole(
+async function executeRbacAssignRoleImpl(
   input: RbacAssignRoleInput,
   _context: ToolContext
 ): Promise<RbacAssignRoleResult> {
@@ -295,7 +296,7 @@ export async function executeRbacAssignRole(
   }
 }
 
-export async function executeRbacCreatePolicy(
+async function executeRbacCreatePolicyImpl(
   input: RbacCreatePolicyInput,
   _context: ToolContext
 ): Promise<RbacCreatePolicyResult> {
@@ -363,3 +364,20 @@ export async function executeRbacCreatePolicy(
     }
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeRbacManage = withTelemetry(executeRbacManageImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'rbac_manage',
+  extractFramework: () => 'unknown',
+})
+export const executeRbacAssignRole = withTelemetry(executeRbacAssignRoleImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'rbac_assign_role',
+  extractFramework: () => 'unknown',
+})
+export const executeRbacCreatePolicy = withTelemetry(executeRbacCreatePolicyImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'rbac_create_policy',
+  extractFramework: () => 'unknown',
+})

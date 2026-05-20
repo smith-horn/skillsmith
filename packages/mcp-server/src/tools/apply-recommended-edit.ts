@@ -30,6 +30,7 @@ import { z } from 'zod'
 
 import { readAuditSuggestions } from '../audit/audit-suggestions.js'
 import { applyRecommendedEdit } from '../audit/edit-applier.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 import type { ApplyRecommendedEditResponse } from './apply-recommended-edit.types.js'
 
@@ -49,9 +50,7 @@ export const applyRecommendedEditInputSchema = z
  * envelope directly; the dispatcher wraps it for the MCP `CallToolResult`
  * shape.
  */
-export async function applyRecommendedEditTool(
-  input: unknown
-): Promise<ApplyRecommendedEditResponse> {
+async function applyRecommendedEditToolImpl(input: unknown): Promise<ApplyRecommendedEditResponse> {
   const parsed = applyRecommendedEditInputSchema.safeParse(input)
   if (!parsed.success) {
     const message = parsed.error.issues
@@ -122,3 +121,10 @@ export async function applyRecommendedEditTool(
     result,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const applyRecommendedEditTool = withTelemetry(applyRecommendedEditToolImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'apply_recommended_edit',
+  extractFramework: () => 'unknown',
+})

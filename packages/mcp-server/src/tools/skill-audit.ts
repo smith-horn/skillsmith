@@ -13,6 +13,7 @@
 
 import { z } from 'zod'
 import { AdvisoryRepository } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 
 // ============================================================================
@@ -117,7 +118,7 @@ export const skillAuditToolSchema = {
  * @param context Tool context with database connection
  * @returns SkillAuditResponse with advisory data or early-access message
  */
-export async function executeSkillAudit(
+async function executeSkillAuditImpl(
   input: SkillAuditInput,
   context: ToolContext
 ): Promise<SkillAuditResponse> {
@@ -163,3 +164,10 @@ export async function executeSkillAudit(
     advisories: entries,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeSkillAudit = withTelemetry(executeSkillAuditImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_audit',
+  extractFramework: () => 'unknown',
+})

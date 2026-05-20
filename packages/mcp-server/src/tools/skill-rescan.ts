@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { SecurityScanner } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { resolveClientPath } from '@skillsmith/core/install'
 
 // ============================================================================
@@ -188,7 +189,7 @@ export async function discoverInstalledSkills(
  * @param overrideDir Optional skills directory override (for testing)
  * @returns SkillRescanResponse with per-skill scan results
  */
-export async function executeSkillRescan(
+async function executeSkillRescanImpl(
   input: SkillRescanInput,
   overrideDir?: string
 ): Promise<SkillRescanResponse> {
@@ -274,3 +275,10 @@ export async function executeSkillRescan(
     results,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeSkillRescan = withTelemetry(executeSkillRescanImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_rescan',
+  extractFramework: () => 'unknown',
+})
