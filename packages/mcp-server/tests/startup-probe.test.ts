@@ -205,8 +205,9 @@ describe('SMI-5009 startup probe — integration (spawn)', () => {
     //
     // The assertion is: stdout MUST NEVER contain `[skillsmith] embeddings:`
     // (R2 / MCP stdio protocol invariant), and the server must reach the
-    // "Skillsmith MCP server running" stderr line within 10s (proving the
-    // probe did not block boot — R1).
+    // "Skillsmith MCP server running" stderr line within 30s (proving the
+    // probe did not block boot — R1). The hard budget was bumped from 10s
+    // to 30s after SMI-5056 (CI runner cold-boot consistently exceeded 10s).
     const proc = spawn('node', [DIST_ENTRY], {
       env: {
         ...process.env,
@@ -229,7 +230,7 @@ describe('SMI-5009 startup probe — integration (spawn)', () => {
               `server boot timeout — stderr so far:\n${stderrChunks.join('')}\nstdout so far:\n${stdoutChunks.join('')}`
             )
           )
-        }, 10_000)
+        }, 30_000)
         proc.stderr.on('data', (d: Buffer) => {
           if (d.toString().includes('Skillsmith MCP server running')) {
             clearTimeout(timeout)
@@ -273,5 +274,5 @@ describe('SMI-5009 startup probe — integration (spawn)', () => {
       expect(stderr).toMatch(/\[skillsmith\] embeddings: (mock|probe-failed)/)
       expect(stderr).toContain('install @huggingface/transformers')
     }
-  }, 30_000)
+  }, 45_000)
 })
