@@ -160,12 +160,6 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
 
 <script>
   import { getSupabaseClient } from '../../lib/supabase-client'
-  import { withAuthTimeout } from '../../lib/auth-timeout'
-
-  // SMI-5055: bound signInWithOAuth so a degraded GoTrue surfaces a clear error
-  // banner instead of a 30 s+ silent spinner. 10 s is generous for slow networks
-  // while still failing visibly faster than the upstream gateway timeout.
-  const OAUTH_REQUEST_TIMEOUT_MS = 10_000
 
   // UA hint for known in-app browsers that swallow OAuth redirects (SMI-2757)
   function isInAppBrowser(): boolean {
@@ -266,20 +260,20 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
         try {
           // Fetch OAuth URL without immediately redirecting so we can inspect it
           // and use it in the fallback banner if the redirect is swallowed (SMI-2757).
-          // Bounded with withAuthTimeout so a degraded GoTrue surfaces a real
-          // error to the user instead of a silent spinner (SMI-5055).
-          const { data, error } = await withAuthTimeout(
-            supabase.auth.signInWithOAuth({
-              provider: 'github',
-              options: {
-                redirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectTo)}`,
-                scopes: 'read:user user:email',
-                skipBrowserRedirect: true,
-              },
-            }),
-            OAUTH_REQUEST_TIMEOUT_MS,
-            'Sign-in is taking too long. Check status.supabase.com or try again in a few minutes.'
-          )
+          // SMI-5055 note: signInWithOAuth({skipBrowserRedirect}) in
+          // @supabase/supabase-js@2.105 builds the URL synchronously, so a
+          // withAuthTimeout wrapper here is dead code today. The actual
+          // GoTrue hop is the browser navigation below; if GoTrue is degraded
+          // (status.supabase.com), the user lands on an opaque Cloudflare
+          // 504 page and we have no client-side hook to intercept it.
+          const { data, error } = await supabase.auth.signInWithOAuth({
+            provider: 'github',
+            options: {
+              redirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectTo)}`,
+              scopes: 'read:user user:email',
+              skipBrowserRedirect: true,
+            },
+          })
 
           if (error) throw error
           if (!data?.url) throw new Error('No OAuth URL returned')
