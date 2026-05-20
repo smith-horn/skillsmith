@@ -205,9 +205,13 @@ describe('SMI-5009 startup probe — integration (spawn)', () => {
     //
     // The assertion is: stdout MUST NEVER contain `[skillsmith] embeddings:`
     // (R2 / MCP stdio protocol invariant), and the server must reach the
-    // "Skillsmith MCP server running" stderr line within 30s (proving the
-    // probe did not block boot — R1). The hard budget was bumped from 10s
-    // to 30s after SMI-5056 (CI runner cold-boot consistently exceeded 10s).
+    // "Skillsmith MCP server running" stderr line within 60s (proving the
+    // probe did not block boot — R1). The hard budget was bumped to 60s
+    // after SMI-5056 — CI runner cold-boot exceeded 10s, then 30s; the
+    // bottleneck is the bundled first-run essentials install path (varlock
+    // / commit), not the probe itself which still has its own internal 2s
+    // Promise.race. If 60s also flakes, switch to Option B (poll-loop wait)
+    // or skip the integration test on CI.
     const proc = spawn('node', [DIST_ENTRY], {
       env: {
         ...process.env,
@@ -230,7 +234,7 @@ describe('SMI-5009 startup probe — integration (spawn)', () => {
               `server boot timeout — stderr so far:\n${stderrChunks.join('')}\nstdout so far:\n${stdoutChunks.join('')}`
             )
           )
-        }, 30_000)
+        }, 60_000)
         proc.stderr.on('data', (d: Buffer) => {
           if (d.toString().includes('Skillsmith MCP server running')) {
             clearTimeout(timeout)
@@ -274,5 +278,5 @@ describe('SMI-5009 startup probe — integration (spawn)', () => {
       expect(stderr).toMatch(/\[skillsmith\] embeddings: (mock|probe-failed)/)
       expect(stderr).toContain('install @huggingface/transformers')
     }
-  }, 45_000)
+  }, 75_000)
 })
