@@ -248,11 +248,7 @@ if (rows.length < PLAUSIBLE_MIN || rows.length > PLAUSIBLE_MAX) {
 }
 ```
 
-Pair with a unit test that feeds the parser HTML with a deliberately-broken
-selector and asserts the implausible-count branch fires (`leaderboard-fetch.
-test.ts` has the canonical pattern). The guard is an active asset, not a
-defensive nicety — leave it on, raise the floor over time, and treat any
-"implausible" warning in prod logs as an incident, not noise.
+Pair with a unit test that feeds the parser HTML with a deliberately-broken selector and asserts the implausible-count branch fires (`leaderboard-fetch.test.ts` has the canonical pattern). The guard is an active asset, not a defensive nicety — leave it on, raise the floor over time, and treat any "implausible" warning in prod logs as an incident, not noise.
 
 ---
 
