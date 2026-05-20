@@ -425,6 +425,10 @@ create_worktree() {
     # Step 6: Patch .mcp.json skillsmith entry for worktree compatibility
     info "Step 6: Patching .mcp.json (skillsmith → npx)..."
     patch_mcp_json "$worktree_path"
+    # SMI-4973: prevent the patched .mcp.json from leaking into PR commits.
+    # Per-worktree index — must run inside (cd "$worktree_path") subshell.
+    (cd "$worktree_path" && git update-index --skip-worktree .mcp.json)
+    success "  .mcp.json marked skip-worktree (SMI-4973)"
 
     echo ""
     success "Worktree created successfully!"
