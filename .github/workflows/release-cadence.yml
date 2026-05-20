@@ -106,7 +106,14 @@ jobs:
       - name: Open PR
         if: steps.check.outputs.count != '0' && github.event.inputs.dry_run != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SMI-5047: GITHUB_TOKEN cannot create PRs because the repo-level
+          # "Allow GitHub Actions to create and approve pull requests" setting
+          # is disabled (failure mode introduced ~2026-04-26; 4 missed Sunday
+          # windows). Use a dedicated RELEASE_PAT (least-privilege: only
+          # pull-requests:write + contents:write on smith-horn/skillsmith)
+          # rather than reusing GH_PAT, which would broaden batch-transform
+          # and indexer-dispatch blast radius.
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           gh pr create \
             --title "chore(release): weekly cadence bump — ${{ steps.branch.outputs.date }}" \
