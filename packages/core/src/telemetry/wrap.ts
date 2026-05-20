@@ -66,17 +66,22 @@ export function setEmissionGate(gate: (() => boolean) | undefined): void {
  * call-time so they can derive values from the live request context.
  * `extractFramework` is intentionally per-call (H4) — not memoised.
  */
-export interface WithTelemetryOpts<F extends (...a: unknown[]) => unknown> {
+// The HOF is generic over an arbitrary args tuple + return type, so wrapping
+// preserves the handler's exact signature at every call site. We parameterize
+// over (TArgs, TReturn) directly rather than `F extends (...args: any[]) => any`
+// because the latter degrades return-type inference through the cast chain in
+// the wrapper body — see SMI-5012 stack PR-2.
+export interface WithTelemetryOpts<TArgs extends readonly unknown[]> {
   /** Discriminator stored with the event — which invocation surface this is. */
   source: 'mcp-tool' | 'cli' | 'vscode-extension'
   /** Derive the skill ID from the handler's arguments at call-time. */
-  extractSkillId: (args: Parameters<F>) => string
+  extractSkillId: (args: TArgs) => string
   /**
    * Derive the framework string from the handler's arguments at call-time.
    * Per H4: called once per invocation, never memoised.
    * Returns `'unknown'` if omitted.
    */
-  extractFramework?: (args: Parameters<F>) => string
+  extractFramework?: (args: TArgs) => string
 }
 
 // ---------------------------------------------------------------------------
@@ -101,11 +106,11 @@ export interface WithTelemetryOpts<F extends (...a: unknown[]) => unknown> {
  *   { source: 'mcp-tool', extractSkillId: (a) => a[0].skill }
  * )
  */
-export function withTelemetry<F extends (...a: unknown[]) => unknown>(
-  handler: F,
-  opts: WithTelemetryOpts<F>
-): F {
-  const wrappedFn = (async (...args: Parameters<F>) => {
+export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
+  handler: (...args: TArgs) => Promise<TReturn> | TReturn,
+  opts: WithTelemetryOpts<TArgs>
+): (...args: TArgs) => Promise<TReturn> {
+  const wrappedFn = async (...args: TArgs): Promise<TReturn> => {
     const start = Date.now()
     const skillId = opts.extractSkillId(args)
     // Per H4: evaluated per-call so a single server process can serve multiple
@@ -136,7 +141,7 @@ export function withTelemetry<F extends (...a: unknown[]) => unknown>(
         // Intentionally swallowed — telemetry must never break user code.
       }
     }
-  }) as F
+  }
 
   wrapped.add(wrappedFn)
   return wrappedFn
