@@ -709,3 +709,47 @@ export const checkCarveOutInvariants = (jobs, denyList) => {
   }
   return { violationsA, violationsB }
 }
+
+/**
+ * Parse a Bash array declaration of the form:
+ *
+ *   ARRAY_NAME=(
+ *     entry-one
+ *     entry-two   # optional inline comment
+ *   )
+ *
+ * Returns a Set<string> of the parsed entry names, or null if the array
+ * cannot be found (i.e. the closing `)` on its own line is missing, meaning
+ * the script format has changed). Tolerates quoted/unquoted entries and
+ * inline `#` comments.
+ *
+ * Token regex accepts [a-z0-9_-] — the underscore is included because Supabase
+ * function names may contain underscores even though all current names use
+ * hyphens. Without `_`, an underscore-named entry would be silently ignored
+ * rather than parsed and later flagged as unregistered.
+ *
+ * Used by Check 47 (edge-function registration coherence, SMI-4963) to parse
+ * NO_VERIFY_JWT_FUNCTIONS / VERIFY_JWT_FUNCTIONS from deploy-edge-functions.sh
+ * and ANONYMOUS_FUNCTIONS / AUTHENTICATED_FUNCTIONS / SERVICE_ROLE_FUNCTIONS
+ * from validate-edge-functions.sh.
+ *
+ * @param {string} src - Full file contents of the shell script.
+ * @param {string} arrayName - The exact variable name (e.g. 'NO_VERIFY_JWT_FUNCTIONS').
+ * @returns {Set<string> | null}
+ */
+export function parseBashArray(src, arrayName) {
+  const re = new RegExp(`^${arrayName}=\\(\\s*\\n([\\s\\S]*?)^\\)\\s*$`, 'm')
+  const m = src.match(re)
+  if (!m) return null
+  const body = m[1]
+  const entries = new Set()
+  for (const rawLine of body.split('\n')) {
+    // Strip inline `# ...` comments and surrounding whitespace.
+    const line = rawLine.replace(/#.*$/, '').trim()
+    if (!line) continue
+    // Each line is one entry: bare-word OR "quoted" OR 'quoted'.
+    const tok = line.match(/^["']?([a-z0-9][a-z0-9_-]*)["']?$/i)
+    if (tok) entries.add(tok[1])
+  }
+  return entries
+}
