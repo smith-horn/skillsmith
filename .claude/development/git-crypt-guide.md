@@ -177,6 +177,53 @@ The script handles:
 
 **Existing worktrees**: Step 6 only runs during creation. If you have an existing worktree with a broken skillsmith MCP, apply the manual fix above. For the Step 4d / Step 7 `node_modules` symlink (SMI-4377), run `./scripts/repair-worktrees.sh` — idempotent, safe to re-run.
 
+### `.mcp.json` skip-worktree (SMI-4973)
+
+When `create-worktree.sh` finishes, the worktree's `.mcp.json` is
+**patched in place** (the `skillsmith` MCP command swaps from
+`./packages/mcp-server/dist/src/index.js` to `npx -y @skillsmith/mcp-server`
+because the worktree has no built `dist/`). The script then marks the
+file `skip-worktree` so `git status` stays clean despite the on-disk
+divergence from HEAD.
+
+**Verify your worktree is set up correctly**:
+
+```bash
+grep 'npx' .mcp.json          # working-tree content IS the npx form
+git ls-files -v .mcp.json     # lowercase 'S' = skip-worktree set
+```
+
+**Do NOT restore `.mcp.json` to HEAD.** The HEAD content (the dist path)
+does not work in a worktree — restoring it silently breaks the
+skillsmith MCP. If `git diff HEAD -- .mcp.json` shows a delta, that is
+expected and correct.
+
+**`skip-worktree`, not `assume-unchanged`**: `skip-worktree` is git's
+sanctioned mechanism for "I have intentionally modified this tracked
+file and never want it staged." `assume-unchanged` is a performance
+hint (skip the stat check) and does not guarantee the file won't be
+staged. See `git update-index --help`.
+
+**Legitimate `.mcp.json` change from a worktree** (e.g., adding a new
+MCP server):
+
+```bash
+git update-index --no-skip-worktree .mcp.json   # clear the bit
+# edit .mcp.json, git add, git commit, push
+git update-index --skip-worktree .mcp.json      # re-set the bit
+```
+
+**Pre-existing worktrees** created before SMI-4973 landed don't have
+the bit set. Run once per existing worktree:
+
+```bash
+cd .worktrees/<name>
+git update-index --skip-worktree .mcp.json
+```
+
+**If the bit is ever lost** (rare; some `git reset --hard` configs can
+clear it): re-set with `git update-index --skip-worktree .mcp.json`.
+
 **Strategy submodule init in worktrees (SMI-4829)**: `create-worktree.sh` calls `init-strategy-submodules.sh` after `git submodule update --init`. This wires sparse-checkout cones for the three strategy mount-points (`.claude/skills`, `.claude/plans`, `.claude/hive-mind`). External contributors without access to `smith-horn/skillsmith-strategy` see empty mount-points but no hard error (gate #3). To re-run manually in an existing worktree: `./scripts/init-strategy-submodules.sh` from the worktree root. Team members who skipped initial setup: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` then run the init script.
 
 **Supported worktree layouts (SMI-4654)**: Both `<repo-root>/.worktrees/<name>/` (the convention used by `create-worktree.sh`) AND nested `<repo-root>/<name>/` (worktree created directly under the repo root) are supported. `scripts/_lib.sh` computes the `node_modules` symlink depth dynamically, so either layout produces working symlinks. The `.worktrees/` convention is preferred — it keeps the repo root tidy and groups parallel work — but if you've already nested a worktree directly in the repo, you don't need to migrate it. Run `./scripts/repair-worktrees.sh` to refresh symlinks; `./scripts/verify-worktree-symlinks.sh` audits them and exits non-zero on any dangling link.
