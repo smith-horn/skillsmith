@@ -94,7 +94,18 @@ function dedupeAutoSection(trimmedSection: string, carried: string): string {
   })
 
   const header = headerLines.join('\n')
-  return `${header}\n${keptAutoLines.join('\n')}\n\n${carried}`.replace(/\n{3,}/g, '\n\n')
+  // SMI-5057: join kept-auto and carried with a single newline. The
+  // previous `\n\n${carried}` inserted a spurious blank line between
+  // bullets of the same version section (e.g. PR #1268 cli/mcp-server
+  // CHANGELOGs had a blank line between drained SMI-5008 and carried
+  // SMI-5006 entries). The `\n{3,}` cleanup is preserved because the
+  // empty-keptAutoLines path still produces `\n\n` between header and
+  // carried, which is correct.
+  //
+  // Caller precondition: dedupeAutoSection is only invoked when
+  // carried.length > 0 (release-changelog.ts:172). No need to guard
+  // against an empty carried producing a trailing newline.
+  return `${header}\n${keptAutoLines.join('\n')}\n${carried}`.replace(/\n{3,}/g, '\n\n')
 }
 
 /**
