@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.6.3'
+export const VERSION = '0.7.0'
 
 // ============================================================================
 // Grouped Exports from Barrel Files
@@ -25,6 +25,9 @@ export type { Database } from './db/database-interface.js'
 export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'
 // SMI-4807: native-driver failure reason getter.
 export { getBetterSqlite3FailureReason } from './db/drivers/betterSqlite3Driver.js'
+// SMI-5006: createLogger exposed for @smith-horn/enterprise/billing consumers.
+// Internal utility promoted to public API to support billing module relocation.
+export { createLogger, type Logger } from './utils/logger.js'
 
 // Types - All type definitions
 export * from './exports/types.js'

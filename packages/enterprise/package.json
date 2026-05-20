@@ -25,6 +25,11 @@
       "types": "./dist/src/license/index.d.ts",
       "import": "./dist/src/license/index.js",
       "default": "./dist/src/license/index.js"
+    },
+    "./billing": {
+      "types": "./dist/src/billing/index.d.ts",
+      "import": "./dist/src/billing/index.js",
+      "default": "./dist/src/billing/index.js"
     }
   },
   "scripts": {
@@ -39,8 +44,9 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "3.1046.0",
     "@opentelemetry/instrumentation-aws-sdk": "0.73.0",
-    "@skillsmith/core": "^0.6.2",
+    "@skillsmith/core": "^0.7.0",
     "jose": "^6.2.2",
+    "stripe": "20.3.0",
     "zod": "4.2.1"
   },
   "devDependencies": {

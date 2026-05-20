@@ -17,3 +17,10 @@
 #     comment naming the Linear issue that will split the file.
 #
 # Do not add new files here without a corresponding split follow-up issue.
+
+# SMI-5036 split follow-up — three billing test files relocated by SMI-5006 from
+# packages/core/tests/billing/ to packages/enterprise/tests/billing/. Pre-existed
+# over-limit on main; the rename surfaces the hook for the first time.
+packages/enterprise/tests/billing/StripeClient.test.ts
+packages/enterprise/tests/billing/webhook-handlers.test.ts
+packages/enterprise/tests/billing/GDPRCompliance.test.ts

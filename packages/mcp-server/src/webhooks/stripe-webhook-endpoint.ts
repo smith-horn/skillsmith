@@ -19,7 +19,27 @@ import {
   getClientIp,
 } from './webhook-endpoint.js'
 import type { RateLimiterState, WebhookServerConfig } from './webhook-endpoint.js'
-import type { StripeWebhookHandler } from '@skillsmith/core/billing'
+/**
+ * SMI-5006: Structural type for the webhook handler — duck-typed to avoid a
+ * workspace cycle with `@smith-horn/enterprise` (which already has an optional
+ * runtime dependency on `@skillsmith/mcp-server/audit`). The canonical class
+ * lives at `@smith-horn/enterprise/billing` — that package's `StripeWebhookHandler`
+ * is structurally assignable to this interface. Callers (production wiring,
+ * tests) construct the real class and pass it in; this surface only consumes
+ * the `handleWebhook` method.
+ */
+export interface StripeWebhookHandler {
+  handleWebhook(
+    payload: string,
+    signature: string
+  ): Promise<{
+    success: boolean
+    message: string
+    eventId: string
+    processed: boolean
+    error?: string
+  }>
+}
 
 // ============================================================================
 // Configuration

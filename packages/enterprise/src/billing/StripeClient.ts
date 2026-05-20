@@ -11,7 +11,7 @@
  */
 
 import Stripe from 'stripe'
-import { createLogger } from '../utils/logger.js'
+import { createLogger } from '@skillsmith/core'
 import type {
   BillingPeriod,
   CreateCheckoutSessionRequest,
@@ -39,7 +39,6 @@ export class StripeClient {
   private readonly stripe: Stripe
   private readonly webhookSecret: string
   private readonly prices: TierPriceConfigs
-  private readonly appUrl: string
 
   constructor(config: StripeClientConfig) {
     this.stripe = new Stripe(config.secretKey, {
@@ -48,7 +47,10 @@ export class StripeClient {
     })
     this.webhookSecret = config.webhookSecret
     this.prices = config.prices
-    this.appUrl = config.appUrl ?? 'https://skillsmith.app'
+    // SMI-5006 W1: appUrl read from config but never used by class; removed
+    // unused private field. Constructor accepts the field for back-compat with
+    // existing StripeClientConfig consumers.
+    void config.appUrl
 
     logger.info('Stripe client initialized')
   }

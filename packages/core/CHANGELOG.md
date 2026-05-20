@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.7.0
+
+- **BREAKING**: SMI-5006 — billing module relocated to `@smith-horn/enterprise/billing`. The `./billing` subpath export was removed (no shim was shipped), and the 27 root-level re-exports of billing symbols (`StripeClient`, `BillingService`, `StripeWebhookHandler`, `GDPRComplianceService`, `StripeReconciliationJob`, and associated types) were removed from `services.ts`. The companion enterprise feature note lands in `@smith-horn/enterprise` Unreleased.
+  - **Migration**: update imports
+    - Before: `import { StripeWebhookHandler } from '@skillsmith/core/billing'`
+    - After: `import { StripeWebhookHandler } from '@smith-horn/enterprise/billing'`
+  - **Why no shim**: a back-compat shim was attempted but proved structurally infeasible — `services.ts` → `../billing/index` (shim) → `@smith-horn/enterprise/billing` (workspace-source) → `@skillsmith/core` (`createLogger`) created a TypeScript build cycle that prevented TS from resolving named exports through the shim during core's compile. The repository-wide audit at relocation time found exactly one consumer (`packages/mcp-server/src/webhooks/stripe-webhook-endpoint.ts`), so the consumer was migrated in the same PR rather than carry the shim.
+  - **createLogger / Logger** are now exported from the core public API to support enterprise billing consumers. (Internal utility promoted to public surface.)
+  - **Stripe runtime dep** remains in core for one more release cycle (removal tracked in a follow-up wave) but should be considered deprecated for direct consumption from `@skillsmith/core`.
+
 ## v0.6.3
 
 - **Chore**: SMI-4539 — synthetic patch release to verify the npm trusted-publisher OIDC publish path end-to-end (PR #1171). No functional or API change; the only source delta from v0.6.2 is the `VERSION` constant bump in `src/index.ts` (PR #1174). Published via OIDC in run 26012688904 with SLSA build provenance.

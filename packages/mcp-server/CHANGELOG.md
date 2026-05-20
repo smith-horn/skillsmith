@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: SMI-5006 — bump `@skillsmith/core` dependency range to `^0.7.0` (BREAKING in core: billing moved to `@smith-horn/enterprise/billing`). The standalone Stripe webhook endpoint no longer imports from `@skillsmith/core/billing`; it now declares a local structural type for `StripeWebhookHandler` so production wiring (and tests) can pass in the canonical `@smith-horn/enterprise/billing` class without a workspace cycle. No runtime change for downstream MCP consumers.
 - **Chore**: SMI-4539 — track `@skillsmith/core` dependency range to `^0.6.3` (synthetic patch release verifying the npm trusted-publisher OIDC publish path, PR #1171). No functional change.
 
 ## v0.5.1
