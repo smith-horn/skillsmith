@@ -78,7 +78,8 @@ This is a test skill.
       const result = await executeValidate({ skill_path: filePath })
 
       expect(result.valid).toBe(true)
-      expect(result.errors.filter((e) => e.severity === 'error')).toHaveLength(0)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.errors.filter((e: any) => e.severity === 'error')).toHaveLength(0)
       expect(result.metadata).toBeDefined()
       expect(result.metadata?.name).toBe('test-skill')
       expect(result.metadata?.description).toBe('A test skill for validation')
@@ -112,7 +113,10 @@ description: A skill without a name
       const result = await executeValidate({ skill_path: filePath })
 
       expect(result.valid).toBe(false)
-      expect(result.errors.some((e) => e.field === 'name' && e.severity === 'error')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.errors.some((e: any) => e.field === 'name' && e.severity === 'error')).toBe(
+        true
+      )
     })
 
     it('should warn for missing description in non-strict mode', async () => {
@@ -127,9 +131,12 @@ version: 1.0.0
       const result = await executeValidate({ skill_path: filePath, strict: false })
 
       expect(result.valid).toBe(true) // Still valid in non-strict mode
-      expect(result.errors.some((e) => e.field === 'description' && e.severity === 'warning')).toBe(
-        true
-      )
+      expect(
+        result.errors.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field === 'description' && e.severity === 'warning'
+        )
+      ).toBe(true)
     })
 
     it('should error for missing description in strict mode', async () => {
@@ -143,9 +150,12 @@ name: no-description-skill
       const result = await executeValidate({ skill_path: filePath, strict: true })
 
       expect(result.valid).toBe(false)
-      expect(result.errors.some((e) => e.field === 'description' && e.severity === 'error')).toBe(
-        true
-      )
+      expect(
+        result.errors.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field === 'description' && e.severity === 'error'
+        )
+      ).toBe(true)
     })
 
     it('should error for name exceeding 64 characters', async () => {
@@ -163,7 +173,8 @@ description: A skill with a very long name
       expect(result.valid).toBe(false)
       expect(
         result.errors.some(
-          (e) => e.field === 'name' && e.message.includes('exceeds maximum length')
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field === 'name' && e.message.includes('exceeds maximum length')
         )
       ).toBe(true)
     })
@@ -183,7 +194,8 @@ description: ${longDesc}
       expect(result.valid).toBe(false)
       expect(
         result.errors.some(
-          (e) => e.field === 'description' && e.message.includes('exceeds maximum length')
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field === 'description' && e.message.includes('exceeds maximum length')
         )
       ).toBe(true)
     })
@@ -203,7 +215,8 @@ repository: file:///etc/passwd
       expect(result.valid).toBe(false)
       expect(
         result.errors.some(
-          (e) => e.field === 'repository' && e.message.includes('dangerous URL pattern')
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field === 'repository' && e.message.includes('dangerous URL pattern')
         )
       ).toBe(true)
     })
@@ -223,7 +236,8 @@ repository: http://localhost:8080/repo
       expect(result.valid).toBe(false)
       expect(
         result.errors.some(
-          (e) => e.field === 'repository' && e.message.includes('dangerous URL pattern')
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field === 'repository' && e.message.includes('dangerous URL pattern')
         )
       ).toBe(true)
     })
@@ -240,7 +254,8 @@ description: ../../../etc/passwd
       const result = await executeValidate({ skill_path: filePath })
 
       expect(result.valid).toBe(false)
-      expect(result.errors.some((e) => e.message.includes('path traversal'))).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.errors.some((e: any) => e.message.includes('path traversal'))).toBe(true)
     })
 
     it('should error for invalid frontmatter', async () => {
@@ -254,7 +269,8 @@ This skill has no YAML frontmatter.
       const result = await executeValidate({ skill_path: filePath })
 
       expect(result.valid).toBe(false)
-      expect(result.errors.some((e) => e.field === 'frontmatter')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.errors.some((e: any) => e.field === 'frontmatter')).toBe(true)
     })
 
     it('should throw for non-existent path', async () => {
@@ -292,9 +308,12 @@ tags: not-an-array
       const result = await executeValidate({ skill_path: filePath })
 
       expect(result.valid).toBe(false)
-      expect(result.errors.some((e) => e.field === 'tags' && e.message.includes('array'))).toBe(
-        true
-      )
+      expect(
+        result.errors.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field === 'tags' && e.message.includes('array')
+        )
+      ).toBe(true)
     })
 
     it('should validate tag length limits', async () => {
@@ -313,7 +332,10 @@ tags:
 
       expect(result.valid).toBe(false)
       expect(
-        result.errors.some((e) => e.field.startsWith('tags[') && e.message.includes('exceeds'))
+        result.errors.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => e.field.startsWith('tags[') && e.message.includes('exceeds')
+        )
       ).toBe(true)
     })
   })

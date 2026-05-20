@@ -372,7 +372,8 @@ describe('skill_pack_audit', () => {
       expect(result.driftCount).toBe(1) // only linear
       expect(result.noRegistryDataCount).toBe(1) // only docker
 
-      const byName = Object.fromEntries(result.skills.map((s) => [s.name, s]))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const byName = Object.fromEntries(result.skills.map((s: any) => [s.name, s]))
       expect(byName['governance']?.status).toBe('current')
       expect(byName['linear']?.status).toBe('outdated')
       expect(byName['docker']?.status).toBe('no_registry_data')
@@ -387,7 +388,8 @@ describe('skill_pack_audit', () => {
 
       const result = await executeSkillPackAudit({ pack_path: testDir }, toolContext)
 
-      expect(result.skills.map((s) => s.name)).toEqual(['apple', 'mango', 'zebra'])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.skills.map((s: any) => s.name)).toEqual(['apple', 'mango', 'zebra'])
     })
 
     it('skips subdirectories with no SKILL.md', async () => {
@@ -509,9 +511,11 @@ describe('skill_pack_audit', () => {
       const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
 
       expect(result.triggerQuality).toBeDefined()
-      const entry = result.triggerQuality!.skills.find((s) => s.id === 'spec')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry = result.triggerQuality!.skills.find((s: any) => s.id === 'spec')
       expect(entry).toBeDefined()
-      const nameFlag = entry!.flags.find((f) => f.location === 'name' && f.token === 'spec')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nameFlag = entry!.flags.find((f: any) => f.location === 'name' && f.token === 'spec')
       expect(nameFlag).toBeDefined()
       expect(nameFlag!.severity).toBe('error')
       expect(nameFlag!.suggested).toBe('planning-spec')
@@ -532,9 +536,11 @@ describe('skill_pack_audit', () => {
 
       const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
 
-      const entry = result.triggerQuality!.skills.find((s) => s.id === 'roadmap-planner')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry = result.triggerQuality!.skills.find((s: any) => s.id === 'roadmap-planner')
       expect(entry).toBeDefined()
-      const descFlag = entry!.flags.find((f) => f.token === 'build')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const descFlag = entry!.flags.find((f: any) => f.token === 'build')
       expect(descFlag).toBeDefined()
       expect(descFlag!.location).toBe('description')
       expect(descFlag!.severity).toBe('warning')
@@ -559,9 +565,11 @@ describe('skill_pack_audit', () => {
 
       const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
 
-      const entry = result.triggerQuality!.skills.find((s) => s.id === 'roadmap')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry = result.triggerQuality!.skills.find((s: any) => s.id === 'roadmap')
       expect(entry).toBeDefined()
-      const tokens = entry!.flags.map((f) => f.token)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tokens = entry!.flags.map((f: any) => f.token)
       expect(tokens).toEqual(expect.arrayContaining(['build', 'test']))
       // Both are description-level warnings
       for (const flag of entry!.flags) {
@@ -588,10 +596,12 @@ describe('skill_pack_audit', () => {
       const elapsed = Date.now() - start
       expect(elapsed).toBeLessThan(2000) // nowhere near pathological
 
-      const entry = result.triggerQuality!.skills.find((s) => s.id === 'roadmap')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry = result.triggerQuality!.skills.find((s: any) => s.id === 'roadmap')
       // Either no flags, or flags from the early padding (which has no triggers).
       if (entry) {
-        const hasSpec = entry.flags.some((f) => f.token === 'spec')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const hasSpec = entry.flags.some((f: any) => f.token === 'spec')
         expect(hasSpec).toBe(false)
       }
 
@@ -689,10 +699,12 @@ describe('skill_pack_audit', () => {
 
       expect(result.namespaceQuality).not.toBeNull()
       // The "tools" skill-name flag should have been merged into the namespace.
-      const toolsEntry = result.triggerQuality!.skills.find((s) => s.id === 'tools')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const toolsEntry = result.triggerQuality!.skills.find((s: any) => s.id === 'tools')
       if (toolsEntry) {
         const hasToolsNameFlag = toolsEntry.flags.some(
-          (f) => f.location === 'name' && f.token === 'tools'
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (f: any) => f.location === 'name' && f.token === 'tools'
         )
         expect(hasToolsNameFlag).toBe(false)
       }

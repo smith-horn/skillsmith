@@ -135,9 +135,13 @@ describe('E2E: skill_compare tool', () => {
         skill_b: 'community/vitest-helper',
       }
 
-      const { result, durationMs } = await measureAsync('compare:two', 'skill_compare (two)', () =>
-        executeCompare(input, context)
+      const { result: _rawResult, durationMs } = await measureAsync(
+        'compare:two',
+        'skill_compare (two)',
+        () => executeCompare(input, context)
       )
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = _rawResult as any
 
       expect(result.comparison.a).toBeDefined()
       expect(result.comparison.b).toBeDefined()

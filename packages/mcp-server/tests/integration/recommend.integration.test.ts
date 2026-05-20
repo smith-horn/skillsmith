@@ -64,7 +64,8 @@ describe('Recommend Tool Integration', () => {
       expect(result.context.installed_count).toBe(1)
 
       // Should not include installed skill
-      const ids = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ids = result.recommendations.map((r: any) => r.skill_id)
       expect(ids).not.toContain('anthropic/commit')
     })
 
@@ -194,7 +195,8 @@ describe('Recommend Tool Integration', () => {
         toolContext
       )
 
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
 
       // docker-compose should be filtered because "docker-compose" contains "docker"
       expect(recommendedIds).not.toContain('community/docker-compose')
@@ -213,7 +215,8 @@ describe('Recommend Tool Integration', () => {
         toolContext
       )
 
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
 
       // vitest-helper should still be recommended - different testing framework
       // "jest-helper" and "vitest-helper" don't share name containment
@@ -233,7 +236,8 @@ describe('Recommend Tool Integration', () => {
         toolContext
       )
 
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
 
       // git-commit-helper should be filtered because "git-commit-helper" contains "commit"
       expect(recommendedIds).not.toContain('community/git-commit-helper')
@@ -253,7 +257,8 @@ describe('Recommend Tool Integration', () => {
         toolContext
       )
 
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
 
       // Should filter docker-compose because "docker-compose" contains "docker"
       expect(recommendedIds).not.toContain('community/docker-compose')
@@ -269,7 +274,8 @@ describe('Recommend Tool Integration', () => {
         toolContext
       )
 
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
 
       // Should still filter docker-compose with case-insensitive matching
       expect(recommendedIds).not.toContain('community/docker-compose')

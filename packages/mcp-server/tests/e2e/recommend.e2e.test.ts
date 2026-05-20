@@ -177,11 +177,13 @@ describe('E2E: skill_recommend tool', () => {
         limit: 5,
       }
 
-      const { result } = await measureAsync(
+      const { result: _rawResult } = await measureAsync(
         'recommend:empty',
         'skill_recommend (no installed)',
         () => executeRecommend(input, context)
       )
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = _rawResult as any
 
       expect(result.recommendations.length).toBeGreaterThan(0)
       expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
@@ -206,7 +208,8 @@ describe('E2E: skill_recommend tool', () => {
       expect(result.context.installed_count).toBe(1)
 
       // If there are recommendations, should not include already installed skill
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
       expect(recommendedIds).not.toContain('anthropic/commit')
 
       // Check for hardcoded values
@@ -396,8 +399,10 @@ describe('E2E: skill_recommend tool', () => {
 
       // Results should potentially differ based on context
       // (This test helps detect if recommendations are completely static)
-      const ids1 = result1.recommendations.map((r) => r.skill_id).sort()
-      const ids2 = result2.recommendations.map((r) => r.skill_id).sort()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ids1 = result1.recommendations.map((r: any) => r.skill_id).sort()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ids2 = result2.recommendations.map((r: any) => r.skill_id).sort()
 
       // If results are EXACTLY the same regardless of context, may indicate hardcoding
       // Note: This is a soft check - might be same due to small dataset

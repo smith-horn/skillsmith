@@ -131,7 +131,8 @@ describe('rbac-tools', () => {
       expect(result.success).toBe(true)
       expect(result.roles).toBeDefined()
       expect(result.roles!.length).toBeGreaterThanOrEqual(4)
-      const names = result.roles!.map((r) => r.name)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const names = result.roles!.map((r: any) => r.name)
       expect(names).toContain('admin')
       expect(names).toContain('viewer')
     })
@@ -166,7 +167,8 @@ describe('rbac-tools', () => {
 
       // List to find the ID
       const listResult = await executeRbacManage({ action: 'list_roles' }, mockContext)
-      const tempRole = listResult.roles!.find((r) => r.name === 'temp-role')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tempRole = listResult.roles!.find((r: any) => r.name === 'temp-role')
       expect(tempRole).toBeDefined()
 
       const result = await executeRbacManage(
