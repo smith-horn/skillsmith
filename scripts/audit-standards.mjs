@@ -29,6 +29,7 @@ import {
   checkCarveOutInvariants,
   findUnsafeSkillsRecreateMigrations,
   parseBashArray,
+  parseConsumersTag,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -3700,6 +3701,92 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
 
         const deployableFnsSet = new Set(deployableFns)
         const failures = []
+
+        // SMI-5004 predicate 5: @consumers tag in supabase/functions/_shared/auth.ts
+        // must equal the grep-derived consumer set across supabase/functions/.
+        // See: docs/internal/implementation/smi-5004-consumer-sync.md
+        // Pure Node (no child_process): readdirSync + readFileSync + String.includes.
+        const AUTH_PATH = join(FUNCTIONS_DIR, '_shared/auth.ts')
+        if (!existsSync(AUTH_PATH)) {
+          warn(
+            'Check 47 predicate 5: supabase/functions/_shared/auth.ts ' +
+              'missing — skipping consumer-sync'
+          )
+        } else {
+          const authSrc = readFileSync(AUTH_PATH, 'utf-8')
+          const parsedConsumers = parseConsumersTag(authSrc)
+
+          // Compute the actual consumer set from the function tree.
+          // Excludes underscore- and dot-prefixed dirs (helper hosts, hidden).
+          const actualConsumers = new Set()
+          for (const name of readdirSync(FUNCTIONS_DIR)) {
+            if (name.startsWith('_') || name.startsWith('.')) continue
+            const idxPath = join(FUNCTIONS_DIR, name, 'index.ts')
+            if (!existsSync(idxPath)) continue
+            const idxSrc = readFileSync(idxPath, 'utf-8')
+            if (idxSrc.includes('isServiceRoleCaller(')) actualConsumers.add(name)
+          }
+
+          if (parsedConsumers === null) {
+            failures.push({
+              fn: '@consumers',
+              problems: [
+                `  - supabase/functions/_shared/auth.ts @consumers tag has ` +
+                  `an invalid token (must match /^[a-z0-9][a-z0-9-]*$/, ` +
+                  `comma-separated, alphabetical). Expected: ` +
+                  `\`* @consumers ${[...actualConsumers].sort().join(', ')}\`.`,
+              ],
+            })
+          } else if (!parsedConsumers.found) {
+            failures.push({
+              fn: '@consumers',
+              problems: [
+                `  - supabase/functions/_shared/auth.ts is missing the ` +
+                  `@consumers tag. Add: ` +
+                  `\`* @consumers ${[...actualConsumers].sort().join(', ')}\` ` +
+                  `to the top JSDoc block.`,
+              ],
+            })
+          } else {
+            const headerSet = new Set(parsedConsumers.names)
+            const missing = [...actualConsumers].filter((n) => !headerSet.has(n))
+            const extra = [...headerSet].filter((n) => !actualConsumers.has(n))
+            for (const fn of missing.sort()) {
+              failures.push({
+                fn,
+                problems: [
+                  `  - supabase/functions/${fn}/index.ts calls ` +
+                    `isServiceRoleCaller(...) but is not declared in ` +
+                    `supabase/functions/_shared/auth.ts @consumers tag. Add ` +
+                    `'${fn}' to the @consumers line (alphabetical, ` +
+                    `comma-separated).`,
+                ],
+              })
+            }
+            for (const fn of extra.sort()) {
+              failures.push({
+                fn: '@consumers',
+                problems: [
+                  `  - supabase/functions/_shared/auth.ts @consumers ` +
+                    `declares '${fn}', but no isServiceRoleCaller( call ` +
+                    `found in supabase/functions/${fn}/index.ts. Remove ` +
+                    `from @consumers or restore the helper call.`,
+                ],
+              })
+            }
+            if (!parsedConsumers.sorted) {
+              failures.push({
+                fn: '@consumers',
+                problems: [
+                  `  - supabase/functions/_shared/auth.ts @consumers list ` +
+                    `is not alphabetically sorted. Expected: ` +
+                    `${[...parsedConsumers.names].sort().join(', ')}. Got: ` +
+                    `${parsedConsumers.names.join(', ')}.`,
+                ],
+              })
+            }
+          }
+        }
 
         // Reverse direction: entries in deploy/validate arrays that have no
         // corresponding supabase/functions/<name>/index.ts. A typo in an array
