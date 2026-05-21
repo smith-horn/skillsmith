@@ -32,6 +32,7 @@ import {
   parseConsumersTag,
   findConventionDrift,
   auditPublishYmlDependentGate,
+  parseNpmLsJson,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -1377,32 +1378,23 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
     // (invalid pins, peer conflicts, override inversions). The current `main`
     // post-SMI-3984 tree is in exactly that state, so every call throws.
     // **The JSON tree is still written to err.stdout** — we read it and
-    // parse it. Returning [] on every catch would fall through to the
-    // pessimistic warning path and break acceptance criterion #1
-    // (SMI-3987 plan-review E1 blocker).
-    const parseNpmLsTree = (raw) => {
-      if (!raw) return null
-      try {
-        return JSON.parse(raw)
-      } catch {
-        return null
-      }
-    }
+    // parse it. SMI-5079: some npm builds split warnings/JSON across stdout
+    // + stderr or prepend non-JSON prelude. `parseNpmLsJson` tries direct
+    // parse, brace-prefix parse, and stderr fallback before returning null.
     const getResolvedVersions = (dep) => {
-      let raw = ''
+      let stdoutRaw = ''
+      let stderrRaw = ''
       try {
-        raw = execSync(`npm ls ${dep} --all --json`, {
+        stdoutRaw = execSync(`npm ls ${dep} --all --json`, {
           encoding: 'utf-8',
           timeout: 10000,
-          stdio: ['ignore', 'pipe', 'ignore'],
+          stdio: ['ignore', 'pipe', 'pipe'],
         })
       } catch (err) {
-        // npm ls exits non-zero on ANY tree problem — stdout still contains
-        // valid JSON. Read it. If err.stdout is missing or not parseable,
-        // fall through to raw='' below → returns [] → pessimistic warning.
-        raw = (err && err.stdout && err.stdout.toString('utf-8')) || ''
+        stdoutRaw = (err && err.stdout && err.stdout.toString('utf-8')) || ''
+        stderrRaw = (err && err.stderr && err.stderr.toString('utf-8')) || ''
       }
-      const tree = parseNpmLsTree(raw)
+      const tree = parseNpmLsJson(stdoutRaw, stderrRaw)
       if (!tree) return [] // unparseable → pessimistic warning (safe default)
       // Walk the tree and collect versions of nodes whose KEY (under
       // .dependencies) matches the queried dep name. The walk must check

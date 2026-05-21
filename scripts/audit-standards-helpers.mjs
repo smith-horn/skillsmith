@@ -74,6 +74,44 @@ export const satisfies = (version, spec) => {
   return version === spec
 }
 
+/**
+ * SMI-5079: Parse `npm ls --json` output robustly.
+ *
+ * `npm ls` exits non-zero on tree warnings (peer-warning soup post-SMI-3984)
+ * and may interleave non-JSON prelude or warning lines into the captured
+ * output. Plain `JSON.parse(stdout)` then fails, dropping Check 11 into the
+ * pessimistic "could not inspect tree" path on overrides that ARE working.
+ *
+ * Strategy:
+ *   1. Try `JSON.parse(stdout)` directly (fast path, most common).
+ *   2. If stdout has prelude text, try parsing the substring starting at the
+ *      first `{`.
+ *   3. If both fail, try the same two strategies against `stderr` (some
+ *      npm builds split warnings/JSON across the streams).
+ *   4. Return null if nothing parses — caller falls through to pessimistic
+ *      warning, preserving the pre-SMI-3987 safe default.
+ *
+ * Returns the parsed tree object on success, or null.
+ */
+export const parseNpmLsJson = (stdout, stderr) => {
+  const tryParse = (raw) => {
+    if (!raw || typeof raw !== 'string') return null
+    try {
+      return JSON.parse(raw)
+    } catch {
+      // intentional fallthrough — try substring strategy
+    }
+    const braceIdx = raw.indexOf('{')
+    if (braceIdx < 0) return null
+    try {
+      return JSON.parse(raw.slice(braceIdx))
+    } catch {
+      return null
+    }
+  }
+  return tryParse(stdout) ?? tryParse(stderr)
+}
+
 // SMI-NNNN extraction patterns for Check 23. Subject-line refs always count
 // as completion claims. Body refs only count when prefixed by a closing
 // keyword (closes/closed/fix/fixes/fixed/resolve/resolves/resolved). The
