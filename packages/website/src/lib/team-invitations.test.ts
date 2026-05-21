@@ -221,14 +221,14 @@ describe('createInvitation', () => {
       body: {
         ok: false,
         error: 'email_send_failed',
-        fallback_url: 'https://skillsmith.app/invite/tok_1',
+        fallback_url: 'https://www.skillsmith.app/invite/tok_1',
       },
     })
 
     const result = await createInvitation(supabase, 'team_1', 'p@example.com', 'member')
     expect(result.ok).toBe(true) // RPC succeeded, just the email failed
     expect(result.emailSent).toBe(false)
-    expect(result.fallback_url).toBe('https://skillsmith.app/invite/tok_1')
+    expect(result.fallback_url).toBe('https://www.skillsmith.app/invite/tok_1')
   })
 
   it('returns ok=false with a default error when RPC payload is malformed', async () => {
@@ -266,12 +266,12 @@ describe('resendInvitation', () => {
       body: {
         ok: false,
         error: 'email_send_failed',
-        fallback_url: 'https://skillsmith.app/invite/x',
+        fallback_url: 'https://www.skillsmith.app/invite/x',
       },
     })
     const result = await resendInvitation(supabase, 'inv_1')
     expect(result.ok).toBe(false)
-    expect(result.fallback_url).toBe('https://skillsmith.app/invite/x')
+    expect(result.fallback_url).toBe('https://www.skillsmith.app/invite/x')
   })
 
   it('returns ok=false when the user has no session', async () => {
