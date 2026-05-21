@@ -224,8 +224,9 @@ export class StripeReconciliationJob {
       })
     }
 
-    // Compare tier (from metadata)
-    const stripeTier = stripeSubscription.metadata?.tier
+    // Compare tier (from metadata) — SMI-5035: metadata is an index signature,
+    // access via bracket notation under noPropertyAccessFromIndexSignature.
+    const stripeTier = stripeSubscription.metadata?.['tier']
     if (stripeTier && local.tier !== stripeTier) {
       discrepancies.push({
         type: 'tier_mismatch',

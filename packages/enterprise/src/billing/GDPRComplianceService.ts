@@ -61,7 +61,12 @@ export class GDPRComplianceService {
 
   constructor(config: GDPRComplianceServiceConfig) {
     this.db = config.db
-    this.stripe = config.stripeClient
+    // SMI-5035: under exactOptionalPropertyTypes, assigning `StripeClient | undefined`
+    // to an optional class field requires the explicit `undefined` skip — only set
+    // when the caller provided a client.
+    if (config.stripeClient !== undefined) {
+      this.stripe = config.stripeClient
+    }
 
     logger.info('GDPR Compliance service initialized')
   }

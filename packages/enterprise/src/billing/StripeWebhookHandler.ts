@@ -163,12 +163,16 @@ export class StripeWebhookHandler implements StripeWebhookHandlerContract {
   // ==========================================================================
 
   private async routeEvent(event: Stripe.Event): Promise<void> {
+    // SMI-5035: exactOptionalPropertyTypes — optional callbacks must be omitted
+    // when undefined, not assigned undefined.
     const ctx: WebhookHandlerContext = {
       stripe: this.stripe,
       billing: this.billing,
       db: this.db,
-      onLicenseKeyNeeded: this.onLicenseKeyNeeded,
-      onEmailNeeded: this.onEmailNeeded,
+      ...(this.onLicenseKeyNeeded !== undefined && {
+        onLicenseKeyNeeded: this.onLicenseKeyNeeded,
+      }),
+      ...(this.onEmailNeeded !== undefined && { onEmailNeeded: this.onEmailNeeded }),
     }
 
     switch (event.type) {
