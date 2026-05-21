@@ -31,6 +31,7 @@ import {
   parseBashArray,
   parseConsumersTag,
   findConventionDrift,
+  auditPublishYmlDependentGate,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -3914,17 +3915,25 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
   }
 }
 
-// 48. SMI-5060 regression test: publish.yml dependents must gate `'skipped'` on core-exists.
+// 48. SMI-5060/SMI-5066 regression test: publish.yml dependents must gate
+// every `needs.publish-<pkg>.result == 'skipped'` clause on a paired
+// `pre-publish-check.outputs.<outputKey>-exists == 'true'` predicate
+// (with outputKey resolved via PUBLISH_JOB_TO_OUTPUT_ALIAS for the
+// `publish-mcp-server` → `mcp-exists` outlier).
 //
-// Background: when validate fails, `publish-core` auto-skips (its `needs:` failed),
-// and GitHub Actions reports `needs.publish-core.result == 'skipped'`. Without the
-// `core-exists == 'true'` paired predicate, the dependent publish-* jobs treated
-// failure-mode skips identically to legitimate skips ("core was already on npm"),
-// and published broken dependents (orphaned npm release on 2026-05-20, run 26186802726).
+// Background (SMI-5060): when validate fails, `publish-<pkg>` auto-skips
+// (its `needs:` failed), and GitHub Actions reports
+// `needs.publish-<pkg>.result == 'skipped'`. Without the paired exists
+// predicate, dependent publish-* jobs treated failure-mode skips identically
+// to legitimate skips ("package was already on npm"), and published broken
+// dependents (orphaned npm release on 2026-05-20, run 26186802726).
 //
-// This check guards against regression of that exact bug. Narrow on purpose:
-// broader actions-expression soundness lint would need an AST parser.
-console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060)${RESET}`)
+// SMI-5066: generalized from publish-core-only to any publish-<pkg> via the
+// helper `auditPublishYmlDependentGate`. The alias map handles the
+// pre-existing convention drift where `publish-mcp-server`'s output key is
+// `mcp-exists`, not `mcp-server-exists`. Narrow on purpose: broader
+// actions-expression soundness lint would need an AST parser.
+console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060/SMI-5066)${RESET}`)
 {
   const PUBLISH_YML = '.github/workflows/publish.yml'
   if (!existsSync(PUBLISH_YML)) {
@@ -3932,52 +3941,30 @@ console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060)${RESET
   } else {
     try {
       const content = readFileSync(PUBLISH_YML, 'utf8')
-      const lines = content.split('\n')
-      // Find every line containing the `'skipped'` clause on publish-core.result,
-      // ignore comment-only lines (start with `#` after whitespace).
-      const matches = []
-      lines.forEach((line, idx) => {
-        const trimmed = line.trim()
-        if (trimmed.startsWith('#')) return
-        if (/needs\.publish-core\.result\s*==\s*'skipped'/.test(line)) {
-          matches.push({ lineno: idx + 1, line: line.trim() })
-        }
-      })
+      const { matches, failures } = auditPublishYmlDependentGate(content)
 
       if (matches.length === 0) {
         warn(
-          `Check 48: no 'publish-core.result == skipped' clauses found in ${PUBLISH_YML} — ` +
+          `Check 48: no 'publish-<pkg>.result == skipped' clauses found in ${PUBLISH_YML} — ` +
             `if this is intentional (e.g. publish.yml restructured), delete this check.`
         )
-      } else {
-        let allOk = true
-        for (const { lineno, line } of matches) {
-          // The paired predicate `pre-publish-check.outputs.core-exists == 'true'`
-          // must appear on the same line as the `'skipped'` clause OR within ±1 line
-          // (allowing for multi-line `if:` expression wrapping).
-          const startIdx = Math.max(0, lineno - 2)
-          const endIdx = Math.min(lines.length, lineno + 1)
-          const window = lines.slice(startIdx, endIdx).join('\n')
-          const hasGuard = /pre-publish-check\.outputs\.core-exists\s*==\s*'true'/.test(window)
-          if (!hasGuard) {
-            fail(
-              `Check 48: ${PUBLISH_YML}:${lineno} accepts 'publish-core.result == \\'skipped\\'' ` +
-                `without the paired 'pre-publish-check.outputs.core-exists == \\'true\\'' predicate. ` +
-                `This is the SMI-5060 regression: validate-failure skips and core-already-published ` +
-                `skips both surface as result == 'skipped' but only the latter is safe to proceed on. ` +
-                `Add the paired predicate or update the regex if publish.yml's structure changed.`,
-              `Tighten the if: clause: (needs.publish-core.result == 'success' || ` +
-                `(needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))`
-            )
-            allOk = false
-          }
-        }
-        if (allOk) {
-          pass(
-            `Check 48: all ${matches.length} 'publish-core.result == skipped' clause(s) in ` +
-              `${PUBLISH_YML} are paired with the core-exists predicate (SMI-5060 regression guard).`
+      } else if (failures.length > 0) {
+        for (const { lineno, pkg, outputKey } of failures) {
+          fail(
+            `Check 48: ${PUBLISH_YML}:${lineno} accepts 'publish-${pkg}.result == \\'skipped\\'' ` +
+              `without the paired 'pre-publish-check.outputs.${outputKey}-exists == \\'true\\'' predicate. ` +
+              `This is the SMI-5060 regression class: validate-failure skips and package-already-published ` +
+              `skips both surface as result == 'skipped' but only the latter is safe to proceed on. ` +
+              `Add the paired predicate or update PUBLISH_JOB_TO_OUTPUT_ALIAS in audit-standards-helpers.mjs.`,
+            `Tighten the if: clause: (needs.publish-${pkg}.result == 'success' || ` +
+              `(needs.publish-${pkg}.result == 'skipped' && needs.pre-publish-check.outputs.${outputKey}-exists == 'true'))`
           )
         }
+      } else {
+        pass(
+          `Check 48: all ${matches.length} 'publish-<pkg>.result == skipped' clause(s) in ` +
+            `${PUBLISH_YML} are paired with the <outputKey>-exists predicate (SMI-5060/SMI-5066 regression guard).`
+        )
       }
     } catch (e) {
       warn(`Could not run Check 48 (publish.yml dependent-gate soundness): ${e.message}`)

@@ -404,6 +404,46 @@ const redirectTo =
       }
 
       // Handle different auth flows
+      // SMI-5059: detect popup mode. When the OAuth flow was opened in a popup
+      // from LoginButton.astro, this page is the popup window. After the
+      // session is set we postMessage the opener (same origin) and close
+      // ourselves; the opener handles the final redirect.
+      function isPopupMode(): boolean {
+        try {
+          return (
+            typeof window.opener !== 'undefined' &&
+            window.opener !== null &&
+            window.opener !== window &&
+            !window.opener.closed
+          )
+        } catch {
+          // Cross-origin opener access can throw in some browsers — treat as
+          // not-a-popup and continue with the normal full-page flow.
+          return false
+        }
+      }
+
+      // Shared post-session completion path used by all four auth branches
+      // (email signin/signup, recovery, generic OAuth, already-logged-in).
+      // In popup mode: post success to opener + close. In normal mode: run
+      // the canonical profile-completion gate (routePostAuth).
+      async function finishCallback() {
+        await fetchAndStoreGitHubOrgs()
+        if (isPopupMode()) {
+          try {
+            window.opener!.postMessage(
+              { type: 'oauth-success', next: authRedirectTo },
+              window.location.origin
+            )
+          } catch (err) {
+            console.warn('[auth/callback] postMessage to opener failed', err)
+          }
+          window.close()
+          return
+        }
+        await routePostAuth()
+      }
+
       // Helper: fetch GitHub org memberships and store in profile (SMI-2978).
       // Must be called BEFORE showSuccess() — showSuccess() starts a 2-second redirect timer.
       // Non-fatal: errors are swallowed so the auth flow always completes.
@@ -448,9 +488,9 @@ const redirectTo =
           if (error) {
             showError(error.message)
           } else {
-            await fetchAndStoreGitHubOrgs()
-            // SMI-4401 Wave 2: gate post-auth on profile completion.
-            await routePostAuth()
+            // SMI-4401 Wave 2: gate post-auth on profile completion (non-popup mode).
+            // SMI-5059: popup mode → postMessage opener + close.
+            await finishCallback()
           }
         } else {
           // Try to exchange code for session (PKCE flow)
@@ -458,8 +498,7 @@ const redirectTo =
           if (error) {
             showError(error.message)
           } else {
-            await fetchAndStoreGitHubOrgs()
-            await routePostAuth()
+            await finishCallback()
           }
         }
       } else if (type === 'recovery') {
@@ -475,8 +514,7 @@ const redirectTo =
         if (error) {
           showError(error.message)
         } else {
-          await fetchAndStoreGitHubOrgs()
-          await routePostAuth()
+          await finishCallback()
         }
       } else {
         // Check if already logged in
@@ -486,8 +524,8 @@ const redirectTo =
         if (session) {
           // SMI-4401 Wave 2: even for "already-logged-in" fast-path, re-check profile
           // completion. A user with an incomplete profile who bounces back here must still
-          // be routed through /complete-profile.
-          await routePostAuth()
+          // be routed through /complete-profile (non-popup mode).
+          await finishCallback()
         } else {
           // No tokens found, try PKCE exchange
           try {
@@ -495,8 +533,7 @@ const redirectTo =
             if (error) {
               showError('Invalid or expired verification link. Please request a new one.')
             } else {
-              await fetchAndStoreGitHubOrgs()
-              await routePostAuth()
+              await finishCallback()
             }
           } catch (pkceError) {
             console.error('PKCE exchange error:', pkceError)
