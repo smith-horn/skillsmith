@@ -21,7 +21,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { ZodType } from 'zod'
+import type { ZodTypeAny, TypeOf } from 'zod'
 
 /**
  * Discriminated result of a `safeParseOrError` call.
@@ -57,14 +57,17 @@ export type SafeParseResult<T> = { ok: true; data: T } | { ok: false; response: 
  * @param toolName  Canonical registered MCP tool name for client correlation.
  * @returns `{ ok: true, data }` on success, `{ ok: false, response }` on failure.
  */
-export function safeParseOrError<T>(
-  // SMI-5037: zod v4 dropped the middle `Def` generic slot. The v3
-  // `ZodType<Output, Def, Input>` collapses to v4 `ZodType<Output, Input>`,
-  // so `ZodType<T, ZodTypeDef, unknown>` becomes `ZodType<T, unknown>`.
-  schema: ZodType<T, unknown>,
+// SMI-5037: parameterise over the schema type `S` (not the output type `T`)
+// and derive the output via `TypeOf<S>`. `ZodType<Output, Def, Input>` was
+// reorganised between zod v3 and v4 (the middle `Def` slot was removed), so a
+// hard-coded three-arg `ZodType<…>` annotation only compiles against one major.
+// `ZodTypeAny` + `TypeOf` are stable across both v3 and v4, so this signature
+// survives node_modules drift between the locked v3 (CI) and a hoisted v4 (dev).
+export function safeParseOrError<S extends ZodTypeAny>(
+  schema: S,
   args: unknown,
   toolName: string
-): SafeParseResult<T> {
+): SafeParseResult<TypeOf<S>> {
   const parsed = schema.safeParse(args)
   if (parsed.success) {
     return { ok: true, data: parsed.data }

@@ -1,7 +1,7 @@
 // SMI-3911: Unified license + quota gate helpers extracted from license.ts (500-line limit).
 // SMI-4402: profile_incomplete detection and JSON-RPC -32001 response.
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { ZodType } from 'zod'
+import type { ZodTypeAny, TypeOf } from 'zod'
 import type { ToolContext } from '../context.types.js'
 import type { QuotaMiddleware } from './quota-types.js'
 import { safeParseOrError } from '../validation.js'
@@ -117,11 +117,14 @@ export function createProfileIncompleteResponse(): {
 // response. Note: checkAndTrack runs before the handler (quota IS decremented even
 // for profile_incomplete errors, because the QuotaMiddleware has no split check/track
 // API). A future improvement (SMI-4403) could add a checkOnly + track-on-success path.
-export async function withLicenseAndQuota<T>(
+// SMI-5037: parameterise over the schema type `S` (see validation.ts) so the
+// signature is stable across zod v3 (locked, used by CI) and v4 (hoisted in
+// drifted dev installs). `TypeOf<S>` derives the handler input from the schema.
+export async function withLicenseAndQuota<S extends ZodTypeAny>(
   toolName: string,
   args: Record<string, unknown> | undefined,
-  schema: ZodType<T, unknown>,
-  handler: (input: T, ctx: ToolContext) => Promise<unknown>,
+  schema: S,
+  handler: (input: TypeOf<S>, ctx: ToolContext) => Promise<unknown>,
   toolContext: ToolContext,
   licenseMiddleware: LicenseMiddleware,
   quotaMiddleware: QuotaMiddleware
