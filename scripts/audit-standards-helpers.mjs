@@ -802,7 +802,7 @@ export function parseConsumersTag(src) {
   return { found: true, names: tokens, sorted }
 }
 
-// --- Check 48: Convention drift backstop (SMI-5026 M5) -----------------------
+// --- Check 49: Convention drift backstop (SMI-5026 M5) -----------------------
 //
 // Encodes the four "Convention check before novelty" greps from the
 // `skill-invoke-telemetry.md` plan (lines 666-674 + 723-730) as static
@@ -811,7 +811,7 @@ export function parseConsumersTag(src) {
 // Per plan template § "Convention check before novelty", generic surveys
 // require knowing the plan's `<pattern-prefix>` to grep for, which can't be
 // statically discovered. We therefore encode the four telemetry-specific
-// invariants explicitly. Adding a future Check 48-style invariant means
+// invariants explicitly. Adding a future Check 49-style invariant means
 // extending this helper, not rewriting the audit loop.
 
 /**
@@ -947,7 +947,7 @@ export function findTmpSkillsmithRefs(srcByPath) {
 }
 
 /**
- * Compose Check 48 results from raw inputs. Pure — caller does all I/O.
+ * Compose Check 49 results from raw inputs. Pure — caller does all I/O.
  * Returns a structured result so the audit-standards.mjs runner can render
  * per-sub-check messages with `fail()` / `warn()`.
  *

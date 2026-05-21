@@ -119,7 +119,7 @@ Key design decisions (from plan-review):
 
 - **Exported `Set<Function>` registry** (H3): the `withTelemetry` marker is an exported `Set` so arrow-const exports can be registered without function-object mutation
 - **Per-request `framework` capture** (H4): `framework` is read inside `withTelemetry` on each call, not memoised at MCP session init — correct for HTTP transport where session context is not constant
-- **Single HOF, no parallel definitions** (audit check): `audit:standards` Check 48 greps for a second `withTelemetry` definition; if found, CI fails
+- **Single HOF, no parallel definitions** (audit check): `audit:standards` Check 49 greps for a second `withTelemetry` definition; if found, CI fails
 
 ### Adding a new MCP dispatcher
 
@@ -143,7 +143,7 @@ const DISPATCHER_MAP: Record<string, string> = {
 };
 ```
 
-CI will fail if a dispatcher is present in the tool list but absent from `DISPATCHER_MAP`. This is the coverage snapshot enforced by `audit:standards` Check 48.
+CI will fail if a dispatcher is present in the tool list but absent from `DISPATCHER_MAP`. This is the coverage snapshot enforced by `audit:standards` Check 49.
 
 ---
 
@@ -175,7 +175,7 @@ The Claude Code hook is installed via `.claude/settings.json` under `Skill` matc
 
 ---
 
-## `audit:standards` Check 48
+## `audit:standards` Check 49
 
 Added in Wave 4 Step 4. Greps that previously lived in plan-review commentary are now re-executed on every PR:
 

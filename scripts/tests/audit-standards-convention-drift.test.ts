@@ -1,7 +1,7 @@
 /**
- * Tests for Check 48 helpers in audit-standards-helpers.mjs (SMI-5026 M5).
+ * Tests for Check 49 helpers in audit-standards-helpers.mjs (SMI-5026 M5).
  *
- * Check 48 encodes the "Convention check before novelty" greps from the
+ * Check 49 encodes the "Convention check before novelty" greps from the
  * `skill-invoke-telemetry.md` plan as static invariants that re-run on every
  * PR. This test file covers the four pure helpers it composes:
  *
