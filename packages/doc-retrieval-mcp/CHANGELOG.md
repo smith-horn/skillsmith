@@ -4,6 +4,18 @@ Internal MCP server (SMI-4417) wrapping `@ruvector/core` for semantic doc retrie
 
 ## [Unreleased]
 
+### Changed
+- SMI-5039 — wire the shared `probeEmbeddingCapability()` helper from
+  `@skillsmith/core/embeddings/probe`. `server.ts` runs the probe eagerly
+  before `server.connect(transport)` so the module-load cache is warm before
+  the first `skill_docs_search` call. `cli.ts` runs the probe lazily on the
+  `reindex` command (the only CLI command that exercises the embedding
+  pipeline) and honors `--quiet` / `SKILLSMITH_QUIET=true` to suppress the
+  operator warning. Probe is hard-bounded at 2 s and stderr-only — MCP stdio
+  protocol invariant preserved. Bumps `@skillsmith/core` dep range to
+  `^0.8.0`. No runtime behavior change beyond the new structured warning when
+  transformers is unavailable.
+
 ### Added
 - `retrieval-log/{schema,writer}.ts` — append-only SQLite instrumentation at `~/.claude/projects/<encoded-cwd>/retrieval-logs.db` (SMI-4450 Wave 1 Step 3). Tables: `meta`, `retrieval_events`, `frontmatter_lint_events`. `$USER` ownership guard, `IS_DOCKER=true` no-op, lazy schema creation on first use.
 - `FRONTMATTER_LINT_EVENTS_DDL` exported from `schema.ts` for the Step 5 runtime divergence guard.

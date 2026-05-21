@@ -18,6 +18,12 @@ import {
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
+// SMI-5039: lazy embedding-capability probe. CLI `search` is the only
+// embedding-relevant command — it surfaces a degraded-search warning to the
+// operator without blocking the FTS fallback path. The probe is hard-bounded
+// at 2 s, stderr-only, and never throws; `SKILLSMITH_QUIET=true` suppresses
+// the warning line for scripted use.
+import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { openCliDatabase } from '../utils/open-database.js'
 import { autoSyncIfEmpty, isLocalIndexEmpty, formatEmptyIndexHint } from './search.helpers.js'
 import { DEFAULT_DB_PATH } from '../config.js'
@@ -371,6 +377,11 @@ Quality Score Formula:
     .action(
       async (query: string | undefined, opts: Record<string, string | boolean | undefined>) => {
         try {
+          // SMI-5039: lazy probe — only fires on the search command, NOT on
+          // --version / --help (those short-circuit at commander level before
+          // any .action runs). Honors SKILLSMITH_QUIET=true for scripted use.
+          // Probe cannot throw; safe to await unconditionally.
+          await probeEmbeddingCapability()
           const interactive = opts['interactive'] as boolean | undefined
           const dbPath = opts['db'] as string
           const limit = parseInt(opts['limit'] as string, 10)

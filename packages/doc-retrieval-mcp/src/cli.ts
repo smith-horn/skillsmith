@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { runIndexer } from './indexer.js'
 
 async function main(): Promise<void> {
@@ -6,6 +7,11 @@ async function main(): Promise<void> {
   if (command === 'reindex') {
     const mode = rest.includes('--full') ? 'full' : 'incremental'
     const quiet = rest.includes('--quiet')
+    // SMI-5039: lazy probe — reindex is the only CLI command that exercises
+    // the embedding pipeline. `status` is metadata-only and doesn't need it.
+    // `--quiet` (and the SKILLSMITH_QUIET env var) suppress the operator
+    // warning; the probe still runs to warm the module-load cache.
+    await probeEmbeddingCapability({ quiet })
     const result = await runIndexer(mode, { quiet })
     if (!quiet) {
       console.log(JSON.stringify(result, null, 2))

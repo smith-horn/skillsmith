@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the
+  `probeEmbeddingCapability()` helper (originally landed inline in
+  `@skillsmith/mcp-server` under SMI-5009) into `@skillsmith/core` so MCP
+  servers, CLIs, and future tooling can share a single audited probe contract.
+  Hard 2 s `Promise.race` timeout, try/catch wrapper, stderr-only logging, and
+  honors `SKILLSMITH_QUIET=true` (or `opts.quiet`) to suppress the operator
+  warning. Minor bump (additive export, no breaking change).
+
 ## v0.7.2
 
 - **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)

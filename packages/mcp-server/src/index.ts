@@ -67,7 +67,10 @@ import {
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
-import { EmbeddingService } from '@skillsmith/core/embeddings'
+// SMI-5039: probe extracted from this file to @skillsmith/core/embeddings/probe.
+// The call site (before server.connect) is unchanged; only the implementation
+// moved so doc-retrieval-mcp + cli can share the same audited probe contract.
+import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 import { resolveStartupFlag } from './cli-flags.js'
@@ -356,61 +359,10 @@ function runStartupDiagnostics(): void {
   }
 }
 
-// SMI-5009: Embedding capability probe. Runs once at MCP server startup and
-// logs a structured stderr line indicating whether real (ONNX) or mock
-// embeddings are active. Replaces the previous silent fallback so operators
-// can observe production degradation when @huggingface/transformers is
-// missing (it is now an optionalDependency of @skillsmith/core).
-//
-// Hard guarantees:
-//   - Returns within 2s even if EmbeddingService.checkAvailability() hangs
-//     (Promise.race with a Symbol timeout sentinel).
-//   - try/catch wraps the probe; a throw is logged and never propagates.
-//   - Logs to stderr (console.error). MCP servers communicate over stdio —
-//     polluting stdout would corrupt protocol framing.
-//   - Silent on success (real embeddings active); only emits a line when
-//     mock fallback is engaged, the probe times out, or the probe throws.
-async function probeEmbeddingCapability(): Promise<void> {
-  const TIMEOUT_MS = 2000
-  const TIMEOUT_SENTINEL: unique symbol = Symbol('probe-timeout')
-  let timeoutHandle: NodeJS.Timeout | undefined
-
-  try {
-    const result = await Promise.race<boolean | typeof TIMEOUT_SENTINEL>([
-      EmbeddingService.checkAvailability(),
-      new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
-        timeoutHandle = setTimeout(() => resolve(TIMEOUT_SENTINEL), TIMEOUT_MS)
-      }),
-    ])
-
-    if (result === TIMEOUT_SENTINEL) {
-      console.error(
-        '[skillsmith] embeddings: mock (transformers unavailable: probe-timeout after 2s; install @huggingface/transformers or set SKILLSMITH_USE_MOCK_EMBEDDINGS=true to silence)'
-      )
-      return
-    }
-
-    if (result === true) {
-      // Silent on success — avoid noise on healthy boots.
-      return
-    }
-
-    // checkAvailability returned false → derive reason from cached load error.
-    const loadErr = EmbeddingService.getTransformersLoadError()
-    const reason = loadErr?.message ?? 'module-load-failed'
-    console.error(
-      `[skillsmith] embeddings: mock (transformers unavailable: ${reason}; install @huggingface/transformers or set SKILLSMITH_USE_MOCK_EMBEDDINGS=true to silence)`
-    )
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error(
-      `[skillsmith] embeddings: probe-failed (${msg}; install @huggingface/transformers or set SKILLSMITH_USE_MOCK_EMBEDDINGS=true to silence)`
-    )
-    // Continue boot — probe failure must NEVER block server start.
-  } finally {
-    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
-  }
-}
+// SMI-5009 (origin) / SMI-5039 (extraction): the embedding capability probe
+// now lives in @skillsmith/core/embeddings/probe. See that file for the
+// contract (hard 2 s timeout, try/catch wrapper, stderr-only, never throws).
+// Call site below preserved verbatim — invoke before server.connect(transport).
 
 // Start server
 async function main() {
