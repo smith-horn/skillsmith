@@ -359,3 +359,68 @@ describe('extractChangeTokens', () => {
     expect(extractChangeTokens('- note about issue #1140 inline')).toEqual([])
   })
 })
+
+/**
+ * SMI-5064: regression test for the cadence-only changelog default.
+ *
+ * Background: `prepare-release.ts:370-376` emits a section body when a
+ * package has zero commits since the last bump AND no carried [Unreleased]
+ * content. The pre-SMI-5064 body was the bare `- Version bump` — uninformative
+ * and visually inconsistent with the `- **Fix**: …` / `- **Feature**: …`
+ * convention used elsewhere. SMI-5064 swaps it for
+ * `- **Cadence**: Mechanical cadence alignment (no changes since v${prior}).`
+ *
+ * This test exercises insertVersionSection (the pure function that places
+ * the section into the CHANGELOG body) with the new bullet shape and
+ * verifies it lands cleanly: bullet preserved verbatim, no spurious
+ * duplication, correct position relative to `## [Unreleased]`.
+ */
+describe('insertVersionSection — SMI-5064 cadence-only default bullet', () => {
+  it('inserts the cadence bullet exactly once between [Unreleased] and prior version', () => {
+    const body = '# Changelog\n\n## [Unreleased]\n\n## v0.2.3\n\n- **Fix**: prior work (#100)\n'
+    const section =
+      '## v0.2.4\n\n- **Cadence**: Mechanical cadence alignment (no changes since v0.2.3).'
+
+    const result = insertVersionSection(body, section)
+
+    // Bullet preserved verbatim.
+    expect(result).toContain(
+      '- **Cadence**: Mechanical cadence alignment (no changes since v0.2.3).'
+    )
+    // No spurious duplicate.
+    expect(result.match(/Mechanical cadence alignment/g)).toHaveLength(1)
+    // Order: ## [Unreleased] before ## v0.2.4 before ## v0.2.3 (audit Check 43 invariant).
+    const unreleasedIdx = result.indexOf('## [Unreleased]')
+    const newVersionIdx = result.indexOf('## v0.2.4')
+    const oldVersionIdx = result.indexOf('## v0.2.3')
+    expect(unreleasedIdx).toBeGreaterThanOrEqual(0)
+    expect(unreleasedIdx).toBeLessThan(newVersionIdx)
+    expect(newVersionIdx).toBeLessThan(oldVersionIdx)
+  })
+
+  it('inserts the cadence bullet correctly when CHANGELOG has no prior versions', () => {
+    // First-time-after-init case — only the synthesized header exists.
+    const body = '# Changelog\n\nAll notable changes to this package are documented here.\n'
+    const section =
+      '## v0.1.0\n\n- **Cadence**: Mechanical cadence alignment (no changes since v0.0.1).'
+
+    const result = insertVersionSection(body, section)
+
+    expect(result).toContain('## [Unreleased]')
+    expect(result).toContain(
+      '- **Cadence**: Mechanical cadence alignment (no changes since v0.0.1).'
+    )
+    expect(result.match(/Mechanical cadence alignment/g)).toHaveLength(1)
+
+    // Governance-fold: assert the cadence bullet lands UNDER `## v0.1.0`, not
+    // under `## [Unreleased]`. Catches a regression where the cadence text
+    // gets placed in the wrong section (would still satisfy the .toContain
+    // assertions but break the Check 43 ordering invariant in spirit).
+    const unreleasedIdx = result.indexOf('## [Unreleased]')
+    const v010Idx = result.indexOf('## v0.1.0')
+    const cadenceIdx = result.indexOf('- **Cadence**: Mechanical cadence alignment')
+    expect(unreleasedIdx).toBeGreaterThanOrEqual(0)
+    expect(v010Idx).toBeGreaterThan(unreleasedIdx)
+    expect(cadenceIdx).toBeGreaterThan(v010Idx)
+  })
+})

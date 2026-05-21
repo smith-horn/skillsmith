@@ -368,10 +368,17 @@ async function main(): Promise<void> {
         prependToChangelog(join(plan.spec.dir, 'CHANGELOG.md'), section)
         console.log(`  ✓ Changelog: ${plan.spec.shortName} (${entries.length} entries)`)
       } else {
-        // Create minimal entry
-        const section = `## v${plan.newVersion}\n\n- Version bump`
+        // SMI-5064: emit a descriptive cadence-only default instead of the
+        // bare "- Version bump" placeholder. The `**Cadence**:` bold prefix
+        // matches the `- **Fix**: …` / `- **Feature**: …` convention emitted
+        // by formatChangelogSection (version-utils.ts:280-288) for visual
+        // consistency. Referencing the prior version lets a reader run
+        // `git log v<prior>..v<new> -- <pkg-dir>` to verify zero commits.
+        const section = `## v${plan.newVersion}\n\n- **Cadence**: Mechanical cadence alignment (no changes since v${plan.currentVersion}).`
         prependToChangelog(join(plan.spec.dir, 'CHANGELOG.md'), section)
-        console.log(`  ✓ Changelog: ${plan.spec.shortName} (version bump only)`)
+        console.log(
+          `  ✓ Changelog: ${plan.spec.shortName} (cadence-only bump from v${plan.currentVersion})`
+        )
       }
     }
   }
