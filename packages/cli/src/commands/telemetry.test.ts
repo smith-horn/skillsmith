@@ -344,7 +344,8 @@ describe('telemetry reset-id', () => {
     }
 
     const m = await loadManifest()
-    const newId = m.telemetry?.anonymousId!
+    const newId = m.telemetry?.anonymousId
+    if (!newId) throw new Error('telemetry.anonymousId missing after runResetId')
     const output = cap.lines.join('\n')
 
     // Tail visible
