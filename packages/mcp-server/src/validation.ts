@@ -21,7 +21,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { ZodType, ZodTypeDef } from 'zod'
+import type { ZodType } from 'zod'
 
 /**
  * Discriminated result of a `safeParseOrError` call.
@@ -58,7 +58,10 @@ export type SafeParseResult<T> = { ok: true; data: T } | { ok: false; response: 
  * @returns `{ ok: true, data }` on success, `{ ok: false, response }` on failure.
  */
 export function safeParseOrError<T>(
-  schema: ZodType<T, ZodTypeDef, unknown>,
+  // SMI-5037: zod v4 dropped the middle `Def` generic slot. The v3
+  // `ZodType<Output, Def, Input>` collapses to v4 `ZodType<Output, Input>`,
+  // so `ZodType<T, ZodTypeDef, unknown>` becomes `ZodType<T, unknown>`.
+  schema: ZodType<T, unknown>,
   args: unknown,
   toolName: string
 ): SafeParseResult<T> {
