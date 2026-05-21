@@ -19,6 +19,7 @@ import { SkillInstallationService } from '@skillsmith/core'
 import { removeLinks } from '@skillsmith/core/install'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 // Input schema
 export const uninstallInputSchema = z.object({
@@ -41,7 +42,7 @@ export type UninstallResult = CoreUninstallResult
  * @param _context - Optional tool context (falls back to singleton)
  * @returns Promise resolving to uninstall result with success status
  */
-export async function uninstallSkill(
+async function uninstallSkillImpl(
   input: UninstallInput,
   _context?: ToolContext
 ): Promise<UninstallResult> {
@@ -120,3 +121,10 @@ export const uninstallTool = {
 }
 
 export default uninstallTool
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const uninstallSkill = withTelemetry(uninstallSkillImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'uninstall_skill',
+  extractFramework: () => 'unknown',
+})

@@ -13,6 +13,7 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import {
   periodDays,
   stubTeamAnalyticsDashboard,
@@ -181,7 +182,7 @@ export const usageReportToolSchema = {
  *
  * Uses real service when db is available, falls back to stub
  */
-export async function executeTeamAnalyticsDashboard(
+async function executeTeamAnalyticsDashboardImpl(
   input: TeamAnalyticsDashboardInput,
   context: ToolContext
 ): Promise<string> {
@@ -232,7 +233,7 @@ export async function executeTeamAnalyticsDashboard(
  *
  * Uses real service when db is available, falls back to stub
  */
-export async function executeTeamUsageReport(
+async function executeTeamUsageReportImpl(
   input: TeamUsageReportInput,
   context: ToolContext
 ): Promise<string> {
@@ -282,7 +283,7 @@ export async function executeTeamUsageReport(
  *
  * Uses real service when db is available, falls back to stub
  */
-export async function executeAnalyticsDashboard(
+async function executeAnalyticsDashboardImpl(
   input: AnalyticsDashboardInput,
   context: ToolContext
 ): Promise<string> {
@@ -342,7 +343,7 @@ export async function executeAnalyticsDashboard(
  *
  * Uses real service when db is available, falls back to stub
  */
-export async function executeUsageReport(
+async function executeUsageReportImpl(
   input: UsageReportInput,
   context: ToolContext
 ): Promise<string> {
@@ -404,3 +405,25 @@ export async function executeUsageReport(
 
   return stubUsageReport(input.period, input.format)
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeTeamAnalyticsDashboard = withTelemetry(executeTeamAnalyticsDashboardImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'team_analytics_dashboard',
+  extractFramework: () => 'unknown',
+})
+export const executeTeamUsageReport = withTelemetry(executeTeamUsageReportImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'team_usage_report',
+  extractFramework: () => 'unknown',
+})
+export const executeAnalyticsDashboard = withTelemetry(executeAnalyticsDashboardImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'analytics_dashboard',
+  extractFramework: () => 'unknown',
+})
+export const executeUsageReport = withTelemetry(executeUsageReportImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'usage_report',
+  extractFramework: () => 'unknown',
+})

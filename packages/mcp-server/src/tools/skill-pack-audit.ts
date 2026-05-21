@@ -22,6 +22,7 @@ import { z } from 'zod'
 import { promises as fs } from 'fs'
 import { basename, join, resolve, sep } from 'path'
 import { SkillsmithError, ErrorCodes, GENERIC_TRIGGERS } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { parseYamlFrontmatter, hasPathTraversal } from './validate.helpers.js'
 import {
   detectGenericTriggerWords,
@@ -193,7 +194,7 @@ const SEMVER_RE = /^\d+\.\d+\.\d+$/
  * @param context Tool context with database connection
  * @returns SkillPackAuditResponse with per-skill drift status
  */
-export async function executeSkillPackAudit(
+async function executeSkillPackAuditImpl(
   input: SkillPackAuditInput,
   context: ToolContext
 ): Promise<SkillPackAuditResponse> {
@@ -420,3 +421,10 @@ export async function executeSkillPackAudit(
     namespaceQuality: namespaceFlag,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeSkillPackAudit = withTelemetry(executeSkillPackAuditImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_pack_audit',
+  extractFramework: () => 'unknown',
+})

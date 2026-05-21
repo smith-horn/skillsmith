@@ -208,7 +208,8 @@ describe('executeOutdated', () => {
 
     const result = await executeOutdated({ include_deps: true }, makeContext(db))
 
-    const depSkill = result.skills.find((s) => s.id === skillId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const depSkill = result.skills.find((s: any) => s.id === skillId)
     expect(depSkill?.dependencies).toBeDefined()
     expect(depSkill!.dependencies!.total).toBe(1)
     expect(depSkill!.dependencies!.satisfied).toHaveLength(1)
@@ -335,8 +336,10 @@ describe('executeOutdated', () => {
     expect(result.skills).toHaveLength(2)
     expect(result.summary.total_installed).toBe(2)
 
-    const good = result.skills.find((s) => s.id === 'community/good-skill')
-    const bad = result.skills.find((s) => s.id === 'test/bad-skill')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const good = result.skills.find((s: any) => s.id === 'community/good-skill')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bad = result.skills.find((s: any) => s.id === 'test/bad-skill')
 
     expect(good?.status).toBe('current')
     expect(bad?.status).toBe('unknown')

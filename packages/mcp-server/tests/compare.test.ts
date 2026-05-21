@@ -105,7 +105,8 @@ describe('Skill Compare Tool', () => {
         context
       )
 
-      const qualityDiff = result.differences.find((d) => d.field === 'quality_score')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const qualityDiff = result.differences.find((d: any) => d.field === 'quality_score')
       expect(qualityDiff).toBeDefined()
       expect(qualityDiff?.a_value).toBeDefined()
       expect(qualityDiff?.b_value).toBeDefined()
@@ -121,7 +122,8 @@ describe('Skill Compare Tool', () => {
         context
       )
 
-      const trustDiff = result.differences.find((d) => d.field === 'trust_tier')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const trustDiff = result.differences.find((d: any) => d.field === 'trust_tier')
       expect(trustDiff).toBeDefined()
       expect(trustDiff?.a_value).toBe('verified')
       expect(trustDiff?.b_value).toBe('community')
@@ -137,7 +139,8 @@ describe('Skill Compare Tool', () => {
         context
       )
 
-      const depsDiff = result.differences.find((d) => d.field === 'dependencies_count')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const depsDiff = result.differences.find((d: any) => d.field === 'dependencies_count')
       expect(depsDiff).toBeDefined()
       expect(typeof depsDiff?.a_value).toBe('number')
       expect(typeof depsDiff?.b_value).toBe('number')

@@ -54,7 +54,8 @@ Use this skill by saying "test trigger".
       })
 
       expect(result.valid).toBe(true)
-      expect(result.errors.filter((e) => e.severity === 'error')).toHaveLength(0)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.errors.filter((e: any) => e.severity === 'error')).toHaveLength(0)
       expect(result.metadata).toBeDefined()
       expect(result.metadata?.name).toBe('test-skill')
     })
@@ -81,9 +82,11 @@ Missing description field.
       })
 
       expect(result.valid).toBe(false)
-      const errors = result.errors.filter((e) => e.severity === 'error')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const errors = result.errors.filter((e: any) => e.severity === 'error')
       expect(errors.length).toBeGreaterThan(0)
-      expect(errors.some((e) => e.field === 'description')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(errors.some((e: any) => e.field === 'description')).toBe(true)
     })
 
     it('should detect empty frontmatter', async () => {
@@ -158,7 +161,8 @@ version: 1.0.0
       })
 
       // In strict mode, warnings become errors
-      if (normalResult.errors.some((e) => e.severity === 'warning')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (normalResult.errors.some((e: any) => e.severity === 'warning')) {
         expect(strictResult.valid).toBe(false)
       }
     })
@@ -184,7 +188,8 @@ url: file:///etc/passwd
 
       // Should detect file:// URL as security issue
       const _securityErrors = result.errors.filter(
-        (e) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (e: any) =>
           e.message.toLowerCase().includes('security') || e.message.toLowerCase().includes('url')
       )
       // May or may not have security errors depending on implementation

@@ -40,6 +40,9 @@ export type SkillsmithEventType =
   | 'skill_recommend'
   | 'api_error'
   | 'feature_flag_evaluated'
+  | 'skill_invoke'
+  | 'skill_context_load'
+  | 'skill_invoke_unparsed'
 
 /**
  * Event properties for skill-related events
@@ -302,6 +305,35 @@ export function trackSkillInstall(
   trackEvent(distinctId, 'skill_install', {
     skill_id: skillId,
     source,
+  })
+}
+
+/**
+ * Parameters for tracking a skill invocation event (SMI-5016).
+ * `distinctId` defaults to `'anonymous'` so the HOF can emit without knowing
+ * the per-user ID at wrap-time; callers with a resolved ID should pass it.
+ */
+export interface TrackSkillInvokeParams {
+  skillId: string
+  source: 'mcp-tool' | 'cli' | 'vscode-extension'
+  framework: string
+  durationMs: number
+  success: boolean
+  distinctId?: string
+}
+
+/**
+ * Convenience function to track skill invocation events (SMI-5016).
+ * Mirrors `trackSkillInstall()` — positional for resolved-ID callers.
+ */
+export function trackSkillInvoke(params: TrackSkillInvokeParams): void {
+  const { skillId, source, framework, durationMs, success, distinctId = 'anonymous' } = params
+  trackEvent(distinctId, 'skill_invoke', {
+    skill_id: skillId,
+    invoke_source: source,
+    framework,
+    duration_ms: durationMs,
+    success,
   })
 }
 

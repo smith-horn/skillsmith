@@ -164,11 +164,13 @@ describe('E2E: skill_suggest tool', () => {
         limit: 3,
       }
 
-      const { result, durationMs } = await measureAsync(
+      const { result: _rawResult, durationMs } = await measureAsync(
         'suggest:basic',
         'skill_suggest (basic)',
         () => executeSuggest(input, context)
       )
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = _rawResult as any
 
       // Should complete without error
       expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
@@ -343,8 +345,10 @@ describe('E2E: skill_suggest tool', () => {
         // These are in the hardcoded skillDatabase but NOT in our test database
       ]
 
-      const suggestedIds = result.suggestions.map((s) => s.skill_id)
-      const fromHardcoded = suggestedIds.filter((id) => hardcodedOnlySkills.includes(id))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const suggestedIds = result.suggestions.map((s: any) => s.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fromHardcoded = suggestedIds.filter((id: any) => hardcodedOnlySkills.includes(id))
 
       if (fromHardcoded.length > 0) {
         // Create Linear issue for hardcoded skillDatabase

@@ -14,6 +14,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createRealComplianceService } from './compliance-tools.service.js'
 
 // ============================================================================
@@ -289,7 +290,7 @@ function formatJson(data: ComplianceData, period: string): Record<string, unknow
 // Handler
 // ============================================================================
 
-export async function executeComplianceReport(
+async function executeComplianceReportImpl(
   input: ComplianceReportInput,
   context: ToolContext
 ): Promise<ComplianceReportResult> {
@@ -341,3 +342,10 @@ export async function executeComplianceReport(
       }
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeComplianceReport = withTelemetry(executeComplianceReportImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'compliance_report',
+  extractFramework: () => 'unknown',
+})

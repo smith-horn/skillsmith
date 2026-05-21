@@ -34,6 +34,7 @@ import {
   ErrorCodes,
   trackSkillView,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import {
   isValidSkillId,
@@ -99,7 +100,7 @@ export interface GetSkillInput {
  * const response = await executeGetSkill({ id: 'getsentry/commit' }, context);
  * console.log(response.skill.score); // 95
  */
-export async function executeGetSkill(
+async function executeGetSkillImpl(
   input: GetSkillInput,
   context: ToolContext
 ): Promise<GetSkillResponse> {
@@ -468,3 +469,10 @@ function formatScoreBar(score: number): string {
   const bar = '='.repeat(filled) + '-'.repeat(empty)
   return '[' + bar + '] ' + score + '/100'
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeGetSkill = withTelemetry(executeGetSkillImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'get_skill',
+  extractFramework: () => 'unknown',
+})

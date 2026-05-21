@@ -167,7 +167,8 @@ describe('Search Tool - Online API Path (SMI-2755)', () => {
 
     const result = await executeSearch({ query: 'commit' }, onlineContext)
 
-    const commitResult = result.results.find((r) => r.name === 'commit')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const commitResult = result.results.find((r: any) => r.name === 'commit')
     expect(commitResult?.installHint).toBe('anthropic/commit')
   })
 })

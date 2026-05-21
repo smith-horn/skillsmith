@@ -23,6 +23,7 @@
 import { resolve } from 'path'
 import { z } from 'zod'
 import { CodebaseAnalyzer, type CodebaseContext, type FrameworkInfo } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { hasPathTraversal } from './validate.helpers.js'
 
 /**
@@ -145,7 +146,7 @@ export const analyzeToolSchema = {
  * });
  * console.log('Detected:', response.frameworks.map(f => f.name).join(', '));
  */
-export async function executeAnalyze(input: AnalyzeInput): Promise<AnalyzeResponse> {
+async function executeAnalyzeImpl(input: AnalyzeInput): Promise<AnalyzeResponse> {
   // Validate input
   const validated = analyzeInputSchema.parse(input)
 
@@ -217,6 +218,13 @@ function transformContextToResponse(
     },
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeAnalyze = withTelemetry(executeAnalyzeImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'analyze',
+  extractFramework: () => 'unknown',
+})
 
 /**
  * Format analysis results for terminal display

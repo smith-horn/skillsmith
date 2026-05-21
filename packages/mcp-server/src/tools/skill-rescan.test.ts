@@ -293,8 +293,10 @@ describe('executeSkillRescan', () => {
     expect(result.scannedCount).toBe(2)
     expect(result.failedCount).toBe(1)
 
-    const good = result.results.find((r) => r.skill === 'good-skill')
-    const bad = result.results.find((r) => r.skill === 'bad-skill')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const good = result.results.find((r: any) => r.skill === 'good-skill')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bad = result.results.find((r: any) => r.skill === 'bad-skill')
     expect(good?.passed).toBe(true)
     expect(bad?.passed).toBe(false)
   })

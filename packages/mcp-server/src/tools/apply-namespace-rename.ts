@@ -32,6 +32,7 @@ import { z } from 'zod'
 import { readAuditSuggestions } from '../audit/audit-suggestions.js'
 import { applyRename } from '../audit/rename-engine.js'
 import type { ApplyRenameRequest } from '../audit/rename-engine.types.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 import type { ApplyNamespaceRenameResponse } from './apply-namespace-rename.types.js'
 
@@ -73,7 +74,7 @@ export const applyNamespaceRenameInputSchema = z
  * the MCP `CallToolResult` shape. The application-level success/failure
  * lives inside the response payload.
  */
-export async function applyNamespaceRename(input: unknown): Promise<ApplyNamespaceRenameResponse> {
+async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceRenameResponse> {
   const parsed = applyNamespaceRenameInputSchema.safeParse(input)
   if (!parsed.success) {
     const message = parsed.error.issues
@@ -150,3 +151,10 @@ export async function applyNamespaceRename(input: unknown): Promise<ApplyNamespa
     result,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const applyNamespaceRename = withTelemetry(applyNamespaceRenameImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'apply_namespace_rename',
+  extractFramework: () => 'unknown',
+})

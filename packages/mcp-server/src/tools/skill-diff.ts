@@ -13,6 +13,7 @@
 
 import { z } from 'zod'
 import { classifyChange, computeUpdateRisk } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 
 // ============================================================================
@@ -228,7 +229,7 @@ function extractSectionBodies(content: string): Map<string, string> {
  * @param _context Tool context (unused — diff is purely content-based)
  * @returns SkillDiffResponse with section diff and risk recommendation
  */
-export async function executeSkillDiff(
+async function executeSkillDiffImpl(
   input: SkillDiffInput,
   _context: ToolContext
 ): Promise<SkillDiffResponse> {
@@ -322,3 +323,10 @@ export function formatSkillDiffResults(response: SkillDiffResponse): string {
 
   return lines.join('\n')
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeSkillDiff = withTelemetry(executeSkillDiffImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_diff',
+  extractFramework: () => 'unknown',
+})

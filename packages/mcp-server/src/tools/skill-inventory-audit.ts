@@ -26,6 +26,7 @@ import * as path from 'node:path'
 import { z } from 'zod'
 
 import { runInventoryAudit } from '../audit/run-inventory-audit.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type {
   SkillInventoryAuditInput,
   SkillInventoryAuditResponse,
@@ -62,7 +63,7 @@ export type SkillInventoryAuditValidatedInput = z.infer<typeof skillInventoryAud
  * returns either the success response OR a structured validation-error
  * envelope (matches `install.ts:buildValidationError` pattern).
  */
-export async function skillInventoryAudit(
+async function skillInventoryAuditImpl(
   input: unknown
 ): Promise<SkillInventoryAuditResponse | InventoryAuditValidationError> {
   const parsed = skillInventoryAuditInputSchema.safeParse(input)
@@ -87,6 +88,13 @@ export async function skillInventoryAudit(
   const result = await runInventoryAudit(runOpts)
   return result
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const skillInventoryAudit = withTelemetry(skillInventoryAuditImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_inventory_audit',
+  extractFramework: () => 'unknown',
+})
 
 /**
  * Application-level validation-error envelope. Mirrors the

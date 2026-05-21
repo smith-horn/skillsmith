@@ -27,6 +27,7 @@
 import { promises as fs } from 'fs'
 import { dirname, join } from 'path'
 import { SkillParser, SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 
 // Import types
@@ -63,7 +64,7 @@ export { formatPublishResults } from './publish.helpers.js'
  * @returns Promise resolving to publish response
  * @throws {SkillsmithError} When path is invalid or skill cannot be read
  */
-export async function executePublish(
+async function executePublishImpl(
   input: PublishInput,
   _context?: ToolContext
 ): Promise<PublishResponse> {
@@ -204,3 +205,10 @@ export async function executePublish(
     nextSteps,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executePublish = withTelemetry(executePublishImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_publish',
+  extractFramework: () => 'unknown',
+})

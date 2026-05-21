@@ -21,6 +21,7 @@
  */
 
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import { isValidSkillId } from '../utils/validation.js'
 
@@ -66,7 +67,7 @@ export { compareInputSchema, compareToolSchema } from './compare.types.js'
  * }, context);
  * console.log(response.recommendation);
  */
-export async function executeCompare(
+async function executeCompareImpl(
   input: CompareInput,
   context: ToolContext
 ): Promise<CompareResponse> {
@@ -151,6 +152,13 @@ export async function executeCompare(
     },
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeCompare = withTelemetry(executeCompareImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_compare',
+  extractFramework: () => 'unknown',
+})
 
 /**
  * Format comparison results for terminal display

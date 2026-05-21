@@ -139,7 +139,8 @@ describe('E2E: Skill Discovery Flow', () => {
       const result = await executeSearch(input, context)
 
       expect(result.results.length).toBeGreaterThan(0)
-      expect(result.results.some((s) => s.id === 'anthropic/commit')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.some((s: any) => s.id === 'anthropic/commit')).toBe(true)
     })
 
     it('should find testing skills when searching for "test"', async () => {
@@ -147,8 +148,10 @@ describe('E2E: Skill Discovery Flow', () => {
       const result = await executeSearch(input, context)
 
       expect(result.results.length).toBeGreaterThanOrEqual(2)
-      expect(result.results.some((s) => s.id === 'community/jest-helper')).toBe(true)
-      expect(result.results.some((s) => s.id === 'community/vitest-helper')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.some((s: any) => s.id === 'community/jest-helper')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.some((s: any) => s.id === 'community/vitest-helper')).toBe(true)
     })
 
     it('should filter by category', async () => {
@@ -157,10 +160,12 @@ describe('E2E: Skill Discovery Flow', () => {
       const result = await executeSearch(input, context)
 
       expect(result.results.length).toBeGreaterThan(0)
-      expect(result.results.some((s) => s.id === 'community/docker-compose')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.some((s: any) => s.id === 'community/docker-compose')).toBe(true)
 
       // Verify docker-compose has expected category from extractCategoryFromTags
-      const dockerSkill = result.results.find((s) => s.id === 'community/docker-compose')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dockerSkill = result.results.find((s: any) => s.id === 'community/docker-compose')
       expect(dockerSkill?.category).toBe('devops')
     })
 
@@ -168,14 +173,16 @@ describe('E2E: Skill Discovery Flow', () => {
       const input: SearchInput = { query: 'commit', trust_tier: 'verified' }
       const result = await executeSearch(input, context)
 
-      expect(result.results.every((s) => s.trustTier === 'verified')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.every((s: any) => s.trustTier === 'verified')).toBe(true)
     })
 
     it('should filter by minimum score', async () => {
       const input: SearchInput = { query: 'test', min_score: 85 }
       const result = await executeSearch(input, context)
 
-      expect(result.results.every((s) => s.score >= 85)).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.every((s: any) => s.score >= 85)).toBe(true)
     })
   })
 
@@ -258,7 +265,8 @@ describe('E2E: Skill Discovery Flow', () => {
       const queries = ['commit', 'test', 'docker', 'jest', 'vitest']
       const results = await Promise.all(queries.map((query) => executeSearch({ query }, context)))
 
-      expect(results.every((r) => r.results.length >= 0)).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(results.every((r: any) => r.results.length >= 0)).toBe(true)
     })
   })
 

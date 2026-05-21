@@ -123,7 +123,8 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
     )
 
     // No duplicate skill IDs
-    const ids = result.recommendations.map((r) => r.skill_id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ids = result.recommendations.map((r: any) => r.skill_id)
     const uniqueIds = new Set(ids)
     expect(ids.length).toBe(uniqueIds.size)
   })
@@ -166,7 +167,8 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
 
     expect(result.context.role_filter).toBe('testing')
     // If any recommendation survived the role filter, its score should be boosted
-    result.recommendations.forEach((rec) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    result.recommendations.forEach((rec: any) => {
       if (rec.roles?.includes('testing')) {
         expect(rec.quality_score).toBeGreaterThanOrEqual(50 + 30)
         expect(rec.reason).toContain('role: testing')

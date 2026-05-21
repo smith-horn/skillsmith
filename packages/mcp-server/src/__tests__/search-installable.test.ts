@@ -67,8 +67,10 @@ describe('SMI-4954: installable signal — online API path', () => {
 
     const result = await executeSearch({ query: 'commit' }, onlineContext)
 
-    expect(result.results.find((r) => r.name === 'commit')?.installable).toBe(true)
-    expect(result.results.find((r) => r.name === 'discovery-only')?.installable).toBe(false)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.find((r: any) => r.name === 'commit')?.installable).toBe(true)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.find((r: any) => r.name === 'discovery-only')?.installable).toBe(false)
   })
 
   it('installable_only filter excludes discovery-only entries', async () => {
@@ -79,8 +81,10 @@ describe('SMI-4954: installable signal — online API path', () => {
 
     const result = await executeSearch({ query: 'commit', installable_only: true }, onlineContext)
 
-    expect(result.results.every((r) => r.installable === true)).toBe(true)
-    expect(result.results.find((r) => r.name === 'discovery-only')).toBeUndefined()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.every((r: any) => r.installable === true)).toBe(true)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.find((r: any) => r.name === 'discovery-only')).toBeUndefined()
     // total reflects the filtered set, not the registry grand-total.
     expect(result.total).toBe(result.results.length)
   })
@@ -93,7 +97,8 @@ describe('SMI-4954: installable signal — online API path', () => {
 
     const result = await executeSearch({ query: 'commit' }, onlineContext)
 
-    expect(result.results.find((r) => r.name === 'discovery-only')).toBeDefined()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.find((r: any) => r.name === 'discovery-only')).toBeDefined()
   })
 })
 

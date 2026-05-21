@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubIntegrationService } from './integration-tools.stub.js'
 
 // Re-export stub factory for external consumers and tests
@@ -220,7 +221,7 @@ function getDataSource(): 'stub' | 'live' {
   return isSupabaseConfigured() ? 'live' : 'stub'
 }
 
-export async function executeWebhookConfigure(
+async function executeWebhookConfigureImpl(
   input: WebhookConfigureInput,
   _context: ToolContext
 ): Promise<WebhookConfigureResult> {
@@ -315,7 +316,7 @@ export async function executeWebhookConfigure(
   }
 }
 
-export async function executeApiKeyManage(
+async function executeApiKeyManageImpl(
   input: ApiKeyManageInput,
   _context: ToolContext
 ): Promise<ApiKeyManageResult> {
@@ -377,3 +378,15 @@ export async function executeApiKeyManage(
     }
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeWebhookConfigure = withTelemetry(executeWebhookConfigureImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'webhook_configure',
+  extractFramework: () => 'unknown',
+})
+export const executeApiKeyManage = withTelemetry(executeApiKeyManageImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'api_key_manage',
+  extractFramework: () => 'unknown',
+})

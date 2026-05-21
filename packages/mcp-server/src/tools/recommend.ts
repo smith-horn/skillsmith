@@ -9,6 +9,7 @@
  */
 
 import { SkillMatcher, OverlapDetector, trackEvent } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import { getInstalledSkills } from '../utils/installed-skills.js'
 import { mapTrustTierFromDb } from '../utils/validation.js'
@@ -111,7 +112,7 @@ async function searchLocalSkillsForRecommend(
  * - Tries live API first (api.skillsmith.app)
  * - Falls back to local semantic matching if API is offline or fails
  */
-export async function executeRecommend(
+async function executeRecommendImpl(
   input: RecommendInput,
   context: ToolContext
 ): Promise<RecommendResponse> {
@@ -429,3 +430,10 @@ export async function executeRecommend(
 
   return response
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeRecommend = withTelemetry(executeRecommendImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_recommend',
+  extractFramework: () => 'unknown',
+})

@@ -20,6 +20,7 @@ import {
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { addLink, getInstallPath, resolveClientPath } from '@skillsmith/core/install'
 import { resolveAuditMode, isAuditMode, type Tier } from '@skillsmith/core/config/audit-mode'
 import type { ToolContext } from '../context.js'
@@ -107,7 +108,7 @@ function buildInvalidSkillIdError(skillId: string, message: string): InstallResu
  * @param _context - Optional tool context (falls back to singleton)
  * @returns Installation result with success status, security report, and dep intel
  */
-export async function installSkill(input: unknown, _context?: ToolContext): Promise<InstallResult> {
+async function installSkillImpl(input: unknown, _context?: ToolContext): Promise<InstallResult> {
   // SMI-4288 / #599: Zod validation boundary. Unlike the previous typed
   // signature, this runs at every call site (tool-dispatch, runFirstTimeSetup,
   // integration tests). Validation failures return a structured InstallResult
@@ -346,3 +347,10 @@ export function extractSkillName(skillId: string): string {
   }
   return name
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const installSkill = withTelemetry(installSkillImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'install_skill',
+  extractFramework: () => 'unknown',
+})

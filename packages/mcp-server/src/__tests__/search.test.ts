@@ -48,7 +48,8 @@ describe('Search Tool', () => {
 
       // Seeded DB has testing-category skills; filter must return results
       expect(result.results.length).toBeGreaterThan(0)
-      expect(result.results.every((r) => r.category === 'testing')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.every((r: any) => r.category === 'testing')).toBe(true)
     })
 
     it('should filter by trust tier', async () => {
@@ -60,7 +61,8 @@ describe('Search Tool', () => {
         context
       )
 
-      result.results.forEach((skill) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      result.results.forEach((skill: any) => {
         expect(skill.trustTier).toBe('verified')
       })
     })
@@ -74,7 +76,8 @@ describe('Search Tool', () => {
         context
       )
 
-      result.results.forEach((skill) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      result.results.forEach((skill: any) => {
         expect(skill.score).toBeGreaterThanOrEqual(90)
       })
     })

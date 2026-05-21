@@ -133,7 +133,8 @@ describe('SMI-797: Performance Validation', () => {
       const elapsed = performance.now() - start
 
       expect(elapsed).toBeLessThan(200)
-      expect(results.every((r) => r.results !== undefined)).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(results.every((r: any) => r.results !== undefined)).toBe(true)
     })
 
     it('should maintain sub-100ms response for repeated searches', async () => {
@@ -182,7 +183,8 @@ describe('SMI-797: Performance Validation', () => {
       const elapsed = performance.now() - start
 
       expect(elapsed).toBeLessThan(200)
-      expect(results.every((r) => r.skill !== undefined)).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(results.every((r: any) => r.skill !== undefined)).toBe(true)
     })
   })
 
@@ -196,7 +198,8 @@ describe('SMI-797: Performance Validation', () => {
 
       // Get first registry result (skip local skills — they aren't in the test DB)
       const firstId =
-        searchResult.results.find((r) => r.source !== 'local')?.id ?? 'test-org/skill-0'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        searchResult.results.find((r: any) => r.source !== 'local')?.id ?? 'test-org/skill-0'
       await executeGetSkill({ id: firstId }, context)
 
       const elapsed = performance.now() - start
@@ -211,10 +214,13 @@ describe('SMI-797: Performance Validation', () => {
 
       // Get up to 10 registry results (skip local skills — they aren't in the test DB)
       const ids = searchResult.results
-        .filter((r) => r.source !== 'local')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .filter((r: any) => r.source !== 'local')
         .slice(0, 10)
-        .map((r) => r.id)
-      await Promise.all(ids.map((id) => executeGetSkill({ id }, context)))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((r: any) => r.id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await Promise.all(ids.map((id: any) => executeGetSkill({ id }, context)))
 
       const elapsed = performance.now() - start
       expect(elapsed).toBeLessThan(200)
@@ -272,7 +278,8 @@ describe('SMI-797: Performance Validation', () => {
       // Search + Get flow (use first registry result — local skills aren't in the test DB)
       start = performance.now()
       const result = await executeSearch({ query: 'test' }, context)
-      const flowId = result.results.find((r) => r.source !== 'local')?.id ?? 'test-org/skill-0'
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const flowId = result.results.find((r: any) => r.source !== 'local')?.id ?? 'test-org/skill-0'
       await executeGetSkill({ id: flowId }, context)
       metrics.searchGetFlow = performance.now() - start
 

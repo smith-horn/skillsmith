@@ -35,6 +35,7 @@ import {
   ErrorCodes,
   trackSkillSearch,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import {
   extractCategoryFromTags,
@@ -201,7 +202,7 @@ export interface SearchInput {
  * const response = await executeSearch({ query: 'commit' }, context);
  * console.log(`Found ${response.total} skills in ${response.timing.totalMs}ms`);
  */
-export async function executeSearch(
+async function executeSearchImpl(
   input: SearchInput,
   context: ToolContext
 ): Promise<SearchResponse> {
@@ -492,3 +493,10 @@ export async function executeSearch(
 
   return response
 }
+
+// SMI-5017 W2.S2: wrap at export boundary so isTelemetered(executeSearch) === true
+export const executeSearch = withTelemetry(executeSearchImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'search',
+  extractFramework: () => 'unknown', // v1 placeholder — real UA parsing is H4 follow-up
+})
