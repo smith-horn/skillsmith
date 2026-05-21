@@ -1,27 +1,6 @@
 /**
- * @fileoverview MCP Search Tool for agent skill discovery
- * @module @skillsmith/mcp-server/tools/search
- * @see {@link https://github.com/wrsmith108/skillsmith|Skillsmith Repository}
- * @see SMI-789: Wire search tool to SearchService
- *
- * Provides skill search functionality with support for:
- * - Full-text search across skill names, descriptions, and authors
- * - Category filtering (development, testing, devops, etc.)
- * - Trust tier filtering (verified, curated, community, experimental, unknown)
- * - Minimum quality score filtering
- *
- * @example
- * // Basic search with context
- * const results = await executeSearch({ query: 'commit' }, context);
- *
- * @example
- * // Search with filters
- * const results = await executeSearch({
- *   query: 'test',
- *   category: 'testing',
- *   trust_tier: 'verified',
- *   min_score: 80
- * }, context);
+ * @fileoverview MCP Search Tool — SMI-789 wires search to SearchService.
+ * Supports full-text query + category / trust_tier / min_score filters.
  */
 
 import {
@@ -494,9 +473,9 @@ async function executeSearchImpl(
   return response
 }
 
-// SMI-5017 W2.S2: wrap at export boundary so isTelemetered(executeSearch) === true
+// SMI-5017 W2.S2 wrap (isTelemetered=true). Framework placeholder per H4.
 export const executeSearch = withTelemetry(executeSearchImpl, {
   source: 'mcp-tool',
   extractSkillId: () => 'search',
-  extractFramework: () => 'unknown', // v1 placeholder — real UA parsing is H4 follow-up
+  extractFramework: () => 'unknown',
 })

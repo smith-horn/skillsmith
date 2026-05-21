@@ -1252,7 +1252,10 @@ try {
 
 // 19. docs/ Directory Structure Guard (SMI-2607)
 console.log(`\n${BOLD}19. docs/ Directory Structure Guard (SMI-2607)${RESET}`)
-const allowedDocsDirs = ['internal']
+// `privacy` is the public legal-docs folder (SMI-5012 W4.S3 / SMI-5025) —
+// served as user-facing privacy notice at skillsmith.app/docs/privacy/.
+// Distinct from the `internal` submodule (private architecture / process).
+const allowedDocsDirs = ['internal', 'privacy']
 const actualDocsDirs = readdirSync('docs', { withFileTypes: true })
   .filter((d) => d.isDirectory())
   .map((d) => d.name)
@@ -4003,7 +4006,7 @@ console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060/SMI-506
 // Severity: 48c/48d are `warn()` for v1 to avoid false-positive fatigue
 // blocking unrelated PRs (CLAUDE.md governance retro guidance). Promote to
 // `fail()` after a soak period if the warn rate is zero.
-console.log(`\n${BOLD}48. Convention drift backstop (SMI-5026 M5)${RESET}`)
+console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
 {
   const POSTHOG_PATH = 'packages/core/src/telemetry/posthog.ts'
   const EVENTS_PATH = 'supabase/functions/events/index.ts'
