@@ -32,7 +32,10 @@ env:
   # vscode-extension are published by other workflows or are private.
   # Parity with the inline pre-publish-check enumeration is enforced by
   # scripts/audit-standards.mjs (fails CI on drift).
-  PUBLISHABLE_PACKAGES_JSON: '["@skillsmith/core","@skillsmith/mcp-server","@skillsmith/cli","@smith-horn/enterprise"]'
+  # SMI-5066: billing-types is a types-only contract package depended on
+  # by mcp-server + enterprise. Order in this list is informational only;
+  # Turbo `--filter=` constructs an alternation, not a sequence.
+  PUBLISHABLE_PACKAGES_JSON: '["@skillsmith/core","@skillsmith/billing-types","@skillsmith/mcp-server","@skillsmith/cli","@smith-horn/enterprise"]'
 
 jobs:
   # SMI-1301: Pre-publish validation before expensive Docker build
@@ -44,6 +47,10 @@ jobs:
 
     outputs:
       core-exists: ${{ steps.version-check.outputs.core_exists }}
+      # SMI-5066: billing-types output key follows the standard
+      # <shortName>-exists convention (the mcp-server → mcp-exists drift is
+      # documented in PUBLISH_JOB_TO_OUTPUT_ALIAS in audit-standards-helpers.mjs).
+      billing-types-exists: ${{ steps.version-check.outputs.billing_types_exists }}
       mcp-exists: ${{ steps.version-check.outputs.mcp_exists }}
       cli-exists: ${{ steps.version-check.outputs.cli_exists }}
       enterprise-exists: ${{ steps.version-check.outputs.enterprise_exists }}
@@ -96,6 +103,18 @@ jobs:
           else
             echo "core_exists=false" >> $GITHUB_OUTPUT
             echo "| @skillsmith/core | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
+            ANY_TO_PUBLISH=true
+          fi
+
+          # SMI-5066: Check @skillsmith/billing-types (types-only contract dep of mcp-server + enterprise)
+          VERSION=$(jq -r .version packages/billing-types/package.json)
+          PUBLISHED=$(npm view @skillsmith/billing-types@$VERSION version 2>/dev/null || echo '')
+          if [ -n "$PUBLISHED" ]; then
+            echo "billing_types_exists=true" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/billing-types | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "billing_types_exists=false" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/billing-types | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
             ANY_TO_PUBLISH=true
           fi
 
@@ -406,7 +425,9 @@ jobs:
         if: steps.download-docker.outcome == 'success'
         run: |
           set -e
-          for pkg in core mcp-server cli enterprise; do
+          # SMI-5066: billing-types added — its `vitest run --passWithNoTests`
+          # is a no-op today but must be invoked so future tests aren't silently skipped.
+          for pkg in core billing-types mcp-server cli enterprise; do
             echo "::group::Test @skillsmith/$pkg (packages/$pkg)"
             docker run --rm --init \
               -v ${{ github.workspace }}:/app \
@@ -571,12 +592,118 @@ jobs:
           echo "::error::@skillsmith/core@${VERSION} is not live on npm after publish — failing the job."
           exit 1
 
+  # SMI-5066: Publish @skillsmith/billing-types — types-only contract package
+  # depended on by mcp-server + enterprise. Mirrors publish-core: no `needs:`
+  # predecessor publish-* job (it has no workspace deps), so its skip-state
+  # surfaces correctly to dependents via the SMI-5060 paired-predicate pattern.
+  # Runs in parallel with publish-core (both gated on validate only).
+  publish-billing-types:
+    name: Publish @skillsmith/billing-types
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [pre-publish-check, validate]
+    # OIDC trusted-publisher must be configured on npmjs.com for this package
+    # (precondition verified before first natural release; see SMI-5066 plan §6.1).
+    permissions:
+      contents: read
+      id-token: write
+    if: |
+      (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
+      needs.pre-publish-check.outputs.billing-types-exists != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build billing-types package
+        run: npm run build -w @skillsmith/billing-types
+
+      - name: Check if version already published
+        id: version-check
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./packages/billing-types/package.json').version")
+          NPM_VERSION=$(npm view @skillsmith/billing-types version 2>/dev/null || echo 'not-found')
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+          if [ "$PACKAGE_VERSION" = "$NPM_VERSION" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "::notice::@skillsmith/billing-types@$PACKAGE_VERSION already published, skipping..."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::notice::Publishing @skillsmith/billing-types@$PACKAGE_VERSION (current npm: $NPM_VERSION)"
+          fi
+
+      # SMI-4188: mirror guard — refuses when proposed <= highest published.
+      - name: Pre-publish collision mirror guard
+        if: steps.version-check.outputs.exists != 'true'
+        run: |
+          VERSION=$(jq -r .version packages/billing-types/package.json)
+          node scripts/check-publish-collision.mjs @skillsmith/billing-types "$VERSION"
+
+      # SMI-4539: native `npm publish` OIDC needs npm >= 11.5.1; runner ships 10.9.7.
+      - name: Upgrade npm for OIDC publish (SMI-4539)
+        run: npm install -g npm@11.9.0
+
+      - name: Assert npm version (SMI-4539)
+        run: |
+          ACTUAL="$(npm --version)"
+          if [ "$ACTUAL" != "11.9.0" ]; then
+            echo "::error::Expected npm 11.9.0 for OIDC publish, got $ACTUAL"
+            exit 1
+          fi
+          echo "✓ npm $ACTUAL"
+
+      - name: Publish billing-types
+        id: publish-billing-types-oidc
+        if: steps.version-check.outputs.exists != 'true'
+        run: |
+          npm publish -w @skillsmith/billing-types --access public
+          echo "::notice::OIDC publish succeeded for @skillsmith/billing-types"
+
+      - name: Verify billing-types on npm
+        if: steps.publish-billing-types-oidc.outcome == 'success'
+        run: |
+          VERSION=$(jq -r .version packages/billing-types/package.json)
+          # Retry to absorb npm registry/CDN propagation lag right after publish.
+          for attempt in 1 2 3 4 5; do
+            LIVE=$(npm view "@skillsmith/billing-types@${VERSION}" version 2>/dev/null || echo '')
+            if [ "$LIVE" = "$VERSION" ]; then
+              echo "✓ @skillsmith/billing-types@${VERSION} verified live on npm (attempt ${attempt})"
+              exit 0
+            fi
+            echo "… @skillsmith/billing-types@${VERSION} not yet visible (attempt ${attempt}/5); waiting 6s"
+            sleep 6
+          done
+          echo "::error::@skillsmith/billing-types@${VERSION} is not live on npm after publish — failing the job."
+          exit 1
+
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-mcp-server:
     name: Publish @skillsmith/mcp-server
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [pre-publish-check, validate, publish-core]
+    # SMI-5066: publish-billing-types added — mcp-server has a runtime
+    # dependency on @skillsmith/billing-types ^0.1.0 and must not publish
+    # before billing-types is on npm.
+    needs: [pre-publish-check, validate, publish-core, publish-billing-types]
     # id-token: write enables two OIDC paths in this job:
     # - SMI-4534: `mcp-publisher login github-oidc` for the MCP Registry publish step
     # - SMI-4540: npm trusted-publisher OIDC for the npm publish step (sole npm auth
@@ -601,12 +728,18 @@ jobs:
     # Edge case retained: if `validate` is *cancelled* (not failed) and core
     # was already on npm, this job still runs. That's intentional — manual
     # cancellation is an operator action, not a soundness failure.
+    #
+    # SMI-5066: mirror the SMI-5060 paired-predicate pattern for the new
+    # publish-billing-types dependency. Audit-standards Check 48 (generalized)
+    # enforces every `*-result == 'skipped'` clause has a matching <outputKey>-exists guard.
     if: |
       !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.mcp-exists != 'true' &&
       (needs.publish-core.result == 'success' ||
-       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))
+       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true')) &&
+      (needs.publish-billing-types.result == 'success' ||
+       (needs.publish-billing-types.result == 'skipped' && needs.pre-publish-check.outputs.billing-types-exists == 'true'))
 
     steps:
       - name: Checkout
@@ -900,7 +1033,9 @@ jobs:
     name: Publish @smith-horn/enterprise
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [pre-publish-check, validate, publish-core]
+    # SMI-5066: publish-billing-types added — enterprise has a runtime
+    # dependency on @skillsmith/billing-types ^0.1.0 (package.json line 47).
+    needs: [pre-publish-check, validate, publish-core, publish-billing-types]
     # SMI-4539 deliberately left this job on GITHUB_TOKEN — npm
     # trusted-publishing is npmjs.org-only; GitHub Packages is unaffected. This
     # job publishes @smith-horn/enterprise to npm.pkg.github.com via the
@@ -912,12 +1047,16 @@ jobs:
       packages: write
     # SMI-4803: see publish-mcp-server for `!cancelled()` rationale.
     # SMI-5060: see publish-mcp-server for the core-exists predicate rationale.
+    # SMI-5066: mirror predicate for publish-billing-types — enterprise also
+    # depends on @skillsmith/billing-types ^0.1.0.
     if: |
       !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.enterprise-exists != 'true' &&
       (needs.publish-core.result == 'success' ||
-       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))
+       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true')) &&
+      (needs.publish-billing-types.result == 'success' ||
+       (needs.publish-billing-types.result == 'skipped' && needs.pre-publish-check.outputs.billing-types-exists == 'true'))
 
     steps:
       - name: Checkout
@@ -1037,8 +1176,10 @@ jobs:
   create-gh-release:
     name: Create GitHub Releases
     runs-on: ubuntu-latest
-    needs: [publish-core, publish-mcp-server, publish-cli, smoke-test]
-    if: always() && (needs.publish-core.result == 'success' || needs.publish-mcp-server.result == 'success' || needs.publish-cli.result == 'success')
+    # SMI-5066: publish-billing-types added so a successful billing-types
+    # publish gets a matching GitHub Release tag (@skillsmith/billing-types-vX.Y.Z).
+    needs: [publish-core, publish-billing-types, publish-mcp-server, publish-cli, smoke-test]
+    if: always() && (needs.publish-core.result == 'success' || needs.publish-billing-types.result == 'success' || needs.publish-mcp-server.result == 'success' || needs.publish-cli.result == 'success')
     timeout-minutes: 5
 
     steps:
@@ -1056,6 +1197,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CORE_RESULT: ${{ needs.publish-core.result }}
+          BILLING_TYPES_RESULT: ${{ needs.publish-billing-types.result }}
           MCP_RESULT: ${{ needs.publish-mcp-server.result }}
           CLI_RESULT: ${{ needs.publish-cli.result }}
         run: |
@@ -1101,6 +1243,8 @@ jobs:
           }
 
           create_release core packages/core @skillsmith/core "$CORE_RESULT"
+          # SMI-5066: billing-types tag matches the @skillsmith/billing-types-vX.Y.Z convention.
+          create_release billing-types packages/billing-types @skillsmith/billing-types "$BILLING_TYPES_RESULT"
           create_release mcp-server packages/mcp-server @skillsmith/mcp-server "$MCP_RESULT"
           create_release cli packages/cli @skillsmith/cli "$CLI_RESULT"
 
@@ -1108,9 +1252,11 @@ jobs:
   publish-summary:
     name: Publish Summary
     runs-on: ubuntu-latest
+    # SMI-5066: publish-billing-types added to needs + summary table.
     needs:
       [
         publish-core,
+        publish-billing-types,
         publish-mcp-server,
         publish-cli,
         publish-enterprise,
@@ -1127,6 +1273,7 @@ jobs:
           echo "| Package | Status | Smoke Test |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|--------|------------|" >> $GITHUB_STEP_SUMMARY
           echo "| @skillsmith/core | ${{ needs.publish-core.result }} | ${{ needs.smoke-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| @skillsmith/billing-types | ${{ needs.publish-billing-types.result }} | N/A |" >> $GITHUB_STEP_SUMMARY
           echo "| @skillsmith/mcp-server | ${{ needs.publish-mcp-server.result }} | ${{ needs.smoke-test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| @skillsmith/cli | ${{ needs.publish-cli.result }} | ${{ needs.smoke-test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| @smith-horn/enterprise | ${{ needs.publish-enterprise.result }} | N/A |" >> $GITHUB_STEP_SUMMARY

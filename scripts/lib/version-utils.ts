@@ -62,6 +62,16 @@ export const PACKAGE_SPECS: PackageSpec[] = [
     serverJsonPath: 'packages/mcp-server/server.json',
   },
   {
+    name: '@skillsmith/billing-types',
+    shortName: 'billing-types',
+    dir: 'packages/billing-types',
+    packageJsonPath: 'packages/billing-types/package.json',
+    // SMI-5066: types-only contract package introduced by SMI-5044. No
+    // versionConstFile (no `export const VERSION` source constant) and no
+    // serverJsonPath (no MCP server.json). Receives dep-range bumps if it
+    // ever depends on another workspace package (none today).
+  },
+  {
     name: '@skillsmith/cli',
     shortName: 'cli',
     dir: 'packages/cli',
