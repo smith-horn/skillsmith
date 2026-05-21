@@ -17,8 +17,10 @@ import { trackSkillInvoke } from './posthog.js'
 // Module-scoped registry (NOT exported — access only via isTelemetered)
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyFunction = (...args: any[]) => any
+// `(...args: never[]) => unknown` is the ESLint-compliant "any callable"
+// shape: contravariant params accept any function reference, and we never
+// invoke entries — `wrapped` is identity-only (used by .has/.add).
+type AnyFunction = (...args: never[]) => unknown
 
 const wrapped = new Set<AnyFunction>()
 
