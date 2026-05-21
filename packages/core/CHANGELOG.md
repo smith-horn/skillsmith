@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.0
+
 - **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the
   `probeEmbeddingCapability()` helper (originally landed inline in
   `@skillsmith/mcp-server` under SMI-5009) into `@skillsmith/core` so MCP

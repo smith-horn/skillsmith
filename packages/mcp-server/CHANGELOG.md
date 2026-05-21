@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.3
+
+- **Refactor**: SMI-5036 split oversized billing test files (#1282)
+- **Fix**: SMI-5012 retro — resolve audit:standards findings
+- **Feature**: SMI-5012 PR-2 — W2 in-process instrumentation (HOF + consent + MCP wraps) (#1251)
+- **Feature**: SMI-5012 PR-1 — W1 cloud foundations (migration + edge function + MCP read path) (#1245)
+- **Fix**: SMI-5056 bump startup-probe.test.ts spawn budget 10s → 30s (#1269)
 - **Chore**: SMI-5039 — `probeEmbeddingCapability()` migrated from inline
   helper in `src/index.ts` to the new shared `@skillsmith/core/embeddings/probe`
   export. Behavior is bit-for-bit identical (same 2 s `Promise.race`
