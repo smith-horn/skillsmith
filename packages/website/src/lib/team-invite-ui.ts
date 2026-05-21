@@ -13,10 +13,37 @@ import {
   createInvitation,
   formatRelativeExpiry,
   listPending,
+  removeTeamMember,
   resendInvitation,
   revokeInvitation,
   type PendingInvitation,
 } from './team-invitations'
+
+/**
+ * Row shape returned by `list_team_members_with_profile(p_team_id)` RPC
+ * (SMI-4294 follow-up). Flat columns — no nested `profiles:` object — because
+ * the RPC is SECURITY DEFINER and reads `profiles` itself, bypassing the
+ * profiles RLS that filtered out non-self rows in the previous PostgREST join.
+ */
+export interface TeamMemberRow {
+  member_id: string
+  user_id: string
+  role: 'owner' | 'admin' | 'member'
+  joined_at: string | null
+  invited_at: string | null
+  full_name: string | null
+  email: string | null
+}
+
+/**
+ * The viewer's role + auth id, used to decide whether to render per-row
+ * Remove buttons. Resolved at page-load time from
+ * `check_team_tier_access` (role) + `supabase.auth.getUser()` (user_id).
+ */
+export interface Viewer {
+  role: 'owner' | 'admin' | 'member'
+  userId: string | null
+}
 
 function escapeHtml(text: string): string {
   const div = document.createElement('div')
@@ -99,7 +126,9 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
       | 'admin'
       | 'member'
     if (!email) return
+    const originalText = submitBtn.textContent
     submitBtn.disabled = true
+    submitBtn.textContent = 'Sending...'
     try {
       const result = await createInvitation(supabase, teamId, email, role)
       if (!result.ok) {
@@ -128,6 +157,7 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
       await refreshPendingList(supabase, teamId)
     } finally {
       submitBtn.disabled = false
+      submitBtn.textContent = originalText ?? 'Send invite'
     }
   })
 
@@ -165,5 +195,128 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
       }
       await refreshPendingList(supabase, teamId)
     }
+  })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Member list rendering + per-row Remove action (SMI-4294 follow-up)
+// ────────────────────────────────────────────────────────────────────────────
+
+function canRemove(viewer: Viewer, row: TeamMemberRow): boolean {
+  if (viewer.role !== 'owner' && viewer.role !== 'admin') return false
+  if (row.role === 'owner') return false
+  if (viewer.userId !== null && row.user_id === viewer.userId) return false
+  return true
+}
+
+/**
+ * Render one `.member-card` row. Used by `refreshMembersList` and by the
+ * initial page-load render in `members.astro` (which imports this directly
+ * to avoid duplicating markup).
+ */
+export function renderMemberRow(row: TeamMemberRow, viewer: Viewer): string {
+  const name = row.full_name || row.email?.split('@')[0] || 'Team member'
+  const email = row.email ?? ''
+  const initial = (name[0] || '?').toUpperCase()
+  const joined = row.joined_at
+    ? new Date(row.joined_at).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+      })
+    : '—'
+  const roleLower = String(row.role).toLowerCase()
+  const roleLabel = roleLower.charAt(0).toUpperCase() + roleLower.slice(1)
+  const removeBtn = canRemove(viewer, row)
+    ? `<div class="member-actions">
+        <button class="btn btn-secondary"
+                type="button"
+                data-action="remove-member"
+                data-member-id="${escapeHtml(row.member_id)}"
+                data-member-email="${escapeHtml(row.email ?? 'this member')}">
+          Remove
+        </button>
+      </div>`
+    : ''
+  return `<div class="member-card" data-member-id="${escapeHtml(row.member_id)}">
+    <div class="member-info">
+      <div class="member-avatar">${escapeHtml(initial)}</div>
+      <div class="member-details">
+        <div class="member-name">${escapeHtml(name)}</div>
+        <div class="member-email">${escapeHtml(email)}</div>
+      </div>
+    </div>
+    <div class="member-meta">
+      <span class="role-badge role-${escapeHtml(roleLower)}">${escapeHtml(roleLabel)}</span>
+      <span class="member-joined">Joined ${escapeHtml(joined)}</span>
+    </div>
+    ${removeBtn}
+  </div>`
+}
+
+/**
+ * Re-fetch the members list via `list_team_members_with_profile` and re-render
+ * both the rows and the Members count heading. Used by the initial load AND
+ * after a successful member removal — full refresh (not surgical row delete)
+ * so concurrent admin actions are reflected.
+ */
+export async function refreshMembersList(
+  supabase: SupabaseClient,
+  teamId: string,
+  viewer: Viewer
+): Promise<void> {
+  const list = document.getElementById('member-list')
+  const heading = document.getElementById('members-heading')
+  if (!list || !heading) return
+
+  const { data, error } = await supabase.rpc('list_team_members_with_profile', {
+    p_team_id: teamId,
+  })
+
+  if (error) {
+    heading.textContent = 'Members'
+    list.innerHTML = '<p class="empty-state">Could not load members.</p>'
+    return
+  }
+
+  const members = (data ?? []) as TeamMemberRow[]
+  heading.textContent = `Members (${members.length})`
+  if (members.length === 0) {
+    list.innerHTML = '<p class="empty-state">No members yet.</p>'
+    return
+  }
+  list.innerHTML = members.map((m) => renderMemberRow(m, viewer)).join('')
+}
+
+/**
+ * Wire the click-delegation handler for per-row Remove buttons in the
+ * `#member-list` container. Mirrors the revoke-invite pattern in
+ * `wireInviteFlow`: window.confirm → disable button → RPC → refresh.
+ */
+export function wireMemberManagement(
+  supabase: SupabaseClient,
+  teamId: string,
+  viewer: Viewer
+): void {
+  const container = document.getElementById('member-list')
+  if (!container) return
+  container.addEventListener('click', async (e) => {
+    const target = e.target as HTMLElement | null
+    if (!target) return
+    if (target.dataset.action !== 'remove-member') return
+
+    const email = target.dataset.memberEmail ?? 'this member'
+    if (!window.confirm(`Remove ${email} from the team? They'll lose access immediately.`)) {
+      return
+    }
+    const memberId = target.dataset.memberId
+    if (!memberId) return
+    target.setAttribute('disabled', 'true')
+    const r = await removeTeamMember(supabase, memberId)
+    if (!r.ok) {
+      window.alert(r.error ?? 'Could not remove member.')
+      target.removeAttribute('disabled')
+      return
+    }
+    await refreshMembersList(supabase, teamId, viewer)
   })
 }

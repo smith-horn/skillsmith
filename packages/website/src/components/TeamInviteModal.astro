@@ -218,6 +218,17 @@
     background: #a04530;
   }
 
+  /* SMI-4294 follow-up: explicit disabled-state for the submit button. Without
+   * this rule the disabled button renders identically to the enabled one
+   * (same #b8523a background) and the user has no visual signal that the
+   * submit is in-flight. Contrast ~3.3:1 against the modal background —
+   * acceptable for a temporary in-flight state. */
+  .invite-modal .btn-primary:disabled {
+    background: #b8523a;
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .invite-modal .btn-secondary {
     background: transparent;
     color: #d1d5db;
