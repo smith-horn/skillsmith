@@ -521,9 +521,11 @@ describe('StripeClient', () => {
 
       await client.cancelSubscription('sub_test' as never)
 
+      // SMI-5035: under exactOptionalPropertyTypes, the cancel call now omits
+      // `cancellation_details` entirely when no feedback was supplied — rather
+      // than passing `{ comment: undefined }`.
       expect(mockSubUpdate).toHaveBeenCalledWith('sub_test', {
         cancel_at_period_end: true,
-        cancellation_details: { comment: undefined },
       })
     })
 

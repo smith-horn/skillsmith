@@ -216,22 +216,30 @@ export async function handleInvoicePaymentSucceeded(
 
   if (!customerId) return
 
+  // SMI-5035: exactOptionalPropertyTypes — omit optional props rather than assign undefined.
+  const subscriptionId = extractSubscriptionIdFromInvoice(invoice)
+  const pdfUrl = invoice.invoice_pdf ?? undefined
+  const hostedInvoiceUrl = invoice.hosted_invoice_url ?? undefined
+  const invoiceNumber = invoice.number ?? undefined
+  const periodStart = invoice.period_start ? new Date(invoice.period_start * 1000) : undefined
+  const periodEnd = invoice.period_end ? new Date(invoice.period_end * 1000) : undefined
+
   // Store invoice
   ctx.billing.storeInvoice({
     customerId,
     stripeInvoiceId: invoice.id,
-    subscriptionId: extractSubscriptionIdFromInvoice(invoice),
+    ...(subscriptionId !== undefined && { subscriptionId }),
     amountCents: invoice.amount_paid,
     currency: invoice.currency,
     status: 'paid',
-    pdfUrl: invoice.invoice_pdf ?? undefined,
-    hostedInvoiceUrl: invoice.hosted_invoice_url ?? undefined,
-    invoiceNumber: invoice.number ?? undefined,
+    ...(pdfUrl !== undefined && { pdfUrl }),
+    ...(hostedInvoiceUrl !== undefined && { hostedInvoiceUrl }),
+    ...(invoiceNumber !== undefined && { invoiceNumber }),
     paidAt: invoice.status_transitions?.paid_at
       ? new Date(invoice.status_transitions.paid_at * 1000)
       : new Date(),
-    periodStart: invoice.period_start ? new Date(invoice.period_start * 1000) : undefined,
-    periodEnd: invoice.period_end ? new Date(invoice.period_end * 1000) : undefined,
+    ...(periodStart !== undefined && { periodStart }),
+    ...(periodEnd !== undefined && { periodEnd }),
   })
 }
 
@@ -251,18 +259,23 @@ export async function handleInvoicePaymentFailed(
 
   // Get subscription ID from parent.subscription_details (Stripe v20+ structure)
   const subscriptionId = extractSubscriptionIdFromInvoice(invoice)
+  // SMI-5035: omit optional props rather than assigning undefined under
+  // exactOptionalPropertyTypes.
+  const pdfUrl = invoice.invoice_pdf ?? undefined
+  const hostedInvoiceUrl = invoice.hosted_invoice_url ?? undefined
+  const invoiceNumber = invoice.number ?? undefined
 
   // Store invoice with failed status
   ctx.billing.storeInvoice({
     customerId,
     stripeInvoiceId: invoice.id,
-    subscriptionId,
+    ...(subscriptionId !== undefined && { subscriptionId }),
     amountCents: invoice.amount_due,
     currency: invoice.currency,
     status: 'open',
-    pdfUrl: invoice.invoice_pdf ?? undefined,
-    hostedInvoiceUrl: invoice.hosted_invoice_url ?? undefined,
-    invoiceNumber: invoice.number ?? undefined,
+    ...(pdfUrl !== undefined && { pdfUrl }),
+    ...(hostedInvoiceUrl !== undefined && { hostedInvoiceUrl }),
+    ...(invoiceNumber !== undefined && { invoiceNumber }),
   })
 
   // Send payment failed email
@@ -353,8 +366,9 @@ export function revokeLicenseKey(db: DatabaseType, subscriptionId: string, reaso
 // ============================================================================
 
 export function extractTier(subscription: Stripe.Subscription): LicenseTier {
-  // Try to get tier from metadata first
-  const metadataTier = subscription.metadata?.tier as LicenseTier | undefined
+  // SMI-5035: metadata is an index signature — access via bracket notation under
+  // noPropertyAccessFromIndexSignature.
+  const metadataTier = subscription.metadata?.['tier'] as LicenseTier | undefined
   if (metadataTier && ['community', 'individual', 'team', 'enterprise'].includes(metadataTier)) {
     return metadataTier
   }
@@ -364,8 +378,8 @@ export function extractTier(subscription: Stripe.Subscription): LicenseTier {
 }
 
 export function extractSeatCount(subscription: Stripe.Subscription): number {
-  // Try metadata first
-  const metadataSeats = subscription.metadata?.seatCount
+  // SMI-5035: metadata index-signature access via brackets.
+  const metadataSeats = subscription.metadata?.['seatCount']
   if (metadataSeats) {
     const count = parseInt(metadataSeats, 10)
     if (!isNaN(count) && count > 0) {

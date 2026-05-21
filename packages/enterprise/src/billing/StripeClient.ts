@@ -47,9 +47,7 @@ export class StripeClient {
     })
     this.webhookSecret = config.webhookSecret
     this.prices = config.prices
-    // SMI-5006 W1: appUrl read from config but never used by class; removed
-    // unused private field. Constructor accepts the field for back-compat with
-    // existing StripeClientConfig consumers.
+    // SMI-5006 W1: appUrl accepted for back-compat but unused by this class.
     void config.appUrl
 
     logger.info('Stripe client initialized')
@@ -68,7 +66,7 @@ export class StripeClient {
     try {
       const customer = await this.stripe.customers.create({
         email: params.email,
-        name: params.name,
+        ...(params.name !== undefined && { name: params.name }),
         metadata: {
           ...params.metadata,
           source: 'skillsmith',
@@ -171,13 +169,11 @@ export class StripeClient {
       sessionParams.customer_email = request.email
     }
 
-    // Allow seat quantity changes for team/enterprise
-    if (request.tier === 'team' || request.tier === 'enterprise') {
-      sessionParams.line_items![0].adjustable_quantity = {
-        enabled: true,
-        minimum: 1,
-        maximum: 1000,
-      }
+    // Allow seat quantity changes for team/enterprise (SMI-5035: explicit guard for
+    // noUncheckedIndexedAccess; line_items[0] is non-null by construction above).
+    const firstLineItem = sessionParams.line_items?.[0]
+    if (firstLineItem && (request.tier === 'team' || request.tier === 'enterprise')) {
+      firstLineItem.adjustable_quantity = { enabled: true, minimum: 1, maximum: 1000 }
     }
 
     try {
@@ -260,28 +256,35 @@ export class StripeClient {
       proration_behavior: params.prorate !== false ? 'create_prorations' : 'none',
     }
 
+    // SMI-5035: noUncheckedIndexedAccess — guard subscription item up front.
+    const firstItem = subscription.items.data[0]
+    if (!firstItem) {
+      throw new BillingError('Subscription has no items', 'STRIPE_API_ERROR', { subscriptionId })
+    }
+
     // Update price if tier or billing period changed
     if (params.tier && params.billingPeriod) {
       const newPriceId = this.getPriceId(params.tier, params.billingPeriod)
       if (newPriceId) {
+        const resolvedQuantity = params.seatCount ?? firstItem.quantity
         updateParams.items = [
           {
-            id: subscription.items.data[0].id,
+            id: firstItem.id,
             price: newPriceId,
-            quantity: params.seatCount ?? subscription.items.data[0].quantity,
+            ...(resolvedQuantity !== undefined && { quantity: resolvedQuantity }),
           },
         ]
         updateParams.metadata = {
           ...subscription.metadata,
           tier: params.tier,
-          seatCount: String(params.seatCount ?? subscription.items.data[0].quantity),
+          seatCount: String(resolvedQuantity ?? 1),
         }
       }
     } else if (params.seatCount !== undefined) {
       // Just update seat count
       updateParams.items = [
         {
-          id: subscription.items.data[0].id,
+          id: firstItem.id,
           quantity: params.seatCount,
         },
       ]
@@ -318,19 +321,19 @@ export class StripeClient {
     }
   ): Promise<Stripe.Subscription> {
     try {
+      // SMI-5035: under exactOptionalPropertyTypes, omit cancellation_details when
+      // no feedback was supplied rather than passing { comment: undefined }.
+      const cancellationDetails =
+        options?.feedback !== undefined ? { comment: options.feedback } : undefined
       if (options?.immediately) {
         return await this.stripe.subscriptions.cancel(subscriptionId, {
-          cancellation_details: {
-            comment: options.feedback,
-          },
+          ...(cancellationDetails && { cancellation_details: cancellationDetails }),
         })
       } else {
         // Cancel at period end
         return await this.stripe.subscriptions.update(subscriptionId, {
           cancel_at_period_end: true,
-          cancellation_details: {
-            comment: options?.feedback,
-          },
+          ...(cancellationDetails && { cancellation_details: cancellationDetails }),
         })
       }
     } catch (error: unknown) {
@@ -405,7 +408,8 @@ export class StripeClient {
     const invoices = await this.stripe.invoices.list({
       customer: customerId,
       limit: options?.limit ?? 10,
-      starting_after: options?.startingAfter,
+      // SMI-5035: exactOptionalPropertyTypes — only include starting_after when set.
+      ...(options?.startingAfter !== undefined && { starting_after: options.startingAfter }),
     })
 
     return {
