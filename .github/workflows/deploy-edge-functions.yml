@@ -126,7 +126,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v2.0.0
+        uses: supabase/setup-cli@52a446718e4edd1a9f1e2631186019c87e329f60 # v2.1.0
         with:
           version: latest
 
@@ -224,7 +224,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v2.0.0
+        uses: supabase/setup-cli@52a446718e4edd1a9f1e2631186019c87e329f60 # v2.1.0
         with:
           version: latest
 
