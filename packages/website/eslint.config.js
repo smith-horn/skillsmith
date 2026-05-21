@@ -55,6 +55,11 @@ export default [
     rules: {
       ...eslint.configs.recommended.rules,
       ...tseslint.configs.recommended[1]?.rules,
+      // Base `no-unused-vars` mis-flags TypeScript interface method-signature
+      // parameter names (which are documentation-only) — defer to the TS
+      // variant below, which understands type positions and honors the `^_`
+      // ignore pattern. Without this, type-only param names fire false errors.
+      'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
         'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
