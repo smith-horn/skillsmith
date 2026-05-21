@@ -801,3 +801,77 @@ export function parseConsumersTag(src) {
   const sorted = tokens.every((tok, i) => tok === sortedCopy[i])
   return { found: true, names: tokens, sorted }
 }
+
+/**
+ * Aliases for publish-* job names whose pre-publish-check output key uses
+ * a shorter name than the job's full shortName.
+ *
+ * SMI-5066: when generalizing Check 48 from core-only to any-package, we
+ * discovered that `publish-mcp-server`'s YAML output key is `mcp-exists`
+ * (not `mcp-server-exists`) — the bash var `mcp_exists` → key `mcp-exists`.
+ * This pre-existing convention drift is documented here rather than
+ * normalized (out of SMI-5066 scope).
+ *
+ * Audit-standards.mjs Check 48 imports this map.
+ */
+export const PUBLISH_JOB_TO_OUTPUT_ALIAS = Object.freeze({
+  'mcp-server': 'mcp',
+})
+
+/**
+ * Audit publish.yml for the SMI-5060 invariant: every
+ * `needs.publish-<pkg>.result == 'skipped'` clause MUST be paired with
+ * `pre-publish-check.outputs.<outputKey>-exists == 'true'` (where
+ * outputKey = PUBLISH_JOB_TO_OUTPUT_ALIAS[pkg] || pkg) within ±1 line.
+ *
+ * Background (SMI-5060): when `validate` fails, `publish-<pkg>` auto-skips
+ * because its `needs:` failed. GitHub Actions reports
+ * `needs.publish-<pkg>.result == 'skipped'` — indistinguishable from the
+ * legitimate "package already on npm, nothing to publish" skip. Without
+ * the paired exists predicate, downstream publish-* jobs publish broken
+ * dependents (orphan-consumer release class of bug).
+ *
+ * SMI-5066: generalized to any `publish-<pkg>` job (not just publish-core)
+ * so the same invariant covers new packages like billing-types.
+ *
+ * @param {string} content - Full publish.yml content (UTF-8).
+ * @returns {{
+ *   matches: Array<{ lineno: number, line: string, pkg: string, outputKey: string }>,
+ *   failures: Array<{ lineno: number, line: string, pkg: string, outputKey: string }>,
+ * }} matches is every skipped-clause found. failures is the subset missing
+ *    the paired guard within ±1 line.
+ */
+export function auditPublishYmlDependentGate(content) {
+  const lines = content.split('\n')
+  const skippedRegex = /needs\.publish-([a-z][a-z0-9-]*)\.result\s*==\s*'skipped'/
+
+  const matches = []
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('#')) return
+    const m = line.match(skippedRegex)
+    if (m) {
+      const pkg = m[1]
+      const outputKey = PUBLISH_JOB_TO_OUTPUT_ALIAS[pkg] || pkg
+      matches.push({ lineno: idx + 1, line: trimmed, pkg, outputKey })
+    }
+  })
+
+  const failures = []
+  for (const match of matches) {
+    const { lineno, outputKey } = match
+    // Window: lines (lineno-1) through (lineno+1) — i.e. matched line ±1.
+    // lineno is 1-based; `lines` is 0-indexed, so the slice covers idx-1..idx+1.
+    const startIdx = Math.max(0, lineno - 2)
+    const endIdx = Math.min(lines.length, lineno + 1)
+    const window = lines.slice(startIdx, endIdx).join('\n')
+    const expectedGuard = new RegExp(
+      `pre-publish-check\\.outputs\\.${outputKey}-exists\\s*==\\s*'true'`
+    )
+    if (!expectedGuard.test(window)) {
+      failures.push(match)
+    }
+  }
+
+  return { matches, failures }
+}

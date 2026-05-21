@@ -28,6 +28,11 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
     resolveModule: (fromFile: string, spec: string) => string | null
   ) => Set<string>
   extractSmokeTestRequiredArrays: (content: string) => { name: string; arrayIndex: number }[]
+  auditPublishYmlDependentGate: (content: string) => {
+    matches: Array<{ lineno: number; line: string; pkg: string; outputKey: string }>
+    failures: Array<{ lineno: number; line: string; pkg: string; outputKey: string }>
+  }
+  PUBLISH_JOB_TO_OUTPUT_ALIAS: Record<string, string>
 }
 
 const {
@@ -37,6 +42,8 @@ const {
   parseTsExports,
   collectTsEntryExports,
   extractSmokeTestRequiredArrays,
+  auditPublishYmlDependentGate,
+  PUBLISH_JOB_TO_OUTPUT_ALIAS,
 } = helpers
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -445,5 +452,130 @@ describe('extractSmokeTestRequiredArrays', () => {
     const entries = extractSmokeTestRequiredArrays(smokeSrc)
     const missing = entries.filter((e) => !coreExports.has(e.name))
     expect(missing.map((m) => m.name)).toEqual(['CategoryRepository'])
+  })
+})
+
+/**
+ * SMI-5066: regression tests for the generalized Check 48 helper. Background:
+ * SMI-5060 introduced the paired-predicate invariant (every
+ * `needs.publish-<pkg>.result == 'skipped'` clause must be guarded by
+ * `pre-publish-check.outputs.<outputKey>-exists == 'true'` within ±1 line).
+ * SMI-5066 generalized it from publish-core-only to any publish-<pkg>, with an
+ * alias map for the pre-existing `publish-mcp-server` → `mcp-exists` outlier.
+ *
+ * These tests guard against future regressions in either the regex or the
+ * alias-map convention.
+ */
+describe('auditPublishYmlDependentGate (SMI-5060/SMI-5066)', () => {
+  it('PUBLISH_JOB_TO_OUTPUT_ALIAS maps mcp-server to mcp', () => {
+    // The alias map exists to document and handle the convention drift
+    // between the publish-* job name and the pre-publish-check output key.
+    expect(PUBLISH_JOB_TO_OUTPUT_ALIAS['mcp-server']).toBe('mcp')
+  })
+
+  it('passes when publish-core skipped clause is paired with core-exists guard', () => {
+    const yml = [
+      'jobs:',
+      '  publish-mcp-server:',
+      '    if: |',
+      "      (needs.publish-core.result == 'success' ||",
+      "       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))",
+    ].join('\n')
+    const { matches, failures } = auditPublishYmlDependentGate(yml)
+    expect(matches).toHaveLength(1)
+    expect(matches[0].pkg).toBe('core')
+    expect(matches[0].outputKey).toBe('core')
+    expect(failures).toHaveLength(0)
+  })
+
+  it('passes when publish-billing-types skipped clause is paired with billing-types-exists guard', () => {
+    const yml = [
+      'jobs:',
+      '  publish-mcp-server:',
+      '    if: |',
+      "      (needs.publish-billing-types.result == 'success' ||",
+      "       (needs.publish-billing-types.result == 'skipped' && needs.pre-publish-check.outputs.billing-types-exists == 'true'))",
+    ].join('\n')
+    const { matches, failures } = auditPublishYmlDependentGate(yml)
+    expect(matches).toHaveLength(1)
+    expect(matches[0].pkg).toBe('billing-types')
+    expect(matches[0].outputKey).toBe('billing-types')
+    expect(failures).toHaveLength(0)
+  })
+
+  it('passes when publish-mcp-server skipped clause is paired with mcp-exists guard (alias map)', () => {
+    const yml = [
+      'jobs:',
+      '  publish-cli:',
+      '    if: |',
+      "      (needs.publish-mcp-server.result == 'success' ||",
+      "       (needs.publish-mcp-server.result == 'skipped' && needs.pre-publish-check.outputs.mcp-exists == 'true'))",
+    ].join('\n')
+    const { matches, failures } = auditPublishYmlDependentGate(yml)
+    expect(matches).toHaveLength(1)
+    expect(matches[0].pkg).toBe('mcp-server')
+    expect(matches[0].outputKey).toBe('mcp') // alias resolved
+    expect(failures).toHaveLength(0)
+  })
+
+  it('fails when publish-core skipped clause has no paired guard', () => {
+    const yml = [
+      'jobs:',
+      '  publish-mcp-server:',
+      '    if: |',
+      "      (needs.publish-core.result == 'success' ||",
+      "       needs.publish-core.result == 'skipped')",
+    ].join('\n')
+    const { matches, failures } = auditPublishYmlDependentGate(yml)
+    expect(matches).toHaveLength(1)
+    expect(failures).toHaveLength(1)
+    expect(failures[0].pkg).toBe('core')
+    expect(failures[0].outputKey).toBe('core')
+  })
+
+  it('fails when publish-billing-types skipped clause has no paired guard', () => {
+    const yml = [
+      'jobs:',
+      '  publish-mcp-server:',
+      '    if: |',
+      "      (needs.publish-billing-types.result == 'success' ||",
+      "       needs.publish-billing-types.result == 'skipped')",
+    ].join('\n')
+    const { matches, failures } = auditPublishYmlDependentGate(yml)
+    expect(matches).toHaveLength(1)
+    expect(failures).toHaveLength(1)
+    expect(failures[0].pkg).toBe('billing-types')
+  })
+
+  it('ignores comment-only lines containing the skipped phrase', () => {
+    const yml = [
+      'jobs:',
+      "  # Documentation: when needs.publish-core.result == 'skipped' fires,",
+      '  # the guard handles it.',
+      '  publish-mcp-server:',
+      "    if: needs.pre-publish-check.outputs.mcp-exists != 'true'",
+    ].join('\n')
+    const { matches, failures } = auditPublishYmlDependentGate(yml)
+    expect(matches).toHaveLength(0)
+    expect(failures).toHaveLength(0)
+  })
+
+  it('fails when paired guard is more than ±1 line away from the skipped clause', () => {
+    // The window is intentionally tight (±1 line) to match the canonical YAML
+    // shape produced by gh actions multi-line `if: |` blocks. A guard that
+    // drifts farther is a smell — either the YAML restructured or the guard
+    // was decoupled.
+    const yml = [
+      'jobs:',
+      '  publish-mcp-server:',
+      '    if: |',
+      "      (needs.publish-core.result == 'success' ||",
+      "       needs.publish-core.result == 'skipped') &&",
+      '      true &&',
+      '      true &&',
+      "      needs.pre-publish-check.outputs.core-exists == 'true'",
+    ].join('\n')
+    const { failures } = auditPublishYmlDependentGate(yml)
+    expect(failures).toHaveLength(1)
   })
 })

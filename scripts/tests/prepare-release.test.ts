@@ -45,13 +45,15 @@ const mockedExecFileSync = vi.mocked(execFileSync)
 const mockedWriteFileSync = vi.mocked(writeFileSync)
 
 describe('PACKAGE_SPECS configuration', () => {
-  it('should define all four packages', () => {
+  it('should define all five packages', () => {
+    // SMI-5066: billing-types added between mcp-server and cli.
     const names = PACKAGE_SPECS.map((s) => s.shortName)
     expect(names).toContain('core')
     expect(names).toContain('mcp-server')
+    expect(names).toContain('billing-types')
     expect(names).toContain('cli')
     expect(names).toContain('vscode')
-    expect(PACKAGE_SPECS).toHaveLength(4)
+    expect(PACKAGE_SPECS).toHaveLength(5)
   })
 
   it('should point to existing package.json files', () => {

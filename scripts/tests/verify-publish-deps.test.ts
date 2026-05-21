@@ -11,6 +11,11 @@ function makeReadJson(coreVersion: string, mcpDepRange: string) {
     if (p.endsWith('packages/core/package.json')) {
       return { name: '@skillsmith/core', version: coreVersion, dependencies: {} }
     }
+    // SMI-5066: billing-types added to PACKAGES. No deps to inspect (types-only
+    // contract). Test fixture mirrors that — empty dependencies, fixed version.
+    if (p.endsWith('packages/billing-types/package.json')) {
+      return { name: '@skillsmith/billing-types', version: '0.1.0', dependencies: {} }
+    }
     if (p.endsWith('packages/mcp-server/package.json')) {
       return {
         name: '@skillsmith/mcp-server',
