@@ -18,10 +18,6 @@
 #
 # Do not add new files here without a corresponding split follow-up issue.
 
-# SMI-5036 split follow-up — two billing test files relocated by SMI-5006 from
-# packages/core/tests/billing/ to packages/enterprise/tests/billing/. Pre-existed
-# over-limit on main; the rename surfaces the hook for the first time.
-# (GDPRCompliance.test.ts removed during SMI-5006 retro 2026-05-20 — actual line
-#  count 486 is under the 500-line gate, so it should never have been listed.)
-packages/enterprise/tests/billing/StripeClient.test.ts
-packages/enterprise/tests/billing/webhook-handlers.test.ts
+# (SMI-5036 split follow-up cleared 2026-05-20: StripeClient.test.ts and
+#  webhook-handlers.test.ts were split into 7 sub-files under 500 lines each;
+#  see docs/internal/retros/2026-05-20-smi-5036-w8-billing-test-splits-retro.md)

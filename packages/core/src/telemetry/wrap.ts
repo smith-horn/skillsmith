@@ -17,7 +17,10 @@ import { trackSkillInvoke } from './posthog.js'
 // Module-scoped registry (NOT exported — access only via isTelemetered)
 // ---------------------------------------------------------------------------
 
-const wrapped = new Set<Function>()
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyFunction = (...args: any[]) => any
+
+const wrapped = new Set<AnyFunction>()
 
 // ---------------------------------------------------------------------------
 // Emission gate (SMI-5019 wire-in)
@@ -160,6 +163,6 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
  * Note: checks the *wrapped* function reference, not the original handler.
  * `isTelemetered(originalHandler)` is always `false`.
  */
-export function isTelemetered(fn: Function): boolean {
+export function isTelemetered(fn: AnyFunction): boolean {
   return wrapped.has(fn)
 }

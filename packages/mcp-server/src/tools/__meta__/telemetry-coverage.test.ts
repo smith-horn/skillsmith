@@ -164,7 +164,10 @@ describe('SMI-5018: MCP tool telemetry coverage (v1, MCP tree only)', () => {
           continue
         }
 
-        if (!isTelemetered(exported)) {
+        // After `typeof === 'function'` narrow, TS infers `Function`; cast to
+        // the structural shape `isTelemetered` accepts (SMI-5076).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!isTelemetered(exported as (...args: any[]) => any)) {
           failures.push(
             `${fileBase}.ts :: ${exportName} — function exists but isTelemetered() returned false`
           )
