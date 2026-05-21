@@ -26,7 +26,7 @@
     "better-sqlite3": "11.10.0",
     "glob": "11.1.0",
     "minimatch": "10.2.5",
-    "zod": "3.25.76"
+    "zod": "4.2.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",

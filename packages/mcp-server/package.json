@@ -42,7 +42,7 @@
   "devDependencies": {
     "tsx": "4.21.0",
     "vitest": "4.1.6",
-    "zod": "3.25.76"
+    "zod": "4.2.1"
   },
   "files": [
     "dist",
