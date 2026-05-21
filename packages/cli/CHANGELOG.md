@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: SMI-5039 — lazy embedding-capability probe on `skillsmith
+  search` (and `sklx search`). Surfaces a structured stderr warning when the
+  `@huggingface/transformers` stack is unavailable so the operator knows that
+  search has degraded to FTS-only. Probe is hard-bounded at 2 s and never
+  throws — boot is never blocked. `--version` / `--help` short-circuit before
+  the probe runs; only the `search` action triggers it. `SKILLSMITH_QUIET=true`
+  suppresses the warning line for scripted use. Bumps `@skillsmith/core`
+  dep range to `^0.8.0` to pick up the new `./embeddings/probe` export.
+
 ## v0.6.2
 
 - **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)

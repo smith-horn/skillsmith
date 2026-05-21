@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: SMI-5039 — `probeEmbeddingCapability()` migrated from inline
+  helper in `src/index.ts` to the new shared `@skillsmith/core/embeddings/probe`
+  export. Behavior is bit-for-bit identical (same 2 s `Promise.race`
+  timeout, same structured stderr message, same stdio invariant); the only
+  change is that doc-retrieval-mcp + cli now share the same audited probe
+  instead of carrying drift-prone copies. Bumps `@skillsmith/core` dep range
+  to `^0.8.0` to pick up the new subpath export. No runtime change.
+
 - **Chore**: SMI-5044 — `StripeWebhookHandler` structural interface in
   `src/webhooks/stripe-webhook-endpoint.ts` is now re-exported from the new
   `@skillsmith/billing-types` package instead of being declared inline. This
