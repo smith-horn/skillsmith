@@ -46,6 +46,7 @@
   "files": [
     "dist",
     "assets",
+    "templates",
     "CHANGELOG.md"
   ],
   "license": "Elastic-2.0",
