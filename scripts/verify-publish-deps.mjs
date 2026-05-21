@@ -51,9 +51,18 @@ function npmViewCached(name, version) {
 }
 
 /**
- * Determine which packages are being released in THIS PR by comparing the
- * working-tree `version` field against the PR base ref. Returns a map of
- * `{ '@skillsmith/<name>': '<newVersion>' }` for packages whose version differs.
+ * Determine which packages are being released in THIS PR. A package is
+ * considered "releasing" if either:
+ *   (a) the working-tree `version` differs from the same field on the PR base
+ *       ref — typical release-PR shape; OR
+ *   (b) the working-tree `version` is not yet published on npm (SMI-5077). This
+ *       catches the case where a prior merged PR bumped the version on main
+ *       without publishing (e.g. SMI-5039 left core@0.8.0 on main unpublished),
+ *       so HEAD-vs-base shows no diff but the package still needs to be
+ *       published — and consumers in the same release PR need to caret-pin to
+ *       that unpublished version.
+ *
+ * Returns a map of `{ '@skillsmith/<name>': '<newVersion>' }`.
  *
  * Base ref = `GITHUB_BASE_REF` when set (PR context), else `main`. The ref is
  * fetched if not present locally — handles shallow clones / detached HEAD.
@@ -61,7 +70,11 @@ function npmViewCached(name, version) {
  * Fail-soft: returns `{ versions: {}, resolved: false }` when the base ref
  * cannot be resolved, so callers can fall back to npm-only checks.
  *
- * @param {{ git?: (args: string[]) => string, readJson?: (p: string) => any }} [io]
+ * @param {{
+ *   git?: (args: string[]) => string,
+ *   readJson?: (p: string) => any,
+ *   npmView?: (name: string, version: string) => string,
+ * }} [io]
  * @returns {{ versions: Record<string, string>, resolved: boolean }}
  */
 export function getReleasingVersions(io = {}) {
@@ -74,6 +87,7 @@ export function getReleasingVersions(io = {}) {
         stdio: ['pipe', 'pipe', 'pipe'],
       }))
   const readJson = io.readJson ?? ((p) => JSON.parse(readFileSync(p, 'utf-8')))
+  const npmView = io.npmView ?? npmViewCached
 
   const base = process.env.GITHUB_BASE_REF || 'main'
   const baseRef = `origin/${base}`
@@ -97,6 +111,7 @@ export function getReleasingVersions(io = {}) {
       } catch {
         continue
       }
+      if (!localVersion) continue
 
       let baseVersion
       try {
@@ -107,7 +122,16 @@ export function getReleasingVersions(io = {}) {
         baseVersion = undefined
       }
 
-      if (localVersion && localVersion !== baseVersion) {
+      if (localVersion !== baseVersion) {
+        versions[pkg.name] = localVersion
+        continue
+      }
+
+      // SMI-5077: same version on base — but if it's still unpublished on npm,
+      // this is also a release-in-progress (prior merge bumped source without
+      // publishing). The npm 404 is the ground truth.
+      const published = npmView(pkg.name, localVersion)
+      if (!published) {
         versions[pkg.name] = localVersion
       }
     }

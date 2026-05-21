@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.3
+
+- **Refactor**: SMI-5036 split oversized billing test files (#1282)
+- **Feature**: SMI-5012 PR-3 — W3 Claude Code hook + CLI subcommands + manifest schema (#1255)
 - **Feature**: SMI-5039 — lazy embedding-capability probe on `skillsmith
   search` (and `sklx search`). Surfaces a structured stderr warning when the
   `@huggingface/transformers` stack is unavailable so the operator knows that
