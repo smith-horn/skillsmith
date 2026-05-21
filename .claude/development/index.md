@@ -24,6 +24,7 @@ Developer guides for local development, testing, and debugging.
 | [subagent-tool-permissions-guide.md](subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior |
 | [supabase-migration-safety.md](supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE lock discipline, rollback convention |
 | [ruvector-dev-tooling.md](ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP — local semantic doc search (SMI-4417) |
+| [skill-invoke-telemetry-guide.md](skill-invoke-telemetry-guide.md) | Skill-invocation telemetry pipeline (SMI-5012) — wire format, consent gate, dispatcher coverage, rotation policy |
 | [smoke-prod-guide.md](smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459), surface manifest, failure triage |
 | [vercel-deploy-hook.md](vercel-deploy-hook.md) | Vercel→GitHub `repository_dispatch` trigger for `smoke-prod.yml` |
 | [e2e-staging-runbook.md](e2e-staging-runbook.md) | Device-login round-trip e2e (SMI-4460) — secret rotation, Docker carve-out |
