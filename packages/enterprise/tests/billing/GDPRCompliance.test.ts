@@ -120,9 +120,9 @@ describe('GDPRComplianceService', () => {
       const exportData = gdprService.exportCustomerData(customerId)
 
       expect(exportData.subscriptions).toHaveLength(1)
-      expect(exportData.subscriptions[0].tier).toBe('team')
-      expect(exportData.subscriptions[0].status).toBe('active')
-      expect(exportData.subscriptions[0].seatCount).toBe(5)
+      expect(exportData.subscriptions[0]!.tier).toBe('team')
+      expect(exportData.subscriptions[0]!.status).toBe('active')
+      expect(exportData.subscriptions[0]!.seatCount).toBe(5)
     })
 
     it('should export invoice data', () => {
@@ -132,9 +132,9 @@ describe('GDPRComplianceService', () => {
       const exportData = gdprService.exportCustomerData(customerId)
 
       expect(exportData.invoices).toHaveLength(1)
-      expect(exportData.invoices[0].amountCents).toBe(2500)
-      expect(exportData.invoices[0].currency).toBe('usd')
-      expect(exportData.invoices[0].status).toBe('paid')
+      expect(exportData.invoices[0]!.amountCents).toBe(2500)
+      expect(exportData.invoices[0]!.currency).toBe('usd')
+      expect(exportData.invoices[0]!.status).toBe('paid')
     })
 
     it('should export license key data without the actual JWT', () => {
@@ -144,7 +144,7 @@ describe('GDPRComplianceService', () => {
       const exportData = gdprService.exportCustomerData(customerId)
 
       expect(exportData.licenseKeys).toHaveLength(1)
-      expect(exportData.licenseKeys[0].isActive).toBe(true)
+      expect(exportData.licenseKeys[0]!.isActive).toBe(true)
       const keyData = exportData.licenseKeys[0] as unknown as Record<string, unknown>
       expect(keyData['keyJwt']).toBeUndefined()
       expect(keyData['keyHash']).toBeUndefined()
@@ -157,8 +157,8 @@ describe('GDPRComplianceService', () => {
       const exportData = gdprService.exportCustomerData(customerId)
 
       expect(exportData.webhookEvents).toHaveLength(1)
-      expect(exportData.webhookEvents[0].eventType).toBe('customer.subscription.created')
-      expect(exportData.webhookEvents[0].success).toBe(true)
+      expect(exportData.webhookEvents[0]!.eventType).toBe('customer.subscription.created')
+      expect(exportData.webhookEvents[0]!.success).toBe(true)
     })
 
     it('should return empty arrays for non-existent customer', () => {
@@ -189,7 +189,7 @@ describe('GDPRComplianceService', () => {
       const exportData = gdprService.exportCustomerData(customerId)
 
       expect(exportData.subscriptions).toHaveLength(1)
-      expect(exportData.subscriptions[0].seatCount).toBe(1)
+      expect(exportData.subscriptions[0]!.seatCount).toBe(1)
     })
 
     it('should include an ISO-8601 exportedAt timestamp', () => {

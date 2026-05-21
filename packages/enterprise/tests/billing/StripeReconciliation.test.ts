@@ -176,9 +176,9 @@ describe('StripeReconciliationJob', () => {
       const result = await job.run()
 
       expect(result.discrepancies).toHaveLength(1)
-      expect(result.discrepancies[0].type).toBe('status_mismatch')
-      expect(result.discrepancies[0].localValue).toBe('past_due')
-      expect(result.discrepancies[0].stripeValue).toBe('active')
+      expect(result.discrepancies[0]!.type).toBe('status_mismatch')
+      expect(result.discrepancies[0]!.localValue).toBe('past_due')
+      expect(result.discrepancies[0]!.stripeValue).toBe('active')
     })
 
     it('should detect tier mismatch', async () => {
@@ -227,7 +227,7 @@ describe('StripeReconciliationJob', () => {
       const result = await job.run()
 
       expect(result.discrepancies).toHaveLength(1)
-      expect(result.discrepancies[0].type).toBe('missing_stripe')
+      expect(result.discrepancies[0]!.type).toBe('missing_stripe')
     })
   })
 
@@ -278,7 +278,7 @@ describe('StripeReconciliationJob', () => {
       const result = await job.run()
 
       expect(result.stats.discrepanciesFixed).toBe(1)
-      expect(result.discrepancies[0].fixed).toBe(true)
+      expect(result.discrepancies[0]!.fixed).toBe(true)
 
       // Verify the fix was applied
       const updated = db
@@ -299,7 +299,7 @@ describe('StripeReconciliationJob', () => {
       const result = await job.run()
 
       expect(result.stats.discrepanciesFixed).toBe(0)
-      expect(result.discrepancies[0].fixed).toBe(false)
+      expect(result.discrepancies[0]!.fixed).toBe(false)
     })
 
     it('should fix invoice status mismatch', async () => {
