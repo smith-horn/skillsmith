@@ -802,6 +802,213 @@ export function parseConsumersTag(src) {
   return { found: true, names: tokens, sorted }
 }
 
+// --- Check 49: Convention drift backstop (SMI-5026 M5) -----------------------
+//
+// Encodes the four "Convention check before novelty" greps from the
+// `skill-invoke-telemetry.md` plan (lines 666-674 + 723-730) as static
+// invariants that re-run on every PR — not just at plan time.
+//
+// Per plan template § "Convention check before novelty", generic surveys
+// require knowing the plan's `<pattern-prefix>` to grep for, which can't be
+// statically discovered. We therefore encode the four telemetry-specific
+// invariants explicitly. Adding a future Check 49-style invariant means
+// extending this helper, not rewriting the audit loop.
+
+/**
+ * Parse a TypeScript discriminated-union of string literals. Tolerates a
+ * leading `|` separator (most-common case) and accepts both `'foo'` and
+ * `"foo"` quoting. Returns the set of literal members, or null if the type
+ * declaration cannot be located.
+ *
+ * Example matched shape:
+ *   export type Foo = | 'a' | 'b' | 'c'
+ *
+ * @param {string} src - TypeScript source
+ * @param {string} typeName - exact exported type alias name
+ * @returns {Set<string> | null}
+ */
+export function parseStringUnionType(src, typeName) {
+  // Match `export type <Name> = ...` up to (a) the next blank line, or (b)
+  // a newline followed by a top-level declaration keyword. We deliberately
+  // omit `$` from the lookahead alternatives because, with the `m` flag, `$`
+  // matches every line-end and would terminate the lazy capture after the
+  // first literal. Without the `m` flag, `^` would not match the export
+  // keyword anchor reliably — so we keep `m` and use the blank-line +
+  // keyword-boundary alternatives only.
+  const re = new RegExp(
+    `^(?:export\\s+)?type\\s+${typeName}\\s*=\\s*([\\s\\S]*?)(?=\\n\\s*\\n|\\n(?:export|import|interface|type|function|const|let|var|class|namespace)\\b)`,
+    'm'
+  )
+  const m = src.match(re)
+  if (!m) return null
+  const body = m[1]
+  const out = new Set()
+  const litRe = /['"]([a-z][a-z0-9_]*)['"]/gi
+  let lm
+  while ((lm = litRe.exec(body)) !== null) out.add(lm[1])
+  return out
+}
+
+/**
+ * Parse a `const X = [ ... ] as const` TypeScript array-of-string-literals.
+ * Tolerates inline comments and trailing commas. Returns the set of entries,
+ * or null if the array declaration cannot be located.
+ *
+ * @param {string} src
+ * @param {string} arrayName
+ * @returns {Set<string> | null}
+ */
+export function parseTsLiteralArray(src, arrayName) {
+  const re = new RegExp(
+    `(?:const|let|var|readonly)\\s+${arrayName}\\s*(?::[^=]*)?=\\s*\\[([\\s\\S]*?)\\]`,
+    'm'
+  )
+  const m = src.match(re)
+  if (!m) return null
+  const body = m[1]
+  const out = new Set()
+  // Strip line + block comments before matching, so commented-out entries
+  // ('// 'foo', // legacy') don't get counted as members.
+  const stripped = body.replace(/\/\/[^\n]*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+  const litRe = /['"]([a-z][a-z0-9_]*)['"]/gi
+  let lm
+  while ((lm = litRe.exec(stripped)) !== null) out.add(lm[1])
+  return out
+}
+
+/**
+ * Find definitions (not call sites) of a function or const named `symbol`
+ * across the provided source files. A "definition" is one of:
+ *   - `function <symbol>(`  (function declaration)
+ *   - `export function <symbol>(` / `async function <symbol>(`
+ *   - `const <symbol> =` / `let <symbol> =` / `var <symbol> =` followed by
+ *     either `function` or an arrow `(...) =>`
+ *
+ * A call site like `withTelemetry(handler, {...})` is NOT a definition and
+ * is intentionally excluded. The canonical `wrap.ts` declaration site is
+ * the single source of truth (SMI-5016); any parallel definition signals
+ * drift and must be flagged.
+ *
+ * @param {Record<string, string>} srcByPath
+ * @param {string} symbol - bareword identifier (no regex metachars)
+ * @returns {{ file: string, line: number, snippet: string }[]}
+ */
+export function findFunctionDefinitions(srcByPath, symbol) {
+  const out = []
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol)) return out
+  // Two anchored patterns:
+  //   (a) `function <symbol>` (also matches `export function`/`async function`)
+  //   (b) `const|let|var <symbol> = ... function|=>`
+  const defRe = new RegExp(
+    `^[ \\t]*(?:export\\s+)?(?:async\\s+)?function\\s+${symbol}\\b|` +
+      `^[ \\t]*(?:export\\s+)?(?:const|let|var)\\s+${symbol}\\s*(?::[^=]*)?=\\s*(?:async\\s+)?(?:function\\b|\\([^)]*\\)\\s*(?::[^=]*)?\\s*=>)`,
+    'm'
+  )
+  for (const [file, src] of Object.entries(srcByPath)) {
+    const lines = src.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (defRe.test(lines[i])) {
+        out.push({ file, line: i + 1, snippet: lines[i].trim() })
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Find literal `/tmp/skillsmith-` references in production source. Excludes
+ * test files (matching `*.test.*`, `*.spec.*`, `__tests__/`, `tests/`,
+ * `_tests_/`, `/e2e/`, `fixtures/`) — those legitimately use the prefix as
+ * a sandbox path per the test-isolation convention.
+ *
+ * Per-line opt-out marker `audit:check-48-ack` is honoured: any line
+ * containing this token is excluded. The marker is the documented escape
+ * hatch for legitimate edge cases (example code in comments, etc) and MUST
+ * sit on the same physical line as the violation alongside a rationale.
+ *
+ * @param {Record<string, string>} srcByPath
+ * @returns {{ file: string, line: number, snippet: string }[]}
+ */
+export function findTmpSkillsmithRefs(srcByPath) {
+  const out = []
+  const TEST_PATH_RE =
+    /(?:\.test\.|\.spec\.|\b__tests__\b|\btests\b|\b_tests_\b|\/e2e\/|fixtures\/)/i
+  for (const [file, src] of Object.entries(srcByPath)) {
+    if (TEST_PATH_RE.test(file)) continue
+    const lines = src.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (!line.includes('/tmp/skillsmith-')) continue
+      if (line.includes('audit:check-48-ack')) continue
+      out.push({ file, line: i + 1, snippet: line.trim() })
+    }
+  }
+  return out
+}
+
+/**
+ * Compose Check 49 results from raw inputs. Pure — caller does all I/O.
+ * Returns a structured result so the audit-standards.mjs runner can render
+ * per-sub-check messages with `fail()` / `warn()`.
+ *
+ * Sub-checks:
+ *   48a: SkillsmithEventType union ⊇ {expected event names}    (FAIL)
+ *   48b: ALLOWED_EVENTS array     ⊇ {expected event names}    (FAIL)
+ *   48c: withTelemetry has exactly ONE definition site         (WARN)
+ *   48d: /tmp/skillsmith- absent from prod source              (WARN)
+ *
+ * Severity rationale: 48a/48b are exact-string set-membership tests against
+ * declared sources of truth (no false-positive surface — drift IS the bug).
+ * 48c/48d are grep-based heuristics that might over-flag in legitimate
+ * edge cases — `warn()` keeps them visible without blocking PRs, matching
+ * the false-positive-fatigue guidance in CLAUDE.md governance retros.
+ *
+ * @param {object} input
+ * @param {string} input.posthogSrc - contents of packages/core/src/telemetry/posthog.ts
+ * @param {string} input.eventsSrc - contents of supabase/functions/events/index.ts
+ * @param {Record<string,string>} input.surveySrcByPath - all .ts files in scope for 48c/48d
+ * @param {string[]} input.expectedNewEvents - canonical list (e.g. ['skill_invoke', ...])
+ * @param {string} input.canonicalWithTelemetryPath - the ONE allowed definition site
+ * @returns {{
+ *   eventTypeUnionMissing: string[],
+ *   allowedEventsMissing: string[],
+ *   eventTypeUnionParseFailed: boolean,
+ *   allowedEventsParseFailed: boolean,
+ *   parallelWithTelemetryDefs: {file:string,line:number,snippet:string}[],
+ *   tmpSkillsmithRefs: {file:string,line:number,snippet:string}[],
+ * }}
+ */
+export function findConventionDrift(input) {
+  const { posthogSrc, eventsSrc, surveySrcByPath, expectedNewEvents, canonicalWithTelemetryPath } =
+    input
+
+  // 48a: SkillsmithEventType union must list every expectedNewEvents member.
+  const union = parseStringUnionType(posthogSrc, 'SkillsmithEventType')
+  const eventTypeUnionParseFailed = union === null
+  const eventTypeUnionMissing = union ? expectedNewEvents.filter((e) => !union.has(e)) : []
+
+  // 48b: ALLOWED_EVENTS const must include every expectedNewEvents member.
+  const allowed = parseTsLiteralArray(eventsSrc, 'ALLOWED_EVENTS')
+  const allowedEventsParseFailed = allowed === null
+  const allowedEventsMissing = allowed ? expectedNewEvents.filter((e) => !allowed.has(e)) : []
+
+  // 48c: exactly one withTelemetry definition (in canonicalWithTelemetryPath).
+  const allDefs = findFunctionDefinitions(surveySrcByPath, 'withTelemetry')
+  const parallelWithTelemetryDefs = allDefs.filter((d) => d.file !== canonicalWithTelemetryPath)
+
+  // 48d: /tmp/skillsmith- must not appear in production source.
+  const tmpSkillsmithRefs = findTmpSkillsmithRefs(surveySrcByPath)
+
+  return {
+    eventTypeUnionMissing,
+    allowedEventsMissing,
+    eventTypeUnionParseFailed,
+    allowedEventsParseFailed,
+    parallelWithTelemetryDefs,
+    tmpSkillsmithRefs,
+  }
+}
+
 /**
  * Aliases for publish-* job names whose pre-publish-check output key uses
  * a shorter name than the job's full shortName.
