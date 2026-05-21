@@ -8,7 +8,7 @@ Deep dive for developers extending or maintaining the telemetry pipeline. For th
 
 ## Architecture
 
-```
+```text
 Claude Code hook (PreToolUse / PostToolUse)
   |
   v
@@ -27,7 +27,7 @@ supabase/functions/events/index.ts             (ALLOWED_EVENTS allowlist enforce
 
 Surface 2 (MCP tool calls) goes through `withTelemetry` HOF in `packages/mcp-server/src/`:
 
-```
+```text
 MCP dispatcher (e.g. get_skill)
   |
   v
@@ -125,23 +125,23 @@ Key design decisions (from plan-review):
 
 1. Wrap the handler with `withTelemetry`:
 
-```typescript
-import { withTelemetry } from '../telemetry/with-telemetry.js';
+   ```typescript
+   import { withTelemetry } from '../telemetry/with-telemetry.js';
 
-export const myNewTool = withTelemetry(
-  async (params, context) => { /* handler */ },
-  'skill_invoke'
-);
-```
+   export const myNewTool = withTelemetry(
+     async (params, context) => { /* handler */ },
+     'skill_invoke'
+   );
+   ```
 
 2. Update `DISPATCHER_MAP` in `packages/mcp-server/src/telemetry/telemetry-coverage.test.ts`:
 
-```typescript
-const DISPATCHER_MAP: Record<string, string> = {
-  // ... existing entries ...
-  my_new_tool: 'packages/mcp-server/src/tools/my-new-tool.ts',
-};
-```
+   ```typescript
+   const DISPATCHER_MAP: Record<string, string> = {
+     // ... existing entries ...
+     my_new_tool: 'packages/mcp-server/src/tools/my-new-tool.ts',
+   };
+   ```
 
 CI will fail if a dispatcher is present in the tool list but absent from `DISPATCHER_MAP`. This is the coverage snapshot enforced by `audit:standards` Check 49.
 
