@@ -16,6 +16,7 @@ import { importToDatabase, saveReport } from '../../src/scripts/import-to-databa
 import { createDatabase, openDatabase } from '../../src/db/schema.js'
 import { SkillRepository } from '../../src/repositories/SkillRepository.js'
 import { SearchService } from '../../src/services/SearchService.js'
+import { isBetterSqlite3Available } from '../../src/db/drivers/betterSqlite3Driver.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const TEST_DIR = join(__dirname, '..', 'fixtures', 'import-test')
@@ -77,7 +78,12 @@ const sampleValidatedSkills = {
   ],
 }
 
-describe('SMI-866: import-to-database', () => {
+// SMI-5121: this suite drives the native-only sync path (importToDatabase →
+// createDatabase → createDatabaseSync), which throws when better-sqlite3 can't
+// load — unlike sibling DB tests that use the WASM fallback. Skip (don't fail)
+// where native is unavailable (macOS host, worktree virtiofs) so the pre-push
+// coverage check passes everywhere; CI runs in clean Docker where native loads.
+describe.skipIf(!isBetterSqlite3Available())('SMI-866: import-to-database', () => {
   beforeEach(() => {
     // Create test directory
     if (!existsSync(TEST_DIR)) {
