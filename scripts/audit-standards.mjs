@@ -3152,9 +3152,12 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
           // Remote tip of the DECLARED branch (not main).
           // subPath/branch validated above; .gitmodules subshell expansion is safe because
           // the submodule URL lookup uses git's own parser, not shell metacharacters.
+          // SMI-5080: capture stderr so the `fatal: ...` lines from a failing
+          // ls-remote (e.g. SSL handshake failure in slim Docker images) do
+          // not leak to console — the catch block below classifies the error.
           const remoteSha = execSync(
             `git ls-remote "$(git config --file .gitmodules "submodule.${subPath}.url")" "${branch}"`,
-            { encoding: 'utf8' }
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
           )
             .trim()
             .split(/\s+/)[0]
@@ -3172,10 +3175,28 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
             pass(`Check 21: Strategy submodule '${subPath}' pointer is at remote ${branch} tip`)
           }
         } catch (e) {
-          warn(
-            `Check 21: Could not check strategy submodule '${subPath}' (branch=${branch}) tip: ${e.message}`,
-            'Ensure remote is reachable and submodule is initialized'
-          )
+          // SMI-5080: in Docker containers without ca-certificates installed (e.g.
+          // node:22-slim base image), `git ls-remote` fails on HTTPS submodule
+          // URLs with a certificate-verification error. The daily-cron / host
+          // audit run still catches real submodule drift; the Docker run is
+          // structurally unable to make this check, so degrade SSL/network
+          // failures to a clean `pass('Skipped ...')` (matches Check 23's
+          // skip-as-pass idiom) instead of emitting a misleading WARN.
+          const msg = String(e?.message || '')
+          const isNetworkUnavailable =
+            /certificate verification failed|unable to access|Could not resolve host|Connection refused|Operation timed out|ssl/i.test(
+              msg
+            )
+          if (isNetworkUnavailable) {
+            pass(
+              `Check 21 skipped for '${subPath}' (branch=${branch}) — SSL/network unavailable in this environment`
+            )
+          } else {
+            warn(
+              `Check 21: Could not check strategy submodule '${subPath}' (branch=${branch}) tip: ${e.message}`,
+              'Ensure remote is reachable and submodule is initialized'
+            )
+          }
         }
       }
     }
