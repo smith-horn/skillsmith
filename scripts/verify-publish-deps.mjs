@@ -26,8 +26,6 @@ const ROOT = join(__dirname, '..')
 
 const PACKAGES = [
   { name: '@skillsmith/core', dir: 'packages/core' },
-  // SMI-5066: types-only contract package; mcp-server depends on it.
-  { name: '@skillsmith/billing-types', dir: 'packages/billing-types' },
   { name: '@skillsmith/mcp-server', dir: 'packages/mcp-server' },
   { name: '@skillsmith/cli', dir: 'packages/cli' },
 ]

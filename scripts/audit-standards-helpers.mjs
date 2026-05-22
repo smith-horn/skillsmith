@@ -1077,7 +1077,7 @@ export const PUBLISH_JOB_TO_OUTPUT_ALIAS = Object.freeze({
  * dependents (orphan-consumer release class of bug).
  *
  * SMI-5066: generalized to any `publish-<pkg>` job (not just publish-core)
- * so the same invariant covers new packages like billing-types.
+ * so the same invariant covers every dependent publish job (e.g. enterprise).
  *
  * @param {string} content - Full publish.yml content (UTF-8).
  * @returns {{

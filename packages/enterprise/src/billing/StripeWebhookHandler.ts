@@ -16,7 +16,7 @@
 import type Stripe from 'stripe'
 import type { Database as DatabaseType } from '@skillsmith/core'
 import { createLogger } from '@skillsmith/core'
-import type { StripeWebhookHandler as StripeWebhookHandlerContract } from '@skillsmith/billing-types'
+import type { StripeWebhookHandlerContract } from './webhook-contract.js'
 import type { StripeClient } from './StripeClient.js'
 import type { BillingService } from './BillingService.js'
 import type { StripeEventId, WebhookProcessResult } from './types.js'
