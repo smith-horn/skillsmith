@@ -33,6 +33,7 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 
 import { isAuditMode, resolveAuditMode, type AuditMode } from '@skillsmith/core/config/audit-mode'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { tierAllowsAuditMode } from '@skillsmith/core/audit'
 
 import { sanitizeError } from '../utils/sanitize.js'
@@ -205,6 +206,47 @@ async function runConfigSet(key: string, value: string): Promise<void> {
 // Command factory
 // ---------------------------------------------------------------------------
 
+// SMI-5128 batch B: extracted from inline .action() closures so withTelemetry
+// can wrap them at the export boundary (SMI-5018 coverage gate).
+
+async function configGetActionImpl(key: string): Promise<void> {
+  try {
+    await runConfigGet(key)
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      console.error(chalk.red(`Error [${error.code}]:`), error.message)
+    } else {
+      console.error(chalk.red('Error:'), sanitizeError(error))
+    }
+    process.exit(1)
+  }
+}
+
+export const configGetAction = withTelemetry(configGetActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'config get',
+  extractFramework: () => 'cli',
+})
+
+async function configSetActionImpl(key: string, value: string): Promise<void> {
+  try {
+    await runConfigSet(key, value)
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      console.error(chalk.red(`Error [${error.code}]:`), error.message)
+    } else {
+      console.error(chalk.red('Error:'), sanitizeError(error))
+    }
+    process.exit(1)
+  }
+}
+
+export const configSetAction = withTelemetry(configSetActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'config set',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Build the `config` parent command. v1 supports `get` / `set` subcommands
  * with a single supported key (`audit_mode`). Additional keys land in v2.
@@ -217,34 +259,12 @@ export function createConfigCommand(): Command {
   config
     .command('get <key>')
     .description('Read a configuration value (e.g. `audit_mode`)')
-    .action(async (key: string) => {
-      try {
-        await runConfigGet(key)
-      } catch (error) {
-        if (error instanceof ConfigError) {
-          console.error(chalk.red(`Error [${error.code}]:`), error.message)
-        } else {
-          console.error(chalk.red('Error:'), sanitizeError(error))
-        }
-        process.exit(1)
-      }
-    })
+    .action(configGetAction)
 
   config
     .command('set <key> <value>')
     .description('Write a configuration value (atomic; tier-revalidated for audit_mode)')
-    .action(async (key: string, value: string) => {
-      try {
-        await runConfigSet(key, value)
-      } catch (error) {
-        if (error instanceof ConfigError) {
-          console.error(chalk.red(`Error [${error.code}]:`), error.message)
-        } else {
-          console.error(chalk.red('Error:'), sanitizeError(error))
-        }
-        process.exit(1)
-      }
-    })
+    .action(configSetAction)
 
   return config
 }
