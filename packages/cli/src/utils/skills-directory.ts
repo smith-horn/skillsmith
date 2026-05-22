@@ -76,7 +76,11 @@ export async function getSkillsFromDirectory(
   let dbConn: Database | null = null
   if (dbPath) {
     try {
-      dbConn = await openCliDatabase(dbPath)
+      // SMI-5139: this is a pure-read version lookup — open read-only so the
+      // WASM driver does not persist (write) on close() and throw EROFS when
+      // dbPath is unwritable/absent. A read-only open of an absent db throws
+      // (native driver), which the catch below degrades to hasUpdates: false.
+      dbConn = await openCliDatabase(dbPath, { readonly: true })
       versionRepo = new SkillVersionRepository(dbConn)
     } catch {
       // DB not available yet — fall back to hasUpdates: false
