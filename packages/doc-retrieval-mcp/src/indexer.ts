@@ -17,6 +17,7 @@ import {
   assertSafeIndexTarget,
   assertSubmoduleInitialized,
 } from './config.js'
+import { stripGitDiscoveryEnv } from './_lib/git-fixture-env.js'
 import { acquireIndexerLock } from './indexer-lock.js'
 import { MetadataStore } from './metadata-store.js'
 import { embedBatch } from './embedding.js'
@@ -191,7 +192,9 @@ function currentGitSha(root: string): string | null {
     return execSync('git rev-parse HEAD', {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+      // SMI-5126: strip GIT_DISCOVERY_VARS so an ambient GIT_DIR cannot
+      // override `cwd` and stamp the wrong repo's HEAD as lastIndexedSha.
+      env: stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' }),
     }).trim()
   } catch {
     return null

@@ -12,7 +12,17 @@ import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const GIT_DISCOVERY_VARS = [
+/**
+ * Every git environment variable that can redirect git's repo-discovery walk
+ * away from the spawned process's `cwd:`. Stripping these ensures the spawned
+ * `git` resolves the repo via cwd-walk, not via inherited env hints.
+ *
+ * SMI-5126: exported (was module-private) so the production read-path helper
+ * `stripGitDiscoveryEnv` and the canonical copy at
+ * `scripts/tests/_lib/git-fixture-env.ts` single-source the same list. A
+ * vitest sync check asserts the two copies are byte-identical.
+ */
+export const GIT_DISCOVERY_VARS = [
   'GIT_DIR',
   'GIT_WORK_TREE',
   'GIT_INDEX_FILE',
@@ -58,4 +68,29 @@ export function makeFixtureEnv(extra: Record<string, string> = {}): NodeJS.Proce
 export function makeFixtureTempDir(prefix: string): string {
   const base = realpath(tmpdir())
   return mkdtempSync(join(base, `${prefix}-`))
+}
+
+/**
+ * SMI-5126 — PRODUCTION read-path env scrub.
+ *
+ * Returns `{ ...process.env, <GIT_DISCOVERY_VARS deleted>, ...extra }`.
+ *
+ * Unlike `makeFixtureEnv`, this does NOT pin test identity
+ * (`GIT_AUTHOR_*` / `GIT_COMMITTER_*` / `GIT_CONFIG_GLOBAL=/dev/null`):
+ * the adapters' read path must still see the user's real git config so
+ * `git config --get remote.origin.url` resolves normally. Its sole job is
+ * to strip the location-pointing discovery vars (`GIT_DIR`,
+ * `GIT_WORK_TREE`, `GIT_INDEX_FILE`, …) that git honors OVER the spawned
+ * process's `cwd:`. An ambient `GIT_DIR` (e.g. exported by git into the
+ * pre-push hook) would otherwise make the adapter read the wrong repo.
+ *
+ * Pass via the `env:` option of every `execFileSync('git', …)` /
+ * `execSync('git …')` / `execFileSync('gh', …)` in the read path:
+ *
+ *     execFileSync('git', [...], { cwd, env: stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' }) })
+ */
+export function stripGitDiscoveryEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const v of GIT_DISCOVERY_VARS) delete env[v]
+  return { ...env, ...extra }
 }

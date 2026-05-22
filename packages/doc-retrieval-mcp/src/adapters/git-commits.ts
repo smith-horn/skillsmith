@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
+import { stripGitDiscoveryEnv } from '../_lib/git-fixture-env.js'
 import { chunkId, estimateTokens } from '../indexer.helpers.js'
 import type { AdapterContext, AdapterFile, ChunkMetadata, SourceAdapter } from '../types.js'
 
@@ -157,7 +158,10 @@ function runGitLog(cwd: string, since: string): string | null {
       {
         cwd,
         encoding: 'utf8',
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+        // SMI-5126: strip GIT_DISCOVERY_VARS so an ambient GIT_DIR (e.g.
+        // exported by git into the pre-push hook) cannot override `cwd`
+        // and make this read the wrong repo.
+        env: stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' }),
         maxBuffer: 32 * 1024 * 1024,
       }
     )
@@ -219,6 +223,10 @@ export function resolveRepoName(ctx: AdapterContext): string {
     const rawUrl = execFileSync('git', ['config', '--get', 'remote.origin.url'], {
       cwd: ctx.repoRoot,
       encoding: 'utf8',
+      // SMI-5126: strip GIT_DISCOVERY_VARS so an ambient GIT_DIR cannot
+      // redirect this read to the wrong repo's `remote.origin.url`.
+      // (Does NOT pin identity/global config — must see the real config.)
+      env: stripGitDiscoveryEnv(),
     }).trim()
     // Strip trailing slashes before matching — git accepts and stores them
     // verbatim, but they cause the regex to produce no match (falling back

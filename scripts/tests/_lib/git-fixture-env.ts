@@ -42,8 +42,12 @@ import { join } from 'node:path'
  * Source: https://git-scm.com/docs/git#_git_environment_variables (sections
  * "The Git Repository" and "Git Diffs"). Audited 2026-05-03; revisit if git
  * adds new GIT_* discovery vars in a future release.
+ *
+ * SMI-5126: exported (was module-private) so the per-package mirror at
+ * `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts` single-sources the
+ * same list. A vitest sync check asserts the two copies are byte-identical.
  */
-const GIT_DISCOVERY_VARS = [
+export const GIT_DISCOVERY_VARS = [
   'GIT_DIR',
   'GIT_WORK_TREE',
   'GIT_INDEX_FILE',

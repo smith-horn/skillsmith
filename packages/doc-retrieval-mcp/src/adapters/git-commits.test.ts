@@ -372,3 +372,46 @@ describe('git-commits fixture isolation (SMI-4699)', () => {
     }
   })
 })
+
+describe('git-commits adapter — read-path env isolation (SMI-5126)', () => {
+  // Proves the PRODUCTION read path (runGitLog -> stripGitDiscoveryEnv) is
+  // not hijacked by an ambient GIT_DIR / GIT_INDEX_FILE. git honors those
+  // discovery vars OVER the spawned process's `cwd:`, so before the fix a
+  // leaked GIT_DIR (e.g. exported by git into the pre-push hook) made the
+  // adapter read the *real* repo's commit history instead of the scratch
+  // fixture. With the scrub, the adapter resolves the repo from `cwd` only.
+  it('listFiles reads cwd repo, not a leaked GIT_DIR', async () => {
+    // The scratch repo (from beforeEach) has exactly one commit on main.
+    // Body is substantial so shouldSkip's short-subject guard (line 254)
+    // does not drop it — mirrors the other single-commit fixtures.
+    commit(
+      'feat(SMI-5126): scrub git discovery env on adapter read path',
+      'A leaked GIT_DIR overrides the spawned git process cwd, so the adapter could read the wrong repo. stripGitDiscoveryEnv removes the discovery vars so resolution falls back to cwd-walk.'
+    )
+
+    // Stage the leak vector: point GIT_DIR / GIT_INDEX_FILE at the REAL
+    // repo this test runs inside. Without the scrub, git resolves the
+    // ambient GIT_DIR and runGitLog returns the host repo's commits.
+    const realGitDir = execFileSync('git', ['rev-parse', '--git-dir'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    }).trim()
+    const origGitDir = process.env.GIT_DIR
+    const origGitIndexFile = process.env.GIT_INDEX_FILE
+    process.env.GIT_DIR = realGitDir
+    process.env.GIT_INDEX_FILE = join(realGitDir, 'index')
+
+    try {
+      const adapter = createGitCommitsAdapter()
+      const files = await adapter.listFiles(makeCtx(scratch, 'full'))
+      // Exactly the one scratch commit — the leaked GIT_DIR did not hijack.
+      expect(files.length).toBe(1)
+      expect(files[0].logicalPath).toMatch(/^git:\/\/[^/]+\/commit\/[0-9a-f]{8}$/)
+    } finally {
+      if (origGitDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = origGitDir
+      if (origGitIndexFile === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = origGitIndexFile
+    }
+  })
+})
