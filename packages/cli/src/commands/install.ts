@@ -18,6 +18,7 @@ import {
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { addLink, assertClientId, getInstallPath, type ClientId } from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
@@ -169,6 +170,171 @@ function displayResult(result: CoreInstallResult, quiet: boolean): void {
   }
 }
 
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function installActionImpl(
+  skillId: string,
+  opts: {
+    force?: boolean
+    skipScan?: boolean
+    skipOptimize?: boolean
+    quiet?: boolean
+    json?: boolean
+    db?: string
+    client?: string
+    alsoLink?: string
+    symlink?: boolean
+  }
+): Promise<void> {
+  const quiet = opts.quiet ?? false
+  const jsonOutput = opts.json ?? false
+
+  try {
+    // SMI-4578: validate --client and parse --also-link before any
+    // I/O so a bad flag fails fast with a friendly hint.
+    const rawClient = opts.client ?? 'claude-code'
+    if (rawClient.includes(',')) {
+      throw new Error(
+        `--client takes a single value (got '${rawClient}'). Pass --also-link <ids> to fan-out into additional clients.`
+      )
+    }
+    assertClientId(rawClient)
+    const client: ClientId = rawClient
+    const alsoLinkClients = parseAlsoLink(opts.alsoLink, client)
+    const skillsDir = getInstallPath(client)
+
+    // Validate skill ID format
+    if (!isValidSkillId(skillId)) {
+      const errorMsg =
+        'Invalid skill ID format. Expected "author/name" or a GitHub URL.\n' +
+        '  Examples:\n' +
+        '    skillsmith install getsentry/commit\n' +
+        '    skillsmith install https://github.com/owner/repo'
+
+      if (jsonOutput) {
+        console.log(JSON.stringify({ success: false, skillId, error: errorMsg }, null, 2))
+      } else {
+        console.error(chalk.red(errorMsg))
+      }
+      process.exit(1)
+      return
+    }
+
+    const dbPath = opts.db ?? DEFAULT_DB_PATH
+    const db = await openCliDatabase(dbPath)
+
+    const spinner = jsonOutput ? null : ora('Installing skill...').start()
+
+    try {
+      const skillRepo = new SkillRepository(db)
+      const skillDependencyRepo = new SkillDependencyRepository(db)
+
+      const service = new SkillInstallationService({
+        db,
+        skillRepo,
+        skillDependencyRepo,
+        skillsDir,
+        manifestPath: DEFAULT_MANIFEST_PATH,
+        registryLookup: createDbRegistryLookup(skillRepo),
+        onProgress: (_stage: string, detail: string) => {
+          if (spinner) {
+            spinner.text = detail
+          }
+        },
+      })
+
+      // Build install options — only set defined properties (exactOptionalPropertyTypes)
+      const installOptions: import('@skillsmith/core').InstallOptions = {}
+      if (opts.force !== undefined) {
+        installOptions.force = opts.force
+      }
+      if (opts.skipScan !== undefined) {
+        installOptions.skipScan = opts.skipScan
+      }
+      if (opts.skipOptimize !== undefined) {
+        installOptions.skipOptimize = opts.skipOptimize
+      }
+
+      const installStart = Date.now()
+      const result = await service.install(skillId, installOptions)
+
+      // SMI-4182 / SMI-4795: fire-and-forget install telemetry —
+      // skipped when CLI is unauthenticated (no SKILLSMITH_API_KEY),
+      // per product decision. `trustTier` is included on every event
+      // (when known); `errorCode` is included only on failures.
+      void emitInstallEvent({
+        skillId,
+        source: 'cli',
+        success: result.success,
+        durationMs: Date.now() - installStart,
+        ...(result.trustTier !== undefined && { trustTier: result.trustTier }),
+        ...(!result.success && result.errorCode !== undefined && { errorCode: result.errorCode }),
+      })
+
+      // SMI-4578: fan-out to --also-link clients only after the
+      // primary install succeeds. Any fan-out failure is reported as
+      // a warning but does NOT mark the overall install as failed —
+      // the canonical install at `client` is already complete.
+      if (result.success && alsoLinkClients.length > 0) {
+        for (const target of alsoLinkClients) {
+          try {
+            const linked = await addLink({
+              skillId,
+              fromClient: client,
+              toClient: target,
+              preferSymlink: opts.symlink ?? false,
+              force: opts.force ?? false,
+            })
+            if (!quiet && !jsonOutput) {
+              const note = linked.fellBackToCopy ? ' (fell back to copy)' : ''
+              console.log(chalk.dim(`  Linked into ${target} as ${linked.record.kind}${note}`))
+            }
+          } catch (linkErr) {
+            if (!jsonOutput) {
+              console.warn(
+                chalk.yellow(`  Warning: could not link to ${target}: ${sanitizeError(linkErr)}`)
+              )
+            }
+          }
+        }
+      }
+
+      if (spinner) {
+        if (result.success) {
+          spinner.succeed('Skill installed')
+        } else {
+          spinner.fail('Installation failed')
+        }
+      }
+
+      if (jsonOutput) {
+        console.log(formatJsonResult(result))
+      } else {
+        displayResult(result, quiet)
+      }
+
+      if (!result.success) {
+        process.exit(1)
+      }
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ success: false, skillId, error: sanitizeError(error) }, null, 2))
+    } else {
+      console.error(chalk.red('Install error:'), sanitizeError(error))
+    }
+    process.exit(1)
+  }
+}
+
+export const installAction = withTelemetry(installActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'install',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create the install command
  */
@@ -193,171 +359,7 @@ export function createInstallCommand(): Command {
       'use relative symlinks instead of file copies for --also-link (POSIX only; falls back to copy on Windows EPERM)',
       false
     )
-    .action(
-      async (
-        skillId: string,
-        opts: {
-          force?: boolean
-          skipScan?: boolean
-          skipOptimize?: boolean
-          quiet?: boolean
-          json?: boolean
-          db?: string
-          client?: string
-          alsoLink?: string
-          symlink?: boolean
-        }
-      ) => {
-        const quiet = opts.quiet ?? false
-        const jsonOutput = opts.json ?? false
-
-        try {
-          // SMI-4578: validate --client and parse --also-link before any
-          // I/O so a bad flag fails fast with a friendly hint.
-          const rawClient = opts.client ?? 'claude-code'
-          if (rawClient.includes(',')) {
-            throw new Error(
-              `--client takes a single value (got '${rawClient}'). Pass --also-link <ids> to fan-out into additional clients.`
-            )
-          }
-          assertClientId(rawClient)
-          const client: ClientId = rawClient
-          const alsoLinkClients = parseAlsoLink(opts.alsoLink, client)
-          const skillsDir = getInstallPath(client)
-
-          // Validate skill ID format
-          if (!isValidSkillId(skillId)) {
-            const errorMsg =
-              'Invalid skill ID format. Expected "author/name" or a GitHub URL.\n' +
-              '  Examples:\n' +
-              '    skillsmith install getsentry/commit\n' +
-              '    skillsmith install https://github.com/owner/repo'
-
-            if (jsonOutput) {
-              console.log(JSON.stringify({ success: false, skillId, error: errorMsg }, null, 2))
-            } else {
-              console.error(chalk.red(errorMsg))
-            }
-            process.exit(1)
-            return
-          }
-
-          const dbPath = opts.db ?? DEFAULT_DB_PATH
-          const db = await openCliDatabase(dbPath)
-
-          const spinner = jsonOutput ? null : ora('Installing skill...').start()
-
-          try {
-            const skillRepo = new SkillRepository(db)
-            const skillDependencyRepo = new SkillDependencyRepository(db)
-
-            const service = new SkillInstallationService({
-              db,
-              skillRepo,
-              skillDependencyRepo,
-              skillsDir,
-              manifestPath: DEFAULT_MANIFEST_PATH,
-              registryLookup: createDbRegistryLookup(skillRepo),
-              onProgress: (_stage: string, detail: string) => {
-                if (spinner) {
-                  spinner.text = detail
-                }
-              },
-            })
-
-            // Build install options — only set defined properties (exactOptionalPropertyTypes)
-            const installOptions: import('@skillsmith/core').InstallOptions = {}
-            if (opts.force !== undefined) {
-              installOptions.force = opts.force
-            }
-            if (opts.skipScan !== undefined) {
-              installOptions.skipScan = opts.skipScan
-            }
-            if (opts.skipOptimize !== undefined) {
-              installOptions.skipOptimize = opts.skipOptimize
-            }
-
-            const installStart = Date.now()
-            const result = await service.install(skillId, installOptions)
-
-            // SMI-4182 / SMI-4795: fire-and-forget install telemetry —
-            // skipped when CLI is unauthenticated (no SKILLSMITH_API_KEY),
-            // per product decision. `trustTier` is included on every event
-            // (when known); `errorCode` is included only on failures.
-            void emitInstallEvent({
-              skillId,
-              source: 'cli',
-              success: result.success,
-              durationMs: Date.now() - installStart,
-              ...(result.trustTier !== undefined && { trustTier: result.trustTier }),
-              ...(!result.success &&
-                result.errorCode !== undefined && { errorCode: result.errorCode }),
-            })
-
-            // SMI-4578: fan-out to --also-link clients only after the
-            // primary install succeeds. Any fan-out failure is reported as
-            // a warning but does NOT mark the overall install as failed —
-            // the canonical install at `client` is already complete.
-            if (result.success && alsoLinkClients.length > 0) {
-              for (const target of alsoLinkClients) {
-                try {
-                  const linked = await addLink({
-                    skillId,
-                    fromClient: client,
-                    toClient: target,
-                    preferSymlink: opts.symlink ?? false,
-                    force: opts.force ?? false,
-                  })
-                  if (!quiet && !jsonOutput) {
-                    const note = linked.fellBackToCopy ? ' (fell back to copy)' : ''
-                    console.log(
-                      chalk.dim(`  Linked into ${target} as ${linked.record.kind}${note}`)
-                    )
-                  }
-                } catch (linkErr) {
-                  if (!jsonOutput) {
-                    console.warn(
-                      chalk.yellow(
-                        `  Warning: could not link to ${target}: ${sanitizeError(linkErr)}`
-                      )
-                    )
-                  }
-                }
-              }
-            }
-
-            if (spinner) {
-              if (result.success) {
-                spinner.succeed('Skill installed')
-              } else {
-                spinner.fail('Installation failed')
-              }
-            }
-
-            if (jsonOutput) {
-              console.log(formatJsonResult(result))
-            } else {
-              displayResult(result, quiet)
-            }
-
-            if (!result.success) {
-              process.exit(1)
-            }
-          } finally {
-            db.close()
-          }
-        } catch (error) {
-          if (jsonOutput) {
-            console.log(
-              JSON.stringify({ success: false, skillId, error: sanitizeError(error) }, null, 2)
-            )
-          } else {
-            console.error(chalk.red('Install error:'), sanitizeError(error))
-          }
-          process.exit(1)
-        }
-      }
-    )
+    .action(installAction)
 }
 
 export default createInstallCommand

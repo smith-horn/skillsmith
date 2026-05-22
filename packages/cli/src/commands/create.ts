@@ -21,6 +21,7 @@ import ora from 'ora'
 import { mkdir, writeFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 import { sanitizeError } from '../utils/sanitize.js'
 import { validateSkillName } from '../utils/skill-name.js'
@@ -377,6 +378,36 @@ export async function createSkill(
 // Command factory
 // ---------------------------------------------------------------------------
 
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function createActionImpl(
+  name: string | undefined,
+  opts: Record<string, string | boolean | undefined>
+): Promise<void> {
+  try {
+    await createSkill(name, {
+      output: opts['output'] as string | undefined,
+      type: opts['type'] as string | undefined,
+      behavior: opts['behavior'] as string | undefined,
+      description: opts['description'] as string | undefined,
+      author: opts['author'] as string | undefined,
+      category: opts['category'] as string | undefined,
+      scripts: opts['scripts'] as boolean | undefined,
+      yes: opts['yes'] as boolean | undefined,
+      dryRun: opts['dryRun'] as boolean | undefined,
+    })
+  } catch (error) {
+    console.error(chalk.red('Error creating skill:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const createAction = withTelemetry(createActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'create',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create the `skillsmith create` command.
  * SMI-3083: Scaffold new agent skills without a separate skill install.
@@ -405,24 +436,5 @@ export function createCreateCommand(): Command {
     .option('--scripts', 'Include a scripts/ directory')
     .option('-y, --yes', 'Auto-confirm overwrite — always overwrites if skill directory exists')
     .option('--dry-run', 'Preview scaffold output without writing files')
-    .action(
-      async (name: string | undefined, opts: Record<string, string | boolean | undefined>) => {
-        try {
-          await createSkill(name, {
-            output: opts['output'] as string | undefined,
-            type: opts['type'] as string | undefined,
-            behavior: opts['behavior'] as string | undefined,
-            description: opts['description'] as string | undefined,
-            author: opts['author'] as string | undefined,
-            category: opts['category'] as string | undefined,
-            scripts: opts['scripts'] as boolean | undefined,
-            yes: opts['yes'] as boolean | undefined,
-            dryRun: opts['dryRun'] as boolean | undefined,
-          })
-        } catch (error) {
-          console.error(chalk.red('Error creating skill:'), sanitizeError(error))
-          process.exit(1)
-        }
-      }
-    )
+    .action(createAction)
 }
