@@ -4,7 +4,8 @@ dist-worker/
 .astro/
 
 # Dependencies
-node_modules/
+# No trailing slash: also match worktree per-package node_modules symlinks (SMI-5124)
+node_modules
 
 # Environment variables
 .env
