@@ -60,11 +60,7 @@
       "mcp__ruflo__transfer_ipfs-resolve",
       "mcp__ruflo__hooks_intelligence_pattern-store",
       "mcp__ruflo__hooks_intelligence_pattern-search",
-      "mcp__ruflo__memory_store",
-      "mcp__ruflo__memory_search",
-      "mcp__ruflo__memory_search_unified",
       "mcp__ruflo__memory_migrate",
-      "mcp__ruflo__swarm_init",
       "mcp__ruflo__claims_handoff",
       "mcp__ruflo__claims_accept-handoff",
       "mcp__ruflo__hooks_post-task",
@@ -186,7 +182,7 @@
     ]
   },
   "includeCoAuthoredBy": true,
-  "enabledMcpjsonServers": ["claude-flow", "ruv-swarm"],
+  "enabledMcpjsonServers": ["skillsmith", "skillsmith-doc-retrieval", "ruflo"],
   "statusLine": {
     "type": "command",
     "command": "npx @claude-flow/cli@latest hooks statusline || node .claude/helpers/statusline.cjs || echo Claude Flow V3"

@@ -16,6 +16,7 @@ import {
   isValidApiKeyFormat,
   type TokenCredentials,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { VERSION as CLI_VERSION } from '../version.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { openCliDatabase } from '../utils/open-database.js'
@@ -333,61 +334,74 @@ async function runPasteLegacyFlow(): Promise<void> {
   process.exit(EXIT.generic)
 }
 
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function loginActionImpl(options: {
+  browser: boolean
+  pasteLegacy?: boolean
+}): Promise<void> {
+  // Already authenticated via JWT?
+  const existing = await loadCredentials()
+  if (existing && Date.now() < existing.expiresAt) {
+    console.log('Already authenticated. Run `skillsmith logout` to switch accounts.')
+    process.exit(EXIT.success)
+  }
+
+  // Legacy key detection: offer 3-choice menu (M10)
+  const legacyKey = detectLegacyKey()
+  if (legacyKey && !options.pasteLegacy) {
+    console.log()
+    console.log(chalk.yellow('A legacy API key is active.'))
+    console.log()
+    console.log(`  ${chalk.bold('(a)')} Keep using this key       [Enter]`)
+    console.log(`  ${chalk.bold('(d)')} Switch to device-code flow`)
+    console.log(`  ${chalk.bold('(p)')} Paste a new legacy key`)
+    console.log()
+
+    const { default: readline } = await import('readline')
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: false,
+    })
+    const choice = await new Promise<string>((resolve) => {
+      process.stdout.write('Choice [a]: ')
+      rl.once('line', (line) => {
+        rl.close()
+        resolve(line.trim().toLowerCase())
+      })
+    })
+
+    if (choice === '' || choice === 'a') {
+      console.log(chalk.dim('Keeping existing key.'))
+      process.exit(EXIT.success)
+    } else if (choice === 'p') {
+      await runPasteLegacyFlow()
+      return
+    }
+    // 'd' or anything else → device flow
+    await runDeviceCodeFlow(!options.browser)
+    return
+  }
+
+  if (options.pasteLegacy) {
+    await runPasteLegacyFlow()
+    return
+  }
+
+  await runDeviceCodeFlow(!options.browser)
+}
+
+export const loginAction = withTelemetry(loginActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'login',
+  extractFramework: () => 'cli',
+})
+
 export function createLoginCommand(): Command {
   return new Command('login')
     .description('Authenticate the Skillsmith CLI')
     .option('--no-browser', 'Print URL instead of opening browser (for CI/headless)')
     .option('--paste-legacy', 'Use legacy API-key paste flow')
-    .action(async (options: { browser: boolean; pasteLegacy?: boolean }) => {
-      // Already authenticated via JWT?
-      const existing = await loadCredentials()
-      if (existing && Date.now() < existing.expiresAt) {
-        console.log('Already authenticated. Run `skillsmith logout` to switch accounts.')
-        process.exit(EXIT.success)
-      }
-
-      // Legacy key detection: offer 3-choice menu (M10)
-      const legacyKey = detectLegacyKey()
-      if (legacyKey && !options.pasteLegacy) {
-        console.log()
-        console.log(chalk.yellow('A legacy API key is active.'))
-        console.log()
-        console.log(`  ${chalk.bold('(a)')} Keep using this key       [Enter]`)
-        console.log(`  ${chalk.bold('(d)')} Switch to device-code flow`)
-        console.log(`  ${chalk.bold('(p)')} Paste a new legacy key`)
-        console.log()
-
-        const { default: readline } = await import('readline')
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-          terminal: false,
-        })
-        const choice = await new Promise<string>((resolve) => {
-          process.stdout.write('Choice [a]: ')
-          rl.once('line', (line) => {
-            rl.close()
-            resolve(line.trim().toLowerCase())
-          })
-        })
-
-        if (choice === '' || choice === 'a') {
-          console.log(chalk.dim('Keeping existing key.'))
-          process.exit(EXIT.success)
-        } else if (choice === 'p') {
-          await runPasteLegacyFlow()
-          return
-        }
-        // 'd' or anything else → device flow
-        await runDeviceCodeFlow(!options.browser)
-        return
-      }
-
-      if (options.pasteLegacy) {
-        await runPasteLegacyFlow()
-        return
-      }
-
-      await runDeviceCodeFlow(!options.browser)
-    })
+    .action(loginAction)
 }

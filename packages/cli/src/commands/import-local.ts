@@ -7,6 +7,7 @@
  */
 import { Command } from 'commander'
 import { SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import {
   getCanonicalInstallPath,
@@ -203,6 +204,59 @@ async function startWatchMode(opts: ImportLocalOptions, jsonOutput: boolean): Pr
   console.log(`[import-local] watching ${rootDir} (Ctrl-C to stop)`)
 }
 
+// SMI-5128 batch B: extracted from inline .action() closure so withTelemetry
+// can wrap it at the export boundary (SMI-5018 coverage gate).
+async function importLocalActionImpl(
+  path: string | undefined,
+  cliOptions: {
+    client?: string
+    watch?: boolean
+    dryRun?: boolean
+    json?: boolean
+    db?: string
+  }
+): Promise<void> {
+  try {
+    let resolvedClient: ClientId | undefined
+    if (cliOptions.client !== undefined) {
+      resolvedClient = resolveClientId(cliOptions.client)
+    }
+
+    const opts: ImportLocalOptions = {
+      ...(path !== undefined && { path }),
+      ...(resolvedClient !== undefined && { client: resolvedClient }),
+      ...(cliOptions.watch !== undefined && { watch: cliOptions.watch }),
+      ...(cliOptions.dryRun !== undefined && { dryRun: cliOptions.dryRun }),
+      ...(cliOptions.json !== undefined && { json: cliOptions.json }),
+      ...(cliOptions.db !== undefined && { dbPath: cliOptions.db }),
+    }
+
+    if (opts.watch) {
+      await startWatchMode(opts, !!opts.json)
+      return
+    }
+
+    const result = await runImportLocal(opts)
+    if (opts.json) {
+      console.log(JSON.stringify(result))
+    } else {
+      printHumanSummary(result)
+    }
+    if (result.errors.length > 0 && opts.json) {
+      process.exit(1)
+    }
+  } catch (error) {
+    console.error('import-local failed:', sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const importLocalAction = withTelemetry(importLocalActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'import-local',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Build the Commander subcommand. Wired into `index.ts` via `addCommand`.
  */
@@ -222,52 +276,7 @@ export function createImportLocalCommand(): Command {
     .option('--dry-run', 'List what would be imported without writing to the DB')
     .option('--json', 'Emit a single machine-readable summary object on stdout')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
-    .action(
-      async (
-        path: string | undefined,
-        cliOptions: {
-          client?: string
-          watch?: boolean
-          dryRun?: boolean
-          json?: boolean
-          db?: string
-        }
-      ) => {
-        try {
-          let resolvedClient: ClientId | undefined
-          if (cliOptions.client !== undefined) {
-            resolvedClient = resolveClientId(cliOptions.client)
-          }
-
-          const opts: ImportLocalOptions = {
-            ...(path !== undefined && { path }),
-            ...(resolvedClient !== undefined && { client: resolvedClient }),
-            ...(cliOptions.watch !== undefined && { watch: cliOptions.watch }),
-            ...(cliOptions.dryRun !== undefined && { dryRun: cliOptions.dryRun }),
-            ...(cliOptions.json !== undefined && { json: cliOptions.json }),
-            ...(cliOptions.db !== undefined && { dbPath: cliOptions.db }),
-          }
-
-          if (opts.watch) {
-            await startWatchMode(opts, !!opts.json)
-            return
-          }
-
-          const result = await runImportLocal(opts)
-          if (opts.json) {
-            console.log(JSON.stringify(result))
-          } else {
-            printHumanSummary(result)
-          }
-          if (result.errors.length > 0 && opts.json) {
-            process.exit(1)
-          }
-        } catch (error) {
-          console.error('import-local failed:', sanitizeError(error))
-          process.exit(1)
-        }
-      }
-    )
+    .action(importLocalAction)
 }
 
 function printHumanSummary(result: ImportLocalResult): void {

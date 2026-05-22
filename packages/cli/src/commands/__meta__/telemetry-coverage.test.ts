@@ -35,6 +35,42 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   recommend: ['recommendAction'],
   whoami: ['whoamiAction'],
   'install-skill': ['setupAction'],
+  // SMI-5127: sibling-split pilot — action impls live in *.action.ts files
+  'sync.action': ['syncAction', 'syncStatusAction', 'syncHistoryAction', 'syncConfigAction'],
+  'search.action': ['searchAction'],
+  // SMI-5128 batch A
+  logout: ['logoutAction'],
+  merge: ['mergeAction'],
+  analyze: ['analyzeAction'],
+  diff: ['diffAction'],
+  // SMI-5128 batch B
+  'ab-test': ['abTestAction'],
+  'import-local': ['importLocalAction'],
+  pin: ['pinAction', 'unpinAction'],
+  config: ['configGetAction', 'configSetAction'],
+  // SMI-5128 batch C
+  install: ['installAction'],
+  login: ['loginAction'],
+  import: ['importAction'],
+  create: ['createAction'],
+  // SMI-5128 batch D
+  'audit-collisions': ['collisionsAction'],
+  audit: ['advisoriesAction', 'auditAction'],
+  manage: ['listAction', 'updateAction', 'removeAction'],
+  // telemetry uses the .action.ts sibling-split (6 subcommands)
+  'telemetry.action': [
+    'telemetryEnableAction',
+    'telemetryDisableAction',
+    'telemetryStatusAction',
+    'telemetryInstallHookAction',
+    'telemetryUninstallHookAction',
+    'telemetryResetIdAction',
+  ],
+  // SMI-5129: author/ subcommands (init split to init.action.ts)
+  'author/init.action': ['initAction', 'validateAction', 'publishAction'],
+  'author/mcp-init': ['mcpInitAction'],
+  'author/subagent': ['subagentAction'],
+  'author/transform': ['transformAction'],
 }
 
 const EXPECTED_TOTAL = Object.values(CLI_DISPATCHER_MAP).reduce((n, arr) => n + arr.length, 0)

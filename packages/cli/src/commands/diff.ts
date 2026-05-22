@@ -16,6 +16,7 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { classifyChange } from '@skillsmith/core'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { requireTier } from '../utils/require-tier.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { loadManifest } from '../utils/manifest.js'
@@ -167,6 +168,61 @@ function printDiff(skillName: string, diff: SectionDiff, changeType: string): vo
 // Command factory
 // ============================================================================
 
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function diffActionImpl(
+  skillName: string,
+  opts: { oldContent?: string; newContent?: string }
+): Promise<void> {
+  try {
+    await requireTier('individual')
+
+    // Resolve old content
+    let oldContent: string | null = null
+    if (opts.oldContent) {
+      oldContent = await readFile(opts.oldContent, 'utf-8')
+    } else {
+      oldContent = await readInstalledSkillContent(skillName)
+    }
+
+    if (!oldContent) {
+      console.error(chalk.red(`Skill "${skillName}" is not installed or SKILL.md not found.`))
+      process.exit(1)
+    }
+
+    // Resolve new content
+    let newContent: string | null = null
+    if (opts.newContent) {
+      newContent = await readFile(opts.newContent, 'utf-8')
+    } else {
+      newContent = await fetchLatestContent(skillName)
+    }
+
+    if (!newContent) {
+      console.error(
+        chalk.red(
+          `Could not fetch latest version for "${skillName}". ` +
+            `Check your network connection or provide --new-content.`
+        )
+      )
+      process.exit(1)
+    }
+
+    const diff = diffSections(oldContent, newContent)
+    const changeType = classifyChange(oldContent, newContent)
+    printDiff(skillName, diff, changeType)
+  } catch (error) {
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const diffAction = withTelemetry(diffActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'diff',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create the diff command
  */
@@ -178,52 +234,5 @@ export function createDiffCommand(): Command {
     .argument('<skill>', 'Skill name to diff')
     .option('--old-content <path>', 'Path to old SKILL.md (uses installed skill if omitted)')
     .option('--new-content <path>', 'Path to new SKILL.md (fetches from registry if omitted)')
-    .action(
-      async (
-        skillName: string,
-        opts: { oldContent?: string; newContent?: string }
-      ): Promise<void> => {
-        try {
-          await requireTier('individual')
-
-          // Resolve old content
-          let oldContent: string | null = null
-          if (opts.oldContent) {
-            oldContent = await readFile(opts.oldContent, 'utf-8')
-          } else {
-            oldContent = await readInstalledSkillContent(skillName)
-          }
-
-          if (!oldContent) {
-            console.error(chalk.red(`Skill "${skillName}" is not installed or SKILL.md not found.`))
-            process.exit(1)
-          }
-
-          // Resolve new content
-          let newContent: string | null = null
-          if (opts.newContent) {
-            newContent = await readFile(opts.newContent, 'utf-8')
-          } else {
-            newContent = await fetchLatestContent(skillName)
-          }
-
-          if (!newContent) {
-            console.error(
-              chalk.red(
-                `Could not fetch latest version for "${skillName}". ` +
-                  `Check your network connection or provide --new-content.`
-              )
-            )
-            process.exit(1)
-          }
-
-          const diff = diffSections(oldContent, newContent)
-          const changeType = classifyChange(oldContent, newContent)
-          printDiff(skillName, diff, changeType)
-        } catch (error) {
-          console.error(chalk.red('Error:'), sanitizeError(error))
-          process.exit(1)
-        }
-      }
-    )
+    .action(diffAction)
 }
