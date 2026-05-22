@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { stripGitDiscoveryEnv } from '../_lib/git-fixture-env.js'
 import { chunkId, estimateTokens } from '../indexer.helpers.js'
 import type { AdapterContext, AdapterFile, ChunkMetadata, SourceAdapter } from '../types.js'
 
@@ -316,7 +317,10 @@ function runGraphql(
   try {
     const out = execFileSync('gh', args, {
       encoding: 'utf8',
-      env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token },
+      // SMI-5126: strip GIT_DISCOVERY_VARS for consistency with the git
+      // spawn sites. `gh` consults GH_TOKEN/GH_CONFIG_DIR (not GIT_DIR),
+      // so this is harmless here — the tokens are preserved.
+      env: stripGitDiscoveryEnv({ GH_TOKEN: token, GITHUB_TOKEN: token }),
       maxBuffer: 32 * 1024 * 1024,
     })
     return parseGraphqlResponse(out)

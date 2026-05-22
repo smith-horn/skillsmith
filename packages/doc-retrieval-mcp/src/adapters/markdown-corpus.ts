@@ -5,6 +5,7 @@ import { join, relative } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { minimatch } from 'minimatch'
 
+import { stripGitDiscoveryEnv } from '../_lib/git-fixture-env.js'
 import { chunkDocument } from '../indexer.helpers.js'
 import type { AdapterContext, AdapterFile, ChunkMetadata, SourceAdapter } from '../types.js'
 
@@ -100,7 +101,9 @@ function gitChangedFiles(root: string, baseSha: string): string[] {
     const out = execFileSync(
       'git',
       ['--no-optional-locks', 'diff', '--name-only', `${baseSha}..HEAD`],
-      { cwd: root, encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }
+      // SMI-5126: strip GIT_DISCOVERY_VARS so an ambient GIT_DIR cannot
+      // override `cwd` and diff the wrong repo.
+      { cwd: root, encoding: 'utf8', env: stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' }) }
     )
     return out.split('\n').filter(Boolean)
   } catch {
