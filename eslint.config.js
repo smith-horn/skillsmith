@@ -57,7 +57,6 @@ const tsConfig = tseslint.config(
       parserOptions: {
         // Exclude website - it uses Astro's tsconfig which requires Astro installed
         project: [
-          './packages/billing-types/tsconfig.json',
           './packages/core/tsconfig.json',
           './packages/mcp-server/tsconfig.json',
           './packages/cli/tsconfig.json',
