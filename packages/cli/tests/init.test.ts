@@ -371,7 +371,8 @@ describe('SMI-4314: createInitCommand wrapper maps errors to exit codes', () => 
   })
 
   it('InitSkillError → prints err.message exactly once and exits with err.exitCode', async () => {
-    const { createInitCommand } = await import('../src/commands/author/init.js')
+    // SMI-5129: createInitCommand moved to init.action.ts (sibling-split).
+    const { createInitCommand } = await import('../src/commands/author/init.action.js')
 
     const cmd = createInitCommand()
     // commander treats process.exit inside .action as a real exit; our stub

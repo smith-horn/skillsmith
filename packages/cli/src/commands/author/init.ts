@@ -5,7 +5,6 @@
  * Commands for creating, validating, and publishing skills.
  */
 
-import { Command } from 'commander'
 import { input, confirm, select } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
@@ -394,97 +393,6 @@ export async function publishSkill(
   }
 }
 
-/**
- * Create init command
- * SMI-1473: Added non-interactive flags for E2E testing
- */
-export function createInitCommand(): Command {
-  return new Command('init')
-    .description('Initialize a new skill directory')
-    .argument('[name]', 'Skill name')
-    .option('-p, --path <path>', 'Target directory', '.')
-    .option('-d, --description <description>', 'Skill description (non-interactive)')
-    .option('-a, --author <author>', 'Skill author (non-interactive)')
-    .option(
-      '-c, --category <category>',
-      'Skill category: development|productivity|communication|data|security|other (non-interactive)'
-    )
-    .option('-y, --yes', 'Auto-confirm overwrite (non-interactive)')
-    .action(
-      async (name: string | undefined, opts: Record<string, string | boolean | undefined>) => {
-        const targetPath = (opts['path'] as string) || '.'
-
-        try {
-          await initSkill(name, targetPath, {
-            description: opts['description'] as string | undefined,
-            author: opts['author'] as string | undefined,
-            category: opts['category'] as string | undefined,
-            yes: opts['yes'] as boolean | undefined,
-          })
-        } catch (error) {
-          // SMI-4314: typed InitSkillError → user-facing message is already
-          // composed (and chalk-styled); print it verbatim and exit with the
-          // requested code. Anything else is an unexpected bug — route
-          // through sanitizeError with the generic prefix.
-          if (error instanceof InitSkillError) {
-            console.error(error.message)
-            process.exit(error.exitCode)
-          }
-          console.error(chalk.red('Error initializing skill:'), sanitizeError(error))
-          process.exit(1)
-        }
-      }
-    )
-}
-
-/**
- * Create validate command
- */
-export function createValidateCommand(): Command {
-  return new Command('validate')
-    .description('Validate a local SKILL.md file')
-    .argument('[path]', 'Path to SKILL.md or skill directory', '.')
-    .action(async (skillPath: string) => {
-      try {
-        const valid = await validateSkill(skillPath)
-        process.exit(valid ? 0 : 1)
-      } catch (error) {
-        console.error(chalk.red('Error validating skill:'), sanitizeError(error))
-        process.exit(1)
-      }
-    })
-}
-
-/**
- * Create publish command
- */
-export function createPublishCommand(): Command {
-  return new Command('publish')
-    .description('Prepare skill for sharing')
-    .argument('[path]', 'Path to skill directory', '.')
-    .option('--check-references', 'Scan for project-specific references before publishing')
-    .option(
-      '--reference-patterns <patterns>',
-      'Additional regex patterns to check (comma-separated)'
-    )
-    .action(async (skillPath: string, opts: Record<string, string | boolean | undefined>) => {
-      try {
-        const referencePatterns = opts['referencePatterns']
-          ? String(opts['referencePatterns'])
-              .split(',')
-              .map((p) => p.trim())
-          : undefined
-        // SMI-2444: Use conditional spread to satisfy exactOptionalPropertyTypes
-        const success = await publishSkill(skillPath, {
-          ...(opts['checkReferences'] !== undefined && {
-            checkReferences: opts['checkReferences'] as boolean,
-          }),
-          ...(referencePatterns !== undefined && { referencePatterns }),
-        })
-        process.exit(success ? 0 : 1)
-      } catch (error) {
-        console.error(chalk.red('Error publishing skill:'), sanitizeError(error))
-        process.exit(1)
-      }
-    })
-}
+// SMI-5129: the `init` / `validate` / `publish` command factories + their
+// withTelemetry-wrapped actions live in ./init.action.ts (sibling-split to keep
+// this file under the 500-LOC gate). They import the logic functions above.
