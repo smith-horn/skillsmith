@@ -75,6 +75,18 @@ import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 import { resolveStartupFlag } from './cli-flags.js'
 
+// SMI-5125: re-export the inline Stripe webhook contract interfaces so the
+// canonical contract in `@smith-horn/enterprise/billing` can be type-equality
+// checked against this package's structural copy across the package boundary.
+// Type-only — erased from the emitted JS, adds nothing to the binary entrypoint.
+// The drift guard at
+// `packages/enterprise/tests/billing/StripeWebhookHandler.drift.test.ts` fails
+// `tsc` if the two definitions diverge.
+export type {
+  StripeWebhookHandler,
+  StripeWebhookResult,
+} from './webhooks/stripe-webhook-endpoint.js'
+
 // Package version - keep in sync with package.json
 const PACKAGE_VERSION = '0.5.3'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
