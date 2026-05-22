@@ -48,6 +48,11 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   'import-local': ['importLocalAction'],
   pin: ['pinAction', 'unpinAction'],
   config: ['configGetAction', 'configSetAction'],
+  // SMI-5128 batch C
+  install: ['installAction'],
+  login: ['loginAction'],
+  import: ['importAction'],
+  create: ['createAction'],
 }
 
 const EXPECTED_TOTAL = Object.values(CLI_DISPATCHER_MAP).reduce((n, arr) => n + arr.length, 0)
