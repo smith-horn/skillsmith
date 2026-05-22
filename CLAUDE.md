@@ -118,11 +118,13 @@ Git-crypt smudge filters can silently switch branches during stash/pop (includin
 **Keep Linear in lock-step with the code. Every commit and every merge updates Linear before moving on — no batching, no end-of-session catch-up.**
 
 **After EVERY commit** (immediately, before the next task):
+
 1. **Comment** on the relevant `SMI-xxx` issue with the commit SHA + a one-line summary of what changed.
 2. **Advance status** if the commit completes the work (`In Progress` → `In Review`/`Done`). A commit that only partially advances the issue stays `In Progress` with a progress comment.
 3. If **no issue exists** for the work, create one under the correct project *before* committing (never commit orphaned work). Project assignment is mandatory (see [Linear hygiene guide](docs/internal/process/linear-hygiene-guide.md)).
 
 **After EVERY PR merges**:
+
 1. Move the issue to `Done` with the squash-merge SHA in a closing comment.
 2. Post a **project update** on the Linear project when a wave/PR-cluster lands or a blocker changes state — keep stakeholders current without them having to read the issue feed.
 
