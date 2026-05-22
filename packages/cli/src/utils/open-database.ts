@@ -29,9 +29,26 @@ import { existsSync } from 'node:fs'
  * bare `createDatabaseAsync` directly.
  *
  * @param path - Filesystem path to the SQLite database (e.g. `DEFAULT_DB_PATH`).
- * @returns A connected, schema-initialized database. Caller owns `db.close()`.
+ * @param options.readonly - SMI-5139: open read-only for pure-read consumers
+ *   (e.g. version lookups). A read-only handle CANNOT run schema DDL, so
+ *   `initializeSchema` is skipped — the caller must tolerate an absent schema
+ *   (queries on a missing table throw, which read consumers already catch).
+ *   This also prevents the WASM `SqlJsDatabaseAdapter` from persisting (writing)
+ *   on `close()`, which would throw `EROFS` on an unwritable/absent db path.
+ * @returns A connected database. Caller owns `db.close()`.
  */
-export async function openCliDatabase(path: string): Promise<DatabaseType> {
+export async function openCliDatabase(
+  path: string,
+  options?: { readonly?: boolean }
+): Promise<DatabaseType> {
+  // SMI-5139: read-only consumers open read-only and skip schema init (DDL is
+  // impossible on a read-only handle; sql.js close() then skips persist()).
+  // The open itself may throw (native better-sqlite3 read-only-opens of an
+  // absent file throw) — that is the caller's signal to degrade gracefully.
+  if (options?.readonly) {
+    return createDatabaseAsync(path, { readonly: true })
+  }
+
   let db: DatabaseType | undefined
   try {
     db = await createDatabaseAsync(path)
