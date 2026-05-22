@@ -25,10 +25,7 @@ export type { BillingServiceConfig } from './BillingService.js'
 // Webhook Handler
 export { StripeWebhookHandler } from './StripeWebhookHandler.js'
 export type { StripeWebhookHandlerConfig } from './StripeWebhookHandler.js'
-export type {
-  StripeWebhookHandlerContract,
-  StripeWebhookResult,
-} from './webhook-contract.js'
+export type { StripeWebhookHandlerContract, StripeWebhookResult } from './webhook-contract.js'
 
 // GDPR Compliance (SMI-1068)
 export { GDPRComplianceService } from './GDPRComplianceService.js'
