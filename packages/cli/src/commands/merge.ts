@@ -21,6 +21,7 @@ import {
   type MergeConflict,
   type DatabaseType,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { getDefaultDbPath } from '../config.js'
 
 /**
@@ -50,6 +51,147 @@ function formatMergeResult(result: {
   return lines.join('\n')
 }
 
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function mergeActionImpl(
+  sourcePath: string,
+  targetPath: string | undefined,
+  options: {
+    strategy: string
+    dryRun: boolean
+    verbose: boolean
+    quiet: boolean
+    force: boolean
+  }
+): Promise<void> {
+  const { strategy, dryRun, verbose, quiet, force } = options
+
+  // Validate strategy
+  const validStrategies: MergeStrategy[] = [
+    'keep_target',
+    'keep_source',
+    'keep_newer',
+    'merge_fields',
+  ]
+  if (!validStrategies.includes(strategy as MergeStrategy)) {
+    console.error(`Invalid strategy: ${strategy}`)
+    console.error(`Valid strategies: ${validStrategies.join(', ')}`)
+    process.exit(1)
+  }
+
+  // Resolve paths
+  const resolvedSource = resolve(sourcePath)
+  const resolvedTarget = targetPath ? resolve(targetPath) : getDefaultDbPath()
+
+  // Check source exists
+  if (!existsSync(resolvedSource)) {
+    console.error(`Source database not found: ${resolvedSource}`)
+    process.exit(1)
+  }
+
+  // Check target exists (or will be created)
+  if (!existsSync(resolvedTarget)) {
+    console.error(`Target database not found: ${resolvedTarget}`)
+    console.error('Create a new database first with: skillsmith init')
+    process.exit(1)
+  }
+
+  if (!quiet) {
+    console.log('╔══════════════════════════════════════════════════════════════╗')
+    console.log('║              Skillsmith Database Merge                       ║')
+    console.log('╠══════════════════════════════════════════════════════════════╣')
+    console.log(`║  Source:   ${resolvedSource.slice(-48).padEnd(48)} ║`)
+    console.log(`║  Target:   ${resolvedTarget.slice(-48).padEnd(48)} ║`)
+    console.log(`║  Strategy: ${(strategy as string).padEnd(48)} ║`)
+    console.log(`║  Dry Run:  ${(dryRun ? 'Yes' : 'No').padEnd(48)} ║`)
+    console.log('╚══════════════════════════════════════════════════════════════╝')
+    console.log('')
+  }
+
+  // Open databases
+  let sourceDb: DatabaseType | null = null
+  let targetDb: DatabaseType | null = null
+
+  try {
+    sourceDb = openDatabase(resolvedSource)
+    targetDb = openDatabase(resolvedTarget)
+
+    // Check schema compatibility
+    if (!force) {
+      const sourceCompat = checkSchemaCompatibility(sourceDb)
+      const targetCompat = checkSchemaCompatibility(targetDb)
+
+      if (!sourceCompat.isCompatible) {
+        console.error(`Source database: ${sourceCompat.message}`)
+        process.exit(1)
+      }
+
+      if (!targetCompat.isCompatible) {
+        console.error(`Target database: ${targetCompat.message}`)
+        process.exit(1)
+      }
+
+      if (!quiet && sourceCompat.action !== 'none') {
+        console.log(`Source: ${sourceCompat.message}`)
+      }
+      if (!quiet && targetCompat.action !== 'none') {
+        console.log(`Target: ${targetCompat.message}`)
+      }
+    }
+
+    // Configure merge options
+    const mergeOptions: MergeOptions = {
+      strategy: strategy as MergeStrategy,
+      dryRun,
+      skipInvalid: true,
+      ...(verbose && {
+        onConflict: (conflict: MergeConflict) => {
+          console.log(`  Conflict: ${conflict.skillId} (${conflict.reason})`)
+          return strategy as MergeStrategy
+        },
+      }),
+    }
+
+    // Perform merge
+    if (!quiet) {
+      console.log('Merging databases...')
+    }
+
+    const result = mergeSkillDatabases(targetDb, sourceDb, mergeOptions)
+
+    // Display results
+    if (!quiet) {
+      console.log(formatMergeResult(result))
+
+      if (dryRun) {
+        console.log('⚠️  DRY RUN: No changes were made to the target database.')
+        console.log('   Remove --dry-run to apply these changes.')
+      } else {
+        console.log('✅ Merge complete!')
+      }
+    }
+
+    // Exit with error if there were issues
+    if (result.skillsAdded === 0 && result.skillsUpdated === 0) {
+      if (!quiet) {
+        console.log('\nNo new skills to merge.')
+      }
+    }
+  } catch (error) {
+    console.error('Merge failed:', error instanceof Error ? error.message : error)
+    process.exit(1)
+  } finally {
+    sourceDb?.close()
+    targetDb?.close()
+  }
+}
+
+export const mergeAction = withTelemetry(mergeActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'merge',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create the merge command
  */
@@ -67,128 +209,7 @@ export function createMergeCommand(): Command {
     .option('-v, --verbose', 'Show detailed conflict information', false)
     .option('-q, --quiet', 'Only output errors', false)
     .option('--force', 'Skip compatibility checks', false)
-    .action(async (sourcePath: string, targetPath: string | undefined, options) => {
-      const { strategy, dryRun, verbose, quiet, force } = options
-
-      // Validate strategy
-      const validStrategies: MergeStrategy[] = [
-        'keep_target',
-        'keep_source',
-        'keep_newer',
-        'merge_fields',
-      ]
-      if (!validStrategies.includes(strategy as MergeStrategy)) {
-        console.error(`Invalid strategy: ${strategy}`)
-        console.error(`Valid strategies: ${validStrategies.join(', ')}`)
-        process.exit(1)
-      }
-
-      // Resolve paths
-      const resolvedSource = resolve(sourcePath)
-      const resolvedTarget = targetPath ? resolve(targetPath) : getDefaultDbPath()
-
-      // Check source exists
-      if (!existsSync(resolvedSource)) {
-        console.error(`Source database not found: ${resolvedSource}`)
-        process.exit(1)
-      }
-
-      // Check target exists (or will be created)
-      if (!existsSync(resolvedTarget)) {
-        console.error(`Target database not found: ${resolvedTarget}`)
-        console.error('Create a new database first with: skillsmith init')
-        process.exit(1)
-      }
-
-      if (!quiet) {
-        console.log('╔══════════════════════════════════════════════════════════════╗')
-        console.log('║              Skillsmith Database Merge                       ║')
-        console.log('╠══════════════════════════════════════════════════════════════╣')
-        console.log(`║  Source:   ${resolvedSource.slice(-48).padEnd(48)} ║`)
-        console.log(`║  Target:   ${resolvedTarget.slice(-48).padEnd(48)} ║`)
-        console.log(`║  Strategy: ${(strategy as string).padEnd(48)} ║`)
-        console.log(`║  Dry Run:  ${(dryRun ? 'Yes' : 'No').padEnd(48)} ║`)
-        console.log('╚══════════════════════════════════════════════════════════════╝')
-        console.log('')
-      }
-
-      // Open databases
-      let sourceDb: DatabaseType | null = null
-      let targetDb: DatabaseType | null = null
-
-      try {
-        sourceDb = openDatabase(resolvedSource)
-        targetDb = openDatabase(resolvedTarget)
-
-        // Check schema compatibility
-        if (!force) {
-          const sourceCompat = checkSchemaCompatibility(sourceDb)
-          const targetCompat = checkSchemaCompatibility(targetDb)
-
-          if (!sourceCompat.isCompatible) {
-            console.error(`Source database: ${sourceCompat.message}`)
-            process.exit(1)
-          }
-
-          if (!targetCompat.isCompatible) {
-            console.error(`Target database: ${targetCompat.message}`)
-            process.exit(1)
-          }
-
-          if (!quiet && sourceCompat.action !== 'none') {
-            console.log(`Source: ${sourceCompat.message}`)
-          }
-          if (!quiet && targetCompat.action !== 'none') {
-            console.log(`Target: ${targetCompat.message}`)
-          }
-        }
-
-        // Configure merge options
-        const mergeOptions: MergeOptions = {
-          strategy: strategy as MergeStrategy,
-          dryRun,
-          skipInvalid: true,
-          ...(verbose && {
-            onConflict: (conflict: MergeConflict) => {
-              console.log(`  Conflict: ${conflict.skillId} (${conflict.reason})`)
-              return strategy as MergeStrategy
-            },
-          }),
-        }
-
-        // Perform merge
-        if (!quiet) {
-          console.log('Merging databases...')
-        }
-
-        const result = mergeSkillDatabases(targetDb, sourceDb, mergeOptions)
-
-        // Display results
-        if (!quiet) {
-          console.log(formatMergeResult(result))
-
-          if (dryRun) {
-            console.log('⚠️  DRY RUN: No changes were made to the target database.')
-            console.log('   Remove --dry-run to apply these changes.')
-          } else {
-            console.log('✅ Merge complete!')
-          }
-        }
-
-        // Exit with error if there were issues
-        if (result.skillsAdded === 0 && result.skillsUpdated === 0) {
-          if (!quiet) {
-            console.log('\nNo new skills to merge.')
-          }
-        }
-      } catch (error) {
-        console.error('Merge failed:', error instanceof Error ? error.message : error)
-        process.exit(1)
-      } finally {
-        sourceDb?.close()
-        targetDb?.close()
-      }
-    })
+    .action(mergeAction)
 
   return command
 }

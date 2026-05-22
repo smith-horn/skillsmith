@@ -8,6 +8,7 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { CodebaseAnalyzer, type CodebaseContext, type FrameworkInfo } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
 
 /**
@@ -177,6 +178,40 @@ async function runAnalyze(
   }
 }
 
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function analyzeActionImpl(
+  targetPath: string,
+  opts: Record<string, string | boolean | string[] | undefined>
+): Promise<void> {
+  try {
+    const maxFiles = parseInt(opts['max-files'] as string, 10)
+    const excludeDirs = opts['exclude'] as string[] | undefined
+    const includeDevDeps = opts['devDeps'] !== false
+    const json = (opts['json'] as boolean) === true
+
+    await runAnalyze(targetPath, {
+      maxFiles,
+      excludeDirs,
+      includeDevDeps,
+      json,
+    })
+  } catch (error) {
+    if (opts['json']) {
+      console.error(JSON.stringify({ error: sanitizeError(error) }))
+    } else {
+      console.error(chalk.red('Analysis error:'), sanitizeError(error))
+    }
+    process.exit(1)
+  }
+}
+
+export const analyzeAction = withTelemetry(analyzeActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'analyze',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create analyze command
  */
@@ -188,30 +223,7 @@ export function createAnalyzeCommand(): Command {
     .option('-e, --exclude <dirs...>', 'Directories to exclude (in addition to defaults)')
     .option('--no-dev-deps', 'Exclude dev dependencies from analysis')
     .option('-j, --json', 'Output results as JSON')
-    .action(
-      async (targetPath: string, opts: Record<string, string | boolean | string[] | undefined>) => {
-        try {
-          const maxFiles = parseInt(opts['max-files'] as string, 10)
-          const excludeDirs = opts['exclude'] as string[] | undefined
-          const includeDevDeps = opts['devDeps'] !== false
-          const json = (opts['json'] as boolean) === true
-
-          await runAnalyze(targetPath, {
-            maxFiles,
-            excludeDirs,
-            includeDevDeps,
-            json,
-          })
-        } catch (error) {
-          if (opts['json']) {
-            console.error(JSON.stringify({ error: sanitizeError(error) }))
-          } else {
-            console.error(chalk.red('Analysis error:'), sanitizeError(error))
-          }
-          process.exit(1)
-        }
-      }
-    )
+    .action(analyzeAction)
 
   return cmd
 }
