@@ -53,6 +53,19 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   login: ['loginAction'],
   import: ['importAction'],
   create: ['createAction'],
+  // SMI-5128 batch D
+  'audit-collisions': ['collisionsAction'],
+  audit: ['advisoriesAction', 'auditAction'],
+  manage: ['listAction', 'updateAction', 'removeAction'],
+  // telemetry uses the .action.ts sibling-split (6 subcommands)
+  'telemetry.action': [
+    'telemetryEnableAction',
+    'telemetryDisableAction',
+    'telemetryStatusAction',
+    'telemetryInstallHookAction',
+    'telemetryUninstallHookAction',
+    'telemetryResetIdAction',
+  ],
 }
 
 const EXPECTED_TOTAL = Object.values(CLI_DISPATCHER_MAP).reduce((n, arr) => n + arr.length, 0)
