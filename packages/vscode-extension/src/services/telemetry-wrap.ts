@@ -29,13 +29,18 @@ export interface VscodeTelemetryOpts {
  * Telemetry emission is fire-and-forget and never alters the handler's
  * observable behaviour (errors are swallowed; `track` self-gates + self-times).
  */
+// audit:check-48-ack — intentional parallel definition: the extension bundles
+// standalone (esbuild) and cannot import the canonical core HOF (would inline
+// posthog-node + OTel SDK). See the file header for the full rationale.
 export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
   handler: (...args: TArgs) => Promise<TReturn> | TReturn,
   opts: VscodeTelemetryOpts
 ): (...args: TArgs) => Promise<TReturn> {
   const wrappedFn = async (...args: TArgs): Promise<TReturn> => {
     try {
-      track('vscode_skill_invoke', { skill_id: opts.extractSkillId(), surface: opts.source })
+      // `skill_id` + `source` match the events edge-function field allowlist
+      // (supabase/functions/events/index.ts); `surface`/other keys would be dropped.
+      track('vscode_skill_invoke', { skill_id: opts.extractSkillId(), source: opts.source })
     } catch {
       // Telemetry must never break a command.
     }

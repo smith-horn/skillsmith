@@ -42,6 +42,41 @@ events edge function (same path as hook)
 
 ---
 
+## Surface coverage (v1)
+
+All three in-process surfaces capture skill invocations via a `withTelemetry`
+HOF that brands the wrapped handler so a per-tree coverage test can assert no
+dispatcher ships unwrapped.
+
+| Surface | Wrapper | Coverage test | Status |
+|---------|---------|---------------|--------|
+| MCP tool dispatchers | `@skillsmith/core/telemetry` `withTelemetry` | `packages/mcp-server/src/tools/__meta__/telemetry-coverage.test.ts` (SMI-5018) | Captured |
+| CLI command handlers (42 dispatchers) | `@skillsmith/core/telemetry` `withTelemetry` | `packages/cli/src/commands/__meta__/telemetry-coverage.test.ts` (SMI-5040 + SMI-5128/5129) | Captured |
+| VS Code panel actions (4) | `packages/vscode-extension/src/services/telemetry-wrap.ts` (local; emits `vscode_skill_invoke` via `services/Telemetry.ts`) | `packages/vscode-extension/src/commands/__meta__/telemetry-coverage.test.ts` (SMI-5130) | Captured |
+| Claude Code hook (PreToolUse/PostToolUse) | start-file + hook (not a HOF) | n/a | Captured |
+
+**Why VS Code uses a local wrapper (SMI-5130):** the extension is bundled
+standalone via `esbuild --bundle` for the Marketplace. Importing the core HOF
+would inline `posthog-node` + the full OpenTelemetry SDK into the bundle (OTel's
+dynamic requires also break esbuild). The local wrapper mirrors the
+`withTelemetry`/`isTelemetered` contract but emits through the extension's own
+`track()`, which self-gates on `vscode.env.isTelemetryEnabled` +
+`skillsmith.telemetry.enabled` + a configured `telemetryEndpoint`.
+
+### `<command>.action.ts` sibling-split convention (SMI-5127+)
+
+When wrapping a command handler pushes its source file over the 500-line
+`audit:standards` gate, extract the action impl(s) + their `withTelemetry`
+exports into a sibling `<command>.action.ts`; the original file keeps the
+commander factory and imports the wrapped actions. Established for `sync`/`search`
+(SMI-5127) and reused for `telemetry` (SMI-5128) and `author/init` (SMI-5129).
+The coverage map keys the sibling base (e.g. `'sync.action'`,
+`'telemetry.action'`, `'author/init.action'`). Keep the heavy logic and the
+factory split one-directional (impl file imports the logic file) to avoid an
+import cycle.
+
+---
+
 ## Allowed events
 
 The `ALLOWED_EVENTS` constant in `supabase/functions/events/index.ts` controls which event types the edge function accepts. Any event not in this set is rejected with HTTP 400.
@@ -205,8 +240,6 @@ Links will be added here once PRs are merged.
 
 | Gap | Tracking |
 |-----|---------|
-| CLI native invocation capture (non-MCP commands) | SMI-5040 |
-| VS Code panel action capture (non-MCP surface) | SMI-5040 |
 | EU data residency (PostHog EU project + Supabase EU replica) | U10 carry-over |
 | DPA addendum text in privacy notice | U11 carry-over |
 | AsyncLocalStorage multi-tenancy for `withTelemetry` in concurrent sessions | PR-2 wire-in deferred |
