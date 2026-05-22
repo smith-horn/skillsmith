@@ -12,6 +12,7 @@ import { mkdir, copyFile, stat, readdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -141,6 +142,32 @@ async function installSkillsmithSkill(force: boolean): Promise<void> {
   }
 }
 
+// SMI-5040: extracted from inline .action() closure for withTelemetry wrap.
+async function setupActionImpl(opts: { force?: boolean }): Promise<void> {
+  try {
+    // SMI-3484: Deprecation warning when invoked via old name
+    const invokedName = process.argv[2]
+    if (invokedName === 'install-skill') {
+      console.log(
+        chalk.yellow(
+          'Warning: "install-skill" is deprecated and will be removed in a future release. ' +
+            'Use "setup" instead.'
+        )
+      )
+    }
+    await installSkillsmithSkill(opts.force ?? false)
+  } catch (error) {
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const setupAction = withTelemetry(setupActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'setup',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create the install-skill command
  */
@@ -151,24 +178,7 @@ export function createInstallSkillCommand(): Command {
       'Set up the skillsmith slash command skill (installs to ~/.claude/skills/skillsmith/)'
     )
     .option('-f, --force', 'Reinstall even if already installed')
-    .action(async (opts: { force?: boolean }) => {
-      try {
-        // SMI-3484: Deprecation warning when invoked via old name
-        const invokedName = process.argv[2]
-        if (invokedName === 'install-skill') {
-          console.log(
-            chalk.yellow(
-              'Warning: "install-skill" is deprecated and will be removed in a future release. ' +
-                'Use "setup" instead.'
-            )
-          )
-        }
-        await installSkillsmithSkill(opts.force ?? false)
-      } catch (error) {
-        console.error(chalk.red('Error:'), sanitizeError(error))
-        process.exit(1)
-      }
-    })
+    .action(setupAction)
 }
 
 export default createInstallSkillCommand
