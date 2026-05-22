@@ -35,6 +35,9 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   recommend: ['recommendAction'],
   whoami: ['whoamiAction'],
   'install-skill': ['setupAction'],
+  // SMI-5127: sibling-split pilot — action impls live in *.action.ts files
+  'sync.action': ['syncAction', 'syncStatusAction', 'syncHistoryAction', 'syncConfigAction'],
+  'search.action': ['searchAction'],
 }
 
 const EXPECTED_TOTAL = Object.values(CLI_DISPATCHER_MAP).reduce((n, arr) => n + arr.length, 0)

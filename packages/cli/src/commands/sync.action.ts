@@ -1,0 +1,439 @@
+/**
+ * SMI-5127: Sync command action implementations + telemetry wrappers.
+ *
+ * Sibling-split from sync.ts following the <command>.action.ts convention
+ * established by SMI-5040. The four impl functions are extracted here and
+ * wrapped with withTelemetry so the CLI_DISPATCHER_MAP coverage test can
+ * assert 100% telemetry coverage without importing the full commander tree.
+ *
+ * Opts-adaptation choice: each *ActionImpl accepts the same typed options
+ * struct that the sync.ts factory closures were building — the factory
+ * closures remain in sync.ts, do the same Record<string,…> → typed cast they
+ * always did, then call the wrapped action. This keeps sync.ts factories
+ * identical to before (no signature churn) and keeps sync.action.ts free of
+ * commander imports.
+ */
+
+import chalk from 'chalk'
+import ora from 'ora'
+import Table from 'cli-table3'
+import {
+  SyncConfigRepository,
+  SyncHistoryRepository,
+  type SyncProgress,
+  type SyncFrequency,
+} from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
+import { openCliDatabase } from '../utils/open-database.js'
+import { runRegistrySync } from './run-registry-sync.js'
+import { sanitizeError } from '../utils/sanitize.js'
+import { formatDuration, formatDate, formatTimeUntil } from '../utils/formatters.js'
+import {
+  scanLocalSkillsForWarnings,
+  formatAdapterWarnings,
+  isAuthFailure,
+  formatAuthGuidance,
+} from './sync.helpers.js'
+
+// ---------------------------------------------------------------------------
+// Impl functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Run sync operation
+ */
+async function syncActionImpl(options: {
+  dbPath: string
+  force: boolean
+  dryRun: boolean
+  json: boolean
+}): Promise<void> {
+  const spinner = ora()
+
+  try {
+    spinner.start('Opening database...')
+    // SMI-4917: openCliDatabase opens a connected, schema-initialized DB —
+    // fresh installs would otherwise hit "no such table: skills".
+    const db = await openCliDatabase(options.dbPath)
+
+    try {
+      spinner.text = options.force ? 'Starting full sync...' : 'Starting differential sync...'
+
+      const result = await runRegistrySync(db, {
+        force: options.force,
+        dryRun: options.dryRun,
+        onProgress: (progress: SyncProgress) => {
+          switch (progress.phase) {
+            case 'connecting':
+              spinner.text = 'Checking API health...'
+              break
+            case 'fetching':
+              spinner.text = `Fetching skills... (${progress.current} fetched)`
+              break
+            case 'comparing':
+              spinner.text = `Comparing ${progress.total} skills with local database...`
+              break
+            case 'upserting':
+              spinner.text = `Syncing skill ${progress.current}/${progress.total}...`
+              break
+            case 'complete':
+              break
+          }
+        },
+      })
+
+      if (options.json) {
+        spinner.stop()
+        console.log(JSON.stringify(result, null, 2))
+        // SMI-4482: signal auth failure via exit code so `--json` scripts can
+        // detect "needs login" without parsing the payload.
+        if (isAuthFailure(result)) {
+          process.exitCode = 1
+        }
+        return
+      }
+
+      // SMI-4482: When sync failed because no credentials were available
+      // (anonymous IP-trial exhausted, or auth rejected), replace the bare
+      // `Authentication required` error with actionable guidance and exit
+      // non-zero — instead of printing `Σ Total: 0` with no next step.
+      if (isAuthFailure(result)) {
+        spinner.fail(chalk.yellow('Sync requires authentication'))
+        console.log()
+        for (const line of formatAuthGuidance()) {
+          console.error(line)
+        }
+        // db.close() runs in the `finally` block below before process.exit.
+        process.exitCode = 1
+        return
+      }
+
+      if (result.success) {
+        spinner.succeed(
+          options.dryRun
+            ? chalk.yellow('Dry run complete (no changes made)')
+            : chalk.green('Sync completed successfully')
+        )
+      } else {
+        spinner.warn(chalk.yellow('Sync completed with errors'))
+      }
+
+      // Display results
+      console.log()
+      console.log(chalk.bold('Results:'))
+      console.log(`  ${chalk.green('+')} Added:     ${result.skillsAdded}`)
+      console.log(`  ${chalk.blue('~')} Updated:   ${result.skillsUpdated}`)
+      console.log(`  ${chalk.dim('=')} Unchanged: ${result.skillsUnchanged}`)
+      console.log(`  ${chalk.cyan('Σ')} Total:     ${result.totalProcessed}`)
+      console.log(`  ${chalk.dim('⏱')} Duration:  ${formatDuration(result.durationMs)}`)
+
+      if (result.errors.length > 0) {
+        console.log()
+        console.log(chalk.red('Errors:'))
+        for (const error of result.errors) {
+          console.log(`  ${chalk.red('•')} ${error}`)
+        }
+      }
+
+      if (options.dryRun) {
+        console.log()
+        console.log(chalk.dim('Run without --dry-run to apply these changes.'))
+      }
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    spinner.fail('Sync failed')
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+/**
+ * Show sync status
+ */
+async function syncStatusActionImpl(options: { dbPath: string; json: boolean }): Promise<void> {
+  try {
+    const db = await openCliDatabase(options.dbPath)
+
+    try {
+      const syncConfigRepo = new SyncConfigRepository(db)
+      const syncHistoryRepo = new SyncHistoryRepository(db)
+
+      const config = syncConfigRepo.getConfig()
+      const lastRun = syncHistoryRepo.getLastSuccessful()
+      const isRunning = syncHistoryRepo.isRunning()
+      const isDue = syncConfigRepo.isSyncDue()
+      const stats = syncHistoryRepo.getStats()
+
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            {
+              config,
+              lastRun,
+              isRunning,
+              isDue,
+              stats,
+            },
+            null,
+            2
+          )
+        )
+        return
+      }
+
+      console.log(chalk.bold.blue('\n=== Sync Status ===\n'))
+
+      // Configuration
+      console.log(chalk.bold('Configuration:'))
+      console.log(
+        `  Auto-sync:  ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`
+      )
+      console.log(`  Frequency:  ${chalk.cyan(config.frequency)}`)
+      console.log()
+
+      // Current state
+      console.log(chalk.bold('Current State:'))
+      console.log(`  Last sync:  ${formatDate(config.lastSyncAt)}`)
+      console.log(`  Next sync:  ${formatDate(config.nextSyncAt)}`)
+      console.log(`  Time until: ${formatTimeUntil(config.nextSyncAt)}`)
+      console.log(
+        `  Status:     ${isRunning ? chalk.yellow('Running') : isDue ? chalk.green('Due') : chalk.dim('Waiting')}`
+      )
+      console.log()
+
+      // Last run details
+      if (lastRun) {
+        console.log(chalk.bold('Last Successful Run:'))
+        console.log(`  Started:    ${formatDate(lastRun.startedAt)}`)
+        console.log(
+          `  Duration:   ${lastRun.durationMs ? formatDuration(lastRun.durationMs) : 'N/A'}`
+        )
+        console.log(`  Added:      ${lastRun.skillsAdded}`)
+        console.log(`  Updated:    ${lastRun.skillsUpdated}`)
+        console.log(`  Unchanged:  ${lastRun.skillsUnchanged}`)
+        console.log()
+      }
+
+      // Error info
+      if (config.lastSyncError) {
+        console.log(chalk.bold.red('Last Error:'))
+        console.log(`  ${config.lastSyncError}`)
+        console.log()
+      }
+
+      // Statistics
+      console.log(chalk.bold('Statistics:'))
+      console.log(`  Total runs:     ${stats.totalRuns}`)
+      console.log(`  Successful:     ${stats.successfulRuns}`)
+      console.log(`  Failed:         ${stats.failedRuns}`)
+      console.log(
+        `  Avg duration:   ${stats.averageDurationMs ? formatDuration(stats.averageDurationMs) : 'N/A'}`
+      )
+
+      // Local-skills adapter warnings (SMI-4287, GitHub #600).
+      // Surface symlink-escape / permission / loop errors so the user can
+      // act on them (e.g. `chmod +r`, remove rogue symlink).
+      const adapterWarnings = await scanLocalSkillsForWarnings()
+      if (adapterWarnings.length > 0) {
+        console.log()
+        console.log(chalk.bold.yellow('Local skill warnings:'))
+        for (const line of formatAdapterWarnings(adapterWarnings)) {
+          console.error(line)
+        }
+      }
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+/**
+ * Show sync history
+ */
+async function syncHistoryActionImpl(options: {
+  dbPath: string
+  limit: number
+  json: boolean
+}): Promise<void> {
+  try {
+    const db = await openCliDatabase(options.dbPath)
+
+    try {
+      const syncHistoryRepo = new SyncHistoryRepository(db)
+      const history = syncHistoryRepo.getHistory(options.limit)
+
+      if (options.json) {
+        console.log(JSON.stringify(history, null, 2))
+        return
+      }
+
+      if (history.length === 0) {
+        console.log(chalk.dim('\nNo sync history found. Run `skillsmith sync` to start syncing.\n'))
+        return
+      }
+
+      console.log(chalk.bold.blue('\n=== Sync History ===\n'))
+
+      const table = new Table({
+        head: [
+          chalk.bold('Date'),
+          chalk.bold('Status'),
+          chalk.bold('Added'),
+          chalk.bold('Updated'),
+          chalk.bold('Duration'),
+        ],
+        colWidths: [22, 12, 10, 10, 12],
+      })
+
+      for (const entry of history) {
+        const statusColor =
+          entry.status === 'success'
+            ? chalk.green
+            : entry.status === 'failed'
+              ? chalk.red
+              : entry.status === 'partial'
+                ? chalk.yellow
+                : chalk.blue
+
+        table.push([
+          new Date(entry.startedAt).toLocaleString(),
+          statusColor(entry.status),
+          String(entry.skillsAdded),
+          String(entry.skillsUpdated),
+          entry.durationMs ? formatDuration(entry.durationMs) : '-',
+        ])
+      }
+
+      console.log(table.toString())
+
+      if (history.some((e) => e.errorMessage)) {
+        console.log()
+        console.log(chalk.bold.red('Errors:'))
+        for (const entry of history.filter((e) => e.errorMessage)) {
+          console.log(
+            `  ${chalk.dim(new Date(entry.startedAt).toLocaleDateString())}: ${entry.errorMessage}`
+          )
+        }
+      }
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+/**
+ * Configure sync settings
+ */
+async function syncConfigActionImpl(options: {
+  dbPath: string
+  enable: boolean | undefined
+  disable: boolean | undefined
+  frequency: string | undefined
+  show: boolean | undefined
+  json: boolean
+}): Promise<void> {
+  try {
+    const db = await openCliDatabase(options.dbPath)
+
+    try {
+      const syncConfigRepo = new SyncConfigRepository(db)
+
+      // If just showing config
+      if (options.show || (!options.enable && !options.disable && !options.frequency)) {
+        const config = syncConfigRepo.getConfig()
+
+        if (options.json) {
+          console.log(JSON.stringify(config, null, 2))
+          return
+        }
+
+        console.log(chalk.bold.blue('\n=== Sync Configuration ===\n'))
+        console.log(
+          `  Auto-sync:  ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`
+        )
+        console.log(`  Frequency:  ${chalk.cyan(config.frequency)}`)
+        console.log(`  Interval:   ${formatDuration(config.intervalMs)}`)
+        console.log(`  Last sync:  ${formatDate(config.lastSyncAt)}`)
+        console.log(`  Next sync:  ${formatDate(config.nextSyncAt)}`)
+        console.log()
+        console.log(chalk.dim('Use --enable/--disable to toggle auto-sync'))
+        console.log(chalk.dim('Use --frequency daily|weekly to change schedule'))
+        return
+      }
+
+      // Apply changes
+      if (options.enable) {
+        syncConfigRepo.enable()
+        console.log(chalk.green('✓ Auto-sync enabled'))
+      }
+
+      if (options.disable) {
+        syncConfigRepo.disable()
+        console.log(chalk.yellow('✓ Auto-sync disabled'))
+      }
+
+      if (options.frequency) {
+        const freq = options.frequency.toLowerCase()
+        if (freq !== 'daily' && freq !== 'weekly') {
+          console.error(chalk.red('Error: Frequency must be "daily" or "weekly"'))
+          process.exit(1)
+        }
+        syncConfigRepo.setFrequency(freq as SyncFrequency)
+        console.log(chalk.green(`✓ Frequency set to ${freq}`))
+      }
+
+      // Show updated config
+      const config = syncConfigRepo.getConfig()
+      console.log()
+      console.log(chalk.dim('Current settings:'))
+      console.log(
+        `  Auto-sync: ${config.enabled ? 'enabled' : 'disabled'}, Frequency: ${config.frequency}`
+      )
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry-wrapped exports (SMI-5127)
+//
+// Namespaced subcommand skillIds use "sync <subcommand>" convention so
+// PostHog events are distinguishable per-subcommand while remaining
+// obviously grouped under the sync surface.
+// ---------------------------------------------------------------------------
+
+export const syncAction = withTelemetry(syncActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'sync',
+  extractFramework: () => 'cli',
+})
+
+export const syncStatusAction = withTelemetry(syncStatusActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'sync status',
+  extractFramework: () => 'cli',
+})
+
+export const syncHistoryAction = withTelemetry(syncHistoryActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'sync history',
+  extractFramework: () => 'cli',
+})
+
+export const syncConfigAction = withTelemetry(syncConfigActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'sync config',
+  extractFramework: () => 'cli',
+})
