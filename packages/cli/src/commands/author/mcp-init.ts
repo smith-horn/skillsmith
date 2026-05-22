@@ -7,6 +7,7 @@
 import { Command } from 'commander'
 import { input, confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import ora from 'ora'
 import { mkdir, writeFile, stat } from 'fs/promises'
 import { dirname, join, resolve } from 'path'
@@ -206,6 +207,29 @@ export async function initMcpServer(
   }
 }
 
+// SMI-5129: extracted from inline .action() closure so withTelemetry can wrap it.
+async function mcpInitActionImpl(
+  name: string | undefined,
+  opts: Record<string, string | boolean | undefined>
+): Promise<void> {
+  try {
+    await initMcpServer(name, {
+      output: opts['output'] as string | undefined,
+      tools: opts['tools'] as string | undefined,
+      force: opts['force'] as boolean | undefined,
+    })
+  } catch (error) {
+    console.error(chalk.red('Error creating MCP server:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const mcpInitAction = withTelemetry(mcpInitActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'author mcp-init',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create mcp-init command
  */
@@ -216,18 +240,5 @@ export function createMcpInitCommand(): Command {
     .option('-o, --output <path>', 'Output directory')
     .option('--tools <tools>', 'Initial tools (comma-separated)')
     .option('--force', 'Overwrite existing directory')
-    .action(
-      async (name: string | undefined, opts: Record<string, string | boolean | undefined>) => {
-        try {
-          await initMcpServer(name, {
-            output: opts['output'] as string | undefined,
-            tools: opts['tools'] as string | undefined,
-            force: opts['force'] as boolean | undefined,
-          })
-        } catch (error) {
-          console.error(chalk.red('Error creating MCP server:'), sanitizeError(error))
-          process.exit(1)
-        }
-      }
-    )
+    .action(mcpInitAction)
 }

@@ -66,6 +66,11 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
     'telemetryUninstallHookAction',
     'telemetryResetIdAction',
   ],
+  // SMI-5129: author/ subcommands (init split to init.action.ts)
+  'author/init.action': ['initAction', 'validateAction', 'publishAction'],
+  'author/mcp-init': ['mcpInitAction'],
+  'author/subagent': ['subagentAction'],
+  'author/transform': ['transformAction'],
 }
 
 const EXPECTED_TOTAL = Object.values(CLI_DISPATCHER_MAP).reduce((n, arr) => n + arr.length, 0)

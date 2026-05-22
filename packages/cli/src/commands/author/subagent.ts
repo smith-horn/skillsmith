@@ -6,6 +6,7 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import ora from 'ora'
 import { readFile, writeFile, stat } from 'fs/promises'
 import { basename, dirname, join, resolve } from 'path'
@@ -174,6 +175,31 @@ export async function generateSubagent(skillPath: string, options: SubagentOptio
   }
 }
 
+// SMI-5129: extracted from inline .action() closure so withTelemetry can wrap it.
+async function subagentActionImpl(
+  skillPath: string,
+  opts: Record<string, string | boolean | undefined>
+): Promise<void> {
+  try {
+    await generateSubagent(skillPath, {
+      output: opts['output'] as string | undefined,
+      tools: opts['tools'] as string | undefined,
+      model: opts['model'] as string | undefined,
+      skipClaudeMd: opts['skipClaudeMd'] as boolean | undefined,
+      force: opts['force'] as boolean | undefined,
+    })
+  } catch (error) {
+    console.error(chalk.red('Error generating subagent:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const subagentAction = withTelemetry(subagentActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'author subagent',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create subagent command
  */
@@ -186,18 +212,5 @@ export function createSubagentCommand(): Command {
     .option('--model <model>', 'Model for subagent: sonnet|opus|haiku', 'sonnet')
     .option('--skip-claude-md', 'Skip CLAUDE.md snippet generation')
     .option('--force', 'Overwrite existing subagent definition')
-    .action(async (skillPath: string, opts: Record<string, string | boolean | undefined>) => {
-      try {
-        await generateSubagent(skillPath, {
-          output: opts['output'] as string | undefined,
-          tools: opts['tools'] as string | undefined,
-          model: opts['model'] as string | undefined,
-          skipClaudeMd: opts['skipClaudeMd'] as boolean | undefined,
-          force: opts['force'] as boolean | undefined,
-        })
-      } catch (error) {
-        console.error(chalk.red('Error generating subagent:'), sanitizeError(error))
-        process.exit(1)
-      }
-    })
+    .action(subagentAction)
 }
