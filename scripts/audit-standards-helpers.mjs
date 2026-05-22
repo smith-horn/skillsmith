@@ -1120,3 +1120,136 @@ export function auditPublishYmlDependentGate(content) {
 
   return { matches, failures }
 }
+
+/**
+ * Map an `@scope/name` package name to its publish-job short name.
+ * `@skillsmith/mcp-server` → `mcp-server`, `@smith-horn/enterprise` →
+ * `enterprise`. Mirrors the `<scope>/<shortName>` → `publish-<shortName>`
+ * convention used throughout publish.yml.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function shortNameFromPackage(name) {
+  const slash = name.indexOf('/')
+  return slash === -1 ? name : name.slice(slash + 1)
+}
+
+/**
+ * SMI-5123: POSITIVE-COVERAGE assertion for publish.yml dependency gating.
+ *
+ * `auditPublishYmlDependentGate` only checks SOUNDNESS: any
+ * `publish-X.result == 'skipped'` clause that EXISTS must carry its paired
+ * `X-exists` predicate. It says nothing about gates that are MISSING entirely
+ * — exactly the SMI-5123 bug (publish-cli depends on @skillsmith/mcp-server in
+ * package.json but had NO gate on publish-mcp-server, so cli could publish a
+ * live dangling ref while mcp-server was skipped).
+ *
+ * This helper derives the REQUIRED gates from ground truth (each publishable
+ * package's package.json workspace-sibling deps that are themselves
+ * publishable) and asserts that the consumer's publish job both (a) `needs:`
+ * the sibling's publish job and (b) carries the SMI-5060 paired predicate
+ * (`needs.publish-<sibling>.result == 'skipped' && ...<key>-exists == 'true'`).
+ *
+ * @param {string} publishYmlContent - Full publish.yml content (UTF-8).
+ * @param {Array<{ name: string, json: any }>} pkgJsons - Publishable packages:
+ *   each `name` is the npm package name and `json` is its parsed package.json.
+ *   Only packages whose `name` appears in this list are treated as "publishable
+ *   siblings" worth gating on (so a dep on a non-published workspace lib is not
+ *   flagged).
+ * @returns {{
+ *   required: Array<{ consumer: string, sibling: string, outputKey: string }>,
+ *   failures: Array<{ consumer: string, sibling: string, outputKey: string, reason: string }>,
+ * }}
+ */
+export function auditPublishYmlRequiredGates(publishYmlContent, pkgJsons) {
+  const lines = publishYmlContent.split('\n')
+  const publishableNames = new Set(pkgJsons.map((p) => p.name))
+
+  // Locate each `publish-<short>:` job header line index (top-level job key,
+  // i.e. indented exactly 2 spaces under `jobs:`). The job body runs until the
+  // next line indented ≤ 2 spaces that is itself a key (another job) — we only
+  // need the header index and the next-job index to bound the body window.
+  const jobHeaderRegex = /^ {2}([a-z][a-z0-9-]*):\s*$/
+  const jobStarts = []
+  lines.forEach((line, idx) => {
+    const m = line.match(jobHeaderRegex)
+    if (m) jobStarts.push({ name: m[1], idx })
+  })
+
+  /** Slice the YAML body of job `jobName`, or null if absent. */
+  const jobBody = (jobName) => {
+    const pos = jobStarts.findIndex((j) => j.name === jobName)
+    if (pos === -1) return null
+    const start = jobStarts[pos].idx
+    const end = pos + 1 < jobStarts.length ? jobStarts[pos + 1].idx : lines.length
+    return lines.slice(start, end).join('\n')
+  }
+
+  const required = []
+  const failures = []
+
+  for (const { name, json } of pkgJsons) {
+    const consumerShort = shortNameFromPackage(name)
+    const consumerJob = `publish-${consumerShort}`
+    const deps = { ...(json && json.dependencies) }
+
+    for (const depName of Object.keys(deps)) {
+      if (!publishableNames.has(depName)) continue
+      if (depName === name) continue
+      const siblingShort = shortNameFromPackage(depName)
+      const outputKey = PUBLISH_JOB_TO_OUTPUT_ALIAS[siblingShort] || siblingShort
+      required.push({ consumer: consumerShort, sibling: siblingShort, outputKey })
+
+      const body = jobBody(consumerJob)
+      if (body == null) {
+        failures.push({
+          consumer: consumerShort,
+          sibling: siblingShort,
+          outputKey,
+          reason: `publish job '${consumerJob}' not found in publish.yml`,
+        })
+        continue
+      }
+
+      // (a) `needs:` must list the sibling publish job.
+      const needsRegex = new RegExp(`needs:[^\\n]*\\bpublish-${siblingShort}\\b`)
+      // A list-form `needs:` may span lines; also accept the job appearing on
+      // its own bullet/array entry anywhere in the body alongside a `needs:`.
+      const hasNeeds =
+        needsRegex.test(body) ||
+        (/\bneeds:/.test(body) && new RegExp(`\\bpublish-${siblingShort}\\b`).test(body))
+      if (!hasNeeds) {
+        failures.push({
+          consumer: consumerShort,
+          sibling: siblingShort,
+          outputKey,
+          reason: `'${consumerJob}' must list 'publish-${siblingShort}' in its needs:`,
+        })
+      }
+
+      // (b) the SMI-5060 paired predicate must be present in the job body.
+      const successClause = new RegExp(
+        `needs\\.publish-${siblingShort}\\.result\\s*==\\s*'success'`
+      )
+      const skippedPairClause = new RegExp(
+        `needs\\.publish-${siblingShort}\\.result\\s*==\\s*'skipped'\\s*&&\\s*` +
+          `needs\\.pre-publish-check\\.outputs\\.${outputKey}-exists\\s*==\\s*'true'`
+      )
+      if (!successClause.test(body) || !skippedPairClause.test(body)) {
+        failures.push({
+          consumer: consumerShort,
+          sibling: siblingShort,
+          outputKey,
+          reason:
+            `'${consumerJob}' if: must gate on publish-${siblingShort}: ` +
+            `(needs.publish-${siblingShort}.result == 'success' || ` +
+            `(needs.publish-${siblingShort}.result == 'skipped' && ` +
+            `needs.pre-publish-check.outputs.${outputKey}-exists == 'true'))`,
+        })
+      }
+    }
+  }
+
+  return { required, failures }
+}

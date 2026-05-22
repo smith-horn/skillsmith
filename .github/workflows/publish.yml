@@ -141,6 +141,34 @@ jobs:
 
           echo "any_to_publish=$ANY_TO_PUBLISH" >> $GITHUB_OUTPUT
 
+      # SMI-5122: fail-fast for a brand-new package that was never published.
+      # The version-check step above reports `<x>_exists=false` for a package
+      # with zero versions on npm just as it does for a new VERSION of an
+      # existing package — but the former proceeds to a publish job that dies
+      # with an opaque E404, because npm OIDC trusted-publishing cannot
+      # bootstrap a package that does not already exist on npm. We surface that
+      # here with an actionable message. Only npmjs.org packages (@skillsmith/*)
+      # are gated; @smith-horn/enterprise publishes to GitHub Packages via
+      # GITHUB_TOKEN and CAN bootstrap a new package, so it is excluded.
+      # check-npm-bootstrap.mjs gracefully skips (exit 0, ::warning::) on
+      # transient network/registry errors — it never blocks on ambiguity.
+      - name: Bootstrap-publisher fail-fast (SMI-5122)
+        run: |
+          set -euo pipefail
+          FAILED=0
+          PKGS=$(echo "$PUBLISHABLE_PACKAGES_JSON" | jq -r '.[] | select(startswith("@skillsmith/"))')
+          for pkg in $PKGS; do
+            echo "::group::Bootstrap gate: $pkg"
+            if ! node scripts/check-npm-bootstrap.mjs "$pkg"; then
+              FAILED=1
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::One or more publishable packages are unregistered on npm — see annotations above."
+            exit 1
+          fi
+
       - name: Validate .npmignore files exist
         run: |
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -785,7 +813,7 @@ jobs:
     name: Publish @skillsmith/cli
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [pre-publish-check, validate, publish-core]
+    needs: [pre-publish-check, validate, publish-core, publish-mcp-server]
     # SMI-4540: id-token: write enables npm trusted-publisher OIDC, which is now
     # the sole auth path for npm publish (granular token revoked 2026-05-19).
     permissions:
@@ -793,12 +821,20 @@ jobs:
       id-token: write
     # SMI-4803: see publish-mcp-server for `!cancelled()` rationale.
     # SMI-5060: see publish-mcp-server for the core-exists predicate rationale.
+    # SMI-5123: cli's package.json depends on BOTH @skillsmith/core AND
+    # @skillsmith/mcp-server. Before this gate, publish-cli only needed/gated on
+    # core, so cli could publish while mcp-server was skipped — shipping a live
+    # dangling ref (cli@0.6.3 → mcp-server@^0.5.3 that didn't exist). Add the
+    # SMI-5060 paired predicate for mcp-server too (mcp-exists output key per
+    # PUBLISH_JOB_TO_OUTPUT_ALIAS), AND it with the existing core gate.
     if: |
       !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.cli-exists != 'true' &&
       (needs.publish-core.result == 'success' ||
-       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))
+       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true')) &&
+      (needs.publish-mcp-server.result == 'success' ||
+       (needs.publish-mcp-server.result == 'skipped' && needs.pre-publish-check.outputs.mcp-exists == 'true'))
 
     steps:
       - name: Checkout
