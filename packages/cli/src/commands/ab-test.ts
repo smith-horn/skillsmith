@@ -7,6 +7,7 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { tryLoadEnterpriseValidator } from '../utils/license-validation.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import type { LicenseTier } from '../utils/license-types.js'
@@ -222,6 +223,23 @@ export async function runAbTest(options: AbTestOptions): Promise<void> {
   }
 }
 
+// SMI-5128 batch B: extracted from inline .action() closure so withTelemetry
+// can wrap it at the export boundary (SMI-5018 coverage gate).
+async function abTestActionImpl(opts: Record<string, string | boolean | undefined>): Promise<void> {
+  await runAbTest({
+    skill: opts['skill'] as string | undefined,
+    iterations: opts['iterations'] ? parseInt(opts['iterations'] as string, 10) : 10,
+    output: opts['output'] as string | undefined,
+    json: opts['json'] === true,
+  })
+}
+
+export const abTestAction = withTelemetry(abTestActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'ab-test',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create the ab-test command
  */
@@ -244,14 +262,7 @@ Note: This feature requires Team tier ($25/user/mo) or higher.
 Visit https://skillsmith.app/pricing to upgrade.
 `
     )
-    .action(async (opts: Record<string, string | boolean | undefined>) => {
-      await runAbTest({
-        skill: opts['skill'] as string | undefined,
-        iterations: opts['iterations'] ? parseInt(opts['iterations'] as string, 10) : 10,
-        output: opts['output'] as string | undefined,
-        json: opts['json'] === true,
-      })
-    })
+    .action(abTestAction)
 
   return cmd
 }
