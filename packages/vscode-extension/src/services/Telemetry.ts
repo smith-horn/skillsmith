@@ -11,6 +11,8 @@ export type TelemetryEvent =
   | 'vscode_uninstall_failed'
   | 'vscode_uninstall_cancelled'
   | 'vscode_tier_denied'
+  // SMI-5130: generic panel-action invocation (skill-invocation telemetry, SMI-5012).
+  | 'vscode_skill_invoke'
 
 // No hardcoded endpoint — telemetry is disabled by default at runtime
 // unless `skillsmith.telemetryEndpoint` is set or the production endpoint

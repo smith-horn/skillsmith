@@ -5,6 +5,7 @@ import * as fs from 'node:fs/promises'
 import crossSpawn from 'cross-spawn'
 import { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
 import { track } from '../services/Telemetry.js'
+import { withTelemetry } from '../services/telemetry-wrap.js'
 import { validateSkillName } from '../utils/skillNameValidation.js'
 
 interface WizardState {
@@ -34,6 +35,83 @@ const SKILL_TYPES: ReadonlyArray<{ label: WizardState['type']; description: stri
  * OutputChannel preferred over Terminal here because the `-y` non-interactive
  * path has no interactive I/O; Terminal would hide exit-status handling.
  */
+interface CreateSkillDeps {
+  output: vscode.OutputChannel
+  treeProvider: SkillTreeDataProvider
+}
+
+// SMI-5130: extracted from the inline registerCommand closure so withTelemetry
+// can wrap it at the export boundary (telemetry coverage gate).
+async function createSkillImpl(deps: CreateSkillDeps): Promise<void> {
+  const { output, treeProvider } = deps
+  track('vscode_create_start')
+  if (!(await ensureCliAvailable())) {
+    track('vscode_create_failed', { reason: 'cli_missing' })
+    return
+  }
+
+  const state = await runWizard()
+  if (!state) {
+    track('vscode_create_cancelled', { stage: 'wizard' })
+    return
+  }
+
+  const targetDir = path.join(os.homedir(), '.claude', 'skills', state.name)
+  if (await exists(targetDir)) {
+    const overwrite = await vscode.window.showWarningMessage(
+      `A skill already exists at ${targetDir}.`,
+      { modal: true, detail: 'Re-running create will overwrite the existing SKILL.md.' },
+      'Overwrite'
+    )
+    if (overwrite !== 'Overwrite') {
+      track('vscode_create_cancelled', { stage: 'overwrite' })
+      return
+    }
+  }
+
+  const args = [
+    'create',
+    state.name,
+    '-a',
+    state.author,
+    '-d',
+    state.description,
+    '--type',
+    state.type,
+    '-y',
+  ]
+
+  output.show(true)
+  output.appendLine(`$ skillsmith ${args.join(' ')}`)
+
+  const exitCode = await runCli(args, output)
+  if (exitCode !== 0) {
+    track('vscode_create_failed', { reason: 'cli_nonzero_exit', exit_code: exitCode })
+    void vscode.window.showErrorMessage(
+      `Create skill failed (exit ${exitCode}). See the "Skillsmith CLI" output channel.`
+    )
+    return
+  }
+
+  track('vscode_create_complete', { type: state.type })
+  await treeProvider.refreshAndWait()
+  const skillMd = path.join(targetDir, 'SKILL.md')
+  try {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(skillMd))
+    await vscode.window.showTextDocument(doc)
+  } catch {
+    void vscode.window.showWarningMessage(
+      `Skill "${state.name}" created, but couldn't open SKILL.md automatically. Open it from the Skills panel.`
+    )
+  }
+  void vscode.window.showInformationMessage(`Created skill "${state.name}".`)
+}
+
+export const createSkillAction = withTelemetry(createSkillImpl, {
+  source: 'vscode-extension',
+  extractSkillId: () => 'skillsmith.createSkill',
+})
+
 export function registerCreateSkillCommand(
   context: vscode.ExtensionContext,
   treeProvider: SkillTreeDataProvider
@@ -41,69 +119,9 @@ export function registerCreateSkillCommand(
   const output = vscode.window.createOutputChannel('Skillsmith CLI')
   context.subscriptions.push(output)
 
-  const disposable = vscode.commands.registerCommand('skillsmith.createSkill', async () => {
-    track('vscode_create_start')
-    if (!(await ensureCliAvailable())) {
-      track('vscode_create_failed', { reason: 'cli_missing' })
-      return
-    }
-
-    const state = await runWizard()
-    if (!state) {
-      track('vscode_create_cancelled', { stage: 'wizard' })
-      return
-    }
-
-    const targetDir = path.join(os.homedir(), '.claude', 'skills', state.name)
-    if (await exists(targetDir)) {
-      const overwrite = await vscode.window.showWarningMessage(
-        `A skill already exists at ${targetDir}.`,
-        { modal: true, detail: 'Re-running create will overwrite the existing SKILL.md.' },
-        'Overwrite'
-      )
-      if (overwrite !== 'Overwrite') {
-        track('vscode_create_cancelled', { stage: 'overwrite' })
-        return
-      }
-    }
-
-    const args = [
-      'create',
-      state.name,
-      '-a',
-      state.author,
-      '-d',
-      state.description,
-      '--type',
-      state.type,
-      '-y',
-    ]
-
-    output.show(true)
-    output.appendLine(`$ skillsmith ${args.join(' ')}`)
-
-    const exitCode = await runCli(args, output)
-    if (exitCode !== 0) {
-      track('vscode_create_failed', { reason: 'cli_nonzero_exit', exit_code: exitCode })
-      void vscode.window.showErrorMessage(
-        `Create skill failed (exit ${exitCode}). See the "Skillsmith CLI" output channel.`
-      )
-      return
-    }
-
-    track('vscode_create_complete', { type: state.type })
-    await treeProvider.refreshAndWait()
-    const skillMd = path.join(targetDir, 'SKILL.md')
-    try {
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(skillMd))
-      await vscode.window.showTextDocument(doc)
-    } catch {
-      void vscode.window.showWarningMessage(
-        `Skill "${state.name}" created, but couldn't open SKILL.md automatically. Open it from the Skills panel.`
-      )
-    }
-    void vscode.window.showInformationMessage(`Created skill "${state.name}".`)
-  })
+  const disposable = vscode.commands.registerCommand('skillsmith.createSkill', () =>
+    createSkillAction({ output, treeProvider })
+  )
   context.subscriptions.push(disposable)
 }
 

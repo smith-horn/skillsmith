@@ -54,7 +54,7 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 ## CI Health Requirements
 
-Zero ESLint warnings/errors. TypeScript strict (no unjustified `any`). All files Prettier-formatted. 100% test pass. No high-severity vulns. **<500 lines/file** (`audit:standards` enforces; split into `foo.helpers.ts`/`foo.types.ts` if approaching). >80% coverage. Source-file changes must include related test updates.
+Zero ESLint warnings/errors. TypeScript strict (no unjustified `any`). All files Prettier-formatted. 100% test pass. No high-severity vulns. **<500 lines/file** (`audit:standards` enforces; split into `foo.helpers.ts`/`foo.types.ts` if approaching, or — for a command whose `withTelemetry`-wrapped action handlers push it over — a `foo.action.ts` sibling holding the impls + wrapped exports while `foo.ts` keeps the commander factory, SMI-5127+). >80% coverage. Source-file changes must include related test updates.
 
 **When CI fails**: don't merge. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Linear issue if non-trivial.
 
