@@ -38,6 +38,11 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   // SMI-5127: sibling-split pilot — action impls live in *.action.ts files
   'sync.action': ['syncAction', 'syncStatusAction', 'syncHistoryAction', 'syncConfigAction'],
   'search.action': ['searchAction'],
+  // SMI-5128 batch A
+  logout: ['logoutAction'],
+  merge: ['mergeAction'],
+  analyze: ['analyzeAction'],
+  diff: ['diffAction'],
 }
 
 const EXPECTED_TOTAL = Object.values(CLI_DISPATCHER_MAP).reduce((n, arr) => n + arr.length, 0)
