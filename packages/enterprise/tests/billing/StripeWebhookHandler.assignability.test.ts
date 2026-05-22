@@ -1,12 +1,11 @@
 /**
- * SMI-5044: StripeWebhookHandler assignability test
+ * SMI-5119: StripeWebhookHandler assignability test
  *
  * Belt-and-suspenders alongside the `implements StripeWebhookHandlerContract`
  * declaration on the canonical class. If the contract in
- * `@skillsmith/billing-types` drifts from the runtime class — for example,
- * if someone adds a new method to the contract or changes the
- * `handleWebhook` signature — both this test and the source-level
- * `implements` clause will fail.
+ * `./webhook-contract.ts` drifts from the runtime class — for example, if
+ * someone adds a new method to the contract or changes the `handleWebhook`
+ * signature — both this test and the source-level `implements` clause will fail.
  *
  * Tests the REAL wire, not a mock: constructs a real `StripeWebhookHandler`
  * with shaped-but-mock collaborators, then asserts (via a `satisfies`-style
@@ -17,15 +16,15 @@
 import { describe, it, expect, vi } from 'vitest'
 import type Stripe from 'stripe'
 import type {
-  StripeWebhookHandler as StripeWebhookHandlerContract,
+  StripeWebhookHandlerContract,
   StripeWebhookResult,
-} from '@skillsmith/billing-types'
+} from '../../src/billing/webhook-contract.js'
 import { StripeWebhookHandler } from '../../src/billing/StripeWebhookHandler.js'
 import type { StripeClient } from '../../src/billing/StripeClient.js'
 import type { BillingService } from '../../src/billing/BillingService.js'
 import type { Database } from '@skillsmith/core'
 
-describe('StripeWebhookHandler ↔ @skillsmith/billing-types contract', () => {
+describe('StripeWebhookHandler ↔ StripeWebhookHandlerContract', () => {
   it('is structurally assignable to StripeWebhookHandlerContract', async () => {
     const mockStripe = {
       verifyWebhookSignature: vi.fn(

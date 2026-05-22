@@ -19,17 +19,36 @@ import {
   getClientIp,
 } from './webhook-endpoint.js'
 import type { RateLimiterState, WebhookServerConfig } from './webhook-endpoint.js'
-import type { StripeWebhookHandler } from '@skillsmith/billing-types'
 
 /**
- * SMI-5044: the structural `StripeWebhookHandler` interface previously declared
- * inline here was promoted to the types-only `@skillsmith/billing-types`
- * package to resolve the workspace cycle with `@smith-horn/enterprise`. The
- * canonical class still lives at `@smith-horn/enterprise/billing` and
- * `implements` the shared interface (assignability test:
- * `packages/enterprise/tests/billing/StripeWebhookHandler.assignability.test.ts`).
+ * SMI-5119: the structural Stripe webhook contract is declared inline here.
+ *
+ * The canonical runtime class lives at `@smith-horn/enterprise/billing`
+ * (`StripeWebhookHandler`) and `implements` an identical contract
+ * (`StripeWebhookHandlerContract`) owned by that package; the assignability
+ * test at
+ * `packages/enterprise/tests/billing/StripeWebhookHandler.assignability.test.ts`
+ * guards the canonical class against its contract. This endpoint consumes only
+ * `handleWebhook(payload, signature)`, so it carries a structural copy rather
+ * than importing across the package boundary.
+ *
+ * History: SMI-5044 briefly extracted this into a shared `@skillsmith/billing-types`
+ * package; that package could not be published (OIDC trusted-publishing requires
+ * a pre-existing npm package) and was consumed only via `import type`, so it was
+ * removed. Proper cross-package contract sharing is tracked as a follow-up
+ * (invert the `enterprise → @skillsmith/mcp-server/audit` dynamic-import edge).
  */
-export type { StripeWebhookHandler }
+export interface StripeWebhookResult {
+  success: boolean
+  message: string
+  eventId: string
+  processed: boolean
+  error?: string
+}
+
+export interface StripeWebhookHandler {
+  handleWebhook(payload: string, signature: string): Promise<StripeWebhookResult>
+}
 
 // ============================================================================
 // Configuration

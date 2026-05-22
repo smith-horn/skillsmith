@@ -488,18 +488,18 @@ describe('auditPublishYmlDependentGate (SMI-5060/SMI-5066)', () => {
     expect(failures).toHaveLength(0)
   })
 
-  it('passes when publish-billing-types skipped clause is paired with billing-types-exists guard', () => {
+  it('passes when publish-enterprise skipped clause is paired with enterprise-exists guard', () => {
     const yml = [
       'jobs:',
-      '  publish-mcp-server:',
+      '  publish-enterprise:',
       '    if: |',
-      "      (needs.publish-billing-types.result == 'success' ||",
-      "       (needs.publish-billing-types.result == 'skipped' && needs.pre-publish-check.outputs.billing-types-exists == 'true'))",
+      "      (needs.publish-core.result == 'success' ||",
+      "       (needs.publish-core.result == 'skipped' && needs.pre-publish-check.outputs.core-exists == 'true'))",
     ].join('\n')
     const { matches, failures } = auditPublishYmlDependentGate(yml)
     expect(matches).toHaveLength(1)
-    expect(matches[0].pkg).toBe('billing-types')
-    expect(matches[0].outputKey).toBe('billing-types')
+    expect(matches[0].pkg).toBe('core')
+    expect(matches[0].outputKey).toBe('core')
     expect(failures).toHaveLength(0)
   })
 
@@ -533,18 +533,18 @@ describe('auditPublishYmlDependentGate (SMI-5060/SMI-5066)', () => {
     expect(failures[0].outputKey).toBe('core')
   })
 
-  it('fails when publish-billing-types skipped clause has no paired guard', () => {
+  it('fails when publish-enterprise skipped clause has no paired guard', () => {
     const yml = [
       'jobs:',
-      '  publish-mcp-server:',
+      '  publish-enterprise:',
       '    if: |',
-      "      (needs.publish-billing-types.result == 'success' ||",
-      "       needs.publish-billing-types.result == 'skipped')",
+      "      (needs.publish-core.result == 'success' ||",
+      "       needs.publish-core.result == 'skipped')",
     ].join('\n')
     const { matches, failures } = auditPublishYmlDependentGate(yml)
     expect(matches).toHaveLength(1)
     expect(failures).toHaveLength(1)
-    expect(failures[0].pkg).toBe('billing-types')
+    expect(failures[0].pkg).toBe('core')
   })
 
   it('ignores comment-only lines containing the skipped phrase', () => {

@@ -19,13 +19,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   instead of carrying drift-prone copies. Bumps `@skillsmith/core` dep range
   to `^0.8.0` to pick up the new subpath export. No runtime change.
 
-- **Chore**: SMI-5044 — `StripeWebhookHandler` structural interface in
-  `src/webhooks/stripe-webhook-endpoint.ts` is now re-exported from the new
-  `@skillsmith/billing-types` package instead of being declared inline. This
-  resolves the workspace cycle with `@smith-horn/enterprise`. No runtime
-  change; consumers continue to `import type { StripeWebhookHandler } from
-  '@skillsmith/mcp-server'` (the re-export is preserved). Adds
-  `@skillsmith/billing-types@^0.1.0` as a runtime dep.
+- **Chore**: SMI-5044 / SMI-5119 — the `StripeWebhookHandler` structural
+  interface in `src/webhooks/stripe-webhook-endpoint.ts` is declared inline and
+  re-exported. SMI-5044 briefly moved it to a shared `@skillsmith/billing-types`
+  package; that package was unpublishable (OIDC trusted-publishing requires a
+  pre-existing npm package) and consumed only via `import type`, so SMI-5119
+  removed it before this version's first publish. No runtime change; consumers
+  continue to `import type { StripeWebhookHandler } from '@skillsmith/mcp-server'`
+  (the re-export is preserved). No `@skillsmith/billing-types` dependency.
 
 ## v0.5.2
 

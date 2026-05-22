@@ -11,11 +11,6 @@ function makeReadJson(coreVersion: string, mcpDepRange: string) {
     if (p.endsWith('packages/core/package.json')) {
       return { name: '@skillsmith/core', version: coreVersion, dependencies: {} }
     }
-    // SMI-5066: billing-types added to PACKAGES. No deps to inspect (types-only
-    // contract). Test fixture mirrors that — empty dependencies, fixed version.
-    if (p.endsWith('packages/billing-types/package.json')) {
-      return { name: '@skillsmith/billing-types', version: '0.1.0', dependencies: {} }
-    }
     if (p.endsWith('packages/mcp-server/package.json')) {
       return {
         name: '@skillsmith/mcp-server',
@@ -120,14 +115,12 @@ describe('getReleasingVersions — SMI-5077 unpublished-on-main acceptance', () 
   it('marks a same-on-base local version as releasing when unpublished on npm', () => {
     const local = {
       '@skillsmith/core': '0.8.0',
-      '@skillsmith/billing-types': '0.1.0',
       '@skillsmith/mcp-server': '0.5.3',
       '@skillsmith/cli': '0.6.3',
     }
     const base = {
-      // core and billing-types were bumped on main but not published
+      // core was bumped on main but not published
       '@skillsmith/core': '0.8.0',
-      '@skillsmith/billing-types': '0.1.0',
       // mcp-server and cli bumped on this PR
       '@skillsmith/mcp-server': '0.5.2',
       '@skillsmith/cli': '0.6.2',
@@ -137,7 +130,6 @@ describe('getReleasingVersions — SMI-5077 unpublished-on-main acceptance', () 
       '@skillsmith/core@0.7.2',
       '@skillsmith/mcp-server@0.5.2',
       '@skillsmith/cli@0.6.2',
-      // billing-types is brand new — nothing published
     ])
 
     const result = getReleasingVersions({
@@ -151,13 +143,11 @@ describe('getReleasingVersions — SMI-5077 unpublished-on-main acceptance', () 
           const pkgName =
             dir === 'core'
               ? '@skillsmith/core'
-              : dir === 'billing-types'
-                ? '@skillsmith/billing-types'
-                : dir === 'mcp-server'
-                  ? '@skillsmith/mcp-server'
-                  : dir === 'cli'
-                    ? '@skillsmith/cli'
-                    : null
+              : dir === 'mcp-server'
+                ? '@skillsmith/mcp-server'
+                : dir === 'cli'
+                  ? '@skillsmith/cli'
+                  : null
           if (!pkgName || !base[pkgName as keyof typeof base]) {
             throw new Error('not found')
           }
@@ -178,11 +168,10 @@ describe('getReleasingVersions — SMI-5077 unpublished-on-main acceptance', () 
     })
 
     expect(result.resolved).toBe(true)
-    // All four should be marked as releasing — the two with diff (mcp-server,
-    // cli) and the two with unpublished local-equals-base (core, billing-types).
+    // All three should be marked as releasing — the two with diff (mcp-server,
+    // cli) and the one with unpublished local-equals-base (core).
     expect(result.versions).toMatchObject({
       '@skillsmith/core': '0.8.0',
-      '@skillsmith/billing-types': '0.1.0',
       '@skillsmith/mcp-server': '0.5.3',
       '@skillsmith/cli': '0.6.3',
     })
