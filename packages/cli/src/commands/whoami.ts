@@ -62,5 +62,7 @@ export const whoamiAction = withTelemetry(whoamiActionImpl, {
  * Create the `skillsmith whoami` command.
  */
 export function createWhoamiCommand(): Command {
-  return new Command('whoami').description('Show current authentication status').action(whoamiAction)
+  return new Command('whoami')
+    .description('Show current authentication status')
+    .action(whoamiAction)
 }
