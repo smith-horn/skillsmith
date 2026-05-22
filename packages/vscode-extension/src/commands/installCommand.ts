@@ -11,6 +11,7 @@ import type { SkillData } from '../types/skill.js'
 import type { SkillService } from '../services/SkillService.js'
 import { getSkillPath, installSkillLocally } from '../services/installUtils.js'
 import { getMcpClient } from '../mcp/McpClient.js'
+import { withTelemetry } from '../services/telemetry-wrap.js'
 
 /** Debounce delay for search input */
 const SEARCH_DEBOUNCE_MS = 300
@@ -22,6 +23,17 @@ interface SkillQuickPickItem extends vscode.QuickPickItem {
   skill: SkillData | null
 }
 
+// SMI-5130: extracted from the inline registerCommand closure so withTelemetry
+// can wrap it at the export boundary (telemetry coverage gate).
+async function installCommandImpl(deps: { skillService: SkillService }): Promise<void> {
+  await showQuickInstallPicker(deps.skillService)
+}
+
+export const installCommandAction = withTelemetry(installCommandImpl, {
+  source: 'vscode-extension',
+  extractSkillId: () => 'skillsmith.installSkill',
+})
+
 /**
  * Registers the quick install command
  */
@@ -29,9 +41,9 @@ export function registerQuickInstallCommand(
   context: vscode.ExtensionContext,
   skillService: SkillService
 ): void {
-  const command = vscode.commands.registerCommand('skillsmith.installSkill', async () => {
-    await showQuickInstallPicker(skillService)
-  })
+  const command = vscode.commands.registerCommand('skillsmith.installSkill', () =>
+    installCommandAction({ skillService })
+  )
 
   context.subscriptions.push(command)
 }

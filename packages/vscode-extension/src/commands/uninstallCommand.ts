@@ -6,10 +6,15 @@ import { track } from '../services/Telemetry.js'
 import { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
 import { SkillTreeItem } from '../sidebar/SkillTreeItem.js'
 import { assertInsideRoot, PathOutsideRoot } from '../utils/pathContainment.js'
+import { withTelemetry } from '../services/telemetry-wrap.js'
 
 interface InstalledPick extends vscode.QuickPickItem {
   skillId: string
   skillPath: string
+}
+
+interface UninstallCommandDeps {
+  treeProvider: SkillTreeDataProvider
 }
 
 /**
@@ -23,86 +28,99 @@ interface InstalledPick extends vscode.QuickPickItem {
  * check → MCP uninstall_skill → refresh tree. Falls back to `fs.rm` when MCP
  * is disconnected (same containment guard).
  */
+// SMI-5130: extracted from the inline registerCommand closure so withTelemetry
+// can wrap it at the export boundary (telemetry coverage gate).
+async function uninstallCommandImpl(
+  deps: UninstallCommandDeps,
+  arg?: SkillTreeItem
+): Promise<void> {
+  const { treeProvider } = deps
+  const via = arg?.skillData?.isInstalled ? 'context-menu' : 'palette'
+  track('vscode_uninstall_start', { via })
+  const pick = await resolveTarget(arg, treeProvider)
+  if (!pick) {
+    track('vscode_uninstall_cancelled', { via, stage: 'resolve' })
+    return
+  }
+
+  const confirm = await vscode.window.showWarningMessage(
+    `Uninstall skill "${pick.skillId}"?`,
+    {
+      modal: true,
+      detail: `This will permanently delete:\n${pick.skillPath}\n\nThis action cannot be undone.`,
+    },
+    'Uninstall'
+  )
+  if (confirm !== 'Uninstall') {
+    track('vscode_uninstall_cancelled', { via, stage: 'confirm' })
+    return
+  }
+
+  const skillsRoot = getSkillsDirectory()
+  try {
+    await assertInsideRoot(pick.skillPath, skillsRoot)
+  } catch (err) {
+    if (err instanceof PathOutsideRoot) {
+      track('vscode_uninstall_failed', { via, reason: 'path_outside_root' })
+      void vscode.window.showErrorMessage(
+        `Refusing to uninstall: "${pick.skillPath}" resolves outside the configured skills directory.`
+      )
+      return
+    }
+    throw err
+  }
+
+  const client = getMcpClient()
+  let uninstalled = false
+
+  if (client.isConnected()) {
+    try {
+      const result = await client.uninstallSkill(pick.skillId)
+      if (!result.success) {
+        // MCP is reachable and deliberately refused — surface this, do NOT fall back to
+        // fs.rm. Falling back would bypass server-side enforcement (e.g. tier-gated ops).
+        const reason = result.error ?? 'MCP server refused the uninstall request'
+        track('vscode_uninstall_failed', { via, reason: 'mcp_refused' })
+        void vscode.window.showErrorMessage(`Failed to uninstall "${pick.skillId}": ${reason}`)
+        return
+      }
+      uninstalled = true
+    } catch (err) {
+      // Transport-level failure (disconnected mid-call, timeout, etc.).
+      // Fall through to the fs.rm branch below.
+      console.warn('[Skillsmith] MCP uninstall transport error, falling back to fs.rm:', err)
+    }
+  }
+
+  if (!uninstalled) {
+    try {
+      await fs.rm(pick.skillPath, { recursive: true, force: true })
+      uninstalled = true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      track('vscode_uninstall_failed', { via, reason: 'fs_rm_error' })
+      void vscode.window.showErrorMessage(`Failed to uninstall "${pick.skillId}": ${msg}`)
+      return
+    }
+  }
+
+  await treeProvider.refreshAndWait()
+  track('vscode_uninstall_complete', { via })
+  void vscode.window.showInformationMessage(`Uninstalled "${pick.skillId}".`)
+}
+
+export const uninstallCommandAction = withTelemetry(uninstallCommandImpl, {
+  source: 'vscode-extension',
+  extractSkillId: () => 'skillsmith.uninstallSkill',
+})
+
 export function registerUninstallCommand(
   context: vscode.ExtensionContext,
   treeProvider: SkillTreeDataProvider
 ): void {
   const disposable = vscode.commands.registerCommand(
     'skillsmith.uninstallSkill',
-    async (arg?: SkillTreeItem) => {
-      const via = arg?.skillData?.isInstalled ? 'context-menu' : 'palette'
-      track('vscode_uninstall_start', { via })
-      const pick = await resolveTarget(arg, treeProvider)
-      if (!pick) {
-        track('vscode_uninstall_cancelled', { via, stage: 'resolve' })
-        return
-      }
-
-      const confirm = await vscode.window.showWarningMessage(
-        `Uninstall skill "${pick.skillId}"?`,
-        {
-          modal: true,
-          detail: `This will permanently delete:\n${pick.skillPath}\n\nThis action cannot be undone.`,
-        },
-        'Uninstall'
-      )
-      if (confirm !== 'Uninstall') {
-        track('vscode_uninstall_cancelled', { via, stage: 'confirm' })
-        return
-      }
-
-      const skillsRoot = getSkillsDirectory()
-      try {
-        await assertInsideRoot(pick.skillPath, skillsRoot)
-      } catch (err) {
-        if (err instanceof PathOutsideRoot) {
-          track('vscode_uninstall_failed', { via, reason: 'path_outside_root' })
-          void vscode.window.showErrorMessage(
-            `Refusing to uninstall: "${pick.skillPath}" resolves outside the configured skills directory.`
-          )
-          return
-        }
-        throw err
-      }
-
-      const client = getMcpClient()
-      let uninstalled = false
-
-      if (client.isConnected()) {
-        try {
-          const result = await client.uninstallSkill(pick.skillId)
-          if (!result.success) {
-            // MCP is reachable and deliberately refused — surface this, do NOT fall back to
-            // fs.rm. Falling back would bypass server-side enforcement (e.g. tier-gated ops).
-            const reason = result.error ?? 'MCP server refused the uninstall request'
-            track('vscode_uninstall_failed', { via, reason: 'mcp_refused' })
-            void vscode.window.showErrorMessage(`Failed to uninstall "${pick.skillId}": ${reason}`)
-            return
-          }
-          uninstalled = true
-        } catch (err) {
-          // Transport-level failure (disconnected mid-call, timeout, etc.).
-          // Fall through to the fs.rm branch below.
-          console.warn('[Skillsmith] MCP uninstall transport error, falling back to fs.rm:', err)
-        }
-      }
-
-      if (!uninstalled) {
-        try {
-          await fs.rm(pick.skillPath, { recursive: true, force: true })
-          uninstalled = true
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          track('vscode_uninstall_failed', { via, reason: 'fs_rm_error' })
-          void vscode.window.showErrorMessage(`Failed to uninstall "${pick.skillId}": ${msg}`)
-          return
-        }
-      }
-
-      await treeProvider.refreshAndWait()
-      track('vscode_uninstall_complete', { via })
-      void vscode.window.showInformationMessage(`Uninstalled "${pick.skillId}".`)
-    }
+    (arg?: SkillTreeItem) => uninstallCommandAction({ treeProvider }, arg)
   )
   context.subscriptions.push(disposable)
 }
