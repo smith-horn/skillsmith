@@ -15,6 +15,7 @@ import {
   type SkillRole,
   SKILL_ROLES,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
 
 // Re-export types for public API
@@ -186,6 +187,47 @@ async function runRecommend(targetPath: string, options: RecommendOptions): Prom
 // Command Creation
 // ============================================================================
 
+// SMI-5040: extracted from inline .action() closure for withTelemetry wrap.
+async function recommendActionImpl(
+  targetPath: string,
+  opts: Record<string, string | boolean | string[] | undefined>
+): Promise<void> {
+  const limit = parseInt(opts['limit'] as string, 10)
+  const maxFiles = parseInt(opts['max-files'] as string, 10)
+  const json = (opts['json'] as boolean) === true
+  const context = opts['context'] as string | undefined
+  const installed = opts['installed'] as string[] | undefined
+  const noOverlap = opts['overlap'] === false
+
+  const roleInput = opts['role'] as string | undefined
+  let role: SkillRole | undefined
+  if (roleInput) {
+    if (SKILL_ROLES.includes(roleInput as SkillRole)) {
+      role = roleInput as SkillRole
+    } else {
+      console.error(
+        chalk.yellow(`Warning: Invalid role "${roleInput}". Valid roles: ${SKILL_ROLES.join(', ')}`)
+      )
+    }
+  }
+
+  await runRecommend(targetPath, {
+    limit: isNaN(limit) ? 5 : Math.min(Math.max(limit, 1), 50),
+    maxFiles: isNaN(maxFiles) ? 1000 : maxFiles,
+    json,
+    context,
+    installed,
+    noOverlap,
+    role,
+  })
+}
+
+export const recommendAction = withTelemetry(recommendActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'recommend',
+  extractFramework: () => 'cli',
+})
+
 /**
  * Create recommend command
  */
@@ -203,40 +245,7 @@ export function createRecommendCommand(): Command {
       '-r, --role <role>',
       `SMI-1631: Filter by skill role (${SKILL_ROLES.join(', ')}). Skills matching the role get a +30 score boost.`
     )
-    .action(
-      async (targetPath: string, opts: Record<string, string | boolean | string[] | undefined>) => {
-        const limit = parseInt(opts['limit'] as string, 10)
-        const maxFiles = parseInt(opts['max-files'] as string, 10)
-        const json = (opts['json'] as boolean) === true
-        const context = opts['context'] as string | undefined
-        const installed = opts['installed'] as string[] | undefined
-        const noOverlap = opts['overlap'] === false
-
-        const roleInput = opts['role'] as string | undefined
-        let role: SkillRole | undefined
-        if (roleInput) {
-          if (SKILL_ROLES.includes(roleInput as SkillRole)) {
-            role = roleInput as SkillRole
-          } else {
-            console.error(
-              chalk.yellow(
-                `Warning: Invalid role "${roleInput}". Valid roles: ${SKILL_ROLES.join(', ')}`
-              )
-            )
-          }
-        }
-
-        await runRecommend(targetPath, {
-          limit: isNaN(limit) ? 5 : Math.min(Math.max(limit, 1), 50),
-          maxFiles: isNaN(maxFiles) ? 1000 : maxFiles,
-          json,
-          context,
-          installed,
-          noOverlap,
-          role,
-        })
-      }
-    )
+    .action(recommendAction)
 
   return cmd
 }
