@@ -28,6 +28,19 @@ export interface PackageSpec {
    * publish cadence (skillsmith-vscode → publish-vscode.yml).
    */
   skipDepRangeUpdate?: boolean
+  /**
+   * SMI-5120: npm registry the package's published artifact lives on. When
+   * set, the publish-collision check (`resolveNpmLookups` → `npm view`) is
+   * issued against this registry via `--registry=<url>`. When unset, the
+   * check uses the default (npmjs) registry, preserving existing behavior
+   * for @skillsmith/* packages.
+   *
+   * @smith-horn/enterprise publishes to GitHub Packages
+   * (https://npm.pkg.github.com), NOT npmjs — without this field its
+   * collision check would 404 against npmjs and be misclassified as a
+   * brand-new package, silently disabling the guard.
+   */
+  registry?: string
 }
 
 export interface ChangelogEntry {
@@ -78,6 +91,20 @@ export const PACKAGE_SPECS: PackageSpec[] = [
     // but a future contributor might add one for shared types).
     skipDepRangeUpdate: true,
   },
+  {
+    // SMI-5120: @smith-horn/enterprise was absent from the bump set, so
+    // prepare-release never advanced its version and the published artifact
+    // froze. It has no VERSION constant (version lives only in package.json)
+    // and no server.json. Its dep ranges (@skillsmith/core) ARE bumped by
+    // updateWorkspaceDependencies, so it is NOT skipDepRangeUpdate.
+    name: '@smith-horn/enterprise',
+    shortName: 'enterprise',
+    dir: 'packages/enterprise',
+    packageJsonPath: 'packages/enterprise/package.json',
+    // Publishes to GitHub Packages, not npmjs — collision check must target
+    // the correct registry (see PackageSpec.registry doc).
+    registry: 'https://npm.pkg.github.com',
+  },
 ]
 
 /**
@@ -104,9 +131,11 @@ export const CORE_DEPENDENTS = [
  *
  * Replaces the older core-only `updateCoreDependency`. The natural
  * predicate "skip if dep key is not in the bump map" correctly handles
- * peerDependencies with `"*"` (e.g. cli → @skillsmith/enterprise: "*"
- * where enterprise is not in PACKAGE_SPECS today, so it's never in the
- * bump map and is naturally skipped).
+ * peerDependencies with `"*"` (e.g. cli → @skillsmith/enterprise: "*").
+ * The `"*"` range maps to a key (@skillsmith/enterprise) that does not
+ * exist in any PACKAGE_SPECS entry — the enterprise package's npm name is
+ * @smith-horn/enterprise (SMI-5120) — so it's never in the bump map and is
+ * naturally skipped.
  */
 export function updateWorkspaceDependencies(
   plans: Array<{ spec: PackageSpec; newVersion: string }>
