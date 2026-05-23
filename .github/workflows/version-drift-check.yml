@@ -26,6 +26,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # SMI-5120: the source-version drift detector walks git history + tags
+          # (baseline resolution + release-cycle count). The default depth-1
+          # clone would blind it and silently no-op the guard.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -43,25 +48,55 @@ jobs:
           cat /tmp/drift.json
           exit 0
 
+      # SMI-5120: source-vs-version drift (published artifact frozen while src changed).
+      - name: Run source-version drift check
+        id: source_drift
+        continue-on-error: true
+        run: |
+          set +e
+          node scripts/check-source-version-drift.mjs > /tmp/source-drift.json
+          CODE=$?
+          echo "exit_code=$CODE" >> $GITHUB_OUTPUT
+          cat /tmp/source-drift.json
+          exit 0
+
+      - name: Merge drift reports
+        id: merge
+        run: |
+          # Guard against a missing/empty source-drift.json (the step above is
+          # continue-on-error): a detector crash must never break the working
+          # behind-npm upsert. Default the missing side to empty arrays.
+          if [ ! -s /tmp/source-drift.json ]; then
+            echo '{"sourceDrifted":[],"clean":[],"errors":[]}' > /tmp/source-drift.json
+          fi
+          jq -s '{
+            drifted: (.[0].drifted // []),
+            sourceDrifted: (.[1].sourceDrifted // []),
+            errors: ((.[0].errors // []) + (.[1].errors // []))
+          }' /tmp/drift.json /tmp/source-drift.json > /tmp/combined.json
+          cat /tmp/combined.json
+
       - name: Parse drift report
         id: parse
         run: |
-          DRIFT_COUNT=$(jq -r '.drifted | length' /tmp/drift.json)
-          ERROR_COUNT=$(jq -r '.errors | length' /tmp/drift.json)
+          DRIFT_COUNT=$(jq -r '.drifted | length' /tmp/combined.json)
+          SOURCE_DRIFT_COUNT=$(jq -r '.sourceDrifted | length' /tmp/combined.json)
+          ERROR_COUNT=$(jq -r '.errors | length' /tmp/combined.json)
           echo "drift_count=$DRIFT_COUNT" >> $GITHUB_OUTPUT
+          echo "source_drift_count=$SOURCE_DRIFT_COUNT" >> $GITHUB_OUTPUT
           echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
 
       - name: Upsert Linear issue on drift
-        if: steps.parse.outputs.drift_count != '0' || steps.parse.outputs.error_count != '0'
+        if: steps.parse.outputs.drift_count != '0' || steps.parse.outputs.source_drift_count != '0' || steps.parse.outputs.error_count != '0'
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node scripts/linear-upsert-drift-issue.mjs /tmp/drift.json
+          node scripts/linear-upsert-drift-issue.mjs /tmp/combined.json
 
       - name: Fail job if drift or error
-        if: steps.drift.outputs.exit_code != '0'
+        if: steps.drift.outputs.exit_code != '0' || steps.source_drift.outputs.exit_code != '0'
         run: |
           echo "::error::Drift or npm failure detected. See Linear issue."
           exit 1
