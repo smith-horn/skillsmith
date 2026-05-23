@@ -32,6 +32,7 @@ import {
   parseConsumersTag,
   findConventionDrift,
   auditPublishYmlDependentGate,
+  auditPublishYmlRequiredGates,
   parseNpmLsJson,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
@@ -3981,6 +3982,52 @@ console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060/SMI-506
           `Check 48: all ${matches.length} 'publish-<pkg>.result == skipped' clause(s) in ` +
             `${PUBLISH_YML} are paired with the <outputKey>-exists predicate (SMI-5060/SMI-5066 regression guard).`
         )
+      }
+
+      // SMI-5123: POSITIVE-COVERAGE — the soundness check above only validates
+      // gates that EXIST. It says nothing about a REQUIRED gate that is missing
+      // entirely (the SMI-5123 bug: publish-cli depends on @skillsmith/mcp-server
+      // in package.json but had no gate on publish-mcp-server, so cli could
+      // publish a live dangling ref while mcp-server was skipped). Derive the
+      // required gates from ground truth — each publishable package's
+      // workspace-sibling deps that are themselves publishable — and assert the
+      // consumer's publish job both needs: the sibling and carries the paired
+      // predicate.
+      const publishableNames = JSON.parse(
+        (content.match(/PUBLISHABLE_PACKAGES_JSON:\s*'(\[[^']*\])'/) || [])[1] || '[]'
+      )
+      const pkgJsons = []
+      for (const name of publishableNames) {
+        const short = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name
+        const pkgPath = `packages/${short}/package.json`
+        if (existsSync(pkgPath)) {
+          try {
+            pkgJsons.push({ name, json: JSON.parse(readFileSync(pkgPath, 'utf8')) })
+          } catch (e) {
+            warn(`Check 48 (required gates): could not parse ${pkgPath}: ${e.message}`)
+          }
+        }
+      }
+
+      if (pkgJsons.length === 0) {
+        warn('Check 48 (required gates): no publishable package.json files found — skipping')
+      } else {
+        const { required, failures: gateFailures } = auditPublishYmlRequiredGates(content, pkgJsons)
+        if (gateFailures.length > 0) {
+          for (const { consumer, sibling, reason } of gateFailures) {
+            fail(
+              `Check 48 (required gates): publish-${consumer} → publish-${sibling}: ${reason}`,
+              `${consumer}'s package.json depends on a publishable sibling; the consumer's ` +
+                `publish job must needs: the sibling job and carry the SMI-5060 paired predicate ` +
+                `so it cannot publish a dangling ref while the sibling is skipped.`
+            )
+          }
+        } else {
+          pass(
+            `Check 48 (required gates): all ${required.length} package.json workspace-sibling ` +
+              `dep(s) have the matching publish-job needs: + paired predicate in ${PUBLISH_YML} (SMI-5123).`
+          )
+        }
       }
     } catch (e) {
       warn(`Could not run Check 48 (publish.yml dependent-gate soundness): ${e.message}`)

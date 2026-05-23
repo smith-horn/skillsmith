@@ -92,6 +92,18 @@ Dependencies before consumers:
 2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
 3. `@smith-horn/enterprise` (private, GitHub Packages)
 
+## New-package onboarding
+
+Adding a brand-new package to the publish pipeline is a multi-step setup, and **the npmjs.com registration MUST come first**. SMI-4540 made all npm publishes OIDC-only (the granular token was revoked 2026-05-19), and **OIDC trusted-publishing cannot bootstrap a package that does not already exist on npm** — the very first publish of a never-seen package dies with an opaque `E404`. SMI-5122 added a `pre-publish-check` fail-fast (`scripts/check-npm-bootstrap.mjs`) that catches this with an actionable message before the expensive Docker build, but the only real fix is to register the package by hand first.
+
+1. **Register the package + enable trusted-publisher OIDC on npmjs.com BEFORE adding it to the pipeline.** On npmjs.com: create/claim the package name, then Settings → Trusted Publisher → add repo `smith-horn/skillsmith`, workflow `publish.yml`. (GitHub Packages targets like `@smith-horn/enterprise` publish via `GITHUB_TOKEN` and *can* bootstrap a new package, so this step is npmjs.org-scoped — i.e. `@skillsmith/*`.)
+2. Add the package name to `PUBLISHABLE_PACKAGES_JSON` in `.github/workflows/publish.yml`.
+3. Add the package to `PACKAGE_SPECS` in `scripts/lib/version-utils.ts`.
+4. Run `npm run audit:standards` (Check 48 asserts the publish-job gates exist for any workspace-sibling deps the new package declares — see SMI-5123).
+5. Update the release tests (`scripts/tests/prepare-release.test.ts`, smoke-test required arrays) and add an `[Unreleased]` `CHANGELOG.md` entry so the doc-drift gate passes.
+
+If the bootstrap fail-fast trips in CI, it means step 1 was skipped — register the package on npmjs.com, then re-run. Cross-ref: SMI-4540 (OIDC-only publishes), SMI-5122 (bootstrap fail-fast).
+
 ## Critical Rules
 
 **Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](../../docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
