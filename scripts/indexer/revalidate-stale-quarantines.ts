@@ -252,27 +252,54 @@ export async function processRow(
 // Sweep orchestration
 // ---------------------------------------------------------------------------
 
+/** PostgREST caps a single response at 1000 rows; the candidate set is larger. */
+const PAGE_SIZE = 1000
+
+/**
+ * Load all stale-quarantined candidates, paging past PostgREST's max-rows cap.
+ *
+ * Candidate set: `quarantined = true` AND `repo_url ILIKE 'https://github.com/%'`
+ * AND (`quarantine_reason IS NULL` OR `quarantine_reason = 'stale'`).
+ * `quarantine_reason IS NULL` covers legacy rows quarantined before the reason
+ * column was populated; `'stale'` is what the stale-reconciliation path writes.
+ *
+ * Ordered by `id` (stable PK) so page boundaries are consistent. ALL rows are
+ * collected before the caller processes them, so apply-mode mutations (which
+ * drop rows out of the candidate set) cannot shift later page offsets.
+ */
+export async function loadCandidates(
+  db: SupabaseClient,
+  limit?: number
+): Promise<StaleQuarantinedRow[]> {
+  const out: StaleQuarantinedRow[] = []
+  for (let page = 0; ; page++) {
+    const remaining = limit === undefined ? PAGE_SIZE : Math.min(PAGE_SIZE, limit - out.length)
+    if (remaining <= 0) break
+    const from = page * PAGE_SIZE
+    const { data, error } = await db
+      .from('skills')
+      .select('id, author, name, repo_url, skill_path, quarantine_reason, security_findings')
+      .eq('quarantined', true)
+      .ilike('repo_url', 'https://github.com/%')
+      .or('quarantine_reason.is.null,quarantine_reason.eq.stale')
+      .order('id', { ascending: true })
+      .range(from, from + remaining - 1)
+    if (error)
+      throw new Error(`Failed to load stale-quarantined rows (page ${page}): ${error.message}`)
+    const rows = (data ?? []) as StaleQuarantinedRow[]
+    out.push(...rows)
+    if (limit !== undefined && out.length >= limit) return out.slice(0, limit)
+    if (rows.length < remaining) break
+  }
+  return out
+}
+
 /** Run the full stale-revalidation sweep. */
 export async function runSweep(opts: { apply: boolean; limit?: number }): Promise<SweepCounts> {
   const db = createSupabaseAdminClient()
   const headers = await buildGitHubHeaders()
 
-  // Candidate query: stale-quarantined rows with a GitHub repo URL.
-  // `quarantine_reason IS NULL` covers legacy rows that were quarantined before
-  // the reason column was populated. `= 'stale'` is the value written by the
-  // stale-reconciliation path (scripts/indexer/stale-reconciliation.ts).
-  let query = db
-    .from('skills')
-    .select('id, author, name, repo_url, skill_path, quarantine_reason, security_findings')
-    .eq('quarantined', true)
-    .ilike('repo_url', 'https://github.com/%')
-    .or('quarantine_reason.is.null,quarantine_reason.eq.stale')
-    .order('author', { ascending: true })
-  if (opts.limit) query = query.limit(opts.limit)
-
-  const { data, error } = await query
-  if (error) throw new Error(`Failed to load stale-quarantined rows: ${error.message}`)
-  const rows = (data ?? []) as StaleQuarantinedRow[]
+  const rows = await loadCandidates(db, opts.limit)
 
   const counts: SweepCounts = {
     total: rows.length,

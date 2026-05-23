@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
-import { processRow } from '../../indexer/revalidate-stale-quarantines.ts'
+import { processRow, loadCandidates } from '../../indexer/revalidate-stale-quarantines.ts'
 import type { StaleQuarantinedRow } from '../../indexer/revalidate-stale-quarantines.ts'
 
 // ---------------------------------------------------------------------------
@@ -298,5 +298,49 @@ describe('processRow — error', () => {
     const result = await processRow(row, {}, true, db as never)
     expect(result.outcome).toBe('error')
     expect(db.insert).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: candidate pagination
+// ---------------------------------------------------------------------------
+
+describe('loadCandidates — pagination', () => {
+  /** A select-only db double whose `.range(from,to)` slices a fixed row array. */
+  function makeSelectDb(rows: StaleQuarantinedRow[]) {
+    return {
+      from: () => ({
+        select: () => ({
+          eq() {
+            return this
+          },
+          ilike() {
+            return this
+          },
+          or() {
+            return this
+          },
+          order() {
+            return this
+          },
+          range(from: number, to: number) {
+            return Promise.resolve({ data: rows.slice(from, to + 1), error: null })
+          },
+        }),
+      }),
+    }
+  }
+
+  it('pages past the 1000-row cap to load the full candidate set', async () => {
+    const rows = Array.from({ length: 1074 }, (_, i) => makeRow({ id: `id-${i}` }))
+    const loaded = await loadCandidates(makeSelectDb(rows) as never)
+    expect(loaded).toHaveLength(1074)
+    expect(loaded[1073].id).toBe('id-1073')
+  })
+
+  it('respects an explicit limit without over-fetching', async () => {
+    const rows = Array.from({ length: 1074 }, (_, i) => makeRow({ id: `id-${i}` }))
+    const loaded = await loadCandidates(makeSelectDb(rows) as never, 10)
+    expect(loaded).toHaveLength(10)
   })
 })
