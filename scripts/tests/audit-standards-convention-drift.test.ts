@@ -33,6 +33,7 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
     srcByPath: Record<string, string>,
     symbol: string
   ) => { file: string; line: number; snippet: string }[]
+  defHasCheck48Ack: (src: string, line: number) => boolean
   findTmpSkillsmithRefs: (
     srcByPath: Record<string, string>
   ) => { file: string; line: number; snippet: string }[]
@@ -49,6 +50,7 @@ const {
   parseStringUnionType,
   parseTsLiteralArray,
   findFunctionDefinitions,
+  defHasCheck48Ack,
   findTmpSkillsmithRefs,
   findConventionDrift,
 } = helpers
@@ -197,6 +199,71 @@ describe('findFunctionDefinitions', () => {
 })
 
 // ---------------------------------------------------------------------------
+// defHasCheck48Ack (48c opt-out)
+// ---------------------------------------------------------------------------
+
+describe('defHasCheck48Ack', () => {
+  it('honors a marker on the definition line itself', () => {
+    const src = 'export function withTelemetry(fn) { return fn } // audit:check-48-ack inline'
+    expect(defHasCheck48Ack(src, 1)).toBe(true)
+  })
+
+  it('honors a marker in the contiguous // comment block above the def', () => {
+    // Mirrors the real packages/vscode-extension/.../telemetry-wrap.ts shape:
+    // a multi-line // block carrying the token, immediately above the def.
+    const src = [
+      '// audit:check-48-ack — intentional parallel definition: the extension',
+      '// bundles standalone and cannot import the canonical core HOF.',
+      'export function withTelemetry<F>(fn: F): F {',
+    ].join('\n')
+    expect(defHasCheck48Ack(src, 3)).toBe(true)
+  })
+
+  it('honors a marker on a * block-comment continuation line above the def', () => {
+    const src = [
+      '/**',
+      ' * audit:check-48-ack rationale here',
+      ' */',
+      'const withTelemetry = (fn) => fn',
+    ].join('\n')
+    expect(defHasCheck48Ack(src, 4)).toBe(true)
+  })
+
+  it('does NOT honor a marker separated from the def by a blank line', () => {
+    const src = [
+      '// audit:check-48-ack stale',
+      '',
+      'export function withTelemetry(fn) { return fn }',
+    ].join('\n')
+    expect(defHasCheck48Ack(src, 3)).toBe(false)
+  })
+
+  it('does NOT honor a marker separated from the def by a code line (walk stops at non-comment)', () => {
+    const src = [
+      '// audit:check-48-ack from an unrelated symbol',
+      'const unrelated = 1',
+      'export function withTelemetry(fn) { return fn }',
+    ].join('\n')
+    expect(defHasCheck48Ack(src, 3)).toBe(false)
+  })
+
+  it('does NOT honor a marker on an unrelated distant line', () => {
+    const src = [
+      '// audit:check-48-ack',
+      'const a = 1',
+      'const b = 2',
+      'function withTelemetry() {}',
+    ].join('\n')
+    expect(defHasCheck48Ack(src, 4)).toBe(false)
+  })
+
+  it('returns false for an out-of-range line', () => {
+    expect(defHasCheck48Ack('const x = 1', 99)).toBe(false)
+    expect(defHasCheck48Ack('const x = 1', 0)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // findTmpSkillsmithRefs
 // ---------------------------------------------------------------------------
 
@@ -299,6 +366,56 @@ export interface Foo {}`
   })
 
   it('flags a parallel withTelemetry definition (48c warn surface)', () => {
+    const r = findConventionDrift({
+      posthogSrc: CANONICAL_POSTHOG,
+      eventsSrc: CANONICAL_EVENTS,
+      surveySrcByPath: {
+        [CANONICAL_WRAP]: 'export function withTelemetry<F>(fn: F): F { return fn }',
+        'packages/website/src/shim.ts': 'export const withTelemetry = (fn: any) => fn',
+      },
+      expectedNewEvents: EXPECTED,
+      canonicalWithTelemetryPath: CANONICAL_WRAP,
+    })
+    expect(r.parallelWithTelemetryDefs).toHaveLength(1)
+    expect(r.parallelWithTelemetryDefs[0].file).toBe('packages/website/src/shim.ts')
+  })
+
+  it('does NOT flag a parallel def acked on the same line (48c opt-out)', () => {
+    const r = findConventionDrift({
+      posthogSrc: CANONICAL_POSTHOG,
+      eventsSrc: CANONICAL_EVENTS,
+      surveySrcByPath: {
+        [CANONICAL_WRAP]: 'export function withTelemetry<F>(fn: F): F { return fn }',
+        'packages/vscode-extension/src/services/telemetry-wrap.ts':
+          'export function withTelemetry(fn) { return fn } // audit:check-48-ack bundled extension',
+      },
+      expectedNewEvents: EXPECTED,
+      canonicalWithTelemetryPath: CANONICAL_WRAP,
+    })
+    expect(r.parallelWithTelemetryDefs).toEqual([])
+  })
+
+  it('does NOT flag a parallel def acked in the comment block above (real telemetry-wrap.ts shape)', () => {
+    const r = findConventionDrift({
+      posthogSrc: CANONICAL_POSTHOG,
+      eventsSrc: CANONICAL_EVENTS,
+      surveySrcByPath: {
+        [CANONICAL_WRAP]: 'export function withTelemetry<F>(fn: F): F { return fn }',
+        'packages/vscode-extension/src/services/telemetry-wrap.ts': [
+          '// audit:check-48-ack — intentional parallel definition: the extension',
+          '// bundles standalone (esbuild) and cannot import the canonical core HOF.',
+          'export function withTelemetry<A, R>(fn: (...a: A[]) => R): (...a: A[]) => R {',
+          '  return fn',
+          '}',
+        ].join('\n'),
+      },
+      expectedNewEvents: EXPECTED,
+      canonicalWithTelemetryPath: CANONICAL_WRAP,
+    })
+    expect(r.parallelWithTelemetryDefs).toEqual([])
+  })
+
+  it('still flags a parallel def with NO ack (regression guard)', () => {
     const r = findConventionDrift({
       posthogSrc: CANONICAL_POSTHOG,
       eventsSrc: CANONICAL_EVENTS,

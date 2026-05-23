@@ -4058,10 +4058,11 @@ console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060/SMI-506
 //   48d (warn): /tmp/skillsmith-* not used in production source (M8 — runtime
 //               state lives in ~/.skillsmith/run/, /tmp doesn't survive reboot)
 //
-// Exemption: a per-line comment containing `audit:check-48-ack` opts that
-// line out of 48d (the only sub-check with grep-heuristic false-positive
-// surface). 48a/48b are exact-string set membership against declared sources
-// of truth — there is no legitimate exemption.
+// Exemption: a comment containing `audit:check-48-ack` opts out of the
+// grep-heuristic warns — 48d per-line (same line as the reference) and 48c on
+// the def line or the comment block immediately above the parallel definition.
+// 48a/48b are exact-string set membership against declared sources of truth —
+// there is no legitimate exemption.
 //
 // Severity: 48c/48d are `warn()` for v1 to avoid false-positive fatigue
 // blocking unrelated PRs (CLAUDE.md governance retro guidance). Promote to
@@ -4186,8 +4187,9 @@ console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
           `Check 48c: parallel withTelemetry definition(s) detected — ` +
             `single-source-of-truth violation per SMI-5016 H1:\n${sites}`,
           `The canonical definition is in ${CANONICAL_WRAP_PATH}. Re-export ` +
-            `from there instead of redefining. Suppress a known-false-positive ` +
-            `with \`// audit:check-48-ack\` on the same line (with rationale).`
+            `from there instead of redefining. Suppress a genuinely-justified ` +
+            `parallel definition with \`// audit:check-48-ack <reason>\` on the ` +
+            `definition line or in the comment block immediately above it.`
         )
       }
 
