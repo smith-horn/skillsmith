@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/mcp.json",
   "mcpServers": {
     "skillsmith": {
-      "command": "node",
-      "args": ["./packages/mcp-server/dist/src/index.js"]
+      "type": "stdio",
+      "command": "./scripts/mcp-skillsmith-launcher.sh"
     },
     "skillsmith-doc-retrieval": {
       "type": "stdio",
