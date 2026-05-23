@@ -20,7 +20,17 @@
   aria-modal="true"
 >
   <form id="invite-form" class="invite-modal__form" method="dialog" novalidate>
-    <h2 id="invite-modal-heading" class="invite-modal__heading">Invite a teammate</h2>
+    <div class="invite-modal__header">
+      <h2 id="invite-modal-heading" class="invite-modal__heading">Invite a teammate</h2>
+      <button
+        type="button"
+        class="invite-modal__close"
+        data-action="close-invite-modal"
+        aria-label="Close"
+      >
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
 
     <label class="invite-modal__field">
       <span class="invite-modal__label">Email address</span>
@@ -98,10 +108,45 @@
     gap: 1rem;
   }
 
+  .invite-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
   .invite-modal__heading {
     font-size: 1.25rem;
     font-weight: 700;
     margin: 0;
+  }
+
+  .invite-modal__close {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    margin: -0.25rem -0.25rem 0 0;
+    padding: 0;
+    border: none;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: #9ca3af;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .invite-modal__close:hover {
+    background: #1a1a1f;
+    color: #fafafa;
+  }
+
+  .invite-modal__close:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 1px;
   }
 
   .invite-modal__field {
@@ -216,6 +261,17 @@
 
   .invite-modal .btn-primary:hover:not(:disabled) {
     background: #a04530;
+  }
+
+  /* SMI-4294 follow-up: disabled-state for the submit button. A 50%-opacity
+   * orange still read as an active button, so the disabled state uses a clearly
+   * inactive neutral grey (distinct from the orange ready state) for both the
+   * in-flight ("Sending...") and post-success ("Sent") locked states. */
+  .invite-modal .btn-primary:disabled {
+    background: #3a3a40;
+    color: rgba(250, 250, 250, 0.45);
+    opacity: 1;
+    cursor: not-allowed;
   }
 
   .invite-modal .btn-secondary {

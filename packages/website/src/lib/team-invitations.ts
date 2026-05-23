@@ -52,6 +52,12 @@ function mapRpcErrorToCopy(msg: string | undefined, maxMembers?: number): string
       : 'Your team is at its seat limit. Revoke a pending invite or remove a member before sending more.'
   }
   if (m.includes('invalid email')) return 'That email address is not valid.'
+  if (m.includes('cannot remove the team owner')) return 'The team owner cannot be removed.'
+  if (m.includes('admins can only remove members'))
+    return 'Admins can only remove members, not other admins.'
+  if (m.includes('only team owners or admins can remove'))
+    return 'Only team owners or admins can remove members.'
+  if (m.includes('member not found')) return 'That member no longer exists on the team.'
   if (m.includes('forbidden')) return 'Only team owners or admins can invite.'
   if (m.includes('team not found')) return 'Team not found.'
   if (m.includes('invitation expired')) return 'The invitation has expired.'
@@ -136,6 +142,23 @@ export async function revokeInvitation(
 ): Promise<SimpleResult> {
   const { error } = await supabase.rpc('revoke_team_invitation', {
     p_invitation_id: invitationId,
+  })
+  if (error) return { ok: false, error: mapRpcErrorToCopy(error.message) }
+  return { ok: true }
+}
+
+/**
+ * Remove a team member via the `remove_team_member` SECURITY DEFINER RPC.
+ * Permission rules enforced server-side: only owner/admin may call; owner
+ * row is never removable; admin cannot remove another admin. See SMI-4294
+ * follow-up plan §Wave 1 step 1.
+ */
+export async function removeTeamMember(
+  supabase: SupabaseClient,
+  memberId: string
+): Promise<SimpleResult> {
+  const { error } = await supabase.rpc('remove_team_member', {
+    p_member_id: memberId,
   })
   if (error) return { ok: false, error: mapRpcErrorToCopy(error.message) }
   return { ok: true }
