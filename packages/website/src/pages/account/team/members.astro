@@ -242,6 +242,15 @@ const supabaseConfig = getSupabaseConfig()
     gap: 1rem;
   }
 
+  .member-actions {
+    margin-left: auto;
+  }
+
+  .member-actions .btn {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+
   .role-badge {
     padding: 0.25rem 0.625rem;
     border-radius: 9999px;
@@ -371,15 +380,15 @@ const supabaseConfig = getSupabaseConfig()
 <script>
   import { createClient } from '@supabase/supabase-js'
   import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
-  import { refreshPendingList, wireInviteFlow } from '../../../lib/team-invite-ui'
+  import {
+    refreshMembersList,
+    refreshPendingList,
+    wireInviteFlow,
+    wireMemberManagement,
+    type Viewer,
+  } from '../../../lib/team-invite-ui'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
-
-  function escapeHtml(text: string): string {
-    const div = document.createElement('div')
-    div.textContent = text
-    return div.innerHTML
-  }
 
   function showState(state: 'loading' | 'content' | 'error', message?: string) {
     const loading = document.getElementById('loading-state') as HTMLDivElement
@@ -433,57 +442,29 @@ const supabaseConfig = getSupabaseConfig()
     const teamId = gate.teamId as string
 
     try {
-      // All members of that team (+ profile)
-      const { data: members, error } = await supabase
-        .from('team_members')
-        .select(
-          'id, role, invited_at, joined_at, user_id, profiles:profiles!team_members_user_id_fkey(full_name, email)'
-        )
-        .eq('team_id', teamId)
+      // Resolve viewer (id + role) in one RPC round-trip: the list contains
+      // the viewer's own row, so we extract role from there instead of
+      // re-querying team_members.
+      const { data: userData } = await supabase.auth.getUser()
+      const viewerUserId = userData?.user?.id ?? null
 
-      if (error) throw new Error(error.message)
-
-      const list = document.getElementById('member-list')!
-      const heading = document.getElementById('members-heading')!
-      heading.textContent = `Members (${members?.length ?? 0})`
-
-      if (!members || members.length === 0) {
-        list.innerHTML = '<p class="empty-state">No members yet.</p>'
-      } else {
-        list.innerHTML = members
-          .map((m) => {
-            // profiles may come back as an array or an object depending on driver
-            const p = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles
-            const name = p?.full_name || p?.email?.split('@')[0] || 'Team member'
-            const email = p?.email ?? ''
-            const initial = (name[0] || '?').toUpperCase()
-            const joined = m.joined_at
-              ? new Date(m.joined_at).toLocaleDateString(undefined, {
-                  year: 'numeric',
-                  month: 'short',
-                })
-              : '—'
-            const roleLower = String(m.role).toLowerCase()
-            const roleLabel = roleLower.charAt(0).toUpperCase() + roleLower.slice(1)
-            return `<div class="member-card">
-              <div class="member-info">
-                <div class="member-avatar">${escapeHtml(initial)}</div>
-                <div class="member-details">
-                  <div class="member-name">${escapeHtml(name)}</div>
-                  <div class="member-email">${escapeHtml(email)}</div>
-                </div>
-              </div>
-              <div class="member-meta">
-                <span class="role-badge role-${escapeHtml(roleLower)}">${escapeHtml(roleLabel)}</span>
-                <span class="member-joined">Joined ${escapeHtml(joined)}</span>
-              </div>
-            </div>`
-          })
-          .join('')
+      const { data: roleData, error: roleErr } = await supabase.rpc(
+        'list_team_members_with_profile',
+        { p_team_id: teamId }
+      )
+      if (roleErr) throw new Error(roleErr.message)
+      const rows = (roleData ?? []) as Array<{ user_id: string; role: string }>
+      let viewerRole: 'owner' | 'admin' | 'member' = 'member'
+      if (viewerUserId) {
+        const match = rows.find((r) => r.user_id === viewerUserId)
+        if (match?.role === 'owner' || match?.role === 'admin') viewerRole = match.role
       }
+      const viewer: Viewer = { role: viewerRole, userId: viewerUserId }
 
+      await refreshMembersList(supabase, teamId, viewer)
       await refreshPendingList(supabase, teamId)
       wireInviteFlow(supabase, teamId)
+      wireMemberManagement(supabase, teamId, viewer)
 
       showState('content')
     } catch (err) {
