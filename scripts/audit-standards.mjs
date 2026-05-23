@@ -28,6 +28,7 @@ import {
   parseCiYmlJobs,
   checkCarveOutInvariants,
   findUnsafeSkillsRecreateMigrations,
+  findOutOfOrderMigrations,
   parseBashArray,
   parseConsumersTag,
   findConventionDrift,
@@ -4210,6 +4211,100 @@ console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
       }
     } catch (e) {
       warn(`Could not run Check 49 (convention drift backstop): ${e.message}`)
+    }
+  }
+}
+
+// Check 50: Migration ordering guard (SMI-5162 / SMI-5159 recurrence guard)
+console.log(`\n${BOLD}50. Migration Ordering Guard (SMI-5162)${RESET}`)
+{
+  const MIG = 'supabase/migrations'
+  const baseRef = process.env.GITHUB_BASE_REF
+  let added = []
+  let baseFiles = []
+  let skipReason = null
+  try {
+    if (baseRef && baseRef.length > 0) {
+      // PR context: resolve the merge-base SHA so the BASE set reflects what
+      // this branch actually forked from, not the current tip of origin/<base>
+      // (E3: if main advanced after this branch forked, using ls-tree
+      // origin/<base> would inflate maxBaseVersion and false-fail a correctly
+      // ordered migration).
+      const mergeBase = execSync(`git merge-base origin/${baseRef} HEAD`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+      // ADDED set: --diff-filter=AR (E2) catches git-mv renames (R) in addition
+      // to plain adds (A). --name-only prints the NEW path for renames, which is
+      // the name that governs ordering. Three-dot = diff against merge-base,
+      // matching the Check 45 pattern.
+      added = execSync(`git diff --name-only --diff-filter=AR ${mergeBase}...HEAD -- ${MIG}/`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .split('\n')
+        .filter(Boolean)
+      // BASE set: list the merge-base tree (not the branch tip).
+      baseFiles = execSync(`git ls-tree -r --name-only ${mergeBase} -- ${MIG}/`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .split('\n')
+        .filter(Boolean)
+    } else {
+      // Local run (no PR base ref). Fall back to origin/main if present; else skip.
+      const base = execSync('git rev-parse --verify --quiet origin/main || true', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+      if (!base) {
+        skipReason = 'no origin/main ref (shallow/local)'
+      } else {
+        const mergeBase = execSync('git merge-base origin/main HEAD', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim()
+        added = execSync(`git diff --name-only --diff-filter=AR ${mergeBase}...HEAD -- ${MIG}/`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+          .split('\n')
+          .filter(Boolean)
+        baseFiles = execSync(`git ls-tree -r --name-only ${mergeBase} -- ${MIG}/`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+          .split('\n')
+          .filter(Boolean)
+      }
+    }
+  } catch (e) {
+    // Shallow clone, detached HEAD, no base — must NOT false-fail. Mirror
+    // Check 45's catch-and-skip behaviour.
+    skipReason = e.message
+  }
+
+  if (skipReason) {
+    pass(`Migration ordering guard skipped (${skipReason})`)
+  } else {
+    const toBase = (p) => p.split('/').pop()
+    const addedSql = added.filter((f) => f.endsWith('.sql')).map(toBase)
+    const baseSql = baseFiles.filter((f) => f.endsWith('.sql')).map(toBase)
+    const { maxBaseVersion, violations } = findOutOfOrderMigrations(addedSql, baseSql)
+    if (addedSql.length === 0) {
+      pass('No migrations added in this diff')
+    } else if (violations.length === 0) {
+      pass(
+        `All ${addedSql.length} added migration(s) sort at/above base tip ${maxBaseVersion ?? '(none)'}`
+      )
+    } else {
+      for (const v of violations) {
+        fail(
+          `Out-of-order migration: ${v.file} (version ${v.version}) sorts BELOW base tip ${v.maxBaseVersion} — ` +
+            `would be SILENTLY SKIPPED by \`supabase db push\` (exit 0) — the SMI-5159 /account/telemetry incident.`,
+          `Rename to a version > ${v.maxBaseVersion} (e.g. \`$(date -u +%Y%m%d%H%M%S)_<name>.sql\`). SQL content unchanged.`
+        )
+      }
     }
   }
 }
