@@ -31,7 +31,8 @@ async function installCommandImpl(deps: { skillService: SkillService }): Promise
 
 export const installCommandAction = withTelemetry(installCommandImpl, {
   source: 'vscode-extension',
-  extractSkillId: () => 'skillsmith.installSkill',
+  // SMI-5143: CLI-aligned action name (shared skill_id across CLI + VS Code).
+  extractSkillId: () => 'install',
 })
 
 /**

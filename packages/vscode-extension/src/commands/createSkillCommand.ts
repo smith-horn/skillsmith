@@ -109,7 +109,8 @@ async function createSkillImpl(deps: CreateSkillDeps): Promise<void> {
 
 export const createSkillAction = withTelemetry(createSkillImpl, {
   source: 'vscode-extension',
-  extractSkillId: () => 'skillsmith.createSkill',
+  // SMI-5143: CLI-aligned action name (shared skill_id across CLI + VS Code).
+  extractSkillId: () => 'create',
 })
 
 export function registerCreateSkillCommand(

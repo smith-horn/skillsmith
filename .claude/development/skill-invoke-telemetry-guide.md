@@ -48,12 +48,22 @@ All three in-process surfaces capture skill invocations via a `withTelemetry`
 HOF that brands the wrapped handler so a per-tree coverage test can assert no
 dispatcher ships unwrapped.
 
-| Surface | Wrapper | Coverage test | Status |
-|---------|---------|---------------|--------|
-| MCP tool dispatchers | `@skillsmith/core/telemetry` `withTelemetry` | `packages/mcp-server/src/tools/__meta__/telemetry-coverage.test.ts` (SMI-5018) | Captured |
-| CLI command handlers (42 dispatchers) | `@skillsmith/core/telemetry` `withTelemetry` | `packages/cli/src/commands/__meta__/telemetry-coverage.test.ts` (SMI-5040 + SMI-5128/5129) | Captured |
-| VS Code panel actions (4) | `packages/vscode-extension/src/services/telemetry-wrap.ts` (local; emits `vscode_skill_invoke` via `services/Telemetry.ts`) | `packages/vscode-extension/src/commands/__meta__/telemetry-coverage.test.ts` (SMI-5130) | Captured |
-| Claude Code hook (PreToolUse/PostToolUse) | start-file + hook (not a HOF) | n/a | Captured |
+| Surface | Wrapper | `skill_id` form | Coverage test | Status |
+|---------|---------|-----------------|---------------|--------|
+| MCP tool dispatchers | `@skillsmith/core/telemetry` `withTelemetry` | bare tool name (`search`, `install_skill`) | `packages/mcp-server/src/tools/__meta__/telemetry-coverage.test.ts` (SMI-5018) | Captured |
+| CLI command handlers (42 dispatchers) | `@skillsmith/core/telemetry` `withTelemetry` | bare action name (`search`, `config set`, `author init`) | `packages/cli/src/commands/__meta__/telemetry-coverage.test.ts` (SMI-5040 + SMI-5128/5129) | Captured |
+| VS Code panel actions (4) | `packages/vscode-extension/src/services/telemetry-wrap.ts` (local; emits `vscode_skill_invoke` via `services/Telemetry.ts`) | CLI-aligned action name (`search`/`install`/`remove`/`create`) | `packages/vscode-extension/src/commands/__meta__/telemetry-coverage.test.ts` (SMI-5130) | Captured |
+| Claude Code hook (PreToolUse/PostToolUse) | start-file + hook (not a HOF) | registry `author/name` (`smith-horn/linear`) | n/a | Captured |
+
+### `skill_id` contract (surface-specific)
+
+`skill_id` is **not** uniformly `author/name` — it is the natural identifier for each surface (see the matrix). Only the **Claude Code hook** captures a registry skill, so only it uses `author/name`. The tool surfaces emit the tool/command being invoked:
+
+- **CLI + VS Code emit the same bare action name** (SMI-5143), so the *same* action correlates across surfaces, distinguished only by the `source` field — e.g. `{skill_id:'search', source:'cli'}` vs `{skill_id:'search', source:'vscode-extension'}`.
+- **VS Code `uninstall` → `'remove'`**: the CLI's canonical command is `remove` (`uninstall` is an alias), so `'remove'` is the shared correlation key. The MCP tool stays `uninstall_skill` (distinct — MCP tool names are not normalized).
+- Downstream analytics RPCs aggregate on `metadata.skill_name`, not `skill_id`, so this is forward-looking correlation (not a reporting dependency today).
+
+**`vscode_skill_invoke` is the canonical VS Code invocation count.** Every panel action emits it (uniform). The granular `vscode_create_*` / `vscode_uninstall_*` events are *funnel detail* for those two flows — do **not** sum `vscode_*` to count invocations (that double-counts create/uninstall); count `vscode_skill_invoke` alone.
 
 **Why VS Code uses a local wrapper (SMI-5130):** the extension is bundled
 standalone via `esbuild --bundle` for the Marketplace. Importing the core HOF
@@ -119,6 +129,8 @@ Full payload schema (all fields required unless noted):
   }
 }
 ```
+
+> The example above is a **`claude-code-hook`** payload, so its `skill_id` is the registry `author/name`. `skill_id` is **surface-specific** — see [`skill_id` contract](#skill_id-contract-surface-specific). For tool surfaces it is the tool/command name (`'search'`, `'config set'`), not `author/name`.
 
 Allowed enum values:
 

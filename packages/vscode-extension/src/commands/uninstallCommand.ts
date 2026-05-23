@@ -111,7 +111,10 @@ async function uninstallCommandImpl(
 
 export const uninstallCommandAction = withTelemetry(uninstallCommandImpl, {
   source: 'vscode-extension',
-  extractSkillId: () => 'skillsmith.uninstallSkill',
+  // SMI-5143: CLI-aligned action name. The CLI's canonical command is `remove`
+  // (`uninstall` is an alias); the MCP tool stays `uninstall_skill`. `'remove'`
+  // gives CLI↔VS Code correlation for the uninstall action.
+  extractSkillId: () => 'remove',
 })
 
 export function registerUninstallCommand(
