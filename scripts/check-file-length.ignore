@@ -22,7 +22,7 @@
 #  webhook-handlers.test.ts were split into 7 sub-files under 500 lines each;
 #  see docs/internal/retros/2026-05-20-smi-5036-w8-billing-test-splits-retro.md)
 
-# SMI-5141 split follow-up: pre-existing >500-line release-tooling test.
-# Grandfathered under SMI-5120 when an unavoidable PACKAGE_SPECS assertion
-# update (enterprise added to the bump set) tripped the gate. De-list once split.
-scripts/tests/prepare-release.test.ts
+# (SMI-5141 split follow-up cleared 2026-05-22: prepare-release.test.ts and
+#  audit-standards.test.ts were split into concern-scoped siblings under 500
+#  lines each — prepare-release-{collision,reserved-range}.test.ts and
+#  audit-standards-{export-drift,publish-gate}.test.ts.)
