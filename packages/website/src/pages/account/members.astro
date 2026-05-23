@@ -1,0 +1,9 @@
+---
+/**
+ * SMI-5153: redirect the intuitive /account/members URL to the canonical
+ * team-members route. The members page lives under /account/team/members;
+ * /account/members had no route and 404'd. The destination self-gates auth.
+ */
+
+return Astro.redirect('/account/team/members')
+---
