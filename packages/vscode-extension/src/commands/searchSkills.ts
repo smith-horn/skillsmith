@@ -99,7 +99,9 @@ async function searchSkillsImpl(deps: SearchSkillsDeps): Promise<void> {
 
 export const searchSkillsAction = withTelemetry(searchSkillsImpl, {
   source: 'vscode-extension',
-  extractSkillId: () => 'skillsmith.searchSkills',
+  // SMI-5143: CLI-aligned action name so the same action shares one skill_id
+  // across CLI + VS Code, split only by `source` (cli vs vscode-extension).
+  extractSkillId: () => 'search',
 })
 
 export function registerSearchCommand(
