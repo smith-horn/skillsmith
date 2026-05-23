@@ -15,8 +15,9 @@
  * Audit-39 in `scripts/audit-standards.mjs` is the second line of defence.
  */
 import { execFileSync } from 'node:child_process'
-import { realpathSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
@@ -283,5 +284,83 @@ describe('SMI-4693 (B-2 self-test): Audit-39 flags fixtures missing the helper',
   it('synthetic file that does not spawn git is NOT a violation even without helper', () => {
     const text = `it('does math', () => { expect(1 + 1).toBe(2) })`
     expect(checkFixture(text)).toEqual({ violation: false })
+  })
+})
+
+// ============================================================================
+// SMI-5144: guard against ambient-cwd git discovery in the test suite
+// ============================================================================
+//
+// A test that spawns git with `cwd: process.cwd()` resolves git state from the
+// AMBIENT repo. Inside a worktree dev container that cwd is
+// `/app/.worktrees/<name>`, whose `.git` is a pointer file targeting a host
+// absolute path absent in the container, so git exits 128 ("not a git
+// repository") — the SMI-4689 / SMI-5144 class. SMI-5140 made the only such
+// test (`git-commits.test.ts` SMI-5126 probe) hermetic by spawning git against
+// a self-created decoy repo instead of the cwd. This guard keeps the count at
+// zero: a future test that reintroduces the pattern fails CI here.
+
+const SPAWNS_GIT_AMBIENT =
+  /(?:execFileSync|execSync|spawnSync)\(\s*['"`]git['"`]|(?:execSync|exec)\(\s*[`'"]\s*git\b/
+const AMBIENT_CWD = /cwd:\s*process\.cwd\(\)/
+
+/** A file is flagged when it BOTH spawns git AND passes `cwd: process.cwd()`. */
+function flagsAmbientCwdGit(text: string): boolean {
+  return SPAWNS_GIT_AMBIENT.test(text) && AMBIENT_CWD.test(text)
+}
+
+/** Collect *.test.ts / *.spec.ts under `dir`, pruning node_modules/dist/.git. */
+function collectTestFiles(dir: string, acc: string[]): void {
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return // root may be absent in some checkouts (e.g. partial submodules)
+  }
+  for (const entry of entries) {
+    if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') continue
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) collectTestFiles(full, acc)
+    else if (/\.(test|spec)\.ts$/.test(entry.name)) acc.push(full)
+  }
+}
+
+describe('SMI-5144: no ambient-cwd git discovery in the test suite', () => {
+  it('flags a fixture that spawns git with cwd: process.cwd()', () => {
+    const text = `
+      import { execFileSync } from 'node:child_process'
+      execFileSync('git', ['rev-parse', '--git-dir'], { cwd: process.cwd() })
+    `
+    expect(flagsAmbientCwdGit(text)).toBe(true)
+  })
+
+  it('does NOT flag git spawned against an explicit fixture cwd', () => {
+    const text = `
+      import { execFileSync } from 'node:child_process'
+      execFileSync('git', ['init'], { cwd: fixtureRepo, env: makeFixtureEnv() })
+    `
+    expect(flagsAmbientCwdGit(text)).toBe(false)
+  })
+
+  it('does NOT flag cwd: process.cwd() on a non-git spawn', () => {
+    const text = `execFileSync('node', ['script.mjs'], { cwd: process.cwd() })`
+    expect(flagsAmbientCwdGit(text)).toBe(false)
+  })
+
+  it('the live test suite contains zero ambient-cwd git-discovery files', () => {
+    // Walk every test file under packages/, tests/, and scripts/tests/. This
+    // file is excluded — its synthetic fixtures above legitimately contain both
+    // patterns as match data. SMI-5140 made git-commits.test.ts hermetic, so
+    // the expected offender count is zero.
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+    const files: string[] = []
+    for (const root of ['packages', 'tests', 'scripts/tests']) {
+      collectTestFiles(join(repoRoot, root), files)
+    }
+    const offenders = files
+      .filter((f) => !f.endsWith('git-fixture-isolation.test.ts'))
+      .filter((f) => flagsAmbientCwdGit(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(repoRoot.length + 1))
+    expect(offenders).toEqual([])
   })
 })
