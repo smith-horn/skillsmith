@@ -700,6 +700,63 @@ export const findUnsafeSkillsRecreateMigrations = (migrationsByPath, { allowList
 }
 
 /**
+ * SMI-5162: detect out-of-order added migrations.
+ *
+ * Returns a violation for every ADDED migration whose version prefix sorts
+ * (lexicographically) strictly below the maximum version prefix among the
+ * PRE-EXISTING (base) migrations. Such a migration would be silently skipped
+ * by `supabase db push` (it sorts below the applied tip), exactly the SMI-5159
+ * /account/telemetry incident.
+ *
+ * Pure: no git, no fs, no content parsing. Version = the substring before the
+ * first underscore (e.g. `20260519000005` from `20260519000005_foo.sql`, or
+ * `077` from `077_bar.sql`). Lexicographic comparison is correct across both
+ * schemes because every legacy `NNN_` prefix begins with a digit < '2' while
+ * every 14-digit timestamp begins with '2026…' (verified: 84 legacy + 14
+ * timestamp prefixes, no intermediate lengths, as of 2026-05-23).
+ *
+ * @param {string[]} addedBasenames — basenames of *.sql migrations added vs base.
+ * @param {string[]} baseBasenames — basenames of all *.sql migrations on base.
+ * @returns {{ maxBaseVersion: string|null, violations: Array<{file: string, version: string, maxBaseVersion: string}> }}
+ */
+export const findOutOfOrderMigrations = (addedBasenames, baseBasenames) => {
+  // Filter to .sql only (defensive; caller already filters).
+  const toSql = (names) => names.filter((n) => n.endsWith('.sql'))
+  const addedSql = toSql(addedBasenames)
+  const baseSql = toSql(baseBasenames)
+
+  // Extract version prefix (everything before the first underscore).
+  // Skip any basename with no underscore or an empty version token —
+  // malformed names are R-Filename's concern, not ordering's.
+  const extractVersion = (basename) => {
+    const idx = basename.indexOf('_')
+    if (idx <= 0) return null
+    return basename.slice(0, idx)
+  }
+
+  // Empty base → first-ever migration or no base context. No-op.
+  const baseVersions = baseSql.map(extractVersion).filter((v) => v !== null)
+  if (baseVersions.length === 0) {
+    return { maxBaseVersion: null, violations: [] }
+  }
+
+  // maxBaseVersion by plain string > comparison (correct across both schemes).
+  const maxBaseVersion = baseVersions.reduce((max, v) => (v > max ? v : max))
+
+  const violations = []
+  for (const basename of addedSql) {
+    const version = extractVersion(basename)
+    if (version === null) continue // malformed — skip
+    // Strict < only. Equal is allowed (duplicate-version is SMI-5163's scope).
+    if (version < maxBaseVersion) {
+      violations.push({ file: basename, version, maxBaseVersion })
+    }
+  }
+
+  return { maxBaseVersion, violations }
+}
+
+/**
  * Check pure-JS carve-out invariants on a parsed job list.
  *
  * Invariant A: every job with `needs:` containing `docker-build` must either
