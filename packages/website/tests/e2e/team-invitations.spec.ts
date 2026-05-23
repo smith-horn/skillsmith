@@ -416,6 +416,14 @@ test.describe('SMI-4294 post-smoke: members page', () => {
     await expect(tonyRow).toBeVisible({ timeout: 5000 })
     await expect(tonyRow.locator('.member-name')).toHaveText('Tony Lee')
     await expect(tonyRow.locator('.member-email')).toHaveText('hy.tony.lee@gmail.com')
+
+    // SMI-5151: per-member card — no stray avatar initial; the Remove button
+    // carries a disambiguating aria-label so the action is unambiguously scoped.
+    await expect(tonyRow.locator('.member-avatar')).toHaveCount(0)
+    await expect(tonyRow.locator('[data-action="remove-member"]')).toHaveAttribute(
+      'aria-label',
+      'Remove Tony Lee'
+    )
   })
 
   test('Bug 3 regression: owner removes member; row disappears; count decrements', async ({

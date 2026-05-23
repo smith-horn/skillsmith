@@ -189,41 +189,21 @@ const supabaseConfig = getSupabaseConfig()
   .member-list {
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 0.75rem;
   }
 
+  /* Each member is its own bordered card so the per-member Remove button is
+   * unambiguously scoped to that member (SMI-5151). Tokens match the page's
+   * border/radius/surface palette. */
   .member-card {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 0;
-    border-bottom: 1px solid #2a2a2f;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  .member-card:last-child {
-    border-bottom: none;
-  }
-
-  .member-info {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .member-avatar {
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 50%;
-    background: #2a2a2f;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: #9ca3af;
-    flex-shrink: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.625rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    background: #1a1a1f;
   }
 
   .member-name {
@@ -243,7 +223,7 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   .member-actions {
-    margin-left: auto;
+    margin-top: 0.25rem;
   }
 
   .member-actions .btn {
@@ -275,7 +255,7 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   .member-joined {
-    color: #6b7280;
+    color: #9ca3af;
     font-size: 0.8125rem;
   }
 

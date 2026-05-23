@@ -251,24 +251,17 @@ const supabaseConfig = getSupabaseConfig()
     border-bottom: none;
   }
 
-  .activity-user {
+  .activity-text {
     color: #fafafa;
-    font-weight: 500;
-  }
-
-  .activity-action {
-    color: #9ca3af;
-  }
-
-  .activity-target {
-    color: #b8523a;
-    font-weight: 500;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .activity-time {
-    color: #6b7280;
+    color: #9ca3af;
     margin-left: auto;
     font-size: 0.8125rem;
+    white-space: nowrap;
   }
 
   .loading-state {
@@ -325,6 +318,7 @@ const supabaseConfig = getSupabaseConfig()
 <script>
   import { createClient } from '@supabase/supabase-js'
   import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
+  import { humanizeActivity, type ActivityEvent } from '../../../lib/team-activity-format'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -447,7 +441,31 @@ const supabaseConfig = getSupabaseConfig()
         document.getElementById('audits-run')!.textContent = String(usage.audits_run ?? 0)
       }
 
-      // 4. Recent activity — audit_logs filtered by team_id in metadata
+      // 4. Member display-name map for humanizing the activity feed. Fetched in
+      //    its own try/catch — NOT the Promise.all above, whose `throw` on any
+      //    member's RPC error (transient / forbidden) would blank the whole
+      //    dashboard. On failure the map stays empty and actors fall back to a
+      //    generic label. (SMI-5151, plan-review #10.)
+      const nameMap = new Map<string, string>()
+      try {
+        const { data: memberRows } = await supabase.rpc('list_team_members_with_profile', {
+          p_team_id: teamId,
+        })
+        for (const m of (memberRows ?? []) as Array<{
+          user_id: string
+          full_name: string | null
+          email: string | null
+        }>) {
+          if (m.user_id) {
+            nameMap.set(m.user_id, m.full_name || m.email?.split('@')[0] || 'Team member')
+          }
+        }
+      } catch {
+        // Leave nameMap empty; humanizeActivity falls back to "A team member".
+      }
+
+      // 5. Recent activity — audit_logs filtered by team_id in metadata, then
+      //    rendered as human-readable lines (no raw UUIDs). (SMI-5151)
       const { data: activity } = await supabase
         .from('audit_logs')
         .select('id, event_type, actor, resource, action, timestamp, metadata')
@@ -457,14 +475,12 @@ const supabaseConfig = getSupabaseConfig()
 
       const list = document.getElementById('activity-list')!
       if (activity && activity.length > 0) {
-        list.innerHTML = activity
-          .map((ev) => {
-            const when = new Date(ev.timestamp).toLocaleString()
+        list.innerHTML = (activity as ActivityEvent[])
+          .map((row) => {
+            const { text, iso, relative } = humanizeActivity(row, nameMap)
             return `<div class="activity-item">
-              <span class="activity-user">${escapeHtml(ev.actor ?? 'system')}</span>
-              <span class="activity-action">${escapeHtml(ev.action ?? ev.event_type)}</span>
-              <span class="activity-target">${escapeHtml(ev.resource ?? '')}</span>
-              <span class="activity-time">${escapeHtml(when)}</span>
+              <span class="activity-text">${escapeHtml(text)}</span>
+              <span class="activity-time" title="${escapeHtml(iso)}">${escapeHtml(relative)}</span>
             </div>`
           })
           .join('')
