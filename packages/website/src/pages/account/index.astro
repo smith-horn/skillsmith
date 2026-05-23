@@ -117,7 +117,6 @@ const supabaseConfig = getSupabaseConfig()
           <div class="stat-card">
             <div class="stat-label">Current Plan</div>
             <div class="stat-value" id="current-tier">Community</div>
-            <a href="/account/subscription/" class="stat-link">Manage subscription</a>
           </div>
 
           <div class="stat-card">
@@ -459,16 +458,6 @@ const supabaseConfig = getSupabaseConfig()
   .stat-subtext {
     font-size: 0.75rem;
     color: #6b7280;
-  }
-
-  .stat-link {
-    font-size: 0.75rem;
-    color: #e07a5f;
-    text-decoration: none;
-  }
-
-  .stat-link:hover {
-    text-decoration: underline;
   }
 
   /* Sections */
@@ -1012,9 +1001,9 @@ const supabaseConfig = getSupabaseConfig()
         }
 
         if (subscriptionActions) {
-          subscriptionActions.innerHTML = `
-            <a href="/account/subscription/" class="btn btn-secondary">Manage Subscription</a>
-          `
+          // The Subscription section header already has a "Manage" button, so
+          // skip a duplicate link here for subscribed users. (SMI-5153)
+          subscriptionActions.innerHTML = ''
         }
       } else {
         if (tierPriceEl) tierPriceEl.textContent = 'Free'
