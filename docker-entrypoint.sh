@@ -90,6 +90,22 @@ fi
 
 echo -e "${GREEN}[entrypoint] dist/ outputs ready.${NC}"
 
+# ---------------------------------------------------------------------------
+# SMI-5144: worktree git-discovery advisory (non-fatal).
+# A worktree's /app/.git is a pointer FILE targeting a HOST absolute path
+# (<host>/.git/worktrees/<name>) that does not exist in this container — only
+# the worktree subtree is bind-mounted at /app, so the main repo's .git is
+# absent. `git` run from /app therefore cannot discover the repo (exit 128,
+# "not a git repository"). This is expected and unsupported: run git on the
+# host, and keep tests hermetic (a self-created fixture repo, never
+# process.cwd()) — see SMI-5140 (the hermetic-test fix) and SMI-5144. The
+# main-repo container is unaffected: there /app/.git is a directory, so the
+# `-f` test is false and this block is skipped entirely.
+# ---------------------------------------------------------------------------
+if [ -f "/app/.git" ] && ! git -C /app rev-parse --git-dir >/dev/null 2>&1; then
+    echo -e "${YELLOW}[entrypoint] In-container git discovery from this worktree is unavailable (expected for worktree containers; non-fatal). Run git on the host; keep tests hermetic — see SMI-5144.${NC}"
+fi
+
 echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 
 # List of native modules to validate.

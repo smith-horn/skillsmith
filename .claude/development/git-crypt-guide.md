@@ -355,6 +355,10 @@ On macOS Docker Desktop, `create-worktree.sh` and `repair-worktrees.sh` emit per
 
 **SMI-4738**: `npm install` in the main repo auto-regenerates worktree `docker-compose.override.yml` files via postinstall (macOS only, via `scripts/regen-worktree-overrides.sh`). Adding a new `packages/<pkg>/` no longer requires a manual `./scripts/repair-worktrees.sh` for existing worktrees to pick up the new bind mounts — just bounce the worktree container. Idempotency is content-compare (`cmp -s`), not marker-based, so drift caused by adding/removing/renaming a package is detected even when the prior override already had the SMI-4689 marker.
 
+### In-container git discovery from a worktree is unsupported (SMI-5144)
+
+A worktree's `/app/.git` is a pointer **file** (`gitdir: <host-abs>/.git/worktrees/<name>`), and a worktree dev container bind-mounts **only the worktree subtree** at `/app` — the main repo's `.git` is absent in-container. So `git` run from `/app` inside a worktree container fails with `fatal: not a git repository … exit 128` (same SMI-4689 class). `docker exec` forwards no host env, so this is **not** a `GIT_*` leak. The entrypoint prints a non-fatal YELLOW advisory in this case; the main-repo container is unaffected (there `/app/.git` is a directory). **Implications**: run git on the host (`git push` always originates on host anyway), and never write a test that does git discovery from `process.cwd()` — build a self-created fixture repo instead (the SMI-5140 hermetic pattern). A static guard in `scripts/tests/git-fixture-isolation.test.ts` (SMI-5144) fails CI if a test reintroduces the `git`-spawn-with-`cwd: process.cwd()` pattern.
+
 ## Submodule Workflow
 
 Internal docs are in a private submodule. After cloning or creating a worktree:
