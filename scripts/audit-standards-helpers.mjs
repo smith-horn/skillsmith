@@ -954,6 +954,45 @@ export function findFunctionDefinitions(srcByPath, symbol) {
 }
 
 /**
+ * Returns `true` if the definition at `line` (1-indexed) in `src` is opted out
+ * of Check 48c via an `audit:check-48-ack` marker — either on the definition
+ * line itself or anywhere in the contiguous comment block immediately preceding
+ * it. The upward walk stops at the first blank OR non-comment line, so a distant
+ * comment carrying the token cannot reach an unrelated definition.
+ *
+ * Why preceding-comment-aware (not same-line only, like 48d): a `withTelemetry`
+ * signature is frequently multi-line (generics + params), so a trailing same-line
+ * marker would fight the formatter. The one legitimate parallel definition
+ * (the esbuild-bundled VS Code extension's local wrapper, which cannot import the
+ * canonical core HOF) carries its ack on the comment block above the def.
+ *
+ * A comment line is one whose trimmed form starts with `//`, `*`, or `/*`.
+ * Detection is substring (`String.prototype.includes`), matching 48d's existing
+ * tradeoff: a def line containing the literal token inside an unrelated string
+ * would be falsely suppressed — narrow, and the audit script excludes itself
+ * from the survey.
+ *
+ * @param {string} src - full file contents
+ * @param {number} line - 1-indexed definition line
+ * @returns {boolean}
+ */
+export function defHasCheck48Ack(src, line) {
+  const lines = src.split('\n')
+  const defIdx = line - 1
+  if (defIdx < 0 || defIdx >= lines.length) return false
+  if (lines[defIdx].includes('audit:check-48-ack')) return true
+  for (let i = defIdx - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim()
+    if (trimmed === '') break
+    const isComment =
+      trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')
+    if (!isComment) break
+    if (lines[i].includes('audit:check-48-ack')) return true
+  }
+  return false
+}
+
+/**
  * Find literal `/tmp/skillsmith-` references in production source. Excludes
  * test files (matching `*.test.*`, `*.spec.*`, `__tests__/`, `tests/`,
  * `_tests_/`, `/e2e/`, `fixtures/`) — those legitimately use the prefix as
@@ -999,7 +1038,10 @@ export function findTmpSkillsmithRefs(srcByPath) {
  * declared sources of truth (no false-positive surface — drift IS the bug).
  * 48c/48d are grep-based heuristics that might over-flag in legitimate
  * edge cases — `warn()` keeps them visible without blocking PRs, matching
- * the false-positive-fatigue guidance in CLAUDE.md governance retros.
+ * the false-positive-fatigue guidance in CLAUDE.md governance retros. Both
+ * honor an `audit:check-48-ack` opt-out marker: 48d per-line (same line as the
+ * reference), 48c on the def line or the comment block immediately above the
+ * parallel definition (see defHasCheck48Ack).
  *
  * @param {object} input
  * @param {string} input.posthogSrc - contents of packages/core/src/telemetry/posthog.ts
@@ -1031,8 +1073,16 @@ export function findConventionDrift(input) {
   const allowedEventsMissing = allowed ? expectedNewEvents.filter((e) => !allowed.has(e)) : []
 
   // 48c: exactly one withTelemetry definition (in canonicalWithTelemetryPath).
+  // A parallel definition can opt out via an `audit:check-48-ack` marker on the
+  // def line or in the comment block immediately above it (genuinely-justified
+  // surfaces, e.g. the esbuild-bundled VS Code extension that cannot import the
+  // core HOF). See defHasCheck48Ack.
   const allDefs = findFunctionDefinitions(surveySrcByPath, 'withTelemetry')
-  const parallelWithTelemetryDefs = allDefs.filter((d) => d.file !== canonicalWithTelemetryPath)
+  const parallelWithTelemetryDefs = allDefs.filter(
+    (d) =>
+      d.file !== canonicalWithTelemetryPath &&
+      !defHasCheck48Ack(surveySrcByPath[d.file] ?? '', d.line)
+  )
 
   // 48d: /tmp/skillsmith- must not appear in production source.
   const tmpSkillsmithRefs = findTmpSkillsmithRefs(surveySrcByPath)
