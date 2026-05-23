@@ -34,7 +34,9 @@ Arguments:
 
 Options:
   --force         Force removal even if worktree has dirty files
-  --prune         Also prune stale Docker networks
+  --prune         Also prune stale Docker networks, dangling images, and build
+                  cache (aggressive image -a / volume prune stay manual — see
+                  the post-removal reclaimable report)
   --keep-docker   Preserve the per-worktree Docker image and node_modules volume
                   (default: both are removed alongside the worktree)
   -h, --help      Show this help message and exit
@@ -51,8 +53,10 @@ What this script does:
   3. Refuses if the worktree has uncommitted changes, unless --force is passed (SMI-5000)
   4. Removes the git worktree (always passes --force to git worktree remove
      so submodule presence — post-SMI-4829 every worktree has 4 — does not block)
-  5. Checks Docker network count and warns if above threshold
-  6. Optionally prunes stale Docker networks (--prune)
+  5. Checks Docker network count and reports global reclaimable Docker
+     resources (images / volumes / build cache) with manual reclaim commands
+  6. Optionally prunes stale networks + dangling images + build cache (--prune);
+     aggressive image -a / volume prune are left to the operator
 
 EOF
 }
@@ -187,6 +191,60 @@ prune_docker_networks() {
     else
         success "  No stale networks to remove"
     fi
+}
+
+#######################################
+# Report reclaimable global Docker resources (read-only)
+#
+# SMI-5145: surface the global reclaimable state — unused images, orphaned
+# volumes, and build cache — that accumulates across worktrees. Read-only;
+# never deletes. The aggressive reclaim (image -a / volume prune) is printed
+# as a MANUAL command, not run by --prune, because it can force expensive
+# native-module rebuilds (better-sqlite3 / onnxruntime, SMI-4698) in other
+# still-active worktrees.
+#
+# No GB-threshold gate (cf. NETWORK_WARN_THRESHOLD): parsing docker's
+# human-readable sizes would reintroduce a numeric-parse/errexit landmine;
+# this report is informational, so `docker system df` output is echoed raw.
+#######################################
+check_docker_reclaimable() {
+    if ! command -v docker &>/dev/null; then
+        return 0
+    fi
+
+    info "Reclaimable Docker resources (global):"
+    # Bare command, NOT inside a $(...) assignment, so under `set -euo pipefail`
+    # an unguarded non-zero exit (daemon hiccup) would abort the script before
+    # "Worktree removal complete!" — the `|| warn` keeps it tolerant.
+    docker system df 2>/dev/null || warn "  Could not read 'docker system df'"
+    echo ""
+    info "To reclaim more (manual — NOT run by --prune):"
+    echo -e "${YELLOW}  docker image prune -a   # unused tagged images${NC}"
+    echo -e "${YELLOW}  docker volume prune     # orphaned volumes (WARNING: forces native-module rebuilds in other worktrees)${NC}"
+    echo ""
+}
+
+#######################################
+# Prune the SAFE global Docker categories (dangling images + build cache)
+#
+# SMI-5145: run under --prune alongside prune_docker_networks. These do NOT
+# affect another worktree's ability to resume — named *_node_modules volumes
+# are preserved, and `image prune -f` removes only dangling/untagged images
+# (tagged images referenced by any running/stopped container are kept).
+# Aggressive `image -a` / `volume prune` stay manual (check_docker_reclaimable).
+# Each command is `|| warn`-tolerant so a transient non-zero exit doesn't abort
+# the script under `set -euo pipefail`.
+#######################################
+prune_docker_safe() {
+    if ! command -v docker &>/dev/null; then
+        warn "Docker not found, skipping safe image/cache prune"
+        return 0
+    fi
+
+    info "Pruning dangling images..."
+    docker image prune -f 2>&1 || warn "  image prune returned non-zero"
+    info "Pruning build cache..."
+    docker builder prune -f 2>&1 || warn "  builder prune returned non-zero"
 }
 
 #######################################
@@ -338,13 +396,16 @@ Commit or discard them first, or re-run with --force to discard:
         error "Failed to remove worktree."
     fi
 
-    # Step 3: Check Docker network count
+    # Step 3: Check Docker resources — network count + global reclaimable report
     echo ""
     check_docker_networks
+    check_docker_reclaimable
 
-    # Step 4: Prune networks if requested
+    # Step 4: Prune networks + SAFE global categories (dangling images + build
+    # cache) if requested. Aggressive image -a / volume prune stay manual.
     if [[ "$prune_flag" == true ]]; then
         prune_docker_networks
+        prune_docker_safe
     fi
 
     echo ""

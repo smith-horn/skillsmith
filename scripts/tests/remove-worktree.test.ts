@@ -277,13 +277,81 @@ describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
     const logPath = join(tempRoot, 'docker.log')
     const exitCodesPath = join(tempRoot, 'exit-codes')
     // Cleanup ops (compose stop, compose down, rmi, volume rm) → 1 (resources already gone).
-    // network ls (final check_docker_networks call) → 0 so the pipefail-protected pipeline
-    // doesn't blow up. Script should still succeed end-to-end.
+    // network ls (5th call, check_docker_networks) → 0 so the pipefail-protected pipeline
+    // doesn't blow up. The SMI-5145 `docker system df` (check_docker_reclaimable) is the 6th
+    // call and defaults to 0 (codes exhausted) — its bare invocation is `|| warn`-guarded so
+    // a non-zero would not abort regardless. Script should still succeed end-to-end.
     writeFileSync(exitCodesPath, '1\n1\n1\n1\n0\n')
     writeDockerShim(binDir, logPath, exitCodesPath)
 
     const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
 
     expect(result.status).toBe(0)
+  })
+})
+
+describe('SMI-5145: reclaimable Docker report + safe --prune', () => {
+  it('reports reclaimable resources (docker system df) on a default run, without pruning', () => {
+    const tempRoot = makeTempDir('rmwt-reclaim-check')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-reclaim')
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    writeDockerShim(binDir, logPath)
+
+    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+
+    expect(result.status).toBe(0)
+    // Step 3 reclaimable report runs `docker system df` unconditionally.
+    expect(result.dockerCalls).toContain('system df')
+    // Without --prune, no safe prune of images / build cache / networks runs.
+    expect(result.dockerCalls.some((c) => c.startsWith('image prune'))).toBe(false)
+    expect(result.dockerCalls.some((c) => c.startsWith('builder prune'))).toBe(false)
+    expect(result.dockerCalls.some((c) => c.startsWith('network prune'))).toBe(false)
+  })
+
+  it('--prune runs network + dangling-image + build-cache prune (safe categories only)', () => {
+    const tempRoot = makeTempDir('rmwt-prune-safe')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-prunesafe')
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    writeDockerShim(binDir, logPath)
+
+    const result = runScriptWithDockerShim(
+      `"${worktreeDir}" --force --prune`,
+      binDir,
+      logPath,
+      repoDir
+    )
+
+    expect(result.status).toBe(0)
+    expect(result.dockerCalls).toContain('network prune -f')
+    expect(result.dockerCalls).toContain('image prune -f')
+    expect(result.dockerCalls).toContain('builder prune -f')
+    // Still reports reclaimable.
+    expect(result.dockerCalls).toContain('system df')
+    // SAFETY GUARD (non-optional): aggressive reclaim is NEVER auto-run — it can
+    // force native-module rebuilds in other active worktrees, so it stays manual.
+    expect(result.dockerCalls.some((c) => c.includes('volume prune'))).toBe(false)
+    expect(result.dockerCalls.some((c) => c.includes('image prune -a'))).toBe(false)
+  })
+
+  it('never auto-runs aggressive reclaim on a default (no --prune) run either', () => {
+    const tempRoot = makeTempDir('rmwt-no-aggressive')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-noaggr')
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    writeDockerShim(binDir, logPath)
+
+    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+
+    expect(result.status).toBe(0)
+    expect(result.dockerCalls.some((c) => c.includes('volume prune'))).toBe(false)
+    expect(result.dockerCalls.some((c) => c.includes('image prune -a'))).toBe(false)
   })
 })
