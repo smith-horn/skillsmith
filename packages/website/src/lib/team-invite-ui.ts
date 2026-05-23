@@ -248,7 +248,6 @@ function canRemove(viewer: Viewer, row: TeamMemberRow): boolean {
 export function renderMemberRow(row: TeamMemberRow, viewer: Viewer): string {
   const name = row.full_name || row.email?.split('@')[0] || 'Team member'
   const email = row.email ?? ''
-  const initial = (name[0] || '?').toUpperCase()
   const joined = row.joined_at
     ? new Date(row.joined_at).toLocaleDateString(undefined, {
         year: 'numeric',
@@ -263,18 +262,16 @@ export function renderMemberRow(row: TeamMemberRow, viewer: Viewer): string {
                 type="button"
                 data-action="remove-member"
                 data-member-id="${escapeHtml(row.member_id)}"
-                data-member-email="${escapeHtml(row.email ?? 'this member')}">
+                data-member-email="${escapeHtml(row.email ?? 'this member')}"
+                aria-label="Remove ${escapeHtml(name)}">
           Remove
         </button>
       </div>`
     : ''
   return `<div class="member-card" data-member-id="${escapeHtml(row.member_id)}">
-    <div class="member-info">
-      <div class="member-avatar">${escapeHtml(initial)}</div>
-      <div class="member-details">
-        <div class="member-name">${escapeHtml(name)}</div>
-        <div class="member-email">${escapeHtml(email)}</div>
-      </div>
+    <div class="member-details">
+      <div class="member-name">${escapeHtml(name)}</div>
+      <div class="member-email">${escapeHtml(email)}</div>
     </div>
     <div class="member-meta">
       <span class="role-badge role-${escapeHtml(roleLower)}">${escapeHtml(roleLabel)}</span>
