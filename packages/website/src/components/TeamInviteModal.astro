@@ -218,14 +218,14 @@
     background: #a04530;
   }
 
-  /* SMI-4294 follow-up: explicit disabled-state for the submit button. Without
-   * this rule the disabled button renders identically to the enabled one
-   * (same #b8523a background) and the user has no visual signal that the
-   * submit is in-flight. Contrast ~3.3:1 against the modal background —
-   * acceptable for a temporary in-flight state. */
+  /* SMI-4294 follow-up: disabled-state for the submit button. A 50%-opacity
+   * orange still read as an active button, so the disabled state uses a clearly
+   * inactive neutral grey (distinct from the orange ready state) for both the
+   * in-flight ("Sending...") and post-success ("Sent") locked states. */
   .invite-modal .btn-primary:disabled {
-    background: #b8523a;
-    opacity: 0.5;
+    background: #3a3a40;
+    color: rgba(250, 250, 250, 0.45);
+    opacity: 1;
     cursor: not-allowed;
   }
 

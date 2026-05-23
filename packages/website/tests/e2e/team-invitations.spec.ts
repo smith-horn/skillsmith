@@ -465,11 +465,19 @@ test.describe('SMI-4294 post-smoke: members page', () => {
     // if a future refactor moved it after the RPC await.
     await expect(submitBtn).toBeDisabled({ timeout: 100 })
     await expect(submitBtn).toHaveText('Sending...', { timeout: 100 })
+    await expect(submitBtn).toHaveAttribute('aria-busy', 'true', { timeout: 100 })
 
     await clickPromise
 
-    // After the RPC resolves, text restored + button re-enabled.
-    await expect(submitBtn).toBeEnabled({ timeout: 5000 })
+    // After a successful invite the button stays LOCKED (disabled, "Sent") so a
+    // completed action can't be re-pressed; aria-busy clears.
+    await expect(submitBtn).toHaveText('Sent', { timeout: 5000 })
+    await expect(submitBtn).toBeDisabled()
+    await expect(submitBtn).not.toHaveAttribute('aria-busy', 'true')
+
+    // Editing the email re-arms the button for the next invite.
+    await page.locator('#invite-email').fill('another@example.com')
+    await expect(submitBtn).toBeEnabled()
     await expect(submitBtn).toHaveText('Send invite')
   })
 })

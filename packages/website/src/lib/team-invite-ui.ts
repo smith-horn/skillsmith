@@ -100,6 +100,14 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
     const alert = document.getElementById('invite-modal-alert') as HTMLDivElement | null
     if (alert) alert.style.display = 'none'
     form?.reset()
+    // Reset the submit button in case a prior open left it in the locked "Sent"
+    // state. (Guarded because TS does not narrow the closured `submitBtn` inside
+    // this hoisted function declaration — same reason modal/form use `?.`.)
+    if (submitBtn) {
+      submitBtn.disabled = false
+      submitBtn.textContent = 'Send invite'
+      submitBtn.removeAttribute('aria-busy')
+    }
     modal?.showModal()
     ;(document.getElementById('invite-email') as HTMLInputElement | null)?.focus()
   }
@@ -129,6 +137,10 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
     const originalText = submitBtn.textContent
     submitBtn.disabled = true
     submitBtn.textContent = 'Sending...'
+    submitBtn.setAttribute('aria-busy', 'true')
+    // Once an invite is created we keep the button disabled (a finished action
+    // must not look re-pressable); it re-arms when the user edits the email.
+    let lockAfterSuccess = false
     try {
       const result = await createInvitation(supabase, teamId, email, role)
       if (!result.ok) {
@@ -155,9 +167,28 @@ export function wireInviteFlow(supabase: SupabaseClient, teamId: string): void {
         showModalAlert('success', `Invitation sent to ${safeEmail}.`)
       }
       await refreshPendingList(supabase, teamId)
+      // Every result.ok path leaves a pending invite on record, so re-pressing
+      // is a no-op ("already pending") — lock the button regardless of subtype.
+      lockAfterSuccess = true
     } finally {
-      submitBtn.disabled = false
-      submitBtn.textContent = originalText ?? 'Send invite'
+      submitBtn.removeAttribute('aria-busy')
+      if (lockAfterSuccess) {
+        // Action completed: leave disabled with a "Sent" label; re-arm on edit.
+        submitBtn.textContent = 'Sent'
+        const emailInput = document.getElementById('invite-email') as HTMLInputElement | null
+        emailInput?.addEventListener(
+          'input',
+          () => {
+            submitBtn.disabled = false
+            submitBtn.textContent = originalText ?? 'Send invite'
+          },
+          { once: true }
+        )
+      } else {
+        // Error (or email-delivery fallback): allow an immediate retry.
+        submitBtn.disabled = false
+        submitBtn.textContent = originalText ?? 'Send invite'
+      }
     }
   })
 
