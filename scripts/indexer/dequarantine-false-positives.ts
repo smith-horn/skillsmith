@@ -58,7 +58,13 @@ export interface ParsedSkillUrl {
 }
 
 /** Per-row outcome of the sweep. */
-export type SweepOutcome = 'cleared' | 'kept' | 'fetch-failed' | 'parse-failed' | 'cas-skipped'
+export type SweepOutcome =
+  | 'cleared'
+  | 'kept'
+  | 'fetch-failed'
+  | 'parse-failed'
+  | 'cas-skipped'
+  | 'error'
 
 const GITHUB_PREFIX = 'https://github.com/'
 
@@ -99,6 +105,15 @@ export function parseSkillMdUrl(
   }
 
   const filePath = dir ? `${dir}/SKILL.md` : 'SKILL.md'
+
+  // Defense-in-depth: a `.`/`..` path segment would let WHATWG URL
+  // normalization collapse the path and escape the `/repos/{owner}/{repo}/
+  // contents/` prefix, turning a benign-looking repo_url into a request against
+  // an arbitrary api.github.com endpoint. GitHub-derived values cannot contain
+  // these, so reject (→ parse-failed, row stays quarantined — never a misfetch).
+  const segments = `${owner}/${repo}/${filePath}`.split('/')
+  if (segments.some((s) => s === '.' || s === '..')) return null
+
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}${query}`
 
@@ -183,7 +198,7 @@ async function processRow(
 
   if (error) {
     console.error(`  ERROR updating ${row.author}/${row.name}: ${error.message}`)
-    return { row, outcome: 'kept', score: scan.riskScore }
+    return { row, outcome: 'error', score: scan.riskScore }
   }
   if (!updated || updated.length === 0)
     return { row, outcome: 'cas-skipped', score: scan.riskScore }
@@ -272,6 +287,10 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
           counts.parseFailed++
           unreachable.push(r)
           break
+        case 'error':
+          counts.errors++
+          console.error(`  ❌ ERROR  ${tag} — left quarantined (DB update failed)`)
+          break
       }
     }
   }
@@ -297,7 +316,8 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
       `  kept (≥40):   ${counts.kept}\n` +
       `  fetch-failed: ${counts.fetchFailed}\n` +
       `  parse-failed: ${counts.parseFailed}\n` +
-      `  cas-skipped:  ${counts.casSkipped}\n`
+      `  cas-skipped:  ${counts.casSkipped}\n` +
+      `  errors:       ${counts.errors}\n`
   )
   if (!opts.apply) console.log('Dry-run only — re-run with --apply to perform the clears.\n')
 

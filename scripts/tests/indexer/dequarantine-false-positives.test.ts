@@ -57,6 +57,14 @@ describe('parseSkillMdUrl', () => {
     expect(parseSkillMdUrl('https://github.com/owner', null)).toBeNull()
     expect(parseSkillMdUrl(null, null)).toBeNull()
   })
+
+  it('rejects a path-traversal segment (SSRF/endpoint-confusion guard)', () => {
+    // A `..` in the tree-path or skill_path would let URL normalization escape
+    // the /repos/{owner}/{repo}/contents/ prefix — must never build a URL.
+    expect(parseSkillMdUrl('https://github.com/owner/repo/tree/main/../../etc', null)).toBeNull()
+    expect(parseSkillMdUrl('https://github.com/owner/repo', '../../../etc')).toBeNull()
+    expect(parseSkillMdUrl('https://github.com/owner/repo/tree/main/./x', null)).toBeNull()
+  })
 })
 
 describe('countFindings', () => {
