@@ -30,7 +30,7 @@ import type { ScoreDistribution } from './indexer-runners.ts'
  */
 export interface AuditLogMeta {
   request_id: string
-  run_type: 'discovery' | 'maintenance'
+  run_type: 'discovery' | 'maintenance' | 'recheck'
   rate_limit_remaining_min: number
   // SMI-4918: per-bucket GitHub rate-limit minimums. `core` is REST 5000/h,
   // `search` 30/min, `code_search` 10/min — `rate_limit_remaining_min` above
@@ -51,6 +51,29 @@ export interface AuditLogMeta {
   // raw.githubusercontent.com fetch. Misses = fell through to validateSkillMd.
   tree_hash_cache_hits: number
   tree_hash_cache_misses: number
+}
+
+/**
+ * SMI-5166: recheck-run counters, persisted under audit_logs.metadata.recheck so
+ * a `GROUP BY run_type='recheck'` dashboard reads prevention (live_touched) and
+ * self-heal (cleared) yields without conflating them with discovery semantics.
+ * Node-only: the Edge/Deno indexer has no recheck path. PARITY SAFETY — parity.test.ts
+ * pins only the AuditLogMeta interface (extractInterface), NOT AuditLogParams or the
+ * writeIndexerAuditLog body, so this Node-only field does not break Deno<->Node parity.
+ */
+export interface RecheckAuditCounters {
+  candidate_count: number
+  live_touched: number
+  cleared: number
+  kept_security: number
+  repo_gone: number
+  parse_failed: number
+  fetch_error: number
+  cas_skipped: number
+  errors: number
+  fetch_error_rate: number
+  cap_saturated: boolean
+  killswitch_engaged: boolean
 }
 
 /**
@@ -96,6 +119,15 @@ export interface AuditLogParams {
    * `v_indexer_health` (migration 051) and ops-report views.
    */
   meta?: AuditLogMeta
+  /**
+   * SMI-5166: recheck-run counters. Present only on `runType: 'recheck'`
+   * callers; undefined elsewhere so it is omitted from the persisted JSON
+   * (zero churn for discovery/maintenance rows). Persisted under
+   * `metadata.recheck` — the authoritative fetch-health signal for a recheck
+   * run is `recheck.fetch_error_rate`, NOT the rate-limit fields in `meta`
+   * (recheck does not thread telemetry through fetchSkillMd in v1).
+   */
+  recheck?: RecheckAuditCounters
 }
 
 /**
@@ -163,6 +195,10 @@ export async function writeIndexerAuditLog(
         // `metadata->'meta'->>'rate_limit_remaining_min'` use this nested
         // envelope. Undefined when called from pre-SMI-4857 callers.
         meta: params.meta,
+        // SMI-5166: recheck-run counters (prevention live_touched + self-heal
+        // cleared, fetch_error_rate, cap/killswitch state). Undefined for
+        // discovery/maintenance callers → omitted from the persisted JSON.
+        recheck: params.recheck,
       },
     })
     if (auditError) {

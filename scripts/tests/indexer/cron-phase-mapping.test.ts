@@ -29,7 +29,7 @@ import { parse as parseYaml } from 'yaml'
 
 interface CronMapping {
   cron: string
-  runType: 'discovery' | 'maintenance'
+  runType: 'discovery' | 'maintenance' | 'recheck'
   cronSlot: number | null
   discoveryPhase: 1 | 2 | 3 | null
 }
@@ -60,6 +60,9 @@ function readWorkflowCrons(): string[] {
  */
 const CRON_MAP: ReadonlyMap<string, Omit<CronMapping, 'cron'>> = new Map([
   ['0 0 * * *', { runType: 'maintenance', cronSlot: null, discoveryPhase: null }],
+  // SMI-5166: durable stale-recheck — re-fetch live-but-undiscovered skills by
+  // repo_url. No CRON_SLOT (no topic rotation) and no DISCOVERY_PHASE.
+  ['0 3 * * *', { runType: 'recheck', cronSlot: null, discoveryPhase: null }],
   ['0 6 * * *', { runType: 'discovery', cronSlot: 6, discoveryPhase: 1 }],
   ['0 7 * * *', { runType: 'discovery', cronSlot: 6, discoveryPhase: 2 }],
   ['0 8 * * *', { runType: 'discovery', cronSlot: 6, discoveryPhase: 3 }],
@@ -78,8 +81,9 @@ const CRON_MAP: ReadonlyMap<string, Omit<CronMapping, 'cron'>> = new Map([
 describe('indexer.yml cron → phase mapping (SMI-4870)', () => {
   const workflowCrons = readWorkflowCrons()
 
-  it('workflow file contains exactly 10 scheduled cron entries', () => {
-    expect(workflowCrons).toHaveLength(10)
+  it('workflow file contains exactly 11 scheduled cron entries', () => {
+    // 1 maintenance (0 0) + 1 recheck (0 3, SMI-5166) + 9 discovery (0 6/7/8, 12/13/14, 18/19/20).
+    expect(workflowCrons).toHaveLength(11)
   })
 
   it('no cron string is duplicated in the workflow', () => {
@@ -102,11 +106,21 @@ describe('indexer.yml cron → phase mapping (SMI-4870)', () => {
     }
   })
 
-  it('exactly 9 discovery crons and 1 maintenance cron', () => {
+  it('exactly 9 discovery crons, 1 maintenance cron, and 1 recheck cron', () => {
     const discovery = workflowCrons.filter((c) => CRON_MAP.get(c)?.runType === 'discovery')
     const maintenance = workflowCrons.filter((c) => CRON_MAP.get(c)?.runType === 'maintenance')
+    const recheck = workflowCrons.filter((c) => CRON_MAP.get(c)?.runType === 'recheck')
     expect(discovery).toHaveLength(9)
     expect(maintenance).toHaveLength(1)
+    expect(recheck).toHaveLength(1)
+  })
+
+  it('recheck cron is "0 3 * * *" with null CRON_SLOT and null DISCOVERY_PHASE (SMI-5166)', () => {
+    const entry = CRON_MAP.get('0 3 * * *')
+    expect(entry).toBeDefined()
+    expect(entry?.runType).toBe('recheck')
+    expect(entry?.cronSlot).toBeNull()
+    expect(entry?.discoveryPhase).toBeNull()
   })
 
   it('maintenance cron is "0 0 * * *" with null CRON_SLOT and null DISCOVERY_PHASE', () => {
