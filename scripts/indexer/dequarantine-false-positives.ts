@@ -33,6 +33,10 @@ import {
   shouldQuarantine,
   type EdgeScanResult,
 } from './_shared/security-scanner-edge.ts'
+import { parseSkillMdUrl, fetchSkillMd } from './_shared/skill-md-fetch.ts'
+
+// Re-export so existing consumers (tests, siblings) keep their import paths.
+export { parseSkillMdUrl, type ParsedSkillUrl } from './_shared/skill-md-fetch.ts'
 
 /** A prod `skills` row narrowed to the columns the sweep reads. */
 export interface QuarantinedRow {
@@ -45,18 +49,6 @@ export interface QuarantinedRow {
   security_findings: unknown
 }
 
-/** The pieces needed to fetch a skill's SKILL.md via the GitHub Contents API. */
-export interface ParsedSkillUrl {
-  owner: string
-  repo: string
-  /** Branch/tag; undefined => repo default branch. */
-  ref?: string
-  /** Directory containing SKILL.md; '' for repo root. */
-  dir: string
-  /** GitHub Contents API URL for the SKILL.md file. */
-  apiUrl: string
-}
-
 /** Per-row outcome of the sweep. */
 export type SweepOutcome =
   | 'cleared'
@@ -66,60 +58,6 @@ export type SweepOutcome =
   | 'cas-skipped'
   | 'error'
 
-const GITHUB_PREFIX = 'https://github.com/'
-
-/**
- * Reconstruct the GitHub Contents API URL for a quarantined row's SKILL.md.
- *
- * Handles both stored `repo_url` shapes:
- *  - bare repo `https://github.com/owner/repo` (SKILL.md at root, default branch)
- *  - tree-path `https://github.com/owner/repo/tree/{ref}/{dir...}` (SKILL.md at {dir})
- *
- * `skill_path` is used as a fallback directory when `repo_url` is bare but a
- * path was recorded separately. The first segment after `tree/` is taken as the
- * ref; slashed branch names (rare for indexed skills) would mis-parse and simply
- * 404 → the row stays quarantined (safe; never a false clear).
- *
- * Returns null when the URL is not a parseable github.com repo URL.
- */
-export function parseSkillMdUrl(
-  repoUrl: string | null,
-  skillPath: string | null
-): ParsedSkillUrl | null {
-  if (!repoUrl || !repoUrl.startsWith(GITHUB_PREFIX)) return null
-
-  const rest = repoUrl.slice(GITHUB_PREFIX.length).replace(/\/+$/, '')
-  const segs = rest.split('/').filter(Boolean)
-  if (segs.length < 2) return null
-
-  const [owner, repo, ...tail] = segs
-  let ref: string | undefined
-  let dir = ''
-
-  if (tail[0] === 'tree' && tail.length >= 2) {
-    ref = tail[1]
-    dir = tail.slice(2).join('/')
-  } else if (tail.length === 0 && skillPath) {
-    // Bare repo URL but a separate skill_path was recorded.
-    dir = skillPath.replace(/^\/+|\/+$/g, '')
-  }
-
-  const filePath = dir ? `${dir}/SKILL.md` : 'SKILL.md'
-
-  // Defense-in-depth: a `.`/`..` path segment would let WHATWG URL
-  // normalization collapse the path and escape the `/repos/{owner}/{repo}/
-  // contents/` prefix, turning a benign-looking repo_url into a request against
-  // an arbitrary api.github.com endpoint. GitHub-derived values cannot contain
-  // these, so reject (→ parse-failed, row stays quarantined — never a misfetch).
-  const segments = `${owner}/${repo}/${filePath}`.split('/')
-  if (segments.some((s) => s === '.' || s === '..')) return null
-
-  const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}${query}`
-
-  return { owner, repo, ref, dir, apiUrl }
-}
-
 /** A row is a false positive (clearable) when the fixed scanner no longer quarantines it. */
 export function isFalsePositive(scan: EdgeScanResult): boolean {
   return !shouldQuarantine(scan)
@@ -128,22 +66,6 @@ export function isFalsePositive(scan: EdgeScanResult): boolean {
 /** Count `security_scan` findings on a row's stored JSONB (for reporting). */
 export function countFindings(findings: unknown): number {
   return Array.isArray(findings) ? findings.length : 0
-}
-
-/**
- * Fetch and decode a skill's SKILL.md via the GitHub Contents API.
- * Returns null on any non-200 / missing-content response (treated as fetch-failed).
- */
-async function fetchSkillMd(
-  parsed: ParsedSkillUrl,
-  headers: Record<string, string>
-): Promise<string | null> {
-  const res = await fetch(parsed.apiUrl, { headers })
-  if (!res.ok) return null
-  const body = (await res.json()) as { content?: string; encoding?: string }
-  if (typeof body.content !== 'string' || body.encoding !== 'base64') return null
-  // Contents API base64 payloads are newline-wrapped.
-  return Buffer.from(body.content.replace(/\n/g, ''), 'base64').toString('utf-8')
 }
 
 interface SweepCounts {
@@ -172,10 +94,12 @@ async function processRow(
   const parsed = parseSkillMdUrl(row.repo_url, row.skill_path)
   if (!parsed) return { row, outcome: 'parse-failed' }
 
-  const content = await fetchSkillMd(parsed, headers)
-  if (content === null) return { row, outcome: 'fetch-failed' }
+  const fetched = await fetchSkillMd(parsed, headers)
+  // not-found (genuine 404) and transient (rate limit / network) both leave the
+  // row quarantined here — this sweep never re-tags, so the distinction is moot.
+  if (fetched.kind !== 'content') return { row, outcome: 'fetch-failed' }
 
-  const scan = await scanSkillContent(content)
+  const scan = await scanSkillContent(fetched.content)
   if (!isFalsePositive(scan)) return { row, outcome: 'kept', score: scan.riskScore }
 
   if (!apply) return { row, outcome: 'cleared', score: scan.riskScore }
