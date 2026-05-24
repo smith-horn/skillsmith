@@ -28,6 +28,7 @@ import {
 } from './_shared/security-scanner-edge.ts'
 
 import { parseFrontmatter } from './frontmatter-parser.ts'
+import { deriveCompatibility } from './compatibility-map.ts'
 import type { HighTrustAuthor } from './high-trust-authors.ts'
 import type { GitHubRepository } from './topic-search.ts'
 
@@ -471,6 +472,10 @@ export function repositoryToSkill(
     // Migration 055's CHECK constraint allows empty string; new rows never land as NULL.
     // Legacy NULLs remain as-is (cohort marker for SMI-4385 before/after yield measurement).
     skill_path: repo.skillPath ?? '',
+    // SMI-5177 (Phase 2a): forward-populate compatibility from skill_path so the
+    // migration backfill only ever covers pre-existing rows. Same matrix as the
+    // backfill CASE (scripts/indexer/compatibility-map.ts). [] = unknown/unscoped.
+    compatibility: deriveCompatibility(repo.skillPath ?? ''),
     tree_hash: repo.treeHash ?? null, // SMI-4861 Wave 1 — migration 20260512000001
     last_tree_hash_check: repo.treeHash ? new Date().toISOString() : null,
   }
