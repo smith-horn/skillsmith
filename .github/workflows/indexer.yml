@@ -30,6 +30,7 @@ on:
     - cron: '0 18 * * *' # discovery - Phase 1, cycle 18
     - cron: '0 19 * * *' # discovery - Phase 2, cycle 18
     - cron: '0 20 * * *' # discovery - Phase 3 + finalize, cycle 18
+    - cron: '0 3 * * *' # recheck (SMI-5166) - re-fetch live-but-undiscovered skills by repo_url
   workflow_dispatch:
     inputs:
       dry_run:
@@ -50,6 +51,7 @@ on:
         options:
           - discovery
           - maintenance
+          - recheck
       discovery_phase:
         description: 'Discovery phase (SMI-4870): empty = full sequential run; 1/2/3 = single phase'
         required: false
@@ -157,6 +159,10 @@ jobs:
                 RUN_TYPE="maintenance"
                 STALE_DAYS="7"
                 ;;
+              "0 3 * * *")
+                RUN_TYPE="recheck"
+                STALE_DAYS=""
+                ;;
               "0 6 * * *")
                 RUN_TYPE="discovery"
                 STALE_DAYS="30"
@@ -230,6 +236,8 @@ jobs:
             if [ -z "$STALE_DAYS" ]; then
               if [ "$RUN_TYPE" = "maintenance" ]; then
                 STALE_DAYS="7"
+              elif [ "$RUN_TYPE" = "recheck" ]; then
+                STALE_DAYS=""
               else
                 STALE_DAYS="30"
               fi
@@ -275,6 +283,15 @@ jobs:
           DISCOVERY_PHASE: ${{ steps.config.outputs.discovery_phase }}
           CONCURRENCY: ${{ github.event.inputs.concurrency || '2' }}
           # CONCURRENCY_KILL_SWITCH inherited from the job-level env (kill-switch sources).
+          # SMI-5166 recheck vars - sourced from optional repo variables with safe defaults.
+          # RECHECK_DRY_RUN is intentionally independent of the workflow DRY_RUN input.
+          # On a scheduled cron there are no inputs, so DRY_RUN resolves to 'false' (live).
+          # RECHECK_DRY_RUN defaults to 'true' as an enforceable dry-run-first gate;
+          # flip to 'false' in the repo var only after observing 2-3 dry-run nights.
+          RECHECK_THRESHOLD_DAYS: ${{ vars.RECHECK_THRESHOLD_DAYS || '5' }}
+          RECHECK_MAX_CANDIDATES: ${{ vars.RECHECK_MAX_CANDIDATES || '2000' }}
+          RECHECK_BATCH: ${{ vars.RECHECK_BATCH || '5' }}
+          RECHECK_DRY_RUN: ${{ vars.RECHECK_DRY_RUN || 'true' }}
         run: |
           # Issue #1: npx tsx (not node --experimental-strip-types).
           # The entrypoint emits one JSON line on success; capture for downstream steps.
@@ -331,6 +348,31 @@ jobs:
             echo "| Concurrency | $CONC |"
             echo "| Kill switch engaged | $KILL |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # SMI-5166: recheck-specific counters from data.recheck sub-object.
+          if [ "$RUN_TYPE" = "recheck" ]; then
+            RC_CANDIDATES=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.candidate_count // 0')
+            RC_LIVE_TOUCHED=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.live_touched // 0')
+            RC_CLEARED=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.cleared // 0')
+            RC_REPO_GONE=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.repo_gone // 0')
+            RC_CAS_SKIPPED=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.cas_skipped // 0')
+            RC_CAP_SATURATED=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.cap_saturated // false')
+            RC_FETCH_ERR=$(printf '%s' "$RESPONSE" | jq -r '.data.recheck.fetch_error_rate // 0')
+            {
+              echo ""
+              echo "#### Recheck Detail (SMI-5166)"
+              echo ""
+              echo "| Recheck Metric | Value |"
+              echo "|----------------|-------|"
+              echo "| Candidates | $RC_CANDIDATES |"
+              echo "| Live Touched (re-fetched live) | $RC_LIVE_TOUCHED |"
+              echo "| Cleared (self-heal) | $RC_CLEARED |"
+              echo "| Repo Gone | $RC_REPO_GONE |"
+              echo "| CAS Skipped (row state changed mid-run) | $RC_CAS_SKIPPED |"
+              echo "| Cap Saturated | $RC_CAP_SATURATED |"
+              echo "| Fetch Error Rate | $RC_FETCH_ERR |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Report Failure
         if: failure()

@@ -34,6 +34,8 @@ import { DEFAULT_MIN_CONTENT_LENGTH } from './skill-processor.ts'
 import { selectTopics, type RotationSource } from './topic-rotation.ts'
 import { runDiscovery } from './discovery-orchestrator.ts'
 import { runMaintenanceReconciliation } from './maintenance-helpers.ts'
+import { runRecheck } from './recheck.ts'
+import type { RecheckResult } from './recheck.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
 import { prefetchExistingSkills } from './prefetch-existing-skills.ts'
@@ -45,7 +47,7 @@ interface RunSummary {
   data: unknown
   meta: {
     request_id: string
-    run_type: 'discovery' | 'maintenance'
+    run_type: 'discovery' | 'maintenance' | 'recheck'
     rate_limit_remaining_min: number
     // SMI-4918: per-bucket GitHub rate-limit minimums (core/search/code_search).
     core_remaining_min: number
@@ -164,6 +166,27 @@ async function runMaintenanceBranch(
   })
 }
 
+async function runRecheckBranch(
+  env: IndexerEnv,
+  requestId: string,
+  telemetry: RateLimitTelemetry
+): Promise<RecheckResult> {
+  const supabase = createSupabaseAdminClient()
+  // RECHECK_DRY_RUN is the enforceable dry-run-first gate (SMI-5166 E6):
+  // a scheduled cron has no inputs.dry_run, so the workflow DRY_RUN resolves
+  // to false (live) on night 1; recheck reads its own RECHECK_DRY_RUN repo-var
+  // instead. apply = !dryRun.
+  return await runRecheck({
+    supabase,
+    requestId,
+    apply: !env.RECHECK_DRY_RUN,
+    thresholdDays: env.RECHECK_THRESHOLD_DAYS,
+    cap: env.RECHECK_MAX_CANDIDATES,
+    batch: env.RECHECK_BATCH,
+    telemetry,
+  })
+}
+
 async function main(): Promise<void> {
   const env = parseEnv()
   const requestId = getRequestId()
@@ -239,7 +262,7 @@ async function main(): Promise<void> {
       quarantined: 0,
       github_skill_count: 0,
       code_search: undefined,
-      scoreDistribution: { highTrust: 0, community: 0 },
+      scoreDistribution: { highTrust: 0, community: 0, scores: [] },
       categorizedCount: 0,
       categoryAssignments: 0,
       wildcard_expansion_count: 0,
@@ -261,6 +284,8 @@ async function main(): Promise<void> {
   try {
     if (env.RUN_TYPE === 'maintenance') {
       result = await runMaintenanceBranch(env, requestId, telemetry)
+    } else if (env.RUN_TYPE === 'recheck') {
+      result = await runRecheckBranch(env, requestId, telemetry)
     } else {
       const discovery = await runDiscoveryBranch(env, requestId, telemetry)
       result = discovery.result
@@ -282,6 +307,10 @@ async function main(): Promise<void> {
     }
   }
 
+  // tree_hash_cache is only present on discovery results; cast narrowly to read
+  // the optional counters without widening the `result` type elsewhere.
+  const treeHashCache = (result as { tree_hash_cache?: { hits?: number; misses?: number } } | null)
+    ?.tree_hash_cache
   const summary: RunSummary = {
     data: result,
     meta: {
@@ -292,8 +321,8 @@ async function main(): Promise<void> {
       topics,
       cron_slot: env.CRON_SLOT,
       rotation_source: rotationSource,
-      tree_hash_cache_hits: result.tree_hash_cache?.hits ?? 0,
-      tree_hash_cache_misses: result.tree_hash_cache?.misses ?? 0,
+      tree_hash_cache_hits: treeHashCache?.hits ?? 0,
+      tree_hash_cache_misses: treeHashCache?.misses ?? 0,
       ...summarizeRateLimitTelemetry(telemetry),
     },
   }

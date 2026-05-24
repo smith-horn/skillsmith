@@ -67,11 +67,15 @@ export interface StaleQuarantinedRow {
   skill_path: string | null
   quarantine_reason: string | null
   security_findings: unknown
+  /** SMI-5166: present only for recheck candidates (loadRecheckCandidates selects them). Absent (undefined) for the Wave-1 loadCandidates cohort, which preserves clear-path behavior. */
+  quarantined?: boolean
+  last_seen_at?: string
 }
 
 /** Per-row outcome of the stale-revalidation sweep. */
 export type StaleOutcome =
   | 'cleared'
+  | 'live-touched'
   | 'kept-security'
   | 'repo-gone'
   | 'parse-failed'
@@ -88,6 +92,7 @@ interface RowResult {
 interface SweepCounts {
   total: number
   cleared: number
+  liveTouched: number
   keptSecurity: number
   repoGone: number
   parseFailed: number
@@ -115,11 +120,23 @@ async function retagUnreachable(
   db: SupabaseClient
 ): Promise<void> {
   const now = new Date().toISOString()
-  await db
+  // SMI-5166 (E9): CAS-gate the re-tag and the audit insert. retagUnreachable is
+  // reused by the recurring recheck, whose candidate set includes quarantined=false
+  // rows. A quarantined=false row whose GitHub repo 404s must NOT be re-tagged or
+  // have last_seen_at bumped — that would keep a dead repo artificially alive (see
+  // E8); maintenance ages it out at 7 days instead. The .eq('quarantined', true)
+  // guard already no-ops the UPDATE for such rows; gating the audit insert on
+  // rows-affected stops a no-op write from emitting a misleading
+  // quarantine:repo_gone row. Wave-1 (loadCandidates) rows are all quarantined=true,
+  // so the CAS always hits and behavior is unchanged.
+  const { data: retagged } = await db
     .from('skills')
     .update({ quarantine_reason: reason, last_seen_at: now })
     .eq('id', row.id)
     .eq('quarantined', true)
+    .select('id')
+
+  if (!retagged || retagged.length === 0) return
 
   await db.from('audit_logs').insert({
     event_type: eventType,
@@ -216,10 +233,44 @@ export async function processRow(
     return { row, outcome: 'kept-security', score: scan.riskScore }
   }
 
-  // Step 4: scanner passes — clear the quarantine.
+  // Step 4: scanner passes.
+  const now = new Date().toISOString()
+
+  // SMI-5166 prevention branch: an aging-but-not-yet-quarantined LIVE row
+  // (quarantined === false) just needs its last_seen_at refreshed so the
+  // 7-day maintenance reconcile never quarantines it. The strict `=== false`
+  // guard means Wave-1 loadCandidates rows (quarantined undefined) fall through
+  // to the existing clear path unchanged (SMI-5166 E4 regression pin).
+  if (row.quarantined === false) {
+    if (!apply) return { row, outcome: 'live-touched', score: scan.riskScore }
+    // E1: the CAS guard `.eq('quarantined', false)` is REQUIRED, not optional.
+    // Candidates are loaded up front and the run takes minutes; if the daily
+    // maintenance pass quarantines this row between load and this write, an
+    // unconditional last_seen_at write would stamp a fresh timestamp onto a
+    // now-quarantined row WITHOUT clearing quarantined — leaving it stuck
+    // quarantined-but-fresh, invisible to Phase 6 AND to the next recheck's
+    // self-heal cohort. The CAS no-ops in that race, so the row keeps its old
+    // timestamp and is correctly picked up as quarantined=true stale next run.
+    const { data: touched, error: touchErr } = await db
+      .from('skills')
+      .update({ last_seen_at: now })
+      .eq('id', row.id)
+      .eq('quarantined', false)
+      .select('id')
+    if (touchErr) {
+      console.error(`  ERROR touching ${row.author}/${row.name}: ${touchErr.message}`)
+      return { row, outcome: 'error', score: scan.riskScore }
+    }
+    if (!touched || touched.length === 0)
+      return { row, outcome: 'cas-skipped', score: scan.riskScore }
+    // Pure liveness touch — emit NO audit row (silent, like the indexer's
+    // unchangedIds touch). last_seen_at refresh is not a state transition worth auditing.
+    return { row, outcome: 'live-touched', score: scan.riskScore }
+  }
+
+  // Existing quarantined=true clear path (self-heal): clear the quarantine.
   if (!apply) return { row, outcome: 'cleared', score: scan.riskScore }
 
-  const now = new Date().toISOString()
   const { data: updated, error } = await db
     .from('skills')
     .update({
@@ -319,6 +370,7 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
   const counts: SweepCounts = {
     total: rows.length,
     cleared: 0,
+    liveTouched: 0,
     keptSecurity: 0,
     repoGone: 0,
     parseFailed: 0,
@@ -344,6 +396,9 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
         case 'cleared':
           counts.cleared++
           console.log(`  CLEAR  ${tag} (score ${r.score})`)
+          break
+        case 'live-touched':
+          counts.liveTouched++
           break
         case 'kept-security':
           counts.keptSecurity++
@@ -389,6 +444,7 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
     `\n── Summary ──\n` +
       `  total:           ${counts.total}\n` +
       `  ${clearedLabel}:       ${counts.cleared}\n` +
+      `  live-touched:    ${counts.liveTouched}\n` +
       `  kept-security:   ${counts.keptSecurity}\n` +
       `  repo-gone:       ${counts.repoGone}\n` +
       `  parse-failed:    ${counts.parseFailed}\n` +
