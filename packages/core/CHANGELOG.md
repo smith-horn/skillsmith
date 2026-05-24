@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.0).
+
 ## v0.8.0
 
 - **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the

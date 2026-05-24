@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.4
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.5.3).
+
 ## v0.5.3
 
 - **Refactor**: SMI-5036 split oversized billing test files (#1282)

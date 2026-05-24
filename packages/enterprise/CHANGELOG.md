@@ -4,6 +4,9 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.1.3
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.1.2).
 - **Chore**: SMI-5044 / SMI-5119 — `StripeWebhookHandler` class `implements
   StripeWebhookHandlerContract`, providing a compile-time assignability
   guarantee for the structural surface consumed by `@skillsmith/mcp-server`.
