@@ -483,6 +483,11 @@ verify_jwt = true
 [functions.sync-stripe-email]
 verify_jwt = true
 
+# SMI-5173: sync-oauth-email — flips auth.users.email to the verified provider
+# email (read server-side via Admin API) for GitHub/Google OAuth accounts.
+[functions.sync-oauth-email]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
