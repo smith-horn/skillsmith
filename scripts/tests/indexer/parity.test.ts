@@ -17,6 +17,13 @@
  * SMI-4960: the source-extraction helpers live in ./parity-utils.ts so this
  * file and the security-scanner-edge parity assertions can share them without
  * either crossing the 500-line limit.
+ *
+ * SMI-5175: `countGitHubSkillFiles` (topic-search) and `FALLBACK_PATH_PREFIXES`
+ * (subdirectory-search) are deliberately NOT parity-guarded. Phase 0 changed the
+ * authoritative Node twins only (broad-query universe count + two new path
+ * prefixes); the legacy Deno twins are left untouched pending SMI-5182's
+ * delete-or-guard decision. Do not "re-sync" the Deno twins to silence drift —
+ * SMI-5182 owns that call.
  */
 
 import { describe, it, expect, afterAll } from 'vitest'
