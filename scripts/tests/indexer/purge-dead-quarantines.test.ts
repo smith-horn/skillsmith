@@ -26,9 +26,17 @@ import {
   describeDeadSet,
   defaultExportPath,
   CSV_COLUMNS,
+  DELETE_BATCH,
   runPurge,
   type DeadRow,
 } from '../../indexer/purge-dead-quarantines.ts'
+
+/** Expected per-batch lengths when deleting `n` rows in `DELETE_BATCH` chunks. */
+function expectedBatches(n: number): number[] {
+  const out: number[] = []
+  for (let i = 0; i < n; i += DELETE_BATCH) out.push(Math.min(DELETE_BATCH, n - i))
+  return out
+}
 
 // The script reads the admin client from this module; stub the factory so no
 // real network client is ever constructed.
@@ -303,9 +311,10 @@ describe('runPurge', () => {
 
     expect(counts.total).toBe(1200)
     expect(counts.deleted).toBe(1200)
-    // 1200 / 500 => batches of 500, 500, 200.
-    expect(skillDeleteBatches.map((b) => b.length)).toEqual([500, 500, 200])
-    expect(approvalDeleteBatches.map((b) => b.length)).toEqual([500, 500, 200])
+    // Deleted in DELETE_BATCH-sized chunks (URL-length-safe for PostgREST .in()).
+    expect(skillDeleteBatches.map((b) => b.length)).toEqual(expectedBatches(1200))
+    expect(approvalDeleteBatches.map((b) => b.length)).toEqual(expectedBatches(1200))
+    expect(skillDeleteBatches.every((b) => b.length <= DELETE_BATCH)).toBe(true)
     expect(counts.approvalsDeleted).toBe(1200)
 
     // Exactly one skill:purged audit row.

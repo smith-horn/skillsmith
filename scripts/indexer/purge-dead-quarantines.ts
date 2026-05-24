@@ -46,7 +46,7 @@
  * ── Safety model ───────────────────────────────────────────────────────────
  *   - `--dry-run` is the DEFAULT; `--apply` is REQUIRED for any DELETE.
  *   - `--limit N` performs a staged run (deletes at most N rows).
- *   - Batched delete (BATCH=500) — each batch is its own transaction, satisfying
+ *   - Batched delete (BATCH=100) — each batch is its own transaction, satisfying
  *     "COMMIT between batches" and keeping each request under PostgREST's 8s
  *     statement_timeout.
  *   - ONE `audit_logs` `skill:purged` row is written summarizing the run.
@@ -247,7 +247,13 @@ export async function loadDeadSet(db: SupabaseClient, limit?: number): Promise<D
   return out
 }
 
-const DELETE_BATCH = 500
+/**
+ * Rows deleted per request. Kept small because PostgREST encodes `.in('id', […])`
+ * into the request URL — ~300+ ids overflow the gateway URL limit (400 Bad
+ * Request, verified against prod). 100 keeps the URL well under the limit while
+ * each batch stays a single fast transaction under the 8s statement_timeout.
+ */
+export const DELETE_BATCH = 100
 
 /**
  * Delete the dead rows from `skills` in batches (each a separate transaction).
