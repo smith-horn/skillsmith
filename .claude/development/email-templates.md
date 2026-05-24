@@ -455,7 +455,15 @@ Used at the top of every template:
 ## Template 4 — Email Change
 
 **Supabase location**: Auth → Email Templates → Change email address
-**Subject**: `Confirm your new Skillsmith email address`
+**Subject**: `Confirm the email change on your Skillsmith account`
+
+> **SMI-5168 — dual confirmation.** `double_confirm_changes = true` (`supabase/config.toml`),
+> so GoTrue sends this template to **both** the current and the new address, and the change
+> completes only after both confirm. The copy below is written to be accurate for either
+> recipient (current-address holder *authorizes*; new-address holder *confirms*) — do **not**
+> rely on a `{{ if eq .Email .NewEmail }}` branch, which never matches (`.Email` is always the
+> current address, `.NewEmail` the new one). Keep this docs template and the live dashboard
+> template in sync — the dashboard copy is the deployed source (update it during UAT).
 
 ```html
 <!DOCTYPE html>
@@ -505,14 +513,14 @@ Used at the top of every template:
               <tr>
                 <td style="padding-bottom:16px;">
                   <h1 style="margin:0;font-size:24px;font-weight:700;color:#fafafa;line-height:1.3;">
-                    Confirm your new email address
+                    Confirm your email change
                   </h1>
                 </td>
               </tr>
               <tr>
                 <td style="padding-bottom:24px;">
                   <p style="margin:0;font-size:16px;color:#9ca3af;line-height:1.6;">
-                    You requested an email address change on your Skillsmith account. Click below to confirm your new address.
+                    A request was made to change the email address on your Skillsmith account to the address below. Click the button to confirm.
                   </p>
                 </td>
               </tr>
@@ -546,7 +554,7 @@ Used at the top of every template:
               <tr>
                 <td style="padding-bottom:24px;">
                   <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6;text-align:center;">
-                    This link expires in 24 hours. If you didn't request this change, please <a href="https://www.skillsmith.app/contact" style="color:#e07a5f;text-decoration:none;">contact support</a> immediately.
+                    For your security, this change must be confirmed from <strong style="color:#9ca3af;">both</strong> your current and new email addresses &mdash; if you only see this in one inbox, check the other too. This link expires in 24 hours. If you didn't request this change, please <a href="https://www.skillsmith.app/contact" style="color:#e07a5f;text-decoration:none;">contact support</a> immediately.
                   </p>
                 </td>
               </tr>

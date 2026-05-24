@@ -51,6 +51,7 @@ AUTHENTICATED_FUNCTIONS=(
   "auth-device-approve"
   "auth-device-preview"
   "team-invite-send"
+  "sync-stripe-email"
 )
 
 # Service role functions (scheduled jobs, internal)

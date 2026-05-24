@@ -60,6 +60,13 @@
       "checks": ["check_auth_device_code_reachable", "check_auth_device_preview_requires_jwt"]
     },
     {
+      "id": "edge-fn-sync-stripe-email",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/sync-stripe-email/**"],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_sync_stripe_email_requires_jwt"]
+    },
+    {
       "id": "cli-published",
       "owner": "cli",
       "trigger_globs": ["packages/cli/**"],
