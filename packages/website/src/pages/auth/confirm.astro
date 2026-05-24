@@ -241,6 +241,7 @@ const supabaseConfig = getSupabaseConfig()
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { STRIPE_EMAIL_RESYNC_KEY } from '../../lib/account-flags'
 
   const VALID_TYPES = ['signup', 'magiclink', 'recovery', 'email_change', 'invite'] as const
   type EmailOtpType = (typeof VALID_TYPES)[number]
@@ -261,8 +262,11 @@ const supabaseConfig = getSupabaseConfig()
     },
     recovery: { heading: 'Link Verified', body: 'Redirecting to password reset...' },
     email_change: {
-      heading: 'Email Updated!',
-      body: 'Your new email address has been confirmed.',
+      // Default; the email_change handler overrides this with an intermediate-vs-
+      // final message because the change is only complete after BOTH inboxes
+      // confirm (double_confirm_changes = true).
+      heading: 'Email change confirmed',
+      body: 'Your email change has been confirmed.',
     },
     invite: { heading: 'Invitation Accepted!', body: 'Setting up your account. Redirecting...' },
   }
@@ -282,21 +286,28 @@ const supabaseConfig = getSupabaseConfig()
     const continueLink = document.getElementById('continue-link') as HTMLAnchorElement | null
     const errorMessageEl = document.getElementById('error-message') as HTMLParagraphElement | null
 
-    function showSuccess(type: EmailOtpType) {
+    function showSuccess(
+      type: EmailOtpType,
+      opts?: { heading?: string; body?: string; autoRedirect?: boolean }
+    ) {
       const msg = SUCCESS_MESSAGES[type]
       const redirectTo = REDIRECT_AFTER_VERIFY[type]
 
-      if (successHeading) successHeading.textContent = msg.heading
-      if (successBody) successBody.textContent = msg.body
+      if (successHeading) successHeading.textContent = opts?.heading ?? msg.heading
+      if (successBody) successBody.textContent = opts?.body ?? msg.body
       if (continueLink) continueLink.href = redirectTo
 
       if (loadingState) loadingState.style.display = 'none'
       if (successState) successState.style.display = 'block'
 
-      // Auto-redirect after 2 seconds
-      setTimeout(() => {
-        window.location.href = redirectTo
-      }, 2000)
+      // Auto-redirect after 2 seconds (suppressed for intermediate states like a
+      // half-confirmed email change, where redirecting to /account would falsely
+      // read as "done").
+      if (opts?.autoRedirect !== false) {
+        setTimeout(() => {
+          window.location.href = redirectTo
+        }, 2000)
+      }
     }
 
     function showError(message?: string) {
@@ -325,13 +336,47 @@ const supabaseConfig = getSupabaseConfig()
       const validType = type as EmailOtpType
       const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-      const { error } = await supabase.auth.verifyOtp({
+      const { data, error } = await supabase.auth.verifyOtp({
         token_hash,
         type: validType,
       })
 
       if (error) {
         showError(error.message)
+      } else if (validType === 'email_change') {
+        // Dual confirmation (double_confirm_changes = true): an email change is
+        // only complete once BOTH the old and new address confirm. While one side
+        // is still pending, the verified user object carries a non-empty
+        // `new_email`. Show an honest intermediate state and do NOT auto-redirect.
+        const verifiedUser = data?.user as unknown as
+          | { email?: string; new_email?: string }
+          | undefined
+        const pending = (verifiedUser?.new_email ?? '').length > 0
+
+        // Flag a best-effort Stripe customer-email resync for the next
+        // authenticated /account load — this page has no durable session of its
+        // own to call the gateway-verified sync function directly.
+        try {
+          sessionStorage.setItem(STRIPE_EMAIL_RESYNC_KEY, '1')
+        } catch {
+          /* sessionStorage unavailable — non-fatal */
+        }
+
+        if (pending) {
+          showSuccess('email_change', {
+            heading: 'One inbox confirmed',
+            body: 'One more step — open the confirmation link in your other inbox to finish changing your email.',
+            autoRedirect: false,
+          })
+        } else {
+          const newEmail = verifiedUser?.email ?? ''
+          showSuccess('email_change', {
+            heading: 'Email updated',
+            body: newEmail
+              ? `Your account email is now ${newEmail}. Redirecting...`
+              : 'Your email change is confirmed. Redirecting...',
+          })
+        }
       } else {
         showSuccess(validType)
       }

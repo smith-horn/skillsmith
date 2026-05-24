@@ -476,6 +476,13 @@ verify_jwt = true
 [functions.indexer-dispatch]
 verify_jwt = true
 
+# SMI-5168: sync-stripe-email — pushes the user's current email to their Stripe
+# customer after a self-service account email change. Authenticated as the user
+# (auth.uid() resolves for the subscriptions/profiles RLS lookups). Deploy
+# WITHOUT --no-verify-jwt; mirrors team-invite-send.
+[functions.sync-stripe-email]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
