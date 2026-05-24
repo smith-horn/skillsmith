@@ -307,6 +307,7 @@ SELECT version, name, statements[1]
 - **SMI-4299** — port 6543 (transaction mode) fails mid-push on prepared-statement conflict. Always use 5432 (session mode) for migrations.
 - **SMI-4306** — `team_members` inline subquery in RLS caused recursion at query time. Fixed via `user_team_ids()` SECURITY DEFINER helper (migration 071) + consolidation (migration 074).
 - **SMI-4353** — `audit_logs` had `USING (true)` on authenticated role for ~2 years — every team's audit trail was readable by every authenticated user in production. The policy-audit check in pre-apply §1 would have caught this earlier.
+- **SMI-5187** (May 2026) — a compatibility-column migration was applied **prod-only**, skipping the mandated staging-first step. Edge functions auto-deploy to **both** envs from `main`, so staging ran the new code (which SELECTs the column) against a column-less table → PostgREST `42703` → 500 on the post-deploy smoke's skills checks (which route to **staging**, `scripts/smoke-prod/website.sh:301`). Lesson: a prod-only apply is uniquely dangerous because staging already runs the matching code — keep staging's `schema_migrations` in lock-step. Durable enforcement tracked in SMI-5190.
 
 ---
 
