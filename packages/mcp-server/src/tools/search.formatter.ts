@@ -79,6 +79,18 @@ export function formatSearchResults(response: SearchResponse): string {
     })
   }
 
+  // SMI-5178: surface how many results were hidden by the compatibility filter
+  // (the restrictive cross-tool default or an explicit compatible_with) so the
+  // model/user knows the view is scoped to their tool and can broaden it.
+  if (response.compatibilityHidden && response.compatibilityHidden > 0) {
+    lines.push('')
+    lines.push(
+      '+ ' +
+        response.compatibilityHidden +
+        ' more skill(s) hidden — tagged for other tools. Pass compatible_with to change the filter.'
+    )
+  }
+
   // Add timing info
   lines.push('---')
   lines.push(

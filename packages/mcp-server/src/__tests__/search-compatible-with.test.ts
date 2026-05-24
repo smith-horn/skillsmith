@@ -7,7 +7,7 @@
  * under the 500-line gate after disposeTestContext wiring.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { executeSearch } from '../tools/search.js'
 import { type SkillSearchResult } from '@skillsmith/core'
 import { createSeededTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
@@ -115,5 +115,50 @@ describe('SMI-2760: compatible_with filter', () => {
     expect(skillWithCompat.compatibility).toContain('claude-code')
     // Skill with non-matching compatibility — excluded when filtering by claude-code
     expect(skillNoMatch.compatibility).not.toContain('claude-code')
+  })
+})
+
+describe('SMI-5178: restrictive cross-tool default (explicit SKILLSMITH_CLIENT)', () => {
+  let ctx: ToolContext
+  const original = process.env['SKILLSMITH_CLIENT']
+
+  beforeAll(async () => {
+    ctx = await createSeededTestContext()
+  })
+
+  afterAll(async () => {
+    await disposeTestContext(ctx)
+  })
+
+  afterEach(() => {
+    if (original === undefined) delete process.env['SKILLSMITH_CLIENT']
+    else process.env['SKILLSMITH_CLIENT'] = original
+  })
+
+  it('unset client → permissive (no compatibility restriction)', async () => {
+    delete process.env['SKILLSMITH_CLIENT']
+    const result = await executeSearch({ query: 'test' }, ctx)
+    expect(result.filters.compatibleWith).toBeUndefined()
+  })
+
+  it('explicit client → restricts to that tool', async () => {
+    process.env['SKILLSMITH_CLIENT'] = 'windsurf'
+    const result = await executeSearch({ query: 'test' }, ctx)
+    expect(result.filters.compatibleWith).toEqual({ ides: ['windsurf'] })
+  })
+
+  it('agents (Codex) client → restricts to codex', async () => {
+    process.env['SKILLSMITH_CLIENT'] = 'agents'
+    const result = await executeSearch({ query: 'test' }, ctx)
+    expect(result.filters.compatibleWith).toEqual({ ides: ['codex'] })
+  })
+
+  it('explicit compatible_with overrides the client default', async () => {
+    process.env['SKILLSMITH_CLIENT'] = 'windsurf'
+    const result = await executeSearch(
+      { query: 'test', compatible_with: { ides: ['cursor'] } },
+      ctx
+    )
+    expect(result.filters.compatibleWith).toEqual({ ides: ['cursor'] })
   })
 })

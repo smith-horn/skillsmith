@@ -75,6 +75,13 @@ export interface ApiSkill {
   /** Associated category names (joined from skill_categories by skills-get) */
   categories?: string[]
   /**
+   * SMI-5178: Cross-ecosystem compatibility slugs (e.g. ["claude-code","copilot"]),
+   * derived from skill_path by the indexer (SMI-5177). `[]`/absent = unknown/unscoped,
+   * NOT incompatible. Hydrated onto search results by skills-search; returned by
+   * skills-get via `.select('*')`.
+   */
+  compatibility?: string[]
+  /**
    * SMI-4240: Security scan fields returned by skills-get via `...skill` spread.
    * All optional/nullable to preserve compatibility with pre-4240 responses and
    * with endpoints like skills-search that don't select these columns.
