@@ -5,6 +5,11 @@
   "buildCommand": "npx turbo run build --filter=@skillsmith/website && rm -rf .vercel/output && mkdir -p .vercel && cp -r packages/website/.vercel/output .vercel/output",
   "redirects": [
     {
+      "source": "/changelog",
+      "destination": "https://github.com/smith-horn/skillsmith/releases",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [
         {

@@ -5,6 +5,11 @@
   "buildCommand": "npm run build",
   "redirects": [
     {
+      "source": "/changelog",
+      "destination": "https://github.com/smith-horn/skillsmith/releases",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [
         {
