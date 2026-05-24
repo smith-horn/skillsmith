@@ -78,18 +78,72 @@ export function parseSkillMdUrl(
 }
 
 /**
- * Fetch and decode a skill's SKILL.md via the GitHub Contents API.
- * Returns null on any non-200 / missing-content response (treated as fetch-failed
- * or repo-gone depending on the caller's context).
+ * Outcome of a SKILL.md fetch. Callers MUST distinguish `not-found` (a genuine
+ * 404 — the file is gone) from `transient` (403 secondary-rate-limit, 429, 5xx,
+ * network error, or an unexpected 200 body). A `transient` result must NEVER be
+ * treated as "repo gone": doing so would let a rate-limit blip re-tag a live
+ * skill as deleted and feed it to the destructive purge (SMI-5165 review).
+ */
+export type SkillMdFetch =
+  | { kind: 'content'; content: string }
+  | { kind: 'not-found' }
+  | { kind: 'transient'; status: number }
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Fetch and decode a skill's SKILL.md via the GitHub Contents API, classifying
+ * the result so callers can act safely on rate limits vs genuine 404s.
+ *
+ * - `200` + valid base64 body → `content`.
+ * - `404` → `not-found` (genuinely gone).
+ * - `403`/`429`/`5xx`/network error/unexpected body → `transient`, retried up to
+ *   `retries` times with backoff (honoring `Retry-After` when present).
+ *
+ * GitHub's secondary rate limit returns `403` *without* consuming core quota, so
+ * a large sweep can see many `403`s even with quota remaining — hence the
+ * explicit `transient` classification.
  */
 export async function fetchSkillMd(
   parsed: ParsedSkillUrl,
-  headers: Record<string, string>
-): Promise<string | null> {
-  const res = await fetch(parsed.apiUrl, { headers })
-  if (!res.ok) return null
-  const body = (await res.json()) as { content?: string; encoding?: string }
-  if (typeof body.content !== 'string' || body.encoding !== 'base64') return null
-  // Contents API base64 payloads are newline-wrapped.
-  return Buffer.from(body.content.replace(/\n/g, ''), 'base64').toString('utf-8')
+  headers: Record<string, string>,
+  retries = 2
+): Promise<SkillMdFetch> {
+  for (let attempt = 0; ; attempt++) {
+    let res: Response
+    try {
+      res = await fetch(parsed.apiUrl, { headers })
+    } catch {
+      if (attempt < retries) {
+        await sleep(500 * 2 ** attempt)
+        continue
+      }
+      return { kind: 'transient', status: 0 } // network error
+    }
+
+    if (res.status === 404) return { kind: 'not-found' }
+
+    if (res.status === 200) {
+      const body = (await res.json()) as { content?: string; encoding?: string }
+      if (typeof body.content !== 'string' || body.encoding !== 'base64') {
+        // Unexpected 200 shape — treat as transient (never a false "gone").
+        return { kind: 'transient', status: 200 }
+      }
+      // Contents API base64 payloads are newline-wrapped.
+      return {
+        kind: 'content',
+        content: Buffer.from(body.content.replace(/\n/g, ''), 'base64').toString('utf-8'),
+      }
+    }
+
+    // 403 / 429 / 5xx — transient; back off and retry.
+    if (attempt < retries) {
+      const retryAfter = Number(res.headers.get('retry-after'))
+      await sleep(
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** attempt
+      )
+      continue
+    }
+    return { kind: 'transient', status: res.status }
+  }
 }

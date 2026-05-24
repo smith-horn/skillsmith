@@ -76,6 +76,7 @@ function encodeAsGitHubResponse(content: string): string {
 function stubFetchOk(content: string): MockInstance {
   return vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
     ok: true,
+    status: 200,
     json: async () => ({
       content: encodeAsGitHubResponse(content),
       encoding: 'base64',
@@ -88,6 +89,15 @@ function stubFetch404(): MockInstance {
   return vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
     ok: false,
     status: 404,
+  } as unknown as Response)
+}
+
+/** Stub a persistent transient (403 secondary-rate-limit) GitHub fetch. */
+function stubFetchTransient(status = 403): MockInstance {
+  return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+    ok: false,
+    status,
+    headers: { get: () => null },
   } as unknown as Response)
 }
 
@@ -299,6 +309,22 @@ describe('processRow — error', () => {
     expect(result.outcome).toBe('error')
     expect(db.insert).not.toHaveBeenCalled()
   })
+})
+
+describe('processRow — fetch-error (transient, never re-tagged)', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it('returns fetch-error on a 403 and does NOT re-tag or clear the row', async () => {
+    stubFetchTransient(403)
+    const row = makeRow()
+    const db = makeDb({ updateError: null, updatedRows: [], insertError: null })
+    const result = await processRow(row, {}, true, db as never)
+    // A rate-limit 403 must NEVER be treated as repo-gone (would feed a false
+    // delete into the purge). Row is left completely untouched.
+    expect(result.outcome).toBe('fetch-error')
+    expect(db.update).not.toHaveBeenCalled()
+    expect(db.insert).not.toHaveBeenCalled()
+  }, 10000)
 })
 
 // ---------------------------------------------------------------------------

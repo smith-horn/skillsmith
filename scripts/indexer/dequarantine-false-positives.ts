@@ -94,10 +94,12 @@ async function processRow(
   const parsed = parseSkillMdUrl(row.repo_url, row.skill_path)
   if (!parsed) return { row, outcome: 'parse-failed' }
 
-  const content = await fetchSkillMd(parsed, headers)
-  if (content === null) return { row, outcome: 'fetch-failed' }
+  const fetched = await fetchSkillMd(parsed, headers)
+  // not-found (genuine 404) and transient (rate limit / network) both leave the
+  // row quarantined here — this sweep never re-tags, so the distinction is moot.
+  if (fetched.kind !== 'content') return { row, outcome: 'fetch-failed' }
 
-  const scan = await scanSkillContent(content)
+  const scan = await scanSkillContent(fetched.content)
   if (!isFalsePositive(scan)) return { row, outcome: 'kept', score: scan.riskScore }
 
   if (!apply) return { row, outcome: 'cleared', score: scan.riskScore }

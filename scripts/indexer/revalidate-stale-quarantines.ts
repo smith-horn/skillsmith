@@ -75,6 +75,7 @@ export type StaleOutcome =
   | 'kept-security'
   | 'repo-gone'
   | 'parse-failed'
+  | 'fetch-error'
   | 'cas-skipped'
   | 'error'
 
@@ -90,9 +91,17 @@ interface SweepCounts {
   keptSecurity: number
   repoGone: number
   parseFailed: number
+  fetchErrors: number
   casSkipped: number
   errors: number
 }
+
+/**
+ * If transient fetch failures (rate limits / 5xx) exceed this fraction of all
+ * rows, the run is being throttled and its `repo-gone` classifications can't be
+ * trusted — abort rather than under-recover or (in apply) under-process.
+ */
+const MAX_FETCH_ERROR_RATE = 0.1
 
 // ---------------------------------------------------------------------------
 // Per-row logic
@@ -151,15 +160,21 @@ export async function processRow(
   }
 
   // Step 2: fetch SKILL.md from GitHub.
-  const content = await fetchSkillMd(parsed, headers)
-  if (content === null) {
+  const fetched = await fetchSkillMd(parsed, headers)
+  if (fetched.kind === 'transient') {
+    // Rate-limited / network / 5xx — NEVER re-tag as gone. A false "repo-gone"
+    // here would feed a live skill into the destructive purge. Leave the row
+    // untouched; a later re-run retries it.
+    return { row, outcome: 'fetch-error' }
+  }
+  if (fetched.kind === 'not-found') {
     const reason = `Repository deleted or not found: ${row.repo_url ?? '(no url)'}`
     if (apply) await retagUnreachable(row, reason, 'quarantine:repo_gone', db)
     return { row, outcome: 'repo-gone' }
   }
 
   // Step 3: run the fixed edge scanner.
-  const scan = await scanSkillContent(content)
+  const scan = await scanSkillContent(fetched.content)
 
   if (shouldQuarantine(scan)) {
     // Row is genuinely risky — keep quarantined, re-tag with real findings so it
@@ -307,6 +322,7 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
     keptSecurity: 0,
     repoGone: 0,
     parseFailed: 0,
+    fetchErrors: 0,
     casSkipped: 0,
     errors: 0,
   }
@@ -341,6 +357,9 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
           counts.parseFailed++
           goneRows.push(r)
           break
+        case 'fetch-error':
+          counts.fetchErrors++
+          break
         case 'cas-skipped':
           counts.casSkipped++
           break
@@ -373,9 +392,20 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
       `  kept-security:   ${counts.keptSecurity}\n` +
       `  repo-gone:       ${counts.repoGone}\n` +
       `  parse-failed:    ${counts.parseFailed}\n` +
+      `  fetch-error:     ${counts.fetchErrors}\n` +
       `  cas-skipped:     ${counts.casSkipped}\n` +
       `  errors:          ${counts.errors}\n`
   )
+
+  // Throttle guard: transient errors never re-tag (safe), but a high rate means
+  // many rows were skipped and the repo-gone tally is incomplete — re-run later.
+  if (counts.total > 0 && counts.fetchErrors / counts.total > MAX_FETCH_ERROR_RATE) {
+    console.warn(
+      `\n⚠️  ${counts.fetchErrors}/${counts.total} rows hit transient fetch errors ` +
+        `(> ${MAX_FETCH_ERROR_RATE * 100}%). The run was likely throttled; ` +
+        `those rows were left untouched. Re-run when GitHub is not rate-limiting.`
+    )
+  }
   if (!opts.apply) console.log('Dry-run only — re-run with --apply to perform writes.\n')
 
   return counts
