@@ -27,6 +27,7 @@ import {
   defaultExportPath,
   CSV_COLUMNS,
   DELETE_BATCH,
+  deleteInBatches,
   runPurge,
   type DeadRow,
 } from '../../indexer/purge-dead-quarantines.ts'
@@ -361,4 +362,36 @@ describe('runPurge', () => {
     ]
     expect(buildCsv(rows).rowCount).toBe(rows.length)
   })
+})
+
+describe('deleteInBatches — transient retry', () => {
+  /** A delete chain whose terminal `.select()` throws `throwTimes` then succeeds. */
+  function dbThrowsThenOk(throwTimes: number) {
+    let calls = 0
+    return {
+      from: () => ({
+        delete: () => ({
+          in() {
+            return this
+          },
+          select() {
+            calls++
+            if (calls <= throwTimes) throw new TypeError('fetch failed')
+            return Promise.resolve({ data: [{ id: 'x' }], error: null })
+          },
+        }),
+      }),
+    }
+  }
+
+  it('retries a thrown network error then succeeds', async () => {
+    const n = await deleteInBatches(dbThrowsThenOk(2) as never, 'skills', 'id', ['a'], undefined, 3)
+    expect(n).toBe(1)
+  }, 10000)
+
+  it('throws after exhausting retries', async () => {
+    await expect(
+      deleteInBatches(dbThrowsThenOk(99) as never, 'skills', 'id', ['a'], undefined, 1)
+    ).rejects.toThrow(/after 2 attempts/)
+  }, 10000)
 })

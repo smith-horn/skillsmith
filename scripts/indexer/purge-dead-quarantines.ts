@@ -255,21 +255,61 @@ export async function loadDeadSet(db: SupabaseClient, limit?: number): Promise<D
  */
 export const DELETE_BATCH = 100
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
 /**
- * Delete the dead rows from `skills` in batches (each a separate transaction).
- * The three CASCADE child tables clear automatically. Returns the number of
- * skill rows confirmed deleted.
+ * Batched `.in()` delete with retry on transient failures — both PostgREST
+ * `error` results AND thrown network errors ("TypeError: fetch failed"). The
+ * live SMI-5167 run died on a thrown fetch error mid-run (the bare `if (error)`
+ * check never saw it), so both paths are retried with backoff before giving up.
+ * Each batch is its own transaction; re-running the tool is idempotent (it
+ * re-selects the remaining dead set), so a hard failure here is recoverable.
  */
-async function deleteSkillRows(db: SupabaseClient, ids: string[]): Promise<number> {
+export async function deleteInBatches(
+  db: SupabaseClient,
+  table: string,
+  column: string,
+  ids: string[],
+  onProgress?: (done: number) => void,
+  retries = 3
+): Promise<number> {
   let deleted = 0
   for (let i = 0; i < ids.length; i += DELETE_BATCH) {
     const batch = ids.slice(i, i + DELETE_BATCH)
-    const { data, error } = await db.from('skills').delete().in('id', batch).select('id')
-    if (error) throw new Error(`skills delete failed (batch @${i}): ${error.message}`)
-    deleted += (data ?? []).length
-    console.log(`  deleted ${deleted}/${ids.length} skills`)
+    let lastErr = ''
+    let done = false
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const { data, error } = await db.from(table).delete().in(column, batch).select(column)
+        if (!error) {
+          deleted += (data ?? []).length
+          done = true
+          break
+        }
+        lastErr = error.message
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e)
+      }
+      if (attempt < retries) await sleep(500 * 2 ** attempt)
+    }
+    if (!done) {
+      throw new Error(
+        `${table} delete failed (batch @${i}) after ${retries + 1} attempts: ${lastErr}`
+      )
+    }
+    onProgress?.(deleted)
   }
   return deleted
+}
+
+/**
+ * Delete the dead rows from `skills` in batches. The three CASCADE child tables
+ * clear automatically. Returns the number of skill rows confirmed deleted.
+ */
+async function deleteSkillRows(db: SupabaseClient, ids: string[]): Promise<number> {
+  return deleteInBatches(db, 'skills', 'id', ids, (done) =>
+    console.log(`  deleted ${done}/${ids.length} skills`)
+  )
 }
 
 /**
@@ -277,18 +317,7 @@ async function deleteSkillRows(db: SupabaseClient, ids: string[]): Promise<numbe
  * they would otherwise orphan). Returns the number of approval rows deleted.
  */
 async function deleteApprovals(db: SupabaseClient, ids: string[]): Promise<number> {
-  let deleted = 0
-  for (let i = 0; i < ids.length; i += DELETE_BATCH) {
-    const batch = ids.slice(i, i + DELETE_BATCH)
-    const { data, error } = await db
-      .from('quarantine_approvals')
-      .delete()
-      .in('skill_id', batch)
-      .select('skill_id')
-    if (error) throw new Error(`quarantine_approvals delete failed (batch @${i}): ${error.message}`)
-    deleted += (data ?? []).length
-  }
-  return deleted
+  return deleteInBatches(db, 'quarantine_approvals', 'skill_id', ids)
 }
 
 /** Write the CSV export, creating the parent directory if needed. */
