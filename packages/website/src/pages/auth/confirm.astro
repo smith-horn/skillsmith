@@ -241,6 +241,7 @@ const supabaseConfig = getSupabaseConfig()
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { STRIPE_EMAIL_RESYNC_KEY } from '../../lib/account-flags'
 
   const VALID_TYPES = ['signup', 'magiclink', 'recovery', 'email_change', 'invite'] as const
   type EmailOtpType = (typeof VALID_TYPES)[number]
@@ -356,7 +357,7 @@ const supabaseConfig = getSupabaseConfig()
         // authenticated /account load — this page has no durable session of its
         // own to call the gateway-verified sync function directly.
         try {
-          sessionStorage.setItem('skillsmith:stripe-email-resync', '1')
+          sessionStorage.setItem(STRIPE_EMAIL_RESYNC_KEY, '1')
         } catch {
           /* sessionStorage unavailable — non-fatal */
         }
