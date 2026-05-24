@@ -22,42 +22,15 @@ import {
   mapTrustTierFromDb,
 } from '../utils/validation.js'
 import { searchLocalSkills } from './LocalSkillSearch.js'
+// SMI-5178: compatibility helpers extracted to keep search.ts under the 500-line
+// governance limit (search.helpers.ts imports only from @skillsmith/core — no
+// circular dependency).
+import {
+  filterByCompatibility,
+  filterInstallable,
+  resolveDefaultCompatibility,
+} from './search.helpers.js'
 export { formatSearchResults } from './search.formatter.js'
-
-/**
- * SMI-2760: Filter search results by compatibility tags.
- * Skills with no compatibility data are included (permissive — they may be compatible
- * but simply haven't declared it yet). Skills that HAVE declared compatibility must
- * include at least one of the requested IDE or LLM slugs.
- */
-function filterByCompatibility(
-  results: SkillSearchResult[],
-  filter: CompatibilityFilter
-): SkillSearchResult[] {
-  const wanted = new Set([...(filter.ides ?? []), ...(filter.llms ?? [])])
-  if (wanted.size === 0) return results
-  return results.filter(
-    (skill) =>
-      !skill.compatibility ||
-      skill.compatibility.length === 0 ||
-      skill.compatibility.some((tag) => wanted.has(tag))
-  )
-}
-
-/**
- * SMI-4954: Drop discovery-only skills when `installable_only` is requested.
- * A skill is installable when it has a registry install source (`repo_url`
- * present) — the `installable` flag is populated by the result mappers below.
- * This is a client-side filter applied to the merged result page, so an
- * `installable_only` search may return fewer than the page limit.
- */
-function filterInstallable(
-  results: SkillSearchResult[],
-  installableOnly: boolean | undefined
-): SkillSearchResult[] {
-  if (!installableOnly) return results
-  return results.filter((skill) => skill.installable === true)
-}
 
 /**
  * Search tool schema for MCP
@@ -255,6 +228,16 @@ async function executeSearchImpl(
     filters.compatibleWith = input.compatible_with
   }
 
+  // SMI-5178: restrictive cross-tool default — apply ONLY when the user's client
+  // is explicitly set (SKILLSMITH_CLIENT) and no compatible_with was passed. An
+  // unset client stays permissive (show all + report hidden count): the client
+  // resolver falls back to claude-code, so auto-restricting would silently hide
+  // cross-tool content from the unset majority. `[]`/unknown rows always surface.
+  if (filters.compatibleWith === undefined) {
+    const restrictive = resolveDefaultCompatibility(process.env['SKILLSMITH_CLIENT'])
+    if (restrictive) filters.compatibleWith = restrictive
+  }
+
   if (input.max_risk !== undefined) {
     if (input.max_risk < 0 || input.max_risk > 100) {
       throw new SkillsmithError(
@@ -298,10 +281,12 @@ async function executeSearchImpl(
         installable: Boolean(item.repo_url),
         // SMI-2734: 'author/name' install ID — valid for all registry API results
         installHint: item.author ? item.author + '/' + item.name : undefined,
-        // SMI-2760: Compatibility tags (populated when API returns them)
-        compatibility: Array.isArray((item as unknown as Record<string, unknown>).compatibility)
-          ? ((item as unknown as Record<string, unknown>).compatibility as string[])
-          : undefined,
+        // SMI-2760 / SMI-5178: compatibility tags. `compatibility` is on ApiSkill
+        // + the Zod schema (so it survives validation at runtime), but the built
+        // ApiSearchResult type does not surface it through the api-client's
+        // ApiResponse<T> at this call site (CI typecheck confirms), so it is read
+        // via a cast — the value is present at runtime.
+        compatibility: (item as unknown as { compatibility?: string[] }).compatibility,
       }))
 
       // SMI-1809: Search local skills and merge with API results
@@ -321,6 +306,9 @@ async function executeSearchImpl(
       const compatFiltered = filters.compatibleWith
         ? filterByCompatibility(merged, filters.compatibleWith)
         : merged
+      // SMI-5178: page-level count hidden by the compatibility filter (restrictive
+      // default or explicit compatible_with). `[]`/unknown rows are never counted.
+      const compatibilityHidden = merged.length - compatFiltered.length
       // SMI-4954: apply installable_only after compatibility filtering
       const mergedResults = filterInstallable(compatFiltered, input.installable_only)
 
@@ -336,6 +324,7 @@ async function executeSearchImpl(
           : ((apiResponse.meta?.total as number) ?? results.length) + localResults.length,
         query: input.query || '', // May be empty for filter-only searches
         filters,
+        compatibilityHidden,
         timing: {
           searchMs: Math.round(searchEnd - searchStart),
           totalMs: Math.round(endTime - startTime),
@@ -436,6 +425,9 @@ async function executeSearchImpl(
   const compatFiltered = filters.compatibleWith
     ? filterByCompatibility(merged, filters.compatibleWith)
     : merged
+  // SMI-5178: page-level count hidden by the compatibility filter (restrictive
+  // default or explicit compatible_with). `[]`/unknown rows are never counted.
+  const compatibilityHidden = merged.length - compatFiltered.length
   // SMI-4954: apply installable_only after compatibility filtering
   const mergedResults = filterInstallable(compatFiltered, input.installable_only)
 
@@ -450,6 +442,7 @@ async function executeSearchImpl(
       : searchResults.total + localResults.length,
     query: input.query || '', // May be empty for filter-only searches
     filters,
+    compatibilityHidden,
     timing: {
       searchMs: Math.round(searchEnd - searchStart),
       totalMs: Math.round(endTime - startTime),

@@ -174,6 +174,16 @@ export { AuditLogger, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS } from './security/
 export { emitInstallEvent } from './audit/remote-audit.js'
 export type { InstallEventPayload } from './audit/remote-audit.js'
 
+// Cross-ecosystem compatibility slug vocabulary (SMI-5178)
+export {
+  COMPATIBILITY_SLUGS,
+  COMPATIBILITY_LABELS,
+  BROWSE_ONLY_SLUGS,
+  CLIENT_TO_COMPATIBILITY_SLUG,
+  compatibilityLabel,
+} from './compatibility/slugs.js'
+export type { CompatibilitySlug } from './compatibility/slugs.js'
+
 // Local skill indexing helper (SMI-4587 Wave 1 PR #4 / NEW-E-2)
 export { indexLocalSkill } from './skills/index-local.js'
 export type {

@@ -164,6 +164,13 @@ export interface SearchResponse {
   total: number
   query: string
   filters: SearchFilters
+  /**
+   * SMI-5178: results on this page hidden by the compatibility filter — the
+   * restrictive cross-tool default (explicit SKILLSMITH_CLIENT) or an explicit
+   * `compatible_with`. 0 / absent when no compat filter applied. `[]`/unknown
+   * rows are never hidden (they always surface).
+   */
+  compatibilityHidden?: number
   timing: {
     searchMs: number
     totalMs: number

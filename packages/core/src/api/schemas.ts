@@ -50,6 +50,10 @@ export const ApiSearchResultSchema = z.object({
   // also be declared here or Zod strips them before get-skill.ts can read them.
   // All .optional() — skills-search doesn't select these columns.
   categories: z.array(z.string()).optional(),
+  // SMI-5178: cross-ecosystem compatibility slugs. Declared here so Zod does not
+  // strip the field skills-search now hydrates — without this the MCP compatibility
+  // filter reads `undefined` and the restrictive default is a no-op.
+  compatibility: z.array(z.string()).optional(),
   security_score: z.number().nullable().optional(),
   last_scanned_at: z.string().nullable().optional(),
   security_findings: z.array(z.unknown()).nullable().optional(),
