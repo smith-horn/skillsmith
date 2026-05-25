@@ -13,6 +13,7 @@ import {
   SkillsmithError,
   ErrorCodes,
   trackSkillSearch,
+  emitSearchEvent,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
@@ -345,6 +346,17 @@ async function executeSearchImpl(
         )
       }
 
+      // SMI-5193: Emit search event so MCP searches land in `search_metrics`
+      // via the `events` edge function. Fire-and-forget; snake_case required.
+      emitSearchEvent({
+        query: input.query || '',
+        results_count: response.total,
+        duration_ms: response.timing.totalMs,
+        has_query: Boolean(hasQuery),
+        ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+        ...(filters.category !== undefined && { category: filters.category }),
+      })
+
       return response
     } catch (error) {
       // Log and fall through to local search
@@ -462,6 +474,17 @@ async function executeSearchImpl(
       }
     )
   }
+
+  // SMI-5193: Emit search event (local-fallback path) so MCP searches land in
+  // `search_metrics` via the `events` edge function. Fire-and-forget.
+  emitSearchEvent({
+    query: input.query || '',
+    results_count: response.total,
+    duration_ms: response.timing.totalMs,
+    has_query: Boolean(hasQuery),
+    ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+    ...(filters.category !== undefined && { category: filters.category }),
+  })
 
   return response
 }
