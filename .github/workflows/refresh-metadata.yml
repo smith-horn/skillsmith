@@ -148,7 +148,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{
               "type": "refresh_failed",
-              "message": "The hourly metadata refresh workflow failed. HTTP Code: ${{ steps.refresh.outputs.http_code }}",
+              "message": "The 4-hourly metadata refresh workflow failed. HTTP Code: ${{ steps.refresh.outputs.http_code }}",
               "workflow": "Skill Metadata Refresh",
               "runId": "${{ github.run_id }}",
               "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
