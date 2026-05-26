@@ -134,7 +134,7 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
 
     for module in "${NATIVE_MODULES[@]}"; do
         echo -e "${YELLOW}  Rebuilding ${module}...${NC}"
-        npm rebuild "${module}" 2>/dev/null || true
+        npm rebuild "${module}" --ignore-scripts=false
     done
 
     # Re-validate after rebuild
@@ -149,6 +149,7 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
     if [ $REBUILD_FAILED -eq 1 ]; then
         echo -e "${RED}[entrypoint] Native module validation failed after rebuild.${NC}"
         echo -e "${YELLOW}Try: docker compose down && docker compose build --no-cache${NC}"
+        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec <container> npm rebuild hnswlib-node${NC}"
         exit 1
     fi
 
