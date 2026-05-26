@@ -113,7 +113,8 @@ echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 # (SMI-4672), this loop is the only runtime rebuild path on cache miss / ABI
 # mismatch — missing a module silently fails open (mock embedding fallback per
 # ADR-009, brute-force vector search per SMI-4577, esbuild platform-binary
-# breakage). Keep this array in sync with Dockerfile:73.
+# breakage). Source-only packages (hnswlib-node) use --ignore-scripts=false so
+# node-gyp runs despite .npmrc (SMI-5200). Keep this array in sync with Dockerfile:73.
 NATIVE_MODULES=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node")
 
 # Track validation status
@@ -134,22 +135,31 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
 
     for module in "${NATIVE_MODULES[@]}"; do
         echo -e "${YELLOW}  Rebuilding ${module}...${NC}"
-        npm rebuild "${module}" --ignore-scripts=false || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
+        # hnswlib-node ships source-only (gypfile: true); --ignore-scripts=false overrides .npmrc
+        # so node-gyp runs (SMI-5200). Prebuilt-binary packages (others) don't need this and it
+        # would re-trigger their CDN download hooks unnecessarily.
+        if [ "${module}" = "hnswlib-node" ]; then
+            npm rebuild "${module}" --ignore-scripts=false || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
+        else
+            npm rebuild "${module}" || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
+        fi
     done
 
     # Re-validate after rebuild
     REBUILD_FAILED=0
+    FAILED_MODULES=""
     for module in "${NATIVE_MODULES[@]}"; do
         if ! node -e "require('${module}')" 2>/dev/null; then
             echo -e "${RED}  ✗ ${module} - still failing after rebuild${NC}"
             REBUILD_FAILED=1
+            FAILED_MODULES="${FAILED_MODULES:+$FAILED_MODULES }${module}"
         fi
     done
 
     if [ $REBUILD_FAILED -eq 1 ]; then
         echo -e "${RED}[entrypoint] Native module validation failed after rebuild.${NC}"
         echo -e "${YELLOW}Try: docker compose down && docker compose build --no-cache${NC}"
-        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec <container> npm rebuild hnswlib-node${NC}"
+        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec skillsmith-dev-1 npm rebuild ${FAILED_MODULES}${NC}"
         exit 1
     fi
 
