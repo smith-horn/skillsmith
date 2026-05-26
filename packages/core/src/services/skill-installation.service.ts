@@ -1,10 +1,7 @@
 /** @fileoverview SkillInstallationService — shared install/uninstall business logic (SMI-3483) */
-import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { SecurityScanner } from '../security/index.js'
-import { safeWriteFile } from '../utils/safe-fs.js'
-import { parseRepoUrl } from '../utils/github-url.js'
 import type { TrustTier } from '../types/skill.js'
 import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
@@ -25,19 +22,25 @@ import {
 import { recordAiDefenceFeedback, collectTrendWarnings } from './skill-installation.feedback.js'
 import { ManifestManager } from './skill-manifest.js'
 import {
-  parseSkillIdInternal,
   hashContent,
-  validateSkillMd,
-  fetchFromGitHub,
   generateTips,
   extractDepIntel,
   persistDependencies,
   applyOptimization,
   performUninstall,
   sanitizeInstallError,
-  validateOptionalConfig,
-  checkDepsAgainstQuarantine,
 } from './skill-installation.helpers.js'
+import {
+  parseSkillIdInternal,
+  validateSkillMd,
+  checkDepsAgainstQuarantine,
+  resolveRegistryInstall,
+} from './skill-installation.validate.js'
+import {
+  fetchFromGitHub,
+  writeInstallFiles,
+  fetchOptionalInstallFiles,
+} from './skill-installation.io.js'
 import { buildInstallFailure, buildConfirmationRequired } from './skill-installation.errors.js'
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_MANIFEST_PATH = path.join(os.homedir(), '.skillsmith', 'manifest.json')
@@ -105,51 +108,16 @@ export class SkillInstallationService {
           })
         }
         this.onProgress('lookup', 'Looking up skill in registry')
-        const registrySkill = await this.registryLookup.lookup(skillId)
-        if (!registrySkill) {
-          return buildInstallFailure('REGISTRY_SKILL_NOT_FOUND', {
-            skillId,
-            installPath: '',
-            error:
-              'Skill "' +
-              skillId +
-              '" is indexed for discovery only. ' +
-              'No installation source available (repo_url is missing). ' +
-              'This may be placeholder/seed data or a metadata-only entry.',
-            tips: [
-              'Use a full GitHub URL instead: install { skillId: "https://github.com/owner/repo" }',
-              'Search for installable skills using the search tool',
-              'Many indexed skills are metadata-only and cannot be installed directly',
-            ],
-          })
-        }
-        if (registrySkill.quarantined) {
-          return buildInstallFailure('QUARANTINED', {
-            skillId,
-            installPath: '',
-            trustTier: registrySkill.trustTier,
-            error:
-              'Skill "' +
-              skillId +
-              '" has been quarantined due to security concerns. ' +
-              'Installation is blocked to protect your environment.',
-            tips: [
-              'Visit https://skillsmith.app/docs/quarantine for details on quarantine policies',
-              'If you believe this is a false positive, contact support via https://skillsmith.app/contact?topic=security',
-              'Contact the skill author or visit the quarantine documentation for more information',
-            ],
-          })
-        }
-
-        const repoInfo = parseRepoUrl(registrySkill.repoUrl)
-        owner = repoInfo.owner
-        repo = repoInfo.repo
-        basePath = repoInfo.path ? repoInfo.path + '/' : ''
-        branch = repoInfo.branch
-        skillName = registrySkill.name
-        trustTier = registrySkill.trustTier
+        const resolution = await resolveRegistryInstall(skillId, this.registryLookup)
+        if (!resolution.resolved) return resolution.failure
+        owner = resolution.owner
+        repo = resolution.repo
+        basePath = resolution.basePath
+        branch = resolution.branch
+        skillName = resolution.skillName
+        trustTier = resolution.trustTier
+        indexedContentHash = resolution.indexedContentHash
         fromRegistry = true
-        indexedContentHash = registrySkill.contentHash
       } else {
         owner = parsed.owner
         repo = parsed.repo
@@ -316,78 +284,28 @@ export class SkillInstallationService {
 
       const { finalSkillContent, subSkillFiles, subagentContent, optimizationInfo } = optimizeResult
       const contentHash = hashContent(finalSkillContent)
-      // Write files
       this.onProgress('write', 'Writing skill files')
-      const writtenFiles: string[] = []
-      try {
-        await fs.mkdir(installPath, { recursive: true })
-        // SMI-4692: realpath both sides — macOS /var/folders symlinks to /private/var/folders.
-        const realInstallPath = await fs.realpath(installPath)
-        const expectedPrefix = await fs
-          .realpath(this.skillsDir)
-          .catch(() => path.resolve(this.skillsDir))
-        if (
-          !realInstallPath.startsWith(expectedPrefix + path.sep) &&
-          realInstallPath !== expectedPrefix
-        ) {
-          throw new Error('Install path escapes skills directory: ' + installPath)
-        }
-
-        const mainSkillPath = path.join(installPath, 'SKILL.md')
-        await safeWriteFile(mainSkillPath, finalSkillContent)
-        writtenFiles.push(mainSkillPath)
-        // Write sub-skills in parallel
-        if (subSkillFiles.length > 0) {
-          await Promise.all(
-            subSkillFiles.map(async (subSkill) => {
-              const subPath = path.join(installPath, subSkill.filename)
-              await safeWriteFile(subPath, subSkill.content)
-              writtenFiles.push(subPath)
-            })
-          )
-        }
-        // Write companion subagent if generated
-        if (subagentContent) {
-          const agentsDir = path.join(os.homedir(), '.claude', 'agents')
-          await fs.mkdir(agentsDir, { recursive: true })
-          const subagentPath = path.join(agentsDir, skillName + '-specialist.md')
-          await safeWriteFile(subagentPath, subagentContent)
-          writtenFiles.push(subagentPath)
-          optimizationInfo.subagentPath = subagentPath
-        }
-      } catch (writeError) {
-        // Rollback on failure
-        for (const filePath of writtenFiles) {
-          await fs.unlink(filePath).catch(() => {})
-        }
-        await fs.rmdir(installPath).catch(() => {})
-        throw writeError
+      const writeResult = await writeInstallFiles(
+        installPath,
+        this.skillsDir,
+        skillName,
+        finalSkillContent,
+        subSkillFiles,
+        subagentContent
+      )
+      if (writeResult.subagentPath) {
+        optimizationInfo.subagentPath = writeResult.subagentPath
       }
-
       // Fetch optional files
-      const optionalFileScanner = options.skipScan
-        ? null
-        : new SecurityScanner(TRUST_TIER_SCANNER_OPTIONS[trustTier])
-      const optionalFiles = ['README.md', 'examples.md', 'config.json']
-      const configWarnings: string[] = []
-      for (const file of optionalFiles) {
-        try {
-          const content = await fetchFromGitHub(owner, repo, basePath + file, branch)
-          if (optionalFileScanner) {
-            const fileScan = optionalFileScanner.scan(skillId + '/' + file, content)
-            if (!fileScan.passed) continue
-          }
-          if (file === 'config.json') {
-            const configCheck = validateOptionalConfig(content)
-            if (!configCheck.valid) continue // SMI-3870: skip invalid config
-            configWarnings.push(...configCheck.warnings)
-          }
-          await safeWriteFile(path.join(installPath, file), content)
-        } catch {
-          // Optional files are fine to skip
-        }
-      }
-
+      const configWarnings = await fetchOptionalInstallFiles(
+        installPath,
+        owner,
+        repo,
+        basePath,
+        branch,
+        skillId,
+        options.skipScan ? null : TRUST_TIER_SCANNER_OPTIONS[trustTier]
+      )
       // Update manifest
       this.onProgress('manifest', 'Updating manifest')
       await this.manifest.updateSafely((currentManifest) => ({
