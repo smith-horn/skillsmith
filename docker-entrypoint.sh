@@ -134,7 +134,7 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
 
     for module in "${NATIVE_MODULES[@]}"; do
         echo -e "${YELLOW}  Rebuilding ${module}...${NC}"
-        npm rebuild "${module}" --ignore-scripts=false
+        npm rebuild "${module}" --ignore-scripts=false || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
     done
 
     # Re-validate after rebuild
