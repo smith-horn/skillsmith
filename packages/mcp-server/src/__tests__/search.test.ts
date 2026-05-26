@@ -166,9 +166,11 @@ describe('Search Tool', () => {
     })
 
     // SMI-5193: emitSearchEvent must use snake_case keys — sanitizeMetadata silently drops camelCase.
+    // Uses contextWithId because the emit is guarded by context.distinctId (matches trackSkillSearch).
     it('calls emitSearchEvent with snake_case keys (results_count, duration_ms, has_query)', async () => {
       const emitSpy = vi.spyOn(CoreModule, 'emitSearchEvent').mockImplementation(() => {})
-      await executeSearch({ query: 'commit' }, offlineContext)
+      const contextWithId: ToolContext = { ...offlineContext, distinctId: 'smi-5193-test-user' }
+      await executeSearch({ query: 'commit' }, contextWithId)
       expect(emitSpy).toHaveBeenCalledTimes(1)
       const payload = emitSpy.mock.calls[0]![0] as unknown as Record<string, unknown>
       expect(payload).toMatchObject({ query: 'commit', has_query: true })
