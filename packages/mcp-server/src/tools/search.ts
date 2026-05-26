@@ -346,16 +346,17 @@ async function executeSearchImpl(
         )
       }
 
-      // SMI-5193: Emit search event so MCP searches land in `search_metrics`
-      // via the `events` edge function. Fire-and-forget; snake_case required.
-      emitSearchEvent({
-        query: input.query || '',
-        results_count: response.total,
-        duration_ms: response.timing.totalMs,
-        has_query: Boolean(hasQuery),
-        ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
-        ...(filters.category !== undefined && { category: filters.category }),
-      })
+      // SMI-5193: emit to search_metrics via events fn; snake_case required; authenticated only.
+      if (context.distinctId) {
+        emitSearchEvent({
+          query: input.query || '',
+          results_count: response.total,
+          duration_ms: response.timing.totalMs,
+          has_query: Boolean(hasQuery),
+          ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+          ...(filters.category !== undefined && { category: filters.category }),
+        })
+      }
 
       return response
     } catch (error) {
@@ -475,16 +476,17 @@ async function executeSearchImpl(
     )
   }
 
-  // SMI-5193: Emit search event (local-fallback path) so MCP searches land in
-  // `search_metrics` via the `events` edge function. Fire-and-forget.
-  emitSearchEvent({
-    query: input.query || '',
-    results_count: response.total,
-    duration_ms: response.timing.totalMs,
-    has_query: Boolean(hasQuery),
-    ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
-    ...(filters.category !== undefined && { category: filters.category }),
-  })
+  // SMI-5193: emit to search_metrics (local-fallback path); authenticated only.
+  if (context.distinctId) {
+    emitSearchEvent({
+      query: input.query || '',
+      results_count: response.total,
+      duration_ms: response.timing.totalMs,
+      has_query: Boolean(hasQuery),
+      ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+      ...(filters.category !== undefined && { category: filters.category }),
+    })
+  }
 
   return response
 }
