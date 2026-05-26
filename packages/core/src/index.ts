@@ -170,9 +170,9 @@ export {
 // Audit Logging (SMI-733)
 export { AuditLogger, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS } from './security/AuditLogger.js'
 
-// Remote telemetry for install events (SMI-4182)
-export { emitInstallEvent } from './audit/remote-audit.js'
-export type { InstallEventPayload } from './audit/remote-audit.js'
+// Remote telemetry for install events (SMI-4182) + search events (SMI-5193)
+export { emitInstallEvent, emitSearchEvent } from './audit/remote-audit.js'
+export type { InstallEventPayload, SearchEventPayload } from './audit/remote-audit.js'
 
 // Cross-ecosystem compatibility slug vocabulary (SMI-5178)
 export {

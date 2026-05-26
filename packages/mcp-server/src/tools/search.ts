@@ -13,6 +13,7 @@ import {
   SkillsmithError,
   ErrorCodes,
   trackSkillSearch,
+  emitSearchEvent,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
@@ -345,6 +346,18 @@ async function executeSearchImpl(
         )
       }
 
+      // SMI-5193: emit to search_metrics via events fn; snake_case required; authenticated only.
+      if (context.distinctId) {
+        emitSearchEvent({
+          query: input.query || '',
+          results_count: response.total,
+          duration_ms: response.timing.totalMs,
+          has_query: Boolean(hasQuery),
+          ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+          ...(filters.category !== undefined && { category: filters.category }),
+        })
+      }
+
       return response
     } catch (error) {
       // Log and fall through to local search
@@ -461,6 +474,18 @@ async function executeSearchImpl(
         category: filters.category,
       }
     )
+  }
+
+  // SMI-5193: emit to search_metrics (local-fallback path); authenticated only.
+  if (context.distinctId) {
+    emitSearchEvent({
+      query: input.query || '',
+      results_count: response.total,
+      duration_ms: response.timing.totalMs,
+      has_query: Boolean(hasQuery),
+      ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+      ...(filters.category !== undefined && { category: filters.category }),
+    })
   }
 
   return response
