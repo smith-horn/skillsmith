@@ -267,6 +267,7 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 |---------|-----|
 | Container won't start | `docker compose --profile dev down && docker volume rm skillsmith_node_modules && docker compose --profile dev up -d` |
 | Native module errors | `docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
+| `hnswlib-node` fails validation after rebuild (`ignore-scripts=true` in `.npmrc` blocks node-gyp — see SMI-5200) | Permanent fix ships in PR #1365. Until merged, delete the stale volume so Docker re-initialises `node_modules` from the image layer (built without `.npmrc`): `docker compose --profile dev down && docker volume rm skillsmith_node_modules && docker compose --profile dev up -d` |
 | Platform mismatch (SIGKILL 137) | `rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node` then rebuild |
 | Node ABI mismatch | WASM fallback auto-activates (core ≥0.4.10). Restore native: rebuild in Docker + `./scripts/repair-host-native-deps.sh` (SMI-4549) |
 | "invalid ELF header" in Docker (SMI-4698) | [git-crypt-guide.md § Host Native Bindings](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549) |
