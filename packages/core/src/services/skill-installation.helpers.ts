@@ -30,6 +30,7 @@ import type {
 } from './skill-installation.types.js'
 
 import { checkForModifications } from './skill-installation.io.js'
+export { fetchFromGitHub } from './skill-installation.io.js'
 import type { ManifestManager } from './skill-manifest.js'
 
 /** Result of applying optimization to a skill's content. */

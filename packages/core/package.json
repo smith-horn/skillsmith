@@ -56,6 +56,11 @@
       "import": "./dist/src/services/skill-installation.helpers.js",
       "default": "./dist/src/services/skill-installation.helpers.js"
     },
+    "./services/skill-installation-io": {
+      "types": "./dist/src/services/skill-installation.io.d.ts",
+      "import": "./dist/src/services/skill-installation.io.js",
+      "default": "./dist/src/services/skill-installation.io.js"
+    },
     "./config/audit-mode": {
       "types": "./dist/src/config/audit-mode.d.ts",
       "import": "./dist/src/config/audit-mode.js",
