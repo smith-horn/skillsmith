@@ -107,3 +107,9 @@ packages/website/src/pages/feed.xml.ts
 # 401 path on team-invite-send.
 supabase/functions/team-invite-send/**
 packages/website/src/pages/invite/[token].astro
+
+# SMI-5173: sync-oauth-email is triggered by Supabase Auth's email-change
+# webhook (OAuth provider email sync), not by direct user HTTP requests.
+# Smoke verification requires a real OAuth email-change event which the
+# harness cannot synthesize. Gateway-verified (no --no-verify-jwt).
+supabase/functions/sync-oauth-email/**
