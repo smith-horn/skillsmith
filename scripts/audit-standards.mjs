@@ -35,6 +35,7 @@ import {
   auditPublishYmlDependentGate,
   auditPublishYmlRequiredGates,
   parseNpmLsJson,
+  findFunctionsWithoutSearchPath,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -4305,6 +4306,83 @@ console.log(`\n${BOLD}50. Migration Ordering Guard (SMI-5162)${RESET}`)
           `Rename to a version > ${v.maxBaseVersion} (e.g. \`$(date -u +%Y%m%d%H%M%S)_<name>.sql\`). SQL content unchanged.`
         )
       }
+    }
+  }
+}
+
+// Check 51: function_search_path_mutable gate (SMI-5203 recurrence guard)
+// Scans migration files changed in this PR for CREATE [OR REPLACE] FUNCTION blocks
+// that lack SET search_path. Warns (not fails) — matches Supabase advisory severity.
+// Known limitation: anonymous DO $$ ... $$ blocks that internally define functions
+// bypass grep detection (acceptable scope for a file-level static check).
+console.log(`\n${BOLD}51. Function search_path Gate — migration authoring guard (SMI-5203)${RESET}`)
+{
+  const MIG_DIR = 'supabase/migrations'
+  let changedSqlFiles = []
+  let skipReason = null
+
+  try {
+    const baseRef = process.env.GITHUB_BASE_REF
+    let mergeBase
+    if (baseRef && baseRef.length > 0) {
+      mergeBase = execSync(`git merge-base origin/${baseRef} HEAD`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+    } else {
+      const originMain = execSync('git rev-parse --verify --quiet origin/main || true', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+      if (!originMain) {
+        skipReason = 'no origin/main ref (shallow/local)'
+      } else {
+        mergeBase = execSync('git merge-base origin/main HEAD', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim()
+      }
+    }
+
+    if (!skipReason) {
+      changedSqlFiles = execSync(
+        `git diff --name-only --diff-filter=AR ${mergeBase}...HEAD -- ${MIG_DIR}/`,
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+        .split('\n')
+        .filter((f) => f.endsWith('.sql') && Boolean(f))
+    }
+  } catch (e) {
+    skipReason = e.message
+  }
+
+  if (skipReason) {
+    pass(`Check 51: function search_path gate skipped (${skipReason})`)
+  } else if (changedSqlFiles.length === 0) {
+    pass('Check 51: no migration SQL files changed in this diff')
+  } else {
+    let totalViolations = 0
+    for (const sqlFile of changedSqlFiles) {
+      let content
+      try {
+        content = readFileSync(sqlFile, 'utf8')
+      } catch {
+        // File may be git-crypt encrypted (binary) — skip silently
+        continue
+      }
+      const violations = findFunctionsWithoutSearchPath(content, sqlFile)
+      for (const v of violations) {
+        warn(
+          `Check 51: function_search_path_mutable — ${v.funcName}() in ${sqlFile} ` +
+            `has no SET search_path. Add SET search_path = public, extensions to the function body.`
+        )
+        totalViolations++
+      }
+    }
+    if (totalViolations === 0) {
+      pass(
+        `Check 51: all CREATE FUNCTION blocks in ${changedSqlFiles.length} changed migration(s) include SET search_path`
+      )
     }
   }
 }
