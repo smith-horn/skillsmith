@@ -1360,3 +1360,53 @@ export function auditPublishYmlRequiredGates(publishYmlContent, pkgJsons) {
 
   return { required, failures }
 }
+
+/**
+ * Check 51 helper — SMI-5203: function_search_path_mutable recurrence guard.
+ *
+ * Parses SQL content for CREATE [OR REPLACE] FUNCTION blocks and checks whether
+ * each function body contains a SET search_path clause.
+ *
+ * Known limitation: Anonymous DO $$ ... $$ blocks that internally define functions
+ * bypass detection (acceptable scope for a file-level grep-based check).
+ *
+ * @param {string} sqlContent  Full text of a SQL migration file
+ * @param {string} filePath    Used in violation objects for reporting
+ * @returns {{ funcName: string, filePath: string }[]}  Violations (functions missing search_path)
+ */
+export function findFunctionsWithoutSearchPath(sqlContent, filePath) {
+  const violations = []
+
+  // Match CREATE [OR REPLACE] FUNCTION <name> blocks.
+  // The regex captures function name and then scans to the matching $$ ... $$ body.
+  // We look for the pattern between each AS $$ and the closing $$ to check for search_path.
+  //
+  // Strategy: split on CREATE [OR REPLACE] FUNCTION boundaries, then check each segment.
+  const createFunctionRe = /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+(\w+)\s*\(/gi
+  let match
+
+  while ((match = createFunctionRe.exec(sqlContent)) !== null) {
+    const funcName = match[1]
+    const afterCreate = sqlContent.slice(match.index)
+
+    // Find the function body between AS $$ ... $$ (or AS $BODY$ ... $BODY$, etc.)
+    // Look for SET search_path within the next 8000 chars (generous for any single function)
+    const window = afterCreate.slice(0, 8000)
+
+    // Check if this function definition contains SET search_path before the next CREATE FUNCTION
+    // or end-of-window. A function has SET search_path if either:
+    //   (a) SET search_path = ... appears in the body (between AS $$ and $$)
+    //   (b) SECURITY DEFINER SET search_path appears in the header
+    const hasSearchPath = /SET\s+search_path\s*[=TO]/i.test(window)
+
+    if (!hasSearchPath) {
+      // Only flag named functions (not anonymous triggers or system-internal stubs).
+      // Skip the _temp_set_function_search_path helper itself (it's the remediation tool).
+      if (funcName !== '_temp_set_function_search_path' && funcName !== 'cleanup_search_metrics') {
+        violations.push({ funcName, filePath })
+      }
+    }
+  }
+
+  return violations
+}
