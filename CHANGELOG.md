@@ -61,6 +61,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `actions/setup-node` step's `node-version` either references
   `${{ env.NODE_VERSION }}` or matches the workflow-local env declaration.
   Prevents future drift like the kind that motivated SMI-4488 + SMI-4489.
+- **OpenAPI specification published** (2026-05-27, SMI-5205): A machine-readable
+  OpenAPI 3.0 spec is now available at `skillsmith.app/openapi.yaml`. The spec
+  documents all four search/get/recommend/compare endpoints with auth (`X-API-Key`
+  header), a 429 Too Many Requests response shape, and the canonical five-tier
+  `trust_tier` enum. Import into Postman, Insomnia, or any OpenAPI-compatible
+  client to explore all endpoints.
+
+### Changed
+
+- **Trust tier API wire format — canonical five-tier model** (2026-05-27, SMI-5205):
+  The public API response now uses the five-tier model documented at
+  `skillsmith.app/docs/trust-tiers`: `official`, `verified`, `curated`,
+  `community`, `unverified`. Two internal storage values that previously leaked
+  into API responses are now translated at the edge function layer:
+  `experimental` → `community` and `unknown` → `unverified`. Skills with the
+  `claude-code-official` GitHub topic are now indexed as `official` tier (was
+  `verified`). **Migration**: consumers filtering on `trust_tier` should update
+  to the five-tier values; `experimental` and `unknown` will no longer appear
+  in API responses.
 
 ### Fixed
 

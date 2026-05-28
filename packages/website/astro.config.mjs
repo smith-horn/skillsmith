@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { copyFileSync, existsSync } from 'node:fs'
 import { defineConfig } from 'astro/config'
 import sitemap from '@astrojs/sitemap'
 import vercel from '@astrojs/vercel'
@@ -87,7 +88,25 @@ export default defineConfig({
 
   // Vite configuration for API proxy in development
   vite: {
-    plugins: [tailwindcss()],
+    plugins: [
+      tailwindcss(),
+      // SMI-5205: publish OpenAPI spec from docs/internal submodule to public/ at build time.
+      // Source stays at docs/internal/api/openapi.yaml (single source of truth).
+      // Skip silently if the submodule is not initialized (external contributors, CI without submodule).
+      {
+        name: 'publish-openapi-spec',
+        buildStart() {
+          const src = join(
+            dirname(fileURLToPath(import.meta.url)),
+            '../../docs/internal/api/openapi.yaml'
+          )
+          const dest = join(dirname(fileURLToPath(import.meta.url)), 'public/openapi.yaml')
+          if (existsSync(src)) {
+            copyFileSync(src, dest)
+          }
+        },
+      },
+    ],
     server: {
       proxy: {
         '/api': {
