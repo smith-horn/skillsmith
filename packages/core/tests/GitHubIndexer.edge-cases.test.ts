@@ -170,7 +170,7 @@ describe('GitHubIndexer — edge cases', () => {
   // -------------------------------------------------------------------------
 
   describe('repositoryToSkill', () => {
-    it('assigns verified tier when claude-code-official topic present', () => {
+    it('assigns official tier when claude-code-official topic present', () => {
       const indexer = new GitHubIndexer({ requestDelay: 0 })
       const repo = {
         owner: 'anthropic',
@@ -187,7 +187,7 @@ describe('GitHubIndexer — edge cases', () => {
 
       const skill = indexer.repositoryToSkill(repo)
 
-      expect(skill.trustTier).toBe('verified')
+      expect(skill.trustTier).toBe('official')
     })
 
     it('assigns community tier for repos with >= 50 stars', () => {
