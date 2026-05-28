@@ -22,8 +22,16 @@ export const CONFIG = {
     'claude-plugins': 40,
     unknown: 0,
   } as Record<string, number>,
-  /** Valid trust tiers */
-  VALID_TRUST_TIERS: ['verified', 'community', 'experimental', 'unknown'] as const,
+  /** Valid trust tiers — includes internal storage values (experimental, unknown) and public values */
+  VALID_TRUST_TIERS: [
+    'official',
+    'verified',
+    'curated',
+    'community',
+    'experimental',
+    'unknown',
+    'unverified',
+  ] as const,
 } as const
 
 // ============================================================================

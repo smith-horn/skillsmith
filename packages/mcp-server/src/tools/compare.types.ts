@@ -123,14 +123,17 @@ export type ExtendedSkill = Omit<Skill, 'dependencies'> & {
  * Trust tier ranking for comparison
  * SMI-1809: Added 'local' tier for local skills
  * SMI-2381 / SMI-4520: Added 'curated' tier for third-party publishers (same rank as community)
+ * SMI-5205: Added 'official' and 'unverified' to match public 5-tier model
  */
 export const TRUST_TIER_RANK: Record<TrustTier, number> = {
+  official: 5, // SMI-5205: Platform/partner, highest trust
   verified: 4,
   community: 3,
   curated: 3, // SMI-2381: Third-party publisher, manually vetted — same rank as community
   local: 3, // SMI-1809: Local skills rank same as community (user trusts their own skills)
   experimental: 2,
   unknown: 1,
+  unverified: 1, // SMI-5205: Public alias for unknown — same rank as unknown
 }
 
 /**

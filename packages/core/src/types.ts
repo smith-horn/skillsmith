@@ -7,24 +7,30 @@
  * NOTE: Database tiers must match database schema (packages/core/src/database/schema.ts)
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  * SMI-2381: Added 'curated' for third-party publishers opted into the registry
+ * SMI-5205: Added 'official' and 'unverified' to align API wire format with public 5-tier model
  */
 export type TrustTier =
+  | 'official' // SMI-5205: Platform/partner skills, full security review
   | 'verified' // Manually reviewed and verified
-  | 'community' // High community ratings
-  | 'experimental' // New or beta skills
   | 'curated' // SMI-2381: Third-party publisher, manually opted in
-  | 'unknown' // Not yet assessed
+  | 'community' // High community ratings
+  | 'experimental' // New or beta skills (internal only, not returned by public API)
+  | 'unknown' // Not yet assessed (internal only, not returned by public API)
+  | 'unverified' // SMI-5205: No verification performed (public alias for unknown)
   | 'local' // SMI-1809: Local skills from ~/.claude/skills/
 
 /**
  * Trust tier descriptions for user display
  */
 export const TrustTierDescriptions: Record<TrustTier, string> = {
+  official:
+    'Official or partner skill with full security review. Maintained by Skillsmith or verified partners.',
   verified: 'Manually reviewed by the Skillsmith team. High quality and safe to use.',
+  curated: 'Third-party publisher. Manually opted into the registry.',
   community: 'Highly rated by the community. Generally reliable.',
   experimental: 'New or beta skill. Use with caution.',
-  curated: 'Third-party publisher. Manually opted into the registry.',
   unknown: 'Not yet assessed. Review carefully before using.',
+  unverified: 'No verification performed. Review carefully before installing.',
   local: 'Local skill from your ~/.claude/skills/ directory. You control this skill.',
 }
 

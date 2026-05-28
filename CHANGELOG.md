@@ -61,6 +61,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `actions/setup-node` step's `node-version` either references
   `${{ env.NODE_VERSION }}` or matches the workflow-local env declaration.
   Prevents future drift like the kind that motivated SMI-4488 + SMI-4489.
+- **OpenAPI specification published** (2026-05-27, SMI-5205): A machine-readable
+  OpenAPI 3.0 spec is now available at `skillsmith.app/openapi.yaml`. The spec
+  documents all four search/get/recommend/compare endpoints with auth (`X-API-Key`
+  header), a 429 Too Many Requests response shape, and the canonical five-tier
+  `trust_tier` enum. Import into Postman, Insomnia, or any OpenAPI-compatible
+  client to explore all endpoints.
+
+### Changed
+
+- **Trust tier API wire format — canonical five-tier model** (2026-05-27, SMI-5205):
+  The public API response now uses the five-tier model documented at
+  `skillsmith.app/docs/trust-tiers`: `official`, `verified`, `curated`,
+  `community`, `unverified`. Two internal storage values that previously leaked
+  into API responses are now translated at the edge function layer:
+  `experimental` → `community` and `unknown` → `unverified`. Skills with the
+  `claude-code-official` GitHub topic are now indexed as `official` tier (was
+  `verified`). **Migration**: consumers filtering on `trust_tier` should update
+  to the five-tier values; `experimental` and `unknown` will no longer appear
+  in API responses.
+- **Node.js floor bumped to >=22.22.0** (SMI-4489): root + every workspace
+  now require Node 22.22.0+. The host install previously failed with
+  EBADENGINE on Node 22.0–22.21 because `posthog-node@5.29.2` (transitive
+  via `@skillsmith/core`) requires `>=22.22.0`. Tightening our own
+  `engines` makes the constraint visible at our package boundary instead
+  of at the deeper transitive resolution. Node 22 stays in Maintenance LTS
+  until 2027-04-30; SMI-4491 tracks the eventual Node-24 evaluation.
+  `.npmrc` (which contains `engine-strict=true`) is excluded from all
+  published tarballs, so consumer EBADENGINE remains a warning rather
+  than a hard install failure.
+- **Removed `SKILLSMITH_MEMORY_DIR_OVERRIDE` doc-retrieval workaround**
+  (SMI-4451 Followup-4): with the host Node bump, `homedir()` derivation
+  resolves correctly and the `.tmp/host-memory/` staging path shipped in
+  SMI-4473 is no longer needed.
+- **Bumped `actions/setup-node` to v6 SHA in two more workflows**
+  (`e2e-usage-counter.yml`, `deploy-edge-functions.yml`) to match the
+  rest of the repo. SMI-4488's `device-login-roundtrip.yml` was bumped
+  separately in PR #793.
+- Rate limits now apply based on your authenticated session tier, not just API key.
+- Improved circuit breaker resilience for authentication service.
+- Vitest globals removed for better test isolation (#453).
+- Dependabot lockfile regeneration automated via script (#453).
+- Shallow clone guard added to audit-standards CI check (#456).
 
 ### Fixed
 
@@ -92,32 +134,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **audit-standards Check 23 worktree bug** (2026-04-08, SMI-3986): Check 23 no longer
   emits `fatal: not a git repository` inside git worktrees. Resolved via
   `git rev-parse --git-common-dir` for worktree-aware `.git` resolution. See PR #492.
-
-### Changed
-
-- **Node.js floor bumped to >=22.22.0** (SMI-4489): root + every workspace
-  now require Node 22.22.0+. The host install previously failed with
-  EBADENGINE on Node 22.0–22.21 because `posthog-node@5.29.2` (transitive
-  via `@skillsmith/core`) requires `>=22.22.0`. Tightening our own
-  `engines` makes the constraint visible at our package boundary instead
-  of at the deeper transitive resolution. Node 22 stays in Maintenance LTS
-  until 2027-04-30; SMI-4491 tracks the eventual Node-24 evaluation.
-  `.npmrc` (which contains `engine-strict=true`) is excluded from all
-  published tarballs, so consumer EBADENGINE remains a warning rather
-  than a hard install failure.
-- **Removed `SKILLSMITH_MEMORY_DIR_OVERRIDE` doc-retrieval workaround**
-  (SMI-4451 Followup-4): with the host Node bump, `homedir()` derivation
-  resolves correctly and the `.tmp/host-memory/` staging path shipped in
-  SMI-4473 is no longer needed.
-- **Bumped `actions/setup-node` to v6 SHA in two more workflows**
-  (`e2e-usage-counter.yml`, `deploy-edge-functions.yml`) to match the
-  rest of the repo. SMI-4488's `device-login-roundtrip.yml` was bumped
-  separately in PR #793.
-- Rate limits now apply based on your authenticated session tier, not just API key.
-- Improved circuit breaker resilience for authentication service.
-- Vitest globals removed for better test isolation (#453).
-- Dependabot lockfile regeneration automated via script (#453).
-- Shallow clone guard added to audit-standards CI check (#456).
 
 ### Removed
 

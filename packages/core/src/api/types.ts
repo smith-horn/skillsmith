@@ -13,7 +13,8 @@
 /**
  * Trust tier levels from API
  */
-export type ApiTrustTier = 'verified' | 'community' | 'experimental' | 'unknown'
+// SMI-5205: 5-tier public model; experimental/unknown are internal only (translated at response layer)
+export type ApiTrustTier = 'official' | 'verified' | 'curated' | 'community' | 'unverified'
 
 // ============================================================================
 // Category (matches OpenAPI category enum)

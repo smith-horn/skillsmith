@@ -76,7 +76,15 @@ export const complianceReportToolSchema = {
 export interface SkillInventoryItem {
   skillId: string
   version: string
-  trustTier: 'verified' | 'curated' | 'community' | 'experimental' | 'unknown'
+  trustTier:
+    | 'official'
+    | 'verified'
+    | 'curated'
+    | 'community'
+    | 'experimental'
+    | 'unknown'
+    | 'unverified'
+    | 'local'
   installedAt: string
   lastUpdated: string
 }

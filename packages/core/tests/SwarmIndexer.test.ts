@@ -381,7 +381,7 @@ describe('GitHubIndexer', () => {
       expect(skill.tags).toContain('claude-code-skill')
     })
 
-    it('should assign verified tier for official repos', () => {
+    it('should assign official tier for official repos', () => {
       const indexer = new GitHubIndexer()
       const repo: GitHubRepository = {
         owner: 'anthropic',
@@ -397,7 +397,7 @@ describe('GitHubIndexer', () => {
       }
 
       const skill = indexer.repositoryToSkill(repo)
-      expect(skill.trustTier).toBe('verified')
+      expect(skill.trustTier).toBe('official')
     })
 
     it('should assign experimental tier for low-star repos', () => {

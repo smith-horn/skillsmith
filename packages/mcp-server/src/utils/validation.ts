@@ -85,12 +85,15 @@ export function parseSkillId(id: string): { source?: string; author: string; nam
  * Types are now unified: verified, community, experimental, curated, unknown, local
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  * SMI-2381 / SMI-4520: Added 'curated' for third-party publishers
+ * SMI-5205: Added 'official' and 'unverified' to match public 5-tier model
  *
  * @param mcpTier - MCP trust tier
  * @returns Database trust tier
  */
 export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
   switch (mcpTier) {
+    case 'official':
+      return 'official'
     case 'verified':
       return 'verified'
     case 'community':
@@ -103,6 +106,8 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
       return 'local'
     case 'unknown':
       return 'unknown'
+    case 'unverified':
+      return 'unverified'
   }
 }
 
@@ -257,12 +262,14 @@ export function normalizeApiCategory(name: string | undefined | null): SkillCate
  */
 export function getTrustBadge(tier: MCPTrustTier): string {
   const badges: Record<MCPTrustTier, string> = {
+    official: '[OFFICIAL]', // SMI-5205: Platform/partner badge
     verified: '[VERIFIED]',
     community: '[COMMUNITY]',
     experimental: '[EXPERIMENTAL]',
     curated: '[CURATED]',
     unknown: '[UNKNOWN]',
     local: '[LOCAL]',
+    unverified: '[UNVERIFIED]', // SMI-5205: Public alias for unknown
   }
   return badges[tier] ?? '[UNKNOWN]'
 }

@@ -13,7 +13,16 @@ import type { DependencyDeclaration } from './dependencies.js'
  *   registry) is a first-class DB-backed tier — the skills.trust_tier CHECK
  *   constraint allows 'curated' (migration v17).
  */
-export type TrustTier = 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
+// SMI-5205: Added 'official' (platform/partner) and 'unverified' (public alias for unknown)
+export type TrustTier =
+  | 'official'
+  | 'verified'
+  | 'curated'
+  | 'community'
+  | 'experimental'
+  | 'unknown'
+  | 'unverified'
+  | 'local'
 
 /**
  * SMI-1631: Skill roles for role-based recommendations

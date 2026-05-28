@@ -27,14 +27,17 @@ import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directo
 
 /**
  * SMI-1809: Added 'local' tier color for local skills
+ * SMI-5205: Added 'official' and 'unverified' tier colors
  */
 const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
+  official: chalk.magenta, // SMI-5205: Platform/partner — magenta to stand out from verified
   verified: chalk.green,
   curated: chalk.blue,
   community: chalk.yellow,
   local: chalk.cyan, // SMI-1809: Cyan for local skills
   experimental: chalk.red,
   unknown: chalk.gray,
+  unverified: chalk.gray, // SMI-5205: Public alias for unknown — same color as unknown
 }
 
 /**

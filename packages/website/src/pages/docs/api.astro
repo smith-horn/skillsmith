@@ -488,12 +488,22 @@ try {
   </table>
 
   <div class="callout">
-    <p class="callout-heading">API Key Required</p>
+    <p class="callout-heading">API Key</p>
     <p>
-      For higher rate limits and premium features, obtain an API key from your
+      Pass your API key in the <code>X-API-Key</code> request header to unlock higher rate
+      limits and tier-gated features. Keys are available at
       <a href="/account">account settings</a>.
     </p>
+    <pre><code>{`X-API-Key: sk_live_...`}</code></pre>
   </div>
+
+  <h2>OpenAPI Specification</h2>
+
+  <p>
+    A machine-readable OpenAPI 3.0 specification is available at
+    <a href="/openapi.yaml"><code>skillsmith.app/openapi.yaml</code></a>.
+    Import it into Postman, Insomnia, or any OpenAPI-compatible client to explore all endpoints.
+  </p>
 
   <h2>Lifecycle Tutorials</h2>
 
