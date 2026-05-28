@@ -261,7 +261,7 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
     maxContentLength: 2_000_000,
   },
   unverified: {
-    riskThreshold: 15,
+    riskThreshold: 20, // Same as unknown — unverified is the public alias for unknown
     maxContentLength: 250_000,
   },
 }
