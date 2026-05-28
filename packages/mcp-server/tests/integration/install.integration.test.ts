@@ -540,7 +540,15 @@ Use this skill by mentioning it in Claude Code.
     // SMI-5205: Added 'official' and 'unverified' to return type
     let validateTrustTier: (
       value: string | null | undefined
-    ) => 'official' | 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local' | 'unverified'
+    ) =>
+      | 'official'
+      | 'verified'
+      | 'curated'
+      | 'community'
+      | 'experimental'
+      | 'unknown'
+      | 'local'
+      | 'unverified'
 
     beforeAll(async () => {
       const installTypesModule = await import('../../src/tools/install.types.js')
@@ -550,7 +558,15 @@ Use this skill by mentioning it in Claude Code.
     // Type alias for trust tier (used in tests below)
     // SMI-1809: Added 'local' tier for local skills
     // SMI-5205: Added 'official' and 'unverified' tiers
-    type TrustTier = 'official' | 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local' | 'unverified'
+    type TrustTier =
+      | 'official'
+      | 'verified'
+      | 'curated'
+      | 'community'
+      | 'experimental'
+      | 'unknown'
+      | 'local'
+      | 'unverified'
 
     // Scanner options per trust tier (matching install.ts)
     // SMI-1809: Added 'local' tier options
