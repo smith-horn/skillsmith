@@ -84,6 +84,7 @@ export interface SkillInventoryItem {
     | 'experimental'
     | 'unknown'
     | 'unverified'
+    | 'local'
   installedAt: string
   lastUpdated: string
 }
