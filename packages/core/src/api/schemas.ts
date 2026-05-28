@@ -12,14 +12,15 @@ import { z } from 'zod'
 // ============================================================================
 
 /**
- * Trust tier enum values
+ * Trust tier enum values — public-facing API values only.
+ * SMI-5205: experimental/unknown translated to community/unverified at response layer.
  */
 export const TrustTierSchema = z.enum([
+  'official',
   'verified',
   'curated',
   'community',
-  'experimental',
-  'unknown',
+  'unverified',
 ])
 
 // ============================================================================
@@ -38,7 +39,7 @@ export const ApiSearchResultSchema = z.object({
   publisher: z.string().nullable().optional(),
   repo_url: z.string().nullable().optional(),
   quality_score: z.number().nullable(),
-  trust_tier: TrustTierSchema.optional().default('unknown'),
+  trust_tier: TrustTierSchema.optional().default('unverified'),
   tags: z.array(z.string()).default([]),
   stars: z.number().nullable().optional(),
   installable: z.boolean().nullable().optional(),
