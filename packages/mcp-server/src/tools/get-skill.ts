@@ -442,9 +442,12 @@ export function formatSkillDetails(response: GetSkillResponse): string {
  * Format trust tier with visual indicator
  * SMI-1809: Added 'local' tier
  * SMI-2381 / SMI-4520: Added 'curated' tier
+ * SMI-5205: Added 'official' and 'unverified' tiers
  */
 function formatTrustTier(tier: TrustTier): string {
   switch (tier) {
+    case 'official':
+      return '[!] OFFICIAL' // SMI-5205: Platform/partner with full security review
     case 'verified':
       return '[*] VERIFIED'
     case 'community':
@@ -457,6 +460,8 @@ function formatTrustTier(tier: TrustTier): string {
       return '[~] EXPERIMENTAL'
     case 'unknown':
       return '[?] UNKNOWN'
+    case 'unverified':
+      return '[?] UNVERIFIED' // SMI-5205: Public alias for unknown
   }
 }
 

@@ -537,9 +537,10 @@ Use this skill by mentioning it in Claude Code.
     // Import the actual validateTrustTier function from install.types.ts
     // SMI-1718: Import from types file after re-export trimming
     // SMI-1809: Added 'local' tier to return type
+    // SMI-5205: Added 'official' and 'unverified' to return type
     let validateTrustTier: (
       value: string | null | undefined
-    ) => 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
+    ) => 'official' | 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local' | 'unverified'
 
     beforeAll(async () => {
       const installTypesModule = await import('../../src/tools/install.types.js')
@@ -548,21 +549,25 @@ Use this skill by mentioning it in Claude Code.
 
     // Type alias for trust tier (used in tests below)
     // SMI-1809: Added 'local' tier for local skills
-    type TrustTier = 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
+    // SMI-5205: Added 'official' and 'unverified' tiers
+    type TrustTier = 'official' | 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local' | 'unverified'
 
     // Scanner options per trust tier (matching install.ts)
     // SMI-1809: Added 'local' tier options
     // SMI-2381: Added 'curated' tier options
+    // SMI-5205: Added 'official' and 'unverified' tier options
     const TRUST_TIER_SCANNER_OPTIONS: Record<
       TrustTier,
       { riskThreshold: number; maxContentLength: number }
     > = {
+      official: { riskThreshold: 70, maxContentLength: 2_000_000 },
       verified: { riskThreshold: 70, maxContentLength: 2_000_000 },
       curated: { riskThreshold: 55, maxContentLength: 1_500_000 },
       community: { riskThreshold: 40, maxContentLength: 1_000_000 },
       local: { riskThreshold: 100, maxContentLength: 10_000_000 },
       experimental: { riskThreshold: 25, maxContentLength: 500_000 },
       unknown: { riskThreshold: 20, maxContentLength: 250_000 },
+      unverified: { riskThreshold: 20, maxContentLength: 250_000 },
     }
 
     describe('validateTrustTier', () => {
