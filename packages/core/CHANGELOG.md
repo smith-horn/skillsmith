@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
+- **Fix**: align scanner thresholds for official/unverified tiers (SMI-5205 retro) (#1374)
+- **Feature**: trust tier API alignment + API reference docs remediation (SMI-5205) (#1372)
+- **Refactor**: split skill-installation + ROIDashboard files under 500-line gate (SMI-4745, SMI-5201) (#1366)
+- **Fix**: wire MCP search tool to emit search events via events endpoint (SMI-5193) (#1362)
+- **Feature**: SMI-5178 expose + tier compatibility on the read path (Phase 2b) (#1353)
+
 ## v0.8.0
 
 - **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the
