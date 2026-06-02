@@ -9,8 +9,8 @@ name: Quota Monitor
 
 on:
   schedule:
-    # Every 30 minutes
-    - cron: '*/30 * * * *'
+    # Every hour (Wave 3: SMI-5209 disk IO remediation)
+    - cron: '0 * * * *'
   workflow_dispatch: {}
 
 permissions:
