@@ -387,6 +387,10 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // SMI-4934 (2026-05-17): qpay-skills added — QPay payment-integration skill
   // whose subject matter is .env credential setup; bare-keyword sensitive_path
   // regex false-positives until Wave 2 tightens.
+  // SMI-5206 (2026-05-31): D1DX/secret-capture-skill added — secret-routing
+  // utility whose repo description mentions '.env file' as one of eight routing
+  // destinations; bare-keyword sensitive_path regex false-positives until
+  // Wave 2 tightens.
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
