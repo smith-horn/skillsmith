@@ -1,6 +1,6 @@
 {
   "name": "@smith-horn/enterprise",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Enterprise features for Skillsmith including audit logging, SSO, and RBAC",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -44,7 +44,7 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "3.1046.0",
     "@opentelemetry/instrumentation-aws-sdk": "0.73.0",
-    "@skillsmith/core": "^0.7.2",
+    "@skillsmith/core": "^0.8.0",
     "jose": "^6.2.2",
     "stripe": "20.3.0",
     "zod": "4.2.1"
