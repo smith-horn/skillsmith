@@ -391,10 +391,11 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(7)
+    expect(parsed.allowlist.length).toBe(8)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
+        'github/D1DX/secret-capture-skill',
         'github/RENJI04/prompt-injection-auditor',
         'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
