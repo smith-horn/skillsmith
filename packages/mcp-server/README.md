@@ -44,9 +44,9 @@ so this README and the website docs cannot drift.
 ```json
 {
   "mcpServers": {
-    "@skillsmith/mcp-server": {
+    "skillsmith": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_..."
       }
@@ -59,15 +59,18 @@ Restart Claude Code after editing settings.json.
 
 </details>
 
+<!-- SMI-5208: contributor-only warning — do not remove or move inside template snippets -->
+> **Skillsmith contributors:** If you're working inside the skillsmith monorepo, do NOT add the above global `~/.claude/settings.json` entry. The project's `.mcp.json` already configures the `skillsmith` MCP server via `scripts/mcp-skillsmith-launcher.sh`. Adding a global entry causes Claude Code to attempt a second connection that also announces as `skillsmith-mcp`, resulting in "Failed to reconnect to skillsmith" errors. Remove the global entry; the project entry takes precedence.
+
 <details>
 <summary><strong>Cursor</strong> — <code>~/.cursor/mcp.json</code></summary>
 
 ```json
 {
   "mcpServers": {
-    "@skillsmith/mcp-server": {
+    "skillsmith": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_..."
       }
@@ -86,9 +89,9 @@ Cursor 2.4+ required. Reload the window after saving.
 ```json
 {
   "mcpServers": {
-    "@skillsmith/mcp-server": {
+    "skillsmith": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_..."
       }
@@ -107,9 +110,9 @@ VS Code 1.108+ required. Workspace-scoped (commit to repo if team-shared, or use
 ```json
 {
   "mcpServers": {
-    "@skillsmith/mcp-server": {
+    "skillsmith": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
         "SKILLSMITH_API_KEY": "${env:SKILLSMITH_API_KEY}"
       }
@@ -126,11 +129,11 @@ Supports `${env:VAR}` interpolation; export `SKILLSMITH_API_KEY` in your shell i
 <summary><strong>Codex CLI</strong> — <code>~/.codex/config.toml</code> (TOML, not JSON)</summary>
 
 ```toml
-[mcp_servers.@skillsmith/mcp-server]
+[mcp_servers.skillsmith]
 command = "npx"
-args = ["-y", "@skillsmith/mcp-server"]
+args = ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"]
 
-[mcp_servers.@skillsmith/mcp-server.env]
+[mcp_servers.skillsmith.env]
 SKILLSMITH_API_KEY = "sk_live_..."
 ```
 
@@ -144,9 +147,9 @@ Codex reads `~/.agents/skills`. When installing via Skillsmith CLI, pass `--clie
 ```json
 {
   "mcpServers": {
-    "@skillsmith/mcp-server": {
+    "skillsmith": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_..."
       }
@@ -204,7 +207,7 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
   "mcpServers": {
     "skillsmith": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_your_key_here"
       }
@@ -457,7 +460,7 @@ Distribute that value through the same secure channel used for `SUPABASE_SERVICE
   "mcpServers": {
     "skillsmith": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_your_personal_key",
         "SKILLSMITH_LICENSE_KEY": "sklic_your_team_license",

@@ -76,7 +76,7 @@ check_mcp_server_version_exits_zero() {
   t0=$(now_ms)
   tmp=$(mktemp -d)
   set +e
-  out=$(cd "$tmp" && timeout "$SMOKE_MCP_TIMEOUT" npx -y "${SMOKE_MCP_PKG}@latest" --version 2>&1)
+  out=$(cd "$tmp" && timeout "$SMOKE_MCP_TIMEOUT" npx -y -p "${SMOKE_MCP_PKG}@latest" skillsmith-mcp --version 2>&1)
   rc=$?
   set -e
   rm -rf "$tmp"
@@ -85,14 +85,14 @@ check_mcp_server_version_exits_zero() {
 
   if [ "$rc" -ne 0 ]; then
     local snippet="${out:0:200}"
-    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "npx ${SMOKE_MCP_PKG}@latest --version" "exit 0" "exit $rc: $snippet" "$ms"
+    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "npx -p ${SMOKE_MCP_PKG}@latest skillsmith-mcp --version" "exit 0" "exit $rc: $snippet" "$ms"
     return 1
   fi
   if ! printf '%s' "$out" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
-    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "npx ${SMOKE_MCP_PKG}@latest --version" "semver" "${out:0:80}" "$ms"
+    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "npx -p ${SMOKE_MCP_PKG}@latest skillsmith-mcp --version" "semver" "${out:0:80}" "$ms"
     return 1
   fi
-  report_pass "mcp-server-published" "check_mcp_server_version_exits_zero" "npx ${SMOKE_MCP_PKG}@latest --version" "$ms"
+  report_pass "mcp-server-published" "check_mcp_server_version_exits_zero" "npx -p ${SMOKE_MCP_PKG}@latest skillsmith-mcp --version" "$ms"
   return 0
 }
 
