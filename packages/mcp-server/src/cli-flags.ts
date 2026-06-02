@@ -2,7 +2,7 @@
  * SMI-4805: startup CLI-flag handling for the MCP server.
  *
  * `@skillsmith/mcp-server` is a stdio-driven MCP server — when invoked directly
- * (`npx -y @skillsmith/mcp-server --version`) the MCP SDK otherwise swallows
+ * (`npx -y -p @skillsmith/mcp-server skillsmith-mcp --version`) the MCP SDK otherwise swallows
  * argv and the process starts the server instead of printing the version.
  *
  * `resolveStartupFlag` is a pure function so it can be unit-tested without
