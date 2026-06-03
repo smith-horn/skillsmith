@@ -2,6 +2,8 @@
 
 All notable changes to `@smith-horn/enterprise` are documented here.
 
+## [Unreleased]
+
 ## [0.2.0] — 2026-06-02
 
 ### Added
