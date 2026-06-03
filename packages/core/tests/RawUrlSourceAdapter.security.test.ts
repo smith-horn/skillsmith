@@ -45,8 +45,11 @@ describe('RawUrlSourceAdapter SSRF Prevention (SMI-721)', () => {
         path: 'file:///etc/passwd', // Will be ignored, base URL used
       })
       // Should fail with 404 from example.com, not file access
-      // DNS-level failures in Docker produce "fetch failed" instead
-      await expect(result).rejects.toThrow(/Failed to fetch skill content|fetch failed/)
+      // DNS-level failures in Docker produce "fetch failed"; AbortController
+      // timeouts produce "This operation was aborted" — all are acceptable.
+      await expect(result).rejects.toThrow(
+        /Failed to fetch skill content|fetch failed|This operation was aborted/
+      )
     })
   })
 
