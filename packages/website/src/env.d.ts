@@ -31,6 +31,10 @@ declare global {
     /** SMI-4895/4896: device-login state — on window so it survives hard navigations. */
     __deviceInited?: boolean;
     __deviceState?: 'input' | 'preview' | 'approved' | 'expired' | 'denied';
+    /** SMI-3663: rate-limit countdown interval on skills search page */
+    _rateLimitInterval?: ReturnType<typeof setInterval>;
+    /** SMI-3664: suppress global rate-limit toast when page handles it inline */
+    hideRateLimitToast?: () => void;
   }
 }
 

@@ -37,6 +37,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
 ---
 
 <BaseLayout title="Skills" description="Search and discover agent skills">
+  <div id="skills-index-config" data-featured-ids={JSON.stringify(FEATURED_SKILL_IDS)} hidden></div>
   <!-- JSON-LD Schema -->
   <script is:inline type="application/ld+json" slot="head">
     {
@@ -387,14 +388,16 @@ const isCrawler = isCrawlerUserAgent(userAgent)
     </div>
   </div>
 
-  <script
-    is:inline
-    define:vars={{
-      apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
-      FEATURED_SKILL_IDS,
-    }}
-  >
-    const API_BASE = apiBase
+  <script>
+    import {
+      TRUST_BADGE_CLASSES,
+      getQualityTier,
+      escapeHtml,
+      formatNumber,
+    } from '../../lib/skills-utils.js'
+    import type { Skill } from '../../types/skills.js'
+
+    const API_BASE = `${import.meta.env.PUBLIC_API_BASE_URL ?? 'https://api.skillsmith.app'}/functions/v1`
     const ITEMS_PER_PAGE = 12
     const MIN_QUERY_LENGTH = 3 // SMI-1613: Minimum characters for search
 
@@ -407,6 +410,10 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // Mirrors the same defensive guard at packages/website/src/pages/skills/[id].astro:575.
       if (!document.getElementById('search-input')) return
 
+      const FEATURED_SKILL_IDS: string[] = JSON.parse(
+        (document.getElementById('skills-index-config') as HTMLElement).dataset.featuredIds ?? '[]'
+      )
+
       // Get Supabase config for API authentication
       const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
       const supabaseAnonKey = config.anonKey
@@ -416,16 +423,12 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       let authToken = supabaseAnonKey // Default to anon key
       let authMethod = 'anon_key'
       // SMI-4401 Wave 2 A-M9-2: authenticated user's GitHub orgs (for signal-boost re-sort).
-      let userGithubOrgs = []
-      let userId = null
+      let userGithubOrgs: string[] = []
+      let userId: string | null = null
 
       async function initAuth() {
         try {
           // Use shared singleton from window.__SUPABASE_CLIENT__ (SMI-3595).
-          // is:inline + define:vars prevents ES import of getSupabaseClient(),
-          // so this consumer cannot use the canonical lazy helper. The null-check
-          // below degrades gracefully if BaseLayout hasn't populated the global
-          // yet. SMI-4907 tracks migrating this script to a bundled <script>.
           // eslint-disable-next-line skillsmith-local/no-raw-window-global
           const supabase = window.__SUPABASE_CLIENT__
           if (!supabase) {
@@ -457,21 +460,24 @@ const isCrawler = isCrawlerUserAgent(userAgent)
                     .filter(Boolean)
                 }
               } catch (orgErr) {
-                console.debug('[Skills] github_orgs fetch failed (non-fatal):', orgErr?.message)
+                console.debug(
+                  '[Skills] github_orgs fetch failed (non-fatal):',
+                  (orgErr as Error)?.message
+                )
               }
             }
           } else {
             console.debug('[Skills] Using anon key (community rate limits)')
           }
         } catch (e) {
-          console.warn('[Skills] Auth init failed, using anon key:', e.message)
+          console.warn('[Skills] Auth init failed, using anon key:', (e as Error).message)
         }
       }
 
       let currentPage = 1
       let totalPages = 1
-      let allResults = []
-      let debounceTimer = null
+      let allResults: Skill[] = []
+      let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
       // DOM Elements
       const searchInput = document.getElementById('search-input')
@@ -492,28 +498,6 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       const searchPromptState = document.getElementById('search-prompt-state')
       const searchSuggestions = document.querySelectorAll('.search-suggestion')
 
-      // Trust tier badge colors
-      const trustBadgeClasses = {
-        verified: 'bg-green-500/10 text-green-400 border-green-500/20',
-        curated: 'bg-teal-500/10 text-teal-300 border-teal-500/20',
-        community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-        experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-        unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
-      }
-
-      // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
-      const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
-
-      // Get quality tier info from star count
-      function getQualityTier(stars) {
-        const count = stars ?? 0
-        if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
-        if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
-          return { color: 'text-green-400', label: 'High Quality' }
-        if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' }
-        return { color: 'text-red-400', label: 'New' }
-      }
-
       // SMI-4401 Wave 2 A-M9-2: render a "Matches your org" badge when signal-boost applies.
       function createOrgMatchBadge(orgName) {
         if (!orgName) return ''
@@ -525,7 +509,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
 
       // Create skill card HTML
       function createSkillCard(skill) {
-        const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown
+        const trustClass = TRUST_BADGE_CLASSES[skill.trust_tier] || TRUST_BADGE_CLASSES.unknown
         const stars = skill.stars ?? 0
         const tier = getQualityTier(stars)
         const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`
@@ -607,19 +591,6 @@ const isCrawler = isCrawlerUserAgent(userAgent)
             onclick="event.stopPropagation(); this.previousElementSibling.style.display='contents'; this.style.display='none';"
           >+${extra.length} more</button>
         </div>`
-      }
-
-      // Format number with locale formatting
-      function formatNumber(num) {
-        return new Intl.NumberFormat().format(num)
-      }
-
-      // Escape HTML to prevent XSS
-      function escapeHtml(str) {
-        if (!str) return ''
-        const div = document.createElement('div')
-        div.textContent = str
-        return div.innerHTML
       }
 
       // Show/hide states
@@ -754,7 +725,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
                 remaining--
                 if (remaining <= 0) {
                   clearInterval(window._rateLimitInterval)
-                  window._rateLimitInterval = null
+                  delete window._rateLimitInterval
                   retryButton.textContent = 'Try Again'
                   retryButton.disabled = false
                 } else {
@@ -897,7 +868,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
 
       // Debounced search
       function debouncedSearch() {
-        clearTimeout(debounceTimer)
+        clearTimeout(debounceTimer ?? undefined)
         debounceTimer = setTimeout(searchSkills, 400)
       }
 
