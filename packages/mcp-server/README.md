@@ -305,7 +305,7 @@ Search for skills matching a query.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `query` | string | Yes | Search term (min 2 characters) |
+| `query` | string | Conditional | Search term (min 3 characters); required unless a filter (`category`/`trust_tier`/`min_score`) is provided |
 | `category` | string | No | Filter by category (development, testing, devops, etc.) |
 | `trust_tier` | string | No | Filter by trust level (verified, community, experimental) |
 | `min_score` | number | No | Minimum quality score (0-100) |

@@ -168,9 +168,9 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `get_skill` | Get skill details by `author/name` ID |
 | `install_skill` | Install skill to `~/.claude/skills` |
 | `uninstall_skill` | Remove installed skill |
-| `recommend` | Contextual skill recommendations |
-| `validate` | Validate skill structure |
-| `compare` | Compare 2-5 skills side-by-side |
+| `skill_recommend` | Contextual skill recommendations |
+| `skill_validate` | Validate skill structure |
+| `skill_compare` | Compare 2-5 skills side-by-side |
 | `skill_diff` | Diff two installed skill versions side-by-side |
 | `skill_audit` | Audit skill for security advisories (Team+) |
 | `skill_inventory_audit` | Audit local `~/.claude/` inventory for namespace collisions; returns rename + edit suggestions (SMI-4590) |

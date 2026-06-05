@@ -81,8 +81,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       <tr>
         <td><code>query</code></td>
         <td><code>string</code></td>
-        <td>Yes</td>
-        <td>Search query (minimum 2 characters)</td>
+        <td>Conditional</td>
+        <td>Search query (minimum 3 characters). Required unless at least one filter (<code>category</code>, <code>trust_tier</code>, <code>min_score</code>) is provided.</td>
       </tr>
       <tr>
         <td><code>category</code></td>
@@ -363,8 +363,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   </p>
 
   <pre><code>{`{
-  "error": "Query parameter required (minimum 2 characters)",
-  "details": { "parameter": "query", "received": "a" }
+  "error": "Query must be at least 3 characters",
+  "details": { "parameter": "query", "received": "ab" }
 }`}</code></pre>
 
   <table>
