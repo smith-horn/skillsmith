@@ -168,6 +168,7 @@ describe('audit round-trip — inventory → rename → idempotent re-apply', ()
         auditId: audit.auditId,
         collisionId: suggestion.collisionId,
         action: 'apply',
+        confirmed: true,
       },
       fakeContext(),
       fakeLicense(),
@@ -190,6 +191,7 @@ describe('audit round-trip — inventory → rename → idempotent re-apply', ()
         auditId: audit.auditId,
         collisionId: suggestion.collisionId,
         action: 'apply',
+        confirmed: true,
       },
       fakeContext(),
       fakeLicense(),
@@ -252,7 +254,7 @@ describe('audit round-trip — apply_recommended_edit via dispatcher', () => {
 
     const editApply = await dispatchAuditTool(
       'apply_recommended_edit',
-      { auditId, collisionId },
+      { auditId, collisionId, confirmed: true },
       fakeContext(),
       fakeLicense(),
       fakeQuota()
@@ -263,6 +265,94 @@ describe('audit round-trip — apply_recommended_edit via dispatcher', () => {
     expect(fs.readFileSync(filePath, 'utf-8')).toContain(
       'description: deploy code to production for deployment tasks'
     )
+  })
+})
+
+describe('audit round-trip — confirmation gate via dispatcher (SMI-5213)', () => {
+  it('apply_namespace_rename returns a preview (no mutation) when confirmed is omitted', async () => {
+    plantSkill(TEST_HOME, 'ship')
+    const cmdPath = plantCommand(TEST_HOME, 'ship')
+    const future = new Date(Date.now() + 60_000)
+    fs.utimesSync(cmdPath, future, future)
+
+    const auditCall = await dispatchAuditTool(
+      'skill_inventory_audit',
+      { homeDir: TEST_HOME },
+      fakeContext(),
+      fakeLicense(),
+      fakeQuota()
+    )
+    const audit = decodeBody<SkillInventoryAuditResponse>(auditCall)
+    const suggestion = audit.renameSuggestions[0]!
+
+    const previewCall = await dispatchAuditTool(
+      'apply_namespace_rename',
+      { auditId: audit.auditId, collisionId: suggestion.collisionId, action: 'apply' },
+      fakeContext(),
+      fakeLicense(),
+      fakeQuota()
+    )
+    const preview = decodeBody<ApplyNamespaceRenameResponse>(previewCall)
+    expect(preview.success).toBe(true)
+    expect(preview.preview).toBe(true)
+    expect(preview.applied).toBe(false)
+    // File untouched — preview did not mutate.
+    expect(fs.existsSync(cmdPath)).toBe(true)
+  })
+
+  it('apply_recommended_edit returns a preview (no mutation) when confirmed is omitted', async () => {
+    const description = 'deploy code to production'
+    const filePath = plantSkill(TEST_HOME, 'roundtrip-preview', description)
+    const auditId = '01J6Z3M0CK4N0R3MPREVIEW0001' as AuditId
+    const collisionId = 'roundtripPreviewFixture' as CollisionId
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n')
+    const lineIdx = lines.findIndex((l) => l === `description: ${description}`)
+    const edit: RecommendedEdit = {
+      collisionId,
+      category: 'description_overlap',
+      pattern: 'add_domain_qualifier',
+      filePath,
+      lineRange: { start: lineIdx + 1, end: lineIdx + 1 },
+      before: `description: ${description}`,
+      after: `description: ${description} for deployment tasks`,
+      rationale: 'preview fixture',
+      applyAction: 'recommended_edit',
+      applyMode: 'apply_with_confirmation',
+      otherEntry: { identifier: 'partner-skill', sourcePath: '/tmp/partner.md' },
+    }
+    await writeAuditHistory({
+      auditId,
+      inventory: [],
+      exactCollisions: [],
+      genericFlags: [],
+      semanticCollisions: [],
+      summary: {
+        totalEntries: 0,
+        totalFlags: 0,
+        errorCount: 0,
+        warningCount: 0,
+        durationMs: 0,
+        passDurations: { exact: 0, generic: 0, semantic: 0 },
+      },
+    })
+    await writeAuditSuggestions(auditId, [], [edit])
+    const before = fs.readFileSync(filePath, 'utf-8')
+
+    const previewCall = await dispatchAuditTool(
+      'apply_recommended_edit',
+      { auditId, collisionId },
+      fakeContext(),
+      fakeLicense(),
+      fakeQuota()
+    )
+    const preview = decodeBody<ApplyRecommendedEditResponse>(previewCall)
+    expect(preview.success).toBe(true)
+    expect(preview.preview).toBe(true)
+    expect(preview.applied).toBe(false)
+    expect(preview.before).toBe(edit.before)
+    expect(preview.after).toBe(edit.after)
+    // File untouched.
+    expect(fs.readFileSync(filePath, 'utf-8')).toBe(before)
   })
 })
 
