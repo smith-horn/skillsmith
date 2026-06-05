@@ -49,6 +49,8 @@ export {
 // API Types (OpenAPI-aligned)
 // ============================================================================
 
+export { API_TRUST_TIERS, API_CATEGORIES } from './types.js'
+
 export type {
   // Trust tier and enums
   ApiTrustTier,

@@ -37,13 +37,51 @@ import type { ApplyRecommendedEditResponse } from './apply-recommended-edit.type
 /**
  * Zod input schema. `auditId` + `collisionId` are FKs into
  * `~/.skillsmith/audits/<auditId>/suggestions.json`.
+ *
+ * SMI-5213: `confirmed` (default false) gates the file mutation. When
+ * `confirmed !== true`, the tool returns a non-mutating preview envelope
+ * describing the prose edit; the caller must re-invoke with
+ * `confirmed: true` to actually rewrite the file.
  */
 export const applyRecommendedEditInputSchema = z
   .object({
     auditId: z.string().min(1),
     collisionId: z.string().min(1),
+    confirmed: z.boolean().optional(),
   })
   .strict()
+
+/**
+ * MCP tool schema for `apply_recommended_edit` (SMI-5213). Hand-written
+ * JSON Schema mirroring {@link applyRecommendedEditInputSchema} so the
+ * tool is client-discoverable via ListTools. Registration is gated on
+ * `APPLY_TEMPLATE_REGISTRY.size > 0` — see `newAuditToolDefinitions` in
+ * `audit-tool-dispatch.ts`. Keep in sync with the Zod schema.
+ */
+export const applyRecommendedEditToolSchema = {
+  name: 'apply_recommended_edit',
+  description:
+    '[Skillsmith — Maintain stage] Apply a recommended prose edit from a prior `skill_inventory_audit`. MUTATES `~/.claude` (rewrites a SKILL.md / CLAUDE.md snippet) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false }). Gated on APPLY_TEMPLATE_REGISTRY: only registered when at least one apply-eligible template is enabled.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      auditId: {
+        type: 'string',
+        description: 'auditId from a prior skill_inventory_audit response.',
+      },
+      collisionId: {
+        type: 'string',
+        description: 'collisionId of the RecommendedEdit to apply.',
+      },
+      confirmed: {
+        type: 'boolean',
+        description:
+          'When true, performs the prose edit. When omitted/false, returns a non-mutating preview. Defaults to false.',
+      },
+    },
+    required: ['auditId', 'collisionId'],
+  },
+}
 
 /**
  * Execute the `apply_recommended_edit` tool. Returns the response
@@ -85,6 +123,22 @@ async function applyRecommendedEditToolImpl(input: unknown): Promise<ApplyRecomm
       collisionId: validInput.collisionId as ApplyRecommendedEditResponse['collisionId'],
       errorCode: 'namespace.audit.collision_not_found',
       error: `Collision ${validInput.collisionId} not found in audit ${validInput.auditId}.`,
+    }
+  }
+
+  // SMI-5213: confirmation gate. Without `confirmed: true`, return a
+  // non-mutating preview describing the prose edit. The agent surfaces
+  // the before/after to the user and re-invokes with `confirmed: true`.
+  if (validInput.confirmed !== true) {
+    return {
+      success: true,
+      preview: true,
+      collisionId: edit.collisionId,
+      action: edit.pattern,
+      target: edit.filePath,
+      before: edit.before,
+      after: edit.after,
+      applied: false,
     }
   }
 

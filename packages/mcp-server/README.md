@@ -272,6 +272,9 @@ All tiers include:
 | `skill_diff` | Section-level diff between skill versions | Individual+ |
 | `skill_pack_audit` | Audit all skills in a directory | Individual+ |
 | `skill_audit` | Check skills for security advisories | Team+ |
+| `skill_inventory_audit` | Audit local `~/.claude/` inventory for namespace collisions; returns rename + edit suggestions | Team+ |
+| `apply_namespace_rename` | Apply a rename suggestion from an inventory audit (`apply`/`custom`/`skip`) | Team+ |
+| `apply_recommended_edit` | Apply a recommended prose edit from an inventory audit (gated on APPLY_TEMPLATE_REGISTRY) | Team+ |
 | `team_workspace` | Manage team workspaces (create, list, get, delete) | Team+ |
 | `share_skill` | Add, remove, or list skills in a team workspace | Team+ |
 | `publish_private` | Mark a skill as private to your team | Team+ |

@@ -41,6 +41,11 @@ import type { ApplyNamespaceRenameResponse } from './apply-namespace-rename.type
  * iff `action === 'custom'`; `customName` is forbidden otherwise (rejects
  * payloads that pass an unused field on apply / skip — keeps the surface
  * clean and helps catch caller-side bugs).
+ *
+ * SMI-5213: `confirmed` (default false) gates the file mutation. When
+ * `confirmed !== true` (and `action !== 'skip'`), the tool returns a
+ * non-mutating preview envelope describing the rename; the caller must
+ * re-invoke with `confirmed: true` to actually rename the file.
  */
 export const applyNamespaceRenameInputSchema = z
   .object({
@@ -48,6 +53,7 @@ export const applyNamespaceRenameInputSchema = z
     collisionId: z.string().min(1),
     action: z.enum(['apply', 'custom', 'skip']),
     customName: z.string().min(1).optional(),
+    confirmed: z.boolean().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -66,6 +72,47 @@ export const applyNamespaceRenameInputSchema = z
       })
     }
   })
+
+/**
+ * MCP tool schema for `apply_namespace_rename` (SMI-5213). Hand-written
+ * JSON Schema mirroring {@link applyNamespaceRenameInputSchema} so the
+ * tool is client-discoverable via ListTools. Keep in sync with the Zod
+ * schema.
+ */
+export const applyNamespaceRenameToolSchema = {
+  name: 'apply_namespace_rename',
+  description:
+    "[Skillsmith — Maintain stage] Apply a rename suggestion from a prior `skill_inventory_audit`. MUTATES `~/.claude` (renames a skill/command/agent file) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false }) so the agent can show the change before committing. `action: 'apply'` uses the suggested name; `'custom'` uses `customName`; `'skip'` records a no-op.",
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      auditId: {
+        type: 'string',
+        description: 'auditId from a prior skill_inventory_audit response.',
+      },
+      collisionId: {
+        type: 'string',
+        description: 'collisionId of the RenameSuggestion to apply.',
+      },
+      action: {
+        type: 'string',
+        description:
+          "'apply' uses the suggested name; 'custom' uses customName; 'skip' is a no-op.",
+        enum: ['apply', 'custom', 'skip'],
+      },
+      customName: {
+        type: 'string',
+        description: "Required when action === 'custom'; forbidden otherwise.",
+      },
+      confirmed: {
+        type: 'boolean',
+        description:
+          'When true, performs the file rename. When omitted/false, returns a non-mutating preview. Defaults to false.',
+      },
+    },
+    required: ['auditId', 'collisionId', 'action'],
+  },
+}
 
 /**
  * Execute the `apply_namespace_rename` tool.
@@ -121,6 +168,23 @@ async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceR
       collisionId: validInput.collisionId as ApplyNamespaceRenameResponse['collisionId'],
       errorCode: 'namespace.audit.collision_not_found',
       error: `Collision ${validInput.collisionId} not found in audit ${validInput.auditId}.`,
+    }
+  }
+
+  // SMI-5213: confirmation gate. Without `confirmed: true`, return a
+  // non-mutating preview describing the rename. The agent surfaces this
+  // to the user and re-invokes with `confirmed: true` to apply.
+  const targetName = validInput.action === 'custom' ? validInput.customName! : suggestion.suggested
+  if (validInput.confirmed !== true) {
+    return {
+      success: true,
+      preview: true,
+      collisionId: suggestion.collisionId,
+      action: suggestion.applyAction,
+      target: suggestion.entry.source_path,
+      before: suggestion.currentName,
+      after: targetName,
+      applied: false,
     }
   }
 

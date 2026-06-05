@@ -90,7 +90,7 @@ skillsmith search --interactive
 
 **Options:**
 - `-c, --category <category>` - Filter by category
-- `-t, --trust <tier>` - Filter by trust tier (verified, community, experimental)
+- `-t, --trust <tier>` - Filter by trust tier (official, verified, curated, community, unverified)
 - `-l, --limit <n>` - Maximum results (default: 10)
 - `-i, --interactive` - Interactive selection mode
 
@@ -185,7 +185,7 @@ skillsmith create my-skill --dry-run
 - `--behavior <behavior>` - Behavioral classification: `autonomous`, `guided`, `interactive`, `configurable`
 - `-d, --description <description>` - Skill description (skips prompt)
 - `-a, --author <author>` - Author GitHub username (skips prompt)
-- `-c, --category <category>` - Category: `development`, `productivity`, `communication`, `data`, `security`, `other`
+- `-c, --category <category>` - Category: `Development`, `Testing`, `DevOps`, `Documentation`, `Productivity`, `Security`
 - `--scripts` - Include a `scripts/` directory
 - `-y, --yes` - Auto-confirm overwrite if skill directory exists
 - `--dry-run` - Preview scaffold output without writing files

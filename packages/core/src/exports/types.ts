@@ -110,6 +110,8 @@ export type { ErrorCategory, ErrorCode, ErrorResponse } from '../errors.js'
 // API Types (SMI-1244, SMI-1245, SMI-1300)
 // ============================================================================
 
+export { API_TRUST_TIERS, API_CATEGORIES } from '../api/index.js'
+
 export type {
   ApiClientConfig,
   ApiResponse,
