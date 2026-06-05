@@ -36,6 +36,7 @@ import { join } from 'node:path'
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { input, select } from '@inquirer/prompts'
 
 import {
@@ -338,6 +339,36 @@ async function runAuditCollisions(options: AuditCollisionsOptions): Promise<void
  * Build the `audit collisions` subcommand. Registered as a sibling of
  * `audit advisories` in `audit.ts` (Step 0a).
  */
+// SMI-5128: extracted from inline .action() closure so withTelemetry can wrap
+// it at the export boundary (SMI-5040 coverage gate).
+async function collisionsActionImpl(opts: Record<string, boolean | undefined>): Promise<void> {
+  try {
+    await runAuditCollisions({
+      deep: opts['deep'] === true,
+      json: opts['json'] === true,
+      applyAll: opts['applyAll'] === true,
+      reportOnly: opts['reportOnly'] === true,
+      resetLedger: opts['resetLedger'] === true,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : sanitizeError(error)
+    // Confirmation rejection is not a stack-trace-worthy failure —
+    // print the canonical message and exit non-zero.
+    if (message === CONFIRMATION_REJECTED_MESSAGE) {
+      console.error(chalk.yellow(message))
+    } else {
+      console.error(chalk.red('Error:'), message)
+    }
+    process.exit(1)
+  }
+}
+
+export const collisionsAction = withTelemetry(collisionsActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'collisions',
+  extractFramework: () => 'cli',
+})
+
 export function createAuditCollisionsSubcommand(): Command {
   return new Command('collisions')
     .description(
@@ -357,27 +388,7 @@ export function createAuditCollisionsSubcommand(): Command {
       'Clear ~/.skillsmith/namespace-overrides.json (typed-confirmation gate: literal phrase `RESET LEDGER`)',
       false
     )
-    .action(async (opts: Record<string, boolean | undefined>) => {
-      try {
-        await runAuditCollisions({
-          deep: opts['deep'] === true,
-          json: opts['json'] === true,
-          applyAll: opts['applyAll'] === true,
-          reportOnly: opts['reportOnly'] === true,
-          resetLedger: opts['resetLedger'] === true,
-        })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : sanitizeError(error)
-        // Confirmation rejection is not a stack-trace-worthy failure —
-        // print the canonical message and exit non-zero.
-        if (message === CONFIRMATION_REJECTED_MESSAGE) {
-          console.error(chalk.yellow(message))
-        } else {
-          console.error(chalk.red('Error:'), message)
-        }
-        process.exit(1)
-      }
-    })
+    .action(collisionsAction)
 }
 
 // Internal exports for tests.

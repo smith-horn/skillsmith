@@ -17,6 +17,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'fs'
 import { join, dirname, relative } from 'path'
 import { fileURLToPath } from 'url'
+import { execSync } from 'child_process'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -277,6 +278,7 @@ function validateDependencies(rootDir: string): ValidationResult {
   console.log(`  Found ${tsFiles.length} TypeScript source files`)
   console.log(`  Found ${allDeps.size} declared dependencies\n`)
 
+  // audit:concurrency-ok — function-local Map; writer (line 292) and reader (return on line 298) share the same single-threaded scope. No cross-tick or cross-process access.
   const missingDependencies = new Map<string, ImportInfo[]>()
   let totalImports = 0
 
@@ -336,11 +338,82 @@ function printResults(result: ValidationResult): boolean {
   return false
 }
 
+/**
+ * SMI-5006: Guard against legacy `@skillsmith/core/billing` imports.
+ *
+ * The billing module relocated to `@smith-horn/enterprise/billing` in core
+ * 0.7.0 and the `./billing` subpath export was removed (no shim). This
+ * check fails preflight if any source file still imports the legacy path,
+ * which would silently fail to resolve at install time for downstream
+ * consumers.
+ *
+ * Exit code 2 (distinct from the missing-deps exit code 1) so CI logs make
+ * the failure cause obvious.
+ */
+function checkLegacyBillingImports(rootDir: string): boolean {
+  console.log('\n🔍 Checking for legacy @skillsmith/core/billing imports...\n')
+  let output = ''
+  try {
+    output = execSync(
+      'grep -rn "@skillsmith/core/billing" packages/ --include="*.ts" --include="*.tsx"',
+      {
+        cwd: rootDir,
+        encoding: 'utf-8',
+      }
+    )
+  } catch (err) {
+    // grep exits 1 when no matches are found — that's the success case.
+    const e = err as { status?: number; stdout?: string }
+    if (e.status === 1) {
+      console.log('✅ No legacy billing imports found.\n')
+      return true
+    }
+    output = e.stdout ?? ''
+  }
+  // Filter out comments/docstrings that legitimately mention the legacy path
+  // for documentation purposes. Real imports are matched by `from '@skillsmith/core/billing'`
+  // or `import('@skillsmith/core/billing')` / `require('@skillsmith/core/billing')`.
+  const lines = output.split('\n').filter((line) => {
+    if (!line.trim()) return false
+    // grep output format: <path>:<lineno>:<content>. Strip the prefix and
+    // inspect the actual source content so we can ignore comments / docstrings
+    // that legitimately mention the legacy path for migration guidance.
+    const colonParts = line.split(':')
+    if (colonParts.length < 3) return false
+    const content = colonParts.slice(2).join(':').trimStart()
+    // Skip single-line and JSDoc comments
+    if (content.startsWith('//') || content.startsWith('*') || content.startsWith('/*')) {
+      return false
+    }
+    // Match actual import/require statements (string literal containing the path)
+    return /(?:from|import|require)\s*\(?\s*['"]@skillsmith\/core\/billing['"]/.test(content)
+  })
+  if (lines.length === 0) {
+    console.log('✅ No legacy billing imports found.\n')
+    return true
+  }
+  console.log(`❌ Found ${lines.length} legacy @skillsmith/core/billing import(s):\n`)
+  for (const line of lines) {
+    console.log(`   ${line}`)
+  }
+  console.log(
+    '\n💡 Update imports to `@smith-horn/enterprise/billing` (SMI-5006 — billing relocated in core 0.7.0).\n'
+  )
+  return false
+}
+
 // Main
 console.log('\n🚀 Pre-flight Dependency Check (SMI-760)\n')
 console.log('='.repeat(50) + '\n')
 
 const result = validateDependencies(ROOT_DIR)
 const success = printResults(result)
+const billingOk = checkLegacyBillingImports(ROOT_DIR)
 
-process.exit(success ? 0 : 1)
+if (!success) {
+  process.exit(1)
+}
+if (!billingOk) {
+  process.exit(2)
+}
+process.exit(0)

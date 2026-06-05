@@ -52,24 +52,26 @@ export function normalizeQualityScore(score: number | null | undefined): number 
  * Normalize trust tier to valid enum value
  */
 export function normalizeTrustTier(tier: string | null | undefined): TrustTier {
-  if (!tier) return 'unknown'
+  if (!tier) return 'unverified'
 
   const normalized = tier.toLowerCase().trim()
 
-  // Map common variations
+  // SMI-5205: official/unverified are now first-class storage values.
+  // experimental and unknown remain valid storage values for internal classification.
   const mappings: Record<string, TrustTier> = {
+    official: 'official',
+    'anthropic-official': 'official',
     verified: 'verified',
-    official: 'verified',
-    'anthropic-official': 'verified',
+    curated: 'curated',
     community: 'community',
     experimental: 'experimental',
     beta: 'experimental',
-    unknown: 'unknown',
-    unverified: 'unknown',
+    unknown: 'unverified',
+    unverified: 'unverified',
     standard: 'community',
   }
 
-  return mappings[normalized] || 'unknown'
+  return mappings[normalized] || 'unverified'
 }
 
 /**

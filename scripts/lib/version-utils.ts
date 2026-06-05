@@ -4,7 +4,7 @@
  */
 
 import { execFileSync } from 'child_process'
-import { readFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -22,6 +22,25 @@ export interface PackageSpec {
   versionConstPattern?: RegExp
   versionConstReplacement?: (v: string) => string
   serverJsonPath?: string
+  /**
+   * SMI-5057: When true, this package's package.json dep ranges are NOT
+   * touched by updateWorkspaceDependencies. Used for packages on a separate
+   * publish cadence (skillsmith-vscode → publish-vscode.yml).
+   */
+  skipDepRangeUpdate?: boolean
+  /**
+   * SMI-5120: npm registry the package's published artifact lives on. When
+   * set, the publish-collision check (`resolveNpmLookups` → `npm view`) is
+   * issued against this registry via `--registry=<url>`. When unset, the
+   * check uses the default (npmjs) registry, preserving existing behavior
+   * for @skillsmith/* packages.
+   *
+   * @smith-horn/enterprise publishes to GitHub Packages
+   * (https://npm.pkg.github.com), NOT npmjs — without this field its
+   * collision check would 404 against npmjs and be misclassified as a
+   * brand-new package, silently disabling the guard.
+   */
+  registry?: string
 }
 
 export interface ChangelogEntry {
@@ -66,15 +85,101 @@ export const PACKAGE_SPECS: PackageSpec[] = [
     shortName: 'vscode',
     dir: 'packages/vscode-extension',
     packageJsonPath: 'packages/vscode-extension/package.json',
+    // SMI-5057: vscode-extension is published on a separate cadence
+    // (publish-vscode.yml). prepare-release.ts must NOT bump its
+    // workspace dep ranges (vscode has no @skillsmith/* deps today,
+    // but a future contributor might add one for shared types).
+    skipDepRangeUpdate: true,
+  },
+  {
+    // SMI-5120: @smith-horn/enterprise was absent from the bump set, so
+    // prepare-release never advanced its version and the published artifact
+    // froze. It has no VERSION constant (version lives only in package.json)
+    // and no server.json. Its dep ranges (@skillsmith/core) ARE bumped by
+    // updateWorkspaceDependencies, so it is NOT skipDepRangeUpdate.
+    name: '@smith-horn/enterprise',
+    shortName: 'enterprise',
+    dir: 'packages/enterprise',
+    packageJsonPath: 'packages/enterprise/package.json',
+    // Publishes to GitHub Packages, not npmjs — collision check must target
+    // the correct registry (see PackageSpec.registry doc).
+    registry: 'https://npm.pkg.github.com',
   },
 ]
 
-// Packages that depend on @skillsmith/core (dep gets updated when core bumps)
+/**
+ * Packages that depend on @skillsmith/core.
+ *
+ * Historical role (pre-SMI-5057): canonical input to `updateCoreDependency`.
+ * SMI-5057 superseded that function with `updateWorkspaceDependencies`,
+ * which derives its targets from `PACKAGE_SPECS` + `skipDepRangeUpdate`.
+ *
+ * Retained as exported const because `scripts/tests/prepare-release.test.ts`
+ * asserts its contents (Wave 4 SMI-4191 fixture). The single source of
+ * truth for the deps-traversal is now PACKAGE_SPECS.
+ */
 export const CORE_DEPENDENTS = [
   'packages/mcp-server/package.json',
   'packages/cli/package.json',
   'packages/enterprise/package.json',
 ]
+
+/**
+ * SMI-5057: walk every PACKAGE_SPECS target (minus skipDepRangeUpdate ones)
+ * and update any workspace dep range whose key matches a freshly-bumped
+ * package. Returns the list of files actually modified.
+ *
+ * Replaces the older core-only `updateCoreDependency`. The natural
+ * predicate "skip if dep key is not in the bump map" correctly handles
+ * peerDependencies with `"*"` (e.g. cli → @skillsmith/enterprise: "*").
+ * The `"*"` range maps to a key (@skillsmith/enterprise) that does not
+ * exist in any PACKAGE_SPECS entry — the enterprise package's npm name is
+ * @smith-horn/enterprise (SMI-5120) — so it's never in the bump map and is
+ * naturally skipped.
+ */
+export function updateWorkspaceDependencies(
+  plans: Array<{ spec: PackageSpec; newVersion: string }>
+): { updated: string[] } {
+  const bumpMap = new Map<string, string>()
+  for (const plan of plans) {
+    bumpMap.set(plan.spec.name, plan.newVersion)
+  }
+
+  const updated: string[] = []
+  const DEP_KINDS = ['dependencies', 'devDependencies', 'peerDependencies'] as const
+
+  for (const target of PACKAGE_SPECS) {
+    if (target.skipDepRangeUpdate) continue
+    const fullPath = join(ROOT_DIR, target.packageJsonPath)
+    // SMI-5057 M-7: the enterprise submodule may be uninitialized on
+    // external clones. Graceful skip — never throw.
+    if (!existsSync(fullPath)) continue
+
+    const pkg = JSON.parse(readFileSync(fullPath, 'utf-8'))
+    let changed = false
+
+    for (const depKind of DEP_KINDS) {
+      const deps = pkg[depKind] as Record<string, string> | undefined
+      if (!deps) continue
+      for (const [depName, currentRange] of Object.entries(deps)) {
+        const newVersion = bumpMap.get(depName)
+        if (!newVersion) continue
+        const newRange = `^${newVersion}`
+        if (currentRange !== newRange) {
+          deps[depName] = newRange
+          changed = true
+        }
+      }
+    }
+
+    if (changed) {
+      writeFileSync(fullPath, JSON.stringify(pkg, null, 2) + '\n')
+      updated.push(target.packageJsonPath)
+    }
+  }
+
+  return { updated }
+}
 
 // --- Version Arithmetic ---
 

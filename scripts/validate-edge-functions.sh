@@ -50,6 +50,9 @@ AUTHENTICATED_FUNCTIONS=(
   "webhook-dlq"
   "auth-device-approve"
   "auth-device-preview"
+  "team-invite-send"
+  "sync-oauth-email"
+  "sync-stripe-email"
 )
 
 # Service role functions (scheduled jobs, internal)
@@ -58,6 +61,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "indexer-dispatch"
   "skills-refresh-metadata"
   "ops-report"
+  "coverage-report"
   "alert-notify"
   "email-inbound"
   "process-pending-subscription"

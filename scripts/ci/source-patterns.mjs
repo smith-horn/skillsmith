@@ -3,7 +3,7 @@
  *
  * Single source of truth for what counts as "source" vs test vs docs.
  * Consumed by:
- *   - scripts/ci/verify-implementation.ts — `Verify Implementation Completeness` CI check
+ *   - scripts/ci/verify-implementation.ts — the `PR Validation (Node)` CI check (SMI-4924)
  *   - scripts/linear-hook.mjs — git post-commit hook that drives Linear status transitions
  *
  * Keep these lists exhaustive for the classification they represent. Drifting

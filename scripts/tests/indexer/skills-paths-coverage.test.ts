@@ -108,3 +108,93 @@ describe('Plain-path entries — no wildcard, handled by Contents API scan (SMI-
     expect(entry.skillsPaths.some((p) => p.includes('*'))).toBe(true)
   })
 })
+
+// SMI-4843 Phase 5b (2026-05-18): the 12 new publishers. Each assertion pins
+// that the configured skillsPaths (or its omission, for flat layouts) actually
+// surfaces >=1 SKILL.md given the live tree probe — the SMI-4860 quarantine
+// failure mode. Tree paths are the concrete results from
+// `gh api repos/<owner>/<repo>/git/trees/HEAD?recursive=1` (2026-05-18),
+// recorded in docs/internal/research/smi-4843-phase5b-candidates.md.
+describe('Phase 5b publishers — skillsPaths surfaces >=1 SKILL.md (SMI-4843 / SMI-4860)', () => {
+  // Explicit-skillsPaths entries — each row carries its own configured path.
+  it.each([
+    ['nextlevelbuilder', 'ui-ux-pro-max-skill', '.claude/skills', '.claude/skills/design/SKILL.md'],
+    ['sleekdotdesign', 'agent-skills', 'skills', 'skills/design-mobile-apps/SKILL.md'],
+    ['scrapegraphai', 'just-scrape', 'skills', 'skills/just-scrape/SKILL.md'],
+    ['juliusbrussee', 'caveman', 'skills', 'skills/caveman/SKILL.md'],
+    ['lllllllama', 'ai-paper-reproduction-skill', 'skills', 'skills/ai-research-explore/SKILL.md'],
+    ['arvindrk', 'extract-design-system', 'skills', 'skills/extract-design-system/SKILL.md'],
+    ['leonxlnx', 'taste-skill', 'skills', 'skills/taste-skill/SKILL.md'],
+  ])(
+    '%s/%s — configured skillsPaths ["%s"] matches a probed SKILL.md path',
+    (owner, repo, expectedPath, sampleSkillMd) => {
+      const entry = findAuthor(owner, repo)
+      expect(entry.skillsPaths).toEqual([expectedPath])
+      const regex = globToSkillMdRegex(expectedPath)
+      expect(
+        regex.test(sampleSkillMd),
+        `${owner}/${repo}: skillsPaths ["${expectedPath}"] must surface ${sampleSkillMd}`
+      ).toBe(true)
+    }
+  )
+
+  // Flat repo-root entries — skillsPaths omitted so the default ['', 'skills']
+  // root-scan reaches <skill-name>/SKILL.md. Mirrors the garrytan/gstack
+  // convention; an explicit [''] would fail the non-empty-string invariant in
+  // high-trust-authors.test.ts.
+  it.each([
+    ['squirrelscan', 'skills'],
+    ['agentspace-so', 'agent-skills'],
+    ['agentspace-so', 'runcomfy-agent-skills'],
+    ['agentspace-so', 'skills'],
+    ['currents-dev', 'playwright-best-practices-skill'],
+  ])('%s/%s — flat layout: skillsPaths omitted (default root-scan)', (owner, repo) => {
+    const entry = findAuthor(owner, repo)
+    expect(
+      entry.skillsPaths,
+      `${owner}/${repo}: flat repo-root layout must omit skillsPaths so default ['', 'skills'] applies`
+    ).toBeUndefined()
+  })
+})
+
+describe('SMI-4962 round-N cross-ecosystem publishers — skillsPaths surfaces >=1 SKILL.md', () => {
+  // skillsPaths probed against the live GitHub Trees API on 2026-05-19. Each
+  // configured path is a non-default subdirectory, so the entry must carry an
+  // explicit skillsPaths value scoped away from internal/asset directories
+  // (openai/codex: codex-rs asset samples; bytedance/deer-flow: .agent/skills
+  // smoke test).
+  it.each([
+    ['openai', 'codex', '.codex/skills', '.codex/skills/babysit-pr/SKILL.md'],
+    ['bytedance', 'deer-flow', 'skills/public', 'skills/public/academic-paper-review/SKILL.md'],
+  ])(
+    '%s/%s — configured skillsPaths ["%s"] matches a probed SKILL.md path',
+    (owner, repo, expectedPath, sampleSkillMd) => {
+      const entry = findAuthor(owner, repo)
+      expect(entry.skillsPaths).toEqual([expectedPath])
+      const regex = globToSkillMdRegex(expectedPath)
+      expect(
+        regex.test(sampleSkillMd),
+        `${owner}/${repo}: skillsPaths ["${expectedPath}"] must surface ${sampleSkillMd}`
+      ).toBe(true)
+    }
+  )
+
+  // NousResearch/hermes-agent — two-level layout under BOTH skills/ and
+  // optional-skills/ (skills/<category>/<name>/SKILL.md), so each path is a
+  // wildcard. plugins/google_meet (flat layout, 1 skill) is intentionally
+  // excluded. Samples probed 2026-05-19.
+  it('NousResearch/hermes-agent — wildcard skillsPaths surface both roots', () => {
+    const entry = findAuthor('NousResearch', 'hermes-agent')
+    expect(entry.skillsPaths).toEqual(['skills/*', 'optional-skills/*'])
+    const cases: Array<[string, string]> = [
+      ['skills/*', 'skills/apple/apple-notes/SKILL.md'],
+      ['optional-skills/*', 'optional-skills/autonomous-ai-agents/blackbox/SKILL.md'],
+    ]
+    for (const [pattern, sampleSkillMd] of cases) {
+      expect(
+        globToSkillMdRegex(pattern).test(sampleSkillMd),
+        `hermes-agent: skillsPaths ["${pattern}"] must surface ${sampleSkillMd}`
+      ).toBe(true)
+    }
+  })
+})

@@ -90,17 +90,17 @@ export interface CompareResponse {
 export const compareToolSchema = {
   name: 'skill_compare',
   description:
-    "[Skillsmith — Evaluate stage] Compare two Skillsmith-registry skills side-by-side. Use when the user wants to compare/contrast/decide-between two specific skills — e.g. 'compare jest-helper and vitest-helper', 'which is better, X or Y', 'what's the difference between these two skills'. Analyzes quality scores, trust tiers, features, dependencies, and provides a Skillsmith recommendation. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
+    "[Skillsmith — Evaluate stage] Compare two Skillsmith-registry skills side-by-side. Use when the user wants to compare/contrast/decide-between two specific skills — e.g. 'compare getsentry/commit and microsoft/playwright-cli', 'which is better, X or Y', 'what's the difference between these two skills'. Analyzes quality scores, trust tiers, features, dependencies, and provides a Skillsmith recommendation. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {
       skill_a: {
         type: 'string',
-        description: 'First skill ID to compare (e.g., "community/jest-helper")',
+        description: 'First skill ID to compare (e.g., "getsentry/commit")',
       },
       skill_b: {
         type: 'string',
-        description: 'Second skill ID to compare (e.g., "community/vitest-helper")',
+        description: 'Second skill ID to compare (e.g., "microsoft/playwright-cli")',
       },
     },
     required: ['skill_a', 'skill_b'],
@@ -123,14 +123,17 @@ export type ExtendedSkill = Omit<Skill, 'dependencies'> & {
  * Trust tier ranking for comparison
  * SMI-1809: Added 'local' tier for local skills
  * SMI-2381 / SMI-4520: Added 'curated' tier for third-party publishers (same rank as community)
+ * SMI-5205: Added 'official' and 'unverified' to match public 5-tier model
  */
 export const TRUST_TIER_RANK: Record<TrustTier, number> = {
+  official: 5, // SMI-5205: Platform/partner, highest trust
   verified: 4,
   community: 3,
   curated: 3, // SMI-2381: Third-party publisher, manually vetted — same rank as community
   local: 3, // SMI-1809: Local skills rank same as community (user trusts their own skills)
   experimental: 2,
   unknown: 1,
+  unverified: 1, // SMI-5205: Public alias for unknown — same rank as unknown
 }
 
 /**

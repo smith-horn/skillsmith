@@ -63,6 +63,10 @@ export function formatSearchResults(response: SearchResponse): string {
       )
       lines.push('   ' + skill.description)
       lines.push('   ID: ' + skill.id)
+      // SMI-4954: flag discovery-only entries so models don't try to install them
+      if (skill.installable === false) {
+        lines.push('   Installable: NO — discovery-only (install_skill cannot resolve this)')
+      }
       // SMI-2734: Surface registry install ID so models can use owner/name directly
       if (skill.installHint) {
         lines.push('   Install: ' + skill.installHint)
@@ -73,6 +77,18 @@ export function formatSearchResults(response: SearchResponse): string {
       }
       lines.push('')
     })
+  }
+
+  // SMI-5178: surface how many results were hidden by the compatibility filter
+  // (the restrictive cross-tool default or an explicit compatible_with) so the
+  // model/user knows the view is scoped to their tool and can broaden it.
+  if (response.compatibilityHidden && response.compatibilityHidden > 0) {
+    lines.push('')
+    lines.push(
+      '+ ' +
+        response.compatibilityHidden +
+        ' more skill(s) hidden — tagged for other tools. Pass compatible_with to change the filter.'
+    )
   }
 
   // Add timing info

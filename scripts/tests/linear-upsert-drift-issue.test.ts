@@ -81,6 +81,69 @@ describe('buildDescription', () => {
     expect(desc).toContain('### npm lookup errors')
     expect(desc).toContain('| @skillsmith/foo | getaddrinfo ENOTFOUND |')
   })
+
+  // SMI-5120: source-vs-version drift section.
+  it('renders the source-drift section with legend and a verified row', () => {
+    const desc = buildDescription(
+      {
+        drifted: [],
+        clean: [],
+        errors: [],
+        sourceDrifted: [
+          {
+            pkg: '@skillsmith/core',
+            version: '0.8.0',
+            releasesElapsed: 4,
+            registryUnverified: false,
+          },
+        ],
+      },
+      '2026-04-20'
+    )
+    expect(desc).toContain('### Source-vs-version drift (stale published artifact)')
+    expect(desc).toContain('Repo releases since baseline')
+    expect(desc).toContain('not the package')
+    expect(desc).toContain('| @skillsmith/core | 0.8.0 | 4 | verified |')
+  })
+
+  it('marks an unverified registry (GitHub Packages without auth)', () => {
+    const desc = buildDescription(
+      {
+        drifted: [],
+        clean: [],
+        errors: [],
+        sourceDrifted: [
+          {
+            pkg: '@smith-horn/enterprise',
+            version: '0.1.2',
+            releasesElapsed: 20,
+            registryUnverified: true,
+          },
+        ],
+      },
+      '2026-04-20'
+    )
+    expect(desc).toContain('| @smith-horn/enterprise | 0.1.2 | 20 | unverified |')
+  })
+
+  it('tolerates a report carrying only sourceDrifted (no drifted/errors keys)', () => {
+    const desc = buildDescription(
+      {
+        sourceDrifted: [
+          {
+            pkg: '@smith-horn/enterprise',
+            version: '0.1.2',
+            releasesElapsed: 20,
+            registryUnverified: true,
+          },
+        ],
+      },
+      '2026-04-20'
+    )
+    expect(desc).toContain('### Source-vs-version drift (stale published artifact)')
+    expect(desc).not.toContain('### Drifted packages')
+    expect(desc).not.toContain('### npm lookup errors')
+  })
 })
 
 describe('withRetry', () => {

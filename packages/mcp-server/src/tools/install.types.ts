@@ -66,6 +66,11 @@ export function validateTrustTier(value: string | null | undefined): TrustTier {
  * - local: No scanning (user's own local skills)
  */
 export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
+  official: {
+    // SMI-5205: Platform/partner skills with full security review — more permissive than verified
+    riskThreshold: 80, // Higher than verified (70); official tier has full Skillsmith security audit
+    maxContentLength: 2_000_000, // Allow larger skills
+  },
   verified: {
     // Anthropic-verified skills get minimal scanning
     riskThreshold: 70, // Higher threshold - more tolerant
@@ -93,6 +98,11 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
   },
   unknown: {
     // Most aggressive scanning for unknown origins
+    riskThreshold: 20, // Very strict
+    maxContentLength: 250_000, // Very limited size
+  },
+  unverified: {
+    // SMI-5205: Public alias for unknown — same scanning profile as unknown
     riskThreshold: 20, // Very strict
     maxContentLength: 250_000, // Very limited size
   },

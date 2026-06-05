@@ -34,7 +34,9 @@ Arguments:
 
 Options:
   --force         Force removal even if worktree has dirty files
-  --prune         Also prune stale Docker networks
+  --prune         Also prune stale Docker networks, dangling images, and build
+                  cache (aggressive image -a / volume prune stay manual — see
+                  the post-removal reclaimable report)
   --keep-docker   Preserve the per-worktree Docker image and node_modules volume
                   (default: both are removed alongside the worktree)
   -h, --help      Show this help message and exit
@@ -48,9 +50,13 @@ Examples:
 What this script does:
   1. Stops Docker containers associated with the worktree
   2. Removes per-worktree Docker image and node_modules volume (unless --keep-docker)
-  3. Removes the git worktree (with --force if specified)
-  4. Checks Docker network count and warns if above threshold
-  5. Optionally prunes stale Docker networks (--prune)
+  3. Refuses if the worktree has uncommitted changes, unless --force is passed (SMI-5000)
+  4. Removes the git worktree (always passes --force to git worktree remove
+     so submodule presence — post-SMI-4829 every worktree has 4 — does not block)
+  5. Checks Docker network count and reports global reclaimable Docker
+     resources (images / volumes / build cache) with manual reclaim commands
+  6. Optionally prunes stale networks + dangling images + build cache (--prune);
+     aggressive image -a / volume prune are left to the operator
 
 EOF
 }
@@ -188,6 +194,60 @@ prune_docker_networks() {
 }
 
 #######################################
+# Report reclaimable global Docker resources (read-only)
+#
+# SMI-5145: surface the global reclaimable state — unused images, orphaned
+# volumes, and build cache — that accumulates across worktrees. Read-only;
+# never deletes. The aggressive reclaim (image -a / volume prune) is printed
+# as a MANUAL command, not run by --prune, because it can force expensive
+# native-module rebuilds (better-sqlite3 / onnxruntime, SMI-4698) in other
+# still-active worktrees.
+#
+# No GB-threshold gate (cf. NETWORK_WARN_THRESHOLD): parsing docker's
+# human-readable sizes would reintroduce a numeric-parse/errexit landmine;
+# this report is informational, so `docker system df` output is echoed raw.
+#######################################
+check_docker_reclaimable() {
+    if ! command -v docker &>/dev/null; then
+        return 0
+    fi
+
+    info "Reclaimable Docker resources (global):"
+    # Bare command, NOT inside a $(...) assignment, so under `set -euo pipefail`
+    # an unguarded non-zero exit (daemon hiccup) would abort the script before
+    # "Worktree removal complete!" — the `|| warn` keeps it tolerant.
+    docker system df 2>/dev/null || warn "  Could not read 'docker system df'"
+    echo ""
+    info "To reclaim more (manual — NOT run by --prune):"
+    echo -e "${YELLOW}  docker image prune -a   # unused tagged images${NC}"
+    echo -e "${YELLOW}  docker volume prune     # orphaned volumes (WARNING: forces native-module rebuilds in other worktrees)${NC}"
+    echo ""
+}
+
+#######################################
+# Prune the SAFE global Docker categories (dangling images + build cache)
+#
+# SMI-5145: run under --prune alongside prune_docker_networks. These do NOT
+# affect another worktree's ability to resume — named *_node_modules volumes
+# are preserved, and `image prune -f` removes only dangling/untagged images
+# (tagged images referenced by any running/stopped container are kept).
+# Aggressive `image -a` / `volume prune` stay manual (check_docker_reclaimable).
+# Each command is `|| warn`-tolerant so a transient non-zero exit doesn't abort
+# the script under `set -euo pipefail`.
+#######################################
+prune_docker_safe() {
+    if ! command -v docker &>/dev/null; then
+        warn "Docker not found, skipping safe image/cache prune"
+        return 0
+    fi
+
+    info "Pruning dangling images..."
+    docker image prune -f 2>&1 || warn "  image prune returned non-zero"
+    info "Pruning build cache..."
+    docker builder prune -f 2>&1 || warn "  builder prune returned non-zero"
+}
+
+#######################################
 # Main entry point
 #######################################
 main() {
@@ -292,21 +352,60 @@ main() {
         info "Skipping per-worktree Docker resource cleanup (--keep-docker)"
     fi
 
-    # Step 2: Remove the worktree
-    info "Removing git worktree..."
-    if git worktree remove "$worktree_path" $force_flag 2>&1; then
-        success "  Worktree removed"
-    else
-        error "Failed to remove worktree. Try with --force flag."
+    # Step 1d: SMI-5000 — script-level dirty-tree check.
+    #
+    # Post-SMI-4829, every worktree has 4 initialized submodules
+    # (docs/internal + 3 strategy mounts), and `git worktree remove`
+    # refuses without --force when submodules are present:
+    #     "fatal: working trees containing submodules cannot be moved or removed"
+    # We pass --force unconditionally in Step 2 to bypass that submodule
+    # check (verified empirically: `git worktree remove --force` from
+    # outside the worktree does NOT modify main/.git/config's submodule
+    # sections; the deinit-corruption concern only applies to
+    # `git submodule deinit --all` from inside a worktree).
+    #
+    # But --force also bypasses git's dirty-tree protection. To preserve
+    # that safety, we implement the dirty check ourselves at the script
+    # level. Untracked entries (??) are excluded — they're typically
+    # node_modules / build artifacts and don't represent unsaved work.
+    if [[ "$force_flag" != "--force" ]]; then
+        # `grep -v '^??'` exits 1 when zero non-?? lines match. Under
+        # `set -euo pipefail`, that exit propagates through the pipe and
+        # prevents `wc -l` from running. Wrapping in `{ ... || true; }`
+        # absorbs the no-match exit so wc -l always receives input and
+        # produces a clean single-line integer — no double-output, no
+        # spurious syntax error in the -gt comparison below.
+        local dirty_count
+        dirty_count=$(cd "$worktree_path" && git status --porcelain 2>/dev/null | { grep -v '^??' || true; } | wc -l | tr -d ' ')
+        if [[ "$dirty_count" -gt 0 ]]; then
+            error "Worktree has $dirty_count uncommitted change(s).
+
+Commit or discard them first, or re-run with --force to discard:
+  $(basename "$0") $worktree_path --force"
+        fi
     fi
 
-    # Step 3: Check Docker network count
+    # Step 2: Remove the worktree (--force is now unconditional — see Step 1d
+    # rationale above). The user-visible --force flag remains for parity with
+    # `git worktree remove --force` semantics, but the script already enforced
+    # the dirty check above. SMI-5000.
+    info "Removing git worktree..."
+    if git worktree remove "$worktree_path" --force 2>&1; then
+        success "  Worktree removed"
+    else
+        error "Failed to remove worktree."
+    fi
+
+    # Step 3: Check Docker resources — network count + global reclaimable report
     echo ""
     check_docker_networks
+    check_docker_reclaimable
 
-    # Step 4: Prune networks if requested
+    # Step 4: Prune networks + SAFE global categories (dangling images + build
+    # cache) if requested. Aggressive image -a / volume prune stay manual.
     if [[ "$prune_flag" == true ]]; then
         prune_docker_networks
+        prune_docker_safe
     fi
 
     echo ""

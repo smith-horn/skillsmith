@@ -20,13 +20,14 @@
  *   project_path: '/path/to/project',
  *   current_file: 'src/App.test.tsx',
  *   recent_commands: ['npm test'],
- *   installed_skills: ['anthropic/commit']
+ *   installed_skills: ['getsentry/commit']
  * }, toolContext);
  */
 
 import { resolve } from 'path'
 import { z } from 'zod'
 import { TriggerDetector, ContextScorer } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { CodebaseAnalyzer } from '@skillsmith/core'
 import { SkillMatcher } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
@@ -226,11 +227,11 @@ async function loadSkillsFromDatabase(
  *   project_path: '/path/to/project',
  *   current_file: 'src/App.test.tsx',
  *   recent_commands: ['npm test'],
- *   installed_skills: ['anthropic/commit'],
+ *   installed_skills: ['getsentry/commit'],
  *   limit: 3
  * }, toolContext);
  */
-export async function executeSuggest(
+async function executeSuggestImpl(
   input: SuggestInput,
   context: ToolContext
 ): Promise<SuggestResponse> {
@@ -348,6 +349,13 @@ export async function executeSuggest(
     },
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeSuggest = withTelemetry(executeSuggestImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_suggest',
+  extractFramework: () => 'unknown',
+})
 
 /**
  * Format suggestions for terminal display

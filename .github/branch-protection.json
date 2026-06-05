@@ -7,13 +7,15 @@
       "Secret Scan",
       "Classify Changes",
       "Package Validation",
-      "Edge Function Validation",
       "Build Docker Image",
       "Quality Checks",
       "Security Audit",
       "Build",
       "Markdown Lint",
-      "Verify Implementation Completeness"
+      "PR Validation (Node)",
+      "PR Validation (Shell)",
+      "Test (root)",
+      "Test (root colocated)"
     ]
   },
   "enforce_admins": false,

@@ -60,11 +60,7 @@
       "mcp__ruflo__transfer_ipfs-resolve",
       "mcp__ruflo__hooks_intelligence_pattern-store",
       "mcp__ruflo__hooks_intelligence_pattern-search",
-      "mcp__ruflo__memory_store",
-      "mcp__ruflo__memory_search",
-      "mcp__ruflo__memory_search_unified",
       "mcp__ruflo__memory_migrate",
-      "mcp__ruflo__swarm_init",
       "mcp__ruflo__claims_handoff",
       "mcp__ruflo__claims_accept-handoff",
       "mcp__ruflo__hooks_post-task",
@@ -88,6 +84,15 @@
           {
             "type": "command",
             "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} npx claude-flow@3 hooks pre-edit --file '{}' --auto-assign-agents true --load-context true"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/dogfood-skill-telemetry.sh pre"
           }
         ]
       }
@@ -117,6 +122,15 @@
           {
             "type": "command",
             "command": "cat | jq -r 'if (.tool_input.description // \"\" | test(\"review|code review\"; \"i\")) then \"GOVERNANCE_CHECK\" else empty end' | xargs -I {} sh -c 'echo \"🔒 Governance Gate: Running standards audit...\"; docker exec skillsmith-dev-1 npm run audit:standards || (echo \"❌ BLOCKED: Governance audit failed. Fix violations before continuing.\" && exit 1)'"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/dogfood-skill-telemetry.sh post"
           }
         ]
       }
@@ -168,7 +182,7 @@
     ]
   },
   "includeCoAuthoredBy": true,
-  "enabledMcpjsonServers": ["claude-flow", "ruv-swarm"],
+  "enabledMcpjsonServers": ["skillsmith", "skillsmith-doc-retrieval", "ruflo"],
   "statusLine": {
     "type": "command",
     "command": "npx @claude-flow/cli@latest hooks statusline || node .claude/helpers/statusline.cjs || echo Claude Flow V3"

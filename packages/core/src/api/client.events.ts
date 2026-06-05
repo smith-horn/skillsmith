@@ -45,6 +45,16 @@ export function createBatchFlushFn(
     // edge function's validation regex `[a-zA-Z0-9_-]{1,64}`.
     const batchId = generateBatchId()
 
+    // SMI-4971: `Authorization` is set explicitly per auth-mode — API-key mode
+    // sends `X-API-Key` only (no Authorization), anonymous mode sends
+    // `Authorization: Bearer <anonKey>`. `buildRequestHeaders` no longer adds a
+    // blanket `Authorization`. (No JWT branch: `BatchPostContext` has no jwt.)
+    const authHeader: Record<string, string> = apiKey
+      ? { 'X-API-Key': apiKey }
+      : anonKey
+        ? { Authorization: `Bearer ${anonKey}` }
+        : {}
+
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeout)
     try {
@@ -52,7 +62,7 @@ export function createBatchFlushFn(
         method: 'POST',
         headers: {
           ...buildRequestHeaders(anonKey),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...authHeader,
           'X-Skillsmith-Batched': 'true',
           'X-Skillsmith-Batch-Id': batchId,
         },

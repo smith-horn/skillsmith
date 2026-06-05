@@ -4,6 +4,48 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.0
+
+- **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the
+  `probeEmbeddingCapability()` helper (originally landed inline in
+  `@skillsmith/mcp-server` under SMI-5009) into `@skillsmith/core` so MCP
+  servers, CLIs, and future tooling can share a single audited probe contract.
+  Hard 2 s `Promise.race` timeout, try/catch wrapper, stderr-only logging, and
+  honors `SKILLSMITH_QUIET=true` (or `opts.quiet`) to suppress the operator
+  warning. Minor bump (additive export, no breaking change).
+
+## v0.7.2
+
+- **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)
+- **Chore**: SMI-5009 promote @huggingface/transformers to optionalDependency + MCP startup capability probe (#870) (#1252)
+- **Chore**: SMI-5006 move billing module to @smith-horn/enterprise + remove core shim (#867, #868) (#1246)
+
+## v0.7.1
+
+- **Chore**: SMI-5008 — removed direct dependency on `stripe`. Billing lives in `@smith-horn/enterprise` since v0.7.0; this release completes the dependency-graph cleanup. Consumers of `@skillsmith/core` no longer pull in the ~3MB Stripe SDK or its transitive deps. (#869)
+- **Chore**: SMI-5009 — `@huggingface/transformers` is now an `optionalDependency` (was a regular `dependency`). Aligns the declared graph with the actual runtime contract per ADR-009: `loadTransformersModule()` already returns `null` on import failure and `EmbeddingService` already falls back to mock embeddings (`SKILLSMITH_USE_MOCK_EMBEDDINGS=true`). Consumers installing with `npm install --no-optional` (or on hosts without prebuilt ONNX binaries) now skip the ~50 MB native install and the runtime degrades gracefully to keyword-only search. To restore real embeddings, install `@huggingface/transformers` explicitly. Companion change in `@skillsmith/mcp-server`: structured stderr warning at server boot when transformers is unavailable (was previously silent). (#870)
+
+## v0.7.0
+
+- **BREAKING**: SMI-5006 — billing module relocated to `@smith-horn/enterprise/billing`. The `./billing` subpath export was removed (no shim was shipped), and the 27 root-level re-exports of billing symbols (`StripeClient`, `BillingService`, `StripeWebhookHandler`, `GDPRComplianceService`, `StripeReconciliationJob`, and associated types) were removed from `services.ts`. The companion enterprise feature note lands in `@smith-horn/enterprise` Unreleased.
+  - **Migration**: update imports
+    - Before: `import { StripeWebhookHandler } from '@skillsmith/core/billing'`
+    - After: `import { StripeWebhookHandler } from '@smith-horn/enterprise/billing'`
+  - **Why no shim**: a back-compat shim was attempted but proved structurally infeasible — `services.ts` → `../billing/index` (shim) → `@smith-horn/enterprise/billing` (workspace-source) → `@skillsmith/core` (`createLogger`) created a TypeScript build cycle that prevented TS from resolving named exports through the shim during core's compile. The repository-wide audit at relocation time found exactly one consumer (`packages/mcp-server/src/webhooks/stripe-webhook-endpoint.ts`), so the consumer was migrated in the same PR rather than carry the shim.
+  - **createLogger / Logger** are now exported from the core public API to support enterprise billing consumers. (Internal utility promoted to public surface.)
+  - **Stripe runtime dep** remains in core for one more release cycle (removal tracked in a follow-up wave) but should be considered deprecated for direct consumption from `@skillsmith/core`.
+
+## v0.6.3
+
+- **Chore**: SMI-4539 — synthetic patch release to verify the npm trusted-publisher OIDC publish path end-to-end (PR #1171). No functional or API change; the only source delta from v0.6.2 is the `VERSION` constant bump in `src/index.ts` (PR #1174). Published via OIDC in run 26012688904 with SLSA build provenance.
+
+## v0.6.2
+
+- **Fix**: SMI-4919 — the v17 migration's `skills` table-recreate (`CREATE/INSERT/DROP/RENAME`) silently cascade-deleted every `skill_categories` row. With `foreign_keys=ON` (the driver default), `DROP TABLE skills` fires the `skill_categories.skill_id → skills(id) ON DELETE CASCADE` immediately; `SyncEngine.upsertSkills()` never repopulates `skill_categories`, so category-filtered search degraded silently after the migration. The recreate now backs `skill_categories` up into a TEMP table before the drop and restores it verbatim after the rename, inside the same transaction. The false "SQLite defers FK enforcement" header comment is corrected. (#1140)
+
+## v0.6.1
+
+- **Fix**: SMI-4917 — repair first-time install (search crash, sync drops all skills, no self-config) (#1132)
 - **Security**: SMI-4888 bump `@opentelemetry/sdk-node` 0.217 → 0.218 (resolves protobufjs transitive chain — `otlp-transformer@0.218.0` removes protobufjs entirely, PR #6629 upstream). Companion bumps: `instrumentation-http` 0.217 → 0.218, `instrumentation-runtime-node` 0.27 → 0.31, `instrumentation-undici` 0.24 → 0.28 (aligned to OTel 0.218 release wave). Closes 1 high + 6 moderate GHSAs (GHSA-q6x5-8v7m-xcrf + chain). (#1102)
 
 ## v0.6.0

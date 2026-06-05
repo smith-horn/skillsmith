@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { checkDepsAgainstQuarantine } from '../../src/services/skill-installation.helpers.js'
+import { checkDepsAgainstQuarantine } from '../../src/services/skill-installation.validate.js'
 import type {
   DepIntelResult,
   QuarantineStatus,

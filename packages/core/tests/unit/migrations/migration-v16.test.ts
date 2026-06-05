@@ -161,8 +161,13 @@ describe('Migration v16: source column + trust_tier=local', () => {
       }
     }
 
-    const versionAfter = getSchemaVersion(db)
-    expect(versionAfter).toBeLessThan(16)
+    // A broken v16 must not stamp version 16. Assert on row 16 specifically —
+    // not getSchemaVersion() (MAX), since later migrations (v17, SMI-4917) can
+    // legitimately succeed and advance the MAX past 16.
+    const v16Stamped = db
+      .prepare('SELECT 1 AS hit FROM schema_version WHERE version = 16')
+      .get() as { hit: number } | undefined
+    expect(v16Stamped).toBeUndefined()
     expect(stamped).toBeGreaterThanOrEqual(0)
   })
 

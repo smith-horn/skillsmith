@@ -34,20 +34,25 @@ import { DEFAULT_MIN_CONTENT_LENGTH } from './skill-processor.ts'
 import { selectTopics, type RotationSource } from './topic-rotation.ts'
 import { runDiscovery } from './discovery-orchestrator.ts'
 import { runMaintenanceReconciliation } from './maintenance-helpers.ts'
+import { runRecheck } from './recheck.ts'
+import type { RecheckResult } from './recheck.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
-import {
-  treeHashCacheKey,
-  type TreeHashCache,
-  type TreeHashCacheEntry,
-} from './high-trust-indexer.ts'
+import { prefetchExistingSkills } from './prefetch-existing-skills.ts'
+// SMI-4870: lock-skip observability — write an audit row even when the lock is
+// already held so partial-cycle gaps are detectable in SQL.
+import { writeIndexerAuditLog } from './indexer-audit-log.ts'
 
 interface RunSummary {
   data: unknown
   meta: {
     request_id: string
-    run_type: 'discovery' | 'maintenance'
+    run_type: 'discovery' | 'maintenance' | 'recheck'
     rate_limit_remaining_min: number
+    // SMI-4918: per-bucket GitHub rate-limit minimums (core/search/code_search).
+    core_remaining_min: number
+    search_remaining_min: number
+    code_search_remaining_min: number
     secondary_rate_limit_hits: number
     retry_after_max_seconds: number
     concurrency: number
@@ -96,47 +101,18 @@ async function runDiscoveryBranch(
   const searchApiTokenBucket = createTokenBucket(0.5, 1)
   const codeSearchTokenBucket = createTokenBucket(1 / 6, 1)
 
-  // SMI-4854 + SMI-4861 Wave 1: Prefetch repo_updated_at + tree_hash maps in
-  // a single query. tree_hash + last_tree_hash_check are read into a separate
-  // `(repo_url, skill_path) → {tree_hash, last_tree_hash_check}` map so Phase 1
-  // can short-circuit the per-skill raw.* fetch when blob SHA + freshness match.
-  const existingRepoUpdatedAt = new Map<string, string | null>()
-  const treeHashCache: TreeHashCache = new Map<string, TreeHashCacheEntry>()
-  const { data: existingRows, error: prefetchError } = await supabase
-    .from('skills')
-    .select('repo_url, repo_updated_at, skill_path, tree_hash, last_tree_hash_check')
-    .not('repo_url', 'is', null)
-  if (prefetchError) {
-    console.error(
-      JSON.stringify({
-        event: 'repo_updated_at_prefetch_failed',
-        error: prefetchError.message,
-        request_id: requestId,
-      })
-    )
-    // Non-fatal — empty maps mean no skip-gate hits this run; correctness preserved.
-  } else {
-    for (const row of (existingRows ?? []) as Array<{
-      repo_url: string
-      repo_updated_at: string | null
-      skill_path: string | null
-      tree_hash: string | null
-      last_tree_hash_check: string | null
-    }>) {
-      if (!row.repo_url) continue
-      existingRepoUpdatedAt.set(row.repo_url, row.repo_updated_at ?? null)
-      if (row.tree_hash) {
-        // skills.repo_url stores the per-skill URL `…/tree/<branch>/<skillPath>` for
-        // multi-skill repos (skill-processor.ts:473). Phase 1 lookups key on the bare
-        // repo URL + skill_path tuple, so strip the suffix here for round-trip parity.
-        const bareRepoUrl = row.repo_url.split('/tree/')[0]
-        treeHashCache.set(treeHashCacheKey(bareRepoUrl, row.skill_path ?? ''), {
-          tree_hash: row.tree_hash,
-          last_tree_hash_check: row.last_tree_hash_check,
-        })
-      }
-    }
-  }
+  // SMI-4854 + SMI-4861 Wave 1: Prefetch repo_updated_at + tree_hash maps so
+  // Phase 1 can short-circuit the per-skill raw.* fetch when blob SHA +
+  // freshness match. Paginated — an unbounded `.select()` is silently capped
+  // by PostgREST's `max-rows` (1000), which previously starved both maps to
+  // the first ~1000 of the ~8400-row corpus. See prefetch-existing-skills.ts.
+  const { existingRepoUpdatedAt, treeHashCache, rowsScanned } = await prefetchExistingSkills(
+    supabase,
+    requestId
+  )
+  console.log(
+    `[Prefetch] ${rowsScanned} skill rows scanned; tree-hash cache seeded with ${treeHashCache.size} entries`
+  )
 
   const result = await runDiscovery({
     supabase,
@@ -158,6 +134,8 @@ async function runDiscoveryBranch(
     telemetry,
     concurrency: env.concurrency,
     killSwitchEngaged: env.kill_switch_engaged,
+    // SMI-4870: thread per-phase sub-slot identifier from env into orchestrator.
+    discoveryPhase: env.DISCOVERY_PHASE,
   })
 
   return { result, topics, rotationSource }
@@ -185,6 +163,27 @@ async function runMaintenanceBranch(
     telemetry,
     concurrency: env.concurrency,
     killSwitchEngaged: env.kill_switch_engaged,
+  })
+}
+
+async function runRecheckBranch(
+  env: IndexerEnv,
+  requestId: string,
+  telemetry: RateLimitTelemetry
+): Promise<RecheckResult> {
+  const supabase = createSupabaseAdminClient()
+  // RECHECK_DRY_RUN is the enforceable dry-run-first gate (SMI-5166 E6):
+  // a scheduled cron has no inputs.dry_run, so the workflow DRY_RUN resolves
+  // to false (live) on night 1; recheck reads its own RECHECK_DRY_RUN repo-var
+  // instead. apply = !dryRun.
+  return await runRecheck({
+    supabase,
+    requestId,
+    apply: !env.RECHECK_DRY_RUN,
+    thresholdDays: env.RECHECK_THRESHOLD_DAYS,
+    cap: env.RECHECK_MAX_CANDIDATES,
+    batch: env.RECHECK_BATCH,
+    telemetry,
   })
 }
 
@@ -219,6 +218,61 @@ async function main(): Promise<void> {
         request_id: requestId,
       })
     )
+    // SMI-4870 issue #1: write a minimal audit_logs row so per-phase sub-slot
+    // skips are observable via SQL (GROUP BY discovery_phase, status).
+    // The meta shape mirrors the Phase 7 row written by writeDiscoveryAuditLog
+    // — only fields available without running any phase are populated.
+    // Assign to a typed intermediate so the extra `status` and `discovery_phase`
+    // keys survive the excess-property check (same pattern as writeDiscoveryAuditLog
+    // uses for its `auditMeta` local).
+    const skipMeta = {
+      request_id: requestId,
+      run_type: env.RUN_TYPE,
+      rate_limit_remaining_min: 0,
+      // SMI-4918: lock-skipped runs make no GitHub calls — zero every bucket.
+      core_remaining_min: 0,
+      search_remaining_min: 0,
+      code_search_remaining_min: 0,
+      secondary_rate_limit_hits: 0,
+      retry_after_max_seconds: 0,
+      concurrency: env.concurrency,
+      kill_switch_engaged: env.kill_switch_engaged,
+      topics: [],
+      cron_slot: env.CRON_SLOT,
+      rotation_source: 'fallback' as const,
+      tree_hash_cache_hits: 0,
+      tree_hash_cache_misses: 0,
+      // SMI-4870: observability keys — status marks the skip; discovery_phase
+      // identifies which per-phase sub-slot was blocked.
+      status: 'skipped_lock' as const,
+      discovery_phase: env.DISCOVERY_PHASE ?? null,
+    }
+    await writeIndexerAuditLog(supabase, 'partial', {
+      requestId,
+      topics: [],
+      runType: env.RUN_TYPE,
+      dryRun: env.DRY_RUN,
+      found: 0,
+      indexed: 0,
+      updated: 0,
+      failed: 0,
+      stale: 0,
+      quality_gate_filtered: 0,
+      unchanged: 0,
+      quarantined: 0,
+      github_skill_count: 0,
+      code_search: undefined,
+      scoreDistribution: { highTrust: 0, community: 0, scores: [] },
+      categorizedCount: 0,
+      categoryAssignments: 0,
+      wildcard_expansion_count: 0,
+      cron_slot: env.CRON_SLOT,
+      rotation_source: 'fallback',
+      discovery_path_counts: {},
+      subdirectory_search: undefined,
+      high_trust_fallback_hits: 0,
+      meta: skipMeta,
+    })
     process.exit(0)
   }
 
@@ -230,6 +284,8 @@ async function main(): Promise<void> {
   try {
     if (env.RUN_TYPE === 'maintenance') {
       result = await runMaintenanceBranch(env, requestId, telemetry)
+    } else if (env.RUN_TYPE === 'recheck') {
+      result = await runRecheckBranch(env, requestId, telemetry)
     } else {
       const discovery = await runDiscoveryBranch(env, requestId, telemetry)
       result = discovery.result
@@ -251,6 +307,10 @@ async function main(): Promise<void> {
     }
   }
 
+  // tree_hash_cache is only present on discovery results; cast narrowly to read
+  // the optional counters without widening the `result` type elsewhere.
+  const treeHashCache = (result as { tree_hash_cache?: { hits?: number; misses?: number } } | null)
+    ?.tree_hash_cache
   const summary: RunSummary = {
     data: result,
     meta: {
@@ -261,8 +321,8 @@ async function main(): Promise<void> {
       topics,
       cron_slot: env.CRON_SLOT,
       rotation_source: rotationSource,
-      tree_hash_cache_hits: result.tree_hash_cache?.hits ?? 0,
-      tree_hash_cache_misses: result.tree_hash_cache?.misses ?? 0,
+      tree_hash_cache_hits: treeHashCache?.hits ?? 0,
+      tree_hash_cache_misses: treeHashCache?.misses ?? 0,
       ...summarizeRateLimitTelemetry(telemetry),
     },
   }

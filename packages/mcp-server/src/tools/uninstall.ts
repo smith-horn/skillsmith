@@ -19,6 +19,7 @@ import { SkillInstallationService } from '@skillsmith/core'
 import { removeLinks } from '@skillsmith/core/install'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 // Input schema
 export const uninstallInputSchema = z.object({
@@ -41,7 +42,7 @@ export type UninstallResult = CoreUninstallResult
  * @param _context - Optional tool context (falls back to singleton)
  * @returns Promise resolving to uninstall result with success status
  */
-export async function uninstallSkill(
+async function uninstallSkillImpl(
   input: UninstallInput,
   _context?: ToolContext
 ): Promise<UninstallResult> {
@@ -102,7 +103,7 @@ export async function listInstalledSkills(): Promise<string[]> {
 export const uninstallTool = {
   name: 'uninstall_skill',
   description:
-    "[Skillsmith — Retire stage] Uninstall an agent skill from the local Claude Code skills directory (~/.claude/skills/) or runtime-equivalent path. Use when the user asks to uninstall/remove/delete a specific skill — e.g. 'uninstall jest-helper', 'remove community/git-commit', 'use Skillsmith to delete the testing skill'. Optional `force` flag overrides protection on locally-modified skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
+    "[Skillsmith — Retire stage] Uninstall an agent skill from the local Claude Code skills directory (~/.claude/skills/) or runtime-equivalent path. Use when the user asks to uninstall/remove/delete a specific skill — e.g. 'uninstall playwright-cli', 'remove getsentry/commit', 'use Skillsmith to delete the testing skill'. Optional `force` flag overrides protection on locally-modified skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -120,3 +121,10 @@ export const uninstallTool = {
 }
 
 export default uninstallTool
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const uninstallSkill = withTelemetry(uninstallSkillImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'uninstall_skill',
+  extractFramework: () => 'unknown',
+})

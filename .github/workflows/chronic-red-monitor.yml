@@ -1,0 +1,67 @@
+# SMI-4974: detect workflows that have rotted into chronic-red.
+# Inverts the burden: instead of every contributor checking every workflow's
+# badge, we hear about regressions on a 24h cadence.
+# SMI-5005: cross-run alert dedup via GHA artifact-backed state file.
+name: Chronic-Red Workflow Monitor
+
+on:
+  schedule:
+    - cron: '0 14 * * *' # 14:00 UTC daily (post-deploys, pre-business-day)
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  monitor:
+    name: Detect chronic-red workflows
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      THRESHOLD: '3'
+      STATE_DIR: /tmp/chronic-red-state
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # SMI-5005: cross-run artifact fetch. `actions/download-artifact@v8`
+      # only fetches within the SAME workflow run; for the previous run's
+      # state we use `gh api` to find and download the most recent
+      # non-expired `chronic-red-state` artifact. continue-on-error
+      # isn't needed because the gh api calls handle missing-artifact
+      # silently (artifact_id is empty → skip download).
+      - name: Restore previous chronic-red state
+        run: |
+          mkdir -p "$STATE_DIR"
+          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts" \
+            --jq '[.artifacts[] | select(.name=="chronic-red-state" and .expired==false)]
+                  | sort_by(.created_at) | reverse | .[0].id // empty')
+          if [ -n "$artifact_id" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id/zip" > /tmp/state.zip
+            unzip -o /tmp/state.zip -d "$STATE_DIR/"
+            echo "Restored chronic-red-state from artifact $artifact_id"
+            echo "::group::Restored state.json contents"
+            jq . "$STATE_DIR/state.json" 2>/dev/null || echo "(no state.json in artifact)"
+            echo "::endgroup::"
+          else
+            echo "::notice::No prior chronic-red-state artifact — treating all chronic-red workflows as new"
+          fi
+
+      - name: Run chronic-red monitor
+        run: bash scripts/chronic-red-monitor.sh
+
+      # SMI-5005: upload the (possibly-updated) state for the next run.
+      # `if: always()` so a script failure mid-loop still persists the
+      # state for entries that were updated before the failure.
+      # `continue-on-error: true` (H-3) so concurrent dispatch + cron
+      # race on the upload doesn't fail the job.
+      - name: Upload chronic-red state for next run
+        if: always()
+        continue-on-error: true # audit:allow-continue-on-error — concurrent dispatch+cron race; one duplicate alert acceptable (P-5 in SPARC plan)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: chronic-red-state
+          path: /tmp/chronic-red-state/state.json
+          retention-days: 30

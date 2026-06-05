@@ -167,6 +167,14 @@ const tierLookup = Object.fromEntries(
               <button class="btn btn-secondary" id="increase-seats">+</button>
             </div>
             <button class="btn btn-primary" id="update-seats-btn" disabled>Update Seats</button>
+            <p
+              id="seat-unavailable-note"
+              class="text-muted"
+              role="note"
+              aria-live="polite"
+              style="display: none;"
+            >
+            </p>
           </div>
         </section>
 
@@ -700,6 +708,7 @@ const tierLookup = Object.fromEntries(
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { isNoStripeSubscription, seatErrorMessage } from '../../lib/seat-update-error'
 
   // Read config injected by SSR script in head
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
@@ -722,6 +731,14 @@ const tierLookup = Object.fromEntries(
 
   // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
   document.addEventListener('astro:page-load', async () => {
+    // Only run on this page — astro:page-load listeners persist on `document`
+    // across ClientRouter navigations and would re-fire here otherwise (SMI-4896).
+    if (
+      window.location.pathname !== '/account/subscription' &&
+      window.location.pathname !== '/account/subscription/'
+    )
+      return
+
     // Bind CSP-safe reload handler (SMI-4311)
     document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -862,6 +879,24 @@ const tierLookup = Object.fromEntries(
           const updateSeatsBtn = document.getElementById('update-seats-btn') as HTMLButtonElement
           const decreaseSeatsBtn = document.getElementById('decrease-seats') as HTMLButtonElement
           const increaseSeatsBtn = document.getElementById('increase-seats') as HTMLButtonElement
+          const seatUnavailableNote = document.getElementById(
+            'seat-unavailable-note'
+          ) as HTMLParagraphElement | null
+
+          // SMI-5153: complimentary/admin-granted plans have no Stripe subscription,
+          // so self-serve seat changes can't run. Surface the message inline and
+          // lock the controls instead of a misleading alert.
+          const showSeatUnavailable = (message: string): void => {
+            if (seatUnavailableNote) {
+              seatUnavailableNote.textContent = message
+              seatUnavailableNote.style.display = 'block'
+            }
+            decreaseSeatsBtn.disabled = true
+            increaseSeatsBtn.disabled = true
+            newSeatCount.disabled = true
+            updateSeatsBtn.disabled = true
+            updateSeatsBtn.textContent = 'Update Seats'
+          }
 
           currentSeats.textContent = String(subscription.seat_count)
           newSeatCount.value = String(subscription.seat_count)
@@ -905,7 +940,11 @@ const tierLookup = Object.fromEntries(
 
               if (!previewRes.ok) {
                 const err = await previewRes.json()
-                throw new Error(err.error || 'Failed to preview seat change')
+                if (isNoStripeSubscription(err)) {
+                  showSeatUnavailable(seatErrorMessage(err))
+                  return
+                }
+                throw new Error(seatErrorMessage(err, 'Failed to preview seat change'))
               }
 
               const preview = await previewRes.json()
@@ -939,7 +978,11 @@ const tierLookup = Object.fromEntries(
 
               if (!updateRes.ok) {
                 const err = await updateRes.json()
-                throw new Error(err.error || 'Failed to update seat count')
+                if (isNoStripeSubscription(err)) {
+                  showSeatUnavailable(seatErrorMessage(err))
+                  return
+                }
+                throw new Error(seatErrorMessage(err, 'Failed to update seat count'))
               }
 
               const result = await updateRes.json()

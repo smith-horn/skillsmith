@@ -106,7 +106,14 @@ jobs:
       - name: Open PR
         if: steps.check.outputs.count != '0' && github.event.inputs.dry_run != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SMI-5047: GITHUB_TOKEN cannot create PRs because the repo-level
+          # "Allow GitHub Actions to create and approve pull requests" setting
+          # is disabled (failure mode introduced ~2026-04-26; 4 missed Sunday
+          # windows). Use a dedicated RELEASE_PAT (least-privilege: only
+          # pull-requests:write + contents:write on smith-horn/skillsmith)
+          # rather than reusing GH_PAT, which would broaden batch-transform
+          # and indexer-dispatch blast radius.
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           gh pr create \
             --title "chore(release): weekly cadence bump — ${{ steps.branch.outputs.date }}" \
@@ -132,3 +139,22 @@ jobs:
           )" \
             --base main \
             --head "${{ steps.branch.outputs.branch }}"
+
+      # SMI-4938: email alert on scheduled failure. Before this, release-cadence
+      # had no failure signal and its "Open PR" step failed silently for weeks.
+      - name: Send alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "release_cadence_failed",
+              "message": "The weekly release-cadence workflow failed. Check GitHub Actions for details.",
+              "workflow": "Release Cadence",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' || echo "Alert notification failed (non-fatal)"

@@ -65,10 +65,21 @@ export function generateAnonymousId(): string {
 // ============================================================================
 
 /**
- * Build request headers for API calls
+ * Build request headers for API calls.
  *
- * @param anonKey - Optional Supabase anon key for authentication
- * @returns Headers object
+ * SMI-4971: This sets only the Supabase gateway `apikey` header (always the
+ * anon key) plus `Content-Type` / `x-request-id`. It deliberately does NOT set
+ * `Authorization` — that header is the caller's per-auth-mode responsibility:
+ * - JWT mode → `Authorization: Bearer <jwtToken>`
+ * - API-key mode → `X-API-Key: <apiKey>`, no `Authorization`
+ * - anonymous mode → `Authorization: Bearer <anonKey>`
+ *
+ * Previously this set `Authorization: Bearer <anonKey>` unconditionally, which
+ * left a stale cross-project anon JWT on API-key requests and broke downstream
+ * edge-function signature validation.
+ *
+ * @param anonKey - Optional Supabase anon key for the gateway `apikey` header
+ * @returns Headers object (no `Authorization` — see above)
  */
 export function buildRequestHeaders(anonKey?: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -77,7 +88,6 @@ export function buildRequestHeaders(anonKey?: string): Record<string, string> {
   }
 
   if (anonKey) {
-    headers['Authorization'] = `Bearer ${anonKey}`
     headers['apikey'] = anonKey
   }
 

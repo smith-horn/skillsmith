@@ -198,17 +198,16 @@ jobs:
             exit 0
           fi
 
-          # Format the closure list as a plain-text body. Mirrors the
-          # smoke-prod/alert.sh convention (alert-notify accepts {to, subject, body}).
+          # Format the closure list as a plain-text message body.
           STALE_LIST=$(awk -F'\t' '{ printf "  - PR #%s (%s): %s\n    %s\n", $1, $2, $3, $4 }' /tmp/stale-prs.tsv)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           BODY=$(printf 'The release-cadence PR-staleness watcher auto-closed the following stale PR(s):\n\n%s\nRunbook: docs/internal/runbooks/release-cadence-stale-pr.md\nWorkflow run: %s\n\nTo re-cut a fresh release PR: `gh workflow run release-cadence.yml -f dry_run=false`\n' "$STALE_LIST" "$RUN_URL")
 
           PAYLOAD=$(jq -nc \
-            --arg to "support@smithhorn.ca" \
-            --arg subject "[SMI-4779] release-cadence stale PR(s) auto-closed" \
-            --arg body "$BODY" \
-            '{to: $to, subject: $subject, body: $body}')
+            --arg msg "$BODY" \
+            --arg rid "${{ github.run_id }}" \
+            --arg url "$RUN_URL" \
+            '{type:"release_cadence_stale_pr_closed", message:$msg, workflow:"Release Cadence PR Staleness", runId:$rid, runUrl:$url}')
 
           curl --silent --show-error --fail \
             --max-time 15 \

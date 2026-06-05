@@ -15,14 +15,17 @@ import {
 
 describe('API Response Validation Schemas', () => {
   describe('TrustTierSchema', () => {
-    it('should accept valid trust tiers', () => {
+    it('should accept valid public trust tiers', () => {
+      expect(TrustTierSchema.safeParse('official').success).toBe(true)
       expect(TrustTierSchema.safeParse('verified').success).toBe(true)
+      expect(TrustTierSchema.safeParse('curated').success).toBe(true)
       expect(TrustTierSchema.safeParse('community').success).toBe(true)
-      expect(TrustTierSchema.safeParse('experimental').success).toBe(true)
-      expect(TrustTierSchema.safeParse('unknown').success).toBe(true)
+      expect(TrustTierSchema.safeParse('unverified').success).toBe(true)
     })
 
-    it('should reject invalid trust tiers', () => {
+    it('should reject internal-only and invalid tiers', () => {
+      expect(TrustTierSchema.safeParse('experimental').success).toBe(false)
+      expect(TrustTierSchema.safeParse('unknown').success).toBe(false)
       expect(TrustTierSchema.safeParse('invalid').success).toBe(false)
       expect(TrustTierSchema.safeParse('').success).toBe(false)
       expect(TrustTierSchema.safeParse(123).success).toBe(false)

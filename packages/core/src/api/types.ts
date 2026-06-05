@@ -13,7 +13,8 @@
 /**
  * Trust tier levels from API
  */
-export type ApiTrustTier = 'verified' | 'community' | 'experimental' | 'unknown'
+// SMI-5205: 5-tier public model; experimental/unknown are internal only (translated at response layer)
+export type ApiTrustTier = 'official' | 'verified' | 'curated' | 'community' | 'unverified'
 
 // ============================================================================
 // Category (matches OpenAPI category enum)
@@ -74,6 +75,13 @@ export interface ApiSkill {
   updated_at: string
   /** Associated category names (joined from skill_categories by skills-get) */
   categories?: string[]
+  /**
+   * SMI-5178: Cross-ecosystem compatibility slugs (e.g. ["claude-code","copilot"]),
+   * derived from skill_path by the indexer (SMI-5177). `[]`/absent = unknown/unscoped,
+   * NOT incompatible. Hydrated onto search results by skills-search; returned by
+   * skills-get via `.select('*')`.
+   */
+  compatibility?: string[]
   /**
    * SMI-4240: Security scan fields returned by skills-get via `...skill` spread.
    * All optional/nullable to preserve compatibility with pre-4240 responses and

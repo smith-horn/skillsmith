@@ -34,7 +34,15 @@ import {
   type OrgVerifiedCache,
 } from './org-verification.ts'
 import { bumpDiscoveryPath, resolveHighTrustAuthor } from './indexer-runners.helpers.ts'
+import { fetchRepoReadme, isMetaListRepo } from './meta-list-filter.ts'
 import { flushUpsertAccumulator, type UpsertAccumulatorItem } from './indexer-runners.batch.ts'
+
+/**
+ * SMI-4842: Cheap `awesome-*` prefix pre-check. Used to gate the README fetch
+ * in the meta-list filter so non-matching repos never incur an extra request.
+ * The full classification still runs through `isMetaListRepo`.
+ */
+const AWESOME_REPO_NAME = /^awesome-/i
 
 /**
  * Score distribution across high-trust and community skill upserts.
@@ -161,6 +169,10 @@ export async function runUpsertPhase(
   quarantined: number
   unchanged: number
   quality_gate_filtered: number
+  // SMI-4842: Count of repos rejected as curated `awesome-*` link-lists
+  // (no SKILL.md, README dominated by external links). Mirrors the
+  // quality_gate_filtered telemetry pattern.
+  meta_list_filtered: number
   scoreDistribution: ScoreDistribution
   errors: string[]
   // SMI-4387: Per-discovery-path yield counts (indexed + updated only).
@@ -177,6 +189,7 @@ export async function runUpsertPhase(
     quarantined: 0,
     unchanged: 0,
     quality_gate_filtered: 0,
+    meta_list_filtered: 0,
     scoreDistribution: { highTrust: 0, community: 0, scores: [] as number[] },
     errors: [] as string[],
     discoveryPathCounts: {} as Record<string, number>,
@@ -193,6 +206,8 @@ export async function runUpsertPhase(
   let quarantined = 0
   let unchanged = 0
   let quality_gate_filtered = 0
+  // SMI-4842: Counter of repos rejected as curated `awesome-*` link-lists.
+  let meta_list_filtered = 0
   const scoreDistribution: ScoreDistribution = { highTrust: 0, community: 0, scores: [] }
   const errors: string[] = []
   // SMI-4387: Counter of yield (indexed + updated) per discovery path. Excludes
@@ -305,6 +320,26 @@ export async function runUpsertPhase(
         validationCache,
         repo.skillPath
       )
+      // SMI-4842: Exclude curated `awesome-*` link-list repos (e.g.
+      // awesome-claude-skills) — README-only catalogs of links to other repos,
+      // not skills. Conservative: requires the `awesome-` name prefix AND no
+      // valid SKILL.md AND a link-dominated README. High-trust authors bypass
+      // (their inclusion is editorial). The README is fetched only here, after
+      // the two cheap signals already hold, so normal repos pay no extra cost.
+      if (!highTrustAuthor && AWESOME_REPO_NAME.test(repo.repoName) && validation?.valid !== true) {
+        const readme = await fetchRepoReadme(
+          repo.owner,
+          repo.repoName,
+          repo.defaultBranch,
+          telemetry
+        )
+        if (isMetaListRepo({ repoName: repo.repoName, hasSkillMd: false, readme })) {
+          meta_list_filtered++
+          console.log(`[MetaListFilter] FILTERED: ${repo.fullName} (curated awesome-* link-list)`)
+          continue
+        }
+      }
+
       // SMI-4651: Promote GitHub-verified vendor orgs to `curated`. Skip the
       // lookup when allowlist already resolved (verified outranks curated).
       const orgIsVerified = highTrustAuthor
@@ -442,6 +477,7 @@ export async function runUpsertPhase(
     quarantined,
     unchanged,
     quality_gate_filtered,
+    meta_list_filtered,
     scoreDistribution,
     errors,
     discoveryPathCounts,

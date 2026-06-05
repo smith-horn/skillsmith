@@ -177,11 +177,113 @@ The script handles:
 
 **Existing worktrees**: Step 6 only runs during creation. If you have an existing worktree with a broken skillsmith MCP, apply the manual fix above. For the Step 4d / Step 7 `node_modules` symlink (SMI-4377), run `./scripts/repair-worktrees.sh` — idempotent, safe to re-run.
 
+### `.mcp.json` skip-worktree (SMI-4973)
+
+When `create-worktree.sh` finishes, the worktree's `.mcp.json` is
+**patched in place** (the `skillsmith` MCP command swaps from
+`./packages/mcp-server/dist/src/index.js` to `npx -y @skillsmith/mcp-server`
+because the worktree has no built `dist/`). The script then marks the
+file `skip-worktree` so `git status` stays clean despite the on-disk
+divergence from HEAD.
+
+**Verify your worktree is set up correctly**:
+
+```bash
+grep 'npx' .mcp.json          # working-tree content IS the npx form
+git ls-files -v .mcp.json     # lowercase 'S' = skip-worktree set
+```
+
+**Do NOT restore `.mcp.json` to HEAD.** The HEAD content (the dist path)
+does not work in a worktree — restoring it silently breaks the
+skillsmith MCP. If `git diff HEAD -- .mcp.json` shows a delta, that is
+expected and correct.
+
+**Prettier-formatting (SMI-5002)**: `create-worktree.sh` Step 6 also runs
+`prettier --write .mcp.json` inside the Docker container immediately after
+the jq patch, so the on-disk content matches the project's prettier style
+(`printWidth: 100` collapses jq's multi-line short args arrays back to
+single-line). Without this step, `format:check` fails on every worktree
+push (hard exit — no `continue-on-error`), forcing operators to bypass
+pre-push via `SKILLSMITH_PRE_PUSH_DOCKER=1 git push --no-verify`. If the
+container is down at create time, the prettier step warns and continues;
+the worktree remains usable but `format:check` will fail until you run
+`docker exec skillsmith-dev-1 sh -c 'cd /app/<wt-rel-path> && npx
+prettier --write .mcp.json'` manually.
+
+**`skip-worktree`, not `assume-unchanged`**: `skip-worktree` is git's
+sanctioned mechanism for "I have intentionally modified this tracked
+file and never want it staged." `assume-unchanged` is a performance
+hint (skip the stat check) and does not guarantee the file won't be
+staged. See `git update-index --help`.
+
+**Legitimate `.mcp.json` change from a worktree** (e.g., adding a new
+MCP server):
+
+```bash
+git update-index --no-skip-worktree .mcp.json   # clear the bit
+# edit .mcp.json, git add, git commit, push
+git update-index --skip-worktree .mcp.json      # re-set the bit
+```
+
+**Pre-existing worktrees** created before SMI-4973 landed don't have
+the bit set. Run once per existing worktree:
+
+```bash
+cd .worktrees/<name>
+git update-index --skip-worktree .mcp.json
+```
+
+**If the bit is ever lost** (rare; some `git reset --hard` configs can
+clear it): re-set with `git update-index --skip-worktree .mcp.json`.
+
 **Strategy submodule init in worktrees (SMI-4829)**: `create-worktree.sh` calls `init-strategy-submodules.sh` after `git submodule update --init`. This wires sparse-checkout cones for the three strategy mount-points (`.claude/skills`, `.claude/plans`, `.claude/hive-mind`). External contributors without access to `smith-horn/skillsmith-strategy` see empty mount-points but no hard error (gate #3). To re-run manually in an existing worktree: `./scripts/init-strategy-submodules.sh` from the worktree root. Team members who skipped initial setup: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` then run the init script.
 
 **Supported worktree layouts (SMI-4654)**: Both `<repo-root>/.worktrees/<name>/` (the convention used by `create-worktree.sh`) AND nested `<repo-root>/<name>/` (worktree created directly under the repo root) are supported. `scripts/_lib.sh` computes the `node_modules` symlink depth dynamically, so either layout produces working symlinks. The `.worktrees/` convention is preferred — it keeps the repo root tidy and groups parallel work — but if you've already nested a worktree directly in the repo, you don't need to migrate it. Run `./scripts/repair-worktrees.sh` to refresh symlinks; `./scripts/verify-worktree-symlinks.sh` audits them and exits non-zero on any dangling link.
 
 **Pre-commit hook behavior in worktrees (SMI-4377 + SMI-4381)**: The Docker `.:/app` bind-mount DOES cover `.worktrees/` (visible at `/app/.worktrees/<name>/` inside the container) — the original SMI-4377 diagnosis ("worktrees live outside `/app`") was wrong. `compute_container_wd` translates the host worktree path to its in-container equivalent. On macOS Docker Desktop, virtiofs cannot traverse the relative per-package `node_modules` symlinks, so worktree commits fall back to host execution (visible as `📂 Worktree on macOS — falling back to host execution (SMI-4381)`). The host fallback works correctly because `scripts/_lib.sh link_worktree_package_node_modules` symlinks each `packages/<pkg>/node_modules` so workspace-pinned deps (e.g. `zod@3.25.76` in `mcp-server`) resolve correctly. Linux Docker hosts use the in-container path. Off-tree worktrees (created outside `<repo-root>/.worktrees/`) also fall back to host. See `docs/internal/retros/2026-04-29-smi-4381-original-diagnosis-wrong.md` for the full RCA.
+
+### E2E imports of `@skillsmith/*` from worktrees (SMI-4972)
+
+A worktree's `node_modules` is a symlink to the main repo's `node_modules`
+(SMI-4377/SMI-4381 — saves 5-10 GB per worktree). Inside, each
+`@skillsmith/<pkg>` entry symlinks to the main repo's `packages/<pkg>/`.
+Any E2E code that does `import '@skillsmith/<pkg>'` would, by default,
+resolve to **main's** `packages/<pkg>/dist`, NOT the worktree's.
+
+Unit tests are not affected — vitest's `vitest.config.ts` source-transforms
+TypeScript directly and tests use relative imports (`../../src/...`).
+
+E2E tests, however, run from `vitest.e2e.config.ts` and import via the
+package name (e.g., `tests/e2e/cli/usage-counter.e2e.test.ts` imports
+from `@skillsmith/core`). To prevent silent main-vs-worktree skew,
+`vitest.e2e.config.ts` defines an explicit alias map that routes
+`@skillsmith/core`, `@skillsmith/mcp-server`, and `@skillsmith/enterprise`
+to the worktree's `packages/<pkg>/dist/src/index.js`.
+
+**Precondition**: you must build the relevant package(s) before running
+E2E from a worktree:
+
+```bash
+docker exec skillsmith-dev-1 npm run build
+# OR for a single package:
+docker exec skillsmith-dev-1 npm run build --workspace=@skillsmith/core
+```
+
+**If you forget**, the test will fail with a clear `MODULE_NOT_FOUND`
+pointing at the worktree's missing dist:
+
+```text
+Error: Cannot find module '/path/to/.worktrees/<name>/packages/core/dist/src/index.js'
+```
+
+This loud failure is by design — pre-SMI-4972, the missing-build state
+silently fell through to main's dist, masking what the worktree was
+actually testing.
+
+**Subpath imports caveat**: `import { x } from '@skillsmith/core/errors'`
+does NOT match the alias key `@skillsmith/core` and falls through to
+the node_modules symlink (i.e., main's dist). No such imports exist in
+`tests/e2e/` as of 2026-05-19; if you add one, extend the alias map.
 
 ### Manual Method
 
@@ -203,10 +305,19 @@ cd worktrees/<name> && git reset --hard HEAD
 ### Removing Worktrees
 
 ```bash
-./scripts/remove-worktree.sh --prune
+./scripts/remove-worktree.sh .worktrees/<name> --prune
 ```
 
-Includes Docker network cleanup. Use `--force` flag if smudge artifacts block removal.
+Includes Docker network cleanup (SMI-5000). `--force` is no longer
+required for routine removal of healthy worktrees — pre-SMI-5000,
+`git worktree remove` refused with "fatal: working trees containing
+submodules cannot be moved or removed" because every worktree initializes
+4 submodules (`docs/internal` + 3 strategy mounts). The script now passes
+`--force` unconditionally to `git worktree remove` (verified empirically:
+`--force` from outside the worktree does NOT modify main's `.git/config`
+submodule sections), and enforces a script-level dirty-tree check to
+preserve the safety that `--force` would otherwise bypass. Use `--force`
+only when the worktree has uncommitted/dirty work that you want to discard.
 
 ### Worktree `git reset` Footgun (SMI-3011)
 
@@ -243,6 +354,10 @@ Pre-commit hooks work in worktrees via tracked `.husky/_/` dispatch stubs + per-
 On macOS Docker Desktop, `create-worktree.sh` and `repair-worktrees.sh` emit per-package `node_modules` bind mounts into the worktree's `docker-compose.override.yml`. This masks the dangling SMI-4381 relative symlinks inside the container so `docker exec ... npm run build` resolves workspace-pinned deps correctly. Pre-commit/pre-push still use the host-fallback path (`scripts/lib/hook-docker-detect.sh`) because the symlinks themselves stay in place — they're needed for host resolution. Linux Docker hosts skip the bind-mount block (overlayfs handles the symlinks correctly). If a worktree container fails an entrypoint build with `Could not resolve <dep>` or `Cannot find module <pkg>`, run `./scripts/repair-worktrees.sh` from the main repo and restart the container.
 
 **SMI-4738**: `npm install` in the main repo auto-regenerates worktree `docker-compose.override.yml` files via postinstall (macOS only, via `scripts/regen-worktree-overrides.sh`). Adding a new `packages/<pkg>/` no longer requires a manual `./scripts/repair-worktrees.sh` for existing worktrees to pick up the new bind mounts — just bounce the worktree container. Idempotency is content-compare (`cmp -s`), not marker-based, so drift caused by adding/removing/renaming a package is detected even when the prior override already had the SMI-4689 marker.
+
+### In-container git discovery from a worktree is unsupported (SMI-5144)
+
+A worktree's `/app/.git` is a pointer **file** (`gitdir: <host-abs>/.git/worktrees/<name>`), and a worktree dev container bind-mounts **only the worktree subtree** at `/app` — the main repo's `.git` is absent in-container. So `git` run from `/app` inside a worktree container fails with `fatal: not a git repository … exit 128` (same SMI-4689 class). `docker exec` forwards no host env, so this is **not** a `GIT_*` leak. The entrypoint prints a non-fatal YELLOW advisory in this case; the main-repo container is unaffected (there `/app/.git` is a directory). **Implications**: run git on the host (`git push` always originates on host anyway), and never write a test that does git discovery from `process.cwd()` — build a self-created fixture repo instead (the SMI-5140 hermetic pattern). A static guard in `scripts/tests/git-fixture-isolation.test.ts` (SMI-5144) fails CI if a test reintroduces the `git`-spawn-with-`cwd: process.cwd()` pattern.
 
 ## Submodule Workflow
 
@@ -360,5 +475,7 @@ export SKILLSMITH_PRE_PUSH_DOCKER=1          # session-wide if pushing repeatedl
 ```
 
 Docker must be running — the hook prints a red error + `exit 1` if `SKILLSMITH_PRE_PUSH_DOCKER=1` is set but the dev container is down. Do NOT use `git push --no-verify` as the default; that bypasses *all* pre-push checks (security scan, format check, etc.), not just the leaky vitest. The env-var workaround is targeted.
+
+**Escape hatch — `SKILLSMITH_PRE_PUSH_NO_PG_SWEEP=1` (SMI-4931)**: `scripts/pre-push-coverage-check.sh` runs each of the five vitest suites inside its own process group (`set -m`) and SIGKILLs that group after the suite finishes, so leaked worker/child processes cannot accumulate and flake later suites. If that process-group sweep ever misbehaves, set `SKILLSMITH_PRE_PUSH_NO_PG_SWEEP=1` to revert Phase 4 to the plain unwrapped invocation — a Phase-4-scoped fallback that, unlike `git push --no-verify`, keeps every other pre-push check active. This is orthogonal to `SKILLSMITH_PRE_PUSH_DOCKER` (which addresses the parent-worktree `GIT_*` env leak, SMI-4769); the two can be combined.
 
 **Caveat (SMI-4698)**: the **native-rebuild step** of `./scripts/repair-worktrees.sh` aborts if a `skillsmith*-dev-N` container is running — it would otherwise overwrite the container's ELF native bindings via the symlinked `node_modules`. Symlink-repair steps run safely regardless. Stop the container first (`docker compose --profile dev down`), or pass `--force-with-active-docker` and run `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` afterward to restore the container's bindings.

@@ -372,3 +372,83 @@ describe('git-commits fixture isolation (SMI-4699)', () => {
     }
   })
 })
+
+describe('git-commits adapter — read-path env isolation (SMI-5126)', () => {
+  // Proves the PRODUCTION read path (runGitLog -> stripGitDiscoveryEnv) is
+  // not hijacked by an ambient GIT_DIR / GIT_INDEX_FILE. git honors those
+  // discovery vars OVER the spawned process's `cwd:`, so before the fix a
+  // leaked GIT_DIR (e.g. exported by git into the pre-push hook) made the
+  // adapter read the *real* repo's commit history instead of the scratch
+  // fixture. With the scrub, the adapter resolves the repo from `cwd` only.
+  it('listFiles reads cwd repo, not a leaked GIT_DIR', async () => {
+    // The scratch repo (from beforeEach) has exactly one commit on main.
+    // Body is substantial so shouldSkip's short-subject guard (line 254)
+    // does not drop it — mirrors the other single-commit fixtures.
+    commit(
+      'feat(SMI-5126): scrub git discovery env on adapter read path',
+      'A leaked GIT_DIR overrides the spawned git process cwd, so the adapter could read the wrong repo. stripGitDiscoveryEnv removes the discovery vars so resolution falls back to cwd-walk.'
+    )
+
+    // SMI-5140: stage the leak against a self-created DECOY repo, NOT
+    // process.cwd(). Probing process.cwd() for git state is unresolvable in a
+    // worktree container (the worktree's .git pointer targets a host path absent
+    // in the container → `git rev-parse` exits 128). The decoy gives an absolute,
+    // genuinely-foreign GIT_DIR with a DISTINCT commit count (2 vs scratch's 1):
+    // if the production scrub regresses, runGitLog surfaces the decoy's 2 commits
+    // and this test fails loudly. (The prior process.cwd() setup leaked a
+    // *relative* `.git` that git re-resolved against the spawn cwd → scratch,
+    // a false-pass that never exercised the scrub.)
+    const decoy = makeFixtureTempDir('smi-5126-decoy')
+    const origGitDir = process.env.GIT_DIR
+    const origGitIndexFile = process.env.GIT_INDEX_FILE
+    try {
+      git(decoy, 'init', '-q', '-b', 'main')
+      git(decoy, 'config', '--local', 'user.email', 'decoy@example.com')
+      git(decoy, 'config', '--local', 'user.name', 'Decoy Author')
+      git(decoy, 'config', '--local', 'commit.gpgsign', 'false')
+      // Two commits that BOTH survive shouldSkip (each has an SMI ref + a
+      // substantial body) so the 2-vs-1 count discriminator can't collapse.
+      // Markers SMI-9001/SMI-9002 are distinct from scratch's SMI-5126.
+      for (const [subject, body] of [
+        [
+          'feat(SMI-9001): decoy commit one — must NOT be the cwd repo',
+          'If the production scrub regresses, a leaked foreign GIT_DIR would surface this decoy commit. Its substantial body clears the minimum token threshold so shouldSkip keeps it, making the 2-vs-1 count discriminator bite.',
+        ],
+        [
+          'feat(SMI-9002): decoy commit two — second discriminator commit',
+          'Two decoy commits guarantee the leaked-GIT_DIR count (2) differs from the scratch count (1). Both carry an SMI ref and a long body so neither is dropped by shouldSkip short-subject or dependabot guards.',
+        ],
+      ] as const) {
+        execFileSync('git', ['commit', '--allow-empty', '-m', `${subject}\n\n${body}`], {
+          cwd: decoy,
+          encoding: 'utf8',
+          env: makeFixtureEnv({
+            GIT_AUTHOR_NAME: 'Decoy Author',
+            GIT_AUTHOR_EMAIL: 'decoy@example.com',
+            GIT_COMMITTER_NAME: 'Decoy Author',
+            GIT_COMMITTER_EMAIL: 'decoy@example.com',
+          }),
+        })
+      }
+      const decoyGitDir = git(decoy, 'rev-parse', '--absolute-git-dir').trim()
+      process.env.GIT_DIR = decoyGitDir
+      process.env.GIT_INDEX_FILE = join(decoyGitDir, 'index')
+
+      const adapter = createGitCommitsAdapter()
+      const files = await adapter.listFiles(makeCtx(scratch, 'full'))
+      // Exactly the one scratch commit — the leaked decoy GIT_DIR did not hijack.
+      expect(files.length).toBe(1)
+      expect(files[0].logicalPath).toMatch(/^git:\/\/[^/]+\/commit\/[0-9a-f]{8}$/)
+      // The survivor is scratch's commit, not merely *a* single commit…
+      expect(files[0].rawContent).toContain('SMI-5126')
+      // …and no decoy commit leaked through.
+      expect(files.every((f) => !/SMI-900[12]/.test(f.rawContent))).toBe(true)
+    } finally {
+      if (origGitDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = origGitDir
+      if (origGitIndexFile === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = origGitIndexFile
+      rmSync(decoy, { recursive: true, force: true })
+    }
+  })
+})

@@ -24,6 +24,8 @@ See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 npm install @skillsmith/core
 ```
 
+`@huggingface/transformers` is an `optionalDependency` — when it cannot be installed (no prebuilt ONNX binary, `--no-optional` flag, restricted hosts) `@skillsmith/core` falls back to mock embeddings per [ADR-009](../../docs/internal/adr/009-embedding-service-fallback.md). To force the mock fallback explicitly, set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`. The `@skillsmith/mcp-server` boot logs a structured stderr warning when the fallback is engaged (SMI-5009).
+
 ## Quick Start
 
 ```typescript
@@ -500,6 +502,22 @@ import {
   type MergedDependency,
 } from '@skillsmith/core'
 ```
+
+### Billing module — relocated in 0.7.0 (BREAKING)
+
+SMI-5006 moved Stripe billing (`StripeClient`, `BillingService`, `StripeWebhookHandler`,
+`GDPRComplianceService`, `StripeReconciliationJob`) to
+[`@smith-horn/enterprise`](../enterprise/README.md). Update imports:
+
+```typescript
+// Before (core ≤ 0.6.x)
+import { StripeWebhookHandler } from '@skillsmith/core/billing'
+
+// After (core ≥ 0.7.0)
+import { StripeWebhookHandler } from '@smith-horn/enterprise/billing'
+```
+
+No back-compat shim is shipped — the `./billing` subpath export was removed.
 
 ## Requirements
 

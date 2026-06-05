@@ -104,7 +104,7 @@ Across all Skillsmith work, Launchpad generated 98 hive-mind YAML configs. Stage
 The flow is deliberate and sequential:
 
 1. **Researcher** — reads all affected files, enumerates edge cases, fetches relevant documentation
-2. **Architect** — writes a full implementation plan to `docs/internal/implementation/` covering root cause, acceptance criteria, exact code changes, and a rollback plan
+2. **Architect** — writes a full implementation plan covering root cause, acceptance criteria, exact code changes, and a rollback plan
 3. **Plan-Review** — three VP perspectives sign off before coding begins
 4. **Coder agents** — implement against the reviewed plan, not against a vague prompt
 

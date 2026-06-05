@@ -14,7 +14,9 @@
  */
 
 import { Command } from 'commander'
-import { createDatabaseAsync, SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
+import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 
@@ -272,7 +274,7 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
   }
 
   // Initialize database
-  const db = await createDatabaseAsync(dbPath)
+  const db = await openCliDatabase(dbPath)
   const skillRepo = new SkillRepository(db)
 
   console.log(`Searching for repositories with topic: ${topic}...`)
@@ -352,6 +354,33 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
   return result
 }
 
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function importActionImpl(options: {
+  topic: string
+  max: string
+  db: string
+  verbose?: boolean
+}): Promise<void> {
+  try {
+    await importSkills({
+      topic: options.topic,
+      maxSkills: parseInt(options.max),
+      dbPath: options.db,
+      ...(options.verbose !== undefined && { verbose: options.verbose }),
+    })
+  } catch (error) {
+    console.error('Import failed:', sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const importAction = withTelemetry(importActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'import',
+  extractFramework: () => 'cli',
+})
+
 /**
  * SMI-4665: Build the `skillsmith import` Commander subcommand. Pulled out of
  * `index.ts` (where it was inline) so registration uses the same `addCommand`
@@ -364,19 +393,7 @@ export function createImportCommand(): Command {
     .option('-m, --max <number>', 'Maximum skills to import', '1000')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-v, --verbose', 'Verbose output')
-    .action(async (options: { topic: string; max: string; db: string; verbose?: boolean }) => {
-      try {
-        await importSkills({
-          topic: options.topic,
-          maxSkills: parseInt(options.max),
-          dbPath: options.db,
-          ...(options.verbose !== undefined && { verbose: options.verbose }),
-        })
-      } catch (error) {
-        console.error('Import failed:', sanitizeError(error))
-        process.exit(1)
-      }
-    })
+    .action(importAction)
 }
 
 // CLI entry point — preserved so `node packages/cli/dist/src/commands/import.js`

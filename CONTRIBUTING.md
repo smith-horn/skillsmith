@@ -40,23 +40,41 @@ Not sure if your contribution fits? Open a [GitHub Discussion](https://github.co
 git clone https://github.com/smith-horn/skillsmith.git
 cd skillsmith
 
-# 2. Start Docker container
+# 2. Create your local environment file
+cp .env.example .env
+
+# 3. Start Docker container
 docker compose --profile dev up -d
 
-# 3. Install dependencies
+# 4. Install dependencies
 docker exec skillsmith-dev-1 npm install
 
-# 4. Run tests to verify setup
+# 5. Run tests to verify setup
 docker exec skillsmith-dev-1 npm test
 ```
+
+`.env.example` is the docker-compose onboarding minimum — it defines just the three variables
+`docker-compose.yml` interpolates, so step 2 alone keeps `docker compose up` warning-free. It is
+not a complete environment; the authoritative, full variable set (types, `@required`,
+`@sensitive`) lives in `.env.schema`. `.env` is gitignored — never commit it.
+
+### Maintainer setup (Smith Horn org members)
+
+Smith Horn team members should additionally populate `SKILLSMITH_PROJECT_DIR_ENCODED` in `.env` so
+the doc-retrieval memory bind (SMI-4677) resolves to the real host path. The generation one-liner
+is documented in `.env.schema` next to the variable definition. External contributors can leave
+the placeholder untouched — the dev container starts either way.
 
 ### Host-side install (SMI-4672)
 
 `.npmrc` sets `ignore-scripts=true`, which skips lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`) on every `npm install` — host or container. The Docker `Dockerfile` explicitly rebuilds native modules and the entrypoint validates them at startup, so the container path is fully covered. The host path needs three follow-ups after a fresh `npm install`:
 
 ```bash
-# Compile better-sqlite3 binding for the host-side retrieval-logs writer (SMI-4549).
-# Idempotent — sub-second [skip] on subsequent runs.
+# Repair host-side native packages (better-sqlite3 + rollup/esbuild prebuilts).
+# Compiles the better-sqlite3 binding for the retrieval-logs writer (SMI-4549)
+# and installs the host-platform rollup/esbuild prebuilt packages the pre-push
+# host-fallback vitest run needs (SMI-4912). Idempotent — sub-second [skip] on
+# subsequent runs.
 ./scripts/repair-host-native-deps.sh
 
 # If you edit `packages/enterprise/` source locally without committing, refresh

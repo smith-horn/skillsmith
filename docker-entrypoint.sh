@@ -44,8 +44,8 @@ MCP_DIST_ENTRY="/app/packages/mcp-server/dist/src/index.js"
 echo -e "${YELLOW}[entrypoint] Checking dist/ outputs...${NC}"
 
 # Pre-check: node_modules must be initialised before build can succeed
-if [ ! -f "/app/node_modules/.package-lock.json" ]; then
-    echo -e "${RED}  ✗ node_modules not initialised — run: npm install inside this container${NC}"
+if [ ! -f "/app/node_modules/.package-lock.json" ] || [ ! -x "/app/node_modules/.bin/turbo" ]; then
+    echo -e "${RED}  ✗ node_modules not initialised (or partial install) — run: npm install inside this container${NC}"
     exit 1
 fi
 
@@ -90,6 +90,22 @@ fi
 
 echo -e "${GREEN}[entrypoint] dist/ outputs ready.${NC}"
 
+# ---------------------------------------------------------------------------
+# SMI-5144: worktree git-discovery advisory (non-fatal).
+# A worktree's /app/.git is a pointer FILE targeting a HOST absolute path
+# (<host>/.git/worktrees/<name>) that does not exist in this container — only
+# the worktree subtree is bind-mounted at /app, so the main repo's .git is
+# absent. `git` run from /app therefore cannot discover the repo (exit 128,
+# "not a git repository"). This is expected and unsupported: run git on the
+# host, and keep tests hermetic (a self-created fixture repo, never
+# process.cwd()) — see SMI-5140 (the hermetic-test fix) and SMI-5144. The
+# main-repo container is unaffected: there /app/.git is a directory, so the
+# `-f` test is false and this block is skipped entirely.
+# ---------------------------------------------------------------------------
+if [ -f "/app/.git" ] && ! git -C /app rev-parse --git-dir >/dev/null 2>&1; then
+    echo -e "${YELLOW}[entrypoint] In-container git discovery from this worktree is unavailable (expected for worktree containers; non-fatal). Run git on the host; keep tests hermetic — see SMI-5144.${NC}"
+fi
+
 echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 
 # List of native modules to validate.
@@ -97,7 +113,8 @@ echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 # (SMI-4672), this loop is the only runtime rebuild path on cache miss / ABI
 # mismatch — missing a module silently fails open (mock embedding fallback per
 # ADR-009, brute-force vector search per SMI-4577, esbuild platform-binary
-# breakage). Keep this array in sync with Dockerfile:73.
+# breakage). Source-only packages (hnswlib-node) use --ignore-scripts=false so
+# node-gyp runs despite .npmrc (SMI-5200). Keep this array in sync with Dockerfile:73.
 NATIVE_MODULES=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node")
 
 # Track validation status
@@ -118,21 +135,31 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
 
     for module in "${NATIVE_MODULES[@]}"; do
         echo -e "${YELLOW}  Rebuilding ${module}...${NC}"
-        npm rebuild "${module}" 2>/dev/null || true
+        # hnswlib-node ships source-only (gypfile: true); --ignore-scripts=false overrides .npmrc
+        # so node-gyp runs (SMI-5200). Prebuilt-binary packages (others) don't need this and it
+        # would re-trigger their CDN download hooks unnecessarily.
+        if [ "${module}" = "hnswlib-node" ]; then
+            npm rebuild "${module}" --ignore-scripts=false || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
+        else
+            npm rebuild "${module}" || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
+        fi
     done
 
     # Re-validate after rebuild
     REBUILD_FAILED=0
+    FAILED_MODULES=""
     for module in "${NATIVE_MODULES[@]}"; do
         if ! node -e "require('${module}')" 2>/dev/null; then
             echo -e "${RED}  ✗ ${module} - still failing after rebuild${NC}"
             REBUILD_FAILED=1
+            FAILED_MODULES="${FAILED_MODULES:+$FAILED_MODULES }${module}"
         fi
     done
 
     if [ $REBUILD_FAILED -eq 1 ]; then
         echo -e "${RED}[entrypoint] Native module validation failed after rebuild.${NC}"
         echo -e "${YELLOW}Try: docker compose down && docker compose build --no-cache${NC}"
+        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec skillsmith-dev-1 npm rebuild ${FAILED_MODULES}${NC}"
         exit 1
     fi
 

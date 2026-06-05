@@ -91,7 +91,8 @@ export const App = () => <div>Hello</div>;
         path: projectDir,
       })
 
-      const reactFramework = result.frameworks.find((f) => f.name === 'React')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const reactFramework = result.frameworks.find((f: any) => f.name === 'React')
       expect(reactFramework).toBeDefined()
       expect(reactFramework?.confidence).toBeGreaterThan(0)
     })
@@ -114,7 +115,8 @@ app.get('/', (req, res) => res.send('Hello'));
         path: projectDir,
       })
 
-      const expressFramework = result.frameworks.find((f) => f.name === 'Express')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const expressFramework = result.frameworks.find((f: any) => f.name === 'Express')
       expect(expressFramework).toBeDefined()
     })
 
@@ -138,7 +140,8 @@ describe('test', () => {
         include_dev_deps: true,
       })
 
-      const vitestFramework = result.frameworks.find((f) => f.name === 'Vitest')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vitestFramework = result.frameworks.find((f: any) => f.name === 'Vitest')
       expect(vitestFramework).toBeDefined()
     })
 
@@ -162,11 +165,15 @@ describe('test', () => {
       })
 
       expect(result.dependencies.length).toBeGreaterThan(0)
-      const prodDeps = result.dependencies.filter((d) => !d.is_dev)
-      const devDeps = result.dependencies.filter((d) => d.is_dev)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const prodDeps = result.dependencies.filter((d: any) => !d.is_dev)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const devDeps = result.dependencies.filter((d: any) => d.is_dev)
 
-      expect(prodDeps.some((d) => d.name === 'lodash')).toBe(true)
-      expect(devDeps.some((d) => d.name === 'typescript')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(prodDeps.some((d: any) => d.name === 'lodash')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(devDeps.some((d: any) => d.name === 'typescript')).toBe(true)
     })
 
     it('should respect max_files option', async () => {

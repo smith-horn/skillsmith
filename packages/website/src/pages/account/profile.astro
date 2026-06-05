@@ -1,0 +1,507 @@
+---
+/**
+ * Account Email Address page — SMI-5168
+ *
+ * Self-service email change. Two paths, branched on how the account authenticates:
+ *  - Password accounts (auth_provider = 'email'): re-verify the current password,
+ *    then supabase.auth.updateUser({ email }) → dual-inbox confirmation.
+ *  - OAuth accounts (github/google): the account email is sourced from the
+ *    identity provider, so updateUser can revert on next login. We show guidance
+ *    to change it at the provider instead of attempting a Supabase email change.
+ */
+
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+import Footer from '../../components/Footer.astro'
+import '../../styles/account-profile.css'
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+    <meta name="description" content="Change the email address on your Skillsmith account" />
+    <title>Email Address | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+    <ClientRouter />
+  </head>
+  <body>
+    <main class="container">
+      <div id="loading-state" class="center-state">
+        <svg class="spinner" viewBox="0 0 24 24">
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+            fill="none"
+            opacity="0.25"></circle>
+          <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+          ></path>
+        </svg>
+        <p>Loading...</p>
+      </div>
+
+      <div id="error-state" class="center-state" style="display:none;">
+        <p id="error-message" class="error-text">Something went wrong</p>
+        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+      </div>
+
+      <div id="page-content" style="display:none;">
+        <div class="page-header">
+          <a href="/account" class="back-link">&larr; Account</a>
+          <h1>Email Address</h1>
+          <p class="subtitle">Change the email address associated with your Skillsmith account.</p>
+        </div>
+
+        <div class="card">
+          <p class="field-label">Current email</p>
+          <p id="current-email" class="current-email">&nbsp;</p>
+        </div>
+
+        <!-- Pending change banner (a change is awaiting inbox confirmation) -->
+        <div
+          id="pending-banner"
+          class="card notice"
+          role="status"
+          aria-live="polite"
+          style="display:none;"
+        >
+          <strong>Email change pending.</strong>
+          <span id="pending-text"></span>
+          Your account email won't change until both inboxes are confirmed.
+        </div>
+
+        <!-- Password-account form -->
+        <form id="password-form" class="card" style="display:none;" novalidate>
+          <div class="form-field">
+            <label for="new-email">New email address</label>
+            <input
+              id="new-email"
+              name="new-email"
+              type="email"
+              autocomplete="email"
+              aria-describedby="email-error"
+              required
+            />
+          </div>
+          <div class="form-field">
+            <label for="confirm-email">Confirm new email address</label>
+            <input
+              id="confirm-email"
+              name="confirm-email"
+              type="email"
+              autocomplete="email"
+              aria-describedby="email-error"
+              required
+            />
+            <p id="email-error" class="field-error" role="alert" style="display:none;"></p>
+          </div>
+          <div class="form-field">
+            <label for="current-password">Current password</label>
+            <input
+              id="current-password"
+              name="current-password"
+              type="password"
+              autocomplete="current-password"
+              aria-describedby="password-error"
+              required
+            />
+            <p id="password-error" class="field-error" role="alert" style="display:none;"></p>
+          </div>
+          <div class="save-row">
+            <button id="submit-btn" type="submit" class="btn btn-primary"
+              >Send confirmation links</button
+            >
+            <svg
+              id="submit-spinner"
+              class="spinner spinner-sm"
+              viewBox="0 0 24 24"
+              style="display:none;"
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <p class="hint">
+            We'll email a confirmation link to <strong>both</strong> your current and new address. Your
+            email changes only after you confirm both.
+          </p>
+        </form>
+
+        <!-- Sent confirmation (after a successful request) -->
+        <div
+          id="sent-state"
+          class="card success-card"
+          role="status"
+          aria-live="polite"
+          style="display:none;"
+        >
+          <h2>Check both inboxes</h2>
+          <p id="sent-text"></p>
+          <p class="hint">
+            Didn't get an email? Check the address you entered and try again — for security, you can
+            request another change in up to an hour.
+          </p>
+        </div>
+
+        <!-- OAuth-account guidance -->
+        <div id="oauth-guidance" class="card" style="display:none;">
+          <h2 id="oauth-heading">Your email comes from your sign-in provider</h2>
+          <p id="oauth-body"></p>
+          <ol class="steps">
+            <li id="oauth-step1"></li>
+            <li id="oauth-step2"></li>
+            <li id="oauth-step3"></li>
+          </ol>
+          <div class="save-row">
+            <button id="oauth-sync-btn" type="button" class="btn btn-primary"
+              >Update my email</button
+            >
+            <svg
+              id="oauth-sync-spinner"
+              class="spinner spinner-sm"
+              viewBox="0 0 24 24"
+              style="display:none;"
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <p id="oauth-sync-hint" class="hint"></p>
+          <p id="oauth-sync-result" role="status" aria-live="polite" style="display:none;"></p>
+          <p class="hint">
+            Can't access your old provider email?
+            <a href="mailto:support@smithhorn.ca?subject=Change%20account%20email"
+              >Contact support</a
+            >
+            to verify your identity.
+          </p>
+        </div>
+
+        <!-- Applies to both paths -->
+        <p class="hint footnote">
+          Note: pending team invitations sent to your old address won't transfer automatically — ask
+          the team owner to re-invite your new address.
+        </p>
+      </div>
+    </main>
+
+    <Footer compact />
+  </body>
+</html>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+  import { describeSyncOAuthEmailOutcome } from '../../lib/oauth-email-sync'
+  import type { SyncOAuthEmailResponse } from '../../lib/oauth-email-sync'
+
+  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
+    .__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+
+  document.addEventListener('astro:page-load', async () => {
+    // Only run on this page — astro:page-load listeners persist on `document`
+    // across ClientRouter navigations and would re-fire otherwise (SMI-4896).
+    if (
+      window.location.pathname !== '/account/profile' &&
+      window.location.pathname !== '/account/profile/'
+    )
+      return
+
+    document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
+      btn.addEventListener('click', () => window.location.reload())
+    })
+
+    const $ = (id: string) => document.getElementById(id)
+    const loadingEl = $('loading-state') as HTMLDivElement | null
+    const errorEl = $('error-state') as HTMLDivElement | null
+    const errorMsgEl = $('error-message') as HTMLParagraphElement | null
+    const pageEl = $('page-content') as HTMLDivElement | null
+
+    function showError(msg: string) {
+      if (loadingEl) loadingEl.style.display = 'none'
+      if (pageEl) pageEl.style.display = 'none'
+      if (errorEl) errorEl.style.display = 'flex'
+      if (errorMsgEl) errorMsgEl.textContent = msg
+    }
+
+    if (!config.url || !config.anonKey) {
+      showError('Auth service not configured.')
+      return
+    }
+    const supabase = createClient(config.url, config.anonKey)
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      window.location.href = '/login?redirect=/account/profile'
+      return
+    }
+
+    const user = session.user
+    const currentEmail = user.email ?? ''
+    const pendingNewEmail = (user as unknown as { new_email?: string }).new_email ?? ''
+
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('auth_provider')
+      .eq('id', user.id)
+      .single()
+    const provider = prof?.auth_provider ?? 'email'
+    const hasPassword = provider === 'email'
+
+    if (loadingEl) loadingEl.style.display = 'none'
+    if (pageEl) pageEl.style.display = 'block'
+
+    const currentEmailEl = $('current-email') as HTMLParagraphElement | null
+    if (currentEmailEl) currentEmailEl.textContent = currentEmail || '—'
+
+    // Pending email change banner (set whenever Supabase reports an in-flight change).
+    if (pendingNewEmail) {
+      const banner = $('pending-banner') as HTMLDivElement | null
+      const pendingText = $('pending-text') as HTMLSpanElement | null
+      if (pendingText)
+        pendingText.textContent = ` A change to ${pendingNewEmail} is awaiting confirmation.`
+      if (banner) banner.style.display = 'block'
+    }
+
+    if (!hasPassword) {
+      // OAuth account: guide the user to change the email at their provider,
+      // then let them pull the updated address into Skillsmith on demand.
+      const providerLabel = provider === 'google' ? 'Google' : 'GitHub'
+      const oauth = $('oauth-guidance') as HTMLDivElement | null
+      const oauthHeading = $('oauth-heading') as HTMLHeadingElement | null
+      const oauthBody = $('oauth-body') as HTMLParagraphElement | null
+      const step1 = $('oauth-step1') as HTMLLIElement | null
+      const step2 = $('oauth-step2') as HTMLLIElement | null
+      const step3 = $('oauth-step3') as HTMLLIElement | null
+      const syncBtn = $('oauth-sync-btn') as HTMLButtonElement | null
+      const syncSpinner = $('oauth-sync-spinner') as SVGSVGElement | null
+      const syncHint = $('oauth-sync-hint') as HTMLParagraphElement | null
+      const syncResult = $('oauth-sync-result') as HTMLParagraphElement | null
+      if (oauthHeading) oauthHeading.textContent = `Your email comes from ${providerLabel}`
+      if (oauthBody)
+        oauthBody.textContent = `You sign in with ${providerLabel}, so Skillsmith uses the email from your ${providerLabel} account rather than a separate one. To change it:`
+      if (step1)
+        step1.textContent = `In ${providerLabel}, set your new address as your primary email and verify it.`
+      if (step2)
+        step2.textContent = `Sign out of Skillsmith and sign back in (this refreshes your ${providerLabel} details).`
+      if (step3) step3.textContent = `Click 'Update my email from ${providerLabel}' below.`
+      if (syncBtn) syncBtn.textContent = `Update my email from ${providerLabel}`
+      if (syncHint)
+        syncHint.textContent = `If you just changed your email at ${providerLabel}, sign out and back in first — otherwise this button will report no change.`
+
+      function showSyncResult(kind: 'success' | 'info' | 'error', message: string) {
+        if (!syncResult) return
+        syncResult.textContent = message
+        if (kind === 'success') {
+          syncResult.className = 'card success-card'
+          syncResult.setAttribute('role', 'status')
+        } else if (kind === 'info') {
+          syncResult.className = 'card notice'
+          syncResult.setAttribute('role', 'status')
+        } else {
+          syncResult.className = 'card field-error'
+          syncResult.setAttribute('role', 'alert')
+        }
+        syncResult.style.display = 'block'
+      }
+
+      syncBtn?.addEventListener('click', async () => {
+        if (syncBtn) {
+          syncBtn.disabled = true
+          syncBtn.setAttribute('aria-disabled', 'true')
+        }
+        if (syncSpinner) syncSpinner.style.display = 'block'
+
+        try {
+          const response = await fetch(`${config.url}/functions/v1/sync-oauth-email`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+          })
+
+          let body: SyncOAuthEmailResponse = {}
+          try {
+            body = (await response.json()) as SyncOAuthEmailResponse
+          } catch {
+            body = {}
+          }
+
+          const outcome = describeSyncOAuthEmailOutcome(response.status, body, providerLabel)
+          showSyncResult(outcome.kind, outcome.message)
+
+          if (outcome.kind === 'success') {
+            await supabase.auth.refreshSession()
+            const currentEmailRefreshEl = $('current-email') as HTMLParagraphElement | null
+            if (currentEmailRefreshEl && body.email) currentEmailRefreshEl.textContent = body.email
+          }
+        } catch {
+          const outcome = describeSyncOAuthEmailOutcome(0, {}, providerLabel)
+          showSyncResult(outcome.kind, outcome.message)
+        } finally {
+          if (syncBtn) {
+            syncBtn.disabled = false
+            syncBtn.setAttribute('aria-disabled', 'false')
+          }
+          if (syncSpinner) syncSpinner.style.display = 'none'
+        }
+      })
+
+      if (oauth) oauth.style.display = 'block'
+      return
+    }
+
+    // ── Password account: email-change form ─────────────────────────────────────
+    const form = $('password-form') as HTMLFormElement | null
+    const newEmailEl = $('new-email') as HTMLInputElement | null
+    const confirmEmailEl = $('confirm-email') as HTMLInputElement | null
+    const passwordEl = $('current-password') as HTMLInputElement | null
+    const emailErrorEl = $('email-error') as HTMLParagraphElement | null
+    const passwordErrorEl = $('password-error') as HTMLParagraphElement | null
+    const submitBtn = $('submit-btn') as HTMLButtonElement | null
+    const submitSpinner = $('submit-spinner') as SVGSVGElement | null
+    const sentState = $('sent-state') as HTMLDivElement | null
+    const sentText = $('sent-text') as HTMLParagraphElement | null
+    if (form) form.style.display = 'block'
+
+    function setFieldError(
+      el: HTMLParagraphElement | null,
+      input: HTMLInputElement | null,
+      msg: string
+    ) {
+      if (el) {
+        el.textContent = msg
+        el.style.display = 'block'
+      }
+      if (input) input.setAttribute('aria-invalid', 'true')
+    }
+    function clearFieldErrors() {
+      for (const el of [emailErrorEl, passwordErrorEl]) {
+        if (el) {
+          el.textContent = ''
+          el.style.display = 'none'
+        }
+      }
+      for (const input of [newEmailEl, confirmEmailEl, passwordEl]) {
+        input?.removeAttribute('aria-invalid')
+      }
+    }
+
+    function isEmail(v: string): boolean {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
+    }
+
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      clearFieldErrors()
+      const newEmail = (newEmailEl?.value ?? '').trim()
+      const confirmEmail = (confirmEmailEl?.value ?? '').trim()
+      const password = passwordEl?.value ?? ''
+
+      if (!isEmail(newEmail)) {
+        setFieldError(emailErrorEl, newEmailEl, 'Enter a valid email address.')
+        newEmailEl?.focus()
+        return
+      }
+      if (newEmail.toLowerCase() !== confirmEmail.toLowerCase()) {
+        setFieldError(emailErrorEl, confirmEmailEl, 'The two email addresses do not match.')
+        confirmEmailEl?.focus()
+        return
+      }
+      if (newEmail.toLowerCase() === currentEmail.toLowerCase()) {
+        setFieldError(emailErrorEl, newEmailEl, 'That is already your current email.')
+        newEmailEl?.focus()
+        return
+      }
+      if (!password) {
+        setFieldError(passwordErrorEl, passwordEl, 'Enter your current password.')
+        passwordEl?.focus()
+        return
+      }
+
+      if (submitBtn) {
+        submitBtn.disabled = true
+        submitBtn.setAttribute('aria-disabled', 'true')
+      }
+      if (submitSpinner) submitSpinner.style.display = 'block'
+
+      try {
+        // Step-up: re-verify the current password before allowing the change.
+        const { error: reauthError } = await supabase.auth.signInWithPassword({
+          email: currentEmail,
+          password,
+        })
+        if (reauthError) {
+          setFieldError(passwordErrorEl, passwordEl, 'Current password is incorrect.')
+          passwordEl?.focus()
+          return
+        }
+
+        // Initiate the change. With double_confirm_changes on, Supabase emails a
+        // confirmation to BOTH addresses; the change completes only after both.
+        const { error: updateError } = await supabase.auth.updateUser({ email: newEmail })
+        if (updateError) {
+          // Enumeration-resistant: do not reveal whether the target is registered.
+          // The most common real failure is the address already being in use.
+          setFieldError(
+            emailErrorEl,
+            newEmailEl,
+            "We couldn't start that change. If that address is available, we've sent a confirmation link — check your inbox. Otherwise try a different address."
+          )
+          return
+        }
+
+        // Success — show the dual-inbox confirmation state, hide the form.
+        if (form) form.style.display = 'none'
+        if (sentText)
+          sentText.textContent = `We've sent a confirmation link to your current address (${currentEmail}) and to ${newEmail}. Click the link in BOTH inboxes to finish changing your email.`
+        if (sentState) sentState.style.display = 'block'
+      } catch {
+        setFieldError(emailErrorEl, newEmailEl, 'Something went wrong. Please try again.')
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false
+          submitBtn.setAttribute('aria-disabled', 'false')
+        }
+        if (submitSpinner) submitSpinner.style.display = 'none'
+      }
+    })
+  })
+</script>

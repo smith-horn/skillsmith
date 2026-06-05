@@ -30,6 +30,7 @@ import {
   provisionTestUser,
   cleanupTestUser,
   getUsageRow,
+  resolveStagingSkillId,
   stagingCredentialsAbsent,
   waitForCounterIncrement,
   type ProvisionedUser,
@@ -41,7 +42,7 @@ const __dirname = dirname(__filename)
 // Built MCP server binary, relative to repo root.
 const MCP_SERVER_BIN = resolve(__dirname, '../../../packages/mcp-server/dist/src/index.js')
 
-const STAGING_SKILL_ID = process.env['SKILLSMITH_E2E_SKILL_ID'] ?? 'anthropic/commit'
+// Staging skill resolved at runtime — see cli/usage-counter.e2e.test.ts (SMI-4970).
 const STAGING_BASE_URL =
   (process.env['STAGING_SUPABASE_URL']?.replace(/\/$/, '') ?? '') + '/functions/v1'
 
@@ -56,8 +57,10 @@ describe.skipIf(skipSuite)('@e2e-usage-counter MCP stdio → usage counter', () 
   let user: ProvisionedUser
   let client: Client
   let transport: StdioClientTransport
+  let stagingSkillId: string
 
   beforeAll(async () => {
+    stagingSkillId = await resolveStagingSkillId()
     user = await provisionTestUser({ tier: 'community' })
 
     transport = new StdioClientTransport({
@@ -99,7 +102,12 @@ describe.skipIf(skipSuite)('@e2e-usage-counter MCP stdio → usage counter', () 
 
     const response = await client.callTool({
       name: 'get_skill',
-      arguments: { skill_id: STAGING_SKILL_ID },
+      // SMI-4976: the tool input schema declares `id` (see
+      // packages/mcp-server/src/tools/get-skill.ts:46-69 — `getSkillInputSchema`).
+      // Sending `skill_id` here results in Zod dropping the unknown key and
+      // the required-field guard firing with 'Skill ID is required' — the
+      // call never reaches the API.
+      arguments: { id: stagingSkillId },
     })
     expect(response).toBeDefined()
     expect(response.isError).not.toBe(true)

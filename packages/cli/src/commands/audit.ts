@@ -19,12 +19,9 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
-import {
-  createDatabaseAsync,
-  initializeSchema,
-  AdvisoryRepository,
-  type SkillAdvisory,
-} from '@skillsmith/core'
+import { AdvisoryRepository, type SkillAdvisory } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
+import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { requireTier } from '../utils/require-tier.js'
@@ -102,8 +99,7 @@ async function runAdvisoriesAudit(options: AuditAdvisoriesOptions): Promise<void
   // Team tier required for security advisories
   await requireTier('team')
 
-  const db = await createDatabaseAsync(options.db)
-  initializeSchema(db) // SMI-4486
+  const db = await openCliDatabase(options.db)
 
   try {
     const advisoryRepo = new AdvisoryRepository(db)
@@ -165,22 +161,34 @@ async function runAdvisoriesAudit(options: AuditAdvisoriesOptions): Promise<void
  *
  * @internal exported for tests; consumers should use {@link createAuditCommand}.
  */
+// SMI-5128: extracted from inline .action() closure so withTelemetry can wrap
+// it at the export boundary (SMI-5040 coverage gate).
+async function advisoriesActionImpl(
+  opts: Record<string, string | boolean | undefined>
+): Promise<void> {
+  try {
+    await runAdvisoriesAudit({
+      db: opts['db'] as string,
+      fix: (opts['fix'] as boolean) ?? false,
+    })
+  } catch (error) {
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const advisoriesAction = withTelemetry(advisoriesActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'advisories',
+  extractFramework: () => 'cli',
+})
+
 export function createAuditAdvisoriesSubcommand(): Command {
   return new Command('advisories')
     .description('Check installed skills for known security advisories (Team tier required)')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('--fix', 'Attempt to update skills with available patches')
-    .action(async (opts: Record<string, string | boolean | undefined>) => {
-      try {
-        await runAdvisoriesAudit({
-          db: opts['db'] as string,
-          fix: (opts['fix'] as boolean) ?? false,
-        })
-      } catch (error) {
-        console.error(chalk.red('Error:'), sanitizeError(error))
-        process.exit(1)
-      }
-    })
+    .action(advisoriesAction)
 }
 
 /**
@@ -221,28 +229,41 @@ export function createAuditCommand(): Command {
     .argument('[skillId]', 'Legacy positional skill-id (deprecated; use `advisories <skill-id>`)')
     .option('-d, --db <path>', 'Database file path (deprecated alias)', DEFAULT_DB_PATH)
     .option('--fix', 'Attempt to update skills with available patches (deprecated alias)')
-    .action(
-      async (skillId: string | undefined, opts: Record<string, string | boolean | undefined>) => {
-        if (skillId === undefined) {
-          // No subcommand and no positional — print parent help.
-          audit.help()
-          return
-        }
-        // Emit deprecation warning to stderr; do not pollute stdout.
-        console.error(chalk.yellow(AUDIT_FLAT_DEPRECATION_NOTICE))
-        try {
-          await runAdvisoriesAudit({
-            db: opts['db'] as string,
-            fix: (opts['fix'] as boolean) ?? false,
-          })
-        } catch (error) {
-          console.error(chalk.red('Error:'), sanitizeError(error))
-          process.exit(1)
-        }
-      }
-    )
+    .action(auditAction)
 
   return audit
 }
+
+// SMI-5128: extracted from the parent `audit` inline .action() closure so
+// withTelemetry can wrap it. `command.help()` (commander passes the Command as
+// the final action arg) replaces the closure's `audit.help()`.
+async function auditActionImpl(
+  skillId: string | undefined,
+  opts: Record<string, string | boolean | undefined>,
+  command: Command
+): Promise<void> {
+  if (skillId === undefined) {
+    // No subcommand and no positional — print parent help.
+    command.help()
+    return
+  }
+  // Emit deprecation warning to stderr; do not pollute stdout.
+  console.error(chalk.yellow(AUDIT_FLAT_DEPRECATION_NOTICE))
+  try {
+    await runAdvisoriesAudit({
+      db: opts['db'] as string,
+      fix: (opts['fix'] as boolean) ?? false,
+    })
+  } catch (error) {
+    console.error(chalk.red('Error:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const auditAction = withTelemetry(auditActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'audit',
+  extractFramework: () => 'cli',
+})
 
 export default createAuditCommand

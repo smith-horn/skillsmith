@@ -318,53 +318,20 @@ export {
 export { mergeDependencies, type MergedDependency } from '../analysis/DependencyMerger.js'
 
 // ============================================================================
-// Billing (SMI-1062 to SMI-1070)
+// Billing (SMI-1062 to SMI-1070) — RELOCATED in SMI-5006 (core 0.7.0)
 // ============================================================================
-
-export {
-  StripeClient,
-  BillingService,
-  StripeWebhookHandler,
-  GDPRComplianceService,
-  StripeReconciliationJob,
-  BillingError,
-  type StripeClientConfig,
-  type TierPriceConfigs,
-  type BillingServiceConfig,
-  type StripeWebhookHandlerConfig,
-  type GDPRComplianceServiceConfig,
-  type CustomerDataExport,
-  type SubscriptionExportData,
-  type InvoiceExportData,
-  type LicenseKeyExportData,
-  type WebhookEventExportData,
-  type DeletionResult,
-  type StripeReconciliationJobConfig,
-  type DiscrepancyType,
-  type Discrepancy,
-  type ReconciliationResult,
-  type StripeCustomerId,
-  type StripeSubscriptionId,
-  type StripePriceId,
-  type StripeInvoiceId,
-  type StripeEventId,
-  type StripeCheckoutSessionId,
-  type SubscriptionStatus,
-  type BillingPeriod,
-  type Subscription,
-  type Invoice,
-  type InvoiceStatus,
-  type WebhookEvent,
-  type WebhookProcessResult,
-  type CreateCheckoutSessionRequest,
-  type CreateCheckoutSessionResponse,
-  type CreatePortalSessionRequest,
-  type CreatePortalSessionResponse,
-  type UpdateSeatsRequest,
-  type UpdateSeatsResponse,
-  type BillingErrorCode,
-  type LicenseTier,
-} from '../billing/index.js'
+//
+// BREAKING: The billing module was moved to `@smith-horn/enterprise/billing`.
+// Both the root re-exports that previously lived here and the `./billing`
+// subpath shim were removed. Consumers must update imports:
+//
+//   - Before: import { StripeWebhookHandler } from '@skillsmith/core/billing'
+//   - After:  import { StripeWebhookHandler } from '@smith-horn/enterprise/billing'
+//
+// Stripe is no longer a runtime dependency of @skillsmith/core (removed in a
+// follow-up wave); applications wanting billing functionality must depend on
+// @smith-horn/enterprise directly. createLogger / Logger are exported from the
+// core barrel (see ../index.ts) to support enterprise's billing consumers.
 
 // ============================================================================
 // Skill Installation (SMI-3483: Wave 0)

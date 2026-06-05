@@ -8,6 +8,13 @@
 # IMPORTANT: audit_logs has no user_id column (per CLAUDE.md memory
 # `feedback_audit_logs_no_user_id_column.md`). The metadata->>'user_id'
 # predicate is required.
+#
+# Connection (SMI-4937): STAGING_POOLER_URL holds the full staging
+# transaction-pooler connection string. Copy it verbatim from the Supabase
+# dashboard (Project Settings → Database → Connection Pooler, Transaction mode,
+# port 6543) for project ovhcifugwqnzoebwfuku. Do NOT hand-assemble
+# host/port/region — the prior hardcoded `aws-0-us-west-1` host never matched
+# staging's region and the job failed 0/4 runs with "Tenant or user not found".
 
 name: Device Login Round-Trip — audit_logs cleanup
 
@@ -28,33 +35,53 @@ jobs:
     permissions:
       contents: read
     env:
-      STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STAGING_POOLER_URL: ${{ secrets.STAGING_POOLER_URL }}
       E2E_TEST_USER_ID: ${{ secrets.E2E_TEST_USER_ID }}
     steps:
-      - name: Refuse if env points at prod
+      - name: Validate connection secret
         run: |
           set -eu
-          if printf '%s' "$STAGING_SUPABASE_URL" | grep -q 'vrcnzpmndtroqxxoqkzy'; then
-            echo "::error::STAGING_SUPABASE_URL contains prod ref — refusing to run"
+          if [ -z "${STAGING_POOLER_URL:-}" ]; then
+            echo "::error::STAGING_POOLER_URL secret is empty or unset — add the staging transaction-pooler connection string to the e2e-staging environment"
+            exit 1
+          fi
+          if [ -z "${E2E_TEST_USER_ID:-}" ]; then
+            echo "::error::E2E_TEST_USER_ID secret is empty or unset"
+            exit 1
+          fi
+          # Refuse if the connection string points at the prod project.
+          if printf '%s' "$STAGING_POOLER_URL" | grep -q 'vrcnzpmndtroqxxoqkzy'; then
+            echo "::error::STAGING_POOLER_URL contains the prod project ref — refusing to run"
             exit 1
           fi
 
       - name: Delete stale audit_logs rows (metadata->>'user_id')
-        env:
-          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
         run: |
           set -eu
-          REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
-          if [ -z "$REF" ] || [ -z "$E2E_TEST_USER_ID" ]; then
-            echo "::error::missing REF or E2E_TEST_USER_ID"
-            exit 1
-          fi
           # NOTE: audit_logs.metadata is jsonb; ->>'user_id' yields text.
-          # Bound the delete with a sub-second statement_timeout fallback if
-          # something pathological happens; pg_safeupdate is enforced at the
-          # database level so the WHERE clause is mandatory.
+          # pg_safeupdate is enforced at the database level, so the WHERE
+          # clause is mandatory.
           psql \
-            "host=aws-0-us-west-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+            "$STAGING_POOLER_URL" \
             -v ON_ERROR_STOP=1 \
             -P pager=off \
             -c "DELETE FROM audit_logs WHERE event_type = 'auth:device_code:consumed' AND metadata->>'user_id' = '${E2E_TEST_USER_ID}' AND created_at < now() - interval '7 days';"
+
+      # SMI-4938: email alert on scheduled failure. Before this, the job had
+      # no failure signal at all and a 0/4 failure streak went unnoticed.
+      - name: Send alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "device_login_cleanup_failed",
+              "message": "The weekly device-login audit_logs cleanup workflow failed. Check GitHub Actions for details.",
+              "workflow": "Device Login Round-Trip audit_logs cleanup",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' || echo "Alert notification failed (non-fatal)"

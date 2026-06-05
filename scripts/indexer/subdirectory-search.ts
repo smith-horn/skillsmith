@@ -43,9 +43,15 @@ import type { SkillMdValidation } from './skill-processor.ts'
 /**
  * Fallback path prefixes used when broad query returns incomplete results.
  * SMI-4385: Extended from 3 to 7 prefixes covering cross-framework conventions.
+ * SMI-5175: Added `.agent/skills` + `.windsurf/skills` — the two 2026 conventions
+ * the broad-query fallback was missing (see
+ * docs/internal/research/cross-ecosystem-skill-index-expansion.md §A).
  * See docs/internal/research/vendor-org-coverage-2026-04-20.md for probe counts.
+ *
+ * Exported so the cross-ecosystem coverage test can assert membership without
+ * re-deriving the list.
  */
-const FALLBACK_PATH_PREFIXES = [
+export const FALLBACK_PATH_PREFIXES = [
   '.gemini/skills', // Google Gemini CLI skills
   '.github/skills', // GitHub-hosted skills (community + Microsoft pattern)
   'skills', // Generic skills/ subdirectory at repo root
@@ -55,6 +61,10 @@ const FALLBACK_PATH_PREFIXES = [
   '.codex/skills', // OpenAI Codex / Cursor shared convention
   '.cursor/skills', // Cursor-specific authoring convention
   '.ai/skills', // Cross-framework neutral convention
+  // SMI-5175: 2026 conventions. Note `.agent/skills` (singular) is Antigravity's
+  // project-local path and is DISTINCT from `.agents/skills` (the cross-tool plural).
+  '.agent/skills', // Antigravity (project-local, singular)
+  '.windsurf/skills', // Windsurf (native, since 2026-03)
 ]
 
 /**

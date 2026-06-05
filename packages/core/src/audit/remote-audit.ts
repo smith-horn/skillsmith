@@ -10,6 +10,25 @@ export interface InstallEventPayload {
   errorCode?: string
 }
 
+/**
+ * SMI-5193: Search-event payload emitted from the MCP `search` tool to the
+ * Skillsmith telemetry endpoint (`/functions/v1/events`).
+ *
+ * **All keys MUST be snake_case** — the `events` edge function's
+ * `sanitizeMetadata` allowlists `results_count`, `duration_ms`, `has_query`,
+ * `trust_tier`, `category`. camelCase variants are silently dropped server-side
+ * (event accepted, metadata lost). The event name is `'search'` (in the edge
+ * function's `ALLOWED_EVENTS`); `'skill_search'` would 400 silently.
+ */
+export interface SearchEventPayload {
+  query: string
+  results_count: number
+  duration_ms: number
+  has_query: boolean
+  trust_tier?: string
+  category?: string
+}
+
 const DEFAULT_API_BASE = 'https://api.skillsmith.app'
 const EVENT_ENDPOINT = '/functions/v1/events'
 const REQUEST_TIMEOUT_MS = 2000
@@ -47,6 +66,37 @@ function isDisabled(): boolean {
   return flag === '0' || flag === 'false' || flag === 'off'
 }
 
+interface TelemetryEventBody {
+  event: string
+  anonymous_id: string
+  metadata: Record<string, unknown>
+}
+
+/**
+ * Best-effort POST to the Skillsmith events endpoint.
+ *
+ * Used by all `emit*Event` exports — never throws, swallows network/abort/
+ * endpoint errors, and respects the 2s timeout. Telemetry failures must
+ * never break the caller's flow.
+ */
+async function postTelemetryEvent(body: TelemetryEventBody): Promise<void> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
+  try {
+    await fetch(`${getApiBase()}${EVENT_ENDPOINT}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    })
+  } catch {
+    // Best-effort: swallow all errors (network, abort, endpoint down).
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * Emit a skill-install event to Skillsmith's remote telemetry endpoint.
  *
@@ -70,31 +120,50 @@ export async function emitInstallEvent(payload: InstallEventPayload): Promise<vo
   const apiKey = getApiKey()
   if (!apiKey) return
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  await postTelemetryEvent({
+    event: 'skill_install',
+    anonymous_id: hashForActor(apiKey),
+    metadata: {
+      skill_id: payload.skillId,
+      source: payload.source,
+      success: payload.success,
+      ...(payload.durationMs !== undefined && { duration_ms: payload.durationMs }),
+      ...(payload.trustTier !== undefined && { trust_tier: payload.trustTier }),
+      ...(payload.errorCode !== undefined && { error_code: payload.errorCode }),
+    },
+  })
+}
 
-  try {
-    await fetch(`${getApiBase()}${EVENT_ENDPOINT}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        event: 'skill_install',
-        anonymous_id: hashForActor(apiKey),
-        metadata: {
-          skill_id: payload.skillId,
-          source: payload.source,
-          success: payload.success,
-          ...(payload.durationMs !== undefined && { duration_ms: payload.durationMs }),
-          ...(payload.trustTier !== undefined && { trust_tier: payload.trustTier }),
-          ...(payload.errorCode !== undefined && { error_code: payload.errorCode }),
-        },
-      }),
-    })
-  } catch {
-    // Best-effort: swallow all errors (network, abort, endpoint down).
-    // Telemetry failures must never break the install flow.
-  } finally {
-    clearTimeout(timer)
-  }
+/**
+ * SMI-5193: Emit a search event to Skillsmith's remote telemetry endpoint.
+ *
+ * Fire-and-forget (synchronous, returns `void`) — wraps `postTelemetryEvent`
+ * with `void` so the caller never awaits. The MCP search tool calls this
+ * after a search completes so the usage report's search count reflects MCP
+ * searches (landing in `search_metrics` via the `events` edge function).
+ *
+ * Silently skips in these cases:
+ * - No API key available (CLI offline / unauthenticated)
+ * - SKILLSMITH_TELEMETRY=0 (opt-out)
+ * - Network / endpoint failure
+ *
+ * CRITICAL — silent-failure modes that motivated this signature:
+ * - `event` MUST be `'search'` (in `events/index.ts` ALLOWED_EVENTS).
+ *   `'skill_search'` would 400 silently.
+ * - `anonymous_id` is REQUIRED (validated as 16-128 char hex server-side).
+ *   Missing → 400 silently.
+ * - Metadata keys MUST be snake_case — `sanitizeMetadata` allowlists
+ *   `results_count`, `duration_ms`, `has_query`, `trust_tier`, `category`.
+ *   camelCase variants are silently dropped.
+ */
+export function emitSearchEvent(payload: SearchEventPayload): void {
+  if (isDisabled()) return
+  const apiKey = getApiKey()
+  if (!apiKey) return
+
+  void postTelemetryEvent({
+    event: 'search',
+    anonymous_id: hashForActor(apiKey),
+    metadata: payload as unknown as Record<string, unknown>,
+  })
 }

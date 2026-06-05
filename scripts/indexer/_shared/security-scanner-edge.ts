@@ -1,46 +1,64 @@
 /**
- * Security scanner (Node port)
- * @module scripts/indexer/_shared/security-scanner-edge
+ * SMI-2272: Edge-compatible Security Scanner
+ * @module scripts/indexer/_shared/security-scanner-edge (Node port)
  *
- * SMI-4852: Node-flavored sibling of `supabase/functions/_shared/security-scanner-edge.ts`.
- * Pure analysis logic — uses Web Crypto + standard regex/string APIs available
- * globally on Node 22. No fetches; byte-identical to the Deno parent. Parity
- * guarded by `scripts/indexer/tests/parity.test.ts`.
+ * Node port of the Deno edge scanner; byte-identical body (parity test enforces).
+ * Extracts pattern matching logic from @skillsmith/core SecurityScanner
+ * to detect high-risk patterns in SKILL.md content.
  *
- * SMI-2272: Lightweight security scanner for high-risk pattern detection
- * (jailbreak, eval, data exfiltration). ReDoS protection via input length limits.
- * Content hash generation for change detection.
+ * Design decisions:
+ * - No Node.js dependencies (pure Deno/Web APIs)
+ * - Focused on high-risk patterns (jailbreak, eval, data exfiltration)
+ * - ReDoS protection via input length limits
+ * - Content hash generation for change detection
+ *
+ * SMI-4960: Ported core's context + confidence model so this prod quarantine
+ * gate stops auto-quarantining documentation prose / frontmatter / tables /
+ * fenced examples / quoted-attack-in-defense strings. A single match in a
+ * documentation context is now a low-confidence finding (0.3x weight) and the
+ * scoring matches @skillsmith/core's category-coefficient model — so a lone
+ * isolated finding can no longer crest the 40 quarantine threshold by itself,
+ * while a pattern-saturated malicious skill (multiple high-confidence findings
+ * OUTSIDE any doc context) still quarantines. The context model + scoring live
+ * in ./security-scanner-edge.context.ts (split out for the 500-line limit).
  */
+
+import type { SecurityFinding, LineContext } from './security-scanner-edge.context.ts'
+import {
+  analyzeMarkdownContext,
+  classifyMatch,
+  calculateRiskScore,
+} from './security-scanner-edge.context.ts'
+
+// SMI-4960: re-export the context model + finding types so existing consumers
+// and the parity tests keep importing them from this module.
+export type {
+  SecurityFindingType,
+  SecuritySeverity,
+  FindingConfidence,
+  SecurityFinding,
+  LineContext,
+} from './security-scanner-edge.context.ts'
+export {
+  analyzeMarkdownContext,
+  isDocumentationContext,
+  isWithinInlineCode,
+  isInsideCodeBlock,
+} from './security-scanner-edge.context.ts'
 
 // ============================================================================
-// Types
+// Constants + Result Type
 // ============================================================================
 
 /**
- * Types of security findings
+ * ReDoS protection: maximum line length for regex matching
  */
-export type SecurityFindingType =
-  | 'jailbreak'
-  | 'suspicious_pattern'
-  | 'data_exfiltration'
-  | 'privilege_escalation'
-  | 'prompt_injection'
+const MAX_LINE_LENGTH = 10000
 
 /**
- * Severity levels for findings
+ * Risk score threshold for quarantine (skills >= this are flagged)
  */
-export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical'
-
-/**
- * Individual security finding
- */
-export interface SecurityFinding {
-  type: SecurityFindingType
-  severity: SecuritySeverity
-  message: string
-  lineNumber?: number
-  location?: string
-}
+export const QUARANTINE_THRESHOLD = 40
 
 /**
  * Scan result from the edge scanner
@@ -55,30 +73,22 @@ export interface EdgeScanResult {
 }
 
 // ============================================================================
-// Constants
-// ============================================================================
-
-/**
- * ReDoS protection: maximum line length for regex matching
- */
-const MAX_LINE_LENGTH = 10000
-
-/**
- * Risk score threshold for quarantine (skills >= this are flagged)
- */
-export const QUARANTINE_THRESHOLD = 40
-
-// ============================================================================
 // Patterns - High-risk subset from core SecurityScanner
 // ============================================================================
 
 /**
  * Jailbreak attempt patterns - attempts to manipulate AI behavior
+ *
+ * SMI-4960: `/developer\s+mode/i` required an activation verb (enable / enter /
+ * activate / switch to). Bare "developer mode" is browser/VS-Code documentation
+ * vocabulary (xixu-me/develop-userscripts FP); only an explicit activation
+ * instruction is a jailbreak signal. The remaining patterns mirror core
+ * patterns.ts JAILBREAK_PATTERNS (no looser core equivalent exists for these).
  */
 const JAILBREAK_PATTERNS: RegExp[] = [
   /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)/i,
   /disregard\s+(all\s+)?(previous|prior|your)\s+(instructions?|programming)/i,
-  /developer\s+mode/i,
+  /(enable|enter|activate|switch\s+to)\s+developer\s+mode/i,
   /\bDAN\b/,
   /do\s+anything\s+now/i,
   /jailbreak/i,
@@ -106,29 +116,64 @@ const SUSPICIOUS_PATTERNS: RegExp[] = [
 
 /**
  * Data exfiltration patterns - suspicious data transfer
+ *
+ * SMI-4960: tightened to core patterns.ts DATA_EXFILTRATION_PATTERNS (SMI-4396
+ * Wave 2 forms). The prior `/upload\s+.*(to|the)\s+(server|cloud|remote)/i`
+ * matched "upload to Cloudinary" (Cloud prefix substring); the bounded
+ * `[\w\s]{0,30}?` + `\bcloud\b` word-boundary excludes
+ * Cloudinary/cloudfront/cloudflare/iCloud. The `(send|transmit|leak|dump|steal|
+ * extract) … (passwords|credentials|secrets)` form preserves imperative
+ * exfiltration coverage without re-introducing prose FPs.
  */
 const DATA_EXFILTRATION_PATTERNS: RegExp[] = [
   /navigator\.sendBeacon/i,
   /webhook\s*[=:]/i,
   /exfil/i,
   /send\s+.*(to|the)\s+(external|remote)/i,
-  /upload\s+.*(to|the)\s+(server|cloud|remote)/i,
+  /upload\s+[\w\s]{0,30}?\s*(?:to|the)\s+(?:server|\bcloud\b|remote)/i,
+  /upload\s+[\w\s]{0,50}?\s*(?:private\s+)?(?:key|secret|credential|token)s?\b/i,
   /post\s+data\s+to/i,
   /to\s+external\s+(api|server|endpoint)/i,
+  /(?:send|transmit|leak|dump|steal|extract)\s+[\w\s']{0,40}(?:passwords?|credentials?|secrets?)\b/i,
 ]
 
 /**
  * Privilege escalation patterns
+ *
+ * SMI-4960: tightened to core patterns.ts PRIVILEGE_ESCALATION_PATTERNS (SMI-4396
+ * Wave 2 forms). The prior bare `/escalat(e|ion)/i` matched documentation prose
+ * in security-research / prompt-injection-scanner skills that enumerate
+ * "privilege escalation" as a technique they DETECT. Replaced with contextual
+ * variants (exploit-escalate, attack/vector noun phrases, to-root/to-admin
+ * targets) that preserve real coverage.
  */
 const PRIVILEGE_ESCALATION_PATTERNS: RegExp[] = [
-  /sudo\s+-S/i,
+  /sudo\s+.*(-S|--stdin)/i,
   /echo\s+.*\|\s*sudo/i,
-  /\bchmod\s+777\b/i,
+  /sudo\s+-S/i,
+  /\bchmod\s+[0-7]*[4-7][0-7][0-7]\b/i,
   /\bchmod\s+\+s\b/i,
+  /\bchmod\s+777\b/i,
+  /\bchmod\s+666\b/i,
+  /\bchown\s+root/i,
+  /\bchgrp\s+root/i,
+  /visudo/i,
   /\/etc\/sudoers/i,
   /NOPASSWD/i,
-  /escalat(e|ion)/i,
+  /setuid/i,
+  /setgid/i,
+  /capability\s+cap_/i,
+  /privilege[_\s-]+escalat(?:e|ion)/i,
+  /escalat(?:e|ion)\s+(?:attack|vector|(?:to|as)\s+(?:root|admin|superuser))/i,
+  /exploit\s+[\w\s]{0,30}?\s*escalat(?:e|ion)/i,
+  /privilege[ds]?\s+(elevat|escal)/i,
+  /run\s+.*as\s+root/i,
   /(run|execute)\s+as\s+(root|admin)/i,
+  /admin(istrator)?\s+access/i,
+  /root\s+(access|user)/i,
+  /as\s+root\s+user/i,
+  /su\s+-\s+root/i,
+  /become\s+root/i,
 ]
 
 /**
@@ -150,25 +195,6 @@ const PROMPT_INJECTION_PATTERNS: RegExp[] = [
 ]
 
 // ============================================================================
-// Severity Weights
-// ============================================================================
-
-const SEVERITY_WEIGHTS: Record<SecuritySeverity, number> = {
-  low: 5,
-  medium: 15,
-  high: 30,
-  critical: 50,
-}
-
-const TYPE_WEIGHTS: Record<SecurityFindingType, number> = {
-  jailbreak: 2.0,
-  suspicious_pattern: 1.3,
-  data_exfiltration: 1.7,
-  privilege_escalation: 1.9,
-  prompt_injection: 1.9,
-}
-
-// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -178,28 +204,6 @@ const TYPE_WEIGHTS: Record<SecurityFindingType, number> = {
 function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null {
   const safeInput = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) : input
   return safeInput.match(pattern)
-}
-
-/**
- * SMI-2385: Check if a given line index is inside a fenced code block.
- *
- * Bioinformatics and other technical SKILL.md files commonly document
- * tool installation with patterns like `curl | bash`, `exec()`, and
- * `subprocess.run` inside markdown code blocks. These are false positives
- * for the security scanner. This helper enables context-aware severity
- * downgrading for patterns found inside code fences.
- *
- * Walks lines 0..lineIndex counting triple-backtick fence toggles.
- * An odd count means we are inside a fenced block.
- */
-export function isInsideCodeBlock(lines: string[], lineIndex: number): boolean {
-  let insideCodeBlock = false
-  for (let i = 0; i < lineIndex && i < lines.length; i++) {
-    if (lines[i].trimStart().startsWith('```')) {
-      insideCodeBlock = !insideCodeBlock
-    }
-  }
-  return insideCodeBlock
 }
 
 /**
@@ -213,42 +217,30 @@ export async function generateContentHash(content: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/**
- * Calculate risk score from findings
- */
-function calculateRiskScore(findings: SecurityFinding[]): number {
-  let score = 0
-
-  for (const finding of findings) {
-    const severityWeight = SEVERITY_WEIGHTS[finding.severity]
-    const typeWeight = TYPE_WEIGHTS[finding.type]
-    score += severityWeight * typeWeight
-  }
-
-  // Cap at 100
-  return Math.min(100, Math.round(score))
-}
-
 // ============================================================================
 // Scanner Implementation
 // ============================================================================
 
 /**
  * Scan content for jailbreak patterns
+ * SMI-4960: documentation-context matches downgrade to low confidence.
  */
-function scanJailbreakPatterns(lines: string[]): SecurityFinding[] {
+function scanJailbreakPatterns(lines: string[], contexts: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
   for (const [index, line] of lines.entries()) {
     for (const pattern of JAILBREAK_PATTERNS) {
       const match = safeRegexTest(pattern, line)
       if (match) {
+        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
         findings.push({
           type: 'jailbreak',
-          severity: 'critical',
+          severity: inDocContext ? 'high' : 'critical',
           message: `Jailbreak pattern detected: "${match[0].slice(0, 50)}"`,
           lineNumber: index + 1,
           location: line.trim().slice(0, 100),
+          inDocumentationContext: inDocContext,
+          confidence,
         })
         break // One finding per line
       }
@@ -260,22 +252,24 @@ function scanJailbreakPatterns(lines: string[]): SecurityFinding[] {
 
 /**
  * Scan content for suspicious patterns
- * SMI-2385: Downgrade severity from 'high' to 'medium' when match is inside a code block
+ * SMI-4960: documentation-context matches downgrade to low confidence.
  */
-function scanSuspiciousPatterns(lines: string[]): SecurityFinding[] {
+function scanSuspiciousPatterns(lines: string[], contexts: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
   for (const [index, line] of lines.entries()) {
     for (const pattern of SUSPICIOUS_PATTERNS) {
       const match = safeRegexTest(pattern, line)
       if (match) {
-        const inCodeBlock = isInsideCodeBlock(lines, index)
+        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
         findings.push({
           type: 'suspicious_pattern',
-          severity: inCodeBlock ? 'medium' : 'high',
+          severity: inDocContext ? 'medium' : 'high',
           message: `Suspicious pattern detected: "${match[0].slice(0, 50)}"`,
           lineNumber: index + 1,
           location: line.trim().slice(0, 100),
+          inDocumentationContext: inDocContext,
+          confidence,
         })
         break
       }
@@ -287,22 +281,24 @@ function scanSuspiciousPatterns(lines: string[]): SecurityFinding[] {
 
 /**
  * Scan content for data exfiltration patterns
- * SMI-2385: Downgrade severity from 'high' to 'medium' when match is inside a code block
+ * SMI-4960: documentation-context matches downgrade to low confidence.
  */
-function scanDataExfiltration(lines: string[]): SecurityFinding[] {
+function scanDataExfiltration(lines: string[], contexts: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
   for (const [index, line] of lines.entries()) {
     for (const pattern of DATA_EXFILTRATION_PATTERNS) {
       const match = safeRegexTest(pattern, line)
       if (match) {
-        const inCodeBlock = isInsideCodeBlock(lines, index)
+        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
         findings.push({
           type: 'data_exfiltration',
-          severity: inCodeBlock ? 'medium' : 'high',
+          severity: inDocContext ? 'medium' : 'high',
           message: `Data exfiltration pattern: "${match[0].slice(0, 50)}"`,
           lineNumber: index + 1,
           location: line.trim().slice(0, 100),
+          inDocumentationContext: inDocContext,
+          confidence,
         })
         break
       }
@@ -314,22 +310,24 @@ function scanDataExfiltration(lines: string[]): SecurityFinding[] {
 
 /**
  * Scan content for privilege escalation patterns
- * SMI-2385: Downgrade severity from 'critical' to 'medium' when match is inside a code block
+ * SMI-4960: documentation-context matches downgrade to low confidence.
  */
-function scanPrivilegeEscalation(lines: string[]): SecurityFinding[] {
+function scanPrivilegeEscalation(lines: string[], contexts: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
   for (const [index, line] of lines.entries()) {
     for (const pattern of PRIVILEGE_ESCALATION_PATTERNS) {
       const match = safeRegexTest(pattern, line)
       if (match) {
-        const inCodeBlock = isInsideCodeBlock(lines, index)
+        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
         findings.push({
           type: 'privilege_escalation',
-          severity: inCodeBlock ? 'medium' : 'critical',
+          severity: inDocContext ? 'high' : 'critical',
           message: `Privilege escalation pattern: "${match[0].slice(0, 50)}"`,
           lineNumber: index + 1,
           location: line.trim().slice(0, 100),
+          inDocumentationContext: inDocContext,
+          confidence,
         })
         break
       }
@@ -341,20 +339,24 @@ function scanPrivilegeEscalation(lines: string[]): SecurityFinding[] {
 
 /**
  * Scan content for prompt injection patterns
+ * SMI-4960: documentation-context matches downgrade to low confidence.
  */
-function scanPromptInjection(lines: string[]): SecurityFinding[] {
+function scanPromptInjection(lines: string[], contexts: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
   for (const [index, line] of lines.entries()) {
     for (const pattern of PROMPT_INJECTION_PATTERNS) {
       const match = safeRegexTest(pattern, line)
       if (match) {
+        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
         findings.push({
           type: 'prompt_injection',
-          severity: 'critical',
+          severity: inDocContext ? 'high' : 'critical',
           message: `Prompt injection pattern: "${match[0].slice(0, 50)}"`,
           lineNumber: index + 1,
           location: line.trim().slice(0, 100),
+          inDocumentationContext: inDocContext,
+          confidence,
         })
         break
       }
@@ -380,13 +382,15 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
 
   // SMI-2408: Split once, pass to all scanners to avoid 5x redundant splitting
   const lines = content.split('\n')
+  // SMI-4960: compute markdown context once and thread it through all scanners.
+  const contexts = analyzeMarkdownContext(content)
 
   // Run all scanners
-  findings.push(...scanJailbreakPatterns(lines))
-  findings.push(...scanSuspiciousPatterns(lines))
-  findings.push(...scanDataExfiltration(lines))
-  findings.push(...scanPrivilegeEscalation(lines))
-  findings.push(...scanPromptInjection(lines))
+  findings.push(...scanJailbreakPatterns(lines, contexts))
+  findings.push(...scanSuspiciousPatterns(lines, contexts))
+  findings.push(...scanDataExfiltration(lines, contexts))
+  findings.push(...scanPrivilegeEscalation(lines, contexts))
+  findings.push(...scanPromptInjection(lines, contexts))
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)
@@ -396,7 +400,12 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
 
   const endTime = performance.now()
 
-  // Determine if scan passed (no critical/high findings and score below threshold)
+  // SMI-4960: `passed` is informational only. Quarantine is decided SOLELY by
+  // `shouldQuarantine` (riskScore >= QUARANTINE_THRESHOLD). `passed` mirrors
+  // core's report semantics (no critical/high finding AND under threshold) but
+  // is NOT consulted by the quarantine gate — an otherwise-clean skill whose
+  // only finding is a downgraded doc-context match still clears
+  // shouldQuarantine().
   const hasCritical = findings.some((f) => f.severity === 'critical')
   const hasHigh = findings.some((f) => f.severity === 'high')
   const passed = !hasCritical && !hasHigh && riskScore < QUARANTINE_THRESHOLD
@@ -437,6 +446,9 @@ export function quickSecurityCheck(content: string): boolean {
 
 /**
  * Check if a skill should be quarantined based on scan result
+ *
+ * SMI-4960: quarantine is purely score-driven — riskScore >= QUARANTINE_THRESHOLD
+ * (40). This is the single prod quarantine gate; it does not consult `passed`.
  */
 export function shouldQuarantine(scanResult: EdgeScanResult): boolean {
   return scanResult.riskScore >= QUARANTINE_THRESHOLD

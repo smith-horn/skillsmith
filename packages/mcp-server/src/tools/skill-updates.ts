@@ -15,6 +15,7 @@
 
 import { z } from 'zod'
 import { SkillVersionRepository } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 
 // ============================================================================
@@ -105,7 +106,7 @@ export const skillUpdatesToolSchema = {
  * @param context Tool context with database connection
  * @returns CheckUpdatesResponse with per-skill update status
  */
-export async function executeSkillUpdates(
+async function executeSkillUpdatesImpl(
   input: SkillUpdatesInput,
   context: ToolContext
 ): Promise<CheckUpdatesResponse> {
@@ -162,3 +163,10 @@ export async function executeSkillUpdates(
     skills: skillInfos,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeSkillUpdates = withTelemetry(executeSkillUpdatesImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_updates',
+  extractFramework: () => 'unknown',
+})

@@ -3,6 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { search } from './search.js'
 import { runIndexer } from './indexer.js'
 import { getStatus } from './status.js'
@@ -164,6 +165,12 @@ async function main(): Promise<void> {
   )
   server.setRequestHandler(ListToolsRequestSchema, handleListTools)
   server.setRequestHandler(CallToolRequestSchema, handleCallTool)
+  // SMI-5039: eager probe BEFORE server.connect so the module-load cache is
+  // warm and the first skill_docs_search call doesn't race cold transformers
+  // init. The probe is hard-bounded at 2 s and can never throw — see
+  // @skillsmith/core/embeddings/probe for contract guarantees. Stderr-only;
+  // MCP stdio protocol invariant (R2) preserved.
+  await probeEmbeddingCapability()
   const transport = new StdioServerTransport()
   await server.connect(transport)
 }

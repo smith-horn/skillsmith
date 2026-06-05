@@ -459,12 +459,33 @@ verify_jwt = true
 [functions.quota-monitor]
 verify_jwt = false
 
+# SMI-4294: team-invite-send — gateway-verified user-action endpoint that
+# sends (or resends) the team invitation email. Calls
+# resend_team_invitation_email_check RPC as the authenticated user so the
+# RPC's permission check enforces owner/admin authority before the email
+# fires. Mirrors auth-device-approve / auth-device-preview pattern. Deploy
+# WITHOUT --no-verify-jwt.
+[functions.team-invite-send]
+verify_jwt = true
+
 # SMI-4852: indexer-dispatch — service-role-only shim that triggers the GHA
 # `indexer.yml` workflow via repository_dispatch. JWT verification ON (the
 # function explicit-checks the bearer is the service-role key); do NOT add
 # to NO_VERIFY_JWT_FUNCTIONS in scripts/audit-standards.mjs. Deploy WITHOUT
 # --no-verify-jwt.
 [functions.indexer-dispatch]
+verify_jwt = true
+
+# SMI-5168: sync-stripe-email — pushes the user's current email to their Stripe
+# customer after a self-service account email change. Authenticated as the user
+# (auth.uid() resolves for the subscriptions/profiles RLS lookups). Deploy
+# WITHOUT --no-verify-jwt; mirrors team-invite-send.
+[functions.sync-stripe-email]
+verify_jwt = true
+
+# SMI-5173: sync-oauth-email — flips auth.users.email to the verified provider
+# email (read server-side via Admin API) for GitHub/Google OAuth accounts.
+[functions.sync-oauth-email]
 verify_jwt = true
 
 # [edge_runtime.secrets]

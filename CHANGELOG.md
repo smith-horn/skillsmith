@@ -61,29 +61,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `actions/setup-node` step's `node-version` either references
   `${{ env.NODE_VERSION }}` or matches the workflow-local env declaration.
   Prevents future drift like the kind that motivated SMI-4488 + SMI-4489.
-
-### Fixed
-
-- **Native SQLite driver auto-installs on `npx`** (SMI-4563, `@skillsmith/core@0.5.8`): `better-sqlite3` is now declared as `optionalDependencies` in `@skillsmith/core`, so `npx -y @skillsmith/mcp-server` resolves and installs the native driver on every supported host. Previously the dependency was only present transitively/devDeps and every fresh `npx` consumer silently fell through to the WASM path. The WASM fallback (sql.js) remains for hosts without a C toolchain.
-- **Webhook DLQ `/retry` → `/resolve`** (SMI-4308): the `webhook-dlq` edge function's `POST /:id/retry` handler was cosmetic (no outbound delivery worker exists). Renamed to `/resolve` with explicit operator-acknowledgement semantics. Migration 077 adds `resolved_at`/`resolved_by` columns, replaces `idx_dlq_unretried` with a compound `idx_dlq_open` partial index, and back-populates rows touched by the old handler. `handleList` now filters both `retried_at IS NULL` and `resolved_at IS NULL` — resolved rows no longer appear in the DLQ view. Operator resolutions emit a team-scoped `webhook:dlq_resolved` audit log (non-fatal).
-- Restored webhook_endpoints and api_keys tables via migrations 065+066 (SMI-4123, PRs #501/#503/#504). Production deployment tracked in SMI-4135.
-- **Audit log telemetry via pooler** (SMI-4118, PR #508): added `SUPABASE_POOLER_URL` to env schema for audit-logs queries that bypass PostgREST's 8s statement timeout. Contributors can now run pooled validation SQL against production without timing out on `audit_logs` LIKE filters.
-- **audit-standards Check 11 false positives** (2026-04-08, SMI-3987): npm overrides
-  targeting exact-pinned transitive deps are no longer flagged as "ineffective" when
-  npm's dedup machinery actually applied the override. Cross-references `npm ls <dep>`
-  to verify. Eliminated 6 false-positive warnings on current `main`. See PR #492.
-- **audit-standards Check 23 cite-in-body false positives** (2026-04-08, SMI-3987):
-  contextual `SMI-NNNN` citations in commit bodies (e.g., "per SMI-3099 doc") are no
-  longer counted as completion claims. Only subject-line refs and body refs after
-  `closes:`/`fixes:`/`resolves:` markers count. Also extended `NON_SOURCE_PREFIXES`
-  to recognize `fix(deps):`/`chore(deps):` commits as legitimately deps-only (no
-  source-file requirement). See PR #492.
-- **audit-standards Check 23 worktree bug** (2026-04-08, SMI-3986): Check 23 no longer
-  emits `fatal: not a git repository` inside git worktrees. Resolved via
-  `git rev-parse --git-common-dir` for worktree-aware `.git` resolution. See PR #492.
+- **OpenAPI specification published** (2026-05-27, SMI-5205): A machine-readable
+  OpenAPI 3.0 spec is now available at `skillsmith.app/openapi.yaml`. The spec
+  documents all four search/get/recommend/compare endpoints with auth (`X-API-Key`
+  header), a 429 Too Many Requests response shape, and the canonical five-tier
+  `trust_tier` enum. Import into Postman, Insomnia, or any OpenAPI-compatible
+  client to explore all endpoints.
 
 ### Changed
 
+- **Trust tier API wire format — canonical five-tier model** (2026-05-27, SMI-5205):
+  The public API response now uses the five-tier model documented at
+  `skillsmith.app/docs/trust-tiers`: `official`, `verified`, `curated`,
+  `community`, `unverified`. Two internal storage values that previously leaked
+  into API responses are now translated at the edge function layer:
+  `experimental` → `community` and `unknown` → `unverified`. Skills with the
+  `claude-code-official` GitHub topic are now indexed as `official` tier (was
+  `verified`). **Migration**: consumers filtering on `trust_tier` should update
+  to the five-tier values; `experimental` and `unknown` will no longer appear
+  in API responses.
 - **Node.js floor bumped to >=22.22.0** (SMI-4489): root + every workspace
   now require Node 22.22.0+. The host install previously failed with
   EBADENGINE on Node 22.0–22.21 because `posthog-node@5.29.2` (transitive
@@ -107,6 +103,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vitest globals removed for better test isolation (#453).
 - Dependabot lockfile regeneration automated via script (#453).
 - Shallow clone guard added to audit-standards CI check (#456).
+
+### Fixed
+
+- **`skills-search` omits category + security fields** (SMI-4251): the
+  `skills-search` edge function projected neither the `skill_categories` join
+  nor the migration-039 security columns (`security_score`, `last_scanned_at`,
+  `security_findings`), so every MCP `search` result reported
+  `category: "other"` and null security fields — even though `skills-get`
+  returned them correctly. All three query branches now SELECT the security
+  columns (the FTS branch backfills them via a parallel `skills` fetch since
+  the `search_skills` RPC cannot project them), and a parallel
+  `skill_categories` fetch hydrates `categories: string[]` onto every result
+  before the JSON response. Response-additive only — no DB migration, no
+  breaking change. `skills-search` auto-deploys on merge to `main`.
+- **Native SQLite driver auto-installs on `npx`** (SMI-4563, `@skillsmith/core@0.5.8`): `better-sqlite3` is now declared as `optionalDependencies` in `@skillsmith/core`, so `npx -y @skillsmith/mcp-server` resolves and installs the native driver on every supported host. Previously the dependency was only present transitively/devDeps and every fresh `npx` consumer silently fell through to the WASM path. The WASM fallback (sql.js) remains for hosts without a C toolchain.
+- **Webhook DLQ `/retry` → `/resolve`** (SMI-4308): the `webhook-dlq` edge function's `POST /:id/retry` handler was cosmetic (no outbound delivery worker exists). Renamed to `/resolve` with explicit operator-acknowledgement semantics. Migration 077 adds `resolved_at`/`resolved_by` columns, replaces `idx_dlq_unretried` with a compound `idx_dlq_open` partial index, and back-populates rows touched by the old handler. `handleList` now filters both `retried_at IS NULL` and `resolved_at IS NULL` — resolved rows no longer appear in the DLQ view. Operator resolutions emit a team-scoped `webhook:dlq_resolved` audit log (non-fatal).
+- Restored webhook_endpoints and api_keys tables via migrations 065+066 (SMI-4123, PRs #501/#503/#504). Production deployment tracked in SMI-4135.
+- **Audit log telemetry via pooler** (SMI-4118, PR #508): added `SUPABASE_POOLER_URL` to env schema for audit-logs queries that bypass PostgREST's 8s statement timeout. Contributors can now run pooled validation SQL against production without timing out on `audit_logs` LIKE filters.
+- **audit-standards Check 11 false positives** (2026-04-08, SMI-3987): npm overrides
+  targeting exact-pinned transitive deps are no longer flagged as "ineffective" when
+  npm's dedup machinery actually applied the override. Cross-references `npm ls <dep>`
+  to verify. Eliminated 6 false-positive warnings on current `main`. See PR #492.
+- **audit-standards Check 23 cite-in-body false positives** (2026-04-08, SMI-3987):
+  contextual `SMI-NNNN` citations in commit bodies (e.g., "per SMI-3099 doc") are no
+  longer counted as completion claims. Only subject-line refs and body refs after
+  `closes:`/`fixes:`/`resolves:` markers count. Also extended `NON_SOURCE_PREFIXES`
+  to recognize `fix(deps):`/`chore(deps):` commits as legitimately deps-only (no
+  source-file requirement). See PR #492.
+- **audit-standards Check 23 worktree bug** (2026-04-08, SMI-3986): Check 23 no longer
+  emits `fatal: not a git repository` inside git worktrees. Resolved via
+  `git rev-parse --git-common-dir` for worktree-aware `.git` resolution. See PR #492.
 
 ### Removed
 

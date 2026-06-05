@@ -52,6 +52,7 @@ export {
   trackSkillSearch,
   trackSkillView,
   trackSkillInstall,
+  trackSkillInvoke,
   trackApiError,
   identifyUser,
   isFeatureFlagEnabled,
@@ -61,8 +62,13 @@ export {
   type PostHogConfig,
   type SkillsmithEventType,
   type SkillEventProperties,
+  type TrackSkillInvokeParams,
   type AllowedUserTraits,
 } from './posthog.js'
+
+// In-process HOF + registry (SMI-5016)
+// Emission gate (SMI-5019 wire-in) — privacy-safe default-suppress.
+export { withTelemetry, isTelemetered, setEmissionGate, type WithTelemetryOpts } from './wrap.js'
 
 /**
  * Initialize all telemetry (tracing + metrics)

@@ -16,6 +16,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 // ============================================================================
 // Input schemas
@@ -214,7 +215,7 @@ export interface SsoSettingsResult {
 /**
  * Execute a configure_sso operation.
  */
-export async function executeConfigureSso(
+async function executeConfigureSsoImpl(
   input: ConfigureSsoInput,
   _context: ToolContext
 ): Promise<ConfigureSsoResult> {
@@ -264,7 +265,7 @@ export async function executeConfigureSso(
 /**
  * Execute an sso_settings query.
  */
-export async function executeSsoSettings(
+async function executeSsoSettingsImpl(
   input: SsoSettingsInput,
   _context: ToolContext
 ): Promise<SsoSettingsResult> {
@@ -290,3 +291,15 @@ export async function executeSsoSettings(
       `Configured at: ${config.configuredAt}`,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeConfigureSso = withTelemetry(executeConfigureSsoImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'configure_sso',
+  extractFramework: () => 'unknown',
+})
+export const executeSsoSettings = withTelemetry(executeSsoSettingsImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'sso_settings',
+  extractFramework: () => 'unknown',
+})

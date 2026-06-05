@@ -145,6 +145,25 @@ export function createBetterSqlite3Database(
 }
 
 /**
+ * Captured reason the native driver last failed to load.
+ *
+ * SMI-4807: `better-sqlite3` is an optionalDependency whose install/dlopen
+ * failures were previously swallowed by a bare `catch {}`. We now retain the
+ * error message so the WASM-fallback path can surface it under `SKILLSMITH_DEBUG`.
+ */
+let betterSqlite3FailureReason: string | undefined
+
+/**
+ * Get the reason the native better-sqlite3 module last failed to load.
+ *
+ * @returns The failure message, or `undefined` if the native module loaded
+ *   successfully or has not been checked yet.
+ */
+export function getBetterSqlite3FailureReason(): string | undefined {
+  return betterSqlite3FailureReason
+}
+
+/**
  * Check if better-sqlite3 native module is available
  * @returns true if the native module can be loaded
  */
@@ -155,8 +174,11 @@ export function isBetterSqlite3Available(): boolean {
     // Catches ABI mismatch (Node upgrade) and platform mismatch (Linux binary on macOS).
     const testDb = new Database(':memory:')
     testDb.close()
+    betterSqlite3FailureReason = undefined
     return true
-  } catch {
+  } catch (err) {
+    // SMI-4807: capture the failure reason instead of silently discarding it.
+    betterSqlite3FailureReason = err instanceof Error ? err.message : String(err)
     return false
   }
 }

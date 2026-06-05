@@ -3,8 +3,12 @@ dist/
 dist-worker/
 .astro/
 
+# Generated at build time from docs/internal submodule — do not commit
+public/openapi.yaml
+
 # Dependencies
-node_modules/
+# No trailing slash: also match worktree per-package node_modules symlinks (SMI-5124)
+node_modules
 
 # Environment variables
 .env

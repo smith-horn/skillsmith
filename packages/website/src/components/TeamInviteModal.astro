@@ -1,0 +1,303 @@
+---
+/**
+ * TeamInviteModal
+ *
+ * SMI-4294: invite-flow modal for /account/team/members. Owns its own markup,
+ * scoped CSS, and form a11y (focus-trap, ESC, focus restore). Form submission
+ * is handled by members.astro's astro:page-load listener, which calls
+ * lib/team-invitations.ts.createInvitation and updates the inline-error region.
+ *
+ * Pattern: <dialog role="dialog" aria-modal="true" aria-labelledby="...">
+ * mirrors cli-token.astro:384+ (proven a11y precedent).
+ */
+---
+
+<dialog
+  id="team-invite-modal"
+  class="invite-modal"
+  role="dialog"
+  aria-labelledby="invite-modal-heading"
+  aria-modal="true"
+>
+  <form id="invite-form" class="invite-modal__form" method="dialog" novalidate>
+    <div class="invite-modal__header">
+      <h2 id="invite-modal-heading" class="invite-modal__heading">Invite a teammate</h2>
+      <button
+        type="button"
+        class="invite-modal__close"
+        data-action="close-invite-modal"
+        aria-label="Close"
+      >
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
+
+    <label class="invite-modal__field">
+      <span class="invite-modal__label">Email address</span>
+      <input
+        type="email"
+        name="email"
+        id="invite-email"
+        required
+        autocomplete="off"
+        placeholder="teammate@example.com"
+        class="invite-modal__input"
+      />
+    </label>
+
+    <fieldset class="invite-modal__field invite-modal__role-group">
+      <legend class="invite-modal__label">Role</legend>
+
+      <label class="invite-modal__role">
+        <input type="radio" name="role" value="member" checked />
+        <span>
+          <strong>Member</strong>
+          <small>Can use team skills and see workspace activity.</small>
+        </span>
+      </label>
+
+      <label class="invite-modal__role">
+        <input type="radio" name="role" value="admin" />
+        <span>
+          <strong>Admin</strong>
+          <small
+            >Can invite/remove members and manage team skills. Cannot change billing or transfer
+            ownership.</small
+          >
+        </span>
+      </label>
+    </fieldset>
+
+    <div
+      class="invite-modal__alert"
+      id="invite-modal-alert"
+      role="alert"
+      aria-live="polite"
+      style="display: none;"
+    >
+    </div>
+
+    <div class="invite-modal__actions">
+      <button type="button" class="btn btn-secondary" data-action="close-invite-modal">
+        Cancel
+      </button>
+      <button type="submit" class="btn btn-primary" id="invite-submit">Send invite</button>
+    </div>
+  </form>
+</dialog>
+
+<style>
+  .invite-modal {
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 0;
+    background: #121214;
+    color: #fafafa;
+    max-width: 480px;
+    width: 90vw;
+  }
+
+  .invite-modal::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+  }
+
+  .invite-modal__form {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .invite-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .invite-modal__heading {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .invite-modal__close {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    margin: -0.25rem -0.25rem 0 0;
+    padding: 0;
+    border: none;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: #9ca3af;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .invite-modal__close:hover {
+    background: #1a1a1f;
+    color: #fafafa;
+  }
+
+  .invite-modal__close:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 1px;
+  }
+
+  .invite-modal__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    border: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .invite-modal__label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #d1d5db;
+  }
+
+  .invite-modal__input {
+    background: #1a1a1f;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.5rem;
+    color: #fafafa;
+    font-size: 0.9375rem;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .invite-modal__input:focus {
+    outline: 2px solid #e07a5f;
+    outline-offset: 1px;
+  }
+
+  .invite-modal__role-group {
+    gap: 0.5rem;
+  }
+
+  .invite-modal__role {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.625rem;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.5rem;
+    cursor: pointer;
+  }
+
+  .invite-modal__role input[type='radio'] {
+    margin-top: 0.25rem;
+  }
+
+  .invite-modal__role strong {
+    display: block;
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+
+  .invite-modal__role small {
+    display: block;
+    font-size: 0.8125rem;
+    color: #9ca3af;
+    margin-top: 0.125rem;
+  }
+
+  .invite-modal__alert {
+    border-radius: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  .invite-modal__alert--error {
+    background: rgba(239, 68, 68, 0.08);
+    border-left: 3px solid #ef4444;
+    color: #fca5a5;
+  }
+
+  .invite-modal__alert--success {
+    background: rgba(16, 185, 129, 0.08);
+    border-left: 3px solid #10b981;
+    color: #6ee7b7;
+  }
+
+  .invite-modal__alert code {
+    display: block;
+    margin-top: 0.5rem;
+    padding: 0.375rem 0.5rem;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 0.375rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem;
+    word-break: break-all;
+  }
+
+  .invite-modal__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .invite-modal .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+  }
+
+  .invite-modal .btn-primary {
+    background: #b8523a;
+    color: #fafafa;
+  }
+
+  .invite-modal .btn-primary:hover:not(:disabled) {
+    background: #a04530;
+  }
+
+  /* SMI-4294 follow-up: disabled-state for the submit button. A 50%-opacity
+   * orange still read as an active button, so the disabled state uses a clearly
+   * inactive neutral grey (distinct from the orange ready state) for both the
+   * in-flight ("Sending...") and post-success ("Sent") locked states. */
+  .invite-modal .btn-primary:disabled {
+    background: #3a3a40;
+    color: rgba(250, 250, 250, 0.45);
+    opacity: 1;
+    cursor: not-allowed;
+  }
+
+  .invite-modal .btn-secondary {
+    background: transparent;
+    color: #d1d5db;
+    border: 1px solid #2a2a2f;
+  }
+
+  .invite-modal .btn-secondary:hover {
+    border-color: #e07a5f;
+    color: #e07a5f;
+  }
+
+  @media (max-width: 640px) {
+    .invite-modal {
+      width: 100vw;
+      max-width: none;
+      height: 100vh;
+      max-height: 100vh;
+      border-radius: 0;
+      border: none;
+    }
+
+    .invite-modal__form {
+      height: 100%;
+      padding: 1.25rem;
+    }
+  }
+</style>

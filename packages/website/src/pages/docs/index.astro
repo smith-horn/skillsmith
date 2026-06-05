@@ -108,7 +108,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <ul>
     <li><strong>Skill Discovery</strong> - Search and browse thousands of community skills</li>
     <li><strong>Smart Recommendations</strong> - Get personalized skill suggestions based on your project</li>
-    <li><strong>Trust Verification</strong> - Know which skills are verified, community-reviewed, or experimental</li>
+    <li><strong>Trust Verification</strong> - Know which skills are official, verified, curated, community, or unverified</li>
     <li><strong>Easy Installation</strong> - Install skills with a single command</li>
     <li><strong>Skill Comparison</strong> - Compare similar skills side-by-side</li>
   </ul>
@@ -280,6 +280,10 @@ EOF`}</code></pre>
       <tr>
         <td><code>verified</code></td>
         <td>Publisher verified, quality checked</td>
+      </tr>
+      <tr>
+        <td><code>curated</code></td>
+        <td>GitHub-verified vendor org or manually curated</td>
       </tr>
       <tr>
         <td><code>community</code></td>

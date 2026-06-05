@@ -160,6 +160,14 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   document.addEventListener('astro:page-load', async () => {
+    // Only run on this page — astro:page-load listeners persist on `document`
+    // across ClientRouter navigations and would re-fire here otherwise (SMI-4896).
+    if (
+      window.location.pathname !== '/account/outreach-preferences' &&
+      window.location.pathname !== '/account/outreach-preferences/'
+    )
+      return
+
     // Bind CSP-safe reload handler (SMI-4311)
     document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
       btn.addEventListener('click', () => {

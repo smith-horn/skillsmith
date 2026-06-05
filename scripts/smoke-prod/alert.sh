@@ -62,10 +62,9 @@ if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
 fi
 
 PAYLOAD=$(jq -nc \
-  --arg to "support@smithhorn.ca" \
-  --arg subject "$SUBJECT" \
-  --arg body "$BODY" \
-  '{to: $to, subject: $subject, body: $body}')
+  --arg msg "$BODY" \
+  --arg url "$RUN_URL" \
+  '{type:"smoke_prod_failed", message:$msg, workflow:"Smoke Prod", runUrl:$url}')
 
 curl --silent --show-error --fail \
   --max-time 15 \

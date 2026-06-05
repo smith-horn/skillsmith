@@ -222,7 +222,7 @@ export function buildDescription(report, dateIso = new Date().toISOString().slic
   const lines = []
   lines.push(`## Version Drift Detected - ${dateIso}`)
   lines.push('')
-  if (report.drifted.length > 0) {
+  if ((report.drifted || []).length > 0) {
     lines.push('### Drifted packages')
     lines.push('')
     lines.push('| Package | Local | npm latest |')
@@ -232,7 +232,23 @@ export function buildDescription(report, dateIso = new Date().toISOString().slic
     }
     lines.push('')
   }
-  if (report.errors.length > 0) {
+  if ((report.sourceDrifted || []).length > 0) {
+    // SMI-5120: published artifact frozen while src kept changing.
+    lines.push('### Source-vs-version drift (stale published artifact)')
+    lines.push('')
+    lines.push(
+      '_"Repo releases since baseline" is a repo-wide release-cycle count, not the package\'s own version bumps._'
+    )
+    lines.push('')
+    lines.push('| Package | Version | Repo releases since baseline | Registry |')
+    lines.push('|---------|---------|------------------------------|----------|')
+    for (const s of report.sourceDrifted) {
+      const registry = s.registryUnverified ? 'unverified' : 'verified'
+      lines.push(`| ${s.pkg} | ${s.version} | ${s.releasesElapsed} | ${registry} |`)
+    }
+    lines.push('')
+  }
+  if ((report.errors || []).length > 0) {
     lines.push('### npm lookup errors')
     lines.push('')
     lines.push('| Package | Error |')
@@ -327,7 +343,10 @@ async function main() {
     )
     process.exit(2)
   }
-  const hasDrift = (report.drifted || []).length > 0 || (report.errors || []).length > 0
+  const hasDrift =
+    (report.drifted || []).length > 0 ||
+    (report.sourceDrifted || []).length > 0 ||
+    (report.errors || []).length > 0
   if (!hasDrift) {
     console.log('No drift or errors — nothing to upsert.')
     return

@@ -10,10 +10,10 @@
  */
 
 // Re-export command creators
+// SMI-5129: the command factories moved to init.action.ts (sibling-split);
+// the logic functions + types stay in init.ts.
+export { createInitCommand, createValidateCommand, createPublishCommand } from './init.action.js'
 export {
-  createInitCommand,
-  createValidateCommand,
-  createPublishCommand,
   initSkill,
   validateSkill,
   publishSkill,

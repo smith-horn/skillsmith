@@ -15,12 +15,12 @@
  * to keep this orchestrator under the 500-line file-length budget.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { execFileSync } from 'child_process'
+import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 import {
   PACKAGE_SPECS,
-  CORE_DEPENDENTS,
   ROOT_DIR,
   incrementVersion,
   isValidSemver,
@@ -29,6 +29,7 @@ import {
   readVersionConstant,
   getCommitsSince,
   formatChangelogSection,
+  updateWorkspaceDependencies,
   type PackageSpec,
 } from './lib/version-utils.js'
 import {
@@ -234,19 +235,21 @@ function updateServerJson(relPath: string, newVersion: string): void {
     server.packages[0].version = newVersion
   }
   writeFileSync(fullPath, JSON.stringify(server, null, 2) + '\n')
+  // SMI-5057: re-format with prettier to collapse short arrays (e.g.
+  // 3-element `categories`) onto one line per repo prettier config.
+  // Without this, `npm run format:check` fails on every cadence PR.
+  // `npx prettier` resolves via node_modules/.bin/prettier — present
+  // because release-cadence.yml runs `npm ci --ignore-scripts` before
+  // calling prepare-release.ts (--ignore-scripts skips lifecycle scripts
+  // but NOT the install itself, so devDependencies including prettier
+  // land in node_modules).
+  execFileSync('npx', ['prettier', '--write', fullPath], { stdio: 'inherit' })
 }
 
-function updateCoreDependency(newCoreVersion: string): void {
-  for (const relPath of CORE_DEPENDENTS) {
-    const fullPath = join(ROOT_DIR, relPath)
-    if (!existsSync(fullPath)) continue
-    const pkg = JSON.parse(readFileSync(fullPath, 'utf-8'))
-    if (pkg.dependencies?.['@skillsmith/core']) {
-      pkg.dependencies['@skillsmith/core'] = `^${newCoreVersion}`
-      writeFileSync(fullPath, JSON.stringify(pkg, null, 2) + '\n')
-    }
-  }
-}
+// SMI-5057: `updateCoreDependency` removed — superseded by
+// `updateWorkspaceDependencies` (in version-utils.ts), which walks every
+// PACKAGE_SPECS target and updates any dep range matching a bumped package.
+// This fixes the missing @skillsmith/mcp-server dep bump in @skillsmith/cli.
 
 // --- Main ---
 
@@ -329,11 +332,17 @@ async function main(): Promise<void> {
     console.log(`  ✓ ${plan.spec.name}@${plan.newVersion}`)
   }
 
-  // Step 6: Update @skillsmith/core dep in dependents
-  const corePlan = plans.find((p) => p.spec.shortName === 'core')
-  if (corePlan) {
-    updateCoreDependency(corePlan.newVersion)
-    console.log(`  ✓ Updated @skillsmith/core dep in dependents`)
+  // Step 6: Update workspace dep ranges in all sibling packages.
+  //
+  // SMI-5057: Replaces the older core-only updateCoreDependency. Walks every
+  // PACKAGE_SPECS target (minus skipDepRangeUpdate ones) and updates any dep
+  // range whose key matches a freshly-bumped package. Catches the
+  // @skillsmith/mcp-server stale-range bug in @skillsmith/cli that bit
+  // PR #1268.
+  const { updated: updatedDepFiles } = updateWorkspaceDependencies(plans)
+  if (updatedDepFiles.length > 0) {
+    console.log(`  ✓ Updated workspace dep ranges in ${updatedDepFiles.length} package(s):`)
+    for (const path of updatedDepFiles) console.log(`    - ${path}`)
   }
 
   // Step 6.5: Regenerate package-lock.json so the lockfile matches the bumped
@@ -359,10 +368,17 @@ async function main(): Promise<void> {
         prependToChangelog(join(plan.spec.dir, 'CHANGELOG.md'), section)
         console.log(`  ✓ Changelog: ${plan.spec.shortName} (${entries.length} entries)`)
       } else {
-        // Create minimal entry
-        const section = `## v${plan.newVersion}\n\n- Version bump`
+        // SMI-5064: emit a descriptive cadence-only default instead of the
+        // bare "- Version bump" placeholder. The `**Cadence**:` bold prefix
+        // matches the `- **Fix**: …` / `- **Feature**: …` convention emitted
+        // by formatChangelogSection (version-utils.ts:280-288) for visual
+        // consistency. Referencing the prior version lets a reader run
+        // `git log v<prior>..v<new> -- <pkg-dir>` to verify zero commits.
+        const section = `## v${plan.newVersion}\n\n- **Cadence**: Mechanical cadence alignment (no changes since v${plan.currentVersion}).`
         prependToChangelog(join(plan.spec.dir, 'CHANGELOG.md'), section)
-        console.log(`  ✓ Changelog: ${plan.spec.shortName} (version bump only)`)
+        console.log(
+          `  ✓ Changelog: ${plan.spec.shortName} (cadence-only bump from v${plan.currentVersion})`
+        )
       }
     }
   }

@@ -136,4 +136,66 @@ describe('SMI-1953: API Client Authentication', () => {
       expect(client.getAuthMode()).toBe('personal')
     })
   })
+
+  // SMI-4971: Verify the request-level auth headers are set explicitly per
+  // auth-mode. Previously `buildRequestHeaders` set `Authorization: Bearer
+  // <anonKey>` unconditionally, leaving a stale cross-project anon JWT on
+  // API-key requests, which broke downstream edge-function auth → 404.
+  describe('SMI-4971: per-auth-mode request headers', () => {
+    const realFetch = global.fetch
+
+    /** Captures the `headers` of the first fetch call and returns an OK JSON response. */
+    function stubFetch(): () => Record<string, string> {
+      let captured: Record<string, string> = {}
+      global.fetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        captured = (init?.headers ?? {}) as Record<string, string>
+        // Shape must satisfy SearchResponseSchema: { data: ApiSearchResult[] }
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as unknown as typeof fetch
+      return () => captured
+    }
+
+    afterEach(() => {
+      global.fetch = realFetch
+    })
+
+    it('JWT mode sends Authorization: Bearer <jwt> and no X-API-Key', async () => {
+      const getHeaders = stubFetch()
+      const client = new SkillsmithApiClient({ jwtToken: 'jwt_token_abc' })
+
+      await client.search({ query: 'test' })
+
+      const headers = getHeaders()
+      expect(headers['Authorization']).toBe('Bearer jwt_token_abc')
+      expect(headers['X-API-Key']).toBeUndefined()
+      expect(headers['apikey']).toBeDefined()
+    })
+
+    it('API-key mode sends X-API-Key and no Authorization', async () => {
+      const getHeaders = stubFetch()
+      const client = new SkillsmithApiClient({ apiKey: 'sk_live_request_test' })
+
+      await client.search({ query: 'test' })
+
+      const headers = getHeaders()
+      expect(headers['X-API-Key']).toBe('sk_live_request_test')
+      expect(headers['Authorization']).toBeUndefined()
+      expect(headers['apikey']).toBeDefined()
+    })
+
+    it('anonymous mode sends Authorization: Bearer <anonKey> and no X-API-Key', async () => {
+      const getHeaders = stubFetch()
+      const client = new SkillsmithApiClient({ anonKey: 'anon_key_xyz' })
+
+      await client.search({ query: 'test' })
+
+      const headers = getHeaders()
+      expect(headers['Authorization']).toBe('Bearer anon_key_xyz')
+      expect(headers['X-API-Key']).toBeUndefined()
+      expect(headers['apikey']).toBe('anon_key_xyz')
+    })
+  })
 })

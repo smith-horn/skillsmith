@@ -74,6 +74,44 @@ export const satisfies = (version, spec) => {
   return version === spec
 }
 
+/**
+ * SMI-5079: Parse `npm ls --json` output robustly.
+ *
+ * `npm ls` exits non-zero on tree warnings (peer-warning soup post-SMI-3984)
+ * and may interleave non-JSON prelude or warning lines into the captured
+ * output. Plain `JSON.parse(stdout)` then fails, dropping Check 11 into the
+ * pessimistic "could not inspect tree" path on overrides that ARE working.
+ *
+ * Strategy:
+ *   1. Try `JSON.parse(stdout)` directly (fast path, most common).
+ *   2. If stdout has prelude text, try parsing the substring starting at the
+ *      first `{`.
+ *   3. If both fail, try the same two strategies against `stderr` (some
+ *      npm builds split warnings/JSON across the streams).
+ *   4. Return null if nothing parses — caller falls through to pessimistic
+ *      warning, preserving the pre-SMI-3987 safe default.
+ *
+ * Returns the parsed tree object on success, or null.
+ */
+export const parseNpmLsJson = (stdout, stderr) => {
+  const tryParse = (raw) => {
+    if (!raw || typeof raw !== 'string') return null
+    try {
+      return JSON.parse(raw)
+    } catch {
+      // intentional fallthrough — try substring strategy
+    }
+    const braceIdx = raw.indexOf('{')
+    if (braceIdx < 0) return null
+    try {
+      return JSON.parse(raw.slice(braceIdx))
+    } catch {
+      return null
+    }
+  }
+  return tryParse(stdout) ?? tryParse(stderr)
+}
+
 // SMI-NNNN extraction patterns for Check 23. Subject-line refs always count
 // as completion claims. Body refs only count when prefixed by a closing
 // keyword (closes/closed/fix/fixes/fixed/resolve/resolves/resolved). The
@@ -568,6 +606,156 @@ export const parseCiYmlJobs = (ciYmlContent) => {
   return jobs
 }
 
+// ============================================================================
+// SMI-4925: skills-recreate migration FK-cascade guard
+// ============================================================================
+//
+// SQLite fires ON DELETE CASCADE actions *immediately* when foreign_keys=ON,
+// not deferred to end of transaction. The skills-recreate pattern (DROP TABLE
+// skills + RENAME) therefore silently deletes all child rows in any table with
+// a hard `skill_id ... REFERENCES skills(id) ON DELETE CASCADE` column.
+//
+// SMI-4919 fixed this in v17 by backing `skill_categories` (the only such
+// child as of that migration) into a TEMP table before DROP TABLE skills and
+// restoring it after the RENAME — all inside one BEGIN/COMMIT.
+//
+// This helper detects any future migration that recreates the skills table
+// WITHOUT that backup/restore pair, preventing the bug from being reintroduced.
+//
+// If a new ON DELETE CASCADE child of `skills` is added to schema-sql.ts,
+// the conforming backup/restore pattern must be extended to include it, and
+// the regex below updated accordingly (the helper would still catch the
+// absence of the _skill_categories_backup pattern, which is a useful signal).
+
+/**
+ * Detect skills-table recreation migrations that do NOT include the
+ * `_skill_categories_backup` TEMP-table backup/restore pair required to
+ * preserve ON DELETE CASCADE child rows (SMI-4919 / SMI-4925).
+ *
+ * @param {Record<string, string>} migrationsByPath — map of file path →
+ *   file contents for every migration to check.
+ * @param {{ allowList: string[] }} options — basenames to skip without
+ *   flagging (e.g. `['v16-skill-source.ts']` for fix-forward allowlisting).
+ * @returns {Array<{file: string, reason: string}>}
+ */
+export const findUnsafeSkillsRecreateMigrations = (migrationsByPath, { allowList = [] } = {}) => {
+  // Matches DROP TABLE [IF EXISTS] skills — word-boundary after `skills` so
+  // `DROP TABLE skills_v17` and `DROP TABLE _skill_categories_backup` do NOT
+  // match. Case-insensitive, tolerant of extra whitespace.
+  const DROP_SKILLS_RE = /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?skills\b/i
+
+  // Both halves of the backup/restore pair must be present.
+  // Half A: CREATE TEMP TABLE _skill_categories_backup (followed by AS SELECT
+  //         ... FROM skill_categories — we only require the CREATE TEMP TABLE
+  //         prefix; the AS SELECT part is optional in the regex for robustness).
+  const BACKUP_CREATE_RE = /CREATE\s+TEMP\s+TABLE\s+_skill_categories_backup\b/i
+
+  // Half B: INSERT INTO skill_categories SELECT * FROM _skill_categories_backup
+  const BACKUP_RESTORE_RE =
+    /INSERT\s+INTO\s+skill_categories\s+SELECT\s+.*FROM\s+_skill_categories_backup\b/i
+
+  const violations = []
+
+  for (const [filePath, content] of Object.entries(migrationsByPath)) {
+    const basename = filePath.split('/').pop() ?? filePath
+
+    // Check if this migration recreates the skills table.
+    if (!DROP_SKILLS_RE.test(content)) continue
+
+    // Allow-listed files are skipped without flagging (fix-forward).
+    if (allowList.includes(basename)) continue
+
+    // A safe recreate must include BOTH halves of the backup/restore pair.
+    const hasBackupCreate = BACKUP_CREATE_RE.test(content)
+    const hasBackupRestore = BACKUP_RESTORE_RE.test(content)
+
+    if (hasBackupCreate && hasBackupRestore) continue
+
+    // Determine which halves are missing for the reason string.
+    if (!hasBackupCreate && !hasBackupRestore) {
+      violations.push({
+        file: filePath,
+        reason:
+          'recreates `skills` table (DROP TABLE skills) but is missing both halves of the ' +
+          '_skill_categories_backup TEMP-table guard (CREATE TEMP TABLE + INSERT INTO ... SELECT)',
+      })
+    } else if (!hasBackupCreate) {
+      violations.push({
+        file: filePath,
+        reason:
+          'recreates `skills` table but is missing the backup half: ' +
+          '`CREATE TEMP TABLE _skill_categories_backup AS SELECT * FROM skill_categories`',
+      })
+    } else {
+      violations.push({
+        file: filePath,
+        reason:
+          'recreates `skills` table but is missing the restore half: ' +
+          '`INSERT INTO skill_categories SELECT * FROM _skill_categories_backup`',
+      })
+    }
+  }
+
+  return violations
+}
+
+/**
+ * SMI-5162: detect out-of-order added migrations.
+ *
+ * Returns a violation for every ADDED migration whose version prefix sorts
+ * (lexicographically) strictly below the maximum version prefix among the
+ * PRE-EXISTING (base) migrations. Such a migration would be silently skipped
+ * by `supabase db push` (it sorts below the applied tip), exactly the SMI-5159
+ * /account/telemetry incident.
+ *
+ * Pure: no git, no fs, no content parsing. Version = the substring before the
+ * first underscore (e.g. `20260519000005` from `20260519000005_foo.sql`, or
+ * `077` from `077_bar.sql`). Lexicographic comparison is correct across both
+ * schemes because every legacy `NNN_` prefix begins with a digit < '2' while
+ * every 14-digit timestamp begins with '2026…' (verified: 84 legacy + 14
+ * timestamp prefixes, no intermediate lengths, as of 2026-05-23).
+ *
+ * @param {string[]} addedBasenames — basenames of *.sql migrations added vs base.
+ * @param {string[]} baseBasenames — basenames of all *.sql migrations on base.
+ * @returns {{ maxBaseVersion: string|null, violations: Array<{file: string, version: string, maxBaseVersion: string}> }}
+ */
+export const findOutOfOrderMigrations = (addedBasenames, baseBasenames) => {
+  // Filter to .sql only (defensive; caller already filters).
+  const toSql = (names) => names.filter((n) => n.endsWith('.sql'))
+  const addedSql = toSql(addedBasenames)
+  const baseSql = toSql(baseBasenames)
+
+  // Extract version prefix (everything before the first underscore).
+  // Skip any basename with no underscore or an empty version token —
+  // malformed names are R-Filename's concern, not ordering's.
+  const extractVersion = (basename) => {
+    const idx = basename.indexOf('_')
+    if (idx <= 0) return null
+    return basename.slice(0, idx)
+  }
+
+  // Empty base → first-ever migration or no base context. No-op.
+  const baseVersions = baseSql.map(extractVersion).filter((v) => v !== null)
+  if (baseVersions.length === 0) {
+    return { maxBaseVersion: null, violations: [] }
+  }
+
+  // maxBaseVersion by plain string > comparison (correct across both schemes).
+  const maxBaseVersion = baseVersions.reduce((max, v) => (v > max ? v : max))
+
+  const violations = []
+  for (const basename of addedSql) {
+    const version = extractVersion(basename)
+    if (version === null) continue // malformed — skip
+    // Strict < only. Equal is allowed (duplicate-version is SMI-5163's scope).
+    if (version < maxBaseVersion) {
+      violations.push({ file: basename, version, maxBaseVersion })
+    }
+  }
+
+  return { maxBaseVersion, violations }
+}
+
 /**
  * Check pure-JS carve-out invariants on a parsed job list.
  *
@@ -615,4 +803,610 @@ export const checkCarveOutInvariants = (jobs, denyList) => {
     }
   }
   return { violationsA, violationsB }
+}
+
+/**
+ * Parse a Bash array declaration of the form:
+ *
+ *   ARRAY_NAME=(
+ *     entry-one
+ *     entry-two   # optional inline comment
+ *   )
+ *
+ * Returns a Set<string> of the parsed entry names, or null if the array
+ * cannot be found (i.e. the closing `)` on its own line is missing, meaning
+ * the script format has changed). Tolerates quoted/unquoted entries and
+ * inline `#` comments.
+ *
+ * Token regex accepts [a-z0-9_-] — the underscore is included because Supabase
+ * function names may contain underscores even though all current names use
+ * hyphens. Without `_`, an underscore-named entry would be silently ignored
+ * rather than parsed and later flagged as unregistered.
+ *
+ * Used by Check 47 (edge-function registration coherence, SMI-4963) to parse
+ * NO_VERIFY_JWT_FUNCTIONS / VERIFY_JWT_FUNCTIONS from deploy-edge-functions.sh
+ * and ANONYMOUS_FUNCTIONS / AUTHENTICATED_FUNCTIONS / SERVICE_ROLE_FUNCTIONS
+ * from validate-edge-functions.sh.
+ *
+ * @param {string} src - Full file contents of the shell script.
+ * @param {string} arrayName - The exact variable name (e.g. 'NO_VERIFY_JWT_FUNCTIONS').
+ * @returns {Set<string> | null}
+ */
+export function parseBashArray(src, arrayName) {
+  const re = new RegExp(`^${arrayName}=\\(\\s*\\n([\\s\\S]*?)^\\)\\s*$`, 'm')
+  const m = src.match(re)
+  if (!m) return null
+  const body = m[1]
+  const entries = new Set()
+  for (const rawLine of body.split('\n')) {
+    // Strip inline `# ...` comments and surrounding whitespace.
+    const line = rawLine.replace(/#.*$/, '').trim()
+    if (!line) continue
+    // Each line is one entry: bare-word OR "quoted" OR 'quoted'.
+    const tok = line.match(/^["']?([a-z0-9][a-z0-9_-]*)["']?$/i)
+    if (tok) entries.add(tok[1])
+  }
+  return entries
+}
+
+/**
+ * Parse the @consumers JSDoc tag from a source file's top comment block.
+ *
+ * The tag declares the in-tree consumers of a shared helper. Format:
+ *   * @consumers name-a, name-b, name-c
+ *
+ * Names are comma-separated, alphabetically sorted, lowercased kebab-case.
+ * Names must match /^[a-z0-9][a-z0-9-]*$/ — underscore-prefix is rejected by
+ * design (prevents '_shared' from being declared as a consumer; '_shared'
+ * is the helper-host, not a consumer).
+ *
+ * Sort enforcement (sorted === false fails predicate 5): makes
+ * append-without-sort merge conflicts deterministic. Two PRs that both
+ * add a consumer alphabetically-positioned conflict immediately at the
+ * same line range, surfacing the collision rather than producing
+ * silently-merging duplicates.
+ *
+ * Used by audit:standards Check 47 predicate 5 (SMI-5004).
+ *
+ * @param {string} src - Full file contents (UTF-8).
+ * @returns {{ found: boolean, names: string[], sorted: boolean } | null}
+ *   - null  → parse-failure (e.g., invalid token like 'Foo_Bar', empty value)
+ *   - { found:false, names:[], sorted:true } → tag absent
+ *   - { found:true, names, sorted } → tag present
+ */
+export function parseConsumersTag(src) {
+  // Match `@consumers` followed by optional trailing content. The capture
+  // group is greedy-but-bounded-to-EOL; allow empty so we can return null
+  // on empty-value as a parse failure (degenerate case) rather than
+  // mis-classifying it as "tag absent".
+  const m = src.match(/^\s*\*\s*@consumers\b[ \t]*(.*?)[ \t]*$/m)
+  if (!m) return { found: false, names: [], sorted: true }
+  const rawValue = m[1].trim()
+  if (!rawValue) return null
+  const tokens = rawValue
+    .split(/\s*,\s*/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+  if (tokens.length === 0) return null
+  const validRe = /^[a-z0-9][a-z0-9-]*$/
+  for (const tok of tokens) {
+    if (!validRe.test(tok)) return null
+  }
+  const sortedCopy = [...tokens].sort()
+  const sorted = tokens.every((tok, i) => tok === sortedCopy[i])
+  return { found: true, names: tokens, sorted }
+}
+
+// --- Check 49: Convention drift backstop (SMI-5026 M5) -----------------------
+//
+// Encodes the four "Convention check before novelty" greps from the
+// `skill-invoke-telemetry.md` plan (lines 666-674 + 723-730) as static
+// invariants that re-run on every PR — not just at plan time.
+//
+// Per plan template § "Convention check before novelty", generic surveys
+// require knowing the plan's `<pattern-prefix>` to grep for, which can't be
+// statically discovered. We therefore encode the four telemetry-specific
+// invariants explicitly. Adding a future Check 49-style invariant means
+// extending this helper, not rewriting the audit loop.
+
+/**
+ * Parse a TypeScript discriminated-union of string literals. Tolerates a
+ * leading `|` separator (most-common case) and accepts both `'foo'` and
+ * `"foo"` quoting. Returns the set of literal members, or null if the type
+ * declaration cannot be located.
+ *
+ * Example matched shape:
+ *   export type Foo = | 'a' | 'b' | 'c'
+ *
+ * @param {string} src - TypeScript source
+ * @param {string} typeName - exact exported type alias name
+ * @returns {Set<string> | null}
+ */
+export function parseStringUnionType(src, typeName) {
+  // Match `export type <Name> = ...` up to (a) the next blank line, or (b)
+  // a newline followed by a top-level declaration keyword. We deliberately
+  // omit `$` from the lookahead alternatives because, with the `m` flag, `$`
+  // matches every line-end and would terminate the lazy capture after the
+  // first literal. Without the `m` flag, `^` would not match the export
+  // keyword anchor reliably — so we keep `m` and use the blank-line +
+  // keyword-boundary alternatives only.
+  const re = new RegExp(
+    `^(?:export\\s+)?type\\s+${typeName}\\s*=\\s*([\\s\\S]*?)(?=\\n\\s*\\n|\\n(?:export|import|interface|type|function|const|let|var|class|namespace)\\b)`,
+    'm'
+  )
+  const m = src.match(re)
+  if (!m) return null
+  const body = m[1]
+  const out = new Set()
+  const litRe = /['"]([a-z][a-z0-9_]*)['"]/gi
+  let lm
+  while ((lm = litRe.exec(body)) !== null) out.add(lm[1])
+  return out
+}
+
+/**
+ * Parse a `const X = [ ... ] as const` TypeScript array-of-string-literals.
+ * Tolerates inline comments and trailing commas. Returns the set of entries,
+ * or null if the array declaration cannot be located.
+ *
+ * @param {string} src
+ * @param {string} arrayName
+ * @returns {Set<string> | null}
+ */
+export function parseTsLiteralArray(src, arrayName) {
+  const re = new RegExp(
+    `(?:const|let|var|readonly)\\s+${arrayName}\\s*(?::[^=]*)?=\\s*\\[([\\s\\S]*?)\\]`,
+    'm'
+  )
+  const m = src.match(re)
+  if (!m) return null
+  const body = m[1]
+  const out = new Set()
+  // Strip line + block comments before matching, so commented-out entries
+  // ('// 'foo', // legacy') don't get counted as members.
+  const stripped = body.replace(/\/\/[^\n]*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+  const litRe = /['"]([a-z][a-z0-9_]*)['"]/gi
+  let lm
+  while ((lm = litRe.exec(stripped)) !== null) out.add(lm[1])
+  return out
+}
+
+/**
+ * Find definitions (not call sites) of a function or const named `symbol`
+ * across the provided source files. A "definition" is one of:
+ *   - `function <symbol>(`  (function declaration)
+ *   - `export function <symbol>(` / `async function <symbol>(`
+ *   - `const <symbol> =` / `let <symbol> =` / `var <symbol> =` followed by
+ *     either `function` or an arrow `(...) =>`
+ *
+ * A call site like `withTelemetry(handler, {...})` is NOT a definition and
+ * is intentionally excluded. The canonical `wrap.ts` declaration site is
+ * the single source of truth (SMI-5016); any parallel definition signals
+ * drift and must be flagged.
+ *
+ * @param {Record<string, string>} srcByPath
+ * @param {string} symbol - bareword identifier (no regex metachars)
+ * @returns {{ file: string, line: number, snippet: string }[]}
+ */
+export function findFunctionDefinitions(srcByPath, symbol) {
+  const out = []
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol)) return out
+  // Two anchored patterns:
+  //   (a) `function <symbol>` (also matches `export function`/`async function`)
+  //   (b) `const|let|var <symbol> = ... function|=>`
+  const defRe = new RegExp(
+    `^[ \\t]*(?:export\\s+)?(?:async\\s+)?function\\s+${symbol}\\b|` +
+      `^[ \\t]*(?:export\\s+)?(?:const|let|var)\\s+${symbol}\\s*(?::[^=]*)?=\\s*(?:async\\s+)?(?:function\\b|\\([^)]*\\)\\s*(?::[^=]*)?\\s*=>)`,
+    'm'
+  )
+  for (const [file, src] of Object.entries(srcByPath)) {
+    const lines = src.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (defRe.test(lines[i])) {
+        out.push({ file, line: i + 1, snippet: lines[i].trim() })
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Returns `true` if the definition at `line` (1-indexed) in `src` is opted out
+ * of Check 48c via an `audit:check-48-ack` marker — either on the definition
+ * line itself or anywhere in the contiguous comment block immediately preceding
+ * it. The upward walk stops at the first blank OR non-comment line, so a distant
+ * comment carrying the token cannot reach an unrelated definition.
+ *
+ * Why preceding-comment-aware (not same-line only, like 48d): a `withTelemetry`
+ * signature is frequently multi-line (generics + params), so a trailing same-line
+ * marker would fight the formatter. The one legitimate parallel definition
+ * (the esbuild-bundled VS Code extension's local wrapper, which cannot import the
+ * canonical core HOF) carries its ack on the comment block above the def.
+ *
+ * A comment line is one whose trimmed form starts with `//`, `*`, or `/*`.
+ * Detection is substring (`String.prototype.includes`), matching 48d's existing
+ * tradeoff: a def line containing the literal token inside an unrelated string
+ * would be falsely suppressed — narrow, and the audit script excludes itself
+ * from the survey.
+ *
+ * @param {string} src - full file contents
+ * @param {number} line - 1-indexed definition line
+ * @returns {boolean}
+ */
+export function defHasCheck48Ack(src, line) {
+  const lines = src.split('\n')
+  const defIdx = line - 1
+  if (defIdx < 0 || defIdx >= lines.length) return false
+  if (lines[defIdx].includes('audit:check-48-ack')) return true
+  for (let i = defIdx - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim()
+    if (trimmed === '') break
+    const isComment =
+      trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')
+    if (!isComment) break
+    if (lines[i].includes('audit:check-48-ack')) return true
+  }
+  return false
+}
+
+/**
+ * Find literal `/tmp/skillsmith-` references in production source. Excludes
+ * test files (matching `*.test.*`, `*.spec.*`, `__tests__/`, `tests/`,
+ * `_tests_/`, `/e2e/`, `fixtures/`) — those legitimately use the prefix as
+ * a sandbox path per the test-isolation convention.
+ *
+ * Per-line opt-out marker `audit:check-48-ack` is honoured: any line
+ * containing this token is excluded. The marker is the documented escape
+ * hatch for legitimate edge cases (example code in comments, etc) and MUST
+ * sit on the same physical line as the violation alongside a rationale.
+ *
+ * @param {Record<string, string>} srcByPath
+ * @returns {{ file: string, line: number, snippet: string }[]}
+ */
+export function findTmpSkillsmithRefs(srcByPath) {
+  const out = []
+  const TEST_PATH_RE =
+    /(?:\.test\.|\.spec\.|\b__tests__\b|\btests\b|\b_tests_\b|\/e2e\/|fixtures\/)/i
+  for (const [file, src] of Object.entries(srcByPath)) {
+    if (TEST_PATH_RE.test(file)) continue
+    const lines = src.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (!line.includes('/tmp/skillsmith-')) continue
+      if (line.includes('audit:check-48-ack')) continue
+      out.push({ file, line: i + 1, snippet: line.trim() })
+    }
+  }
+  return out
+}
+
+/**
+ * Compose Check 49 results from raw inputs. Pure — caller does all I/O.
+ * Returns a structured result so the audit-standards.mjs runner can render
+ * per-sub-check messages with `fail()` / `warn()`.
+ *
+ * Sub-checks:
+ *   48a: SkillsmithEventType union ⊇ {expected event names}    (FAIL)
+ *   48b: ALLOWED_EVENTS array     ⊇ {expected event names}    (FAIL)
+ *   48c: withTelemetry has exactly ONE definition site         (WARN)
+ *   48d: /tmp/skillsmith- absent from prod source              (WARN)
+ *
+ * Severity rationale: 48a/48b are exact-string set-membership tests against
+ * declared sources of truth (no false-positive surface — drift IS the bug).
+ * 48c/48d are grep-based heuristics that might over-flag in legitimate
+ * edge cases — `warn()` keeps them visible without blocking PRs, matching
+ * the false-positive-fatigue guidance in CLAUDE.md governance retros. Both
+ * honor an `audit:check-48-ack` opt-out marker: 48d per-line (same line as the
+ * reference), 48c on the def line or the comment block immediately above the
+ * parallel definition (see defHasCheck48Ack).
+ *
+ * @param {object} input
+ * @param {string} input.posthogSrc - contents of packages/core/src/telemetry/posthog.ts
+ * @param {string} input.eventsSrc - contents of supabase/functions/events/index.ts
+ * @param {Record<string,string>} input.surveySrcByPath - all .ts files in scope for 48c/48d
+ * @param {string[]} input.expectedNewEvents - canonical list (e.g. ['skill_invoke', ...])
+ * @param {string} input.canonicalWithTelemetryPath - the ONE allowed definition site
+ * @returns {{
+ *   eventTypeUnionMissing: string[],
+ *   allowedEventsMissing: string[],
+ *   eventTypeUnionParseFailed: boolean,
+ *   allowedEventsParseFailed: boolean,
+ *   parallelWithTelemetryDefs: {file:string,line:number,snippet:string}[],
+ *   tmpSkillsmithRefs: {file:string,line:number,snippet:string}[],
+ * }}
+ */
+export function findConventionDrift(input) {
+  const { posthogSrc, eventsSrc, surveySrcByPath, expectedNewEvents, canonicalWithTelemetryPath } =
+    input
+
+  // 48a: SkillsmithEventType union must list every expectedNewEvents member.
+  const union = parseStringUnionType(posthogSrc, 'SkillsmithEventType')
+  const eventTypeUnionParseFailed = union === null
+  const eventTypeUnionMissing = union ? expectedNewEvents.filter((e) => !union.has(e)) : []
+
+  // 48b: ALLOWED_EVENTS const must include every expectedNewEvents member.
+  const allowed = parseTsLiteralArray(eventsSrc, 'ALLOWED_EVENTS')
+  const allowedEventsParseFailed = allowed === null
+  const allowedEventsMissing = allowed ? expectedNewEvents.filter((e) => !allowed.has(e)) : []
+
+  // 48c: exactly one withTelemetry definition (in canonicalWithTelemetryPath).
+  // A parallel definition can opt out via an `audit:check-48-ack` marker on the
+  // def line or in the comment block immediately above it (genuinely-justified
+  // surfaces, e.g. the esbuild-bundled VS Code extension that cannot import the
+  // core HOF). See defHasCheck48Ack.
+  const allDefs = findFunctionDefinitions(surveySrcByPath, 'withTelemetry')
+  const parallelWithTelemetryDefs = allDefs.filter(
+    (d) =>
+      d.file !== canonicalWithTelemetryPath &&
+      !defHasCheck48Ack(surveySrcByPath[d.file] ?? '', d.line)
+  )
+
+  // 48d: /tmp/skillsmith- must not appear in production source.
+  const tmpSkillsmithRefs = findTmpSkillsmithRefs(surveySrcByPath)
+
+  return {
+    eventTypeUnionMissing,
+    allowedEventsMissing,
+    eventTypeUnionParseFailed,
+    allowedEventsParseFailed,
+    parallelWithTelemetryDefs,
+    tmpSkillsmithRefs,
+  }
+}
+
+/**
+ * Aliases for publish-* job names whose pre-publish-check output key uses
+ * a shorter name than the job's full shortName.
+ *
+ * SMI-5066: when generalizing Check 48 from core-only to any-package, we
+ * discovered that `publish-mcp-server`'s YAML output key is `mcp-exists`
+ * (not `mcp-server-exists`) — the bash var `mcp_exists` → key `mcp-exists`.
+ * This pre-existing convention drift is documented here rather than
+ * normalized (out of SMI-5066 scope).
+ *
+ * Audit-standards.mjs Check 48 imports this map.
+ */
+export const PUBLISH_JOB_TO_OUTPUT_ALIAS = Object.freeze({
+  'mcp-server': 'mcp',
+})
+
+/**
+ * Audit publish.yml for the SMI-5060 invariant: every
+ * `needs.publish-<pkg>.result == 'skipped'` clause MUST be paired with
+ * `pre-publish-check.outputs.<outputKey>-exists == 'true'` (where
+ * outputKey = PUBLISH_JOB_TO_OUTPUT_ALIAS[pkg] || pkg) within ±1 line.
+ *
+ * Background (SMI-5060): when `validate` fails, `publish-<pkg>` auto-skips
+ * because its `needs:` failed. GitHub Actions reports
+ * `needs.publish-<pkg>.result == 'skipped'` — indistinguishable from the
+ * legitimate "package already on npm, nothing to publish" skip. Without
+ * the paired exists predicate, downstream publish-* jobs publish broken
+ * dependents (orphan-consumer release class of bug).
+ *
+ * SMI-5066: generalized to any `publish-<pkg>` job (not just publish-core)
+ * so the same invariant covers every dependent publish job (e.g. enterprise).
+ *
+ * @param {string} content - Full publish.yml content (UTF-8).
+ * @returns {{
+ *   matches: Array<{ lineno: number, line: string, pkg: string, outputKey: string }>,
+ *   failures: Array<{ lineno: number, line: string, pkg: string, outputKey: string }>,
+ * }} matches is every skipped-clause found. failures is the subset missing
+ *    the paired guard within ±1 line.
+ */
+export function auditPublishYmlDependentGate(content) {
+  const lines = content.split('\n')
+  const skippedRegex = /needs\.publish-([a-z][a-z0-9-]*)\.result\s*==\s*'skipped'/
+
+  const matches = []
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('#')) return
+    const m = line.match(skippedRegex)
+    if (m) {
+      const pkg = m[1]
+      const outputKey = PUBLISH_JOB_TO_OUTPUT_ALIAS[pkg] || pkg
+      matches.push({ lineno: idx + 1, line: trimmed, pkg, outputKey })
+    }
+  })
+
+  const failures = []
+  for (const match of matches) {
+    const { lineno, outputKey } = match
+    // Window: lines (lineno-1) through (lineno+1) — i.e. matched line ±1.
+    // lineno is 1-based; `lines` is 0-indexed, so the slice covers idx-1..idx+1.
+    const startIdx = Math.max(0, lineno - 2)
+    const endIdx = Math.min(lines.length, lineno + 1)
+    const window = lines.slice(startIdx, endIdx).join('\n')
+    const expectedGuard = new RegExp(
+      `pre-publish-check\\.outputs\\.${outputKey}-exists\\s*==\\s*'true'`
+    )
+    if (!expectedGuard.test(window)) {
+      failures.push(match)
+    }
+  }
+
+  return { matches, failures }
+}
+
+/**
+ * Map an `@scope/name` package name to its publish-job short name.
+ * `@skillsmith/mcp-server` → `mcp-server`, `@smith-horn/enterprise` →
+ * `enterprise`. Mirrors the `<scope>/<shortName>` → `publish-<shortName>`
+ * convention used throughout publish.yml.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function shortNameFromPackage(name) {
+  const slash = name.indexOf('/')
+  return slash === -1 ? name : name.slice(slash + 1)
+}
+
+/**
+ * SMI-5123: POSITIVE-COVERAGE assertion for publish.yml dependency gating.
+ *
+ * `auditPublishYmlDependentGate` only checks SOUNDNESS: any
+ * `publish-X.result == 'skipped'` clause that EXISTS must carry its paired
+ * `X-exists` predicate. It says nothing about gates that are MISSING entirely
+ * — exactly the SMI-5123 bug (publish-cli depends on @skillsmith/mcp-server in
+ * package.json but had NO gate on publish-mcp-server, so cli could publish a
+ * live dangling ref while mcp-server was skipped).
+ *
+ * This helper derives the REQUIRED gates from ground truth (each publishable
+ * package's package.json workspace-sibling deps that are themselves
+ * publishable) and asserts that the consumer's publish job both (a) `needs:`
+ * the sibling's publish job and (b) carries the SMI-5060 paired predicate
+ * (`needs.publish-<sibling>.result == 'skipped' && ...<key>-exists == 'true'`).
+ *
+ * @param {string} publishYmlContent - Full publish.yml content (UTF-8).
+ * @param {Array<{ name: string, json: any }>} pkgJsons - Publishable packages:
+ *   each `name` is the npm package name and `json` is its parsed package.json.
+ *   Only packages whose `name` appears in this list are treated as "publishable
+ *   siblings" worth gating on (so a dep on a non-published workspace lib is not
+ *   flagged).
+ * @returns {{
+ *   required: Array<{ consumer: string, sibling: string, outputKey: string }>,
+ *   failures: Array<{ consumer: string, sibling: string, outputKey: string, reason: string }>,
+ * }}
+ */
+export function auditPublishYmlRequiredGates(publishYmlContent, pkgJsons) {
+  const lines = publishYmlContent.split('\n')
+  const publishableNames = new Set(pkgJsons.map((p) => p.name))
+
+  // Locate each `publish-<short>:` job header line index (top-level job key,
+  // i.e. indented exactly 2 spaces under `jobs:`). The job body runs until the
+  // next line indented ≤ 2 spaces that is itself a key (another job) — we only
+  // need the header index and the next-job index to bound the body window.
+  const jobHeaderRegex = /^ {2}([a-z][a-z0-9-]*):\s*$/
+  const jobStarts = []
+  lines.forEach((line, idx) => {
+    const m = line.match(jobHeaderRegex)
+    if (m) jobStarts.push({ name: m[1], idx })
+  })
+
+  /** Slice the YAML body of job `jobName`, or null if absent. */
+  const jobBody = (jobName) => {
+    const pos = jobStarts.findIndex((j) => j.name === jobName)
+    if (pos === -1) return null
+    const start = jobStarts[pos].idx
+    const end = pos + 1 < jobStarts.length ? jobStarts[pos + 1].idx : lines.length
+    return lines.slice(start, end).join('\n')
+  }
+
+  const required = []
+  const failures = []
+
+  for (const { name, json } of pkgJsons) {
+    const consumerShort = shortNameFromPackage(name)
+    const consumerJob = `publish-${consumerShort}`
+    const deps = { ...(json && json.dependencies) }
+
+    for (const depName of Object.keys(deps)) {
+      if (!publishableNames.has(depName)) continue
+      if (depName === name) continue
+      const siblingShort = shortNameFromPackage(depName)
+      const outputKey = PUBLISH_JOB_TO_OUTPUT_ALIAS[siblingShort] || siblingShort
+      required.push({ consumer: consumerShort, sibling: siblingShort, outputKey })
+
+      const body = jobBody(consumerJob)
+      if (body == null) {
+        failures.push({
+          consumer: consumerShort,
+          sibling: siblingShort,
+          outputKey,
+          reason: `publish job '${consumerJob}' not found in publish.yml`,
+        })
+        continue
+      }
+
+      // (a) `needs:` must list the sibling publish job.
+      const needsRegex = new RegExp(`needs:[^\\n]*\\bpublish-${siblingShort}\\b`)
+      // A list-form `needs:` may span lines; also accept the job appearing on
+      // its own bullet/array entry anywhere in the body alongside a `needs:`.
+      const hasNeeds =
+        needsRegex.test(body) ||
+        (/\bneeds:/.test(body) && new RegExp(`\\bpublish-${siblingShort}\\b`).test(body))
+      if (!hasNeeds) {
+        failures.push({
+          consumer: consumerShort,
+          sibling: siblingShort,
+          outputKey,
+          reason: `'${consumerJob}' must list 'publish-${siblingShort}' in its needs:`,
+        })
+      }
+
+      // (b) the SMI-5060 paired predicate must be present in the job body.
+      const successClause = new RegExp(
+        `needs\\.publish-${siblingShort}\\.result\\s*==\\s*'success'`
+      )
+      const skippedPairClause = new RegExp(
+        `needs\\.publish-${siblingShort}\\.result\\s*==\\s*'skipped'\\s*&&\\s*` +
+          `needs\\.pre-publish-check\\.outputs\\.${outputKey}-exists\\s*==\\s*'true'`
+      )
+      if (!successClause.test(body) || !skippedPairClause.test(body)) {
+        failures.push({
+          consumer: consumerShort,
+          sibling: siblingShort,
+          outputKey,
+          reason:
+            `'${consumerJob}' if: must gate on publish-${siblingShort}: ` +
+            `(needs.publish-${siblingShort}.result == 'success' || ` +
+            `(needs.publish-${siblingShort}.result == 'skipped' && ` +
+            `needs.pre-publish-check.outputs.${outputKey}-exists == 'true'))`,
+        })
+      }
+    }
+  }
+
+  return { required, failures }
+}
+
+/**
+ * Check 51 helper — SMI-5203: function_search_path_mutable recurrence guard.
+ *
+ * Parses SQL content for CREATE [OR REPLACE] FUNCTION blocks and checks whether
+ * each function body contains a SET search_path clause.
+ *
+ * Known limitation: Anonymous DO $$ ... $$ blocks that internally define functions
+ * bypass detection (acceptable scope for a file-level grep-based check).
+ *
+ * @param {string} sqlContent  Full text of a SQL migration file
+ * @param {string} filePath    Used in violation objects for reporting
+ * @returns {{ funcName: string, filePath: string }[]}  Violations (functions missing search_path)
+ */
+export function findFunctionsWithoutSearchPath(sqlContent, filePath) {
+  const violations = []
+
+  // Match CREATE [OR REPLACE] FUNCTION <name> blocks.
+  // The regex captures function name and then scans to the matching $$ ... $$ body.
+  // We look for the pattern between each AS $$ and the closing $$ to check for search_path.
+  //
+  // Strategy: split on CREATE [OR REPLACE] FUNCTION boundaries, then check each segment.
+  const createFunctionRe = /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+(\w+)\s*\(/gi
+  let match
+
+  while ((match = createFunctionRe.exec(sqlContent)) !== null) {
+    const funcName = match[1]
+    const afterCreate = sqlContent.slice(match.index)
+
+    // Find the function body between AS $$ ... $$ (or AS $BODY$ ... $BODY$, etc.)
+    // Look for SET search_path within the next 8000 chars (generous for any single function)
+    const window = afterCreate.slice(0, 8000)
+
+    // Check if this function definition contains SET search_path before the next CREATE FUNCTION
+    // or end-of-window. A function has SET search_path if either:
+    //   (a) SET search_path = ... appears in the body (between AS $$ and $$)
+    //   (b) SECURITY DEFINER SET search_path appears in the header
+    const hasSearchPath = /SET\s+search_path\s*[=TO]/i.test(window)
+
+    if (!hasSearchPath) {
+      // Only flag named functions (not anonymous triggers or system-internal stubs).
+      // Skip the _temp_set_function_search_path helper itself (it's the remediation tool).
+      if (funcName !== '_temp_set_function_search_path' && funcName !== 'cleanup_search_metrics') {
+        violations.push({ funcName, filePath })
+      }
+    }
+  }
+
+  return violations
 }

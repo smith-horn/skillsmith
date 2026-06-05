@@ -44,8 +44,14 @@ export async function checkApiHealth(
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 5000) // 5s timeout for health
 
+    // SMI-4971: health check is always an anonymous request. `Authorization`
+    // is set explicitly here because `buildRequestHeaders` no longer adds a
+    // blanket `Authorization` header.
     const response = await fetch(`${baseUrl}/health`, {
-      headers: buildRequestHeaders(anonKey),
+      headers: {
+        ...buildRequestHeaders(anonKey),
+        ...(anonKey ? { Authorization: `Bearer ${anonKey}` } : {}),
+      },
       signal: controller.signal,
     })
 

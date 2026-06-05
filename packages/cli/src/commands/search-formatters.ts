@@ -14,14 +14,17 @@ import type { TrustTierColors } from './search-types.js'
 /**
  * Trust tier color mapping
  * SMI-1809: Added 'local' tier color
+ * SMI-5205: Added 'official' and 'unverified' tier colors
  */
 export const TRUST_TIER_COLORS: TrustTierColors = {
+  official: chalk.magenta, // SMI-5205: Platform/partner — magenta to stand out from verified
   verified: chalk.green,
   curated: chalk.blue,
   community: chalk.yellow,
   local: chalk.cyan, // SMI-1809: Cyan for local skills
   experimental: chalk.red,
   unknown: chalk.gray,
+  unverified: chalk.gray, // SMI-5205: Public alias for unknown — same color as unknown
 }
 
 /**

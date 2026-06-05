@@ -1,0 +1,328 @@
+---
+/**
+ * Team Invitation Acceptance Page
+ *
+ * SMI-4294: Client-side acceptance of team_invitations tokens. Mirrors
+ * auth/confirm.astro:243,276,326 (createClient inside <script>, all logic in
+ * astro:page-load listener). NOT SSR — there is no @supabase/ssr in this
+ * codebase, and acceptance is a write that requires the user's session.
+ *
+ * The token is read from the route param (path, not query) — see plan §4 —
+ * to avoid Referer-header leakage to third-party links the invitee may
+ * follow afterwards.
+ *
+ * States:
+ *   1. Not signed in → redirect to /login?next=/invite/<token>
+ *   2. Signed in, RPC success → /account/team/members?invited=1&team=<id>
+ *   3. Signed in, RPC error → render one of the four error states from the
+ *      plan's "Open UX copy" section. Token is NEVER rendered post-error.
+ */
+
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+
+const { token } = Astro.params
+
+// Path-validate the token before injecting into the page. The plan's H2
+// tightening is /^[A-Za-z0-9_-]{32,64}$/ (matches 24-byte base64url output).
+if (!token || !/^[A-Za-z0-9_-]{32,64}$/.test(token)) {
+  return Astro.redirect('/account/team/members?error=invalid_invite')
+}
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <meta name="description" content="Accepting your team invitation..." />
+    <title>Joining team... | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline define:vars={{ supabaseConfig, token }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+      window.__INVITE_TOKEN__ = token
+    </script>
+    <ClientRouter />
+  </head>
+  <body>
+    <main class="invite-container">
+      <div class="invite-card">
+        <div id="loading-state" class="state-content">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <h1>Joining team...</h1>
+          <p>Please wait while we accept your invitation.</p>
+        </div>
+
+        <div id="error-state" class="state-content" style="display: none;">
+          <div class="icon-container error">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+          </div>
+          <h1 id="error-heading">Invitation problem</h1>
+          <p id="error-body">
+            This invitation link isn't valid. Ask the team admin to send a new one.
+          </p>
+          <div class="error-actions">
+            <a id="primary-action" href="/account/team/members" class="btn btn-primary">
+              Go to my team page
+            </a>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+    line-height: 1.6;
+    color: #fafafa;
+    background: #0d0d0f;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .invite-container {
+    padding: 2rem;
+    width: 100%;
+    max-width: 440px;
+  }
+
+  .invite-card {
+    background: #121214;
+    border-radius: 1rem;
+    padding: 2.5rem 2rem;
+    border: 1px solid #2a2a2f;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  .state-content {
+    text-align: center;
+  }
+
+  .state-content h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  .state-content p {
+    color: #9ca3af;
+    margin-bottom: 1.5rem;
+  }
+
+  .spinner-container {
+    margin-bottom: 1.5rem;
+  }
+
+  .spinner {
+    width: 3rem;
+    height: 3rem;
+    color: #e07a5f;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .icon-container {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1.5rem;
+  }
+
+  .icon-container svg {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .icon-container.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+  }
+
+  .error-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  // Open UX copy strings (plan §"Open UX copy"). Do not ad-lib.
+  const ERROR_COPY: Record<string, { heading: string; body: string }> = {
+    invalid: {
+      heading: 'Invitation problem',
+      body: "This invitation link isn't valid. Ask the team admin to send a new one.",
+    },
+    expired: {
+      heading: 'Invitation expired',
+      body: 'This invitation has expired. Ask the team admin to send a new one.',
+    },
+    wrong_email: {
+      heading: 'Wrong account',
+      body: 'This invitation is for a different email address. Sign in with that email or ask the team admin to resend the invite to your current email.',
+    },
+    already_member: {
+      heading: 'Already on this team',
+      body: "You're already a member of this team. Head to your team page.",
+    },
+  }
+
+  type ErrorCode = keyof typeof ERROR_COPY
+
+  function mapErrorToCode(message: string | undefined): ErrorCode {
+    const m = (message ?? '').toLowerCase()
+    if (m.includes('expired')) return 'expired'
+    if (m.includes('different email')) return 'wrong_email'
+    if (m.includes('already a member')) return 'already_member'
+    return 'invalid'
+  }
+
+  function ensureInitOnce(): boolean {
+    // Idempotency guard for Astro's ClientRouter re-fires of astro:page-load
+    // (SMI-4896 pattern). Required by concurrency-auditor diff scan.
+    const w = window as unknown as { __inviteAcceptInited?: boolean }
+    if (w.__inviteAcceptInited) return false
+    w.__inviteAcceptInited = true
+    return true
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    if (!window.location.pathname.startsWith('/invite/')) return
+    if (!ensureInitOnce()) return
+
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
+    const errorState = document.getElementById('error-state') as HTMLDivElement | null
+    const errorHeading = document.getElementById('error-heading') as HTMLHeadingElement | null
+    const errorBody = document.getElementById('error-body') as HTMLParagraphElement | null
+
+    function showError(code: ErrorCode) {
+      const copy = ERROR_COPY[code]
+      if (errorHeading) errorHeading.textContent = copy.heading
+      if (errorBody) errorBody.textContent = copy.body
+      if (loadingState) loadingState.style.display = 'none'
+      if (errorState) errorState.style.display = 'block'
+    }
+
+    try {
+      const config = (
+        window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }
+      ).__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+      const token = (window as unknown as { __INVITE_TOKEN__?: string }).__INVITE_TOKEN__ ?? ''
+
+      if (!config.url || !config.anonKey || !token) {
+        showError('invalid')
+        return
+      }
+
+      const supabase = createClient(config.url, config.anonKey)
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        // Bounce through /login. login.astro reads ?next= and forwards on success.
+        window.location.replace('/login?next=' + encodeURIComponent('/invite/' + token))
+        return
+      }
+
+      const { data, error } = await supabase.rpc('accept_team_invitation', {
+        p_token: token,
+      })
+
+      if (error) {
+        showError(mapErrorToCode(error.message))
+        return
+      }
+
+      const teamId = (data as { team_id?: string } | null)?.team_id ?? ''
+      const params = new URLSearchParams({ invited: '1' })
+      if (teamId) params.set('team', teamId)
+      window.location.replace('/account/team/members?' + params.toString())
+    } catch (err) {
+      console.error('[invite-accept]', err)
+      showError('invalid')
+    }
+  })
+</script>

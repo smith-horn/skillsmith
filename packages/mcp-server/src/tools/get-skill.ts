@@ -13,12 +13,12 @@
  *
  * @example
  * // Get skill by ID with context
- * const response = await executeGetSkill({ id: 'anthropic/commit' }, context);
+ * const response = await executeGetSkill({ id: 'getsentry/commit' }, context);
  * console.log(response.skill.description);
  *
  * @example
  * // Format for terminal display
- * const response = await executeGetSkill({ id: 'community/jest-helper' }, context);
+ * const response = await executeGetSkill({ id: 'microsoft/playwright-cli' }, context);
  * console.log(formatSkillDetails(response));
  */
 
@@ -34,6 +34,7 @@ import {
   ErrorCodes,
   trackSkillView,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import {
   isValidSkillId,
@@ -55,13 +56,14 @@ export const getSkillInputSchema = z.object({
 export const getSkillToolSchema = {
   name: 'get_skill',
   description:
-    "[Skillsmith — Evaluate stage] Fetch full details for a specific Skillsmith-registry skill by ID. Use when the user wants details/info/description of a known skill — e.g. 'what does community/jest-helper do?', 'show me details for anthropic/commit', 'describe the playwright-utils skill'. Returns name, description, trust tier, quality score, dependencies, compatibility, repository URL, install count, and an `also_installed` array of co-installed skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
+    "[Skillsmith — Evaluate stage] Fetch full details for a specific Skillsmith-registry skill by ID. Use when the user wants details/info/description of a known skill — e.g. 'what does microsoft/playwright-cli do?', 'show me details for getsentry/commit', 'describe the vercel-labs/vercel-react-best-practices skill'. Returns name, description, trust tier, quality score, dependencies, compatibility, repository URL, install count, and an `also_installed` array of co-installed skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {
       id: {
         type: 'string',
-        description: 'The skill ID (e.g., "anthropic/commit" or UUID)',
+        description:
+          'The skill ID exactly as returned by `search` (e.g., "getsentry/commit" or UUID). Do not guess the author segment — use a search result.',
       },
     },
     required: ['id'],
@@ -95,10 +97,10 @@ export interface GetSkillInput {
  *
  * @example
  * // Get a verified skill
- * const response = await executeGetSkill({ id: 'anthropic/commit' }, context);
+ * const response = await executeGetSkill({ id: 'getsentry/commit' }, context);
  * console.log(response.skill.score); // 95
  */
-export async function executeGetSkill(
+async function executeGetSkillImpl(
   input: GetSkillInput,
   context: ToolContext
 ): Promise<GetSkillResponse> {
@@ -121,7 +123,7 @@ export async function executeGetSkill(
       {
         details: { id: input.id },
         suggestion:
-          'Skill IDs should be in format "author/skill-name" (e.g., "anthropic/commit") or a valid UUID',
+          'Skill IDs should be in format "author/skill-name" (e.g., "getsentry/commit") or a valid UUID. Use the exact id from a `search` result rather than guessing the author.',
       }
     )
   }
@@ -164,6 +166,9 @@ export async function executeGetSkill(
         description: apiSkill.description || '',
         author: apiSkill.author || 'unknown',
         repository: apiSkill.repo_url || undefined,
+        // SMI-4954: installable when the registry row carries a repo_url —
+        // discovery-only entries (repo_url null, SMI-2723) cannot be installed.
+        installable: Boolean(apiSkill.repo_url),
         version: undefined,
         // SMI-4240: Prefer the category joined from skill_categories by the API
         // (populated by the indexer's classifier) over tag-based inference.
@@ -236,6 +241,8 @@ export async function executeGetSkill(
     description: dbSkill.description || '',
     author: dbSkill.author || 'unknown',
     repository: dbSkill.repoUrl || undefined,
+    // SMI-4954: installable when the local DB row carries a repoUrl
+    installable: Boolean(dbSkill.repoUrl),
     version: undefined, // Version not stored in current schema
     category: extractCategoryFromTags(dbSkill.tags),
     trustTier: mapTrustTierFromDb(dbSkill.trustTier as import('@skillsmith/core').TrustTier),
@@ -307,12 +314,12 @@ export async function executeGetSkill(
  * @returns Formatted string suitable for terminal output
  *
  * @example
- * const response = await executeGetSkill({ id: 'anthropic/commit' });
+ * const response = await executeGetSkill({ id: 'getsentry/commit' });
  * console.log(formatSkillDetails(response));
  * // Output:
  * // === commit ===
- * // ID: anthropic/commit
- * // Author: anthropic
+ * // ID: getsentry/commit
+ * // Author: getsentry
  * // Version: 1.2.0
  * // ...
  */
@@ -327,6 +334,13 @@ export function formatSkillDetails(response: GetSkillResponse): string {
   lines.push('Author: ' + skill.author)
   lines.push('Version: ' + (skill.version || 'N/A'))
   lines.push('Category: ' + skill.category)
+  // SMI-4954: surface installability so callers don't try to install a
+  // discovery-only entry that install_skill cannot resolve.
+  if (skill.installable === false) {
+    lines.push('Installable: NO — discovery-only entry (install_skill will not resolve this)')
+  } else if (skill.installable === true) {
+    lines.push('Installable: yes')
+  }
   lines.push('')
 
   // Description
@@ -428,9 +442,12 @@ export function formatSkillDetails(response: GetSkillResponse): string {
  * Format trust tier with visual indicator
  * SMI-1809: Added 'local' tier
  * SMI-2381 / SMI-4520: Added 'curated' tier
+ * SMI-5205: Added 'official' and 'unverified' tiers
  */
 function formatTrustTier(tier: TrustTier): string {
   switch (tier) {
+    case 'official':
+      return '[!] OFFICIAL' // SMI-5205: Platform/partner with full security review
     case 'verified':
       return '[*] VERIFIED'
     case 'community':
@@ -443,6 +460,8 @@ function formatTrustTier(tier: TrustTier): string {
       return '[~] EXPERIMENTAL'
     case 'unknown':
       return '[?] UNKNOWN'
+    case 'unverified':
+      return '[?] UNVERIFIED' // SMI-5205: Public alias for unknown
   }
 }
 
@@ -455,3 +474,10 @@ function formatScoreBar(score: number): string {
   const bar = '='.repeat(filled) + '-'.repeat(empty)
   return '[' + bar + '] ' + score + '/100'
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeGetSkill = withTelemetry(executeGetSkillImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'get_skill',
+  extractFramework: () => 'unknown',
+})

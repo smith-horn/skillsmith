@@ -13,6 +13,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { getTeamWorkspaceService } from './team-workspace.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 // ============================================================================
 // Input / Output types
@@ -70,7 +71,7 @@ export const publishPrivateToolSchema = {
  * @param input - Validated publish-private input
  * @param context - Tool context with database access
  */
-export async function executePublishPrivate(
+async function executePublishPrivateImpl(
   input: PublishPrivateInput,
   context: ToolContext
 ): Promise<PublishPrivateResult> {
@@ -114,3 +115,10 @@ export async function executePublishPrivate(
     message: `Skill "${skillId}" is now private (team: ${teamId}).`,
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executePublishPrivate = withTelemetry(executePublishPrivateImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'publish_private',
+  extractFramework: () => 'unknown',
+})

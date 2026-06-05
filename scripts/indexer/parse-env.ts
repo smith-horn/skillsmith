@@ -9,6 +9,10 @@
  *   - All numeric vars default cleanly if absent.
  */
 
+// SMI-4870: reuse the canonical DiscoveryPhase type from the orchestrator so
+// the interface and the runDiscovery call site share one source of truth.
+import type { DiscoveryPhase } from './discovery-orchestrator.phase-split.ts'
+
 export interface IndexerEnv {
   SUPABASE_URL: string
   SUPABASE_SERVICE_ROLE_KEY: string
@@ -17,10 +21,16 @@ export interface IndexerEnv {
   MAX_REPOS: number
   CODE_SEARCH_MAX_PAGES: number
   DRY_RUN: boolean
-  RUN_TYPE: 'discovery' | 'maintenance'
+  RUN_TYPE: 'discovery' | 'maintenance' | 'recheck'
   STALE_DAYS: number
+  RECHECK_THRESHOLD_DAYS: number
+  RECHECK_MAX_CANDIDATES: number
+  RECHECK_BATCH: number
+  RECHECK_DRY_RUN: boolean
   concurrency: number
   kill_switch_engaged: boolean
+  /** SMI-4870: per-phase cron sub-slot (1/2/3); undefined = legacy all-phases path. */
+  DISCOVERY_PHASE: DiscoveryPhase | undefined
 }
 
 function getRequired(name: string): string {
@@ -71,11 +81,37 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
     const CODE_SEARCH_MAX_PAGES = getInt('CODE_SEARCH_MAX_PAGES', 1)
     const DRY_RUN = getBool('DRY_RUN', false)
     const RUN_TYPE_RAW = process.env.RUN_TYPE ?? 'discovery'
-    if (RUN_TYPE_RAW !== 'discovery' && RUN_TYPE_RAW !== 'maintenance') {
-      throw new Error(`Invalid RUN_TYPE: ${RUN_TYPE_RAW} (expected discovery|maintenance)`)
+    if (
+      RUN_TYPE_RAW !== 'discovery' &&
+      RUN_TYPE_RAW !== 'maintenance' &&
+      RUN_TYPE_RAW !== 'recheck'
+    ) {
+      throw new Error(`Invalid RUN_TYPE: ${RUN_TYPE_RAW} (expected discovery|maintenance|recheck)`)
     }
     const RUN_TYPE = RUN_TYPE_RAW
     const STALE_DAYS = getInt('STALE_DAYS', RUN_TYPE === 'maintenance' ? 7 : 30)
+
+    // SMI-5166: recheck run-type configuration.
+    // Defaults: threshold=5d, max candidates=2000, batch=5, dry-run=true.
+    // RECHECK_DRY_RUN defaults true so a scheduled cron (which has no workflow
+    // dry_run input) lands in dry-run on first fire (SMI-5166 E6). Clamping is
+    // done downstream in runRecheck, mirroring how STALE_DAYS is parsed here.
+    const RECHECK_THRESHOLD_DAYS = getInt('RECHECK_THRESHOLD_DAYS', 5)
+    const RECHECK_MAX_CANDIDATES = getInt('RECHECK_MAX_CANDIDATES', 2000)
+    const RECHECK_BATCH = getInt('RECHECK_BATCH', 5)
+    const RECHECK_DRY_RUN = getBool('RECHECK_DRY_RUN', true)
+
+    // SMI-4870: parse DISCOVERY_PHASE — empty/unset → undefined; '1'/'2'/'3' →
+    // numeric literal; any other non-empty value → hard error (mirrors RUN_TYPE
+    // validation style above).
+    const discoveryPhaseRaw = process.env.DISCOVERY_PHASE
+    let DISCOVERY_PHASE: DiscoveryPhase | undefined
+    if (discoveryPhaseRaw != null && discoveryPhaseRaw !== '') {
+      if (discoveryPhaseRaw !== '1' && discoveryPhaseRaw !== '2' && discoveryPhaseRaw !== '3') {
+        throw new Error(`Invalid DISCOVERY_PHASE: ${discoveryPhaseRaw} (expected 1|2|3)`)
+      }
+      DISCOVERY_PHASE = Number(discoveryPhaseRaw) as DiscoveryPhase
+    }
 
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)
@@ -92,8 +128,13 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       DRY_RUN,
       RUN_TYPE,
       STALE_DAYS,
+      RECHECK_THRESHOLD_DAYS,
+      RECHECK_MAX_CANDIDATES,
+      RECHECK_BATCH,
+      RECHECK_DRY_RUN,
       concurrency,
       kill_switch_engaged,
+      DISCOVERY_PHASE,
     }
   } finally {
     process.env = prev

@@ -18,6 +18,7 @@
 import { createRequire } from 'node:module'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { isCorruptionError, backupCorruptDbFile } from './corruption.js'
 
 // ESM-compatible require for dynamic module loading
 const require = createRequire(import.meta.url)
@@ -382,14 +383,53 @@ export async function createSqlJsDatabase(
     throw new Error(`SQLITE_CANTOPEN: unable to open database file: ${path}`)
   }
 
-  const db = new SQL.Database(data)
-
-  // Set default pragmas for consistency
-  // Note: WAL mode is intentionally NOT set for sql.js because:
-  // 1. sql.js operates fully in-memory with manual file persistence
-  // 2. Journal modes are meaningless without filesystem integration
-  // 3. Setting WAL would create false parity expectations with better-sqlite3
-  db.run('PRAGMA foreign_keys = ON')
+  // Open the database. If the on-disk file is corrupt (e.g. WAL-mode files
+  // written by the native driver that sql.js cannot read — SMI-4484), back it
+  // up and rebuild an empty database so the next sync repopulates it, instead
+  // of crashing the user's command with `database disk image is malformed`.
+  //
+  // sql.js validates the file lazily — `new SQL.Database(data)` and a no-op
+  // PRAGMA can both succeed on garbage bytes; corruption only surfaces on the
+  // first read of a page. We therefore probe `sqlite_master` inside the
+  // try-block so corruption is detected here rather than at an arbitrary later
+  // query the caller cannot recover from.
+  let db: SqlJsDatabase
+  let partialDb: SqlJsDatabase | undefined
+  try {
+    partialDb = new SQL.Database(data)
+    db = partialDb
+    // Set default pragmas for consistency.
+    // Note: WAL mode is intentionally NOT set for sql.js because:
+    // 1. sql.js operates fully in-memory with manual file persistence
+    // 2. Journal modes are meaningless without filesystem integration
+    // 3. Setting WAL would create false parity expectations with better-sqlite3
+    db.run('PRAGMA foreign_keys = ON')
+    // Integrity probe: forces sql.js to read the schema page. Skipped for a
+    // brand-new empty database (no `data`) where there is nothing to validate.
+    if (data !== undefined) {
+      db.run('SELECT name FROM sqlite_master LIMIT 1')
+    }
+  } catch (error) {
+    // Free the partially-opened handle's WASM heap memory before we rebuild or
+    // rethrow — otherwise it leaks for the process lifetime (SMI-4484).
+    if (partialDb) {
+      try {
+        partialDb.close()
+      } catch {
+        // handle already unusable — nothing more to free
+      }
+    }
+    if (!isCorruptionError(error) || path === ':memory:' || !existsSync(path)) {
+      throw error
+    }
+    const backupPath = backupCorruptDbFile(path)
+    console.warn(
+      `[Skillsmith] The local database at ${path} was corrupt and could not be opened. ` +
+        `It has been backed up to ${backupPath} and will be rebuilt on the next sync.`
+    )
+    db = new SQL.Database()
+    db.run('PRAGMA foreign_keys = ON')
+  }
 
   return new SqlJsDatabaseAdapter(db, path, options)
 }

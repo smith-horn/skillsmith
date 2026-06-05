@@ -113,7 +113,8 @@ describe('Skill Recommend Tool', () => {
       expect(result.context.installed_count).toBe(1)
 
       // Should not recommend already installed skill
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
       expect(recommendedIds).not.toContain('anthropic/commit')
     })
 
@@ -127,7 +128,8 @@ describe('Skill Recommend Tool', () => {
         toolContext
       )
 
-      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id)
       expect(recommendedIds).not.toContain('anthropic/commit')
       expect(recommendedIds).not.toContain('anthropic/review-pr')
     })
@@ -207,9 +209,11 @@ describe('Skill Recommend Tool', () => {
 
       expect(result.context.has_project_context).toBe(true)
       // Should have React or testing related skills ranked higher
-      const topSkillNames = result.recommendations.slice(0, 3).map((r) => r.name)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const topSkillNames = result.recommendations.slice(0, 3).map((r: any) => r.name)
       const hasRelevantSkill = topSkillNames.some(
-        (name) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (name: any) =>
           name.toLowerCase().includes('react') ||
           name.toLowerCase().includes('jest') ||
           name.toLowerCase().includes('test')
@@ -240,7 +244,8 @@ describe('Skill Recommend Tool', () => {
         toolContext
       )
 
-      const recommendedIds = result.recommendations.map((r) => r.skill_id.toLowerCase())
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recommendedIds = result.recommendations.map((r: any) => r.skill_id.toLowerCase())
       expect(recommendedIds).not.toContain('anthropic/commit')
     })
   })
@@ -354,7 +359,10 @@ describe('Skill Recommend Tool', () => {
       )
 
       // Find a skill that has the 'testing' role
-      const testingSkill = withoutRole.recommendations.find((r) => r.roles?.includes('testing'))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const testingSkill = withoutRole.recommendations.find((r: any) =>
+        r.roles?.includes('testing')
+      )
 
       if (testingSkill) {
         const originalScore = testingSkill.quality_score
@@ -371,7 +379,8 @@ describe('Skill Recommend Tool', () => {
         )
 
         const boostedSkill = withRole.recommendations.find(
-          (r) => r.skill_id === testingSkill.skill_id
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (r: any) => r.skill_id === testingSkill.skill_id
         )
 
         if (boostedSkill) {

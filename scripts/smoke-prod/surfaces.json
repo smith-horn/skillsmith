@@ -60,6 +60,13 @@
       "checks": ["check_auth_device_code_reachable", "check_auth_device_preview_requires_jwt"]
     },
     {
+      "id": "edge-fn-sync-stripe-email",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/sync-stripe-email/**"],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_sync_stripe_email_requires_jwt"]
+    },
+    {
       "id": "cli-published",
       "owner": "cli",
       "trigger_globs": ["packages/cli/**"],
@@ -128,6 +135,13 @@
       ],
       "script": "scripts/smoke-prod/website.sh",
       "checks": ["check_skills_recommend_usage_counter"]
+    },
+    {
+      "id": "edge-fn-events",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/events/**", "supabase/functions/_shared/posthog.ts"],
+      "script": "scripts/smoke-prod/events.sh",
+      "checks": ["check_events_skill_invoke_accepted", "check_events_skill_invoke_row_visible"]
     },
     {
       "id": "website-docs-tutorials",

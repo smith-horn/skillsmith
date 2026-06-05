@@ -12,29 +12,32 @@ import ora from 'ora'
 import { mkdir } from 'fs/promises'
 import { dirname } from 'path'
 import {
-  createDatabaseAsync,
-  initializeSchema,
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
   type Skill,
   type TrustTier,
 } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { removeLinks } from '@skillsmith/core/install'
 import { sanitizeError } from '../utils/sanitize.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
 
 /**
  * SMI-1809: Added 'local' tier color for local skills
+ * SMI-5205: Added 'official' and 'unverified' tier colors
  */
 const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
+  official: chalk.magenta, // SMI-5205: Platform/partner — magenta to stand out from verified
   verified: chalk.green,
   curated: chalk.blue,
   community: chalk.yellow,
   local: chalk.cyan, // SMI-1809: Cyan for local skills
   experimental: chalk.red,
   unknown: chalk.gray,
+  unverified: chalk.gray, // SMI-5205: Public alias for unknown — same color as unknown
 }
 
 /**
@@ -93,7 +96,7 @@ async function getSkillDiff(
   skillName: string,
   dbPath: string
 ): Promise<{ oldVersion: string | null; newVersion: string | null; changes: string[] } | null> {
-  const db = await createDatabaseAsync(dbPath)
+  const db = await openCliDatabase(dbPath)
   const skillRepo = new SkillRepository(db)
 
   try {
@@ -254,8 +257,7 @@ async function removeSkill(skillName: string, force: boolean, dbPath: string): P
 
   // Ensure database directory exists before opening
   await mkdir(dirname(dbPath), { recursive: true })
-  const db = await createDatabaseAsync(dbPath)
-  initializeSchema(db)
+  const db = await openCliDatabase(dbPath)
 
   try {
     const skillRepo = new SkillRepository(db)
@@ -314,64 +316,105 @@ async function removeSkill(skillName: string, force: boolean, dbPath: string): P
 /**
  * Create list command
  */
+// SMI-5128: handler impls extracted from inline .action() closures so
+// withTelemetry can wrap them at the export boundary (SMI-5040 coverage gate).
+async function listActionImpl(opts: Record<string, string | boolean | undefined>): Promise<void> {
+  try {
+    const dbPath = opts['db'] as string
+    const outdated = (opts['outdated'] as boolean) ?? false
+
+    const skills = await getInstalledSkills(dbPath)
+    const filtered = outdated ? skills.filter((s) => s.hasUpdates) : skills
+
+    if (outdated && filtered.length === 0) {
+      console.log(chalk.green('\nAll installed skills are up to date.\n'))
+      return
+    }
+
+    displaySkillsTable(filtered)
+  } catch (error) {
+    console.error(chalk.red('Error listing skills:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const listAction = withTelemetry(listActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'list',
+  extractFramework: () => 'cli',
+})
+
 export function createListCommand(): Command {
   return new Command('list')
     .alias('ls')
     .description('List all installed skills')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('--outdated', 'Show only skills with available updates (requires Individual tier)')
-    .action(async (opts: Record<string, string | boolean | undefined>) => {
-      try {
-        const dbPath = opts['db'] as string
-        const outdated = (opts['outdated'] as boolean) ?? false
-
-        const skills = await getInstalledSkills(dbPath)
-        const filtered = outdated ? skills.filter((s) => s.hasUpdates) : skills
-
-        if (outdated && filtered.length === 0) {
-          console.log(chalk.green('\nAll installed skills are up to date.\n'))
-          return
-        }
-
-        displaySkillsTable(filtered)
-      } catch (error) {
-        console.error(chalk.red('Error listing skills:'), sanitizeError(error))
-        process.exit(1)
-      }
-    })
+    .action(listAction)
 }
 
 /**
  * Create update command
  */
+async function updateActionImpl(
+  skillName: string | undefined,
+  opts: Record<string, string | boolean | undefined>
+): Promise<void> {
+  const dbPath = opts['db'] as string
+  const updateAll = opts['all'] as boolean | undefined
+
+  try {
+    if (updateAll || !skillName) {
+      await updateAllSkills(dbPath)
+    } else {
+      await updateSkill(skillName, dbPath)
+    }
+  } catch (error) {
+    console.error(chalk.red('Error updating skills:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const updateAction = withTelemetry(updateActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'update',
+  extractFramework: () => 'cli',
+})
+
 export function createUpdateCommand(): Command {
   return new Command('update')
     .description('Update installed skills')
     .argument('[skill]', 'Skill name to update (omit for all)')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-a, --all', 'Update all installed skills')
-    .action(
-      async (skillName: string | undefined, opts: Record<string, string | boolean | undefined>) => {
-        const dbPath = opts['db'] as string
-        const updateAll = opts['all'] as boolean | undefined
-
-        try {
-          if (updateAll || !skillName) {
-            await updateAllSkills(dbPath)
-          } else {
-            await updateSkill(skillName, dbPath)
-          }
-        } catch (error) {
-          console.error(chalk.red('Error updating skills:'), sanitizeError(error))
-          process.exit(1)
-        }
-      }
-    )
+    .action(updateAction)
 }
 
 /**
  * Create remove command
  */
+async function removeActionImpl(
+  skillName: string,
+  opts: Record<string, string | boolean | undefined>
+): Promise<void> {
+  const force = (opts['force'] as boolean) ?? false
+  const dbPath = (opts['db'] as string) ?? DEFAULT_DB_PATH
+
+  try {
+    const success = await removeSkill(skillName, force, dbPath)
+    process.exit(success ? 0 : 1)
+  } catch (error) {
+    console.error(chalk.red('Error removing skill:'), sanitizeError(error))
+    process.exit(1)
+  }
+}
+
+export const removeAction = withTelemetry(removeActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'remove',
+  extractFramework: () => 'cli',
+})
+
 export function createRemoveCommand(): Command {
   return new Command('remove')
     .alias('rm')
@@ -380,18 +423,7 @@ export function createRemoveCommand(): Command {
     .argument('<skill>', 'Skill name to remove')
     .option('-f, --force', 'Skip confirmation prompt and force removal of modified/orphan skills')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
-    .action(async (skillName: string, opts: Record<string, string | boolean | undefined>) => {
-      const force = (opts['force'] as boolean) ?? false
-      const dbPath = (opts['db'] as string) ?? DEFAULT_DB_PATH
-
-      try {
-        const success = await removeSkill(skillName, force, dbPath)
-        process.exit(success ? 0 : 1)
-      } catch (error) {
-        console.error(chalk.red('Error removing skill:'), sanitizeError(error))
-        process.exit(1)
-      }
-    })
+    .action(removeAction)
 }
 
 export { getInstalledSkills, displaySkillsTable }

@@ -11,43 +11,54 @@ import { Command } from 'commander'
 import { confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
 import { clearApiKey, getAuthStatus } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
+
+// SMI-5128: extracted from inline .action() closure to a named function so
+// withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
+async function logoutActionImpl(): Promise<void> {
+  // 1. Check whether there is anything to remove
+  const status = await getAuthStatus()
+  if (!status.authenticated) {
+    console.log('Not authenticated. Nothing to log out.')
+    process.exit(0)
+  }
+
+  // 2. Confirm before removing
+  const confirmed = await confirm({
+    message: 'Log out and remove stored API key?',
+    default: false,
+  })
+
+  if (!confirmed) {
+    console.log('Cancelled.')
+    process.exit(0)
+  }
+
+  // 3. Clear key from all storage locations
+  const result = await clearApiKey()
+
+  if (result.success) {
+    console.log(chalk.green(`Logged out. Key removed from ${result.source}.`))
+  } else {
+    console.log(
+      chalk.yellow(
+        `Logged out (config file cleared), but could not remove from keyring: ${result.error}`
+      )
+    )
+    console.log(chalk.dim('The key may still be stored in your OS keyring.'))
+  }
+  process.exit(0)
+}
+
+export const logoutAction = withTelemetry(logoutActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'logout',
+  extractFramework: () => 'cli',
+})
 
 /**
  * Create the `skillsmith logout` command.
  */
 export function createLogoutCommand(): Command {
-  return new Command('logout').description('Remove stored Skillsmith API key').action(async () => {
-    // 1. Check whether there is anything to remove
-    const status = await getAuthStatus()
-    if (!status.authenticated) {
-      console.log('Not authenticated. Nothing to log out.')
-      process.exit(0)
-    }
-
-    // 2. Confirm before removing
-    const confirmed = await confirm({
-      message: 'Log out and remove stored API key?',
-      default: false,
-    })
-
-    if (!confirmed) {
-      console.log('Cancelled.')
-      process.exit(0)
-    }
-
-    // 3. Clear key from all storage locations
-    const result = await clearApiKey()
-
-    if (result.success) {
-      console.log(chalk.green(`Logged out. Key removed from ${result.source}.`))
-    } else {
-      console.log(
-        chalk.yellow(
-          `Logged out (config file cleared), but could not remove from keyring: ${result.error}`
-        )
-      )
-      console.log(chalk.dim('The key may still be stored in your OS keyring.'))
-    }
-    process.exit(0)
-  })
+  return new Command('logout').description('Remove stored Skillsmith API key').action(logoutAction)
 }

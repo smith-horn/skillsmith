@@ -12,14 +12,15 @@ import { z } from 'zod'
 // ============================================================================
 
 /**
- * Trust tier enum values
+ * Trust tier enum values — public-facing API values only.
+ * SMI-5205: experimental/unknown translated to community/unverified at response layer.
  */
 export const TrustTierSchema = z.enum([
+  'official',
   'verified',
   'curated',
   'community',
-  'experimental',
-  'unknown',
+  'unverified',
 ])
 
 // ============================================================================
@@ -38,7 +39,7 @@ export const ApiSearchResultSchema = z.object({
   publisher: z.string().nullable().optional(),
   repo_url: z.string().nullable().optional(),
   quality_score: z.number().nullable(),
-  trust_tier: TrustTierSchema.optional().default('unknown'),
+  trust_tier: TrustTierSchema.optional().default('unverified'),
   tags: z.array(z.string()).default([]),
   stars: z.number().nullable().optional(),
   installable: z.boolean().nullable().optional(),
@@ -50,6 +51,10 @@ export const ApiSearchResultSchema = z.object({
   // also be declared here or Zod strips them before get-skill.ts can read them.
   // All .optional() — skills-search doesn't select these columns.
   categories: z.array(z.string()).optional(),
+  // SMI-5178: cross-ecosystem compatibility slugs. Declared here so Zod does not
+  // strip the field skills-search now hydrates — without this the MCP compatibility
+  // filter reads `undefined` and the restrictive default is a no-op.
+  compatibility: z.array(z.string()).optional(),
   security_score: z.number().nullable().optional(),
   last_scanned_at: z.string().nullable().optional(),
   security_findings: z.array(z.unknown()).nullable().optional(),

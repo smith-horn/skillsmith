@@ -30,6 +30,10 @@ describe('parseEnv', () => {
       'STALE_DAYS',
       'CONCURRENCY',
       'CONCURRENCY_KILL_SWITCH',
+      'RECHECK_THRESHOLD_DAYS',
+      'RECHECK_MAX_CANDIDATES',
+      'RECHECK_BATCH',
+      'RECHECK_DRY_RUN',
     ]) {
       delete process.env[k]
     }
@@ -99,5 +103,30 @@ describe('parseEnv', () => {
   it('CRON_SLOT empty string => null', () => {
     process.env.CRON_SLOT = ''
     expect(parseEnv().CRON_SLOT).toBe(null)
+  })
+
+  // SMI-5166: recheck run-type + RECHECK_* configuration.
+  it('RUN_TYPE=recheck parses successfully and yields RUN_TYPE recheck', () => {
+    process.env.RUN_TYPE = 'recheck'
+    expect(() => parseEnv()).not.toThrow()
+    expect(parseEnv().RUN_TYPE).toBe('recheck')
+  })
+
+  it('RECHECK_* defaults: threshold=5, max=2000, batch=5, dry-run=true when absent', () => {
+    const env = parseEnv()
+    expect(env.RECHECK_THRESHOLD_DAYS).toBe(5)
+    expect(env.RECHECK_MAX_CANDIDATES).toBe(2000)
+    expect(env.RECHECK_BATCH).toBe(5)
+    expect(env.RECHECK_DRY_RUN).toBe(true)
+  })
+
+  it("RECHECK_DRY_RUN='false' yields false", () => {
+    process.env.RECHECK_DRY_RUN = 'false'
+    expect(parseEnv().RECHECK_DRY_RUN).toBe(false)
+  })
+
+  it('RECHECK_THRESHOLD_DAYS non-finite throws (getInt contract — no clamping)', () => {
+    process.env.RECHECK_THRESHOLD_DAYS = 'abc'
+    expect(() => parseEnv()).toThrow(/RECHECK_THRESHOLD_DAYS/)
   })
 })

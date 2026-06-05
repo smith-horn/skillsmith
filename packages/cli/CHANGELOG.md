@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.3
+
+- **Refactor**: SMI-5036 split oversized billing test files (#1282)
+- **Feature**: SMI-5012 PR-3 — W3 Claude Code hook + CLI subcommands + manifest schema (#1255)
+- **Feature**: SMI-5039 — lazy embedding-capability probe on `skillsmith
+  search` (and `sklx search`). Surfaces a structured stderr warning when the
+  `@huggingface/transformers` stack is unavailable so the operator knows that
+  search has degraded to FTS-only. Probe is hard-bounded at 2 s and never
+  throws — boot is never blocked. `--version` / `--help` short-circuit before
+  the probe runs; only the `search` action triggers it. `SKILLSMITH_QUIET=true`
+  suppresses the warning line for scripted use. Bumps `@skillsmith/core`
+  dep range to `^0.8.0` to pick up the new `./embeddings/probe` export.
+
+## v0.6.2
+
+- **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)
+
+- **Chore**: SMI-5006 — bump `@skillsmith/core` dependency range to `^0.7.0` (BREAKING in core: billing moved to `@smith-horn/enterprise/billing`). No CLI surface change; CLI does not consume the billing module directly.
+- **Chore**: SMI-4539 — track `@skillsmith/core` dependency range to `^0.6.3` (synthetic patch release verifying the npm trusted-publisher OIDC publish path, PR #1171). No functional change.
+
+## v0.6.1
+
+- **Fix**: SMI-4917 — repair first-time install (search crash, sync drops all skills, no self-config) (#1132)
+
 ## v0.6.0
 
 - **Feature**: SMI-4590 Wave 4 PR 5/6 — new `sklx audit collisions` subcommand runs the consumer namespace audit (mirrors the `skill_inventory_audit` MCP tool); new `sklx config get audit_mode` / `sklx config set audit_mode <preventative|power_user|governance|off>` for managing audit verbosity. Tier-revalidated: Free/Individual cannot select `power_user`/`governance`. (#950)

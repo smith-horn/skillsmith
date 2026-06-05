@@ -7,6 +7,7 @@
  * - Repository metadata extraction
  */
 
+import type { TrustTier } from '../types.js'
 import type { SkillCreateInput } from '../types/skill.js'
 import type { DependencyDeclaration } from '../types/dependencies.js'
 
@@ -327,9 +328,9 @@ export class GitHubIndexer {
     const qualityScore = (starScore + forkScore + 25) / 100 // Normalize to 0-1
 
     // Determine trust tier based on indicators
-    let trustTier: 'verified' | 'community' | 'experimental' | 'unknown' = 'unknown'
+    let trustTier: TrustTier = 'unknown'
     if (repo.topics.includes('claude-code-official')) {
-      trustTier = 'verified'
+      trustTier = 'official' // SMI-5205: platform/partner skills get official tier
     } else if (repo.stars >= 50) {
       trustTier = 'community'
     } else if (repo.stars >= 5) {

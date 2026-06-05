@@ -16,6 +16,7 @@ import { z } from 'zod'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 import { SkillVersionRepository } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { SkillDependencyRow } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { hashContent } from './install.conflict-helpers.js'
@@ -180,7 +181,7 @@ function checkDependencies(
  * @param context Tool context with database connection
  * @returns OutdatedResponse with per-skill status and summary
  */
-export async function executeOutdated(
+async function executeOutdatedImpl(
   input: OutdatedInput,
   context: ToolContext
 ): Promise<OutdatedResponse> {
@@ -294,3 +295,10 @@ export async function executeOutdated(
     },
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeOutdated = withTelemetry(executeOutdatedImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'skill_outdated',
+  extractFramework: () => 'unknown',
+})

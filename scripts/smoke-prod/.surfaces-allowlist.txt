@@ -27,6 +27,11 @@ supabase/functions/admin-grant-subscription/**
 supabase/functions/update-seat-count/**
 supabase/functions/webhook-dlq/**
 supabase/functions/quota-monitor/**
+# SMI-4995: coverage-report is the weekly cross-ecosystem coverage cron
+# (SMI-4963) — invoked only by .github/workflows/coverage-report.yml via
+# service-role auth. No user-facing HTTP surface; results land in
+# audit_logs and the GitHub Actions artifact.
+supabase/functions/coverage-report/**
 
 # SMI-4852: indexer-dispatch is invoked by repository_dispatch via the
 # indexer.yml workflow + manual ops; service-role-only, fires GitHub
@@ -79,7 +84,6 @@ packages/website/src/pages/early-access/**
 packages/website/src/pages/install.astro
 packages/website/src/pages/pricing.astro
 packages/website/src/pages/contact.astro
-packages/website/src/pages/changelog.astro
 packages/website/src/pages/about.astro
 packages/website/src/pages/faq.astro
 packages/website/src/pages/license.astro
@@ -93,3 +97,19 @@ packages/website/src/pages/complete-profile.astro
 packages/website/src/pages/sitemap.xml.ts
 packages/website/src/pages/robots.txt.ts
 packages/website/src/pages/feed.xml.ts
+
+# SMI-4294 team invite flow — smoke verification is manual on first deploy
+# (per plan §"Smoke vs CI"). Both surfaces depend on a real authenticated
+# session + a live team_invitations row, which the current smoke harness
+# cannot synthesize without persisting test data. After the first manual
+# smoke run lands, these get moved into surfaces.json with a check that
+# exercises /invite/[token] in the not-signed-in flow + the gateway-verified
+# 401 path on team-invite-send.
+supabase/functions/team-invite-send/**
+packages/website/src/pages/invite/[token].astro
+
+# SMI-5173: sync-oauth-email is triggered by Supabase Auth's email-change
+# webhook (OAuth provider email sync), not by direct user HTTP requests.
+# Smoke verification requires a real OAuth email-change event which the
+# harness cannot synthesize. Gateway-verified (no --no-verify-jwt).
+supabase/functions/sync-oauth-email/**

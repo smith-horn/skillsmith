@@ -1,0 +1,640 @@
+---
+/**
+ * Telemetry Preferences Page — SMI-5019 W2.S4
+ *
+ * Per user decision U5: the consent surface for MCP-only clients (Cursor,
+ * Continue, Copilot users without a CLI install) lives on the web — NOT as
+ * an MCP tool. First MCP call from an unknown anonymous_id returns
+ * `consent_required:true` + a link to this page; the user toggles here and
+ * the setting syncs back via the API key.
+ *
+ * Auth: Supabase session (redirects unauthenticated users to /login).
+ * Data: user_telemetry_preferences table (RLS-scoped to the calling user).
+ */
+
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+import Footer from '../../components/Footer.astro'
+import Nav from '../../components/Nav.astro'
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+    <meta
+      name="description"
+      content="Control whether Skillsmith collects skill-invocation telemetry from this account"
+    />
+    <title>Telemetry Preferences | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+    <ClientRouter />
+  </head>
+  <body>
+    <Nav activePath="/account" />
+
+    <main class="page-container">
+      <div id="loading-state" class="state-block">
+        <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+            fill="none"
+            opacity="0.25"></circle>
+          <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+          ></path>
+        </svg>
+        <p>Loading...</p>
+      </div>
+
+      <div id="error-state" class="state-block" style="display: none;">
+        <p id="error-message" class="error-text">Something went wrong.</p>
+        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+      </div>
+
+      <div id="page-content" style="display: none;">
+        <div class="page-header">
+          <a href="/account" class="back-link">&larr; Account</a>
+          <h1>Telemetry Preferences</h1>
+          <p class="page-description">
+            Skillsmith can collect anonymous data about which skills you invoke (skill name,
+            duration, success/failure). This helps us improve recommendations and surface broken or
+            stale skills. Telemetry is <strong>off by default</strong>.
+          </p>
+        </div>
+
+        <section class="card">
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <h2>Skill-invocation telemetry</h2>
+              <p id="state-summary" class="state-summary">Off</p>
+            </div>
+            <label class="switch" for="telemetry-toggle">
+              <input id="telemetry-toggle" type="checkbox" aria-describedby="state-summary" />
+              <span class="switch-slider" aria-hidden="true"></span>
+            </label>
+          </div>
+
+          <dl class="meta-grid">
+            <div>
+              <dt>Anonymous ID</dt>
+              <dd id="anon-id-display">Not set</dd>
+            </div>
+            <div>
+              <dt>ID rotated</dt>
+              <dd id="anon-id-rotated">Never</dd>
+            </div>
+            <div>
+              <dt>Last updated</dt>
+              <dd id="updated-at-display">Never</dd>
+            </div>
+          </dl>
+
+          <div class="actions-row">
+            <button id="save-btn" class="btn btn-primary" disabled aria-disabled="true">
+              Save
+            </button>
+            <button id="rotate-btn" class="btn btn-secondary" type="button">
+              Rotate anonymous ID
+            </button>
+          </div>
+          <p id="save-result" class="save-result" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="card info-card">
+          <h2>What we collect when telemetry is on</h2>
+          <ul>
+            <li>Skill name (e.g. <code>linear</code>, <code>cloudinary</code>)</li>
+            <li>Invocation source (CLI / MCP tool / VS Code)</li>
+            <li>Duration and success/failure outcome</li>
+            <li>Framework string (e.g. <code>claude-code</code>, <code>cursor</code>)</li>
+          </ul>
+          <h2>What we never collect</h2>
+          <ul>
+            <li>Arguments you pass to a skill</li>
+            <li>File paths, file contents, or environment variables</li>
+            <li>Anything linking the anonymous ID to your real identity outside this dashboard</li>
+          </ul>
+        </section>
+      </div>
+    </main>
+
+    <Footer compact />
+
+    <script>
+      import { createClient } from '@supabase/supabase-js'
+
+      interface TelemetryPreference {
+        user_id: string
+        enabled: boolean
+        anonymous_id: string | null
+        anonymous_id_created_at: string | null
+        updated_at: string
+      }
+
+      function formatAnonId(id: string | null | undefined): string {
+        if (!id) return 'Not set'
+        // Show last 8 chars (per plan U5 + SMI-5019 spec) so users can
+        // verify the same ID across machines without exposing the full token.
+        const clean = id.replace(/[^a-zA-Z0-9_-]/g, '')
+        if (clean.length <= 8) return clean
+        return `...${clean.slice(-8)}`
+      }
+
+      function formatDate(iso: string | null | undefined): string {
+        if (!iso) return 'Never'
+        const date = new Date(iso)
+        if (Number.isNaN(date.getTime())) return 'Never'
+        if (date.getTime() === 0) return 'Never'
+        return date.toLocaleString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      }
+
+      function generateAnonId(): string {
+        // Browser-friendly id generator — mirrors the format the core
+        // `generateAnonymousId()` helper produces (opaque, URL-safe).
+        const bytes = new Uint8Array(16)
+        crypto.getRandomValues(bytes)
+        const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+        return `sa_${hex}`
+      }
+
+      document.addEventListener('astro:page-load', async () => {
+        // Only run on this page — astro:page-load listeners persist on `document`
+        // across ClientRouter navigations and would re-fire here otherwise (SMI-4896).
+        if (
+          window.location.pathname !== '/account/telemetry' &&
+          window.location.pathname !== '/account/telemetry/'
+        )
+          return
+
+        document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            window.location.reload()
+          })
+        })
+
+        const config = window.__SUPABASE_CONFIG__
+        const supabaseUrl = config?.url
+        const supabaseAnonKey = config?.anonKey
+
+        const loadingEl = document.getElementById('loading-state') as HTMLDivElement | null
+        const errorEl = document.getElementById('error-state') as HTMLDivElement | null
+        const errorMsgEl = document.getElementById('error-message') as HTMLParagraphElement | null
+        const pageEl = document.getElementById('page-content') as HTMLDivElement | null
+
+        const toggleEl = document.getElementById('telemetry-toggle') as HTMLInputElement | null
+        const stateSummaryEl = document.getElementById(
+          'state-summary'
+        ) as HTMLParagraphElement | null
+        const anonIdEl = document.getElementById('anon-id-display') as HTMLElement | null
+        const anonRotatedEl = document.getElementById('anon-id-rotated') as HTMLElement | null
+        const updatedAtEl = document.getElementById('updated-at-display') as HTMLElement | null
+        const saveBtnEl = document.getElementById('save-btn') as HTMLButtonElement | null
+        const rotateBtnEl = document.getElementById('rotate-btn') as HTMLButtonElement | null
+        const saveResultEl = document.getElementById('save-result') as HTMLParagraphElement | null
+
+        function showError(msg: string) {
+          if (loadingEl) loadingEl.style.display = 'none'
+          if (pageEl) pageEl.style.display = 'none'
+          if (errorEl) errorEl.style.display = 'flex'
+          if (errorMsgEl) errorMsgEl.textContent = msg
+        }
+
+        if (!supabaseUrl || !supabaseAnonKey) {
+          showError('Auth service not configured.')
+          return
+        }
+
+        const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        if (!session) {
+          window.location.href = '/login?next=/account/telemetry'
+          return
+        }
+
+        let pref: TelemetryPreference | null = null
+        try {
+          const res = await fetch('/api/account/telemetry', {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          })
+          if (!res.ok) {
+            showError('Could not load preferences. Try again in a moment.')
+            return
+          }
+          pref = ((await res.json()) as { preference: TelemetryPreference }).preference
+        } catch {
+          showError('Could not load preferences. Check your connection and try again.')
+          return
+        }
+
+        if (loadingEl) loadingEl.style.display = 'none'
+        if (pageEl) pageEl.style.display = 'block'
+
+        // Track dirty state separately from the in-flight `pref` snapshot so
+        // we can render the saved row immediately after a successful PUT.
+        const initial = {
+          enabled: pref?.enabled ?? false,
+          anonymousId: pref?.anonymous_id ?? null,
+        }
+        const draft = { ...initial }
+
+        function render(snapshot: TelemetryPreference | null) {
+          const enabled = draft.enabled
+          if (toggleEl) toggleEl.checked = enabled
+          if (stateSummaryEl) stateSummaryEl.textContent = enabled ? 'On' : 'Off'
+          if (anonIdEl) anonIdEl.textContent = formatAnonId(draft.anonymousId)
+          if (anonRotatedEl)
+            anonRotatedEl.textContent = formatDate(snapshot?.anonymous_id_created_at)
+          if (updatedAtEl) updatedAtEl.textContent = formatDate(snapshot?.updated_at)
+          updateSaveButton()
+        }
+
+        function updateSaveButton() {
+          if (!saveBtnEl) return
+          const dirty =
+            draft.enabled !== initial.enabled || draft.anonymousId !== initial.anonymousId
+          saveBtnEl.disabled = !dirty
+          saveBtnEl.setAttribute('aria-disabled', dirty ? 'false' : 'true')
+        }
+
+        render(pref)
+
+        if (toggleEl) {
+          toggleEl.addEventListener('change', () => {
+            draft.enabled = toggleEl.checked
+            // If enabling telemetry for the first time and no anonymous_id
+            // exists yet, mint one so the row carries a stable identifier.
+            if (draft.enabled && !draft.anonymousId) {
+              draft.anonymousId = generateAnonId()
+              if (anonIdEl) anonIdEl.textContent = formatAnonId(draft.anonymousId)
+            }
+            if (stateSummaryEl) stateSummaryEl.textContent = draft.enabled ? 'On' : 'Off'
+            updateSaveButton()
+          })
+        }
+
+        if (rotateBtnEl) {
+          rotateBtnEl.addEventListener('click', () => {
+            draft.anonymousId = generateAnonId()
+            if (anonIdEl) anonIdEl.textContent = formatAnonId(draft.anonymousId)
+            updateSaveButton()
+          })
+        }
+
+        if (saveBtnEl) {
+          saveBtnEl.addEventListener('click', async () => {
+            saveBtnEl.disabled = true
+            saveBtnEl.setAttribute('aria-disabled', 'true')
+            if (saveResultEl) {
+              saveResultEl.style.display = 'none'
+              saveResultEl.textContent = ''
+            }
+            try {
+              const res = await fetch('/api/account/telemetry', {
+                method: 'PUT',
+                headers: {
+                  Authorization: `Bearer ${session.access_token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  enabled: draft.enabled,
+                  anonymous_id: draft.anonymousId,
+                }),
+              })
+              if (!res.ok) {
+                if (saveResultEl) {
+                  saveResultEl.style.color = '#ef4444'
+                  saveResultEl.textContent = 'Save failed. Please try again.'
+                  saveResultEl.style.display = 'block'
+                }
+                updateSaveButton()
+                return
+              }
+              const body = (await res.json()) as { preference: TelemetryPreference }
+              pref = body.preference
+              initial.enabled = pref.enabled
+              initial.anonymousId = pref.anonymous_id ?? null
+              draft.anonymousId = pref.anonymous_id ?? null
+              render(pref)
+              if (saveResultEl) {
+                saveResultEl.style.color = '#10b981'
+                saveResultEl.textContent = 'Preferences saved.'
+                saveResultEl.style.display = 'block'
+              }
+            } catch {
+              if (saveResultEl) {
+                saveResultEl.style.color = '#ef4444'
+                saveResultEl.textContent = 'Network error. Please try again.'
+                saveResultEl.style.display = 'block'
+              }
+              updateSaveButton()
+            }
+          })
+        }
+      })
+    </script>
+
+    <style>
+      body {
+        margin: 0;
+        background: #0a0a0c;
+        color: #fafafa;
+        font-family:
+          'Satoshi',
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        min-height: 100vh;
+      }
+
+      .page-container {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem 4rem;
+      }
+
+      .state-block {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 50vh;
+        gap: 1rem;
+        color: #71717a;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        animation: spin 0.8s linear infinite;
+        color: #7c3aed;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .page-header {
+        margin-bottom: 2rem;
+      }
+
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        color: #71717a;
+        text-decoration: none;
+        font-size: 0.875rem;
+        margin-bottom: 1rem;
+        transition: color 0.15s;
+      }
+
+      .back-link:hover {
+        color: #fafafa;
+      }
+
+      .page-header h1 {
+        font-size: 1.875rem;
+        font-weight: 700;
+        margin: 0 0 0.5rem;
+        line-height: 1.2;
+      }
+
+      .page-description {
+        color: #a1a1aa;
+        margin: 0;
+        font-size: 1rem;
+        line-height: 1.6;
+      }
+
+      .card {
+        background: #111114;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .card h2 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin: 0 0 0.5rem;
+        color: #a1a1aa;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .toggle-text {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .state-summary {
+        margin: 0;
+        font-size: 0.9375rem;
+        color: #d4d4d8;
+      }
+
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 48px;
+        height: 28px;
+        flex-shrink: 0;
+      }
+
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .switch-slider {
+        position: absolute;
+        cursor: pointer;
+        inset: 0;
+        background: #3f3f46;
+        border-radius: 9999px;
+        transition: background 0.15s;
+      }
+
+      .switch-slider::before {
+        position: absolute;
+        content: '';
+        height: 22px;
+        width: 22px;
+        left: 3px;
+        bottom: 3px;
+        background: #fafafa;
+        border-radius: 50%;
+        transition: transform 0.15s;
+      }
+
+      .switch input:checked + .switch-slider {
+        background: #7c3aed;
+      }
+
+      .switch input:checked + .switch-slider::before {
+        transform: translateX(20px);
+      }
+
+      .switch input:focus-visible + .switch-slider {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+      }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin: 0 0 1.5rem;
+      }
+
+      .meta-grid div {
+        background: #18181b;
+        border-radius: 8px;
+        padding: 0.75rem 0.875rem;
+      }
+
+      .meta-grid dt {
+        font-size: 0.6875rem;
+        color: #71717a;
+        margin-bottom: 0.25rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .meta-grid dd {
+        margin: 0;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        font-size: 0.875rem;
+        color: #d4d4d8;
+        word-break: break-all;
+      }
+
+      .actions-row {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .save-result {
+        font-size: 0.875rem;
+        margin: 0.75rem 0 0;
+        display: none;
+      }
+
+      .info-card ul {
+        margin: 0 0 1rem;
+        padding-left: 1.25rem;
+        color: #d4d4d8;
+        line-height: 1.75;
+      }
+
+      .info-card ul li {
+        font-size: 0.9375rem;
+      }
+
+      .info-card code {
+        background: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 4px;
+        padding: 0.1em 0.4em;
+        font-size: 0.875em;
+        color: #a78bfa;
+      }
+
+      .info-card h2 + ul {
+        margin-bottom: 1.5rem;
+      }
+
+      .info-card h2:not(:first-child) {
+        margin-top: 0.5rem;
+      }
+
+      .error-text {
+        color: #ef4444;
+        font-size: 0.875rem;
+        margin: 0 0 1rem;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.625rem 1.25rem;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.15s;
+        border: 1px solid transparent;
+        text-decoration: none;
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: #7c3aed;
+        color: #fafafa;
+        border-color: #7c3aed;
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        background: #6d28d9;
+        border-color: #6d28d9;
+      }
+
+      .btn-secondary {
+        background: #18181b;
+        color: #d4d4d8;
+        border-color: #3f3f46;
+      }
+
+      .btn-secondary:hover:not(:disabled) {
+        background: #27272a;
+        color: #fafafa;
+      }
+    </style>
+  </body>
+</html>

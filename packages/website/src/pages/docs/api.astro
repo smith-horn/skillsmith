@@ -264,8 +264,8 @@ if (result.success) {
 
   <p>
     The following tools are available on the Enterprise tier via the MCP server.
-    They are currently <em>in preview — availability pending production migration</em>
-    (tracked in SMI-4135). Backing tables are restored in staging (SMI-4123).
+    They are currently <em>in preview — availability pending a production
+    migration</em>.
   </p>
 
   <h3>webhook_configure</h3>
@@ -312,9 +312,8 @@ if (result.success) {
   </table>
 
   <p>
-    Requires the Enterprise tier. Availability is gated on the production
-    migration tracked in SMI-4135; calls will return a feature-unavailable
-    response until then.
+    Requires the Enterprise tier. Availability is gated on a pending production
+    migration; calls will return a feature-unavailable response until then.
   </p>
 
   <h3>api_key_manage</h3>
@@ -360,9 +359,8 @@ if (result.success) {
   </table>
 
   <p>
-    Requires the Enterprise tier. Availability is gated on the production
-    migration tracked in SMI-4135; calls will return a feature-unavailable
-    response until then.
+    Requires the Enterprise tier. Availability is gated on a pending production
+    migration; calls will return a feature-unavailable response until then.
   </p>
 
   <h2>Types</h2>
@@ -490,12 +488,22 @@ try {
   </table>
 
   <div class="callout">
-    <p class="callout-heading">API Key Required</p>
+    <p class="callout-heading">API Key</p>
     <p>
-      For higher rate limits and premium features, obtain an API key from your
+      Pass your API key in the <code>X-API-Key</code> request header to unlock higher rate
+      limits and tier-gated features. Keys are available at
       <a href="/account">account settings</a>.
     </p>
+    <pre><code>{`X-API-Key: sk_live_...`}</code></pre>
   </div>
+
+  <h2>OpenAPI Specification</h2>
+
+  <p>
+    A machine-readable OpenAPI 3.0 specification is available at
+    <a href="/openapi.yaml"><code>skillsmith.app/openapi.yaml</code></a>.
+    Import it into Postman, Insomnia, or any OpenAPI-compatible client to explore all endpoints.
+  </p>
 
   <h2>Lifecycle Tutorials</h2>
 

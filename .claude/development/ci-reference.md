@@ -79,13 +79,13 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Secret Scan | ci.yml, docs-only.yml | Detect committed credentials |
 | Classify Changes | ci.yml | Categorize change type |
 | Package Validation | ci.yml | Verify package.json scope |
-| Edge Function Validation | ci.yml | Validate Supabase function structure |
 | Build Docker Image | ci.yml | Build development container |
 | Quality Checks | ci.yml | ESLint, Prettier, TypeScript type check, governance standards audit (bundled — SMI-4908) |
 | Security Audit | ci.yml | npm audit and security tests |
 | Build | ci.yml | Build all packages via Turborepo |
 | Markdown Lint | docs-only.yml | Documentation quality |
-| Verify Implementation Completeness | ci.yml | Verify PRs with SMI refs contain source changes |
+| PR Validation (Node) | ci.yml | Verify PRs with SMI refs contain source changes + doc-drift (bundled — SMI-4924) |
+| PR Validation (Shell) | ci.yml | Edge function structure + smoke-prod pre-ship validation + migration SQL lint (bundled — SMI-4924) |
 | Dependency Guard | ci.yml | Block known-vulnerable dep upgrades (SMI-3985, promoted 2026-04-21) |
 
 ### How It Works
@@ -312,66 +312,131 @@ Edge functions import from Deno ESM URLs pinned at specific versions (e.g., `esm
 
 See [edge-function-patterns.md](edge-function-patterns.md) §Third-Party Library Imports for the pinning convention.
 
-## Docker BuildKit Cache Policy (SMI-3531, SMI-3539, SMI-3653)
+## Docker BuildKit Cache Policy (SMI-3531, SMI-3539, SMI-3653, SMI-4927)
 
-Three workflows build Docker images with BuildKit GHA cache. All Docker build jobs have a **20-minute timeout** to accommodate cold builds (~15 min for native module compilation).
+Three workflows build Docker images with a BuildKit registry cache hosted in
+GHCR. All Docker build jobs have a **20-minute timeout** to accommodate cold
+builds (~15 min for native module compilation).
 
-| Workflow | Scope | Mode | Timeout | Purpose |
-|----------|-------|------|---------|---------|
-| `ci.yml` | `scope=ci` | `mode=min` | 20 min | PR and push CI |
-| `e2e-tests.yml` | `scope=e2e` | `mode=min` | 20 min | End-to-end tests |
-| `publish.yml` | `scope=publish` | `mode=min` | 20 min | npm publish |
+**SMI-4927**: the BuildKit cache was migrated from `type=gha` to `type=registry`
+(GHCR). The `type=gha` backend shared the 10 GB per-repo Actions cache budget;
+its blobs accumulated without bound and LRU-evicted the useful `docker-image-*`
+tarball cache. GHCR cache lives outside that budget. Its **tagged** versions are
+bounded by overwrite-in-place (each main push moves the tag to a fresh version);
+the prior version is left **untagged, not deleted**, so untagged orphans
+accumulate and are pruned weekly by `ghcr-cache-prune.yml` (SMI-4933). See
+[ci-cache-pressure-fix-v2.md](../../docs/internal/implementation/ci-cache-pressure-fix-v2.md)
+and [ghcr-cache-retention.md](../../docs/internal/implementation/ghcr-cache-retention.md).
 
-**Cache lifecycle** (SMI-3653):
+| Workflow | GHCR cache ref | Mode | Timeout | Purpose |
+|----------|----------------|------|---------|---------|
+| `ci.yml` | `ghcr.io/smith-horn/skillsmith-buildcache:ci` | `mode=min` | 20 min | PR and push CI |
+| `e2e-tests.yml` | `ghcr.io/smith-horn/skillsmith-buildcache:e2e` | `mode=min` | 20 min | End-to-end tests |
+| `publish.yml` | `ghcr.io/smith-horn/skillsmith-buildcache:publish` | `mode=min` | 20 min | npm publish |
+
+**Cache lifecycle** (SMI-3653, SMI-4927):
 
 | Trigger | `cache-from` (read) | `cache-to` (write) |
 |---------|---------------------|---------------------|
 | Push to main | Yes | Yes |
-| Pull request | Yes (reads main's cache) | **No** |
+| Pull request (same-repo) | Yes (reads GHCR cache) | **No** |
+| Pull request (fork) | No — GHCR login skipped, cold build | No |
 | `workflow_dispatch` from main | Yes | Yes |
 | `workflow_dispatch` from branch | Yes | No |
 
-Only main-branch pushes write BuildKit blobs. PR branches read from main's cache but do not write their own blob copies. This prevents per-PR blob accumulation that filled the 10 GB GHA cache limit (70 blobs, 7.44 GB in 24 hours — SMI-3653). Implementation uses an env-var (`CACHE_TO`) set conditionally in a prior step.
+Only main-branch pushes write the GHCR cache. PR branches read it via
+`cache-from` but never write. `cache-to` is gated main-only via an env-var
+(`CACHE_TO`) set conditionally in a prior step (SMI-3653 pattern, preserved).
 
-**Latency note**: The first PR opened after a lockfile change merges to main — but before main's post-merge CI build completes (~6 min) — may see a longer Docker build because main's cache is stale.
+**Fork PRs**: the `Log in to ghcr.io` step is guarded with
+`github.event.pull_request.head.repo.fork != true` — fork PRs run with a
+read-only `GITHUB_TOKEN` that has no `packages:` scope. With the login skipped,
+`cache-from: type=registry` against the private package is a non-fatal cache
+miss and the fork PR cold-builds.
+
+**Latency note**: the first PR opened after a lockfile change merges to main —
+but before main's post-merge CI build completes (~6 min) — may see a longer
+Docker build because the GHCR cache is stale.
 
 **Dual-layer cache architecture** (ci.yml only):
 
 ci.yml uses two cache mechanisms in sequence:
 
-1. **Mechanism 1** (`actions/cache@v5`): Keyed on `Dockerfile + package-lock.json + .dockerignore + .nvmrc`. On hit, loads a pre-built image tarball and skips Docker build entirely. On miss, falls through to mechanism 2.
-2. **Mechanism 2** (`build-push-action` with BuildKit GHA cache): Runs the full Docker build using BuildKit layer cache.
+1. **Mechanism 1** (`actions/cache@v5`): keyed on a hash of `Dockerfile`,
+   `package-lock.json`, `.dockerignore`, and `.nvmrc`. On hit, loads a pre-built
+   image tarball and skips the Docker build entirely. On miss, falls through to
+   mechanism 2. This tarball cache stays in the GHA cache budget.
+2. **Mechanism 2** (`build-push-action` with the GHCR BuildKit registry cache):
+   runs the full Docker build using the GHCR layer cache.
 
-E2E and publish workflows only use mechanism 2 (no `actions/cache` tarball layer). This means E2E PR builds rely entirely on main's BuildKit cache — if main's cache is stale, E2E gets a cold build (~6 min).
+E2E and publish workflows only use mechanism 2 (no `actions/cache` tarball
+layer). E2E PR builds therefore rely entirely on the GHCR BuildKit cache — if
+it is stale, E2E gets a cold build (~6 min).
 
 **Key decisions**:
 
-- `scope=` isolates each workflow's cache entries. Without scope, workflows evict each other's entries when the 10 GB GHA cache cap is reached.
-- All workflows use `mode=min` (final image layers only). `mode=max` was trialed for CI in PR #344 (SMI-3539) but rolled back in SMI-3547 after 72h verification showed cache pressure (10.45 GB, publish scope evicted). The marginal benefit (~3–5 min on ~1–2 lockfile-change builds/week) did not justify the cache eviction risk.
+- One GHCR package (`skillsmith-buildcache`), three tags (`ci`/`e2e`/`publish`)
+  isolate each workflow's cache. Each main push moves its tag to a fresh
+  version, so the **tagged** set stays at ~3 layer-sets regardless of run count.
+  The prior version is left untagged (not deleted), so untagged orphans
+  accumulate — `ghcr-cache-prune.yml` (SMI-4933) prunes them weekly.
+- All workflows use `mode=min` (final image layers only). `mode=max` was
+  trialed for CI in PR #344 (SMI-3539) but rolled back in SMI-3547 after 72h
+  verification showed cache pressure. The marginal benefit (~3–5 min on ~1–2
+  lockfile-change builds/week) did not justify the eviction risk.
+- `cache-to` carries `image-manifest=true,oci-mediatypes=true` (export-side
+  only) — GHCR requires an OCI image manifest for the cache artifact.
+
+**GHCR package linking**: a package created by a workflow's `GITHUB_TOKEN` (as
+`cache-to` does on the first main push) is **auto-linked** to the source repo —
+GitHub sets the package's `repository` to `smith-horn/skillsmith` and the repo's
+Actions inherit access, so same-repo PR `cache-from` resolves with no manual
+step. The package is private; that is expected and fine for same-repo CI.
+Verified for `skillsmith-buildcache` on 2026-05-16 (SMI-4927). Manual linking is
+only a **fallback**: if `cache-from` ever 401s, open
+`github.com/orgs/smith-horn/packages/container/skillsmith-buildcache/settings`
+→ "Manage Actions access" → add `smith-horn/skillsmith` with the **Write** role.
+
+**GHCR cache troubleshooting**:
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `401 Unauthorized` on `cache-from` | GHCR package not linked to the repo, or wrong visibility | Link the package (see "GHCR package linking" above) |
+| `cache-to` denied / `403` | Job missing `packages: write` permission | Add `packages: write` to the build job's `permissions:` block |
+| Fork PR always cold-builds | Expected — GHCR login is skipped on fork PRs | None; this is by design |
+| Untagged version count growing past ~3 | Weekly prune disabled, never ran, or 403 on missing Admin role | Check `ghcr-cache-prune.yml` Actions history; confirm the package's "Manage Actions access" grants `smith-horn/skillsmith` the Admin role; re-run via `workflow_dispatch` |
 
 **Monitoring commands**:
 
 ```bash
-# Total cache usage (should be under 5 GB)
+# Total GHA Actions cache usage (post-SMI-4927: BuildKit blobs no longer here)
 gh api repos/smith-horn/skillsmith/actions/cache/usage
 
-# Cache breakdown by scope
+# GHA cache breakdown — should show only docker-image-*, pkg-builds-*, npm caches
 gh api "repos/smith-horn/skillsmith/actions/caches?per_page=100" --paginate \
   --jq '[.actions_caches[] | {prefix: (.key | split("-")[0:2] | join("-")), size: .size_in_bytes}] | group_by(.prefix) | map({prefix: .[0].prefix, count: length, total_gb: ([.[].size] | add / 1073741824 * 100 | floor / 100)}) | sort_by(-.total_gb) | .[]'
 
-# Verify scope indexes (ci, e2e, publish should all be present)
-gh api "repos/smith-horn/skillsmith/actions/caches?per_page=100" --paginate \
-  --jq '.actions_caches[] | select(.key | test("index-")) | {key, last_accessed_at}'
+# GHCR BuildKit cache package — versions/tags and size
+gh api orgs/smith-horn/packages/container/skillsmith-buildcache/versions \
+  --jq '.[] | {tags: .metadata.container.tags, updated: .updated_at}'
 
-# Prune all BuildKit caches — blobs AND indexes (run when no CI is in progress)
-# IMPORTANT: Always purge indexes alongside blobs. Deleting blobs but leaving
-# indexes creates poisoned references → "blob sha256:... not found" build failures.
+# Untagged-orphan count — should stay bounded (ghcr-cache-prune.yml, SMI-4933).
+# A count growing past min-versions-to-keep means the weekly prune is not running.
+gh api orgs/smith-horn/packages/container/skillsmith-buildcache/versions --paginate \
+  --jq '[.[] | select(.metadata.container.tags == [])] | length'
+
+# One-time GHA BuildKit purge (post-migration only — run when no CI in progress).
+# IMPORTANT: purge indexes alongside blobs — orphaned indexes create poisoned
+# references → "blob sha256:... not found" build failures.
 gh api repos/smith-horn/skillsmith/actions/caches --paginate \
   --jq '.actions_caches[] | select(.key | startswith("buildkit-blob") or startswith("index-")) | .id' \
   | xargs -I{} gh api -X DELETE repos/smith-horn/skillsmith/actions/caches/{}
 ```
 
-- **Cache-miss Step Summary** (SMI-3539): ci.yml docker-build writes cache hit/miss status to `$GITHUB_STEP_SUMMARY` so PR authors know when a cold build is expected.
+- **Cache-status Step Summary** (SMI-3539, SMI-4927): ci.yml and e2e-tests.yml
+  docker-build write cache hit/miss and GHCR login status to
+  `$GITHUB_STEP_SUMMARY` so PR authors know when a cold build is expected and
+  can diagnose a GHCR registry-pull failure.
 
 ## Artifact Retention Policy (SMI-3531)
 
@@ -403,6 +468,8 @@ Extracted from CLAUDE.md (SMI-4828). Authoritative guidance on transitive vulner
 **SMI-3502 split rationale**: colocated `packages/*/src/**/*.test.ts` tests run only in `vitest.config.root-tests.ts` (post-merge-verify). Per-package configs use `tests/**/*.test.ts` only — including `src/**` everywhere previously caused CI OOM at 147 files (vs 120 with memory benchmarks excluded).
 
 **SMI-4557 carve-out**: `packages/core/src/analysis/tree-sitter/**/*.test.ts` is included in `packages/core/vitest.config.ts` so PR matrix catches dependabot bumps to `web-tree-sitter` / `tree-sitter-*` deps before merge. Subtree is small (~4 files) and well below SMI-3502's 147-file OOM threshold. Driven by SMI-4556 — 0.26.x bump merged green and broke `post-merge-verify` for ~14 commits before detection.
+
+**SMI-4958 — indexer edge-function tests in `Test (root)`**: the `Test (root)` job runs `npx vitest run scripts/tests supabase/functions` and so already covered `supabase/functions/_shared/**`. The `supabase/functions/indexer/**` exclude in `vitest.config.ts` / `vitest.config.root-tests.ts` previously hid the 24 indexer test files (462 tests) — they ran nowhere in CI and bit-rotted (10 failures discovered locally). SMI-4958 removed that exclude; the indexer suite now runs in `Test (root)` (git-crypt unlocked, Docker). Total `Test (root)` scope is ~128 files / ~2090 tests — under SMI-3502's 147-file OOM ceiling, so no invocation split was needed. `Test (root)` and `Test (root colocated)` were added to `branch-protection.json` `required_status_checks` so the suite blocks merge. The `gitCryptLocked()` guard in `root-tests.ts` still skips all of `supabase/functions/**` on locked CI checkouts (post-merge-verify, fork PRs without the key).
 
 ## Docker-First CI Carve-out (SMI-4647)
 

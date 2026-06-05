@@ -43,7 +43,38 @@ vi.mock('@inquirer/prompts', () => ({
 
 vi.mock('open', () => ({ default: vi.fn() }))
 
+// SMI-4917: postLoginSync opens a DB and syncs the registry after login.
+// Stub the helper, the sync, and ora so the post-login sync is a controlled
+// no-op here — its behavior is covered by login.post-login-sync.test.ts.
+vi.mock('../utils/open-database.js', () => ({
+  openCliDatabase: vi.fn().mockResolvedValue({ close: vi.fn() }),
+}))
+vi.mock('./run-registry-sync.js', () => ({
+  runRegistrySync: vi.fn().mockResolvedValue({
+    success: true,
+    skillsAdded: 0,
+    skillsUpdated: 0,
+    skillsUnchanged: 0,
+    totalProcessed: 0,
+    errors: [],
+    durationMs: 1,
+    dryRun: false,
+  }),
+}))
+vi.mock('ora', () => {
+  const spinner = {
+    start: vi.fn(() => spinner),
+    succeed: vi.fn(() => spinner),
+    warn: vi.fn(() => spinner),
+    fail: vi.fn(() => spinner),
+    stop: vi.fn(() => spinner),
+    text: '',
+  }
+  return { default: vi.fn(() => spinner) }
+})
+
 import { createLoginCommand } from './login.js'
+import { mockDeviceCodeSuccess } from './login.test-helpers.js'
 import {
   loadCredentials,
   storeCredentials,
@@ -66,40 +97,6 @@ const NOW = Date.now()
 async function runCommand(args: string[] = []): Promise<void> {
   const cmd = createLoginCommand()
   await cmd.parseAsync(['node', 'login', ...args])
-}
-
-// Simulate a successful device-code exchange
-function mockDeviceCodeSuccess(): void {
-  let callCount = 0
-  global.fetch = vi.fn().mockImplementation((url: string) => {
-    if ((url as string).includes('auth-device-code')) {
-      return Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            device_code: 'dc_test',
-            user_code: 'BCDFGHJK',
-            verification_uri: 'https://skillsmith.app/device',
-            expires_in: 900,
-            interval: 5,
-          }),
-      })
-    }
-    // auth-device-token
-    callCount++
-    if (callCount === 1) {
-      return Promise.resolve({ ok: false, status: 428, json: () => Promise.resolve({}) })
-    }
-    return Promise.resolve({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          access_token: 'jwt.access',
-          refresh_token: 'jwt.refresh',
-          expires_in: 3600,
-        }),
-    })
-  }) as typeof fetch
 }
 
 describe('createLoginCommand', () => {

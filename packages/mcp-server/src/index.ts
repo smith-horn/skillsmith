@@ -67,11 +67,28 @@ import {
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
+// SMI-5039: probe extracted from this file to @skillsmith/core/embeddings/probe.
+// The call site (before server.connect) is unchanged; only the implementation
+// moved so doc-retrieval-mcp + cli can share the same audited probe contract.
+import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
+import { resolveStartupFlag } from './cli-flags.js'
+
+// SMI-5125: re-export the inline Stripe webhook contract interfaces so the
+// canonical contract in `@smith-horn/enterprise/billing` can be type-equality
+// checked against this package's structural copy across the package boundary.
+// Type-only — erased from the emitted JS, adds nothing to the binary entrypoint.
+// The drift guard at
+// `packages/enterprise/tests/billing/StripeWebhookHandler.drift.test.ts` fails
+// `tsc` if the two definitions diverge.
+export type {
+  StripeWebhookHandler,
+  StripeWebhookResult,
+} from './webhooks/stripe-webhook-endpoint.js'
 
 // Package version - keep in sync with package.json
-const PACKAGE_VERSION = '0.5.1'
+const PACKAGE_VERSION = '0.5.3'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 import {
   installBundledSkills,
@@ -354,8 +371,22 @@ function runStartupDiagnostics(): void {
   }
 }
 
+// SMI-5009 (origin) / SMI-5039 (extraction): the embedding capability probe
+// now lives in @skillsmith/core/embeddings/probe. See that file for the
+// contract (hard 2 s timeout, try/catch wrapper, stderr-only, never throws).
+// Call site below preserved verbatim — invoke before server.connect(transport).
+
 // Start server
 async function main() {
+  // SMI-4805: --version / --help must short-circuit before diagnostics, DB
+  // init, or the stdio server start — otherwise the flag is swallowed by the
+  // MCP SDK's stdio mode and the server runs instead of printing + exiting.
+  const startupFlagOutput = resolveStartupFlag(process.argv.slice(2), PACKAGE_VERSION)
+  if (startupFlagOutput !== null) {
+    console.log(startupFlagOutput)
+    return
+  }
+
   // SMI-2163: Run startup diagnostics before anything else
   runStartupDiagnostics()
 
@@ -411,6 +442,12 @@ async function main() {
         // Silent failure - don't block server startup
       })
   }
+
+  // SMI-5009: probe embedding capability BEFORE serving any requests so the
+  // module-load cache is warm and the first user search request doesn't race
+  // with cold transformers initialisation. Probe is hard-bounded at 2s and
+  // can never throw — see probeEmbeddingCapability for guarantees.
+  await probeEmbeddingCapability()
 
   const transport = new StdioServerTransport()
   await server.connect(transport)

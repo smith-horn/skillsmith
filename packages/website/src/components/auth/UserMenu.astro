@@ -69,6 +69,13 @@ const { loginRedirect = '/account' } = Astro.props
         </svg>
         Subscription
       </a>
+      <a href="/account/profile" class="dropdown-item" role="menuitem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+          <path d="M22 7l-10 6L2 7"></path>
+        </svg>
+        Email Address
+      </a>
       <div class="dropdown-divider"></div>
       <button type="button" class="dropdown-item logout-btn" id="logout-btn" role="menuitem">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -256,6 +263,12 @@ const { loginRedirect = '/account' } = Astro.props
 
 <script>
   import { getSupabaseClient } from '../../lib/supabase-client'
+  import { withAuthTimeout } from '../../lib/auth-timeout'
+
+  // SMI-5055: if Supabase Auth (GoTrue) is unreachable, fall back to the
+  // logged-out UI within one heartbeat rather than leaving the shimmer skeleton
+  // visible forever (status.supabase.com degradation, 2026-05-20).
+  const GET_SESSION_TIMEOUT_MS = 3000
 
   let controller: AbortController | null = null
 
@@ -273,19 +286,34 @@ const { loginRedirect = '/account' } = Astro.props
     const dropdown = document.getElementById('user-dropdown')
     const logoutBtn = document.getElementById('logout-btn')
 
+    const showLoggedOut = () => {
+      if (loadingState) loadingState.style.display = 'none'
+      if (loggedOutState) loggedOutState.style.display = 'block'
+    }
+
     const supabase = getSupabaseClient()
 
     if (!supabase) {
       // No config, show logged out state
-      if (loadingState) loadingState.style.display = 'none'
-      if (loggedOutState) loggedOutState.style.display = 'block'
+      showLoggedOut()
       return
     }
 
-    // Check auth state
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    // Check auth state — bounded so a degraded GoTrue can't leave the header
+    // stuck on the loading skeleton forever (SMI-5055).
+    let session: Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session'] = null
+    try {
+      const result = await withAuthTimeout(
+        supabase.auth.getSession(),
+        GET_SESSION_TIMEOUT_MS,
+        'Supabase Auth did not respond within 3 s — treating as logged out.'
+      )
+      session = result.data.session
+    } catch (err) {
+      console.warn('UserMenu: auth check failed, rendering logged-out state.', err)
+      showLoggedOut()
+      return
+    }
 
     if (loadingState) loadingState.style.display = 'none'
 

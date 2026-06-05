@@ -8,12 +8,11 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import {
   SkillParser,
-  createDatabaseAsync,
-  initializeSchema,
   SkillVersionRepository,
   type Database,
   type TrustTier,
 } from '@skillsmith/core'
+import { openCliDatabase } from './open-database.js'
 import {
   CANONICAL_CLIENT,
   CLIENT_IDS,
@@ -77,8 +76,11 @@ export async function getSkillsFromDirectory(
   let dbConn: Database | null = null
   if (dbPath) {
     try {
-      dbConn = await createDatabaseAsync(dbPath)
-      initializeSchema(dbConn)
+      // SMI-5139: this is a pure-read version lookup — open read-only so the
+      // WASM driver does not persist (write) on close() and throw EROFS when
+      // dbPath is unwritable/absent. A read-only open of an absent db throws
+      // (native driver), which the catch below degrades to hasUpdates: false.
+      dbConn = await openCliDatabase(dbPath, { readonly: true })
       versionRepo = new SkillVersionRepository(dbConn)
     } catch {
       // DB not available yet — fall back to hasUpdates: false

@@ -96,7 +96,7 @@ The same rule applies to all public-facing CHANGELOGs in this repo (`packages/*/
 | Dependencies | Ships `node_modules` | `--no-dependencies` (esbuild bundles) |
 | Name | Scoped (`@skillsmith/core`) | Unscoped (`skillsmith-vscode`) |
 | Registry | npmjs.com | marketplace.visualstudio.com |
-| Auth | `SKILLSMITH_NPM_TOKEN` | `VSCE_SKILLSMITH` / `VSCE_PAT` |
+| Auth | npm trusted-publisher OIDC (SMI-4540) | `VSCE_SKILLSMITH` / `VSCE_PAT` |
 | Smoke test | `scripts/smoke-test-published.ts` | `code --install-extension` |
 
 ## Troubleshooting

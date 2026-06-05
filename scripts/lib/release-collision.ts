@@ -42,14 +42,33 @@ export interface NpmLookup {
 // --- NPM Registry Lookup ---
 
 /**
+ * Build the `npm view` argv, optionally targeting a non-default registry.
+ *
+ * SMI-5120: @smith-horn/enterprise publishes to GitHub Packages, not npmjs.
+ * Passing `--registry=<url>` makes the collision check query the registry the
+ * artifact actually lives on; otherwise the lookup 404s on npmjs and the
+ * package is misclassified as brand-new (guard silently disabled).
+ */
+function npmViewArgs(pkg: string, registry?: string): string[] {
+  const args = ['view', pkg, 'versions', '--json']
+  if (registry) {
+    args.push(`--registry=${registry}`)
+  }
+  return args
+}
+
+/**
  * Fetch all published versions from npm for a package and return the highest valid semver.
  * Returns null ONLY when npm reports E404 (package does not exist).
  * Throws for any other error (network, timeout, malformed JSON, non-404 npm error) — fail closed.
+ *
+ * SMI-5120: pass `registry` to query a non-default registry (GitHub Packages
+ * for @smith-horn/enterprise). Omit for npmjs (default).
  */
-export async function fetchNpmLatest(pkg: string): Promise<string | null> {
+export async function fetchNpmLatest(pkg: string, registry?: string): Promise<string | null> {
   let stdout: string
   try {
-    stdout = execFileSync('npm', ['view', pkg, 'versions', '--json'], {
+    stdout = execFileSync('npm', npmViewArgs(pkg, registry), {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -98,12 +117,16 @@ export async function fetchNpmLatest(pkg: string): Promise<string | null> {
   return sorted[0] ?? null
 }
 
-export async function fetchAllPublishedVersions(pkg: string): Promise<string[] | null> {
+export async function fetchAllPublishedVersions(
+  pkg: string,
+  registry?: string
+): Promise<string[] | null> {
   // Same as fetchNpmLatest but returns the full list (for equals-published check).
   // Returns null on E404; throws on other errors.
+  // SMI-5120: `registry` targets a non-default registry (GitHub Packages).
   let stdout: string
   try {
-    stdout = execFileSync('npm', ['view', pkg, 'versions', '--json'], {
+    stdout = execFileSync('npm', npmViewArgs(pkg, registry), {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -118,6 +141,22 @@ export async function fetchAllPublishedVersions(pkg: string): Promise<string[] |
           : ''
     const is404 = e.code === 'E404' || /E404/.test(stderrText) || /E404/.test(e.message ?? '')
     if (is404) return null
+    // SMI-5120: a registry-targeted lookup (GitHub Packages for
+    // @smith-horn/enterprise) needs auth. The documented local prepare-release
+    // flow runs without a registry token, so npm returns E401/E403. Degrade
+    // gracefully — warn and skip this package's collision guard rather than
+    // blocking the whole multi-package release. npmjs packages (no registry)
+    // keep the strict fail-closed behavior, since npmjs `npm view` is anonymous.
+    const isAuthError =
+      /E401|E403|Unauthorized|ENEEDAUTH|need(?:s)? auth|authentication/i.test(stderrText) ||
+      /E401|E403|Unauthorized|ENEEDAUTH/i.test(e.message ?? '')
+    if (registry && isAuthError) {
+      console.warn(
+        `⚠️  Could not verify ${pkg} on ${registry} (not authenticated) — ` +
+          `skipping its npm collision guard. Provide a registry token to enable it.`
+      )
+      return null
+    }
     throw new Error(
       `npm view ${pkg} failed (fail-closed): ${e.message ?? 'unknown error'}${stderrText ? '\n' + stderrText : ''}`
     )
@@ -284,7 +323,9 @@ export function checkReservedVersionRanges(plans: BumpPlan[]): CollisionCheckRes
 export async function resolveNpmLookups(plans: BumpPlan[]): Promise<Map<string, NpmLookup>> {
   const lookups = new Map<string, NpmLookup>()
   for (const plan of plans) {
-    const allVersions = await fetchAllPublishedVersions(plan.spec.name)
+    // SMI-5120: query the package's own registry (GitHub Packages for
+    // @smith-horn/enterprise; default npmjs when spec.registry is undefined).
+    const allVersions = await fetchAllPublishedVersions(plan.spec.name, plan.spec.registry)
     let latest: string | null = null
     if (allVersions !== null) {
       // Exclude reserved ranges (SMI-4207 / ADR-115) from the "live" pool used to compute

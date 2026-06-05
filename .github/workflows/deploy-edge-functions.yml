@@ -163,19 +163,15 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          jq -n \
-            --arg type "edge_function_deploy_failure" \
-            --arg source "github-actions" \
-            --arg workflow "deploy-edge-functions" \
-            --arg target "prod" \
-            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --arg functions "${{ needs.detect.outputs.functions || 'all' }}" \
-            --arg commit "${{ github.sha }}" \
-            '{type: $type, source: $source, details: {workflow: $workflow, target: $target, run_url: $run_url, functions: $functions, commit: $commit}}' \
-          | curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+          BODY=$(jq -n \
+            --arg msg "Edge function deploy to prod failed for commit ${{ github.sha }} (functions: ${{ needs.detect.outputs.functions || 'all' }})." \
+            --arg rid "${{ github.run_id }}" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{type:"edge_function_deploy_failed", message:$msg, workflow:"Deploy Edge Functions", runId:$rid, runUrl:$url}')
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
-            -d @- || true
+            -d "$BODY" || true
 
   deploy-staging:
     name: Deploy edge functions (staging)
@@ -265,16 +261,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          jq -n \
-            --arg type "edge_function_deploy_failure" \
-            --arg source "github-actions" \
-            --arg workflow "deploy-edge-functions" \
-            --arg target "staging" \
-            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --arg functions "${{ needs.detect.outputs.functions || 'all' }}" \
-            --arg commit "${{ github.sha }}" \
-            '{type: $type, source: $source, details: {workflow: $workflow, target: $target, run_url: $run_url, functions: $functions, commit: $commit}}' \
-          | curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+          BODY=$(jq -n \
+            --arg msg "Edge function deploy to staging failed for commit ${{ github.sha }} (functions: ${{ needs.detect.outputs.functions || 'all' }})." \
+            --arg rid "${{ github.run_id }}" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{type:"edge_function_deploy_failed", message:$msg, workflow:"Deploy Edge Functions", runId:$rid, runUrl:$url}')
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
-            -d @- || true
+            -d "$BODY" || true

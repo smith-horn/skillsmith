@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.2.4
+
+- Version bump
+
 ## [0.2.3] - 2026-05-06
 
 - Marketplace keywords: add `agent-skills`, `cursor`, `copilot` so the extension surfaces beyond the Claude Code search.

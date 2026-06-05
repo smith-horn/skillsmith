@@ -27,6 +27,15 @@ import {
   findUncoveredSurfacePaths,
   parseCiYmlJobs,
   checkCarveOutInvariants,
+  findUnsafeSkillsRecreateMigrations,
+  findOutOfOrderMigrations,
+  parseBashArray,
+  parseConsumersTag,
+  findConventionDrift,
+  auditPublishYmlDependentGate,
+  auditPublishYmlRequiredGates,
+  parseNpmLsJson,
+  findFunctionsWithoutSearchPath,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -1138,6 +1147,8 @@ console.log(`\n${BOLD}17. Email Consistency (SMI-2562)${RESET}`)
     'supabase/functions/alert-notify/index.ts',
     'supabase/functions/contact-submit/index.ts',
     'supabase/functions/email-inbound/index.ts',
+    // SMI-4963: coverage-report recipient lives in coverage-templates.ts.
+    'supabase/functions/coverage-report/coverage-templates.ts',
   ]
 
   for (const file of edgeFnRecipientFiles) {
@@ -1245,7 +1256,10 @@ try {
 
 // 19. docs/ Directory Structure Guard (SMI-2607)
 console.log(`\n${BOLD}19. docs/ Directory Structure Guard (SMI-2607)${RESET}`)
-const allowedDocsDirs = ['internal']
+// `privacy` is the public legal-docs folder (SMI-5012 W4.S3 / SMI-5025) —
+// served as user-facing privacy notice at skillsmith.app/docs/privacy/.
+// Distinct from the `internal` submodule (private architecture / process).
+const allowedDocsDirs = ['internal', 'privacy']
 const actualDocsDirs = readdirSync('docs', { withFileTypes: true })
   .filter((d) => d.isDirectory())
   .map((d) => d.name)
@@ -1367,32 +1381,23 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
     // (invalid pins, peer conflicts, override inversions). The current `main`
     // post-SMI-3984 tree is in exactly that state, so every call throws.
     // **The JSON tree is still written to err.stdout** — we read it and
-    // parse it. Returning [] on every catch would fall through to the
-    // pessimistic warning path and break acceptance criterion #1
-    // (SMI-3987 plan-review E1 blocker).
-    const parseNpmLsTree = (raw) => {
-      if (!raw) return null
-      try {
-        return JSON.parse(raw)
-      } catch {
-        return null
-      }
-    }
+    // parse it. SMI-5079: some npm builds split warnings/JSON across stdout
+    // + stderr or prepend non-JSON prelude. `parseNpmLsJson` tries direct
+    // parse, brace-prefix parse, and stderr fallback before returning null.
     const getResolvedVersions = (dep) => {
-      let raw = ''
+      let stdoutRaw = ''
+      let stderrRaw = ''
       try {
-        raw = execSync(`npm ls ${dep} --all --json`, {
+        stdoutRaw = execSync(`npm ls ${dep} --all --json`, {
           encoding: 'utf-8',
           timeout: 10000,
-          stdio: ['ignore', 'pipe', 'ignore'],
+          stdio: ['ignore', 'pipe', 'pipe'],
         })
       } catch (err) {
-        // npm ls exits non-zero on ANY tree problem — stdout still contains
-        // valid JSON. Read it. If err.stdout is missing or not parseable,
-        // fall through to raw='' below → returns [] → pessimistic warning.
-        raw = (err && err.stdout && err.stdout.toString('utf-8')) || ''
+        stdoutRaw = (err && err.stdout && err.stdout.toString('utf-8')) || ''
+        stderrRaw = (err && err.stderr && err.stderr.toString('utf-8')) || ''
       }
-      const tree = parseNpmLsTree(raw)
+      const tree = parseNpmLsJson(stdoutRaw, stderrRaw)
       if (!tree) return [] // unparseable → pessimistic warning (safe default)
       // Walk the tree and collect versions of nodes whose KEY (under
       // .dependencies) matches the queried dep name. The walk must check
@@ -3150,9 +3155,12 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
           // Remote tip of the DECLARED branch (not main).
           // subPath/branch validated above; .gitmodules subshell expansion is safe because
           // the submodule URL lookup uses git's own parser, not shell metacharacters.
+          // SMI-5080: capture stderr so the `fatal: ...` lines from a failing
+          // ls-remote (e.g. SSL handshake failure in slim Docker images) do
+          // not leak to console — the catch block below classifies the error.
           const remoteSha = execSync(
             `git ls-remote "$(git config --file .gitmodules "submodule.${subPath}.url")" "${branch}"`,
-            { encoding: 'utf8' }
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
           )
             .trim()
             .split(/\s+/)[0]
@@ -3170,10 +3178,28 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
             pass(`Check 21: Strategy submodule '${subPath}' pointer is at remote ${branch} tip`)
           }
         } catch (e) {
-          warn(
-            `Check 21: Could not check strategy submodule '${subPath}' (branch=${branch}) tip: ${e.message}`,
-            'Ensure remote is reachable and submodule is initialized'
-          )
+          // SMI-5080: in Docker containers without ca-certificates installed (e.g.
+          // node:22-slim base image), `git ls-remote` fails on HTTPS submodule
+          // URLs with a certificate-verification error. The daily-cron / host
+          // audit run still catches real submodule drift; the Docker run is
+          // structurally unable to make this check, so degrade SSL/network
+          // failures to a clean `pass('Skipped ...')` (matches Check 23's
+          // skip-as-pass idiom) instead of emitting a misleading WARN.
+          const msg = String(e?.message || '')
+          const isNetworkUnavailable =
+            /certificate verification failed|unable to access|Could not resolve host|Connection refused|Operation timed out|ssl/i.test(
+              msg
+            )
+          if (isNetworkUnavailable) {
+            pass(
+              `Check 21 skipped for '${subPath}' (branch=${branch}) — SSL/network unavailable in this environment`
+            )
+          } else {
+            warn(
+              `Check 21: Could not check strategy submodule '${subPath}' (branch=${branch}) tip: ${e.message}`,
+              'Ensure remote is reachable and submodule is initialized'
+            )
+          }
         }
       }
     }
@@ -3243,6 +3269,1119 @@ console.log(`\n${BOLD}Check 23: git config --file subshell discipline${RESET}`)
       fail(
         `Check 23: Bare \`git config --file\` without subshell: ${v}`,
         'Wrap as: (cd / && git config --file ...) — see scripts/_lib.sh enumerate_submodules() for the canonical pattern. Or add `# audit-standards-check-23-exempt: <reason>` if subshelling is genuinely impossible.'
+      )
+    }
+  }
+}
+
+// Check 24: No internal references in rendered published website content (SMI-4916)
+//
+// Internal Linear issue IDs (SMI-NNN), ADR numbers (ADR-NNN), and private doc
+// paths (docs/internal/) are engineering jargon and must never reach end users.
+// This check scans rendered website content — .astro pages and blog markdown —
+// and fails the build if such a reference appears in user-visible text.
+//
+// Non-rendered regions are stripped before matching so legitimate internal refs
+// in frontmatter, comments, and <style>/<script> blocks stay legal:
+//   - .astro: frontmatter fence (--- … ---), <!-- … -->, {/* … */} JSX comments,
+//     and entire <style>…</style> / <script>…</script> blocks. Inside the
+//     frontmatter fence ONLY, // line comments and /* … */ block comments are
+//     also stripped. In the template body, // and /* */ are literal rendered
+//     text and are NOT stripped.
+//   - .md/.mdx: <!-- … --> only. Fenced code blocks are rendered and kept.
+// A line carrying the marker `audit:internal-ref-ok` (matched on the raw line
+// before stripping) is skipped, for the rare case a page must legitimately name
+// a reference.
+console.log(
+  `\n${BOLD}Check 24: No internal references in rendered website content (SMI-4916)${RESET}`
+)
+
+// Apply a stripping regex repeatedly until the text stabilizes. A single
+// .replace() pass can leave a partial delimiter behind when matches overlap
+// (e.g. `<!--<!---->`), which CodeQL flags as incomplete multi-character
+// sanitization (js/incomplete-multi-character-sanitization).
+function stripUntilStable(text, regex) {
+  let prev
+  do {
+    prev = text
+    text = text.replace(regex, '')
+  } while (text !== prev)
+  return text
+}
+
+function stripAstroNonRendered(content) {
+  const rawLines = content.split('\n')
+  const out = []
+  let inFrontmatter = false
+  let frontmatterDone = false
+  let inStyleOrScript = false
+  let inOpeningTag = false // <style/<script seen, > not yet found
+  let inHtmlComment = false
+  let inJsxComment = false
+  let jsxBracePending = false // a line ended with a bare `{` — a `/*` next opens a JSX comment
+  let inBlockComment = false // /* */ inside frontmatter only
+
+  for (let i = 0; i < rawLines.length; i++) {
+    let line = rawLines[i]
+
+    // Frontmatter fence: a leading `---` on the first non-empty line opens it.
+    if (!frontmatterDone && !inFrontmatter && line.trim() === '---') {
+      inFrontmatter = true
+      out.push('')
+      continue
+    }
+    if (inFrontmatter) {
+      if (line.trim() === '---') {
+        inFrontmatter = false
+        frontmatterDone = true
+        out.push('')
+        continue
+      }
+      // Inside frontmatter: strip // line comments and /* */ block comments.
+      if (inBlockComment) {
+        const end = line.indexOf('*/')
+        if (end === -1) {
+          out.push('')
+          continue
+        }
+        line = line.slice(end + 2)
+        inBlockComment = false
+      }
+      line = line.replace(/\/\*[\s\S]*?\*\//g, '')
+      const openBlock = line.indexOf('/*')
+      if (openBlock !== -1) {
+        line = line.slice(0, openBlock)
+        inBlockComment = true
+      }
+      line = line.replace(/\/\/.*$/, '')
+      out.push(line)
+      continue
+    }
+
+    frontmatterDone = true
+
+    // Multi-line HTML comment continuation.
+    if (inHtmlComment) {
+      const end = line.indexOf('-->')
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(end + 3)
+      inHtmlComment = false
+    }
+    // Multi-line JSX comment continuation.
+    if (inJsxComment) {
+      const end = line.indexOf('*/}')
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(end + 3)
+      inJsxComment = false
+    }
+    // A prior line ended with a bare `{`; if this line opens with `/*` (after
+    // optional whitespace) it is a JSX comment whose opener was split.
+    if (jsxBracePending) {
+      jsxBracePending = false
+      const m = line.match(/^\s*\/\*/)
+      if (m) {
+        const end = line.indexOf('*/}')
+        if (end === -1) {
+          inJsxComment = true
+          out.push('')
+          continue
+        }
+        line = line.slice(end + 3)
+      }
+    }
+    // Multi-line opening tag continuation: <style/<script seen, > not yet found.
+    if (inOpeningTag) {
+      const gt = line.indexOf('>')
+      if (gt === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(gt + 1)
+      inOpeningTag = false
+      inStyleOrScript = true
+    }
+    // Multi-line <style>/<script> body continuation.
+    if (inStyleOrScript) {
+      const end = line.search(/<\/(style|script)\b[^>]*>/i)
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(line.indexOf('>', end) + 1)
+      inStyleOrScript = false
+    }
+
+    // Strip single-line HTML comments, then detect an unterminated one.
+    line = stripUntilStable(line, /<!--[\s\S]*?-->/g)
+    const openHtml = line.indexOf('<!--')
+    if (openHtml !== -1) {
+      line = line.slice(0, openHtml)
+      inHtmlComment = true
+    }
+    // Strip single-line JSX comments, then detect an unterminated one.
+    line = line.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    const openJsx = line.indexOf('{/*')
+    if (openJsx !== -1) {
+      line = line.slice(0, openJsx)
+      inJsxComment = true
+    }
+    // Strip single-line <style>/<script> blocks, then detect an open one.
+    line = stripUntilStable(line, /<(style|script)\b[^>]*>[\s\S]*?<\/(style|script)\b[^>]*>/gi)
+    const styleScriptOpen = line.search(/<(style|script)\b/i)
+    if (styleScriptOpen !== -1) {
+      const gt = line.indexOf('>', styleScriptOpen)
+      line = line.slice(0, styleScriptOpen)
+      if (gt === -1) {
+        inOpeningTag = true // `>` is on a later line
+      } else {
+        inStyleOrScript = true
+      }
+    }
+
+    // A line whose remaining content ends with a bare `{` may open a JSX
+    // comment on the next line (Astro allows whitespace between `{` and `/*`).
+    if (/\{\s*$/.test(line)) {
+      jsxBracePending = true
+    }
+
+    out.push(line)
+  }
+  return out
+}
+
+function stripMdNonRendered(content) {
+  const rawLines = content.split('\n')
+  const out = []
+  let inHtmlComment = false
+  for (let line of rawLines) {
+    if (inHtmlComment) {
+      const end = line.indexOf('-->')
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(end + 3)
+      inHtmlComment = false
+    }
+    line = stripUntilStable(line, /<!--[\s\S]*?-->/g)
+    const openHtml = line.indexOf('<!--')
+    if (openHtml !== -1) {
+      line = line.slice(0, openHtml)
+      inHtmlComment = true
+    }
+    out.push(line)
+  }
+  return out
+}
+
+const INTERNAL_REF_PATTERN = /\bSMI-\d+\b|\bADR-\d+\b|docs\/internal\//
+const internalRefPagesDir = 'packages/website/src/pages'
+const internalRefBlogDir = 'packages/website/src/content/blog'
+
+if (!existsSync(internalRefPagesDir) && !existsSync(internalRefBlogDir)) {
+  warn('Check 24: Website pages/blog directories not found - skipping internal-ref check')
+} else {
+  const internalRefHits = []
+  const astroFilesForRefCheck = existsSync(internalRefPagesDir)
+    ? getFilesRecursive(internalRefPagesDir, ['.astro'])
+    : []
+  const mdFilesForRefCheck = existsSync(internalRefBlogDir)
+    ? getFilesRecursive(internalRefBlogDir, ['.md', '.mdx'])
+    : []
+
+  for (const file of astroFilesForRefCheck) {
+    const content = readFileSync(file, 'utf8')
+    const rawLines = content.split('\n')
+    const strippedLines = stripAstroNonRendered(content)
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (rawLines[i] && rawLines[i].includes('audit:internal-ref-ok')) continue
+      const match = strippedLines[i].match(INTERNAL_REF_PATTERN)
+      if (match) {
+        internalRefHits.push({ file: relative('.', file), line: i + 1, match: match[0] })
+      }
+    }
+  }
+  for (const file of mdFilesForRefCheck) {
+    const content = readFileSync(file, 'utf8')
+    const rawLines = content.split('\n')
+    const strippedLines = stripMdNonRendered(content)
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (rawLines[i] && rawLines[i].includes('audit:internal-ref-ok')) continue
+      const match = strippedLines[i].match(INTERNAL_REF_PATTERN)
+      if (match) {
+        internalRefHits.push({ file: relative('.', file), line: i + 1, match: match[0] })
+      }
+    }
+  }
+
+  if (internalRefHits.length === 0) {
+    pass('Check 24: No internal references (SMI-/ADR-/docs/internal/) in rendered website content')
+  } else {
+    fail(
+      `Check 24: ${internalRefHits.length} internal reference(s) found in rendered website content`,
+      'Reword to drop the internal ref (Linear ID, ADR number, or docs/internal/ path). For a legitimate exception, add an `audit:internal-ref-ok` marker on that line.'
+    )
+    internalRefHits.forEach(({ file, line, match }) =>
+      console.log(`    ${file}:${line} — ${match}`)
+    )
+  }
+}
+
+// 46. Skills-recreate migration FK-cascade guard (SMI-4925)
+//
+// Background: SQLite fires ON DELETE CASCADE actions immediately when
+// `foreign_keys = ON` (the driver default). Any migration that recreates the
+// `skills` table via DROP TABLE + RENAME therefore silently deletes all rows
+// in every child table that holds a hard `skill_id REFERENCES skills(id)
+// ON DELETE CASCADE`. As of schema-sql.ts, `skill_categories` is the ONLY
+// such child; `skill_versions`, `skill_advisories`, `skill_co_installs`,
+// `skill_dependencies`, and `risk_score_history` all use soft `skill_id TEXT`
+// columns with no FK and are unaffected.
+//
+// SMI-4919 introduced the conforming pattern in v17: back `skill_categories`
+// up into `_skill_categories_backup` (TEMP table) BEFORE `DROP TABLE skills`,
+// then restore it AFTER the RENAME — all inside one BEGIN/COMMIT.
+//
+// v16 performed the same recreate WITHOUT the guard; it is allow-listed here
+// because fixing it retroactively (fix-forward) is intentional — re-applying
+// v16 on an existing DB would still trigger the cascade on the old schema where
+// `skill_categories` may be empty, and the migration is already deployed.
+//
+// EXTEND THIS CHECK if a new ON DELETE CASCADE child of `skills` is added to
+// schema-sql.ts: update the helper regex in audit-standards-helpers.mjs to
+// require backup/restore pairs for the new child table as well.
+console.log(`\n${BOLD}46. Skills-recreate migration FK-cascade guard (SMI-4925)${RESET}`)
+{
+  const coreMigrationsDir = 'packages/core/src/db/migrations'
+  if (!existsSync(coreMigrationsDir)) {
+    pass('No core migrations dir — skipping skills-recreate FK-cascade guard')
+  } else {
+    try {
+      const migrationFiles = readdirSync(coreMigrationsDir)
+        .filter((f) => f.endsWith('.ts'))
+        .map((f) => join(coreMigrationsDir, f))
+      const migrationsByPath = {}
+      for (const f of migrationFiles) migrationsByPath[f] = readFileSync(f, 'utf8')
+      const violations = findUnsafeSkillsRecreateMigrations(migrationsByPath, {
+        // v16 recreates skills without the guard; allow-listed as fix-forward
+        // (the migration is already deployed and retroactive patching is not
+        // needed — v17 introduced the conforming backup/restore pattern).
+        allowList: ['v16-skill-source.ts'],
+      })
+      const recreateCount = Object.entries(migrationsByPath).filter(([, src]) =>
+        /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?skills\b/i.test(src)
+      ).length
+      if (violations.length === 0) {
+        pass(
+          `Skills-recreate FK-cascade guard: ${recreateCount} recreate migration(s) scanned — all safe or allow-listed`
+        )
+      } else {
+        for (const v of violations) {
+          fail(
+            `Skills-recreate FK-cascade guard: ${v.file} — ${v.reason}`,
+            'Follow the v17 RECREATE_TABLE_SQL pattern in ' +
+              'packages/core/src/db/migrations/v17-curated-trust-tier.ts: ' +
+              'add `DROP TABLE IF EXISTS _skill_categories_backup; ' +
+              'CREATE TEMP TABLE _skill_categories_backup AS SELECT * FROM skill_categories;` ' +
+              'BEFORE `DROP TABLE skills`, and ' +
+              '`INSERT INTO skill_categories SELECT * FROM _skill_categories_backup; ' +
+              'DROP TABLE _skill_categories_backup;` AFTER the RENAME. ' +
+              '`skill_categories` is the only ON DELETE CASCADE child of `skills` ' +
+              'per packages/core/src/db/schema-sql.ts — re-check that file if a new cascade child is added.'
+          )
+        }
+      }
+    } catch (e) {
+      warn(`Could not check skills-recreate FK-cascade guard: ${e.message}`)
+    }
+  }
+}
+
+// 47. SMI-4963 retro Lesson 1: Edge-function multi-script registration coherence
+//
+// Adding a new edge function requires four coordinated edits:
+//   1. supabase/functions/<name>/index.ts (the function itself)
+//   2. scripts/deploy-edge-functions.sh — append to NO_VERIFY_JWT_FUNCTIONS xor
+//      VERIFY_JWT_FUNCTIONS (controls the --no-verify-jwt deploy flag)
+//   3. scripts/validate-edge-functions.sh — append to ANONYMOUS xor
+//      AUTHENTICATED xor SERVICE_ROLE (encodes the runtime auth model)
+//   4. supabase/config.toml — [functions.<name>] verify_jwt = false iff (2)
+//      placed it in NO_VERIFY_JWT_FUNCTIONS (Check 10 already covers config
+//      and CLAUDE.md surfaces; this check closes the gap on the two shell
+//      scripts and cross-validates against config.toml)
+//
+// PR #1213 silently broke main's deploy workflow for ~50 min by registering
+// coverage-report in the validate script but forgetting the deploy script.
+// This check enforces both registrations and the config.toml predicate.
+//
+// IMPORTANT — the two script taxonomies are ORTHOGONAL:
+//   - deploy-edge-functions.sh tracks the `--no-verify-jwt` deploy FLAG
+//   - validate-edge-functions.sh tracks the runtime AUTH MODEL
+// A function may legitimately be NO_VERIFY (anonymous deploy) AND SERVICE_ROLE
+// (validates its own service-role bearer internally), or NO_VERIFY AND
+// AUTHENTICATED (internal JWT validation in handler) — see Check 10's
+// `NO_VERIFY_JWT_FUNCTIONS` rationale comments. This check enforces per-script
+// presence and the NO_VERIFY → config.toml link, NOT cross-script consistency.
+console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET}`)
+{
+  const FUNCTIONS_DIR = 'supabase/functions'
+  const DEPLOY_SCRIPT = 'scripts/deploy-edge-functions.sh'
+  const VALIDATE_SCRIPT = 'scripts/validate-edge-functions.sh'
+  const CONFIG_TOML = 'supabase/config.toml'
+
+  // SMI-5003: predicate 4 (test-neighbor) suppression list. Each entry has
+  // a corresponding test backfill tracked by SMI-5011; entries are removed
+  // only after the test file lands. New deployable functions fail-fast —
+  // the allowlist is not extensible (CI will reject new entries via a
+  // future audit guard or code review).
+  const TEST_BACKFILL_ALLOWLIST = new Set([
+    'alert-notify',
+    'checkout',
+    'contact-submit',
+    'coverage-report',
+    'create-portal-session',
+    'early-access-signup',
+    'email-inbound',
+    'expire-complimentary',
+    'generate-license',
+    'health',
+    'list-invoices',
+    'ops-report',
+    'quota-monitor',
+    'regenerate-license',
+    'skills-outreach',
+    'skills-outreach-preferences',
+    'skills-recommend',
+    'skills-refresh-metadata',
+    'stats',
+    'stripe-webhook',
+    'update-seat-count',
+  ])
+
+  if (
+    !existsSync(FUNCTIONS_DIR) ||
+    !existsSync(DEPLOY_SCRIPT) ||
+    !existsSync(VALIDATE_SCRIPT) ||
+    !existsSync(CONFIG_TOML)
+  ) {
+    warn('Check 47: required file(s) missing — skipping registration-coherence check')
+  } else {
+    try {
+      // Walk dirs with index.ts (validate-edge-functions.sh:79 idiom — _shared/
+      // has no index.ts so is excluded by the file-existence filter alone).
+      const deployableFns = readdirSync(FUNCTIONS_DIR)
+        .filter((name) => !name.startsWith('.') && !name.startsWith('_'))
+        .filter((name) => {
+          try {
+            return (
+              statSync(join(FUNCTIONS_DIR, name)).isDirectory() &&
+              existsSync(join(FUNCTIONS_DIR, name, 'index.ts'))
+            )
+          } catch {
+            return false
+          }
+        })
+        .sort()
+
+      // parseBashArray is imported from audit-standards-helpers.mjs (Check 47,
+      // SMI-4963). Exported there so it can be unit-tested via vitest.
+
+      const deploySrc = readFileSync(DEPLOY_SCRIPT, 'utf8')
+      const validateSrc = readFileSync(VALIDATE_SCRIPT, 'utf8')
+      const configSrc = readFileSync(CONFIG_TOML, 'utf8')
+
+      const noVerifyDeploy = parseBashArray(deploySrc, 'NO_VERIFY_JWT_FUNCTIONS')
+      const verifyDeploy = parseBashArray(deploySrc, 'VERIFY_JWT_FUNCTIONS')
+      const anonValidate = parseBashArray(validateSrc, 'ANONYMOUS_FUNCTIONS')
+      const authValidate = parseBashArray(validateSrc, 'AUTHENTICATED_FUNCTIONS')
+      const serviceValidate = parseBashArray(validateSrc, 'SERVICE_ROLE_FUNCTIONS')
+
+      if (!noVerifyDeploy || !verifyDeploy || !anonValidate || !authValidate || !serviceValidate) {
+        warn(
+          'Check 47: could not parse one or more bash arrays — verify the ' +
+            'NAME=(\\n...\\n) shape in scripts/{deploy,validate}-edge-functions.sh ' +
+            'has not changed'
+        )
+      } else {
+        // Parse config.toml for [functions.<name>] verify_jwt = false blocks.
+        // Uses [^\[]*? so that any keys between the section header and
+        // verify_jwt (e.g. future service_role or timeout settings) are tolerated
+        // without causing a false-negative. Stops before the next section header.
+        const configNoVerify = new Set()
+        const configRe = /\[functions\.([a-z0-9_-]+)\][^\[]*?verify_jwt\s*=\s*false/gis
+        let cMatch
+        while ((cMatch = configRe.exec(configSrc)) !== null) {
+          configNoVerify.add(cMatch[1])
+        }
+
+        const deployableFnsSet = new Set(deployableFns)
+        const failures = []
+
+        // SMI-5004 predicate 5: @consumers tag in supabase/functions/_shared/auth.ts
+        // must equal the grep-derived consumer set across supabase/functions/.
+        // See: docs/internal/implementation/smi-5004-consumer-sync.md
+        // Pure Node (no child_process): readdirSync + readFileSync + String.includes.
+        const AUTH_PATH = join(FUNCTIONS_DIR, '_shared/auth.ts')
+        // SMI-5004: predicate 5 reads content from supabase/functions/**, which
+        // is git-crypt encrypted. In CI jobs that check out without the
+        // git-crypt key (e.g. the `code-review` job in ci.yml — `quality-checks`
+        // unlocks first, code-review does not), `_shared/auth.ts` is the
+        // ciphertext blob starting with \x00GITCRYPT. The @consumers regex
+        // would then fail-to-match and falsely fire "missing tag". Skip the
+        // predicate in that case — quality-checks already enforces it.
+        // Sentinel pattern mirrors vitest.config.root-tests.ts:gitCryptLocked.
+        const gitCryptLocked =
+          existsSync(AUTH_PATH) &&
+          (() => {
+            try {
+              const head = readFileSync(AUTH_PATH).subarray(0, 9).toString('binary')
+              return head.startsWith('\x00GITCRYPT')
+            } catch {
+              return false
+            }
+          })()
+        if (!existsSync(AUTH_PATH)) {
+          warn(
+            'Check 47 predicate 5: supabase/functions/_shared/auth.ts ' +
+              'missing — skipping consumer-sync'
+          )
+        } else if (gitCryptLocked) {
+          warn(
+            'Check 47 predicate 5: supabase/functions/** is git-crypt ' +
+              'locked here — skipping consumer-sync (quality-checks job ' +
+              'enforces it after unlock)'
+          )
+        } else {
+          const authSrc = readFileSync(AUTH_PATH, 'utf-8')
+          const parsedConsumers = parseConsumersTag(authSrc)
+
+          // Compute the actual consumer set from the function tree.
+          // Excludes underscore- and dot-prefixed dirs (helper hosts, hidden).
+          const actualConsumers = new Set()
+          for (const name of readdirSync(FUNCTIONS_DIR)) {
+            if (name.startsWith('_') || name.startsWith('.')) continue
+            const idxPath = join(FUNCTIONS_DIR, name, 'index.ts')
+            if (!existsSync(idxPath)) continue
+            const idxSrc = readFileSync(idxPath, 'utf-8')
+            if (idxSrc.includes('isServiceRoleCaller(')) actualConsumers.add(name)
+          }
+
+          if (parsedConsumers === null) {
+            failures.push({
+              fn: '@consumers',
+              problems: [
+                `  - supabase/functions/_shared/auth.ts @consumers tag has ` +
+                  `an invalid token (must match /^[a-z0-9][a-z0-9-]*$/, ` +
+                  `comma-separated, alphabetical). Expected: ` +
+                  `\`* @consumers ${[...actualConsumers].sort().join(', ')}\`.`,
+              ],
+            })
+          } else if (!parsedConsumers.found) {
+            failures.push({
+              fn: '@consumers',
+              problems: [
+                `  - supabase/functions/_shared/auth.ts is missing the ` +
+                  `@consumers tag. Add: ` +
+                  `\`* @consumers ${[...actualConsumers].sort().join(', ')}\` ` +
+                  `to the top JSDoc block.`,
+              ],
+            })
+          } else {
+            const headerSet = new Set(parsedConsumers.names)
+            const missing = [...actualConsumers].filter((n) => !headerSet.has(n))
+            const extra = [...headerSet].filter((n) => !actualConsumers.has(n))
+            for (const fn of missing.sort()) {
+              failures.push({
+                fn,
+                problems: [
+                  `  - supabase/functions/${fn}/index.ts calls ` +
+                    `isServiceRoleCaller(...) but is not declared in ` +
+                    `supabase/functions/_shared/auth.ts @consumers tag. Add ` +
+                    `'${fn}' to the @consumers line (alphabetical, ` +
+                    `comma-separated).`,
+                ],
+              })
+            }
+            for (const fn of extra.sort()) {
+              failures.push({
+                fn: '@consumers',
+                problems: [
+                  `  - supabase/functions/_shared/auth.ts @consumers ` +
+                    `declares '${fn}', but no isServiceRoleCaller( call ` +
+                    `found in supabase/functions/${fn}/index.ts. Remove ` +
+                    `from @consumers or restore the helper call.`,
+                ],
+              })
+            }
+            if (!parsedConsumers.sorted) {
+              failures.push({
+                fn: '@consumers',
+                problems: [
+                  `  - supabase/functions/_shared/auth.ts @consumers list ` +
+                    `is not alphabetically sorted. Expected: ` +
+                    `${[...parsedConsumers.names].sort().join(', ')}. Got: ` +
+                    `${parsedConsumers.names.join(', ')}.`,
+                ],
+              })
+            }
+          }
+        }
+
+        // Reverse direction: entries in deploy/validate arrays that have no
+        // corresponding supabase/functions/<name>/index.ts. A typo in an array
+        // entry (e.g. 'foobar' when the dir is 'foo-bar') would otherwise be
+        // invisible — the forward-direction loop only iterates deployableFns.
+        const allArrayEntries = new Set([
+          ...noVerifyDeploy,
+          ...verifyDeploy,
+          ...anonValidate,
+          ...authValidate,
+          ...serviceValidate,
+        ])
+        for (const entry of [...allArrayEntries].sort()) {
+          if (!deployableFnsSet.has(entry)) {
+            failures.push({
+              fn: entry,
+              problems: [
+                `  - Listed in a deploy/validate array but has no ` +
+                  `supabase/functions/${entry}/index.ts (typo or stale entry?)`,
+              ],
+            })
+          }
+        }
+
+        for (const fn of deployableFns) {
+          const inNoVerify = noVerifyDeploy.has(fn)
+          const inVerify = verifyDeploy.has(fn)
+          const deployCount = (inNoVerify ? 1 : 0) + (inVerify ? 1 : 0)
+
+          const inAnon = anonValidate.has(fn)
+          const inAuth = authValidate.has(fn)
+          const inService = serviceValidate.has(fn)
+          const validateCount = (inAnon ? 1 : 0) + (inAuth ? 1 : 0) + (inService ? 1 : 0)
+
+          const configMissing = inNoVerify && !configNoVerify.has(fn)
+
+          const testMissing =
+            !existsSync(join(FUNCTIONS_DIR, fn, 'index.test.ts')) &&
+            !TEST_BACKFILL_ALLOWLIST.has(fn)
+
+          if (deployCount === 1 && validateCount === 1 && !configMissing && !testMissing) continue
+
+          const problems = []
+          if (deployCount === 0) {
+            problems.push(
+              `  - Missing from scripts/deploy-edge-functions.sh ` +
+                `(add to either NO_VERIFY_JWT_FUNCTIONS or VERIFY_JWT_FUNCTIONS)`
+            )
+          } else if (deployCount === 2) {
+            problems.push(`  - Listed in BOTH deploy arrays (must appear in exactly one)`)
+          }
+          if (validateCount === 0) {
+            problems.push(
+              `  - Missing from scripts/validate-edge-functions.sh ` +
+                `(add to ANONYMOUS_FUNCTIONS, AUTHENTICATED_FUNCTIONS, ` +
+                `or SERVICE_ROLE_FUNCTIONS)`
+            )
+          } else if (validateCount > 1) {
+            problems.push(`  - Listed in MULTIPLE validate arrays (must appear in exactly one)`)
+          }
+          if (configMissing) {
+            problems.push(
+              `  - In NO_VERIFY_JWT_FUNCTIONS but missing ` +
+                `[functions.${fn}] with verify_jwt = false from supabase/config.toml`
+            )
+          }
+          if (testMissing) {
+            problems.push(
+              `  - Missing sibling test file: ` +
+                `supabase/functions/${fn}/index.test.ts ` +
+                `(predicate 4 enforces file presence only; SMI-5010 will add ` +
+                `depth enforcement)`
+            )
+          }
+          failures.push({ fn, problems })
+        }
+
+        if (failures.length === 0) {
+          pass(
+            `Check 47: ${deployableFns.length} deployable function(s) — ` +
+              `all coherently registered across deploy-script + validate-script + config.toml; ` +
+              `no stale array entries`
+          )
+        } else {
+          for (const { fn, problems } of failures) {
+            fail(
+              `Check 47: ${fn} is not correctly registered\n${problems.join('\n')}`,
+              `The deploy --no-verify-jwt flag and the runtime auth model are orthogonal — ` +
+                `a function may legitimately be NO_VERIFY (anonymous deploy) + SERVICE_ROLE ` +
+                `(validates its own bearer). Fix the specific gap(s) above; do not "fix" ` +
+                `perceived cross-script mismatches. ` +
+                `See .claude/development/edge-function-patterns.md § Function Auth Matrix.`
+            )
+          }
+        }
+      }
+    } catch (e) {
+      warn(`Could not run Check 47 (edge-function registration coherence): ${e.message}`)
+    }
+  }
+}
+
+// 48. SMI-5060/SMI-5066 regression test: publish.yml dependents must gate
+// every `needs.publish-<pkg>.result == 'skipped'` clause on a paired
+// `pre-publish-check.outputs.<outputKey>-exists == 'true'` predicate
+// (with outputKey resolved via PUBLISH_JOB_TO_OUTPUT_ALIAS for the
+// `publish-mcp-server` → `mcp-exists` outlier).
+//
+// Background (SMI-5060): when validate fails, `publish-<pkg>` auto-skips
+// (its `needs:` failed), and GitHub Actions reports
+// `needs.publish-<pkg>.result == 'skipped'`. Without the paired exists
+// predicate, dependent publish-* jobs treated failure-mode skips identically
+// to legitimate skips ("package was already on npm"), and published broken
+// dependents (orphaned npm release on 2026-05-20, run 26186802726).
+//
+// SMI-5066: generalized from publish-core-only to any publish-<pkg> via the
+// helper `auditPublishYmlDependentGate`. The alias map handles the
+// pre-existing convention drift where `publish-mcp-server`'s output key is
+// `mcp-exists`, not `mcp-server-exists`. Narrow on purpose: broader
+// actions-expression soundness lint would need an AST parser.
+console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060/SMI-5066)${RESET}`)
+{
+  const PUBLISH_YML = '.github/workflows/publish.yml'
+  if (!existsSync(PUBLISH_YML)) {
+    warn(`Check 48: ${PUBLISH_YML} not found — skipping`)
+  } else {
+    try {
+      const content = readFileSync(PUBLISH_YML, 'utf8')
+      const { matches, failures } = auditPublishYmlDependentGate(content)
+
+      if (matches.length === 0) {
+        warn(
+          `Check 48: no 'publish-<pkg>.result == skipped' clauses found in ${PUBLISH_YML} — ` +
+            `if this is intentional (e.g. publish.yml restructured), delete this check.`
+        )
+      } else if (failures.length > 0) {
+        for (const { lineno, pkg, outputKey } of failures) {
+          fail(
+            `Check 48: ${PUBLISH_YML}:${lineno} accepts 'publish-${pkg}.result == \\'skipped\\'' ` +
+              `without the paired 'pre-publish-check.outputs.${outputKey}-exists == \\'true\\'' predicate. ` +
+              `This is the SMI-5060 regression class: validate-failure skips and package-already-published ` +
+              `skips both surface as result == 'skipped' but only the latter is safe to proceed on. ` +
+              `Add the paired predicate or update PUBLISH_JOB_TO_OUTPUT_ALIAS in audit-standards-helpers.mjs.`,
+            `Tighten the if: clause: (needs.publish-${pkg}.result == 'success' || ` +
+              `(needs.publish-${pkg}.result == 'skipped' && needs.pre-publish-check.outputs.${outputKey}-exists == 'true'))`
+          )
+        }
+      } else {
+        pass(
+          `Check 48: all ${matches.length} 'publish-<pkg>.result == skipped' clause(s) in ` +
+            `${PUBLISH_YML} are paired with the <outputKey>-exists predicate (SMI-5060/SMI-5066 regression guard).`
+        )
+      }
+
+      // SMI-5123: POSITIVE-COVERAGE — the soundness check above only validates
+      // gates that EXIST. It says nothing about a REQUIRED gate that is missing
+      // entirely (the SMI-5123 bug: publish-cli depends on @skillsmith/mcp-server
+      // in package.json but had no gate on publish-mcp-server, so cli could
+      // publish a live dangling ref while mcp-server was skipped). Derive the
+      // required gates from ground truth — each publishable package's
+      // workspace-sibling deps that are themselves publishable — and assert the
+      // consumer's publish job both needs: the sibling and carries the paired
+      // predicate.
+      const publishableNames = JSON.parse(
+        (content.match(/PUBLISHABLE_PACKAGES_JSON:\s*'(\[[^']*\])'/) || [])[1] || '[]'
+      )
+      const pkgJsons = []
+      for (const name of publishableNames) {
+        const short = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name
+        const pkgPath = `packages/${short}/package.json`
+        if (existsSync(pkgPath)) {
+          try {
+            pkgJsons.push({ name, json: JSON.parse(readFileSync(pkgPath, 'utf8')) })
+          } catch (e) {
+            warn(`Check 48 (required gates): could not parse ${pkgPath}: ${e.message}`)
+          }
+        }
+      }
+
+      if (pkgJsons.length === 0) {
+        warn('Check 48 (required gates): no publishable package.json files found — skipping')
+      } else {
+        const { required, failures: gateFailures } = auditPublishYmlRequiredGates(content, pkgJsons)
+        if (gateFailures.length > 0) {
+          for (const { consumer, sibling, reason } of gateFailures) {
+            fail(
+              `Check 48 (required gates): publish-${consumer} → publish-${sibling}: ${reason}`,
+              `${consumer}'s package.json depends on a publishable sibling; the consumer's ` +
+                `publish job must needs: the sibling job and carry the SMI-5060 paired predicate ` +
+                `so it cannot publish a dangling ref while the sibling is skipped.`
+            )
+          }
+        } else {
+          pass(
+            `Check 48 (required gates): all ${required.length} package.json workspace-sibling ` +
+              `dep(s) have the matching publish-job needs: + paired predicate in ${PUBLISH_YML} (SMI-5123).`
+          )
+        }
+      }
+    } catch (e) {
+      warn(`Could not run Check 48 (publish.yml dependent-gate soundness): ${e.message}`)
+    }
+  }
+}
+
+// 49. SMI-5026 M5: "Convention check before novelty" backstop
+//
+// Encodes the four telemetry-specific convention-check greps from the
+// `skill-invoke-telemetry.md` plan (lines 666-674 + 723-730) as static
+// invariants that re-run on every PR — not just at plan time.
+//
+// Per the implementation-plan template (.claude/templates/implementation-plan.md
+// § Surface Grounding / Convention check before novelty), generic per-PR
+// pattern surveys would require knowing the plan's `<pattern-prefix>` to
+// grep for, which can't be statically discovered. We therefore encode the
+// four telemetry-specific assertions explicitly here. Adding a future
+// Check-48-style invariant for a different SMI = extending the helper's
+// `findConventionDrift` input shape, not rewriting the audit loop.
+//
+// Sub-checks:
+//   48a (fail): SkillsmithEventType union ⊇ {skill_invoke, skill_context_load,
+//               skill_invoke_unparsed}
+//   48b (fail): ALLOWED_EVENTS in supabase/functions/events/index.ts ⊇ same set
+//   48c (warn): withTelemetry has exactly ONE definition site, at
+//               packages/core/src/telemetry/wrap.ts
+//   48d (warn): /tmp/skillsmith-* not used in production source (M8 — runtime
+//               state lives in ~/.skillsmith/run/, /tmp doesn't survive reboot)
+//
+// Exemption: a comment containing `audit:check-48-ack` opts out of the
+// grep-heuristic warns — 48d per-line (same line as the reference) and 48c on
+// the def line or the comment block immediately above the parallel definition.
+// 48a/48b are exact-string set membership against declared sources of truth —
+// there is no legitimate exemption.
+//
+// Severity: 48c/48d are `warn()` for v1 to avoid false-positive fatigue
+// blocking unrelated PRs (CLAUDE.md governance retro guidance). Promote to
+// `fail()` after a soak period if the warn rate is zero.
+console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
+{
+  const POSTHOG_PATH = 'packages/core/src/telemetry/posthog.ts'
+  const EVENTS_PATH = 'supabase/functions/events/index.ts'
+  const CANONICAL_WRAP_PATH = 'packages/core/src/telemetry/wrap.ts'
+  const EXPECTED_EVENTS = ['skill_invoke', 'skill_context_load', 'skill_invoke_unparsed']
+
+  if (!existsSync(POSTHOG_PATH) || !existsSync(EVENTS_PATH)) {
+    warn('Check 48: required telemetry source file(s) missing — skipping convention-drift backstop')
+  } else {
+    try {
+      const posthogSrc = readFileSync(POSTHOG_PATH, 'utf8')
+      const eventsSrc = readFileSync(EVENTS_PATH, 'utf8')
+
+      // 48c/48d scope: all .ts files under packages/ and scripts/, excluding
+      // node_modules, dist, build, and the audit script itself (which discusses
+      // /tmp/skillsmith- in comments and references withTelemetry as an
+      // identifier — the audit must not flag itself).
+      // Git-crypt locked supabase/functions/** is read separately via
+      // EVENTS_PATH; we don't walk it for the survey because the smudge
+      // filter may leave it as a binary blob in CI checkouts that don't
+      // hold the key (see Check 47 predicate 5 comment for the same idiom).
+      const surveySrcByPath = {}
+      const walk = (dir) => {
+        if (!existsSync(dir)) return
+        for (const name of readdirSync(dir)) {
+          if (
+            name === 'node_modules' ||
+            name === 'dist' ||
+            name === 'build' ||
+            name === '.next' ||
+            name === '.turbo' ||
+            name.startsWith('.')
+          ) {
+            continue
+          }
+          const p = join(dir, name)
+          let st
+          try {
+            st = statSync(p)
+          } catch {
+            continue
+          }
+          if (st.isDirectory()) {
+            walk(p)
+          } else if (
+            (p.endsWith('.ts') || p.endsWith('.tsx') || p.endsWith('.mjs') || p.endsWith('.js')) &&
+            // Exclude the audit script itself — it references withTelemetry
+            // as a string identifier in comments + check-48 prose.
+            p !== 'scripts/audit-standards.mjs' &&
+            p !== 'scripts/audit-standards-helpers.mjs'
+          ) {
+            try {
+              surveySrcByPath[p] = readFileSync(p, 'utf8')
+            } catch {
+              // Unreadable (e.g. git-crypt locked) — skip silently; another
+              // check enforces decryption posture.
+            }
+          }
+        }
+      }
+      walk('packages')
+      walk('scripts')
+
+      const result = findConventionDrift({
+        posthogSrc,
+        eventsSrc,
+        surveySrcByPath,
+        expectedNewEvents: EXPECTED_EVENTS,
+        canonicalWithTelemetryPath: CANONICAL_WRAP_PATH,
+      })
+
+      // 48a — SkillsmithEventType union coherence (FAIL)
+      if (result.eventTypeUnionParseFailed) {
+        warn(
+          `Check 48a: Could not locate \`export type SkillsmithEventType\` in ` +
+            `${POSTHOG_PATH} — file may have been restructured; check that the ` +
+            `discriminated-union shape still uses the canonical \`= | 'foo' | 'bar'\` form.`
+        )
+      } else if (result.eventTypeUnionMissing.length > 0) {
+        fail(
+          `Check 48a: SkillsmithEventType union missing event(s): ` +
+            `${result.eventTypeUnionMissing.join(', ')}`,
+          `Add the missing literal(s) to the union in ${POSTHOG_PATH}. ` +
+            `The events are the canonical SMI-5026 telemetry surface — see ` +
+            `docs/internal/implementation/skill-invoke-telemetry.md § Wire format.`
+        )
+      } else {
+        pass(`Check 48a: SkillsmithEventType union includes all SMI-5026 telemetry events`)
+      }
+
+      // 48b — ALLOWED_EVENTS validation list coherence (FAIL)
+      if (result.allowedEventsParseFailed) {
+        warn(
+          `Check 48b: Could not locate \`const ALLOWED_EVENTS = [...]\` in ` +
+            `${EVENTS_PATH} — file may have been restructured.`
+        )
+      } else if (result.allowedEventsMissing.length > 0) {
+        fail(
+          `Check 48b: ALLOWED_EVENTS in ${EVENTS_PATH} missing event(s): ` +
+            `${result.allowedEventsMissing.join(', ')}`,
+          `Add the missing literal(s) to ALLOWED_EVENTS. The edge function ` +
+            `rejects any event not in this list — drift here causes silent ` +
+            `400s for clients on the new event names.`
+        )
+      } else {
+        pass(`Check 48b: ALLOWED_EVENTS includes all SMI-5026 telemetry events`)
+      }
+
+      // 48c — withTelemetry single-source-of-truth (WARN)
+      if (result.parallelWithTelemetryDefs.length === 0) {
+        pass(`Check 48c: withTelemetry has a single definition site ` + `(${CANONICAL_WRAP_PATH})`)
+      } else {
+        const sites = result.parallelWithTelemetryDefs
+          .map((d) => `  ${d.file}:${d.line} — ${d.snippet}`)
+          .join('\n')
+        warn(
+          `Check 48c: parallel withTelemetry definition(s) detected — ` +
+            `single-source-of-truth violation per SMI-5016 H1:\n${sites}`,
+          `The canonical definition is in ${CANONICAL_WRAP_PATH}. Re-export ` +
+            `from there instead of redefining. Suppress a genuinely-justified ` +
+            `parallel definition with \`// audit:check-48-ack <reason>\` on the ` +
+            `definition line or in the comment block immediately above it.`
+        )
+      }
+
+      // 48d — /tmp/skillsmith- absent from prod source (WARN)
+      if (result.tmpSkillsmithRefs.length === 0) {
+        pass(`Check 48d: /tmp/skillsmith- not referenced in production source (M8)`)
+      } else {
+        const refs = result.tmpSkillsmithRefs
+          .map((r) => `  ${r.file}:${r.line} — ${r.snippet}`)
+          .join('\n')
+        warn(
+          `Check 48d: /tmp/skillsmith- referenced in production source — ` +
+            `should live under ~/.skillsmith/run/ per M8 (/tmp doesn't survive reboot):\n${refs}`,
+          `Move runtime state to ~/.skillsmith/run/ (mkdir -p, atomic temp ` +
+            `rename). For inline doc/example references, append ` +
+            `\`// audit:check-48-ack <reason>\` to the line.`
+        )
+      }
+    } catch (e) {
+      warn(`Could not run Check 49 (convention drift backstop): ${e.message}`)
+    }
+  }
+}
+
+// Check 50: Migration ordering guard (SMI-5162 / SMI-5159 recurrence guard)
+console.log(`\n${BOLD}50. Migration Ordering Guard (SMI-5162)${RESET}`)
+{
+  const MIG = 'supabase/migrations'
+  const baseRef = process.env.GITHUB_BASE_REF
+  let added = []
+  let baseFiles = []
+  let skipReason = null
+  try {
+    if (baseRef && baseRef.length > 0) {
+      // PR context: resolve the merge-base SHA so the BASE set reflects what
+      // this branch actually forked from, not the current tip of origin/<base>
+      // (E3: if main advanced after this branch forked, using ls-tree
+      // origin/<base> would inflate maxBaseVersion and false-fail a correctly
+      // ordered migration).
+      const mergeBase = execSync(`git merge-base origin/${baseRef} HEAD`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+      // ADDED set: --diff-filter=AR (E2) catches git-mv renames (R) in addition
+      // to plain adds (A). --name-only prints the NEW path for renames, which is
+      // the name that governs ordering. Three-dot = diff against merge-base,
+      // matching the Check 45 pattern.
+      added = execSync(`git diff --name-only --diff-filter=AR ${mergeBase}...HEAD -- ${MIG}/`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .split('\n')
+        .filter(Boolean)
+      // BASE set: list the merge-base tree (not the branch tip).
+      baseFiles = execSync(`git ls-tree -r --name-only ${mergeBase} -- ${MIG}/`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .split('\n')
+        .filter(Boolean)
+    } else {
+      // Local run (no PR base ref). Fall back to origin/main if present; else skip.
+      const base = execSync('git rev-parse --verify --quiet origin/main || true', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+      if (!base) {
+        skipReason = 'no origin/main ref (shallow/local)'
+      } else {
+        const mergeBase = execSync('git merge-base origin/main HEAD', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim()
+        added = execSync(`git diff --name-only --diff-filter=AR ${mergeBase}...HEAD -- ${MIG}/`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+          .split('\n')
+          .filter(Boolean)
+        baseFiles = execSync(`git ls-tree -r --name-only ${mergeBase} -- ${MIG}/`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+          .split('\n')
+          .filter(Boolean)
+      }
+    }
+  } catch (e) {
+    // Shallow clone, detached HEAD, no base — must NOT false-fail. Mirror
+    // Check 45's catch-and-skip behaviour.
+    skipReason = e.message
+  }
+
+  if (skipReason) {
+    pass(`Migration ordering guard skipped (${skipReason})`)
+  } else {
+    const toBase = (p) => p.split('/').pop()
+    const addedSql = added.filter((f) => f.endsWith('.sql')).map(toBase)
+    const baseSql = baseFiles.filter((f) => f.endsWith('.sql')).map(toBase)
+    const { maxBaseVersion, violations } = findOutOfOrderMigrations(addedSql, baseSql)
+    if (addedSql.length === 0) {
+      pass('No migrations added in this diff')
+    } else if (violations.length === 0) {
+      pass(
+        `All ${addedSql.length} added migration(s) sort at/above base tip ${maxBaseVersion ?? '(none)'}`
+      )
+    } else {
+      for (const v of violations) {
+        fail(
+          `Out-of-order migration: ${v.file} (version ${v.version}) sorts BELOW base tip ${v.maxBaseVersion} — ` +
+            `would be SILENTLY SKIPPED by \`supabase db push\` (exit 0) — the SMI-5159 /account/telemetry incident.`,
+          `Rename to a version > ${v.maxBaseVersion} (e.g. \`$(date -u +%Y%m%d%H%M%S)_<name>.sql\`). SQL content unchanged.`
+        )
+      }
+    }
+  }
+}
+
+// Check 51: function_search_path_mutable gate (SMI-5203 recurrence guard)
+// Scans migration files changed in this PR for CREATE [OR REPLACE] FUNCTION blocks
+// that lack SET search_path. Warns (not fails) — matches Supabase advisory severity.
+// Known limitation: anonymous DO $$ ... $$ blocks that internally define functions
+// bypass grep detection (acceptable scope for a file-level static check).
+console.log(`\n${BOLD}51. Function search_path Gate — migration authoring guard (SMI-5203)${RESET}`)
+{
+  const MIG_DIR = 'supabase/migrations'
+  let changedSqlFiles = []
+  let skipReason = null
+
+  try {
+    const baseRef = process.env.GITHUB_BASE_REF
+    let mergeBase
+    if (baseRef && baseRef.length > 0) {
+      mergeBase = execSync(`git merge-base origin/${baseRef} HEAD`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+    } else {
+      const originMain = execSync('git rev-parse --verify --quiet origin/main || true', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+      if (!originMain) {
+        skipReason = 'no origin/main ref (shallow/local)'
+      } else {
+        mergeBase = execSync('git merge-base origin/main HEAD', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim()
+      }
+    }
+
+    if (!skipReason) {
+      changedSqlFiles = execSync(
+        `git diff --name-only --diff-filter=AR ${mergeBase}...HEAD -- ${MIG_DIR}/`,
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+        .split('\n')
+        .filter((f) => f.endsWith('.sql') && Boolean(f))
+    }
+  } catch (e) {
+    skipReason = e.message
+  }
+
+  if (skipReason) {
+    pass(`Check 51: function search_path gate skipped (${skipReason})`)
+  } else if (changedSqlFiles.length === 0) {
+    pass('Check 51: no migration SQL files changed in this diff')
+  } else {
+    let totalViolations = 0
+    for (const sqlFile of changedSqlFiles) {
+      let content
+      try {
+        content = readFileSync(sqlFile, 'utf8')
+      } catch {
+        // File may be git-crypt encrypted (binary) — skip silently
+        continue
+      }
+      const violations = findFunctionsWithoutSearchPath(content, sqlFile)
+      for (const v of violations) {
+        warn(
+          `Check 51: function_search_path_mutable — ${v.funcName}() in ${sqlFile} ` +
+            `has no SET search_path. Add SET search_path = public, extensions to the function body.`
+        )
+        totalViolations++
+      }
+    }
+    if (totalViolations === 0) {
+      pass(
+        `Check 51: all CREATE FUNCTION blocks in ${changedSqlFiles.length} changed migration(s) include SET search_path`
       )
     }
   }

@@ -383,6 +383,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
 | Metadata Refresh | Every 4h :30 (SMI-4121) | `skills-refresh-metadata` |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
+| Weekly Coverage Report (SMI-4963) | Monday 10 AM UTC (`coverage-report.yml`; `schedule:` enabled via follow-up commit). Deploy: `npx supabase functions deploy coverage-report` (no `--no-verify-jwt`) | `coverage-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
 | Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
 | Quota Monitor | Every 30 min | GitHub Actions (`quota-monitor.yml`) |
@@ -393,6 +394,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Device-login audit_logs cleanup | Sundays 04:00 UTC (SMI-4460) | GitHub Actions (`device-login-roundtrip-cleanup.yml`) |
 | Skillsmith Scheduled Audit (Enterprise governance pass) | On-demand via `runScheduledScan` (SMI-4590); deep + un-filtered findings | `@skillsmith/enterprise/audit` (`runScheduledScan`); idempotent within `SKILLSMITH_SCHEDULED_AUDIT_CACHE_MIN` (default 5 min) |
 | Session-start audit hook (Team/Enterprise) | Per session start, debounced 24h (SMI-4590) | `scripts/session-start-audit.sh` → `scripts/lib/session-start-audit-helper.ts`; tier-gated render (Free/Individual silent) |
+| Chronic-red monitor | Daily 14:00 UTC | `chronic-red-monitor.yml` — detect non-required workflows that have failed N consecutive main-branch runs; post `alert-notify` per regression (SMI-4974) |
 
 ### Alert Notifications
 

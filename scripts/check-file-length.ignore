@@ -1,0 +1,31 @@
+# check-file-length.ignore — grandfather list for the pre-commit length hook (SMI-4397)
+#
+# Purpose:
+#   scripts/check-file-length.mjs hard-fails any staged .ts file over 500
+#   lines. The paths below are pre-existing over-limit files exempted from
+#   that hard-fail so they can still be committed without `git commit
+#   --no-verify`. The exemption is conditional: it applies ONLY while the
+#   file remains over 500 lines. Once a listed file is split below the
+#   limit it re-enters normal enforcement and the hook prints an
+#   "eligible to de-list" notice — remove its entry here at that point.
+#
+# Format:
+#   - One repo-relative path per line (forward slashes).
+#   - Blank lines and lines starting with `#` are ignored.
+#   - Trailing whitespace and CRLF line endings are tolerated.
+#   - Each grandfathered path is preceded by a `# SMI-XXXX split follow-up`
+#     comment naming the Linear issue that will split the file.
+#
+# Do not add new files here without a corresponding split follow-up issue.
+
+# (SMI-5036 split follow-up cleared 2026-05-20: StripeClient.test.ts and
+#  webhook-handlers.test.ts were split into 7 sub-files under 500 lines each;
+#  see docs/internal/retros/2026-05-20-smi-5036-w8-billing-test-splits-retro.md)
+
+# (SMI-5141 split follow-up cleared 2026-05-22: prepare-release.test.ts and
+#  audit-standards.test.ts were split into concern-scoped siblings under 500
+#  lines each — prepare-release-{collision,reserved-range}.test.ts and
+#  audit-standards-{export-drift,publish-gate}.test.ts.)
+
+# SMI-5211 split follow-up
+packages/core/tests/RawUrlSourceAdapter.security.test.ts

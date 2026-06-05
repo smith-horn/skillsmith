@@ -52,7 +52,8 @@ describe('Recommend Tool', () => {
       expect(result.context.installed_count).toBe(1)
       // Should not recommend the already installed skill
       const hasInstalledSkill = result.recommendations.some(
-        (r) => r.skill_id === 'anthropic/commit'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (r: any) => r.skill_id === 'anthropic/commit'
       )
       expect(hasInstalledSkill).toBe(false)
     })
@@ -206,7 +207,8 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
       )
 
       // Check for duplicate skill_ids
-      const skillIds = result.recommendations.map((r) => r.skill_id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const skillIds = result.recommendations.map((r: any) => r.skill_id)
       const uniqueIds = new Set(skillIds)
       expect(skillIds.length).toBe(uniqueIds.size)
     })
@@ -325,13 +327,16 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
 
       // Should not have both 'anthropic/commit' and 'local/commit'
       const commitSkills = result.recommendations.filter(
-        (r) => r.name === 'commit' || r.skill_id.includes('commit')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (r: any) => r.name === 'commit' || r.skill_id.includes('commit')
       )
 
       // If there's a commit skill, registry should take precedence
       if (commitSkills.length > 0) {
-        const hasRegistryCommit = commitSkills.some((s) => s.skill_id === 'anthropic/commit')
-        const hasLocalCommit = commitSkills.some((s) => s.skill_id === 'local/commit')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const hasRegistryCommit = commitSkills.some((s: any) => s.skill_id === 'anthropic/commit')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const hasLocalCommit = commitSkills.some((s: any) => s.skill_id === 'local/commit')
         // Should not have local duplicate if registry version exists
         if (hasRegistryCommit) {
           expect(hasLocalCommit).toBe(false)
@@ -354,7 +359,8 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
 
       // All results should have testing role if role filter is applied
       if (result.recommendations.length > 0 && result.context.role_filter) {
-        result.recommendations.forEach((rec) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        result.recommendations.forEach((rec: any) => {
           if (rec.roles) {
             expect(rec.roles).toContain('testing')
           }

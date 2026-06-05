@@ -81,18 +81,20 @@ jobs:
           echo "✅ Batch transformation completed successfully"
           echo "Check Supabase for transformation results"
 
+      # Only alert on scheduled runs to avoid noise during manual testing
       - name: Alert on failure
-        if: failure()
+        if: failure() && github.event_name == 'schedule'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          curl -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+          curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -d '{
-              "subject": "Batch Skill Transformation Failed",
-              "body": "The weekly batch skill transformation job failed. Check GitHub Actions for details.",
-              "workflow": "batch-transform",
-              "run_id": "${{ github.run_id }}"
+              "type": "batch_transform_failed",
+              "message": "The weekly batch skill transformation job failed. Check GitHub Actions for details.",
+              "workflow": "Batch Skill Transformation",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             }' || echo "Alert notification failed (non-fatal)"

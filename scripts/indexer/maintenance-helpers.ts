@@ -47,6 +47,8 @@ export interface MaintenanceResponseData {
   skipped: boolean
   stale: number
   quality_gate_filtered: number
+  /** SMI-4842: Repos rejected as curated `awesome-*` link-lists. Always 0 on maintenance — symmetry with discovery. */
+  meta_list_filtered: number
   unchanged: number
   github_skill_count: number
   high_trust_wildcard: {
@@ -100,6 +102,7 @@ export function buildMaintenanceResponseData(
     skipped: false,
     stale: staleResult.staleQuarantined,
     quality_gate_filtered: 0,
+    meta_list_filtered: 0,
     unchanged: 0,
     github_skill_count: 0,
     high_trust_wildcard: {

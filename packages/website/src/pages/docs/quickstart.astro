@@ -135,8 +135,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     Get Skillsmith running in 5 minutes. Choose your preferred workflow below.
   </p>
 
-  <div class="quickstart-prereqs" style="background: var(--color-warning-bg, #fff8e1); border: 1px solid var(--color-warning-border, #ffe082); border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
-    <p style="margin: 0;"><strong>Note:</strong> The bare <code>skillsmith</code> package on npm is not this project. Use <code>@skillsmith/cli</code> for the CLI or <code>@skillsmith/mcp-server</code> for MCP. Alternatively, <code>npm install -g skillsmith-cli</code> also works.</p>
+  <div class="callout warning">
+    <p><strong>Note:</strong> The bare <code>skillsmith</code> package on npm is not this project. Use <code>@skillsmith/cli</code> for the CLI or <code>@skillsmith/mcp-server</code> for MCP. Alternatively, <code>npm install -g skillsmith-cli</code> also works.</p>
   </div>
 
   <!-- Prerequisites -->
@@ -258,9 +258,8 @@ curl -fsSL https://claude.ai/install.sh | sh`}</code></pre>
   <h3 id="step-a2">Step 2: Add Skillsmith MCP Server</h3>
 
   <p>
-    Pick the snippet for your MCP client. SMI-4580: snippets are sourced from
-    <code>@skillsmith/cli/templates/mcp-server.template.snippets.ts</code> so this
-    page can't drift from the scaffolded README or root README.
+    Pick the snippet for your MCP client. Every snippet uses the same shape —
+    only the config-file path (and, for Codex, the format) differs.
   </p>
 
   <details open>
@@ -406,8 +405,8 @@ claude`}</code></pre>
     </p>
   </div>
 
-  <div class="callout" style="background: #f0f7ff; border-left: 4px solid #3b82f6; padding: 1rem; margin: 1.5rem 0; border-radius: 0 0.5rem 0.5rem 0;">
-    <p style="margin: 0;">
+  <div class="callout">
+    <p>
       <strong>Built-in security scanning</strong> — Every skill is automatically scanned for security issues before installation.
       Skills with critical findings are blocked; high-severity findings require your confirmation.
       <a href="/docs/security">Learn more about security →</a>
@@ -417,7 +416,7 @@ claude`}</code></pre>
   <!-- PATH B: Direct CLI -->
   <h2 id="path-cli">Using the CLI Directly</h2>
 
-  <div class="callout callout-warning">
+  <div class="callout warning">
     <p class="callout-heading">When to use this</p>
     <p>
       Use the CLI if you prefer traditional command-line tools, want to script skill management, or are not using an MCP client.

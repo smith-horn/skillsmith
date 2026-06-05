@@ -7,6 +7,7 @@ package-lock.json
 
 # Auto-generated directories
 .astro/
+.understand-anything/
 
 # Scripts with embedded GraphQL that Prettier cannot parse
 scripts/linear-api.mjs

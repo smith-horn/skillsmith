@@ -19,7 +19,8 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/mcp-server" },
-    { "path": "./packages/cli" }
+    { "path": "./packages/cli" },
+    { "path": "./packages/enterprise" }
   ],
   "files": [],
   "exclude": ["node_modules", "dist"]

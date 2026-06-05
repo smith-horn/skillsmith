@@ -12,6 +12,7 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 // ============================================================================
 // Input schemas
@@ -156,7 +157,7 @@ async function getAuditLogger(toolContext: ToolContext): Promise<AuditLoggerLike
   }
 }
 
-export async function executeAuditExport(input: AuditExportInput, toolContext: ToolContext) {
+async function executeAuditExportImpl(input: AuditExportInput, toolContext: ToolContext) {
   const logger = await getAuditLogger(toolContext)
   try {
     const filter: Record<string, unknown> = {}
@@ -171,7 +172,7 @@ export async function executeAuditExport(input: AuditExportInput, toolContext: T
   }
 }
 
-export async function executeAuditQuery(input: AuditQueryInput, toolContext: ToolContext) {
+async function executeAuditQueryImpl(input: AuditQueryInput, toolContext: ToolContext) {
   const logger = await getAuditLogger(toolContext)
   try {
     const filter: Record<string, unknown> = {}
@@ -189,7 +190,7 @@ export async function executeAuditQuery(input: AuditQueryInput, toolContext: Too
   }
 }
 
-export async function executeSiemExport(input: SiemExportInput, toolContext: ToolContext) {
+async function executeSiemExportImpl(input: SiemExportInput, toolContext: ToolContext) {
   const logger = await getAuditLogger(toolContext)
   try {
     const filter: Record<string, unknown> = {}
@@ -206,3 +207,20 @@ export async function executeSiemExport(input: SiemExportInput, toolContext: Too
     logger.dispose()
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executeAuditExport = withTelemetry(executeAuditExportImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'audit_export',
+  extractFramework: () => 'unknown',
+})
+export const executeAuditQuery = withTelemetry(executeAuditQueryImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'audit_query',
+  extractFramework: () => 'unknown',
+})
+export const executeSiemExport = withTelemetry(executeSiemExportImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'siem_export',
+  extractFramework: () => 'unknown',
+})

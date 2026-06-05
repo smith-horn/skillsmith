@@ -32,230 +32,29 @@
  * surface (package-lock churn was prohibitive for SMI-4462 Wave 1).
  */
 
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
+import type {
+  UserTier,
+  ProvisionedUser,
+  ProvisionOptions,
+  UsageRow,
+  CounterColumn,
+  SkillRow,
+} from './usage-counter-fixture.types.js'
+import {
+  resolveStagingEnv,
+  readEnv,
+  readJsonOrText,
+  adminCreateUser,
+  adminDeleteUser,
+  signInWithPassword,
+  postgrestWrite,
+  postgrestDelete,
+  generateApiKey,
+} from './usage-counter-fixture.helpers.js'
 
-const STAGING_PROJECT_REF = 'ovhcifugwqnzoebwfuku'
-
-export type UserTier = 'community' | 'individual' | 'team' | 'enterprise'
-
-export interface ProvisionedUser {
-  userId: string
-  email: string
-  password: string
-  /** Supabase access JWT (Bearer-style) issued by signInWithPassword. */
-  jwt: string
-  /** Supabase refresh token, written into the CLI ~/.skillsmith/config.json. */
-  refreshToken: string
-  /** Plain sk_live_* license key — write to X-API-Key / Bearer header. */
-  apiKey: string
-}
-
-export interface ProvisionOptions {
-  tier?: UserTier
-  /** Optional name for the license_keys row (defaults to 'CLI Token'). */
-  apiKeyName?: string
-}
-
-export interface UsageRow {
-  user_id: string
-  hour_bucket: string
-  search_count: number
-  get_count: number
-  recommend_count: number
-}
-
-interface ResolvedEnv {
-  url: string
-  serviceRoleKey: string
-  anonKey: string
-}
-
-function readEnv(name: string): string {
-  const v = process.env[name]
-  if (!v || v.length === 0) {
-    throw new Error(
-      `usage-counter-fixture: missing required env ${name}. ` +
-        `Run under varlock (e.g. \`varlock run -- npm run test:e2e:usage-counter\`).`
-    )
-  }
-  return v
-}
-
-function resolveStagingEnv(): ResolvedEnv {
-  const url = readEnv('STAGING_SUPABASE_URL').replace(/\/$/, '')
-  const serviceRoleKey = readEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY')
-  const anonKey = readEnv('STAGING_SUPABASE_ANON_KEY')
-
-  // Defense-in-depth: refuse to run on a non-staging URL even if a caller
-  // somehow injected prod creds via the staging-named env (CLAUDE.md memory:
-  // 2026-04-17 prod-vs-staging confusion burned ~7 minutes).
-  if (!url.includes(STAGING_PROJECT_REF)) {
-    throw new Error(
-      `usage-counter-fixture: STAGING_SUPABASE_URL must point at staging ref ${STAGING_PROJECT_REF}; got ${url}.`
-    )
-  }
-  return { url, serviceRoleKey, anonKey }
-}
-
-interface RestErrorShape {
-  code?: string
-  message?: string
-  details?: string
-}
-
-async function readJsonOrText(res: Response): Promise<unknown> {
-  const text = await res.text()
-  if (!text) return undefined
-  try {
-    return JSON.parse(text)
-  } catch {
-    return text
-  }
-}
-
-/**
- * Service-role wrapper around the Supabase Auth Admin API.
- * https://supabase.com/docs/reference/api/admin-create-user
- *
- * Retries once on 5xx with a 2s backoff. The signup endpoint surfaces
- * password-validation as a clean 400, but admin/users masks pre-validation
- * failures (e.g. bcrypt's 72-char input limit) as a generic 500
- * unexpected_failure (SMI-4525). A single retry keeps the suite resilient
- * to genuinely transient GoTrue 5xx without papering over deterministic
- * client-side bugs.
- */
-async function adminCreateUser(
-  env: ResolvedEnv,
-  body: Record<string, unknown>
-): Promise<{ id: string }> {
-  const MAX_ATTEMPTS = 2
-  let lastStatus = 0
-  let lastBody: unknown = '<no response>'
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await fetch(`${env.url}/auth/v1/admin/users`, {
-      method: 'POST',
-      headers: {
-        apikey: env.serviceRoleKey,
-        Authorization: `Bearer ${env.serviceRoleKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
-    const data = (await readJsonOrText(res)) as { id?: string; msg?: string; error?: string }
-    if (res.ok && data && typeof data === 'object' && data.id) {
-      return { id: data.id }
-    }
-    lastStatus = res.status
-    lastBody = data ?? '<empty>'
-    const isRetriable = res.status >= 500 && res.status < 600
-    if (!isRetriable || attempt === MAX_ATTEMPTS) break
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-  }
-  throw new Error(`adminCreateUser failed (${lastStatus}): ${JSON.stringify(lastBody)}`)
-}
-
-async function adminDeleteUser(env: ResolvedEnv, userId: string): Promise<void> {
-  const res = await fetch(`${env.url}/auth/v1/admin/users/${userId}`, {
-    method: 'DELETE',
-    headers: {
-      apikey: env.serviceRoleKey,
-      Authorization: `Bearer ${env.serviceRoleKey}`,
-    },
-  })
-  if (!res.ok && res.status !== 404) {
-    const body = await readJsonOrText(res)
-    console.warn(
-      `[cleanupTestUser] auth.admin DELETE failed (${res.status}): ${JSON.stringify(body)}`
-    )
-  }
-}
-
-interface SignInResponse {
-  access_token: string
-  refresh_token: string
-}
-
-async function signInWithPassword(
-  env: ResolvedEnv,
-  email: string,
-  password: string
-): Promise<SignInResponse> {
-  const res = await fetch(`${env.url}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: {
-      apikey: env.anonKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ email, password }),
-  })
-  const data = (await readJsonOrText(res)) as Partial<SignInResponse> & RestErrorShape
-  if (!res.ok || !data?.access_token || !data?.refresh_token) {
-    throw new Error(
-      `signInWithPassword failed (${res.status}): ${data?.message ?? JSON.stringify(data ?? '<empty>')}`
-    )
-  }
-  return { access_token: data.access_token, refresh_token: data.refresh_token }
-}
-
-/** PostgREST insert/upsert via service-role. Returns parsed JSON or throws. */
-async function postgrestWrite(
-  env: ResolvedEnv,
-  table: string,
-  body: unknown,
-  opts: { upsertOnConflict?: string } = {}
-): Promise<void> {
-  const headers: Record<string, string> = {
-    apikey: env.serviceRoleKey,
-    Authorization: `Bearer ${env.serviceRoleKey}`,
-    'Content-Type': 'application/json',
-    Prefer: 'return=minimal',
-  }
-  if (opts.upsertOnConflict) {
-    headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
-  }
-  const url = opts.upsertOnConflict
-    ? `${env.url}/rest/v1/${table}?on_conflict=${encodeURIComponent(opts.upsertOnConflict)}`
-    : `${env.url}/rest/v1/${table}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const errBody = (await readJsonOrText(res)) as RestErrorShape
-    throw new Error(
-      `postgrestWrite ${table} failed (${res.status} ${errBody?.code ?? ''}): ${errBody?.message ?? JSON.stringify(errBody ?? '<empty>')}`
-    )
-  }
-}
-
-async function postgrestDelete(
-  env: ResolvedEnv,
-  table: string,
-  filter: string
-): Promise<RestErrorShape | null> {
-  const res = await fetch(`${env.url}/rest/v1/${table}?${filter}`, {
-    method: 'DELETE',
-    headers: {
-      apikey: env.serviceRoleKey,
-      Authorization: `Bearer ${env.serviceRoleKey}`,
-      Prefer: 'return=minimal',
-    },
-  })
-  if (res.ok) return null
-  return (await readJsonOrText(res)) as RestErrorShape
-}
-
-/**
- * Generate a sk_live_* style key. Format mirrors production
- * (`sk_live_<48-hex>`); the value isn't pretty-printed anywhere user-visible.
- */
-function generateApiKey(): { plain: string; hash: string; prefix: string } {
-  const random = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '').slice(0, 16)
-  const plain = `sk_live_${random}`
-  const hash = createHash('sha256').update(plain).digest('hex')
-  return { plain, hash, prefix: plain.slice(0, 16) }
-}
+export type { UserTier, CounterColumn } from './usage-counter-fixture.types.js'
+export type { ProvisionedUser, ProvisionOptions, UsageRow } from './usage-counter-fixture.types.js'
 
 /**
  * Provision a fresh staging user with profile + license_keys row + auth JWT.
@@ -422,6 +221,96 @@ export function stagingFunctionUrl(fn: string): string {
   return `${env.url}/functions/v1/${fn}`
 }
 
+/** Memoized resolved staging skill identifier — see resolveStagingSkillId. */
+let resolvedStagingSkillId: string | undefined
+
+const NO_VERIFIED_SKILL_ERROR = 'staging has no verified skill — cannot run the usage-counter suite'
+
+/**
+ * Resolve a staging skill identifier (`author/name`) for the usage-counter
+ * E2E suites, with runtime discovery so the suite self-heals against staging
+ * seed-data drift (SMI-4970). A hard-coded constant has rotted twice now
+ * (`anthropic/commit`, then `anthropics/web-artifacts-builder`).
+ *
+ * Resolution order:
+ *   1. `SKILLSMITH_E2E_SKILL_ID` env override — escape hatch, preserved.
+ *   2. Otherwise read the staging `skills` table directly via PostgREST.
+ *
+ * The query goes to the database (`/rest/v1/skills`) with the service-role
+ * key, NOT through the `skills-search` edge function. `skills-search` enforces
+ * an IP-scoped anonymous-trial gate (401 "Free trial exhausted") that a busy
+ * CI runner trips routinely — discovery must not depend on that quota.
+ * Service-role bypasses RLS; the read is plain and unmetered.
+ *
+ * Memoized module-scoped (including the env-override path) so the query runs
+ * at most once per suite run. The fetch has a short timeout and 1 retry,
+ * matching `adminCreateUser`'s 2s-backoff idiom.
+ *
+ * Fail-fast, with two distinct messages so triage stays honest:
+ *   - empty result          → genuinely un-runnable suite (no verified skill).
+ *   - network error / timeout / non-2xx → transient outage, not seed drift.
+ * A malformed row with a null/empty `author` or `name` also throws rather than
+ * yielding a `null/...` identifier and a misleading downstream 404.
+ */
+export async function resolveStagingSkillId(): Promise<string> {
+  if (resolvedStagingSkillId !== undefined) return resolvedStagingSkillId
+
+  const override = process.env['SKILLSMITH_E2E_SKILL_ID']
+  if (override && override.length > 0) {
+    resolvedStagingSkillId = override
+    return resolvedStagingSkillId
+  }
+
+  const env = resolveStagingEnv()
+  const url =
+    `${env.url}/rest/v1/skills` +
+    `?select=author,name&trust_tier=eq.verified&quarantined=eq.false&limit=1`
+
+  const MAX_ATTEMPTS = 2
+  let lastError: unknown
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          apikey: env.serviceRoleKey,
+          Authorization: `Bearer ${env.serviceRoleKey}`,
+        },
+        signal: AbortSignal.timeout(8_000),
+      })
+      if (!res.ok) {
+        throw new Error(`skills query returned ${res.status}`)
+      }
+      // PostgREST returns a bare JSON array of rows.
+      const rows = (await readJsonOrText(res)) as SkillRow[] | undefined
+      const results: SkillRow[] = Array.isArray(rows) ? rows : []
+      if (results.length === 0) {
+        throw new Error(NO_VERIFIED_SKILL_ERROR)
+      }
+      const first = results[0]
+      const author = first?.author
+      const name = first?.name
+      if (!author || author.length === 0 || !name || name.length === 0) {
+        throw new Error(NO_VERIFIED_SKILL_ERROR)
+      }
+      resolvedStagingSkillId = `${author}/${name}`
+      return resolvedStagingSkillId
+    } catch (err) {
+      // The empty-staging / malformed-row error is a deterministic
+      // un-runnable-suite signal — never retry it and never reclassify it.
+      if (err instanceof Error && err.message === NO_VERIFIED_SKILL_ERROR) {
+        throw err
+      }
+      lastError = err
+      if (attempt === MAX_ATTEMPTS) break
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
+  }
+  throw new Error(
+    `staging skills query unreachable — transient outage, not seed drift ` +
+      `(${lastError instanceof Error ? lastError.message : String(lastError)})`
+  )
+}
+
 /** SMI-4741: Insert stale sub row (status='active', current_period_end=yesterday). */
 export async function setStaleSubscriptionRow(userId: string): Promise<void> {
   const env = resolveStagingEnv()
@@ -468,8 +357,6 @@ export function getStagingAnonKey(): string {
 export function getStagingServiceRoleKey(): string {
   return readEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY')
 }
-
-type CounterColumn = 'search_count' | 'get_count' | 'recommend_count'
 
 /**
  * Polling helper — `increment_api_usage` is fire-and-forget downstream of the

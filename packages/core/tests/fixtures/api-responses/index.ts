@@ -146,7 +146,7 @@ export const MOCK_SKILL_MINIMAL: ApiSkill = {
   author: null,
   repo_url: null,
   quality_score: null,
-  trust_tier: 'experimental',
+  trust_tier: 'community',
   tags: [],
   stars: null,
   created_at: '2025-01-01T00:00:00Z',

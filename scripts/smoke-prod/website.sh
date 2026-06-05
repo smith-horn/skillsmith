@@ -212,6 +212,27 @@ check_auth_device_preview_requires_jwt() {
   return 1
 }
 
+# ---- check_sync_stripe_email_requires_jwt -----------------------------
+# SMI-5168. GET without auth. sync-stripe-email is gateway-verified, so a
+# request with no JWT must be rejected by the gateway with 401. 200 (or any
+# non-401) means JWT verification regressed — and this endpoint can mutate a
+# Stripe customer, so a broken gate is high-impact.
+check_sync_stripe_email_requires_jwt() {
+  _require_supabase_url || { report_fail "edge-fn-sync-stripe-email" "check_sync_stripe_email_requires_jwt" "" "SUPABASE_URL" "unset"; return 1; }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/sync-stripe-email"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status GET "$url")
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  if [ "$status" = "401" ]; then
+    report_pass "edge-fn-sync-stripe-email" "check_sync_stripe_email_requires_jwt" "$url" "$ms"
+    return 0
+  fi
+  report_fail "edge-fn-sync-stripe-email" "check_sync_stripe_email_requires_jwt" "$url" "401" "$status" "$ms"
+  return 1
+}
+
 # ---- check_blog_local_db_renders --------------------------------------
 # Verifies the /blog/inside-the-local-skill-database post renders. Uses
 # the page title text as a stable fingerprint — the title is part of the

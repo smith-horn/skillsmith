@@ -255,4 +255,13 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
     riskThreshold: 20,
     maxContentLength: 250_000,
   },
+  // SMI-5205: new public tiers
+  official: {
+    riskThreshold: 80,
+    maxContentLength: 2_000_000,
+  },
+  unverified: {
+    riskThreshold: 20, // Same as unknown — unverified is the public alias for unknown
+    maxContentLength: 250_000,
+  },
 }

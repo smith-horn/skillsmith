@@ -26,6 +26,7 @@ import { MIGRATION_V10_SQL } from './migrations/v10-dependencies.js'
 import { MIGRATION_V12_SQL } from './migrations/v12-risk-score-history.js'
 import { MIGRATION_V13_SQL } from './migrations/v13-team-tables.js'
 import { applyMigrationV16 } from './migrations/v16-skill-source.js'
+import { applyMigrationV17 } from './migrations/v17-curated-trust-tier.js'
 import { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
 
 /**
@@ -44,7 +45,7 @@ export interface Migration {
   apply?: (db: Database) => void
 }
 
-// Reserved: v14 (RBAC), v15 (integrations), v16 → SMI-4665
+// Reserved: v14 (RBAC), v15 (integrations), v16 → SMI-4665, v17 → SMI-4917
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -116,6 +117,11 @@ export const MIGRATIONS: Migration[] = [
     version: 16,
     description: "SMI-4665: source column + extend trust_tier CHECK to allow 'local'",
     apply: applyMigrationV16,
+  },
+  {
+    version: 17,
+    description: "SMI-4917: widen trust_tier CHECK to allow 'curated'",
+    apply: applyMigrationV17,
   },
 ]
 

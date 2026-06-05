@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-04-21T18:30:00.000Z",
+  "generatedAt": "2026-06-02T00:00:00.000Z",
   "allowlist": [
     {
       "skillId": "github/kcmadden/claude-code-1password-skill",
@@ -56,6 +56,24 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-05-06",
       "expiresAt": "2026-08-06"
+    },
+    {
+      "skillId": "github/dokind/qpay-skills",
+      "findingType": "sensitive_path",
+      "messagePattern": "\\.env",
+      "reason": "QPay (Mongolian QR payments) integration skill — its subject matter IS .env credential setup. SKILL.md instructs developers to gitignore .env, never log/echo secrets in plaintext, and never bundle credentials in mobile apps. The bare-keyword sensitive_path regex flags any documented '.env' string. Same class as github/RobinGase/skill-protocol-rs (allowlisted under SMI-4558). Triaged 2026-05-17 under SMI-4934 — Wave 2 sensitive_path tightening (require assignment/path context) will eliminate this class of false positive. Closes GH #1060.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-05-17",
+      "expiresAt": "2026-08-15"
+    },
+    {
+      "skillId": "github/D1DX/secret-capture-skill",
+      "findingType": "sensitive_path",
+      "messagePattern": "\\.env",
+      "reason": "Secret-routing utility (analogous to Varlock) that captures credentials via a hidden-input dialog and routes them to vaults/stores without the value appearing in any tool result, log, or transcript. The env-file adapter writes to a local .env (0600) as one of eight routing destinations; the bare-keyword sensitive_path regex fires on the repo description's mention of '.env file' as a destination. Same false-positive class as github/RobinGase/skill-protocol-rs and github/dokind/qpay-skills. Triaged 2026-05-31 under SMI-5206 — Wave 2 sensitive_path tightening (require assignment/path context) will eliminate this class of false positive. Closes GH #1343.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-05-31",
+      "expiresAt": "2026-08-29"
     }
   ]
 }

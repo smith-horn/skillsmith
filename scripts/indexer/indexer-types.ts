@@ -40,6 +40,8 @@ export interface IndexerResult {
   quarantined: number
   stale: number
   quality_gate_filtered: number
+  /** SMI-4842: Repos rejected as curated `awesome-*` link-lists (not skills). */
+  meta_list_filtered: number
   unchanged: number
   github_skill_count: number
   github_skill_breakdown?: Record<string, number>

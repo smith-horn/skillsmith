@@ -1,27 +1,6 @@
 /**
- * @fileoverview MCP Search Tool for agent skill discovery
- * @module @skillsmith/mcp-server/tools/search
- * @see {@link https://github.com/wrsmith108/skillsmith|Skillsmith Repository}
- * @see SMI-789: Wire search tool to SearchService
- *
- * Provides skill search functionality with support for:
- * - Full-text search across skill names, descriptions, and authors
- * - Category filtering (development, testing, devops, etc.)
- * - Trust tier filtering (verified, curated, community, experimental, unknown)
- * - Minimum quality score filtering
- *
- * @example
- * // Basic search with context
- * const results = await executeSearch({ query: 'commit' }, context);
- *
- * @example
- * // Search with filters
- * const results = await executeSearch({
- *   query: 'test',
- *   category: 'testing',
- *   trust_tier: 'verified',
- *   min_score: 80
- * }, context);
+ * @fileoverview MCP Search Tool — SMI-789 wires search to SearchService.
+ * Supports full-text query + category / trust_tier / min_score filters.
  */
 
 import {
@@ -34,7 +13,9 @@ import {
   SkillsmithError,
   ErrorCodes,
   trackSkillSearch,
+  emitSearchEvent,
 } from '@skillsmith/core'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import {
   extractCategoryFromTags,
@@ -42,27 +23,15 @@ import {
   mapTrustTierFromDb,
 } from '../utils/validation.js'
 import { searchLocalSkills } from './LocalSkillSearch.js'
+// SMI-5178: compatibility helpers extracted to keep search.ts under the 500-line
+// governance limit (search.helpers.ts imports only from @skillsmith/core — no
+// circular dependency).
+import {
+  filterByCompatibility,
+  filterInstallable,
+  resolveDefaultCompatibility,
+} from './search.helpers.js'
 export { formatSearchResults } from './search.formatter.js'
-
-/**
- * SMI-2760: Filter search results by compatibility tags.
- * Skills with no compatibility data are included (permissive — they may be compatible
- * but simply haven't declared it yet). Skills that HAVE declared compatibility must
- * include at least one of the requested IDE or LLM slugs.
- */
-function filterByCompatibility(
-  results: SkillSearchResult[],
-  filter: CompatibilityFilter
-): SkillSearchResult[] {
-  const wanted = new Set([...(filter.ides ?? []), ...(filter.llms ?? [])])
-  if (wanted.size === 0) return results
-  return results.filter(
-    (skill) =>
-      !skill.compatibility ||
-      skill.compatibility.length === 0 ||
-      skill.compatibility.some((tag) => wanted.has(tag))
-  )
-}
 
 /**
  * Search tool schema for MCP
@@ -70,7 +39,7 @@ function filterByCompatibility(
 export const searchToolSchema = {
   name: 'search',
   description:
-    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, limit, compatibility (IDE/LLM).",
+    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Each result carries an `installable` flag — discovery-only entries (installable:false) cannot be installed. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM).",
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -110,6 +79,12 @@ export const searchToolSchema = {
       safe_only: {
         type: 'boolean',
         description: 'Only show skills that passed security scan',
+      },
+      // SMI-4954: Installability filter
+      installable_only: {
+        type: 'boolean',
+        description:
+          'When true, return only installable skills — excludes discovery-only registry entries (no install source) that install_skill cannot resolve.',
       },
       max_risk: {
         type: 'number',
@@ -154,6 +129,8 @@ export interface SearchInput {
   min_score?: number
   /** SMI-825: Only show skills that passed security scan */
   safe_only?: boolean
+  /** SMI-4954: Only return installable skills (excludes discovery-only entries) */
+  installable_only?: boolean
   /** SMI-825: Maximum risk score (0-100, lower is safer) */
   max_risk?: number
   /** SMI-2760: Filter by IDE/LLM compatibility */
@@ -178,7 +155,7 @@ export interface SearchInput {
  * const response = await executeSearch({ query: 'commit' }, context);
  * console.log(`Found ${response.total} skills in ${response.timing.totalMs}ms`);
  */
-export async function executeSearch(
+async function executeSearchImpl(
   input: SearchInput,
   context: ToolContext
 ): Promise<SearchResponse> {
@@ -191,13 +168,14 @@ export async function executeSearch(
     input.trust_tier ||
     input.min_score !== undefined ||
     input.safe_only !== undefined ||
+    input.installable_only !== undefined ||
     input.max_risk !== undefined ||
     input.compatible_with !== undefined
 
   if (!hasQuery && !hasFilters) {
     throw new SkillsmithError(
       ErrorCodes.SEARCH_QUERY_EMPTY,
-      'Provide a search query or at least one filter (category, trust_tier, min_score, safe_only, max_risk)'
+      'Provide a search query or at least one filter (category, trust_tier, min_score, safe_only, installable_only, max_risk)'
     )
   }
 
@@ -251,6 +229,16 @@ export async function executeSearch(
     filters.compatibleWith = input.compatible_with
   }
 
+  // SMI-5178: restrictive cross-tool default — apply ONLY when the user's client
+  // is explicitly set (SKILLSMITH_CLIENT) and no compatible_with was passed. An
+  // unset client stays permissive (show all + report hidden count): the client
+  // resolver falls back to claude-code, so auto-restricting would silently hide
+  // cross-tool content from the unset majority. `[]`/unknown rows always surface.
+  if (filters.compatibleWith === undefined) {
+    const restrictive = resolveDefaultCompatibility(process.env['SKILLSMITH_CLIENT'])
+    if (restrictive) filters.compatibleWith = restrictive
+  }
+
   if (input.max_risk !== undefined) {
     if (input.max_risk < 0 || input.max_risk > 100) {
       throw new SkillsmithError(
@@ -290,12 +278,16 @@ export async function executeSearch(
         trustTier: mapTrustTierFromDb(item.trust_tier),
         score: Math.round((item.quality_score ?? 0) * 100),
         repository: item.repo_url || undefined,
+        // SMI-4954: installable when the registry row carries a repo_url
+        installable: Boolean(item.repo_url),
         // SMI-2734: 'author/name' install ID — valid for all registry API results
         installHint: item.author ? item.author + '/' + item.name : undefined,
-        // SMI-2760: Compatibility tags (populated when API returns them)
-        compatibility: Array.isArray((item as unknown as Record<string, unknown>).compatibility)
-          ? ((item as unknown as Record<string, unknown>).compatibility as string[])
-          : undefined,
+        // SMI-2760 / SMI-5178: compatibility tags. `compatibility` is on ApiSkill
+        // + the Zod schema (so it survives validation at runtime), but the built
+        // ApiSearchResult type does not surface it through the api-client's
+        // ApiResponse<T> at this call site (CI typecheck confirms), so it is read
+        // via a cast — the value is present at runtime.
+        compatibility: (item as unknown as { compatibility?: string[] }).compatibility,
       }))
 
       // SMI-1809: Search local skills and merge with API results
@@ -312,17 +304,28 @@ export async function executeSearch(
       // Merge results: local skills first (since they're user's own), then registry
       // SMI-2760: Apply compatibility filter if requested
       const merged = [...localResults, ...results]
-      const mergedResults = filters.compatibleWith
+      const compatFiltered = filters.compatibleWith
         ? filterByCompatibility(merged, filters.compatibleWith)
         : merged
+      // SMI-5178: page-level count hidden by the compatibility filter (restrictive
+      // default or explicit compatible_with). `[]`/unknown rows are never counted.
+      const compatibilityHidden = merged.length - compatFiltered.length
+      // SMI-4954: apply installable_only after compatibility filtering
+      const mergedResults = filterInstallable(compatFiltered, input.installable_only)
 
       const endTime = performance.now()
 
       const response: SearchResponse = {
         results: mergedResults.slice(0, 10), // Limit to 10 total
-        total: ((apiResponse.meta?.total as number) ?? results.length) + localResults.length,
+        // SMI-4954: when installable_only narrows the page client-side the
+        // registry grand-total no longer describes the returned set — report
+        // the filtered count instead.
+        total: input.installable_only
+          ? mergedResults.length
+          : ((apiResponse.meta?.total as number) ?? results.length) + localResults.length,
         query: input.query || '', // May be empty for filter-only searches
         filters,
+        compatibilityHidden,
         timing: {
           searchMs: Math.round(searchEnd - searchStart),
           totalMs: Math.round(endTime - startTime),
@@ -341,6 +344,18 @@ export async function executeSearch(
             category: filters.category,
           }
         )
+      }
+
+      // SMI-5193: emit to search_metrics via events fn; snake_case required; authenticated only.
+      if (context.distinctId) {
+        emitSearchEvent({
+          query: input.query || '',
+          results_count: response.total,
+          duration_ms: response.timing.totalMs,
+          has_query: Boolean(hasQuery),
+          ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+          ...(filters.category !== undefined && { category: filters.category }),
+        })
       }
 
       return response
@@ -388,6 +403,8 @@ export async function executeSearch(
     trustTier: mapTrustTierFromDb(item.skill.trustTier),
     score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
     repository: item.skill.repoUrl || undefined,
+    // SMI-4954: installable when the local DB row carries a repoUrl
+    installable: Boolean(item.skill.repoUrl),
     // SMI-2734: Only set installHint when author is a real registry owner (not 'unknown')
     installHint:
       item.skill.author && item.skill.author !== 'unknown'
@@ -418,17 +435,27 @@ export async function executeSearch(
   // Merge results: local skills first (since they're user's own), then registry
   // SMI-2760: Apply compatibility filter if requested
   const merged = [...localResults, ...results]
-  const mergedResults = filters.compatibleWith
+  const compatFiltered = filters.compatibleWith
     ? filterByCompatibility(merged, filters.compatibleWith)
     : merged
+  // SMI-5178: page-level count hidden by the compatibility filter (restrictive
+  // default or explicit compatible_with). `[]`/unknown rows are never counted.
+  const compatibilityHidden = merged.length - compatFiltered.length
+  // SMI-4954: apply installable_only after compatibility filtering
+  const mergedResults = filterInstallable(compatFiltered, input.installable_only)
 
   const endTime = performance.now()
 
   const response: SearchResponse = {
     results: mergedResults.slice(0, 10), // Limit to 10 total
-    total: searchResults.total + localResults.length,
+    // SMI-4954: when installable_only narrows the page client-side the total
+    // no longer describes the returned set — report the filtered count.
+    total: input.installable_only
+      ? mergedResults.length
+      : searchResults.total + localResults.length,
     query: input.query || '', // May be empty for filter-only searches
     filters,
+    compatibilityHidden,
     timing: {
       searchMs: Math.round(searchEnd - searchStart),
       totalMs: Math.round(endTime - startTime),
@@ -449,5 +476,24 @@ export async function executeSearch(
     )
   }
 
+  // SMI-5193: emit to search_metrics (local-fallback path); authenticated only.
+  if (context.distinctId) {
+    emitSearchEvent({
+      query: input.query || '',
+      results_count: response.total,
+      duration_ms: response.timing.totalMs,
+      has_query: Boolean(hasQuery),
+      ...(filters.trustTier !== undefined && { trust_tier: filters.trustTier }),
+      ...(filters.category !== undefined && { category: filters.category }),
+    })
+  }
+
   return response
 }
+
+// SMI-5017 W2.S2 wrap (isTelemetered=true). Framework placeholder per H4.
+export const executeSearch = withTelemetry(executeSearchImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'search',
+  extractFramework: () => 'unknown',
+})

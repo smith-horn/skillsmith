@@ -7,24 +7,30 @@
  * NOTE: Database tiers must match database schema (packages/core/src/database/schema.ts)
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  * SMI-2381: Added 'curated' for third-party publishers opted into the registry
+ * SMI-5205: Added 'official' and 'unverified' to align API wire format with public 5-tier model
  */
 export type TrustTier =
+  | 'official' // SMI-5205: Platform/partner skills, full security review
   | 'verified' // Manually reviewed and verified
-  | 'community' // High community ratings
-  | 'experimental' // New or beta skills
   | 'curated' // SMI-2381: Third-party publisher, manually opted in
-  | 'unknown' // Not yet assessed
+  | 'community' // High community ratings
+  | 'experimental' // New or beta skills (internal only, not returned by public API)
+  | 'unknown' // Not yet assessed (internal only, not returned by public API)
+  | 'unverified' // SMI-5205: No verification performed (public alias for unknown)
   | 'local' // SMI-1809: Local skills from ~/.claude/skills/
 
 /**
  * Trust tier descriptions for user display
  */
 export const TrustTierDescriptions: Record<TrustTier, string> = {
+  official:
+    'Official or partner skill with full security review. Maintained by Skillsmith or verified partners.',
   verified: 'Manually reviewed by the Skillsmith team. High quality and safe to use.',
+  curated: 'Third-party publisher. Manually opted into the registry.',
   community: 'Highly rated by the community. Generally reliable.',
   experimental: 'New or beta skill. Use with caution.',
-  curated: 'Third-party publisher. Manually opted into the registry.',
   unknown: 'Not yet assessed. Review carefully before using.',
+  unverified: 'No verification performed. Review carefully before installing.',
   local: 'Local skill from your ~/.claude/skills/ directory. You control this skill.',
 }
 
@@ -78,6 +84,12 @@ export interface Skill {
   description: string
   author: string
   repository?: string
+  /**
+   * SMI-4954: True when the skill has an installable source (registry `repo_url`
+   * present). When false/undefined the skill is a discovery-only entry (SMI-2723)
+   * and `install_skill` will not resolve it. Always populated by `get_skill`.
+   */
+  installable?: boolean
   version?: string
   category: SkillCategory
   trustTier: TrustTier
@@ -108,6 +120,12 @@ export interface SkillSearchResult {
   score: number
   /** GitHub repository URL (may be undefined for seed data/metadata-only skills) */
   repository?: string
+  /**
+   * SMI-4954: True when the skill is installable (registry `repo_url` present).
+   * When false the skill is a discovery-only entry (SMI-2723) and `install_skill`
+   * will not resolve it. Always populated by `search`.
+   */
+  installable?: boolean
   /** SMI-825: Security scan summary */
   security?: SecuritySummary
   /** SMI-1809: Source of the skill ('local' for ~/.claude/skills/, 'registry' for API) */
@@ -152,6 +170,13 @@ export interface SearchResponse {
   total: number
   query: string
   filters: SearchFilters
+  /**
+   * SMI-5178: results on this page hidden by the compatibility filter — the
+   * restrictive cross-tool default (explicit SKILLSMITH_CLIENT) or an explicit
+   * `compatible_with`. 0 / absent when no compat filter applied. `[]`/unknown
+   * rows are never hidden (they always surface).
+   */
+  compatibilityHidden?: number
   timing: {
     searchMs: number
     totalMs: number

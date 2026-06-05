@@ -21,7 +21,6 @@ import { type GitHubRepository, countGitHubSkillFiles } from './topic-search.ts'
 import {
   GITHUB_API_DELAY,
   delay,
-  summarizeRateLimitTelemetry,
   type TokenBucket,
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
@@ -29,18 +28,18 @@ import { type SkillMdValidation } from './skill-processor.ts'
 import { reconcileStaleSkills } from './stale-reconciliation.ts'
 import { notifyBulkQuarantine } from './_shared/notification.ts'
 import { runSubdirectorySearch } from './subdirectory-search.ts'
-import {
-  runCategorization,
-  runCodeSearch,
-  runUpsertPhase,
-  writeIndexerAuditLog,
-} from './indexer-runners.ts'
+import { runCategorization, runCodeSearch, runUpsertPhase } from './indexer-runners.ts'
 import { applyTreeHashTouches, type TreeHashTouchEntry } from './tree-hash-touch.ts'
 import type { RotationSource } from './topic-rotation.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import { runHighTrustPhase } from './phases/high-trust.ts'
 import { runTopicSearchPhase } from './phases/topic-search.ts'
 import type { TreeHashCache, TreeHashCacheCounters } from './high-trust-indexer.ts'
+import {
+  type DiscoveryPhase,
+  selectCategorizationRepoUrls,
+  writeDiscoveryAuditLog,
+} from './discovery-orchestrator.phase-split.ts'
 
 /**
  * Parameters for `runDiscovery`.
@@ -106,6 +105,19 @@ export interface RunDiscoveryParams {
    * `RunSummary.meta.kill_switch_engaged` value into `audit_logs.metadata.meta`.
    */
   killSwitchEngaged: boolean
+  /**
+   * SMI-4870 Wave 2: per-phase sub-slot selector. The single discovery cron
+   * is split into 3 hourly sub-slots, each a separate Node process running
+   * ONE phase:
+   *   1 → Phase 1 (high-trust) + Phase 4 upsert + Phase 7 audit.
+   *   2 → Phase 2 (topic search) + Phase 4 upsert + Phase 7 audit.
+   *   3 → Phase 3a/3b (code search) + Phase 4 upsert + finalize
+   *       (Phase 5 categorize, Phase 6 stale) + Phase 7 audit.
+   * UNSET (`undefined`) → legacy `workflow_dispatch` / maintenance path: all
+   * 7 phases run in sequence over the shared in-memory accumulators,
+   * byte-identical to pre-SMI-4870 behaviour.
+   */
+  discoveryPhase?: DiscoveryPhase
 }
 
 export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerResult> {
@@ -128,7 +140,18 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     telemetry,
     concurrency,
     killSwitchEngaged,
+    discoveryPhase,
   } = params
+
+  // SMI-4870: phase gates. When `discoveryPhase` is unset every gate is true,
+  // so the legacy all-phases-in-sequence path is byte-identical. When a
+  // sub-slot is selected only that phase's discovery work runs; Phase 4
+  // upsert and Phase 7 audit always run; the FINALIZE phases (5 categorize,
+  // 6 stale) run only in the phase-3 sub-slot (or the legacy path).
+  const runPhase1 = discoveryPhase === undefined || discoveryPhase === 1
+  const runPhase2 = discoveryPhase === undefined || discoveryPhase === 2
+  const runPhase3 = discoveryPhase === undefined || discoveryPhase === 3
+  const runFinalize = discoveryPhase === undefined || discoveryPhase === 3
 
   // SMI-4861 Wave 1: per-skill tree-hash cache counters. Accumulated by
   // Phase 1 only (blob SHAs require Trees API). Safe under pMapBounded
@@ -147,6 +170,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     quarantined: 0,
     stale: 0,
     quality_gate_filtered: 0,
+    meta_list_filtered: 0,
     unchanged: 0,
     github_skill_count: 0,
     high_trust_wildcard: {
@@ -166,38 +190,50 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   // Plan issue #14: extracted to phases/high-trust.ts to keep this file < 350 LOC.
   // SMI-4861 cache-refresh-on-hit: collect per-hit touches; batch-refresh
   // last_tree_hash_check after Phase 1 so cached rows stay fresh.
-  const treeHashTouches: TreeHashTouchEntry[] = []
-  const phase1 = await runHighTrustPhase({
-    validationCache,
-    validationOptions,
-    telemetry,
-    concurrency,
-    treeHashCache,
-    cacheCounters,
-    treeHashTouches,
-  })
-  if (treeHashTouches.length > 0) {
-    const touchResult = await applyTreeHashTouches(supabase, treeHashTouches)
-    if (touchResult.errors.length > 0) {
-      console.warn(
-        `[Phase1] tree_hash touch errors (${touchResult.errors.length}/${treeHashTouches.length}): ${touchResult.errors.slice(0, 3).join('; ')}`
+  // SMI-4870: `highTrustSkillMap` + `wildcardExpansionCount` are consumed by
+  // Phase 4 / Phase 7. They default empty/0 when Phase 1 is skipped so the
+  // downstream phases stay shape-stable in the phase-2/3 sub-slots.
+  const highTrustSkillMap: Map<string, HighTrustAuthor> = new Map()
+  let wildcardExpansionCount = 0
+  if (runPhase1) {
+    const treeHashTouches: TreeHashTouchEntry[] = []
+    const phase1 = await runHighTrustPhase({
+      validationCache,
+      validationOptions,
+      telemetry,
+      concurrency,
+      treeHashCache,
+      cacheCounters,
+      treeHashTouches,
+    })
+    if (treeHashTouches.length > 0) {
+      const touchResult = await applyTreeHashTouches(supabase, treeHashTouches)
+      if (touchResult.errors.length > 0) {
+        console.warn(
+          `[Phase1] tree_hash touch errors (${touchResult.errors.length}/${treeHashTouches.length}): ${touchResult.errors.slice(0, 3).join('; ')}`
+        )
+      }
+      console.log(
+        `[Phase1] tree_hash touches: ${touchResult.ok}/${treeHashTouches.length} refreshed`
       )
     }
-    console.log(`[Phase1] tree_hash touches: ${touchResult.ok}/${treeHashTouches.length} refreshed`)
-  }
-  for (const skill of phase1.repos) {
-    if (!seenUrls.has(skill.url)) {
-      seenUrls.add(skill.url)
-      repositories.push(skill)
+    for (const skill of phase1.repos) {
+      if (!seenUrls.has(skill.url)) {
+        seenUrls.add(skill.url)
+        repositories.push(skill)
+      }
     }
-  }
-  result.errors.push(...phase1.errors)
-  const highTrustSkillMap: Map<string, HighTrustAuthor> = phase1.highTrustSkillMap
-  result.high_trust_wildcard = {
-    authors_with_wildcards: phase1.authorsWithWildcards,
-    total_paths_expanded: phase1.wildcardExpansionCount,
-    trees_api_calls: phase1.treesApiCallCount,
-    truncated_responses: phase1.truncatedResponseCount,
+    result.errors.push(...phase1.errors)
+    for (const [url, author] of phase1.highTrustSkillMap) {
+      highTrustSkillMap.set(url, author)
+    }
+    wildcardExpansionCount = phase1.wildcardExpansionCount
+    result.high_trust_wildcard = {
+      authors_with_wildcards: phase1.authorsWithWildcards,
+      total_paths_expanded: phase1.wildcardExpansionCount,
+      trees_api_calls: phase1.treesApiCallCount,
+      truncated_responses: phase1.truncatedResponseCount,
+    }
   }
   // Reference HIGH_TRUST_AUTHORS to preserve the import surface used by the
   // Phase-1 logging contract — the parent orchestrator owns the audit-log
@@ -210,25 +246,33 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   // branch never reaches this path).
   const freshnessDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
 
-  const phase2 = await runTopicSearchPhase({
-    topics,
-    maxPages,
-    maxTopicRepos,
-    freshnessDate,
-    seenUrls,
-    repositories,
-    validationCache,
-    validationOptions,
-    searchApiTokenBucket,
-    existingRepoUpdatedAt,
-    telemetry,
-  })
-  result.errors.push(...phase2.errors)
-  result.failed += phase2.failed
-  result.found = highTrustSkillMap.size + phase2.topicSearchFound
-  console.log(
-    `[Phase2] skip-gate hits: ${phase2.phase2SkipGateHits} of ${phase2.topicRepoCount} repos (skipped checkSkillMdExists)`
-  )
+  // SMI-4870: in a phase-2 sub-slot `seenUrls`/`repositories` start empty
+  // (Phase 1 didn't run in this process). That is correct — cross-process
+  // dedup of *unchanged* repos is handled by the `existingRepoUpdatedAt`
+  // prefetch (process-independent), not by the in-memory accumulators.
+  let topicSearchFound = 0
+  if (runPhase2) {
+    const phase2 = await runTopicSearchPhase({
+      topics,
+      maxPages,
+      maxTopicRepos,
+      freshnessDate,
+      seenUrls,
+      repositories,
+      validationCache,
+      validationOptions,
+      searchApiTokenBucket,
+      existingRepoUpdatedAt,
+      telemetry,
+    })
+    result.errors.push(...phase2.errors)
+    result.failed += phase2.failed
+    topicSearchFound = phase2.topicSearchFound
+    console.log(
+      `[Phase2] skip-gate hits: ${phase2.phase2SkipGateHits} of ${phase2.topicRepoCount} repos (skipped checkSkillMdExists)`
+    )
+  }
+  result.found = highTrustSkillMap.size + topicSearchFound
 
   // ── Phase 3a: Code search for root-level SKILL.md ────────────────────
   // SMI-4861 Wave 1 / SMI-4859: env-gated default OFF. Phase 3a has produced
@@ -237,7 +281,8 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   // SKILLSMITH_ENABLE_CODE_SEARCH=true. Pattern mirrors Phase 3b at :230 —
   // direct process.env read, NOT threaded through IndexerEnv (would be a
   // separate refactor of parse-env.ts covering both phases).
-  if (process.env.SKILLSMITH_ENABLE_CODE_SEARCH === 'true') {
+  // SMI-4870: only the phase-3 sub-slot (or the legacy path) runs code search.
+  if (runPhase3 && process.env.SKILLSMITH_ENABLE_CODE_SEARCH === 'true') {
     try {
       const {
         repos: codeRepos,
@@ -266,13 +311,19 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   } else {
     // Phase 3a disabled — surface as a zero-counter so audit telemetry is
     // unambiguous (vs. older crons where the phase ran but found 0).
-    result.code_search = { repos_found: 0, retries: 0, error: 'disabled_by_env' }
+    // SMI-4870: distinguish "not this sub-slot" from "env-disabled".
+    result.code_search = {
+      repos_found: 0,
+      retries: 0,
+      error: runPhase3 ? 'disabled_by_env' : 'skipped_phase_split',
+    }
   }
 
   // ── Phase 3b: Subdirectory code search (SMI-2660) ────────────────────
   // Gated by env var — each path prefix costs 1 code search API call per run.
   // Enable with: SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=true
-  if (process.env.SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH === 'true') {
+  // SMI-4870: only the phase-3 sub-slot (or the legacy path) runs subdir search.
+  if (runPhase3 && process.env.SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH === 'true') {
     try {
       const subdirResult = await runSubdirectorySearch(
         seenUrls,
@@ -310,16 +361,21 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     }
   }
 
-  // Count total SKILL.md files on GitHub for homepage stats display
-  const {
-    total: githubSkillCount,
-    breakdown: githubSkillBreakdown,
-    error: countError,
-  } = await countGitHubSkillFiles(telemetry)
-  result.github_skill_count = githubSkillCount
-  result.github_skill_breakdown = githubSkillBreakdown
-  if (countError) console.warn(`[SkillCount] ${countError}`)
-  await delay(GITHUB_API_DELAY)
+  // Count total SKILL.md files on GitHub for homepage stats display.
+  // SMI-4870: this homepage-stats GitHub call runs once per cycle — in the
+  // phase-3 sub-slot (or the legacy path) — so the 3-sub-slot split doesn't
+  // triple the API cost. Phase-1/2 sub-slots leave `github_skill_count` at 0.
+  if (runFinalize) {
+    const {
+      total: githubSkillCount,
+      breakdown: githubSkillBreakdown,
+      error: countError,
+    } = await countGitHubSkillFiles(telemetry)
+    result.github_skill_count = githubSkillCount
+    result.github_skill_breakdown = githubSkillBreakdown
+    if (countError) console.warn(`[SkillCount] ${countError}`)
+    await delay(GITHUB_API_DELAY)
+  }
 
   // ── Phase 4: Database upsert ─────────────────────────────────────────
   const upsertResult = await runUpsertPhase(
@@ -336,44 +392,62 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   result.quarantined = upsertResult.quarantined
   result.unchanged = upsertResult.unchanged
   result.quality_gate_filtered = upsertResult.quality_gate_filtered
+  result.meta_list_filtered = upsertResult.meta_list_filtered
   result.errors.push(...upsertResult.errors)
 
   let categorizedCount = 0
   let categoryAssignments = 0
 
-  if (!dryRun && repositories.length > 0) {
-    // ── Phase 5: Categorization ────────────────────────────────────────
-    const catResult = await runCategorization(
-      supabase,
-      repositories.map((r) => r.url)
-    )
-    categorizedCount = catResult.categorizedCount
-    categoryAssignments = catResult.categoryAssignments
-    result.errors.push(...catResult.errors)
+  // SMI-4870: in the legacy (`discoveryPhase` unset) path the whole finalize
+  // block is still gated on `repositories.length > 0`, byte-identical to
+  // before. In a sub-slot we always reach Phase 7 (each sub-slot writes its
+  // own audit row), and Phases 5/6 run only in the phase-3 sub-slot.
+  const runFinalizeBlock = !dryRun && (discoveryPhase !== undefined || repositories.length > 0)
 
-    // ── Phase 6: Stale reconciliation ──────────────────────────────────
-    const rawStaleThreshold = body.staleThresholdDays
-    const staleThresholdDays =
-      typeof rawStaleThreshold === 'number' && !isNaN(rawStaleThreshold) ? rawStaleThreshold : 30
-    const staleResult = await reconcileStaleSkills(supabase, staleThresholdDays)
-    result.stale = staleResult.staleQuarantined
-    result.errors.push(...staleResult.errors)
+  if (runFinalizeBlock) {
+    if (runFinalize) {
+      // ── Phase 5: Categorization ──────────────────────────────────────
+      // SMI-4870 fix #8: in a phase-3 sub-slot the in-memory `repositories[]`
+      // holds only Phase 3's repos (empty — Phase 3 is env-gated off), so
+      // iterating it would categorize nothing. Source the repo list from the
+      // `skills` table instead (rows touched this cycle / never categorized).
+      // The legacy path keeps its in-memory behaviour — no regression.
+      const catRepoUrls = discoveryPhase === undefined ? repositories.map((r) => r.url) : undefined
+      let repoUrlsForCategorization: string[]
+      if (catRepoUrls !== undefined) {
+        repoUrlsForCategorization = catRepoUrls
+      } else {
+        const selected = await selectCategorizationRepoUrls(supabase)
+        repoUrlsForCategorization = selected.repoUrls
+        result.errors.push(...selected.errors)
+      }
+      const catResult = await runCategorization(supabase, repoUrlsForCategorization)
+      categorizedCount = catResult.categorizedCount
+      categoryAssignments = catResult.categoryAssignments
+      result.errors.push(...catResult.errors)
 
-    // SMI-3347: Notify if any author had >= 3 skills quarantined in this run
-    if (staleResult.quarantinedIds.length > 0 && !dryRun) {
-      await notifyBulkQuarantine(supabase, staleResult.quarantinedIds)
+      // ── Phase 6: Stale reconciliation ────────────────────────────────
+      const rawStaleThreshold = body.staleThresholdDays
+      const staleThresholdDays =
+        typeof rawStaleThreshold === 'number' && !isNaN(rawStaleThreshold) ? rawStaleThreshold : 30
+      const staleResult = await reconcileStaleSkills(supabase, staleThresholdDays)
+      result.stale = staleResult.staleQuarantined
+      result.errors.push(...staleResult.errors)
+
+      // SMI-3347: Notify if any author had >= 3 skills quarantined in this run
+      if (staleResult.quarantinedIds.length > 0 && !dryRun) {
+        await notifyBulkQuarantine(supabase, staleResult.quarantinedIds)
+      }
     }
 
-    // ── Phase 7: Audit log ─────────────────────────────────────────────
-    // SMI-4857: Build the run-scoped meta envelope mirroring the stdout
-    // `RunSummary.meta` shape from `run.ts`. Persisted under
-    // `audit_logs.metadata.meta` so SQL monitors (SMI-4861 API-budget tracking)
-    // can read rate-limit + kill-switch state without re-deriving from views.
-    const rateLimitSummary = summarizeRateLimitTelemetry(telemetry)
-    await writeIndexerAuditLog(supabase, result.failed === 0 ? 'success' : 'partial', {
+    // ── Phase 7: Audit log ───────────────────────────────────────────────
+    // SMI-4870: every sub-slot writes its own audit row; the payload assembly
+    // lives in `writeDiscoveryAuditLog` (phase-split helper) so this file
+    // stays under its LOC budget. `discovery_phase` is recorded in the meta
+    // envelope so monitoring can `GROUP BY` cycle.
+    await writeDiscoveryAuditLog(supabase, {
       requestId,
       topics,
-      runType: 'discovery',
       dryRun,
       found: result.found,
       indexed: result.indexed,
@@ -381,6 +455,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       failed: result.failed,
       stale: result.stale,
       quality_gate_filtered: result.quality_gate_filtered,
+      meta_list_filtered: result.meta_list_filtered,
       unchanged: result.unchanged,
       quarantined: result.quarantined,
       github_skill_count: result.github_skill_count,
@@ -388,28 +463,18 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       scoreDistribution: upsertResult.scoreDistribution,
       categorizedCount,
       categoryAssignments,
-      wildcard_expansion_count: phase1.wildcardExpansionCount,
+      wildcardExpansionCount,
       subdirectory_search: result.subdirectory_search,
-      cron_slot: cronSlot,
-      rotation_source: rotationSource,
-      discovery_path_counts: upsertResult.discoveryPathCounts,
-      high_trust_fallback_hits: upsertResult.high_trust_fallback_hits,
-      meta: {
-        request_id: requestId,
-        run_type: 'discovery',
-        rate_limit_remaining_min: rateLimitSummary.rate_limit_remaining_min,
-        secondary_rate_limit_hits: rateLimitSummary.secondary_rate_limit_hits,
-        retry_after_max_seconds: rateLimitSummary.retry_after_max_seconds,
-        concurrency,
-        kill_switch_engaged: killSwitchEngaged,
-        topics,
-        cron_slot: cronSlot,
-        rotation_source: rotationSource,
-        // SMI-4861 Wave 1: tree-hash cache observability. Phase 1 sole
-        // contributor in this wave; Wave 4 may extend to Phase 2 / 3a.
-        tree_hash_cache_hits: cacheCounters.hits,
-        tree_hash_cache_misses: cacheCounters.misses,
-      },
+      cronSlot,
+      rotationSource,
+      discoveryPathCounts: upsertResult.discoveryPathCounts,
+      highTrustFallbackHits: upsertResult.high_trust_fallback_hits,
+      telemetry,
+      concurrency,
+      killSwitchEngaged,
+      treeHashCacheHits: cacheCounters.hits,
+      treeHashCacheMisses: cacheCounters.misses,
+      discoveryPhase: discoveryPhase ?? null,
     })
   }
 

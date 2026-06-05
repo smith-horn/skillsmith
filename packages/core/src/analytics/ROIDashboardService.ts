@@ -12,7 +12,16 @@ import type { Database as DatabaseType } from '../db/database-interface.js'
 import { ValidationError } from '../validation/validation-error.js'
 import { AnalyticsRepository } from './AnalyticsRepository.js'
 import { convertROIToCSV } from './ROIDashboardService.csv.js'
-import type { ROIDashboard, ROIMetrics, ExportFormat, UsageEvent } from './types.js'
+import {
+  calculateTimeSaved,
+  groupBySkill,
+  calculateWeeklyTrend,
+  computeStakeholderROIOnTheFly,
+  computeUserMetrics,
+  computeSkillMetrics,
+  computeDailyMetrics,
+} from './ROIDashboardService.compute.js'
+import type { ROIDashboard, ROIMetrics, ExportFormat } from './types.js'
 
 export interface ROIComputeOptions {
   userId?: string
@@ -71,24 +80,29 @@ export class ROIDashboardService {
     const events = this.repo.getUsageEventsForUser(userId, startDate, endDate)
 
     // Calculate total time saved
-    const totalTimeSaved = this.calculateTimeSaved(events)
+    const totalTimeSaved = calculateTimeSaved(events, this.TIME_SAVED_PER_SUCCESS)
 
     // Estimate value in USD
     const estimatedValueUsd = totalTimeSaved * this.VALUE_PER_MINUTE
 
     // Get top skills for this user
-    const skillUsage = this.groupBySkill(events)
+    const skillUsage = groupBySkill(events)
     const topSkills = Object.entries(skillUsage)
       .map(([skillId, skillEvents]) => ({
         skillId,
         skillName: skillId, // In production, lookup skill name from skills table
-        timeSaved: this.calculateTimeSaved(skillEvents),
+        timeSaved: calculateTimeSaved(skillEvents, this.TIME_SAVED_PER_SUCCESS),
       }))
       .sort((a, b) => b.timeSaved - a.timeSaved)
       .slice(0, 5)
 
     // Calculate weekly trend (filtered to [startDate, endDate])
-    const weeklyTrend = this.calculateWeeklyTrend(events, startDate, endDate)
+    const weeklyTrend = calculateWeeklyTrend(
+      events,
+      startDate,
+      endDate,
+      this.TIME_SAVED_PER_SUCCESS
+    )
 
     return {
       userId,
@@ -118,7 +132,9 @@ export class ROIDashboardService {
 
     if (metrics.length === 0) {
       // No precomputed metrics, compute on-the-fly (slower)
-      return this.computeStakeholderROIOnTheFly(startDate, endDate)
+      return computeStakeholderROIOnTheFly(this.repo, startDate, endDate, (a, b) =>
+        this.assertValidRange(a, b)
+      )
     }
 
     // Aggregate from precomputed metrics
@@ -192,15 +208,29 @@ export class ROIDashboardService {
 
     if (options.userId) {
       // Compute for specific user
-      const metrics = this.computeUserMetrics(options.userId, startDate, endDate)
+      const metrics = computeUserMetrics(
+        this.repo,
+        options.userId,
+        startDate,
+        endDate,
+        this.TIME_SAVED_PER_SUCCESS,
+        this.VALUE_PER_MINUTE
+      )
       computed.push(this.repo.storeROIMetrics(metrics))
     } else if (options.skillId) {
       // Compute for specific skill
-      const metrics = this.computeSkillMetrics(options.skillId, startDate, endDate)
+      const metrics = computeSkillMetrics(
+        this.repo,
+        options.skillId,
+        startDate,
+        endDate,
+        this.TIME_SAVED_PER_SUCCESS,
+        this.VALUE_PER_MINUTE
+      )
       computed.push(this.repo.storeROIMetrics(metrics))
     } else {
       // Compute daily aggregate
-      const metrics = this.computeDailyMetrics(startDate, endDate)
+      const metrics = computeDailyMetrics(startDate, endDate)
       computed.push(this.repo.storeROIMetrics(metrics))
     }
 
@@ -241,8 +271,6 @@ export class ROIDashboardService {
 
     // In production, also compute per-user and per-skill metrics
   }
-
-  // ==================== Private Helper Methods ====================
 
   private getDateRange(days: number): { startDate: string; endDate: string } {
     // SMI-4317: fail fast on non-positive-integer `days`. Without this guard,
@@ -321,177 +349,6 @@ export class ROIDashboardService {
         'Invalid range: startDate must be before endDate',
         'INVALID_DATE_RANGE'
       )
-    }
-  }
-
-  private calculateTimeSaved(events: UsageEvent[]): number {
-    const successCount = events.filter((e) => e.eventType === 'success').length
-    return successCount * this.TIME_SAVED_PER_SUCCESS
-  }
-
-  private groupBySkill(events: UsageEvent[]): Record<string, UsageEvent[]> {
-    const groups: Record<string, UsageEvent[]> = {}
-    for (const event of events) {
-      if (!groups[event.skillId]) {
-        groups[event.skillId] = []
-      }
-      groups[event.skillId].push(event)
-    }
-    return groups
-  }
-
-  private calculateWeeklyTrend(
-    events: UsageEvent[],
-    startDate: string,
-    endDate: string
-  ): Array<{ week: string; timeSaved: number }> {
-    // Filter events to the requested inclusive range (SMI-1683 / GitHub #603).
-    // ISO-8601 timestamps sort lexicographically, so string comparison is correct.
-    const filtered = events.filter(
-      (event) => event.timestamp >= startDate && event.timestamp <= endDate
-    )
-
-    // Group filtered events by week
-    const weeklyGroups: Record<string, UsageEvent[]> = {}
-
-    for (const event of filtered) {
-      const weekStart = this.getWeekStart(event.timestamp)
-      if (!weeklyGroups[weekStart]) {
-        weeklyGroups[weekStart] = []
-      }
-      weeklyGroups[weekStart].push(event)
-    }
-
-    // Calculate time saved per week
-    return Object.entries(weeklyGroups)
-      .map(([week, weekEvents]) => ({
-        week,
-        timeSaved: this.calculateTimeSaved(weekEvents),
-      }))
-      .sort((a, b) => a.week.localeCompare(b.week))
-  }
-
-  private getWeekStart(timestamp: string): string {
-    const date = new Date(timestamp)
-    const day = date.getDay()
-    const diff = date.getDate() - day + (day === 0 ? -6 : 1) // Adjust for Sunday
-    const weekStart = new Date(date.setDate(diff))
-    return weekStart.toISOString().split('T')[0]
-  }
-
-  private computeStakeholderROIOnTheFly(
-    startDate: string,
-    endDate: string
-  ): ROIDashboard['stakeholder'] {
-    // SMI-1683 scope: validate the date range even though the on-the-fly branch
-    // still returns zeroed stakeholder data. This guards callers from passing
-    // malformed ranges while the event-query implementation remains deferred.
-    //
-    // DESCOPE: The actual event aggregation (users, activations, time saved,
-    // leaderboard) lands in SMI-4296. Until then this method intentionally
-    // returns a zeroed struct regardless of the events present in the range,
-    // and the unit test for this branch asserts the zeroed shape to document
-    // the incompleteness.
-    this.assertValidRange(startDate, endDate)
-
-    return {
-      totalUsers: 0,
-      totalActivations: 0,
-      avgTimeSavedPerUser: 0,
-      totalEstimatedValue: 0,
-      adoptionRate: 0,
-      skillLeaderboard: [],
-    }
-  }
-
-  private computeUserMetrics(
-    userId: string,
-    startDate: string,
-    endDate: string
-  ): Omit<ROIMetrics, 'id' | 'createdAt'> {
-    const events = this.repo.getUsageEventsForUser(userId, startDate, endDate)
-
-    const totalActivations = events.filter((e) => e.eventType === 'activation').length
-    const totalInvocations = events.filter((e) => e.eventType === 'invocation').length
-    const totalSuccesses = events.filter((e) => e.eventType === 'success').length
-    const totalFailures = events.filter((e) => e.eventType === 'failure').length
-
-    const valueScores = events.filter((e) => e.valueScore != null).map((e) => e.valueScore!)
-    const avgValueScore =
-      valueScores.length > 0 ? valueScores.reduce((sum, s) => sum + s, 0) / valueScores.length : 0
-
-    const estimatedTimeSaved = totalSuccesses * this.TIME_SAVED_PER_SUCCESS
-    const estimatedValueUsd = estimatedTimeSaved * this.VALUE_PER_MINUTE
-
-    return {
-      metricType: 'user',
-      entityId: userId,
-      periodStart: startDate,
-      periodEnd: endDate,
-      totalActivations,
-      totalInvocations,
-      totalSuccesses,
-      totalFailures,
-      avgValueScore,
-      estimatedTimeSaved,
-      estimatedValueUsd,
-      computedAt: new Date().toISOString(),
-    }
-  }
-
-  private computeSkillMetrics(
-    skillId: string,
-    startDate: string,
-    endDate: string
-  ): Omit<ROIMetrics, 'id' | 'createdAt'> {
-    const events = this.repo.getUsageEventsForSkill(skillId, startDate, endDate)
-
-    const totalActivations = events.filter((e) => e.eventType === 'activation').length
-    const totalInvocations = events.filter((e) => e.eventType === 'invocation').length
-    const totalSuccesses = events.filter((e) => e.eventType === 'success').length
-    const totalFailures = events.filter((e) => e.eventType === 'failure').length
-
-    const valueScores = events.filter((e) => e.valueScore != null).map((e) => e.valueScore!)
-    const avgValueScore =
-      valueScores.length > 0 ? valueScores.reduce((sum, s) => sum + s, 0) / valueScores.length : 0
-
-    const estimatedTimeSaved = totalSuccesses * this.TIME_SAVED_PER_SUCCESS
-    const estimatedValueUsd = estimatedTimeSaved * this.VALUE_PER_MINUTE
-
-    return {
-      metricType: 'skill',
-      entityId: skillId,
-      periodStart: startDate,
-      periodEnd: endDate,
-      totalActivations,
-      totalInvocations,
-      totalSuccesses,
-      totalFailures,
-      avgValueScore,
-      estimatedTimeSaved,
-      estimatedValueUsd,
-      computedAt: new Date().toISOString(),
-    }
-  }
-
-  private computeDailyMetrics(
-    startDate: string,
-    endDate: string
-  ): Omit<ROIMetrics, 'id' | 'createdAt'> {
-    // In production, aggregate from all events
-    // For now, return empty metrics
-    return {
-      metricType: 'daily',
-      periodStart: startDate,
-      periodEnd: endDate,
-      totalActivations: 0,
-      totalInvocations: 0,
-      totalSuccesses: 0,
-      totalFailures: 0,
-      avgValueScore: 0,
-      estimatedTimeSaved: 0,
-      estimatedValueUsd: 0,
-      computedAt: new Date().toISOString(),
     }
   }
 }

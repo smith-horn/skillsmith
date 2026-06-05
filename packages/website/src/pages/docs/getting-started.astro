@@ -117,11 +117,9 @@ EOF`}</code></pre>
   <p><strong>Option 3: MCP Client Settings</strong> (MCP server only)</p>
 
   <p>
-    Skillsmith is MCP-compatible — pick the snippet for your agent. SMI-4580: every
-    snippet uses the same shape; the only differences are the config-file path and
-    (for Codex) the format. Snippets are sourced from
-    <code>@skillsmith/cli/templates/mcp-server.template.snippets.ts</code> so this
-    page can't drift from the scaffolded README.
+    Skillsmith is MCP-compatible — pick the snippet for your agent. Every
+    snippet uses the same shape; the only differences are the config-file path
+    and (for Codex) the format.
   </p>
 
   <details>
@@ -215,7 +213,7 @@ SKILLSMITH_API_KEY = "sk_live_your_key_here"`}</code></pre>
     <p>Read by any agent honouring the cross-agent skill convention.</p>
   </details>
 
-  <div class="callout callout-warning">
+  <div class="callout warning">
     <p class="callout-heading">Shell Exports Don't Work</p>
     <p>
       Running <code>export SKILLSMITH_API_KEY=...</code> in your terminal does NOT pass the variable

@@ -4,6 +4,38 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.3
+
+- **Refactor**: SMI-5036 split oversized billing test files (#1282)
+- **Fix**: SMI-5012 retro — resolve audit:standards findings
+- **Feature**: SMI-5012 PR-2 — W2 in-process instrumentation (HOF + consent + MCP wraps) (#1251)
+- **Feature**: SMI-5012 PR-1 — W1 cloud foundations (migration + edge function + MCP read path) (#1245)
+- **Fix**: SMI-5056 bump startup-probe.test.ts spawn budget 10s → 30s (#1269)
+- **Chore**: SMI-5039 — `probeEmbeddingCapability()` migrated from inline
+  helper in `src/index.ts` to the new shared `@skillsmith/core/embeddings/probe`
+  export. Behavior is bit-for-bit identical (same 2 s `Promise.race`
+  timeout, same structured stderr message, same stdio invariant); the only
+  change is that doc-retrieval-mcp + cli now share the same audited probe
+  instead of carrying drift-prone copies. Bumps `@skillsmith/core` dep range
+  to `^0.8.0` to pick up the new subpath export. No runtime change.
+
+- **Chore**: SMI-5044 / SMI-5119 — the `StripeWebhookHandler` structural
+  interface in `src/webhooks/stripe-webhook-endpoint.ts` is declared inline and
+  re-exported. SMI-5044 briefly moved it to a shared `@skillsmith/billing-types`
+  package; that package was unpublishable (OIDC trusted-publishing requires a
+  pre-existing npm package) and consumed only via `import type`, so SMI-5119
+  removed it before this version's first publish. No runtime change; consumers
+  continue to `import type { StripeWebhookHandler } from '@skillsmith/mcp-server'`
+  (the re-export is preserved). No `@skillsmith/billing-types` dependency.
+
+## v0.5.2
+
+- **Chore**: SMI-5008 remove stripe SDK from @skillsmith/core dependencies (#869) (#1262)
+
+- **Chore**: SMI-5006 — bump `@skillsmith/core` dependency range to `^0.7.0` (BREAKING in core: billing moved to `@smith-horn/enterprise/billing`). The standalone Stripe webhook endpoint no longer imports from `@skillsmith/core/billing`; it now declares a local structural type for `StripeWebhookHandler` so production wiring (and tests) can pass in the canonical `@smith-horn/enterprise/billing` class without a workspace cycle. No runtime change for downstream MCP consumers.
+- **Feature**: SMI-5009 — startup capability probe. `main()` now calls `probeEmbeddingCapability()` before connecting the stdio transport. Probe runs `EmbeddingService.checkAvailability()` inside a `Promise.race` with a hard 2 s `Symbol` timeout sentinel and a try/catch wrapper — it can neither block nor crash server boot. On success the probe is silent; when the mock fallback is engaged (`@huggingface/transformers` absent or `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`), the probe emits a single structured stderr line including a remediation hint: `[skillsmith] embeddings: mock (transformers unavailable: <reason>; install @huggingface/transformers or set SKILLSMITH_USE_MOCK_EMBEDDINGS=true to silence)`. Logs are stderr-only to avoid corrupting the MCP stdio protocol frame. Companion to the `@skillsmith/core` optional-dep promotion in the same PR. (#870)
+- **Chore**: SMI-4539 — track `@skillsmith/core` dependency range to `^0.6.3` (synthetic patch release verifying the npm trusted-publisher OIDC publish path, PR #1171). No functional change.
+
 ## v0.5.1
 
 - **Feature**: SMI-4790 lifecycle-tagged tool descriptions + skill auto-install (#1022)

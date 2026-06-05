@@ -15,6 +15,7 @@ import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
 import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
+import { withTelemetry } from '@skillsmith/core/telemetry'
 
 // ============================================================================
 // Input schemas
@@ -250,7 +251,7 @@ async function resolveTeamId(): Promise<string> {
 /**
  * Execute a private_registry_publish operation.
  */
-export async function executePrivateRegistryPublish(
+async function executePrivateRegistryPublishImpl(
   input: PrivateRegistryPublishInput,
   _context: ToolContext
 ): Promise<PrivateRegistryPublishResult> {
@@ -280,7 +281,7 @@ export async function executePrivateRegistryPublish(
 /**
  * Execute a private_registry_manage operation.
  */
-export async function executePrivateRegistryManage(
+async function executePrivateRegistryManageImpl(
   input: PrivateRegistryManageInput,
   _context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
@@ -365,3 +366,15 @@ export async function executePrivateRegistryManage(
     }
   }
 }
+
+// SMI-5017 W2.S2: wrap at export boundary
+export const executePrivateRegistryPublish = withTelemetry(executePrivateRegistryPublishImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'private_registry_publish',
+  extractFramework: () => 'unknown',
+})
+export const executePrivateRegistryManage = withTelemetry(executePrivateRegistryManageImpl, {
+  source: 'mcp-tool',
+  extractSkillId: () => 'private_registry_manage',
+  extractFramework: () => 'unknown',
+})

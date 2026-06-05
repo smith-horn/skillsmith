@@ -117,7 +117,6 @@ const supabaseConfig = getSupabaseConfig()
           <div class="stat-card">
             <div class="stat-label">Current Plan</div>
             <div class="stat-value" id="current-tier">Community</div>
-            <a href="/account/subscription/" class="stat-link">Manage subscription</a>
           </div>
 
           <div class="stat-card">
@@ -212,6 +211,15 @@ const supabaseConfig = getSupabaseConfig()
               </svg>
               <span>API Documentation</span>
             </a>
+            <a href="/account/team" class="quick-link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+              <span>Team</span>
+            </a>
             <a href="/account/billing" class="quick-link">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
@@ -226,6 +234,13 @@ const supabaseConfig = getSupabaseConfig()
               </svg>
               <span>CLI Token</span>
             </a>
+            <a href="/account/profile" class="quick-link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                <path d="M22 7l-10 6L2 7"></path>
+              </svg>
+              <span>Email Address</span>
+            </a>
             <a href="/account/outreach-preferences" class="quick-link">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path
@@ -233,6 +248,12 @@ const supabaseConfig = getSupabaseConfig()
                 ></path>
               </svg>
               <span>Outreach Preferences</span>
+            </a>
+            <a href="/account/telemetry" class="quick-link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12h4l3-9 4 18 3-9h4"></path>
+              </svg>
+              <span>Telemetry Preferences</span>
             </a>
           </div>
         </section>
@@ -453,16 +474,6 @@ const supabaseConfig = getSupabaseConfig()
   .stat-subtext {
     font-size: 0.75rem;
     color: #6b7280;
-  }
-
-  .stat-link {
-    font-size: 0.75rem;
-    color: #e07a5f;
-    text-decoration: none;
-  }
-
-  .stat-link:hover {
-    text-decoration: underline;
   }
 
   /* Sections */
@@ -775,6 +786,7 @@ const supabaseConfig = getSupabaseConfig()
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { STRIPE_EMAIL_RESYNC_KEY } from '../../lib/account-flags'
 
   // Read config injected by SSR script in head
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
@@ -790,6 +802,10 @@ const supabaseConfig = getSupabaseConfig()
 
   // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
   document.addEventListener('astro:page-load', async () => {
+    // Only run on this page — astro:page-load listeners persist on `document`
+    // across ClientRouter navigations and would re-fire here otherwise (SMI-4896).
+    if (window.location.pathname !== '/account' && window.location.pathname !== '/account/') return
+
     // Bind CSP-safe reload handler (SMI-4311)
     document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -840,6 +856,23 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     const user = session.user
+
+    // SMI-5168: after a confirmed email change (flagged by /auth/confirm), push the
+    // new email to the user's Stripe customer. Best-effort, fire-and-forget — the
+    // gateway-verified function is idempotent and no-ops for free-tier users.
+    try {
+      if (sessionStorage.getItem(STRIPE_EMAIL_RESYNC_KEY)) {
+        sessionStorage.removeItem(STRIPE_EMAIL_RESYNC_KEY)
+        void fetch(`${supabaseUrl}/functions/v1/sync-stripe-email`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        }).catch(() => {
+          /* non-fatal */
+        })
+      }
+    } catch {
+      /* sessionStorage unavailable — non-fatal */
+    }
 
     // Load user data
     try {
@@ -1006,9 +1039,9 @@ const supabaseConfig = getSupabaseConfig()
         }
 
         if (subscriptionActions) {
-          subscriptionActions.innerHTML = `
-            <a href="/account/subscription/" class="btn btn-secondary">Manage Subscription</a>
-          `
+          // The Subscription section header already has a "Manage" button, so
+          // skip a duplicate link here for subscribed users. (SMI-5153)
+          subscriptionActions.innerHTML = ''
         }
       } else {
         if (tierPriceEl) tierPriceEl.textContent = 'Free'

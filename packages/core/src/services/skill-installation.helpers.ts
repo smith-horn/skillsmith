@@ -26,11 +26,11 @@ import type {
   DepIntelResult,
   OptimizationInfo,
   ProgressCallback,
-  QuarantineStatus,
   UninstallResult,
 } from './skill-installation.types.js'
-import { validateSkillConfig } from './skill-config-schema.js'
 
+import { checkForModifications } from './skill-installation.io.js'
+export { fetchFromGitHub } from './skill-installation.io.js'
 import type { ManifestManager } from './skill-manifest.js'
 
 /** Result of applying optimization to a skill's content. */
@@ -42,126 +42,8 @@ export interface OptimizationResult {
   optimizationInfo: OptimizationInfo
 }
 
-export interface ParsedSkillId {
-  owner: string
-  repo: string
-  path: string
-  isRegistryId: boolean
-}
-
-export function parseSkillIdInternal(input: string): ParsedSkillId {
-  if (input.startsWith('https://github.com/')) {
-    const url = new URL(input)
-    const parts = url.pathname.split('/').filter(Boolean)
-    return {
-      owner: parts[0],
-      repo: parts[1],
-      path: parts.slice(2).join('/') || '',
-      isRegistryId: false,
-    }
-  }
-
-  if (input.includes('/')) {
-    const parts = input.split('/')
-    if (parts.length === 2) {
-      return { owner: parts[0], repo: parts[1], path: '', isRegistryId: true }
-    }
-    return {
-      owner: parts[0],
-      repo: parts[1],
-      path: parts.slice(2).join('/'),
-      isRegistryId: false,
-    }
-  }
-
-  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (UUID_REGEX.test(input)) {
-    return { owner: '', repo: '', path: '', isRegistryId: true }
-  }
-
-  throw new Error('Invalid skill ID format: ' + input + '. Use owner/repo or GitHub URL.')
-}
-
 export function hashContent(content: string): string {
   return createHash('sha256').update(content).digest('hex')
-}
-export interface SkillMdValidation {
-  valid: boolean
-  errors: string[]
-}
-
-export function validateSkillMd(content: string): SkillMdValidation {
-  const errors: string[] = []
-  if (!content.includes('# ')) {
-    errors.push('Missing title (# heading)')
-  }
-  if (content.length < 100) {
-    errors.push('SKILL.md is too short (minimum 100 characters)')
-  }
-  return { valid: errors.length === 0, errors }
-}
-
-export function assertNotEncrypted(content: string, filePath: string): void {
-  if (content.startsWith('\x00GITCRYPT')) {
-    throw new Error(
-      'File "' +
-        filePath +
-        '" is git-crypt encrypted. The repository uses git-crypt and this file cannot be fetched from GitHub.'
-    )
-  }
-}
-
-export async function fetchFromGitHub(
-  owner: string,
-  repo: string,
-  filePath: string,
-  branch: string = 'main'
-): Promise<string> {
-  const url =
-    'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/' + filePath
-  const response = await fetch(url)
-
-  if (!response.ok) {
-    if (branch === 'main') {
-      const masterUrl =
-        'https://raw.githubusercontent.com/' + owner + '/' + repo + '/master/' + filePath
-      const masterResponse = await fetch(masterUrl)
-      if (!masterResponse.ok) {
-        throw new Error('Failed to fetch ' + filePath + ': ' + response.status)
-      }
-      const masterText = await masterResponse.text()
-      assertNotEncrypted(masterText, filePath)
-      return masterText
-    }
-    throw new Error('Failed to fetch ' + filePath + ': ' + response.status)
-  }
-
-  const text = await response.text()
-  assertNotEncrypted(text, filePath)
-  return text
-}
-
-export async function checkForModifications(
-  skillPath: string,
-  installedAt: string
-): Promise<boolean> {
-  try {
-    const installDate = new Date(installedAt)
-    const files = await fs.readdir(skillPath, { withFileTypes: true })
-
-    for (const file of files) {
-      if (file.isFile()) {
-        const filePath = path.join(skillPath, file.name)
-        const stats = await fs.stat(filePath)
-        if (stats.mtime > installDate) {
-          return true
-        }
-      }
-    }
-    return false
-  } catch {
-    return false
-  }
 }
 
 export function generateTips(skillName: string, optimizationInfo: OptimizationInfo): string[] {
@@ -456,43 +338,4 @@ export function recordRiskHistory(params: {
   } catch {
     // Best-effort — do not block install on history recording failure
   }
-}
-
-/** SMI-3870: Validate config.json content; returns validity and warnings. */
-export function validateOptionalConfig(content: string): {
-  valid: boolean
-  warnings: string[]
-} {
-  const result = validateSkillConfig(content)
-  if (!result.valid) {
-    return { valid: false, warnings: ['config.json rejected: ' + result.errors.join('; ')] }
-  }
-  return { valid: true, warnings: result.warnings }
-}
-
-/** SMI-3871: Cross-reference dependency targets against quarantine status. */
-export function checkDepsAgainstQuarantine(
-  depIntel: DepIntelResult,
-  getStatus: (skillId: string) => QuarantineStatus | null
-): { warnings: string[]; quarantinedDeps: string[] } {
-  const warnings: string[] = []
-  const quarantinedDeps: string[] = []
-  const checked = new Set<string>()
-  const check = (target: string): void => {
-    if (checked.has(target)) return
-    checked.add(target)
-    const status = getStatus(target)
-    if (!status) return
-    quarantinedDeps.push(target)
-    const label =
-      status === 'pending'
-        ? 'under review for security concerns'
-        : 'quarantined (confirmed malicious)'
-    warnings.push('Dependency "' + target + '" is ' + label + '.')
-  }
-  for (const server of depIntel.dep_inferred_servers) check(server)
-  if (depIntel.dep_declared?.platform?.mcp_servers) {
-    for (const srv of depIntel.dep_declared.platform.mcp_servers) check(srv.name)
-  }
-  return { warnings, quarantinedDeps }
 }

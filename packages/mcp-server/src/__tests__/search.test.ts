@@ -48,7 +48,8 @@ describe('Search Tool', () => {
 
       // Seeded DB has testing-category skills; filter must return results
       expect(result.results.length).toBeGreaterThan(0)
-      expect(result.results.every((r) => r.category === 'testing')).toBe(true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(result.results.every((r: any) => r.category === 'testing')).toBe(true)
     })
 
     it('should filter by trust tier', async () => {
@@ -60,7 +61,8 @@ describe('Search Tool', () => {
         context
       )
 
-      result.results.forEach((skill) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      result.results.forEach((skill: any) => {
         expect(skill.trustTier).toBe('verified')
       })
     })
@@ -74,7 +76,8 @@ describe('Search Tool', () => {
         context
       )
 
-      result.results.forEach((skill) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      result.results.forEach((skill: any) => {
         expect(skill.score).toBeGreaterThanOrEqual(90)
       })
     })
@@ -160,6 +163,22 @@ describe('Search Tool', () => {
         expect.any(Number),
         expect.any(Object)
       )
+    })
+
+    // SMI-5193: emitSearchEvent must use snake_case keys — sanitizeMetadata silently drops camelCase.
+    // Uses contextWithId because the emit is guarded by context.distinctId (matches trackSkillSearch).
+    it('calls emitSearchEvent with snake_case keys (results_count, duration_ms, has_query)', async () => {
+      const emitSpy = vi.spyOn(CoreModule, 'emitSearchEvent').mockImplementation(() => {})
+      const contextWithId: ToolContext = { ...offlineContext, distinctId: 'smi-5193-test-user' }
+      await executeSearch({ query: 'commit' }, contextWithId)
+      expect(emitSpy).toHaveBeenCalledTimes(1)
+      const payload = emitSpy.mock.calls[0]![0] as unknown as Record<string, unknown>
+      expect(payload).toMatchObject({ query: 'commit', has_query: true })
+      expect(payload.results_count).toEqual(expect.any(Number))
+      expect(payload.duration_ms).toEqual(expect.any(Number))
+      expect(payload).not.toHaveProperty('resultCount')
+      expect(payload).not.toHaveProperty('durationMs')
+      expect(payload).not.toHaveProperty('hasQuery')
     })
   })
 })

@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.6.0'
+export const VERSION = '0.8.0'
 
 // ============================================================================
 // Grouped Exports from Barrel Files
@@ -21,6 +21,13 @@ export * from './exports/repositories.js'
 // SMI-2721 (L1): Export createDatabaseAsync for CLI + enterprise async migration
 export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
+// SMI-4484: corruption detection + self-heal helpers, reused by the CLI opener.
+export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'
+// SMI-4807: native-driver failure reason getter.
+export { getBetterSqlite3FailureReason } from './db/drivers/betterSqlite3Driver.js'
+// SMI-5006: createLogger exposed for @smith-horn/enterprise/billing consumers.
+// Internal utility promoted to public API to support billing module relocation.
+export { createLogger, type Logger } from './utils/logger.js'
 
 // Types - All type definitions
 export * from './exports/types.js'
@@ -163,9 +170,19 @@ export {
 // Audit Logging (SMI-733)
 export { AuditLogger, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS } from './security/AuditLogger.js'
 
-// Remote telemetry for install events (SMI-4182)
-export { emitInstallEvent } from './audit/remote-audit.js'
-export type { InstallEventPayload } from './audit/remote-audit.js'
+// Remote telemetry for install events (SMI-4182) + search events (SMI-5193)
+export { emitInstallEvent, emitSearchEvent } from './audit/remote-audit.js'
+export type { InstallEventPayload, SearchEventPayload } from './audit/remote-audit.js'
+
+// Cross-ecosystem compatibility slug vocabulary (SMI-5178)
+export {
+  COMPATIBILITY_SLUGS,
+  COMPATIBILITY_LABELS,
+  BROWSE_ONLY_SLUGS,
+  CLIENT_TO_COMPATIBILITY_SLUG,
+  compatibilityLabel,
+} from './compatibility/slugs.js'
+export type { CompatibilitySlug } from './compatibility/slugs.js'
 
 // Local skill indexing helper (SMI-4587 Wave 1 PR #4 / NEW-E-2)
 export { indexLocalSkill } from './skills/index-local.js'

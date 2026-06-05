@@ -257,10 +257,12 @@ If you want to recreate it, remove it first with:
 #######################################
 # Patch .mcp.json in worktree to use npx for skillsmith
 #
-# The main repo .mcp.json uses a local dist path that doesn't exist in
-# worktrees (worktrees share the git history but not build artefacts).
-# Worktrees use the published npm package instead — works on any machine
-# without requiring a local build.
+# The main repo .mcp.json invokes scripts/mcp-skillsmith-launcher.sh, which
+# pre-flight-checks for a local dist build that doesn't exist in worktrees
+# (worktrees share the git history but not build artefacts). Worktrees use
+# the published npm package instead — works on any machine without requiring
+# a local build. SMI-5049 introduced the host launcher; this worktree path
+# remains unchanged.
 #
 # @latest is intentional: worktrees are for feature development, not MCP
 # server changes. Always using the latest published version is correct.
@@ -295,6 +297,7 @@ patch_mcp_json() {
     fi
 
     local tmp_file
+    local container_rel
     tmp_file=$(mktemp)
     trap 'rm -f "$tmp_file"' EXIT  # clean up on SIGINT/SIGTERM/EXIT
 
@@ -305,6 +308,26 @@ patch_mcp_json() {
         cat "$tmp_file" > "$mcp_json"
         rm -f "$tmp_file"
         trap - EXIT
+        # SMI-5002: normalize jq's multi-line output to single-line short arrays
+        # so the project's prettier config (printWidth: 100) is satisfied.
+        # Worktree push otherwise needs --no-verify to bypass format:check
+        # (skip-worktree from SMI-4973 hides the diff from `git status` but
+        # not from prettier's content-style check). validate_args (L209-224)
+        # normalizes worktree_path to an absolute path under REPO_ROOT for
+        # relative invocations; strip the REPO_ROOT/ prefix to compute the
+        # container-relative path. The container only has REPO_ROOT mounted
+        # at /app, so out-of-tree worktrees cannot be reached via docker exec
+        # — warn-skip in that case.
+        container_rel="${worktree_path#"$REPO_ROOT/"}"
+        if [[ "$container_rel" == "$worktree_path" ]]; then
+            warn "  Prettier skip: worktree not under REPO_ROOT — manual prettier-write may be needed"
+        elif docker exec skillsmith-dev-1 sh -c \
+            "cd \"/app/$container_rel\" && npx --no-install prettier --write .mcp.json" \
+            >/dev/null; then
+            success "  Prettier-formatted .mcp.json (SMI-5002)"
+        else
+            warn "  Prettier unavailable (container down or prettier missing?); .mcp.json may fail format:check until run manually"
+        fi
         success "  Patched .mcp.json: skillsmith → npx (worktrees have no local dist)"
     else
         rm -f "$tmp_file"
@@ -425,6 +448,10 @@ create_worktree() {
     # Step 6: Patch .mcp.json skillsmith entry for worktree compatibility
     info "Step 6: Patching .mcp.json (skillsmith → npx)..."
     patch_mcp_json "$worktree_path"
+    # SMI-4973: prevent the patched .mcp.json from leaking into PR commits.
+    # Per-worktree index — must run inside (cd "$worktree_path") subshell.
+    (cd "$worktree_path" && git update-index --skip-worktree .mcp.json)
+    success "  .mcp.json marked skip-worktree (SMI-4973)"
 
     echo ""
     success "Worktree created successfully!"
