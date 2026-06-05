@@ -31,6 +31,12 @@ const __dirname = path.dirname(__filename)
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..')
 const OPENAPI_PATH = path.join(REPO_ROOT, 'docs', 'internal', 'api', 'openapi.yaml')
 const SUPABASE_CONFIG_PATH = path.join(REPO_ROOT, 'supabase', 'config.toml')
+// SMI-5226: the spec is committed to the website's public/ dir so Vercel's
+// remote rebuild serves it at /openapi.yaml (the deploy can't see the private
+// docs/internal submodule). This committed copy must stay byte-identical to the
+// source. The dedicated PR check openapi-spec-sync.yml is the enforced guard
+// (the vitest CI job does not fetch docs/internal); this is local-dev signal.
+const WEBSITE_SPEC_PATH = path.join(REPO_ROOT, 'packages', 'website', 'public', 'openapi.yaml')
 
 // ---------------------------------------------------------------------------
 // Allowlist of the 12 documented public endpoints (positive source of truth)
@@ -281,5 +287,21 @@ describe.skipIf(!specExists)('SMI-5213: OpenAPI contract', () => {
         `${endpoint} (fn: ${fnName}) is neither in verify_jwt=false list nor in GATEWAY_VERIFIED_EXCEPTIONS`
       ).toBe(true)
     }
+  })
+
+  // -------------------------------------------------------------------------
+  // SMI-5226: committed website copy must match the source byte-for-byte
+  // -------------------------------------------------------------------------
+
+  it('committed packages/website/public/openapi.yaml is byte-identical to the source', () => {
+    expect(
+      existsSync(WEBSITE_SPEC_PATH),
+      'packages/website/public/openapi.yaml is missing — run `npm run sync:openapi` in packages/website and commit'
+    ).toBe(true)
+    const websiteCopy = readFileSync(WEBSITE_SPEC_PATH, 'utf-8')
+    expect(
+      websiteCopy,
+      'public/openapi.yaml drifted from docs/internal/api/openapi.yaml — run `npm run sync:openapi` in packages/website and commit'
+    ).toBe(specContent)
   })
 })

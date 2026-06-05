@@ -1,0 +1,94 @@
+name: OpenAPI Spec Sync Guard
+
+# SMI-5226: fail a PR when the committed website copy of the OpenAPI spec
+# (packages/website/public/openapi.yaml) drifts from its source of truth
+# (docs/internal/api/openapi.yaml).
+#
+# Why the copy is committed: the website is deployed via `vercel deploy` which
+# rebuilds remotely, rooted at packages/website/. That build cannot see the
+# private docs/internal submodule, so the astro publish-openapi-spec hook's
+# existsSync(src) guard skips spec generation -> /openapi.yaml 404s. Committing
+# public/openapi.yaml makes it part of the deploy root so it ships. This guard
+# keeps the committed copy honest. Refresh with `npm run sync:openapi` (in
+# packages/website) or any local `npm run build` (the hook re-copies it).
+#
+# docs/internal is the private submodule smith-horn/skillsmith-docs; this guard
+# runs in the main repo and triggers on PRs that bump the submodule pointer or
+# edit the committed copy. It detects drift retroactively on the PR — it does
+# not push to main (branch-protected). Mirrors docs-folder-index.yml (SMI-4932).
+#
+# # audit:carveout-pure-js — host shell (checkout + diff), zero deps, no Docker.
+#
+# Plan: docs/internal/implementation/smi-5226-openapi-spec-publish-fix.md
+# Parent: SMI-5226.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'docs/internal/**'
+      - '.gitmodules'
+      - 'packages/website/public/openapi.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openapi-spec-sync-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Committed spec matches source
+    # audit:carveout-pure-js — host shell, zero-dep diff, no Docker needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR (no submodules yet)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch docs/internal submodule (best-effort)
+        # docs/internal is a private repo requiring STRATEGY_SUBMODULE_PAT.
+        # actions/checkout treats submodule-fetch failure as fatal, so we fetch
+        # in a separate continue-on-error step — external-contributor PRs
+        # lacking the PAT degrade to the "skip" branch instead of hard-failing.
+        # audit:allow-continue-on-error — see step comment.
+        continue-on-error: true
+        env:
+          STRATEGY_SUBMODULE_PAT: ${{ secrets.STRATEGY_SUBMODULE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -n "${STRATEGY_SUBMODULE_PAT:-}" ]; then
+            git config --global url."https://x-access-token:${STRATEGY_SUBMODULE_PAT}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule update --init docs/internal || \
+            echo "::warning::docs/internal submodule fetch failed; the spec-sync check will short-circuit"
+
+      - name: Verify docs/internal present
+        id: verify
+        run: |
+          set -euo pipefail
+          if [ -f docs/internal/api/openapi.yaml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::docs/internal not checked out (external contributors lack PAT access). Skipping spec-sync check."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check committed spec matches source
+        if: steps.verify.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          SRC=docs/internal/api/openapi.yaml
+          DEST=packages/website/public/openapi.yaml
+          if [ ! -f "$DEST" ]; then
+            echo "::error::$DEST is missing. Run 'npm run sync:openapi' in packages/website and commit."
+            exit 1
+          fi
+          if ! diff -u "$SRC" "$DEST"; then
+            echo "::error::$DEST has drifted from $SRC. Run 'npm run sync:openapi' in packages/website and commit the result."
+            exit 1
+          fi
+          echo "Committed OpenAPI spec matches the source of truth."
