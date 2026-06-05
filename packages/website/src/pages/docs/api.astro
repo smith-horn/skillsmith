@@ -52,20 +52,18 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
   <h2>Quick Start</h2>
 
-  <p>Search for skills with a single <code>POST</code> request:</p>
+  <p>Search for skills with a single <code>GET</code> request:</p>
 
-  <pre><code>{`curl -X POST https://api.skillsmith.app/skills-search \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: $SKILLSMITH_API_KEY" \\
-  -d '{"query": "testing", "trust_tier": "verified", "limit": 10}'`}</code></pre>
+  <pre><code>{`curl "https://api.skillsmith.app/skills-search?query=testing&trust_tier=verified&limit=10" \\
+  -H "X-API-Key: $SKILLSMITH_API_KEY"`}</code></pre>
 
   <h2>Endpoints</h2>
 
-  <h3>POST /skills-search</h3>
+  <h3>GET /skills-search</h3>
 
   <p>
-    Full-text search across skills with optional filters. Results are ranked by relevance and
-    quality score.
+    Full-text search across skills with optional filters, passed as URL query-string parameters.
+    Results are ranked by relevance and quality score.
   </p>
 
   <h4>Parameters</h4>
@@ -121,16 +119,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
   <h4>Example</h4>
 
-  <pre><code>{`curl -X POST https://api.skillsmith.app/skills-search \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: $SKILLSMITH_API_KEY" \\
-  -d '{
-    "query": "git",
-    "category": "Testing",
-    "trust_tier": "verified",
-    "min_score": 80,
-    "limit": 5
-  }'`}</code></pre>
+  <pre><code>{`curl "https://api.skillsmith.app/skills-search?query=git&category=Testing&trust_tier=verified&min_score=80&limit=5" \\
+  -H "X-API-Key: $SKILLSMITH_API_KEY"`}</code></pre>
 
   <p>Response (<code>SearchResponse</code>):</p>
 
@@ -572,5 +562,3 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     </li>
   </ul>
 </DocsLayout>
-</content>
-</invoke>
