@@ -239,6 +239,11 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
     apply via the namespace-overrides ledger so subsequent audits respect them.
   </p>
 
+  <p>
+    Both apply tools return a non-mutating preview by default; pass
+    <code>confirmed: true</code> to actually write the change.
+  </p>
+
   <h2>Common pitfalls</h2>
 
   <h3>"License required" on every Govern call</h3>

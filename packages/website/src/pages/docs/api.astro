@@ -6,86 +6,72 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <h1>API Reference</h1>
 
   <p class="lead">
-    Build integrations with Skillsmith using our TypeScript API. Access skill search,
-    installation, and management programmatically.
+    Build integrations with Skillsmith using our <strong>HTTP API</strong>. Search skills, fetch
+    skill details, and request recommendations programmatically over plain HTTP — no SDK required.
   </p>
 
-  <h2>Installation</h2>
+  <h2>Base URL</h2>
 
-  <pre><code>{`npm install @skillsmith/core`}</code></pre>
+  <p>
+    All endpoints are served from the Skillsmith API gateway:
+  </p>
+
+  <pre><code>{`https://api.skillsmith.app`}</code></pre>
+
+  <p>
+    The gateway proxies to the underlying Supabase Edge Functions. The direct Supabase origin path
+    is <code>https://&lt;project-ref&gt;.supabase.co/functions/v1</code> — paths are identical, only
+    the host differs. Prefer the proxy base (<code>api.skillsmith.app</code>) for production traffic;
+    it terminates TLS, applies rate limiting, and shields the origin. Endpoint paths are RPC-style
+    function names (<code>/skills-search</code>, not <code>/skills</code>), so this is an HTTP API,
+    not a REST resource API.
+  </p>
+
+  <div class="callout">
+    <p class="callout-heading">Not <code>@skillsmith/core</code></p>
+    <p>
+      <code>@skillsmith/core</code> is a local DB/indexer library, not a network client — it does not
+      call the registry over HTTP. For programmatic registry access use the HTTP API documented here,
+      or the <a href="/docs/cli">Skillsmith CLI</a>.
+    </p>
+  </div>
+
+  <h2>Authentication</h2>
+
+  <p>
+    Pass your API key in the <code>X-API-Key</code> request header. Keys are tier-scoped and unlock
+    higher rate limits. Keys are available at <a href="/account">account settings</a>.
+  </p>
+
+  <pre><code>{`X-API-Key: $SKILLSMITH_API_KEY`}</code></pre>
+
+  <p>
+    Search and skill-detail endpoints are also reachable unauthenticated at a low anonymous rate
+    limit, but authenticated requests are strongly recommended for any integration.
+  </p>
 
   <h2>Quick Start</h2>
 
-  <pre><code>{`import { SkillRegistry, SkillInstaller } from '@skillsmith/core';
+  <p>Search for skills with a single <code>GET</code> request:</p>
 
-// Initialize the registry
-const registry = new SkillRegistry();
+  <pre><code>{`curl "https://api.skillsmith.app/skills-search?query=testing&trust_tier=verified&limit=10" \\
+  -H "X-API-Key: $SKILLSMITH_API_KEY"`}</code></pre>
 
-// Search for skills
-const results = await registry.search({
-  query: 'testing',
-  trustTier: 'verified',
-  limit: 10
-});
+  <h2>Endpoints</h2>
 
-// Install a skill
-const installer = new SkillInstaller();
-await installer.install('community/jest-helper');`}</code></pre>
+  <h3>GET /skills-search</h3>
 
-  <h2>SkillRegistry</h2>
+  <p>
+    Full-text search across skills with optional filters, passed as URL query-string parameters.
+    Results are ranked by relevance and quality score.
+  </p>
 
-  <p>The main interface for discovering and querying skills.</p>
-
-  <h3>Constructor</h3>
-
-  <pre><code>{`const registry = new SkillRegistry(options?: RegistryOptions);`}</code></pre>
-
-  <h4>RegistryOptions</h4>
+  <h4>Parameters</h4>
 
   <table>
     <thead>
       <tr>
-        <th>Property</th>
-        <th>Type</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>registryUrl</code></td>
-        <td><code>string</code></td>
-        <td>Custom registry URL</td>
-      </tr>
-      <tr>
-        <td><code>cacheEnabled</code></td>
-        <td><code>boolean</code></td>
-        <td>Enable response caching</td>
-      </tr>
-      <tr>
-        <td><code>cacheTtl</code></td>
-        <td><code>number</code></td>
-        <td>Cache TTL in seconds</td>
-      </tr>
-      <tr>
-        <td><code>apiKey</code></td>
-        <td><code>string</code></td>
-        <td>API key for authenticated requests</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <h3>search()</h3>
-
-  <p>Search for skills matching the given criteria.</p>
-
-  <pre><code>{`async search(options: SearchOptions): Promise<SearchResult[]>`}</code></pre>
-
-  <h4>SearchOptions</h4>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Property</th>
+        <th>Field</th>
         <th>Type</th>
         <th>Required</th>
         <th>Description</th>
@@ -96,365 +82,241 @@ await installer.install('community/jest-helper');`}</code></pre>
         <td><code>query</code></td>
         <td><code>string</code></td>
         <td>Yes</td>
-        <td>Search query (min 2 characters)</td>
+        <td>Search query (minimum 2 characters)</td>
       </tr>
       <tr>
         <td><code>category</code></td>
         <td><code>Category</code></td>
         <td>No</td>
-        <td>Filter by category</td>
+        <td>Filter by category (case-sensitive — see <a href="#category">Category</a>)</td>
       </tr>
       <tr>
-        <td><code>trustTier</code></td>
+        <td><code>trust_tier</code></td>
         <td><code>TrustTier</code></td>
         <td>No</td>
         <td>Filter by trust tier</td>
       </tr>
       <tr>
-        <td><code>minScore</code></td>
-        <td><code>number</code></td>
+        <td><code>min_score</code></td>
+        <td><code>integer</code></td>
         <td>No</td>
-        <td>Minimum quality score (0-100)</td>
+        <td>Minimum quality score on a 0–100 integer scale</td>
       </tr>
       <tr>
         <td><code>limit</code></td>
-        <td><code>number</code></td>
+        <td><code>integer</code></td>
         <td>No</td>
-        <td>Max results (default: 10)</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <h4>Example</h4>
-
-  <pre><code>{`const results = await registry.search({
-  query: 'git',
-  trustTier: 'verified',
-  category: 'devops',
-  minScore: 80,
-  limit: 5
-});
-
-for (const skill of results) {
-  console.log(\`\${skill.id}: \${skill.name}\`);
-}`}</code></pre>
-
-  <h3>getSkill()</h3>
-
-  <p>Get detailed information about a specific skill.</p>
-
-  <pre><code>{`async getSkill(id: string): Promise<Skill | null>`}</code></pre>
-
-  <h4>Example</h4>
-
-  <pre><code>{`const skill = await registry.getSkill('community/jest-helper');
-
-if (skill) {
-  console.log(skill.name);
-  console.log(skill.description);
-  console.log(skill.trustTier);
-  console.log(skill.qualityScore);
-}`}</code></pre>
-
-  <h3>compare()</h3>
-
-  <p>Compare multiple skills side-by-side.</p>
-
-  <pre><code>{`async compare(ids: string[]): Promise<ComparisonResult>`}</code></pre>
-
-  <h4>Example</h4>
-
-  <pre><code>{`const comparison = await registry.compare([
-  'community/jest-helper',
-  'community/vitest-helper'
-]);
-
-console.log(comparison.skills);
-console.log(comparison.differences);
-console.log(comparison.recommendation);`}</code></pre>
-
-  <h2>SkillInstaller</h2>
-
-  <p>Handle skill installation and removal.</p>
-
-  <h3>Constructor</h3>
-
-  <pre><code>{`const installer = new SkillInstaller(options?: InstallerOptions);`}</code></pre>
-
-  <h4>InstallerOptions</h4>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Property</th>
-        <th>Type</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>installPath</code></td>
-        <td><code>string</code></td>
-        <td>Default installation directory</td>
+        <td>Maximum results (default 20, max 100)</td>
       </tr>
       <tr>
-        <td><code>registry</code></td>
-        <td><code>SkillRegistry</code></td>
-        <td>Registry instance to use</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <h3>install()</h3>
-
-  <p>Install a skill to the local environment.</p>
-
-  <pre><code>{`async install(id: string, options?: InstallOptions): Promise<InstallResult>`}</code></pre>
-
-  <h4>InstallOptions</h4>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Property</th>
-        <th>Type</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>path</code></td>
-        <td><code>string</code></td>
-        <td>Override installation path</td>
-      </tr>
-      <tr>
-        <td><code>force</code></td>
-        <td><code>boolean</code></td>
-        <td>Overwrite existing installation</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <h4>Example</h4>
-
-  <pre><code>{`const result = await installer.install('community/jest-helper', {
-  path: '~/.claude/skills',
-  force: true
-});
-
-if (result.success) {
-  console.log(\`Installed to \${result.installPath}\`);
-} else {
-  console.error(result.error);
-}`}</code></pre>
-
-  <h3>uninstall()</h3>
-
-  <p>Remove an installed skill.</p>
-
-  <pre><code>{`async uninstall(id: string): Promise<UninstallResult>`}</code></pre>
-
-  <h3>list()</h3>
-
-  <p>List all installed skills.</p>
-
-  <pre><code>{`async list(): Promise<InstalledSkill[]>`}</code></pre>
-
-  <h2>Enterprise Tools</h2>
-
-  <p>
-    The following tools are available on the Enterprise tier via the MCP server.
-    They are currently <em>in preview — availability pending a production
-    migration</em>.
-  </p>
-
-  <h3>webhook_configure</h3>
-
-  <p>
-    Configure HMAC-SHA256 signed webhooks for skill events (install, uninstall,
-    update, audit). Enables integration with external systems such as SIEM,
-    incident response, or internal notification pipelines.
-  </p>
-
-  <pre><code>{`async webhookConfigure(options: WebhookConfigureOptions): Promise<WebhookEndpoint>`}</code></pre>
-
-  <h4>WebhookConfigureOptions</h4>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Property</th>
-        <th>Type</th>
-        <th>Required</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>url</code></td>
-        <td><code>string</code></td>
-        <td>Yes</td>
-        <td>HTTPS endpoint to receive events</td>
-      </tr>
-      <tr>
-        <td><code>events</code></td>
-        <td><code>string[]</code></td>
-        <td>Yes</td>
-        <td>Event types to subscribe to (e.g. <code>skill.installed</code>)</td>
-      </tr>
-      <tr>
-        <td><code>secret</code></td>
-        <td><code>string</code></td>
+        <td><code>offset</code></td>
+        <td><code>integer</code></td>
         <td>No</td>
-        <td>HMAC-SHA256 signing secret (auto-generated if omitted)</td>
+        <td>Pagination offset (default 0)</td>
       </tr>
     </tbody>
   </table>
 
-  <p>
-    Requires the Enterprise tier. Availability is gated on a pending production
-    migration; calls will return a feature-unavailable response until then.
-  </p>
+  <h4>Example</h4>
 
-  <h3>api_key_manage</h3>
+  <pre><code>{`curl "https://api.skillsmith.app/skills-search?query=git&category=Testing&trust_tier=verified&min_score=80&limit=5" \\
+  -H "X-API-Key: $SKILLSMITH_API_KEY"`}</code></pre>
 
-  <p>
-    Manage API keys for programmatic access — list, create, rotate, and revoke
-    keys scoped to your workspace.
-  </p>
+  <p>Response (<code>SearchResponse</code>):</p>
 
-  <pre><code>{`async apiKeyManage(options: ApiKeyManageOptions): Promise<ApiKeyResult>`}</code></pre>
-
-  <h4>ApiKeyManageOptions</h4>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Property</th>
-        <th>Type</th>
-        <th>Required</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>action</code></td>
-        <td><code>'list' | 'create' | 'rotate' | 'revoke'</code></td>
-        <td>Yes</td>
-        <td>Operation to perform</td>
-      </tr>
-      <tr>
-        <td><code>keyId</code></td>
-        <td><code>string</code></td>
-        <td>Conditional</td>
-        <td>Required for <code>rotate</code> and <code>revoke</code></td>
-      </tr>
-      <tr>
-        <td><code>label</code></td>
-        <td><code>string</code></td>
-        <td>No</td>
-        <td>Human-readable label for <code>create</code></td>
-      </tr>
-    </tbody>
-  </table>
-
-  <p>
-    Requires the Enterprise tier. Availability is gated on a pending production
-    migration; calls will return a feature-unavailable response until then.
-  </p>
-
-  <h2>Types</h2>
-
-  <h3>Skill</h3>
-
-  <pre><code>{`interface Skill {
-  id: string;              // "author/name" format
-  name: string;            // Display name
-  description: string;     // Full description
-  author: string;          // Author identifier
-  version: string;         // Semantic version
-  trustTier: TrustTier;    // Trust level
-  qualityScore: number;    // 0-100 score
-  category: Category;      // Primary category
-  tags: string[];          // Searchable tags
-  dependencies: string[];  // Required dependencies
-  createdAt: Date;         // Creation timestamp
-  updatedAt: Date;         // Last update timestamp
-}`}</code></pre>
-
-  <h3>TrustTier</h3>
-
-  <pre><code>{`type TrustTier = 'official' | 'verified' | 'curated' | 'community' | 'unverified';`}</code></pre>
-
-  <h3>Category</h3>
-
-  <pre><code>{`type Category =
-  | 'development'
-  | 'testing'
-  | 'devops'
-  | 'documentation'
-  | 'security'
-  | 'productivity'
-  | 'data'
-  | 'ai'
-  | 'other';`}</code></pre>
-
-  <h3>SearchResult</h3>
-
-  <pre><code>{`interface SearchResult {
-  skill: Skill;
-  score: number;        // Relevance score
-  highlights: string[]; // Matching text highlights
-}`}</code></pre>
-
-  <h2>Error Handling</h2>
-
-  <pre><code>{`import { SkillsmithError, NotFoundError, ValidationError } from '@skillsmith/core';
-
-try {
-  await registry.getSkill('invalid/skill');
-} catch (error) {
-  if (error instanceof NotFoundError) {
-    console.log('Skill not found');
-  } else if (error instanceof ValidationError) {
-    console.log('Invalid skill ID format');
-  } else {
-    throw error;
+  <pre><code>{`{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "jest-helper",
+      "description": "Helper utilities for Jest testing",
+      "author": "community",
+      "repo_url": "https://github.com/example/jest-helper",
+      "quality_score": 0.85,
+      "trust_tier": "verified",
+      "tags": ["testing", "jest", "javascript"],
+      "stars": 150,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-15T00:00:00Z",
+      "categories": ["Testing", "Development"],
+      "rank": 0.92
+    }
+  ],
+  "meta": {
+    "query": "git",
+    "total": 1,
+    "limit": 5,
+    "offset": 0,
+    "filters": { "category": "Testing", "trust_tier": "verified", "min_score": 80 }
   }
 }`}</code></pre>
 
-  <h3>Error Types</h3>
+  <h3>GET /skills-get</h3>
+
+  <p>
+    Retrieve detailed information about a single skill. The <code>id</code> query parameter accepts a
+    UUID, an <code>author/name</code> identifier (e.g. <code>anthropic/commit</code>), or a fuzzy
+    skill name.
+  </p>
+
+  <h4>Example</h4>
+
+  <pre><code>{`curl "https://api.skillsmith.app/skills-get?id=anthropic/commit" \\
+  -H "X-API-Key: $SKILLSMITH_API_KEY"`}</code></pre>
+
+  <p>Response (<code>SkillResponse</code>) wraps a single skill in <code>data</code>:</p>
+
+  <pre><code>{`{
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "commit",
+    "description": "Generate conventional commit messages",
+    "author": "anthropic",
+    "repo_url": "https://github.com/anthropic/commit",
+    "quality_score": 0.93,
+    "trust_tier": "official",
+    "tags": ["git", "commit"],
+    "stars": 1200,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-20T00:00:00Z",
+    "categories": ["DevOps"]
+  }
+}`}</code></pre>
+
+  <h3>POST /skills-recommend</h3>
+
+  <p>
+    Get skill recommendations ranked by relevance to your technology stack.
+  </p>
+
+  <h4>Parameters</h4>
 
   <table>
     <thead>
       <tr>
-        <th>Error</th>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Required</th>
         <th>Description</th>
       </tr>
     </thead>
     <tbody>
       <tr>
-        <td><code>SkillsmithError</code></td>
-        <td>Base error class</td>
+        <td><code>stack</code></td>
+        <td><code>string[]</code></td>
+        <td>Yes</td>
+        <td>Technology stack, 1–10 items (e.g. <code>["react", "typescript"]</code>)</td>
       </tr>
       <tr>
-        <td><code>NotFoundError</code></td>
-        <td>Skill or resource not found</td>
+        <td><code>project_type</code></td>
+        <td><code>string</code></td>
+        <td>No</td>
+        <td>One of <code>web</code>, <code>api</code>, <code>cli</code>, <code>mobile</code>, <code>data</code>, <code>ml</code></td>
       </tr>
       <tr>
-        <td><code>ValidationError</code></td>
-        <td>Invalid input or parameters</td>
-      </tr>
-      <tr>
-        <td><code>InstallError</code></td>
-        <td>Installation failed</td>
-      </tr>
-      <tr>
-        <td><code>NetworkError</code></td>
-        <td>Network request failed</td>
+        <td><code>limit</code></td>
+        <td><code>integer</code></td>
+        <td>No</td>
+        <td>Maximum recommendations (default 10, max 50)</td>
       </tr>
     </tbody>
   </table>
+
+  <h4>Example</h4>
+
+  <pre><code>{`curl -X POST https://api.skillsmith.app/skills-recommend \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: $SKILLSMITH_API_KEY" \\
+  -d '{
+    "stack": ["typescript", "react", "jest"],
+    "project_type": "web",
+    "limit": 10
+  }'`}</code></pre>
+
+  <p>
+    Response (<code>RecommendResponse</code>) mirrors the search shape — a <code>data</code> array of
+    skills (each with an optional <code>relevance_score</code>) plus a <code>meta</code> object
+    echoing <code>stack</code>, <code>project_type</code>, <code>total</code>, and <code>limit</code>.
+  </p>
+
+  <h3>POST /events</h3>
+
+  <p>
+    Record an anonymous telemetry event. No personally identifiable information is collected;
+    <code>anonymous_id</code> must be a client-generated hex hash, never a user identifier.
+  </p>
+
+  <pre><code>{`curl -X POST https://api.skillsmith.app/events \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "event": "search",
+    "anonymous_id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+    "metadata": { "query": "testing", "results_count": 12 }
+  }'`}</code></pre>
+
+  <p>Returns <code>{`{ "ok": true }`}</code> on success.</p>
+
+  <h2>Wire Schema (JSON Response Shape)</h2>
+
+  <p>
+    All endpoints return <strong>snake_case</strong> JSON. The <code>Skill</code> object below is the
+    canonical wire schema returned inside <code>data</code> by every skill-returning endpoint.
+    Timestamps are ISO 8601 strings.
+  </p>
+
+  <pre><code>{`// Skill — wire schema (JSON response shape), snake_case
+{
+  id: string;                    // UUID
+  name: string;                  // Skill name
+  description: string | null;    // Skill description
+  author: string | null;         // Author identifier
+  repo_url: string | null;       // Source repository URL
+  quality_score: number | null;  // 0-1 float (see Quality Score)
+  trust_tier: TrustTier;         // Trust level
+  tags: string[];                // Searchable tags
+  stars: number | null;          // GitHub stars count
+  created_at: string;            // ISO 8601 timestamp
+  updated_at: string;            // ISO 8601 timestamp
+  categories?: string[];         // Associated category names
+}`}</code></pre>
+
+  <p>
+    Search results additionally carry a <code>rank</code> (relevance), and recommendation results
+    carry a <code>relevance_score</code>.
+  </p>
+
+  <h3 id="category">Category</h3>
+
+  <p>
+    Category values are <strong>case-sensitive</strong> Titlecase strings. Pass them exactly as
+    written — <code>?category=Testing</code> matches, <code>?category=testing</code> does not.
+  </p>
+
+  <pre><code>{`type Category =
+  | 'Development'
+  | 'Testing'
+  | 'DevOps'
+  | 'Documentation'
+  | 'Productivity'
+  | 'Security';`}</code></pre>
+
+  <h3>TrustTier</h3>
+
+  <p>
+    Five trust tiers, from highest assurance to lowest. See the
+    <a href="/docs/trust-tiers">trust tiers guide</a> for criteria and promotion rules.
+  </p>
+
+  <pre><code>{`type TrustTier = 'official' | 'verified' | 'curated' | 'community' | 'unverified';`}</code></pre>
+
+  <h3>Quality Score</h3>
+
+  <p>
+    Quality is expressed on <strong>two different scales</strong>, so be careful not to mis-filter:
+    the <code>min_score</code> query parameter takes a <strong>0–100 integer</strong>, while the
+    <code>quality_score</code> field in responses is a <strong>0–1 float</strong> — a response value
+    of <code>0.85</code> corresponds to a <code>min_score</code> of <code>85</code>.
+  </p>
 
   <h2>Rate Limiting</h2>
 
@@ -487,15 +349,183 @@ try {
     </tbody>
   </table>
 
-  <div class="callout">
-    <p class="callout-heading">API Key</p>
-    <p>
-      Pass your API key in the <code>X-API-Key</code> request header to unlock higher rate
-      limits and tier-gated features. Keys are available at
-      <a href="/account">account settings</a>.
-    </p>
-    <pre><code>{`X-API-Key: sk_live_...`}</code></pre>
-  </div>
+  <p>
+    Each response includes <code>X-RateLimit-Limit</code>, <code>X-RateLimit-Remaining</code>, and
+    <code>X-RateLimit-Reset</code> (Unix timestamp) headers, plus an <code>X-Request-ID</code> for
+    support correlation.
+  </p>
+
+  <h2>Error Responses</h2>
+
+  <p>
+    Errors return a non-2xx status and a JSON body with an <code>error</code> message and optional
+    <code>details</code>:
+  </p>
+
+  <pre><code>{`{
+  "error": "Query parameter required (minimum 2 characters)",
+  "details": { "parameter": "query", "received": "a" }
+}`}</code></pre>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>400</code></td>
+        <td>Invalid request parameters</td>
+      </tr>
+      <tr>
+        <td><code>404</code></td>
+        <td>Skill or resource not found</td>
+      </tr>
+      <tr>
+        <td><code>500</code></td>
+        <td>Internal server error</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="enterprise-audit-siem">Enterprise Audit &amp; SIEM</h2>
+
+  <p>
+    Audit-log access and SIEM export are exposed as <strong>MCP tools, not HTTP endpoints</strong>.
+    They run through the Skillsmith MCP server on the Enterprise tier — there is no
+    <code>api.skillsmith.app</code> path for them.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>MCP Tool</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>audit_query</code></td>
+        <td>Query audit-log events with filters (actor, action, time range)</td>
+      </tr>
+      <tr>
+        <td><code>audit_export</code></td>
+        <td>Export audit-log events for a time range</td>
+      </tr>
+      <tr>
+        <td><code>siem_export</code></td>
+        <td>Export audit events for SIEM ingestion</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>SIEM Wire Formats</h3>
+
+  <p>
+    <code>siem_export</code> emits audit events in one of three wire formats, selectable per export:
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Format</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CEF</code></td>
+        <td>ArcSight Common Event Format — pipe-delimited header plus <code>key=value</code> extensions</td>
+      </tr>
+      <tr>
+        <td><code>LEEF</code></td>
+        <td>IBM QRadar Log Event Extended Format — tab-delimited attribute pairs</td>
+      </tr>
+      <tr>
+        <td><code>JSON</code></td>
+        <td>Newline-delimited JSON objects, one audit event per line</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>webhook_configure</h3>
+
+  <p>
+    <em>MCP tool — in preview, availability pending a production migration.</em> Configure
+    HMAC-SHA256 signed webhooks for skill events (install, uninstall, update, audit) to integrate
+    with external SIEM, incident-response, or notification pipelines.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>url</code></td>
+        <td><code>string</code></td>
+        <td>Yes</td>
+        <td>HTTPS endpoint to receive events</td>
+      </tr>
+      <tr>
+        <td><code>events</code></td>
+        <td><code>string[]</code></td>
+        <td>Yes</td>
+        <td>Event types to subscribe to (e.g. <code>skill.installed</code>)</td>
+      </tr>
+      <tr>
+        <td><code>secret</code></td>
+        <td><code>string</code></td>
+        <td>No</td>
+        <td>HMAC-SHA256 signing secret (auto-generated if omitted)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>api_key_manage</h3>
+
+  <p>
+    <em>MCP tool — in preview, availability pending a production migration.</em> Manage API keys for
+    programmatic access — list, create, rotate, and revoke keys scoped to your workspace.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>action</code></td>
+        <td><code>'list' | 'create' | 'rotate' | 'revoke'</code></td>
+        <td>Yes</td>
+        <td>Operation to perform</td>
+      </tr>
+      <tr>
+        <td><code>keyId</code></td>
+        <td><code>string</code></td>
+        <td>Conditional</td>
+        <td>Required for <code>rotate</code> and <code>revoke</code></td>
+      </tr>
+      <tr>
+        <td><code>label</code></td>
+        <td><code>string</code></td>
+        <td>No</td>
+        <td>Human-readable label for <code>create</code></td>
+      </tr>
+    </tbody>
+  </table>
 
   <h2>OpenAPI Specification</h2>
 
@@ -508,14 +538,27 @@ try {
   <h2>Lifecycle Tutorials</h2>
 
   <p>
-    The HTTP API exposes the same data the CLI and MCP server use. For end-to-end walkthroughs of
-    each lifecycle stage — including which API endpoints they exercise — see the
-    <a href="/docs/tutorials">lifecycle tutorials</a>:
+    The HTTP API endpoints above back the <code>search</code>, <code>get_skill</code>, and
+    <code>recommend</code> MCP tools that the CLI and MCP server expose. The lifecycle tutorials are
+    MCP-tool and CLI walkthroughs — they do not call these HTTP endpoints directly, but rely on the
+    same underlying data:
   </p>
 
   <ul>
-    <li><a href="/docs/tutorials/discover">Discover</a> — search and recommend endpoints</li>
-    <li><a href="/docs/tutorials/evaluate">Evaluate</a> — skill detail, compare, diff endpoints</li>
-    <li><a href="/docs/tutorials/govern">Govern</a> — audit query, export, and SIEM endpoints (Enterprise)</li>
+    <li>
+      <a href="/docs/tutorials/discover">Discover</a> — uses the <code>search</code> and
+      <code>recommend</code> MCP tools (backed by <code>/skills-search</code> and
+      <code>/skills-recommend</code>).
+    </li>
+    <li>
+      <a href="/docs/tutorials/evaluate">Evaluate</a> — uses the <code>get_skill</code>,
+      <code>compare</code>, and <code>skill_diff</code> MCP tools (skill detail backed by
+      <code>/skills-get</code>).
+    </li>
+    <li>
+      <a href="/docs/tutorials/govern">Govern</a> — uses the Enterprise <code>audit_query</code>,
+      <code>audit_export</code>, and <code>siem_export</code> MCP tools (see
+      <a href="#enterprise-audit-siem">Enterprise Audit &amp; SIEM</a> for the wire format details).
+    </li>
   </ul>
 </DocsLayout>
