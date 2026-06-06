@@ -13,6 +13,8 @@ import { ClientRouter } from 'astro:transitions'
 import Nav from '../components/Nav.astro'
 import Footer from '../components/Footer.astro'
 import { getSupabaseConfig } from '../lib/supabase-config'
+// SMI-5217: single source of truth for trust-tier pill colors (canonical 5-tier).
+import { TRUST_TIER_PILL_CLASSES, DEFAULT_TRUST_TIER } from '../constants/trust-tier-badges'
 import '../styles/global.css'
 
 const supabaseConfig = getSupabaseConfig()
@@ -323,7 +325,13 @@ const supabaseConfig = getSupabaseConfig()
     </script>
 
     <!-- Inline skill search (debounced 300ms, 12 results) -->
-    <script is:inline>
+    <script
+      is:inline
+      define:vars={{
+        trustTierPillClasses: TRUST_TIER_PILL_CLASSES,
+        defaultTrustTier: DEFAULT_TRUST_TIER,
+      }}
+    >
       document.addEventListener('astro:page-load', function () {
         var input = document.getElementById('v2-search-input')
         var results = document.getElementById('v2-search-results')
@@ -331,18 +339,11 @@ const supabaseConfig = getSupabaseConfig()
 
         var debounceTimer = null
 
-        // SMI-5217: 5-tier public vocabulary (ApiTrustTier), canonical colors.
-        // The API never returns experimental/unknown — any unmatched value
-        // degrades to the unverified style.
+        // SMI-5217: 5-tier public vocabulary (ApiTrustTier). Colors come from the
+        // shared trustTierPillClasses map (define:vars). The API never returns
+        // experimental/unknown — any unmatched value degrades to the unverified style.
         function badgeClasses(tier) {
-          const colors = {
-            official: 'bg-green-500/20 text-green-400',
-            verified: 'bg-blue-500/20 text-blue-400',
-            curated: 'bg-teal-500/20 text-teal-300',
-            community: 'bg-yellow-500/20 text-yellow-400',
-            unverified: 'bg-red-500/20 text-red-400',
-          }
-          const color = colors[tier] || colors.unverified
+          const color = trustTierPillClasses[tier] || trustTierPillClasses[defaultTrustTier]
           return `px-1.5 py-0.5 rounded text-[10px] font-medium ${color} flex-shrink-0`
         }
 
