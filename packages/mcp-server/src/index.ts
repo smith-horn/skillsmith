@@ -149,11 +149,11 @@ const toolDefinitions = [
   complianceReportToolSchema,
   // SMI-5213: skill_inventory_audit, apply_namespace_rename, and (gated)
   // apply_recommended_edit. Spread so apply_recommended_edit is omitted
-  // when APPLY_TEMPLATE_REGISTRY is empty. NOTE: audit:standards Check 25
-  // line-counts this array and can't see spread/conditional entries, so it
-  // emits a non-blocking tool-count warn (37 vs 39 README rows). The real
-  // registration invariant is covered by the ListTools-registry test;
-  // SMI-5216 tracks making Check 25 spread-aware (ADR-109 infra path).
+  // when APPLY_TEMPLATE_REGISTRY is empty. audit:standards Check 25 resolves
+  // this spread to its MAX *ToolSchema set (SMI-5216), so the README must
+  // document every tool that CAN register (the max set, incl. the gated one).
+  // Runtime may register fewer; that correctness is covered by the
+  // ListTools-registry test, not Check 25.
   ...newAuditToolDefinitions(),
 ]
 
