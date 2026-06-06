@@ -447,21 +447,32 @@ jobs:
       - name: Smoke - OpenAPI spec is served
         # SMI-5226: the docs/api page advertises skillsmith.app/openapi.yaml for
         # Postman/Insomnia import. Assert it serves 200 as YAML (not a 404 HTML
-        # page) with the expected contract markers.
+        # page) with the expected contract markers. Production www is served by
+        # Vercel's git-integration deploy, which can lag this workflow's CLI
+        # deploy — so retry before failing. Parse via command substitution, NOT
+        # `read < <(curl -w ...)`: curl -w emits no trailing newline, so `read`
+        # returns non-zero at EOF and trips `errexit` before any check runs.
         run: |
           set -euo pipefail
           URL=https://www.skillsmith.app/openapi.yaml
           TMP=$(mktemp)
-          read -r CODE CTYPE < <(curl -sSL -o "$TMP" -w '%{http_code} %{content_type}' --max-time 15 "$URL")
-          echo "openapi.yaml -> $CODE ($CTYPE)"
-          if [ "$CODE" != "200" ]; then
-            echo "::error::$URL returned HTTP $CODE (expected 200)"
+          ok=0
+          last="(none)"
+          for attempt in $(seq 1 6); do
+            OUT=$(curl -sSL -o "$TMP" -w '%{http_code} %{content_type}' --max-time 15 "$URL" || true)
+            CODE=${OUT%% *}
+            CTYPE=${OUT#* }
+            last="$CODE $CTYPE"
+            echo "attempt $attempt: openapi.yaml -> $last"
+            case "$CODE $CTYPE" in
+              "200 application/yaml"*|"200 text/yaml"*|"200 application/x-yaml"*|"200 text/plain"*) ok=1; break ;;
+            esac
+            sleep 20
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::$URL not served as YAML after 6 attempts (last: $last)"
             exit 1
           fi
-          case "$CTYPE" in
-            application/yaml*|text/yaml*|application/x-yaml*|text/plain*) : ;;
-            *) echo "::error::$URL served unexpected content-type '$CTYPE' (expected YAML/text, not HTML)"; exit 1 ;;
-          esac
           grep -q "openapi: 3.0" "$TMP"        || { echo "::error::spec body missing 'openapi: 3.0'"; exit 1; }
           grep -q "api.skillsmith.app" "$TMP"  || { echo "::error::spec body missing 'api.skillsmith.app' server"; exit 1; }
           PATHS=$({ grep -cE '^  /' "$TMP" || true; })
