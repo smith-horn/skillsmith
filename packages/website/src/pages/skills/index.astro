@@ -6,6 +6,9 @@ import SignedOutOverlay from '../../components/SignedOutOverlay.astro'
 import { isCrawlerUserAgent } from '../../lib/crawler-detect'
 // SMI-4838: featured-skills catalog seed — pinned author/name set verified against indexer DB.
 import featuredSkillsData from '../../data/featured-skills.json'
+// SMI-5217: shared 5-tier badge classes (single source of truth, canonical colors).
+import { TRUST_TIER_BADGE_CLASSES, DEFAULT_TRUST_TIER } from '../../constants/trust-tier-badges'
+import { TRUST_TIER_ORDER } from '../../constants/terminology'
 
 const FEATURED_SKILL_IDS: string[] = (featuredSkillsData.skills as Array<{ id: string }>).map(
   (s) => s.id
@@ -22,12 +25,12 @@ const categories = [
   { value: 'security', label: 'Security' },
 ]
 
+// SMI-5217: derive filter options from the canonical 5-tier order so the values
+// stay in lock-step with the API's accepted trust_tier set (experimental/unknown
+// are rejected by skills-search; official was missing).
 const trustTiers = [
   { value: '', label: 'All Trust Tiers' },
-  { value: 'verified', label: 'Verified' },
-  { value: 'curated', label: 'Curated' },
-  { value: 'community', label: 'Community' },
-  { value: 'experimental', label: 'Experimental' },
+  ...TRUST_TIER_ORDER.map((t) => ({ value: t.id, label: t.label })),
 ]
 
 // SMI-4401 Wave 2: SSR-time crawler detection. Emits a human-only overlay while keeping
@@ -392,6 +395,8 @@ const isCrawler = isCrawlerUserAgent(userAgent)
     define:vars={{
       apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
       FEATURED_SKILL_IDS,
+      trustBadgeClasses: TRUST_TIER_BADGE_CLASSES,
+      defaultTrustTier: DEFAULT_TRUST_TIER,
     }}
   >
     const API_BASE = apiBase
@@ -492,14 +497,8 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       const searchPromptState = document.getElementById('search-prompt-state')
       const searchSuggestions = document.querySelectorAll('.search-suggestion')
 
-      // Trust tier badge colors
-      const trustBadgeClasses = {
-        verified: 'bg-green-500/10 text-green-400 border-green-500/20',
-        curated: 'bg-teal-500/10 text-teal-300 border-teal-500/20',
-        community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-        experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-        unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
-      }
+      // SMI-5217: trustBadgeClasses + defaultTrustTier injected via define:vars
+      // from the shared 5-tier map (constants/trust-tier-badges.ts).
 
       // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
       const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
@@ -525,7 +524,8 @@ const isCrawler = isCrawlerUserAgent(userAgent)
 
       // Create skill card HTML
       function createSkillCard(skill) {
-        const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown
+        const trustClass =
+          trustBadgeClasses[skill.trust_tier] || trustBadgeClasses[defaultTrustTier]
         const stars = skill.stars ?? 0
         const tier = getQualityTier(stars)
         const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`
@@ -540,7 +540,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
               ${orgMatchBadge}
             </div>
             <span class="ml-4 px-2.5 py-1 text-xs font-medium rounded-full border ${trustClass}">
-              ${escapeHtml(skill.trust_tier || 'unknown')}
+              ${escapeHtml(skill.trust_tier || defaultTrustTier)}
             </span>
           </div>
           <p class="text-dark-400 text-sm mb-4 line-clamp-2">${escapeHtml(skill.description || 'No description available')}</p>
