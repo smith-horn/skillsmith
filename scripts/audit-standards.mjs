@@ -40,6 +40,7 @@ import {
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
+import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -1881,11 +1882,28 @@ console.log(`\n${BOLD}25. MCP Tool Count (SMI-3886)${RESET}`)
   } else {
     try {
       const indexContent = readFileSync(mcpIndexPath, 'utf8')
-      // Extract toolDefinitions array and count entries (lines with Schema or Tool suffix)
-      const defMatch = indexContent.match(/const toolDefinitions\s*=\s*\[([\s\S]*?)\]/)
-      const toolCount = defMatch
-        ? defMatch[1].split('\n').filter((l) => l.trim() && !l.trim().startsWith('//')).length
-        : 0
+      // SMI-5216: spread-aware count. Plain entries count as 1; a `...builder()`
+      // spread is resolved to the MAX *ToolSchema set the builder can contribute
+      // (conditional pushes included). Invariant: the README documents every tool
+      // that CAN register. Runtime may register fewer (e.g. apply_recommended_edit
+      // is gated on APPLY_TEMPLATE_REGISTRY) — that's covered by the
+      // ListTools-registry test, not this counter.
+      const mcpSrcDir = dirname(mcpIndexPath)
+      const { count: toolCount, unresolvedSpreads } = countToolDefinitions({
+        indexContent,
+        // Map an import specifier (e.g. './audit-tool-dispatch.js') to its .ts source.
+        resolveModuleSource: (spec) => {
+          if (!spec.startsWith('.')) return null
+          const tsPath = resolvePath(mcpSrcDir, spec.replace(/\.js$/, '.ts'))
+          return existsSync(tsPath) ? readFileSync(tsPath, 'utf8') : null
+        },
+      })
+      if (unresolvedSpreads.length > 0) {
+        warn(
+          `Check 25: could not resolve spread builder(s) in toolDefinitions: ${unresolvedSpreads.join(', ')}`,
+          'Each unresolved spread was counted as a single tool — the README parity count may be low'
+        )
+      }
 
       const readme = readFileSync(mcpReadmePath, 'utf8')
       // Extract "Available Tools" section up to next heading, then count tool rows
