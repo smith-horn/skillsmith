@@ -160,21 +160,21 @@ const supabaseConfig = getSupabaseConfig()
           >
             <span class="inline-flex items-center gap-1 mr-3">
               <span
-                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400"
+                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400"
                 >verified</span
               >
               Official Anthropic skills
             </span>
             <span class="inline-flex items-center gap-1 mr-3">
               <span
-                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400"
+                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-500/20 text-yellow-400"
                 >community</span
               >
               Reviewed
             </span>
             <span class="inline-flex items-center gap-1">
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-700 text-dark-400"
-                >experimental</span
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/20 text-red-400"
+                >unverified</span
               >
               New
             </span>
@@ -331,12 +331,19 @@ const supabaseConfig = getSupabaseConfig()
 
         var debounceTimer = null
 
+        // SMI-5217: 5-tier public vocabulary (ApiTrustTier), canonical colors.
+        // The API never returns experimental/unknown — any unmatched value
+        // degrades to the unverified style.
         function badgeClasses(tier) {
-          if (tier === 'verified')
-            return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400 flex-shrink-0'
-          if (tier === 'community')
-            return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400 flex-shrink-0'
-          return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-700 text-dark-400 flex-shrink-0'
+          const colors = {
+            official: 'bg-green-500/20 text-green-400',
+            verified: 'bg-blue-500/20 text-blue-400',
+            curated: 'bg-teal-500/20 text-teal-300',
+            community: 'bg-yellow-500/20 text-yellow-400',
+            unverified: 'bg-red-500/20 text-red-400',
+          }
+          const color = colors[tier] || colors.unverified
+          return `px-1.5 py-0.5 rounded text-[10px] font-medium ${color} flex-shrink-0`
         }
 
         function renderSkill(skill) {
@@ -351,7 +358,7 @@ const supabaseConfig = getSupabaseConfig()
           name.textContent = skill.name || skill.id || ''
           var badge = document.createElement('span')
           badge.className = badgeClasses(skill.trust_tier)
-          badge.textContent = skill.trust_tier || 'experimental'
+          badge.textContent = skill.trust_tier || 'unverified'
           top.appendChild(name)
           top.appendChild(badge)
           var desc = document.createElement('p')

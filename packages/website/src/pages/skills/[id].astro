@@ -10,6 +10,12 @@
  * Edge cache for category pages: s-maxage=300, stale-while-revalidate=60
  */
 import BaseLayout from '../../layouts/BaseLayout.astro'
+// SMI-5217: shared 5-tier badge classes (single source of truth, canonical colors).
+import {
+  TRUST_TIER_BADGE_CLASSES,
+  TRUST_TIER_PILL_CLASSES,
+  DEFAULT_TRUST_TIER,
+} from '../../constants/trust-tier-badges'
 
 export const prerender = false
 
@@ -135,12 +141,14 @@ if (isCategory && categoryMeta) {
   Astro.response.headers.set('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
 }
 
+// SMI-5217: compact related-skills pill, keyed off the shared 5-tier map.
+// categorySkills is fetched from the API (skills-search), which only returns the
+// translated public tiers, so an unmatched value degrades to the unverified style.
 function badgeClasses(tier: string): string {
-  if (tier === 'verified')
-    return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400 flex-shrink-0'
-  if (tier === 'community')
-    return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400 flex-shrink-0'
-  return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-700 text-dark-400 flex-shrink-0'
+  const color =
+    TRUST_TIER_PILL_CLASSES[tier as keyof typeof TRUST_TIER_PILL_CLASSES] ??
+    TRUST_TIER_PILL_CLASSES[DEFAULT_TRUST_TIER]
+  return `px-1.5 py-0.5 rounded text-[10px] font-medium ${color} flex-shrink-0`
 }
 
 // Build JSON-LD for category pages
@@ -565,6 +573,8 @@ const categoryJsonLd =
   define:vars={{
     skillId: id,
     apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
+    trustBadgeClasses: TRUST_TIER_BADGE_CLASSES,
+    defaultTrustTier: DEFAULT_TRUST_TIER,
   }}
 >
   const API_BASE = apiBase
@@ -610,13 +620,8 @@ const categoryJsonLd =
       }
     }
 
-    // Trust tier badge colors
-    const trustBadgeClasses = {
-      verified: 'bg-green-500/10 text-green-400 border-green-500/20',
-      community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-      experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-      unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
-    }
+    // SMI-5217: trustBadgeClasses + defaultTrustTier injected via define:vars
+    // from the shared 5-tier map (constants/trust-tier-badges.ts).
 
     // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
     const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
@@ -687,9 +692,9 @@ const categoryJsonLd =
 
       // Trust badge
       const trustBadge = document.getElementById('skill-trust-badge')
-      const trustTier = skill.trust_tier || 'unknown'
+      const trustTier = skill.trust_tier || defaultTrustTier
       trustBadge.textContent = trustTier
-      trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses.unknown}`
+      trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses[defaultTrustTier]}`
 
       // Quality tier based on stars
       const stars = skill.stars ?? 0
@@ -781,7 +786,7 @@ const categoryJsonLd =
         window.gtag('event', 'skill_view', {
           skill_id: skillId,
           skill_name: skill.name || skillId,
-          trust_tier: skill.trust_tier || 'unknown',
+          trust_tier: skill.trust_tier || defaultTrustTier,
           category: skill.categories?.[0] || 'uncategorized',
         })
       }
