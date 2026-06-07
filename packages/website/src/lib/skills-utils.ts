@@ -18,10 +18,12 @@ export type { QualityTier } from '../utils/quality-tiers.js'
 
 import type { Skill } from '../types/skills.js'
 
-export const TRUST_BADGE_CLASSES: Record<Skill['trust_tier'] | 'unknown', string> = {
-  verified: 'bg-green-500/10 text-green-400 border-green-500/20',
+export const TRUST_BADGE_CLASSES: Record<Skill['trust_tier'], string> = {
+  official: 'bg-green-500/10 text-green-400 border-green-500/20',
+  verified: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
   curated: 'bg-teal-500/10 text-teal-300 border-teal-500/20',
-  community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  community: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+  unverified: 'bg-red-500/10 text-red-400 border-red-500/20',
   experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
   unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
 }
