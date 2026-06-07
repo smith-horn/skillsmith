@@ -4,6 +4,10 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.2.1
+
+- **Fix**: add missing [Unreleased] stub to CHANGELOG post-0.2.0 release (SMI-5154 retro)
+
 ## [0.2.0] — 2026-06-02
 
 ### Added

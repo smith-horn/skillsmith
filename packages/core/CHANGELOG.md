@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
+- **Fix**: publish OpenAPI spec to production (SMI-5226) (#1399)
+- **Feature**: reconcile live API contract + register 3 audit tools (SMI-5213) (#1395)
+- **Fix**: handle AbortController timeout in RawUrlSourceAdapter SSRF test (SMI-5211)
+- **Fix**: add ./services/skill-installation-validate package export (SMI-4745 retro) (#1368)
+
 ## v0.8.0
 
 - **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the

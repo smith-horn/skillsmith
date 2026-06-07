@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.4
+
+- **Fix**: make audit Check 25 spread-aware for MCP tool count (SMI-5216) (#1402)
+- **Feature**: reconcile live API contract + register 3 audit tools (SMI-5213) (#1395)
+- **Fix**: use npx -p flag to reliably resolve skillsmith-mcp binary (SMI-5208) (#1388)
+
 ## v0.5.3
 
 - **Refactor**: SMI-5036 split oversized billing test files (#1282)
