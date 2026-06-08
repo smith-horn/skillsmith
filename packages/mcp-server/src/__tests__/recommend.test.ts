@@ -325,6 +325,7 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
         branchContext
       )
 
+      expect(result.recommendations).toBeDefined()
       // Should not have both 'anthropic/commit' and 'local/commit'
       const commitSkills = result.recommendations.filter(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
