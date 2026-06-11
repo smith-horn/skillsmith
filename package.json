@@ -118,7 +118,7 @@
     "fast-uri": "^3.1.1",
     "tar": "^7.5.8",
     "h3": "^1.15.9",
-    "hono": "^4.12.14",
+    "hono": "^4.12.21",
     "@hono/node-server": "^1.19.13",
     "protobufjs": "^7.5.8",
     "uuid": "^14.0.0",
@@ -126,8 +126,11 @@
     "fast-xml-parser": "^5.5.7",
     "@aws-sdk/xml-builder": ">=3.972.3",
     "rollup": "^4.59.0",
-    "qs": "^6.14.2",
+    "qs": "^6.15.2",
     "web-vitals": "5.1.0",
+    "@grpc/grpc-js": "^1.14.4",
+    "ws": "^8.21.0",
+    "brace-expansion": "^5.0.6",
     "@modelcontextprotocol/sdk": {
       ".": "^1.27.1",
       "ajv": "^8.18.0"
