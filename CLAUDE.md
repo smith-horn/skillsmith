@@ -50,6 +50,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **After pulling**: post-merge hook auto-runs `npm install` in Docker on `package-lock.json` change; if container is down, start it and run `docker exec skillsmith-dev-1 npm install && npm run build`. **Full rebuild** (native modules, major upgrades): [docker-guide.md](.claude/development/docker-guide.md#full-rebuild-thorough). **Stop**: `docker compose --profile dev down`. **Logs**: `docker logs skillsmith-dev-1`. **Submodule**: `git submodule update --init` before `docker compose up` if internal docs needed inside container.
 
+**Auto-recovery (SMI-5245)**: the `dev` service sets `restart: unless-stopped`, so the container comes back on its own after a Docker Desktop / machine restart — this keeps the `skillsmith-doc-retrieval` + `skillsmith` MCP servers (launched via `docker exec` in `.mcp.json`) from silently dropping with a `-32000` reconnect error. An explicit `docker compose --profile dev down` or `docker stop` is still honored (stays down). If you ever see the container *restart-looping* after a reboot, it hit a degraded environment (wiped volume / ABI mismatch) — run the **Container won't start** Troubleshooting recipe.
+
 **After fresh clone or volume wipe**: run `npm install` + `npm run build` in the container before the `skillsmith` MCP server can connect. The launcher (`scripts/mcp-skillsmith-launcher.sh`, SMI-5049) prints actionable stderr in the `/mcp` panel's per-server log when `node_modules/` or `dist/` is missing — surfaced when you expand the failing entry.
 
 ---
