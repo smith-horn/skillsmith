@@ -229,7 +229,7 @@ npx supabase functions deploy quota-monitor --no-verify-jwt
 
 ## Monitoring & Alerts
 
-High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, GHA — SMI-5209; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
+High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, Supabase pg_cron — SMI-4798; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
 
 ---
 
