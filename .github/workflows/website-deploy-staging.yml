@@ -345,6 +345,7 @@ jobs:
       # Must be a PAT (VERCEL_DEPLOY_HOOK_TOKEN) with Actions:read-write -- the
       # default GITHUB_TOKEN will not re-trigger smoke-prod.yml (recursion guard).
       - name: Re-fire post-deploy smoke dispatch
+        id: smoke_dispatch
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.VERCEL_DEPLOY_HOOK_TOKEN }}
@@ -352,6 +353,14 @@ jobs:
           gh api repos/${{ github.repository }}/dispatches \
             -f event_type=vercel-prod-deployed \
             -f 'client_payload[sha]=${{ github.sha }}'
+
+      # Surface a failed dispatch (e.g. missing/expired PAT) without failing the
+      # already-successful production deploy. smoke-prod.yml can still be run via
+      # workflow_dispatch if this annotation appears.
+      - name: Warn if smoke dispatch failed
+        if: steps.smoke_dispatch.outcome == 'failure'
+        run: |
+          echo "::warning::Failed to re-fire vercel-prod-deployed dispatch; smoke-prod.yml did not auto-run. Check VERCEL_DEPLOY_HOOK_TOKEN, then trigger smoke-prod.yml manually."
 
       - name: Generate deployment summary
         run: |
