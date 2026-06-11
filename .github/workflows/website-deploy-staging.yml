@@ -58,12 +58,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
 
+      - name: Cache Vercel build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
-      - name: Build website
-        working-directory: packages/website
-        run: npm run build
 
       - name: Install Vercel CLI (pinned to root devDep)
         run: |
@@ -72,7 +76,18 @@ jobs:
           npm i -g "vercel@$PINNED"
           vercel --version
 
-      - name: Deploy to Vercel (Staging)
+      - name: Vercel pull + build (preview, prebuilt)
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -eu
+          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          vercel build --token "$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt to Vercel (Staging)
         id: deploy
         working-directory: packages/website
         env:
@@ -80,9 +95,9 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
-          # Deploy to staging (no --prod flag)
+          # Deploy the prebuilt Build Output (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
-          DEPLOYMENT_URL=$(vercel deploy --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
 
           if [ -z "$DEPLOYMENT_URL" ]; then
             echo "::error::Failed to capture deployment URL. Check Vercel configuration."
@@ -275,12 +290,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
 
+      - name: Cache Vercel build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
-      - name: Build website
-        working-directory: packages/website
-        run: npm run build
 
       - name: Install Vercel CLI (pinned to root devDep)
         run: |
@@ -289,7 +308,18 @@ jobs:
           npm i -g "vercel@$PINNED"
           vercel --version
 
-      - name: Deploy to Vercel (Production)
+      - name: Vercel pull + build (production, prebuilt)
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -eu
+          vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+          vercel build --prod --token "$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt to Vercel (Production)
         id: deploy
         working-directory: packages/website
         env:
@@ -297,9 +327,9 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
-          # Deploy to production (with --prod flag)
+          # Deploy the prebuilt Build Output to production (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
-          DEPLOYMENT_URL=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
 
           if [ -z "$DEPLOYMENT_URL" ]; then
             echo "::error::Failed to capture deployment URL. Check Vercel configuration."
@@ -308,6 +338,29 @@ jobs:
 
           echo "deployment-url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
           echo "Deployed to production: $DEPLOYMENT_URL"
+
+      # Re-fire the repository_dispatch that smoke-prod.yml listens for. Once
+      # native git integration is disconnected (Phase 2), Vercel stops emitting
+      # the deploy webhook, so this CLI-deploy path must fire it itself.
+      # Must be a PAT (VERCEL_DEPLOY_HOOK_TOKEN) with Actions:read-write -- the
+      # default GITHUB_TOKEN will not re-trigger smoke-prod.yml (recursion guard).
+      - name: Re-fire post-deploy smoke dispatch
+        id: smoke_dispatch
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.VERCEL_DEPLOY_HOOK_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/dispatches \
+            -f event_type=vercel-prod-deployed \
+            -f 'client_payload[sha]=${{ github.sha }}'
+
+      # Surface a failed dispatch (e.g. missing/expired PAT) without failing the
+      # already-successful production deploy. smoke-prod.yml can still be run via
+      # workflow_dispatch if this annotation appears.
+      - name: Warn if smoke dispatch failed
+        if: steps.smoke_dispatch.outcome == 'failure'
+        run: |
+          echo "::warning::Failed to re-fire vercel-prod-deployed dispatch; smoke-prod.yml did not auto-run. Check VERCEL_DEPLOY_HOOK_TOKEN, then trigger smoke-prod.yml manually."
 
       - name: Generate deployment summary
         run: |
