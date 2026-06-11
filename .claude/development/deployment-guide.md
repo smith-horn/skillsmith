@@ -386,7 +386,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Weekly Coverage Report (SMI-4963) | Monday 10 AM UTC (`coverage-report.yml`; `schedule:` enabled via follow-up commit). Deploy: `npx supabase functions deploy coverage-report` (no `--no-verify-jwt`) | `coverage-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
 | Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
-| Quota Monitor | Every 30 min | GitHub Actions (`quota-monitor.yml`) |
+| Quota Monitor | Hourly | Supabase pg_cron (`invoke_quota_monitor()`) |
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 | Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
