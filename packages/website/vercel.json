@@ -3,6 +3,11 @@
   "framework": "astro",
   "installCommand": "npm install",
   "buildCommand": "npm run build",
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  },
   "redirects": [
     {
       "source": "/changelog",
