@@ -1376,6 +1376,98 @@ jobs:
           fi
           exit 0
 
+  # SMI-5262: gate the mcp-server integration suite (packages/mcp-server/tests/
+  # integration/**) so it cannot silently rot again (the whole suite previously ran
+  # in NO CI job — `packages/mcp-server/vitest.config.ts` excludes tests/integration).
+  # Clones `Test (root colocated)`'s tier gate, plus an affected_dirs guard mirroring
+  # the `Test (mcp-server)` matrix so it runs ONLY when mcp-server is affected.
+  # ADVISORY until promoted to a required status check after 2 green runs (SMI-5262).
+  test-mcp-server-integration:
+    name: Test (mcp-server integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docker-build, classify]
+    # Match the `Test (root colocated)` tier gate so this ungates/skips alongside the
+    # other test jobs, AND additionally require mcp-server to be affected (mirror the
+    # `Test (mcp-server)` matrix membership). On PRs that don't touch mcp-server this
+    # job is skipped-as-success.
+    if: |
+      needs.classify.outputs.skip_tests != 'true' &&
+      (needs.classify.outputs.tier == 'code' || needs.classify.outputs.tier == 'deps') &&
+      contains(fromJson(needs.classify.outputs.affected_dirs), 'mcp-server')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
+
+      - name: Download Docker image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        run: |
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
+          fi
+
+      - name: Extract node_modules
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
+
+      # Build core dist first — the integration mocks resolve `@skillsmith/core`
+      # subpaths to built dist (SMI-5260), so the suite needs a fresh build.
+      - name: Build project
+        run: |
+          docker run --rm --init \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      # SMI-5262: NO env is set on purpose — `github-api.integration.test.ts`
+      # self-skips its network tests unless GITHUB_API_TESTS=true, so the suite
+      # stays fully offline/hermetic in CI. Do NOT add GITHUB_API_TESTS here.
+      # Strict exit-code semantics (default `bash -e`): a real test failure fails
+      # the job — no SMI-4667-style exit-code masking, since this is a gate.
+      - name: Run mcp-server integration tests
+        run: |
+          docker run --rm --init \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run test:integration -w packages/mcp-server
+
+      - name: Advisory note
+        if: always()
+        run: |
+          {
+            echo "### Test (mcp-server integration)"
+            echo ""
+            echo "Advisory check (SMI-5262) — promote to a required status check after 2 green runs. Result: \`${{ job.status }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Security audit always runs regardless of change classification.
   # Rationale: Security vulnerabilities can be introduced by any change type,
   # and the audit is relatively fast compared to the cost of missing a vulnerability.
