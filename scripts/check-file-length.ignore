@@ -29,3 +29,7 @@
 
 # SMI-5211 split follow-up
 packages/core/tests/RawUrlSourceAdapter.security.test.ts
+
+# SMI-5263 split follow-up (pre-existing over-limit; grew during the SMI-5261
+# mock-seam fix — split into 3 concern-scoped siblings tracked in SMI-5263)
+packages/mcp-server/tests/integration/install.integration.test.ts

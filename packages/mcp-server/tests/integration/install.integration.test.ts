@@ -27,13 +27,35 @@ vi.mock('../../src/tools/install.helpers.js', async (importActual) => {
   }
 })
 
-// SMI-3483: Core service now owns fetchFromGitHub — mock it there too so
-// SkillInstallationService uses the test double instead of real GitHub fetch.
-vi.mock('@skillsmith/core/services/skill-installation-helpers', async (importActual) => {
+// SMI-5260: SkillInstallationService imports `fetchFromGitHub` +
+// `fetchOptionalInstallFiles` DIRECTLY from `skill-installation.io` — NOT from the
+// `-helpers` re-export the prior mock targeted (which is why the UUID install test
+// silently 404'd against the real network). Mock the `.io` module so the service
+// uses the test doubles. `fetchOptionalInstallFiles` must also be mocked: its
+// internal `fetchFromGitHub` call is a lexical module-local reference (not the
+// mocked export), so the un-mocked real version would still hit the network for
+// README/examples/config.json. `writeInstallFiles` is intentionally left REAL so the
+// install actually writes SKILL.md to the per-test temp skillsDir (asserted below).
+vi.mock('@skillsmith/core/services/skill-installation-io', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>()
   return {
     ...actual,
     fetchFromGitHub: vi.fn(),
+    fetchOptionalInstallFiles: vi.fn(),
+  }
+})
+
+// SMI-5260: redirect the install target away from the real `~/.claude/skills`.
+// `resolveClientPath`/`getInstallPath` derive from `CLIENT_NATIVE_PATHS`, which is
+// frozen at module load (`homedir()`), so a runtime HOME swap cannot redirect them —
+// mock the resolvers and point them at the per-test temp skillsDir in beforeEach.
+// `addLink` and the rest are preserved via importActual.
+vi.mock('@skillsmith/core/install', async (importActual) => {
+  const actual = await importActual<Record<string, unknown>>()
+  return {
+    ...actual,
+    resolveClientPath: vi.fn(),
+    getInstallPath: vi.fn(),
   }
 })
 
@@ -788,6 +810,11 @@ Use this skill by mentioning it in Claude Code.
     let fetchFromGitHub: ReturnType<typeof vi.fn>
 
     let coreFetchFromGitHub: ReturnType<typeof vi.fn>
+    // SMI-5260: core `.io` optional-files double + the install-path resolvers,
+    // redirected per-test to the temp skillsDir.
+    let coreFetchOptionalInstallFiles: ReturnType<typeof vi.fn>
+    let resolveClientPath: ReturnType<typeof vi.fn>
+    let getInstallPath: ReturnType<typeof vi.fn>
 
     beforeAll(async () => {
       // Dynamic import after vi.mock() has been hoisted — module is already mocked
@@ -801,15 +828,35 @@ Use this skill by mentioning it in Claude Code.
       lookupSkillFromRegistry = vi.mocked(helpersModule.lookupSkillFromRegistry)
       fetchFromGitHub = vi.mocked(helpersModule.fetchFromGitHub)
 
-      // SMI-3483: Core service owns fetchFromGitHub — get its mock handle too
-      const coreHelpersModule = await import('@skillsmith/core/services/skill-installation-helpers')
+      // SMI-5260: core service fetches via `skill-installation.io` — grab the
+      // GitHub-fetch and optional-files mock handles from there. Also grab the
+      // install-path resolvers so each test can redirect writes to its temp dir.
+      const coreIoModule = await import('@skillsmith/core/services/skill-installation-io')
       coreFetchFromGitHub = vi.mocked(
-        coreHelpersModule.fetchFromGitHub as (...args: unknown[]) => unknown
+        coreIoModule.fetchFromGitHub as (...args: unknown[]) => unknown
+      )
+      coreFetchOptionalInstallFiles = vi.mocked(
+        coreIoModule.fetchOptionalInstallFiles as (...args: unknown[]) => unknown
+      )
+      const coreInstallModule = await import('@skillsmith/core/install')
+      resolveClientPath = vi.mocked(
+        coreInstallModule.resolveClientPath as (...args: unknown[]) => unknown
+      )
+      getInstallPath = vi.mocked(
+        coreInstallModule.getInstallPath as (...args: unknown[]) => unknown
       )
     })
 
     beforeEach(() => {
       vi.clearAllMocks()
+      // SMI-5260: redirect every install in this block to the per-test temp
+      // skillsDir (created by the outer describe's beforeEach) so writes never
+      // touch the real ~/.claude/skills. Optional-files fetch is a no-op by
+      // default so the suite stays fully offline; the happy-path test sets the
+      // SKILL.md fetch return explicitly.
+      resolveClientPath.mockReturnValue(fsContext.skillsDir)
+      getInstallPath.mockReturnValue(fsContext.skillsDir)
+      coreFetchOptionalInstallFiles.mockResolvedValue([])
     })
 
     it('UUID with valid repo_url resolves and installs the skill', async () => {
@@ -820,7 +867,7 @@ Use this skill by mentioning it in Claude Code.
         trustTier: 'community',
         quarantined: false,
       })
-      // SKILL.md fetch succeeds (mock both mcp-server and core paths)
+      // SKILL.md fetch succeeds (mock both the mcp-server seam and the core .io seam)
       fetchFromGitHub.mockResolvedValue(VALID_SKILL_MD)
       coreFetchFromGitHub.mockResolvedValue(VALID_SKILL_MD)
 
@@ -831,6 +878,13 @@ Use this skill by mentioning it in Claude Code.
       expect(result.success).toBe(true)
       expect(result.skillId).toBe(TEST_UUID)
       expect(lookupSkillFromRegistry).toHaveBeenCalledWith(TEST_UUID, expect.anything())
+      // SMI-5260 anti-false-green guards: the core .io fetch double was actually
+      // exercised (proving the mock intercepts the service's direct import, not a
+      // real network fetch), and the install wrote SKILL.md into the temp skillsDir.
+      // A regression back to a real-fetch / real-path install fails loudly here.
+      expect(coreFetchFromGitHub).toHaveBeenCalled()
+      expect(result.installPath.startsWith(fsContext.skillsDir)).toBe(true)
+      expect(await fileExists(path.join(result.installPath, 'SKILL.md'))).toBe(true)
     })
 
     it('UUID with null registry result returns "indexed for discovery only" error', async () => {
