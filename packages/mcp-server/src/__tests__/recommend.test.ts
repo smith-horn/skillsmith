@@ -7,7 +7,12 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest'
-import { executeRecommend, formatRecommendations } from '../tools/recommend.js'
+import {
+  executeRecommend,
+  formatRecommendations,
+  mergeAndDeduplicateRecommendations,
+  type SkillRecommendation,
+} from '../tools/recommend.js'
 import { createSeededTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
 import type { LocalSkill } from '../indexer/LocalIndexer.js'
@@ -287,8 +292,31 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
 
   describe('deduplication logic', () => {
     it('should prefer registry skills over local skills with same name', async () => {
-      expect.hasAssertions()
-      // Create a local skill with same name as registry skill
+      // SMI-5253: Route through the ONLINE path so the registry result set is deterministic.
+      // The offline path ranks DB candidates through SkillMatcher's mock-embedding similarity,
+      // whose ordering is environment-dependent — that nondeterminism previously left this
+      // assertion ungated (the sole expect() sat behind two `if` guards + expect.hasAssertions(),
+      // which failed whenever no 'commit' skill survived ranking). The online path merges
+      // apiClient.getRecommendations() with local results via mergeAndDeduplicateRecommendations
+      // (no matcher, no embeddings, no DB ordering). NOTE: the seeded DB rows are unused on this
+      // path — the registry 'commit' comes from the getRecommendations mock below, not the seed.
+      vi.spyOn(branchContext.apiClient, 'isOffline').mockReturnValue(false)
+      vi.spyOn(branchContext.apiClient, 'getRecommendations').mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/commit',
+            name: 'commit',
+            description: 'Generate semantic commit messages',
+            author: 'anthropic',
+            tags: ['git', 'commit'],
+            trust_tier: 'verified',
+            quality_score: 0.95,
+          },
+        ],
+        meta: { total: 1 },
+      })
+
+      // Local indexer returns a same-name duplicate of the registry skill
       const duplicateMockSkills: LocalSkill[] = [
         {
           id: 'local/commit',
@@ -317,31 +345,59 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
         // Partial mock — only methods called by executeRecommend are implemented
       } as unknown as ReturnType<typeof LocalSkillSearchModule.getLocalIndexer>)
 
+      // installed_skills is passed explicitly so autoDetected=false and getInstalledSkills()
+      // (which reads the real ~/.claude/skills/) is never called — closing the last host-coupling
+      // vector. 'anthropic/review-pr' collides with neither target id, so the installed-skill
+      // filter (recommend.ts) is a no-op.
       const result = await executeRecommend(
         {
           project_context: 'git workflow',
+          installed_skills: ['anthropic/review-pr'],
           limit: 10,
         },
         branchContext
       )
 
-      // Should not have both 'anthropic/commit' and 'local/commit'
-      const commitSkills = result.recommendations.filter(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (r: any) => r.name === 'commit' || r.skill_id.includes('commit')
-      )
+      // Registry skill wins; the same-name local duplicate is deduped out — assert unconditionally.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ids = result.recommendations.map((r: any) => r.skill_id)
+      expect(ids).toContain('anthropic/commit')
+      expect(ids).not.toContain('local/commit')
+    })
 
-      // If there's a commit skill, registry should take precedence
-      if (commitSkills.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const hasRegistryCommit = commitSkills.some((s: any) => s.skill_id === 'anthropic/commit')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const hasLocalCommit = commitSkills.some((s: any) => s.skill_id === 'local/commit')
-        // Should not have local duplicate if registry version exists
-        if (hasRegistryCommit) {
-          expect(hasLocalCommit).toBe(false)
-        }
-      }
+    it('mergeAndDeduplicateRecommendations drops same-name local skill in favor of registry', () => {
+      // SMI-5253: Deterministic unit coverage for the same-name dedup invariant on the merge
+      // logic that BOTH the online and offline executeRecommend paths share. No context, DB, or
+      // embeddings — zero flake surface.
+      const apiResults: SkillRecommendation[] = [
+        {
+          skill_id: 'anthropic/commit',
+          name: 'commit',
+          reason: 'registry match',
+          similarity_score: 0.8,
+          trust_tier: 'verified',
+          quality_score: 95,
+          roles: [],
+        },
+      ]
+      const localResults: SkillRecommendation[] = [
+        {
+          skill_id: 'local/commit',
+          name: 'commit',
+          reason: 'local match',
+          similarity_score: 0.7,
+          trust_tier: 'local',
+          quality_score: 60,
+          roles: [],
+        },
+      ]
+
+      const merged = mergeAndDeduplicateRecommendations(apiResults, localResults, 10)
+      const ids = merged.map((r) => r.skill_id)
+
+      expect(ids).toContain('anthropic/commit')
+      expect(ids).not.toContain('local/commit') // same-name local filtered
+      expect(merged[0].skill_id).toBe('anthropic/commit') // registry ordered first
     })
   })
 
