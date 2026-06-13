@@ -105,7 +105,7 @@
   },
   "dependencies": {
     "@claude-flow/aidefence": "3.0.2",
-    "@supabase/supabase-js": "2.105.0",
+    "@supabase/supabase-js": "2.108.1",
     "protobufjs": "^7.5.8"
   },
   "overrides": {
