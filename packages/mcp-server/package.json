@@ -35,7 +35,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@skillsmith/core": "^0.8.0",
-    "esbuild": "0.27.2",
+    "esbuild": "0.28.1",
     "ulid": "3.0.1"
   },
   "devDependencies": {

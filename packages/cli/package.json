@@ -23,7 +23,7 @@
     "chokidar": "4.0.3",
     "cli-table3": "0.6.5",
     "commander": "14.0.3",
-    "esbuild": "0.27.2",
+    "esbuild": "0.28.1",
     "gray-matter": "4.0.3",
     "open": "11.0.0",
     "ora": "9.3.0"
