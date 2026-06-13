@@ -51,7 +51,7 @@ jobs:
       mode: ${{ steps.detect.outputs.mode }}
       functions: ${{ steps.detect.outputs.functions }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 2 # Need parent commit for diff (assumes squash-merge)
 
@@ -99,7 +99,7 @@ jobs:
           fi
           echo "Prod secrets validated"
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 2
 
@@ -126,7 +126,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v2.0.0
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
           version: latest
 
@@ -199,7 +199,7 @@ jobs:
           fi
           echo "Staging secrets validated"
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 2
 
@@ -224,7 +224,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v2.0.0
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
           version: latest
 
