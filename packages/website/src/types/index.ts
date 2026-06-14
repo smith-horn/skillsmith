@@ -1,6 +1,10 @@
 /**
  * Type definitions for Skillsmith website
  */
+// SMI-5217: the API (skills-search/skills-get) translates internal DB tiers to
+// the canonical 5-tier public set before serialization, so the Skill wire type
+// uses the canonical vocabulary rather than the legacy experimental/unknown DB tiers.
+import type { TrustTierId } from '../constants/terminology'
 
 /**
  * Feature in a pricing tier
@@ -39,7 +43,7 @@ export interface Skill {
   displayName: string
   description: string
   version: string
-  trustTier: 'verified' | 'curated' | 'community' | 'experimental' | 'unknown'
+  trustTier: TrustTierId
   category: SkillCategory
   tags: string[]
   qualityScore: number

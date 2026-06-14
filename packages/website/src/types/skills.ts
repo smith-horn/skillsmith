@@ -23,7 +23,14 @@ export interface Skill {
   name: string
   author: string
   description: string
-  trust_tier: 'verified' | 'curated' | 'community' | 'experimental' | 'unknown'
+  trust_tier:
+    | 'official'
+    | 'verified'
+    | 'curated'
+    | 'community'
+    | 'unverified'
+    | 'experimental'
+    | 'unknown'
   categories: string[]
   version?: string
   stars?: number

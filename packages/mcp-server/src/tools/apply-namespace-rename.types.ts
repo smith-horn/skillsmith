@@ -49,4 +49,19 @@ export interface ApplyNamespaceRenameResponse {
     | 'namespace.rename.subcall_failed'
   /** Human-readable error message. */
   error?: string
+  // SMI-5213: confirmation-gate preview fields. Present (with
+  // `applied: false`) when the tool was called without `confirmed: true`
+  // on a non-skip action — nothing on disk changed.
+  /** True when this is a non-mutating preview of the rename. */
+  preview?: boolean
+  /** Mutation strategy that *would* run on confirm. */
+  action?: string
+  /** Absolute path of the file that *would* be renamed. */
+  target?: string
+  /** Current identifier (pre-rename). */
+  before?: string
+  /** Proposed identifier (post-rename: suggested or custom name). */
+  after?: string
+  /** Always `false` on a preview; absent on a real apply. */
+  applied?: boolean
 }

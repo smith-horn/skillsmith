@@ -10,7 +10,13 @@
  * Edge cache for category pages: s-maxage=300, stale-while-revalidate=60
  */
 import BaseLayout from '../../layouts/BaseLayout.astro'
-import { CATEGORIES, type CategoryMeta, type SkillItem } from '../../data/categories.js'
+import { CATEGORIES, type SkillItem } from '../../data/categories.js'
+// SMI-5217: shared 5-tier badge classes (single source of truth, canonical colors).
+import {
+  TRUST_TIER_BADGE_CLASSES,
+  TRUST_TIER_PILL_CLASSES,
+  DEFAULT_TRUST_TIER,
+} from '../../constants/trust-tier-badges'
 
 export const prerender = false
 
@@ -38,12 +44,14 @@ if (isCategory && categoryMeta) {
   Astro.response.headers.set('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
 }
 
+// SMI-5217: compact related-skills pill, keyed off the shared 5-tier map.
+// categorySkills is fetched from the API (skills-search), which only returns the
+// translated public tiers, so an unmatched value degrades to the unverified style.
 function badgeClasses(tier: string): string {
-  if (tier === 'verified')
-    return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400 flex-shrink-0'
-  if (tier === 'community')
-    return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400 flex-shrink-0'
-  return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-700 text-dark-400 flex-shrink-0'
+  const color =
+    TRUST_TIER_PILL_CLASSES[tier as keyof typeof TRUST_TIER_PILL_CLASSES] ??
+    TRUST_TIER_PILL_CLASSES[DEFAULT_TRUST_TIER]
+  return `px-1.5 py-0.5 rounded text-[10px] font-medium ${color} flex-shrink-0`
 }
 
 // Build JSON-LD for category pages
@@ -464,6 +472,351 @@ const categoryJsonLd =
   )
 }
 
-<script>
-  export const API_BASE = `${import.meta.env.PUBLIC_API_BASE_URL ?? 'https://api.skillsmith.app'}/functions/v1`
+<script
+  is:inline
+  define:vars={{
+    skillId: id,
+    apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
+    trustBadgeClasses: TRUST_TIER_BADGE_CLASSES,
+    defaultTrustTier: DEFAULT_TRUST_TIER,
+  }}
+>
+  const API_BASE = apiBase
+
+  // Use astro:page-load for View Transitions compatibility
+  document.addEventListener('astro:page-load', () => {
+    // Only run on skill detail pages (not category pages)
+    if (!document.getElementById('loading-state')) return
+
+    // Get Supabase config for API authentication
+    const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+    const supabaseAnonKey = config.anonKey
+
+    // SMI-2075: Get authenticated user's JWT if available
+    // JWT auth provides tier-based rate limits vs anon key's community limits
+    let authToken = supabaseAnonKey // Default to anon key
+
+    async function initAuth() {
+      try {
+        // Use shared singleton from window.__SUPABASE_CLIENT__ (SMI-3595).
+        // is:inline + define:vars prevents ES import of getSupabaseClient(),
+        // so this consumer cannot use the canonical lazy helper. The null-check
+        // below degrades gracefully if BaseLayout hasn't populated the global
+        // yet. SMI-4907 tracks migrating this script to a bundled <script>.
+        // eslint-disable-next-line skillsmith-local/no-raw-window-global
+        const supabase = window.__SUPABASE_CLIENT__
+        if (!supabase) {
+          console.debug('[Skills] No Supabase client, using anon key')
+          return
+        }
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+
+        if (session?.access_token) {
+          authToken = session.access_token
+          console.debug('[Skills] Using JWT auth for tier-based rate limits')
+        } else {
+          console.debug('[Skills] Using anon key (community rate limits)')
+        }
+      } catch (e) {
+        console.warn('[Skills] Auth init failed, using anon key:', e.message)
+      }
+    }
+
+    // SMI-5217: trustBadgeClasses + defaultTrustTier injected via define:vars
+    // from the shared 5-tier map (constants/trust-tier-badges.ts).
+
+    // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
+    const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
+
+    // Get quality tier info from star count
+    function getQualityTier(stars) {
+      const count = stars ?? 0
+      if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
+      if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
+        return { color: 'text-green-400', label: 'High Quality' }
+      if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' }
+      return { color: 'text-red-400', label: 'New' }
+    }
+
+    // DOM Elements
+    const loadingState = document.getElementById('loading-state')
+    const errorState = document.getElementById('error-state')
+    const errorMessage = document.getElementById('error-message')
+    const skillContent = document.getElementById('skill-content')
+    const breadcrumbName = document.getElementById('breadcrumb-name')
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(str) {
+      if (!str) return ''
+      const div = document.createElement('div')
+      div.textContent = str
+      return div.innerHTML
+    }
+
+    // Format number with commas
+    function formatNumber(num) {
+      return new Intl.NumberFormat().format(num)
+    }
+
+    // Format date
+    function formatDate(dateStr) {
+      if (!dateStr) return 'Unknown'
+      const date = new Date(dateStr)
+      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+    }
+
+    // Show error state
+    function showError(message) {
+      // Defensive: refs are normally captured at lines 630-634 against markup
+      // that always renders for !isCategory pages. Guard anyway — a failure here
+      // (e.g. async fetchSkill catch firing after a ClientRouter detach) should
+      // not throw a confusing null-deref over the underlying error message.
+      if (loadingState) loadingState.classList.add('hidden')
+      if (skillContent) skillContent.classList.add('hidden')
+      if (errorState) errorState.classList.remove('hidden')
+      if (errorMessage) errorMessage.textContent = message
+    }
+
+    // Render skill details
+    function renderSkill(skill) {
+      // Update breadcrumb
+      breadcrumbName.textContent = skill.name || skillId
+
+      // Update page title
+      document.title = `${skill.name || skillId} | Skillsmith`
+
+      // Header
+      document.getElementById('skill-name').textContent = skill.name || skillId
+      document.getElementById('skill-author').textContent = `by ${skill.author || 'Unknown author'}`
+      document.getElementById('skill-version').textContent = skill.version
+        ? `Version ${skill.version}`
+        : ''
+
+      // Trust badge
+      const trustBadge = document.getElementById('skill-trust-badge')
+      const trustTier = skill.trust_tier || defaultTrustTier
+      trustBadge.textContent = trustTier
+      trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses[defaultTrustTier]}`
+
+      // Quality tier based on stars
+      const stars = skill.stars ?? 0
+      const tier = getQualityTier(stars)
+      const tierEl = document.getElementById('skill-tier')
+      tierEl.textContent = tier.label
+      tierEl.className = `text-2xl font-bold ${tier.color}`
+      document.getElementById('skill-stars').textContent = `${formatNumber(stars)} ★`
+
+      // Description
+      document.getElementById('skill-description').textContent =
+        skill.description || 'No description available.'
+
+      // Installation commands
+      const skillName = skill.name || skillId.split('/').pop()
+      document.getElementById('install-command-npx').textContent =
+        `npx @skillsmith/cli install ${skill.id || skillId}`
+      document.getElementById('install-command-cli').textContent =
+        `skillsmith install ${skill.id || skillId}`
+      document.getElementById('install-command-claude').textContent =
+        `"Install the ${skillName} skill"`
+
+      // Details
+      document.getElementById('skill-category').textContent =
+        skill.categories?.[0] || 'Uncategorized'
+      document.getElementById('skill-trust-tier').textContent =
+        trustTier.charAt(0).toUpperCase() + trustTier.slice(1)
+      document.getElementById('skill-version-detail').textContent = skill.version || 'Unknown'
+
+      // Optional fields
+      if (skill.downloads) {
+        document.getElementById('downloads-row').classList.remove('hidden')
+        document.getElementById('skill-downloads').textContent = formatNumber(skill.downloads)
+      }
+      if (skill.updated_at) {
+        document.getElementById('updated-row').classList.remove('hidden')
+        document.getElementById('skill-updated').textContent = formatDate(skill.updated_at)
+      }
+
+      // Tags
+      const tagsContainer = document.getElementById('skill-tags')
+      const noTagsEl = document.getElementById('no-tags')
+      const tags = skill.tags || []
+
+      if (tags.length > 0) {
+        tagsContainer.innerHTML = tags
+          .map(
+            (tag) =>
+              `<span class="px-3 py-1 bg-dark-800 border border-dark-700 rounded-full text-dark-300 text-sm">${escapeHtml(tag)}</span>`
+          )
+          .join('')
+        noTagsEl.classList.add('hidden')
+      } else {
+        tagsContainer.innerHTML = ''
+        noTagsEl.classList.remove('hidden')
+      }
+
+      // SMI-3687: Render SKILL.md content if present
+      if (skill.content) {
+        const readmeEl = document.getElementById('skill-readme')
+        const contentSection = document.getElementById('skill-content-section')
+        readmeEl.textContent = skill.content
+        contentSection.classList.remove('hidden')
+      }
+
+      // SMI-4840: Render "View source" link when skill.repo_url is a valid https URL.
+      // Hide gracefully when null/undefined or non-https (seed/metadata-only skills).
+      const sourceLink = document.getElementById('skill-source-link')
+      if (sourceLink) {
+        const repoUrl =
+          typeof skill.repo_url === 'string' && skill.repo_url.startsWith('https://')
+            ? skill.repo_url
+            : ''
+        if (repoUrl) {
+          sourceLink.setAttribute('href', repoUrl)
+          sourceLink.classList.remove('hidden')
+        } else {
+          sourceLink.classList.add('hidden')
+        }
+      }
+
+      // Show content
+      loadingState.classList.add('hidden')
+      errorState.classList.add('hidden')
+      skillContent.classList.remove('hidden')
+
+      // GA4: Track skill view (SMI-2453)
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', 'skill_view', {
+          skill_id: skillId,
+          skill_name: skill.name || skillId,
+          trust_tier: skill.trust_tier || defaultTrustTier,
+          category: skill.categories?.[0] || 'uncategorized',
+        })
+      }
+
+      // SMI-2761: Load "Users also installed" if present and non-empty
+      if (skill.also_installed && skill.also_installed.length > 0) {
+        loadAlsoInstalled(skill.also_installed)
+      }
+
+      // Load related skills if available
+      if (skill.related_skills && skill.related_skills.length > 0) {
+        loadRelatedSkills(skill.related_skills)
+      }
+    }
+
+    // SMI-2761: Render "Users also installed" section — omit entirely when empty
+    function loadAlsoInstalled(alsoInstalled) {
+      if (!alsoInstalled || alsoInstalled.length === 0) return
+      const section = document.getElementById('also-installed-section')
+      const container = document.getElementById('also-installed-skills')
+      container.innerHTML = alsoInstalled
+        .map(
+          (s) => `
+          <a href="/skills/${encodeURIComponent(s.skillId)}" class="block bg-dark-800 rounded-lg p-4 hover:bg-dark-700 transition-colors">
+            <p class="text-white font-medium">${escapeHtml(s.name || s.skillId)}</p>
+            ${s.description ? `<p class="text-dark-400 text-sm mt-1">${escapeHtml(s.description)}</p>` : ''}
+          </a>`
+        )
+        .join('')
+      section.classList.remove('hidden')
+    }
+
+    // Load related skills
+    async function loadRelatedSkills(relatedIds) {
+      const relatedSection = document.getElementById('related-section')
+      const relatedContainer = document.getElementById('related-skills')
+
+      try {
+        // For now, just show the IDs as links
+        relatedContainer.innerHTML = relatedIds
+          .slice(0, 6)
+          .map(
+            (id) => `
+          <a href="/skills/${encodeURIComponent(id)}" class="block bg-dark-800 rounded-lg p-4 hover:bg-dark-700 transition-colors">
+            <p class="text-white font-medium">${escapeHtml(id)}</p>
+          </a>
+        `
+          )
+          .join('')
+
+        relatedSection.classList.remove('hidden')
+      } catch (error) {
+        // Silent fail for related skills (non-critical feature)
+      }
+    }
+
+    // Fetch skill details
+    async function fetchSkill() {
+      try {
+        // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
+        const decodedSkillId = decodeURIComponent(skillId)
+        const response = await fetch(
+          `${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}?include_content=true`,
+          {
+            headers: {
+              Authorization: `Bearer ${authToken}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        )
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error('This skill does not exist or has been removed.')
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+
+        const result = await response.json()
+        if (!result.data) {
+          throw new Error(result.error || 'Invalid response from server')
+        }
+        renderSkill(result.data)
+      } catch (error) {
+        showError(error.message)
+      }
+    }
+
+    // Copy to clipboard
+    document.querySelectorAll('.copy-button').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const targetId = button.getAttribute('data-target')
+        const targetEl = document.getElementById(targetId)
+        const text = targetEl.textContent
+
+        try {
+          await navigator.clipboard.writeText(text)
+
+          // GA4: Track install command copy (SMI-2453)
+          if (typeof window.gtag === 'function') {
+            window.gtag('event', 'skill_install_copy', {
+              skill_id: skillId,
+              command_type: targetId.replace('install-command-', ''),
+            })
+          }
+
+          // Show feedback
+          const originalHTML = button.innerHTML
+          button.innerHTML = `
+            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+          `
+
+          setTimeout(() => {
+            button.innerHTML = originalHTML
+          }, 2000)
+        } catch (error) {
+          // Silent fail for clipboard
+        }
+      })
+    })
+
+    // SMI-2075: Initialize auth then fetch skill (JWT provides tier-based rate limits)
+    initAuth().then(() => {
+      fetchSkill()
+    })
+  }) // End astro:page-load handler
 </script>

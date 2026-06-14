@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -58,12 +58,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
 
+      - name: Cache Vercel build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
-      - name: Build website
-        working-directory: packages/website
-        run: npm run build
 
       - name: Install Vercel CLI (pinned to root devDep)
         run: |
@@ -72,7 +76,18 @@ jobs:
           npm i -g "vercel@$PINNED"
           vercel --version
 
-      - name: Deploy to Vercel (Staging)
+      - name: Vercel pull + build (preview, prebuilt)
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -eu
+          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          vercel build --token "$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt to Vercel (Staging)
         id: deploy
         working-directory: packages/website
         env:
@@ -80,9 +95,9 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
-          # Deploy to staging (no --prod flag)
+          # Deploy the prebuilt Build Output (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
-          DEPLOYMENT_URL=$(vercel deploy --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
 
           if [ -z "$DEPLOYMENT_URL" ]; then
             echo "::error::Failed to capture deployment URL. Check Vercel configuration."
@@ -119,7 +134,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Run Lighthouse CI
         uses: treosh/lighthouse-ci-action@3e7e23fb74242897f95c0ba9cabad3d0227b9b18 # v12
@@ -164,7 +179,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Check links on staging deployment
         uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
@@ -260,7 +275,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -275,12 +290,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
 
+      - name: Cache Vercel build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
-      - name: Build website
-        working-directory: packages/website
-        run: npm run build
 
       - name: Install Vercel CLI (pinned to root devDep)
         run: |
@@ -289,7 +308,18 @@ jobs:
           npm i -g "vercel@$PINNED"
           vercel --version
 
-      - name: Deploy to Vercel (Production)
+      - name: Vercel pull + build (production, prebuilt)
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -eu
+          vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+          vercel build --prod --token "$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt to Vercel (Production)
         id: deploy
         working-directory: packages/website
         env:
@@ -297,9 +327,9 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
-          # Deploy to production (with --prod flag)
+          # Deploy the prebuilt Build Output to production (no cloud rebuild)
           # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
-          DEPLOYMENT_URL=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
 
           if [ -z "$DEPLOYMENT_URL" ]; then
             echo "::error::Failed to capture deployment URL. Check Vercel configuration."
@@ -308,6 +338,29 @@ jobs:
 
           echo "deployment-url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
           echo "Deployed to production: $DEPLOYMENT_URL"
+
+      # Re-fire the repository_dispatch that smoke-prod.yml listens for. Once
+      # native git integration is disconnected (Phase 2), Vercel stops emitting
+      # the deploy webhook, so this CLI-deploy path must fire it itself.
+      # Must be a real PAT (GH_PAT) -- the default GITHUB_TOKEN will not
+      # re-trigger smoke-prod.yml (GitHub's workflow-recursion guard).
+      - name: Re-fire post-deploy smoke dispatch
+        id: smoke_dispatch
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh api repos/${{ github.repository }}/dispatches \
+            -f event_type=vercel-prod-deployed \
+            -f 'client_payload[sha]=${{ github.sha }}'
+
+      # Surface a failed dispatch (e.g. missing/expired PAT) without failing the
+      # already-successful production deploy. smoke-prod.yml can still be run via
+      # workflow_dispatch if this annotation appears.
+      - name: Warn if smoke dispatch failed
+        if: steps.smoke_dispatch.outcome == 'failure'
+        run: |
+          echo "::warning::Failed to re-fire vercel-prod-deployed dispatch; smoke-prod.yml did not auto-run. Check the GH_PAT secret, then trigger smoke-prod.yml manually."
 
       - name: Generate deployment summary
         run: |
@@ -443,6 +496,41 @@ jobs:
           fi
 
           echo "All smoke tests passed!"
+
+      - name: Smoke - OpenAPI spec is served
+        # SMI-5226: the docs/api page advertises skillsmith.app/openapi.yaml for
+        # Postman/Insomnia import. Assert it serves 200 as YAML (not a 404 HTML
+        # page) with the expected contract markers. Production www is served by
+        # Vercel's git-integration deploy, which can lag this workflow's CLI
+        # deploy — so retry before failing. Parse via command substitution, NOT
+        # `read < <(curl -w ...)`: curl -w emits no trailing newline, so `read`
+        # returns non-zero at EOF and trips `errexit` before any check runs.
+        run: |
+          set -euo pipefail
+          URL=https://www.skillsmith.app/openapi.yaml
+          TMP=$(mktemp)
+          ok=0
+          last="(none)"
+          for attempt in $(seq 1 6); do
+            OUT=$(curl -sSL -o "$TMP" -w '%{http_code} %{content_type}' --max-time 15 "$URL" || true)
+            CODE=${OUT%% *}
+            CTYPE=${OUT#* }
+            last="$CODE $CTYPE"
+            echo "attempt $attempt: openapi.yaml -> $last"
+            case "$CODE $CTYPE" in
+              "200 application/yaml"*|"200 text/yaml"*|"200 application/x-yaml"*|"200 text/plain"*) ok=1; break ;;
+            esac
+            sleep 20
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::$URL not served as YAML after 6 attempts (last: $last)"
+            exit 1
+          fi
+          grep -q "openapi: 3.0" "$TMP"        || { echo "::error::spec body missing 'openapi: 3.0'"; exit 1; }
+          grep -q "api.skillsmith.app" "$TMP"  || { echo "::error::spec body missing 'api.skillsmith.app' server"; exit 1; }
+          PATHS=$({ grep -cE '^  /' "$TMP" || true; })
+          [ "$PATHS" -eq 12 ] || { echo "::error::spec has $PATHS top-level paths (expected 12)"; exit 1; }
+          echo "OpenAPI spec served correctly (200, $CTYPE, 12 paths)."
 
       - name: Update deployment status
         if: always()

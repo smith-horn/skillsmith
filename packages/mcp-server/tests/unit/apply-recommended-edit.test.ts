@@ -142,12 +142,60 @@ describe('apply_recommended_edit — happy path', () => {
     const filePath = plantSkillForEdit(TEST_HOME, 'fixture', description)
     const { auditId, collisionId } = await seedAuditWithEdit(filePath, description)
 
-    const response = await applyRecommendedEditTool({ auditId, collisionId })
+    const response = await applyRecommendedEditTool({ auditId, collisionId, confirmed: true })
     expect(response.success).toBe(true)
     expect(response.result?.success).toBe(true)
     // File mutated: original line replaced with the templated version.
     const fileBody = fs.readFileSync(filePath, 'utf-8')
     expect(fileBody).toContain('description: deploy code to production (qualified)')
+  })
+})
+
+describe('apply_recommended_edit — confirmation gate (SMI-5213)', () => {
+  it('returns a non-mutating preview when confirmed is omitted', async () => {
+    const description = 'deploy code to production'
+    const filePath = plantSkillForEdit(TEST_HOME, 'fixture-preview', description)
+    const { auditId, collisionId, edit } = await seedAuditWithEdit(filePath, description)
+    const before = fs.readFileSync(filePath, 'utf-8')
+
+    const response = await applyRecommendedEditTool({ auditId, collisionId })
+    expect(response.success).toBe(true)
+    expect(response.preview).toBe(true)
+    expect(response.applied).toBe(false)
+    expect(response.result).toBeUndefined()
+    expect(response.action).toBe(edit.pattern)
+    expect(response.target).toBe(filePath)
+    expect(response.before).toBe(edit.before)
+    expect(response.after).toBe(edit.after)
+    // File untouched.
+    expect(fs.readFileSync(filePath, 'utf-8')).toBe(before)
+  })
+
+  it('returns a non-mutating preview when confirmed is explicitly false', async () => {
+    const description = 'deploy code to production'
+    const filePath = plantSkillForEdit(TEST_HOME, 'fixture-preview-false', description)
+    const { auditId, collisionId } = await seedAuditWithEdit(filePath, description)
+    const before = fs.readFileSync(filePath, 'utf-8')
+
+    const response = await applyRecommendedEditTool({ auditId, collisionId, confirmed: false })
+    expect(response.success).toBe(true)
+    expect(response.preview).toBe(true)
+    expect(response.applied).toBe(false)
+    expect(fs.readFileSync(filePath, 'utf-8')).toBe(before)
+  })
+
+  it('mutates the file only when confirmed is true', async () => {
+    const description = 'deploy code to production'
+    const filePath = plantSkillForEdit(TEST_HOME, 'fixture-confirmed', description)
+    const { auditId, collisionId } = await seedAuditWithEdit(filePath, description)
+
+    const response = await applyRecommendedEditTool({ auditId, collisionId, confirmed: true })
+    expect(response.success).toBe(true)
+    expect(response.preview).toBeUndefined()
+    expect(response.result?.success).toBe(true)
+    expect(fs.readFileSync(filePath, 'utf-8')).toContain(
+      'description: deploy code to production (qualified)'
+    )
   })
 })
 
@@ -158,7 +206,10 @@ describe('apply_recommended_edit — registry guard', () => {
     const { auditId, collisionId } = await seedAuditWithEdit(filePath, description, 'narrow_scope')
     const before = fs.readFileSync(filePath, 'utf-8')
 
-    const response = await applyRecommendedEditTool({ auditId, collisionId })
+    // SMI-5213: registry guard fires only on the actual apply path, so
+    // confirm to reach it (an unconfirmed call would short-circuit to a
+    // preview).
+    const response = await applyRecommendedEditTool({ auditId, collisionId, confirmed: true })
     expect(response.success).toBe(false)
     expect(response.errorCode).toBe('edit.template_not_in_apply_registry')
     // File untouched — registry guard rejects before any mutation.
@@ -200,7 +251,7 @@ describe('apply_recommended_edit — failure modes', () => {
       'utf-8'
     )
 
-    const response = await applyRecommendedEditTool({ auditId, collisionId })
+    const response = await applyRecommendedEditTool({ auditId, collisionId, confirmed: true })
     expect(response.success).toBe(false)
     expect(response.errorCode).toBe('edit.subcall_failed')
     expect(response.error).toContain('edit.stale_before')
@@ -229,6 +280,41 @@ describe('audit-tool-dispatch — apply_recommended_edit conditional registratio
     const dispatch = await import('../../src/audit-tool-dispatch.js')
     expect(dispatch.AUDIT_TOOL_NAMES.has('apply_recommended_edit')).toBe(true)
     expect(dispatch.isAuditToolName('apply_recommended_edit')).toBe(true)
+  })
+
+  // SMI-5213: newAuditToolDefinitions feeds index.ts's toolDefinitions so
+  // the three tools are client-discoverable via ListTools.
+  it('newAuditToolDefinitions returns the 3 new tools (live registry) and excludes skill_audit', async () => {
+    const dispatch = await import('../../src/audit-tool-dispatch.js')
+    const names = dispatch.newAuditToolDefinitions().map((d) => d.name)
+    expect(names).toEqual([
+      'skill_inventory_audit',
+      'apply_namespace_rename',
+      'apply_recommended_edit',
+    ])
+    // Must NOT re-list the already-registered audit tools.
+    expect(names).not.toContain('skill_audit')
+    expect(names).not.toContain('skill_pack_audit')
+  })
+
+  it('newAuditToolDefinitions omits apply_recommended_edit when the registry is empty', async () => {
+    vi.resetModules()
+    vi.doMock('../../src/audit/edit-applier.js', async (importOriginal) => {
+      const actual = (await importOriginal()) as Record<string, unknown>
+      return {
+        ...actual,
+        APPLY_TEMPLATE_REGISTRY: new Set<EditTemplatePattern>(),
+      }
+    })
+    try {
+      const dispatch = await import('../../src/audit-tool-dispatch.js')
+      const names = dispatch.newAuditToolDefinitions().map((d) => d.name)
+      expect(names).toEqual(['skill_inventory_audit', 'apply_namespace_rename'])
+      expect(names).not.toContain('apply_recommended_edit')
+    } finally {
+      vi.doUnmock('../../src/audit/edit-applier.js')
+      vi.resetModules()
+    }
   })
 
   it('omits apply_recommended_edit when APPLY_TEMPLATE_REGISTRY is empty', async () => {

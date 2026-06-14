@@ -53,4 +53,19 @@ export interface ApplyRecommendedEditResponse {
     | 'edit.subcall_failed'
   /** Human-readable error message. */
   error?: string
+  // SMI-5213: confirmation-gate preview fields. Present (with
+  // `applied: false`) when the tool was called without `confirmed: true`
+  // — nothing on disk changed.
+  /** True when this is a non-mutating preview of the prose edit. */
+  preview?: boolean
+  /** Template pattern that *would* be applied on confirm. */
+  action?: string
+  /** Absolute path of the file that *would* be rewritten. */
+  target?: string
+  /** Current snippet at the edit's line range (pre-edit). */
+  before?: string
+  /** Proposed snippet (post-edit). */
+  after?: string
+  /** Always `false` on a preview; absent on a real apply. */
+  applied?: boolean
 }

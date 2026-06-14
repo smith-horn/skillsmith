@@ -59,6 +59,40 @@ export const skillInventoryAuditInputSchema = z
 export type SkillInventoryAuditValidatedInput = z.infer<typeof skillInventoryAuditInputSchema>
 
 /**
+ * MCP tool schema for `skill_inventory_audit` (SMI-5213). Hand-written
+ * JSON Schema mirroring {@link skillInventoryAuditInputSchema} so the tool
+ * is client-discoverable via ListTools. Keep in sync with the Zod schema.
+ */
+export const skillInventoryAuditToolSchema = {
+  name: 'skill_inventory_audit',
+  description:
+    '[Skillsmith — Maintain stage] Audit the local `~/.claude/` inventory (skills, commands, agents, CLAUDE.md rules) for namespace collisions. Returns rename + prose-edit suggestions keyed by a fresh `auditId`. Read-only — performs no file mutations. Feed the returned suggestions into `apply_namespace_rename` / `apply_recommended_edit`.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      deep: {
+        type: 'boolean',
+        description: 'Run the deep (semantic) collision pass. Defaults to false.',
+      },
+      homeDir: {
+        type: 'string',
+        description:
+          'Override the inventory root. Must resolve under os.homedir() or os.tmpdir(); arbitrary paths are rejected.',
+      },
+      projectDir: {
+        type: 'string',
+        description: 'Project directory whose CLAUDE.md rules are included in the scan.',
+      },
+      applyExclusions: {
+        type: 'boolean',
+        description: 'Apply the configured exclusion list to the scan. Defaults to true.',
+      },
+    },
+    required: [],
+  },
+}
+
+/**
  * Execute the `skill_inventory_audit` tool. Validates input via Zod and
  * returns either the success response OR a structured validation-error
  * envelope (matches `install.ts:buildValidationError` pattern).

@@ -167,9 +167,14 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
     </thead>
     <tbody>
       <tr>
+        <td><code>official</code></td>
+        <td>Full security review by the platform; platform- or partner-maintained</td>
+        <td>Enterprise and regulated environments; always safe</td>
+      </tr>
+      <tr>
         <td><code>verified</code></td>
-        <td>Full security audit by Skillsmith</td>
-        <td>Production paths, regulated environments</td>
+        <td>Publisher identity verified via GitHub; automated scan passed</td>
+        <td>Production paths where the publisher is accountable</td>
       </tr>
       <tr>
         <td><code>curated</code></td>
@@ -178,18 +183,13 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
       </tr>
       <tr>
         <td><code>community</code></td>
-        <td>Peer review + automated checks</td>
-        <td>Personal projects, prototypes</td>
+        <td>Basic scan passed, metadata present; publisher not verified</td>
+        <td>Personal projects, prototypes; review first</td>
       </tr>
       <tr>
-        <td><code>experimental</code></td>
-        <td>Basic validation only</td>
-        <td>Bleeding-edge exploration; expect breakage</td>
-      </tr>
-      <tr>
-        <td><code>unknown</code></td>
-        <td>None</td>
-        <td>Read the source first, then decide</td>
+        <td><code>unverified</code></td>
+        <td>No verification performed</td>
+        <td>Read the source first, then decide; install requires confirmation</td>
       </tr>
     </tbody>
   </table>

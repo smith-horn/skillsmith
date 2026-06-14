@@ -35,3 +35,8 @@ smi-*/
 # Local settings (untracked, varies per developer)
 .claude/settings.local.json
 docker-compose.override.yml
+
+# SMI-5226: published OpenAPI spec is a verbatim copy of docs/internal/api/openapi.yaml
+# (via `npm run sync:openapi`). Must NOT be independently reformatted, or it drifts
+# from the source and breaks the openapi-spec-sync byte-identity guard.
+packages/website/public/openapi.yaml

@@ -1,0 +1,138 @@
+name: Website Preview (PR)
+
+# Replaces the automatic per-PR preview deploys that Vercel git integration
+# provided before Phase 2 disconnected native git integration (SMI-5246).
+# Runs a prebuilt deploy on every push to a PR so UAT always has a fresh URL.
+# Full rationale: docs/internal/implementation/smi-5246-vercel-prebuilt-deploy.md
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'packages/website/**'
+
+concurrency:
+  group: website-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fork PRs do not have access to VERCEL_TOKEN -- skip cleanly rather than fail.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+
+      - name: Cache Vercel build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Vercel CLI (pinned to root devDep)
+        run: |
+          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
+          echo "Installing vercel@$PINNED (pinned from root package.json)"
+          npm i -g "vercel@$PINNED"
+          vercel --version
+
+      - name: Deploy preview (prebuilt)
+        id: deploy
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -eu
+          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          vercel build --token "$VERCEL_TOKEN"
+          URL=$(vercel deploy --prebuilt --yes --token "$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL on PR
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const MARKER = '<!-- website-preview -->';
+            const previewUrl = '${{ steps.deploy.outputs.url }}';
+            const sha = '${{ github.event.pull_request.head.sha }}';
+            const shortSha = sha.slice(0, 7);
+            const runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}';
+
+            let body;
+            if (previewUrl) {
+              body = [
+                MARKER,
+                '### Website Preview',
+                '',
+                `| | |`,
+                `|---|---|`,
+                `| **Preview URL** | ${previewUrl} |`,
+                `| **Commit** | \`${shortSha}\` |`,
+                `| **Actions run** | [View logs](${runUrl}) |`,
+              ].join('\n');
+            } else {
+              body = [
+                MARKER,
+                '### Website Preview',
+                '',
+                '**Deploy failed.** No preview URL was captured.',
+                '',
+                `[View logs](${runUrl}) for details.`,
+              ].join('\n');
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(MARKER));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

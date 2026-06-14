@@ -9,7 +9,7 @@
  */
 
 /**
- * Trust Tiers - Four-tier system for evaluating skill safety
+ * Trust Tiers - Five-tier system for evaluating skill safety
  */
 export const TRUST_TIERS = {
   OFFICIAL: {

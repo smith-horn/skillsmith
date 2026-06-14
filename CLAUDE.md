@@ -50,6 +50,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **After pulling**: post-merge hook auto-runs `npm install` in Docker on `package-lock.json` change; if container is down, start it and run `docker exec skillsmith-dev-1 npm install && npm run build`. **Full rebuild** (native modules, major upgrades): [docker-guide.md](.claude/development/docker-guide.md#full-rebuild-thorough). **Stop**: `docker compose --profile dev down`. **Logs**: `docker logs skillsmith-dev-1`. **Submodule**: `git submodule update --init` before `docker compose up` if internal docs needed inside container.
 
+**Auto-recovery (SMI-5245)**: the `dev` service sets `restart: unless-stopped`, so the container comes back on its own after a Docker Desktop / machine restart — this keeps the `skillsmith-doc-retrieval` + `skillsmith` MCP servers (launched via `docker exec` in `.mcp.json`) from silently dropping with a `-32000` reconnect error. An explicit `docker compose --profile dev down` or `docker stop` is still honored (stays down). If you ever see the container *restart-looping* after a reboot, it hit a degraded environment (wiped volume / ABI mismatch) — run the **Container won't start** Troubleshooting recipe. **Both MCP servers require the container to be running** — there is no fallback path; if the container is down, `/mcp` will report `Failed to reconnect` and all MCP tools will be unavailable until `docker compose --profile dev up -d` is run.
+
 **After fresh clone or volume wipe**: run `npm install` + `npm run build` in the container before the `skillsmith` MCP server can connect. The launcher (`scripts/mcp-skillsmith-launcher.sh`, SMI-5049) prints actionable stderr in the `/mcp` panel's per-server log when `node_modules/` or `dist/` is missing — surfaced when you expand the failing entry.
 
 ---
@@ -65,6 +67,8 @@ Zero ESLint warnings/errors. TypeScript strict (no unjustified `any`). All files
 **Post-deploy smoke (SMI-4459)**: `smoke-prod.yml` runs `scripts/smoke-prod.sh` against prod after each merge. Failure → Linear + email. Skip: `[skip-smoke]` in PR body. [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md).
 
 **Build**: Turborepo (`npm run build`); legacy fallback `npm run build:legacy` ([ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md)). **Change tiers**: `docs` ~30s, `config` validation, `code` ~11 min full, `deps` rebuild+audit. **Branch protection**: 10 checks (code) / 2 checks (docs-only). **npm overrides, release-PR carve-out, vitest split rationale**: [ci-reference.md](.claude/development/ci-reference.md).
+
+**Dependabot lockfile stability (SMI-5272)**: the root `jose: "5.10.0"` devDependency is a **load-bearing anchor** — it pins an otherwise optional-peer-only `jose@5.10.0` (reachable solely via `ruflo → @claude-flow/cli → fastmcp`) as a regular root edge so Dependabot's lockfile regen can't drop it. If Dependabot or `npm ci` ever fails with `Missing: jose@5.10.0 from lock file`, the anchor was removed — restore it. Root cause + manual-consolidated-bump fallback: [ci-reference.md § Dependabot lockfile regen](.claude/development/ci-reference.md).
 
 ---
 
@@ -168,9 +172,9 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `get_skill` | Get skill details by `author/name` ID |
 | `install_skill` | Install skill to `~/.claude/skills` |
 | `uninstall_skill` | Remove installed skill |
-| `recommend` | Contextual skill recommendations |
-| `validate` | Validate skill structure |
-| `compare` | Compare 2-5 skills side-by-side |
+| `skill_recommend` | Contextual skill recommendations |
+| `skill_validate` | Validate skill structure |
+| `skill_compare` | Compare 2-5 skills side-by-side |
 | `skill_diff` | Diff two installed skill versions side-by-side |
 | `skill_audit` | Audit skill for security advisories (Team+) |
 | `skill_inventory_audit` | Audit local `~/.claude/` inventory for namespace collisions; returns rename + edit suggestions (SMI-4590) |
@@ -227,7 +231,7 @@ npx supabase functions deploy quota-monitor --no-verify-jwt
 
 ## Monitoring & Alerts
 
-High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, GHA — SMI-5209; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
+High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, Supabase pg_cron — SMI-4798; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
 
 ---
 
@@ -286,7 +290,7 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 
 ## Key References
 
-- **Architecture**: [System Overview](docs/internal/architecture/system-design/system-overview.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md)
+- **Architecture**: [API Architecture (as-built)](docs/internal/architecture/system-design/api-architecture.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md). Historical (Dec-2025 design, superseded): [System Overview](docs/internal/architecture/system-design/system-overview.md)
 - **Standards**: [Engineering](docs/internal/architecture/standards.md), [DB](docs/internal/architecture/standards-database.md), [Astro](docs/internal/architecture/standards-astro.md), [Security](docs/internal/architecture/standards-security.md)
 - **Process**: [Context Compaction](docs/internal/process/context-compaction.md), [Linear Hygiene](docs/internal/process/linear-hygiene-guide.md), [Wave Checklist](docs/internal/process/wave-completion-checklist.md)
 - **Testing**: [Stripe](.claude/development/stripe-testing.md), [Neural](.claude/development/neural-testing.md), [Benchmarks](.claude/development/benchmarks.md)

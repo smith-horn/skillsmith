@@ -4,13 +4,13 @@
 # Decoupled from the request hot path so per-request latency is unaffected.
 # Email dedup is enforced by the quota_warning_log table at the DB layer.
 # Each run scans the last 7 days so a paused workflow does not lose alerts.
+#
+# Scheduling: invoked hourly by Supabase pg_cron (migration 20260611000001_quota_monitor_pg_cron.sql, SMI-4798).
+# This workflow is manual-dispatch only / break-glass.
 
 name: Quota Monitor
 
 on:
-  schedule:
-    # Every hour (Wave 3: SMI-5209 disk IO remediation)
-    - cron: '0 * * * *'
   workflow_dispatch: {}
 
 permissions:

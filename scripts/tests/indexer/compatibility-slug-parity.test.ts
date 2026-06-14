@@ -4,7 +4,7 @@
  * Three surfaces must agree on the slug set:
  *  1. the indexer matrix (scripts/indexer/compatibility-map.ts) — derives slugs from skill_path
  *  2. @skillsmith/core (compatibility/slugs.ts) — the canonical filterable list + labels (MCP)
- *  3. the website badge renderer (skills/index.astro) — mirrors the labels (client bundle
+ *  3. the website badge renderer (lib/skill-card.ts) — mirrors the labels (client bundle
  *     cannot import core)
  *
  * This test fails if a slug is added to the matrix but not the canonical list, or if the
@@ -40,14 +40,14 @@ describe('compatibility slug parity (SMI-5178)', () => {
   })
 
   it('the website badge renderer mirrors every core slug + label', () => {
-    const astro = readFileSync(
-      resolve(repoRoot, 'packages/website/src/pages/skills/index.astro'),
+    const skillCard = readFileSync(
+      resolve(repoRoot, 'packages/website/src/lib/skill-card.ts'),
       'utf8'
     )
     for (const slug of COMPATIBILITY_SLUGS) {
-      expect(astro, `website COMPAT_LABELS missing slug "${slug}"`).toContain(slug)
+      expect(skillCard, `website COMPAT_LABELS missing slug "${slug}"`).toContain(slug)
       expect(
-        astro,
+        skillCard,
         `website COMPAT_LABELS missing label "${COMPATIBILITY_LABELS[slug]}"`
       ).toContain(COMPATIBILITY_LABELS[slug])
     }
