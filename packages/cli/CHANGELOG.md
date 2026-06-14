@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.4
+
+- **Fix**: override axios@^1.17.0 + bump turbo@2.9.14 — clear 8 Dependabot alerts (SMI-5266) (#1421)
+
 ## v0.6.3
 
 - **Refactor**: SMI-5036 split oversized billing test files (#1282)

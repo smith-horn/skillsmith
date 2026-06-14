@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.4
+
+- **Fix**: override axios@^1.17.0 + bump turbo@2.9.14 — clear 8 Dependabot alerts (SMI-5266) (#1421)
+- **Fix**: repair install.integration UUID mock seam + un-break integration config (SMI-5261) (#1417)
+- **Fix**: make audit Check 25 spread-aware for MCP tool count (SMI-5216) (#1402)
+
 ## v0.5.3
 
 - **Refactor**: SMI-5036 split oversized billing test files (#1282)

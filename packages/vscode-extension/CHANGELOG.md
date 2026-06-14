@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.2.5
+
+- **Fix**: override axios@^1.17.0 + bump turbo@2.9.14 — clear 8 Dependabot alerts (SMI-5266) (#1421)
+
 ## v0.2.4
 
 - Version bump
