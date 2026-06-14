@@ -2,7 +2,7 @@
  * API Types matching OpenAPI specification
  * @module api/types
  *
- * These types are aligned with docs/api/openapi.yaml for type-safe API interactions.
+ * These types are aligned with docs/internal/api/openapi.yaml for type-safe API interactions.
  * Uses snake_case for API wire format compatibility.
  */
 
@@ -14,7 +14,14 @@
  * Trust tier levels from API
  */
 // SMI-5205: 5-tier public model; experimental/unknown are internal only (translated at response layer)
-export type ApiTrustTier = 'official' | 'verified' | 'curated' | 'community' | 'unverified'
+export const API_TRUST_TIERS = [
+  'official',
+  'verified',
+  'curated',
+  'community',
+  'unverified',
+] as const
+export type ApiTrustTier = (typeof API_TRUST_TIERS)[number]
 
 // ============================================================================
 // Category (matches OpenAPI category enum)
@@ -23,13 +30,15 @@ export type ApiTrustTier = 'official' | 'verified' | 'curated' | 'community' | '
 /**
  * Skill category filter values
  */
-export type ApiCategory =
-  | 'Development'
-  | 'Testing'
-  | 'DevOps'
-  | 'Documentation'
-  | 'Productivity'
-  | 'Security'
+export const API_CATEGORIES = [
+  'Development',
+  'Testing',
+  'DevOps',
+  'Documentation',
+  'Productivity',
+  'Security',
+] as const
+export type ApiCategory = (typeof API_CATEGORIES)[number]
 
 // ============================================================================
 // Project Type (matches OpenAPI project_type enum)

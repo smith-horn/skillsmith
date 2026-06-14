@@ -13,6 +13,8 @@ import { ClientRouter } from 'astro:transitions'
 import Nav from '../components/Nav.astro'
 import Footer from '../components/Footer.astro'
 import { getSupabaseConfig } from '../lib/supabase-config'
+// SMI-5217: single source of truth for trust-tier pill colors (canonical 5-tier).
+import { TRUST_TIER_PILL_CLASSES, DEFAULT_TRUST_TIER } from '../constants/trust-tier-badges'
 import '../styles/global.css'
 
 const supabaseConfig = getSupabaseConfig()
@@ -160,21 +162,21 @@ const supabaseConfig = getSupabaseConfig()
           >
             <span class="inline-flex items-center gap-1 mr-3">
               <span
-                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400"
+                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400"
                 >verified</span
               >
               Official Anthropic skills
             </span>
             <span class="inline-flex items-center gap-1 mr-3">
               <span
-                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400"
+                class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-500/20 text-yellow-400"
                 >community</span
               >
               Reviewed
             </span>
             <span class="inline-flex items-center gap-1">
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-700 text-dark-400"
-                >experimental</span
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/20 text-red-400"
+                >unverified</span
               >
               New
             </span>
@@ -323,7 +325,13 @@ const supabaseConfig = getSupabaseConfig()
     </script>
 
     <!-- Inline skill search (debounced 300ms, 12 results) -->
-    <script is:inline>
+    <script
+      is:inline
+      define:vars={{
+        trustTierPillClasses: TRUST_TIER_PILL_CLASSES,
+        defaultTrustTier: DEFAULT_TRUST_TIER,
+      }}
+    >
       document.addEventListener('astro:page-load', function () {
         var input = document.getElementById('v2-search-input')
         var results = document.getElementById('v2-search-results')
@@ -331,12 +339,12 @@ const supabaseConfig = getSupabaseConfig()
 
         var debounceTimer = null
 
+        // SMI-5217: 5-tier public vocabulary (ApiTrustTier). Colors come from the
+        // shared trustTierPillClasses map (define:vars). The API never returns
+        // experimental/unknown — any unmatched value degrades to the unverified style.
         function badgeClasses(tier) {
-          if (tier === 'verified')
-            return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400 flex-shrink-0'
-          if (tier === 'community')
-            return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400 flex-shrink-0'
-          return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-700 text-dark-400 flex-shrink-0'
+          const color = trustTierPillClasses[tier] || trustTierPillClasses[defaultTrustTier]
+          return `px-1.5 py-0.5 rounded text-[10px] font-medium ${color} flex-shrink-0`
         }
 
         function renderSkill(skill) {
@@ -351,7 +359,7 @@ const supabaseConfig = getSupabaseConfig()
           name.textContent = skill.name || skill.id || ''
           var badge = document.createElement('span')
           badge.className = badgeClasses(skill.trust_tier)
-          badge.textContent = skill.trust_tier || 'experimental'
+          badge.textContent = skill.trust_tier || 'unverified'
           top.appendChild(name)
           top.appendChild(badge)
           var desc = document.createElement('p')

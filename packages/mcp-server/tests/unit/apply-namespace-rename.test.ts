@@ -124,6 +124,7 @@ describe('apply_namespace_rename — action: apply', () => {
       auditId: audit.auditId,
       collisionId: suggestion.collisionId,
       action: 'apply',
+      confirmed: true,
     })
     expect(response.success).toBe(true)
     expect(response.result).toBeDefined()
@@ -131,6 +132,64 @@ describe('apply_namespace_rename — action: apply', () => {
     // Source path no longer exists; target does.
     expect(fs.existsSync(cmdPath)).toBe(false)
     expect(fs.existsSync(response.result!.toPath)).toBe(true)
+  })
+})
+
+describe('apply_namespace_rename — confirmation gate (SMI-5213)', () => {
+  it('returns a non-mutating preview when confirmed is omitted', async () => {
+    const audit = await seedAuditWithCollision()
+    const suggestion = audit.renameSuggestions[0]!
+    const cmdPath = path.join(TEST_HOME, '.claude', 'commands', 'ship.md')
+    const before = fs.readFileSync(cmdPath, 'utf-8')
+
+    const response = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'apply',
+    })
+    expect(response.success).toBe(true)
+    expect(response.preview).toBe(true)
+    expect(response.applied).toBe(false)
+    expect(response.result).toBeUndefined()
+    expect(response.action).toBe(suggestion.applyAction)
+    expect(response.before).toBe(suggestion.currentName)
+    expect(response.after).toBe(suggestion.suggested)
+    // File untouched.
+    expect(fs.existsSync(cmdPath)).toBe(true)
+    expect(fs.readFileSync(cmdPath, 'utf-8')).toBe(before)
+  })
+
+  it('returns a non-mutating preview when confirmed is explicitly false', async () => {
+    const audit = await seedAuditWithCollision()
+    const suggestion = audit.renameSuggestions[0]!
+    const cmdPath = path.join(TEST_HOME, '.claude', 'commands', 'ship.md')
+
+    const response = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'apply',
+      confirmed: false,
+    })
+    expect(response.success).toBe(true)
+    expect(response.preview).toBe(true)
+    expect(response.applied).toBe(false)
+    expect(fs.existsSync(cmdPath)).toBe(true)
+  })
+
+  it('previews the custom name when action is custom and confirmed is omitted', async () => {
+    const audit = await seedAuditWithCollision()
+    const suggestion = audit.renameSuggestions[0]!
+
+    const response = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'custom',
+      customName: 'ship-preview-custom',
+    })
+    expect(response.success).toBe(true)
+    expect(response.preview).toBe(true)
+    expect(response.after).toBe('ship-preview-custom')
+    expect(response.result).toBeUndefined()
   })
 })
 
@@ -144,6 +203,7 @@ describe('apply_namespace_rename — action: custom', () => {
       collisionId: suggestion.collisionId,
       action: 'custom',
       customName: 'ship-custom-explicit',
+      confirmed: true,
     })
     expect(response.success).toBe(true)
     expect(response.result?.success).toBe(true)
@@ -212,6 +272,7 @@ describe('apply_namespace_rename — idempotent re-apply', () => {
       auditId: audit.auditId,
       collisionId: suggestion.collisionId,
       action: 'apply',
+      confirmed: true,
     })
     expect(first.success).toBe(true)
     expect(first.result?.success).toBe(true)
@@ -220,6 +281,7 @@ describe('apply_namespace_rename — idempotent re-apply', () => {
       auditId: audit.auditId,
       collisionId: suggestion.collisionId,
       action: 'apply',
+      confirmed: true,
     })
     expect(second.success).toBe(true)
     expect(second.result?.success).toBe(true)

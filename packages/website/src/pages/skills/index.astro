@@ -6,6 +6,10 @@ import SignedOutOverlay from '../../components/SignedOutOverlay.astro'
 import { isCrawlerUserAgent } from '../../lib/crawler-detect'
 // SMI-4838: featured-skills catalog seed — pinned author/name set verified against indexer DB.
 import featuredSkillsData from '../../data/featured-skills.json'
+// SMI-5217: canonical 5-tier order drives the trust-tier filter options. Badge
+// rendering itself now lives in the bundled skill-card.ts module (SMI-1377), which
+// imports TRUST_TIER_BADGE_CLASSES / DEFAULT_TRUST_TIER directly.
+import { TRUST_TIER_ORDER } from '../../constants/terminology'
 
 const FEATURED_SKILL_IDS: string[] = (featuredSkillsData.skills as Array<{ id: string }>).map(
   (s) => s.id
@@ -22,12 +26,12 @@ const categories = [
   { value: 'security', label: 'Security' },
 ]
 
+// SMI-5217: derive filter options from the canonical 5-tier order so the values
+// stay in lock-step with the API's accepted trust_tier set (experimental/unknown
+// are rejected by skills-search; official was missing).
 const trustTiers = [
   { value: '', label: 'All Trust Tiers' },
-  { value: 'verified', label: 'Verified' },
-  { value: 'curated', label: 'Curated' },
-  { value: 'community', label: 'Community' },
-  { value: 'experimental', label: 'Experimental' },
+  ...TRUST_TIER_ORDER.map((t) => ({ value: t.id, label: t.label })),
 ]
 
 // SMI-4401 Wave 2: SSR-time crawler detection. Emits a human-only overlay while keeping
@@ -474,27 +478,28 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       let allResults: Skill[] = []
       let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-      // DOM Elements
-      const searchInput = document.getElementById('search-input')
-      const categoryFilter = document.getElementById('category-filter')
-      const trustFilter = document.getElementById('trust-filter')
-      const sortSelect = document.getElementById('sort-select')
-      const resultsGrid = document.getElementById('results-grid')
-      const resultsCount = document.getElementById('results-count')
-      const loadingState = document.getElementById('loading-state')
-      const emptyState = document.getElementById('empty-state')
-      const errorState = document.getElementById('error-state')
-      const errorMessage = document.getElementById('error-message')
-      const pagination = document.getElementById('pagination')
-      const prevPageBtn = document.getElementById('prev-page')
-      const nextPageBtn = document.getElementById('next-page')
-      const pageInfo = document.getElementById('page-info')
-      const retryButton = document.getElementById('retry-button')
-      const searchPromptState = document.getElementById('search-prompt-state')
+      // DOM Elements. The early-return guard above (search-input presence)
+      // guarantees the skills-browser markup is mounted, so these casts are safe.
+      const searchInput = document.getElementById('search-input') as HTMLInputElement
+      const categoryFilter = document.getElementById('category-filter') as HTMLSelectElement
+      const trustFilter = document.getElementById('trust-filter') as HTMLSelectElement
+      const sortSelect = document.getElementById('sort-select') as HTMLSelectElement
+      const resultsGrid = document.getElementById('results-grid') as HTMLElement
+      const resultsCount = document.getElementById('results-count') as HTMLElement
+      const loadingState = document.getElementById('loading-state') as HTMLElement
+      const emptyState = document.getElementById('empty-state') as HTMLElement
+      const errorState = document.getElementById('error-state') as HTMLElement
+      const errorMessage = document.getElementById('error-message') as HTMLElement
+      const pagination = document.getElementById('pagination') as HTMLElement
+      const prevPageBtn = document.getElementById('prev-page') as HTMLButtonElement
+      const nextPageBtn = document.getElementById('next-page') as HTMLButtonElement
+      const pageInfo = document.getElementById('page-info') as HTMLElement
+      const retryButton = document.getElementById('retry-button') as HTMLButtonElement
+      const searchPromptState = document.getElementById('search-prompt-state') as HTMLElement
       const searchSuggestions = document.querySelectorAll('.search-suggestion')
 
       // Show/hide states
-      function showState(state) {
+      function showState(state: string) {
         resultsGrid.classList.add('hidden')
         loadingState.classList.add('hidden')
         emptyState.classList.add('hidden')
@@ -665,7 +670,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
               }
             }
           } catch (headerErr) {
-            console.debug('[Skills] quota header parse failed:', headerErr?.message)
+            console.debug('[Skills] quota header parse failed:', (headerErr as Error)?.message)
           }
 
           const data = await response.json()
@@ -715,10 +720,10 @@ const isCrawler = isCrawlerUserAgent(userAgent)
         } catch (error) {
           clearTimeout(timeoutId)
           console.error('Search error:', error)
-          const isTimeout = error.name === 'AbortError'
+          const isTimeout = (error as Error).name === 'AbortError'
           errorMessage.textContent = isTimeout
             ? 'Request timed out. Please try again.'
-            : error.message
+            : (error as Error).message
           showState('error')
           resultsCount.textContent = 'Error'
         }
@@ -804,7 +809,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // Search suggestion buttons
       searchSuggestions.forEach((btn) => {
         btn.addEventListener('click', () => {
-          searchInput.value = btn.dataset.query
+          searchInput.value = (btn as HTMLElement).dataset.query ?? ''
           searchSkills()
         })
       })
@@ -839,7 +844,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
             .map((s) => renderSkillCard({ skill: s, href: `/skills/${encodeURIComponent(s.id)}` }))
             .join('')
         } catch (e) {
-          console.debug('[Skills] featured-skills load failed:', e?.message)
+          console.debug('[Skills] featured-skills load failed:', (e as Error)?.message)
         }
       }
 

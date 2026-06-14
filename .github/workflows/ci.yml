@@ -62,7 +62,7 @@ jobs:
       version_files: ${{ steps.filter.outputs.version_files }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # SMI-3999: Pinned to SHA for reproducibility (v4 release). Keep in sync with
       # docs-only.yml and website-build job (ci.yml:1415) — any drift is a bug.
@@ -118,7 +118,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0 # Full history for scanning all commits in PR
 
@@ -158,7 +158,7 @@ jobs:
       affected_count: ${{ steps.affected.outputs.affected_count || '0' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -206,7 +206,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
       - name: Setup Node.js
@@ -239,7 +239,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # SMI-1317: Verify required dependencies are available
       - name: Verify dependencies
@@ -348,7 +348,7 @@ jobs:
       # eval baseline delta comment.
       pull-requests: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -468,7 +468,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -525,7 +525,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -722,7 +722,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files before Docker build
       # Narrowed scope (SMI-2604): .claude/skills/**, .claude/plans/**, .claude/hive-mind/**,
@@ -771,7 +771,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
       # SMI-4927: GHCR auth for the registry BuildKit cache. Skipped on fork PRs
       # (read-only GITHUB_TOKEN has no packages: scope) — fork PRs then cold-build
@@ -779,7 +779,7 @@ jobs:
       - name: Log in to ghcr.io
         id: ghcr-login
         if: (steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true') && github.event.pull_request.head.repo.fork != true
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -787,7 +787,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
         with:
           images: skillsmith-ci
           tags: |
@@ -807,7 +807,7 @@ jobs:
       # SMI-2194: Only build if cache miss or load failed
       - name: Build and cache Docker image
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
           push: false
@@ -989,7 +989,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           # SMI-4764 Wave 4 finding 2: audit:standards check 45 needs full
           # history to compute origin/${baseRef}...HEAD diff. Default depth=1
@@ -1048,7 +1048,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1168,7 +1168,7 @@ jobs:
         run: npm run test:coverage --workspace=packages/${{ matrix.package }} || true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           files: ./packages/${{ matrix.package }}/coverage/coverage-final.json
@@ -1190,7 +1190,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # SMI-2250: Decrypt git-crypt encrypted files (supabase/functions tests are encrypted)
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1277,7 +1277,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # Note: colocated tests don't read git-crypt content, but unlock matches
       # `Test (root)` so devs see consistent setup across jobs.
@@ -1376,6 +1376,98 @@ jobs:
           fi
           exit 0
 
+  # SMI-5262: gate the mcp-server integration suite (packages/mcp-server/tests/
+  # integration/**) so it cannot silently rot again (the whole suite previously ran
+  # in NO CI job — `packages/mcp-server/vitest.config.ts` excludes tests/integration).
+  # Clones `Test (root colocated)`'s tier gate, plus an affected_dirs guard mirroring
+  # the `Test (mcp-server)` matrix so it runs ONLY when mcp-server is affected.
+  # ADVISORY until promoted to a required status check after 2 green runs (SMI-5262).
+  test-mcp-server-integration:
+    name: Test (mcp-server integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docker-build, classify]
+    # Match the `Test (root colocated)` tier gate so this ungates/skips alongside the
+    # other test jobs, AND additionally require mcp-server to be affected (mirror the
+    # `Test (mcp-server)` matrix membership). On PRs that don't touch mcp-server this
+    # job is skipped-as-success.
+    if: |
+      needs.classify.outputs.skip_tests != 'true' &&
+      (needs.classify.outputs.tier == 'code' || needs.classify.outputs.tier == 'deps') &&
+      contains(fromJson(needs.classify.outputs.affected_dirs), 'mcp-server')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
+
+      - name: Download Docker image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        run: |
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
+          fi
+
+      - name: Extract node_modules
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
+
+      # Build core dist first — the integration mocks resolve `@skillsmith/core`
+      # subpaths to built dist (SMI-5260), so the suite needs a fresh build.
+      - name: Build project
+        run: |
+          docker run --rm --init \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      # SMI-5262: NO env is set on purpose — `github-api.integration.test.ts`
+      # self-skips its network tests unless GITHUB_API_TESTS=true, so the suite
+      # stays fully offline/hermetic in CI. Do NOT add GITHUB_API_TESTS here.
+      # Strict exit-code semantics (default `bash -e`): a real test failure fails
+      # the job — no SMI-4667-style exit-code masking, since this is a gate.
+      - name: Run mcp-server integration tests
+        run: |
+          docker run --rm --init \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run test:integration -w packages/mcp-server
+
+      - name: Advisory note
+        if: always()
+        run: |
+          {
+            echo "### Test (mcp-server integration)"
+            echo ""
+            echo "Advisory check (SMI-5262) — promote to a required status check after 2 green runs. Result: \`${{ job.status }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Security audit always runs regardless of change classification.
   # Rationale: Security vulnerabilities can be introduced by any change type,
   # and the audit is relatively fast compared to the cost of missing a vulnerability.
@@ -1390,7 +1482,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1500,7 +1592,7 @@ jobs:
 
       - name: Checkout
         if: steps.changes.outputs.website == 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1622,7 +1714,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -1692,7 +1784,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -1792,7 +1884,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6

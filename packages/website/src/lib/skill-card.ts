@@ -10,7 +10,13 @@
  */
 
 import type { Skill } from '../types/skills.js'
-import { TRUST_BADGE_CLASSES, getQualityTier, formatNumber, escapeHtml } from './skills-utils.js'
+import { getQualityTier, formatNumber, escapeHtml } from './skills-utils.js'
+// SMI-5217: canonical 5-tier badge map is the single source of truth (pinned by
+// constants/trust-tier-badges.test.ts). The public API only ever emits the five
+// ApiTrustTier values; any other value (legacy experimental/unknown) degrades to
+// DEFAULT_TRUST_TIER styling, matching the rest of the site.
+import { TRUST_TIER_BADGE_CLASSES, DEFAULT_TRUST_TIER } from '../constants/trust-tier-badges.js'
+import type { TrustTierId } from '../constants/terminology.js'
 
 export interface SkillCardProps {
   skill: Skill
@@ -84,7 +90,9 @@ function renderCompatibilityBadges(compatibility: string[] | undefined): string 
 }
 
 export function renderSkillCard({ skill, href }: SkillCardProps): string {
-  const trustClass = TRUST_BADGE_CLASSES[skill.trust_tier] ?? TRUST_BADGE_CLASSES.unverified
+  const trustClass =
+    TRUST_TIER_BADGE_CLASSES[skill.trust_tier as TrustTierId] ??
+    TRUST_TIER_BADGE_CLASSES[DEFAULT_TRUST_TIER]
   const stars = skill.stars ?? 0
   const tier = getQualityTier(stars)
   const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`
@@ -98,7 +106,7 @@ export function renderSkillCard({ skill, href }: SkillCardProps): string {
         ${renderOrgMatchBadge(skill._orgMatch)}
       </div>
       <span class="ml-4 px-2.5 py-1 text-xs font-medium rounded-full border ${trustClass}">
-        ${escapeHtml(skill.trust_tier)}
+        ${escapeHtml(skill.trust_tier || DEFAULT_TRUST_TIER)}
       </span>
     </div>
     <p class="text-dark-400 text-sm mb-4 line-clamp-2">${escapeHtml(skill.description || 'No description available')}</p>

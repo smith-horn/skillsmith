@@ -5,6 +5,13 @@ services:
       dockerfile: Dockerfile
       target: dev
     container_name: skillsmith-dev-1
+    # SMI-5245: auto-recover the long-lived dev container after a Docker daemon /
+    # machine restart so the doc-retrieval + skillsmith MCP servers (launched via
+    # `docker exec` in .mcp.json) don't silently drop with a -32000 reconnect error.
+    # `unless-stopped` (not `always`): honors an explicit `docker stop` / `compose
+    # down` so the CLAUDE.md recovery flows that rely on `down` staying down still
+    # work. dev-only — `test`/`orchestrator` run one-shot commands and must not loop.
+    restart: unless-stopped
     ports:
       - '${DEV_PORT:-3001}:3001'
     volumes:

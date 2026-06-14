@@ -172,16 +172,25 @@
   @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
 }
 
-@utility badge-verified {
+/* SMI-5217: 5-tier public vocabulary (ApiTrustTier), colors per docs/trust-tiers.astro. */
+@utility badge-official {
   @apply badge bg-green-100 text-green-800;
 }
 
-@utility badge-community {
+@utility badge-verified {
   @apply badge bg-blue-100 text-blue-800;
 }
 
-@utility badge-experimental {
+@utility badge-curated {
+  @apply badge bg-teal-100 text-teal-800;
+}
+
+@utility badge-community {
   @apply badge bg-yellow-100 text-yellow-800;
+}
+
+@utility badge-unverified {
+  @apply badge bg-red-100 text-red-800;
 }
 
 @layer base {

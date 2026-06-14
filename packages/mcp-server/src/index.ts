@@ -60,6 +60,10 @@ import {
 import { webhookConfigureToolSchema, apiKeyManageToolSchema } from './tools/integration-tools.js'
 import { complianceReportToolSchema } from './tools/compliance-tools.js'
 import { dispatchToolCall } from './tool-dispatch.js'
+// SMI-5213: make the three audit-family tools client-discoverable. The
+// builder gates `apply_recommended_edit` on APPLY_TEMPLATE_REGISTRY and
+// omits the already-registered `skill_audit` / `skill_pack_audit`.
+import { newAuditToolDefinitions } from './audit-tool-dispatch.js'
 import {
   isFirstRun,
   markFirstRunComplete,
@@ -143,6 +147,14 @@ const toolDefinitions = [
   webhookConfigureToolSchema,
   apiKeyManageToolSchema,
   complianceReportToolSchema,
+  // SMI-5213: skill_inventory_audit, apply_namespace_rename, and (gated)
+  // apply_recommended_edit. Spread so apply_recommended_edit is omitted
+  // when APPLY_TEMPLATE_REGISTRY is empty. audit:standards Check 25 resolves
+  // this spread to its MAX *ToolSchema set (SMI-5216), so the README must
+  // document every tool that CAN register (the max set, incl. the gated one).
+  // Runtime may register fewer; that correctness is covered by the
+  // ListTools-registry test, not Check 25.
+  ...newAuditToolDefinitions(),
 ]
 
 // Create server

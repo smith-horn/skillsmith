@@ -30,9 +30,18 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ToolContext } from './context.js'
 import { skillAuditInputSchema, executeSkillAudit } from './tools/skill-audit.js'
 import { skillPackAuditInputSchema, executeSkillPackAudit } from './tools/skill-pack-audit.js'
-import { skillInventoryAudit } from './tools/skill-inventory-audit.js'
-import { applyNamespaceRename } from './tools/apply-namespace-rename.js'
-import { applyRecommendedEditTool } from './tools/apply-recommended-edit.js'
+import {
+  skillInventoryAudit,
+  skillInventoryAuditToolSchema,
+} from './tools/skill-inventory-audit.js'
+import {
+  applyNamespaceRename,
+  applyNamespaceRenameToolSchema,
+} from './tools/apply-namespace-rename.js'
+import {
+  applyRecommendedEditTool,
+  applyRecommendedEditToolSchema,
+} from './tools/apply-recommended-edit.js'
 import { APPLY_TEMPLATE_REGISTRY } from './audit/edit-applier.js'
 import { withLicenseAndQuota } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
@@ -76,6 +85,42 @@ function buildAuditToolNames(): string[] {
  */
 export function isAuditToolName(name: string): boolean {
   return AUDIT_TOOL_NAMES.has(name)
+}
+
+/**
+ * SMI-5213: ListTools definitions for the THREE NEW audit-family tools
+ * (`skill_inventory_audit`, `apply_namespace_rename`, and — gated —
+ * `apply_recommended_edit`). `index.ts` spreads this into `toolDefinitions`
+ * so the tools become client-discoverable.
+ *
+ * Deliberately EXCLUDES `skill_audit` / `skill_pack_audit`: those are
+ * already registered in `index.ts`'s static array; re-listing them here
+ * would double-list them in ListTools.
+ *
+ * `apply_recommended_edit` is included iff `APPLY_TEMPLATE_REGISTRY.size > 0`
+ * — the SAME registration gate `buildAuditToolNames` uses for
+ * `AUDIT_TOOL_NAMES`, so the discoverable surface and the dispatchable
+ * surface stay in lock-step.
+ */
+export interface NewAuditToolDefinition {
+  name: string
+  description: string
+  inputSchema: {
+    type: 'object'
+    properties: Record<string, unknown>
+    required: string[]
+  }
+}
+
+export function newAuditToolDefinitions(): NewAuditToolDefinition[] {
+  const defs: NewAuditToolDefinition[] = [
+    skillInventoryAuditToolSchema,
+    applyNamespaceRenameToolSchema,
+  ]
+  if (APPLY_TEMPLATE_REGISTRY.size > 0) {
+    defs.push(applyRecommendedEditToolSchema)
+  }
+  return defs
 }
 
 /**

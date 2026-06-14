@@ -150,6 +150,12 @@ paths = [
   '''scripts/.*''',
   '''docs/.*\.md$''',
   '''docs/.*\.yaml$''',
+  # SMI-5226: the published OpenAPI spec (served publicly at /openapi.yaml) is a
+  # build-published copy of docs/internal/api/openapi.yaml (already allowlisted
+  # by docs/.*\.yaml above). It is public by definition and contains no secrets;
+  # schema names like `EarlyAccessSignupRequest` and a placeholder device-code
+  # example match the broad 24-char vercel-token regex by coincidence.
+  '''packages/website/public/openapi\.yaml$''',
   # Research data contains session IDs and experiment UUIDs (not secrets)
   '''docs/research/.*\.json$''',
   # .claude/skills, .claude/hive-mind moved to private submodule
