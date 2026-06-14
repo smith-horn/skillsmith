@@ -376,3 +376,94 @@ SMI-4086  # Upgrade Node 20→24 — superseded by SMI-4489 (Node 22.22 floor)
 # manual-op: investigation / version-drift report / content publishing (no commit expected)
 SMI-4172  # Version drift core@0.5.0 vs git main — investigation task
 SMI-2691  # Publish State of Claude Skills Security blog post (content, no commit)
+
+
+# === 2026-06-14 batch (SMI-5275 — #1074 drift clearance, 71 entries) ===
+# Cleared the 2026-06-08 drift run. Buckets via scripts/triage-linear-drift.mjs
+# (Linear-initiative lookup); the 15 genuine-drift survivors dispositioned
+# case-by-case (all resolved/external — none reopened). See SMI-5275.
+
+# external-repo: 021.School Aprio curriculum — docs live in the 021.School
+# repo / initiative; no source-glob match in this repo by design.
+SMI-5147  # 021.School CI — branch-protection ruleset (021 repo)
+SMI-5146  # 021.School CI — content-access E2E deploy gate (021 repo)
+SMI-5117  # 021.School Aprio [Z-8] discover-and-define
+SMI-5116  # 021.School Aprio [Z-7] front-matter sweep
+SMI-5115  # 021.School Aprio [Z-6] workshop.yaml (workshop fork)
+SMI-5113  # 021.School Aprio [Z-4] workspace-prep
+SMI-5112  # 021.School Aprio [Z-3] appendix-prompt-library
+SMI-5111  # 021.School Aprio [Z-2] designing-with-agency
+SMI-5110  # 021.School Aprio [Z-1] ai-slop-and-default
+SMI-5109  # 021.School Aprio [C-9] share-out-and-rationale
+SMI-5107  # 021.School Aprio [C-7] adding-a-design-system
+SMI-5106  # 021.School Aprio [C-6] introduction/facilitator-notes
+SMI-5105  # 021.School Aprio [C-5] tooling-comparison
+SMI-5104  # 021.School Aprio [C-4] designing-with-agency
+SMI-5103  # 021.School Aprio [C-3] appendix-troubleshooting
+SMI-5102  # 021.School Aprio [C-2] adding-a-design-system
+SMI-5101  # 021.School Aprio [C-1] introduction
+SMI-5100  # 021.School Aprio [B-7] facilitator-notes
+SMI-5099  # 021.School Aprio [B-6] appendix-prompt-library
+SMI-5098  # 021.School Aprio [B-5] share-out-and-rationale
+SMI-5097  # 021.School Aprio [B-4] pair-prototyping
+SMI-5096  # 021.School Aprio [B-3] pair-design-process-overview
+SMI-5095  # 021.School Aprio [B-2] pair-design-agent-skill
+SMI-5094  # 021.School Aprio [B-1] travel-design-problems
+SMI-5093  # 021.School Aprio [A-10] tooling-comparison
+SMI-5092  # 021.School Aprio [A-9] introduction
+SMI-5091  # 021.School Aprio [A-8] workspace-prep
+SMI-5087  # 021.School Aprio [A-4] working-with-ai-risks
+SMI-5086  # 021.School Aprio [A-3] ai-slop-and-default
+SMI-5085  # 021.School Aprio [A-2] taste-judgement-craft
+SMI-5084  # 021.School Aprio [A-1] designing-with-agency
+SMI-4993  # 021.School Aprio B2 — orchestration-reference.md
+SMI-4991  # 021.School Aprio B1 — Aprio Engineering Playbook
+SMI-4990  # 021.School Aprio A10 — agent-skills.md skill-security
+SMI-4989  # 021.School Aprio A9 — feature-branch-workflow.md
+SMI-4988  # 021.School Aprio A8 — agentic-project-management.md
+SMI-4987  # 021.School Aprio A7 — spec-driven-development.md
+SMI-4986  # 021.School Aprio A6 — product-research-configuration.md
+SMI-4985  # 021.School Aprio A2 — introduction.md
+SMI-4984  # 021.School Aprio A1 — coaching intake form
+SMI-4983  # 021.School Aprio A5 — agent-orchestration.md
+SMI-4982  # 021.School Aprio A11 — environment-setup.md
+SMI-4981  # 021.School Aprio A4 — agent-skills.md reframe
+SMI-4980  # 021.School Aprio A3 — agent-skills.md rewrite
+SMI-4977  # 021.School Aprio Track A — must-fix parent
+
+# external-repo: 021.School cohort-management UI (instructor/attendee/admin
+# modal). Orphan issues with no Linear project; these components
+# (InstructorChips, AttendeeList, .instructor-error, admin-modal) do not
+# exist in this skill-discovery repo — confirmed absent.
+SMI-5072  # 021.School instructor-modal verification (ESC/focus/mobile) — absent here
+SMI-5071  # 021.School instructor assignment modal Playwright smoke — absent here
+SMI-5070  # 021.School InstructorChips/AttendeeList CSS drift guard — absent here
+SMI-5069  # 021.School .instructor-error design token — absent here
+SMI-5068  # 021.School modal-trigger CSP listeners — absent here
+SMI-5067  # 021.School admin-modal stylesheet + a11y — absent here
+
+# wave-subtask: shipped under a parent/docs PR whose squash commit lacked the child SMI token.
+SMI-3535  # chore(deps) posthog-node align — shipped under dep PR
+SMI-3489  # Wave 6 docs overview CLI-vs-MCP — docs PR
+SMI-3488  # Wave 5 skill authoring docs — docs PR
+SMI-3487  # Wave 4 README link fixes — docs PR
+SMI-3486  # Wave 3 quickstart/sidebar — docs PR
+SMI-3485  # Wave 2 template fixes/CLI parity — docs PR
+SMI-3484  # Wave 1 CLI install/install-skill rename — docs PR
+SMI-942   # Phase 7 Enterprise — packages/enterprise shipped across successor SMIs (54 files, @smith-horn/enterprise@0.2.0)
+
+# manual-op: one-time ops / verify / content publishing; no source change expected.
+SMI-5172  # Provision GHA staging Supabase secrets — ops
+SMI-5169  # Manual email change for Peter Lee — ops
+SMI-4911  # Cross-post memory-architecture essay to blog — content
+SMI-4881  # SMI-4118 close-out invocation-rate verify — investigation
+SMI-4548  # SMI-4451 host bootstrap better-sqlite3 rebuild — host op
+
+# resolved-elsewhere: work landed or no longer applicable; squash lacked the SMI token.
+SMI-5081  # main-broken telemetry lint/tsc — false alarm; fixed under SMI-5012 follow-ups (#1286–1294); lint/tsc clean
+SMI-4942  # high-trust-authors.ts line gate — resolved; file now 74 lines (refactored)
+SMI-4889  # remove protobufjs allowlist — done; protobufjs 7.5.8 bump (PR #1102); no allowlist entry remains
+SMI-4851  # pre-push vitest 234 worktree — documented workaround SKILLSMITH_PRE_PUSH_DOCKER=1 (SMI-4767/5140)
+SMI-4819  # vercel 50→53 (GHSA-pgf8-2hgj-grqg) — alert cleared; 0 open security alerts (SMI-5268)
+SMI-3921  # vite high-sev vuln — resolved; vite override ^7.3.2; 0 open security alerts (SMI-5268)
+SMI-2398  # .in() silent prod failure — fixed by batch-utils.ts batchedIn() (SMI-2380); residual quota-monitor gap tracked as SMI-5276
