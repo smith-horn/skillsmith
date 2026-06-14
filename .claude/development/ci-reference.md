@@ -312,6 +312,20 @@ Edge functions import from Deno ESM URLs pinned at specific versions (e.g., `esm
 
 See [edge-function-patterns.md](edge-function-patterns.md) §Third-Party Library Imports for the pinning convention.
 
+### Dependabot lockfile regen — the `jose` optional-peer anchor (SMI-5272)
+
+For a period after the June 2026 triage (SMI-5266), **every** Dependabot recreate failed `npm ci` with `Missing: jose@5.10.0 from lock file`, forcing all dep bumps (#1421/#1423/#1385/#1424 + 8 routine PRs) to be manual consolidated bumps.
+
+**Root cause:** `npm explain jose@5.10.0` → `dev optional peer`. The only edge to that node was `peerOptional jose@^5.0.0 from fastmcp@3.35.0`, reachable solely through optional edges (`ruflo → @claude-flow/cli → agentic-flow → fastmcp`). A full `npm install` speculatively places the optional peer; Dependabot's lockfile regen drops it; `npm ci` then fails. (The tree also carries `jose@6.2.x` at top for `@smith-horn/enterprise` + `@modelcontextprotocol/sdk`, and `jose@5.9.6` under `vercel`.)
+
+**Fix:** a root direct `devDependency` `"jose": "5.10.0"` in `package.json`. This creates a *regular* root edge, so npm hoists `jose@5.10.0` to the top and the `@claude-flow` optional peer dedupes to it — a regular edge that lockfile regen (incl. `npm install --package-lock-only`, Dependabot's mechanism) **cannot** drop. The `6.x` consumers keep a nested `jose@6.2.x` (the v5/v6 split is preserved). Verified: `--package-lock-only` recompute keeps `jose@5.10.0` and `npm ci` stays clean.
+
+**Do not remove the anchor.** `audit:standards` guards it (see the "Dependency anchor: jose" check). Note the related caret-allowlist entry for `jose` (`scripts/audit-standards.mjs` `CARET_RANGE_ALLOWLIST`).
+
+**Why scoped `overrides` were NOT used:** npm `overrides` rewrite *regular* dependency edges and do not reliably reach an optional-peer-only edge (the same class of override-resistance seen with `@astrojs/vercel`'s nested esbuild, SMI-5270). `npm update <pkg>` collapses *hoisted* duplicates but not workspace-nested/optional-peer copies.
+
+**Manual-consolidated-bump fallback** (if the anchor is ever lost or a new optional-peer drift appears): Dependabot recreate can't produce a valid lockfile, so bump the target dep(s) in `package.json` directly, run an **incremental** `npm install` (never a blind `rm package-lock.json` regen — that re-resolves floating `@claude-flow` alpha deps like `agentdb`/`@huggingface/transformers`/`onnxruntime` and diverges), verify `npm ci` clean + `npm audit --omit=dev --audit-level=high` = 0, and open a single consolidated PR with `[skip-impl-check]`.
+
 ## Docker BuildKit Cache Policy (SMI-3531, SMI-3539, SMI-3653, SMI-4927)
 
 Three workflows build Docker images with a BuildKit registry cache hosted in
