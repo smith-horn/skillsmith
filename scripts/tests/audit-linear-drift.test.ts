@@ -254,4 +254,110 @@ describe('SMI-3542: Linear Drift Audit', () => {
       expect(result.since).toBe('2026-03-01')
     })
   })
+
+  // SMI-5275: structural out-of-scope tier. isOutOfScope is pure (no CLI mocks),
+  // operating on the in-memory issue object returned by the GraphQL query.
+  describe('isOutOfScope', () => {
+    it('(a) flags an issue under a non-Skillsmith initiative as out-of-scope', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9001',
+        project: {
+          name: 'Module 4',
+          initiatives: { nodes: [{ name: '021 School Platform' }] },
+        },
+        labels: { nodes: [] },
+      }
+      const result = isOutOfScope(issue)
+      expect(result.outOfScope).toBe(true)
+      expect(result.reason.startsWith('external-initiative')).toBe(true)
+      expect(result.reason).toBe('external-initiative:021 School Platform')
+    })
+
+    it('(b) flags an orphan issue (no project) carrying an external-curriculum label', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9002',
+        project: null,
+        labels: { nodes: [{ name: 'Track_A' }] },
+      }
+      const result = isOutOfScope(issue)
+      expect(result.outOfScope).toBe(true)
+      expect(result.reason.startsWith('external-curriculum-label')).toBe(true)
+      expect(result.reason).toBe('external-curriculum-label:Track_A')
+    })
+
+    it('(c) keeps a Skillsmith-initiative issue in scope (stays drift)', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9003',
+        project: {
+          name: 'Core Repositories',
+          initiatives: { nodes: [{ name: 'Skillsmith' }] },
+        },
+        labels: { nodes: [] },
+      }
+      expect(isOutOfScope(issue).outOfScope).toBe(false)
+    })
+
+    it('(d) does NOT exclude a Skillsmith issue labeled generic Docs (guards rejected alt A)', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9004',
+        project: {
+          name: 'Core Repositories',
+          initiatives: { nodes: [{ name: 'Skillsmith' }] },
+        },
+        labels: { nodes: [{ name: 'Docs' }] },
+      }
+      expect(isOutOfScope(issue).outOfScope).toBe(false)
+    })
+
+    it('(e) keeps a multi-initiative issue in scope when Skillsmith is among them (.some guard)', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9005',
+        project: {
+          name: 'Shared Project',
+          initiatives: { nodes: [{ name: '021 School Platform' }, { name: 'Skillsmith' }] },
+        },
+        labels: { nodes: [] },
+      }
+      expect(isOutOfScope(issue).outOfScope).toBe(false)
+    })
+
+    it('keeps an issue in scope when the project name matches a Skillsmith project pattern', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9006',
+        project: {
+          name: 'Dependabot Vulnerability Fixes',
+          // Non-Skillsmith initiative, but project carve-out wins.
+          initiatives: { nodes: [{ name: 'MiniMax Gateway' }] },
+        },
+        labels: { nodes: [] },
+      }
+      expect(isOutOfScope(issue).outOfScope).toBe(false)
+    })
+
+    it('keeps an issue with no project and no curriculum label in scope (fail-safe)', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9007',
+        project: null,
+        labels: { nodes: [{ name: 'bug' }] },
+      }
+      expect(isOutOfScope(issue).outOfScope).toBe(false)
+    })
+
+    it('keeps an issue with an empty initiatives list in scope (fail-safe)', async () => {
+      const { isOutOfScope } = await importModule()
+      const issue = {
+        identifier: 'SMI-9008',
+        project: { name: 'Some Project', initiatives: { nodes: [] } },
+        labels: { nodes: [] },
+      }
+      expect(isOutOfScope(issue).outOfScope).toBe(false)
+    })
+  })
 })

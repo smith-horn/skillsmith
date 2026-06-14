@@ -45,6 +45,26 @@ const SOURCE_GLOBS = [
 const RETRY_DELAYS = [1000, 2000, 4000]
 const ALLOWLIST_PATH = '.linear-drift-allowlist'
 
+// SMI-5275: Structural out-of-scope tier. The SMI Linear team spans multiple
+// initiatives; non-Skillsmith ones (021 School Platform, MiniMax Gateway, …)
+// ship their code in other repos and would always "drift" here. Classify them
+// structurally rather than via manual allowlist entries.
+//
+// SOURCE OF TRUTH: copied verbatim from scripts/triage-linear-drift.mjs
+// (SKILLSMITH_PROJECT_PATTERNS, ~lines 221-226). Keep the two in lock-step —
+// several Skillsmith projects live under names that don't start with
+// "Skillsmith", so the initiative check needs this project-name escape hatch.
+const SKILLSMITH_PROJECT_PATTERNS = [
+  /^Skillsmith/i,
+  /Dependabot Vulnerability Fixes/i,
+  /Stub-to-Real|Tier Feature Gap/i,
+  /^Backfill Infrastructure/i,
+]
+// LIVE Smith Horn Group label set — confirmed external-curriculum markers ONLY
+// (verified 2026-06-14). Do NOT add generic Docs/Content/documentation labels
+// here: those mark genuine Skillsmith repo docs and would suppress real drift.
+const EXTERNAL_CURRICULUM_LABELS = ['Track_A', 'Track_B', 'Track_C', 'Track_Z', 'Cohort_4']
+
 // --- Argument Parsing ---
 
 function parseArgs() {
@@ -121,6 +141,8 @@ async function fetchDoneIssues(since) {
           title
           completedAt
           state { name }
+          project { name initiatives { nodes { name } } }
+          labels(first: 50) { nodes { name } }
         }
         pageInfo { hasNextPage endCursor }
       }
@@ -146,8 +168,11 @@ async function fetchDoneIssues(since) {
 
     const data = await res.json()
     if (data.errors) {
-      console.error('Linear API error:', JSON.stringify(data.errors))
-      process.exit(1)
+      // Distinct from the drift `exit 1` gate: a Linear query rejection (e.g.
+      // a complexity error or schema drift) must never be mistaken for drift.
+      // exit 2 = audit could not run; exit 1 = audit ran and found drift.
+      console.error('Drift audit: Linear query failed:', JSON.stringify(data.errors))
+      process.exit(2)
     }
 
     const { nodes, pageInfo } = data.data.issues
@@ -246,6 +271,49 @@ function verifyIssue(issueId, verbose) {
   return { status: 'unverified', reason: 'no-commit-found' }
 }
 
+// --- Structural Out-of-Scope (SMI-5275) ---
+
+/**
+ * Classify an issue as structurally out-of-scope for THIS repo's drift audit.
+ *
+ * Returns `{ outOfScope: true, reason }` ONLY when:
+ *   - (primary) the issue's project has a non-empty initiatives list, NONE of
+ *     which is Skillsmith (full-list `.some()`, never nodes[0] — guards
+ *     multi-initiative issues), AND the project name matches no known
+ *     Skillsmith project pattern → reason `external-initiative:<name>`; OR
+ *   - (secondary) the issue carries an external-curriculum label (catches
+ *     orphan issues with no project/initiative) → reason
+ *     `external-curriculum-label:<label>`.
+ *
+ * Otherwise returns `{ outOfScope: false }`. FAIL SAFE: a missing/blank
+ * initiative with no curriculum label keeps the issue IN scope (it falls
+ * through to verifyIssue and can still be flagged as drift) — the heuristic
+ * never silently excludes.
+ */
+function isOutOfScope(issue) {
+  // Primary: project initiative ∉ Skillsmith AND project not a Skillsmith project.
+  const initiativeNodes = issue.project?.initiatives?.nodes
+  if (Array.isArray(initiativeNodes) && initiativeNodes.length > 0) {
+    const hasSkillsmith = initiativeNodes.some((n) => /^Skillsmith$/i.test(n?.name ?? ''))
+    const projectName = issue.project?.name ?? ''
+    const isSkillsmithProject = SKILLSMITH_PROJECT_PATTERNS.some((p) => p.test(projectName))
+    if (!hasSkillsmith && !isSkillsmithProject) {
+      // Report a representative non-Skillsmith initiative name for the reason.
+      const externalName = initiativeNodes.find((n) => n?.name)?.name ?? 'unknown'
+      return { outOfScope: true, reason: `external-initiative:${externalName}` }
+    }
+  }
+
+  // Secondary: external-curriculum label on an orphan issue (no project/initiative).
+  const labels = issue.labels?.nodes?.map((n) => n?.name).filter(Boolean) ?? []
+  const curriculumLabel = labels.find((l) => EXTERNAL_CURRICULUM_LABELS.includes(l))
+  if (curriculumLabel) {
+    return { outOfScope: true, reason: `external-curriculum-label:${curriculumLabel}` }
+  }
+
+  return { outOfScope: false }
+}
+
 // --- Main ---
 
 async function main() {
@@ -266,10 +334,20 @@ async function main() {
   const verifiedIssues = []
   const mentionOnlyIssues = []
   const allowlistedIssues = []
+  const outOfScopeIssues = []
 
   for (const issue of issues) {
     if (allowlist.has(issue.identifier)) {
       allowlistedIssues.push(issue)
+      continue
+    }
+
+    // SMI-5275: structural exclusion BEFORE verifyIssue. External-initiative /
+    // external-curriculum issues ship their code in other repos and would
+    // always drift here; exclude them from the `exit 1` gate.
+    const scope = isOutOfScope(issue)
+    if (scope.outOfScope) {
+      outOfScopeIssues.push({ ...issue, reason: scope.reason })
       continue
     }
 
@@ -303,6 +381,16 @@ async function main() {
             completedAt: i.completedAt,
             reason: i.reason,
           })),
+          // SMI-5275: out-of-scope is a per-item array (so maintainers can audit
+          // WHAT was excluded), while `allowlisted` stays a bare count. The
+          // asymmetry is intentional — do not "fix" it: the allowlist is a
+          // manual override that needs no per-item audit trail here.
+          outOfScope: outOfScopeIssues.map((i) => ({
+            id: i.identifier,
+            title: i.title,
+            completedAt: i.completedAt,
+            reason: i.reason,
+          })),
           allowlisted: allowlistedIssues.length,
         },
         null,
@@ -313,7 +401,17 @@ async function main() {
     console.log(`Verified: ${verifiedIssues.length}`)
     console.log(`Mention-only (commit exists, no source glob match): ${mentionOnlyIssues.length}`)
     console.log(`Allowlisted: ${allowlistedIssues.length}`)
+    console.log(
+      `Out-of-scope (external initiative/curriculum — auto-excluded): ${outOfScopeIssues.length}`
+    )
     console.log(`Drift detected: ${driftIssues.length}`)
+
+    if (outOfScopeIssues.length > 0) {
+      console.log('\n--- Issues structurally excluded (external initiative/curriculum) ---\n')
+      for (const issue of outOfScopeIssues) {
+        console.log(`  ${issue.identifier}: ${issue.title} (${issue.reason})`)
+      }
+    }
 
     if (mentionOnlyIssues.length > 0) {
       console.log('\n--- Issues with commits but no source glob match (informational) ---\n')
@@ -357,4 +455,5 @@ export {
   hasMergedPr,
   hasAnyGitCommit,
   verifyIssue,
+  isOutOfScope,
 }
