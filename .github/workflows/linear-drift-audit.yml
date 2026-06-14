@@ -55,8 +55,10 @@ jobs:
           fi
           DRIFT_COUNT=$(jq -r '.drift | length' /tmp/drift-results.json)
           MENTION_COUNT=$(jq -r '.mentionOnly | length' /tmp/drift-results.json 2>/dev/null || echo "0")
+          OOS_COUNT=$(jq -r '.outOfScope | length' /tmp/drift-results.json 2>/dev/null || echo "0")
           echo "drift_count=$DRIFT_COUNT" >> $GITHUB_OUTPUT
           echo "mention_count=$MENTION_COUNT" >> $GITHUB_OUTPUT
+          echo "oos_count=$OOS_COUNT" >> $GITHUB_OUTPUT
 
       - name: Ensure governance label exists
         if: steps.check.outputs.drift_count != '0'
@@ -72,19 +74,33 @@ jobs:
         run: |
           DRIFT_COUNT=${{ steps.check.outputs.drift_count }}
           MENTION_COUNT=${{ steps.check.outputs.mention_count }}
+          OOS_COUNT=${{ steps.check.outputs.oos_count }}
           DATE=$(date -u +%Y-%m-%d)
 
           # Build issue body
-          BODY="## Linear Drift Audit — $DATE
+          BODY="## Linear Drift Audit - $DATE
 
           **$DRIFT_COUNT issue(s)** marked Done without any source code commits.
           **$MENTION_COUNT issue(s)** have commits but no source glob match (informational).
+          **$OOS_COUNT issue(s)** structurally excluded (external initiative/curriculum - no allowlist entry needed).
 
           ### Drift Details
           "
 
           # Append each drifted issue with reason
           BODY+=$(jq -r '.drift[] | "- **\(.id)**: \(.title) (reason: \(.reason))"' /tmp/drift-results.json)
+
+          # Best-effort: list the structurally-excluded set so a maintainer can
+          # audit WHAT was excluded (canonical surface is the step summary).
+          if [ "$OOS_COUNT" != "0" ]; then
+            OOS_LIST=$(jq -r '.outOfScope[] | "- **\(.id)**: \(.title) (\(.reason))"' /tmp/drift-results.json)
+            BODY+="
+
+          <details><summary>Out-of-scope ($OOS_COUNT auto-excluded)</summary>
+
+          $OOS_LIST
+          </details>"
+          fi
 
           BODY+="
 
@@ -122,13 +138,24 @@ jobs:
             MENTION=$(jq -r '.mentionOnly | length' /tmp/drift-results.json 2>/dev/null || echo "0")
             DRIFT=$(jq -r '.drift | length' /tmp/drift-results.json 2>/dev/null || echo "?")
             ALLOWLISTED=$(jq -r '.allowlisted' /tmp/drift-results.json 2>/dev/null || echo "?")
+            OOS=$(jq -r '.outOfScope | length' /tmp/drift-results.json 2>/dev/null || echo "0")
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
             echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
             echo "| Total completed | $TOTAL |" >> $GITHUB_STEP_SUMMARY
             echo "| Verified | $VERIFIED |" >> $GITHUB_STEP_SUMMARY
             echo "| Mention-only | $MENTION |" >> $GITHUB_STEP_SUMMARY
             echo "| Allowlisted | $ALLOWLISTED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Out-of-scope | $OOS |" >> $GITHUB_STEP_SUMMARY
             echo "| **Drift** | **$DRIFT** |" >> $GITHUB_STEP_SUMMARY
+            # Canonical (always-rendered) out-of-scope audit trail: id + title + reason.
+            if [ "$OOS" != "0" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "<details><summary>Out-of-scope ($OOS auto-excluded: external initiative/curriculum)</summary>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              jq -r '.outOfScope[] | "- \(.id): \(.title) (\(.reason))"' /tmp/drift-results.json >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "</details>" >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "Audit did not produce results. Check logs." >> $GITHUB_STEP_SUMMARY
           fi
