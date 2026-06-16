@@ -81,7 +81,7 @@
     "@typescript-eslint/eslint-plugin": "8.59.1",
     "@typescript-eslint/parser": "8.59.1",
     "@vitest/coverage-v8": "4.1.6",
-    "astro": "6.3.2",
+    "astro": "6.4.7",
     "chalk": "5.6.2",
     "cloudinary": "2.10.0",
     "commander": "14.0.3",
@@ -107,7 +107,7 @@
   "dependencies": {
     "@claude-flow/aidefence": "3.0.2",
     "@supabase/supabase-js": "2.108.1",
-    "protobufjs": "^7.5.8"
+    "protobufjs": "^7.6.3"
   },
   "overrides": {
     "undici": "^7.18.0",
@@ -122,9 +122,9 @@
     "tmp": "^0.2.6",
     "hono": "^4.12.21",
     "@hono/node-server": "^1.19.13",
-    "protobufjs": "^7.5.8",
+    "protobufjs": "^7.6.3",
     "uuid": "^14.0.0",
-    "vite": "^7.3.2",
+    "vite": "^7.3.5",
     "fast-xml-parser": "^5.5.7",
     "@aws-sdk/xml-builder": ">=3.972.3",
     "rollup": "^4.59.0",
