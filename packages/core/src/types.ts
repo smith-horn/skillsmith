@@ -177,6 +177,12 @@ export interface SearchResponse {
    * rows are never hidden (they always surface).
    */
   compatibilityHidden?: number
+  /**
+   * SMI-5178: results on this page hidden by the default-ON installable filter.
+   * Present when discovery-only entries were filtered out. Pass
+   * `installable_only: false` to include them.
+   */
+  discoveryOnlyHidden?: number
   timing: {
     searchMs: number
     totalMs: number

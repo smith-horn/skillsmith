@@ -65,6 +65,8 @@ function localSkillToRecommendation(skill: LocalSkill, matchReason: string): Ski
     trust_tier: 'local',
     quality_score: skill.qualityScore,
     roles,
+    // SMI-5178 (C2): local skills are always installable (they live on disk).
+    installable: true,
   }
 }
 
@@ -121,7 +123,8 @@ async function executeRecommendImpl(
   // Validate input with Zod
   const validated = recommendInputSchema.parse(input)
   let { installed_skills } = validated
-  const { project_context, limit, detect_overlap, min_similarity, role } = validated
+  const { project_context, limit, detect_overlap, min_similarity, role, installable_only } =
+    validated
 
   // SMI-906: Auto-detect installed skills from ~/.claude/skills/ if not provided
   const autoDetected = installed_skills.length === 0
@@ -169,6 +172,8 @@ async function executeRecommendImpl(
             trust_tier: mapTrustTierFromDb(skill.trust_tier),
             quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
             roles: skillRoles,
+            // SMI-5178 (C2): thread installable from the API result (repo_url present = installable).
+            installable: skill.installable ?? skill.repo_url != null,
           }
         })
       } else {
@@ -214,6 +219,14 @@ async function executeRecommendImpl(
         recommendations.sort((a, b) => b.quality_score - a.quality_score)
       }
 
+      // SMI-5178: default-ON installable filter. installable !== false means
+      // null/absent (unknown) is treated as installable — mirrors search behavior.
+      const beforeInstallableFilter = recommendations.length
+      if (installable_only) {
+        recommendations = recommendations.filter((rec) => rec.installable !== false)
+      }
+      const discoveryOnlyHidden = beforeInstallableFilter - recommendations.length
+
       // Calculate total candidates considered
       const apiCandidates =
         apiResultSettled.status === 'fulfilled' ? apiResultSettled.value.data.length : 0
@@ -224,6 +237,7 @@ async function executeRecommendImpl(
         candidates_considered: apiCandidates + localCandidates,
         overlap_filtered: 0,
         role_filtered: roleFiltered,
+        discovery_only_hidden: discoveryOnlyHidden,
         context: {
           installed_count: installed_skills.length,
           has_project_context: !!project_context,
@@ -381,6 +395,8 @@ async function executeRecommendImpl(
       trust_tier: skill.trustTier,
       quality_score: Math.round(boostedScore * 100),
       roles: skill.roles,
+      // SMI-5178 (C2): thread installable from SkillData (set by transformSkillToMatchData).
+      installable: skill.installable !== false ? true : false,
     }
   })
 
@@ -398,6 +414,13 @@ async function executeRecommendImpl(
     roleFiltered = beforeRoleFilter - recommendations.length
   }
 
+  // SMI-5178: default-ON installable filter on the local DB fallback path.
+  const beforeInstallableFilter = recommendations.length
+  if (installable_only) {
+    recommendations = recommendations.filter((rec) => rec.installable !== false)
+  }
+  const discoveryOnlyHidden = beforeInstallableFilter - recommendations.length
+
   const endTime = performance.now()
 
   matcher.close()
@@ -407,6 +430,7 @@ async function executeRecommendImpl(
     candidates_considered: candidates.length + localRecommendations.length,
     overlap_filtered: overlapFiltered,
     role_filtered: roleFiltered,
+    discovery_only_hidden: discoveryOnlyHidden,
     context: {
       installed_count: installed_skills.length,
       has_project_context: !!project_context,

@@ -38,6 +38,11 @@ export const recommendInputSchema = z.object({
   min_similarity: z.number().min(0).max(1).default(0.3),
   /** SMI-1631: Filter by skill role for targeted recommendations */
   role: skillRoleSchema.optional(),
+  /**
+   * SMI-5178: When true (default), return only installable skills.
+   * Pass false to include discovery-only entries that cannot be installed.
+   */
+  installable_only: z.boolean().default(true),
 })
 
 /**
@@ -67,6 +72,11 @@ export interface SkillRecommendation {
   quality_score: number
   /** SMI-1631: Skill roles for role-based filtering */
   roles?: SkillRole[]
+  /**
+   * SMI-5178: Whether the skill can be installed.
+   * False for discovery-only entries (no repo_url); absent means unknown/assumed installable.
+   */
+  installable?: boolean
 }
 
 /**
@@ -81,6 +91,11 @@ export interface RecommendResponse {
   overlap_filtered: number
   /** SMI-1631: Skills filtered due to role mismatch */
   role_filtered: number
+  /**
+   * SMI-5178: Discovery-only entries hidden by the default-ON installable filter.
+   * Pass installable_only: false to include them.
+   */
+  discovery_only_hidden?: number
   /** Query context used for matching */
   context: {
     installed_count: number
@@ -146,6 +161,12 @@ export const recommendToolSchema = {
         enum: [...SKILL_ROLES],
         description:
           'SMI-1631: Filter by skill role (code-quality, testing, documentation, workflow, security, development-partner). Skills matching the role get a +30 score boost.',
+      },
+      installable_only: {
+        type: 'boolean',
+        description:
+          'SMI-5178: When true (default), return only installable skills. Pass false to include discovery-only entries that cannot be installed.',
+        default: true,
       },
     },
     required: [],

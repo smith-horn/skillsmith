@@ -125,7 +125,9 @@ export class SkillRepository {
       qualityScore: row.quality_score,
       trustTier: row.trust_tier as Skill['trustTier'],
       tags: JSON.parse(row.tags || '[]'),
-      installable: row.installable ?? false,
+      // SMI-5178: when the installable column is NULL, derive from repo_url
+      // (rows created before the column existed are installable iff repo_url is set).
+      installable: row.installable !== null ? row.installable : row.repo_url !== null,
       // SMI-825: Security scan fields
       riskScore: row.risk_score,
       securityFindingsCount: row.security_findings_count ?? 0,

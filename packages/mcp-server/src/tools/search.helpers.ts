@@ -39,13 +39,17 @@ export function filterByCompatibility(
  * A skill is installable when it has a registry install source (`repo_url`
  * present). Client-side filter applied to the merged result page, so an
  * `installable_only` search may return fewer than the page limit.
+ *
+ * SMI-5178 (C3): treat `installable === null` / absent as installable — the
+ * stored column is frequently null for rows that DO have a repo_url. Only
+ * explicitly `false` marks a discovery-only entry.
  */
 export function filterInstallable(
   results: SkillSearchResult[],
   installableOnly: boolean | undefined
 ): SkillSearchResult[] {
   if (!installableOnly) return results
-  return results.filter((skill) => skill.installable === true)
+  return results.filter((skill) => skill.installable !== false)
 }
 
 /**

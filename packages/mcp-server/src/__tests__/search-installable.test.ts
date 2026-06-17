@@ -65,7 +65,8 @@ describe('SMI-4954: installable signal — online API path', () => {
       meta: { total: 2 },
     })
 
-    const result = await executeSearch({ query: 'commit' }, onlineContext)
+    // Pass installable_only: false so both rows are returned and we can inspect the signal.
+    const result = await executeSearch({ query: 'commit', installable_only: false }, onlineContext)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(result.results.find((r: any) => r.name === 'commit')?.installable).toBe(true)
@@ -73,7 +74,7 @@ describe('SMI-4954: installable signal — online API path', () => {
     expect(result.results.find((r: any) => r.name === 'discovery-only')?.installable).toBe(false)
   })
 
-  it('installable_only filter excludes discovery-only entries', async () => {
+  it('installable_only: true explicitly excludes discovery-only entries', async () => {
     vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
       data: apiResults,
       meta: { total: 2 },
@@ -82,14 +83,16 @@ describe('SMI-4954: installable signal — online API path', () => {
     const result = await executeSearch({ query: 'commit', installable_only: true }, onlineContext)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(result.results.every((r: any) => r.installable === true)).toBe(true)
+    expect(result.results.every((r: any) => r.installable !== false)).toBe(true)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(result.results.find((r: any) => r.name === 'discovery-only')).toBeUndefined()
-    // total reflects the filtered set, not the registry grand-total.
+    // (C1) total reflects the filtered set, not the registry grand-total.
     expect(result.total).toBe(result.results.length)
+    // discoveryOnlyHidden reports what was filtered.
+    expect(result.discoveryOnlyHidden).toBe(1)
   })
 
-  it('without installable_only, discovery-only entries are still returned', async () => {
+  it('(SMI-5178) DEFAULT ON: without installable_only, discovery-only entries are filtered out', async () => {
     vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
       data: apiResults,
       meta: { total: 2 },
@@ -97,8 +100,27 @@ describe('SMI-4954: installable signal — online API path', () => {
 
     const result = await executeSearch({ query: 'commit' }, onlineContext)
 
+    // Default is installable-only — discovery-only is hidden.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.find((r: any) => r.name === 'discovery-only')).toBeUndefined()
+    // (C1) total equals the filtered count (not the grand total of 2).
+    expect(result.total).toBe(result.results.length)
+    // discoveryOnlyHidden tells callers how many were hidden.
+    expect(result.discoveryOnlyHidden).toBe(1)
+  })
+
+  it('installable_only: false opts out — discovery-only entries are included', async () => {
+    vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
+      data: apiResults,
+      meta: { total: 2 },
+    })
+
+    const result = await executeSearch({ query: 'commit', installable_only: false }, onlineContext)
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(result.results.find((r: any) => r.name === 'discovery-only')).toBeDefined()
+    // discoveryOnlyHidden is 0 when the filter is off.
+    expect(result.discoveryOnlyHidden ?? 0).toBe(0)
   })
 })
 

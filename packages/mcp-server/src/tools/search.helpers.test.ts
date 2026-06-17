@@ -52,6 +52,26 @@ describe('filterInstallable (SMI-5178 regression guard)', () => {
     expect(filterInstallable(rows, false)).toHaveLength(2)
     expect(filterInstallable(rows, undefined)).toHaveLength(2)
   })
+
+  it('(C3) keeps a row with installable: null — null means unknown, not discovery-only', () => {
+    // `installable` is a stored column frequently null for rows that DO have a repo_url.
+    // Only explicit `false` marks a discovery-only entry.
+    const rows = [skill('null-row'), skill('false-row', undefined, false)]
+    // null-row has no installable key at all (undefined) — treated as installable.
+    expect(filterInstallable(rows, true).map((r) => r.id)).toEqual(['null-row'])
+  })
+
+  it('(C3) drops a row with installable: false, keeps installable: true and absent', () => {
+    const rows = [
+      skill('true-row', undefined, true),
+      skill('false-row', undefined, false),
+      skill('absent-row'), // no installable key
+    ]
+    const out = filterInstallable(rows, true).map((r) => r.id)
+    expect(out).toContain('true-row')
+    expect(out).toContain('absent-row')
+    expect(out).not.toContain('false-row')
+  })
 })
 
 describe('resolveDefaultCompatibility (SMI-5178)', () => {

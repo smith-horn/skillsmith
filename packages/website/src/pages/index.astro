@@ -62,7 +62,7 @@ const jsonLd = {
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Cross-platform',
       description:
-        'Discover, install, and manage agent skills. 14,000+ curated from 20,000+ GitHub skills with semantic search, quality scores, and stack-aware recommendations.',
+        'Discover, install, and manage agent skills — thousands indexed by scanning SKILL.md files across GitHub, with semantic search, quality scores, and stack-aware recommendations.',
       url: 'https://www.skillsmith.app',
       author: {
         '@id': 'https://www.skillsmith.app/#organization',
@@ -165,7 +165,7 @@ const jsonLd = {
     <title>Skillsmith - Agent Skill Discovery & Management</title>
     <meta
       name="description"
-      content="Find the right agent skills for your stack. 14,000+ curated from 20,000+ skills on GitHub. Get started for free."
+      content="Find the right agent skills for your stack. Thousands of skills indexed from GitHub with semantic search, quality scores, and stack-aware recommendations. Get started for free."
     />
     <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
@@ -224,7 +224,7 @@ const jsonLd = {
     <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
     <meta
       property="og:description"
-      content="Find the right agent skills for your stack. 14,000+ curated from 20,000+ skills on GitHub. Get started for free."
+      content="Find the right agent skills for your stack. Thousands of skills indexed from GitHub with semantic search, quality scores, and stack-aware recommendations. Get started for free."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
@@ -394,12 +394,12 @@ const jsonLd = {
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-sm">
             <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
               <span class="block text-[#71717A] text-sm mb-0.5 hidden" id="github-total-install"
-                ><span id="github-total-count-install">20,000+</span> on GitHub</span
+                ><span id="github-total-count-install">280,000+</span> scanned on GitHub</span
               >
               <span class="block text-[#E07A5F] font-bold text-lg mb-1" id="skill-count-install"
-                >14,000+</span
+                >7,900+</span
               >
-              <span class="text-[#A1A1AA]">Curated &amp; verified</span>
+              <span class="text-[#A1A1AA]">Skills indexed</span>
             </div>
             <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
               <span class="block text-[#E07A5F] font-bold text-lg mb-1">AI-Powered</span>
@@ -587,8 +587,8 @@ const jsonLd = {
                 <li class="flex items-start gap-3">
                   <span class="text-[#81B29A] mt-0.5">✓</span>
                   <span class="text-[#FAFAFA]"
-                    >Stack-aware recommendations from <span id="skill-count-feature">14,000+</span>
-                    curated examples</span
+                    >Stack-aware recommendations from <span id="skill-count-feature">7,900+</span>
+                    indexed skills</span
                   >
                 </li>
               </ul>
