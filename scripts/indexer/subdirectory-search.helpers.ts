@@ -229,6 +229,7 @@ export async function runBackfillFacetCrawl(
     const qualifier = facetToQualifier(range)
 
     let saturated = false
+    let errored = false
     for (let page = state.lastPage + 1; page <= plan.maxPagesPerRange; page++) {
       const result = await searchCodeForSkillMdInSubdirectory(
         plan.pathPrefix,
@@ -239,6 +240,7 @@ export async function runBackfillFacetCrawl(
       )
       if (result.error) {
         errors.push(`[backfill ${pathLabel} ${facetId(range)} p${page}] ${result.error}`)
+        errored = true
         break
       }
       // The 1000-cap is detected from total_count on the first page: rather than
@@ -266,7 +268,18 @@ export async function runBackfillFacetCrawl(
 
     rangesCrawled++
 
-    if (saturated) {
+    if (errored) {
+      // M-1: a page error (rate-limiter already retried transient 403/429, so a
+      // returned error is exceptional) — count it as truncated so it surfaces in
+      // the dispatch summary + errors[], then advance past the range rather than
+      // re-crawl it forever this dispatch. The operator can re-run the facet under
+      // a narrower BACKFILL_PATH_PREFIX once the cause is cleared (SPARC §#3).
+      truncatedRanges++
+      console.warn(
+        `[Backfill] facet ${facetId(range)} (${pathLabel}) errored — recorded as truncated, advancing`
+      )
+      advanceFacet(state)
+    } else if (saturated) {
       capSaturated = true
       if (!bisectCurrentFacet(state, range)) {
         // Saturated AND unbisectable: record + skip (never silent). The operator

@@ -47,8 +47,12 @@ export interface BackfillCursor {
   /** Last code-search page consumed within the current (sub)range (1-based; 0 = none yet). */
   last_page: number
   /**
-   * SMI-5286 1c: 0-based index of the current TOP-LEVEL facet in the static
-   * {@link buildSizeFacets} ladder. Equals the number of fully-completed facets.
+   * SMI-5286 1c: 0-based index of the next top-level facet to process in the
+   * static {@link buildSizeFacets} ladder. Incremented when a top-level facet is
+   * RETIRED — either fully drained OR bisected (its sub-ranges, tracked in
+   * `pending_subranges`, then cover it). So it counts top-level facets whose
+   * coverage is committed, NOT necessarily finished crawling; use `current_facet`
+   * / `pending_subrange_count` (in the run summary) to tell 'bisecting' from 'done'.
    */
   facet_index?: number
   /**
@@ -115,11 +119,22 @@ export function currentFacetRange(
  * Replace the current saturated range with its two halves (the first half is
  * crawled next). Resets the page cursor. Returns false when the range cannot
  * subdivide (the caller then records truncation and advances).
+ *
+ * Retirement: a saturated range is REPLACED by its halves, so it must never be
+ * revisited. If it was a sub-range (stack non-empty) we pop it; if it was the
+ * TOP-LEVEL facet (stack empty) we advance `facetIndex` past it before pushing —
+ * otherwise, once the halves drain, `currentFacetRange` would return the same
+ * top-level facet again, it would re-saturate, and the crawl would loop forever
+ * without advancing `facets_completed` (governance C-1).
  */
 export function bisectCurrentFacet(state: FacetCrawlState, range: SizeFacet): boolean {
   const halves = bisectFacet(range)
   if (!halves) return false
-  if (state.pendingSubranges.length > 0) state.pendingSubranges.pop()
+  if (state.pendingSubranges.length > 0) {
+    state.pendingSubranges.pop() // retire the sub-range being bisected
+  } else {
+    state.facetIndex++ // retire the top-level facet — its halves now cover it
+  }
   // Push so halves[0] ends up on top (LIFO) → the lower sub-range is crawled next.
   state.pendingSubranges.push(halves[1], halves[0])
   state.lastPage = 0
@@ -251,6 +266,15 @@ export interface BackfillSummary {
   facets_remaining: number
   cap_saturated: boolean
   truncated_repo_count: number
+  /**
+   * SMI-5286 1c (M-2): true crawl position. `facets_remaining` is coarse — it
+   * reads 0 once the last top-level facet is retired even while its bisected
+   * sub-ranges are still draining. `current_facet` (the active (sub)range id, or
+   * 'done') + `pending_subrange_count` (bisection-frontier depth) let the operator
+   * distinguish "finished" from "still bisecting".
+   */
+  current_facet?: string
+  pending_subrange_count?: number
 }
 
 /**

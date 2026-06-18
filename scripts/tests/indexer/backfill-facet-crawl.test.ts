@@ -344,4 +344,91 @@ describe('runSubdirectorySearch — size-faceted backfill crawl (SMI-5286 1c)', 
     // The first facet (size:0..127) renders as `size:0..127`.
     expect(sizeArgs).toContain('size:0..127')
   })
+
+  // A mock where facet 0 (size:0..127) AND every bisected descendant (a finite
+  // range with hi <= 127) ALWAYS saturates; every other facet (lo >= 128, plus
+  // the open-ended tail) is non-saturating.
+  function facet0AlwaysSaturates() {
+    return async (
+      _pathPrefix: unknown,
+      page: number,
+      _perPage: unknown,
+      _telemetry: unknown,
+      sizeQualifier: string
+    ) => {
+      const m = /^size:(\d+)\.\.(\d+)$/.exec(sizeQualifier)
+      const withinFacet0 = m !== null && Number(m[2]) <= 127
+      if (withinFacet0 && page === 1) {
+        return { repos: [makeCodeSearchRepo()], total: 5000, retries: 0, incomplete_results: false }
+      }
+      return nonSaturatingPage(page)
+    }
+  }
+
+  it('Case 5 (C-1 regression): a PERSISTENTLY-saturating top-level facet is retired and the crawl still terminates', async () => {
+    // Pre-C-1-fix this looped forever re-crawling facet 0 (facets_completed stuck
+    // at 0). Post-fix facet 0 is retired on its first bisect, bisects down to
+    // single-byte truncation, then facets 1-8 complete to a clean terminal state.
+    mockSearchCode.mockImplementation(facet0AlwaysSaturates())
+
+    const result = await runSubdirectorySearch(
+      new Set<string>(),
+      new Map(),
+      {},
+      1,
+      noTelemetry,
+      makePlan({ maxRangesPerDispatch: 1000 })
+    )
+    const backfill = result.backfill!
+    expect(backfill.done).toBe(true) // terminates — no infinite loop
+    expect(backfill.facets_completed).toBe(LADDER_SIZE)
+    expect(backfill.cap_saturated).toBe(true)
+    // facet 0 bisects to single-byte buckets that can't subdivide → recorded truncated.
+    expect(backfill.truncated_repo_count).toBeGreaterThan(0)
+    expect(backfill.cursor.facet).toBe('done')
+  })
+
+  it('Case 6 (C-1 regression, budget-bounded): a saturating top-level facet advances facets_completed past 0', async () => {
+    // The decisive C-1 check: with a tiny budget and facet 0 always saturating,
+    // the top-level facet must RETIRE (facets_completed >= 1) — pre-fix it stayed
+    // at 0 across every dispatch, an infinite re-crawl that never made progress.
+    mockSearchCode.mockImplementation(facet0AlwaysSaturates())
+
+    const result = await runSubdirectorySearch(
+      new Set<string>(),
+      new Map(),
+      {},
+      1,
+      noTelemetry,
+      makePlan({ maxRangesPerDispatch: 3 })
+    )
+    expect(result.backfill!.facets_completed).toBeGreaterThanOrEqual(1)
+  })
+
+  it('M-1: a page error on a range is recorded as truncated and the crawl advances', async () => {
+    // First range errors on page 1; everything else is non-saturating.
+    let firstCall = true
+    mockSearchCode.mockImplementation(async (_pathPrefix: unknown, page: number) => {
+      if (firstCall) {
+        firstCall = false
+        return { repos: [], total: 0, retries: 0, incomplete_results: false, error: 'rate limited' }
+      }
+      return nonSaturatingPage(page)
+    })
+
+    const result = await runSubdirectorySearch(
+      new Set<string>(),
+      new Map(),
+      {},
+      1,
+      noTelemetry,
+      makePlan({ maxRangesPerDispatch: 100 })
+    )
+    const backfill = result.backfill!
+    // The errored range is surfaced (counted + in errors[]), not silently dropped,
+    // and the crawl advanced past it to complete the rest of the ladder.
+    expect(backfill.truncated_repo_count).toBeGreaterThanOrEqual(1)
+    expect(backfill.done).toBe(true)
+    expect(result.errors.some((e) => e.includes('rate limited'))).toBe(true)
+  })
 })

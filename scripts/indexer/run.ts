@@ -404,6 +404,10 @@ async function main(): Promise<void> {
       facets_remaining: crawl ? crawl.facets_total - crawl.facets_completed : 0,
       cap_saturated: crawl?.cap_saturated ?? false,
       truncated_repo_count: crawl?.truncated_repo_count ?? 0,
+      // M-2: honest crawl position — 'done' only when the bisection frontier is
+      // also empty (facets_remaining alone reads 0 while sub-ranges still drain).
+      current_facet: crawl?.cursor.facet,
+      pending_subrange_count: crawl?.cursor.pending_subranges?.length ?? 0,
     }
     data = { ...(result as Record<string, unknown>), backfill }
   }

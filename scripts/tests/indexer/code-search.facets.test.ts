@@ -116,4 +116,16 @@ describe('SMI-5286 Wave 1c: bisectFacet', () => {
   it('returns null for an open-ended facet anchored at 0 (cannot double)', () => {
     expect(bisectFacet({ lo: 0, hi: Number.POSITIVE_INFINITY })).toBeNull()
   })
+
+  it('returns null for an open-ended facet past the 4 MiB ceiling (terminates persistent saturation)', () => {
+    // A SKILL.md larger than 4 MiB is not a real skill; an open-ended bucket
+    // doubling forever would never reach lo === hi, so the ceiling makes a
+    // persistently-saturating open-ended tail terminate (recorded truncated)
+    // instead of bisecting infinitely (SMI-5286 1c C-1 follow-up).
+    const ceiling = 4 * 1024 * 1024
+    expect(bisectFacet({ lo: ceiling, hi: Number.POSITIVE_INFINITY })).toBeNull()
+    expect(bisectFacet({ lo: ceiling + 1, hi: Number.POSITIVE_INFINITY })).toBeNull()
+    // Just below the ceiling still splits.
+    expect(bisectFacet({ lo: ceiling / 2, hi: Number.POSITIVE_INFINITY })).not.toBeNull()
+  })
 })

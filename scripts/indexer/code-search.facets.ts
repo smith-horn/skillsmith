@@ -91,13 +91,22 @@ export function facetToQualifier(facet: SizeFacet): string {
 }
 
 /**
+ * Upper ceiling for open-ended bisection (bytes). A SKILL.md larger than 4 MiB is
+ * not a real skill, so once an open-ended bucket's lower bound passes this the
+ * tail is treated as unsplittable (the caller records it truncated rather than
+ * bisecting forever — doubling an open-ended range never reaches `lo === hi`, so
+ * a persistently-saturating open-ended facet would otherwise loop infinitely).
+ */
+const OPEN_ENDED_BISECT_CEILING = 4 * 1024 * 1024
+
+/**
  * Split a facet into two disjoint, contiguous, inclusive halves that together
  * cover the SAME range (used when a facet saturates the 1000-result cap).
  * Finite: mid = lo + floor((hi - lo) / 2) → [{lo, hi: mid}, {lo: mid+1, hi}].
  * Open-ended (hi === Infinity): pivot by doubling →
- *   [{lo, hi: lo*2 - 1}, {lo: lo*2, hi: Infinity}] (requires lo > 0).
- * Returns null when the facet CANNOT subdivide (finite with lo >= hi; or
- * open-ended with lo === 0 — guard it).
+ *   [{lo, hi: lo*2 - 1}, {lo: lo*2, hi: Infinity}] (requires 0 < lo < ceiling).
+ * Returns null when the facet CANNOT subdivide (finite with lo >= hi; open-ended
+ * with lo === 0; or open-ended past {@link OPEN_ENDED_BISECT_CEILING}).
  *
  * @param facet - The saturated size bucket to bisect
  * @returns A two-element tuple of contiguous halves, or null when unsplittable
@@ -105,8 +114,11 @@ export function facetToQualifier(facet: SizeFacet): string {
 export function bisectFacet(facet: SizeFacet): [SizeFacet, SizeFacet] | null {
   if (facet.hi === Number.POSITIVE_INFINITY) {
     // Open-ended bucket: pivot by doubling the lower bound. A bucket starting at
-    // 0 cannot double (0 * 2 === 0), so it is unsplittable — guard it.
-    if (facet.lo <= 0) {
+    // 0 cannot double (0 * 2 === 0), and past the ceiling there are no real
+    // skills left to partition — both are unsplittable, guard them so a
+    // persistently-saturating open-ended tail terminates instead of doubling
+    // forever.
+    if (facet.lo <= 0 || facet.lo >= OPEN_ENDED_BISECT_CEILING) {
       return null
     }
     const pivot = facet.lo * 2

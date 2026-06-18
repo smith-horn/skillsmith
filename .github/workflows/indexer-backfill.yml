@@ -237,6 +237,11 @@ jobs:
           CAP_SATURATED=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.cap_saturated // false')
           TRUNCATED_REPO_COUNT=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.truncated_repo_count // 0')
           TOKEN_SOURCE=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.token_source // "unknown"')
+          # SMI-5286 1c (M-2): true crawl position. current_facet == 'done' is the
+          # AUTHORITATIVE terminal signal (facets_remaining alone reads 0 while the
+          # last facet's bisected sub-ranges still drain).
+          CURRENT_FACET=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.current_facet // "unknown"')
+          PENDING_SUBRANGES=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.pending_subrange_count // 0')
 
           # CRITICAL: token_source must be exactly "pat" on every backfill dispatch.
           # An "app" value means the App env entries leaked in (consuming the cron's
@@ -260,15 +265,19 @@ jobs:
             echo "| Facets Total | $FACETS_TOTAL |"
             echo "| Facets Completed | $FACETS_COMPLETED |"
             echo "| Facets Remaining | $FACETS_REMAINING |"
+            echo "| Current Facet | $CURRENT_FACET |"
+            echo "| Pending Sub-ranges | $PENDING_SUBRANGES |"
             echo "| Checkpoint ID | $CHECKPOINT_ID |"
             echo "| Cap Saturated | $CAP_SATURATED |"
             echo "| Truncated Repo Count | $TRUNCATED_REPO_COUNT |"
             echo "| Token Source | $TOKEN_SOURCE |"
             echo ""
-            if [ "$FACETS_REMAINING" = "0" ]; then
-              echo "**TERMINAL CONDITION MET**: facets_remaining == 0. Backfill loop is complete."
+            # current_facet == 'done' is authoritative: it is set only when the
+            # ladder AND the bisection frontier are both exhausted (SMI-5286 1c C-1/M-2).
+            if [ "$CURRENT_FACET" = "done" ]; then
+              echo "**TERMINAL CONDITION MET**: current_facet == 'done'. Backfill loop is complete."
             else
-              echo "**Backfill continues.** Re-dispatch with resume_from=latest to pick up from checkpoint $CHECKPOINT_ID."
+              echo "**Backfill continues** (current_facet=$CURRENT_FACET, pending_subranges=$PENDING_SUBRANGES). Re-dispatch with resume_from=latest to pick up from checkpoint $CHECKPOINT_ID."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
