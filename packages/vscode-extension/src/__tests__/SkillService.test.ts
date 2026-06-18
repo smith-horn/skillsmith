@@ -311,6 +311,64 @@ describe('SkillService', () => {
     })
   })
 
+  describe('demo-mode filters (SMI-5304 plan-review #4)', () => {
+    it('applies trustTier filter client-side to mock results', async () => {
+      const client = createMockClient({ isConnected: () => false })
+      service = new SkillService(client, demoOn)
+
+      const unfiltered = await service.search('')
+      const filtered = await service.search('', { trustTier: 'community' })
+
+      // MOCK_SKILLS has a mix of tiers; the community filter must drop some.
+      expect(filtered.results.length).toBeLessThan(unfiltered.results.length)
+      expect(filtered.results.every((s) => s.trustTier.toLowerCase() === 'community')).toBe(true)
+    })
+
+    it('applies category filter case-insensitively (capitalized filter vs lowercase mock)', async () => {
+      const client = createMockClient({ isConnected: () => false })
+      service = new SkillService(client, demoOn)
+
+      // Filter passes 'Testing'; mock data uses lowercase 'testing'.
+      const { results } = await service.search('', { category: 'Testing' })
+      expect(results.length).toBeGreaterThan(0)
+      expect(results.every((s) => s.category.toLowerCase() === 'testing')).toBe(true)
+    })
+
+    it('applies minScore as an inclusive threshold to mock results', async () => {
+      const client = createMockClient({ isConnected: () => false })
+      service = new SkillService(client, demoOn)
+
+      const { results } = await service.search('', { minScore: 90 })
+      expect(results.length).toBeGreaterThan(0)
+      expect(results.every((s) => s.score >= 90)).toBe(true)
+    })
+
+    it('filtered vs unfiltered same query yield different mock results', async () => {
+      const client = createMockClient({ isConnected: () => false })
+      service = new SkillService(client, demoOn)
+
+      const unfiltered = await service.search('')
+      const filtered = await service.search('', { minScore: 95 })
+      expect(filtered.results.length).not.toBe(unfiltered.results.length)
+    })
+  })
+
+  describe('cache key distinctness per options', () => {
+    it('filtered + unfiltered same query are cached separately (distinct keys)', async () => {
+      const searchFn = vi.fn().mockImplementation(async () => makeMcpSearchResponse())
+      const client = createMockClient({ search: searchFn })
+      service = new SkillService(client)
+
+      await service.search('governance')
+      await service.search('governance', { trustTier: 'verified' })
+
+      // Distinct cache keys → both hit MCP (no collision).
+      expect(searchFn).toHaveBeenCalledTimes(2)
+      expect(searchFn).toHaveBeenNthCalledWith(1, 'governance', undefined)
+      expect(searchFn).toHaveBeenNthCalledWith(2, 'governance', { trustTier: 'verified' })
+    })
+  })
+
   describe('cache TTL', () => {
     it('returns cached results within TTL without re-calling MCP', async () => {
       const searchFn = vi.fn().mockResolvedValue(makeMcpSearchResponse())

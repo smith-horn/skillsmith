@@ -65,18 +65,49 @@ interface FakeProvider {
   setSearchResults: ReturnType<typeof vi.fn>
   clearSearchResults: ReturnType<typeof vi.fn>
   getAvailableGroupItem: ReturnType<typeof vi.fn>
+  getFilters: ReturnType<typeof vi.fn>
+  setFilters: ReturnType<typeof vi.fn>
+  clearFilters: ReturnType<typeof vi.fn>
+  hasActiveFilters: ReturnType<typeof vi.fn>
+  getLastSearchQuery: ReturnType<typeof vi.fn>
+  describeActiveContext: ReturnType<typeof vi.fn>
 }
 
-function makeProvider(hasAvailable: boolean): FakeProvider {
+interface ProviderState {
+  filters?: import('../commands/searchFilters.js').SearchFilters
+  lastQuery?: string
+}
+
+function makeProvider(hasAvailable: boolean, state: ProviderState = {}): FakeProvider {
+  let filters = state.filters ?? {}
+  const lastQuery = state.lastQuery ?? ''
   return {
     setSearchResults: vi.fn(),
     clearSearchResults: vi.fn(),
     getAvailableGroupItem: vi.fn(() => (hasAvailable ? AVAILABLE_GROUP : undefined)),
+    getFilters: vi.fn(() => filters),
+    setFilters: vi.fn((f) => {
+      filters = f
+    }),
+    clearFilters: vi.fn(() => {
+      filters = {}
+    }),
+    hasActiveFilters: vi.fn(
+      () =>
+        filters.trustTier !== undefined ||
+        filters.category !== undefined ||
+        filters.minScore !== undefined
+    ),
+    getLastSearchQuery: vi.fn(() => lastQuery),
+    describeActiveContext: vi.fn(() => ({ rawQuery: lastQuery, demo: false, filterParts: [] })),
   }
 }
 
 function makeView() {
-  return { reveal: vi.fn((..._args: unknown[]) => Promise.resolve()) }
+  return {
+    reveal: vi.fn((..._args: unknown[]) => Promise.resolve()),
+    message: undefined as string | undefined,
+  }
 }
 
 function makeService(result: { results: SkillData[]; isOffline: boolean }) {
@@ -105,7 +136,9 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillService: service as any,
     })
 
-    expect(provider.setSearchResults).toHaveBeenCalledWith(expect.any(Array), 'docker')
+    expect(provider.setSearchResults).toHaveBeenCalledWith(expect.any(Array), 'docker', {
+      demo: false,
+    })
     expect(provider.clearSearchResults).not.toHaveBeenCalled()
     // Container focused BEFORE reveal so a collapsed/hidden sidebar still surfaces.
     expect(executeCommand).toHaveBeenCalledWith('skillsmith.skillsView.focus')
@@ -178,7 +211,9 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
     expect(provider.setSearchResults).not.toHaveBeenCalled()
     expect(showInformationMessage).toHaveBeenCalledWith('No skills found for "zzz"')
     expect(view.reveal).not.toHaveBeenCalled()
-    expect(executeCommand).not.toHaveBeenCalled()
+    // No reveal/focus on no-results; the only executeCommand is the
+    // hasActiveFilters setContext sync.
+    expect(executeCommand).not.toHaveBeenCalledWith('skillsmith.skillsView.focus')
   })
 
   it('offline + empty (not demo): shows warning, clears results, does NOT reveal', async () => {

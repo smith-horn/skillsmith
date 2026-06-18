@@ -114,6 +114,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(skillsView)
 
+  // #1438-P2 (SMI-5306): first-run / pre-search hint. `viewsWelcome` renders
+  // ONLY for an empty tree, so an installed-but-never-searched user never sees
+  // it (plan-review #2). Surface the affordance as a persistent
+  // `TreeView.message` hint shown until the first search runs; `performSearch`
+  // overwrites it with the context banner once results land. Per-platform chord
+  // copy mirrors Wave 1's welcome message.
+  const isMac = process.platform === 'darwin'
+  const searchChord = isMac ? '⌘K ⌘Y' : 'Ctrl+K Ctrl+Y'
+  skillsView.message = `Press the search icon or ${searchChord} to discover skills.`
+
   // Register intellisense providers
   const skillMdSelector = getSkillMdSelector()
 

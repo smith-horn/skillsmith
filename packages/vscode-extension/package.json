@@ -61,6 +61,18 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "skillsmith.filterSkills",
+        "title": "Filter Skills",
+        "category": "Skillsmith",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "skillsmith.clearSkillFilters",
+        "title": "Clear Skill Filters",
+        "category": "Skillsmith",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "skillsmith.viewSkillDetails",
         "title": "View Skill Details",
         "category": "Skillsmith"
@@ -153,6 +165,16 @@
         {
           "command": "skillsmith.searchSkills",
           "when": "view == skillsmith.skillsView",
+          "group": "navigation"
+        },
+        {
+          "command": "skillsmith.filterSkills",
+          "when": "view == skillsmith.skillsView",
+          "group": "navigation"
+        },
+        {
+          "command": "skillsmith.clearSkillFilters",
+          "when": "view == skillsmith.skillsView && skillsmith.hasActiveFilters",
           "group": "navigation"
         },
         {

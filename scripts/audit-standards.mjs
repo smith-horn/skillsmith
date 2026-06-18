@@ -2024,6 +2024,8 @@ console.log(`\n${BOLD}28. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
         'skillsmith.mcpReconnect', // integration-tested via McpStatusBar
         'skillsmith.searchSkills', // exercised through SkillService tests
         'skillsmith.installSkill', // exercised through SkillService tests
+        'skillsmith.filterSkills', // SMI-5304: collector in searchFilters.test.ts, action in searchSkills.test.ts
+        'skillsmith.clearSkillFilters', // SMI-5304: action exercised in searchSkills.test.ts
       ])
       const testFiles = readdirSync(testDir).filter((f) => f.endsWith('.test.ts'))
       const missing = []

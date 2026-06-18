@@ -9,11 +9,30 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { SkillTreeItem, type SkillItemData } from './SkillTreeItem.js'
-import { type ExtensionTrustTier, normalizeTrustTier } from './trustTier.js'
+import { type ExtensionTrustTier, normalizeTrustTier, getTrustTierLabel } from './trustTier.js'
 import { type SkillData } from '../types/skill.js'
+import { type SearchFilters } from '../commands/searchFilters.js'
 
 /** Maximum length for skill descriptions */
 const MAX_DESCRIPTION_LENGTH = 100
+
+/**
+ * Structured description of the active discovery context (#1432 / SMI-5305).
+ *
+ * The SINGLE source of truth (plan-review #1) from which BOTH the Available
+ * group label and the persistent `TreeView.message` banner are composed, so the
+ * two surfaces can never drift. Each surface picks the parts it owns:
+ *   - banner = `rawQuery` + `filterParts` (the "Showing results for…" sentence)
+ *   - group label = the count header (`Available Skills (N)`)
+ */
+export interface ActiveContext {
+  /** The true search query (distinct from any `(Demo)`/`all skills` display label). */
+  rawQuery: string
+  /** Whether the results came from demo-mode mock data. */
+  demo: boolean
+  /** Ordered, human-readable active-filter labels (tier, category, `N+`). */
+  filterParts: string[]
+}
 
 /**
  * SkillTreeDataProvider implements TreeDataProvider for the skill sidebar
@@ -26,7 +45,12 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   private installedSkills: SkillItemData[] = []
   private availableSkills: SkillItemData[] = []
   private loadingPromise: Promise<void> | undefined
-  private lastSearchQuery = ''
+  /** The TRUE raw search query — distinct from any display label (#1432). */
+  private rawQuery = ''
+  /** Whether the current results came from demo-mode mock data. */
+  private demo = false
+  /** Active discovery filters — single source of truth (#1433). Ephemeral. */
+  private filters: SearchFilters = {}
 
   constructor() {
     // Load installed skills on initialization
@@ -41,13 +65,22 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Sets search results as available skills
+   * Sets search results as available skills.
+   *
+   * The raw query is stored SEPARATELY from any display suffix (#1432 / #1433):
+   * earlier code conflated the query with the `(Demo)`/`all skills` display
+   * label, so the context formatter could not recover the true query. Callers
+   * now pass the true `rawQuery` plus an optional `demo` flag; the demo
+   * annotation is composed at render time from `demo`, never baked into the
+   * stored query.
    *
    * @param results - Search results to display
-   * @param query - The search query used
+   * @param rawQuery - The true search query ('' for browse-all)
+   * @param meta.demo - Whether the results are demo-mode mock data
    */
-  setSearchResults(results: SkillData[], query: string): void {
-    this.lastSearchQuery = query
+  setSearchResults(results: SkillData[], rawQuery: string, meta: { demo?: boolean } = {}): void {
+    this.rawQuery = rawQuery
+    this.demo = meta.demo ?? false
     this.availableSkills = results.map((skill) => {
       const tier = normalizeTrustTier(skill.trustTier)
       const item: SkillItemData = {
@@ -68,19 +101,72 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Clears search results
+   * Clears search results. Does NOT clear the active filters — clearing
+   * results (e.g. a no-results or offline run) must leave the user's filter
+   * selection intact so the Clear Filters action still reflects reality.
    */
   clearSearchResults(): void {
     this.availableSkills = []
-    this.lastSearchQuery = ''
+    this.rawQuery = ''
+    this.demo = false
     this._onDidChangeTreeData.fire()
   }
 
   /**
-   * Gets the search query that was last used
+   * Gets the true search query last used ('' for browse-all / no search).
    */
   getLastSearchQuery(): string {
-    return this.lastSearchQuery
+    return this.rawQuery
+  }
+
+  /** Returns the active discovery filters (single source of truth, #1433). */
+  getFilters(): SearchFilters {
+    return this.filters
+  }
+
+  /**
+   * Replaces the active filters. Stored by value (shallow copy) so a later
+   * mutation of the caller's object cannot retroactively change provider state.
+   */
+  setFilters(filters: SearchFilters): void {
+    this.filters = { ...filters }
+    this._onDidChangeTreeData.fire()
+  }
+
+  /** Clears all active filters. */
+  clearFilters(): void {
+    this.filters = {}
+    this._onDidChangeTreeData.fire()
+  }
+
+  /** Whether any discovery filter is currently active. */
+  hasActiveFilters(): boolean {
+    return (
+      this.filters.trustTier !== undefined ||
+      this.filters.category !== undefined ||
+      this.filters.minScore !== undefined
+    )
+  }
+
+  /**
+   * The SINGLE formatter (plan-review #1) describing the active discovery
+   * context. Both the Available group label and the #1432 banner derive from
+   * this, so they can never diverge. Returns the raw query, the demo flag, and
+   * the ordered filter-facet labels (tier · category · `N+`).
+   */
+  describeActiveContext(): ActiveContext {
+    const filterParts: string[] = []
+    if (this.filters.trustTier !== undefined) {
+      const label = getTrustTierLabel(this.filters.trustTier)
+      filterParts.push(label || this.filters.trustTier)
+    }
+    if (this.filters.category !== undefined) {
+      filterParts.push(this.filters.category)
+    }
+    if (this.filters.minScore !== undefined) {
+      filterParts.push(`${this.filters.minScore}+`)
+    }
+    return { rawQuery: this.rawQuery, demo: this.demo, filterParts }
   }
 
   /**
@@ -209,12 +295,21 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
    * Builds the Available group header. Single source of truth shared by
    * `getRootGroups()`, `getAvailableGroupItem()`, and `getParent()` so the
    * stable id (`group:available`) matches across all reveal/parent lookups.
+   *
+   * The label is now the COUNT-BEARING header only (#1432 plan-review #8): the
+   * query + filter context lives in the persistent `TreeView.message` banner,
+   * so the two surfaces are complementary, not duplicate. `createGroup` appends
+   * the `(N)` count; the stable `group:available` id is decoupled from the
+   * label (set from `groupId` in `SkillTreeItem.setupGroupItem`), so changing
+   * the label never regresses the reveal contract (#1431 / SMI-5298).
    */
   private buildAvailableGroupItem(): SkillTreeItem {
-    const label = this.lastSearchQuery
-      ? `Available Skills — "${this.lastSearchQuery}"`
-      : 'Available Skills'
-    return SkillTreeItem.createGroup(label, 'available', this.availableSkills.length, true)
+    return SkillTreeItem.createGroup(
+      'Available Skills',
+      'available',
+      this.availableSkills.length,
+      true
+    )
   }
 
   /**

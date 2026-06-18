@@ -18,6 +18,16 @@ Discover, search, and install agent skills directly in VS Code. Works with any M
 | MCP Integration | Live data from the Skillsmith API via Model Context Protocol |
 | Offline Fallback | Works offline with cached local skill data |
 
+### Filtering
+
+Click **Filter Skills** in the Skills view title bar to narrow discovery results by:
+
+- **Trust tier** — Official, Verified, Curated, Community, or Unverified
+- **Category** — limit results to a specific skill category
+- **Minimum score** — set a quality floor so lower-rated skills are hidden
+
+A persistent banner in the Skills view shows your active query and any filters so you always know what you're looking at. Use **Clear Skill Filters** (available in the title bar when filters are active) to reset them. Filters are cleared automatically when the window reloads.
+
 **Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
 
 ## Getting Started
