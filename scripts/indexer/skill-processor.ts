@@ -467,6 +467,12 @@ export function repositoryToSkill(
     repo_updated_at: repo.updatedAt ?? null,
     // SMI-2663: Cross-ecosystem discovery columns (migration 055)
     source_format: 'skill-md', // Phase 1: always skill-md; Phase 2 will detect format
+    // SMI-5286 Wave 1b (R-2): persist the in-memory discovery provenance tag
+    // (e.g. 'subdirectory_search:…', 'backfill_trees:<facet>') stamped at the
+    // discovery site. Column added in 20260617000001_skills_discovery_path.sql;
+    // load-bearing for the backfill §Rollback tag-keyed DELETE + count ACs.
+    // `?? null` so pre-tag callers (and any path that forgot to stamp) land NULL.
+    discovery_path: repo.discoveryPath ?? null,
     license: repo.license ?? null,
     // SMI-4387: Default to '' (empty string, explicit root marker) instead of null.
     // Migration 055's CHECK constraint allows empty string; new rows never land as NULL.

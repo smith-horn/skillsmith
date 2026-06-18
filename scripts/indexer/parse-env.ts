@@ -31,6 +31,13 @@ export interface IndexerEnv {
   kill_switch_engaged: boolean
   /** SMI-4870: per-phase cron sub-slot (1/2/3); undefined = legacy all-phases path. */
   DISCOVERY_PHASE: DiscoveryPhase | undefined
+  /**
+   * SMI-5286 Wave 1b (§#2): out-of-band backfill mode. When true the discovery
+   * run drops the 7-day freshness window (un-windowed scan) and skips the
+   * Phase-6 stale sweep so a partial crawl can't quarantine real skills. Bare
+   * name (no prefix) per the parse-env convention. Cap-raising (§#3) is Wave 1c.
+   */
+  BACKFILL_MODE: boolean
 }
 
 function getRequired(name: string): string {
@@ -113,6 +120,9 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       DISCOVERY_PHASE = Number(discoveryPhaseRaw) as DiscoveryPhase
     }
 
+    // SMI-5286 Wave 1b: backfill mode (bare name; default off).
+    const BACKFILL_MODE = getBool('BACKFILL_MODE', false)
+
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)
     const concurrencyRequest = getInt('CONCURRENCY', 2)
@@ -135,6 +145,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       concurrency,
       kill_switch_engaged,
       DISCOVERY_PHASE,
+      BACKFILL_MODE,
     }
   } finally {
     process.env = prev

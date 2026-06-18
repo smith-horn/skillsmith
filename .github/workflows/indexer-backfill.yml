@@ -1,0 +1,301 @@
+# SMI-5286 Wave 1b: Out-of-band backfill workflow.
+#
+# PURPOSE: Run a wide, resumable backfill crawl on a separate GitHub PAT rate
+# bucket, completely isolated from the production cron (indexer.yml) which uses
+# the GitHub App bucket.
+#
+# RATE BUCKET ISOLATION (load-bearing design):
+#   The cron (indexer.yml:272-274) maps three secrets onto env vars:
+#     GITHUB_APP_ID               <- secrets.SKILLSMITH_GITHUB_APP_ID
+#     GITHUB_APP_INSTALLATION_ID  <- secrets.SKILLSMITH_GITHUB_APP_INSTALLATION_ID
+#     GITHUB_APP_PRIVATE_KEY      <- secrets.SKILLSMITH_GITHUB_APP_PRIVATE_KEY
+#   getInstallationToken() (_shared/github-auth.ts:124-126) reads exactly those
+#   three names. When all three are present it returns an App installation token
+#   (buildGitHubHeaders :178-181), consuming the App bucket (5000/hr shared with
+#   cron). This workflow OMITS those three env entries entirely. With them absent,
+#   getInstallationToken() returns null (:128-130) and buildGitHubHeaders falls
+#   through to the PAT path (:184) via process.env.GITHUB_TOKEN -- a wholly
+#   separate 5000/hr bucket. GitHub Actions does NOT auto-inject GITHUB_TOKEN into
+#   step env; it only exists as secrets.GITHUB_TOKEN / github.token when explicitly
+#   mapped. We map it from secrets.BACKFILL_GITHUB_TOKEN so the name in the step
+#   env is GITHUB_TOKEN as expected by github-auth.ts:184.
+#
+# PREREQUISITES before first dispatch:
+#   1. Provision the BACKFILL_GITHUB_TOKEN secret (a classic PAT, repo scope,
+#      for the skillsmith-indexer bot account or a dedicated backfill account).
+#      Never print or echo its value. Verify: gh secret list | grep BACKFILL_GITHUB_TOKEN
+#   2. Provision the R-2 tag column (discovery_path migration, SMI-5286 1b sub-task)
+#      before any DRY_RUN=false dispatch -- rollback and count ACs are blocked until
+#      that column exists and repositoryToSkill writes it.
+#   3. Read the operator runbook: docs/internal/runbooks/indexer-backfill.md
+#
+# ADR-109: this is an infra workflow -- SPARC + plan-review gated before
+# implementation (see docs/internal/implementation/smi-5286-wave1-backfill-engine-sparc.md).
+#
+# EXECUTION MODEL: host runner (ubuntu-latest), pure-TS indexer path, no native
+# modules. Mirrors indexer.yml's npm ci + npx tsx invocation exactly.
+# audit:carveout-pure-js -- pure-TS indexer path, no native modules (same as indexer.yml)
+
+name: Skill Indexer Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run -- no database writes (default: true; always start here)'
+        required: false
+        default: 'true'
+        type: boolean
+      resume_from:
+        description: 'Checkpoint to resume from: "latest" auto-reads most recent, or a specific run_id'
+        required: false
+        default: 'latest'
+        type: string
+      kill_switch:
+        description: 'Abort the in-flight backfill loop immediately (emits error and exits non-zero)'
+        required: false
+        default: false
+        type: boolean
+      max_skills_per_repo:
+        description: 'Per-repo skill cap (default: 50); guards against mega-monorepo fan-out'
+        required: false
+        default: '50'
+        type: string
+      path_prefix:
+        description: 'Scope crawl to one path prefix (e.g. .agents/skills); empty = all prefixes'
+        required: false
+        default: ''
+        type: string
+      supabase_env:
+        description: 'Target Supabase environment'
+        required: false
+        default: 'prod'
+        type: choice
+        options:
+          - prod
+          - staging
+
+env:
+  NODE_VERSION: '22'
+
+# DISTINCT concurrency group from the cron (group: skill-indexer in indexer.yml:101).
+# cancel-in-progress: false ensures two backfill dispatches queue rather than
+# cancel, which would corrupt the checkpoint cursor. Operators must wait for the
+# running backfill to finish (or engage kill_switch) before dispatching a new one.
+concurrency:
+  group: skill-indexer-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: Backfill Skill Index
+    runs-on: ubuntu-latest
+    # 6h is the GHA hard ceiling. The operator loop re-dispatches until
+    # facets_remaining == 0. Each dispatch does as many facets as fit in ~5h30m
+    # then writes a checkpoint and exits 0.
+    timeout-minutes: 330
+    permissions: {}
+
+    env:
+      # Kill-switch: honored from either the workflow_dispatch input or the repo
+      # variable BACKFILL_KILL_SWITCH (operators can set the repo var to abort
+      # an in-flight loop without re-dispatching). Input supersedes repo var.
+      EFFECTIVE_KILL_SWITCH: ${{ (vars.BACKFILL_KILL_SWITCH == '1' || github.event.inputs.kill_switch == 'true') && '1' || '0' }}
+
+    steps:
+      - name: Kill-switch gate
+        # Check the kill switch before any work begins. If engaged, emit an
+        # actionable error and exit non-zero so the run is red and visible.
+        run: |
+          if [ "$EFFECTIVE_KILL_SWITCH" = "1" ]; then
+            echo "::error::Backfill kill switch is engaged (input or repo var BACKFILL_KILL_SWITCH=1). Aborting run. To resume, clear the kill switch and re-dispatch with resume_from=latest."
+            exit 1
+          fi
+          echo "Kill switch not engaged -- proceeding."
+
+      - name: Validate Secrets
+        env:
+          SUPABASE_ENV: ${{ github.event.inputs.supabase_env || 'prod' }}
+          SUPABASE_URL_PROD: ${{ secrets.SUPABASE_URL_PROD }}
+          SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY_PROD: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
+          SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKFILL_GITHUB_TOKEN_CHECK: ${{ secrets.BACKFILL_GITHUB_TOKEN }}
+        run: |
+          # Fail fast with clear error if secrets not configured.
+          # Mirrors the Validate Secrets step in indexer.yml.
+          if [ "$SUPABASE_ENV" = "staging" ]; then
+            URL_VAL="$SUPABASE_URL_STAGING"
+            KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY_STAGING"
+          else
+            URL_VAL="${SUPABASE_URL_PROD:-$SUPABASE_URL}"
+            KEY_VAL="${SUPABASE_SERVICE_ROLE_KEY_PROD:-$SUPABASE_SERVICE_ROLE_KEY}"
+          fi
+          if [ -z "$URL_VAL" ] || [ -z "$KEY_VAL" ]; then
+            echo "::error::Required Supabase secrets not configured for env=$SUPABASE_ENV."
+            exit 1
+          fi
+          if [ -z "$BACKFILL_GITHUB_TOKEN_CHECK" ]; then
+            echo "::error::BACKFILL_GITHUB_TOKEN secret not provisioned. See docs/internal/runbooks/indexer-backfill.md for provisioning steps."
+            exit 1
+          fi
+          echo "::add-mask::$KEY_VAL"
+          echo "SELECTED_SUPABASE_URL=$URL_VAL" >> "$GITHUB_ENV"
+          echo "SELECTED_SUPABASE_SERVICE_ROLE_KEY=$KEY_VAL" >> "$GITHUB_ENV"
+          echo "Secrets validated for env=$SUPABASE_ENV"
+
+      - name: Checkout
+        # SHA-pinned per audit-workflow-sha-pin (Check 42 / SMI-4758). Tag = v6.
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          submodules: false
+
+      - name: Setup Node
+        # SHA-pinned per audit-workflow-sha-pin (Check 42 / SMI-4758). Tag = v6.
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --omit=dev
+
+      - name: Run backfill indexer
+        id: backfill_run
+        env:
+          SUPABASE_URL: ${{ env.SELECTED_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SELECTED_SUPABASE_SERVICE_ROLE_KEY }}
+          # PAT bucket path: GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID /
+          # GITHUB_APP_PRIVATE_KEY are deliberately NOT mapped here. With those
+          # three env vars absent, getInstallationToken() (github-auth.ts:128-130)
+          # returns null and buildGitHubHeaders (github-auth.ts:184) falls back to
+          # process.env.GITHUB_TOKEN -- the PAT path, separate from the cron's App bucket.
+          GITHUB_TOKEN: ${{ secrets.BACKFILL_GITHUB_TOKEN }}
+          # Backfill-specific env. BACKFILL_MODE=true disables the 7-day freshness
+          # window (discovery-orchestrator.ts:247) and subsumes the Phase-6 stale-pause
+          # (no separate flag needed -- see SPARC section #2 and #5).
+          BACKFILL_MODE: 'true'
+          SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH: 'true'
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+          RESUME_FROM: ${{ github.event.inputs.resume_from || 'latest' }}
+          BACKFILL_MAX_SKILLS_PER_REPO: ${{ github.event.inputs.max_skills_per_repo || '50' }}
+          BACKFILL_PATH_PREFIX: ${{ github.event.inputs.path_prefix || '' }}
+          # Raised caps for backfill mode (per SPARC section #3).
+          # These override the conservative cron defaults.
+          CODE_SEARCH_MAX_PAGES: '10'
+          MAX_PAGES: '10'
+          MAX_REPOS: '500'
+          # RUN_TYPE always discovery for backfill (no maintenance or recheck).
+          RUN_TYPE: 'discovery'
+          # STALE_DAYS not set -- backfill mode bypasses the freshness window entirely.
+          # CONCURRENCY_KILL_SWITCH honored via EFFECTIVE_KILL_SWITCH at job level;
+          # indexer run.ts also checks this env var for in-run abort.
+          CONCURRENCY_KILL_SWITCH: ${{ env.EFFECTIVE_KILL_SWITCH }}
+        run: |
+          set -eo pipefail
+          OUTPUT_FILE="$(mktemp)"
+          if npx tsx scripts/indexer/run.ts | tee "$OUTPUT_FILE"; then
+            HTTP_CODE=200
+          else
+            HTTP_CODE=500
+          fi
+          RESPONSE=$(tail -n1 "$OUTPUT_FILE" || echo '{}')
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          echo "response=$RESPONSE" >> "$GITHUB_OUTPUT"
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            exit 1
+          fi
+
+      - name: Verify PAT bucket and write step summary
+        if: success()
+        env:
+          RESPONSE: ${{ steps.backfill_run.outputs.response }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run || 'true' }}
+          RESUME_FROM_INPUT: ${{ github.event.inputs.resume_from || 'latest' }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Extract backfill sub-object fields from the indexer response.
+          # The indexer emits a .data.backfill sub-object in BACKFILL_MODE.
+          FACETS_TOTAL=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.facets_total // 0')
+          FACETS_COMPLETED=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.facets_completed // 0')
+          FACETS_REMAINING=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.facets_remaining // "unknown"')
+          CHECKPOINT_ID=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.checkpoint_id // "none"')
+          CAP_SATURATED=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.cap_saturated // false')
+          TRUNCATED_REPO_COUNT=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.truncated_repo_count // 0')
+          TOKEN_SOURCE=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.token_source // "unknown"')
+
+          # CRITICAL: token_source must be exactly "pat" on every backfill dispatch.
+          # An "app" value means the App env entries leaked in (consuming the cron's
+          # rate bucket); "unknown" means the indexer never emitted the field (e.g. it
+          # crashed before producing JSON) so the PAT isolation was never confirmed.
+          # Require "pat" explicitly -- reject app, unknown, and anything else.
+          if [ "$TOKEN_SOURCE" != "pat" ]; then
+            echo "::error::token_source is '$TOKEN_SOURCE' (expected 'pat'). Either the GitHub App env entries (GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID / GITHUB_APP_PRIVATE_KEY) leaked into this workflow and are consuming the cron's App rate bucket, or the indexer did not emit data.backfill.token_source. Abort and investigate immediately."
+            exit 1
+          fi
+
+          # Write the operator loop summary to the step summary.
+          {
+            echo "### Backfill Run Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Run ID | $RUN_ID |"
+            echo "| Dry Run | $DRY_RUN_INPUT |"
+            echo "| Resume From | $RESUME_FROM_INPUT |"
+            echo "| Facets Total | $FACETS_TOTAL |"
+            echo "| Facets Completed | $FACETS_COMPLETED |"
+            echo "| Facets Remaining | $FACETS_REMAINING |"
+            echo "| Checkpoint ID | $CHECKPOINT_ID |"
+            echo "| Cap Saturated | $CAP_SATURATED |"
+            echo "| Truncated Repo Count | $TRUNCATED_REPO_COUNT |"
+            echo "| Token Source | $TOKEN_SOURCE |"
+            echo ""
+            if [ "$FACETS_REMAINING" = "0" ]; then
+              echo "**TERMINAL CONDITION MET**: facets_remaining == 0. Backfill loop is complete."
+            else
+              echo "**Backfill continues.** Re-dispatch with resume_from=latest to pick up from checkpoint $CHECKPOINT_ID."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report Failure
+        if: failure()
+        env:
+          HTTP_CODE: ${{ steps.backfill_run.outputs.http_code }}
+          RESPONSE: ${{ steps.backfill_run.outputs.response }}
+        run: |
+          TRUNCATED=$(printf '%s' "$RESPONSE" | head -c 4096)
+          {
+            echo "### Backfill Failed"
+            echo ""
+            echo "HTTP Code: ${HTTP_CODE:-n/a}"
+            echo ""
+            echo "Response:"
+            echo '```text'
+            printf '%s' "$TRUNCATED"
+            echo ""
+            echo '```'
+            echo ""
+            echo "Next steps: see docs/internal/runbooks/indexer-backfill.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Send Alert on Failure
+        if: failure()
+        env:
+          HTTP_CODE: ${{ steps.backfill_run.outputs.http_code }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUPABASE_URL: ${{ env.SELECTED_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SELECTED_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          BODY=$(jq -n \
+            --arg msg "The skill indexer backfill workflow failed. HTTP Code: $HTTP_CODE" \
+            --arg rid "$RUN_ID" \
+            --arg url "$RUN_URL" \
+            '{type:"indexer_backfill_failed", message:$msg, workflow:"Skill Indexer Backfill", runId:$rid, runUrl:$url}')
+          curl -s -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/alert-notify" || true
