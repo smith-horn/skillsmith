@@ -1,14 +1,21 @@
 /**
  * Search skills command implementation
  * Uses SkillService for centralized MCP-first + mock fallback.
+ *
+ * SMI-5298 (#1431): search routes into the unified `SkillTreeDataProvider`
+ * (the single `skillsmith.skillsView` tree), not the retired `searchView`.
+ * Results land in the provider's "Available Skills" group, which is then
+ * revealed via the retained `TreeView` handle.
  */
 import * as vscode from 'vscode'
-import { SkillSearchProvider } from '../providers/SkillSearchProvider.js'
+import type { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
+import type { SkillTreeItem } from '../sidebar/SkillTreeItem.js'
 import type { SkillService } from '../services/SkillService.js'
 import { withTelemetry } from '../services/telemetry-wrap.js'
 
 interface SearchSkillsDeps {
-  searchProvider: SkillSearchProvider
+  treeDataProvider: SkillTreeDataProvider
+  skillsView: vscode.TreeView<SkillTreeItem>
   skillService: SkillService
 }
 
@@ -17,11 +24,32 @@ function isDemoModeEnabled(): boolean {
   return vscode.workspace.getConfiguration('skillsmith').get<boolean>('demoMode', false)
 }
 
+/**
+ * Surfaces the Available group after a successful search.
+ *
+ * SMI-5298 (#1431): focus the container/view FIRST, then reveal. `reveal({
+ * focus })` does not reliably open a collapsed/hidden activity-bar container or
+ * pull focus from the editor, so a palette-invoked search with the sidebar
+ * closed would otherwise give zero feedback (compounded by #1434-P1 removing
+ * the success toast). Focus-then-reveal covers all sidebar states. The reveal
+ * no-ops when there is no Available group to show.
+ */
+async function revealAvailableGroup(deps: SearchSkillsDeps): Promise<void> {
+  const { treeDataProvider, skillsView } = deps
+  await vscode.commands.executeCommand('skillsmith.skillsView.focus')
+  const availableGroup = treeDataProvider.getAvailableGroupItem()
+  if (availableGroup) {
+    await skillsView.reveal(availableGroup, { focus: true, expand: true })
+  }
+}
+
 // SMI-5130: extracted from the inline registerCommand closure so withTelemetry
 // can wrap it at the export boundary (telemetry coverage gate). Deps that the
-// closure captured are threaded in explicitly.
+// closure captured are threaded in explicitly. The reveal call MUST stay inside
+// this function (never module scope) so telemetry-coverage.test.ts can import
+// `searchSkillsAction` as a value without invoking vscode APIs at load.
 async function searchSkillsImpl(deps: SearchSkillsDeps): Promise<void> {
-  const { searchProvider, skillService } = deps
+  const { treeDataProvider, skillService } = deps
   // Show search input (query is optional - empty searches return all skills)
   const query = await vscode.window.showInputBox({
     prompt: 'Search for agent skills',
@@ -80,29 +108,26 @@ async function searchSkillsImpl(deps: SearchSkillsDeps): Promise<void> {
             vscode.window.showWarningMessage(
               'Skillsmith server unavailable — start the Skillsmith MCP server and try again.'
             )
-            searchProvider.clearResults()
+            treeDataProvider.clearSearchResults()
             return
           }
           const noResultsMsg = trimmedQuery
             ? `No skills found for "${trimmedQuery}"`
             : 'No skills found'
           vscode.window.showInformationMessage(noResultsMsg)
-          searchProvider.clearResults()
+          treeDataProvider.clearSearchResults()
           return
         }
 
         const label = trimmedQuery || 'all skills'
         // SMI-5288: non-empty offline results only happen in demo mode now.
         const displayLabel = isOffline && demoMode ? `${label} (Demo)` : label
-        searchProvider.setResults(results, displayLabel)
+        treeDataProvider.setSearchResults(results, displayLabel)
 
-        // Focus on search results view
-        await vscode.commands.executeCommand('skillsmith.searchView.focus')
-
-        const foundMsg = trimmedQuery
-          ? `Found ${results.length} skill${results.length === 1 ? '' : 's'} for "${trimmedQuery}"`
-          : `Showing ${results.length} skill${results.length === 1 ? '' : 's'}`
-        vscode.window.showInformationMessage(foundMsg)
+        // SMI-5298 (#1431): surface the Available group in the unified view.
+        // #1434-P1: the "Found N skills" success toast is intentionally removed —
+        // the revealed tree group is the feedback now.
+        await revealAvailableGroup(deps)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
         vscode.window.showErrorMessage(`Search failed: ${message}`)
@@ -123,11 +148,12 @@ export const searchSkillsAction = withTelemetry(searchSkillsImpl, {
 
 export function registerSearchCommand(
   context: vscode.ExtensionContext,
-  searchProvider: SkillSearchProvider,
+  treeDataProvider: SkillTreeDataProvider,
+  skillsView: vscode.TreeView<SkillTreeItem>,
   skillService: SkillService
 ): void {
   const searchCommand = vscode.commands.registerCommand('skillsmith.searchSkills', () =>
-    searchSkillsAction({ searchProvider, skillService })
+    searchSkillsAction({ treeDataProvider, skillsView, skillService })
   )
   context.subscriptions.push(searchCommand)
 }

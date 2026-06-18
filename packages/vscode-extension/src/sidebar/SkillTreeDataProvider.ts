@@ -117,6 +117,44 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
+   * Returns the parent of the given element.
+   *
+   * Required by `vscode.TreeView.reveal` (#1431 / SMI-5298). Implemented as a
+   * PURE DERIVATION rather than a mutable membership map: a skill can appear in
+   * BOTH the Installed and Available groups (installed AND a search hit), so any
+   * cached single-parent map would be wrong. Parentage is derived solely from
+   * the element's type and `contextValue`/`isInstalled`:
+   *   - group items → `undefined` (root)
+   *   - installed skill (`contextValue === 'installedSkill'`) → Installed group
+   *   - available skill (`contextValue === 'skill'`) → Available group
+   */
+  getParent(element: SkillTreeItem): SkillTreeItem | undefined {
+    if (element.itemType === 'group') {
+      return undefined
+    }
+
+    const isInstalled =
+      element.contextValue === 'installedSkill' || element.skillData?.isInstalled === true
+
+    if (isInstalled) {
+      return this.buildInstalledGroupItem()
+    }
+    return this.getAvailableGroupItem()
+  }
+
+  /**
+   * Returns the Available group `SkillTreeItem` when search results exist, else
+   * `undefined` (so `reveal` no-ops). Shares the single group-builder with
+   * `getRootGroups()` so the id matches and `TreeView.reveal` can resolve it.
+   */
+  getAvailableGroupItem(): SkillTreeItem | undefined {
+    if (this.availableSkills.length === 0) {
+      return undefined
+    }
+    return this.buildAvailableGroupItem()
+  }
+
+  /**
    * Returns installed skills in a form suitable for quickPick consumers
    * (e.g., uninstall/create commands) without requiring a tree selection.
    * Data is refreshed via `refresh()`; callers awaiting fresh state should
@@ -136,26 +174,47 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Gets the root level groups
+   * Gets the root level groups.
+   *
+   * Ordering (#1431 / SMI-5298): when a search is active (`availableSkills`
+   * populated) the Available group renders FIRST so just-searched results lead;
+   * with no active search, Installed-first (the default browse layout).
    */
   private getRootGroups(): SkillTreeItem[] {
-    const groups: SkillTreeItem[] = []
+    const installedGroup = this.buildInstalledGroupItem()
 
-    // Always show installed skills group
-    groups.push(
-      SkillTreeItem.createGroup('Installed Skills', 'installed', this.installedSkills.length, true)
-    )
-
-    // Show available skills group if there are search results
+    // Show available skills group only when there are search results.
     if (this.availableSkills.length > 0) {
-      const label = this.lastSearchQuery
-        ? `Available Skills - "${this.lastSearchQuery}"`
-        : 'Available Skills'
-
-      groups.push(SkillTreeItem.createGroup(label, 'available', this.availableSkills.length, true))
+      // Available-first while searching.
+      return [this.buildAvailableGroupItem(), installedGroup]
     }
 
-    return groups
+    return [installedGroup]
+  }
+
+  /**
+   * Builds the Installed group header. Single source of truth for the group's
+   * label, count, and (via `createGroup`) its stable id.
+   */
+  private buildInstalledGroupItem(): SkillTreeItem {
+    return SkillTreeItem.createGroup(
+      'Installed Skills',
+      'installed',
+      this.installedSkills.length,
+      true
+    )
+  }
+
+  /**
+   * Builds the Available group header. Single source of truth shared by
+   * `getRootGroups()`, `getAvailableGroupItem()`, and `getParent()` so the
+   * stable id (`group:available`) matches across all reveal/parent lookups.
+   */
+  private buildAvailableGroupItem(): SkillTreeItem {
+    const label = this.lastSearchQuery
+      ? `Available Skills — "${this.lastSearchQuery}"`
+      : 'Available Skills'
+    return SkillTreeItem.createGroup(label, 'available', this.availableSkills.length, true)
   }
 
   /**

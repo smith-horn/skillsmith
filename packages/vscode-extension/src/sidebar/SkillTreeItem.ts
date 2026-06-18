@@ -94,11 +94,20 @@ export class SkillTreeItem extends vscode.TreeItem {
   }
 
   /**
-   * Sets up the tree item for a group header
+   * Sets up the tree item for a group header.
+   *
+   * A STABLE `id` is critical: `TreeView.reveal` matches the target element by
+   * id (or reference) and the provider builds fresh group instances on every
+   * `getChildren`/`getRootGroups` call. Without a deterministic id, a group
+   * returned from `getAvailableGroupItem()` matches neither by reference nor id
+   * and `reveal` silently no-ops (#1431 / SMI-5298).
    */
   private setupGroupItem(groupId?: string): void {
     this.contextValue = 'skillGroup'
     this.iconPath = this.getGroupIcon(groupId)
+    if (groupId) {
+      this.id = `group:${groupId}`
+    }
   }
 
   /**
