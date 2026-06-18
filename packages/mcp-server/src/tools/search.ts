@@ -278,8 +278,8 @@ async function executeSearchImpl(
         trustTier: mapTrustTierFromDb(item.trust_tier),
         score: Math.round((item.quality_score ?? 0) * 100),
         repository: item.repo_url || undefined,
-        // SMI-4954: installable when the registry row carries a repo_url
-        installable: Boolean(item.repo_url),
+        // SMI-5178: trust the authoritative `installable` column; repo_url heuristic only as fallback.
+        installable: item.installable ?? Boolean(item.repo_url),
         // SMI-2734: 'author/name' install ID — valid for all registry API results
         installHint: item.author ? item.author + '/' + item.name : undefined,
         // SMI-2760 / SMI-5178: compatibility tags. `compatibility` is on ApiSkill

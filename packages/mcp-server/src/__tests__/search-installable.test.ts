@@ -122,6 +122,101 @@ describe('SMI-4954: installable signal — online API path', () => {
     // discoveryOnlyHidden is 0 when the filter is off.
     expect(result.discoveryOnlyHidden ?? 0).toBe(0)
   })
+
+  // SMI-5178 ground-truth: API now returns the authoritative `installable` column.
+  // A row with installable=false + repo_url present must be hidden by the default
+  // filter (these are the 54 prod rows the fix is targeting).
+  it('(SMI-5178) installable=false + repo_url present is DROPPED by default filter', async () => {
+    vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
+      data: [
+        {
+          id: 'getsentry/commit',
+          name: 'commit',
+          description: 'Commit helper',
+          author: 'getsentry',
+          tags: ['git'],
+          trust_tier: 'verified' as const,
+          quality_score: 0.95,
+          repo_url: 'https://github.com/getsentry/commit',
+          installable: true,
+        },
+        {
+          id: 'acme/broken-skillmd',
+          name: 'broken-skillmd',
+          description: 'Repo exists but SKILL.md did not resolve at index time',
+          author: 'acme',
+          tags: [],
+          trust_tier: 'community' as const,
+          quality_score: 0.5,
+          repo_url: 'https://github.com/acme/broken-skillmd', // non-null repo_url…
+          installable: false, // …but indexer says not installable
+        },
+      ],
+      meta: { total: 2 },
+    })
+
+    const result = await executeSearch({ query: 'commit' }, onlineContext)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.find((r: any) => r.name === 'broken-skillmd')).toBeUndefined()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(result.results.find((r: any) => r.name === 'commit')).toBeDefined()
+    expect(result.discoveryOnlyHidden).toBe(1)
+  })
+
+  it('(SMI-5178) installable=false + repo_url present is INCLUDED when installable_only=false', async () => {
+    vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
+      data: [
+        {
+          id: 'acme/broken-skillmd',
+          name: 'broken-skillmd',
+          description: 'Repo exists but SKILL.md did not resolve',
+          author: 'acme',
+          tags: [],
+          trust_tier: 'community' as const,
+          quality_score: 0.5,
+          repo_url: 'https://github.com/acme/broken-skillmd',
+          installable: false,
+        },
+      ],
+      meta: { total: 1 },
+    })
+
+    const result = await executeSearch({ query: 'broken', installable_only: false }, onlineContext)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const found = result.results.find((r: any) => r.name === 'broken-skillmd')
+    expect(found).toBeDefined()
+    expect(found?.installable).toBe(false)
+    expect(result.discoveryOnlyHidden ?? 0).toBe(0)
+  })
+
+  it('(SMI-5178) API item without installable field falls back to repo_url heuristic', async () => {
+    vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
+      data: [
+        {
+          id: 'acme/old-api-skill',
+          name: 'old-api-skill',
+          description: 'Older API response without installable field',
+          author: 'acme',
+          tags: [],
+          trust_tier: 'community' as const,
+          quality_score: 0.7,
+          repo_url: 'https://github.com/acme/old-api-skill',
+          // installable field intentionally absent — simulates older API response
+        },
+      ],
+      meta: { total: 1 },
+    })
+
+    const result = await executeSearch({ query: 'old', installable_only: false }, onlineContext)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const found = result.results.find((r: any) => r.name === 'old-api-skill')
+    expect(found).toBeDefined()
+    // Absent installable → fallback to Boolean(repo_url) → true
+    expect(found?.installable).toBe(true)
+  })
 })
 
 describe('SMI-4954: installable signal — formatters', () => {
