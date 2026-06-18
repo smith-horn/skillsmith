@@ -238,6 +238,11 @@
           "type": "string",
           "default": "",
           "description": "Telemetry endpoint URL (leave empty to disable network calls). Events POST here as {event, anonymous_id, metadata}."
+        },
+        "skillsmith.demoMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show sample/demo skills when the Skillsmith server is unavailable. Off by default; intended for demos and screenshots only."
         }
       }
     }

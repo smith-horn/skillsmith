@@ -15,6 +15,7 @@ import {
   type McpUninstallResponse,
   DEFAULT_MCP_CONFIG,
 } from './types.js'
+import { McpToolError, type McpToolErrorCode } from './McpToolError.js'
 
 // Re-export McpClientConfig from types for external use
 export type { McpClientConfig } from './types.js'
@@ -44,6 +45,21 @@ interface JsonRpcResponse {
     message: string
     data?: unknown
   }
+}
+
+/**
+ * SMI-5288: Classify the text of an `isError` MCP tool response into an
+ * `McpToolErrorCode`. Tier/plan denials and unknown-tool errors get specific
+ * codes so command handlers can branch without string-matching messages.
+ */
+function classifyIsErrorText(errorText: string): McpToolErrorCode {
+  if (/tier|plan|denied|forbidden|upgrade/i.test(errorText)) {
+    return 'TierDenied'
+  }
+  if (/unknown tool|not found|no such tool/i.test(errorText)) {
+    return 'UnknownTool'
+  }
+  return 'Unknown'
 }
 
 /**
@@ -322,7 +338,7 @@ export class McpClient {
    */
   private async callTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
     if (this.status !== 'connected') {
-      throw new Error('MCP client not connected')
+      throw new McpToolError(name, 'NotConnected', 'MCP client not connected')
     }
 
     const raw = await this.sendRequest('tools/call', {
@@ -332,28 +348,38 @@ export class McpClient {
 
     const result = raw as Record<string, unknown> | null | undefined
     if (!result || typeof result !== 'object') {
-      throw new Error(`Invalid MCP response: expected object, got ${typeof raw}`)
+      throw new McpToolError(
+        name,
+        'InvalidResponse',
+        `Invalid MCP response: expected object, got ${typeof raw}`
+      )
     }
 
     const content = result['content']
     if (!Array.isArray(content) || content.length === 0) {
-      throw new Error('Invalid MCP response: missing or empty content array')
+      throw new McpToolError(
+        name,
+        'InvalidResponse',
+        'Invalid MCP response: missing or empty content array'
+      )
     }
 
     if (result['isError']) {
       const errorText = (content[0] as { text?: string })?.text || 'Unknown error'
-      throw new Error(errorText)
+      throw new McpToolError(name, classifyIsErrorText(errorText), errorText)
     }
 
     const text = (content[0] as { text?: string })?.text
     if (!text) {
-      throw new Error('Empty response from MCP server')
+      throw new McpToolError(name, 'InvalidResponse', 'Empty response from MCP server')
     }
 
     try {
       return JSON.parse(text) as T
     } catch (parseError) {
-      throw new Error(
+      throw new McpToolError(
+        name,
+        'InvalidResponse',
         `Failed to parse MCP response as JSON: ${parseError instanceof Error ? parseError.message : 'unknown error'}`
       )
     }

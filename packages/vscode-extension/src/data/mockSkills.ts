@@ -1,7 +1,8 @@
 /**
- * Fallback skill data for offline/disconnected mode
+ * Sample skill data for demo/training mode only (gated by skillsmith.demoMode).
  * Primary data comes from the Skillsmith API via SkillService + McpClient.
- * This module provides fallback data when the MCP server is unavailable.
+ * SMI-5288: this is NOT a silent offline fallback — it is returned only when
+ * explicit demo mode is enabled, for demos and screenshots.
  *
  * The SkillData interface is defined in types/skill.ts and re-exported here
  * for backwards compatibility.
@@ -50,7 +51,7 @@ export const MOCK_SKILLS: SkillData[] = [
     description: 'Automatically generates unit tests for your code using AI.',
     author: 'skillsmith',
     category: 'testing',
-    trustTier: 'standard',
+    trustTier: 'curated',
     score: 85,
     repository: 'https://github.com/skillsmith/test-generator-skill',
   },

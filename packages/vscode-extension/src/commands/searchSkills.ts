@@ -12,6 +12,11 @@ interface SearchSkillsDeps {
   skillService: SkillService
 }
 
+/** SMI-5288: whether explicit demo mode is enabled. */
+function isDemoModeEnabled(): boolean {
+  return vscode.workspace.getConfiguration('skillsmith').get<boolean>('demoMode', false)
+}
+
 // SMI-5130: extracted from the inline registerCommand closure so withTelemetry
 // can wrap it at the export boundary (telemetry coverage gate). Deps that the
 // closure captured are threaded in explicitly.
@@ -66,7 +71,18 @@ async function searchSkillsImpl(deps: SearchSkillsDeps): Promise<void> {
 
         progress.report({ increment: 100 })
 
+        const demoMode = isDemoModeEnabled()
+
         if (results.length === 0) {
+          // SMI-5288: offline + empty + not demo means the server is
+          // unavailable — be honest instead of showing a fake catalog.
+          if (isOffline && !demoMode) {
+            vscode.window.showWarningMessage(
+              'Skillsmith server unavailable — start the Skillsmith MCP server and try again.'
+            )
+            searchProvider.clearResults()
+            return
+          }
           const noResultsMsg = trimmedQuery
             ? `No skills found for "${trimmedQuery}"`
             : 'No skills found'
@@ -76,7 +92,8 @@ async function searchSkillsImpl(deps: SearchSkillsDeps): Promise<void> {
         }
 
         const label = trimmedQuery || 'all skills'
-        const displayLabel = isOffline ? `${label} (Offline)` : label
+        // SMI-5288: non-empty offline results only happen in demo mode now.
+        const displayLabel = isOffline && demoMode ? `${label} (Demo)` : label
         searchProvider.setResults(results, displayLabel)
 
         // Focus on search results view
