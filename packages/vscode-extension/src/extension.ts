@@ -6,7 +6,6 @@
  */
 import * as vscode from 'vscode'
 import { SkillTreeDataProvider } from './sidebar/SkillTreeDataProvider.js'
-import { SkillSearchProvider } from './providers/SkillSearchProvider.js'
 import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
 import { registerUninstallCommand } from './commands/uninstallCommand.js'
@@ -31,7 +30,6 @@ import {
 
 // Extension state
 let skillTreeDataProvider: SkillTreeDataProvider
-let skillSearchProvider: SkillSearchProvider
 let mcpStatusBar: McpStatusBar | undefined
 let skillDiagnosticsProvider: SkillDiagnosticsProvider
 
@@ -59,7 +57,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Initialize providers
   skillTreeDataProvider = new SkillTreeDataProvider()
-  skillSearchProvider = new SkillSearchProvider()
 
   // Initialize intellisense providers
   const skillCompletionProvider = new SkillCompletionProvider()
@@ -107,18 +104,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // Register MCP commands
   registerMcpCommands(context)
 
-  // Register tree views
+  // Register tree views. SMI-5298 (#1431): a single unified view — the retired
+  // `skillsmith.searchView` + SkillSearchProvider are gone; search routes into
+  // this provider's Available group and is revealed via the `skillsView` handle.
   const skillsView = vscode.window.createTreeView('skillsmith.skillsView', {
     treeDataProvider: skillTreeDataProvider,
     showCollapseAll: true,
   })
 
-  const searchView = vscode.window.createTreeView('skillsmith.searchView', {
-    treeDataProvider: skillSearchProvider,
-    showCollapseAll: true,
-  })
-
-  context.subscriptions.push(skillsView, searchView)
+  context.subscriptions.push(skillsView)
 
   // Register intellisense providers
   const skillMdSelector = getSkillMdSelector()
@@ -163,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // Register commands — pass skillService to consumers
-  registerSearchCommand(context, skillSearchProvider, skillService)
+  registerSearchCommand(context, skillTreeDataProvider, skillsView, skillService)
   registerQuickInstallCommand(context, skillService)
   registerUninstallCommand(context, skillTreeDataProvider)
   registerCreateSkillCommand(context, skillTreeDataProvider)
@@ -196,12 +190,16 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   )
 
-  // Show welcome message on first activation
+  // Show welcome message on first activation.
+  // #1438-P1 (SMI-5301): lead with the spatial affordance (the Skillsmith icon
+  // in the activity bar / sidebar) and the Command Palette, with the #1439 chord
+  // secondary. The mac chord is rendered with ⌘/⌥/⇧ glyphs (never the word
+  // "Alt"); the chord text must match the contributed keybinding in package.json.
   const hasShownWelcome = context.globalState.get('skillsmith.welcomeShown')
   if (!hasShownWelcome) {
     vscode.window
       .showInformationMessage(
-        'Welcome to Skillsmith! Search for agent skills using Cmd+Shift+P.',
+        'Welcome to Skillsmith! Open the Skillsmith view from the activity bar, or run "Skillsmith: Search Skills" from the Command Palette (⌘K ⌘Y on macOS, Ctrl+K Ctrl+Y on Windows/Linux).',
         'Search Skills',
         'Connect to MCP'
       )
@@ -279,4 +277,4 @@ export function deactivate(): void {
 }
 
 // Export providers for testing
-export { skillTreeDataProvider, skillSearchProvider }
+export { skillTreeDataProvider }

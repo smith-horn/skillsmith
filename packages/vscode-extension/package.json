@@ -84,6 +84,13 @@
         "icon": "$(trash)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "skillsmith.searchSkills",
+        "key": "ctrl+k ctrl+y",
+        "mac": "cmd+k cmd+y"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -99,12 +106,6 @@
           "id": "skillsmith.skillsView",
           "name": "Skills",
           "type": "tree"
-        },
-        {
-          "id": "skillsmith.searchView",
-          "name": "Search Results",
-          "type": "tree",
-          "visibility": "collapsed"
         }
       ]
     },
@@ -123,7 +124,7 @@
           {
             "id": "skillsmith.walkthrough.discover",
             "title": "Discover skills",
-            "description": "Search the Skillsmith registry by keyword, category, or trust tier.\n[Search Skills](command:skillsmith.searchSkills)",
+            "description": "Search the Skillsmith registry by keyword.\n[Search Skills](command:skillsmith.searchSkills)",
             "media": {
               "markdown": "resources/walkthrough/discover.md"
             }
@@ -131,7 +132,7 @@
           {
             "id": "skillsmith.walkthrough.install",
             "title": "Install a skill",
-            "description": "Install any skill with one click from the Search Results view.\n[Open Skillsmith Sidebar](command:workbench.view.extension.skillsmith)",
+            "description": "Install any skill with one click from the Available Skills group in the Skills view.\n[Open Skillsmith Sidebar](command:workbench.view.extension.skillsmith)",
             "media": {
               "markdown": "resources/walkthrough/install.md"
             }
@@ -163,7 +164,7 @@
       "view/item/context": [
         {
           "command": "skillsmith.installSkill",
-          "when": "view == skillsmith.searchView && viewItem == skill",
+          "when": "view == skillsmith.skillsView && viewItem == skill",
           "group": "inline"
         },
         {
