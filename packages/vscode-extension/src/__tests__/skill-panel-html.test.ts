@@ -263,24 +263,40 @@ describe('getSkillDetailHtml', () => {
 })
 
 describe('getTrustBadgeColor', () => {
+  it('returns official for official tier', () => {
+    expect(getTrustBadgeColor('official')).toBe('official')
+  })
+
   it('returns verified for verified tier', () => {
     expect(getTrustBadgeColor('verified')).toBe('verified')
+  })
+
+  it('returns curated for curated tier', () => {
+    expect(getTrustBadgeColor('curated')).toBe('curated')
   })
 
   it('returns community for community tier', () => {
     expect(getTrustBadgeColor('community')).toBe('community')
   })
 
-  it('returns experimental for experimental tier', () => {
-    expect(getTrustBadgeColor('experimental')).toBe('experimental')
+  it('returns unverified for unverified tier', () => {
+    expect(getTrustBadgeColor('unverified')).toBe('unverified')
   })
 
-  it('returns local for local tier', () => {
-    expect(getTrustBadgeColor('local')).toBe('local')
+  it('maps legacy experimental to community', () => {
+    expect(getTrustBadgeColor('experimental')).toBe('community')
   })
 
-  it('returns unknown for unrecognized tier', () => {
-    expect(getTrustBadgeColor('something')).toBe('unknown')
+  it('maps legacy local to unverified', () => {
+    expect(getTrustBadgeColor('local')).toBe('unverified')
+  })
+
+  it('maps legacy unknown to unverified', () => {
+    expect(getTrustBadgeColor('unknown')).toBe('unverified')
+  })
+
+  it('returns unverified for unrecognized tier', () => {
+    expect(getTrustBadgeColor('something')).toBe('unverified')
   })
 
   it('is case-insensitive', () => {
@@ -289,20 +305,36 @@ describe('getTrustBadgeColor', () => {
 })
 
 describe('getTrustBadgeText', () => {
+  it('returns Official for official tier', () => {
+    expect(getTrustBadgeText('official')).toBe('Official')
+  })
+
   it('returns Verified for verified tier', () => {
     expect(getTrustBadgeText('verified')).toBe('Verified')
   })
 
-  it('returns Experimental for experimental tier', () => {
-    expect(getTrustBadgeText('experimental')).toBe('Experimental')
+  it('returns Curated for curated tier', () => {
+    expect(getTrustBadgeText('curated')).toBe('Curated')
   })
 
-  it('returns Local for local tier', () => {
-    expect(getTrustBadgeText('local')).toBe('Local')
+  it('returns Community for community tier', () => {
+    expect(getTrustBadgeText('community')).toBe('Community')
   })
 
-  it('returns Unknown for unrecognized tier', () => {
-    expect(getTrustBadgeText('something')).toBe('Unknown')
+  it('returns Unverified for unverified tier', () => {
+    expect(getTrustBadgeText('unverified')).toBe('Unverified')
+  })
+
+  it('maps legacy experimental to Community', () => {
+    expect(getTrustBadgeText('experimental')).toBe('Community')
+  })
+
+  it('maps legacy local to Unverified', () => {
+    expect(getTrustBadgeText('local')).toBe('Unverified')
+  })
+
+  it('returns Unverified for unrecognized tier', () => {
+    expect(getTrustBadgeText('something')).toBe('Unverified')
   })
 })
 

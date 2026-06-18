@@ -13,39 +13,39 @@ import { getScript } from './skill-panel-script.js'
 // Re-export for testing
 export { getContentHtml } from './skill-panel-content.js'
 
+// vocabulary mirrors src/sidebar/trustTier.ts (ApiTrustTier 5-tier). Kept inline to keep this module vscode-free.
+function normalizeTierForBadge(tier: string): string {
+  const lower = tier.toLowerCase()
+  const canonical = ['official', 'verified', 'curated', 'community', 'unverified']
+  if (canonical.includes(lower)) return lower
+  // Legacy mapping: experimental → community; all other unrecognized → unverified
+  if (lower === 'experimental') return 'community'
+  return 'unverified'
+}
+
 /**
  * Get the CSS class for trust tier badge color
  */
 export function getTrustBadgeColor(tier: string): string {
-  switch (tier.toLowerCase()) {
-    case 'verified':
-      return 'verified'
-    case 'community':
-      return 'community'
-    case 'experimental':
-      return 'experimental'
-    case 'local':
-      return 'local'
-    default:
-      return 'unknown'
-  }
+  return normalizeTierForBadge(tier)
 }
 
 /**
  * Get the display text for trust tier badge
  */
 export function getTrustBadgeText(tier: string): string {
-  switch (tier.toLowerCase()) {
+  const normalized = normalizeTierForBadge(tier)
+  switch (normalized) {
+    case 'official':
+      return 'Official'
     case 'verified':
       return 'Verified'
+    case 'curated':
+      return 'Curated'
     case 'community':
       return 'Community'
-    case 'experimental':
-      return 'Experimental'
-    case 'local':
-      return 'Local'
     default:
-      return 'Unknown'
+      return 'Unverified'
   }
 }
 

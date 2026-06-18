@@ -5,11 +5,18 @@
  * @module sidebar/SkillTreeItem
  */
 import * as vscode from 'vscode'
+import {
+  type ExtensionTrustTier,
+  getTrustTierIcon,
+  getTrustTierEmoji,
+  getTrustTierLabel,
+} from './trustTier.js'
 
 /**
- * Trust tier values for skills
+ * TrustTier is now the canonical 5-tier model. Re-exported as an alias for
+ * backward compatibility with external consumers.
  */
-export type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
+export type { ExtensionTrustTier as TrustTier } from './trustTier.js'
 
 /**
  * Data for a skill tree item
@@ -19,7 +26,7 @@ export interface SkillItemData {
   name: string
   description: string | undefined
   author?: string
-  trustTier?: TrustTier
+  trustTier?: ExtensionTrustTier
   category?: string
   score?: number
   path?: string
@@ -76,7 +83,7 @@ export class SkillTreeItem extends vscode.TreeItem {
     this.description = this.formatDescription(data)
     this.tooltip = this.createTooltip(data)
     this.contextValue = data.isInstalled ? 'installedSkill' : 'skill'
-    this.iconPath = this.getTrustTierIcon(data.trustTier)
+    this.iconPath = getTrustTierIcon(data.trustTier)
 
     // Set command to view details
     this.command = {
@@ -104,8 +111,9 @@ export class SkillTreeItem extends vscode.TreeItem {
       parts.push(`by ${data.author}`)
     }
 
-    if (data.trustTier) {
-      parts.push(data.trustTier)
+    const label = getTrustTierLabel(data.trustTier)
+    if (label) {
+      parts.push(label)
     }
 
     return parts.join(' | ')
@@ -141,9 +149,10 @@ export class SkillTreeItem extends vscode.TreeItem {
       md.appendMarkdown('\n')
     }
 
-    if (data.trustTier) {
-      const emoji = this.getTrustTierEmoji(data.trustTier)
-      md.appendMarkdown(`- **Trust Tier:** ${emoji} ${data.trustTier}\n`)
+    const tierEmoji = getTrustTierEmoji(data.trustTier)
+    const tierLabel = getTrustTierLabel(data.trustTier)
+    if (tierLabel) {
+      md.appendMarkdown(`- **Trust Tier:** ${tierEmoji} ${tierLabel}\n`)
     }
 
     if (data.score !== undefined) {
@@ -157,44 +166,6 @@ export class SkillTreeItem extends vscode.TreeItem {
     md.appendMarkdown(`\n*${data.isInstalled ? 'Installed' : 'Available for installation'}*`)
 
     return md
-  }
-
-  /**
-   * Gets the appropriate icon for a trust tier
-   */
-  private getTrustTierIcon(tier?: TrustTier): vscode.ThemeIcon {
-    switch (tier) {
-      case 'verified':
-        return new vscode.ThemeIcon('verified-filled', new vscode.ThemeColor('charts.green'))
-      case 'community':
-        return new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.yellow'))
-      case 'experimental':
-        return new vscode.ThemeIcon('beaker', new vscode.ThemeColor('charts.orange'))
-      case 'local':
-        return new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.blue'))
-      case 'unknown':
-      default:
-        return new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.gray'))
-    }
-  }
-
-  /**
-   * Gets the emoji for a trust tier
-   */
-  private getTrustTierEmoji(tier: TrustTier): string {
-    switch (tier) {
-      case 'verified':
-        return '(verified)'
-      case 'community':
-        return '(star)'
-      case 'experimental':
-        return '(beaker)'
-      case 'local':
-        return '(folder)'
-      case 'unknown':
-      default:
-        return '(question)'
-    }
   }
 
   /**

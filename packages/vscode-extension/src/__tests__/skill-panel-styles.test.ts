@@ -22,12 +22,18 @@ describe('getStyles', () => {
     expect(css).toContain('.header h1')
   })
 
-  it('contains badge styles for all tiers', () => {
+  it('contains badge styles for all canonical tiers', () => {
+    expect(css).toContain('.badge-official')
     expect(css).toContain('.badge-verified')
+    expect(css).toContain('.badge-curated')
     expect(css).toContain('.badge-community')
-    expect(css).toContain('.badge-experimental')
-    expect(css).toContain('.badge-local')
-    expect(css).toContain('.badge-unknown')
+    expect(css).toContain('.badge-unverified')
+  })
+
+  it('does not contain removed legacy badge classes', () => {
+    expect(css).not.toContain('.badge-experimental')
+    expect(css).not.toContain('.badge-local')
+    expect(css).not.toContain('.badge-unknown')
   })
 
   it('contains security scan status styles', () => {
