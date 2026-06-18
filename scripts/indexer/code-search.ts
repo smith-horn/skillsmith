@@ -76,24 +76,13 @@ const RETRY_DELAYS = [1000, 2000, 4000]
 export async function searchCodeForSkillMd(
   page: number,
   perPage = 30,
-  createdAfter: string | undefined,
   telemetry: RateLimitTelemetry
 ): Promise<{ repos: GitHubRepository[]; total: number; retries: number; error?: string }> {
-  // SMI-2576: Validate date format before URL construction
-  if (createdAfter && !/^\d{4}-\d{2}-\d{2}$/.test(createdAfter)) {
-    return {
-      repos: [],
-      total: 0,
-      retries: 0,
-      error: `Invalid date format: ${sanitizeForLog(createdAfter)}`,
-    }
-  }
-
-  // Build query: find root-level SKILL.md files
-  let queryStr = 'filename:SKILL.md path:/'
-  if (createdAfter) {
-    queryStr += ` created:>${createdAfter}`
-  }
+  // Build query: find root-level SKILL.md files.
+  // SMI-5176: date qualifiers (created:>/pushed:>) are NOT functional on GitHub
+  // code search — they are tokenized as free-text content, crushing results to
+  // files that literally contain the date string. No freshness qualifier here.
+  const queryStr = 'filename:SKILL.md path:/'
   const query = encodeURIComponent(queryStr)
   const url = `https://api.github.com/search/code?q=${query}&per_page=${perPage}&page=${page}`
 
@@ -227,7 +216,6 @@ export async function searchCodeForSkillMdInSubdirectory(
   pathPrefix: string | undefined,
   page: number,
   perPage = 30,
-  createdAfter: string | undefined,
   telemetry: RateLimitTelemetry
 ): Promise<{
   repos: GitHubRepository[]
@@ -236,17 +224,6 @@ export async function searchCodeForSkillMdInSubdirectory(
   incomplete_results: boolean
   error?: string
 }> {
-  // SMI-2576: Validate date format before URL construction
-  if (createdAfter && !/^\d{4}-\d{2}-\d{2}$/.test(createdAfter)) {
-    return {
-      repos: [],
-      total: 0,
-      retries: 0,
-      incomplete_results: false,
-      error: `Invalid date format: ${sanitizeForLog(createdAfter)}`,
-    }
-  }
-
   // Reject path prefixes with leading/trailing slashes to match DB CHECK constraint
   if (pathPrefix && (pathPrefix.startsWith('/') || pathPrefix.endsWith('/'))) {
     return {
@@ -258,11 +235,10 @@ export async function searchCodeForSkillMdInSubdirectory(
     }
   }
 
-  // Build query: broad (no path constraint) or scoped to pathPrefix
-  let queryStr = pathPrefix ? `filename:SKILL.md path:${pathPrefix}` : 'filename:SKILL.md'
-  if (createdAfter) {
-    queryStr += ` created:>${createdAfter}`
-  }
+  // Build query: broad (no path constraint) or scoped to pathPrefix.
+  // SMI-5176: date qualifiers (created:>/pushed:>) are NOT functional on GitHub
+  // code search — they are tokenized as free-text content. No freshness qualifier.
+  const queryStr = pathPrefix ? `filename:SKILL.md path:${pathPrefix}` : 'filename:SKILL.md'
   const query = encodeURIComponent(queryStr)
   const url = `https://api.github.com/search/code?q=${query}&per_page=${perPage}&page=${page}`
 

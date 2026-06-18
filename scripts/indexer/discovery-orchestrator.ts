@@ -119,10 +119,9 @@ export interface RunDiscoveryParams {
   discoveryPhase?: DiscoveryPhase
   /**
    * SMI-5286 Wave 1b (§#2): out-of-band backfill mode. When true the freshness
-   * window is dropped (`freshnessDate = undefined`, an un-windowed scan — a
-   * no-op qualifier the downstream `createdAfter: string | undefined` chain
-   * already accepts) and the Phase-6 stale sweep is skipped (a partial crawl
-   * must not quarantine real skills). Default false → byte-identical cron path.
+   * window is dropped (`freshnessDate = undefined`, an un-windowed scan) and
+   * the Phase-6 stale sweep is skipped (a partial crawl must not quarantine
+   * real skills). Default false → byte-identical cron path.
    */
   backfillMode?: boolean
 }
@@ -251,8 +250,11 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
 
   // ── Phase 2: Topic search ────────────────────────────────────────────
   // Freshness targeting on discovery runs (maintenance branch never reaches
-  // here). SMI-5286 Wave 1b (§#2): backfill mode → `undefined` (un-windowed);
-  // the `createdAfter: string | undefined` chain treats falsy as "no qualifier".
+  // here). SMI-5286 Wave 1b (§#2): backfill mode → `undefined` (un-windowed).
+  // SMI-5176: freshnessDate flows ONLY into runTopicSearchPhase → searchRepositories
+  // (repo search) where it emits a pushed:> qualifier — repo search honors it.
+  // Code search (Phase 3a/3b) receives no freshness param: GitHub code search
+  // tokenizes date qualifiers as free-text content (SMI-5176 probe verdict).
   const freshnessDate: string | undefined = backfillMode
     ? undefined
     : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -286,13 +288,13 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   result.found = highTrustSkillMap.size + topicSearchFound
 
   // ── Phase 3a: Code search for root-level SKILL.md ────────────────────
-  // SMI-4861 Wave 1 / SMI-4859: env-gated default OFF. Phase 3a has produced
-  // 0 new repos for 25+ consecutive days (RCA confirms Phase 1/2 dedup
-  // already covers every candidate). Re-enable via
-  // SKILLSMITH_ENABLE_CODE_SEARCH=true. Pattern mirrors Phase 3b at :230 —
-  // direct process.env read, NOT threaded through IndexerEnv (would be a
-  // separate refactor of parse-env.ts covering both phases).
-  // SMI-4870: only the phase-3 sub-slot (or the legacy path) runs code search.
+  // SMI-4861 / SMI-4859: env-gated default OFF. Prior "0 new repos" signal was
+  // a bug artifact — the created:> qualifier was tokenized as free-text (SMI-5176
+  // removed it). Re-enable via SKILLSMITH_ENABLE_CODE_SEARCH=true.
+  // WARNING (SMI-5296): re-enabling for INCREMENTAL runs ships with NO freshness
+  // windowing — GitHub code search has no functional date qualifier. Design the
+  // pushed_at post-filter (SMI-5296) before flipping this flag.
+  // SMI-4870: only the phase-3 sub-slot (or legacy path) runs code search.
   if (runPhase3 && process.env.SKILLSMITH_ENABLE_CODE_SEARCH === 'true') {
     try {
       const {
@@ -303,7 +305,6 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
         skipGateHits,
       } = await runCodeSearch(
         seenUrls,
-        freshnessDate,
         validationCache,
         validationOptions,
         codeSearchMaxPages,
@@ -338,7 +339,6 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     try {
       const subdirResult = await runSubdirectorySearch(
         seenUrls,
-        freshnessDate,
         validationCache,
         validationOptions,
         codeSearchMaxPages,

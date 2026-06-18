@@ -24,8 +24,10 @@ export interface TopicSearchPhaseParams {
   maxPages: number
   maxTopicRepos: number
   // SMI-5286 Wave 1b (§#2): `undefined` in backfill mode (un-windowed scan).
-  // `searchRepositories` accepts `createdAfter: string | undefined` and treats
-  // falsy as "no `created:>` qualifier", so this is a pass-through no-op.
+  // SMI-5176: `searchRepositories` now accepts `pushedAfter: string | undefined`
+  // and emits a `pushed:>` qualifier (not `created:>`) on repo search when set.
+  // Callers pass positionally — this field name is the orchestrator's generic
+  // `freshnessDate` variable; the rename is local to topic-search.ts.
   freshnessDate: string | undefined
   seenUrls: Set<string>
   repositories: GitHubRepository[]

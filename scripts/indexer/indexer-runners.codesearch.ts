@@ -50,7 +50,6 @@ import type { GitHubRepository } from './topic-search.ts'
  */
 export async function runCodeSearch(
   seenUrls: Set<string>,
-  freshnessDate: string | undefined,
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   maxPages: number,
@@ -70,7 +69,7 @@ export async function runCodeSearch(
   let skipGateHits = 0
 
   for (let page = 1; page <= maxPages; page++) {
-    const codeResult = await searchCodeForSkillMd(page, 30, freshnessDate, telemetry)
+    const codeResult = await searchCodeForSkillMd(page, 30, telemetry)
     retries += codeResult.retries
     if (codeResult.error) {
       error = codeResult.error

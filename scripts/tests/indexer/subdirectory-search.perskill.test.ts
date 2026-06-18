@@ -151,14 +151,7 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
     const seenUrls = new Set<string>()
     const validationCache = new Map()
 
-    const result = await runSubdirectorySearch(
-      seenUrls,
-      undefined,
-      validationCache,
-      {},
-      1,
-      noTelemetry
-    )
+    const result = await runSubdirectorySearch(seenUrls, validationCache, {}, 1, noTelemetry)
 
     // Three distinct repo rows
     expect(result.repos).toHaveLength(3)
@@ -199,7 +192,7 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
       truncatedByApi: false,
     })
 
-    const result = await runSubdirectorySearch(new Set(), undefined, new Map(), {}, 1, noTelemetry)
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
     expect(result.repos).toHaveLength(3)
 
@@ -233,7 +226,7 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
       truncatedByApi: false,
     })
 
-    const result = await runSubdirectorySearch(new Set(), undefined, new Map(), {}, 1, noTelemetry)
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
     expect(result.repos).toHaveLength(2)
 
@@ -263,7 +256,6 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
 
     const result = await runSubdirectorySearch(
       new Set(),
-      undefined,
       new Map(),
       {},
       3, // allow up to 3 pages
@@ -286,7 +278,7 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
       truncatedByApi: true, // policy (b): emit nothing
     })
 
-    const result = await runSubdirectorySearch(new Set(), undefined, new Map(), {}, 1, noTelemetry)
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
     expect(result.repos).toHaveLength(0)
   })
@@ -304,7 +296,7 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
     // Validation fails for this skill
     mockCheckSkillMdExists.mockResolvedValue(false)
 
-    const result = await runSubdirectorySearch(new Set(), undefined, new Map(), {}, 1, noTelemetry)
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
     expect(result.repos).toHaveLength(1)
     expect(result.repos[0].installable).toBe(false)
@@ -316,7 +308,7 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
 
     mockFetchRepoLicense.mockResolvedValue({ license: null, fetchFailed: true })
 
-    const result = await runSubdirectorySearch(new Set(), undefined, new Map(), {}, 1, noTelemetry)
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
     expect(result.repos).toHaveLength(0)
     expect(result.licenseFiltered).toBe(0)
@@ -331,7 +323,7 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
 
     mockFetchRepoLicense.mockResolvedValue({ license: 'GPL-3.0', fetchFailed: false })
 
-    const result = await runSubdirectorySearch(new Set(), undefined, new Map(), {}, 1, noTelemetry)
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
     expect(result.repos).toHaveLength(0)
     expect(result.licenseFiltered).toBe(1)
