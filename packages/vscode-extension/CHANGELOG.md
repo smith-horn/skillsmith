@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-18
+
+### Changed
+
+- **Unified sidebar.** Search results now appear in the **Skills** view under an **Available Skills** group instead of a separate "Search Results" view. When you search, the extension opens the Skills view and reveals your results — even if the sidebar was collapsed — and shows the newest results above your installed skills.
+- Removed the redundant "Found N skills" notification after a search; results appear directly in the tree (the "server unavailable" and "no results" messages are unchanged).
+- The first-run welcome now points to the Skillsmith view in the activity bar and the Command Palette ("Skillsmith: Search Skills") instead of an unassigned shortcut.
+
+### Added
+
+- **Keyboard shortcut for search:** `Ctrl+K Ctrl+Y` (Windows/Linux) / `⌘K ⌘Y` (macOS) opens skill search.
+
+### Fixed
+
+- Documentation no longer advertises trust-tier and category *filtering* that the search box does not yet provide; the registry search is keyword-based and shows a trust-tier badge on each result.
+
 ## [0.3.0] - 2026-06-18
 
 ### Added
@@ -138,7 +154,7 @@ The Marketplace keyword additions (`agent-skills`, `cursor`, `copilot`) and the 
 ### Added
 
 - Activity bar icon and sidebar skill tree view.
-- Skill search with trust-tier and category filters.
+- Skill search with trust-tier and category filters. (Note: trust-tier and category filters were not implemented in this release; the inaccurate claim is corrected in 0.4.0.)
 - Skill detail panel with score breakdown and metadata.
 - One-click install command.
 - Automatic MCP server connection with configurable timeout and reconnection.
