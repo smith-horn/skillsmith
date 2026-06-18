@@ -24,7 +24,7 @@ vi.mock('vscode', () => ({
 }))
 
 import { isTelemetered } from '../../services/telemetry-wrap.js'
-import { searchSkillsAction } from '../searchSkills.js'
+import { searchSkillsAction, filterSkillsAction, clearFiltersAction } from '../searchSkills.js'
 import { installCommandAction } from '../installCommand.js'
 import { uninstallCommandAction } from '../uninstallCommand.js'
 import { createSkillAction } from '../createSkillCommand.js'
@@ -32,6 +32,8 @@ import { createSkillAction } from '../createSkillCommand.js'
 /** Registered command id → wrapped panel action. */
 const VSCODE_DISPATCHER_MAP: Record<string, (...args: never[]) => unknown> = {
   'skillsmith.searchSkills': searchSkillsAction,
+  'skillsmith.filterSkills': filterSkillsAction,
+  'skillsmith.clearSkillFilters': clearFiltersAction,
   'skillsmith.installSkill': installCommandAction,
   'skillsmith.uninstallSkill': uninstallCommandAction,
   'skillsmith.createSkill': createSkillAction,
@@ -62,6 +64,6 @@ describe('SMI-5130: VS Code command telemetry coverage', () => {
   it('reports VS Code dispatcher coverage to CI output', () => {
     const count = Object.keys(VSCODE_DISPATCHER_MAP).length
     console.info(`[SMI-5130] VS Code telemetry coverage: ${count} panel actions wrapped.`)
-    expect(count).toBe(4)
+    expect(count).toBe(6)
   })
 })

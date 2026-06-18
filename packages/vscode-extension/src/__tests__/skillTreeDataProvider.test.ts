@@ -137,7 +137,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
     expect(provider.getLastSearchQuery()).toBe('')
   })
 
-  it('renders Available group first while searching, with the em-dash query label', async () => {
+  it('renders Available group first while searching, with the count-bearing label', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
     const provider = new SkillTreeDataProvider()
     provider.setSearchResults(sampleResults, 'docker')
@@ -147,7 +147,9 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
     // Available-first ordering.
     expect(roots[0]?.groupId).toBe('available')
     expect(roots[1]?.groupId).toBe('installed')
-    expect(roots[0]?.label).toBe('Available Skills — "docker" (2)')
+    // #1432: the group label is now the count header only (no inline query —
+    // the banner carries the query/filter context).
+    expect(roots[0]?.label).toBe('Available Skills (2)')
   })
 
   it('renders Installed group first (only) when no search is active', async () => {
@@ -262,5 +264,111 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
     } finally {
       await fs.rm(localRoot, { recursive: true, force: true })
     }
+  })
+})
+
+describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', () => {
+  const sampleResults = [
+    {
+      id: 'a/one',
+      name: 'one',
+      description: 'first',
+      author: 'a',
+      category: 'cat',
+      trustTier: 'verified',
+      score: 90,
+    },
+  ]
+
+  it('hasActiveFilters is false initially and true after setFilters', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    expect(provider.hasActiveFilters()).toBe(false)
+    provider.setFilters({ trustTier: 'verified' })
+    expect(provider.hasActiveFilters()).toBe(true)
+    expect(provider.getFilters()).toEqual({ trustTier: 'verified' })
+  })
+
+  it('clearFilters resets to no active filters', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    provider.setFilters({ category: 'Testing', minScore: 70 })
+    expect(provider.hasActiveFilters()).toBe(true)
+    provider.clearFilters()
+    expect(provider.hasActiveFilters()).toBe(false)
+    expect(provider.getFilters()).toEqual({})
+  })
+
+  it('setFilters stores by value (later mutation does not leak in)', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    const input = { trustTier: 'verified' }
+    provider.setFilters(input)
+    input.trustTier = 'community'
+    expect(provider.getFilters().trustTier).toBe('verified')
+  })
+
+  it('describeActiveContext returns rawQuery + demo flag + ordered filter parts', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    provider.setFilters({ trustTier: 'verified', category: 'Testing', minScore: 70 })
+    provider.setSearchResults(sampleResults, 'react', { demo: true })
+
+    const ctx = provider.describeActiveContext()
+    expect(ctx.rawQuery).toBe('react')
+    expect(ctx.demo).toBe(true)
+    // Ordered: tier label · category · N+.
+    expect(ctx.filterParts).toEqual(['Verified', 'Testing', '70+'])
+  })
+
+  it('describeActiveContext has no filter parts when no filters are active', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    provider.setSearchResults(sampleResults, 'react')
+    const ctx = provider.describeActiveContext()
+    expect(ctx.filterParts).toEqual([])
+    expect(ctx.demo).toBe(false)
+  })
+
+  it('getLastSearchQuery returns the raw query, not the display label', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    provider.setSearchResults(sampleResults, 'react', { demo: true })
+    // Raw query is stored separately from the demo annotation.
+    expect(provider.getLastSearchQuery()).toBe('react')
+  })
+
+  it('group:available id is stable across filter/query changes (reveal guard)', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    provider.setSearchResults(sampleResults, 'react')
+    const before = provider.getAvailableGroupItem()
+    expect(before?.id).toBe('group:available')
+
+    provider.setFilters({ trustTier: 'verified', category: 'Testing', minScore: 90 })
+    provider.setSearchResults(sampleResults, 'docker', { demo: true })
+    const after = provider.getAvailableGroupItem()
+    // Label may change with filters/query; the reveal id must NOT.
+    expect(after?.id).toBe('group:available')
+  })
+
+  it('clearSearchResults clears the query but preserves active filters', async () => {
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    const provider = new SkillTreeDataProvider()
+
+    provider.setFilters({ trustTier: 'verified' })
+    provider.setSearchResults(sampleResults, 'react')
+    provider.clearSearchResults()
+
+    expect(provider.getLastSearchQuery()).toBe('')
+    // No-results / offline must not silently drop the user's filter selection.
+    expect(provider.hasActiveFilters()).toBe(true)
   })
 })

@@ -83,8 +83,12 @@ export class SkillService {
 
     // Server unavailable (or transport error). Mock is demo-only now.
     if (this.demoMode()) {
-      // Demo mode: empty query returns all mock skills (browse-all mode)
-      const results = query ? searchMockSkills(query) : [...MOCK_SKILLS]
+      // Demo mode: empty query returns all mock skills (browse-all mode).
+      // SMI-5304 demo-mode honesty (plan-review #4): apply filters client-side
+      // so a demo user who sets filters never sees unfiltered results while the
+      // banner claims filtering happened.
+      const base = query ? searchMockSkills(query) : [...MOCK_SKILLS]
+      const results = applyMockFilters(base, options)
       return { results, isOffline: true }
     }
     return { results: [], isOffline: true }
@@ -144,6 +148,41 @@ export class SkillService {
   clearCache(): void {
     this.searchCache.clear()
   }
+}
+
+/**
+ * Applies discovery filters to demo-mode mock results (SMI-5304 plan-review #4).
+ *
+ * Mirrors the server-side `search` facet semantics so demo mode is honest:
+ * - `category`: exact match, case-insensitive (mock data uses lowercase
+ *   categories, e.g. `development`, while the filter passes `Development`).
+ * - `trustTier`: exact match, case-insensitive.
+ * - `minScore`: inclusive threshold (`score >= minScore`).
+ *
+ * Returns a new array; never mutates the input.
+ */
+export function applyMockFilters(
+  skills: SkillData[],
+  options?: { category?: string; trustTier?: string; minScore?: number }
+): SkillData[] {
+  if (!options) {
+    return skills
+  }
+  const category = options.category?.toLowerCase()
+  const trustTier = options.trustTier?.toLowerCase()
+  const { minScore } = options
+  return skills.filter((skill) => {
+    if (category !== undefined && skill.category.toLowerCase() !== category) {
+      return false
+    }
+    if (trustTier !== undefined && skill.trustTier.toLowerCase() !== trustTier) {
+      return false
+    }
+    if (minScore !== undefined && skill.score < minScore) {
+      return false
+    }
+    return true
+  })
 }
 
 /** Map MCP search result to SkillData */
