@@ -49,8 +49,12 @@ export function activate(context: vscode.ExtensionContext): void {
   // Initialize MCP client with configuration from settings
   initializeMcpClientFromSettings()
 
-  // Create centralized SkillService
-  const skillService = new SkillService(getMcpClient())
+  // Create centralized SkillService. SMI-5288: mock data is demo-only — the
+  // demoMode resolver gates whether sample skills are shown when the server is
+  // unavailable.
+  const skillService = new SkillService(getMcpClient(), () =>
+    vscode.workspace.getConfiguration('skillsmith').get<boolean>('demoMode', false)
+  )
   SkillDetailPanel.setSkillService(skillService)
 
   // Initialize providers

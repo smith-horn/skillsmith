@@ -12,10 +12,17 @@ import type { SkillService } from '../services/SkillService.js'
 import { getSkillPath, installSkillLocally } from '../services/installUtils.js'
 import { getTrustTierCodicon, getTrustTierLabel } from '../sidebar/trustTier.js'
 import { getMcpClient } from '../mcp/McpClient.js'
+import { McpToolError } from '../mcp/McpToolError.js'
+import { handleTierDenied } from '../mcp/tierDenied.js'
 import { withTelemetry } from '../services/telemetry-wrap.js'
 
 /** Debounce delay for search input */
 const SEARCH_DEBOUNCE_MS = 300
+
+/** SMI-5288: whether explicit demo mode is enabled. */
+function isDemoModeEnabled(): boolean {
+  return vscode.workspace.getConfiguration('skillsmith').get<boolean>('demoMode', false)
+}
 
 /**
  * Quick pick item with skill data
@@ -79,11 +86,13 @@ async function showQuickInstallPicker(skillService: SkillService): Promise<void>
         const { results, isOffline } = await skillService.search(query)
 
         if (results.length === 0) {
-          if (isOffline) {
+          if (isOffline && !isDemoModeEnabled()) {
+            // SMI-5288: server unavailable and demo mode off — be honest, do
+            // not offer mock/placeholder skills.
             quickPick.items = [
               {
-                label: '$(cloud-offline) No offline results',
-                description: 'Connect to Skillsmith for full search',
+                label: '$(cloud-offline) Skillsmith server unavailable',
+                description: 'Start the Skillsmith MCP server and try again.',
                 alwaysShow: true,
                 skill: null,
               },
@@ -194,6 +203,12 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
 
         progress.report({ increment: 100, message: 'Complete!' })
 
+        if (result.tierDeniedHandled) {
+          // SMI-5288: the server refused on tier grounds; the tier-denied UX
+          // (billing/pricing prompt) has already been shown. Do not error.
+          return
+        }
+
         if (result.success) {
           await showInstallSuccess(skill, result)
         } else {
@@ -213,6 +228,8 @@ interface InstallResult {
   installPath: string
   tips: string[] | undefined
   error: string | undefined
+  /** SMI-5288: server refused on tier grounds; tier-denied UX already shown. */
+  tierDeniedHandled?: boolean
 }
 
 /**
@@ -234,13 +251,30 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
           tips: result.tips,
           error: undefined,
         }
-      } else {
+      }
+
+      // SMI-5288: install_skill returns a structured {success:false} payload
+      // (not an isError response), so callTool never throws for a tier denial.
+      // Detect it here and route to the upgrade UX instead of a generic error.
+      if (/^TierDenied/i.test(result.error ?? '')) {
+        await handleTierDenied(
+          'skillsmith.installSkill',
+          new McpToolError('install_skill', 'TierDenied', result.error!)
+        )
         return {
           success: false,
-          installPath: result.installPath || '',
+          installPath: '',
           tips: undefined,
           error: result.error,
+          tierDeniedHandled: true,
         }
+      }
+
+      return {
+        success: false,
+        installPath: result.installPath || '',
+        tips: undefined,
+        error: result.error,
       }
     } catch (error) {
       console.warn('[Skillsmith] MCP install failed, falling back to local:', error)

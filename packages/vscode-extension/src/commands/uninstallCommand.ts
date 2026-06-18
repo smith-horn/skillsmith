@@ -1,6 +1,8 @@
 import * as vscode from 'vscode'
 import * as fs from 'node:fs/promises'
 import { getMcpClient } from '../mcp/McpClient.js'
+import { McpToolError } from '../mcp/McpToolError.js'
+import { handleTierDenied } from '../mcp/tierDenied.js'
 import { getSkillsDirectory } from '../services/installUtils.js'
 import { track } from '../services/Telemetry.js'
 import { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
@@ -79,6 +81,16 @@ async function uninstallCommandImpl(
       if (!result.success) {
         // MCP is reachable and deliberately refused — surface this, do NOT fall back to
         // fs.rm. Falling back would bypass server-side enforcement (e.g. tier-gated ops).
+        // SMI-5288: a TierDenied refusal arrives as a structured {success:false}
+        // payload (not an isError throw), so route it to the upgrade UX.
+        if (/^TierDenied/i.test(result.error ?? '')) {
+          track('vscode_uninstall_failed', { via, reason: 'tier_denied' })
+          await handleTierDenied(
+            'skillsmith.uninstallSkill',
+            new McpToolError('uninstall_skill', 'TierDenied', result.error!)
+          )
+          return
+        }
         const reason = result.error ?? 'MCP server refused the uninstall request'
         track('vscode_uninstall_failed', { via, reason: 'mcp_refused' })
         void vscode.window.showErrorMessage(`Failed to uninstall "${pick.skillId}": ${reason}`)

@@ -14,6 +14,8 @@ vi.mock('vscode', () => {
   return {
     window: { showWarningMessage, showErrorMessage, showInformationMessage, showQuickPick },
     commands: { registerCommand },
+    env: { openExternal: vi.fn() },
+    Uri: { parse: (s: string) => ({ toString: () => s }) },
     workspace: {
       getConfiguration: vi.fn(() => ({ get: vi.fn(() => undefined) })),
     },
@@ -180,17 +182,40 @@ describe('uninstallCommand (SMI-4195)', () => {
   })
 
   it('surfaces MCP refusal and does NOT fall back to fs.rm', async () => {
-    // MCP is connected but deliberately refuses (e.g. TierDenied, server-side validation).
+    // MCP is connected but deliberately refuses (server-side validation).
     // The extension must NOT bypass this by deleting via fs.rm.
     showQuickPick.mockResolvedValue({ skillId: 'example-skill', skillPath })
     showWarningMessage.mockResolvedValue('Uninstall')
-    mcpUninstall.mockResolvedValue({ success: false, error: 'TierDenied: requires Team plan' })
+    mcpUninstall.mockResolvedValue({ success: false, error: 'Skill is locked by policy' })
 
     await handler()
 
     expect(showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('TierDenied: requires Team plan')
+      expect.stringContaining('Skill is locked by policy')
     )
+    // Skill directory must still exist — fs.rm was NOT called.
+    await expect(fs.access(skillPath)).resolves.toBeUndefined()
+    expect(showInformationMessage).not.toHaveBeenCalledWith(expect.stringContaining('Uninstalled'))
+  })
+
+  it('routes a TierDenied refusal to the upgrade UX and does NOT fall back to fs.rm', async () => {
+    // SMI-5288: a TierDenied {success:false} payload must show the tier-denied
+    // warning (not the generic error) and must not delete via fs.rm.
+    showQuickPick.mockResolvedValue({ skillId: 'example-skill', skillPath })
+    // First showWarningMessage call = the confirm dialog; second = tierDenied warning.
+    showWarningMessage.mockResolvedValueOnce('Uninstall').mockResolvedValueOnce(undefined)
+    mcpUninstall.mockResolvedValue({ success: false, error: 'TierDenied: requires the Team plan' })
+
+    await handler()
+
+    // The tier-denied warning was shown with the upgrade actions.
+    expect(showWarningMessage).toHaveBeenCalledWith(
+      'TierDenied: requires the Team plan',
+      'Open Billing',
+      'Learn more'
+    )
+    // Generic refusal error must NOT be shown.
+    expect(showErrorMessage).not.toHaveBeenCalled()
     // Skill directory must still exist — fs.rm was NOT called.
     await expect(fs.access(skillPath)).resolves.toBeUndefined()
     expect(showInformationMessage).not.toHaveBeenCalledWith(expect.stringContaining('Uninstalled'))

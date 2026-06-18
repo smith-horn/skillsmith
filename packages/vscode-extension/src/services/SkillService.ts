@@ -1,9 +1,18 @@
 /**
- * Centralized skill data service with MCP-first + mock fallback
+ * Centralized skill data service (SMI-5288).
+ *
+ * MCP-first. Mock data is no longer a silent offline fallback in the live
+ * product — it is returned ONLY when explicit demo mode is enabled
+ * (`skillsmith.demoMode`, resolved via the injected `demoMode` callback). When
+ * the server is unavailable and demo mode is off, search returns empty results
+ * and `getRichSkill` throws so the UI can show an honest "server unavailable"
+ * state. Tier-denied errors always propagate (never mocked).
+ *
  * Accepts McpClient via constructor injection for testability.
  */
 import type { McpClient } from '../mcp/McpClient.js'
 import type { McpSkillSearchResult, McpGetSkillResponse } from '../mcp/types.js'
+import { McpToolError } from '../mcp/McpToolError.js'
 import {
   MOCK_SKILLS,
   getSkillById as getMockSkillById,
@@ -33,11 +42,18 @@ export class SkillService {
   private searchCache = new Map<string, CacheEntry>()
   private static readonly CACHE_TTL_MS = 60_000
 
-  constructor(private readonly client: McpClient) {}
+  constructor(
+    private readonly client: McpClient,
+    // SMI-5288: resolves whether explicit demo mode is on. Defaults to off so
+    // mock data never leaks into the live product unless the caller opts in.
+    private readonly demoMode: () => boolean = () => false
+  ) {}
 
   /**
-   * Search for skills. MCP-first with mock fallback.
-   * Empty query returns all mock skills in fallback mode.
+   * Search for skills. MCP-first. Mock data is returned only in demo mode.
+   * - TierDenied errors propagate (never mocked).
+   * - Other errors / not-connected: demo mode returns mock (empty query → all
+   *   MOCK_SKILLS, browse-all); otherwise returns an empty offline result.
    */
   async search(
     query: string,
@@ -56,17 +72,30 @@ export class SkillService {
         this.searchCache.set(cacheKey, { results, timestamp: Date.now() })
         return { results, isOffline: false }
       } catch (error) {
-        console.warn('[Skillsmith] MCP search failed, using fallback:', error)
+        // Tier denial must never be masked by mock data — let the command
+        // surface the upgrade UX.
+        if (error instanceof McpToolError && error.code === 'TierDenied') {
+          throw error
+        }
+        console.warn('[Skillsmith] MCP search failed:', error)
       }
     }
 
-    // Fallback: empty query returns all mock skills (browse-all mode)
-    const results = query ? searchMockSkills(query) : [...MOCK_SKILLS]
-    return { results, isOffline: true }
+    // Server unavailable (or transport error). Mock is demo-only now.
+    if (this.demoMode()) {
+      // Demo mode: empty query returns all mock skills (browse-all mode)
+      const results = query ? searchMockSkills(query) : [...MOCK_SKILLS]
+      return { results, isOffline: true }
+    }
+    return { results: [], isOffline: true }
   }
 
   /**
-   * Get rich skill details (ExtendedSkillData) with MCP-first fallback.
+   * Get rich skill details (ExtendedSkillData). MCP-first.
+   * - TierDenied errors propagate (never mocked).
+   * - Other errors / not-connected: demo mode returns mock; otherwise throws
+   *   `McpToolError(NotConnected)` since `skill` is non-nullable and an empty
+   *   skill is not representable.
    */
   async getRichSkill(skillId: string): Promise<RichSkillResult> {
     if (this.client.isConnected()) {
@@ -74,21 +103,28 @@ export class SkillService {
         const response = await this.client.getSkill(skillId)
         return { skill: mapSkillDetailsToExtendedSkillData(response), isOffline: false }
       } catch (error) {
-        console.warn('[Skillsmith] MCP get_skill failed, using fallback:', error)
+        if (error instanceof McpToolError && error.code === 'TierDenied') {
+          throw error
+        }
+        console.warn('[Skillsmith] MCP get_skill failed:', error)
       }
     }
 
-    const mock = getMockSkillById(skillId)
-    return {
-      skill: {
-        ...mock,
-        version: undefined,
-        tags: undefined,
-        installCommand: undefined,
-        scoreBreakdown: undefined,
-      },
-      isOffline: true,
+    // Mock is demo-only now.
+    if (this.demoMode()) {
+      const mock = getMockSkillById(skillId)
+      return {
+        skill: {
+          ...mock,
+          version: undefined,
+          tags: undefined,
+          installCommand: undefined,
+          scoreBreakdown: undefined,
+        },
+        isOffline: true,
+      }
     }
+    throw new McpToolError('get_skill', 'NotConnected', 'Skillsmith server unavailable')
   }
 
   /**
