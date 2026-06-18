@@ -134,7 +134,7 @@ describe('searchCodeForSkillMd — tree-URL and fork guard (SMI-5286 Wave 1a §#
       })
     )
 
-    const { repos } = await searchCodeForSkillMd(1, 30, undefined, noTelemetry)
+    const { repos } = await searchCodeForSkillMd(1, 30, noTelemetry)
 
     expect(repos).toHaveLength(1)
     // Root SKILL.md → skillPath '' → tree URL ends with /tree/main
@@ -156,7 +156,7 @@ describe('searchCodeForSkillMd — tree-URL and fork guard (SMI-5286 Wave 1a §#
       })
     )
 
-    const { repos } = await searchCodeForSkillMd(1, 30, undefined, noTelemetry)
+    const { repos } = await searchCodeForSkillMd(1, 30, noTelemetry)
 
     expect(repos).toHaveLength(1)
     expect(repos[0].repoName).toBe('original')
@@ -174,7 +174,7 @@ describe('searchCodeForSkillMd — tree-URL and fork guard (SMI-5286 Wave 1a §#
       })
     )
 
-    const { repos, total } = await searchCodeForSkillMd(1, 30, undefined, noTelemetry)
+    const { repos, total } = await searchCodeForSkillMd(1, 30, noTelemetry)
 
     expect(repos).toHaveLength(0)
     expect(total).toBe(2) // total_count from API is still returned
@@ -197,13 +197,7 @@ describe('searchCodeForSkillMdInSubdirectory — tree-URL and fork guard (SMI-52
       })
     )
 
-    const result = await searchCodeForSkillMdInSubdirectory(
-      '.agents/skills',
-      1,
-      30,
-      undefined,
-      noTelemetry
-    )
+    const result = await searchCodeForSkillMdInSubdirectory('.agents/skills', 1, 30, noTelemetry)
 
     expect(result.repos).toHaveLength(1)
     const repo = result.repos[0]
@@ -234,13 +228,7 @@ describe('searchCodeForSkillMdInSubdirectory — tree-URL and fork guard (SMI-52
       })
     )
 
-    const result = await searchCodeForSkillMdInSubdirectory(
-      '.agents/skills',
-      1,
-      30,
-      undefined,
-      noTelemetry
-    )
+    const result = await searchCodeForSkillMdInSubdirectory('.agents/skills', 1, 30, noTelemetry)
 
     expect(result.repos).toHaveLength(1)
     expect(result.repos[0].repoName).toBe('original')
@@ -264,7 +252,6 @@ describe('searchCodeForSkillMdInSubdirectory — tree-URL and fork guard (SMI-52
       undefined, // broad
       1,
       30,
-      undefined,
       noTelemetry
     )
 
@@ -369,5 +356,98 @@ describe('searchRepositories — tree-URL and fork guard (SMI-5286 Wave 1a §#1/
     const repoB = repos.find((r) => r.name === 'repo-b')!
     expect(repoB.url).toBe('https://github.com/acme/repo-b/tree/main')
     expect(repoB.license).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5176: Freshness qualifier contract tests (anti-false-green)
+// Asserts the EXACT qualifiers emitted in the fetch URL for each search type.
+// ---------------------------------------------------------------------------
+
+describe('SMI-5176 freshness qualifier contracts', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  // ── repo search (topic-search.ts) ────────────────────────────────────────
+
+  it('searchRepositories emits pushed:>${date} in the fetch URL when pushedAfter is supplied', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({ total_count: 0, incomplete_results: false, items: [] })
+    })
+
+    await searchRepositories('mcp', 1, 30, '2026-06-10', noTelemetry)
+
+    const decodedQ = decodeURIComponent(capturedUrl.split('q=')[1]?.split('&')[0] ?? '')
+    // POSITIVE: must contain the exact pushed:>DATE substring
+    expect(decodedQ).toContain('pushed:>2026-06-10')
+    // NEGATIVE: must NOT use the old broken qualifier
+    expect(decodedQ).not.toContain('created:>')
+  })
+
+  it('searchRepositories does NOT emit any date qualifier when pushedAfter is undefined', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({ total_count: 0, incomplete_results: false, items: [] })
+    })
+
+    await searchRepositories('mcp', 1, 30, undefined, noTelemetry)
+
+    const decodedQ = decodeURIComponent(capturedUrl.split('q=')[1]?.split('&')[0] ?? '')
+    expect(decodedQ).not.toContain('pushed:>')
+    expect(decodedQ).not.toContain('created:>')
+  })
+
+  // ── code search (code-search.ts) — neither qualifier must appear ─────────
+
+  it('searchCodeForSkillMd emits NEITHER created: NOR pushed: in the fetch URL (SMI-5176)', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({ total_count: 0, incomplete_results: false, items: [] })
+    })
+
+    await searchCodeForSkillMd(1, 30, noTelemetry)
+
+    const decodedQ = decodeURIComponent(capturedUrl.split('q=')[1]?.split('&')[0] ?? '')
+    expect(decodedQ).not.toContain('created:')
+    expect(decodedQ).not.toContain('pushed:')
+  })
+
+  it('searchCodeForSkillMdInSubdirectory (broad) emits NEITHER created: NOR pushed: in the fetch URL', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({
+        total_count: 0,
+        incomplete_results: false,
+        items: [],
+      })
+    })
+
+    await searchCodeForSkillMdInSubdirectory(undefined, 1, 30, noTelemetry)
+
+    const decodedQ = decodeURIComponent(capturedUrl.split('q=')[1]?.split('&')[0] ?? '')
+    expect(decodedQ).not.toContain('created:')
+    expect(decodedQ).not.toContain('pushed:')
+  })
+
+  it('searchCodeForSkillMdInSubdirectory (.claude/skills) emits NEITHER created: NOR pushed: in the fetch URL', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({
+        total_count: 0,
+        incomplete_results: false,
+        items: [],
+      })
+    })
+
+    await searchCodeForSkillMdInSubdirectory('.claude/skills', 1, 30, noTelemetry)
+
+    const decodedQ = decodeURIComponent(capturedUrl.split('q=')[1]?.split('&')[0] ?? '')
+    expect(decodedQ).not.toContain('created:')
+    expect(decodedQ).not.toContain('pushed:')
   })
 })

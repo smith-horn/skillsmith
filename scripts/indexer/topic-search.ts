@@ -118,7 +118,7 @@ export async function searchRepositories(
   topic: string,
   page: number,
   perPage = 30,
-  createdAfter: string | undefined,
+  pushedAfter: string | undefined,
   telemetry: RateLimitTelemetry
 ): Promise<{ repos: GitHubRepository[]; total: number; error?: string }> {
   try {
@@ -128,14 +128,15 @@ export async function searchRepositories(
     }
 
     // SMI-2576: Validate date format before URL construction
-    if (createdAfter && !/^\d{4}-\d{2}-\d{2}$/.test(createdAfter)) {
-      return { repos: [], total: 0, error: `Invalid date format: ${sanitizeForLog(createdAfter)}` }
+    if (pushedAfter && !/^\d{4}-\d{2}-\d{2}$/.test(pushedAfter)) {
+      return { repos: [], total: 0, error: `Invalid date format: ${sanitizeForLog(pushedAfter)}` }
     }
 
-    // Build query with optional freshness qualifier
+    // Build query with optional freshness qualifier (pushed:> matches last-push activity,
+    // not repo creation — SMI-5176 corrected created:> which only matched newly-created repos)
     let queryStr = `topic:${topic}`
-    if (createdAfter) {
-      queryStr += ` created:>${createdAfter}`
+    if (pushedAfter) {
+      queryStr += ` pushed:>${pushedAfter}`
     }
     const query = encodeURIComponent(queryStr)
     const url = `https://api.github.com/search/repositories?q=${query}&per_page=${perPage}&page=${page}&sort=stars&order=desc`

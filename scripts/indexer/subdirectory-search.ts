@@ -218,7 +218,6 @@ async function processSearchResults(
  * SMI-4852: Threads `telemetry` through to every downstream GitHub call.
  *
  * @param seenUrls - Shared deduplication set from the indexer (modified in place)
- * @param freshnessDate - ISO date string for freshness targeting (or undefined for full scan)
  * @param validationCache - Request-scoped SKILL.md validation cache
  * @param validationOptions - Strict validation and minimum content length options
  * @param maxPages - Maximum pages per query (capped by caller)
@@ -226,7 +225,6 @@ async function processSearchResults(
  */
 export async function runSubdirectorySearch(
   seenUrls: Set<string>,
-  freshnessDate: string | undefined,
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   maxPages: number,
@@ -262,7 +260,6 @@ export async function runSubdirectorySearch(
       undefined, // no pathPrefix → broad query
       page,
       30,
-      freshnessDate,
       telemetry
     )
 
@@ -310,13 +307,7 @@ export async function runSubdirectorySearch(
       console.log(`[BroadDiscovery] Fallback searching path:${pathPrefix}...`)
 
       for (let page = 1; page <= maxPages; page++) {
-        const result = await searchCodeForSkillMdInSubdirectory(
-          pathPrefix,
-          page,
-          30,
-          freshnessDate,
-          telemetry
-        )
+        const result = await searchCodeForSkillMdInSubdirectory(pathPrefix, page, 30, telemetry)
 
         totalRetries += result.retries
 
