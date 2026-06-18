@@ -15,9 +15,17 @@ import {
   resolveTokenSource,
   writeCheckpoint,
   readLatestCheckpoint,
+  cursorToFacetState,
+  currentFacetRange,
+  bisectCurrentFacet,
+  advanceFacet,
+  isFacetCrawlDone,
+  facetStateToCursor,
   BACKFILL_CHECKPOINT_EVENT_TYPE,
   type BackfillCheckpointPayload,
+  type FacetCrawlState,
 } from '../../indexer/backfill-checkpoint.ts'
+import { buildSizeFacets } from '../../indexer/code-search.facets.ts'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -434,5 +442,169 @@ describe('backfill checkpoint round-trip (SPARC AC §#5)', () => {
     expect(readBack?.cap_saturated).toBe(true)
     expect(readBack?.truncated_repo_count).toBe(3)
     expect(readBack?.run_id).toBe('roundtrip-run-001')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5286 1c: facet driver state machine (cursor <-> crawl frontier)
+// ---------------------------------------------------------------------------
+
+describe('facet driver state machine (SMI-5286 1c)', () => {
+  const FACETS = buildSizeFacets()
+
+  it('cursorToFacetState cold-starts on null/undefined', () => {
+    expect(cursorToFacetState(null)).toEqual({ facetIndex: 0, pendingSubranges: [], lastPage: 0 })
+    expect(cursorToFacetState(undefined)).toEqual({
+      facetIndex: 0,
+      pendingSubranges: [],
+      lastPage: 0,
+    })
+  })
+
+  it('cursorToFacetState reconstructs facet_index, last_page, and pending_subranges', () => {
+    const state = cursorToFacetState({
+      path: '',
+      facet: '0-63',
+      last_page: 2,
+      facet_index: 3,
+      pending_subranges: [
+        [0, 63],
+        [64, 127],
+      ],
+    })
+    expect(state.facetIndex).toBe(3)
+    expect(state.lastPage).toBe(2)
+    expect(state.pendingSubranges).toEqual([
+      { lo: 0, hi: 63 },
+      { lo: 64, hi: 127 },
+    ])
+  })
+
+  it('cursorToFacetState maps a null upper bound back to Infinity', () => {
+    const state = cursorToFacetState({
+      path: '',
+      facet: '16384+',
+      last_page: 0,
+      facet_index: 8,
+      pending_subranges: [[16384, null]],
+    })
+    expect(state.pendingSubranges[0]).toEqual({ lo: 16384, hi: Number.POSITIVE_INFINITY })
+  })
+
+  it('currentFacetRange returns the top-level facet when the stack is empty', () => {
+    const state: FacetCrawlState = { facetIndex: 0, pendingSubranges: [], lastPage: 0 }
+    expect(currentFacetRange(state, FACETS)).toEqual(FACETS[0])
+  })
+
+  it('currentFacetRange returns the stack head (LIFO) when a bisection is in progress', () => {
+    const state: FacetCrawlState = {
+      facetIndex: 0,
+      pendingSubranges: [
+        { lo: 64, hi: 127 },
+        { lo: 0, hi: 63 },
+      ],
+      lastPage: 0,
+    }
+    expect(currentFacetRange(state, FACETS)).toEqual({ lo: 0, hi: 63 })
+  })
+
+  it('currentFacetRange returns null once the ladder is exhausted', () => {
+    const state: FacetCrawlState = {
+      facetIndex: FACETS.length,
+      pendingSubranges: [],
+      lastPage: 0,
+    }
+    expect(currentFacetRange(state, FACETS)).toBeNull()
+  })
+
+  it('bisectCurrentFacet splits a top-level facet, lower half on top, page reset', () => {
+    const state: FacetCrawlState = { facetIndex: 0, pendingSubranges: [], lastPage: 4 }
+    const ok = bisectCurrentFacet(state, { lo: 0, hi: 127 })
+    expect(ok).toBe(true)
+    expect(state.pendingSubranges).toEqual([
+      { lo: 64, hi: 127 },
+      { lo: 0, hi: 63 },
+    ])
+    expect(currentFacetRange(state, FACETS)).toEqual({ lo: 0, hi: 63 }) // crawled next
+    expect(state.lastPage).toBe(0)
+    expect(state.facetIndex).toBe(0) // top-level index unchanged until the stack drains
+  })
+
+  it('bisectCurrentFacet replaces the stack head with its halves', () => {
+    const state: FacetCrawlState = {
+      facetIndex: 2,
+      pendingSubranges: [{ lo: 0, hi: 63 }],
+      lastPage: 1,
+    }
+    bisectCurrentFacet(state, { lo: 0, hi: 63 })
+    expect(state.pendingSubranges).toEqual([
+      { lo: 32, hi: 63 },
+      { lo: 0, hi: 31 },
+    ])
+  })
+
+  it('bisectCurrentFacet returns false for an unsplittable range (lo === hi)', () => {
+    const state: FacetCrawlState = { facetIndex: 0, pendingSubranges: [], lastPage: 0 }
+    expect(bisectCurrentFacet(state, { lo: 5, hi: 5 })).toBe(false)
+    expect(state.pendingSubranges).toEqual([])
+  })
+
+  it('advanceFacet pops the stack when bisecting, else increments facetIndex', () => {
+    const withStack: FacetCrawlState = {
+      facetIndex: 1,
+      pendingSubranges: [{ lo: 0, hi: 63 }],
+      lastPage: 3,
+    }
+    advanceFacet(withStack)
+    expect(withStack.pendingSubranges).toEqual([])
+    expect(withStack.facetIndex).toBe(1) // unchanged — a sub-range finished, not the facet
+    expect(withStack.lastPage).toBe(0)
+
+    const noStack: FacetCrawlState = { facetIndex: 1, pendingSubranges: [], lastPage: 3 }
+    advanceFacet(noStack)
+    expect(noStack.facetIndex).toBe(2)
+    expect(noStack.lastPage).toBe(0)
+  })
+
+  it('isFacetCrawlDone is true only when the ladder AND the bisection frontier are empty', () => {
+    expect(
+      isFacetCrawlDone({ facetIndex: FACETS.length, pendingSubranges: [], lastPage: 0 }, FACETS)
+    ).toBe(true)
+    expect(
+      isFacetCrawlDone(
+        { facetIndex: FACETS.length, pendingSubranges: [{ lo: 0, hi: 63 }], lastPage: 0 },
+        FACETS
+      )
+    ).toBe(false)
+    expect(isFacetCrawlDone({ facetIndex: 3, pendingSubranges: [], lastPage: 0 }, FACETS)).toBe(
+      false
+    )
+  })
+
+  it('facetStateToCursor → cursorToFacetState round-trips through JSON (Infinity survives as null)', () => {
+    const state: FacetCrawlState = {
+      facetIndex: 8,
+      pendingSubranges: [{ lo: 16384, hi: Number.POSITIVE_INFINITY }],
+      lastPage: 2,
+    }
+    const cursor = facetStateToCursor(state, '.agents/skills', FACETS)
+    // The open-ended upper bound is persisted as null (JSON-safe).
+    expect(cursor.pending_subranges).toEqual([[16384, null]])
+    expect(cursor.path).toBe('.agents/skills')
+
+    // Survive a real JSON round-trip (the audit_logs metadata path).
+    const roundTripped = JSON.parse(JSON.stringify(cursor))
+    const restored = cursorToFacetState(roundTripped)
+    expect(restored).toEqual(state)
+  })
+
+  it("facetStateToCursor reports facet 'done' when the ladder is exhausted", () => {
+    const cursor = facetStateToCursor(
+      { facetIndex: FACETS.length, pendingSubranges: [], lastPage: 0 },
+      '',
+      FACETS
+    )
+    expect(cursor.facet).toBe('done')
+    expect(cursor.facet_index).toBe(FACETS.length)
   })
 })

@@ -451,3 +451,71 @@ describe('SMI-5176 freshness qualifier contracts', () => {
     expect(decodedQ).not.toContain('pushed:')
   })
 })
+
+// ---------------------------------------------------------------------------
+// SMI-5286 1c: size-facet qualifier + per_page=100 contracts
+// Asserts the size: qualifier reaches the emitted fetch URL (encoded) and that
+// the new default per_page=100 is present. Mirrors the freshness-qualifier
+// harness above (capture URL via fetch mock, then inspect q= and per_page=).
+// ---------------------------------------------------------------------------
+
+describe('SMI-5286 1c size-facet qualifier + per_page contracts', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it('appends a sizeQualifier (URL-encoded) to the code-search query', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({ total_count: 0, incomplete_results: false, items: [] })
+    })
+
+    await searchCodeForSkillMdInSubdirectory(undefined, 1, 100, noTelemetry, 'size:0..127')
+
+    // Raw URL carries the percent-encoded colon (size%3A0..127).
+    expect(capturedUrl).toContain('size%3A0..127')
+    // Decoded query contains the literal qualifier alongside the base filter.
+    const decodedQ = decodeURIComponent(capturedUrl.split('q=')[1]?.split('&')[0] ?? '')
+    expect(decodedQ).toContain('size:0..127')
+    expect(decodedQ).toContain('filename:SKILL.md')
+  })
+
+  it('omits any size: qualifier when sizeQualifier is not supplied', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({ total_count: 0, incomplete_results: false, items: [] })
+    })
+
+    await searchCodeForSkillMdInSubdirectory(undefined, 1, 100, noTelemetry)
+
+    const decodedQ = decodeURIComponent(capturedUrl.split('q=')[1]?.split('&')[0] ?? '')
+    expect(decodedQ).not.toContain('size:')
+  })
+
+  it('emits per_page=100 (GitHub max) for searchCodeForSkillMdInSubdirectory', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({ total_count: 0, incomplete_results: false, items: [] })
+    })
+
+    // telemetry is positional after perPage, so the default cannot be exercised
+    // by omitting perPage; pass the new default (100) explicitly to assert it
+    // reaches the URL.
+    await searchCodeForSkillMdInSubdirectory(undefined, 1, 100, noTelemetry)
+
+    expect(capturedUrl).toContain('per_page=100')
+  })
+
+  it('emits per_page=100 (GitHub max) for searchCodeForSkillMd (root phase)', async () => {
+    let capturedUrl = ''
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url) => {
+      capturedUrl = String(url)
+      return makeFetchOk({ total_count: 0, incomplete_results: false, items: [] })
+    })
+
+    await searchCodeForSkillMd(1, 100, noTelemetry)
+
+    expect(capturedUrl).toContain('per_page=100')
+  })
+})

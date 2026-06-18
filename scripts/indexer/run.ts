@@ -43,9 +43,12 @@ import { prefetchExistingSkills } from './prefetch-existing-skills.ts'
 // (§#2): token-source derivation + backfill summary sub-object emitted on stdout.
 import {
   readLatestCheckpoint,
+  writeCheckpoint,
   resolveTokenSource,
   type BackfillSummary,
 } from './backfill-checkpoint.ts'
+// SMI-5286 1c: the facet-crawl plan handed to the orchestrator's Phase 3b.
+import type { BackfillFacetPlan } from './subdirectory-search.ts'
 // SMI-4870: lock-skip observability — write an audit row even when the lock is
 // already held so partial-cycle gaps are detectable in SQL.
 import { writeIndexerAuditLog } from './indexer-audit-log.ts'
@@ -128,17 +131,18 @@ async function runDiscoveryBranch(
     `[Prefetch] ${rowsScanned} skill rows scanned; tree-hash cache seeded with ${treeHashCache.size} entries`
   )
 
-  // SMI-5286 Wave 1b (§#5): on a backfill dispatch, read the latest checkpoint
-  // cursor so a re-dispatch resumes mid-facet. `RESUME_FROM` ('latest' or a
-  // specific run_id) maps to the workflow's `resume_from` input. The full
-  // facet-resume DRIVER lands in Wave 1c; here we read + log the resumed cursor
-  // so the operator loop is observable from this dispatch onward.
+  // SMI-5286 1c (§#5): on a backfill dispatch, read the latest checkpoint cursor
+  // and build the facet-crawl plan so a re-dispatch resumes mid-facet. The
+  // advanced cursor returns on `result.backfill_crawl` and is checkpointed below.
+  // `RESUME_FROM` ('latest' or a specific run_id) maps to the workflow's
+  // `resume_from` input; the NEW checkpoint is keyed on GITHUB_RUN_ID.
   let checkpointId: string | null = null
+  let backfillFacetPlan: BackfillFacetPlan | undefined
+  const backfillRunId = process.env.GITHUB_RUN_ID ?? requestId
   if (env.BACKFILL_MODE) {
     const resumeFrom = process.env.RESUME_FROM
     const checkpoint = await readLatestCheckpoint(supabase, resumeFrom)
     if (checkpoint) {
-      checkpointId = checkpoint.run_id
       const { path, facet, last_page } = checkpoint.cursor
       console.log(
         `[Backfill] SMI-5286: resuming from checkpoint (run_id=${checkpoint.run_id}) ` +
@@ -147,6 +151,13 @@ async function runDiscoveryBranch(
       )
     } else {
       console.log('[Backfill] SMI-5286: no prior checkpoint — starting from the beginning')
+    }
+    backfillFacetPlan = {
+      startCursor: checkpoint?.cursor ?? null,
+      pathPrefix: env.BACKFILL_PATH_PREFIX,
+      perPage: 100,
+      maxPagesPerRange: env.CODE_SEARCH_MAX_PAGES,
+      maxRangesPerDispatch: env.BACKFILL_MAX_RANGES,
     }
   }
 
@@ -174,7 +185,30 @@ async function runDiscoveryBranch(
     discoveryPhase: env.DISCOVERY_PHASE,
     // SMI-5286 Wave 1b (§#2): drop the freshness window + skip Phase 6 in backfill.
     backfillMode: env.BACKFILL_MODE,
+    // SMI-5286 1c: facet-crawl plan (undefined on the cron path).
+    backfillFacetPlan,
   })
+
+  // SMI-5286 1c (§#5): persist the advanced facet cursor so the next dispatch
+  // (resume_from=latest) continues mid-facet. Written even in DRY_RUN so the
+  // operator can verify the resume loop before flipping to a live write
+  // (audit_logs is append-only telemetry, not the skills registry).
+  if (env.BACKFILL_MODE && result.backfill_crawl) {
+    const bc = result.backfill_crawl
+    const wrote = await writeCheckpoint(supabase, {
+      run_id: backfillRunId,
+      cursor: bc.cursor,
+      facets_completed: bc.facets_completed,
+      facets_total: bc.facets_total,
+      cap_saturated: bc.cap_saturated,
+      truncated_repo_count: bc.truncated_repo_count,
+    })
+    if (wrote) checkpointId = backfillRunId
+    console.log(
+      `[Backfill] SMI-5286: checkpoint ${wrote ? 'written' : 'FAILED'} (run_id=${backfillRunId}) ` +
+        `cursor.facet=${bc.cursor.facet} facets ${bc.facets_completed}/${bc.facets_total} done=${bc.done}`
+    )
+  }
 
   return { result, topics, rotationSource, checkpointId }
 }
@@ -352,22 +386,24 @@ async function main(): Promise<void> {
   const treeHashCache = (result as { tree_hash_cache?: { hits?: number; misses?: number } } | null)
     ?.tree_hash_cache
 
-  // SMI-5286 Wave 1b (§#2): on a backfill dispatch, attach a `backfill` sub-object
-  // onto `data` so `indexer-backfill.yml` can read `data.backfill.token_source`
-  // (its guardian fails the run if it reads 'app', proving PAT-bucket isolation).
-  // Facet counters are 0 in 1b (facet partitioning lands in 1c); token_source is
-  // the load-bearing field. Spread keeps the existing IndexerResult fields under
-  // `data` intact. Only emitted when BACKFILL_MODE is true.
+  // SMI-5286 (§#2): on a backfill dispatch, attach a `backfill` sub-object onto
+  // `data` so `indexer-backfill.yml` can read `data.backfill.token_source` (its
+  // guardian fails the run if it reads 'app', proving PAT-bucket isolation).
+  // 1c: the facet counters are sourced from `result.backfill_crawl` (the advanced
+  // cursor outcome from Phase 3b); `facets_remaining == 0` is the terminal
+  // condition the operator loop watches. Spread keeps the existing IndexerResult
+  // fields under `data` intact. Only emitted when BACKFILL_MODE is true.
   let data: unknown = result
   if (env.BACKFILL_MODE && result && typeof result === 'object') {
+    const crawl = (result as { backfill_crawl?: IndexerResult['backfill_crawl'] }).backfill_crawl
     const backfill: BackfillSummary = {
       token_source: resolveTokenSource(),
       checkpoint_id: checkpointId,
-      facets_total: 0,
-      facets_completed: 0,
-      facets_remaining: 0,
-      cap_saturated: false,
-      truncated_repo_count: 0,
+      facets_total: crawl?.facets_total ?? 0,
+      facets_completed: crawl?.facets_completed ?? 0,
+      facets_remaining: crawl ? crawl.facets_total - crawl.facets_completed : 0,
+      cap_saturated: crawl?.cap_saturated ?? false,
+      truncated_repo_count: crawl?.truncated_repo_count ?? 0,
     }
     data = { ...(result as Record<string, unknown>), backfill }
   }

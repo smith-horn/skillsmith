@@ -84,3 +84,62 @@ describe('parseEnv — BACKFILL_MODE (SMI-5286 Wave 1b)', () => {
     expect('BACKFILL_MODE' in env).toBe(true)
   })
 })
+
+describe('parseEnv — SMI-5286 1c backfill levers', () => {
+  let originalEnv: NodeJS.ProcessEnv
+
+  beforeEach(() => {
+    originalEnv = { ...process.env }
+    for (const k of Object.keys(process.env)) {
+      delete process.env[k]
+    }
+    Object.assign(process.env, BASE_ENV)
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('BACKFILL_PATH_PREFIX is undefined when absent or empty', () => {
+    delete process.env.BACKFILL_PATH_PREFIX
+    expect(parseEnv().BACKFILL_PATH_PREFIX).toBeUndefined()
+    process.env.BACKFILL_PATH_PREFIX = ''
+    expect(parseEnv().BACKFILL_PATH_PREFIX).toBeUndefined()
+  })
+
+  it('BACKFILL_PATH_PREFIX passes a non-empty prefix through verbatim', () => {
+    process.env.BACKFILL_PATH_PREFIX = '.agents/skills'
+    expect(parseEnv().BACKFILL_PATH_PREFIX).toBe('.agents/skills')
+  })
+
+  it('BACKFILL_MAX_RANGES defaults to 150 and honors an override', () => {
+    delete process.env.BACKFILL_MAX_RANGES
+    expect(parseEnv().BACKFILL_MAX_RANGES).toBe(150)
+    process.env.BACKFILL_MAX_RANGES = '40'
+    expect(parseEnv().BACKFILL_MAX_RANGES).toBe(40)
+  })
+
+  it('raises the cap DEFAULTS only when BACKFILL_MODE is set (C-5)', () => {
+    // Cron defaults (backfill off)
+    const cron = parseEnv()
+    expect(cron.MAX_PAGES).toBe(5)
+    expect(cron.MAX_REPOS).toBe(100)
+    expect(cron.CODE_SEARCH_MAX_PAGES).toBe(1)
+
+    // Backfill defaults (no explicit caps set)
+    process.env.BACKFILL_MODE = 'true'
+    const backfill = parseEnv()
+    expect(backfill.MAX_PAGES).toBe(10)
+    expect(backfill.MAX_REPOS).toBe(500)
+    expect(backfill.CODE_SEARCH_MAX_PAGES).toBe(10)
+  })
+
+  it('explicit cap env vars still override the backfill defaults', () => {
+    process.env.BACKFILL_MODE = 'true'
+    process.env.CODE_SEARCH_MAX_PAGES = '3'
+    process.env.MAX_PAGES = '7'
+    const env = parseEnv()
+    expect(env.CODE_SEARCH_MAX_PAGES).toBe(3)
+    expect(env.MAX_PAGES).toBe(7)
+  })
+})
