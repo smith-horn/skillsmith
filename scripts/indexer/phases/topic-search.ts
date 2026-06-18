@@ -23,7 +23,10 @@ export interface TopicSearchPhaseParams {
   topics: string[]
   maxPages: number
   maxTopicRepos: number
-  freshnessDate: string
+  // SMI-5286 Wave 1b (§#2): `undefined` in backfill mode (un-windowed scan).
+  // `searchRepositories` accepts `createdAfter: string | undefined` and treats
+  // falsy as "no `created:>` qualifier", so this is a pass-through no-op.
+  freshnessDate: string | undefined
   seenUrls: Set<string>
   repositories: GitHubRepository[]
   validationCache: Map<string, SkillMdValidation>

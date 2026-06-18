@@ -25,8 +25,6 @@ import {
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
 import { type SkillMdValidation } from './skill-processor.ts'
-import { reconcileStaleSkills } from './stale-reconciliation.ts'
-import { notifyBulkQuarantine } from './_shared/notification.ts'
 import { runSubdirectorySearch } from './subdirectory-search.ts'
 import { runCategorization, runCodeSearch, runUpsertPhase } from './indexer-runners.ts'
 import { applyTreeHashTouches, type TreeHashTouchEntry } from './tree-hash-touch.ts'
@@ -39,6 +37,7 @@ import {
   type DiscoveryPhase,
   selectCategorizationRepoUrls,
   writeDiscoveryAuditLog,
+  runStaleReconciliationPhase,
 } from './discovery-orchestrator.phase-split.ts'
 
 /**
@@ -118,6 +117,14 @@ export interface RunDiscoveryParams {
    * byte-identical to pre-SMI-4870 behaviour.
    */
   discoveryPhase?: DiscoveryPhase
+  /**
+   * SMI-5286 Wave 1b (§#2): out-of-band backfill mode. When true the freshness
+   * window is dropped (`freshnessDate = undefined`, an un-windowed scan — a
+   * no-op qualifier the downstream `createdAfter: string | undefined` chain
+   * already accepts) and the Phase-6 stale sweep is skipped (a partial crawl
+   * must not quarantine real skills). Default false → byte-identical cron path.
+   */
+  backfillMode?: boolean
 }
 
 export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerResult> {
@@ -141,6 +148,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     concurrency,
     killSwitchEngaged,
     discoveryPhase,
+    backfillMode = false,
   } = params
 
   // SMI-4870: phase gates. When `discoveryPhase` is unset every gate is true,
@@ -242,9 +250,12 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   void HIGH_TRUST_AUTHORS
 
   // ── Phase 2: Topic search ────────────────────────────────────────────
-  // Freshness targeting on discovery runs (always enabled here — maintenance
-  // branch never reaches this path).
-  const freshnessDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  // Freshness targeting on discovery runs (maintenance branch never reaches
+  // here). SMI-5286 Wave 1b (§#2): backfill mode → `undefined` (un-windowed);
+  // the `createdAfter: string | undefined` chain treats falsy as "no qualifier".
+  const freshnessDate: string | undefined = backfillMode
+    ? undefined
+    : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
 
   // SMI-4870: in a phase-2 sub-slot `seenUrls`/`repositories` start empty
   // (Phase 1 didn't run in this process). That is correct — cross-process
@@ -427,17 +438,17 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       result.errors.push(...catResult.errors)
 
       // ── Phase 6: Stale reconciliation ────────────────────────────────
-      const rawStaleThreshold = body.staleThresholdDays
-      const staleThresholdDays =
-        typeof rawStaleThreshold === 'number' && !isNaN(rawStaleThreshold) ? rawStaleThreshold : 30
-      const staleResult = await reconcileStaleSkills(supabase, staleThresholdDays)
-      result.stale = staleResult.staleQuarantined
+      // Extracted to runStaleReconciliationPhase (phase-split sibling) to keep
+      // this file under the 500-line gate. SMI-5286 Wave 1b: the helper is a
+      // no-op in backfill mode (a partial crawl must not quarantine real skills).
+      const staleResult = await runStaleReconciliationPhase(
+        supabase,
+        body.staleThresholdDays,
+        dryRun,
+        backfillMode
+      )
+      result.stale = staleResult.stale
       result.errors.push(...staleResult.errors)
-
-      // SMI-3347: Notify if any author had >= 3 skills quarantined in this run
-      if (staleResult.quarantinedIds.length > 0 && !dryRun) {
-        await notifyBulkQuarantine(supabase, staleResult.quarantinedIds)
-      }
     }
 
     // ── Phase 7: Audit log ───────────────────────────────────────────────

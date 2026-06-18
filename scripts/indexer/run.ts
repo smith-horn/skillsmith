@@ -39,6 +39,13 @@ import type { RecheckResult } from './recheck.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
 import { prefetchExistingSkills } from './prefetch-existing-skills.ts'
+// SMI-5286 Wave 1b (§#5): resume cursor read on backfill dispatches.
+// (§#2): token-source derivation + backfill summary sub-object emitted on stdout.
+import {
+  readLatestCheckpoint,
+  resolveTokenSource,
+  type BackfillSummary,
+} from './backfill-checkpoint.ts'
 // SMI-4870: lock-skip observability — write an audit row even when the lock is
 // already held so partial-cycle gaps are detectable in SQL.
 import { writeIndexerAuditLog } from './indexer-audit-log.ts'
@@ -70,7 +77,14 @@ async function runDiscoveryBranch(
   env: IndexerEnv,
   requestId: string,
   telemetry: RateLimitTelemetry
-): Promise<{ result: IndexerResult; topics: string[]; rotationSource: RotationSource }> {
+): Promise<{
+  result: IndexerResult
+  topics: string[]
+  rotationSource: RotationSource
+  // SMI-5286 Wave 1b (§#2): id of the checkpoint read this dispatch (null on cold
+  // start / non-backfill), surfaced as `data.backfill.checkpoint_id`.
+  checkpointId: string | null
+}> {
   const supabase = createSupabaseAdminClient()
   const envRaw = process.env.SKILLSMITH_INDEX_TOPICS
   const envTopics = envRaw
@@ -114,6 +128,28 @@ async function runDiscoveryBranch(
     `[Prefetch] ${rowsScanned} skill rows scanned; tree-hash cache seeded with ${treeHashCache.size} entries`
   )
 
+  // SMI-5286 Wave 1b (§#5): on a backfill dispatch, read the latest checkpoint
+  // cursor so a re-dispatch resumes mid-facet. `RESUME_FROM` ('latest' or a
+  // specific run_id) maps to the workflow's `resume_from` input. The full
+  // facet-resume DRIVER lands in Wave 1c; here we read + log the resumed cursor
+  // so the operator loop is observable from this dispatch onward.
+  let checkpointId: string | null = null
+  if (env.BACKFILL_MODE) {
+    const resumeFrom = process.env.RESUME_FROM
+    const checkpoint = await readLatestCheckpoint(supabase, resumeFrom)
+    if (checkpoint) {
+      checkpointId = checkpoint.run_id
+      const { path, facet, last_page } = checkpoint.cursor
+      console.log(
+        `[Backfill] SMI-5286: resuming from checkpoint (run_id=${checkpoint.run_id}) ` +
+          `cursor=(path=${path}, facet=${facet}, last_page=${last_page}); ` +
+          `facets ${checkpoint.facets_completed}/${checkpoint.facets_total}`
+      )
+    } else {
+      console.log('[Backfill] SMI-5286: no prior checkpoint — starting from the beginning')
+    }
+  }
+
   const result = await runDiscovery({
     supabase,
     requestId,
@@ -136,9 +172,11 @@ async function runDiscoveryBranch(
     killSwitchEngaged: env.kill_switch_engaged,
     // SMI-4870: thread per-phase sub-slot identifier from env into orchestrator.
     discoveryPhase: env.DISCOVERY_PHASE,
+    // SMI-5286 Wave 1b (§#2): drop the freshness window + skip Phase 6 in backfill.
+    backfillMode: env.BACKFILL_MODE,
   })
 
-  return { result, topics, rotationSource }
+  return { result, topics, rotationSource, checkpointId }
 }
 
 async function runMaintenanceBranch(
@@ -279,6 +317,7 @@ async function main(): Promise<void> {
   let result: unknown = null
   let topics: string[] = []
   let rotationSource: RotationSource | 'maintenance' = 'maintenance'
+  let checkpointId: string | null = null
   let runError: unknown = null
 
   try {
@@ -291,6 +330,7 @@ async function main(): Promise<void> {
       result = discovery.result
       topics = discovery.topics
       rotationSource = discovery.rotationSource
+      checkpointId = discovery.checkpointId
     }
   } catch (err) {
     runError = err
@@ -311,8 +351,29 @@ async function main(): Promise<void> {
   // the optional counters without widening the `result` type elsewhere.
   const treeHashCache = (result as { tree_hash_cache?: { hits?: number; misses?: number } } | null)
     ?.tree_hash_cache
+
+  // SMI-5286 Wave 1b (§#2): on a backfill dispatch, attach a `backfill` sub-object
+  // onto `data` so `indexer-backfill.yml` can read `data.backfill.token_source`
+  // (its guardian fails the run if it reads 'app', proving PAT-bucket isolation).
+  // Facet counters are 0 in 1b (facet partitioning lands in 1c); token_source is
+  // the load-bearing field. Spread keeps the existing IndexerResult fields under
+  // `data` intact. Only emitted when BACKFILL_MODE is true.
+  let data: unknown = result
+  if (env.BACKFILL_MODE && result && typeof result === 'object') {
+    const backfill: BackfillSummary = {
+      token_source: resolveTokenSource(),
+      checkpoint_id: checkpointId,
+      facets_total: 0,
+      facets_completed: 0,
+      facets_remaining: 0,
+      cap_saturated: false,
+      truncated_repo_count: 0,
+    }
+    data = { ...(result as Record<string, unknown>), backfill }
+  }
+
   const summary: RunSummary = {
-    data: result,
+    data,
     meta: {
       request_id: requestId,
       run_type: env.RUN_TYPE,

@@ -19,6 +19,8 @@ import { summarizeRateLimitTelemetry, type RateLimitTelemetry } from './_shared/
 import { writeIndexerAuditLog } from './indexer-runners.ts'
 import type { ScoreDistribution } from './indexer-runners.ts'
 import type { RotationSource } from './topic-rotation.ts'
+import { reconcileStaleSkills } from './stale-reconciliation.ts'
+import { notifyBulkQuarantine } from './_shared/notification.ts'
 
 /**
  * SMI-4870: the per-phase sub-slot a discovery process is running.
@@ -173,4 +175,43 @@ export async function writeDiscoveryAuditLog(
     high_trust_fallback_hits: input.highTrustFallbackHits,
     meta: auditMeta,
   })
+}
+
+/**
+ * Phase 6 (stale reconciliation) extracted from `runDiscovery` to keep
+ * `discovery-orchestrator.ts` under the 500-line CI gate (SMI-5286 Wave 1b).
+ *
+ * Quarantines skills whose `last_seen_at` is older than the stale threshold,
+ * then bulk-notifies authors with ≥3 quarantines (SMI-3347). **Skipped entirely
+ * in backfill mode** (SMI-5286 §#5): a backfill enriches against a PARTIALLY
+ * crawled set, so a stale sweep mid-backfill would age-out + quarantine real
+ * skills the crawl simply hasn't re-touched. The cron owns the stale sweep, and
+ * backfilled rows stamp a fresh `last_seen_at` at insert so the next cron leaves
+ * them be.
+ *
+ * @param supabase - Supabase admin client.
+ * @param staleThresholdDays - raw `body.staleThresholdDays`; coerced to 30 when
+ *   not a finite number.
+ * @param dryRun - when true, suppresses the bulk-quarantine notification.
+ * @param backfillMode - when true, the whole phase is a no-op (returns zeros).
+ * @returns `{ stale, errors }` for the caller to fold into the run result.
+ */
+export async function runStaleReconciliationPhase(
+  supabase: SupabaseClient,
+  staleThresholdDays: number | undefined,
+  dryRun: boolean,
+  backfillMode: boolean
+): Promise<{ stale: number; errors: string[] }> {
+  if (backfillMode) {
+    console.log('[Backfill] SMI-5286: skipping Phase 6 stale reconciliation (backfill mode)')
+    return { stale: 0, errors: [] }
+  }
+  const threshold =
+    typeof staleThresholdDays === 'number' && !isNaN(staleThresholdDays) ? staleThresholdDays : 30
+  const staleResult = await reconcileStaleSkills(supabase, threshold)
+  // SMI-3347: Notify if any author had >= 3 skills quarantined in this run.
+  if (staleResult.quarantinedIds.length > 0 && !dryRun) {
+    await notifyBulkQuarantine(supabase, staleResult.quarantinedIds)
+  }
+  return { stale: staleResult.staleQuarantined, errors: staleResult.errors }
 }
