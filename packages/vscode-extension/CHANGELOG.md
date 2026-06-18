@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-18
+
+### Added
+
+- New `skillsmith.demoMode` setting (off by default) — when enabled, the extension shows sample skills while the server is unavailable, useful for demos and screenshots.
+
+### Changed
+
+- Trust tier labels (Official, Verified, Curated, Community, Unverified) are now rendered consistently in the sidebar tree, search results, and the skill detail view. Previously the same tier could appear with different wording or styling depending on where you were looking.
+- When the Skillsmith server is unavailable, the extension now shows a clear "server unavailable" message rather than silently falling back to placeholder sample skills.
+- Actions that require a higher plan tier now show a contextual upgrade prompt with **Open Billing** and **Learn more** options instead of a generic error message.
+- The welcome view now clarifies that Skillsmith works with any agent client that supports skills, not just Claude Code.
+
+### Note
+
+The Marketplace keyword additions (`agent-skills`, `cursor`, `copilot`) and the welcome view update first appeared in v0.2.3 but never reached the stable Marketplace channel — they are included here as the first stable release to carry them.
+
 ## v0.2.4
 
 - Version bump
