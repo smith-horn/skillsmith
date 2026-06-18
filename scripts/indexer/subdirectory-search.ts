@@ -37,6 +37,8 @@ import { GITHUB_API_DELAY, delay, type RateLimitTelemetry } from './_shared/rate
 import { searchCodeForSkillMdInSubdirectory } from './code-search.ts'
 import { checkSkillMdExists } from './skill-processor.ts'
 import { fetchRepoLicense, isPermissiveLicense } from './license-filter.ts'
+import { enumerateRepoSkillPaths, type EnumerateTelemetry } from './trees-enumerate.ts'
+import { buildSkillTreeUrl } from './skill-url.ts'
 import type { GitHubRepository } from './topic-search.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
 
@@ -74,6 +76,16 @@ export const FALLBACK_PATH_PREFIXES = [
  * SMI-4852: Threads `telemetry` to downstream `fetchRepoLicense` and
  * `checkSkillMdExists` calls so every GitHub API hit lands in the shared
  * collector.
+ *
+ * SMI-5286 Wave 1a (§#1, C-1): per-skill (collection) extraction. Each candidate
+ * repo is enumerated ONCE via the Trees API (`enumerateRepoSkillPaths`) and EVERY
+ * valid SKILL.md parent dir becomes its own `GitHubRepository`, with a DISTINCT
+ * per-skill tree URL (`buildSkillTreeUrl`) so N skills in one repo yield N distinct
+ * `repo_url` rows that never collide on `onConflict: 'repo_url'`. Each per-path row
+ * is validated independently (§#4 strict gate) before it is collected; validated
+ * rows are `installable:true` (`skill-processor.ts:440` then persists the non-null
+ * tree URL). Edit E: only the enumeration loop changed — the dedup-key /
+ * freshness-qualifier lines (`:89`) are byte-stable for the SMI-5176 rebase.
  */
 async function processSearchResults(
   resultRepos: GitHubRepository[],
@@ -82,7 +94,9 @@ async function processSearchResults(
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   repos: GitHubRepository[],
   stats: { licenseFiltered: number; licenseFetchFailed: number },
-  telemetry: RateLimitTelemetry
+  telemetry: RateLimitTelemetry,
+  enumerateTelemetry: EnumerateTelemetry,
+  enumeratedRepos: Set<string>
 ): Promise<void> {
   for (const repo of resultRepos) {
     // Deduplication key includes skillPath: one repo can have multiple skills
@@ -113,23 +127,76 @@ async function processSearchResults(
       continue
     }
 
-    // Validate SKILL.md exists and meets quality gate
-    repo.installable = await checkSkillMdExists(
+    // Mark this code-search result consumed (per-repo+skillPath identity) so the
+    // same surfaced file is not re-processed across pages/prefixes.
+    seenUrls.add(dedupKey)
+
+    // SMI-5286 Wave 1a (§#1): enumerate the repo's full tree ONCE. The broad query
+    // can surface the same repo via multiple SKILL.md hits; guard re-enumeration.
+    const repoKey = `${repo.owner}/${repo.repoName}`
+    if (enumeratedRepos.has(repoKey)) {
+      await delay(50)
+      continue
+    }
+    enumeratedRepos.add(repoKey)
+
+    const { entries, truncatedByApi, truncatedByCap } = await enumerateRepoSkillPaths(
       repo.owner,
       repo.repoName,
       repo.defaultBranch,
-      validationCache,
       telemetry,
-      repo.skillPath,
-      validationOptions
+      enumerateTelemetry
     )
 
-    // Attach license for persistence in repositoryToSkill()
-    repo.license = spdxId
+    if (truncatedByApi) {
+      // Trees API truncated — do NOT emit a partial set (deterministic skip).
+      console.log(
+        `[BroadDiscovery] Trees truncated, skipping for manual handling: ${repo.fullName}`
+      )
+      await delay(50)
+      continue
+    }
+    if (truncatedByCap) {
+      console.log(`[BroadDiscovery] Per-repo cap reached, taking first N: ${repo.fullName}`)
+    }
 
-    seenUrls.add(dedupKey)
-    repos.push(repo)
-    await delay(50)
+    // Validate each enumerated SKILL.md independently (§#4 strict gate) and emit
+    // one per-skill GitHubRepository with a distinct tree URL (C-1) per valid path.
+    for (const entry of entries) {
+      const skillPath = entry.path
+      const installable = await checkSkillMdExists(
+        repo.owner,
+        repo.repoName,
+        repo.defaultBranch,
+        validationCache,
+        telemetry,
+        skillPath,
+        validationOptions
+      )
+
+      // C-1: build the per-skill tree URL from the BARE repo html_url
+      // (reconstructed from owner/repoName), NOT from `repo.url` — by this point
+      // `repo.url` is already the code-search mapper's tree URL, so reusing it
+      // would double the `/tree/<branch>` segment. `skillUrl` already encodes
+      // `skillPath`, so it alone is the dedup key.
+      const skillUrl = buildSkillTreeUrl(
+        `https://github.com/${repo.owner}/${repo.repoName}`,
+        repo.defaultBranch,
+        skillPath
+      )
+      if (seenUrls.has(skillUrl)) continue
+      seenUrls.add(skillUrl)
+
+      repos.push({
+        ...repo,
+        url: skillUrl,
+        installable,
+        skillPath,
+        treeHash: entry.blobSha,
+        license: spdxId,
+      })
+      await delay(50)
+    }
   }
 }
 
@@ -181,6 +248,11 @@ export async function runSubdirectorySearch(
   const stats = { licenseFiltered: 0, licenseFetchFailed: 0 }
   let incompleteResults = 0
   let searchMode: 'broad' | 'prefix-fallback' = 'broad'
+  // SMI-5286 Wave 1a: run-scoped per-skill extraction state. `enumerateTelemetry`
+  // accumulates denylist/cap/truncation counters across the whole run;
+  // `enumeratedRepos` guards one Trees call per repo across pages and prefixes.
+  const enumerateTelemetry: EnumerateTelemetry = {}
+  const enumeratedRepos = new Set<string>()
 
   // ── Primary: broad query (no path constraint) ────────────────────────
   console.log('[BroadDiscovery] Running broad filename:SKILL.md query...')
@@ -217,7 +289,9 @@ export async function runSubdirectorySearch(
       validationOptions,
       repos,
       stats,
-      telemetry
+      telemetry,
+      enumerateTelemetry,
+      enumeratedRepos
     )
 
     if (result.repos.length < 30) break
@@ -269,7 +343,9 @@ export async function runSubdirectorySearch(
           validationOptions,
           repos,
           stats,
-          telemetry
+          telemetry,
+          enumerateTelemetry,
+          enumeratedRepos
         )
 
         if (result.repos.length < 30) break
@@ -285,6 +361,18 @@ export async function runSubdirectorySearch(
   console.log(
     `[BroadDiscovery] Complete (${searchMode}): ${repos.length} added, ${stats.licenseFiltered} license-filtered, ${stats.licenseFetchFailed} fetch-failed, ${incompleteResults} incomplete, ${totalRetries} retries`
   )
+  // SMI-5286 Wave 1a: per-skill extraction observability (§#1, Edit D).
+  console.log(
+    `[BroadDiscovery] Per-skill extraction: ${enumeratedRepos.size} repos enumerated, ${enumerateTelemetry.denylistSkipped ?? 0} denylist-skipped, ${enumerateTelemetry.cappedRepoCount ?? 0} capped, ${enumerateTelemetry.truncatedRepoCount ?? 0} api-truncated`
+  )
+  if (
+    enumerateTelemetry.denylistSkippedSample &&
+    enumerateTelemetry.denylistSkippedSample.length > 0
+  ) {
+    console.log(
+      `[BroadDiscovery] Denylist-skipped sample: ${enumerateTelemetry.denylistSkippedSample.join(', ')}`
+    )
+  }
 
   return {
     repos,
