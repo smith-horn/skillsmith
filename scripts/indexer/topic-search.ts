@@ -16,6 +16,7 @@
 
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import { validateGitHubParams, isValidGitHubTopic, sanitizeForLog } from './_shared/validation.ts'
+import { buildSkillTreeUrl } from './skill-url.ts'
 import {
   GITHUB_API_DELAY,
   delay,
@@ -76,6 +77,8 @@ interface GitHubSearchResponse {
     html_url: string
     stargazers_count: number
     forks_count: number
+    // SMI-5286 Wave 1a (§#6): light fork guard — skip forked repos.
+    fork: boolean
     topics: string[]
     updated_at: string
     default_branch: string
@@ -167,6 +170,8 @@ export async function searchRepositories(
     // SMI-2271: Filter out repos with invalid identifiers before processing
     const repos: GitHubRepository[] = data.items
       .filter((item) => {
+        // SMI-5286 Wave 1a (§#6): light fork guard — skip forked repos.
+        if (item.fork) return false
         try {
           validateGitHubParams(item.owner.login, item.name)
           return true
@@ -180,7 +185,12 @@ export async function searchRepositories(
         name: item.name,
         fullName: item.full_name,
         description: item.description,
-        url: item.html_url,
+        // SMI-5286 Wave 1a (§#1, C-1): topic-search knows only the repo root + a
+        // root SKILL.md. Emit the per-skill tree URL for that single known path
+        // (`${html_url}/tree/${branch}`) rather than the bare html_url so the row
+        // carries a distinct, install-correct repo_url. Repos with multiple skills
+        // are enumerated by the subdirectory path; topic-search stays root-only.
+        url: buildSkillTreeUrl(item.html_url, item.default_branch, ''),
         stars: item.stargazers_count,
         forks: item.forks_count,
         topics: item.topics || [],

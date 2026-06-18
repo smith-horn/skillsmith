@@ -32,6 +32,7 @@
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import { validateGitHubParams, sanitizeForLog } from './_shared/validation.ts'
 import { delay, withRateLimitTracking, type RateLimitTelemetry } from './_shared/rate-limit.ts'
+import { buildSkillTreeUrl } from './skill-url.ts'
 import type { GitHubRepository } from './topic-search.ts'
 
 /**
@@ -52,6 +53,8 @@ interface CodeSearchResponse {
       html_url: string
       stargazers_count: number
       forks_count: number
+      // SMI-5286 Wave 1a (§#6): light fork guard — skip forked repos.
+      fork: boolean
       topics: string[]
       default_branch: string
     }
@@ -109,6 +112,9 @@ export async function searchCodeForSkillMd(
 
         const repos: GitHubRepository[] = data.items
           .filter((item) => {
+            // SMI-5286 Wave 1a (§#6): light fork guard — forks are ~0% of the
+            // searchable population; skip them to cut noise without dedup cost.
+            if (item.repository.fork) return false
             // Deduplicate: code search can return multiple SKILL.md per repo
             const key = item.repository.full_name
             if (seen.has(key)) return false
@@ -128,7 +134,9 @@ export async function searchCodeForSkillMd(
             name: item.repository.name,
             fullName: item.repository.full_name,
             description: item.repository.description,
-            url: item.repository.html_url,
+            // SMI-5286 Wave 1a (§#1, C-1): per-skill tree URL (root SKILL.md →
+            // `${html_url}/tree/${branch}`) so rows never collide on repo_url.
+            url: buildSkillTreeUrl(item.repository.html_url, item.repository.default_branch, ''),
             stars: item.repository.stargazers_count,
             forks: item.repository.forks_count,
             topics: item.repository.topics || [],
@@ -282,6 +290,9 @@ export async function searchCodeForSkillMdInSubdirectory(
 
         const repos: GitHubRepository[] = data.items
           .filter((item) => {
+            // SMI-5286 Wave 1a (§#6): light fork guard — skip forked repos.
+            if (item.repository.fork) return false
+
             const skillPath = extractSkillPath(item.path)
 
             // Reject path traversal sequences — prevents ../ escapes from GitHub results
@@ -309,7 +320,13 @@ export async function searchCodeForSkillMdInSubdirectory(
             name: item.repository.name,
             fullName: item.repository.full_name,
             description: item.repository.description,
-            url: item.repository.html_url,
+            // SMI-5286 Wave 1a (§#1, C-1): per-skill tree URL keyed on this result's
+            // SKILL.md path so N skills in one repo yield N distinct repo_url rows.
+            url: buildSkillTreeUrl(
+              item.repository.html_url,
+              item.repository.default_branch,
+              extractSkillPath(item.path)
+            ),
             stars: item.repository.stargazers_count,
             forks: item.repository.forks_count,
             topics: item.repository.topics || [],
