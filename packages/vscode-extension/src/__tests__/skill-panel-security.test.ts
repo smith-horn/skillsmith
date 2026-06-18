@@ -78,9 +78,9 @@ describe('security scan rendering (SMI-3857/3858)', () => {
     expect(html).not.toContain('Not scanned')
   })
 
-  it('shows "Pending scan" for experimental skills when securityPassed is null (SMI-4240)', () => {
+  it('shows "Pending scan" for community skills (non-verified) when securityPassed is null (SMI-4240)', () => {
     const html = getSkillDetailHtml(
-      makeSkill({ securityPassed: null, trustTier: 'experimental' }),
+      makeSkill({ securityPassed: null, trustTier: 'community' }),
       NONCE,
       CSP
     )

@@ -10,6 +10,7 @@ import { isValidSkillId } from '../utils/security.js'
 import type { SkillData } from '../types/skill.js'
 import type { SkillService } from '../services/SkillService.js'
 import { getSkillPath, installSkillLocally } from '../services/installUtils.js'
+import { getTrustTierCodicon, getTrustTierLabel } from '../sidebar/trustTier.js'
 import { getMcpClient } from '../mcp/McpClient.js'
 import { withTelemetry } from '../services/telemetry-wrap.js'
 
@@ -144,29 +145,14 @@ async function showQuickInstallPicker(skillService: SkillService): Promise<void>
  * Creates a quick pick item from skill data
  */
 function createQuickPickItem(skill: SkillData): SkillQuickPickItem {
-  const trustIcon = getTrustTierIcon(skill.trustTier)
+  const trustIcon = getTrustTierCodicon(skill.trustTier)
+  const tierLabel = getTrustTierLabel(skill.trustTier)
 
   return {
     label: `${trustIcon} ${skill.name}`,
-    description: `by ${skill.author} | ${skill.trustTier}`,
+    description: tierLabel ? `by ${skill.author} | ${tierLabel}` : `by ${skill.author}`,
     detail: skill.description,
     skill,
-  }
-}
-
-/**
- * Gets the icon for a trust tier
- */
-function getTrustTierIcon(tier: string): string {
-  switch (tier.toLowerCase()) {
-    case 'verified':
-      return '$(verified-filled)'
-    case 'community':
-      return '$(star-full)'
-    case 'standard':
-      return '$(circle-filled)'
-    default:
-      return '$(question)'
   }
 }
 

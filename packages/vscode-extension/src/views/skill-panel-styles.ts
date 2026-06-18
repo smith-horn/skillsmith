@@ -37,11 +37,11 @@ export function getStyles(): string {
             font-weight: 500;
             text-transform: uppercase;
         }
-        .badge-verified { background-color: #28a745; color: white; }
+        .badge-official { background-color: #28a745; color: white; }
+        .badge-verified { background-color: #007bff; color: white; }
+        .badge-curated { background-color: #0d9488; color: white; }
         .badge-community { background-color: #b8960a; color: white; }
-        .badge-experimental { background-color: #e36209; color: white; }
-        .badge-local { background-color: #007bff; color: white; }
-        .badge-unknown { background-color: #6c757d; color: white; }
+        .badge-unverified { background-color: #6c757d; color: white; }
         .scan-pass { color: #28a745; font-weight: 600; }
         .scan-fail { color: #d73a49; font-weight: 600; }
         .scan-none { color: #6c757d; }

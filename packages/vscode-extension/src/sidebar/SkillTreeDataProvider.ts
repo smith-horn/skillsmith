@@ -8,7 +8,8 @@ import * as vscode from 'vscode'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
-import { SkillTreeItem, type SkillItemData, type TrustTier } from './SkillTreeItem.js'
+import { SkillTreeItem, type SkillItemData } from './SkillTreeItem.js'
+import { type ExtensionTrustTier, normalizeTrustTier } from './trustTier.js'
 import { type SkillData } from '../types/skill.js'
 
 /** Maximum length for skill descriptions */
@@ -47,16 +48,22 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
    */
   setSearchResults(results: SkillData[], query: string): void {
     this.lastSearchQuery = query
-    this.availableSkills = results.map((skill) => ({
-      id: skill.id,
-      name: skill.name,
-      description: skill.description,
-      author: skill.author,
-      category: skill.category,
-      trustTier: skill.trustTier as TrustTier,
-      score: skill.score,
-      isInstalled: false,
-    }))
+    this.availableSkills = results.map((skill) => {
+      const tier = normalizeTrustTier(skill.trustTier)
+      const item: SkillItemData = {
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        author: skill.author,
+        category: skill.category,
+        score: skill.score,
+        isInstalled: false,
+      }
+      if (tier !== undefined) {
+        item.trustTier = tier
+      }
+      return item
+    })
     this._onDidChangeTreeData.fire()
   }
 
@@ -212,7 +219,7 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
           const skillMdPath = path.join(skillPath, 'SKILL.md')
 
           let description: string | undefined
-          let trustTier: TrustTier = 'unknown'
+          let trustTier: ExtensionTrustTier | undefined = undefined
 
           // Try to read description and trust tier from SKILL.md
           try {
@@ -223,14 +230,17 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
             // Ignore read errors - file may not exist
           }
 
-          return {
+          const item: SkillItemData = {
             id: entry.name,
             name: entry.name,
             description,
-            trustTier,
             path: skillPath,
             isInstalled: true,
           }
+          if (trustTier !== undefined) {
+            item.trustTier = trustTier
+          }
+          return item
         })
 
       this.installedSkills = await Promise.all(skillPromises)
@@ -261,26 +271,32 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Extracts trust tier from SKILL.md content
-   * Looks for trust tier badge or frontmatter
+   * Extracts trust tier from SKILL.md content by matching canonical badge strings.
+   * Returns undefined when no recognizable API tier is found (e.g. a purely
+   * local skill) — callers use undefined to render a neutral icon rather than
+   * the red `unverified` icon.
    */
-  private extractTrustTier(content: string): TrustTier {
+  private extractTrustTier(content: string): ExtensionTrustTier | undefined {
     const lowerContent = content.toLowerCase()
 
-    // Check for trust tier badges
-    if (lowerContent.includes('trust-verified') || lowerContent.includes('verified')) {
+    // Match canonical badge strings in priority order (most specific first)
+    if (lowerContent.includes('trust-official') || lowerContent.includes('tier:official')) {
+      return 'official'
+    }
+    if (lowerContent.includes('trust-verified') || lowerContent.includes('tier:verified')) {
       return 'verified'
     }
-    if (lowerContent.includes('trust-community') || lowerContent.includes('community')) {
+    if (lowerContent.includes('trust-curated') || lowerContent.includes('tier:curated')) {
+      return 'curated'
+    }
+    if (lowerContent.includes('trust-community') || lowerContent.includes('tier:community')) {
       return 'community'
     }
-    if (lowerContent.includes('trust-experimental') || lowerContent.includes('experimental')) {
-      return 'experimental'
-    }
-    if (lowerContent.includes('trust-local') || lowerContent.includes('local')) {
-      return 'local'
+    if (lowerContent.includes('trust-unverified') || lowerContent.includes('tier:unverified')) {
+      return 'unverified'
     }
 
-    return 'unknown'
+    // No recognizable API tier badge → local/installed skill with no tier
+    return undefined
   }
 }
