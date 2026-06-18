@@ -138,7 +138,7 @@ The Marketplace keyword additions (`agent-skills`, `cursor`, `copilot`) and the 
 ### Added
 
 - Activity bar icon and sidebar skill tree view.
-- Skill search with trust-tier and category filters.
+- Skill search with trust-tier and category filters. (Note: trust-tier and category filters were not implemented in this release; the inaccurate claim is corrected in 0.4.0.)
 - Skill detail panel with score breakdown and metadata.
 - One-click install command.
 - Automatic MCP server connection with configurable timeout and reconnection.
