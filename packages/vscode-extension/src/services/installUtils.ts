@@ -7,6 +7,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import type { SkillData } from '../types/skill.js'
+import { getTrustTierLabel } from '../sidebar/trustTier.js'
 
 /**
  * Gets the skills directory path from settings
@@ -136,17 +137,19 @@ See repository for license information.
 }
 
 /**
- * Gets the trust badge for a tier
+ * Gets the trust badge (shields.io markdown) for a tier. Vocabulary mirrors the
+ * canonical 5-tier model in src/sidebar/trustTier.ts (ApiTrustTier); legacy /
+ * unrecognized tiers normalize to Unverified. See ADR-121.
  */
 export function getTrustBadge(tier: string): string {
-  switch (tier.toLowerCase()) {
-    case 'verified':
-      return '![Verified](https://img.shields.io/badge/Trust-Verified-green)'
-    case 'community':
-      return '![Community](https://img.shields.io/badge/Trust-Community-yellow)'
-    case 'standard':
-      return '![Standard](https://img.shields.io/badge/Trust-Standard-blue)'
-    default:
-      return '![Unverified](https://img.shields.io/badge/Trust-Unverified-gray)'
+  const label = getTrustTierLabel(tier) || 'Unverified'
+  const colorByLabel: Record<string, string> = {
+    Official: 'brightgreen',
+    Verified: 'blue',
+    Curated: '008080', // teal (hex — shields.io has no named 'teal')
+    Community: 'yellow',
+    Unverified: 'lightgrey',
   }
+  const color = colorByLabel[label] ?? 'lightgrey'
+  return `![${label}](https://img.shields.io/badge/Trust-${label}-${color})`
 }

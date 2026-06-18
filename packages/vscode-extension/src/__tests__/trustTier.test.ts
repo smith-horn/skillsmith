@@ -22,6 +22,7 @@ import {
   getTrustTierIcon,
   getTrustTierEmoji,
   getTrustTierLabel,
+  getTrustTierCodicon,
 } from '../sidebar/trustTier.js'
 import * as vscode from 'vscode'
 
@@ -200,5 +201,31 @@ describe('legacy tier pass-through via higher-level functions', () => {
 
   it('default normalizes to unverified label (Unverified)', () => {
     expect(getTrustTierLabel('default')).toBe('Unverified')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getTrustTierCodicon (string codicons for QuickPick / non-ThemeIcon surfaces)
+// ---------------------------------------------------------------------------
+
+describe('getTrustTierCodicon', () => {
+  it('maps each canonical tier to its codicon', () => {
+    expect(getTrustTierCodicon('official')).toBe('$(verified-filled)')
+    expect(getTrustTierCodicon('verified')).toBe('$(verified)')
+    expect(getTrustTierCodicon('curated')).toBe('$(star-full)')
+    expect(getTrustTierCodicon('community')).toBe('$(organization)')
+    expect(getTrustTierCodicon('unverified')).toBe('$(question)')
+  })
+
+  it('normalizes legacy/bogus tiers (experimental→community, standard→unverified)', () => {
+    expect(getTrustTierCodicon('experimental')).toBe('$(organization)')
+    expect(getTrustTierCodicon('standard')).toBe('$(question)')
+    expect(getTrustTierCodicon('default')).toBe('$(question)')
+    expect(getTrustTierCodicon('bogus')).toBe('$(question)')
+  })
+
+  it('returns a neutral codicon for an absent/empty tier (no misleading badge)', () => {
+    expect(getTrustTierCodicon(undefined)).toBe('$(symbol-function)')
+    expect(getTrustTierCodicon('')).toBe('$(symbol-function)')
   })
 })

@@ -10,4 +10,5 @@ export {
   getTrustTierIcon,
   getTrustTierEmoji,
   getTrustTierLabel,
+  getTrustTierCodicon,
 } from './trustTier.js'

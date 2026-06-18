@@ -123,3 +123,28 @@ export function getTrustTierLabel(tier?: string): string {
       return ''
   }
 }
+
+/**
+ * Returns a VS Code codicon string (`$(icon)`) for a trust tier — for
+ * string-rendered surfaces that cannot use a ThemeIcon (e.g. QuickPick item
+ * labels). Icon ids mirror getTrustTierIcon(); absent/empty/unrecognized tiers
+ * normalize the same way (unrecognized → `unverified`; absent → neutral
+ * `$(symbol-function)`).
+ */
+export function getTrustTierCodicon(tier?: string): string {
+  const normalized = normalizeTrustTier(tier)
+  switch (normalized) {
+    case 'official':
+      return '$(verified-filled)'
+    case 'verified':
+      return '$(verified)'
+    case 'curated':
+      return '$(star-full)'
+    case 'community':
+      return '$(organization)'
+    case 'unverified':
+      return '$(question)'
+    default:
+      return '$(symbol-function)'
+  }
+}
