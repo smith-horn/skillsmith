@@ -9,19 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Indexer freshness qualifier** (SMI-5176): repo-search freshness window now
-  uses `pushed:>DATE` instead of `created:>DATE` — `pushed:>` matches repos
-  with recent push activity (5–7× wider universe per topic) whereas `created:>`
-  only matched newly-created repos, permanently excluding long-lived skills.
-  GitHub code-search tokenizes date qualifiers as free-text content rather than
-  filtering by date; the broken `created:>` qualifier has been removed from both
-  `searchCodeForSkillMd` and `searchCodeForSkillMdInSubdirectory` (code search
-  is env-gated off in the production cron; removal unblocks future re-enablement
-  without misleading filtering). Added contract tests asserting the exact
-  qualifier strings emitted in fetch URLs for each search type.
-
 ### Added
 
 - **Vendor-Org Trust Tier** (2026-05-02, SMI-4651): GitHub-verified vendor
@@ -119,6 +106,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Indexer freshness qualifier** (SMI-5176): repo-search freshness window now
+  uses `pushed:>DATE` instead of `created:>DATE` — `pushed:>` matches repos
+  with recent push activity (5–7× wider universe per topic) whereas `created:>`
+  only matched newly-created repos, permanently excluding long-lived skills.
+  GitHub code-search tokenizes date qualifiers as free-text content rather than
+  filtering by date; the broken `created:>` qualifier has been removed from both
+  `searchCodeForSkillMd` and `searchCodeForSkillMdInSubdirectory` (code search
+  is env-gated off in the production cron; removal unblocks future re-enablement
+  without misleading filtering). Added contract tests asserting the exact
+  qualifier strings emitted in fetch URLs for each search type.
 - **`skills-search` omits category + security fields** (SMI-4251): the
   `skills-search` edge function projected neither the `skill_categories` join
   nor the migration-039 security columns (`security_score`, `last_scanned_at`,
