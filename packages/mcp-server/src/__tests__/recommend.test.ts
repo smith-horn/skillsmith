@@ -311,6 +311,8 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
             tags: ['git', 'commit'],
             trust_tier: 'verified',
             quality_score: 0.95,
+            // SMI-5178: repo_url required so installable=true and default-ON filter keeps this row.
+            repo_url: 'https://github.com/anthropic/claude-code-skills',
           },
         ],
         meta: { total: 1 },

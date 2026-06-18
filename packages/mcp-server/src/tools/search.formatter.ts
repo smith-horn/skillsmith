@@ -41,6 +41,10 @@ export function formatSearchResults(response: SearchResponse): string {
     lines.push('  - Try different keywords')
     lines.push('  - Remove filters to broaden the search')
     lines.push('  - Check spelling')
+    // SMI-5178: hint that the default installable-only filter may be the cause.
+    lines.push(
+      '  - Discovery-only entries are hidden by default — pass installable_only: false to include them'
+    )
   } else {
     lines.push('Found ' + response.total + ' skill(s):\n')
 
@@ -77,6 +81,17 @@ export function formatSearchResults(response: SearchResponse): string {
       }
       lines.push('')
     })
+  }
+
+  // SMI-5178: surface how many results were hidden by the default installable filter
+  // so the model/user knows discovery-only entries exist and how to include them.
+  if (response.discoveryOnlyHidden && response.discoveryOnlyHidden > 0) {
+    lines.push('')
+    lines.push(
+      '+ ' +
+        response.discoveryOnlyHidden +
+        ' discovery-only result(s) hidden — pass installable_only: false to include them.'
+    )
   }
 
   // SMI-5178: surface how many results were hidden by the compatibility filter

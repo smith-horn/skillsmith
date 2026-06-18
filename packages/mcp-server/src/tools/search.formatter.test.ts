@@ -46,3 +46,39 @@ describe('formatSearchResults — compatibility-hidden notice (SMI-5178)', () =>
     expect(out).not.toContain('hidden — tagged for other tools')
   })
 })
+
+describe('formatSearchResults — discovery-only hidden notice (SMI-5178)', () => {
+  it('shows discovery-only hidden line with installable_only: false token when discoveryOnlyHidden > 0', () => {
+    const out = formatSearchResults(baseResponse({ discoveryOnlyHidden: 5 }))
+    expect(out).toContain('5 discovery-only result(s) hidden')
+    // Must emit the literal escape-hatch token
+    expect(out).toContain('installable_only: false')
+  })
+
+  it('discovery-only notice is distinct from the compatibility notice in wording', () => {
+    const out = formatSearchResults(
+      baseResponse({ discoveryOnlyHidden: 2, compatibilityHidden: 3 })
+    )
+    expect(out).toContain('discovery-only result(s) hidden')
+    expect(out).toContain('tagged for other tools')
+    // The two lines must be different
+    expect(out.indexOf('discovery-only result(s) hidden')).not.toBe(
+      out.indexOf('tagged for other tools')
+    )
+  })
+
+  it('omits the discovery-only notice when discoveryOnlyHidden is 0', () => {
+    const out = formatSearchResults(baseResponse({ discoveryOnlyHidden: 0 }))
+    expect(out).not.toContain('discovery-only result(s) hidden')
+  })
+
+  it('omits the discovery-only notice when discoveryOnlyHidden is absent', () => {
+    const out = formatSearchResults(baseResponse())
+    expect(out).not.toContain('discovery-only result(s) hidden')
+  })
+
+  it('zero-result branch mentions installable_only: false as a suggestion', () => {
+    const out = formatSearchResults(baseResponse({ results: [], total: 0, discoveryOnlyHidden: 0 }))
+    expect(out).toContain('installable_only: false')
+  })
+})

@@ -249,6 +249,77 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
     expect(Array.isArray(result.recommendations)).toBe(true)
   })
 
+  it('(SMI-5178) default installable_only filters out discovery-only recommendations', async () => {
+    vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+    vi.spyOn(onlineContext.apiClient, 'getRecommendations').mockResolvedValue({
+      data: [
+        {
+          id: 'community/installable-skill',
+          name: 'installable-skill',
+          description: 'Has a repo_url',
+          author: 'community',
+          tags: ['git'],
+          trust_tier: 'community',
+          quality_score: 0.8,
+          repo_url: 'https://github.com/community/installable-skill',
+          installable: true,
+        },
+        {
+          id: 'community/discovery-only',
+          name: 'discovery-only',
+          description: 'No repo_url — cannot be installed',
+          author: 'community',
+          tags: ['git'],
+          trust_tier: 'community',
+          quality_score: 0.6,
+          repo_url: null,
+          installable: false,
+        },
+      ],
+      meta: { total: 2 },
+    })
+
+    const result = await executeRecommend({ project_context: 'git', limit: 5 }, onlineContext)
+
+    // Default is ON — discovery-only entry must be absent.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(
+      result.recommendations.find((r: any) => r.skill_id === 'community/discovery-only')
+    ).toBeUndefined()
+    expect(result.discovery_only_hidden).toBe(1)
+  })
+
+  it('(SMI-5178) installable_only: false opts out — discovery-only included', async () => {
+    vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+    vi.spyOn(onlineContext.apiClient, 'getRecommendations').mockResolvedValue({
+      data: [
+        {
+          id: 'community/discovery-only',
+          name: 'discovery-only',
+          description: 'No repo_url',
+          author: 'community',
+          tags: ['git'],
+          trust_tier: 'community',
+          quality_score: 0.6,
+          repo_url: null,
+          installable: false,
+        },
+      ],
+      meta: { total: 1 },
+    })
+
+    const result = await executeRecommend(
+      { project_context: 'git', limit: 5, installable_only: false },
+      onlineContext
+    )
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(
+      result.recommendations.find((r: any) => r.skill_id === 'community/discovery-only')
+    ).toBeDefined()
+    expect(result.discovery_only_hidden ?? 0).toBe(0)
+  })
+
   it('combines online + role filter + tracking simultaneously', async () => {
     const trackEventSpy = vi.spyOn(CoreModule, 'trackEvent').mockImplementation(() => {})
 

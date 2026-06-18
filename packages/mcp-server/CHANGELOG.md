@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: SMI-5178 — `search` and `skill_recommend` MCP tools now default to
+  installable-only results. Discovery-only entries (no `repo_url`, cannot be resolved
+  by `install_skill`) are hidden by default (~71% of the registry). Pass
+  `installable_only: false` to restore the previous inclusive behavior. The
+  `discoveryOnlyHidden` field on search responses and `discovery_only_hidden` on
+  recommend responses report how many entries were hidden. The `skills-search` edge
+  function adopts the same default via the `installable_only` query param.
+
 ## v0.5.3
 
 - **Refactor**: SMI-5036 split oversized billing test files (#1282)

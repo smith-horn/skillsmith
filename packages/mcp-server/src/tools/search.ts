@@ -39,7 +39,7 @@ export { formatSearchResults } from './search.formatter.js'
 export const searchToolSchema = {
   name: 'search',
   description:
-    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Each result carries an `installable` flag — discovery-only entries (installable:false) cannot be installed. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM).",
+    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM).",
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -80,11 +80,11 @@ export const searchToolSchema = {
         type: 'boolean',
         description: 'Only show skills that passed security scan',
       },
-      // SMI-4954: Installability filter
+      // SMI-4954 / SMI-5178: Installability filter (default ON)
       installable_only: {
         type: 'boolean',
         description:
-          'When true, return only installable skills — excludes discovery-only registry entries (no install source) that install_skill cannot resolve.',
+          'When true (default), return only installable skills — excludes discovery-only registry entries that install_skill cannot resolve. Pass false to opt back in to discovery-only entries.',
       },
       max_risk: {
         type: 'number',
@@ -278,8 +278,8 @@ async function executeSearchImpl(
         trustTier: mapTrustTierFromDb(item.trust_tier),
         score: Math.round((item.quality_score ?? 0) * 100),
         repository: item.repo_url || undefined,
-        // SMI-4954: installable when the registry row carries a repo_url
-        installable: Boolean(item.repo_url),
+        // SMI-5178: trust the authoritative `installable` column; repo_url heuristic only as fallback.
+        installable: item.installable ?? Boolean(item.repo_url),
         // SMI-2734: 'author/name' install ID — valid for all registry API results
         installHint: item.author ? item.author + '/' + item.name : undefined,
         // SMI-2760 / SMI-5178: compatibility tags. `compatibility` is on ApiSkill
@@ -307,25 +307,25 @@ async function executeSearchImpl(
       const compatFiltered = filters.compatibleWith
         ? filterByCompatibility(merged, filters.compatibleWith)
         : merged
-      // SMI-5178: page-level count hidden by the compatibility filter (restrictive
-      // default or explicit compatible_with). `[]`/unknown rows are never counted.
+      // SMI-5178: compat hidden; C1: effectiveInstallableOnly defaults ON.
       const compatibilityHidden = merged.length - compatFiltered.length
-      // SMI-4954: apply installable_only after compatibility filtering
-      const mergedResults = filterInstallable(compatFiltered, input.installable_only)
+      const effectiveInstallableOnly = input.installable_only ?? true
+      const mergedResults = filterInstallable(compatFiltered, effectiveInstallableOnly)
+      const discoveryOnlyHidden = compatFiltered.length - mergedResults.length
 
       const endTime = performance.now()
 
       const response: SearchResponse = {
         results: mergedResults.slice(0, 10), // Limit to 10 total
-        // SMI-4954: when installable_only narrows the page client-side the
-        // registry grand-total no longer describes the returned set — report
-        // the filtered count instead.
-        total: input.installable_only
+        // SMI-4954/C1: key off effectiveInstallableOnly so default-ON also
+        // reports the filtered total (not the registry grand-total).
+        total: effectiveInstallableOnly
           ? mergedResults.length
           : ((apiResponse.meta?.total as number) ?? results.length) + localResults.length,
         query: input.query || '', // May be empty for filter-only searches
         filters,
         compatibilityHidden,
+        discoveryOnlyHidden,
         timing: {
           searchMs: Math.round(searchEnd - searchStart),
           totalMs: Math.round(endTime - startTime),
@@ -438,24 +438,24 @@ async function executeSearchImpl(
   const compatFiltered = filters.compatibleWith
     ? filterByCompatibility(merged, filters.compatibleWith)
     : merged
-  // SMI-5178: page-level count hidden by the compatibility filter (restrictive
-  // default or explicit compatible_with). `[]`/unknown rows are never counted.
+  // SMI-5178: compat hidden; C1: effectiveInstallableOnly defaults ON.
   const compatibilityHidden = merged.length - compatFiltered.length
-  // SMI-4954: apply installable_only after compatibility filtering
-  const mergedResults = filterInstallable(compatFiltered, input.installable_only)
+  const effectiveInstallableOnly = input.installable_only ?? true
+  const mergedResults = filterInstallable(compatFiltered, effectiveInstallableOnly)
+  const discoveryOnlyHidden = compatFiltered.length - mergedResults.length
 
   const endTime = performance.now()
 
   const response: SearchResponse = {
     results: mergedResults.slice(0, 10), // Limit to 10 total
-    // SMI-4954: when installable_only narrows the page client-side the total
-    // no longer describes the returned set — report the filtered count.
-    total: input.installable_only
+    // SMI-4954/C1: key off effectiveInstallableOnly so default-ON reports filtered total.
+    total: effectiveInstallableOnly
       ? mergedResults.length
       : searchResults.total + localResults.length,
     query: input.query || '', // May be empty for filter-only searches
     filters,
     compatibilityHidden,
+    discoveryOnlyHidden,
     timing: {
       searchMs: Math.round(searchEnd - searchStart),
       totalMs: Math.round(endTime - startTime),

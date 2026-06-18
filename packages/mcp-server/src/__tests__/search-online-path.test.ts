@@ -160,6 +160,8 @@ describe('Search Tool - Online API Path (SMI-2755)', () => {
           tags: [],
           trust_tier: 'verified',
           quality_score: 0.95,
+          // SMI-5178: repo_url required so installable=true and default-ON filter keeps this row.
+          repo_url: 'https://github.com/anthropic/commit',
         },
       ],
       meta: { total: 1 },
