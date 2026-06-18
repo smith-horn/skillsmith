@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Indexer Backfill Facet Driver** (2026-06-18, SMI-5286 sub-wave 1c): the
+  out-of-band backfill (`indexer-backfill.yml`) now crawls the full
+  `filename:SKILL.md` universe past GitHub code-search's 1000-result-per-query
+  cap by partitioning the broad query into a fixed `size:` byte-range ladder
+  (`code-search.facets.ts`) with adaptive bisect-on-saturation: any facet whose
+  `total_count` exceeds the cap is split and its halves crawled before the next
+  facet, so every file is reachable. The depth-first frontier (facet index +
+  bisection stack + page) is fully captured by the checkpoint cursor — extended
+  with `pending_subranges` — so a dispatch boundary mid-bisection resumes
+  losslessly across the 6h GHA cap. `per_page` raised 30→100; `BACKFILL_PATH_PREFIX`
+  scopes a one-ecosystem DRY_RUN; `DISCOVERY_PHASE=3` focuses each dispatch on the
+  Phase-3b crawl + finalize. Also fixes a latent root-`SKILL.md` drop in
+  `fetchSkillPathsFromTree` (`trees-search.ts`) — repos whose only skill is a root
+  `SKILL.md` are now emitted as `path:''` instead of silently lost. Gated: the
+  live (`DRY_RUN=false`) crawl requires explicit operator sign-off.
 - **Vendor-Org Trust Tier** (2026-05-02, SMI-4651): GitHub-verified vendor
   organizations (Stripe, Notion, Atlassian, Figma, Canva, Zapier, Cloudflare,
   and any future verified org) are now auto-promoted to the `curated` trust

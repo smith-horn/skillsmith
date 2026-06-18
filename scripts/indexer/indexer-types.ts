@@ -3,12 +3,16 @@
  * @module scripts/indexer/indexer-types
  *
  * SMI-4852: Node-flavored sibling of `supabase/functions/indexer/indexer-types.ts`.
- * Pure interface declarations — byte-identical to the Deno parent (no env, no
- * imports, no fetches). Parity guarded by `scripts/indexer/tests/parity.test.ts`.
+ * Interface declarations only (no env, no fetches). NOTE (SMI-5286 1c): this file
+ * is NOT in the `parity.test.ts` guarded set, so the Node copy may diverge from
+ * the Deno parent — the `backfill_crawl` field + its type import below are
+ * Node-only (the backfill engine is the Node GHA runner, never the Deno cron).
  *
  * Original SMI-4376: Shared interfaces extracted from `index.ts` to keep the
  * orchestrator thin.
  */
+
+import type { BackfillCrawlOutcome } from './backfill-checkpoint.ts'
 
 /**
  * Indexer request body
@@ -66,6 +70,12 @@ export interface IndexerResult {
     search_mode?: 'broad' | 'prefix-fallback'
     error?: string
   }
+  /**
+   * SMI-5286 1c: the facet driver's advanced cursor + counters for this backfill
+   * dispatch. Present only when `BACKFILL_MODE` is set and Phase 3b ran the
+   * size-facet crawl; `run.ts` reads it to write the checkpoint + step summary.
+   */
+  backfill_crawl?: BackfillCrawlOutcome
   /** Phase 1: High-trust wildcard expansion stats (SMI-2672). Always present; zero values when no wildcards ran. */
   high_trust_wildcard: {
     authors_with_wildcards: number

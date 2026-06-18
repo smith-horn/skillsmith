@@ -35,9 +35,21 @@ export interface IndexerEnv {
    * SMI-5286 Wave 1b (§#2): out-of-band backfill mode. When true the discovery
    * run drops the 7-day freshness window (un-windowed scan) and skips the
    * Phase-6 stale sweep so a partial crawl can't quarantine real skills. Bare
-   * name (no prefix) per the parse-env convention. Cap-raising (§#3) is Wave 1c.
+   * name (no prefix) per the parse-env convention.
    */
   BACKFILL_MODE: boolean
+  /**
+   * SMI-5286 1c (C-5): when set, the backfill facet crawl is restricted to this
+   * single `path:` prefix (the one-ecosystem DRY_RUN / targeted-recovery mode).
+   * Empty/unset → the broad `filename:SKILL.md` query (subsumes root + subdirs).
+   */
+  BACKFILL_PATH_PREFIX: string | undefined
+  /**
+   * SMI-5286 1c: per-dispatch budget — the facet driver stops after this many
+   * size (sub)ranges so a dispatch fits inside the GHA cap, writes a checkpoint,
+   * and the operator re-dispatches with `resume_from=latest`.
+   */
+  BACKFILL_MAX_RANGES: number
 }
 
 function getRequired(name: string): string {
@@ -83,9 +95,14 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
             return parsed
           })()
 
-    const MAX_PAGES = getInt('MAX_PAGES', 5)
-    const MAX_REPOS = getInt('MAX_REPOS', 100)
-    const CODE_SEARCH_MAX_PAGES = getInt('CODE_SEARCH_MAX_PAGES', 1)
+    // SMI-5286 Wave 1b: backfill mode (bare name; default off). Parsed before the
+    // caps so 1c (§#3, C-5) can raise their DEFAULTS in backfill mode while the
+    // cron defaults stay untouched. (The backfill workflow also sets the caps
+    // explicitly; these defaults are the safety net if it doesn't.)
+    const BACKFILL_MODE = getBool('BACKFILL_MODE', false)
+    const MAX_PAGES = getInt('MAX_PAGES', BACKFILL_MODE ? 10 : 5)
+    const MAX_REPOS = getInt('MAX_REPOS', BACKFILL_MODE ? 500 : 100)
+    const CODE_SEARCH_MAX_PAGES = getInt('CODE_SEARCH_MAX_PAGES', BACKFILL_MODE ? 10 : 1)
     const DRY_RUN = getBool('DRY_RUN', false)
     const RUN_TYPE_RAW = process.env.RUN_TYPE ?? 'discovery'
     if (
@@ -120,8 +137,15 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       DISCOVERY_PHASE = Number(discoveryPhaseRaw) as DiscoveryPhase
     }
 
-    // SMI-5286 Wave 1b: backfill mode (bare name; default off).
-    const BACKFILL_MODE = getBool('BACKFILL_MODE', false)
+    // SMI-5286 1c: single-prefix restriction for the backfill facet crawl. Empty
+    // string → undefined (the broad query). BACKFILL_MAX_RANGES = per-dispatch
+    // (sub)range budget so a run fits the GHA cap (default 150).
+    const backfillPathPrefixRaw = process.env.BACKFILL_PATH_PREFIX
+    const BACKFILL_PATH_PREFIX =
+      backfillPathPrefixRaw == null || backfillPathPrefixRaw === ''
+        ? undefined
+        : backfillPathPrefixRaw
+    const BACKFILL_MAX_RANGES = getInt('BACKFILL_MAX_RANGES', 150)
 
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)
@@ -146,6 +170,8 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       kill_switch_engaged,
       DISCOVERY_PHASE,
       BACKFILL_MODE,
+      BACKFILL_PATH_PREFIX,
+      BACKFILL_MAX_RANGES,
     }
   } finally {
     process.env = prev

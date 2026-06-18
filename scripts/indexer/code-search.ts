@@ -75,7 +75,10 @@ const RETRY_DELAYS = [1000, 2000, 4000]
  */
 export async function searchCodeForSkillMd(
   page: number,
-  perPage = 30,
+  // SMI-5286 1c: default per_page raised 30 → 100 (GitHub max) so each page
+  // drains the 1000-result ceiling in fewer requests. The root phase stays
+  // disabled in 1c, so no size facet is threaded here.
+  perPage = 100,
   telemetry: RateLimitTelemetry
 ): Promise<{ repos: GitHubRepository[]; total: number; retries: number; error?: string }> {
   // Build query: find root-level SKILL.md files.
@@ -215,8 +218,14 @@ export function extractSkillPath(itemPath: string): string {
 export async function searchCodeForSkillMdInSubdirectory(
   pathPrefix: string | undefined,
   page: number,
-  perPage = 30,
-  telemetry: RateLimitTelemetry
+  // SMI-5286 1c: default per_page raised 30 → 100 (GitHub max).
+  perPage = 100,
+  telemetry: RateLimitTelemetry,
+  // SMI-5286 1c: optional pre-formatted GitHub `size:` qualifier (e.g.
+  // `size:0..127`) appended to the query so the broad backfill can partition the
+  // 1000-result-capped query by file size. The caller (the facet driver) formats
+  // it via code-search.facets.ts; this file stays free of the facet dependency.
+  sizeQualifier?: string
 ): Promise<{
   repos: GitHubRepository[]
   total: number
@@ -238,7 +247,11 @@ export async function searchCodeForSkillMdInSubdirectory(
   // Build query: broad (no path constraint) or scoped to pathPrefix.
   // SMI-5176: date qualifiers (created:>/pushed:>) are NOT functional on GitHub
   // code search — they are tokenized as free-text content. No freshness qualifier.
-  const queryStr = pathPrefix ? `filename:SKILL.md path:${pathPrefix}` : 'filename:SKILL.md'
+  const baseQuery = pathPrefix ? `filename:SKILL.md path:${pathPrefix}` : 'filename:SKILL.md'
+  // SMI-5286 1c: append the size facet qualifier (already INCLUSIVE-INCLUSIVE,
+  // e.g. `size:0..127`) BEFORE encoding so the partitioned backfill stays under
+  // the 1000-result ceiling. The qualifier is part of queryStr pre-encode.
+  const queryStr = sizeQualifier ? `${baseQuery} ${sizeQualifier}` : baseQuery
   const query = encodeURIComponent(queryStr)
   const url = `https://api.github.com/search/code?q=${query}&per_page=${perPage}&page=${page}`
 

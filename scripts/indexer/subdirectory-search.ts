@@ -5,23 +5,28 @@
  * SMI-4852: Node-flavored sibling of
  * `supabase/functions/indexer/subdirectory-search.ts`. This module performs no
  * direct GitHub fetches; it dispatches to `searchCodeForSkillMdInSubdirectory`
- * (already wrapped per Hard Rule 1) and the sibling-module helpers
- * `checkSkillMdExists` / `fetchRepoLicense` (each wrapped in their own
- * cluster). Telemetry is threaded through to every downstream call so the
- * single run-scoped collector aggregates header data from every consumer.
- * Parity is guarded by `scripts/indexer/tests/parity.test.ts`.
+ * (already wrapped per Hard Rule 1) and the sibling-module helper
+ * `processSearchResults` (license-gate + Trees per-skill enumeration). Telemetry
+ * is threaded through to every downstream call so the single run-scoped collector
+ * aggregates header data from every consumer. NOTE (SMI-5286 1c): this surface is
+ * NOT parity-guarded (`parity.test.ts` exempts subdirectory-search), so the Node
+ * copy may diverge from the Deno parent.
  *
  * Original module docs:
  *
  * SMI-2660: Phase 3b of the indexer — finds SKILL.md files via GitHub Code Search.
  * SMI-3229: Replaced hardcoded path-prefix loop with broad `filename:SKILL.md` query.
  *
- * Extracted from index.ts to satisfy the 500-line CI gate.
+ * Extracted from index.ts to satisfy the 500-line CI gate. SMI-5286 1c moved the
+ * shared `processSearchResults` + the size-faceted backfill crawl to
+ * `subdirectory-search.helpers.ts` to stay under that gate.
  *
  * Strategy:
  * 1. Primary: broad query (no path: constraint) — discovers SKILL.md at any depth
  * 2. Fallback: if any page returns incomplete_results, re-runs with 7 path-scoped
  *    queries to ensure known ecosystems are fully covered
+ * 3. SMI-5286 1c backfill: when a `BackfillFacetPlan` is supplied, the legacy loop
+ *    is replaced by a resumable size-faceted depth-first crawl.
  *
  * Rate limit: 10 code search requests/minute (separate from main API).
  * Gated by SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=true env var to prevent
@@ -35,12 +40,25 @@
 
 import { GITHUB_API_DELAY, delay, type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { searchCodeForSkillMdInSubdirectory } from './code-search.ts'
-import { checkSkillMdExists } from './skill-processor.ts'
-import { fetchRepoLicense, isPermissiveLicense } from './license-filter.ts'
-import { enumerateRepoSkillPaths, type EnumerateTelemetry } from './trees-enumerate.ts'
-import { buildSkillTreeUrl } from './skill-url.ts'
+import { type EnumerateTelemetry } from './trees-enumerate.ts'
+import {
+  processSearchResults,
+  runBackfillFacetCrawl,
+  type BackfillFacetPlan,
+} from './subdirectory-search.helpers.ts'
+import type { BackfillCrawlOutcome } from './backfill-checkpoint.ts'
 import type { GitHubRepository } from './topic-search.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
+import type { IndexerResult } from './indexer-types.ts'
+
+export type { BackfillFacetPlan } from './subdirectory-search.helpers.ts'
+
+/**
+ * Results per code-search page. SMI-5286 1c (C-5): GitHub allows 100 (was a
+ * hardcoded 30 → 3.3x fewer requests for the same coverage). The cron leaves
+ * Phase 3b disabled, so this only affects manual-enable + backfill runs.
+ */
+const BROAD_QUERY_PER_PAGE = 100
 
 /**
  * Fallback path prefixes used when broad query returns incomplete results.
@@ -70,137 +88,6 @@ export const FALLBACK_PATH_PREFIXES = [
 ]
 
 /**
- * Process code search results: deduplicate, license-gate, validate, and collect repos.
- * Shared by both broad and fallback search paths.
- *
- * SMI-4852: Threads `telemetry` to downstream `fetchRepoLicense` and
- * `checkSkillMdExists` calls so every GitHub API hit lands in the shared
- * collector.
- *
- * SMI-5286 Wave 1a (§#1, C-1): per-skill (collection) extraction. Each candidate
- * repo is enumerated ONCE via the Trees API (`enumerateRepoSkillPaths`) and EVERY
- * valid SKILL.md parent dir becomes its own `GitHubRepository`, with a DISTINCT
- * per-skill tree URL (`buildSkillTreeUrl`) so N skills in one repo yield N distinct
- * `repo_url` rows that never collide on `onConflict: 'repo_url'`. Each per-path row
- * is validated independently (§#4 strict gate) before it is collected; validated
- * rows are `installable:true` (`skill-processor.ts:440` then persists the non-null
- * tree URL). Edit E: only the enumeration loop changed — the dedup-key /
- * freshness-qualifier lines (`:89`) are byte-stable for the SMI-5176 rebase.
- */
-async function processSearchResults(
-  resultRepos: GitHubRepository[],
-  seenUrls: Set<string>,
-  validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
-  repos: GitHubRepository[],
-  stats: { licenseFiltered: number; licenseFetchFailed: number },
-  telemetry: RateLimitTelemetry,
-  enumerateTelemetry: EnumerateTelemetry,
-  enumeratedRepos: Set<string>
-): Promise<void> {
-  for (const repo of resultRepos) {
-    // Deduplication key includes skillPath: one repo can have multiple skills
-    const dedupKey = repo.skillPath ? `${repo.url}/${repo.skillPath}` : repo.url
-    if (seenUrls.has(dedupKey)) continue
-
-    // License gate: fetch SPDX from GitHub API (not included in code search response)
-    const { license: spdxId, fetchFailed } = await fetchRepoLicense(
-      repo.owner,
-      repo.repoName,
-      telemetry
-    )
-
-    if (fetchFailed) {
-      // API failure — skip this run but don't count as license-filtered.
-      // NOT added to seenUrls so the repo is retried on the next indexer run.
-      console.log(`[BroadDiscovery] License fetch failed (will retry next run): ${repo.fullName}`)
-      stats.licenseFetchFailed++
-      await delay(200)
-      continue
-    }
-
-    if (!isPermissiveLicense(spdxId)) {
-      // Confirmed non-permissive license — permanently excluded.
-      console.log(`[BroadDiscovery] License excluded: ${repo.fullName} spdx=${spdxId ?? 'null'}`)
-      stats.licenseFiltered++
-      await delay(200)
-      continue
-    }
-
-    // Mark this code-search result consumed (per-repo+skillPath identity) so the
-    // same surfaced file is not re-processed across pages/prefixes.
-    seenUrls.add(dedupKey)
-
-    // SMI-5286 Wave 1a (§#1): enumerate the repo's full tree ONCE. The broad query
-    // can surface the same repo via multiple SKILL.md hits; guard re-enumeration.
-    const repoKey = `${repo.owner}/${repo.repoName}`
-    if (enumeratedRepos.has(repoKey)) {
-      await delay(50)
-      continue
-    }
-    enumeratedRepos.add(repoKey)
-
-    const { entries, truncatedByApi, truncatedByCap } = await enumerateRepoSkillPaths(
-      repo.owner,
-      repo.repoName,
-      repo.defaultBranch,
-      telemetry,
-      enumerateTelemetry
-    )
-
-    if (truncatedByApi) {
-      // Trees API truncated — do NOT emit a partial set (deterministic skip).
-      console.log(
-        `[BroadDiscovery] Trees truncated, skipping for manual handling: ${repo.fullName}`
-      )
-      await delay(50)
-      continue
-    }
-    if (truncatedByCap) {
-      console.log(`[BroadDiscovery] Per-repo cap reached, taking first N: ${repo.fullName}`)
-    }
-
-    // Validate each enumerated SKILL.md independently (§#4 strict gate) and emit
-    // one per-skill GitHubRepository with a distinct tree URL (C-1) per valid path.
-    for (const entry of entries) {
-      const skillPath = entry.path
-      const installable = await checkSkillMdExists(
-        repo.owner,
-        repo.repoName,
-        repo.defaultBranch,
-        validationCache,
-        telemetry,
-        skillPath,
-        validationOptions
-      )
-
-      // C-1: build the per-skill tree URL from the BARE repo html_url
-      // (reconstructed from owner/repoName), NOT from `repo.url` — by this point
-      // `repo.url` is already the code-search mapper's tree URL, so reusing it
-      // would double the `/tree/<branch>` segment. `skillUrl` already encodes
-      // `skillPath`, so it alone is the dedup key.
-      const skillUrl = buildSkillTreeUrl(
-        `https://github.com/${repo.owner}/${repo.repoName}`,
-        repo.defaultBranch,
-        skillPath
-      )
-      if (seenUrls.has(skillUrl)) continue
-      seenUrls.add(skillUrl)
-
-      repos.push({
-        ...repo,
-        url: skillUrl,
-        installable,
-        skillPath,
-        treeHash: entry.blobSha,
-        license: spdxId,
-      })
-      await delay(50)
-    }
-  }
-}
-
-/**
  * SMI-3229: Run Phase 3b broad SKILL.md discovery with incomplete_results fallback.
  *
  * Primary: single broad query (no path: constraint), paginating up to maxPages.
@@ -222,13 +109,17 @@ async function processSearchResults(
  * @param validationOptions - Strict validation and minimum content length options
  * @param maxPages - Maximum pages per query (capped by caller)
  * @param telemetry - Shared rate-limit telemetry collector.
+ * @param backfillPlan - SMI-5286 1c: when present, run the size-faceted backfill
+ *   crawl instead of the legacy broad+fallback loop. Optional → every existing
+ *   5-arg caller (the cron Phase-3b path + tests) is byte-stable.
  */
 export async function runSubdirectorySearch(
   seenUrls: Set<string>,
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   maxPages: number,
-  telemetry: RateLimitTelemetry
+  telemetry: RateLimitTelemetry,
+  backfillPlan?: BackfillFacetPlan
 ): Promise<{
   repos: GitHubRepository[]
   totalFound: number
@@ -238,6 +129,8 @@ export async function runSubdirectorySearch(
   incompleteResults: number
   searchMode: 'broad' | 'prefix-fallback'
   errors: string[]
+  /** SMI-5286 1c: present only when `backfillPlan` was supplied. */
+  backfill?: BackfillCrawlOutcome
 }> {
   const repos: GitHubRepository[] = []
   const errors: string[] = []
@@ -245,21 +138,56 @@ export async function runSubdirectorySearch(
   let totalRetries = 0
   const stats = { licenseFiltered: 0, licenseFetchFailed: 0 }
   let incompleteResults = 0
-  let searchMode: 'broad' | 'prefix-fallback' = 'broad'
+  const searchMode: 'broad' | 'prefix-fallback' = 'broad'
   // SMI-5286 Wave 1a: run-scoped per-skill extraction state. `enumerateTelemetry`
   // accumulates denylist/cap/truncation counters across the whole run;
   // `enumeratedRepos` guards one Trees call per repo across pages and prefixes.
   const enumerateTelemetry: EnumerateTelemetry = {}
   const enumeratedRepos = new Set<string>()
 
+  // ── SMI-5286 1c: size-faceted backfill crawl (replaces the legacy loop) ──
+  if (backfillPlan) {
+    const backfill = await runBackfillFacetCrawl(
+      backfillPlan,
+      seenUrls,
+      validationCache,
+      validationOptions,
+      repos,
+      stats,
+      telemetry,
+      enumerateTelemetry,
+      enumeratedRepos,
+      errors
+    )
+    console.log(
+      `[Backfill] Facet crawl: ${repos.length} skills added, ${backfill.facets_completed}/${backfill.facets_total} facets, ${backfill.ranges_crawled} ranges this dispatch, ` +
+        `${stats.licenseFiltered} license-filtered, cap_saturated=${backfill.cap_saturated}, truncated=${backfill.truncated_repo_count}, done=${backfill.done}`
+    )
+    console.log(
+      `[Backfill] Per-skill extraction: ${enumeratedRepos.size} repos enumerated, ${enumerateTelemetry.denylistSkipped ?? 0} denylist-skipped, ${enumerateTelemetry.cappedRepoCount ?? 0} capped, ${enumerateTelemetry.truncatedRepoCount ?? 0} api-truncated`
+    )
+    return {
+      repos,
+      totalFound: repos.length,
+      retries: totalRetries,
+      licenseFiltered: stats.licenseFiltered,
+      licenseFetchFailed: stats.licenseFetchFailed,
+      incompleteResults,
+      searchMode,
+      errors,
+      backfill,
+    }
+  }
+
   // ── Primary: broad query (no path constraint) ────────────────────────
   console.log('[BroadDiscovery] Running broad filename:SKILL.md query...')
 
+  let primaryMode: 'broad' | 'prefix-fallback' = 'broad'
   for (let page = 1; page <= maxPages; page++) {
     const result = await searchCodeForSkillMdInSubdirectory(
       undefined, // no pathPrefix → broad query
       page,
-      30,
+      BROAD_QUERY_PER_PAGE,
       telemetry
     )
 
@@ -291,14 +219,14 @@ export async function runSubdirectorySearch(
       enumeratedRepos
     )
 
-    if (result.repos.length < 30) break
+    if (result.repos.length < BROAD_QUERY_PER_PAGE) break
     // Code search rate limit: 10 req/min → 6s between pages
     await delay(6000)
   }
 
   // ── Fallback: path-scoped queries if broad had incomplete results ────
   if (incompleteResults > 0) {
-    searchMode = 'prefix-fallback'
+    primaryMode = 'prefix-fallback'
     console.log(
       `[BroadDiscovery] ${incompleteResults} page(s) had incomplete results — falling back to path-scoped queries`
     )
@@ -307,7 +235,12 @@ export async function runSubdirectorySearch(
       console.log(`[BroadDiscovery] Fallback searching path:${pathPrefix}...`)
 
       for (let page = 1; page <= maxPages; page++) {
-        const result = await searchCodeForSkillMdInSubdirectory(pathPrefix, page, 30, telemetry)
+        const result = await searchCodeForSkillMdInSubdirectory(
+          pathPrefix,
+          page,
+          BROAD_QUERY_PER_PAGE,
+          telemetry
+        )
 
         totalRetries += result.retries
 
@@ -339,7 +272,7 @@ export async function runSubdirectorySearch(
           enumeratedRepos
         )
 
-        if (result.repos.length < 30) break
+        if (result.repos.length < BROAD_QUERY_PER_PAGE) break
         // Code search rate limit: 10 req/min → 6s between pages
         await delay(6000)
       }
@@ -350,7 +283,7 @@ export async function runSubdirectorySearch(
   }
 
   console.log(
-    `[BroadDiscovery] Complete (${searchMode}): ${repos.length} added, ${stats.licenseFiltered} license-filtered, ${stats.licenseFetchFailed} fetch-failed, ${incompleteResults} incomplete, ${totalRetries} retries`
+    `[BroadDiscovery] Complete (${primaryMode}): ${repos.length} added, ${stats.licenseFiltered} license-filtered, ${stats.licenseFetchFailed} fetch-failed, ${incompleteResults} incomplete, ${totalRetries} retries`
   )
   // SMI-5286 Wave 1a: per-skill extraction observability (§#1, Edit D).
   console.log(
@@ -372,7 +305,63 @@ export async function runSubdirectorySearch(
     licenseFiltered: stats.licenseFiltered,
     licenseFetchFailed: stats.licenseFetchFailed,
     incompleteResults,
-    searchMode,
+    searchMode: primaryMode,
     errors,
+  }
+}
+
+/**
+ * Phase 3b wrapper: runs {@link runSubdirectorySearch}, folds its repos/errors/
+ * stats into the orchestrator's accumulators, and (SMI-5286 1c) surfaces the
+ * backfill cursor on `result.backfill_crawl`. Extracted here so
+ * `discovery-orchestrator.ts` stays under the 500-line gate. Never throws — a
+ * Phase-3b failure records a zeroed `subdirectory_search` and is swallowed
+ * (one phase must not abort the cycle), matching the prior inline behavior.
+ */
+export async function runSubdirectorySearchPhase(args: {
+  seenUrls: Set<string>
+  validationCache: Map<string, SkillMdValidation>
+  validationOptions: { strictValidation?: boolean; minContentLength?: number }
+  codeSearchMaxPages: number
+  telemetry: RateLimitTelemetry
+  repositories: GitHubRepository[]
+  result: IndexerResult
+  backfillFacetPlan?: BackfillFacetPlan
+}): Promise<void> {
+  try {
+    const subdirResult = await runSubdirectorySearch(
+      args.seenUrls,
+      args.validationCache,
+      args.validationOptions,
+      args.codeSearchMaxPages,
+      args.telemetry,
+      args.backfillFacetPlan
+    )
+    for (const repo of subdirResult.repos) {
+      args.repositories.push(repo)
+    }
+    args.result.errors.push(...subdirResult.errors)
+    args.result.subdirectory_search = {
+      repos_found: subdirResult.repos.length,
+      total_found: subdirResult.totalFound,
+      retries: subdirResult.retries,
+      license_filtered: subdirResult.licenseFiltered,
+      license_fetch_failed: subdirResult.licenseFetchFailed,
+      incomplete_results: subdirResult.incompleteResults,
+      search_mode: subdirResult.searchMode,
+    }
+    if (subdirResult.backfill) {
+      args.result.backfill_crawl = subdirResult.backfill
+    }
+  } catch (err) {
+    console.warn(`[CodeSearch] Phase 3b failed: ${err instanceof Error ? err.message : 'Unknown'}`)
+    args.result.subdirectory_search = {
+      repos_found: 0,
+      total_found: 0,
+      retries: 0,
+      license_filtered: 0,
+      license_fetch_failed: 0,
+      error: 'phase_failed',
+    }
   }
 }

@@ -25,7 +25,7 @@ import {
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
 import { type SkillMdValidation } from './skill-processor.ts'
-import { runSubdirectorySearch } from './subdirectory-search.ts'
+import { runSubdirectorySearchPhase, type BackfillFacetPlan } from './subdirectory-search.ts'
 import { runCategorization, runCodeSearch, runUpsertPhase } from './indexer-runners.ts'
 import { applyTreeHashTouches, type TreeHashTouchEntry } from './tree-hash-touch.ts'
 import type { RotationSource } from './topic-rotation.ts'
@@ -124,6 +124,13 @@ export interface RunDiscoveryParams {
    * real skills). Default false → byte-identical cron path.
    */
   backfillMode?: boolean
+  /**
+   * SMI-5286 1c: when set (backfill dispatches), Phase 3b runs the resumable
+   * size-faceted crawl from this plan's cursor instead of the legacy broad+
+   * fallback loop. `run.ts` builds it from the checkpoint; the advanced cursor
+   * returns on `result.backfill_crawl`.
+   */
+  backfillFacetPlan?: BackfillFacetPlan
 }
 
 export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerResult> {
@@ -148,6 +155,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     killSwitchEngaged,
     discoveryPhase,
     backfillMode = false,
+    backfillFacetPlan,
   } = params
 
   // SMI-4870: phase gates. When `discoveryPhase` is unset every gate is true,
@@ -336,40 +344,19 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   // Enable with: SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=true
   // SMI-4870: only the phase-3 sub-slot (or the legacy path) runs subdir search.
   if (runPhase3 && process.env.SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH === 'true') {
-    try {
-      const subdirResult = await runSubdirectorySearch(
-        seenUrls,
-        validationCache,
-        validationOptions,
-        codeSearchMaxPages,
-        telemetry
-      )
-      for (const repo of subdirResult.repos) {
-        repositories.push(repo)
-      }
-      result.errors.push(...subdirResult.errors)
-      result.subdirectory_search = {
-        repos_found: subdirResult.repos.length,
-        total_found: subdirResult.totalFound,
-        retries: subdirResult.retries,
-        license_filtered: subdirResult.licenseFiltered,
-        license_fetch_failed: subdirResult.licenseFetchFailed,
-        incomplete_results: subdirResult.incompleteResults,
-        search_mode: subdirResult.searchMode,
-      }
-    } catch (err) {
-      console.warn(
-        `[CodeSearch] Phase 3b failed: ${err instanceof Error ? err.message : 'Unknown'}`
-      )
-      result.subdirectory_search = {
-        repos_found: 0,
-        total_found: 0,
-        retries: 0,
-        license_filtered: 0,
-        license_fetch_failed: 0,
-        error: 'phase_failed',
-      }
-    }
+    // SMI-5286 1c: extracted to `runSubdirectorySearchPhase` (keeps this file
+    // under the 500-line gate). In backfill mode `backfillFacetPlan` routes it to
+    // the size-faceted crawl; the advanced cursor lands on `result.backfill_crawl`.
+    await runSubdirectorySearchPhase({
+      seenUrls,
+      validationCache,
+      validationOptions,
+      codeSearchMaxPages,
+      telemetry,
+      repositories,
+      result,
+      backfillFacetPlan,
+    })
   }
 
   // Count total SKILL.md files on GitHub for homepage stats display.

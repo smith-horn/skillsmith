@@ -110,8 +110,12 @@ export async function fetchSkillPathsFromTree(
           // Match SKILL.md case-insensitively at any depth
           if (!entry.path.endsWith('/SKILL.md') && entry.path.toUpperCase() !== 'SKILL.MD') continue
           const slashIdx = entry.path.lastIndexOf('/')
-          if (slashIdx < 0) continue // root SKILL.md — no parent dir to extract
-          skillEntries.push({ path: entry.path.slice(0, slashIdx), blobSha: entry.sha })
+          // SMI-5286 1c (C-4): a root-level SKILL.md has no parent dir → emit path:''
+          // (buildSkillTreeUrl maps '' → …/tree/<branch>). Previously dropped, which
+          // silently lost repos whose only skill is a root SKILL.md once Phase 3a (the
+          // only other root-skill emitter) was disabled.
+          const skillPath = slashIdx < 0 ? '' : entry.path.slice(0, slashIdx)
+          skillEntries.push({ path: skillPath, blobSha: entry.sha })
         }
 
         if (data.truncated) {

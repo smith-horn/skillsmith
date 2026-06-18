@@ -22,21 +22,174 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { type SizeFacet, buildSizeFacets, facetId, bisectFacet } from './code-search.facets.ts'
 
 /** `event_type` discriminator for backfill checkpoint rows in `audit_logs`. */
 export const BACKFILL_CHECKPOINT_EVENT_TYPE = 'indexer_backfill_checkpoint'
+
+/**
+ * A persisted size sub-range `[lo, hi]`. `hi` is `null` when the range is
+ * open-ended (`Infinity`) — `Infinity` does NOT survive `JSON.stringify`
+ * (it serializes to `null`), so the cursor uses an explicit `null` sentinel and
+ * {@link deserializeRange} maps it back to `Number.POSITIVE_INFINITY`.
+ */
+export type PersistedSubrange = [number, number | null]
 
 /**
  * Resume cursor. `(path, facet, last_page)` lets a re-dispatch resume mid-facet,
  * not just at facet boundaries (SPARC §#5 facet-AND-page granularity).
  */
 export interface BackfillCursor {
-  /** The path-prefix facet being crawled (e.g. '.agents/skills'). */
+  /** The path-prefix being crawled ('' = the broad, no-`path:` query). */
   path: string
-  /** The active facet window within that path (e.g. a date/size bucket; Wave 1c). */
+  /** Stable id of the active size facet/sub-range ({@link facetId}); 'done' when complete. */
   facet: string
-  /** Last code-search page consumed within the current facet (1-based). */
+  /** Last code-search page consumed within the current (sub)range (1-based; 0 = none yet). */
   last_page: number
+  /**
+   * SMI-5286 1c: 0-based index of the next top-level facet to process in the
+   * static {@link buildSizeFacets} ladder. Incremented when a top-level facet is
+   * RETIRED — either fully drained OR bisected (its sub-ranges, tracked in
+   * `pending_subranges`, then cover it). So it counts top-level facets whose
+   * coverage is committed, NOT necessarily finished crawling; use `current_facet`
+   * / `pending_subrange_count` (in the run summary) to tell 'bisecting' from 'done'.
+   */
+  facet_index?: number
+  /**
+   * SMI-5286 1c: the in-progress bisection frontier — sub-ranges of the current
+   * facet not yet fully crawled (DFS stack; the LAST element is crawled next).
+   * Persisted so a dispatch boundary mid-bisection resumes without losing
+   * not-yet-crawled sub-ranges (the bare `(path,facet,last_page)` cursor cannot
+   * represent a partial bisection tree, C-2).
+   */
+  pending_subranges?: PersistedSubrange[]
+}
+
+/** Map a runtime {@link SizeFacet} to its JSON-safe persisted form (`Infinity` → `null`). */
+function serializeRange(facet: SizeFacet): PersistedSubrange {
+  return [facet.lo, Number.isFinite(facet.hi) ? facet.hi : null]
+}
+
+/** Map a persisted sub-range back to a runtime {@link SizeFacet} (`null` → `Infinity`). */
+function deserializeRange([lo, hi]: PersistedSubrange): SizeFacet {
+  return { lo, hi: hi == null ? Number.POSITIVE_INFINITY : hi }
+}
+
+/**
+ * Runtime crawl frontier reconstructed from a {@link BackfillCursor}. The facet
+ * driver is a depth-first walk of the static size ladder: each top-level facet
+ * that saturates the 1000-result cap is bisected into `pendingSubranges`, which
+ * are drained (themselves bisecting further) before `facetIndex` advances.
+ */
+export interface FacetCrawlState {
+  /** Index into {@link buildSizeFacets} of the current top-level facet. */
+  facetIndex: number
+  /** DFS stack of sub-ranges still to crawl for the current facet; head crawled next. */
+  pendingSubranges: SizeFacet[]
+  /** Last page consumed within the current (sub)range (0 = none). */
+  lastPage: number
+}
+
+/** Reconstruct the crawl frontier from a persisted cursor (or a cold start). */
+export function cursorToFacetState(cursor: BackfillCursor | null | undefined): FacetCrawlState {
+  if (!cursor) return { facetIndex: 0, pendingSubranges: [], lastPage: 0 }
+  return {
+    facetIndex: cursor.facet_index ?? 0,
+    pendingSubranges: (cursor.pending_subranges ?? []).map(deserializeRange),
+    lastPage: cursor.last_page ?? 0,
+  }
+}
+
+/**
+ * The range currently being crawled: the head of the bisection stack, else the
+ * top-level facet at `facetIndex`. `null` once the ladder is exhausted.
+ */
+export function currentFacetRange(
+  state: FacetCrawlState,
+  facets: SizeFacet[] = buildSizeFacets()
+): SizeFacet | null {
+  if (state.pendingSubranges.length > 0) {
+    return state.pendingSubranges[state.pendingSubranges.length - 1]
+  }
+  if (state.facetIndex < facets.length) return facets[state.facetIndex]
+  return null
+}
+
+/**
+ * Replace the current saturated range with its two halves (the first half is
+ * crawled next). Resets the page cursor. Returns false when the range cannot
+ * subdivide (the caller then records truncation and advances).
+ *
+ * Retirement: a saturated range is REPLACED by its halves, so it must never be
+ * revisited. If it was a sub-range (stack non-empty) we pop it; if it was the
+ * TOP-LEVEL facet (stack empty) we advance `facetIndex` past it before pushing —
+ * otherwise, once the halves drain, `currentFacetRange` would return the same
+ * top-level facet again, it would re-saturate, and the crawl would loop forever
+ * without advancing `facets_completed` (governance C-1).
+ */
+export function bisectCurrentFacet(state: FacetCrawlState, range: SizeFacet): boolean {
+  const halves = bisectFacet(range)
+  if (!halves) return false
+  if (state.pendingSubranges.length > 0) {
+    state.pendingSubranges.pop() // retire the sub-range being bisected
+  } else {
+    state.facetIndex++ // retire the top-level facet — its halves now cover it
+  }
+  // Push so halves[0] ends up on top (LIFO) → the lower sub-range is crawled next.
+  state.pendingSubranges.push(halves[1], halves[0])
+  state.lastPage = 0
+  return true
+}
+
+/**
+ * Advance past the current exhausted (or unbisectable-saturated) range: pop the
+ * bisection stack if non-empty, else advance the top-level facet index. Resets
+ * the page cursor.
+ */
+export function advanceFacet(state: FacetCrawlState): void {
+  if (state.pendingSubranges.length > 0) state.pendingSubranges.pop()
+  else state.facetIndex++
+  state.lastPage = 0
+}
+
+/** True when every top-level facet AND its bisection frontier are exhausted. */
+export function isFacetCrawlDone(
+  state: FacetCrawlState,
+  facets: SizeFacet[] = buildSizeFacets()
+): boolean {
+  return state.facetIndex >= facets.length && state.pendingSubranges.length === 0
+}
+
+/** Serialize the crawl frontier back into a persisted {@link BackfillCursor}. */
+export function facetStateToCursor(
+  state: FacetCrawlState,
+  pathPrefix: string,
+  facets: SizeFacet[] = buildSizeFacets()
+): BackfillCursor {
+  const range = currentFacetRange(state, facets)
+  return {
+    path: pathPrefix,
+    facet: range ? facetId(range) : 'done',
+    last_page: state.lastPage,
+    facet_index: state.facetIndex,
+    pending_subranges: state.pendingSubranges.map(serializeRange),
+  }
+}
+
+/**
+ * The outcome of one dispatch's facet crawl: the advanced cursor to persist, a
+ * terminal flag, and the operator-observable counters. Lives here (not in
+ * `subdirectory-search.ts`) so `indexer-types.ts` can reference it without
+ * importing the search module.
+ */
+export interface BackfillCrawlOutcome {
+  cursor: BackfillCursor
+  done: boolean
+  cap_saturated: boolean
+  truncated_repo_count: number
+  facets_completed: number
+  facets_total: number
+  ranges_crawled: number
 }
 
 /**
@@ -113,6 +266,15 @@ export interface BackfillSummary {
   facets_remaining: number
   cap_saturated: boolean
   truncated_repo_count: number
+  /**
+   * SMI-5286 1c (M-2): true crawl position. `facets_remaining` is coarse — it
+   * reads 0 once the last top-level facet is retired even while its bisected
+   * sub-ranges are still draining. `current_facet` (the active (sub)range id, or
+   * 'done') + `pending_subrange_count` (bisection-frontier depth) let the operator
+   * distinguish "finished" from "still bisecting".
+   */
+  current_facet?: string
+  pending_subrange_count?: number
 }
 
 /**
