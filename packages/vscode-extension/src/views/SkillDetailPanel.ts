@@ -264,9 +264,11 @@ export class SkillDetailPanel {
     const loadingNonce = this._getNonce()
     this._panel.webview.html = getLoadingHtml(loadingNonce, getSkillDetailCsp(loadingNonce))
     this._showFullContent = false
-    // SMI-5317: clear stale advisory state before the new load (C1).
+    // SMI-5317: clear stale advisory state before the new load (C1). Reflect a
+    // prior session tier-denial immediately (M2) so the upsell line persists on
+    // every gated panel without re-calling the Team-gated tool.
     this._advisories = null
-    this._advisoryTierDenied = false
+    this._advisoryTierDenied = SkillDetailPanel._advisoryTierDeniedSession
 
     if (!SkillDetailPanel._skillService) {
       const nonce = this._getNonce()
@@ -333,19 +335,28 @@ export class SkillDetailPanel {
         return
       }
       // M3: defensive normalized filter (the server already filters by skillIds).
+      // H1: skillName is untrusted JSON-RPC data — guard the shape before
+      // skillComparisonKey() (which calls .split) so a malformed row can't throw.
       const key = skillComparisonKey(skillId)
-      const list = (r.advisories ?? []).filter((a) => skillComparisonKey(a.skillName) === key)
+      const list = (r.advisories ?? []).filter(
+        (a) => typeof a.skillName === 'string' && skillComparisonKey(a.skillName) === key
+      )
       this._advisories = list
       if (list.length > 0) {
         track('vscode_advisories_shown', { count: list.length, surface: 'detail-panel' })
       }
       this._update()
     } catch (err) {
+      const denied = err instanceof McpToolError && err.code === 'TierDenied'
+      // M1: tier denial is account-global — record it even if we've navigated
+      // away, so the next panel skips the wasted gated call.
+      if (denied) {
+        SkillDetailPanel._advisoryTierDeniedSession = true
+      }
       if (this._disposed || this._skillId !== skillId) {
         return
       }
-      if (err instanceof McpToolError && err.code === 'TierDenied') {
-        SkillDetailPanel._advisoryTierDeniedSession = true
+      if (denied) {
         this._advisoryTierDenied = true
         track('vscode_advisories_tier_denied', { surface: 'detail-panel' })
         this._update()

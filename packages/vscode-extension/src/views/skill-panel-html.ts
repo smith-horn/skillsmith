@@ -146,22 +146,13 @@ export function getAdvisoriesHtml(advisories: McpAdvisory[] | null, tierDenied: 
       .join('')
     return `
     <div class="section" aria-live="polite">
-        <style>
-            .advisory-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
-            .advisory-id { color: var(--vscode-descriptionForeground); font-size: 12px; }
-            .advisory-fix { color: var(--vscode-charts-green, #28a745); font-size: 12px; }
-            .badge-sev-critical { background-color: #d32f2f; color: white; }
-            .badge-sev-high { background-color: #e65100; color: white; }
-            .badge-sev-medium { background-color: #b8960a; color: white; }
-            .badge-sev-low { background-color: #6c757d; color: white; }
-        </style>
         <h2>Security Advisories</h2>${rows}
     </div>
     `
   }
   if (tierDenied) {
     return `
-    <div class="section">
+    <div class="section" aria-live="polite">
         <p class="advisory-upsell">${escapeHtml('Security advisories are available on the Team plan.')}</p>
     </div>
     `

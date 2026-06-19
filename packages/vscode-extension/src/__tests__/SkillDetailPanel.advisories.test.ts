@@ -186,7 +186,9 @@ describe('SkillDetailPanel lazy advisories (SMI-5317)', () => {
       new McpToolError('skill_audit', 'TierDenied', 'Team plan required')
     )
     const mock = await showPanel()
-    await vi.waitFor(() => expect(mock.getHtmlHistory().at(-1) ?? '').toContain('advisory-upsell'))
+    await vi.waitFor(() =>
+      expect(mock.getHtmlHistory().at(-1) ?? '').toContain('available on the Team plan')
+    )
     expect(track).toHaveBeenCalledWith('vscode_advisories_tier_denied', { surface: 'detail-panel' })
     expect(skillAudit).toHaveBeenCalledTimes(1)
 
@@ -195,5 +197,50 @@ describe('SkillDetailPanel lazy advisories (SMI-5317)', () => {
     await showPanel()
     await tick()
     expect(skillAudit).not.toHaveBeenCalled()
+  })
+
+  it('still shows the upsell on a later panel without re-calling (M2)', async () => {
+    SkillDetailPanel.setSkillService(createMockSkillService())
+    skillAudit.mockRejectedValue(
+      new McpToolError('skill_audit', 'TierDenied', 'Team plan required')
+    )
+    const first = await showPanel()
+    await vi.waitFor(() =>
+      expect(first.getHtmlHistory().at(-1) ?? '').toContain('available on the Team plan')
+    )
+
+    SkillDetailPanel.currentPanel?.dispose()
+    skillAudit.mockClear()
+    const second = await showPanel()
+    await tick()
+    // The session flag skips the gated call, but the upsell still renders.
+    expect(skillAudit).not.toHaveBeenCalled()
+    expect(second.getHtmlHistory().at(-1) ?? '').toContain('available on the Team plan')
+  })
+
+  it('drops an advisory with a malformed skillName without throwing (H1)', async () => {
+    SkillDetailPanel.setSkillService(createMockSkillService())
+    skillAudit.mockResolvedValue({
+      advisoriesAvailable: true,
+      // first row has a non-string skillName (untrusted JSON-RPC data) and must
+      // be filtered out without throwing; the valid row still renders.
+      advisories: [{ ...ADV, skillName: undefined }, ADV],
+    })
+    const mock = await showPanel()
+    await vi.waitFor(() =>
+      expect(mock.getHtmlHistory().at(-1) ?? '').toContain('Security Advisories')
+    )
+    expect(mock.getHtmlHistory().at(-1) ?? '').toContain('A published advisory')
+  })
+
+  it('silently ignores a non-TierDenied skillAudit error (L3)', async () => {
+    SkillDetailPanel.setSkillService(createMockSkillService())
+    skillAudit.mockRejectedValue(new McpToolError('skill_audit', 'Unknown', 'boom'))
+    const mock = await showPanel()
+    await tick()
+    const html = mock.getHtmlHistory().at(-1) ?? ''
+    expect(html).not.toContain('available on the Team plan')
+    expect(html).not.toContain('Security Advisories')
+    expect(track).not.toHaveBeenCalledWith('vscode_advisories_tier_denied', expect.anything())
   })
 })
