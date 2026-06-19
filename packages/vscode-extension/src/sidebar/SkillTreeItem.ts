@@ -31,6 +31,21 @@ export interface SkillItemData {
   score?: number
   path?: string
   isInstalled: boolean
+  /**
+   * Render-only marker: this Available-group (registry) hit is ALSO installed
+   * locally. Drives the `✓ Installed` description suffix ONLY — it must NEVER be
+   * mirrored into `isInstalled`/`contextValue`, or `getParent` would route a
+   * search hit to the Installed group and break the #1431/SMI-5298 reveal
+   * contract (`group:available` stable id). Set at render time in
+   * `getGroupChildren` via the normalized id cross-reference. (#1436 / SMI-5307)
+   */
+  installedElsewhere?: boolean
+  /**
+   * Whether a `SKILL.md` file was found on disk for an installed skill. Gates
+   * the detail panel's "Open SKILL.md" action (#1437 / SMI-5308). Set in
+   * `doLoadInstalledSkills`; undefined for registry results.
+   */
+  hasSkillMd?: boolean
 }
 
 /**
@@ -111,7 +126,11 @@ export class SkillTreeItem extends vscode.TreeItem {
   }
 
   /**
-   * Formats the description line for a skill item
+   * Formats the description line for a skill item.
+   *
+   * Format (U+00B7 middle dot separator): `by {author} · {category} · {score}/100 · ✓ Installed`
+   * Each segment is conditional; all-missing → `''`. Trust-tier label is
+   * intentionally excluded — it is redundant with the row icon and the tooltip.
    */
   private formatDescription(data: SkillItemData): string {
     const parts: string[] = []
@@ -120,12 +139,19 @@ export class SkillTreeItem extends vscode.TreeItem {
       parts.push(`by ${data.author}`)
     }
 
-    const label = getTrustTierLabel(data.trustTier)
-    if (label) {
-      parts.push(label)
+    if (data.category) {
+      parts.push(data.category)
     }
 
-    return parts.join(' | ')
+    if (data.score !== undefined) {
+      parts.push(`${data.score}/100`)
+    }
+
+    if (data.installedElsewhere) {
+      parts.push('✓ Installed')
+    }
+
+    return parts.join(' · ')
   }
 
   /**

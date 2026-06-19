@@ -12,6 +12,7 @@ import { SkillTreeItem, type SkillItemData } from './SkillTreeItem.js'
 import { type ExtensionTrustTier, normalizeTrustTier, getTrustTierLabel } from './trustTier.js'
 import { type SkillData } from '../types/skill.js'
 import { type SearchFilters } from '../commands/searchFilters.js'
+import { buildInstalledKeySet, skillComparisonKey } from '../utils/skillId.js'
 
 /** Maximum length for skill descriptions */
 const MAX_DESCRIPTION_LENGTH = 100
@@ -81,6 +82,12 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   setSearchResults(results: SkillData[], rawQuery: string, meta: { demo?: boolean } = {}): void {
     this.rawQuery = rawQuery
     this.demo = meta.demo ?? false
+    // `isInstalled` is intentionally false for all search results stored here.
+    // Whether a registry hit is ALSO installed locally is determined at render
+    // time in `getGroupChildren` via the normalized id cross-reference (H4).
+    // `installedElsewhere` (set there) is the authoritative "also installed"
+    // signal for the Available surface — it must never be baked into the stored
+    // item because the installed set can change between renders.
     this.availableSkills = results.map((skill) => {
       const tier = normalizeTrustTier(skill.trustTier)
       const item: SkillItemData = {
@@ -313,14 +320,29 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Gets children for a specific group
+   * Gets children for a specific group.
+   *
+   * For the `available` branch the installed-key set is computed once per
+   * render call and used to mark each registry hit with `installedElsewhere`
+   * when its normalized slug matches a locally-installed skill. This is a
+   * render-time annotation — the stored `availableSkills` items are never
+   * mutated and `isInstalled` is left false so `getParent` continues routing
+   * Available items to the Available group (#1431 / SMI-5298, H4 / C2).
    */
   private getGroupChildren(groupId?: string): SkillTreeItem[] {
     switch (groupId) {
       case 'installed':
         return this.installedSkills.map((skill) => SkillTreeItem.createSkill(skill))
-      case 'available':
-        return this.availableSkills.map((skill) => SkillTreeItem.createSkill(skill))
+      case 'available': {
+        const installedKeys = buildInstalledKeySet(this.installedSkills.map((s) => s.id))
+        return this.availableSkills.map((skill) => {
+          const installedElsewhere = installedKeys.has(skillComparisonKey(skill.id))
+          if (installedElsewhere) {
+            return SkillTreeItem.createSkill({ ...skill, installedElsewhere: true })
+          }
+          return SkillTreeItem.createSkill(skill)
+        })
+      }
       default:
         return []
     }
@@ -374,14 +396,16 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
 
           let description: string | undefined
           let trustTier: ExtensionTrustTier | undefined = undefined
+          let hasSkillMd = false
 
           // Try to read description and trust tier from SKILL.md
           try {
             const content = await fs.readFile(skillMdPath, 'utf-8')
+            hasSkillMd = true
             description = this.extractDescription(content)
             trustTier = this.extractTrustTier(content)
           } catch {
-            // Ignore read errors - file may not exist
+            // Ignore read errors - file may not exist or be unreadable
           }
 
           const item: SkillItemData = {
@@ -393,6 +417,9 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
           }
           if (trustTier !== undefined) {
             item.trustTier = trustTier
+          }
+          if (hasSkillMd) {
+            item.hasSkillMd = true
           }
           return item
         })
