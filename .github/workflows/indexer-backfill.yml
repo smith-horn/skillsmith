@@ -192,7 +192,7 @@ jobs:
           BACKFILL_MAX_SKILLS_PER_REPO: ${{ github.event.inputs.max_skills_per_repo || '50' }}
           BACKFILL_PATH_PREFIX: ${{ github.event.inputs.path_prefix || '' }}
           # SMI-5286 1c: run ONLY Phase 3 (the size-faceted subdirectory crawl) +
-          # finalize each dispatch — topic/high-trust are the cron's job, so this
+          # finalize each dispatch -- topic/high-trust are the cron's job, so this
           # keeps every backfill dispatch focused and resumable on the facet cursor.
           DISCOVERY_PHASE: '3'
           # SMI-5286 1c: per-dispatch (sub)range budget -- the facet driver writes a

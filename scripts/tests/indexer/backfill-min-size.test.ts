@@ -165,7 +165,8 @@ describe('SMI-5319 W4: runSubdirectorySearch -- minSizeBytes fresh-start facet s
     const backfill = result.backfill!
     // Done: the crawl ran facets 4-8 and exhausted the full ladder.
     expect(backfill.done).toBe(true)
-    // facetIndex advanced past LADDER_SIZE (all 9 entries of the static array).
+    // Only facets 4-8 were crawled (min_size skipped 0-3); facets_completed is a
+    // ladder-position counter that reads LADDER_SIZE once the ladder is exhausted.
     expect(backfill.facets_completed).toBe(LADDER_SIZE)
     expect(backfill.cursor.facet_index).toBe(LADDER_SIZE)
 
