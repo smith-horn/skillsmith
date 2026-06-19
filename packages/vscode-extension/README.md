@@ -15,6 +15,9 @@ Discover, search, and install agent skills directly in VS Code. Works with any M
 | Sidebar Skill Tree | Browse skills grouped into Installed and Available sections, with a trust-tier badge shown per skill |
 | Skill Search | Search the registry by keyword — trust-tier badges are shown on each result |
 | Detail Panel | Rich skill detail view with rendered SKILL.md content, score breakdown, and metadata |
+| Recommend Skills | Contextual skill recommendations based on your installed skills, surfaced in a quick pick |
+| Compare Skills | Side-by-side comparison of two skills in a panel with quality, trust tier, key differences, and a recommendation |
+| Check for Updates | Compares an installed skill against the latest registry version and advises whether to update (Individual plan or higher) |
 | MCP Integration | Live data from the Skillsmith API via Model Context Protocol |
 | Offline Fallback | Works offline with cached local skill data |
 

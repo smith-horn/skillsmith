@@ -13,9 +13,12 @@ import {
   type McpGetSkillResponse,
   type McpInstallResponse,
   type McpUninstallResponse,
+  type McpRecommendResponse,
+  type McpCompareResponse,
+  type McpSkillDiffResponse,
   DEFAULT_MCP_CONFIG,
 } from './types.js'
-import { McpToolError, type McpToolErrorCode } from './McpToolError.js'
+import { callMcpTool } from './callTool.js'
 
 // Re-export McpClientConfig from types for external use
 export type { McpClientConfig } from './types.js'
@@ -45,21 +48,6 @@ interface JsonRpcResponse {
     message: string
     data?: unknown
   }
-}
-
-/**
- * SMI-5288: Classify the text of an `isError` MCP tool response into an
- * `McpToolErrorCode`. Tier/plan denials and unknown-tool errors get specific
- * codes so command handlers can branch without string-matching messages.
- */
-function classifyIsErrorText(errorText: string): McpToolErrorCode {
-  if (/tier|plan|denied|forbidden|upgrade/i.test(errorText)) {
-    return 'TierDenied'
-  }
-  if (/unknown tool|not found|no such tool/i.test(errorText)) {
-    return 'UnknownTool'
-  }
-  return 'Unknown'
 }
 
 /**
@@ -334,55 +322,16 @@ export class McpClient {
   }
 
   /**
-   * Call an MCP tool with defensive response parsing
+   * Call an MCP tool. Delegates parsing + error classification to `callMcpTool`
+   * (SMI-5309). Reads `this.status` / `this.sendRequest` at call time so the
+   * test seam (set private `status='connected'`, stub private `sendRequest`) is
+   * preserved unchanged.
    */
   private async callTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
-    if (this.status !== 'connected') {
-      throw new McpToolError(name, 'NotConnected', 'MCP client not connected')
-    }
-
-    const raw = await this.sendRequest('tools/call', {
-      name,
-      arguments: args,
+    return callMcpTool<T>(name, args, {
+      connected: this.status === 'connected',
+      send: (method, params) => this.sendRequest(method, params),
     })
-
-    const result = raw as Record<string, unknown> | null | undefined
-    if (!result || typeof result !== 'object') {
-      throw new McpToolError(
-        name,
-        'InvalidResponse',
-        `Invalid MCP response: expected object, got ${typeof raw}`
-      )
-    }
-
-    const content = result['content']
-    if (!Array.isArray(content) || content.length === 0) {
-      throw new McpToolError(
-        name,
-        'InvalidResponse',
-        'Invalid MCP response: missing or empty content array'
-      )
-    }
-
-    if (result['isError']) {
-      const errorText = (content[0] as { text?: string })?.text || 'Unknown error'
-      throw new McpToolError(name, classifyIsErrorText(errorText), errorText)
-    }
-
-    const text = (content[0] as { text?: string })?.text
-    if (!text) {
-      throw new McpToolError(name, 'InvalidResponse', 'Empty response from MCP server')
-    }
-
-    try {
-      return JSON.parse(text) as T
-    } catch (parseError) {
-      throw new McpToolError(
-        name,
-        'InvalidResponse',
-        `Failed to parse MCP response as JSON: ${parseError instanceof Error ? parseError.message : 'unknown error'}`
-      )
-    }
   }
 
   /**
@@ -430,6 +379,47 @@ export class McpClient {
    */
   async uninstallSkill(skillId: string): Promise<McpUninstallResponse> {
     return this.callTool<McpUninstallResponse>('uninstall_skill', { skillId })
+  }
+
+  /**
+   * Contextual skill recommendations (SMI-5314 / #1455). Ungated; the server
+   * auto-detects installed skills from `~/.claude/skills/` when
+   * `installed_skills` is omitted. Keys are snake_case per the tool schema.
+   */
+  async skillRecommend(args: {
+    installed_skills?: string[]
+    project_context?: string
+    limit?: number
+    role?: string
+    installable_only?: boolean
+  }): Promise<McpRecommendResponse> {
+    return this.callTool<McpRecommendResponse>('skill_recommend', args)
+  }
+
+  /**
+   * Side-by-side comparison of exactly two skills (SMI-5315 / #1456). Ungated.
+   * Each id is `author/name` or a UUID.
+   */
+  async skillCompare(args: { skill_a: string; skill_b: string }): Promise<McpCompareResponse> {
+    return this.callTool<McpCompareResponse>('skill_compare', args)
+  }
+
+  /**
+   * Structured semantic diff between two SKILL.md contents (SMI-5316 / #1457).
+   * Tier-gated to Individual+ (`version_tracking`); a denial surfaces as an
+   * `McpToolError` with code `TierDenied`. `oldContent`/`newContent` must be
+   * non-empty (server enforces `min(1)`).
+   */
+  async skillDiff(args: {
+    skillId: string
+    oldContent: string
+    newContent: string
+    oldRiskScore?: number
+    newRiskScore?: number
+    hasLocalModifications?: boolean
+    trustTier?: 'verified' | 'community' | 'experimental'
+  }): Promise<McpSkillDiffResponse> {
+    return this.callTool<McpSkillDiffResponse>('skill_diff', args)
   }
 
   /**

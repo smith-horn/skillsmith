@@ -174,6 +174,28 @@ export function getCreateSkillCsp(nonce: string): string {
 }
 
 /**
+ * Gets CSP configuration for the Compare Skills webview (SMI-5315 / GH #1456).
+ * `allowInlineStyles: true` matches the detail panel (VS Code CSS variables).
+ */
+export function getCompareCsp(nonce: string): string {
+  return buildWebviewCsp(nonce, {
+    allowInlineStyles: true,
+    allowVscodeResources: true,
+  })
+}
+
+/**
+ * Gets CSP configuration for the Skill Diff / update-advisor webview
+ * (SMI-5316 / GH #1457). `allowInlineStyles: true` matches the detail panel.
+ */
+export function getSkillDiffCsp(nonce: string): string {
+  return buildWebviewCsp(nonce, {
+    allowInlineStyles: true,
+    allowVscodeResources: true,
+  })
+}
+
+/**
  * Validates a CSP header for common security issues
  * @param csp - The CSP header to validate
  * @returns Validation result with any warnings

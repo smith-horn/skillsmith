@@ -94,6 +94,24 @@
         "title": "Uninstall Skill",
         "category": "Skillsmith",
         "icon": "$(trash)"
+      },
+      {
+        "command": "skillsmith.recommendSkills",
+        "title": "Recommend Skills",
+        "category": "Skillsmith",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "skillsmith.compareSkills",
+        "title": "Compare Skills",
+        "category": "Skillsmith",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "skillsmith.diffSkill",
+        "title": "Check Skill for Updates (Individual+)",
+        "category": "Skillsmith",
+        "icon": "$(versions)"
       }
     ],
     "keybindings": [
