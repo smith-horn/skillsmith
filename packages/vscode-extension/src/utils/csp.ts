@@ -196,6 +196,17 @@ export function getSkillDiffCsp(nonce: string): string {
 }
 
 /**
+ * Gets CSP configuration for the Inventory Audit webview (SMI-5318 / GH #1459).
+ * `allowInlineStyles: true` matches the detail panel (VS Code CSS variables).
+ */
+export function getInventoryAuditCsp(nonce: string): string {
+  return buildWebviewCsp(nonce, {
+    allowInlineStyles: true,
+    allowVscodeResources: true,
+  })
+}
+
+/**
  * Validates a CSP header for common security issues
  * @param csp - The CSP header to validate
  * @returns Validation result with any warnings
