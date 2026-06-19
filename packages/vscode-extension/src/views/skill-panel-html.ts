@@ -4,6 +4,7 @@
 
 import { escapeHtml } from '../utils/security.js'
 import { getSkillDetailCsp } from '../utils/csp.js'
+import type { McpAdvisory } from '../mcp/types.js'
 import type { ExtendedSkillData, ScoreBreakdown, SkillActionContext } from './skill-panel-types.js'
 import { getContentHtml, renderMarkdown } from './skill-panel-content.js'
 import { inferRepositoryUrl } from './skill-panel-helpers.js'
@@ -87,6 +88,12 @@ function getSecurityScanHtml(skill: ExtendedSkillData): string {
     statusClass = 'scan-pass'
   } else if (passed === false) {
     statusText = risk != null ? `FAIL (risk: ${risk}/100)` : 'FAIL'
+    // SMI-5317: append the finding count only on FAIL with >0 findings (count
+    // only — the findings list is not on get_skill, see SMI-5324).
+    const n = skill.securityFindingsCount
+    if (typeof n === 'number' && n > 0) {
+      statusText += ` · ${n} finding${n === 1 ? '' : 's'}`
+    }
     statusClass = 'scan-fail'
   } else {
     // passed === null || undefined: no scan result available.
@@ -105,6 +112,52 @@ function getSecurityScanHtml(skill: ExtendedSkillData): string {
                 <div class="meta-label">Security Scan</div>
                 <div class="meta-value"><span class="${statusClass}"${titleAttr}>${statusText}</span>${dateStr}</div>
             </div>`
+}
+
+/** Severity values that map to a known `.badge-sev-*` class (L1 whitelist). */
+const ADVISORY_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const
+
+/**
+ * SMI-5317: Generate the lazily-loaded "Security Advisories" section from
+ * Team-gated `skill_audit` advisories. Returns `''` when there is nothing to
+ * show so the caller can place it unconditionally (M4).
+ *
+ * Security (L1): every untrusted field is escaped via `escapeHtml`, and the
+ * severity is mapped to a CSS class through a whitelist — never interpolated
+ * raw. The section is `aria-live="polite"` (L2) since it arrives after the
+ * base panel render, and severity is rendered as visible text (not color-only).
+ */
+export function getAdvisoriesHtml(advisories: McpAdvisory[] | null, tierDenied: boolean): string {
+  if (advisories && advisories.length > 0) {
+    const rows = advisories
+      .map((a) => {
+        const sev = ADVISORY_SEVERITIES.includes(a.severity) ? a.severity : 'low'
+        const sevLabel = escapeHtml(sev.toUpperCase())
+        const title = escapeHtml(a.title)
+        const id = escapeHtml(a.id)
+        const fixMarker = a.fixAvailable ? ' <span class="advisory-fix">fix available</span>' : ''
+        return `
+            <div class="advisory-row">
+                <span class="badge badge-sev-${sev}">${sevLabel}</span>
+                <span class="advisory-title">${title}</span>
+                <span class="advisory-id">${id}</span>${fixMarker}
+            </div>`
+      })
+      .join('')
+    return `
+    <div class="section" aria-live="polite">
+        <h2>Security Advisories</h2>${rows}
+    </div>
+    `
+  }
+  if (tierDenied) {
+    return `
+    <div class="section" aria-live="polite">
+        <p class="advisory-upsell">${escapeHtml('Security advisories are available on the Team plan.')}</p>
+    </div>
+    `
+  }
+  return ''
 }
 
 /**
@@ -153,7 +206,11 @@ export function getSkillDetailHtml(
   nonce: string,
   csp: string,
   showFullContent = false,
-  actionCtx: SkillActionContext = { installed: false }
+  actionCtx: SkillActionContext = { installed: false },
+  advisoryCtx: { advisories: McpAdvisory[] | null; tierDenied: boolean } = {
+    advisories: null,
+    tierDenied: false,
+  }
 ): string {
   // Escape all user-controlled content to prevent XSS
   const safeName = escapeHtml(skill.name)
@@ -232,6 +289,8 @@ export function getSkillDetailHtml(
             ${getSecurityScanHtml(skill)}
         </div>
     </div>
+
+    ${getAdvisoriesHtml(advisoryCtx.advisories, advisoryCtx.tierDenied)}
 
     ${scoreBreakdown ? getScoreBreakdownHtml(scoreBreakdown) : ''}
 

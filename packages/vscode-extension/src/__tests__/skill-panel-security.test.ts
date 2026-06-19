@@ -110,3 +110,55 @@ describe('security scan rendering (SMI-3857/3858)', () => {
     expect(html).not.toContain('<span class="scan-date">')
   })
 })
+
+describe('findingsCount rendering (SMI-5317 / H1)', () => {
+  it('appends a pluralized count on FAIL with findingsCount > 1', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: false, securityFindingsCount: 3 }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('3 findings')
+  })
+
+  it('uses the singular "finding" on FAIL with findingsCount === 1', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: false, securityFindingsCount: 1 }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('1 finding')
+    expect(html).not.toContain('1 findings')
+  })
+
+  it('shows no count on FAIL when findingsCount is 0', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: false, securityFindingsCount: 0 }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('scan-fail')
+    expect(html).not.toContain('finding')
+  })
+
+  it('shows no count on PASS even when findingsCount is present', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: true, securityFindingsCount: 5 }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('scan-pass')
+    expect(html).not.toContain('5 finding')
+    expect(html).not.toContain('finding')
+  })
+
+  it('shows no count when Pending (securityPassed null)', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: null, securityFindingsCount: 4 }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('scan-none')
+    expect(html).not.toContain('finding')
+  })
+})

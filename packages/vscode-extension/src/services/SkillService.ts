@@ -226,6 +226,8 @@ export function mapSkillDetailsToExtendedSkillData(
     securityPassed: s.security?.passed ?? null,
     securityRiskScore: s.security?.riskScore ?? null,
     securityScannedAt: s.security?.scannedAt ?? null,
+    // SMI-5317: thread the finding count (dropped before); null when no security info.
+    securityFindingsCount: s.security?.findingsCount ?? null,
   }
   if (s.repository !== undefined) {
     result.repository = s.repository

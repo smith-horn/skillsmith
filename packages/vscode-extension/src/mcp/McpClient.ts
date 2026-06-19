@@ -16,6 +16,7 @@ import {
   type McpRecommendResponse,
   type McpCompareResponse,
   type McpSkillDiffResponse,
+  type McpSkillAuditResponse,
   DEFAULT_MCP_CONFIG,
 } from './types.js'
 import { callMcpTool } from './callTool.js'
@@ -420,6 +421,15 @@ export class McpClient {
     trustTier?: 'verified' | 'community' | 'experimental'
   }): Promise<McpSkillDiffResponse> {
     return this.callTool<McpSkillDiffResponse>('skill_diff', args)
+  }
+
+  /**
+   * Published security advisories for skills (SMI-5317 / #1458). Tier-gated to
+   * Team+ (`skill_security_audit`); a denial surfaces as `McpToolError` code
+   * `TierDenied`. Omit `skillIds` to audit all skills with active advisories.
+   */
+  async skillAudit(args: { skillIds?: string[] } = {}): Promise<McpSkillAuditResponse> {
+    return this.callTool<McpSkillAuditResponse>('skill_audit', args)
   }
 
   /**

@@ -222,6 +222,30 @@ export interface McpSkillDiffResponse {
 }
 
 /**
+ * A published security advisory for a skill (SMI-5317 / #1458). CVE-style — note
+ * there is no per-finding `message`/`line` (that shape lives on the install
+ * response's McpSecurityReport, not on skill_audit).
+ */
+export interface McpAdvisory {
+  skillName: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  title: string
+  id: string
+  fixAvailable: boolean
+}
+
+/**
+ * Response from the MCP skill_audit tool (SMI-5317 / #1458). Team+ gated.
+ * `summary`/`advisories` are present only when `advisoriesAvailable` is true.
+ */
+export interface McpSkillAuditResponse {
+  advisoriesAvailable: boolean
+  message?: string
+  summary?: { critical: number; high: number; medium: number; low: number; total: number }
+  advisories?: McpAdvisory[]
+}
+
+/**
  * MCP connection status
  */
 export type McpConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
