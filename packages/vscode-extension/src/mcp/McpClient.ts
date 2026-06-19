@@ -17,8 +17,10 @@ import {
   type McpCompareResponse,
   type McpSkillDiffResponse,
   type McpSkillAuditResponse,
+  type McpInventoryAuditResponse,
   DEFAULT_MCP_CONFIG,
 } from './types.js'
+import type { JsonRpcRequest, JsonRpcResponse } from './jsonrpc.types.js'
 import { callMcpTool } from './callTool.js'
 
 // Re-export McpClientConfig from types for external use
@@ -26,30 +28,6 @@ export type { McpClientConfig } from './types.js'
 
 /** JSON-RPC request ID counter */
 let requestId = 0
-
-/**
- * JSON-RPC request structure
- */
-interface JsonRpcRequest {
-  jsonrpc: '2.0'
-  id: number
-  method: string
-  params: Record<string, unknown> | undefined
-}
-
-/**
- * JSON-RPC response structure
- */
-interface JsonRpcResponse {
-  jsonrpc: '2.0'
-  id: number
-  result?: unknown
-  error?: {
-    code: number
-    message: string
-    data?: unknown
-  }
-}
 
 /**
  * MCP Client for communicating with the Skillsmith MCP server
@@ -430,6 +408,22 @@ export class McpClient {
    */
   async skillAudit(args: { skillIds?: string[] } = {}): Promise<McpSkillAuditResponse> {
     return this.callTool<McpSkillAuditResponse>('skill_audit', args)
+  }
+
+  /**
+   * Audit the local `~/.claude/` inventory for namespace collisions
+   * (SMI-5318 / #1459). UNGATED — never tier-denies. `deep` (default false)
+   * gates the slower semantic-overlap pass.
+   */
+  async skillInventoryAudit(
+    args: {
+      deep?: boolean
+      homeDir?: string
+      projectDir?: string
+      applyExclusions?: boolean
+    } = {}
+  ): Promise<McpInventoryAuditResponse> {
+    return this.callTool<McpInventoryAuditResponse>('skill_inventory_audit', args)
   }
 
   /**

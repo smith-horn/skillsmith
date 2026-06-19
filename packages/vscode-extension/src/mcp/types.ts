@@ -246,6 +246,100 @@ export interface McpSkillAuditResponse {
 }
 
 /**
+ * One entry in the local inventory scanned by skill_inventory_audit
+ * (SMI-5318 / #1459). `CollisionId`/`AuditId` are branded strings server-side;
+ * on the wire they are plain strings.
+ */
+export interface McpInventoryEntry {
+  kind: 'skill' | 'command' | 'agent' | 'claude_md_rule'
+  source_path: string
+  identifier: string
+  triggerSurface: string[]
+  mtime?: number
+  meta?: { author?: string; tags?: string[]; description?: string }
+}
+
+/** Exact identifier collision (severity always 'error'). */
+export interface McpExactCollision {
+  kind: 'exact'
+  collisionId: string
+  identifier: string
+  entries: McpInventoryEntry[]
+  severity: 'error'
+  reason: string
+}
+
+/** Semantic-overlap collision (severity always 'warning'; deep pass only). */
+export interface McpSemanticCollision {
+  kind: 'semantic'
+  collisionId: string
+  entryA: McpInventoryEntry
+  entryB: McpInventoryEntry
+  cosineScore: number
+  overlappingPhrases: Array<{ phrase1: string; phrase2: string; similarity: number }>
+  severity: 'warning'
+  reason: string
+}
+
+/** Generic-token flag (severity always 'warning'). */
+export interface McpGenericFlag {
+  kind: 'generic'
+  collisionId: string
+  identifier: string
+  entry: McpInventoryEntry
+  matchedTokens: string[]
+  severity: 'warning'
+  reason: string
+}
+
+/** A suggested rename to resolve a collision. */
+export interface McpRenameSuggestion {
+  collisionId: string
+  entry: McpInventoryEntry
+  currentName: string
+  suggested: string
+  applyAction: 'rename_command_file' | 'rename_agent_file' | 'rename_skill_dir_and_frontmatter'
+  reason: string
+}
+
+/** A suggested prose edit (rendered read-only in PR-D3; apply deferred to SMI-5325). */
+export interface McpRecommendedEdit {
+  collisionId: string
+  category: 'description_overlap' | 'claude_md_trigger_overlap'
+  pattern: 'add_domain_qualifier' | 'narrow_scope' | 'reword_trigger_verb'
+  filePath: string
+  lineRange: { start: number; end: number }
+  before: string
+  after: string
+  rationale: string
+  applyAction: 'recommended_edit'
+  applyMode: 'manual_review' | 'apply_with_confirmation'
+  otherEntry: { identifier: string; sourcePath: string }
+}
+
+/**
+ * Response from MCP skill_inventory_audit (SMI-5318 / #1459). UNGATED. The
+ * server also writes a formatted report to `reportPath`.
+ */
+export interface McpInventoryAuditResponse {
+  auditId: string
+  inventory: McpInventoryEntry[]
+  exactCollisions: McpExactCollision[]
+  genericFlags: McpGenericFlag[]
+  semanticCollisions: McpSemanticCollision[]
+  renameSuggestions: McpRenameSuggestion[]
+  recommendedEdits: McpRecommendedEdit[]
+  reportPath: string
+  summary: {
+    totalEntries: number
+    totalFlags: number
+    errorCount: number
+    warningCount: number
+    durationMs: number
+  }
+}
+
+/**
  * MCP connection status
  */
 export type McpConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'

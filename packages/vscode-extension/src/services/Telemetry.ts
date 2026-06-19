@@ -29,6 +29,10 @@ export type TelemetryEvent =
   // SMI-5317 (Epic D / PR-D2): detail-panel security advisories (skill_audit).
   | 'vscode_advisories_shown'
   | 'vscode_advisories_tier_denied'
+  // SMI-5318 (Epic D / PR-D3): inventory audit (skill_inventory_audit).
+  | 'vscode_inventory_audit_start'
+  | 'vscode_inventory_audit_complete'
+  | 'vscode_inventory_audit_empty'
 
 // No hardcoded endpoint — telemetry is disabled by default at runtime
 // unless `skillsmith.telemetryEndpoint` is set or the production endpoint
