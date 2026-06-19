@@ -237,8 +237,11 @@ export async function processSearchResults(
 
     // SMI-5319: without a resolvable default branch we CANNOT enumerate the repo
     // (`GET /git/trees/null` → 404 for every path) and MUST NOT emit a row with a
-    // null branch. Skip and retry on the next run. NOT added to seenUrls so the
-    // skill paths remain re-discoverable.
+    // null branch. Skip. Retry happens on the NEXT indexer run: `seenUrls` and
+    // `enumeratedRepos` are run-scoped (allocated fresh per `runSubdirectorySearch`),
+    // so a later run with a resolvable branch re-discovers and re-enumerates this
+    // repo. (Within THIS run it is not retried — the `enumeratedRepos` once-guard
+    // already holds `repoKey`, and this hit's `dedupKey` is already in `seenUrls`.)
     if (branch === null) {
       console.log(`[BroadDiscovery] No default branch, skipping (retry next run): ${repo.fullName}`)
       stats.noDefaultBranch++

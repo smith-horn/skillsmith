@@ -32,10 +32,13 @@
  * Gated by SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=true env var to prevent
  * accidental budget exhaustion when not needed.
  *
- * License gate: code search does not return license data. Each unique repo found
- * here requires a separate fetchRepoLicense() call before indexing. This means
- * N subdirectory repos = N additional /repos/{owner}/{repo} API calls (main API,
- * 5000 req/hr authenticated — budget is generous but must be monitored).
+ * Repo metadata (SMI-5319): code search returns neither license NOR
+ * default_branch. Each unique repo found here requires a separate
+ * fetchRepoLicense() call (GET /repos/{owner}/{repo}) that resolves BOTH the
+ * surfaced license AND the real default branch (the branch drives the Trees
+ * enumeration + the emitted skill URL; a repo with no resolvable branch is
+ * skipped). This means N subdirectory repos = N additional /repos API calls
+ * (main API, 5000 req/hr authenticated — budget is generous but must be monitored).
  */
 
 import { GITHUB_API_DELAY, delay, type RateLimitTelemetry } from './_shared/rate-limit.ts'
