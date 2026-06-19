@@ -6,18 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-19
+
 ### Added
 
-<!-- Wave 2a -->
 - **Filter Skills button** in the Skills view title bar opens a quick pick to filter discovery results by trust tier, category, and minimum score. A **Clear Skill Filters** action (shown in the title bar when filters are active) removes all active filters. Filters reset when the window reloads.
 - **Persistent status banner** in the Skills view shows what you are currently viewing — your search query and any active filters — so the context is always visible, not just a momentary toast.
 - Clearer empty and offline states: when no skills match your filters, the view says so and points you to clear them; when the Skillsmith server is unavailable the view says so directly; first-time users see a hint to start searching from the title bar or Command Palette.
-<!-- /Wave 2a -->
-
-<!-- Wave 2b -->
-- **Richer sidebar rows** — each available skill shows metadata inline: `by {author} · {category} · {score}/100 · ✓ Installed` (when also installed locally). Evaluate skills at a glance without opening every detail panel.
-- **Detail panel product page** — sticky header with Install/Uninstall action stays visible while scrolling; installed skills show **Open SKILL.md** and **Open folder** shortcuts for quick navigation.
-<!-- /Wave 2b -->
+- **Richer sidebar rows** — each available skill shows its author, category, and score inline, plus a "✓ Installed" indicator when the skill is already installed locally. Evaluate skills at a glance without opening every detail panel.
+- **Detail panel product page** — a sticky header keeps the Install/Uninstall action visible while you scroll; installed skills gain **Open SKILL.md** and **Open folder** shortcuts for quick navigation.
 
 ## [0.4.0] - 2026-06-18
 
