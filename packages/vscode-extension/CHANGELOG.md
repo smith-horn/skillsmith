@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Post-create authoring checklist**: after creating a skill, a notification guides your next steps with **Open folder** and **Authoring docs** quick actions.
 
+### Changed
+
+- Create Skill now opens a single-page form (author, name, description, type) with live name validation, replacing the step-by-step prompts.
+
 ## [0.5.0] - 2026-06-19
 
 ### Added

@@ -162,6 +162,18 @@ export function getSearchResultsCsp(nonce: string): string {
 }
 
 /**
+ * Gets CSP configuration for the Create Skill wizard webview (SMI-5313 / GH #1454).
+ * `allowInlineStyles: true` is required — the form's `<style>` block uses VS Code
+ * CSS variables (no nonce), same as the skill detail panel.
+ */
+export function getCreateSkillCsp(nonce: string): string {
+  return buildWebviewCsp(nonce, {
+    allowInlineStyles: true,
+    allowVscodeResources: true,
+  })
+}
+
+/**
  * Validates a CSP header for common security issues
  * @param csp - The CSP header to validate
  * @returns Validation result with any warnings
