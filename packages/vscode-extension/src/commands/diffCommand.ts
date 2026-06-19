@@ -115,8 +115,10 @@ async function diffCommandImpl(deps: {
     if (err instanceof McpToolError) {
       // Route a tier denial to the upgrade UX before any panel opens. The
       // defensive message check covers a denial that arrives without the
-      // TierDenied code (e.g. a differently-shaped middleware message).
-      if (err.code === 'TierDenied' || /requires .*tier|upgrade/i.test(err.message)) {
+      // TierDenied code (e.g. a differently-shaped middleware message). Kept
+      // narrow — grouped to "requires … (tier|plan)" so a bare "upgrade"
+      // substring in an unrelated error can't misroute (M1).
+      if (err.code === 'TierDenied' || /requires .*(tier|plan)/i.test(err.message)) {
         await handleTierDenied('skillsmith.diffSkill', err)
         return
       }

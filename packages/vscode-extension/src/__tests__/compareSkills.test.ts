@@ -72,9 +72,17 @@ vi.mock('../views/CompareSkillsPanel.js', () => ({
 
 // ── McpToolError: real class so instanceof works ──────────────────────────────
 import { McpToolError } from '../mcp/McpToolError.js'
+import type * as vscode from 'vscode'
+import type { SkillService } from '../services/SkillService.js'
 
 // ── SUT ───────────────────────────────────────────────────────────────────────
 import { compareCommandAction } from '../commands/compareCommand.js'
+
+/** Cast the partial mocks to the action's param types without `any`. */
+const asDeps = (): { skillService: SkillService; context: vscode.ExtensionContext } => ({
+  skillService: FAKE_SKILL_SERVICE as unknown as SkillService,
+  context: FAKE_CONTEXT as unknown as vscode.ExtensionContext,
+})
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 const SKILL_A = {
@@ -162,16 +170,14 @@ describe('compareCommand', () => {
       .mockReturnValueOnce(makeQuickPickStub(SKILL_A))
       .mockReturnValueOnce(makeQuickPickStub(SKILL_B))
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await compareCommandAction({
-      skillService: FAKE_SKILL_SERVICE as any,
-      context: FAKE_CONTEXT as any,
-    })
+    await compareCommandAction(asDeps())
 
     expect(mcpSkillCompare).toHaveBeenCalledWith({ skill_a: SKILL_A.id, skill_b: SKILL_B.id })
     expect(compareCreateOrShow).toHaveBeenCalledWith(
       FAKE_CONTEXT.extensionUri,
-      FAKE_COMPARE_RESPONSE
+      FAKE_COMPARE_RESPONSE,
+      SKILL_A.id,
+      SKILL_B.id
     )
   })
 
@@ -179,11 +185,7 @@ describe('compareCommand', () => {
     // First pick dismisses (null = hide without accept).
     createQuickPickFn.mockReturnValueOnce(makeQuickPickStub(null))
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await compareCommandAction({
-      skillService: FAKE_SKILL_SERVICE as any,
-      context: FAKE_CONTEXT as any,
-    })
+    await compareCommandAction(asDeps())
 
     expect(mcpSkillCompare).not.toHaveBeenCalled()
     expect(compareCreateOrShow).not.toHaveBeenCalled()
@@ -194,11 +196,7 @@ describe('compareCommand', () => {
       .mockReturnValueOnce(makeQuickPickStub(SKILL_A))
       .mockReturnValueOnce(makeQuickPickStub(null))
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await compareCommandAction({
-      skillService: FAKE_SKILL_SERVICE as any,
-      context: FAKE_CONTEXT as any,
-    })
+    await compareCommandAction(asDeps())
 
     expect(mcpSkillCompare).not.toHaveBeenCalled()
     expect(compareCreateOrShow).not.toHaveBeenCalled()
@@ -210,11 +208,7 @@ describe('compareCommand', () => {
       .mockReturnValueOnce(makeQuickPickStub(SKILL_A))
       .mockReturnValueOnce(makeQuickPickStub(SKILL_B))
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await compareCommandAction({
-      skillService: FAKE_SKILL_SERVICE as any,
-      context: FAKE_CONTEXT as any,
-    })
+    await compareCommandAction(asDeps())
 
     expect(mcpSkillCompare).not.toHaveBeenCalled()
     expect(showInformationMessage).toHaveBeenCalledWith(expect.stringContaining('not connected'))
@@ -228,11 +222,7 @@ describe('compareCommand', () => {
       .mockReturnValueOnce(makeQuickPickStub(SKILL_A))
       .mockReturnValueOnce(makeQuickPickStub(SKILL_B))
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await compareCommandAction({
-      skillService: FAKE_SKILL_SERVICE as any,
-      context: FAKE_CONTEXT as any,
-    })
+    await compareCommandAction(asDeps())
 
     expect(handleTierDenied).toHaveBeenCalledWith('skillsmith.compareSkills', tierErr)
     expect(compareCreateOrShow).not.toHaveBeenCalled()
@@ -246,11 +236,7 @@ describe('compareCommand', () => {
       .mockReturnValueOnce(makeQuickPickStub(SKILL_A))
       .mockReturnValueOnce(makeQuickPickStub(SKILL_B))
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await compareCommandAction({
-      skillService: FAKE_SKILL_SERVICE as any,
-      context: FAKE_CONTEXT as any,
-    })
+    await compareCommandAction(asDeps())
 
     expect(showErrorMessage).toHaveBeenCalledWith('something went wrong')
     expect(compareCreateOrShow).not.toHaveBeenCalled()

@@ -162,7 +162,7 @@ async function compareCommandImpl(deps: {
 
   try {
     const response = await client.skillCompare({ skill_a: first.id, skill_b: second.id })
-    CompareSkillsPanel.createOrShow(deps.context.extensionUri, response)
+    CompareSkillsPanel.createOrShow(deps.context.extensionUri, response, first.id, second.id)
     track('vscode_compare_complete')
   } catch (err) {
     if (err instanceof McpToolError) {

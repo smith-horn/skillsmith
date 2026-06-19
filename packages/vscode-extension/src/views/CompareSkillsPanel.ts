@@ -22,6 +22,9 @@ export class CompareSkillsPanel {
 
   private readonly _panel: vscode.WebviewPanel
   private _response: McpCompareResponse
+  /** Original picked ids — retry re-runs against these, not the response echo (L3). */
+  private _skillAId: string
+  private _skillBId: string
   private _disposables: vscode.Disposable[] = []
 
   /** Reset the singleton between tests. */
@@ -30,7 +33,12 @@ export class CompareSkillsPanel {
     CompareSkillsPanel.currentPanel = undefined
   }
 
-  public static createOrShow(_extensionUri: vscode.Uri, response: McpCompareResponse): void {
+  public static createOrShow(
+    _extensionUri: vscode.Uri,
+    response: McpCompareResponse,
+    skillAId: string,
+    skillBId: string
+  ): void {
     const column = vscode.window.activeTextEditor
       ? vscode.window.activeTextEditor.viewColumn
       : undefined
@@ -38,6 +46,8 @@ export class CompareSkillsPanel {
     if (CompareSkillsPanel.currentPanel) {
       CompareSkillsPanel.currentPanel._panel.reveal(column)
       CompareSkillsPanel.currentPanel._response = response
+      CompareSkillsPanel.currentPanel._skillAId = skillAId
+      CompareSkillsPanel.currentPanel._skillBId = skillBId
       CompareSkillsPanel.currentPanel._update()
       return
     }
@@ -49,12 +59,19 @@ export class CompareSkillsPanel {
       { enableScripts: true }
     )
 
-    CompareSkillsPanel.currentPanel = new CompareSkillsPanel(panel, response)
+    CompareSkillsPanel.currentPanel = new CompareSkillsPanel(panel, response, skillAId, skillBId)
   }
 
-  private constructor(panel: vscode.WebviewPanel, response: McpCompareResponse) {
+  private constructor(
+    panel: vscode.WebviewPanel,
+    response: McpCompareResponse,
+    skillAId: string,
+    skillBId: string
+  ) {
     this._panel = panel
     this._response = response
+    this._skillAId = skillAId
+    this._skillBId = skillBId
 
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables)
 
@@ -108,8 +125,8 @@ export class CompareSkillsPanel {
 
     try {
       const response = await client.skillCompare({
-        skill_a: this._response.comparison.a.id,
-        skill_b: this._response.comparison.b.id,
+        skill_a: this._skillAId,
+        skill_b: this._skillBId,
       })
       this._response = response
       this._update()

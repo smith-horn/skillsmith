@@ -8,7 +8,7 @@
  */
 
 import { escapeHtml } from '../utils/security.js'
-import { getSkillDiffCsp, getCompareCsp } from '../utils/csp.js'
+import { getCompareCsp } from '../utils/csp.js'
 import { getTrustBadgeColor, getTrustBadgeText } from './trust-badge.js'
 import type { McpCompareResponse, McpCompareSummary, McpSkillDifference } from '../mcp/types.js'
 
@@ -58,11 +58,23 @@ function getTagsRowHtml(a: McpCompareSummary, b: McpCompareSummary): string {
     </tr>`
 }
 
+/**
+ * Format an untrusted, `unknown`-typed difference value for display. Avoids the
+ * literal "null"/"undefined"/"[object Object]" that bare `String()` would emit
+ * (L1) — null/undefined render as an em dash, objects as compact JSON. The
+ * result is still escaped by the caller.
+ */
+function formatDiffValue(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
 /** Render one differences row, highlighting the winner cell. */
 function getDifferenceRowHtml(diff: McpSkillDifference): string {
   const safeField = escapeHtml(String(diff.field))
-  const safeA = escapeHtml(String(diff.a_value))
-  const safeB = escapeHtml(String(diff.b_value))
+  const safeA = escapeHtml(formatDiffValue(diff.a_value))
+  const safeB = escapeHtml(formatDiffValue(diff.b_value))
   const aWin = diff.winner === 'a' ? ' diff-winner' : ''
   const bWin = diff.winner === 'b' ? ' diff-winner' : ''
   return `
@@ -168,14 +180,10 @@ export function getCompareHtml(response: McpCompareResponse, nonce: string): str
 }
 
 /**
- * Build a local error page for the Compare panel (CSP from getSkillDiffCsp is
- * compatible; we reuse the compare CSP for consistency). Mirrors the detail
- * panel's getErrorHtml: aria-live region + a Retry button wired via nonce.
+ * Build a local error page for the Compare panel. Mirrors the detail panel's
+ * getErrorHtml: aria-live region + a Retry button wired via nonce.
  */
 export function getCompareErrorHtml(message: string, nonce: string, rawError?: string): string {
-  // getCompareCsp is the compare panel's CSP; getSkillDiffCsp is imported only
-  // to satisfy the shared-helper contract noted in the worker brief.
-  void getSkillDiffCsp
   const csp = getCompareCsp(nonce)
   const detailsBlock =
     rawError && rawError !== message
