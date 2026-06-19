@@ -14,41 +14,11 @@ import { getActionBlock } from './skill-panel-actions.js'
 // Re-export for testing
 export { getContentHtml } from './skill-panel-content.js'
 
-// vocabulary mirrors src/sidebar/trustTier.ts (ApiTrustTier 5-tier). Kept inline to keep this module vscode-free.
-function normalizeTierForBadge(tier: string): string {
-  const lower = tier.toLowerCase()
-  const canonical = ['official', 'verified', 'curated', 'community', 'unverified']
-  if (canonical.includes(lower)) return lower
-  // Legacy mapping: experimental → community; all other unrecognized → unverified
-  if (lower === 'experimental') return 'community'
-  return 'unverified'
-}
-
-/**
- * Get the CSS class for trust tier badge color
- */
-export function getTrustBadgeColor(tier: string): string {
-  return normalizeTierForBadge(tier)
-}
-
-/**
- * Get the display text for trust tier badge
- */
-export function getTrustBadgeText(tier: string): string {
-  const normalized = normalizeTierForBadge(tier)
-  switch (normalized) {
-    case 'official':
-      return 'Official'
-    case 'verified':
-      return 'Verified'
-    case 'curated':
-      return 'Curated'
-    case 'community':
-      return 'Community'
-    default:
-      return 'Unverified'
-  }
-}
+// SMI-5315: trust-badge helpers extracted to ./trust-badge.ts so the Compare /
+// Diff panels share the same `.badge badge-${color}` component. Re-exported here
+// for back-compat with existing importers + tests.
+import { getTrustBadgeColor, getTrustBadgeText } from './trust-badge.js'
+export { getTrustBadgeColor, getTrustBadgeText } from './trust-badge.js'
 
 /**
  * Generate loading HTML for the panel

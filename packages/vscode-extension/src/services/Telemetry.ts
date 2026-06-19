@@ -18,6 +18,14 @@ export type TelemetryEvent =
   // invoke discriminator, M5).
   | 'vscode_open_skill_file'
   | 'vscode_open_folder'
+  // SMI-5314/5315/5316 (Epic D / PR-D1): MCP-powered command surfaces.
+  | 'vscode_recommend_start'
+  | 'vscode_recommend_complete'
+  | 'vscode_recommend_empty'
+  | 'vscode_compare_start'
+  | 'vscode_compare_complete'
+  | 'vscode_diff_start'
+  | 'vscode_diff_complete'
 
 // No hardcoded endpoint — telemetry is disabled by default at runtime
 // unless `skillsmith.telemetryEndpoint` is set or the production endpoint
