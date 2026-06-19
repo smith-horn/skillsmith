@@ -1,48 +1,32 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventEmitter } from 'node:events'
-
 /**
- * Drain the microtask/macrotask queues so the fire-and-forget
- * `void showPostCreateChecklist(...)` (two sequential awaits) fully settles
- * before assertions. Two `setImmediate` ticks make the guarantee independent
- * of how the vscode mocks resolve (microtask vs macrotask).
+ * Tests for createSkillCommand.ts (rewired for SMI-5313 / GH #1454).
+ *
+ * The command now delegates to CreateSkillPanel instead of runWizard.
+ * Wizard-step tests are removed; panel interaction is tested in
+ * CreateSkillPanel.test.ts. Checklist tests moved to createSkill.checklist.test.ts.
  */
-const flushAsync = (): Promise<void> =>
-  new Promise((resolve) => setImmediate(() => setImmediate(() => resolve())))
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const showInputBox = vi.fn()
-const showQuickPick = vi.fn()
-const showInformationMessage = vi.fn()
+// ── vscode mock ───────────────────────────────────────────────────────────────
 const showErrorMessage = vi.fn()
-const showWarningMessage = vi.fn()
 const createOutputChannel = vi.fn(() => ({
   appendLine: vi.fn(),
   append: vi.fn(),
   show: vi.fn(),
   dispose: vi.fn(),
 }))
-const openTextDocument = vi.fn()
-const showTextDocument = vi.fn()
-const clipboardWrite = vi.fn()
-const openExternal = vi.fn()
 const registerCommand = vi.fn()
-const executeCommand = vi.fn()
+const FAKE_EXTENSION_URI = { fsPath: '/ext' }
 
 vi.mock('vscode', () => ({
   window: {
-    showInputBox,
-    showQuickPick,
-    showInformationMessage,
     showErrorMessage,
-    showWarningMessage,
     createOutputChannel,
-    showTextDocument,
   },
-  workspace: { openTextDocument },
-  commands: { registerCommand, executeCommand },
+  commands: { registerCommand },
   env: {
-    clipboard: { writeText: clipboardWrite },
-    openExternal,
+    clipboard: { writeText: vi.fn() },
+    openExternal: vi.fn(),
   },
   Uri: {
     file: (s: string) => ({ toString: () => s, fsPath: s }),
@@ -50,27 +34,17 @@ vi.mock('vscode', () => ({
   },
 }))
 
-interface FakeChild extends EventEmitter {
-  stdout: EventEmitter
-  stderr: EventEmitter
-}
-const spawnMock = vi.fn()
-vi.mock('cross-spawn', () => ({ default: spawnMock }))
+// ── Telemetry mock ────────────────────────────────────────────────────────────
+const trackMock = vi.fn()
+vi.mock('../services/Telemetry.js', () => ({
+  track: trackMock,
+}))
 
-function makeChild(behavior: 'found' | 'notfound', exitCode = 0): FakeChild {
-  const c = new EventEmitter() as FakeChild
-  c.stdout = new EventEmitter()
-  c.stderr = new EventEmitter()
-  queueMicrotask(() => {
-    if (behavior === 'notfound') {
-      c.emit('error', Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
-    } else {
-      c.emit('exit', exitCode)
-    }
-  })
-  return c
-}
+// ── telemetry-wrap: use real impl (withTelemetry calls track internally) ──────
+// Do NOT mock telemetry-wrap — we want createSkillAction to be the real
+// withTelemetry-wrapped version so the telemetry-coverage test stays green.
 
+// ── Sidebar mock ──────────────────────────────────────────────────────────────
 const refreshAndWait = vi.fn(async () => {})
 vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   SkillTreeDataProvider: class {
@@ -78,33 +52,60 @@ vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   },
 }))
 
-vi.mock('../services/Telemetry.js', () => ({
-  track: vi.fn(),
+// ── ensureCliAvailable mock ───────────────────────────────────────────────────
+const ensureCliAvailableMock = vi.fn()
+vi.mock('../utils/createSkill.helpers.js', () => ({
+  ensureCliAvailable: ensureCliAvailableMock,
+  runCli: vi.fn(),
+  exists: vi.fn(),
+  buildCreateArgs: vi.fn(),
+  targetDirFor: vi.fn(),
+  showPostCreateChecklist: vi.fn(),
 }))
 
-describe('createSkillCommand (SMI-4196)', () => {
+// ── CreateSkillPanel mock ─────────────────────────────────────────────────────
+const createOrShowMock = vi.fn()
+let currentPanelRef: undefined | { dispose: () => void } = undefined
+
+vi.mock('../views/CreateSkillPanel.js', () => ({
+  CreateSkillPanel: {
+    get currentPanel() {
+      return currentPanelRef
+    },
+    createOrShow: createOrShowMock,
+    resetForTests: vi.fn(() => {
+      currentPanelRef = undefined
+    }),
+  },
+}))
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+describe('createSkillCommand (SMI-5313 rewire)', () => {
   let handler: () => Promise<void>
 
   beforeEach(async () => {
-    showInputBox.mockReset()
-    showQuickPick.mockReset()
-    showInformationMessage.mockReset()
     showErrorMessage.mockReset()
-    showWarningMessage.mockReset()
-    openTextDocument.mockReset().mockRejectedValue(new Error('not found'))
-    showTextDocument.mockReset()
-    clipboardWrite.mockReset()
-    openExternal.mockReset()
+    createOutputChannel.mockReset().mockReturnValue({
+      appendLine: vi.fn(),
+      append: vi.fn(),
+      show: vi.fn(),
+      dispose: vi.fn(),
+    })
     registerCommand.mockReset()
     refreshAndWait.mockReset().mockResolvedValue(undefined)
-    executeCommand.mockReset()
-    spawnMock.mockReset()
+    trackMock.mockReset()
+    ensureCliAvailableMock.mockReset().mockResolvedValue(true)
+    createOrShowMock.mockReset()
+    currentPanelRef = undefined
 
     vi.resetModules()
     const { registerCreateSkillCommand } = await import('../commands/createSkillCommand.js')
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
     const provider = new SkillTreeDataProvider()
-    const context = { subscriptions: [] }
+    const context = {
+      subscriptions: [],
+      extensionUri: FAKE_EXTENSION_URI,
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     registerCreateSkillCommand(context as any, provider as any)
     const call = registerCommand.mock.calls[0]
@@ -112,207 +113,46 @@ describe('createSkillCommand (SMI-4196)', () => {
     handler = call[1] as () => Promise<void>
   })
 
-  it('surfaces install instructions when CLI is missing', async () => {
-    spawnMock.mockImplementationOnce(() => makeChild('notfound'))
-    showErrorMessage.mockResolvedValue('Copy install command')
+  it('opens the panel after ensureCliAvailable returns true', async () => {
+    ensureCliAvailableMock.mockResolvedValue(true)
 
     await handler()
 
-    expect(showErrorMessage).toHaveBeenCalledWith(
-      'Skillsmith CLI is not installed.',
-      expect.objectContaining({ modal: true }),
-      'Copy install command',
-      'Open docs'
-    )
-    expect(clipboardWrite).toHaveBeenCalledWith('npm install -g @skillsmith/cli')
-    expect(showInputBox).not.toHaveBeenCalled()
+    expect(ensureCliAvailableMock).toHaveBeenCalledTimes(1)
+    expect(createOrShowMock).toHaveBeenCalledTimes(1)
   })
 
-  it('cancels cleanly when wizard dismissed on first step', async () => {
-    spawnMock.mockImplementationOnce(() => makeChild('found'))
-    showInputBox.mockResolvedValueOnce(undefined)
+  it('tracks vscode_create_failed with cli_missing and does not open panel when CLI missing', async () => {
+    ensureCliAvailableMock.mockResolvedValue(false)
 
     await handler()
 
-    expect(showQuickPick).not.toHaveBeenCalled()
-    expect(spawnMock).toHaveBeenCalledTimes(1) // only --version check
+    expect(trackMock).toHaveBeenCalledWith('vscode_create_failed', { reason: 'cli_missing' })
+    expect(createOrShowMock).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid skill name via validator', async () => {
-    spawnMock.mockImplementationOnce(() => makeChild('found'))
-    showInputBox
-      .mockResolvedValueOnce('author')
-      .mockImplementationOnce(
-        async (opts: { validateInput?: (v: string) => string | undefined }) => {
-          expect(opts.validateInput?.('BadName')).toContain('lowercase')
-          return undefined // user cancels after seeing validation
-        }
-      )
+  it('reveals the panel without calling ensureCliAvailable when panel is already open (H5)', async () => {
+    currentPanelRef = { dispose: vi.fn() }
 
     await handler()
 
-    expect(showQuickPick).not.toHaveBeenCalled()
+    expect(ensureCliAvailableMock).not.toHaveBeenCalled()
+    expect(createOrShowMock).toHaveBeenCalledTimes(1)
   })
 
-  it('spawns CLI with correct flag shape on happy path', async () => {
-    spawnMock
-      .mockImplementationOnce(() => makeChild('found')) // --version
-      .mockImplementationOnce(() => makeChild('found', 0)) // create
-
-    openTextDocument.mockResolvedValueOnce({ uri: {} }) // SKILL.md opens successfully
-    showInputBox
-      .mockResolvedValueOnce('my-author')
-      .mockResolvedValueOnce('my-skill')
-      .mockResolvedValueOnce('An example skill')
-    showQuickPick.mockResolvedValueOnce({ label: 'basic', description: '...' })
+  it('tracks vscode_create_start before CLI check on first open', async () => {
+    ensureCliAvailableMock.mockResolvedValue(true)
 
     await handler()
 
-    expect(spawnMock).toHaveBeenNthCalledWith(
-      2,
-      'skillsmith',
-      ['create', 'my-skill', '-a', 'my-author', '-d', 'An example skill', '--type', 'basic', '-y'],
-      expect.any(Object)
-    )
-    expect(refreshAndWait).toHaveBeenCalled()
-    // Flush the fire-and-forget showPostCreateChecklist promise
-    await flushAsync()
-    expect(showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Created skill "my-skill"'),
-      'Open folder',
-      'Authoring docs'
-    )
-    expect(showWarningMessage).not.toHaveBeenCalled()
+    expect(trackMock).toHaveBeenCalledWith('vscode_create_start')
   })
 
-  it('shows warning toast when SKILL.md cannot be opened after successful create', async () => {
-    spawnMock
-      .mockImplementationOnce(() => makeChild('found')) // --version
-      .mockImplementationOnce(() => makeChild('found', 0)) // create
-
-    // openTextDocument already mocked to reject in beforeEach
-    showInputBox
-      .mockResolvedValueOnce('my-author')
-      .mockResolvedValueOnce('my-skill')
-      .mockResolvedValueOnce('An example skill')
-    showQuickPick.mockResolvedValueOnce({ label: 'basic', description: '...' })
+  it('does not track vscode_create_start when panel is already open (H5)', async () => {
+    currentPanelRef = { dispose: vi.fn() }
 
     await handler()
 
-    expect(refreshAndWait).toHaveBeenCalled()
-    // Flush the fire-and-forget showPostCreateChecklist promise
-    await flushAsync()
-    expect(showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Created skill "my-skill"'),
-      'Open folder',
-      'Authoring docs'
-    )
-    expect(showWarningMessage).toHaveBeenCalledWith(
-      expect.stringContaining("couldn't open SKILL.md")
-    )
-  })
-
-  it('cancels cleanly when wizard dismissed at QuickPick (step 4)', async () => {
-    spawnMock.mockImplementationOnce(() => makeChild('found'))
-    showInputBox
-      .mockResolvedValueOnce('my-author')
-      .mockResolvedValueOnce('my-skill')
-      .mockResolvedValueOnce('An example skill')
-    showQuickPick.mockResolvedValueOnce(undefined) // user pressed Esc
-
-    await handler()
-
-    expect(spawnMock).toHaveBeenCalledTimes(1) // only --version check, no CLI spawn
-    expect(showErrorMessage).not.toHaveBeenCalled()
-    expect(refreshAndWait).not.toHaveBeenCalled()
-  })
-
-  it('reports CLI failure exit code to the user', async () => {
-    spawnMock
-      .mockImplementationOnce(() => makeChild('found'))
-      .mockImplementationOnce(() => makeChild('found', 2))
-
-    showInputBox
-      .mockResolvedValueOnce('author')
-      .mockResolvedValueOnce('name')
-      .mockResolvedValueOnce('desc')
-    showQuickPick.mockResolvedValueOnce({ label: 'basic', description: '...' })
-
-    await handler()
-
-    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('exit 2'))
-    expect(refreshAndWait).not.toHaveBeenCalled()
-  })
-
-  describe('post-create authoring checklist (GH #1453 / SMI-5312)', () => {
-    function setupHappyPath() {
-      spawnMock
-        .mockImplementationOnce(() => makeChild('found'))
-        .mockImplementationOnce(() => makeChild('found', 0))
-      openTextDocument.mockResolvedValueOnce({ uri: {} })
-      showInputBox
-        .mockResolvedValueOnce('my-author')
-        .mockResolvedValueOnce('my-skill')
-        .mockResolvedValueOnce('An example skill')
-      showQuickPick.mockResolvedValueOnce({ label: 'basic', description: '...' })
-    }
-
-    it('shows checklist toast with correct message and both button labels after successful create', async () => {
-      setupHappyPath()
-      showInformationMessage.mockResolvedValue(undefined) // user dismisses
-
-      await handler()
-      await flushAsync()
-
-      expect(showInformationMessage).toHaveBeenCalledWith(
-        expect.stringContaining('Created skill "my-skill"'),
-        'Open folder',
-        'Authoring docs'
-      )
-    })
-
-    it('opens the skill folder in OS when user picks "Open folder"', async () => {
-      const { track } = await import('../services/Telemetry.js')
-      setupHappyPath()
-      showInformationMessage.mockResolvedValue('Open folder')
-
-      await handler()
-      await flushAsync()
-
-      expect(executeCommand).toHaveBeenCalledWith(
-        'revealFileInOS',
-        expect.objectContaining({ toString: expect.any(Function) })
-      )
-      expect(track).toHaveBeenCalledWith('vscode_create_checklist_action', {
-        action: 'open_folder',
-      })
-      expect(openExternal).not.toHaveBeenCalled()
-    })
-
-    it('opens the authoring docs URL when user picks "Authoring docs"', async () => {
-      const { track } = await import('../services/Telemetry.js')
-      setupHappyPath()
-      showInformationMessage.mockResolvedValue('Authoring docs')
-
-      await handler()
-      await flushAsync()
-
-      expect(openExternal).toHaveBeenCalledWith(
-        expect.objectContaining({ toString: expect.any(Function) })
-      )
-      expect(track).toHaveBeenCalledWith('vscode_create_checklist_action', { action: 'docs' })
-      expect(executeCommand).not.toHaveBeenCalled()
-    })
-
-    it('takes no action when user dismisses the checklist toast', async () => {
-      setupHappyPath()
-      showInformationMessage.mockResolvedValue(undefined)
-
-      await handler()
-      await flushAsync()
-
-      expect(executeCommand).not.toHaveBeenCalled()
-      expect(openExternal).not.toHaveBeenCalled()
-    })
+    expect(trackMock).not.toHaveBeenCalledWith('vscode_create_start')
   })
 })
