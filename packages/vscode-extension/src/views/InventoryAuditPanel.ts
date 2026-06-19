@@ -103,6 +103,7 @@ export class InventoryAuditPanel {
    * tier-denied handling).
    */
   private async _retry(): Promise<void> {
+    if (this._disposed) return
     const nonce = generateCspNonce()
     this._panel.webview.html = getLoadingHtml(nonce, getInventoryAuditCsp(nonce))
 
@@ -152,9 +153,10 @@ export class InventoryAuditPanel {
 
   /** Copy a suggested rename to the clipboard. */
   private async _copyRename(text: string): Promise<void> {
+    if (this._disposed) return
     if (typeof text !== 'string') return
     await vscode.env.clipboard.writeText(text)
-    void vscode.window.showInformationMessage('Copied: ' + text)
+    void vscode.window.showInformationMessage(`Copied: ${text}`)
   }
 
   private _update(): void {
