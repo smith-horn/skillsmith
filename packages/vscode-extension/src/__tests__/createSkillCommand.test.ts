@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 
+/**
+ * Drain the microtask/macrotask queues so the fire-and-forget
+ * `void showPostCreateChecklist(...)` (two sequential awaits) fully settles
+ * before assertions. Two `setImmediate` ticks make the guarantee independent
+ * of how the vscode mocks resolve (microtask vs macrotask).
+ */
+const flushAsync = (): Promise<void> =>
+  new Promise((resolve) => setImmediate(() => setImmediate(() => resolve())))
+
 const showInputBox = vi.fn()
 const showQuickPick = vi.fn()
 const showInformationMessage = vi.fn()
@@ -17,6 +26,7 @@ const showTextDocument = vi.fn()
 const clipboardWrite = vi.fn()
 const openExternal = vi.fn()
 const registerCommand = vi.fn()
+const executeCommand = vi.fn()
 
 vi.mock('vscode', () => ({
   window: {
@@ -29,13 +39,13 @@ vi.mock('vscode', () => ({
     showTextDocument,
   },
   workspace: { openTextDocument },
-  commands: { registerCommand },
+  commands: { registerCommand, executeCommand },
   env: {
     clipboard: { writeText: clipboardWrite },
     openExternal,
   },
   Uri: {
-    file: (s: string) => ({ toString: () => s }),
+    file: (s: string) => ({ toString: () => s, fsPath: s }),
     parse: (s: string) => ({ toString: () => s }),
   },
 }))
@@ -87,6 +97,7 @@ describe('createSkillCommand (SMI-4196)', () => {
     openExternal.mockReset()
     registerCommand.mockReset()
     refreshAndWait.mockReset().mockResolvedValue(undefined)
+    executeCommand.mockReset()
     spawnMock.mockReset()
 
     vi.resetModules()
@@ -164,7 +175,13 @@ describe('createSkillCommand (SMI-4196)', () => {
       expect.any(Object)
     )
     expect(refreshAndWait).toHaveBeenCalled()
-    expect(showInformationMessage).toHaveBeenCalledWith('Created skill "my-skill".')
+    // Flush the fire-and-forget showPostCreateChecklist promise
+    await flushAsync()
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Created skill "my-skill"'),
+      'Open folder',
+      'Authoring docs'
+    )
     expect(showWarningMessage).not.toHaveBeenCalled()
   })
 
@@ -183,7 +200,13 @@ describe('createSkillCommand (SMI-4196)', () => {
     await handler()
 
     expect(refreshAndWait).toHaveBeenCalled()
-    expect(showInformationMessage).toHaveBeenCalledWith('Created skill "my-skill".')
+    // Flush the fire-and-forget showPostCreateChecklist promise
+    await flushAsync()
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Created skill "my-skill"'),
+      'Open folder',
+      'Authoring docs'
+    )
     expect(showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining("couldn't open SKILL.md")
     )
@@ -219,5 +242,77 @@ describe('createSkillCommand (SMI-4196)', () => {
 
     expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('exit 2'))
     expect(refreshAndWait).not.toHaveBeenCalled()
+  })
+
+  describe('post-create authoring checklist (GH #1453 / SMI-5312)', () => {
+    function setupHappyPath() {
+      spawnMock
+        .mockImplementationOnce(() => makeChild('found'))
+        .mockImplementationOnce(() => makeChild('found', 0))
+      openTextDocument.mockResolvedValueOnce({ uri: {} })
+      showInputBox
+        .mockResolvedValueOnce('my-author')
+        .mockResolvedValueOnce('my-skill')
+        .mockResolvedValueOnce('An example skill')
+      showQuickPick.mockResolvedValueOnce({ label: 'basic', description: '...' })
+    }
+
+    it('shows checklist toast with correct message and both button labels after successful create', async () => {
+      setupHappyPath()
+      showInformationMessage.mockResolvedValue(undefined) // user dismisses
+
+      await handler()
+      await flushAsync()
+
+      expect(showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Created skill "my-skill"'),
+        'Open folder',
+        'Authoring docs'
+      )
+    })
+
+    it('opens the skill folder in OS when user picks "Open folder"', async () => {
+      const { track } = await import('../services/Telemetry.js')
+      setupHappyPath()
+      showInformationMessage.mockResolvedValue('Open folder')
+
+      await handler()
+      await flushAsync()
+
+      expect(executeCommand).toHaveBeenCalledWith(
+        'revealFileInOS',
+        expect.objectContaining({ toString: expect.any(Function) })
+      )
+      expect(track).toHaveBeenCalledWith('vscode_create_checklist_action', {
+        action: 'open_folder',
+      })
+      expect(openExternal).not.toHaveBeenCalled()
+    })
+
+    it('opens the authoring docs URL when user picks "Authoring docs"', async () => {
+      const { track } = await import('../services/Telemetry.js')
+      setupHappyPath()
+      showInformationMessage.mockResolvedValue('Authoring docs')
+
+      await handler()
+      await flushAsync()
+
+      expect(openExternal).toHaveBeenCalledWith(
+        expect.objectContaining({ toString: expect.any(Function) })
+      )
+      expect(track).toHaveBeenCalledWith('vscode_create_checklist_action', { action: 'docs' })
+      expect(executeCommand).not.toHaveBeenCalled()
+    })
+
+    it('takes no action when user dismisses the checklist toast', async () => {
+      setupHappyPath()
+      showInformationMessage.mockResolvedValue(undefined)
+
+      await handler()
+      await flushAsync()
+
+      expect(executeCommand).not.toHaveBeenCalled()
+      expect(openExternal).not.toHaveBeenCalled()
+    })
   })
 })

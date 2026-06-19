@@ -6,6 +6,7 @@ export type TelemetryEvent =
   | 'vscode_create_complete'
   | 'vscode_create_failed'
   | 'vscode_create_cancelled'
+  | 'vscode_create_checklist_action'
   | 'vscode_uninstall_start'
   | 'vscode_uninstall_complete'
   | 'vscode_uninstall_failed'

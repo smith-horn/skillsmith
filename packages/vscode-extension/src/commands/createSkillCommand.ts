@@ -104,7 +104,7 @@ async function createSkillImpl(deps: CreateSkillDeps): Promise<void> {
       `Skill "${state.name}" created, but couldn't open SKILL.md automatically. Open it from the Skills panel.`
     )
   }
-  void vscode.window.showInformationMessage(`Created skill "${state.name}".`)
+  void showPostCreateChecklist(targetDir, state.name)
 }
 
 export const createSkillAction = withTelemetry(createSkillImpl, {
@@ -214,5 +214,30 @@ async function exists(p: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+async function showPostCreateChecklist(targetDir: string, name: string): Promise<void> {
+  const OPEN_FOLDER = 'Open folder'
+  const DOCS = 'Authoring docs'
+  // Best-effort post-create affordance: the caller invokes this fire-and-forget
+  // (`void`), so the helper must never reject — `executeCommand`/`openExternal`
+  // can throw (host shutting down, unregistered scheme) and an unhandled
+  // rejection would surface to the user. Swallow; the actions are optional.
+  try {
+    const action = await vscode.window.showInformationMessage(
+      `Created skill "${name}". Next: fill in SKILL.md (frontmatter + instructions), add examples, then publish.`,
+      OPEN_FOLDER,
+      DOCS
+    )
+    if (action === OPEN_FOLDER) {
+      track('vscode_create_checklist_action', { action: 'open_folder' })
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targetDir))
+    } else if (action === DOCS) {
+      track('vscode_create_checklist_action', { action: 'docs' })
+      await vscode.env.openExternal(vscode.Uri.parse('https://skillsmith.app/docs'))
+    }
+  } catch {
+    // Optional next-step action failed; nothing actionable to surface.
   }
 }
