@@ -22,7 +22,12 @@ import { checkSkillMdExists } from './skill-processor.ts'
 import { fetchRepoLicense, isPermissiveLicense } from './license-filter.ts'
 import { enumerateRepoSkillPaths, type EnumerateTelemetry } from './trees-enumerate.ts'
 import { buildSkillTreeUrl } from './skill-url.ts'
-import { buildSizeFacets, facetId, facetToQualifier } from './code-search.facets.ts'
+import {
+  buildSizeFacets,
+  facetId,
+  facetToQualifier,
+  firstFacetIndexForMinSize,
+} from './code-search.facets.ts'
 import {
   type BackfillCursor,
   type BackfillCrawlOutcome,
@@ -262,6 +267,16 @@ export interface BackfillFacetPlan {
   maxPagesPerRange: number
   /** Dispatch budget: stop after this many (sub)ranges so the run fits the GHA cap. */
   maxRangesPerDispatch: number
+  /**
+   * SMI-5319 W4: minimum file size (bytes) for the FRESH-START facet index.
+   * On a cold start (no resume cursor), the crawl begins at the first facet in
+   * the static 9-bucket ladder whose `hi >= minSizeBytes`, skipping the
+   * low-byte noise band. Default (undefined/0) = start at facet 0 (all facets).
+   *
+   * RESUMES are unaffected: when `startCursor` is non-null the cursor's own
+   * `facet_index` is used as-is and `minSizeBytes` is ignored.
+   */
+  minSizeBytes?: number
 }
 
 /** GitHub code-search retrievable-results ceiling per query (any query caps here). */
@@ -300,6 +315,24 @@ export async function runBackfillFacetCrawl(
 ): Promise<BackfillCrawlOutcome> {
   const facets = buildSizeFacets()
   const state = cursorToFacetState(plan.startCursor)
+
+  // SMI-5319 W4: on a FRESH START (null startCursor), advance the facet index
+  // to skip the low-byte noise band. A resume (non-null startCursor) carries
+  // its own facet_index from the checkpoint cursor and must NOT be overridden —
+  // `cursorToFacetState` already restored it above, so we only act when there
+  // was no prior cursor to restore from.
+  if (plan.startCursor == null && (plan.minSizeBytes ?? 0) > 0) {
+    const skipToIndex = firstFacetIndexForMinSize(plan.minSizeBytes ?? 0)
+    if (skipToIndex > 0) {
+      console.log(
+        `[Backfill] min_size_bytes=${plan.minSizeBytes} -> starting at facet ${skipToIndex} ` +
+          `(${facets[skipToIndex].lo}-${Number.isFinite(facets[skipToIndex].hi) ? facets[skipToIndex].hi : String(facets[skipToIndex].hi)}), ` +
+          `skipping facets 0-${skipToIndex - 1}`
+      )
+      state.facetIndex = skipToIndex
+    }
+  }
+
   const pathLabel = plan.pathPrefix ?? 'broad'
   let capSaturated = false
   let truncatedRanges = 0

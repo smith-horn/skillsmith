@@ -100,6 +100,35 @@ export function facetToQualifier(facet: SizeFacet): string {
 const OPEN_ENDED_BISECT_CEILING = 4 * 1024 * 1024
 
 /**
+ * Return the index of the first facet in the canonical {@link buildSizeFacets}
+ * ladder whose `hi >= minSizeBytes`. Used by the backfill crawl to skip the
+ * low-byte noise band (0-1023B facets) on a FRESH START when the operator
+ * knows real skills are always >=1024B (SMI-5319 W4).
+ *
+ * Contract:
+ * - Returns 0 when `minSizeBytes <= 0` (no skip — all facets included).
+ * - Returns the index of the FIRST facet whose `hi >= minSizeBytes`.
+ *   For the 9-bucket ladder: 1024 → 4, 2048 → 5, 4096 → 6, etc.
+ * - Clamps to the last valid index (never exceeds `facets.length - 1`) so a
+ *   huge `minSizeBytes` starts at the open-ended tail rather than going OOB.
+ * - RESUMES are NOT affected — this function is ONLY called on the fresh-start
+ *   path; resumed crawls carry their own `facet_index` from the checkpoint
+ *   cursor and never consult `min_size_bytes`.
+ *
+ * @param minSizeBytes - Minimum file size in bytes. Values <= 0 return 0.
+ * @returns Zero-based index into the static 9-bucket size ladder.
+ */
+export function firstFacetIndexForMinSize(minSizeBytes: number): number {
+  if (minSizeBytes <= 0) return 0
+  const facets = buildSizeFacets()
+  for (let i = 0; i < facets.length; i++) {
+    if (facets[i].hi >= minSizeBytes) return i
+  }
+  // minSizeBytes exceeds every finite hi: clamp to last index.
+  return facets.length - 1
+}
+
+/**
  * Split a facet into two disjoint, contiguous, inclusive halves that together
  * cover the SAME range (used when a facet saturates the 1000-result cap).
  * Finite: mid = lo + floor((hi - lo) / 2) → [{lo, hi: mid}, {lo: mid+1, hi}].

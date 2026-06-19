@@ -50,6 +50,15 @@ export interface IndexerEnv {
    * and the operator re-dispatches with `resume_from=latest`.
    */
   BACKFILL_MAX_RANGES: number
+  /**
+   * SMI-5319 W4: minimum file size (bytes) for the backfill crawl's FRESH START.
+   * When > 0, the facet driver begins at the first facet whose `hi >=
+   * BACKFILL_MIN_SIZE_BYTES` instead of facet 0, skipping the low-byte noise band
+   * (0-1023B facets are GitHub-tokenized stubs that admit zero real skills).
+   * Default 0 = all facets. Only applied on a fresh start — RESUMES carry their
+   * own facet_index from the checkpoint cursor and are unaffected.
+   */
+  BACKFILL_MIN_SIZE_BYTES: number
 }
 
 function getRequired(name: string): string {
@@ -146,6 +155,11 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
         ? undefined
         : backfillPathPrefixRaw
     const BACKFILL_MAX_RANGES = getInt('BACKFILL_MAX_RANGES', 150)
+    // SMI-5319 W4: fresh-start facet skip — skip the 0-1023B noise band on a
+    // cold-start dispatch. Default 0 = all facets (no skip). Only applied on the
+    // fresh-start path; RESUMES carry their own facet_index from the checkpoint
+    // cursor and are unaffected.
+    const BACKFILL_MIN_SIZE_BYTES = getInt('BACKFILL_MIN_SIZE_BYTES', 0)
 
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)
@@ -172,6 +186,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       BACKFILL_MODE,
       BACKFILL_PATH_PREFIX,
       BACKFILL_MAX_RANGES,
+      BACKFILL_MIN_SIZE_BYTES,
     }
   } finally {
     process.env = prev

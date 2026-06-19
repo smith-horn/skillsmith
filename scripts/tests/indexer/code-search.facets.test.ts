@@ -15,6 +15,7 @@ import {
   facetId,
   facetToQualifier,
   bisectFacet,
+  firstFacetIndexForMinSize,
   type SizeFacet,
 } from '../../indexer/code-search.facets.ts'
 
@@ -80,6 +81,39 @@ describe('SMI-5286 Wave 1c: facetId', () => {
 
   it('labels the open-ended bucket as `${lo}+`', () => {
     expect(facetId({ lo: 16384, hi: Number.POSITIVE_INFINITY })).toBe('16384+')
+  })
+})
+
+describe('SMI-5319 W4: firstFacetIndexForMinSize', () => {
+  it('returns 0 for minSizeBytes <= 0 (no skip, all facets)', () => {
+    expect(firstFacetIndexForMinSize(0)).toBe(0)
+    expect(firstFacetIndexForMinSize(-1)).toBe(0)
+    expect(firstFacetIndexForMinSize(-1000)).toBe(0)
+  })
+
+  it('returns 0 for minSizeBytes = 1 (first facet hi=127 >= 1)', () => {
+    expect(firstFacetIndexForMinSize(1)).toBe(0)
+  })
+
+  it('returns 4 for minSizeBytes = 1024 (facet index 4 has lo=1024, hi=2047)', () => {
+    // The 9-bucket ladder: [0-127, 128-255, 256-511, 512-1023, 1024-2047, ...]
+    // facets[4].hi = 2047 >= 1024 and facets[3].hi = 1023 < 1024.
+    expect(firstFacetIndexForMinSize(1024)).toBe(4)
+  })
+
+  it('returns 4 for minSizeBytes = 1500 (facet 4 hi=2047 >= 1500)', () => {
+    expect(firstFacetIndexForMinSize(1500)).toBe(4)
+  })
+
+  it('returns 5 for minSizeBytes = 2048 (facet 5 lo=2048, hi=4095)', () => {
+    expect(firstFacetIndexForMinSize(2048)).toBe(5)
+  })
+
+  it('returns the last index (8) for a huge minSizeBytes (clamps to open-ended tail)', () => {
+    const facets = buildSizeFacets()
+    const lastIndex = facets.length - 1
+    expect(firstFacetIndexForMinSize(999_999_999)).toBe(lastIndex)
+    expect(firstFacetIndexForMinSize(Number.MAX_SAFE_INTEGER)).toBe(lastIndex)
   })
 })
 

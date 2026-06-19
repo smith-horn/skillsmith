@@ -171,6 +171,9 @@ async function runDiscoveryBranch(
       perPage: 100,
       maxPagesPerRange: env.CODE_SEARCH_MAX_PAGES,
       maxRangesPerDispatch: env.BACKFILL_MAX_RANGES,
+      // SMI-5319 W4: only applied on a fresh start (null cursor); resumes
+      // carry their own facet_index from the checkpoint and are unaffected.
+      minSizeBytes: env.BACKFILL_MIN_SIZE_BYTES,
     }
   }
 
