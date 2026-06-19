@@ -2,7 +2,7 @@
 
 **Craft your agent skill workflow.**
 
-Skillsmith is an agent skill discovery, recommendation, and management system for MCP-compatible AI tools. Find the right skills for your projects, install them safely, and learn to use them effectively.
+Skillsmith is a lifecycle manager for agent skills, handling discovery, recommendation, installation, and updates for MCP-compatible AI tools. Find the right skills for your projects, install them safely, and learn to use them effectively.
 
 ## Features
 
