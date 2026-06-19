@@ -87,6 +87,12 @@ function getSecurityScanHtml(skill: ExtendedSkillData): string {
     statusClass = 'scan-pass'
   } else if (passed === false) {
     statusText = risk != null ? `FAIL (risk: ${risk}/100)` : 'FAIL'
+    // SMI-5317: append the finding count only on FAIL with >0 findings (count
+    // only — the findings list is not on get_skill, see SMI-5324).
+    const n = skill.securityFindingsCount
+    if (typeof n === 'number' && n > 0) {
+      statusText += ` · ${n} finding${n === 1 ? '' : 's'}`
+    }
     statusClass = 'scan-fail'
   } else {
     // passed === null || undefined: no scan result available.

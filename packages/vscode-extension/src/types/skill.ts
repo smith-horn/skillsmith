@@ -38,4 +38,6 @@ export interface ExtendedSkillData extends SkillData {
   securityRiskScore?: number | null | undefined
   /** SMI-3858: When the skill was last scanned */
   securityScannedAt?: string | null | undefined
+  /** SMI-5317: Scan finding count (null = no security info). Count only — the findings list is not on get_skill (see SMI-5324). */
+  securityFindingsCount?: number | null | undefined
 }
