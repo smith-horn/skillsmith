@@ -40,6 +40,10 @@ New tools use `skill_` prefix; legacy tools (`search`, `get_skill`) lack it.
 
 **Team-scoped tools** (`team_workspace`, `share_skill`, `private_registry_*`) additionally require `SKILLSMITH_LICENSE_KEY` to resolve the caller's team AND `SUPABASE_SERVICE_ROLE_KEY` on the MCP host for downstream CRUD (SMI-4312 / ADR-116 — the MCP subprocess has no user JWT, so anon-key RLS policies deny). Resolution path: `SKILLSMITH_LICENSE_KEY` env → SHA-256 → `license_keys.key_hash` → `subscriptions` → `teams.subscription_id`, via the `resolve_team_from_license` RPC (migration 071, SECURITY DEFINER, invoked via anon client). Missing/invalid keys return a typed error (not stub data) when Supabase is configured; missing service-role key surfaces `Team workspace operations require SUPABASE_SERVICE_ROLE_KEY`.
 
+## VS Code Extension Surface
+
+The `skill_recommend`, `skill_compare`, and `skill_diff` MCP tools are surfaced in the VS Code extension as commands: **Recommend Skills**, **Compare Skills**, and **Check Skill for Updates** (the latter requires Individual plan or higher).
+
 ## CLI
 
 `skillsmith` or `sklx` — `author subagent/transform/mcp-init`, `sync/status/config`. See [ADR-018](../../docs/internal/adr/018-registry-sync-system.md). New in SMI-4590: `sklx audit collisions` (namespace audit, opposite of legacy `sklx audit advisories` security-advisory checker), `sklx config get audit_mode` / `sklx config set audit_mode <preventative|power_user|governance|off>` (tier-revalidated; Free/Individual cannot select `power_user`/`governance`).

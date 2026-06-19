@@ -28,6 +28,9 @@ import { searchSkillsAction, filterSkillsAction, clearFiltersAction } from '../s
 import { installCommandAction } from '../installCommand.js'
 import { uninstallCommandAction } from '../uninstallCommand.js'
 import { createSkillAction } from '../createSkillCommand.js'
+import { recommendCommandAction } from '../recommendCommand.js'
+import { compareCommandAction } from '../compareCommand.js'
+import { diffCommandAction } from '../diffCommand.js'
 import type { TelemetryEvent } from '../../services/Telemetry.js'
 
 /** Registered command id → wrapped panel action. */
@@ -38,6 +41,9 @@ const VSCODE_DISPATCHER_MAP: Record<string, (...args: never[]) => unknown> = {
   'skillsmith.installSkill': installCommandAction,
   'skillsmith.uninstallSkill': uninstallCommandAction,
   'skillsmith.createSkill': createSkillAction,
+  'skillsmith.recommendSkills': recommendCommandAction,
+  'skillsmith.compareSkills': compareCommandAction,
+  'skillsmith.diffSkill': diffCommandAction,
 }
 
 describe('SMI-5130: VS Code command telemetry coverage', () => {
@@ -65,7 +71,7 @@ describe('SMI-5130: VS Code command telemetry coverage', () => {
   it('reports VS Code dispatcher coverage to CI output', () => {
     const count = Object.keys(VSCODE_DISPATCHER_MAP).length
     console.info(`[SMI-5130] VS Code telemetry coverage: ${count} panel actions wrapped.`)
-    expect(count).toBe(6)
+    expect(count).toBe(9)
   })
 
   // SMI-5308 (M5): the detail-panel open actions are postMessage handlers, not

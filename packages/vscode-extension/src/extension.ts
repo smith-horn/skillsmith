@@ -10,6 +10,9 @@ import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
 import { registerUninstallCommand } from './commands/uninstallCommand.js'
 import { registerCreateSkillCommand } from './commands/createSkillCommand.js'
+import { registerRecommendCommand } from './commands/recommendCommand.js'
+import { registerCompareCommand } from './commands/compareCommand.js'
+import { registerDiffCommand } from './commands/diffCommand.js'
 import { initializeTelemetry } from './services/Telemetry.js'
 import { SkillDetailPanel } from './views/SkillDetailPanel.js'
 import { SkillService } from './services/SkillService.js'
@@ -175,6 +178,9 @@ export function activate(context: vscode.ExtensionContext): void {
   registerQuickInstallCommand(context, skillService)
   registerUninstallCommand(context, skillTreeDataProvider)
   registerCreateSkillCommand(context, skillTreeDataProvider)
+  registerRecommendCommand(context)
+  registerCompareCommand(context, skillService)
+  registerDiffCommand(context, skillTreeDataProvider)
 
   // Register refresh command
   const refreshCommand = vscode.commands.registerCommand('skillsmith.refreshSkills', () => {
