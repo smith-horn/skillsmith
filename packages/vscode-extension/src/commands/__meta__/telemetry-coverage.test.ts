@@ -77,4 +77,12 @@ describe('SMI-5130: VS Code command telemetry coverage', () => {
     expect(openIds).toHaveLength(2)
     expect(new Set(openIds).size).toBe(2)
   })
+
+  // SMI-5312: the post-create checklist action is fired inside a helper, not a
+  // registered command, so it isn't in VSCODE_DISPATCHER_MAP. Assert its
+  // type-safe id exists in the TelemetryEvent union (rename/removal breaks here).
+  it('declares the post-create checklist telemetry id', () => {
+    const checklistId: TelemetryEvent = 'vscode_create_checklist_action'
+    expect(checklistId).toBe('vscode_create_checklist_action')
+  })
 })
