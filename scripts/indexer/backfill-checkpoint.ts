@@ -372,13 +372,14 @@ export async function readLatestCheckpoint(
     }
 
     if (excludeDryRun) {
-      // Exclude rows where metadata.dry_run is the boolean true.
-      // PostgREST's `.not('metadata->>dry_run', 'eq', 'true')` emits:
-      //   metadata->>'dry_run' != 'true' OR metadata->>'dry_run' IS NULL
-      // The IS NULL branch means legacy rows with no dry_run field are
-      // INCLUDED — they are treated as live, which is the safe default
-      // (an operator pre-flight cleans untagged dry-run rows; see SMI-5319).
-      query = query.not('metadata->>dry_run', 'eq', 'true')
+      // Exclude rows where metadata.dry_run is the boolean true, but KEEP rows
+      // where it is absent/null (legacy pre-SMI-5319 checkpoints — treated as
+      // live, the safe default). NULL-safety is explicit here: `.not(...,'eq',
+      // 'true')` would emit `NOT (col = 'true')`, which is NULL (→ row dropped)
+      // when col IS NULL — silently cold-starting on legacy live checkpoints.
+      // The `.or(neq.true | is.null)` form emits the intended
+      // `col <> 'true' OR col IS NULL` (i.e. col IS DISTINCT FROM 'true').
+      query = query.or('metadata->>dry_run.neq.true,metadata->>dry_run.is.null')
     }
 
     const { data, error } = await query

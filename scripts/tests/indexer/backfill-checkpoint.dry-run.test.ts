@@ -69,8 +69,8 @@ type ReadQueryState = {
   row: { metadata: BackfillCheckpointPayload } | null
   error: { message: string } | null
   eqFilters: Record<string, string>
-  /** Captures .not(column, operator, value) calls for assertion. */
-  notFilters: Array<{ column: string; operator: string; value: string }>
+  /** Captures .or(filterString) calls for assertion. */
+  orFilters: string[]
 }
 
 function makeReadMock(state: ReadQueryState): SupabaseClient {
@@ -79,8 +79,8 @@ function makeReadMock(state: ReadQueryState): SupabaseClient {
       state.eqFilters[key] = value
       return chain
     },
-    not: (column: string, operator: string, value: string) => {
-      state.notFilters.push({ column, operator, value })
+    or: (filter: string) => {
+      state.orFilters.push(filter)
       return chain
     },
     order: () => chain,
@@ -129,52 +129,48 @@ describe('writeCheckpoint — dry_run tag (SMI-5319 W3)', () => {
 // ---------------------------------------------------------------------------
 
 describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
-  it('does NOT apply a not() filter when excludeDryRun is false (default)', async () => {
+  it('does NOT apply an or() filter when excludeDryRun is false (default)', async () => {
     const state: ReadQueryState = {
       row: { metadata: makePayload() },
       error: null,
       eqFilters: {},
-      notFilters: [],
+      orFilters: [],
     }
     const supabase = makeReadMock(state)
 
     await readLatestCheckpoint(supabase, undefined, { excludeDryRun: false })
 
-    expect(state.notFilters).toHaveLength(0)
+    expect(state.orFilters).toHaveLength(0)
   })
 
-  it('does NOT apply a not() filter when options is omitted entirely', async () => {
+  it('does NOT apply an or() filter when options is omitted entirely', async () => {
     const state: ReadQueryState = {
       row: { metadata: makePayload() },
       error: null,
       eqFilters: {},
-      notFilters: [],
+      orFilters: [],
     }
     const supabase = makeReadMock(state)
 
     // No options arg — default behaviour must be back-compat (no filter).
     await readLatestCheckpoint(supabase)
 
-    expect(state.notFilters).toHaveLength(0)
+    expect(state.orFilters).toHaveLength(0)
   })
 
-  it('applies .not("metadata->>dry_run", "eq", "true") when excludeDryRun is true', async () => {
+  it('applies a NULL-safe .or() (dry_run neq true OR is null) when excludeDryRun is true', async () => {
     const state: ReadQueryState = {
       row: { metadata: makePayload({ dry_run: false }) },
       error: null,
       eqFilters: {},
-      notFilters: [],
+      orFilters: [],
     }
     const supabase = makeReadMock(state)
 
     await readLatestCheckpoint(supabase, undefined, { excludeDryRun: true })
 
-    expect(state.notFilters).toHaveLength(1)
-    expect(state.notFilters[0]).toEqual({
-      column: 'metadata->>dry_run',
-      operator: 'eq',
-      value: 'true',
-    })
+    expect(state.orFilters).toHaveLength(1)
+    expect(state.orFilters[0]).toBe('metadata->>dry_run.neq.true,metadata->>dry_run.is.null')
   })
 
   it('excludeDryRun: true — filter applied; mock returns the live (non-dry-run) row', async () => {
@@ -185,13 +181,13 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
       row: { metadata: livePayload },
       error: null,
       eqFilters: {},
-      notFilters: [],
+      orFilters: [],
     }
     const supabase = makeReadMock(state)
 
     const result = await readLatestCheckpoint(supabase, undefined, { excludeDryRun: true })
 
-    expect(state.notFilters).toHaveLength(1)
+    expect(state.orFilters).toHaveLength(1)
     expect(result).not.toBeNull()
     expect(result?.run_id).toBe('live-run')
     expect(result?.dry_run).toBe(false)
@@ -205,26 +201,28 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
       row: { metadata: dryRunPayload },
       error: null,
       eqFilters: {},
-      notFilters: [],
+      orFilters: [],
     }
     const supabase = makeReadMock(state)
 
     const result = await readLatestCheckpoint(supabase, undefined, { excludeDryRun: false })
 
-    // No not() filter applied.
-    expect(state.notFilters).toHaveLength(0)
+    // No or() filter applied.
+    expect(state.orFilters).toHaveLength(0)
     expect(result?.run_id).toBe('dry-run')
     expect(result?.dry_run).toBe(true)
   })
 
   it('legacy row WITHOUT dry_run field is returned when excludeDryRun is true (NULL-safe)', async () => {
     // A legacy checkpoint row has no dry_run key in metadata (JSONB value is null).
-    // PostgREST .not('metadata->>dry_run', 'eq', 'true') generates:
-    //   metadata->>'dry_run' <> 'true' OR metadata->>'dry_run' IS NULL
-    // The IS NULL branch includes the legacy row — it is NOT silently excluded.
-    // This test verifies the mock simulates that behaviour: the legacy row is returned
-    // even though excludeDryRun is true, proving no silent loss of legacy live checkpoints.
-    // (Pre-SMI-5319 dry-run checkpoints must be cleaned up by the operator pre-flight.)
+    // The query uses `.or('metadata->>dry_run.neq.true,metadata->>dry_run.is.null')`,
+    // which emits `metadata->>'dry_run' <> 'true' OR metadata->>'dry_run' IS NULL`.
+    // The IS NULL branch includes legacy rows — they are NOT silently excluded.
+    // A unit test can't exercise the DB predicate (the mock returns the row), so this
+    // proves null-safety at the query-construction level: the .or() string carries the
+    // explicit `is.null` branch (asserted below). DB-level behaviour is covered by the
+    // live-dispatch verification (SMI-5319). Pre-SMI-5319 dry-run rows must still be
+    // cleaned up by the operator pre-flight.
     const legacyPayload = makePayload({ run_id: 'legacy-live-run' })
     // Delete dry_run to simulate a pre-SMI-5319 row.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -233,14 +231,16 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
       row: { metadata: legacyWithoutDryRun as BackfillCheckpointPayload },
       error: null,
       eqFilters: {},
-      notFilters: [],
+      orFilters: [],
     }
     const supabase = makeReadMock(state)
 
     const result = await readLatestCheckpoint(supabase, undefined, { excludeDryRun: true })
 
-    // The not() filter was applied (DB includes the row because dry_run IS NULL).
-    expect(state.notFilters).toHaveLength(1)
+    // The NULL-safe .or() filter was applied — its `is.null` branch is what keeps
+    // legacy rows; assert the exact null-inclusive form (proof, not a tautology).
+    expect(state.orFilters).toHaveLength(1)
+    expect(state.orFilters[0]).toContain('metadata->>dry_run.is.null')
     // The legacy checkpoint is returned — not dropped.
     expect(result).not.toBeNull()
     expect(result?.run_id).toBe('legacy-live-run')
