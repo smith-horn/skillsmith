@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-19
+
 ### Added
 
 - **Post-create authoring checklist**: after creating a skill, a notification guides your next steps with **Open folder** and **Authoring docs** quick actions.
