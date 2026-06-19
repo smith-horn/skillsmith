@@ -67,9 +67,9 @@ on:
         default: ''
         type: string
       max_ranges:
-        description: 'SMI-5286 1c: per-dispatch size-(sub)range budget before a checkpoint+exit (default: 150)'
+        description: 'SMI-5286 1c: per-dispatch size-(sub)range budget before a checkpoint+exit (default: 50). Lower = shorter dispatches = less work lost if a dispatch is killed (Phase-4 upsert is batch-at-end, so a kill mid-crawl discards the whole batch) and shorter lock-hold windows (SMI-5311); higher = fewer re-dispatches.'
         required: false
-        default: '150'
+        default: '50'
         type: string
       supabase_env:
         description: 'Target Supabase environment'
@@ -193,7 +193,7 @@ jobs:
           # SMI-5286 1c: per-dispatch (sub)range budget — the facet driver writes a
           # checkpoint after this many ranges so the run fits the GHA cap; re-dispatch
           # with resume_from=latest until facets_remaining=0.
-          BACKFILL_MAX_RANGES: ${{ github.event.inputs.max_ranges || '150' }}
+          BACKFILL_MAX_RANGES: ${{ github.event.inputs.max_ranges || '50' }}
           # Raised caps for backfill mode (per SPARC section #3).
           # These override the conservative cron defaults.
           CODE_SEARCH_MAX_PAGES: '10'

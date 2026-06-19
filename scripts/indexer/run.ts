@@ -52,6 +52,9 @@ import type { BackfillFacetPlan } from './subdirectory-search.ts'
 // SMI-4870: lock-skip observability — write an audit row even when the lock is
 // already held so partial-cycle gaps are detectable in SQL.
 import { writeIndexerAuditLog } from './indexer-audit-log.ts'
+// SMI-5311: periodic holder-scoped lock refresh + abort-on-steal. Armed only on
+// the acquire path so a long backfill dispatch never lets its lock go stale.
+import { startLockHeartbeat } from './lock-heartbeat.ts'
 
 interface RunSummary {
   data: unknown
@@ -79,7 +82,10 @@ interface RunSummary {
 async function runDiscoveryBranch(
   env: IndexerEnv,
   requestId: string,
-  telemetry: RateLimitTelemetry
+  telemetry: RateLimitTelemetry,
+  // SMI-5311: aborts when the lock is stolen / repeatedly unrefreshable; the
+  // orchestrator skips the Phase-4 upsert so a thief's run isn't double-written.
+  abortSignal: AbortSignal
 ): Promise<{
   result: IndexerResult
   topics: string[]
@@ -187,6 +193,8 @@ async function runDiscoveryBranch(
     backfillMode: env.BACKFILL_MODE,
     // SMI-5286 1c: facet-crawl plan (undefined on the cron path).
     backfillFacetPlan,
+    // SMI-5311: lock-heartbeat abort signal — checked before the Phase-4 upsert.
+    abortSignal,
   })
 
   // SMI-5286 1c (§#5): persist the advanced facet cursor so the next dispatch
@@ -354,13 +362,20 @@ async function main(): Promise<void> {
   let checkpointId: string | null = null
   let runError: unknown = null
 
+  // SMI-5311: arm the lock heartbeat ONLY on the acquire path (never the skip
+  // branch above). It refreshes our holder-scoped lock every 5 min so a long
+  // backfill dispatch (~5h30m) never lets the 20-min stale window elapse, and
+  // aborts `heartbeat.signal` if the lock is stolen so the orchestrator skips
+  // the Phase-4 upsert. Stopped first in `finally` before release.
+  const heartbeat = startLockHeartbeat(supabase, requestId)
+
   try {
     if (env.RUN_TYPE === 'maintenance') {
       result = await runMaintenanceBranch(env, requestId, telemetry)
     } else if (env.RUN_TYPE === 'recheck') {
       result = await runRecheckBranch(env, requestId, telemetry)
     } else {
-      const discovery = await runDiscoveryBranch(env, requestId, telemetry)
+      const discovery = await runDiscoveryBranch(env, requestId, telemetry, heartbeat.signal)
       result = discovery.result
       topics = discovery.topics
       rotationSource = discovery.rotationSource
@@ -369,6 +384,8 @@ async function main(): Promise<void> {
   } catch (err) {
     runError = err
   } finally {
+    // SMI-5311: stop the heartbeat first so no late refresh fires after release.
+    heartbeat.stop()
     const releaseResult = await supabase.rpc('release_indexer_lock', { run_id: requestId })
     if (releaseResult.error) {
       console.error(

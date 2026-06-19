@@ -92,4 +92,10 @@ export interface IndexerResult {
   dryRun: boolean
   /** SMI-4376: Populated by `runDiscovery`; equals `repositories.length` at end of Phase 3. */
   repositories_found?: number
+  /**
+   * SMI-5311: set true when `runDiscovery` skipped the Phase-4 upsert + finalize
+   * because the lock-heartbeat abort signal fired (lock stolen / unrefreshable).
+   * Upsert counters are all zero on an aborted result. Absent on normal runs.
+   */
+  aborted?: boolean
 }
