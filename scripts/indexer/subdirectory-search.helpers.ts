@@ -45,14 +45,51 @@ import type { SkillMdValidation } from './skill-processor.ts'
  * SMI-5319: The single shared derivation of a per-run repo cache key.
  *
  * Used as the key for BOTH the `enumeratedRepos` once-guard AND the
- * `licenseCache` map so the write-key (when a license is resolved + cached) and
- * the read-key (when a cached license is consumed) are provably identical — a
+ * `repoMetaCache` map so the write-key (when repo metadata is resolved + cached)
+ * and the read-key (when cached metadata is consumed) are provably identical — a
  * concurrency-auditor Pattern-3 (cache key-shape mismatch, SMI-4861) invariant.
  * Centralizing it here removes the inline `${owner}/${repoName}` that previously
  * lived at two call sites.
  */
 export function repoCacheKey(owner: string, repoName: string): string {
   return `${owner}/${repoName}`
+}
+
+/**
+ * SMI-5319: per-run cached repo metadata resolved once via the SAME
+ * `GET /repos/{owner}/{repo}` call (`fetchRepoLicense`). The code-search API does
+ * not return `default_branch`, so the REAL branch from this metadata — not
+ * `repo.defaultBranch` (null) — drives both the Trees enumeration and the emitted
+ * skill tree URL. A `defaultBranch` of null means the repo cannot be enumerated
+ * this run (fetch failed or the field was absent) and must be skipped.
+ */
+export interface RepoMeta {
+  /** Resolved SPDX license id (surfaced metadata), or null. */
+  license: string | null
+  /** Resolved default branch, or null when it could not be resolved. */
+  defaultBranch: string | null
+}
+
+/**
+ * Mutable per-run counters accumulated across every `processSearchResults` call.
+ * Shared by the broad/fallback loop and the backfill crawl so the shape stays in
+ * lock-step at all three threading sites.
+ */
+export interface SubdirSearchStats {
+  /** Repos dropped by the legacy kill-switch license gate (~0 by default). */
+  licenseFiltered: number
+  /** Metadata-fetch failures (rate-limit / network, after retries). */
+  licenseFetchFailed: number
+  /** Skills admitted (indexed) this run. */
+  admitted: number
+  /** Admitted skills whose resolved SPDX is null. */
+  licenseNull: number
+  /**
+   * SMI-5319: repos skipped because no default branch could be resolved (the
+   * code-search API omits `default_branch` and the `GET /repos` fallback failed
+   * or returned no branch). Skipped repos are retried on the next run.
+   */
+  noDefaultBranch: number
 }
 
 /**
@@ -63,12 +100,20 @@ export function repoCacheKey(owner: string, repoName: string): string {
  * ALL valid skills regardless of license and records the resolved SPDX id as
  * surfaced metadata (the consumer decides). The ONLY admission filter is the
  * existing strict validity path (`enumerateRepoSkillPaths` +
- * `checkSkillMdExists`). License resolution is now once-per-repo, AFTER the
- * `enumeratedRepos` once-guard, cached in `licenseCache` keyed by
- * {@link repoCacheKey} (the same derivation as the once-guard, so write-key ===
- * read-key), and NEVER drops a skill — a fetch failure records `license: null`
- * and proceeds. A kill-switch (`SKILLSMITH_INDEXER_LICENSE_GATE === 'true'`)
- * restores the legacy exclude-non-permissive behavior without a deploy.
+ * `checkSkillMdExists`). Repo metadata (license + default branch) is resolved
+ * once-per-repo, AFTER the `enumeratedRepos` once-guard but BEFORE the Trees
+ * enumeration, cached in `repoMetaCache` keyed by {@link repoCacheKey} (the same
+ * derivation as the once-guard, so write-key === read-key). A license-fetch
+ * failure records `license: null` and never drops a skill. A kill-switch
+ * (`SKILLSMITH_INDEXER_LICENSE_GATE === 'true'`) restores the legacy
+ * exclude-non-permissive behavior without a deploy.
+ *
+ * SMI-5319 (Trees default-branch fix): the code-search API does NOT return
+ * `default_branch`, so `repo.defaultBranch` is null. The REAL branch comes from
+ * the same `GET /repos` metadata call and is passed to `enumerateRepoSkillPaths`
+ * AND `buildSkillTreeUrl`. A repo whose default branch cannot be resolved is
+ * skipped (NOT enumerated with a null branch, which 404s every Trees call) and
+ * retried on the next run.
  *
  * SMI-4852: Threads `telemetry` to downstream `fetchRepoLicense` and
  * `checkSkillMdExists` calls so every GitHub API hit lands in the shared
@@ -89,16 +134,11 @@ export async function processSearchResults(
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   repos: GitHubRepository[],
-  stats: {
-    licenseFiltered: number
-    licenseFetchFailed: number
-    admitted: number
-    licenseNull: number
-  },
+  stats: SubdirSearchStats,
   telemetry: RateLimitTelemetry,
   enumerateTelemetry: EnumerateTelemetry,
   enumeratedRepos: Set<string>,
-  licenseCache: Map<string, string | null>
+  repoMetaCache: Map<string, RepoMeta>
 ): Promise<void> {
   // SMI-5319 kill-switch: when set to the literal string 'true', restore the
   // legacy pre-validity license ADMISSION gate (exclude non-permissive repos)
@@ -112,25 +152,26 @@ export async function processSearchResults(
     if (seenUrls.has(dedupKey)) continue
 
     // SMI-5319: keyed via the shared `repoCacheKey` derivation so the once-guard
-    // key (enumeratedRepos) and the licenseCache key are provably identical
+    // key (enumeratedRepos) and the repoMetaCache key are provably identical
     // (concurrency-auditor Pattern-3 invariant).
     const repoKey = repoCacheKey(repo.owner, repo.repoName)
 
     // SMI-5319 kill-switch (legacy path only): the OLD pre-validity admission gate.
-    // Fetch SPDX from the GitHub API and drop the repo if the license could not be
-    // fetched (retry next run) or is confirmed non-permissive. Disabled by default
-    // — the new behavior resolves license once-per-repo AFTER the validity gate and
-    // never drops a skill. When the gate admits a repo, the just-fetched SPDX is
-    // seeded into `licenseCache` so the post-validity resolution below reuses it
-    // (no second fetch there). NOTE: this break-glass loop runs before the
-    // `enumeratedRepos` once-guard, so a repo surfacing via multiple skillPaths is
-    // re-fetched here per hit — acceptable on the default-off legacy path.
+    // Fetch repo metadata from the GitHub API and drop the repo if it could not be
+    // fetched (retry next run) or the license is confirmed non-permissive. Disabled
+    // by default — the new behavior resolves metadata once-per-repo AFTER the
+    // once-guard and never drops a skill. When the gate admits a repo, the
+    // just-fetched metadata is seeded into `repoMetaCache` so the post-once-guard
+    // resolution below reuses it (no second fetch there). NOTE: this break-glass
+    // loop runs before the `enumeratedRepos` once-guard, so a repo surfacing via
+    // multiple skillPaths is re-fetched here per hit — acceptable on the
+    // default-off legacy path.
     if (legacyLicenseGate) {
-      const { license: spdxId, fetchFailed } = await fetchRepoLicense(
-        repo.owner,
-        repo.repoName,
-        telemetry
-      )
+      const {
+        license: spdxId,
+        defaultBranch,
+        fetchFailed,
+      } = await fetchRepoLicense(repo.owner, repo.repoName, telemetry)
 
       if (fetchFailed) {
         // API failure — skip this run but don't count as license-filtered.
@@ -149,8 +190,10 @@ export async function processSearchResults(
         continue
       }
 
-      // Admitted by the legacy gate: reuse this SPDX for the metadata resolution.
-      if (!licenseCache.has(repoKey)) licenseCache.set(repoKey, spdxId)
+      // Admitted by the legacy gate: reuse this metadata for the resolution below.
+      if (!repoMetaCache.has(repoKey)) {
+        repoMetaCache.set(repoKey, { license: spdxId, defaultBranch })
+      }
     }
 
     // Mark this code-search result consumed (per-repo+skillPath identity) so the
@@ -165,10 +208,48 @@ export async function processSearchResults(
     }
     enumeratedRepos.add(repoKey)
 
+    // SMI-5319: resolve repo metadata (license + default branch) ONCE per repo,
+    // AFTER the once-guard but BEFORE enumeration, cached on `repoKey` (the SAME
+    // key as the once-guard above, so write-key === read-key). The code-search API
+    // does NOT return `default_branch` (`repo.defaultBranch` is null), so the REAL
+    // branch comes from this `GET /repos` call. A metadata-fetch failure records
+    // `license: null` + `defaultBranch: null`. The repo is enumerated once per run,
+    // so a cache miss here means exactly one fetch.
+    let meta: RepoMeta
+    if (repoMetaCache.has(repoKey)) {
+      meta = repoMetaCache.get(repoKey) ?? { license: null, defaultBranch: null }
+    } else {
+      const { license, defaultBranch, fetchFailed } = await fetchRepoLicense(
+        repo.owner,
+        repo.repoName,
+        telemetry
+      )
+      // Ignore fetchFailed for license: record null and proceed (never drop, never
+      // retry-storm). A failed fetch also leaves `defaultBranch` null → the repo is
+      // skipped below and retried next run.
+      meta = { license: fetchFailed ? null : license, defaultBranch }
+      if (fetchFailed) stats.licenseFetchFailed++
+      repoMetaCache.set(repoKey, meta)
+    }
+    const spdx = meta.license
+    const branch = meta.defaultBranch
+    if (spdx === null) stats.licenseNull++
+
+    // SMI-5319: without a resolvable default branch we CANNOT enumerate the repo
+    // (`GET /git/trees/null` → 404 for every path) and MUST NOT emit a row with a
+    // null branch. Skip and retry on the next run. NOT added to seenUrls so the
+    // skill paths remain re-discoverable.
+    if (branch === null) {
+      console.log(`[BroadDiscovery] No default branch, skipping (retry next run): ${repo.fullName}`)
+      stats.noDefaultBranch++
+      await delay(50)
+      continue
+    }
+
     const { entries, truncatedByApi, truncatedByCap } = await enumerateRepoSkillPaths(
       repo.owner,
       repo.repoName,
-      repo.defaultBranch,
+      branch,
       telemetry,
       enumerateTelemetry
     )
@@ -185,23 +266,6 @@ export async function processSearchResults(
       console.log(`[BroadDiscovery] Per-repo cap reached, taking first N: ${repo.fullName}`)
     }
 
-    // SMI-5319: resolve the license ONCE per repo, AFTER the validity gate
-    // (enumeration succeeded), cached on `repoKey` (the SAME key as the
-    // once-guard above). A fetch failure records `license: null` and PROCEEDS —
-    // the license is surfaced metadata only, never an admission filter. The repo
-    // is enumerated once per run, so a cache miss here means exactly one fetch.
-    let spdx: string | null
-    if (licenseCache.has(repoKey)) {
-      spdx = licenseCache.get(repoKey) ?? null
-    } else {
-      const { license, fetchFailed } = await fetchRepoLicense(repo.owner, repo.repoName, telemetry)
-      // Ignore fetchFailed: record null and proceed (never drop, never retry-storm).
-      spdx = fetchFailed ? null : license
-      if (fetchFailed) stats.licenseFetchFailed++
-      licenseCache.set(repoKey, spdx)
-    }
-    if (spdx === null) stats.licenseNull++
-
     // Validate each enumerated SKILL.md independently (§#4 strict gate) and emit
     // one per-skill GitHubRepository with a distinct tree URL (C-1) per valid path.
     for (const entry of entries) {
@@ -209,7 +273,7 @@ export async function processSearchResults(
       const installable = await checkSkillMdExists(
         repo.owner,
         repo.repoName,
-        repo.defaultBranch,
+        branch,
         validationCache,
         telemetry,
         skillPath,
@@ -220,10 +284,11 @@ export async function processSearchResults(
       // (reconstructed from owner/repoName), NOT from `repo.url` — by this point
       // `repo.url` is already the code-search mapper's tree URL, so reusing it
       // would double the `/tree/<branch>` segment. `skillUrl` already encodes
-      // `skillPath`, so it alone is the dedup key.
+      // `skillPath`, so it alone is the dedup key. SMI-5319: built with the FETCHED
+      // `branch` (not `repo.defaultBranch`, which is null from code search).
       const skillUrl = buildSkillTreeUrl(
         `https://github.com/${repo.owner}/${repo.repoName}`,
-        repo.defaultBranch,
+        branch,
         skillPath
       )
       if (seenUrls.has(skillUrl)) continue
@@ -301,16 +366,11 @@ export async function runBackfillFacetCrawl(
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   repos: GitHubRepository[],
-  stats: {
-    licenseFiltered: number
-    licenseFetchFailed: number
-    admitted: number
-    licenseNull: number
-  },
+  stats: SubdirSearchStats,
   telemetry: RateLimitTelemetry,
   enumerateTelemetry: EnumerateTelemetry,
   enumeratedRepos: Set<string>,
-  licenseCache: Map<string, string | null>,
+  repoMetaCache: Map<string, RepoMeta>,
   errors: string[]
 ): Promise<BackfillCrawlOutcome> {
   const facets = buildSizeFacets()
@@ -375,7 +435,7 @@ export async function runBackfillFacetCrawl(
         telemetry,
         enumerateTelemetry,
         enumeratedRepos,
-        licenseCache
+        repoMetaCache
       )
       state.lastPage = page
       if (result.repos.length < plan.perPage) break // short page → range exhausted

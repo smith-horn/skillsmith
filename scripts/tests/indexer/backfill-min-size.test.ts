@@ -124,7 +124,14 @@ beforeEach(() => {
   mockCheckSkillMdExists.mockReset()
   mockEnumerateRepoSkillPaths.mockReset()
 
-  mockFetchRepoLicense.mockResolvedValue({ license: 'MIT', fetchFailed: false })
+  // SMI-5319: fetchRepoLicense now also returns `defaultBranch` (the code-search
+  // API omits it) — a repo with a null `defaultBranch` is skipped, so a real
+  // branch must be present for repos to emit.
+  mockFetchRepoLicense.mockResolvedValue({
+    license: 'MIT',
+    defaultBranch: 'main',
+    fetchFailed: false,
+  })
   mockCheckSkillMdExists.mockResolvedValue(true)
   mockEnumerateRepoSkillPaths.mockResolvedValue({
     entries: [{ path: 'skills/x', blobSha: 'sha1' }],

@@ -61,42 +61,66 @@ export function isPermissiveLicense(spdxId: string | null | undefined): boolean 
 }
 
 /**
- * Result of a license fetch operation.
+ * Result of a repo-metadata fetch (license + default branch).
  * Distinguishes between a confirmed non-permissive license and a fetch failure,
  * which produce different outcomes in the caller (licenseFiltered vs licenseFetchFailed).
+ *
+ * SMI-5319: `defaultBranch` is fetched ALONGSIDE the license from the SAME
+ * `GET /repos/{owner}/{repo}` call. The GitHub /search/code API does NOT return
+ * `default_branch` (it surfaces as null in the code-search mapper), so the Trees
+ * enumeration (`enumerateRepoSkillPaths`) and the emitted skill tree URL must use
+ * THIS branch — not `repo.defaultBranch` from the code-search result — to avoid
+ * `GET /git/trees/null` → 404 for every repo.
  */
 export interface FetchLicenseResult {
   /** SPDX license identifier, or null if the repo has no detected license. */
   license: string | null
   /**
-   * True when the license could not be fetched due to a rate limit or network
+   * SMI-5319: the repository's default branch (e.g. 'main'), or null if it could
+   * not be resolved (fetch failed, or the field was absent from the response).
+   * Callers MUST NOT enumerate a repo whose `defaultBranch` is null.
+   */
+  defaultBranch: string | null
+  /**
+   * True when the metadata could not be fetched due to a rate limit or network
    * error (after retries). The repo is excluded from this run but should not
    * be counted as license-filtered — it may succeed on the next indexer run.
+   * When true, `defaultBranch` is null.
    */
   fetchFailed: boolean
 }
 
 /**
- * GitHub repository license response shape
+ * GitHub repository metadata response shape.
+ * SMI-5319: `default_branch` is read alongside the license SPDX id.
  */
 interface RepoLicenseResponse {
   license: {
     spdx_id: string
   } | null
+  default_branch?: string | null
 }
 
 /** Retry delays for exponential backoff on rate-limit responses (ms) */
 const LICENSE_RETRY_DELAYS = [1000, 2000, 4000]
 
 /**
- * Fetch the SPDX license identifier for a GitHub repository.
+ * Fetch the SPDX license identifier AND the default branch for a GitHub repo
+ * via a single `GET /repos/{owner}/{repo}` call.
  *
- * Used for code search results which do not include license data in the
- * search response. Topic search results include license in the GitHub Search
- * API response and do not need this function.
+ * Used for code search results which do not include license data — NOR the
+ * default branch (`default_branch` is null on the /search/code API) — in the
+ * search response. Topic search results include both in the GitHub Search API
+ * response and do not need this function.
  *
- * Returns `{ license: null, fetchFailed: false }` for repos with no license.
- * Returns `{ license: null, fetchFailed: true }` for rate-limit/network errors.
+ * Returns `{ license: null, defaultBranch: <branch>, fetchFailed: false }` for
+ * repos with no detected license. Returns
+ * `{ license: null, defaultBranch: null, fetchFailed: true }` for
+ * rate-limit/network errors (after retries).
+ *
+ * SMI-5319: the default branch is read from `data.default_branch` on the SAME
+ * response, so the Trees enumeration and the emitted skill tree URL can use the
+ * REAL branch instead of the null `default_branch` from the code-search mapper.
  *
  * SMI-4852: Builds headers internally (matching Deno parent), threads
  * `telemetry`, routes through `withRateLimitTracking` (Hard Rule 1).
@@ -119,7 +143,7 @@ export async function fetchRepoLicense(
     validateGitHubParams(owner, repo)
   } catch {
     console.log(`[LicenseFilter] Skipping invalid repo: ${sanitizeForLog(`${owner}/${repo}`)}`)
-    return { license: null, fetchFailed: false }
+    return { license: null, defaultBranch: null, fetchFailed: false }
   }
 
   const url = `https://api.github.com/repos/${owner}/${repo}`
@@ -133,7 +157,11 @@ export async function fetchRepoLicense(
 
       if (response.ok) {
         const data = (await response.json()) as RepoLicenseResponse
-        return { license: data.license?.spdx_id ?? null, fetchFailed: false }
+        return {
+          license: data.license?.spdx_id ?? null,
+          defaultBranch: data.default_branch ?? null,
+          fetchFailed: false,
+        }
       }
 
       // Rate limit — retry with backoff
@@ -150,14 +178,14 @@ export async function fetchRepoLicense(
         console.log(
           `[LicenseFilter] Rate limit exhausted for ${sanitizeForLog(`${owner}/${repo}`)}. Remaining: ${remaining}`
         )
-        return { license: null, fetchFailed: true }
+        return { license: null, defaultBranch: null, fetchFailed: true }
       }
 
       // Non-retryable HTTP error (404, 5xx, etc.)
       console.log(
         `[LicenseFilter] HTTP ${response.status} for ${sanitizeForLog(`${owner}/${repo}`)}`
       )
-      return { license: null, fetchFailed: response.status >= 500 }
+      return { license: null, defaultBranch: null, fetchFailed: response.status >= 500 }
     } catch (error) {
       if (attempt < LICENSE_RETRY_DELAYS.length) {
         const delayMs = LICENSE_RETRY_DELAYS[attempt]
@@ -170,9 +198,9 @@ export async function fetchRepoLicense(
       console.log(
         `[LicenseFilter] Network error exhausted retries for ${sanitizeForLog(`${owner}/${repo}`)}: ${error instanceof Error ? error.message : 'Unknown'}`
       )
-      return { license: null, fetchFailed: true }
+      return { license: null, defaultBranch: null, fetchFailed: true }
     }
   }
 
-  return { license: null, fetchFailed: true }
+  return { license: null, defaultBranch: null, fetchFailed: true }
 }

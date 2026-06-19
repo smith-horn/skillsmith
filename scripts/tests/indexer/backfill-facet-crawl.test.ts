@@ -161,8 +161,15 @@ beforeEach(() => {
   mockCheckSkillMdExists.mockReset()
   mockEnumerateRepoSkillPaths.mockReset()
 
-  // Default I/O behaviour: permissive license, validation passes, one skill per repo.
-  mockFetchRepoLicense.mockResolvedValue({ license: 'MIT', fetchFailed: false })
+  // Default I/O behaviour: permissive license + resolvable default branch,
+  // validation passes, one skill per repo. SMI-5319: fetchRepoLicense now also
+  // returns `defaultBranch` (the code-search API omits it) — the crawl skips a
+  // repo whose `defaultBranch` is null, so it must be present for repos to emit.
+  mockFetchRepoLicense.mockResolvedValue({
+    license: 'MIT',
+    defaultBranch: 'main',
+    fetchFailed: false,
+  })
   mockCheckSkillMdExists.mockResolvedValue(true)
   mockEnumerateRepoSkillPaths.mockResolvedValue({
     entries: [{ path: 'skills/x', blobSha: 'sha1' }],

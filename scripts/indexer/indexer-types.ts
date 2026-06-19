@@ -62,12 +62,14 @@ export interface IndexerResult {
     retries: number
     /** SMI-5319: ~0 by default; only the SKILLSMITH_INDEXER_LICENSE_GATE kill-switch excludes repos */
     license_filtered: number
-    /** Repos whose license API call failed — admitted with license:null (SMI-5319), counted for observability */
+    /** Repos whose repo-metadata API call failed — skipped (no resolvable branch), retried next run (SMI-5319) */
     license_fetch_failed: number
     /** SMI-5319: skills admitted (indexed) this run */
     admitted?: number
     /** SMI-5319: admitted skills whose resolved SPDX is null (the null-license rate) */
     license_null?: number
+    /** SMI-5319: repos skipped because no default branch could be resolved (code search omits it); retried next run */
+    no_default_branch?: number
     /** Number of pages where GitHub returned incomplete_results (query timeout) */
     incomplete_results?: number
     /** Which search strategy was used: 'broad' (single query) or 'prefix-fallback' (3 scoped queries) */
