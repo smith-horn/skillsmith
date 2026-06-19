@@ -86,9 +86,20 @@ describe('getActionBlock', () => {
     })
   })
 
-  describe('security', () => {
-    it('escapes a repository URL with HTML metacharacters', () => {
-      const html = getActionBlock({ installed: false }, 'https://x.test/"><script>')
+  describe('repository URL handling', () => {
+    it('interpolates an already-escaped URL without double-encoding (&amp; stays &amp;)', () => {
+      // The caller (getSkillDetailHtml) pre-escapes the URL. getActionBlock must
+      // NOT re-escape, or `&` in a query string becomes `&amp;amp;` and the
+      // webview opens the wrong URL.
+      const safe = 'https://x.test/repo?a=1&amp;b=2'
+      const html = getActionBlock({ installed: false }, safe)
+      expect(html).toContain('data-url="https://x.test/repo?a=1&amp;b=2"')
+      expect(html).not.toContain('&amp;amp;')
+    })
+
+    it('emits no raw script tag for a properly pre-escaped URL', () => {
+      const safe = 'https://x.test/&quot;&gt;&lt;script&gt;'
+      const html = getActionBlock({ installed: false }, safe)
       expect(html).not.toContain('<script>')
       expect(html).toContain('&lt;script&gt;')
     })

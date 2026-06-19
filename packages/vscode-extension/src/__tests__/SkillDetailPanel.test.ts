@@ -394,6 +394,18 @@ describe('SkillDetailPanel', () => {
       expect(mock.panel.dispose).not.toHaveBeenCalled()
     })
 
+    it('surfaces a generic error and does not dispose when the core throws (H3)', async () => {
+      uninstallByTarget.mockRejectedValue(new Error('Unexpected fs error'))
+      const mock = await showInstalledPanel(true)
+      mock.sendMessage({ command: 'uninstall' })
+      await vi.waitFor(() => {
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to uninstall')
+        )
+      })
+      expect(mock.panel.dispose).not.toHaveBeenCalled()
+    })
+
     it('aborts with a notice when the skill is gone at click time (M2)', async () => {
       SkillDetailPanel.setSkillService(createMockSkillService())
       // Provider reports the skill installed at load, but empty at click time.

@@ -7,22 +7,21 @@
  * explicit `aria-label` (H7) because the header-first DOM order places actions
  * ahead of the body content.
  */
-import { escapeHtml } from '../utils/security.js'
 import type { SkillActionContext } from './skill-panel-types.js'
 
 /**
  * Build the header action buttons for the detail panel.
  *
  * @param ctx - Installed-state context resolved at load time
- * @param safeRepository - An already-`escapeHtml`'d repository URL, or `''`
+ * @param safeRepository - An already-`escapeHtml`'d repository URL, or `''`.
+ *   It is interpolated as-is — re-escaping here would double-encode `&` in
+ *   query strings and corrupt the `data-url` the webview opens (matches the
+ *   body `.repository-link` span, which also consumes the pre-escaped value).
  * @returns The buttons HTML fragment
  */
 export function getActionBlock(ctx: SkillActionContext, safeRepository: string): string {
-  // Defense-in-depth: ctx carries no raw user strings into the markup today, but
-  // re-escape the repository URL so this builder stays safe if callers change.
-  const repoUrl = escapeHtml(safeRepository)
   const repoButton = safeRepository
-    ? `<button class="btn-secondary" id="repoBtn" data-url="${repoUrl}" aria-label="View the source repository">View Repository</button>`
+    ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}" aria-label="View the source repository">View Repository</button>`
     : ''
 
   if (!ctx.installed) {
