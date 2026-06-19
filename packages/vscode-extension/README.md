@@ -28,6 +28,10 @@ Click **Filter Skills** in the Skills view title bar to narrow discovery results
 
 A persistent banner in the Skills view shows your active query and any filters so you always know what you're looking at. Use **Clear Skill Filters** (available in the title bar when filters are active) to reset them. Filters are cleared automatically when the window reloads.
 
+### Browsing and Detail View
+
+The sidebar displays skills with rich metadata on each row: author, category, score, and an installed indicator when the skill is also available locally. Click a skill to open the detail panel, where a sticky header keeps the Install or Uninstall button visible while you scroll through documentation. For installed skills, the detail panel offers quick shortcuts to open the skill's `SKILL.md` file or reveal its folder in the operating system.
+
 **Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
 
 ## Getting Started

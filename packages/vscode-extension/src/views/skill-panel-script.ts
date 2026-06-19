@@ -13,9 +13,36 @@ export function getScript(nonce: string): string {
     <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
 
-        document.getElementById('installBtn').addEventListener('click', function() {
-            vscode.postMessage({ command: 'install' });
-        });
+        // C1: null-guard every getElementById. The Install button is absent on
+        // the installed-skill view; an unguarded lookup throws and kills every
+        // listener wired after it (uninstall/open would be dead).
+        const installBtn = document.getElementById('installBtn');
+        if (installBtn) {
+            installBtn.addEventListener('click', function() {
+                vscode.postMessage({ command: 'install' });
+            });
+        }
+
+        const uninstallBtn = document.getElementById('uninstallBtn');
+        if (uninstallBtn) {
+            uninstallBtn.addEventListener('click', function() {
+                vscode.postMessage({ command: 'uninstall' });
+            });
+        }
+
+        const openSkillFileBtn = document.getElementById('openSkillFileBtn');
+        if (openSkillFileBtn) {
+            openSkillFileBtn.addEventListener('click', function() {
+                vscode.postMessage({ command: 'openSkillFile' });
+            });
+        }
+
+        const openFolderBtn = document.getElementById('openFolderBtn');
+        if (openFolderBtn) {
+            openFolderBtn.addEventListener('click', function() {
+                vscode.postMessage({ command: 'openFolder' });
+            });
+        }
 
         const repoBtn = document.getElementById('repoBtn');
         if (repoBtn) {

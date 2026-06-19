@@ -24,10 +24,30 @@ export function getStyles(): string {
             margin-bottom: 24px;
             padding-bottom: 16px;
             border-bottom: 1px solid var(--vscode-panel-border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background-color: var(--vscode-editor-background);
+            justify-content: space-between;
+            flex-wrap: nowrap;
+        }
+        .header-titles {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            min-width: 0;
         }
         .header h1 {
             margin: 0;
             font-size: 24px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex-shrink: 1;
+        }
+        .header .actions {
+            flex-shrink: 0;
         }
         .badge {
             display: inline-block;
@@ -86,7 +106,7 @@ export function getStyles(): string {
             background-color: var(--vscode-progressBar-foreground);
             border-radius: 4px;
         }
-        .actions { display: flex; gap: 12px; margin-top: 24px; }
+        .header .actions { display: flex; gap: 12px; }
         button {
             padding: 10px 20px;
             border: none;
@@ -105,6 +125,15 @@ export function getStyles(): string {
             color: var(--vscode-button-secondaryForeground);
         }
         .btn-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
+        .btn-destructive {
+            background-color: var(--vscode-inputValidation-errorBackground);
+            color: var(--vscode-errorForeground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+        }
+        .btn-destructive:hover {
+            background-color: var(--vscode-inputValidation-errorBorder);
+            color: var(--vscode-editor-background);
+        }
         .repository-link {
             color: var(--vscode-textLink-foreground);
             text-decoration: none;

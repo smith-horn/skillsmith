@@ -59,6 +59,19 @@ describe('getStyles', () => {
     expect(css).toContain('.btn-secondary')
   })
 
+  it('makes the header sticky with an opaque background (SMI-5308)', () => {
+    expect(css).toContain('position: sticky')
+    expect(css).toContain('top: 0')
+    expect(css).toContain('background-color: var(--vscode-editor-background)')
+    expect(css).toContain('justify-content: space-between')
+  })
+
+  it('defines a destructive button style using VS Code error tokens', () => {
+    expect(css).toContain('.btn-destructive')
+    expect(css).toContain('var(--vscode-inputValidation-errorBackground)')
+    expect(css).toContain('var(--vscode-errorForeground)')
+  })
+
   it('contains repository link styles with focus indicator', () => {
     expect(css).toContain('.repository-link')
     expect(css).toContain('.repository-link:focus')

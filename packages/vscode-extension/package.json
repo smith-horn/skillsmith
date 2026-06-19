@@ -194,6 +194,11 @@
           "when": "viewItem == skill"
         },
         {
+          "command": "skillsmith.viewSkillDetails",
+          "when": "view == skillsmith.skillsView && viewItem == installedSkill",
+          "group": "navigation"
+        },
+        {
           "command": "skillsmith.uninstallSkill",
           "when": "view == skillsmith.skillsView && viewItem == installedSkill",
           "group": "inline"
