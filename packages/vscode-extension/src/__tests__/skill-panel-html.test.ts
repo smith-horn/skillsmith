@@ -364,6 +364,8 @@ describe('getTrustBadgeText', () => {
 })
 
 // Security scan tests live in skill-panel-security.test.ts (SMI-4240 file-size split).
+// Advisory-section tests (getAdvisoriesHtml, SMI-5317) live in
+// skill-panel-advisories.test.ts — same 500-line-gate split precedent.
 
 describe('getLoadingHtml', () => {
   it('returns loading spinner HTML with CSP', () => {

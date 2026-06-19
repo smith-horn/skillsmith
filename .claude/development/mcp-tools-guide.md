@@ -42,7 +42,7 @@ New tools use `skill_` prefix; legacy tools (`search`, `get_skill`) lack it.
 
 ## VS Code Extension Surface
 
-The `skill_recommend`, `skill_compare`, and `skill_diff` MCP tools are surfaced in the VS Code extension as commands: **Recommend Skills**, **Compare Skills**, and **Check Skill for Updates** (the latter requires Individual plan or higher).
+The `skill_recommend`, `skill_compare`, and `skill_diff` MCP tools are surfaced in the VS Code extension as commands: **Recommend Skills**, **Compare Skills**, and **Check Skill for Updates** (the latter requires Individual plan or higher). The `skill_audit` tool is surfaced in the skill detail panel as a **Security Advisories** section (Team plan or higher).
 
 ## CLI
 

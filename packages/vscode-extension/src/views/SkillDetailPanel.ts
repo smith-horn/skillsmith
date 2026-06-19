@@ -15,6 +15,9 @@ import type {
 import { skillComparisonKey } from '../utils/skillId.js'
 import { uninstallByTarget } from '../commands/uninstallCommand.js'
 import { track } from '../services/Telemetry.js'
+import { getMcpClient } from '../mcp/McpClient.js'
+import { McpToolError } from '../mcp/McpToolError.js'
+import type { McpAdvisory } from '../mcp/types.js'
 import {
   getLoadingHtml,
   getSkillDetailHtml,
@@ -47,6 +50,18 @@ export class SkillDetailPanel {
   private _skillPath: string | undefined
   private _hasSkillMd = false
 
+  /**
+   * SMI-5317: lazily-loaded Team-gated security advisories. `_advisories` is the
+   * filtered list once `skill_audit` resolves; `_advisoryTierDenied` flips when
+   * a free/Individual user hits the Team gate (drives the quiet inline upsell).
+   * `_disposed` guards against writes after the panel is closed (C2). The static
+   * session flag (M1) skips the wasted Team-gated call after the first denial.
+   */
+  private _advisories: McpAdvisory[] | null = null
+  private _advisoryTierDenied = false
+  private _disposed = false
+  private static _advisoryTierDeniedSession = false
+
   /** Set the shared SkillService instance (called once at activation) */
   public static setSkillService(service: SkillService): void {
     SkillDetailPanel._skillService = service
@@ -66,6 +81,7 @@ export class SkillDetailPanel {
   public static resetForTests(): void {
     SkillDetailPanel._skillService = undefined as unknown as SkillService
     SkillDetailPanel._treeProvider = undefined
+    SkillDetailPanel._advisoryTierDeniedSession = false
   }
 
   public static createOrShow(extensionUri: vscode.Uri, skillId: string) {
@@ -123,6 +139,7 @@ export class SkillDetailPanel {
 
   public dispose() {
     SkillDetailPanel.currentPanel = undefined
+    this._disposed = true
 
     this._panel.dispose()
 
@@ -247,6 +264,9 @@ export class SkillDetailPanel {
     const loadingNonce = this._getNonce()
     this._panel.webview.html = getLoadingHtml(loadingNonce, getSkillDetailCsp(loadingNonce))
     this._showFullContent = false
+    // SMI-5317: clear stale advisory state before the new load (C1).
+    this._advisories = null
+    this._advisoryTierDenied = false
 
     if (!SkillDetailPanel._skillService) {
       const nonce = this._getNonce()
@@ -263,6 +283,9 @@ export class SkillDetailPanel {
       this._skillData = skill
       this._resolveInstalledState()
       this._update()
+      // SMI-5317: lazily auto-load Team-gated advisories; never block the base
+      // panel render on the gated call (it throws TierDenied for free users).
+      void this._loadAdvisories(this._skillId)
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error)
       const userMessage = mapErrorToUserMessage(rawMessage)
@@ -288,7 +311,54 @@ export class SkillDetailPanel {
     this._hasSkillMd = local?.hasSkillMd ?? false
   }
 
+  /**
+   * SMI-5317: lazily fetch Team-gated security advisories for the viewed skill
+   * and re-render. Passive and non-modal — a free user sees a single quiet
+   * upsell line, never a billing modal. Guards (C1/C2): the captured `skillId`
+   * must still match `this._skillId` and the panel must not be disposed before
+   * any state mutation. M1: skip entirely once the session has seen a denial.
+   */
+  private async _loadAdvisories(skillId: string): Promise<void> {
+    if (SkillDetailPanel._advisoryTierDeniedSession) {
+      return
+    }
+    const client = getMcpClient()
+    if (!client.isConnected()) {
+      return
+    }
+    try {
+      const r = await client.skillAudit({ skillIds: [skillId] })
+      // C1 (stale-skill) + C2 (dispose): bail before mutating if context moved on.
+      if (this._disposed || this._skillId !== skillId) {
+        return
+      }
+      // M3: defensive normalized filter (the server already filters by skillIds).
+      const key = skillComparisonKey(skillId)
+      const list = (r.advisories ?? []).filter((a) => skillComparisonKey(a.skillName) === key)
+      this._advisories = list
+      if (list.length > 0) {
+        track('vscode_advisories_shown', { count: list.length, surface: 'detail-panel' })
+      }
+      this._update()
+    } catch (err) {
+      if (this._disposed || this._skillId !== skillId) {
+        return
+      }
+      if (err instanceof McpToolError && err.code === 'TierDenied') {
+        SkillDetailPanel._advisoryTierDeniedSession = true
+        this._advisoryTierDenied = true
+        track('vscode_advisories_tier_denied', { surface: 'detail-panel' })
+        this._update()
+      }
+      // Other errors: silently leave _advisories null (no modal — passive load).
+    }
+  }
+
   private _update() {
+    // C2: never touch the webview after the panel is disposed.
+    if (this._disposed) {
+      return
+    }
     if (!this._skillData) {
       return
     }
@@ -337,6 +407,9 @@ export class SkillDetailPanel {
       hasSkillMd: this._hasSkillMd,
       ...(this._skillPath !== undefined ? { skillPath: this._skillPath } : {}),
     }
-    return getSkillDetailHtml(skill, nonce, csp, this._showFullContent, actionCtx)
+    return getSkillDetailHtml(skill, nonce, csp, this._showFullContent, actionCtx, {
+      advisories: this._advisories,
+      tierDenied: this._advisoryTierDenied,
+    })
   }
 }

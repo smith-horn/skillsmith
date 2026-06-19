@@ -45,6 +45,17 @@ vi.mock('../services/Telemetry.js', () => ({
   track: vi.fn(),
 }))
 
+// SMI-5317: the panel lazily auto-loads advisories via getMcpClient().skillAudit
+// after a successful render. Stub it inert here so these error/action tests stay
+// focused; the advisory behaviour itself is covered in
+// SkillDetailPanel.advisories.test.ts.
+vi.mock('../mcp/McpClient.js', () => ({
+  getMcpClient: () => ({
+    skillAudit: vi.fn().mockResolvedValue({ advisoriesAvailable: false, advisories: [] }),
+    isConnected: () => true,
+  }),
+}))
+
 import * as vscode from 'vscode'
 import { SkillDetailPanel } from '../views/SkillDetailPanel.js'
 import type { SkillService } from '../services/SkillService.js'

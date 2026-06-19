@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Recommend Skills command** — contextual skill recommendations based on your installed skills, surfaced in a quick pick.
 - **Compare Skills command** — side-by-side comparison of two skills in a panel (quality, trust tier, key differences, and a recommendation).
 - **Check Skill for Updates command** — compares an installed skill against the latest registry version and advises whether to update (Individual plan or higher).
+- **Security advisories** — the skill detail panel now shows published security advisories for a skill (Team plan or higher), plus a finding count on failed scans.
 
 ### Changed
 
