@@ -8,11 +8,19 @@
  *   4. A repo surfaced twice across code-search pages is enumerated only once
  *      (no duplicate rows from re-enumeration).
  *
+ * SMI-5319: the license ADMISSION gate has been removed. These tests also prove:
+ *   5. ALL licenses (null/CC0/MIT/Apache-2.0/GPL-3.0) ADMIT with the surfaced SPDX.
+ *   6. A failed license fetch ADMITS the skill with `license: null` (never drops).
+ *   7. License resolution is once-per-repo (N-skill repo → ONE fetchRepoLicense),
+ *      cached across pages of the same repo.
+ *   8. `repoCacheKey` is the single shared key derivation (equality / round-trip).
+ *   9. The SKILLSMITH_INDEXER_LICENSE_GATE kill-switch restores legacy exclusion.
+ *
  * Strategy: mock every I/O boundary (code-search, license-fetch, skill-processor,
  * trees-enumerate) at the module level; let buildSkillTreeUrl run real (pure).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { RateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
 
 // ---------------------------------------------------------------------------
@@ -70,6 +78,8 @@ vi.mock('../../indexer/trees-enumerate.ts', async (importOriginal) => {
 
 // Imported AFTER mocks so the SUT binds the stubs.
 import { runSubdirectorySearch } from '../../indexer/subdirectory-search.ts'
+// repoCacheKey is a pure helper (no I/O) — imported real for the key-shape test.
+import { repoCacheKey } from '../../indexer/subdirectory-search.helpers.ts'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -302,31 +312,178 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
     expect(result.repos[0].installable).toBe(false)
   })
 
-  it('skips a repo whose license fetch failed (not counted as license-filtered)', async () => {
+  // SMI-5319: INVERTED. A failed license fetch no longer drops the skill — it
+  // ADMITS with `license: null`, and the (post-validity) enumeration IS called.
+  it('admits a repo whose license fetch failed, surfacing license: null', async () => {
     mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
     mockSearchCode.mockResolvedValue(makeSearchResult([]))
 
+    mockEnumerateRepoSkillPaths.mockResolvedValue({
+      entries: [{ path: '.agents/skills/a', blobSha: 'sha-a' }],
+      truncatedByCap: false,
+      truncatedByApi: false,
+    })
     mockFetchRepoLicense.mockResolvedValue({ license: null, fetchFailed: true })
 
     const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
-    expect(result.repos).toHaveLength(0)
+    expect(result.repos).toHaveLength(1)
+    expect(result.repos[0].license).toBeNull()
+    // Not an admission filter → never counted as license-filtered.
     expect(result.licenseFiltered).toBe(0)
     expect(result.licenseFetchFailed).toBe(1)
-    // Trees enumeration must NOT have been called for this repo
-    expect(mockEnumerateRepoSkillPaths).not.toHaveBeenCalled()
+    // Enumeration (the strict validity gate) IS exercised now.
+    expect(mockEnumerateRepoSkillPaths).toHaveBeenCalledTimes(1)
   })
 
-  it('excludes repos with a non-permissive license and increments licenseFiltered', async () => {
+  // SMI-5319: INVERTED. A non-permissive license is no longer an admission filter
+  // — the skill ADMITS and the SPDX is surfaced; licenseFiltered stays 0.
+  it('admits a repo with a non-permissive license and surfaces its SPDX', async () => {
     mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
     mockSearchCode.mockResolvedValue(makeSearchResult([]))
 
+    mockEnumerateRepoSkillPaths.mockResolvedValue({
+      entries: [{ path: '.agents/skills/a', blobSha: 'sha-a' }],
+      truncatedByCap: false,
+      truncatedByApi: false,
+    })
     mockFetchRepoLicense.mockResolvedValue({ license: 'GPL-3.0', fetchFailed: false })
 
     const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
 
-    expect(result.repos).toHaveLength(0)
-    expect(result.licenseFiltered).toBe(1)
-    expect(mockEnumerateRepoSkillPaths).not.toHaveBeenCalled()
+    expect(result.repos).toHaveLength(1)
+    expect(result.repos[0].license).toBe('GPL-3.0')
+    expect(result.licenseFiltered).toBe(0)
+    expect(mockEnumerateRepoSkillPaths).toHaveBeenCalledTimes(1)
+  })
+
+  // SMI-5319: every license value ADMITS with the correct surfaced SPDX.
+  it.each([
+    ['null (no detected license)', null],
+    ['CC0-1.0 (public-domain dedication)', 'CC0-1.0'],
+    ['MIT (permissive)', 'MIT'],
+    ['Apache-2.0 (permissive)', 'Apache-2.0'],
+    ['GPL-3.0 (copyleft)', 'GPL-3.0'],
+  ])('admits and surfaces license for %s', async (_label, spdx) => {
+    mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
+    mockSearchCode.mockResolvedValue(makeSearchResult([]))
+
+    mockEnumerateRepoSkillPaths.mockResolvedValue({
+      entries: [{ path: '.agents/skills/a', blobSha: 'sha-a' }],
+      truncatedByCap: false,
+      truncatedByApi: false,
+    })
+    mockFetchRepoLicense.mockResolvedValue({ license: spdx, fetchFailed: false })
+
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
+
+    expect(result.repos).toHaveLength(1)
+    expect(result.repos[0].license).toBe(spdx)
+    expect(result.licenseFiltered).toBe(0)
+  })
+
+  // SMI-5319: license resolution is ONCE-per-repo (after the validity gate).
+  it('fetches the license exactly ONCE for an N-skill repo', async () => {
+    mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
+    mockSearchCode.mockResolvedValue(makeSearchResult([]))
+
+    // One repo, three valid SKILL.md paths.
+    mockEnumerateRepoSkillPaths.mockResolvedValue({
+      entries: [
+        { path: '.agents/skills/a', blobSha: 'sha-a' },
+        { path: '.agents/skills/b', blobSha: 'sha-b' },
+        { path: '.agents/skills/c', blobSha: 'sha-c' },
+      ],
+      truncatedByCap: false,
+      truncatedByApi: false,
+    })
+    mockFetchRepoLicense.mockResolvedValue({ license: 'MIT', fetchFailed: false })
+
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
+
+    // Three emitted skills, all sharing the one resolved license.
+    expect(result.repos).toHaveLength(3)
+    for (const r of result.repos) expect(r.license).toBe('MIT')
+    // Exactly ONE license fetch for the whole repo.
+    expect(mockFetchRepoLicense).toHaveBeenCalledTimes(1)
+  })
+
+  // SMI-5319: the licenseCache is reused across two code-search pages of the same
+  // repo — still exactly ONE fetch total (write-key === read-key via repoCacheKey).
+  it('reuses the cached license across two pages of the same repo (one fetch total)', async () => {
+    const repo = makeCodeSearchRepo()
+
+    mockSearchCode
+      .mockResolvedValueOnce({ ...makeSearchResult([repo]), repos: [repo] })
+      .mockResolvedValueOnce({ ...makeSearchResult([repo]), repos: [repo] })
+      .mockResolvedValue(makeSearchResult([]))
+
+    mockEnumerateRepoSkillPaths.mockResolvedValue({
+      entries: [{ path: '.agents/skills/a', blobSha: 'sha-a' }],
+      truncatedByCap: false,
+      truncatedByApi: false,
+    })
+    mockFetchRepoLicense.mockResolvedValue({ license: 'Apache-2.0', fetchFailed: false })
+
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 3, noTelemetry)
+
+    // The repo is enumerated once (once-guard) and the license fetched once.
+    expect(mockEnumerateRepoSkillPaths).toHaveBeenCalledTimes(1)
+    expect(mockFetchRepoLicense).toHaveBeenCalledTimes(1)
+    expect(result.repos).toHaveLength(1)
+    expect(result.repos[0].license).toBe('Apache-2.0')
+  })
+
+  // SMI-5319 (Pattern-3 invariant): repoCacheKey is the single key derivation, so
+  // the once-guard write-key and the licenseCache read-key are provably identical.
+  it('repoCacheKey is a stable, deterministic owner/repo derivation', () => {
+    expect(repoCacheKey('acme', 'skills-repo')).toBe('acme/skills-repo')
+    // Deterministic / idempotent.
+    expect(repoCacheKey('acme', 'skills-repo')).toBe(repoCacheKey('acme', 'skills-repo'))
+    // Distinct owners or repos do not collide.
+    expect(repoCacheKey('acme', 'a')).not.toBe(repoCacheKey('acme', 'b'))
+    expect(repoCacheKey('a', 'repo')).not.toBe(repoCacheKey('b', 'repo'))
+  })
+
+  // SMI-5319 kill-switch: SKILLSMITH_INDEXER_LICENSE_GATE=true restores the legacy
+  // pre-validity exclusion (drop non-permissive, count as license-filtered).
+  describe('SKILLSMITH_INDEXER_LICENSE_GATE kill-switch (legacy behavior)', () => {
+    afterEach(() => {
+      delete process.env.SKILLSMITH_INDEXER_LICENSE_GATE
+    })
+
+    it('restores legacy exclusion of non-permissive licenses when =true', async () => {
+      process.env.SKILLSMITH_INDEXER_LICENSE_GATE = 'true'
+
+      mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
+      mockSearchCode.mockResolvedValue(makeSearchResult([]))
+      mockFetchRepoLicense.mockResolvedValue({ license: 'GPL-3.0', fetchFailed: false })
+
+      const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
+
+      // Legacy: dropped before the validity gate, counted as license-filtered.
+      expect(result.repos).toHaveLength(0)
+      expect(result.licenseFiltered).toBe(1)
+      expect(mockEnumerateRepoSkillPaths).not.toHaveBeenCalled()
+    })
+
+    it('admits permissive licenses under the legacy gate', async () => {
+      process.env.SKILLSMITH_INDEXER_LICENSE_GATE = 'true'
+
+      mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
+      mockSearchCode.mockResolvedValue(makeSearchResult([]))
+      mockEnumerateRepoSkillPaths.mockResolvedValue({
+        entries: [{ path: '.agents/skills/a', blobSha: 'sha-a' }],
+        truncatedByCap: false,
+        truncatedByApi: false,
+      })
+      mockFetchRepoLicense.mockResolvedValue({ license: 'MIT', fetchFailed: false })
+
+      const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
+
+      expect(result.repos).toHaveLength(1)
+      expect(result.repos[0].license).toBe('MIT')
+      expect(result.licenseFiltered).toBe(0)
+    })
   })
 })

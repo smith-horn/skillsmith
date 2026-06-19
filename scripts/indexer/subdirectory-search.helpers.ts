@@ -19,6 +19,20 @@ import { searchCodeForSkillMdInSubdirectory } from './code-search.ts'
 import { checkSkillMdExists } from './skill-processor.ts'
 import { fetchRepoLicense, isPermissiveLicense } from './license-filter.ts'
 import { enumerateRepoSkillPaths, type EnumerateTelemetry } from './trees-enumerate.ts'
+
+/**
+ * SMI-5319: The single shared derivation of a per-run repo cache key.
+ *
+ * Used as the key for BOTH the `enumeratedRepos` once-guard AND the
+ * `licenseCache` map so the write-key (when a license is resolved + cached) and
+ * the read-key (when a cached license is consumed) are provably identical — a
+ * concurrency-auditor Pattern-3 (cache key-shape mismatch, SMI-4861) invariant.
+ * Centralizing it here removes the inline `${owner}/${repoName}` that previously
+ * lived at two call sites.
+ */
+export function repoCacheKey(owner: string, repoName: string): string {
+  return `${owner}/${repoName}`
+}
 import { buildSkillTreeUrl } from './skill-url.ts'
 import { buildSizeFacets, facetId, facetToQualifier } from './code-search.facets.ts'
 import {
@@ -35,8 +49,19 @@ import type { GitHubRepository } from './topic-search.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
 
 /**
- * Process code search results: deduplicate, license-gate, validate, and collect repos.
+ * Process code search results: deduplicate, validate, resolve license, and collect repos.
  * Shared by both broad and fallback search paths.
+ *
+ * SMI-5319: the license ADMISSION gate has been removed. The indexer now indexes
+ * ALL valid skills regardless of license and records the resolved SPDX id as
+ * surfaced metadata (the consumer decides). The ONLY admission filter is the
+ * existing strict validity path (`enumerateRepoSkillPaths` +
+ * `checkSkillMdExists`). License resolution is now once-per-repo, AFTER the
+ * `enumeratedRepos` once-guard, cached in `licenseCache` keyed by
+ * {@link repoCacheKey} (the same derivation as the once-guard, so write-key ===
+ * read-key), and NEVER drops a skill — a fetch failure records `license: null`
+ * and proceeds. A kill-switch (`SKILLSMITH_INDEXER_LICENSE_GATE === 'true'`)
+ * restores the legacy exclude-non-permissive behavior without a deploy.
  *
  * SMI-4852: Threads `telemetry` to downstream `fetchRepoLicense` and
  * `checkSkillMdExists` calls so every GitHub API hit lands in the shared
@@ -49,8 +74,7 @@ import type { SkillMdValidation } from './skill-processor.ts'
  * `repo_url` rows that never collide on `onConflict: 'repo_url'`. Each per-path row
  * is validated independently (§#4 strict gate) before it is collected; validated
  * rows are `installable:true` (`skill-processor.ts:440` then persists the non-null
- * tree URL). Edit E: only the enumeration loop changed — the dedup-key /
- * freshness-qualifier lines (`:89`) are byte-stable for the SMI-5176 rebase.
+ * tree URL).
  */
 export async function processSearchResults(
   resultRepos: GitHubRepository[],
@@ -58,38 +82,66 @@ export async function processSearchResults(
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   repos: GitHubRepository[],
-  stats: { licenseFiltered: number; licenseFetchFailed: number },
+  stats: {
+    licenseFiltered: number
+    licenseFetchFailed: number
+    admitted: number
+    licenseNull: number
+  },
   telemetry: RateLimitTelemetry,
   enumerateTelemetry: EnumerateTelemetry,
-  enumeratedRepos: Set<string>
+  enumeratedRepos: Set<string>,
+  licenseCache: Map<string, string | null>
 ): Promise<void> {
+  // SMI-5319 kill-switch: when set to the literal string 'true', restore the
+  // legacy pre-validity license ADMISSION gate (exclude non-permissive repos)
+  // so ops can re-enable the old behavior without a deploy. Default (unset /
+  // anything else) = OFF = the new no-gate behavior.
+  const legacyLicenseGate = process.env.SKILLSMITH_INDEXER_LICENSE_GATE === 'true'
+
   for (const repo of resultRepos) {
     // Deduplication key includes skillPath: one repo can have multiple skills
     const dedupKey = repo.skillPath ? `${repo.url}/${repo.skillPath}` : repo.url
     if (seenUrls.has(dedupKey)) continue
 
-    // License gate: fetch SPDX from GitHub API (not included in code search response)
-    const { license: spdxId, fetchFailed } = await fetchRepoLicense(
-      repo.owner,
-      repo.repoName,
-      telemetry
-    )
+    // SMI-5319: keyed via the shared `repoCacheKey` derivation so the once-guard
+    // key (enumeratedRepos) and the licenseCache key are provably identical
+    // (concurrency-auditor Pattern-3 invariant).
+    const repoKey = repoCacheKey(repo.owner, repo.repoName)
 
-    if (fetchFailed) {
-      // API failure — skip this run but don't count as license-filtered.
-      // NOT added to seenUrls so the repo is retried on the next indexer run.
-      console.log(`[BroadDiscovery] License fetch failed (will retry next run): ${repo.fullName}`)
-      stats.licenseFetchFailed++
-      await delay(200)
-      continue
-    }
+    // SMI-5319 kill-switch (legacy path only): the OLD pre-validity admission gate.
+    // Fetch SPDX from the GitHub API and drop the repo if the license could not be
+    // fetched (retry next run) or is confirmed non-permissive. Disabled by default
+    // — the new behavior resolves license once-per-repo AFTER the validity gate and
+    // never drops a skill. When the gate admits a repo, the just-fetched SPDX is
+    // seeded into `licenseCache` so the once-per-repo resolution below reuses it
+    // (no redundant second fetch in legacy mode).
+    if (legacyLicenseGate) {
+      const { license: spdxId, fetchFailed } = await fetchRepoLicense(
+        repo.owner,
+        repo.repoName,
+        telemetry
+      )
 
-    if (!isPermissiveLicense(spdxId)) {
-      // Confirmed non-permissive license — permanently excluded.
-      console.log(`[BroadDiscovery] License excluded: ${repo.fullName} spdx=${spdxId ?? 'null'}`)
-      stats.licenseFiltered++
-      await delay(200)
-      continue
+      if (fetchFailed) {
+        // API failure — skip this run but don't count as license-filtered.
+        // NOT added to seenUrls so the repo is retried on the next indexer run.
+        console.log(`[BroadDiscovery] License fetch failed (will retry next run): ${repo.fullName}`)
+        stats.licenseFetchFailed++
+        await delay(200)
+        continue
+      }
+
+      if (!isPermissiveLicense(spdxId)) {
+        // Confirmed non-permissive license — permanently excluded.
+        console.log(`[BroadDiscovery] License excluded: ${repo.fullName} spdx=${spdxId ?? 'null'}`)
+        stats.licenseFiltered++
+        await delay(200)
+        continue
+      }
+
+      // Admitted by the legacy gate: reuse this SPDX for the metadata resolution.
+      if (!licenseCache.has(repoKey)) licenseCache.set(repoKey, spdxId)
     }
 
     // Mark this code-search result consumed (per-repo+skillPath identity) so the
@@ -98,7 +150,6 @@ export async function processSearchResults(
 
     // SMI-5286 Wave 1a (§#1): enumerate the repo's full tree ONCE. The broad query
     // can surface the same repo via multiple SKILL.md hits; guard re-enumeration.
-    const repoKey = `${repo.owner}/${repo.repoName}`
     if (enumeratedRepos.has(repoKey)) {
       await delay(50)
       continue
@@ -124,6 +175,23 @@ export async function processSearchResults(
     if (truncatedByCap) {
       console.log(`[BroadDiscovery] Per-repo cap reached, taking first N: ${repo.fullName}`)
     }
+
+    // SMI-5319: resolve the license ONCE per repo, AFTER the validity gate
+    // (enumeration succeeded), cached on `repoKey` (the SAME key as the
+    // once-guard above). A fetch failure records `license: null` and PROCEEDS —
+    // the license is surfaced metadata only, never an admission filter. The repo
+    // is enumerated once per run, so a cache miss here means exactly one fetch.
+    let spdx: string | null
+    if (licenseCache.has(repoKey)) {
+      spdx = licenseCache.get(repoKey) ?? null
+    } else {
+      const { license, fetchFailed } = await fetchRepoLicense(repo.owner, repo.repoName, telemetry)
+      // Ignore fetchFailed: record null and proceed (never drop, never retry-storm).
+      spdx = fetchFailed ? null : license
+      if (fetchFailed) stats.licenseFetchFailed++
+      licenseCache.set(repoKey, spdx)
+    }
+    if (spdx === null) stats.licenseNull++
 
     // Validate each enumerated SKILL.md independently (§#4 strict gate) and emit
     // one per-skill GitHubRepository with a distinct tree URL (C-1) per valid path.
@@ -152,14 +220,17 @@ export async function processSearchResults(
       if (seenUrls.has(skillUrl)) continue
       seenUrls.add(skillUrl)
 
+      // SMI-5319: emit with the cached license as surfaced metadata (possibly
+      // null). Admission was already governed by the strict validity gate above.
       repos.push({
         ...repo,
         url: skillUrl,
         installable,
         skillPath,
         treeHash: entry.blobSha,
-        license: spdxId,
+        license: spdx,
       })
+      stats.admitted++
       await delay(50)
     }
   }
@@ -201,8 +272,9 @@ const CODE_SEARCH_RESULT_CAP = 1000
  * almost always denylist-caught boilerplate) is recorded as truncated, logged,
  * and skipped (never silently dropped). The frontier (facet index + bisection
  * stack + page) is fully captured by the returned cursor so a dispatch boundary
- * mid-bisection resumes losslessly. Reuses {@link processSearchResults} (license
- * gate + Trees per-skill enumeration + per-path validation) unchanged.
+ * mid-bisection resumes losslessly. Reuses {@link processSearchResults} (Trees
+ * per-skill enumeration + per-path validation + once-per-repo license metadata
+ * resolution) unchanged.
  */
 export async function runBackfillFacetCrawl(
   plan: BackfillFacetPlan,
@@ -210,10 +282,16 @@ export async function runBackfillFacetCrawl(
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   repos: GitHubRepository[],
-  stats: { licenseFiltered: number; licenseFetchFailed: number },
+  stats: {
+    licenseFiltered: number
+    licenseFetchFailed: number
+    admitted: number
+    licenseNull: number
+  },
   telemetry: RateLimitTelemetry,
   enumerateTelemetry: EnumerateTelemetry,
   enumeratedRepos: Set<string>,
+  licenseCache: Map<string, string | null>,
   errors: string[]
 ): Promise<BackfillCrawlOutcome> {
   const facets = buildSizeFacets()
@@ -259,7 +337,8 @@ export async function runBackfillFacetCrawl(
         stats,
         telemetry,
         enumerateTelemetry,
-        enumeratedRepos
+        enumeratedRepos,
+        licenseCache
       )
       state.lastPage = page
       if (result.repos.length < plan.perPage) break // short page → range exhausted

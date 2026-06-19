@@ -136,14 +136,19 @@ export async function runSubdirectorySearch(
   const errors: string[] = []
   let totalFound = 0
   let totalRetries = 0
-  const stats = { licenseFiltered: 0, licenseFetchFailed: 0 }
+  // SMI-5319: `licenseFiltered` is ~0 now (only the kill-switch path increments
+  // it). `admitted` + `licenseNull` give admit volume + null-license rate.
+  const stats = { licenseFiltered: 0, licenseFetchFailed: 0, admitted: 0, licenseNull: 0 }
   let incompleteResults = 0
   const searchMode: 'broad' | 'prefix-fallback' = 'broad'
   // SMI-5286 Wave 1a: run-scoped per-skill extraction state. `enumerateTelemetry`
   // accumulates denylist/cap/truncation counters across the whole run;
   // `enumeratedRepos` guards one Trees call per repo across pages and prefixes.
+  // SMI-5319: `licenseCache` resolves each repo's license at most once per run;
+  // it is keyed by `repoCacheKey` — the SAME derivation as `enumeratedRepos`.
   const enumerateTelemetry: EnumerateTelemetry = {}
   const enumeratedRepos = new Set<string>()
+  const licenseCache = new Map<string, string | null>()
 
   // ── SMI-5286 1c: size-faceted backfill crawl (replaces the legacy loop) ──
   if (backfillPlan) {
@@ -157,11 +162,12 @@ export async function runSubdirectorySearch(
       telemetry,
       enumerateTelemetry,
       enumeratedRepos,
+      licenseCache,
       errors
     )
     console.log(
       `[Backfill] Facet crawl: ${repos.length} skills added, ${backfill.facets_completed}/${backfill.facets_total} facets, ${backfill.ranges_crawled} ranges this dispatch, ` +
-        `${stats.licenseFiltered} license-filtered, cap_saturated=${backfill.cap_saturated}, truncated=${backfill.truncated_repo_count}, done=${backfill.done}`
+        `admitted=${stats.admitted}, licenseNull=${stats.licenseNull}, ${stats.licenseFiltered} license-filtered, cap_saturated=${backfill.cap_saturated}, truncated=${backfill.truncated_repo_count}, done=${backfill.done}`
     )
     console.log(
       `[Backfill] Per-skill extraction: ${enumeratedRepos.size} repos enumerated, ${enumerateTelemetry.denylistSkipped ?? 0} denylist-skipped, ${enumerateTelemetry.cappedRepoCount ?? 0} capped, ${enumerateTelemetry.truncatedRepoCount ?? 0} api-truncated`
@@ -216,7 +222,8 @@ export async function runSubdirectorySearch(
       stats,
       telemetry,
       enumerateTelemetry,
-      enumeratedRepos
+      enumeratedRepos,
+      licenseCache
     )
 
     if (result.repos.length < BROAD_QUERY_PER_PAGE) break
@@ -269,7 +276,8 @@ export async function runSubdirectorySearch(
           stats,
           telemetry,
           enumerateTelemetry,
-          enumeratedRepos
+          enumeratedRepos,
+          licenseCache
         )
 
         if (result.repos.length < BROAD_QUERY_PER_PAGE) break
@@ -282,8 +290,12 @@ export async function runSubdirectorySearch(
     }
   }
 
+  // SMI-5319: `admitted` = volume passing the strict validity gate; `licenseNull`
+  // = how many had no detectable license (now surfaced, not dropped).
+  // `licenseFiltered` is ~0 unless the SKILLSMITH_INDEXER_LICENSE_GATE kill-switch
+  // is on. Existing fields kept for shape stability.
   console.log(
-    `[BroadDiscovery] Complete (${primaryMode}): ${repos.length} added, ${stats.licenseFiltered} license-filtered, ${stats.licenseFetchFailed} fetch-failed, ${incompleteResults} incomplete, ${totalRetries} retries`
+    `[BroadDiscovery] Complete (${primaryMode}): ${repos.length} added, admitted=${stats.admitted}, licenseNull=${stats.licenseNull}, ${stats.licenseFiltered} license-filtered, ${stats.licenseFetchFailed} fetch-failed, ${incompleteResults} incomplete, ${totalRetries} retries`
   )
   // SMI-5286 Wave 1a: per-skill extraction observability (§#1, Edit D).
   console.log(
