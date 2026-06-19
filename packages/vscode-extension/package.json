@@ -112,6 +112,12 @@
         "title": "Check Skill for Updates (Individual+)",
         "category": "Skillsmith",
         "icon": "$(versions)"
+      },
+      {
+        "command": "skillsmith.auditInventory",
+        "title": "Audit Skill Inventory",
+        "category": "Skillsmith",
+        "icon": "$(search)"
       }
     ],
     "keybindings": [
