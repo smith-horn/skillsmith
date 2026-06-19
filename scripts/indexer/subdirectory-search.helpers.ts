@@ -17,22 +17,10 @@
 import { delay, type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { searchCodeForSkillMdInSubdirectory } from './code-search.ts'
 import { checkSkillMdExists } from './skill-processor.ts'
+// `isPermissiveLicense` is consumed ONLY by the SMI-5319 kill-switch (the legacy
+// license gate); the default path resolves license as surfaced metadata only.
 import { fetchRepoLicense, isPermissiveLicense } from './license-filter.ts'
 import { enumerateRepoSkillPaths, type EnumerateTelemetry } from './trees-enumerate.ts'
-
-/**
- * SMI-5319: The single shared derivation of a per-run repo cache key.
- *
- * Used as the key for BOTH the `enumeratedRepos` once-guard AND the
- * `licenseCache` map so the write-key (when a license is resolved + cached) and
- * the read-key (when a cached license is consumed) are provably identical — a
- * concurrency-auditor Pattern-3 (cache key-shape mismatch, SMI-4861) invariant.
- * Centralizing it here removes the inline `${owner}/${repoName}` that previously
- * lived at two call sites.
- */
-export function repoCacheKey(owner: string, repoName: string): string {
-  return `${owner}/${repoName}`
-}
 import { buildSkillTreeUrl } from './skill-url.ts'
 import { buildSizeFacets, facetId, facetToQualifier } from './code-search.facets.ts'
 import {
@@ -47,6 +35,20 @@ import {
 } from './backfill-checkpoint.ts'
 import type { GitHubRepository } from './topic-search.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
+
+/**
+ * SMI-5319: The single shared derivation of a per-run repo cache key.
+ *
+ * Used as the key for BOTH the `enumeratedRepos` once-guard AND the
+ * `licenseCache` map so the write-key (when a license is resolved + cached) and
+ * the read-key (when a cached license is consumed) are provably identical — a
+ * concurrency-auditor Pattern-3 (cache key-shape mismatch, SMI-4861) invariant.
+ * Centralizing it here removes the inline `${owner}/${repoName}` that previously
+ * lived at two call sites.
+ */
+export function repoCacheKey(owner: string, repoName: string): string {
+  return `${owner}/${repoName}`
+}
 
 /**
  * Process code search results: deduplicate, validate, resolve license, and collect repos.
@@ -114,8 +116,10 @@ export async function processSearchResults(
     // fetched (retry next run) or is confirmed non-permissive. Disabled by default
     // — the new behavior resolves license once-per-repo AFTER the validity gate and
     // never drops a skill. When the gate admits a repo, the just-fetched SPDX is
-    // seeded into `licenseCache` so the once-per-repo resolution below reuses it
-    // (no redundant second fetch in legacy mode).
+    // seeded into `licenseCache` so the post-validity resolution below reuses it
+    // (no second fetch there). NOTE: this break-glass loop runs before the
+    // `enumeratedRepos` once-guard, so a repo surfacing via multiple skillPaths is
+    // re-fetched here per hit — acceptable on the default-off legacy path.
     if (legacyLicenseGate) {
       const { license: spdxId, fetchFailed } = await fetchRepoLicense(
         repo.owner,

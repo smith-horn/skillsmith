@@ -97,10 +97,11 @@ export const FALLBACK_PATH_PREFIXES = [
  * Deduplicates results against the shared seenUrls set from earlier phases
  * so repos discovered via topic search are not re-validated.
  *
- * License gate: repos without a permissive license (MIT, Apache-2.0, etc.) are
- * excluded and counted in licenseFiltered. Repos where the license fetch failed
- * (rate limit / network error) are counted separately in licenseFetchFailed and
- * are NOT added to seenUrls — they will be retried on the next indexer run.
+ * SMI-5319: license is NOT an admission filter. Every valid skill is indexed with
+ * its resolved SPDX as surfaced metadata (the consumer decides). `licenseFiltered`
+ * is ~0 unless `SKILLSMITH_INDEXER_LICENSE_GATE=true` restores the legacy gate; a
+ * license-fetch failure records `license: null` and STILL admits the skill.
+ * `admitted` / `licenseNull` report admit volume and the null-license rate.
  *
  * SMI-4852: Threads `telemetry` through to every downstream GitHub call.
  *
@@ -126,6 +127,10 @@ export async function runSubdirectorySearch(
   retries: number
   licenseFiltered: number
   licenseFetchFailed: number
+  /** SMI-5319: skills admitted (indexed) this run. */
+  admitted: number
+  /** SMI-5319: admitted skills whose resolved SPDX is null. */
+  licenseNull: number
   incompleteResults: number
   searchMode: 'broad' | 'prefix-fallback'
   errors: string[]
@@ -178,6 +183,8 @@ export async function runSubdirectorySearch(
       retries: totalRetries,
       licenseFiltered: stats.licenseFiltered,
       licenseFetchFailed: stats.licenseFetchFailed,
+      admitted: stats.admitted,
+      licenseNull: stats.licenseNull,
       incompleteResults,
       searchMode,
       errors,
@@ -316,6 +323,8 @@ export async function runSubdirectorySearch(
     retries: totalRetries,
     licenseFiltered: stats.licenseFiltered,
     licenseFetchFailed: stats.licenseFetchFailed,
+    admitted: stats.admitted,
+    licenseNull: stats.licenseNull,
     incompleteResults,
     searchMode: primaryMode,
     errors,
@@ -359,6 +368,8 @@ export async function runSubdirectorySearchPhase(args: {
       retries: subdirResult.retries,
       license_filtered: subdirResult.licenseFiltered,
       license_fetch_failed: subdirResult.licenseFetchFailed,
+      admitted: subdirResult.admitted,
+      license_null: subdirResult.licenseNull,
       incomplete_results: subdirResult.incompleteResults,
       search_mode: subdirResult.searchMode,
     }
@@ -373,6 +384,8 @@ export async function runSubdirectorySearchPhase(args: {
       retries: 0,
       license_filtered: 0,
       license_fetch_failed: 0,
+      admitted: 0,
+      license_null: 0,
       error: 'phase_failed',
     }
   }
