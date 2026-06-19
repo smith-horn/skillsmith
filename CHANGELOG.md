@@ -121,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Prod IO-budget outage — skills refresh seq-scan** (2026-06-18, SMI-5310): the
+  4-hourly Skill Metadata Refresh query (`skills-refresh-metadata`) had no index
+  serving `WHERE repo_url IS NOT NULL AND quarantined <> true AND indexed_at < …
+  ORDER BY indexed_at` and did a full `Seq Scan on skills` + Sort. Under a
+  recurring disk-IO-budget throttle (the SMI-4968 / SMI-5209 / SMI-5228 / SMI-5278
+  theme) that seq-scan hit `statement timeout`, saturating the gateway and
+  cascading to Cloudflare 522 on all prod HTTP. Added partial index
+  `idx_skills_active_indexed_at` on `skills (indexed_at) WHERE NOT quarantined AND
+  repo_url IS NOT NULL` (runbook-applied CONCURRENTLY; parity migration
+  `20260618000001`) — the refresh query now plans an index scan in ~3 ms instead
+  of timing out.
 - **Indexer freshness qualifier** (SMI-5176): repo-search freshness window now
   uses `pushed:>DATE` instead of `created:>DATE` — `pushed:>` matches repos
   with recent push activity (5–7× wider universe per topic) whereas `created:>`
