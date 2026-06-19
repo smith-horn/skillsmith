@@ -131,6 +131,11 @@ export interface RunDiscoveryParams {
    * returns on `result.backfill_crawl`.
    */
   backfillFacetPlan?: BackfillFacetPlan
+  /**
+   * SMI-5311: lock-heartbeat abort signal. If aborted (lock stolen / unrefreshable)
+   * before Phase 4, the upsert + finalize are skipped (see the abort gate below).
+   */
+  abortSignal?: AbortSignal
 }
 
 export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerResult> {
@@ -156,6 +161,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     discoveryPhase,
     backfillMode = false,
     backfillFacetPlan,
+    abortSignal,
   } = params
 
   // SMI-4870: phase gates. When `discoveryPhase` is unset every gate is true,
@@ -375,6 +381,19 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     await delay(GITHUB_API_DELAY)
   }
 
+  // Finalize stdout-RunSummary fields (SMI-4861) before the abort gate so both the abort path and normal tail reuse them.
+  result.repositories_found = repositories.length
+  result.tree_hash_cache = { hits: cacheCounters.hits, misses: cacheCounters.misses }
+  // SMI-5311 abort gate: heartbeat aborted (lock stolen / unrefreshable) in Phases
+  // 1-3 → another indexer holds the lock. Skip Phase 4 upsert + 5/6/7 finalize +
+  // backfill checkpoint (cursor cleared) so a thief isn't double-written.
+  if (abortSignal?.aborted) {
+    console.error(JSON.stringify({ event: 'backfill_aborted_lock_lost', request_id: requestId }))
+    result.backfill_crawl = undefined
+    result.aborted = true
+    return result
+  }
+
   // ── Phase 4: Database upsert ─────────────────────────────────────────
   const upsertResult = await runUpsertPhase(
     supabase,
@@ -476,9 +495,5 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     })
   }
 
-  result.repositories_found = repositories.length
-  // SMI-4861 Wave 1 post-merge retro: also surface cache counters in stdout
-  // RunSummary so cron logs show the hit ratio without a DB query.
-  result.tree_hash_cache = { hits: cacheCounters.hits, misses: cacheCounters.misses }
   return result
 }
