@@ -240,7 +240,7 @@ describe('uninstallCommand (SMI-4195)', () => {
 describe('uninstallByTarget core (SMI-5308 / detail-panel)', () => {
   let tempRoot: string
   let skillPath: string
-  let uninstallByTarget: typeof import('../commands/uninstallCommand.js')['uninstallByTarget']
+  let uninstallByTarget: (typeof import('../commands/uninstallCommand.js'))['uninstallByTarget']
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let provider: any
 

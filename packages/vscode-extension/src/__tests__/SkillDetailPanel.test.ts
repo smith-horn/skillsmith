@@ -275,7 +275,13 @@ describe('SkillDetailPanel', () => {
       SkillDetailPanel.setSkillService(createMockSkillService())
       SkillDetailPanel.setTreeProvider(
         createMockTreeProvider([
-          { id: 'skill', name: 'Test Skill', path: '/skills/skill', hasSkillMd: true, isInstalled: true },
+          {
+            id: 'skill',
+            name: 'Test Skill',
+            path: '/skills/skill',
+            hasSkillMd: true,
+            isInstalled: true,
+          },
         ])
       )
 
@@ -311,7 +317,13 @@ describe('SkillDetailPanel', () => {
       SkillDetailPanel.setSkillService(createMockSkillService())
       SkillDetailPanel.setTreeProvider(
         createMockTreeProvider([
-          { id: 'skill', name: 'Test Skill', path: '/skills/skill', hasSkillMd: false, isInstalled: true },
+          {
+            id: 'skill',
+            name: 'Test Skill',
+            path: '/skills/skill',
+            hasSkillMd: false,
+            isInstalled: true,
+          },
         ])
       )
 
@@ -410,7 +422,13 @@ describe('SkillDetailPanel', () => {
       SkillDetailPanel.setSkillService(createMockSkillService())
       // Provider reports the skill installed at load, but empty at click time.
       const provider = createMockTreeProvider([
-        { id: 'skill', name: 'Test Skill', path: '/skills/skill', hasSkillMd: true, isInstalled: true },
+        {
+          id: 'skill',
+          name: 'Test Skill',
+          path: '/skills/skill',
+          hasSkillMd: true,
+          isInstalled: true,
+        },
       ])
       SkillDetailPanel.setTreeProvider(provider)
 

@@ -7,7 +7,11 @@ import * as path from 'node:path'
 import { generateCspNonce, getSkillDetailCsp } from '../utils/csp.js'
 import type { SkillService } from '../services/SkillService.js'
 import type { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
-import type { ExtendedSkillData, SkillPanelMessage, SkillActionContext } from './skill-panel-types.js'
+import type {
+  ExtendedSkillData,
+  SkillPanelMessage,
+  SkillActionContext,
+} from './skill-panel-types.js'
 import { skillComparisonKey } from '../utils/skillId.js'
 import { uninstallByTarget } from '../commands/uninstallCommand.js'
 import { track } from '../services/Telemetry.js'
@@ -167,10 +171,7 @@ export class SkillDetailPanel {
         return
       case 'openFolder':
         if (this._skillPath) {
-          void vscode.commands.executeCommand(
-            'revealFileInOS',
-            vscode.Uri.file(this._skillPath)
-          )
+          void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(this._skillPath))
           track('vscode_open_folder', { surface: 'detail-panel' })
         }
         return
@@ -194,9 +195,7 @@ export class SkillDetailPanel {
     const key = skillComparisonKey(this._skillId)
     const local = provider.getInstalledSkills().find((s) => skillComparisonKey(s.id) === key)
     if (!local || !local.path) {
-      void vscode.window.showInformationMessage(
-        'Skill no longer installed — refresh the tree'
-      )
+      void vscode.window.showInformationMessage('Skill no longer installed — refresh the tree')
       return
     }
 
