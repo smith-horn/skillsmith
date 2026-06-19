@@ -58,6 +58,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // Initialize providers
   skillTreeDataProvider = new SkillTreeDataProvider()
 
+  // Inject the tree provider into the detail panel so it can resolve installed
+  // state (#1437 / SMI-5308). Always set before the only live createOrShow path.
+  SkillDetailPanel.setTreeProvider(skillTreeDataProvider)
+
   // Initialize intellisense providers
   const skillCompletionProvider = new SkillCompletionProvider()
   const skillHoverProvider = new SkillHoverProvider()

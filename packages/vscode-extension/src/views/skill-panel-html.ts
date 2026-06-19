@@ -4,11 +4,12 @@
 
 import { escapeHtml } from '../utils/security.js'
 import { getSkillDetailCsp } from '../utils/csp.js'
-import type { ExtendedSkillData, ScoreBreakdown } from './skill-panel-types.js'
+import type { ExtendedSkillData, ScoreBreakdown, SkillActionContext } from './skill-panel-types.js'
 import { getContentHtml, renderMarkdown } from './skill-panel-content.js'
 import { inferRepositoryUrl } from './skill-panel-helpers.js'
 import { getStyles } from './skill-panel-styles.js'
 import { getScript } from './skill-panel-script.js'
+import { getActionBlock } from './skill-panel-actions.js'
 
 // Re-export for testing
 export { getContentHtml } from './skill-panel-content.js'
@@ -181,7 +182,8 @@ export function getSkillDetailHtml(
   skill: ExtendedSkillData,
   nonce: string,
   csp: string,
-  showFullContent = false
+  showFullContent = false,
+  actionCtx: SkillActionContext = { installed: false }
 ): string {
   // Escape all user-controlled content to prevent XSS
   const safeName = escapeHtml(skill.name)
@@ -213,10 +215,12 @@ export function getSkillDetailHtml(
     <style>${getStyles()}</style>
 </head>
 <body>
-    <div aria-live="polite">
     <div class="header">
-        <h1>${safeName}</h1>
-        <span class="badge badge-${trustBadgeColor}">${trustBadgeText}</span>
+        <div class="header-titles">
+            <h1>${safeName}</h1>
+            <span class="badge badge-${trustBadgeColor}">${trustBadgeText}</span>
+        </div>
+        ${getActionBlock(actionCtx, safeRepository)}
     </div>
 
     <div class="description">${safeDescription}</div>
@@ -296,13 +300,6 @@ export function getSkillDetailHtml(
             // cross-ecosystem discovery-only skills, the section simply doesn't appear.
             ''
     }
-
-    <div class="actions">
-        <button class="btn-primary" id="installBtn">Install Skill</button>
-        ${safeRepository ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}">View Repository</button>` : ''}
-    </div>
-
-    </div>
 
     ${getScript(nonce)}
 </body>

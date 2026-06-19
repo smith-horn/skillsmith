@@ -3,9 +3,14 @@
  * Uses SkillService for centralized MCP-first + mock fallback.
  */
 import * as vscode from 'vscode'
+import * as path from 'node:path'
 import { generateCspNonce, getSkillDetailCsp } from '../utils/csp.js'
 import type { SkillService } from '../services/SkillService.js'
-import type { ExtendedSkillData, SkillPanelMessage } from './skill-panel-types.js'
+import type { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
+import type { ExtendedSkillData, SkillPanelMessage, SkillActionContext } from './skill-panel-types.js'
+import { skillComparisonKey } from '../utils/skillId.js'
+import { uninstallByTarget } from '../commands/uninstallCommand.js'
+import { track } from '../services/Telemetry.js'
 import {
   getLoadingHtml,
   getSkillDetailHtml,
@@ -24,6 +29,7 @@ export class SkillDetailPanel {
   private static readonly TRUSTED_DOMAINS = ['github.com', 'gitlab.com', 'skillsmith.app']
 
   private static _skillService: SkillService
+  private static _treeProvider: SkillTreeDataProvider | undefined
 
   private readonly _panel: vscode.WebviewPanel
   private readonly _extensionUri: vscode.Uri
@@ -32,9 +38,30 @@ export class SkillDetailPanel {
   private _showFullContent = false
   private _disposables: vscode.Disposable[] = []
 
+  /** Installed-state resolved at load time (drives the conditional action set). */
+  private _installed = false
+  private _skillPath: string | undefined
+  private _hasSkillMd = false
+
   /** Set the shared SkillService instance (called once at activation) */
   public static setSkillService(service: SkillService): void {
     SkillDetailPanel._skillService = service
+  }
+
+  /**
+   * Inject the tree provider (called once at activation). Used to look up
+   * whether the viewed skill is installed locally and where on disk. When unset
+   * (tests / the dead `revive` path), the panel treats the skill as
+   * available-only (C3).
+   */
+  public static setTreeProvider(provider: SkillTreeDataProvider | undefined): void {
+    SkillDetailPanel._treeProvider = provider
+  }
+
+  /** Clear both injected statics between tests (M1). */
+  public static resetForTests(): void {
+    SkillDetailPanel._skillService = undefined as unknown as SkillService
+    SkillDetailPanel._treeProvider = undefined
   }
 
   public static createOrShow(extensionUri: vscode.Uri, skillId: string) {
@@ -126,6 +153,68 @@ export class SkillDetailPanel {
       case 'retry':
         void this._loadAndUpdate()
         return
+      case 'uninstall':
+        void this._handleUninstall()
+        return
+      case 'openSkillFile':
+        if (this._skillPath && this._hasSkillMd) {
+          void vscode.commands.executeCommand(
+            'vscode.open',
+            vscode.Uri.file(path.join(this._skillPath, 'SKILL.md'))
+          )
+          track('vscode_open_skill_file', { surface: 'detail-panel' })
+        }
+        return
+      case 'openFolder':
+        if (this._skillPath) {
+          void vscode.commands.executeCommand(
+            'revealFileInOS',
+            vscode.Uri.file(this._skillPath)
+          )
+          track('vscode_open_folder', { surface: 'detail-panel' })
+        }
+        return
+    }
+  }
+
+  /**
+   * Handle an in-panel uninstall request. Re-resolves the installed entry at
+   * click time (multi-window safety, M2); if it's gone, notifies and aborts.
+   * Delegates to the shared `uninstallByTarget` core (which shows the success
+   * toast + emits telemetry), then disposes the panel on success (H9) so the
+   * dead local-only skill is never re-fetched into an error page.
+   */
+  private async _handleUninstall(): Promise<void> {
+    const provider = SkillDetailPanel._treeProvider
+    if (!this._skillPath || !provider) {
+      return
+    }
+
+    // Re-find at click time — the skill may have been removed in another window.
+    const key = skillComparisonKey(this._skillId)
+    const local = provider.getInstalledSkills().find((s) => skillComparisonKey(s.id) === key)
+    if (!local || !local.path) {
+      void vscode.window.showInformationMessage(
+        'Skill no longer installed — refresh the tree'
+      )
+      return
+    }
+
+    try {
+      const ok = await uninstallByTarget(
+        { skillId: this._skillId, skillPath: local.path },
+        { treeProvider: provider },
+        'detail-panel'
+      )
+      if (ok) {
+        this.dispose()
+      }
+    } catch (err) {
+      // H3: never let an uninstall throw escape the handler — the core already
+      // emits `vscode_uninstall_failed` for known failure shapes; surface the
+      // rest as a generic error rather than a silent drop.
+      const msg = err instanceof Error ? err.message : String(err)
+      void vscode.window.showErrorMessage(`Failed to uninstall "${this._skillId}": ${msg}`)
     }
   }
 
@@ -173,6 +262,7 @@ export class SkillDetailPanel {
     try {
       const { skill } = await SkillDetailPanel._skillService.getRichSkill(this._skillId)
       this._skillData = skill
+      this._resolveInstalledState()
       this._update()
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error)
@@ -181,6 +271,22 @@ export class SkillDetailPanel {
       this._panel.title = `Error: ${this._skillId}`
       this._panel.webview.html = getErrorHtml(userMessage, this._skillId, nonce, rawMessage)
     }
+  }
+
+  /**
+   * Cross-reference the viewed skill against the installed list to populate the
+   * `_installed` / `_skillPath` / `_hasSkillMd` fields that drive the action set.
+   * Null-guards the provider: when unset (tests / dead `revive` path), the skill
+   * is treated as available-only (C3).
+   */
+  private _resolveInstalledState(): void {
+    const key = skillComparisonKey(this._skillId)
+    const local = SkillDetailPanel._treeProvider
+      ?.getInstalledSkills()
+      .find((s) => skillComparisonKey(s.id) === key)
+    this._installed = !!local
+    this._skillPath = local?.path
+    this._hasSkillMd = local?.hasSkillMd ?? false
   }
 
   private _update() {
@@ -225,6 +331,13 @@ export class SkillDetailPanel {
     // Ensure extensionUri is used (for future resource loading)
     void this._getResourceUri
 
-    return getSkillDetailHtml(skill, nonce, csp, this._showFullContent)
+    // Build the action context conditionally: under exactOptionalPropertyTypes
+    // an optional `skillPath?: string` must be omitted (not set to undefined).
+    const actionCtx: SkillActionContext = {
+      installed: this._installed,
+      hasSkillMd: this._hasSkillMd,
+      ...(this._skillPath !== undefined ? { skillPath: this._skillPath } : {}),
+    }
+    return getSkillDetailHtml(skill, nonce, csp, this._showFullContent, actionCtx)
   }
 }

@@ -28,6 +28,7 @@ import { searchSkillsAction, filterSkillsAction, clearFiltersAction } from '../s
 import { installCommandAction } from '../installCommand.js'
 import { uninstallCommandAction } from '../uninstallCommand.js'
 import { createSkillAction } from '../createSkillCommand.js'
+import type { TelemetryEvent } from '../../services/Telemetry.js'
 
 /** Registered command id → wrapped panel action. */
 const VSCODE_DISPATCHER_MAP: Record<string, (...args: never[]) => unknown> = {
@@ -65,5 +66,15 @@ describe('SMI-5130: VS Code command telemetry coverage', () => {
     const count = Object.keys(VSCODE_DISPATCHER_MAP).length
     console.info(`[SMI-5130] VS Code telemetry coverage: ${count} panel actions wrapped.`)
     expect(count).toBe(6)
+  })
+
+  // SMI-5308 (M5): the detail-panel open actions are postMessage handlers, not
+  // registered commands, so they don't appear in VSCODE_DISPATCHER_MAP. Assert
+  // their distinct, type-safe ids exist in the TelemetryEvent union (a removal
+  // or rename breaks compilation here).
+  it('declares distinct telemetry ids for the detail-panel open actions', () => {
+    const openIds: TelemetryEvent[] = ['vscode_open_skill_file', 'vscode_open_folder']
+    expect(openIds).toHaveLength(2)
+    expect(new Set(openIds).size).toBe(2)
   })
 })

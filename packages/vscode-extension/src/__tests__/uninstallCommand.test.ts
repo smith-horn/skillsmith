@@ -50,8 +50,9 @@ vi.mock('../services/installUtils.js', () => ({
   getSkillsDirectory: vi.fn(() => globalThis.__TEMP_ROOT__ as string),
 }))
 
+const track = vi.fn()
 vi.mock('../services/Telemetry.js', () => ({
-  track: vi.fn(),
+  track,
 }))
 
 declare global {
@@ -78,6 +79,7 @@ describe('uninstallCommand (SMI-4195)', () => {
     registerCommand.mockReset()
     mcpConnected.mockReset().mockReturnValue(true)
     mcpUninstall.mockReset()
+    track.mockReset()
     refreshAndWait.mockReset().mockResolvedValue(undefined)
     getInstalledSkills.mockReset().mockReturnValue([
       {
@@ -232,5 +234,129 @@ describe('uninstallCommand (SMI-4195)', () => {
 
     await expect(fs.access(skillPath)).rejects.toThrow()
     expect(showInformationMessage).toHaveBeenCalledWith('Uninstalled "example-skill".')
+  })
+})
+
+describe('uninstallByTarget core (SMI-5308 / detail-panel)', () => {
+  let tempRoot: string
+  let skillPath: string
+  let uninstallByTarget: typeof import('../commands/uninstallCommand.js')['uninstallByTarget']
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let provider: any
+
+  beforeEach(async () => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'uninstall-core-'))
+    globalThis.__TEMP_ROOT__ = tempRoot
+    skillPath = path.join(tempRoot, 'example-skill')
+    await fs.mkdir(skillPath)
+
+    showWarningMessage.mockReset()
+    showErrorMessage.mockReset()
+    showInformationMessage.mockReset()
+    mcpConnected.mockReset().mockReturnValue(true)
+    mcpUninstall.mockReset()
+    track.mockReset()
+    refreshAndWait.mockReset().mockResolvedValue(undefined)
+
+    vi.resetModules()
+    const mod = await import('../commands/uninstallCommand.js')
+    uninstallByTarget = mod.uninstallByTarget
+    const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
+    provider = new SkillTreeDataProvider()
+  })
+
+  afterEach(async () => {
+    await fs.rm(tempRoot, { recursive: true, force: true })
+  })
+
+  it('returns true and emits detail-panel telemetry on MCP success', async () => {
+    showWarningMessage.mockResolvedValue('Uninstall')
+    mcpUninstall.mockResolvedValue({ success: true, skillId: 'example-skill' })
+
+    const ok = await uninstallByTarget(
+      { skillId: 'example-skill', skillPath },
+      { treeProvider: provider },
+      'detail-panel'
+    )
+
+    expect(ok).toBe(true)
+    expect(mcpUninstall).toHaveBeenCalledWith('example-skill')
+    expect(track).toHaveBeenCalledWith('vscode_uninstall_start', { via: 'detail-panel' })
+    expect(track).toHaveBeenCalledWith('vscode_uninstall_complete', { via: 'detail-panel' })
+    expect(showInformationMessage).toHaveBeenCalledWith('Uninstalled "example-skill".')
+  })
+
+  it('returns false on confirm cancel', async () => {
+    showWarningMessage.mockResolvedValue(undefined)
+
+    const ok = await uninstallByTarget(
+      { skillId: 'example-skill', skillPath },
+      { treeProvider: provider },
+      'detail-panel'
+    )
+
+    expect(ok).toBe(false)
+    expect(mcpUninstall).not.toHaveBeenCalled()
+    expect(track).toHaveBeenCalledWith('vscode_uninstall_cancelled', {
+      via: 'detail-panel',
+      stage: 'confirm',
+    })
+  })
+
+  it('returns false and refuses when the path is outside the root', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'uninstall-core-outside-'))
+    try {
+      const evilLink = path.join(tempRoot, 'evil')
+      await fs.symlink(outside, evilLink)
+      showWarningMessage.mockResolvedValue('Uninstall')
+
+      const ok = await uninstallByTarget(
+        { skillId: 'evil', skillPath: evilLink },
+        { treeProvider: provider },
+        'detail-panel'
+      )
+
+      expect(ok).toBe(false)
+      expect(mcpUninstall).not.toHaveBeenCalled()
+      expect(track).toHaveBeenCalledWith('vscode_uninstall_failed', {
+        via: 'detail-panel',
+        reason: 'path_outside_root',
+      })
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('routes TierDenied to the upgrade UX and returns false', async () => {
+    showWarningMessage.mockResolvedValueOnce('Uninstall').mockResolvedValueOnce(undefined)
+    mcpUninstall.mockResolvedValue({ success: false, error: 'TierDenied: requires the Team plan' })
+
+    const ok = await uninstallByTarget(
+      { skillId: 'example-skill', skillPath },
+      { treeProvider: provider },
+      'detail-panel'
+    )
+
+    expect(ok).toBe(false)
+    expect(track).toHaveBeenCalledWith('vscode_uninstall_failed', {
+      via: 'detail-panel',
+      reason: 'tier_denied',
+    })
+    await expect(fs.access(skillPath)).resolves.toBeUndefined()
+  })
+
+  it('falls back to fs.rm on transport throw and returns true', async () => {
+    showWarningMessage.mockResolvedValue('Uninstall')
+    mcpUninstall.mockRejectedValue(new Error('ECONNRESET'))
+
+    const ok = await uninstallByTarget(
+      { skillId: 'example-skill', skillPath },
+      { treeProvider: provider },
+      'detail-panel'
+    )
+
+    expect(ok).toBe(true)
+    await expect(fs.access(skillPath)).rejects.toThrow()
+    expect(track).toHaveBeenCalledWith('vscode_uninstall_complete', { via: 'detail-panel' })
   })
 })

@@ -28,6 +28,32 @@ describe('getScript', () => {
     expect(html).toContain("command: 'install'")
   })
 
+  it('null-guards the install button (C1)', () => {
+    // The install button is absent on the installed-skill view; an unguarded
+    // getElementById('installBtn').addEventListener would throw and kill every
+    // listener wired after it.
+    expect(html).toContain('const installBtn = ')
+    expect(html).toContain('if (installBtn) {')
+  })
+
+  it('wires the uninstall button to the uninstall command', () => {
+    expect(html).toContain("getElementById('uninstallBtn')")
+    expect(html).toContain("command: 'uninstall'")
+    expect(html).toContain('if (uninstallBtn) {')
+  })
+
+  it('wires the Open SKILL.md button', () => {
+    expect(html).toContain("getElementById('openSkillFileBtn')")
+    expect(html).toContain("command: 'openSkillFile'")
+    expect(html).toContain('if (openSkillFileBtn) {')
+  })
+
+  it('wires the Open Folder button', () => {
+    expect(html).toContain("getElementById('openFolderBtn')")
+    expect(html).toContain("command: 'openFolder'")
+    expect(html).toContain('if (openFolderBtn) {')
+  })
+
   it('includes repository button listener', () => {
     expect(html).toContain("getElementById('repoBtn')")
     expect(html).toContain("command: 'openRepository'")

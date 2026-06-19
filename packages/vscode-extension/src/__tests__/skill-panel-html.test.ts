@@ -103,20 +103,9 @@ describe('getSkillDetailHtml', () => {
       expect(html).not.toContain('inferred from skill ID')
     })
 
-    it('shows View Repository button for explicit repository', () => {
-      const html = getSkillDetailHtml(
-        makeSkill({ repository: 'https://github.com/tester/test-skill' }),
-        NONCE,
-        CSP
-      )
-      expect(html).toContain('View Repository')
-    })
-
-    it('suppresses View Repository button for inferred repository', () => {
-      const html = getSkillDetailHtml(makeSkill({ id: 'tester/test-skill' }), NONCE, CSP)
-      expect(html).toContain('inferred from skill ID')
-      expect(html).not.toContain('View Repository')
-    })
+    // Action-block assertions (Install / View Repository buttons) live in
+    // skill-panel-actions.test.ts after the SMI-5308 split — getActionBlock owns
+    // that markup now.
   })
 
   describe('description markdown rendering', () => {
@@ -258,6 +247,42 @@ describe('getSkillDetailHtml', () => {
     it('omits skill content section when content is absent', () => {
       const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
       expect(html).not.toContain('Skill Content')
+    })
+  })
+
+  describe('sticky header restructure (SMI-5308)', () => {
+    it('wraps the title + badge in a header-titles container with the action block', () => {
+      const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
+      expect(html).toContain('class="header-titles"')
+      // The action block renders inside the header (sticky CTA), not as a
+      // trailing bottom block.
+      const header = html.split('class="header"')[1]?.split('class="description"')[0] ?? ''
+      expect(header).toContain('class="actions"')
+    })
+
+    it('does not render the root-level aria-live wrapper (H6)', () => {
+      const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
+      // The whole-body aria-live wrapper was removed so reloads don't announce
+      // the entire panel. The detail body must contain no aria-live region.
+      const body = html.split('<body>')[1] ?? ''
+      expect(body).not.toContain('aria-live')
+    })
+
+    it('renders Install action for available (default) skills', () => {
+      const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
+      expect(html).toContain('id="installBtn"')
+      expect(html).not.toContain('id="uninstallBtn"')
+    })
+
+    it('renders the installed action set when actionCtx.installed', () => {
+      const html = getSkillDetailHtml(makeSkill(), NONCE, CSP, false, {
+        installed: true,
+        skillPath: '/skills/test-skill',
+        hasSkillMd: true,
+      })
+      expect(html).toContain('id="uninstallBtn"')
+      expect(html).toContain('id="openFolderBtn"')
+      expect(html).not.toContain('id="installBtn"')
     })
   })
 })
