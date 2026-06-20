@@ -21,14 +21,21 @@ import { McpToolError, type McpToolErrorCode } from './McpToolError.js'
  * `error.message`, not the structured `SkillsmithError.code`. So we match the
  * message text. Requiring the word "skill" keeps the generic `tool not found ->
  * UnknownTool` contract intact (`__tests__/mcp/uninstall_skill.test.ts`): a bare
- * "tool not found" has no "skill" token and falls through to the rule below.
+ * "tool not found" has no "skill" token and falls through to the unknown-tool
+ * rule.
+ *
+ * The `SkillNotFound` rule is checked BEFORE `TierDenied` on purpose: a skill
+ * whose name contains a tier keyword (e.g. `Skill "plan-review" not found`)
+ * would otherwise misroute to the upgrade upsell. A real tier-denial message
+ * never contains `skill … not found` / `invalid skill id`, so this ordering is
+ * safe.
  */
 export function classifyIsErrorText(errorText: string): McpToolErrorCode {
-  if (/tier|plan|denied|forbidden|upgrade/i.test(errorText)) {
-    return 'TierDenied'
-  }
   if (/\bskill\b.*\bnot found\b/i.test(errorText) || /invalid skill id/i.test(errorText)) {
     return 'SkillNotFound'
+  }
+  if (/tier|plan|denied|forbidden|upgrade/i.test(errorText)) {
+    return 'TierDenied'
   }
   if (/unknown tool|not found|no such tool/i.test(errorText)) {
     return 'UnknownTool'

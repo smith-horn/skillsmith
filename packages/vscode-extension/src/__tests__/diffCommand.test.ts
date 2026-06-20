@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // ── hoisted spies ─────────────────────────────────────────────────────────────
 const showInformationMessage = vi.hoisted(() => vi.fn())
 const showErrorMessage = vi.hoisted(() => vi.fn())
+const showWarningMessage = vi.hoisted(() => vi.fn())
 const showQuickPick = vi.hoisted(() => vi.fn())
 
 // ── vscode mock ───────────────────────────────────────────────────────────────
@@ -16,7 +17,7 @@ vi.mock('vscode', () => ({
   window: {
     showInformationMessage,
     showErrorMessage,
-    showWarningMessage: vi.fn(),
+    showWarningMessage,
     showQuickPick,
   },
   commands: { registerCommand: vi.fn(), executeCommand: vi.fn() },
@@ -190,6 +191,22 @@ describe('diffCommand', () => {
     await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
 
     expect(handleTierDenied).toHaveBeenCalledWith('skillsmith.diffSkill', tierErr)
+    expect(diffCreateOrShow).not.toHaveBeenCalled()
+  })
+
+  it('shows a friendly warning and does NOT open SkillDiffPanel on SkillNotFound (SMI-5322)', async () => {
+    mcpSkillDiff.mockRejectedValue(
+      new McpToolError('skill_diff', 'SkillNotFound', 'Skill "smith-horn/docker" not found')
+    )
+
+    const treeProvider = makeTreeProvider()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
+
+    expect(showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('could not be found'))
+    expect(handleTierDenied).not.toHaveBeenCalled()
+    expect(showErrorMessage).not.toHaveBeenCalled()
     expect(diffCreateOrShow).not.toHaveBeenCalled()
   })
 

@@ -241,4 +241,24 @@ describe('compareCommand', () => {
     expect(showErrorMessage).toHaveBeenCalledWith('something went wrong')
     expect(compareCreateOrShow).not.toHaveBeenCalled()
   })
+
+  it('shows a friendly warning and does NOT open panel on SkillNotFound (SMI-5322)', async () => {
+    const err = new McpToolError(
+      'skill_compare',
+      'SkillNotFound',
+      'Skill "community/foo" not found'
+    )
+    mcpSkillCompare.mockRejectedValue(err)
+
+    createQuickPickFn
+      .mockReturnValueOnce(makeQuickPickStub(SKILL_A))
+      .mockReturnValueOnce(makeQuickPickStub(SKILL_B))
+
+    await compareCommandAction(asDeps())
+
+    expect(showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('could not be found'))
+    expect(showErrorMessage).not.toHaveBeenCalled()
+    expect(handleTierDenied).not.toHaveBeenCalled()
+    expect(compareCreateOrShow).not.toHaveBeenCalled()
+  })
 })

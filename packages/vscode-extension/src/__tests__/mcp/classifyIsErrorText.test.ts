@@ -28,6 +28,17 @@ describe('classifyIsErrorText (SMI-5322)', () => {
     expect(classifyIsErrorText('Error: Invalid skill ID format: "@@@"')).toBe('SkillNotFound')
   })
 
+  it('skill name containing a tier keyword still classifies SkillNotFound, not TierDenied', () => {
+    // The SkillNotFound rule runs before TierDenied so a skill named e.g.
+    // "plan-review" / "tier-manager" / "upgrade-kit" does not misroute to the
+    // upgrade upsell.
+    expect(classifyIsErrorText('Error: Skill "smith-horn/plan-review" not found')).toBe(
+      'SkillNotFound'
+    )
+    expect(classifyIsErrorText('Error: Skill "tier-manager" not found')).toBe('SkillNotFound')
+    expect(classifyIsErrorText('Error: Skill "upgrade-kit" not found')).toBe('SkillNotFound')
+  })
+
   it('generic tool-not-found stays UnknownTool (preserves the tested contract)', () => {
     expect(classifyIsErrorText('tool not found')).toBe('UnknownTool')
     expect(classifyIsErrorText('Unknown tool: skill_compare')).toBe('UnknownTool')
