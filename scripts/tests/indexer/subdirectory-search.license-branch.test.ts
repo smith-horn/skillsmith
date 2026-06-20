@@ -312,6 +312,11 @@ describe('runSubdirectorySearch — license-as-metadata + Trees default branch (
     expect(result.repos).toHaveLength(1)
     expect(result.repos[0].license).toBe(spdx)
     expect(result.licenseFiltered).toBe(0)
+    // SMI-5319 retro: pin the two NEW observability counters (admit volume +
+    // null-license rate) so a regression that stops/double-counts them can't
+    // silently corrupt the dispatch-summary monitoring.
+    expect(result.admitted).toBe(1)
+    expect(result.licenseNull).toBe(spdx === null ? 1 : 0)
   })
 
   // SMI-5319: license resolution is ONCE-per-repo (after the validity gate).
@@ -342,6 +347,9 @@ describe('runSubdirectorySearch — license-as-metadata + Trees default branch (
     for (const r of result.repos) expect(r.license).toBe('MIT')
     // Exactly ONE license fetch for the whole repo.
     expect(mockFetchRepoLicense).toHaveBeenCalledTimes(1)
+    // SMI-5319 retro: all three skills admit; none is null-license (MIT resolved once).
+    expect(result.admitted).toBe(3)
+    expect(result.licenseNull).toBe(0)
   })
 
   // SMI-5319: the repoMetaCache is reused across two code-search pages of the same
