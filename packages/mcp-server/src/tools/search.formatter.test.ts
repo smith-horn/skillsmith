@@ -157,4 +157,24 @@ describe('formatSearchResults — license display (SMI-5327)', () => {
     )
     expect(out).toContain('License: Unknown')
   })
+
+  it('renders "License: Unknown" when license is whitespace-only', () => {
+    const out = formatSearchResults(
+      baseResponse({
+        results: [
+          {
+            id: 'acme/skill',
+            name: 'skill',
+            description: 'a skill',
+            author: 'acme',
+            category: 'development',
+            trustTier: 'community',
+            score: 80,
+            license: '   ',
+          },
+        ],
+      })
+    )
+    expect(out).toContain('License: Unknown')
+  })
 })

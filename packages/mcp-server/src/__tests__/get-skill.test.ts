@@ -476,4 +476,9 @@ describe('formatSkillDetails — license display (SMI-5327)', () => {
     const formatted = formatSkillDetails(baseResponse(''))
     expect(formatted).toContain('License: Unknown')
   })
+
+  it('renders "License: Unknown" when license is whitespace-only', () => {
+    const formatted = formatSkillDetails(baseResponse('   '))
+    expect(formatted).toContain('License: Unknown')
+  })
 })
