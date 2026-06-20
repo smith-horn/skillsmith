@@ -59,6 +59,10 @@ export const ApiSearchResultSchema = z.object({
   last_scanned_at: z.string().nullable().optional(),
   security_findings: z.array(z.unknown()).nullable().optional(),
   quarantined: z.boolean().optional(),
+  // SMI-5327: SPDX license surfaced by skills-get / skills-search. Declared here
+  // so Zod does not strip the field before get-skill.ts / search.ts read it
+  // (same reason as compatibility above). skills-search may omit it → optional.
+  license: z.string().nullable().optional(),
 })
 
 // ============================================================================

@@ -73,6 +73,11 @@ export interface ApiSearchResult {
   last_scanned_at?: string | null
   /** SMI-4240: Security findings array (jsonb); length drives findingsCount */
   security_findings?: unknown[] | null
+  /**
+   * SMI-5327: SPDX license identifier surfaced by skills-get / skills-search.
+   * Null means "unknown / not detected" — NOT public domain or "no restrictions".
+   */
+  license?: string | null
 }
 
 /**
