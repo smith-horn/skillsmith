@@ -1,11 +1,12 @@
 /**
- * Backfill checkpoint read/write tests (SMI-5286 Wave 1b §#5)
+ * Backfill checkpoint read/write tests (SMI-5286 Wave 1b §#5 + SMI-5319 W3)
  * @module scripts/tests/indexer/backfill-checkpoint
  *
  * Covers:
  *  - resolveTokenSource: app/pat detection from env vars
- *  - writeCheckpoint: insert shape, fail-soft on error/throw
- *  - readLatestCheckpoint: payload parsing, runId filter, null on no row/error
+ *  - writeCheckpoint: insert shape, fail-soft on error/throw, dry_run tag
+ *  - readLatestCheckpoint: payload parsing, runId filter, null on no row/error,
+ *    excludeDryRun filter (SMI-5319 W3)
  *  - Round-trip: write then read back preserves cursor (path, facet, last_page)
  */
 
@@ -33,6 +34,7 @@ function makePayload(
     facets_total: 10,
     cap_saturated: false,
     truncated_repo_count: 2,
+    dry_run: false,
     ...overrides,
   }
 }
@@ -203,6 +205,7 @@ describe('writeCheckpoint', () => {
       facets_total: 15,
       cap_saturated: true,
       truncated_repo_count: 5,
+      dry_run: false,
     })
 
     await writeCheckpoint(supabase, payload)
@@ -214,6 +217,7 @@ describe('writeCheckpoint', () => {
     expect(metadata.facets_total).toBe(15)
     expect(metadata.cap_saturated).toBe(true)
     expect(metadata.truncated_repo_count).toBe(5)
+    expect(metadata.dry_run).toBe(false)
   })
 
   it('returns false (fail-soft) when supabase returns an error response', async () => {
@@ -248,8 +252,10 @@ type ReadQueryState = {
 }
 
 /**
- * Builds a Supabase mock whose `from('audit_logs').select().eq().order().limit().maybeSingle()`
+ * Builds a Supabase mock whose `from('audit_logs').select().eq().not().order().limit().maybeSingle()`
  * chain returns the configured row/error pair and records eq() calls.
+ * The `.not()` call is a no-op here — excludeDryRun filter behaviour is
+ * covered in backfill-checkpoint.dry-run.test.ts (SMI-5319 W3 split).
  */
 function makeReadMock(state: ReadQueryState): SupabaseClient {
   const chain = {
@@ -257,6 +263,7 @@ function makeReadMock(state: ReadQueryState): SupabaseClient {
       state.eqFilters[key] = value
       return chain
     },
+    not: () => chain,
     order: () => chain,
     limit: () => chain,
     maybeSingle: () =>
@@ -318,7 +325,11 @@ describe('readLatestCheckpoint', () => {
 
   it('applies run_id filter when a specific runId is given', async () => {
     const payload = makePayload({ run_id: 'specific-run' })
-    const state: ReadQueryState = { row: { metadata: payload }, error: null, eqFilters: {} }
+    const state: ReadQueryState = {
+      row: { metadata: payload },
+      error: null,
+      eqFilters: {},
+    }
     const supabase = makeReadMock(state)
 
     await readLatestCheckpoint(supabase, 'specific-run')
@@ -408,6 +419,7 @@ describe('backfill checkpoint round-trip (SPARC AC §#5)', () => {
       facets_total: 20,
       cap_saturated: true,
       truncated_repo_count: 3,
+      dry_run: false,
     }
 
     const writeOk = await writeCheckpoint(writeSupabase, originalPayload)
@@ -434,5 +446,7 @@ describe('backfill checkpoint round-trip (SPARC AC §#5)', () => {
     expect(readBack?.cap_saturated).toBe(true)
     expect(readBack?.truncated_repo_count).toBe(3)
     expect(readBack?.run_id).toBe('roundtrip-run-001')
+    // SMI-5319 W3: dry_run tag survives the round-trip
+    expect(readBack?.dry_run).toBe(false)
   })
 })

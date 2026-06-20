@@ -1,13 +1,14 @@
 /**
- * Subdirectory-search helpers: shared per-skill result processor + the SMI-5286
- * 1c size-faceted backfill crawl.
+ * Subdirectory-search helpers: BackfillFacetPlan + runBackfillFacetCrawl.
  * @module scripts/indexer/subdirectory-search.helpers
  *
  * Extracted from `subdirectory-search.ts` to keep that entrypoint under the
- * 500-line CI gate (SMI-5286 1c). `processSearchResults` is shared by the legacy
- * broad/fallback loop AND the backfill crawl; `runBackfillFacetCrawl` is the
- * size-faceted depth-first driver. The dependency is one-way
- * (`subdirectory-search.ts` → this file) — this file never imports the entrypoint.
+ * 500-line CI gate (SMI-5286 1c). The per-skill result processor and shared
+ * types live in `subdirectory-search.process.ts` (split out when the SMI-5319
+ * per-dispatch skill cap pushed this file over 500 lines). Re-exports everything
+ * from the process module so callers that import from this path continue to work
+ * unchanged. The dependency is one-way
+ * (`subdirectory-search.ts` -> this file -> subdirectory-search.process.ts).
  *
  * NOT parity-guarded (`parity.test.ts` exempts the subdirectory surface, C-2),
  * so divergence from the Deno copy is safe and intended (the backfill engine is
@@ -16,11 +17,12 @@
 
 import { delay, type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { searchCodeForSkillMdInSubdirectory } from './code-search.ts'
-import { checkSkillMdExists } from './skill-processor.ts'
-import { fetchRepoLicense, isPermissiveLicense } from './license-filter.ts'
-import { enumerateRepoSkillPaths, type EnumerateTelemetry } from './trees-enumerate.ts'
-import { buildSkillTreeUrl } from './skill-url.ts'
-import { buildSizeFacets, facetId, facetToQualifier } from './code-search.facets.ts'
+import {
+  buildSizeFacets,
+  facetId,
+  facetToQualifier,
+  firstFacetIndexForMinSize,
+} from './code-search.facets.ts'
 import {
   type BackfillCursor,
   type BackfillCrawlOutcome,
@@ -33,137 +35,21 @@ import {
 } from './backfill-checkpoint.ts'
 import type { GitHubRepository } from './topic-search.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
+import type { EnumerateTelemetry } from './trees-enumerate.ts'
 
-/**
- * Process code search results: deduplicate, license-gate, validate, and collect repos.
- * Shared by both broad and fallback search paths.
- *
- * SMI-4852: Threads `telemetry` to downstream `fetchRepoLicense` and
- * `checkSkillMdExists` calls so every GitHub API hit lands in the shared
- * collector.
- *
- * SMI-5286 Wave 1a (§#1, C-1): per-skill (collection) extraction. Each candidate
- * repo is enumerated ONCE via the Trees API (`enumerateRepoSkillPaths`) and EVERY
- * valid SKILL.md parent dir becomes its own `GitHubRepository`, with a DISTINCT
- * per-skill tree URL (`buildSkillTreeUrl`) so N skills in one repo yield N distinct
- * `repo_url` rows that never collide on `onConflict: 'repo_url'`. Each per-path row
- * is validated independently (§#4 strict gate) before it is collected; validated
- * rows are `installable:true` (`skill-processor.ts:440` then persists the non-null
- * tree URL). Edit E: only the enumeration loop changed — the dedup-key /
- * freshness-qualifier lines (`:89`) are byte-stable for the SMI-5176 rebase.
- */
-export async function processSearchResults(
-  resultRepos: GitHubRepository[],
-  seenUrls: Set<string>,
-  validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
-  repos: GitHubRepository[],
-  stats: { licenseFiltered: number; licenseFetchFailed: number },
-  telemetry: RateLimitTelemetry,
-  enumerateTelemetry: EnumerateTelemetry,
-  enumeratedRepos: Set<string>
-): Promise<void> {
-  for (const repo of resultRepos) {
-    // Deduplication key includes skillPath: one repo can have multiple skills
-    const dedupKey = repo.skillPath ? `${repo.url}/${repo.skillPath}` : repo.url
-    if (seenUrls.has(dedupKey)) continue
-
-    // License gate: fetch SPDX from GitHub API (not included in code search response)
-    const { license: spdxId, fetchFailed } = await fetchRepoLicense(
-      repo.owner,
-      repo.repoName,
-      telemetry
-    )
-
-    if (fetchFailed) {
-      // API failure — skip this run but don't count as license-filtered.
-      // NOT added to seenUrls so the repo is retried on the next indexer run.
-      console.log(`[BroadDiscovery] License fetch failed (will retry next run): ${repo.fullName}`)
-      stats.licenseFetchFailed++
-      await delay(200)
-      continue
-    }
-
-    if (!isPermissiveLicense(spdxId)) {
-      // Confirmed non-permissive license — permanently excluded.
-      console.log(`[BroadDiscovery] License excluded: ${repo.fullName} spdx=${spdxId ?? 'null'}`)
-      stats.licenseFiltered++
-      await delay(200)
-      continue
-    }
-
-    // Mark this code-search result consumed (per-repo+skillPath identity) so the
-    // same surfaced file is not re-processed across pages/prefixes.
-    seenUrls.add(dedupKey)
-
-    // SMI-5286 Wave 1a (§#1): enumerate the repo's full tree ONCE. The broad query
-    // can surface the same repo via multiple SKILL.md hits; guard re-enumeration.
-    const repoKey = `${repo.owner}/${repo.repoName}`
-    if (enumeratedRepos.has(repoKey)) {
-      await delay(50)
-      continue
-    }
-    enumeratedRepos.add(repoKey)
-
-    const { entries, truncatedByApi, truncatedByCap } = await enumerateRepoSkillPaths(
-      repo.owner,
-      repo.repoName,
-      repo.defaultBranch,
-      telemetry,
-      enumerateTelemetry
-    )
-
-    if (truncatedByApi) {
-      // Trees API truncated — do NOT emit a partial set (deterministic skip).
-      console.log(
-        `[BroadDiscovery] Trees truncated, skipping for manual handling: ${repo.fullName}`
-      )
-      await delay(50)
-      continue
-    }
-    if (truncatedByCap) {
-      console.log(`[BroadDiscovery] Per-repo cap reached, taking first N: ${repo.fullName}`)
-    }
-
-    // Validate each enumerated SKILL.md independently (§#4 strict gate) and emit
-    // one per-skill GitHubRepository with a distinct tree URL (C-1) per valid path.
-    for (const entry of entries) {
-      const skillPath = entry.path
-      const installable = await checkSkillMdExists(
-        repo.owner,
-        repo.repoName,
-        repo.defaultBranch,
-        validationCache,
-        telemetry,
-        skillPath,
-        validationOptions
-      )
-
-      // C-1: build the per-skill tree URL from the BARE repo html_url
-      // (reconstructed from owner/repoName), NOT from `repo.url` — by this point
-      // `repo.url` is already the code-search mapper's tree URL, so reusing it
-      // would double the `/tree/<branch>` segment. `skillUrl` already encodes
-      // `skillPath`, so it alone is the dedup key.
-      const skillUrl = buildSkillTreeUrl(
-        `https://github.com/${repo.owner}/${repo.repoName}`,
-        repo.defaultBranch,
-        skillPath
-      )
-      if (seenUrls.has(skillUrl)) continue
-      seenUrls.add(skillUrl)
-
-      repos.push({
-        ...repo,
-        url: skillUrl,
-        installable,
-        skillPath,
-        treeHash: entry.blobSha,
-        license: spdxId,
-      })
-      await delay(50)
-    }
-  }
-}
+// Types and the result-processor used internally by runBackfillFacetCrawl.
+// Also re-exported so callers that import from this path continue to work.
+import {
+  processSearchResults,
+  type RepoMeta,
+  type SubdirSearchStats,
+} from './subdirectory-search.process.ts'
+export {
+  repoCacheKey,
+  processSearchResults,
+  type RepoMeta,
+  type SubdirSearchStats,
+} from './subdirectory-search.process.ts'
 
 /**
  * SMI-5286 1c: a single dispatch's facet-crawl plan. The driver in `run.ts`
@@ -183,10 +69,29 @@ export interface BackfillFacetPlan {
   pathPrefix: string | undefined
   /** Results per code-search page (GitHub max 100). */
   perPage: number
-  /** Pages to crawl per (sub)range before treating it as exhausted (≈ ceil(1000 / perPage)). */
+  /** Pages to crawl per (sub)range before treating it as exhausted (approx ceil(1000 / perPage)). */
   maxPagesPerRange: number
   /** Dispatch budget: stop after this many (sub)ranges so the run fits the GHA cap. */
   maxRangesPerDispatch: number
+  /**
+   * SMI-5319 W4: minimum file size (bytes) for the FRESH-START facet index.
+   * On a cold start (no resume cursor), the crawl begins at the first facet in
+   * the static 9-bucket ladder whose `hi >= minSizeBytes`, skipping the
+   * low-byte noise band. Default (undefined/0) = start at facet 0 (all facets).
+   *
+   * RESUMES are unaffected: when `startCursor` is non-null the cursor's own
+   * `facet_index` is used as-is and `minSizeBytes` is ignored.
+   */
+  minSizeBytes?: number
+  /**
+   * Per-dispatch skill cap: stop the crawl at a clean range boundary once
+   * `repos.length >= maxSkillsPerDispatch`, checkpoint, and exit so the next
+   * dispatch resumes. The overshoot by at most the last range's contribution is
+   * intentional -- the break occurs AFTER the full range completes (bisect or
+   * advance), so the cursor is always clean. Default 0 (or undefined) = no cap.
+   * Distinct from the per-repo cap `BACKFILL_MAX_SKILLS_PER_REPO`.
+   */
+  maxSkillsPerDispatch?: number
 }
 
 /** GitHub code-search retrievable-results ceiling per query (any query caps here). */
@@ -197,12 +102,13 @@ const CODE_SEARCH_RESULT_CAP = 1000
  * query (or a single `path:` prefix). Pages each size (sub)range to the 1000-cap;
  * a range whose `total_count` exceeds the cap is BISECTED (its halves crawled
  * before the next top-level facet) so every file is reachable. A range that
- * saturates but cannot subdivide further (≥1000 identical-byte-size files —
+ * saturates but cannot subdivide further (>=1000 identical-byte-size files --
  * almost always denylist-caught boilerplate) is recorded as truncated, logged,
  * and skipped (never silently dropped). The frontier (facet index + bisection
  * stack + page) is fully captured by the returned cursor so a dispatch boundary
- * mid-bisection resumes losslessly. Reuses {@link processSearchResults} (license
- * gate + Trees per-skill enumeration + per-path validation) unchanged.
+ * mid-bisection resumes losslessly. Reuses {@link processSearchResults} (Trees
+ * per-skill enumeration + per-path validation + once-per-repo license metadata
+ * resolution) unchanged.
  */
 export async function runBackfillFacetCrawl(
   plan: BackfillFacetPlan,
@@ -210,14 +116,33 @@ export async function runBackfillFacetCrawl(
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number },
   repos: GitHubRepository[],
-  stats: { licenseFiltered: number; licenseFetchFailed: number },
+  stats: SubdirSearchStats,
   telemetry: RateLimitTelemetry,
   enumerateTelemetry: EnumerateTelemetry,
   enumeratedRepos: Set<string>,
+  repoMetaCache: Map<string, RepoMeta>,
   errors: string[]
 ): Promise<BackfillCrawlOutcome> {
   const facets = buildSizeFacets()
   const state = cursorToFacetState(plan.startCursor)
+
+  // SMI-5319 W4: on a FRESH START (null startCursor), advance the facet index
+  // to skip the low-byte noise band. A resume (non-null startCursor) carries
+  // its own facet_index from the checkpoint cursor and must NOT be overridden --
+  // `cursorToFacetState` already restored it above, so we only act when there
+  // was no prior cursor to restore from.
+  if (plan.startCursor == null && (plan.minSizeBytes ?? 0) > 0) {
+    const skipToIndex = firstFacetIndexForMinSize(plan.minSizeBytes ?? 0)
+    if (skipToIndex > 0) {
+      console.log(
+        `[Backfill] min_size_bytes=${plan.minSizeBytes} -> starting at facet ${skipToIndex} ` +
+          `(${facets[skipToIndex].lo}-${Number.isFinite(facets[skipToIndex].hi) ? facets[skipToIndex].hi : String(facets[skipToIndex].hi)}), ` +
+          `skipping facets 0-${skipToIndex - 1}`
+      )
+      state.facetIndex = skipToIndex
+    }
+  }
+
   const pathLabel = plan.pathPrefix ?? 'broad'
   let capSaturated = false
   let truncatedRanges = 0
@@ -244,7 +169,7 @@ export async function runBackfillFacetCrawl(
         break
       }
       // The 1000-cap is detected from total_count on the first page: rather than
-      // waste pages on the unreachable tail, bisect immediately — the sub-ranges
+      // waste pages on the unreachable tail, bisect immediately -- the sub-ranges
       // (each < cap, or bisected further) cover the same files.
       if (page === 1 && result.total > CODE_SEARCH_RESULT_CAP) {
         saturated = true
@@ -259,40 +184,53 @@ export async function runBackfillFacetCrawl(
         stats,
         telemetry,
         enumerateTelemetry,
-        enumeratedRepos
+        enumeratedRepos,
+        repoMetaCache
       )
       state.lastPage = page
-      if (result.repos.length < plan.perPage) break // short page → range exhausted
-      await delay(6000) // 10 code-search req/min → 6s between pages
+      if (result.repos.length < plan.perPage) break // short page -> range exhausted
+      await delay(6000) // 10 code-search req/min -> 6s between pages
     }
 
     rangesCrawled++
 
     if (errored) {
       // M-1: a page error (rate-limiter already retried transient 403/429, so a
-      // returned error is exceptional) — count it as truncated so it surfaces in
+      // returned error is exceptional) -- count it as truncated so it surfaces in
       // the dispatch summary + errors[], then advance past the range rather than
       // re-crawl it forever this dispatch. The operator can re-run the facet under
-      // a narrower BACKFILL_PATH_PREFIX once the cause is cleared (SPARC §#3).
+      // a narrower BACKFILL_PATH_PREFIX once the cause is cleared (SPARC sec#3).
       truncatedRanges++
       console.warn(
-        `[Backfill] facet ${facetId(range)} (${pathLabel}) errored — recorded as truncated, advancing`
+        `[Backfill] facet ${facetId(range)} (${pathLabel}) errored -- recorded as truncated, advancing`
       )
       advanceFacet(state)
     } else if (saturated) {
       capSaturated = true
       if (!bisectCurrentFacet(state, range)) {
         // Saturated AND unbisectable: record + skip (never silent). The operator
-        // can re-run this facet under a narrower BACKFILL_PATH_PREFIX (SPARC §#3).
+        // can re-run this facet under a narrower BACKFILL_PATH_PREFIX (SPARC sec#3).
         truncatedRanges++
         console.warn(
-          `[Backfill] facet ${facetId(range)} (${pathLabel}) saturated at the 1000-cap and cannot subdivide — recorded as truncated, skipping`
+          `[Backfill] facet ${facetId(range)} (${pathLabel}) saturated at the 1000-cap and cannot subdivide -- recorded as truncated, skipping`
         )
         advanceFacet(state)
       }
     } else {
       // Range exhausted (short page, or page cap reached with total <= cap).
       advanceFacet(state)
+    }
+
+    // Per-dispatch skill cap: checked at the range boundary (after bisect/advance)
+    // so the cursor is always clean and `done` is computed normally below. The
+    // overshoot by at most the last range's contribution is intentional. The crawl
+    // is NOT done -- there is more to do; the next dispatch resumes from the
+    // checkpoint cursor written by the caller.
+    if (plan.maxSkillsPerDispatch && repos.length >= plan.maxSkillsPerDispatch) {
+      console.log(
+        `[Backfill] Skill cap reached: ${repos.length} skills >= cap ${plan.maxSkillsPerDispatch}, checkpointing and exiting`
+      )
+      break
     }
   }
 

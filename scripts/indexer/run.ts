@@ -142,12 +142,19 @@ async function runDiscoveryBranch(
   // advanced cursor returns on `result.backfill_crawl` and is checkpointed below.
   // `RESUME_FROM` ('latest' or a specific run_id) maps to the workflow's
   // `resume_from` input; the NEW checkpoint is keyed on GITHUB_RUN_ID.
+  //
+  // SMI-5319 (W3): a LIVE run passes excludeDryRun: true so it cannot
+  // accidentally resume from a DRY_RUN checkpoint cursor. A DRY_RUN dispatch
+  // passes false (the default) — it should still resume from the latest
+  // checkpoint (dry-run or live) to verify the resume loop end-to-end.
   let checkpointId: string | null = null
   let backfillFacetPlan: BackfillFacetPlan | undefined
   const backfillRunId = process.env.GITHUB_RUN_ID ?? requestId
   if (env.BACKFILL_MODE) {
     const resumeFrom = process.env.RESUME_FROM
-    const checkpoint = await readLatestCheckpoint(supabase, resumeFrom)
+    const checkpoint = await readLatestCheckpoint(supabase, resumeFrom, {
+      excludeDryRun: !env.DRY_RUN,
+    })
     if (checkpoint) {
       const { path, facet, last_page } = checkpoint.cursor
       console.log(
@@ -164,6 +171,11 @@ async function runDiscoveryBranch(
       perPage: 100,
       maxPagesPerRange: env.CODE_SEARCH_MAX_PAGES,
       maxRangesPerDispatch: env.BACKFILL_MAX_RANGES,
+      // SMI-5319 W4: only applied on a fresh start (null cursor); resumes
+      // carry their own facet_index from the checkpoint and are unaffected.
+      minSizeBytes: env.BACKFILL_MIN_SIZE_BYTES,
+      // Per-dispatch skill cap (0 = no cap). Distinct from per-repo cap.
+      maxSkillsPerDispatch: env.BACKFILL_MAX_SKILLS_PER_DISPATCH,
     }
   }
 
@@ -201,6 +213,8 @@ async function runDiscoveryBranch(
   // (resume_from=latest) continues mid-facet. Written even in DRY_RUN so the
   // operator can verify the resume loop before flipping to a live write
   // (audit_logs is append-only telemetry, not the skills registry).
+  // SMI-5319 (W3): stamp dry_run so a subsequent live resume_from=latest can
+  // skip these rows via readLatestCheckpoint's excludeDryRun: true option.
   if (env.BACKFILL_MODE && result.backfill_crawl) {
     const bc = result.backfill_crawl
     const wrote = await writeCheckpoint(supabase, {
@@ -210,6 +224,7 @@ async function runDiscoveryBranch(
       facets_total: bc.facets_total,
       cap_saturated: bc.cap_saturated,
       truncated_repo_count: bc.truncated_repo_count,
+      dry_run: env.DRY_RUN,
     })
     if (wrote) checkpointId = backfillRunId
     console.log(

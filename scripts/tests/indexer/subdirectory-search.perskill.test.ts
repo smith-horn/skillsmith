@@ -8,6 +8,12 @@
  *   4. A repo surfaced twice across code-search pages is enumerated only once
  *      (no duplicate rows from re-enumeration).
  *
+ * SMI-5319: the default mock now returns `defaultBranch` alongside the license
+ * (the code-search API omits it) so repos emit. The license-as-metadata + Trees
+ * default-branch assertions live in the sibling
+ * `subdirectory-search.license-branch.test.ts` (split out to keep both files
+ * under the 500-line CI gate).
+ *
  * Strategy: mock every I/O boundary (code-search, license-fetch, skill-processor,
  * trees-enumerate) at the module level; let buildSkillTreeUrl run real (pure).
  */
@@ -121,8 +127,16 @@ beforeEach(() => {
   mockCheckSkillMdExists.mockReset()
   mockEnumerateRepoSkillPaths.mockReset()
 
-  // Default: permissive license, validation always passes
-  mockFetchRepoLicense.mockResolvedValue({ license: 'MIT', fetchFailed: false })
+  // Default: permissive license + resolvable default branch, validation passes.
+  // SMI-5319: fetchRepoLicense now returns `defaultBranch` alongside the license
+  // (the code-search API omits `default_branch`) — a repo whose `defaultBranch`
+  // is null is SKIPPED (not enumerated with a null branch), so the default mock
+  // must carry a real branch for repos to emit.
+  mockFetchRepoLicense.mockResolvedValue({
+    license: 'MIT',
+    defaultBranch: 'main',
+    fetchFailed: false,
+  })
   mockCheckSkillMdExists.mockResolvedValue(true)
 })
 
@@ -300,33 +314,5 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
 
     expect(result.repos).toHaveLength(1)
     expect(result.repos[0].installable).toBe(false)
-  })
-
-  it('skips a repo whose license fetch failed (not counted as license-filtered)', async () => {
-    mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
-    mockSearchCode.mockResolvedValue(makeSearchResult([]))
-
-    mockFetchRepoLicense.mockResolvedValue({ license: null, fetchFailed: true })
-
-    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
-
-    expect(result.repos).toHaveLength(0)
-    expect(result.licenseFiltered).toBe(0)
-    expect(result.licenseFetchFailed).toBe(1)
-    // Trees enumeration must NOT have been called for this repo
-    expect(mockEnumerateRepoSkillPaths).not.toHaveBeenCalled()
-  })
-
-  it('excludes repos with a non-permissive license and increments licenseFiltered', async () => {
-    mockSearchCode.mockResolvedValueOnce(makeSearchResult([makeCodeSearchRepo()]))
-    mockSearchCode.mockResolvedValue(makeSearchResult([]))
-
-    mockFetchRepoLicense.mockResolvedValue({ license: 'GPL-3.0', fetchFailed: false })
-
-    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
-
-    expect(result.repos).toHaveLength(0)
-    expect(result.licenseFiltered).toBe(1)
-    expect(mockEnumerateRepoSkillPaths).not.toHaveBeenCalled()
   })
 })

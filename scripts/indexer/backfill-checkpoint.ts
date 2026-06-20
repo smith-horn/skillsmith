@@ -195,6 +195,16 @@ export interface BackfillCrawlOutcome {
 /**
  * Checkpoint payload persisted under `audit_logs.metadata`. `run_id` lets a
  * resume scope to a single dispatch lineage; the rest is operator observability.
+ *
+ * `dry_run` tags whether the writing dispatch was a dry run. Used by
+ * {@link readLatestCheckpoint} with `excludeDryRun: true` so a LIVE
+ * `resume_from=latest` does not accidentally resume from a DRY_RUN cursor.
+ *
+ * Legacy rows written before this field was added have `dry_run` absent
+ * (null in JSONB). {@link readLatestCheckpoint} treats those as LIVE rows
+ * (not excluded) — the operator is responsible for cleaning up any pre-existing
+ * dry-run checkpoints during pre-flight before the first tagged live run
+ * (SMI-5319 plan).
  */
 export interface BackfillCheckpointPayload {
   run_id: string
@@ -205,6 +215,12 @@ export interface BackfillCheckpointPayload {
   cap_saturated: boolean
   /** Repos skipped because their Trees response truncated (cap or API). */
   truncated_repo_count: number
+  /**
+   * Whether this checkpoint was written by a DRY_RUN dispatch. Tagged so live
+   * resumes can skip dry-run checkpoints via {@link readLatestCheckpoint}
+   * `excludeDryRun: true`.
+   */
+  dry_run: boolean
 }
 
 /**
@@ -212,8 +228,13 @@ export interface BackfillCheckpointPayload {
  * checkpoint failure cannot abort an in-flight backfill mid-facet (the operator
  * loop tolerates a missed checkpoint by re-running the same facet idempotently).
  *
+ * DRY_RUN dispatches intentionally write checkpoints so the operator can verify
+ * the resume loop end-to-end before flipping to live writes. The `dry_run` field
+ * in `metadata` lets a subsequent live `resume_from=latest` skip these rows when
+ * {@link readLatestCheckpoint} is called with `excludeDryRun: true`.
+ *
  * @param supabase - Supabase admin client.
- * @param payload - The checkpoint cursor + progress counters.
+ * @param payload - The checkpoint cursor + progress counters, including `dry_run`.
  * @returns true on a clean insert, false if the write was rejected/threw.
  */
 export async function writeCheckpoint(
@@ -233,6 +254,7 @@ export async function writeCheckpoint(
         facets_total: payload.facets_total,
         cap_saturated: payload.cap_saturated,
         truncated_repo_count: payload.truncated_repo_count,
+        dry_run: payload.dry_run,
       },
     })
     if (error) {
@@ -296,6 +318,31 @@ export function resolveTokenSource(env: NodeJS.ProcessEnv = process.env): 'app' 
 }
 
 /**
+ * Options for {@link readLatestCheckpoint}.
+ */
+export interface ReadLatestCheckpointOptions {
+  /**
+   * When true, excludes rows whose `metadata.dry_run` is exactly `'true'`
+   * (PostgREST text-cast of the JSONB boolean). Rows where `dry_run` is absent
+   * (null — legacy rows written before SMI-5319) are NOT excluded, preserving
+   * backward compatibility with untagged live checkpoints.
+   *
+   * Use `excludeDryRun: true` on a LIVE `resume_from=latest` call so it never
+   * resumes from a DRY_RUN cursor. DRY_RUN dispatches should pass `false` (the
+   * default) so they can verify the resume loop against the latest checkpoint
+   * regardless of whether it was written by a dry run or a live run.
+   *
+   * NOTE: legacy DRY_RUN checkpoints written before this field was added cannot
+   * be distinguished from live ones and are NOT excluded. The operator must clean
+   * up any pre-existing untagged dry-run checkpoints during pre-flight before the
+   * first tagged live run (SMI-5319 plan).
+   *
+   * @default false
+   */
+  excludeDryRun?: boolean
+}
+
+/**
  * Read the most recent checkpoint, optionally scoped to a single `run_id`.
  * Returns null when no checkpoint exists (cold start) or on read failure — the
  * caller treats null as "start from the beginning".
@@ -304,12 +351,15 @@ export function resolveTokenSource(env: NodeJS.ProcessEnv = process.env): 'app' 
  * @param runId - Optional dispatch lineage to scope the resume to. Omit (or pass
  *   undefined) to read the latest checkpoint across all runs (the `latest`
  *   default the workflow's `resume_from` input maps to).
+ * @param options - Additional query options (see {@link ReadLatestCheckpointOptions}).
  * @returns The latest matching checkpoint payload, or null.
  */
 export async function readLatestCheckpoint(
   supabase: SupabaseClient,
-  runId?: string
+  runId?: string,
+  options: ReadLatestCheckpointOptions = {}
 ): Promise<BackfillCheckpointPayload | null> {
+  const { excludeDryRun = false } = options
   try {
     let query = supabase
       .from('audit_logs')
@@ -319,6 +369,17 @@ export async function readLatestCheckpoint(
     if (runId !== undefined && runId !== '' && runId !== 'latest') {
       // `metadata->>'run_id'` text-extract filter (PostgREST JSON operator).
       query = query.eq('metadata->>run_id', runId)
+    }
+
+    if (excludeDryRun) {
+      // Exclude rows where metadata.dry_run is the boolean true, but KEEP rows
+      // where it is absent/null (legacy pre-SMI-5319 checkpoints — treated as
+      // live, the safe default). NULL-safety is explicit here: `.not(...,'eq',
+      // 'true')` would emit `NOT (col = 'true')`, which is NULL (→ row dropped)
+      // when col IS NULL — silently cold-starting on legacy live checkpoints.
+      // The `.or(neq.true | is.null)` form emits the intended
+      // `col <> 'true' OR col IS NULL` (i.e. col IS DISTINCT FROM 'true').
+      query = query.or('metadata->>dry_run.neq.true,metadata->>dry_run.is.null')
     }
 
     const { data, error } = await query

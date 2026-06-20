@@ -143,3 +143,90 @@ describe('parseEnv — SMI-5286 1c backfill levers', () => {
     expect(env.MAX_PAGES).toBe(7)
   })
 })
+
+describe('parseEnv -- SMI-5319 W4: BACKFILL_MIN_SIZE_BYTES', () => {
+  let originalEnv: NodeJS.ProcessEnv
+
+  beforeEach(() => {
+    originalEnv = { ...process.env }
+    for (const k of Object.keys(process.env)) {
+      delete process.env[k]
+    }
+    Object.assign(process.env, BASE_ENV)
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('defaults BACKFILL_MIN_SIZE_BYTES to 0 when the var is absent', () => {
+    delete process.env.BACKFILL_MIN_SIZE_BYTES
+    expect(parseEnv().BACKFILL_MIN_SIZE_BYTES).toBe(0)
+  })
+
+  it('defaults BACKFILL_MIN_SIZE_BYTES to 0 when the var is an empty string', () => {
+    process.env.BACKFILL_MIN_SIZE_BYTES = ''
+    expect(parseEnv().BACKFILL_MIN_SIZE_BYTES).toBe(0)
+  })
+
+  it('parses BACKFILL_MIN_SIZE_BYTES="1024" as 1024', () => {
+    process.env.BACKFILL_MIN_SIZE_BYTES = '1024'
+    expect(parseEnv().BACKFILL_MIN_SIZE_BYTES).toBe(1024)
+  })
+
+  it('parses BACKFILL_MIN_SIZE_BYTES="0" as 0', () => {
+    process.env.BACKFILL_MIN_SIZE_BYTES = '0'
+    expect(parseEnv().BACKFILL_MIN_SIZE_BYTES).toBe(0)
+  })
+
+  it('BACKFILL_MIN_SIZE_BYTES is present in the returned IndexerEnv shape (not undefined)', () => {
+    const env = parseEnv()
+    expect('BACKFILL_MIN_SIZE_BYTES' in env).toBe(true)
+  })
+})
+
+describe('parseEnv -- BACKFILL_MAX_SKILLS_PER_DISPATCH', () => {
+  let originalEnv: NodeJS.ProcessEnv
+
+  beforeEach(() => {
+    originalEnv = { ...process.env }
+    for (const k of Object.keys(process.env)) {
+      delete process.env[k]
+    }
+    Object.assign(process.env, BASE_ENV)
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('defaults BACKFILL_MAX_SKILLS_PER_DISPATCH to 0 when the var is absent', () => {
+    delete process.env.BACKFILL_MAX_SKILLS_PER_DISPATCH
+    expect(parseEnv().BACKFILL_MAX_SKILLS_PER_DISPATCH).toBe(0)
+  })
+
+  it('defaults BACKFILL_MAX_SKILLS_PER_DISPATCH to 0 when the var is an empty string', () => {
+    process.env.BACKFILL_MAX_SKILLS_PER_DISPATCH = ''
+    expect(parseEnv().BACKFILL_MAX_SKILLS_PER_DISPATCH).toBe(0)
+  })
+
+  it('parses BACKFILL_MAX_SKILLS_PER_DISPATCH="500" as 500', () => {
+    process.env.BACKFILL_MAX_SKILLS_PER_DISPATCH = '500'
+    expect(parseEnv().BACKFILL_MAX_SKILLS_PER_DISPATCH).toBe(500)
+  })
+
+  it('parses BACKFILL_MAX_SKILLS_PER_DISPATCH="0" as 0 (no cap)', () => {
+    process.env.BACKFILL_MAX_SKILLS_PER_DISPATCH = '0'
+    expect(parseEnv().BACKFILL_MAX_SKILLS_PER_DISPATCH).toBe(0)
+  })
+
+  it('clamps a negative BACKFILL_MAX_SKILLS_PER_DISPATCH to 0 (no cap, not an immediate exit)', () => {
+    process.env.BACKFILL_MAX_SKILLS_PER_DISPATCH = '-1'
+    expect(parseEnv().BACKFILL_MAX_SKILLS_PER_DISPATCH).toBe(0)
+  })
+
+  it('BACKFILL_MAX_SKILLS_PER_DISPATCH is present in the returned IndexerEnv shape', () => {
+    const env = parseEnv()
+    expect('BACKFILL_MAX_SKILLS_PER_DISPATCH' in env).toBe(true)
+  })
+})

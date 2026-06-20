@@ -71,6 +71,16 @@ on:
         required: false
         default: '50'
         type: string
+      min_size_bytes:
+        description: 'Skip size facets below this byte size on a FRESH crawl (e.g. 1024 to skip the 0-1023B noise band; ignored on resume). Default 0 = all facets.'
+        required: false
+        default: '0'
+        type: string
+      max_skills_per_dispatch:
+        description: 'Stop the dispatch after roughly this many skills are admitted (checkpoints + exits; resume continues). 0 = no cap. Distinct from max_skills_per_repo.'
+        required: false
+        default: '0'
+        type: string
       supabase_env:
         description: 'Target Supabase environment'
         required: false
@@ -187,13 +197,21 @@ jobs:
           BACKFILL_MAX_SKILLS_PER_REPO: ${{ github.event.inputs.max_skills_per_repo || '50' }}
           BACKFILL_PATH_PREFIX: ${{ github.event.inputs.path_prefix || '' }}
           # SMI-5286 1c: run ONLY Phase 3 (the size-faceted subdirectory crawl) +
-          # finalize each dispatch — topic/high-trust are the cron's job, so this
+          # finalize each dispatch -- topic/high-trust are the cron's job, so this
           # keeps every backfill dispatch focused and resumable on the facet cursor.
           DISCOVERY_PHASE: '3'
-          # SMI-5286 1c: per-dispatch (sub)range budget — the facet driver writes a
+          # SMI-5286 1c: per-dispatch (sub)range budget -- the facet driver writes a
           # checkpoint after this many ranges so the run fits the GHA cap; re-dispatch
           # with resume_from=latest until facets_remaining=0.
           BACKFILL_MAX_RANGES: ${{ github.event.inputs.max_ranges || '50' }}
+          # SMI-5319 W4: fresh-start facet skip -- skip noise-band facets below this
+          # byte size on a cold-start dispatch; ignored on resume (cursor carries its
+          # own facet_index). Default 0 = all facets.
+          BACKFILL_MIN_SIZE_BYTES: ${{ github.event.inputs.min_size_bytes || '0' }}
+          # Per-dispatch skill cap: stop the crawl at a clean range boundary once
+          # roughly this many skills are admitted, checkpoint, and exit so the next
+          # dispatch resumes. 0 = no cap. Distinct from max_skills_per_repo.
+          BACKFILL_MAX_SKILLS_PER_DISPATCH: ${{ github.event.inputs.max_skills_per_dispatch || '0' }}
           # Raised caps for backfill mode (per SPARC section #3).
           # These override the conservative cron defaults.
           CODE_SEARCH_MAX_PAGES: '10'

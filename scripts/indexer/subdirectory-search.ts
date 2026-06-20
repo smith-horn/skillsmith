@@ -32,10 +32,13 @@
  * Gated by SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=true env var to prevent
  * accidental budget exhaustion when not needed.
  *
- * License gate: code search does not return license data. Each unique repo found
- * here requires a separate fetchRepoLicense() call before indexing. This means
- * N subdirectory repos = N additional /repos/{owner}/{repo} API calls (main API,
- * 5000 req/hr authenticated — budget is generous but must be monitored).
+ * Repo metadata (SMI-5319): code search returns neither license NOR
+ * default_branch. Each unique repo found here requires a separate
+ * fetchRepoLicense() call (GET /repos/{owner}/{repo}) that resolves BOTH the
+ * surfaced license AND the real default branch (the branch drives the Trees
+ * enumeration + the emitted skill URL; a repo with no resolvable branch is
+ * skipped). This means N subdirectory repos = N additional /repos API calls
+ * (main API, 5000 req/hr authenticated — budget is generous but must be monitored).
  */
 
 import { GITHUB_API_DELAY, delay, type RateLimitTelemetry } from './_shared/rate-limit.ts'
@@ -45,6 +48,7 @@ import {
   processSearchResults,
   runBackfillFacetCrawl,
   type BackfillFacetPlan,
+  type RepoMeta,
 } from './subdirectory-search.helpers.ts'
 import type { BackfillCrawlOutcome } from './backfill-checkpoint.ts'
 import type { GitHubRepository } from './topic-search.ts'
@@ -97,10 +101,11 @@ export const FALLBACK_PATH_PREFIXES = [
  * Deduplicates results against the shared seenUrls set from earlier phases
  * so repos discovered via topic search are not re-validated.
  *
- * License gate: repos without a permissive license (MIT, Apache-2.0, etc.) are
- * excluded and counted in licenseFiltered. Repos where the license fetch failed
- * (rate limit / network error) are counted separately in licenseFetchFailed and
- * are NOT added to seenUrls — they will be retried on the next indexer run.
+ * SMI-5319: license is NOT an admission filter. Every valid skill is indexed with
+ * its resolved SPDX as surfaced metadata (the consumer decides). `licenseFiltered`
+ * is ~0 unless `SKILLSMITH_INDEXER_LICENSE_GATE=true` restores the legacy gate; a
+ * license-fetch failure records `license: null` and STILL admits the skill.
+ * `admitted` / `licenseNull` report admit volume and the null-license rate.
  *
  * SMI-4852: Threads `telemetry` through to every downstream GitHub call.
  *
@@ -126,6 +131,12 @@ export async function runSubdirectorySearch(
   retries: number
   licenseFiltered: number
   licenseFetchFailed: number
+  /** SMI-5319: skills admitted (indexed) this run. */
+  admitted: number
+  /** SMI-5319: admitted skills whose resolved SPDX is null. */
+  licenseNull: number
+  /** SMI-5319: repos skipped for an unresolvable default branch (retried next run). */
+  noDefaultBranch: number
   incompleteResults: number
   searchMode: 'broad' | 'prefix-fallback'
   errors: string[]
@@ -136,14 +147,27 @@ export async function runSubdirectorySearch(
   const errors: string[] = []
   let totalFound = 0
   let totalRetries = 0
-  const stats = { licenseFiltered: 0, licenseFetchFailed: 0 }
+  // SMI-5319: `licenseFiltered` is ~0 now (only the kill-switch path increments
+  // it). `admitted` + `licenseNull` give admit volume + null-license rate;
+  // `noDefaultBranch` counts repos skipped for an unresolvable default branch.
+  const stats = {
+    licenseFiltered: 0,
+    licenseFetchFailed: 0,
+    admitted: 0,
+    licenseNull: 0,
+    noDefaultBranch: 0,
+  }
   let incompleteResults = 0
   const searchMode: 'broad' | 'prefix-fallback' = 'broad'
   // SMI-5286 Wave 1a: run-scoped per-skill extraction state. `enumerateTelemetry`
   // accumulates denylist/cap/truncation counters across the whole run;
   // `enumeratedRepos` guards one Trees call per repo across pages and prefixes.
+  // SMI-5319: `repoMetaCache` resolves each repo's metadata (license + default
+  // branch) at most once per run; it is keyed by `repoCacheKey` — the SAME
+  // derivation as `enumeratedRepos`.
   const enumerateTelemetry: EnumerateTelemetry = {}
   const enumeratedRepos = new Set<string>()
+  const repoMetaCache = new Map<string, RepoMeta>()
 
   // ── SMI-5286 1c: size-faceted backfill crawl (replaces the legacy loop) ──
   if (backfillPlan) {
@@ -157,11 +181,12 @@ export async function runSubdirectorySearch(
       telemetry,
       enumerateTelemetry,
       enumeratedRepos,
+      repoMetaCache,
       errors
     )
     console.log(
       `[Backfill] Facet crawl: ${repos.length} skills added, ${backfill.facets_completed}/${backfill.facets_total} facets, ${backfill.ranges_crawled} ranges this dispatch, ` +
-        `${stats.licenseFiltered} license-filtered, cap_saturated=${backfill.cap_saturated}, truncated=${backfill.truncated_repo_count}, done=${backfill.done}`
+        `admitted=${stats.admitted}, licenseNull=${stats.licenseNull}, noDefaultBranch=${stats.noDefaultBranch}, ${stats.licenseFiltered} license-filtered, cap_saturated=${backfill.cap_saturated}, truncated=${backfill.truncated_repo_count}, done=${backfill.done}`
     )
     console.log(
       `[Backfill] Per-skill extraction: ${enumeratedRepos.size} repos enumerated, ${enumerateTelemetry.denylistSkipped ?? 0} denylist-skipped, ${enumerateTelemetry.cappedRepoCount ?? 0} capped, ${enumerateTelemetry.truncatedRepoCount ?? 0} api-truncated`
@@ -172,6 +197,9 @@ export async function runSubdirectorySearch(
       retries: totalRetries,
       licenseFiltered: stats.licenseFiltered,
       licenseFetchFailed: stats.licenseFetchFailed,
+      admitted: stats.admitted,
+      licenseNull: stats.licenseNull,
+      noDefaultBranch: stats.noDefaultBranch,
       incompleteResults,
       searchMode,
       errors,
@@ -216,7 +244,8 @@ export async function runSubdirectorySearch(
       stats,
       telemetry,
       enumerateTelemetry,
-      enumeratedRepos
+      enumeratedRepos,
+      repoMetaCache
     )
 
     if (result.repos.length < BROAD_QUERY_PER_PAGE) break
@@ -269,7 +298,8 @@ export async function runSubdirectorySearch(
           stats,
           telemetry,
           enumerateTelemetry,
-          enumeratedRepos
+          enumeratedRepos,
+          repoMetaCache
         )
 
         if (result.repos.length < BROAD_QUERY_PER_PAGE) break
@@ -282,8 +312,12 @@ export async function runSubdirectorySearch(
     }
   }
 
+  // SMI-5319: `admitted` = volume passing the strict validity gate; `licenseNull`
+  // = how many had no detectable license (now surfaced, not dropped).
+  // `licenseFiltered` is ~0 unless the SKILLSMITH_INDEXER_LICENSE_GATE kill-switch
+  // is on. Existing fields kept for shape stability.
   console.log(
-    `[BroadDiscovery] Complete (${primaryMode}): ${repos.length} added, ${stats.licenseFiltered} license-filtered, ${stats.licenseFetchFailed} fetch-failed, ${incompleteResults} incomplete, ${totalRetries} retries`
+    `[BroadDiscovery] Complete (${primaryMode}): ${repos.length} added, admitted=${stats.admitted}, licenseNull=${stats.licenseNull}, noDefaultBranch=${stats.noDefaultBranch}, ${stats.licenseFiltered} license-filtered, ${stats.licenseFetchFailed} fetch-failed, ${incompleteResults} incomplete, ${totalRetries} retries`
   )
   // SMI-5286 Wave 1a: per-skill extraction observability (§#1, Edit D).
   console.log(
@@ -304,6 +338,9 @@ export async function runSubdirectorySearch(
     retries: totalRetries,
     licenseFiltered: stats.licenseFiltered,
     licenseFetchFailed: stats.licenseFetchFailed,
+    admitted: stats.admitted,
+    licenseNull: stats.licenseNull,
+    noDefaultBranch: stats.noDefaultBranch,
     incompleteResults,
     searchMode: primaryMode,
     errors,
@@ -347,6 +384,9 @@ export async function runSubdirectorySearchPhase(args: {
       retries: subdirResult.retries,
       license_filtered: subdirResult.licenseFiltered,
       license_fetch_failed: subdirResult.licenseFetchFailed,
+      admitted: subdirResult.admitted,
+      license_null: subdirResult.licenseNull,
+      no_default_branch: subdirResult.noDefaultBranch,
       incomplete_results: subdirResult.incompleteResults,
       search_mode: subdirResult.searchMode,
     }
@@ -361,6 +401,9 @@ export async function runSubdirectorySearchPhase(args: {
       retries: 0,
       license_filtered: 0,
       license_fetch_failed: 0,
+      admitted: 0,
+      license_null: 0,
+      no_default_branch: 0,
       error: 'phase_failed',
     }
   }
