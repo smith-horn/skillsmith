@@ -66,6 +66,14 @@ export interface IndexerEnv {
    * BACKFILL_MAX_SKILLS_PER_REPO.
    */
   BACKFILL_MAX_SKILLS_PER_DISPATCH: number
+  /**
+   * SMI-5321: opt-in fetch-with-truncation floor. When true, a saturated
+   * unbisectable size-facet leaf (>=1000 identical-byte-size SKILL.md files)
+   * is FETCHED (first up-to-1000 results admitted) rather than silently skipped.
+   * The leaf is still recorded truncated=true for observability. Default false
+   * preserves the current skip-only behavior byte-for-byte.
+   */
+  BACKFILL_ACCEPT_TRUNCATION: boolean
 }
 
 function getRequired(name: string): string {
@@ -176,6 +184,9 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       0,
       getInt('BACKFILL_MAX_SKILLS_PER_DISPATCH', 0)
     )
+    // SMI-5321: opt-in fetch-with-truncation floor for saturated unbisectable
+    // leaves. Default false — absent or anything other than "true" => false.
+    const BACKFILL_ACCEPT_TRUNCATION = getBool('BACKFILL_ACCEPT_TRUNCATION', false)
 
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)
@@ -204,6 +215,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       BACKFILL_MAX_RANGES,
       BACKFILL_MIN_SIZE_BYTES,
       BACKFILL_MAX_SKILLS_PER_DISPATCH,
+      BACKFILL_ACCEPT_TRUNCATION,
     }
   } finally {
     process.env = prev

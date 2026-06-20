@@ -92,6 +92,17 @@ export interface BackfillFacetPlan {
    * Distinct from the per-repo cap `BACKFILL_MAX_SKILLS_PER_REPO`.
    */
   maxSkillsPerDispatch?: number
+  /**
+   * SMI-5321: opt-in fetch-with-truncation floor. When true, a saturated
+   * unbisectable leaf (>=1000 identical-byte-size SKILL.md files) is processed
+   * instead of skipped. The leaf is still recorded truncated=true so
+   * observability continues to surface the cap. Reuses the page-1 result
+   * already fetched during saturation detection — NO additional code-search
+   * request is issued — and processes those up-to-perPage results, marking
+   * the leaf truncated=true for observability.
+   * Default false (or undefined) = current skip-only behavior, byte-identical.
+   */
+  acceptTruncation?: boolean
 }
 
 /** GitHub code-search retrievable-results ceiling per query (any query caps here). */
@@ -155,6 +166,9 @@ export async function runBackfillFacetCrawl(
 
     let saturated = false
     let errored = false
+    // SMI-5321: capture page-1 repos during saturation detection so the
+    // acceptTruncation floor can reuse them without a second code-search fetch.
+    let saturatedPageRepos: GitHubRepository[] | null = null
     for (let page = state.lastPage + 1; page <= plan.maxPagesPerRange; page++) {
       const result = await searchCodeForSkillMdInSubdirectory(
         plan.pathPrefix,
@@ -173,6 +187,7 @@ export async function runBackfillFacetCrawl(
       // (each < cap, or bisected further) cover the same files.
       if (page === 1 && result.total > CODE_SEARCH_RESULT_CAP) {
         saturated = true
+        saturatedPageRepos = result.repos
         break
       }
       await processSearchResults(
@@ -208,12 +223,40 @@ export async function runBackfillFacetCrawl(
     } else if (saturated) {
       capSaturated = true
       if (!bisectCurrentFacet(state, range)) {
-        // Saturated AND unbisectable: record + skip (never silent). The operator
-        // can re-run this facet under a narrower BACKFILL_PATH_PREFIX (SPARC sec#3).
+        // Saturated AND unbisectable: record as truncated (always — for
+        // observability), then either fetch the first ≤1000 results (opt-in)
+        // or skip (default, byte-identical to the prior behavior).
         truncatedRanges++
-        console.warn(
-          `[Backfill] facet ${facetId(range)} (${pathLabel}) saturated at the 1000-cap and cannot subdivide -- recorded as truncated, skipping`
-        )
+        if (plan.acceptTruncation) {
+          // SMI-5321: fetch-with-truncation floor. Reuses the page-1 result
+          // already in memory from the saturation detection branch above —
+          // NO additional code-search request is issued. The leaf is still
+          // marked truncated=true (above) so the dispatch summary continues
+          // to surface the cap; only the first up-to-perPage results are
+          // admitted.
+          console.warn(
+            `[Backfill] facet ${facetId(range)} (${pathLabel}) saturated and unbisectable -- ` +
+              `acceptTruncation=true, admitting page-1 results already in memory (up to ${plan.perPage}), recorded as truncated`
+          )
+          if (saturatedPageRepos !== null) {
+            await processSearchResults(
+              saturatedPageRepos,
+              seenUrls,
+              validationCache,
+              validationOptions,
+              repos,
+              stats,
+              telemetry,
+              enumerateTelemetry,
+              enumeratedRepos,
+              repoMetaCache
+            )
+          }
+        } else {
+          console.warn(
+            `[Backfill] facet ${facetId(range)} (${pathLabel}) saturated at the 1000-cap and cannot subdivide -- recorded as truncated, skipping`
+          )
+        }
         advanceFacet(state)
       }
     } else {

@@ -185,6 +185,57 @@ describe('parseEnv -- SMI-5319 W4: BACKFILL_MIN_SIZE_BYTES', () => {
   })
 })
 
+describe('parseEnv -- SMI-5321: BACKFILL_ACCEPT_TRUNCATION', () => {
+  let originalEnv: NodeJS.ProcessEnv
+
+  beforeEach(() => {
+    originalEnv = { ...process.env }
+    for (const k of Object.keys(process.env)) {
+      delete process.env[k]
+    }
+    Object.assign(process.env, BASE_ENV)
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('defaults BACKFILL_ACCEPT_TRUNCATION to false when the var is absent', () => {
+    delete process.env.BACKFILL_ACCEPT_TRUNCATION
+    expect(parseEnv().BACKFILL_ACCEPT_TRUNCATION).toBe(false)
+  })
+
+  it('defaults BACKFILL_ACCEPT_TRUNCATION to false when the var is an empty string', () => {
+    process.env.BACKFILL_ACCEPT_TRUNCATION = ''
+    expect(parseEnv().BACKFILL_ACCEPT_TRUNCATION).toBe(false)
+  })
+
+  it('parses BACKFILL_ACCEPT_TRUNCATION="true" as true', () => {
+    process.env.BACKFILL_ACCEPT_TRUNCATION = 'true'
+    expect(parseEnv().BACKFILL_ACCEPT_TRUNCATION).toBe(true)
+  })
+
+  it('parses BACKFILL_ACCEPT_TRUNCATION="1" as true', () => {
+    process.env.BACKFILL_ACCEPT_TRUNCATION = '1'
+    expect(parseEnv().BACKFILL_ACCEPT_TRUNCATION).toBe(true)
+  })
+
+  it('parses BACKFILL_ACCEPT_TRUNCATION="false" as false', () => {
+    process.env.BACKFILL_ACCEPT_TRUNCATION = 'false'
+    expect(parseEnv().BACKFILL_ACCEPT_TRUNCATION).toBe(false)
+  })
+
+  it('parses BACKFILL_ACCEPT_TRUNCATION="0" as false', () => {
+    process.env.BACKFILL_ACCEPT_TRUNCATION = '0'
+    expect(parseEnv().BACKFILL_ACCEPT_TRUNCATION).toBe(false)
+  })
+
+  it('BACKFILL_ACCEPT_TRUNCATION is present in the returned IndexerEnv shape', () => {
+    const env = parseEnv()
+    expect('BACKFILL_ACCEPT_TRUNCATION' in env).toBe(true)
+  })
+})
+
 describe('parseEnv -- BACKFILL_MAX_SKILLS_PER_DISPATCH', () => {
   let originalEnv: NodeJS.ProcessEnv
 

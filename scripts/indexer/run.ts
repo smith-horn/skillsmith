@@ -176,6 +176,8 @@ async function runDiscoveryBranch(
       minSizeBytes: env.BACKFILL_MIN_SIZE_BYTES,
       // Per-dispatch skill cap (0 = no cap). Distinct from per-repo cap.
       maxSkillsPerDispatch: env.BACKFILL_MAX_SKILLS_PER_DISPATCH,
+      // SMI-5321: opt-in fetch for saturated unbisectable leaves (default false).
+      acceptTruncation: env.BACKFILL_ACCEPT_TRUNCATION,
     }
   }
 
