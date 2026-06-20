@@ -84,7 +84,12 @@ function getDiffStyles(): string {
     .meta-label { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
     .changelog { white-space: pre-wrap; background: var(--vscode-textCodeBlock-background);
       padding: 12px; border-radius: 6px; font-size: 0.9em; }
-    .no-changes { margin-top: 20px; color: var(--vscode-descriptionForeground); }`
+    .no-changes { margin-top: 20px; color: var(--vscode-descriptionForeground); }
+    .text-diff-btn { margin-top: 8px; background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground); border: none; padding: 8px 16px;
+      border-radius: 4px; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .text-diff-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .text-diff-btn:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }`
 }
 
 /** Render the risk-score-delta row when present. */
@@ -154,6 +159,10 @@ export function getDiffHtml(
     </div>
   </div>
 
+  <div class="meta-row">
+    <button id="textDiffBtn" class="text-diff-btn">View full text diff</button>
+  </div>
+
   ${added}
   ${removed}
   ${modified}
@@ -161,6 +170,16 @@ export function getDiffHtml(
 
   ${getRiskDeltaHtml(response.riskScoreDelta)}
   ${getChangelogHtml(response.changelog)}
+
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    const textDiffBtn = document.getElementById('textDiffBtn');
+    if (textDiffBtn) {
+      textDiffBtn.addEventListener('click', () => {
+        vscode.postMessage({ command: 'viewTextDiff' });
+      });
+    }
+  </script>
 </body>
 </html>`
 }

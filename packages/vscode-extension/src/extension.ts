@@ -14,6 +14,10 @@ import { registerRecommendCommand } from './commands/recommendCommand.js'
 import { registerCompareCommand } from './commands/compareCommand.js'
 import { registerDiffCommand } from './commands/diffCommand.js'
 import { registerAuditInventoryCommand } from './commands/auditInventoryCommand.js'
+import {
+  SkillDiffContentProvider,
+  skillDiffContentProvider,
+} from './views/skillDiffContentProvider.js'
 import { initializeTelemetry } from './services/Telemetry.js'
 import { SkillDetailPanel } from './views/SkillDetailPanel.js'
 import { SkillService } from './services/SkillService.js'
@@ -183,6 +187,15 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCompareCommand(context, skillService)
   registerDiffCommand(context, skillTreeDataProvider)
   registerAuditInventoryCommand(context)
+
+  // SMI-5323: serve installed vs registry-latest SKILL.md to the native diff
+  // editor opened from the update advisor's "View full text diff" action.
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      SkillDiffContentProvider.scheme,
+      skillDiffContentProvider
+    )
+  )
 
   // Register refresh command
   const refreshCommand = vscode.commands.registerCommand('skillsmith.refreshSkills', () => {

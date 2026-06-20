@@ -8,12 +8,11 @@
 
 /**
  * Messages posted from the Diff webview back to the extension host.
- * The diff panel is read-only, so the only inbound message is `retry`
- * (re-run the check after a transient `McpToolError`).
+ * - `retry`: re-run the check after a transient `McpToolError`.
+ * - `viewTextDiff` (SMI-5323): open the installed vs registry-latest SKILL.md
+ *   side-by-side in VS Code's native diff editor.
  */
-export interface DiffPanelMessage {
-  command: 'retry'
-}
+export type DiffPanelMessage = { command: 'retry' } | { command: 'viewTextDiff' }
 
 /**
  * Arguments for an MCP `skill_diff` call. Stored on the panel so a `retry`
