@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-20
+
 ### Added
 
 - **Deep inventory audit** — a new setting `skillsmith.inventoryAudit.deep` (off by default) runs the slower semantic-overlap pass when you Audit Skill Inventory, surfacing near-duplicate skills beyond exact namespace clashes.
