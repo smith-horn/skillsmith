@@ -235,6 +235,18 @@ describe('InventoryAuditPanel interactive apply (SMI-5325)', () => {
     expect(fakeClient.applyNamespaceRename).toHaveBeenCalledTimes(1)
   })
 
+  it('retry is ignored while an apply is in flight (no _response swap mid-flow)', async () => {
+    // Apply preview never resolves → the flow is parked with _applyInFlight set.
+    fakeClient.applyNamespaceRename.mockReturnValue(new Promise(() => {}))
+    InventoryAuditPanel.createOrShow(URI, makeResponse())
+
+    mock.send({ command: 'applyRename', collisionId: 'c1' })
+    mock.send({ command: 'retry' })
+
+    // The user-retry must NOT re-audit (which would swap _response mid-apply).
+    expect(fakeClient.skillInventoryAudit).not.toHaveBeenCalled()
+  })
+
   it('unknown collisionId from the webview is a no-op', async () => {
     InventoryAuditPanel.createOrShow(URI, makeResponse())
     mock.send({ command: 'applyRename', collisionId: 'does-not-exist' })

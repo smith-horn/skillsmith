@@ -119,6 +119,12 @@ export class InventoryAuditPanel {
 
   private _handleMessage(message: InventoryAuditPanelMessage): void {
     if (message.command === 'retry') {
+      // Ignore a user-triggered re-run while an apply flow is mid-flight: it
+      // would swap `_response` (new auditId) during the Phase-1 preview window
+      // and re-render the panel underneath the confirm modal. Internal
+      // `_reaudit` calls (post-apply / self-heal) run from inside the flow and
+      // are intentionally not gated. (SMI-5325 governance M-1/M-2)
+      if (this._applyInFlight) return
       void this._reaudit()
     } else if (message.command === 'openReport') {
       void this._openReport()
@@ -137,17 +143,15 @@ export class InventoryAuditPanel {
     if (!suggestion) return
     const before = typeof suggestion.currentName === 'string' ? suggestion.currentName : ''
     const after = typeof suggestion.suggested === 'string' ? suggestion.suggested : ''
+    // Snapshot auditId so it stays coherent with this collisionId for both the
+    // preview and the apply call, even if `_response` is replaced meanwhile.
+    const auditId = this._response.auditId
     await this._runApply('rename', {
       confirmTitle: 'Apply this rename?',
       summary: `"${before}" → "${after}"`,
       successMessage: `Renamed "${before}" → "${after}" — a backup was saved.`,
       call: (confirmed) =>
-        getMcpClient().applyNamespaceRename({
-          auditId: this._response.auditId,
-          collisionId,
-          action: 'apply',
-          confirmed,
-        }),
+        getMcpClient().applyNamespaceRename({ auditId, collisionId, action: 'apply', confirmed }),
     })
   }
 
@@ -156,16 +160,13 @@ export class InventoryAuditPanel {
     const edit = this._response.recommendedEdits.find((e) => e.collisionId === collisionId)
     if (!edit) return
     const filePath = typeof edit.filePath === 'string' ? edit.filePath : 'the file'
+    // Snapshot auditId (coherent with this collisionId across preview + apply).
+    const auditId = this._response.auditId
     await this._runApply('edit', {
       confirmTitle: 'Apply this edit?',
       summary: `Rewrite ${filePath}`,
       successMessage: 'Applied edit — a backup was saved.',
-      call: (confirmed) =>
-        getMcpClient().applyRecommendedEdit({
-          auditId: this._response.auditId,
-          collisionId,
-          confirmed,
-        }),
+      call: (confirmed) => getMcpClient().applyRecommendedEdit({ auditId, collisionId, confirmed }),
     })
   }
 
