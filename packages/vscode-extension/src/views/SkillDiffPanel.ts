@@ -16,6 +16,7 @@ import { getDiffHtml, getDiffErrorHtml } from './diff-panel-html.js'
 import { getMcpClient } from '../mcp/McpClient.js'
 import { McpToolError } from '../mcp/McpToolError.js'
 import { handleTierDenied } from '../mcp/tierDenied.js'
+import { skillDiffContentProvider } from './skillDiffContentProvider.js'
 import type { McpSkillDiffResponse } from '../mcp/types.js'
 import type { DiffPanelMessage, SkillDiffArgs } from './diff-panel-types.js'
 
@@ -26,7 +27,7 @@ export class SkillDiffPanel {
   private readonly _panel: vscode.WebviewPanel
   private _skillName: string
   private _response: McpSkillDiffResponse
-  private readonly _args: SkillDiffArgs
+  private _args: SkillDiffArgs
   private _disposables: vscode.Disposable[] = []
 
   /** Reset the singleton between tests. */
@@ -49,6 +50,9 @@ export class SkillDiffPanel {
       SkillDiffPanel.currentPanel._panel.reveal(column)
       SkillDiffPanel.currentPanel._skillName = skillName
       SkillDiffPanel.currentPanel._response = response
+      // Refresh _args too — a stale value would make "View full text diff" and
+      // retry operate on the previously-opened skill's content (SMI-5323).
+      SkillDiffPanel.currentPanel._args = args
       SkillDiffPanel.currentPanel._update()
       return
     }
@@ -102,7 +106,27 @@ export class SkillDiffPanel {
   private _handleMessage(message: DiffPanelMessage): void {
     if (message.command === 'retry') {
       void this._retry()
+    } else if (message.command === 'viewTextDiff') {
+      this._openTextDiff()
     }
+  }
+
+  /**
+   * SMI-5323: open the installed vs registry-latest SKILL.md in VS Code's native
+   * diff editor. Both texts are already on `_args`; the content provider serves
+   * them under the read-only `skillsmith-diff:` scheme. The `.md` suffixes give
+   * the diff editor Markdown highlighting and readable tab labels.
+   */
+  private _openTextDiff(): void {
+    const key = encodeURIComponent(this._args.skillId)
+    const oldUri = skillDiffContentProvider.setContent(`${key}/installed.md`, this._args.oldContent)
+    const newUri = skillDiffContentProvider.setContent(`${key}/latest.md`, this._args.newContent)
+    void vscode.commands.executeCommand(
+      'vscode.diff',
+      oldUri,
+      newUri,
+      `${this._skillName}: installed ↔ latest`
+    )
   }
 
   /**

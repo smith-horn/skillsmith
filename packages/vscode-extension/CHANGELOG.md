@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Deep inventory audit** — a new setting `skillsmith.inventoryAudit.deep` (off by default) runs the slower semantic-overlap pass when you Audit Skill Inventory, surfacing near-duplicate skills beyond exact namespace clashes.
+- **View full text diff** — the update advisor (Check Skill for Updates) now has a "View full text diff" button that opens your installed `SKILL.md` against the registry's latest version in VS Code's native side-by-side diff editor, alongside the structured summary.
 
 ### Fixed
 
