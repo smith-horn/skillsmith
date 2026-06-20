@@ -59,6 +59,13 @@ export interface IndexerEnv {
    * own facet_index from the checkpoint cursor and are unaffected.
    */
   BACKFILL_MIN_SIZE_BYTES: number
+  /**
+   * Per-dispatch skill cap: the facet driver stops at a clean range boundary once
+   * roughly this many skills are admitted, checkpoints, and exits so the next
+   * dispatch resumes. Default 0 = no cap. Distinct from the per-repo cap
+   * BACKFILL_MAX_SKILLS_PER_REPO.
+   */
+  BACKFILL_MAX_SKILLS_PER_DISPATCH: number
 }
 
 function getRequired(name: string): string {
@@ -160,6 +167,10 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
     // fresh-start path; RESUMES carry their own facet_index from the checkpoint
     // cursor and are unaffected.
     const BACKFILL_MIN_SIZE_BYTES = getInt('BACKFILL_MIN_SIZE_BYTES', 0)
+    // Per-dispatch skill cap: stop the crawl at a clean range boundary once
+    // roughly this many skills are admitted, checkpoint, and exit. Default 0 = no
+    // cap. Distinct from the per-repo cap BACKFILL_MAX_SKILLS_PER_REPO.
+    const BACKFILL_MAX_SKILLS_PER_DISPATCH = getInt('BACKFILL_MAX_SKILLS_PER_DISPATCH', 0)
 
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)
@@ -187,6 +198,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       BACKFILL_PATH_PREFIX,
       BACKFILL_MAX_RANGES,
       BACKFILL_MIN_SIZE_BYTES,
+      BACKFILL_MAX_SKILLS_PER_DISPATCH,
     }
   } finally {
     process.env = prev

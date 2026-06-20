@@ -174,6 +174,8 @@ async function runDiscoveryBranch(
       // SMI-5319 W4: only applied on a fresh start (null cursor); resumes
       // carry their own facet_index from the checkpoint and are unaffected.
       minSizeBytes: env.BACKFILL_MIN_SIZE_BYTES,
+      // Per-dispatch skill cap (0 = no cap). Distinct from per-repo cap.
+      maxSkillsPerDispatch: env.BACKFILL_MAX_SKILLS_PER_DISPATCH,
     }
   }
 
