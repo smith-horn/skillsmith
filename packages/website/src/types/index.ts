@@ -50,6 +50,11 @@ export interface Skill {
   downloadCount: number
   createdAt: string
   updatedAt: string
+  /**
+   * SMI-5327: SPDX license identifier (e.g. "MIT", "Apache-2.0"). Null means
+   * "unknown / not detected" — NOT "no restrictions" or "freely usable".
+   */
+  license?: string | null
 }
 
 /**

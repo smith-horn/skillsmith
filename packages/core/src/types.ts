@@ -101,6 +101,11 @@ export interface Skill {
   security?: SecuritySummary
   createdAt: string
   updatedAt: string
+  /**
+   * SMI-5327: SPDX license identifier (e.g. "MIT", "Apache-2.0"). Null means
+   * "unknown / not detected" — NOT "no restrictions" or "freely usable".
+   */
+  license?: string | null
 }
 
 /**
@@ -135,6 +140,11 @@ export interface SkillSearchResult {
   installHint?: string
   /** SMI-2760: Flat array of compatible IDE/LLM/platform slugs (e.g. ["claude-code", "cursor", "claude"]) */
   compatibility?: string[]
+  /**
+   * SMI-5327: SPDX license identifier (e.g. "MIT", "Apache-2.0"). Null means
+   * "unknown / not detected" — NOT "no restrictions" or "freely usable".
+   */
+  license?: string | null
 }
 
 /**

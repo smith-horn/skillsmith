@@ -532,6 +532,10 @@ const categoryJsonLd =
                   <dt class="text-dark-500">Last Updated</dt>
                   <dd id="skill-updated" class="text-dark-300" />
                 </div>
+                <div id="license-row" class="flex justify-between hidden">
+                  <dt class="text-dark-500">License</dt>
+                  <dd id="skill-license" class="text-dark-300" />
+                </div>
               </dl>
             </div>
 
@@ -733,6 +737,11 @@ const categoryJsonLd =
         document.getElementById('updated-row').classList.remove('hidden')
         document.getElementById('skill-updated').textContent = formatDate(skill.updated_at)
       }
+      // SMI-5327: License — null / absent / whitespace-only means "unknown / not detected".
+      // NEVER render null as "no license", "unrestricted", or "freely usable".
+      // MIRRORS licenseLabel() in src/lib/license-label.ts (SMI-5327) — keep in sync; is:inline cannot import.
+      document.getElementById('license-row').classList.remove('hidden')
+      document.getElementById('skill-license').textContent = skill.license?.trim() || 'Unknown'
 
       // Tags
       const tagsContainer = document.getElementById('skill-tags')

@@ -2,6 +2,8 @@
  * SMI-5178: formatter coverage for the compatibility-hidden notice.
  * Asserts the "+ N more skill(s) hidden" line appears only when
  * compatibilityHidden > 0 (the restrictive cross-tool default / explicit filter).
+ *
+ * SMI-5327: license display in search results.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -80,5 +82,99 @@ describe('formatSearchResults — discovery-only hidden notice (SMI-5178)', () =
   it('zero-result branch mentions installable_only: false as a suggestion', () => {
     const out = formatSearchResults(baseResponse({ results: [], total: 0, discoveryOnlyHidden: 0 }))
     expect(out).toContain('installable_only: false')
+  })
+})
+
+describe('formatSearchResults — license display (SMI-5327)', () => {
+  it('renders the SPDX identifier verbatim when license is "MIT"', () => {
+    const out = formatSearchResults(
+      baseResponse({
+        results: [
+          {
+            id: 'acme/skill',
+            name: 'skill',
+            description: 'a skill',
+            author: 'acme',
+            category: 'development',
+            trustTier: 'community',
+            score: 80,
+            license: 'MIT',
+          },
+        ],
+      })
+    )
+    expect(out).toContain('License: MIT')
+    expect(out).not.toContain('License: Unknown')
+  })
+
+  it('renders "License: Unknown" when license is null', () => {
+    const out = formatSearchResults(
+      baseResponse({
+        results: [
+          {
+            id: 'acme/skill',
+            name: 'skill',
+            description: 'a skill',
+            author: 'acme',
+            category: 'development',
+            trustTier: 'community',
+            score: 80,
+            license: null,
+          },
+        ],
+      })
+    )
+    expect(out).toContain('License: Unknown')
+    // Must NOT imply any permissive conclusion for a null license
+    expect(out).not.toContain('no license')
+    expect(out).not.toContain('unrestricted')
+    expect(out).not.toContain('freely usable')
+    expect(out).not.toContain('public domain')
+  })
+
+  it('renders "License: Unknown" when license field is absent', () => {
+    // baseResponse skill has no license field — same as undefined
+    const out = formatSearchResults(baseResponse())
+    expect(out).toContain('License: Unknown')
+  })
+
+  it('renders "License: Unknown" when license is an empty string', () => {
+    const out = formatSearchResults(
+      baseResponse({
+        results: [
+          {
+            id: 'acme/skill',
+            name: 'skill',
+            description: 'a skill',
+            author: 'acme',
+            category: 'development',
+            trustTier: 'community',
+            score: 80,
+            license: '',
+          },
+        ],
+      })
+    )
+    expect(out).toContain('License: Unknown')
+  })
+
+  it('renders "License: Unknown" when license is whitespace-only', () => {
+    const out = formatSearchResults(
+      baseResponse({
+        results: [
+          {
+            id: 'acme/skill',
+            name: 'skill',
+            description: 'a skill',
+            author: 'acme',
+            category: 'development',
+            trustTier: 'community',
+            score: 80,
+            license: '   ',
+          },
+        ],
+      })
+    )
+    expect(out).toContain('License: Unknown')
   })
 })
