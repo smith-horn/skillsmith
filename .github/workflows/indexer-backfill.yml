@@ -261,6 +261,19 @@ jobs:
           CURRENT_FACET=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.current_facet // "unknown"')
           PENDING_SUBRANGES=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.pending_subrange_count // 0')
 
+          # SMI-5319: Phase-3b admit-volume counters from .data.subdirectory_search.
+          # With the license gate removed, license_filtered is ~0, so the meaningful
+          # health signals are how many skills were ADMITTED, the null-license rate,
+          # and how many repos were SKIPPED for an unresolvable default branch.
+          # no_default_branch is the leading regression indicator for the W5 branch
+          # fix: a rising value means GET /repos is failing to resolve branches again
+          # (the original 404-every-repo failure). These are independent dimensions,
+          # not a partition; admitted is the authoritative admit count.
+          ADMITTED=$(printf '%s' "$RESPONSE" | jq -r '.data.subdirectory_search.admitted // 0')
+          LICENSE_NULL=$(printf '%s' "$RESPONSE" | jq -r '.data.subdirectory_search.license_null // 0')
+          NO_DEFAULT_BRANCH=$(printf '%s' "$RESPONSE" | jq -r '.data.subdirectory_search.no_default_branch // 0')
+          LICENSE_FETCH_FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.subdirectory_search.license_fetch_failed // 0')
+
           # CRITICAL: token_source must be exactly "pat" on every backfill dispatch.
           # An "app" value means the App env entries leaked in (consuming the cron's
           # rate bucket); "unknown" means the indexer never emitted the field (e.g. it
@@ -288,6 +301,10 @@ jobs:
             echo "| Checkpoint ID | $CHECKPOINT_ID |"
             echo "| Cap Saturated | $CAP_SATURATED |"
             echo "| Truncated Repo Count | $TRUNCATED_REPO_COUNT |"
+            echo "| Skills Admitted | $ADMITTED |"
+            echo "| Null License (of admitted) | $LICENSE_NULL |"
+            echo "| No Default Branch (skipped) | $NO_DEFAULT_BRANCH |"
+            echo "| License Fetch Failed | $LICENSE_FETCH_FAILED |"
             echo "| Token Source | $TOKEN_SOURCE |"
             echo ""
             # current_facet == 'done' is authoritative: it is set only when the
