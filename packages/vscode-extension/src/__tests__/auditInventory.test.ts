@@ -17,6 +17,8 @@ const track = vi.hoisted(() => vi.fn())
 const mcpIsConnected = vi.hoisted(() => vi.fn(() => true))
 const mcpSkillInventoryAudit = vi.hoisted(() => vi.fn())
 const inventoryAuditCreateOrShow = vi.hoisted(() => vi.fn())
+// SMI-5326: configurable `skillsmith.inventoryAudit.deep` read.
+const configGet = vi.hoisted(() => vi.fn((_key: string, fallback?: unknown) => fallback))
 const withProgress = vi.hoisted(() =>
   vi.fn(async (_opts: unknown, task: (p: unknown, t: unknown) => Promise<unknown>) => {
     return task({ report: vi.fn() }, tokenRef)
@@ -32,7 +34,7 @@ vi.mock('vscode', () => ({
   },
   commands: { registerCommand: vi.fn(), executeCommand: vi.fn() },
   workspace: {
-    getConfiguration: vi.fn(() => ({ get: () => undefined })),
+    getConfiguration: vi.fn(() => ({ get: configGet })),
   },
   Uri: {
     file: (s: string) => ({ toString: () => s, fsPath: s }),
@@ -108,6 +110,9 @@ describe('auditInventoryCommand (SMI-5318)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mcpIsConnected.mockReturnValue(true)
+    // Restore the default config read (returns the fallback) — a per-test
+    // mockReturnValue override survives vi.clearAllMocks(), so re-establish it.
+    configGet.mockImplementation((_key: string, fallback?: unknown) => fallback)
     // Reset the shared token so each test starts with cancellation = false.
     tokenRef.isCancellationRequested = false
     // Restore the default withProgress implementation after vi.clearAllMocks().
@@ -142,6 +147,16 @@ describe('auditInventoryCommand (SMI-5318)', () => {
     })
     expect(track).not.toHaveBeenCalledWith('vscode_inventory_audit_empty')
     expect(inventoryAuditCreateOrShow).toHaveBeenCalledOnce()
+  })
+
+  it('deep setting enabled: passes { deep: true } to skillInventoryAudit (SMI-5326)', async () => {
+    configGet.mockReturnValue(true)
+    mcpSkillInventoryAudit.mockResolvedValue(makeResponse())
+
+    await auditInventoryCommandAction()
+
+    expect(configGet).toHaveBeenCalledWith('inventoryAudit.deep', false)
+    expect(mcpSkillInventoryAudit).toHaveBeenCalledWith({ deep: true })
   })
 
   it('connected + clean (totalFlags:0): fires empty telemetry AND still opens panel', async () => {

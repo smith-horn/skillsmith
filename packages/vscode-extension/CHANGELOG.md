@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Deep inventory audit** — a new setting `skillsmith.inventoryAudit.deep` (off by default) runs the slower semantic-overlap pass when you Audit Skill Inventory, surfacing near-duplicate skills beyond exact namespace clashes.
+
+### Fixed
+
+- Clearer "skill not found" messaging — when a skill you compare or check for updates no longer exists in the registry (or its ID is invalid), the extension now says so directly instead of showing a generic error.
+
 ## [0.6.0] - 2026-06-19
 
 ### Added

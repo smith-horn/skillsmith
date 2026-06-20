@@ -117,6 +117,13 @@ describe('McpClient.skillCompare (SMI-5315)', () => {
     ).rejects.toMatchObject({ code: 'UnknownTool' })
   })
 
+  it('skill-not-found isError response throws McpToolError code SkillNotFound (SMI-5322)', async () => {
+    const client = connectedClient(isErr('Error: Skill "community/docker-compose" not found'))
+    await expect(
+      client.skillCompare({ skill_a: 'smith-horn/docker', skill_b: 'community/docker-compose' })
+    ).rejects.toMatchObject({ code: 'SkillNotFound', toolName: 'skill_compare' })
+  })
+
   it('calling before connect throws NotConnected with the exact message', async () => {
     const client = new McpClient()
     await expect(

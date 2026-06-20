@@ -170,6 +170,12 @@ async function compareCommandImpl(deps: {
         await handleTierDenied('skillsmith.compareSkills', err)
         return
       }
+      if (err.code === 'SkillNotFound') {
+        void vscode.window.showWarningMessage(
+          'One or both skills could not be found. Check the skill IDs and try again.'
+        )
+        return
+      }
       void vscode.window.showErrorMessage(err.message)
       return
     }

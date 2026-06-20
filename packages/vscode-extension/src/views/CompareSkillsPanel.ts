@@ -137,11 +137,11 @@ export class CompareSkillsPanel {
       }
       const raw = err instanceof Error ? err.message : String(err)
       const errNonce = generateCspNonce()
-      this._panel.webview.html = getCompareErrorHtml(
-        'Could not compare these skills. Please try again.',
-        errNonce,
-        raw
-      )
+      const headline =
+        err instanceof McpToolError && err.code === 'SkillNotFound'
+          ? 'One or both skills could not be found. Check the skill IDs and try again.'
+          : 'Could not compare these skills. Please try again.'
+      this._panel.webview.html = getCompareErrorHtml(headline, errNonce, raw)
     }
   }
 
