@@ -288,6 +288,8 @@ async function executeSearchImpl(
         // ApiResponse<T> at this call site (CI typecheck confirms), so it is read
         // via a cast — the value is present at runtime.
         compatibility: (item as unknown as { compatibility?: string[] }).compatibility,
+        // SMI-5327: SPDX license from the edge function response.
+        license: item.license ?? null,
       }))
 
       // SMI-1809: Search local skills and merge with API results

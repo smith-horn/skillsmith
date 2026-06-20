@@ -67,6 +67,10 @@ export function formatSearchResults(response: SearchResponse): string {
       )
       lines.push('   ' + skill.description)
       lines.push('   ID: ' + skill.id)
+      // SMI-5327: surface license so consumers can evaluate usage terms.
+      // null / undefined / whitespace-only means the license was not detected —
+      // render "Unknown" (NOT "no license", "unrestricted", or "freely usable").
+      lines.push('   License: ' + (skill.license?.trim() || 'Unknown'))
       // SMI-4954: flag discovery-only entries so models don't try to install them
       if (skill.installable === false) {
         lines.push('   Installable: NO — discovery-only (install_skill cannot resolve this)')

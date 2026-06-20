@@ -186,6 +186,8 @@ async function executeGetSkillImpl(
         // SMI-1577: Handle optional date fields with sentinel value
         createdAt: apiSkill.created_at ?? '1970-01-01T00:00:00.000Z',
         updatedAt: apiSkill.updated_at ?? '1970-01-01T00:00:00.000Z',
+        // SMI-5327: SPDX license from the API. Null means "unknown / not detected".
+        license: apiSkill.license ?? null,
       }
 
       const endTime = performance.now()
@@ -369,6 +371,9 @@ export function formatSkillDetails(response: GetSkillResponse): string {
   if (skill.repository) {
     lines.push('Repository: ' + skill.repository)
   }
+
+  // SMI-5327: License — null / whitespace-only means "unknown / not detected", NOT "no license".
+  lines.push('License: ' + (skill.license?.trim() || 'Unknown'))
 
   // Tags
   if (skill.tags && skill.tags.length > 0) {

@@ -421,3 +421,59 @@ describe('formatSkillDetails branch coverage', () => {
     expect(formatted).not.toContain('Tags:')
   })
 })
+
+/**
+ * SMI-5327: formatSkillDetails license display
+ * Null license must render as "unknown", not imply any permissive conclusion.
+ */
+describe('formatSkillDetails — license display (SMI-5327)', () => {
+  const baseSkill = {
+    id: 'test/skill',
+    name: 'test-skill',
+    description: 'A test skill',
+    author: 'test',
+    category: 'development' as const,
+    trustTier: 'community' as const,
+    score: 80,
+    tags: [] as string[],
+    installCommand: 'claude skill add test/skill',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+  }
+  const baseResponse = (license?: string | null) => ({
+    skill: { ...baseSkill, license },
+    installCommand: 'claude skill add test/skill',
+    timing: { totalMs: 10 },
+  })
+
+  it('renders "License: MIT" verbatim for an MIT-licensed skill', () => {
+    const formatted = formatSkillDetails(baseResponse('MIT'))
+    expect(formatted).toContain('License: MIT')
+    expect(formatted).not.toContain('License: Unknown')
+  })
+
+  it('renders "License: Apache-2.0" verbatim', () => {
+    const formatted = formatSkillDetails(baseResponse('Apache-2.0'))
+    expect(formatted).toContain('License: Apache-2.0')
+  })
+
+  it('renders "License: Unknown" when license is null', () => {
+    const formatted = formatSkillDetails(baseResponse(null))
+    expect(formatted).toContain('License: Unknown')
+    // Must not imply any permissive conclusion for a null license
+    expect(formatted).not.toContain('no license')
+    expect(formatted).not.toContain('unrestricted')
+    expect(formatted).not.toContain('freely usable')
+    expect(formatted).not.toContain('public domain')
+  })
+
+  it('renders "License: Unknown" when license field is absent', () => {
+    const formatted = formatSkillDetails(baseResponse(undefined))
+    expect(formatted).toContain('License: Unknown')
+  })
+
+  it('renders "License: Unknown" when license is an empty string', () => {
+    const formatted = formatSkillDetails(baseResponse(''))
+    expect(formatted).toContain('License: Unknown')
+  })
+})
