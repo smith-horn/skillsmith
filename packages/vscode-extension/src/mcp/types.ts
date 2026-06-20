@@ -340,6 +340,57 @@ export interface McpInventoryAuditResponse {
 }
 
 /**
+ * Response from MCP `apply_namespace_rename` (SMI-5325). UNGATED. Mirrors the
+ * server envelope (`apply-namespace-rename.types.ts`). Application-level failure
+ * is `success: false` + `errorCode` (the dispatcher wraps every result with
+ * `okBody` → `isError: false`, so this never surfaces as a thrown McpToolError).
+ * The SMI-5213 preview fields are present (with `applied: false`) when the tool
+ * was called without `confirmed: true`. `result` is opaque to the extension.
+ */
+export interface McpApplyNamespaceRenameResponse {
+  success: boolean
+  collisionId: string
+  result?: unknown
+  errorCode?:
+    | 'namespace.audit.invalid_input'
+    | 'namespace.audit.history_not_found'
+    | 'namespace.audit.collision_not_found'
+    | 'namespace.rename.subcall_failed'
+  error?: string
+  preview?: boolean
+  action?: string
+  target?: string
+  before?: string
+  after?: string
+  applied?: boolean
+}
+
+/**
+ * Response from MCP `apply_recommended_edit` (SMI-5325). UNGATED but the tool is
+ * conditionally registered server-side (`APPLY_TEMPLATE_REGISTRY`). Mirrors the
+ * server envelope (`apply-recommended-edit.types.ts`); same preview/error-code
+ * contract as {@link McpApplyNamespaceRenameResponse}. `result` is opaque.
+ */
+export interface McpApplyRecommendedEditResponse {
+  success: boolean
+  collisionId: string
+  result?: unknown
+  errorCode?:
+    | 'namespace.audit.invalid_input'
+    | 'namespace.audit.history_not_found'
+    | 'namespace.audit.collision_not_found'
+    | 'edit.template_not_in_apply_registry'
+    | 'edit.subcall_failed'
+  error?: string
+  preview?: boolean
+  action?: string
+  target?: string
+  before?: string
+  after?: string
+  applied?: boolean
+}
+
+/**
  * MCP connection status
  */
 export type McpConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'

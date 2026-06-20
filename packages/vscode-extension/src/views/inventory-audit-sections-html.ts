@@ -155,7 +155,12 @@ export function getGenericFlagsSection(items: McpGenericFlag[]): string {
     </section>`
 }
 
-/** Suggested renames — each row carries a copy button reading `data-copy`. */
+/**
+ * Suggested renames — each row carries a Copy button (`data-copy`) and an
+ * "Apply rename…" button (`data-collision`, SMI-5325). The host validates the
+ * `collisionId` against the live response before any apply, and always sends
+ * `action: 'apply'` (the suggested name); custom-name is deferred (SMI-5328).
+ */
 export function getRenameSuggestionsSection(items: McpRenameSuggestion[]): string {
   if (!Array.isArray(items) || items.length === 0) return ''
   const rows = items
@@ -163,6 +168,7 @@ export function getRenameSuggestionsSection(items: McpRenameSuggestion[]): strin
       const currentName = typeof r.currentName === 'string' ? r.currentName : ''
       const suggested = typeof r.suggested === 'string' ? r.suggested : ''
       const reason = typeof r.reason === 'string' ? r.reason : ''
+      const collisionId = typeof r.collisionId === 'string' ? r.collisionId : ''
       return `
       <div class="rename-row">
         <div class="rename-names">
@@ -170,6 +176,7 @@ export function getRenameSuggestionsSection(items: McpRenameSuggestion[]): strin
           <span class="rename-arrow">→</span>
           <span class="rename-suggested">${escapeHtml(suggested)}</span>
           <button class="copy-btn" data-copy="${escapeHtml(suggested)}">Copy</button>
+          <button class="apply-btn apply-rename-btn" data-collision="${escapeHtml(collisionId)}">Apply rename…</button>
         </div>
         ${renderEntryLine(r.entry)}
         <div class="row-reason">${escapeHtml(reason)}</div>
@@ -183,8 +190,18 @@ export function getRenameSuggestionsSection(items: McpRenameSuggestion[]): strin
     </section>`
 }
 
-/** Recommended prose edits — READ-ONLY (before → after + rationale, no apply). */
-export function getRecommendedEditsSection(items: McpRecommendedEdit[]): string {
+/**
+ * Recommended prose edits (SMI-5325). Rows whose `applyMode` is
+ * `'apply_with_confirmation'` carry an "Apply edit…" button (`data-collision`);
+ * `'manual_review'` rows show a muted "Review and apply manually" hint instead,
+ * so the absent button reads as intentional. When `editApplyUnavailable` is true
+ * (the server's `apply_recommended_edit` is unregistered), ALL rows collapse to
+ * the hint.
+ */
+export function getRecommendedEditsSection(
+  items: McpRecommendedEdit[],
+  editApplyUnavailable = false
+): string {
   if (!Array.isArray(items) || items.length === 0) return ''
   const rows = items
     .map((e) => {
@@ -192,6 +209,11 @@ export function getRecommendedEditsSection(items: McpRecommendedEdit[]): string 
       const before = typeof e.before === 'string' ? e.before : ''
       const after = typeof e.after === 'string' ? e.after : ''
       const rationale = typeof e.rationale === 'string' ? e.rationale : ''
+      const collisionId = typeof e.collisionId === 'string' ? e.collisionId : ''
+      const applyable = !editApplyUnavailable && e.applyMode === 'apply_with_confirmation'
+      const action = applyable
+        ? `<button class="apply-btn apply-edit-btn" data-collision="${escapeHtml(collisionId)}">Apply edit…</button>`
+        : `<span class="edit-hint">Review and apply manually</span>`
       return `
       <div class="edit-row">
         <div class="edit-file">${escapeHtml(filePath)}</div>
@@ -200,12 +222,13 @@ export function getRecommendedEditsSection(items: McpRecommendedEdit[]): string 
           <div class="edit-after"><span class="edit-label">After</span><pre>${escapeHtml(after)}</pre></div>
         </div>
         <div class="row-reason">${escapeHtml(rationale)}</div>
+        <div class="edit-actions">${action}</div>
       </div>`
     })
     .join('')
   return `
     <section aria-labelledby="recommended-edits-heading">
-      <h2 id="recommended-edits-heading">Recommended Edits (read-only)</h2>
+      <h2 id="recommended-edits-heading">Recommended Edits</h2>
       ${rows}
     </section>`
 }

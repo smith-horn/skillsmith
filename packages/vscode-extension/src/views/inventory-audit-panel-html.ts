@@ -73,10 +73,23 @@ function getStyles(): string {
     button:hover { background-color: var(--vscode-button-hoverBackground); }
     button:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
     .copy-btn { padding: 2px 10px; font-size: 12px; }
+    /* SMI-5325: apply buttons use the secondary treatment so the consequential
+       (file-mutating) action is visually distinct from the benign Copy. */
+    .apply-btn { padding: 2px 10px; font-size: 12px;
+      background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+    .apply-btn:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
+    .edit-actions { margin-top: 8px; }
+    .edit-hint { color: var(--vscode-descriptionForeground); font-size: 0.85em; font-style: italic; }
+    .status-node { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin: 4px 0; min-height: 1.2em; }
+    .status-node:empty { margin: 0; min-height: 0; }
     .actions { display: flex; gap: 8px; margin-top: 24px; }`
 }
 
-/** Inline script: wires Retry, Open-Report, and delegated `.copy-btn` clicks. */
+/**
+ * Inline script: wires Retry, Open-Report, delegated `.copy-btn` / `.apply-btn`
+ * clicks, and — SMI-5325 — moves focus to the status node after a re-render so a
+ * screen-reader user is re-oriented and hears the apply result.
+ */
 function getScript(nonce: string): string {
   return `
   <script nonce="${nonce}">
@@ -95,13 +108,20 @@ function getScript(nonce: string): string {
     }
     document.addEventListener('click', (event) => {
       const target = event.target;
-      if (target && target.classList && target.classList.contains('copy-btn')) {
-        const text = target.dataset ? target.dataset.copy : undefined;
-        if (typeof text === 'string') {
-          vscode.postMessage({ command: 'copyRename', text: text });
-        }
+      if (!target || !target.classList) return;
+      const data = target.dataset || {};
+      if (target.classList.contains('copy-btn') && typeof data.copy === 'string') {
+        vscode.postMessage({ command: 'copyRename', text: data.copy });
+      } else if (target.classList.contains('apply-rename-btn') && typeof data.collision === 'string') {
+        vscode.postMessage({ command: 'applyRename', collisionId: data.collision });
+      } else if (target.classList.contains('apply-edit-btn') && typeof data.collision === 'string') {
+        vscode.postMessage({ command: 'applyEdit', collisionId: data.collision });
       }
     });
+    const statusNode = document.getElementById('statusNode');
+    if (statusNode && statusNode.textContent && statusNode.textContent.trim().length > 0) {
+      statusNode.focus();
+    }
   </script>`
 }
 
@@ -118,12 +138,22 @@ function getActionsHtml(): string {
  * Build the complete Inventory Audit panel HTML. All untrusted fields are
  * escaped (in the section renderers). When there are no flags, a clean-state
  * hero replaces the collision sections.
+ *
+ * SMI-5325 options: `editApplyUnavailable` collapses all Apply-edit buttons to
+ * the manual-review hint (server's `apply_recommended_edit` is unregistered);
+ * `statusMessage` is announced via an `aria-live` status node that the inline
+ * script focuses on load (re-orients a screen-reader user after an apply).
  */
-export function getInventoryAuditHtml(response: McpInventoryAuditResponse, nonce: string): string {
+export function getInventoryAuditHtml(
+  response: McpInventoryAuditResponse,
+  nonce: string,
+  opts: { editApplyUnavailable?: boolean; statusMessage?: string } = {}
+): string {
   const csp = getInventoryAuditCsp(nonce)
   const summary = response.summary
   const totalFlags = Number.isFinite(summary?.totalFlags) ? summary.totalFlags : 0
   const totalEntries = Number.isFinite(summary?.totalEntries) ? summary.totalEntries : 0
+  const statusMessage = typeof opts.statusMessage === 'string' ? opts.statusMessage : ''
 
   const bodyContent =
     totalFlags === 0
@@ -139,7 +169,7 @@ export function getInventoryAuditHtml(response: McpInventoryAuditResponse, nonce
     ${getSemanticSection(response.semanticCollisions)}
     ${getGenericFlagsSection(response.genericFlags)}
     ${getRenameSuggestionsSection(response.renameSuggestions)}
-    ${getRecommendedEditsSection(response.recommendedEdits)}`
+    ${getRecommendedEditsSection(response.recommendedEdits, opts.editApplyUnavailable === true)}`
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -152,6 +182,7 @@ export function getInventoryAuditHtml(response: McpInventoryAuditResponse, nonce
 </head>
 <body>
   <h1>Skill Inventory Audit</h1>
+  <div id="statusNode" class="status-node" role="status" aria-live="polite" tabindex="-1">${escapeHtml(statusMessage)}</div>
   ${bodyContent}
   ${getActionsHtml()}
   ${getScript(nonce)}
