@@ -27,11 +27,18 @@ async function auditInventoryCommandImpl(): Promise<void> {
     return
   }
 
+  // SMI-5326: opt into the slower semantic-overlap pass via setting. Pass `deep`
+  // only when true — exactOptionalPropertyTypes forbids `{ deep: undefined }`,
+  // and `{}` preserves the existing fast-path default.
+  const deep = vscode.workspace
+    .getConfiguration('skillsmith')
+    .get<boolean>('inventoryAudit.deep', false)
+
   try {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Window, title: 'Auditing skill inventory…' },
       async (_progress, token) => {
-        const response = await client.skillInventoryAudit({})
+        const response = await client.skillInventoryAudit(deep ? { deep: true } : {})
         if (token.isCancellationRequested) return
 
         const flags = response.summary.errorCount + response.summary.warningCount

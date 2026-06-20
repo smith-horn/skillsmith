@@ -135,11 +135,11 @@ export class SkillDiffPanel {
       }
       const raw = err instanceof Error ? err.message : String(err)
       const errNonce = generateCspNonce()
-      this._panel.webview.html = getDiffErrorHtml(
-        'Could not check this skill for updates. Please try again.',
-        errNonce,
-        raw
-      )
+      const headline =
+        err instanceof McpToolError && err.code === 'SkillNotFound'
+          ? 'This skill could not be found in the registry. It may have been removed or renamed.'
+          : 'Could not check this skill for updates. Please try again.'
+      this._panel.webview.html = getDiffErrorHtml(headline, errNonce, raw)
     }
   }
 

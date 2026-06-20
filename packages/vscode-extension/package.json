@@ -295,6 +295,11 @@
           "type": "boolean",
           "default": false,
           "description": "Show sample/demo skills when the Skillsmith server is unavailable. Off by default; intended for demos and screenshots only."
+        },
+        "skillsmith.inventoryAudit.deep": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run the deep semantic-overlap pass when auditing your skill inventory (Audit Skill Inventory). Detects semantic collisions beyond exact namespace clashes, but is slower. Off by default."
         }
       }
     }

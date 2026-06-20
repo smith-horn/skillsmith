@@ -40,7 +40,7 @@ async skillDiff(args: { skillId: string; from: string; to: string }): Promise<Mc
 export class McpToolError extends Error {
   constructor(
     public readonly toolName: string,
-    public readonly code: string, // e.g. 'TierDenied', 'SkillNotFound'
+    public readonly code: McpToolErrorCode,
     message: string,
   ) {
     super(message)
@@ -48,6 +48,13 @@ export class McpToolError extends Error {
   }
 }
 ```
+
+`McpToolErrorCode` is a 6-value union (`McpToolError.ts`):
+`TierDenied | UnknownTool | SkillNotFound | NotConnected | InvalidResponse |
+Unknown`. `SkillNotFound` (SMI-5322) is classified from the server's plain-text
+`Skill "x" not found` / `Invalid skill ID format` messages — see
+`classifyIsErrorText` in `callTool.ts`, which keeps the generic `tool not found
+-> UnknownTool` contract by requiring the word "skill".
 
 Command-level handlers catch `McpToolError` and branch on `.code`. No
 string-matching against `.message`.

@@ -6,6 +6,7 @@
 export type McpToolErrorCode =
   | 'TierDenied'
   | 'UnknownTool'
+  | 'SkillNotFound'
   | 'NotConnected'
   | 'InvalidResponse'
   | 'Unknown'

@@ -14,13 +14,21 @@ import { McpToolError, type McpToolErrorCode } from './McpToolError.js'
  * `McpToolErrorCode`. Tier/plan denials and unknown-tool errors get specific
  * codes so command handlers can branch without string-matching messages.
  *
- * NOTE (SMI-5322): `not found` currently maps to `UnknownTool` — this is a
- * tested contract (`__tests__/mcp/uninstall_skill.test.ts`). A precise
- * `SkillNotFound` code is tracked separately; do not change this here.
+ * SMI-5322: A skill-level not-found (`SKILL_NOT_FOUND`) or invalid-id
+ * (`SKILL_INVALID_ID`) must classify as `SkillNotFound`, NOT `UnknownTool`. The
+ * server surfaces these as plain text — `Error: Skill "x" not found` /
+ * `Error: Invalid skill ID format: "x"` — because `index.ts` emits only
+ * `error.message`, not the structured `SkillsmithError.code`. So we match the
+ * message text. Requiring the word "skill" keeps the generic `tool not found ->
+ * UnknownTool` contract intact (`__tests__/mcp/uninstall_skill.test.ts`): a bare
+ * "tool not found" has no "skill" token and falls through to the rule below.
  */
 export function classifyIsErrorText(errorText: string): McpToolErrorCode {
   if (/tier|plan|denied|forbidden|upgrade/i.test(errorText)) {
     return 'TierDenied'
+  }
+  if (/\bskill\b.*\bnot found\b/i.test(errorText) || /invalid skill id/i.test(errorText)) {
+    return 'SkillNotFound'
   }
   if (/unknown tool|not found|no such tool/i.test(errorText)) {
     return 'UnknownTool'

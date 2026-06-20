@@ -122,6 +122,12 @@ async function diffCommandImpl(deps: {
         await handleTierDenied('skillsmith.diffSkill', err)
         return
       }
+      if (err.code === 'SkillNotFound') {
+        void vscode.window.showWarningMessage(
+          'This skill could not be found in the registry. It may have been removed or renamed.'
+        )
+        return
+      }
       void vscode.window.showErrorMessage(err.message)
       return
     }
