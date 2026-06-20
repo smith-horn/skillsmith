@@ -33,7 +33,13 @@ vi.mock('../utils/csp.js', () => ({
   generateCspNonce: () => 'nonce',
   getSkillDiffCsp: () => "default-src 'none';",
 }))
-vi.mock('../mcp/McpClient.js', () => ({ getMcpClient: () => ({ isConnected: () => true }) }))
+vi.mock('../mcp/McpClient.js', () => ({
+  getMcpClient: () => ({
+    isConnected: () => true,
+    // Present so the retry path resolves cleanly (no unhandled rejection).
+    skillDiff: vi.fn().mockResolvedValue({ changeType: 'minor' }),
+  }),
+}))
 vi.mock('../mcp/tierDenied.js', () => ({ handleTierDenied: vi.fn() }))
 
 import * as vscode from 'vscode'
@@ -103,6 +109,33 @@ describe('SkillDiffPanel — viewTextDiff (SMI-5323)', () => {
     expect(oldUri.toString()).toBe('skillsmith-diff:smith-horn%2Fdocker/installed.md')
     expect(newUri.toString()).toBe('skillsmith-diff:smith-horn%2Fdocker/latest.md')
     expect(title).toBe('docker: installed ↔ latest')
+  })
+
+  it('uses the refreshed args after the singleton panel is reused for another skill', () => {
+    const mock = createMockPanel()
+    createWebviewPanel.mockReturnValue(mock.panel)
+
+    SkillDiffPanel.createOrShow({} as vscode.Uri, 'docker', RESPONSE, ARGS)
+    // Reuse the open panel for a different skill (no new webview created).
+    const argsB: SkillDiffArgs = {
+      skillId: 'community/kubectl',
+      oldContent: 'K8S OLD',
+      newContent: 'K8S NEW',
+    }
+    SkillDiffPanel.createOrShow({} as vscode.Uri, 'kubectl', RESPONSE, argsB)
+    expect(createWebviewPanel).toHaveBeenCalledTimes(1)
+
+    mock.send({ command: 'viewTextDiff' })
+
+    const [, oldUri, newUri, title] = executeCommand.mock.calls[0] as [
+      string,
+      vscode.Uri,
+      vscode.Uri,
+      string,
+    ]
+    expect(oldUri.toString()).toBe('skillsmith-diff:community%2Fkubectl/installed.md')
+    expect(newUri.toString()).toBe('skillsmith-diff:community%2Fkubectl/latest.md')
+    expect(title).toBe('kubectl: installed ↔ latest')
   })
 
   it('does not open a diff for an unrelated message', () => {

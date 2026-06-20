@@ -27,7 +27,7 @@ export class SkillDiffPanel {
   private readonly _panel: vscode.WebviewPanel
   private _skillName: string
   private _response: McpSkillDiffResponse
-  private readonly _args: SkillDiffArgs
+  private _args: SkillDiffArgs
   private _disposables: vscode.Disposable[] = []
 
   /** Reset the singleton between tests. */
@@ -50,6 +50,9 @@ export class SkillDiffPanel {
       SkillDiffPanel.currentPanel._panel.reveal(column)
       SkillDiffPanel.currentPanel._skillName = skillName
       SkillDiffPanel.currentPanel._response = response
+      // Refresh _args too — a stale value would make "View full text diff" and
+      // retry operate on the previously-opened skill's content (SMI-5323).
+      SkillDiffPanel.currentPanel._args = args
       SkillDiffPanel.currentPanel._update()
       return
     }
