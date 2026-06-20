@@ -18,6 +18,8 @@ import {
   type McpSkillDiffResponse,
   type McpSkillAuditResponse,
   type McpInventoryAuditResponse,
+  type McpApplyNamespaceRenameResponse,
+  type McpApplyRecommendedEditResponse,
   DEFAULT_MCP_CONFIG,
 } from './types.js'
 import type { JsonRpcRequest, JsonRpcResponse } from './jsonrpc.types.js'
@@ -427,6 +429,37 @@ export class McpClient {
   }
 
   /**
+   * Apply a rename suggestion from a prior `skill_inventory_audit` (SMI-5325).
+   * UNGATED. Mutates `~/.claude/` (backup + revert ledger) only when
+   * `confirmed: true`; else returns a non-mutating preview. The UI sends
+   * `action: 'apply'` (`'custom'`/`'skip'` are reserved for SMI-5328).
+   * App-level failure arrives as `success: false` + `errorCode`, not a throw.
+   */
+  async applyNamespaceRename(args: {
+    auditId: string
+    collisionId: string
+    action: 'apply' | 'custom' | 'skip'
+    customName?: string
+    confirmed?: boolean
+  }): Promise<McpApplyNamespaceRenameResponse> {
+    return this.callTool<McpApplyNamespaceRenameResponse>('apply_namespace_rename', args)
+  }
+
+  /**
+   * Apply a recommended prose edit from a prior `skill_inventory_audit`
+   * (SMI-5325). UNGATED but conditionally registered server-side
+   * (`APPLY_TEMPLATE_REGISTRY`) — when absent, throws `McpToolError`
+   * (`UnknownTool`). Mutates `~/.claude/` only when `confirmed: true`.
+   */
+  async applyRecommendedEdit(args: {
+    auditId: string
+    collisionId: string
+    confirmed?: boolean
+  }): Promise<McpApplyRecommendedEditResponse> {
+    return this.callTool<McpApplyRecommendedEditResponse>('apply_recommended_edit', args)
+  }
+
+  /**
    * Disconnect from the MCP server
    */
   disconnect(): void {
@@ -447,38 +480,7 @@ export class McpClient {
   }
 }
 
-/**
- * Singleton MCP client instance
- */
-let mcpClientInstance: McpClient | null = null
-
-/**
- * Get the singleton MCP client instance
- */
-export function getMcpClient(): McpClient {
-  if (!mcpClientInstance) {
-    mcpClientInstance = new McpClient()
-  }
-  return mcpClientInstance
-}
-
-/**
- * Initialize the MCP client with custom configuration
- */
-export function initializeMcpClient(config?: Partial<McpClientConfig>): McpClient {
-  if (mcpClientInstance) {
-    mcpClientInstance.disconnect()
-  }
-  mcpClientInstance = new McpClient(config)
-  return mcpClientInstance
-}
-
-/**
- * Dispose the MCP client
- */
-export function disposeMcpClient(): void {
-  if (mcpClientInstance) {
-    mcpClientInstance.disconnect()
-    mcpClientInstance = null
-  }
-}
+// Singleton accessors live in McpClientSingleton.ts (SMI-5325 file-length shed)
+// and are re-exported here for back-compat. The circular import is eval-safe —
+// see McpClientSingleton.ts.
+export { getMcpClient, initializeMcpClient, disposeMcpClient } from './McpClientSingleton.js'

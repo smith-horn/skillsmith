@@ -47,6 +47,7 @@ function makeResponse(
     withSemantic: boolean
     withRename: boolean
     withEdit: boolean
+    editApplyMode: 'manual_review' | 'apply_with_confirmation'
     identifier: string
   }> = {}
 ) {
@@ -59,6 +60,7 @@ function makeResponse(
     withSemantic = false,
     withRename = false,
     withEdit = false,
+    editApplyMode = 'manual_review',
     identifier = 'org/foo',
   } = overrides
 
@@ -121,7 +123,7 @@ function makeResponse(
             after: 'Searches TypeScript files in the repo.',
             rationale: 'Narrow scope to reduce overlap.',
             applyAction: 'recommended_edit' as const,
-            applyMode: 'manual_review' as const,
+            applyMode: editApplyMode,
             otherEntry: { identifier: 'org/bar', sourcePath: '/home/u/.claude/skills/org/bar' },
           },
         ]
@@ -173,26 +175,72 @@ describe('inventory-audit HTML (SMI-5318)', () => {
     expect(html).toContain('0.91')
   })
 
-  it('rename suggestion: contains currentName, suggested, and copy button with data-copy', () => {
+  it('rename suggestion: contains currentName, suggested, copy + Apply-rename buttons', () => {
     const items = makeResponse({ withRename: true }).renameSuggestions
     const html = getRenameSuggestionsSection(items)
 
     expect(html).toContain('foo')
     expect(html).toContain('foo-2')
     expect(html).toContain('data-copy="foo-2"')
+    // SMI-5325: Apply-rename button carries the collisionId (escaped).
+    expect(html).toContain('apply-rename-btn')
+    expect(html).toContain('data-collision="c1"')
+    expect(html).toContain('Apply rename')
   })
 
-  it('recommendedEdits: contains before/after/rationale and section heading; no Apply button', () => {
-    const items = makeResponse({ withEdit: true }).recommendedEdits
+  it('recommendedEdits (manual_review): shows the manual-review hint, NOT an Apply button', () => {
+    const items = makeResponse({ withEdit: true, editApplyMode: 'manual_review' }).recommendedEdits
     const html = getRecommendedEditsSection(items)
 
     expect(html).toContain('Recommended Edits')
     expect(html).toContain('Searches files in the repo.')
     expect(html).toContain('Searches TypeScript files in the repo.')
     expect(html).toContain('Narrow scope to reduce overlap.')
-    // Read-only section: no "Apply" button text inside this section
-    expect(html).not.toContain('>Apply<')
-    expect(html).not.toContain('>Apply </') // also no "Apply " prefix variant
+    // manual_review → hint, no apply-edit button
+    expect(html).toContain('Review and apply manually')
+    expect(html).not.toContain('apply-edit-btn')
+  })
+
+  it('recommendedEdits (apply_with_confirmation): renders the Apply-edit button with data-collision', () => {
+    const items = makeResponse({
+      withEdit: true,
+      editApplyMode: 'apply_with_confirmation',
+    }).recommendedEdits
+    const html = getRecommendedEditsSection(items)
+
+    expect(html).toContain('apply-edit-btn')
+    expect(html).toContain('data-collision="c1"')
+    expect(html).toContain('Apply edit')
+    expect(html).not.toContain('Review and apply manually')
+  })
+
+  it('recommendedEdits: editApplyUnavailable collapses an applyable row to the hint', () => {
+    const items = makeResponse({
+      withEdit: true,
+      editApplyMode: 'apply_with_confirmation',
+    }).recommendedEdits
+    const html = getRecommendedEditsSection(items, true)
+
+    expect(html).not.toContain('apply-edit-btn')
+    expect(html).toContain('Review and apply manually')
+  })
+
+  it('XSS escape: a malicious collisionId is escaped into the data-collision attribute', () => {
+    const xss = '"><img src=x onerror=alert(1)>'
+    const items = [
+      {
+        collisionId: xss,
+        entry: makeEntry(),
+        currentName: 'foo',
+        suggested: 'foo-2',
+        applyAction: 'rename_skill_dir_and_frontmatter' as const,
+        reason: 'collision',
+      },
+    ]
+    const html = getRenameSuggestionsSection(items)
+
+    expect(html).not.toContain('onerror=alert(1)>')
+    expect(html).toContain('&lt;img')
   })
 
   it('XSS escape: <script> identifier is escaped, raw form absent', () => {

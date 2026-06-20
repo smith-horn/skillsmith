@@ -33,6 +33,12 @@ export type TelemetryEvent =
   | 'vscode_inventory_audit_start'
   | 'vscode_inventory_audit_complete'
   | 'vscode_inventory_audit_empty'
+  // SMI-5325 (Epic D): interactive apply (apply_namespace_rename / _recommended_edit).
+  // Panel-message-driven (no new registered command → coverage count stays 10).
+  | 'vscode_inventory_apply_preview'
+  | 'vscode_inventory_apply_applied'
+  | 'vscode_inventory_apply_failed'
+  | 'vscode_inventory_apply_cancelled'
 
 // No hardcoded endpoint — telemetry is disabled by default at runtime
 // unless `skillsmith.telemetryEndpoint` is set or the production endpoint
