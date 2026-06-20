@@ -274,6 +274,79 @@ describe('InventoryAuditPanel interactive apply (SMI-5325)', () => {
     })
   })
 
+  it('history_not_found on preview self-heals via re-audit (no confirm, no mutation)', async () => {
+    fakeClient.applyNamespaceRename.mockResolvedValueOnce({
+      success: false,
+      collisionId: 'c1',
+      errorCode: 'namespace.audit.history_not_found',
+      error: 'Audit history not found. Run skill_inventory_audit first.',
+    })
+
+    InventoryAuditPanel.createOrShow(URI, makeResponse())
+    mock.send({ command: 'applyRename', collisionId: 'c1' })
+
+    await vi.waitFor(() => expect(fakeClient.skillInventoryAudit).toHaveBeenCalled())
+    expect(showWarningMessage).not.toHaveBeenCalled() // never reached the confirm modal
+    expect(fakeClient.applyNamespaceRename).toHaveBeenCalledTimes(1) // preview only
+    expect(trackMock).toHaveBeenCalledWith('vscode_inventory_apply_failed', {
+      kind: 'rename',
+      errorCode: 'namespace.audit.history_not_found',
+    })
+  })
+
+  it('edit happy path: preview(confirmed:false) → modal → apply(confirmed:true) → re-audit', async () => {
+    fakeClient.applyRecommendedEdit
+      .mockResolvedValueOnce({
+        success: true,
+        preview: true,
+        collisionId: 'c3',
+        before: 'b',
+        after: 'a',
+        applied: false,
+      })
+      .mockResolvedValueOnce({ success: true, collisionId: 'c3' })
+    showWarningMessage.mockResolvedValue('Apply')
+
+    InventoryAuditPanel.createOrShow(URI, makeResponse('apply_with_confirmation'))
+    mock.send({ command: 'applyEdit', collisionId: 'c3' })
+
+    await vi.waitFor(() => expect(fakeClient.applyRecommendedEdit).toHaveBeenCalledTimes(2))
+    expect(fakeClient.applyRecommendedEdit).toHaveBeenNthCalledWith(1, {
+      auditId: 'aud_test',
+      collisionId: 'c3',
+      confirmed: false,
+    })
+    expect(fakeClient.applyRecommendedEdit).toHaveBeenNthCalledWith(2, {
+      auditId: 'aud_test',
+      collisionId: 'c3',
+      confirmed: true,
+    })
+    await vi.waitFor(() => expect(fakeClient.skillInventoryAudit).toHaveBeenCalled())
+    expect(showInformationMessage).toHaveBeenCalledWith(expect.stringContaining('backup was saved'))
+    expect(trackMock).toHaveBeenCalledWith('vscode_inventory_apply_applied', { kind: 'edit' })
+  })
+
+  it('edit confirm cancelled: apply(confirmed:true) is NOT called', async () => {
+    fakeClient.applyRecommendedEdit.mockResolvedValueOnce({
+      success: true,
+      preview: true,
+      collisionId: 'c3',
+      before: 'b',
+      after: 'a',
+      applied: false,
+    })
+    showWarningMessage.mockResolvedValue(undefined)
+
+    InventoryAuditPanel.createOrShow(URI, makeResponse('apply_with_confirmation'))
+    mock.send({ command: 'applyEdit', collisionId: 'c3' })
+
+    await vi.waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('vscode_inventory_apply_cancelled', { kind: 'edit' })
+    )
+    expect(fakeClient.applyRecommendedEdit).toHaveBeenCalledTimes(1)
+    expect(fakeClient.skillInventoryAudit).not.toHaveBeenCalled()
+  })
+
   it('applyEdit UnknownTool collapses edit buttons to the manual-review hint', async () => {
     fakeClient.applyRecommendedEdit.mockRejectedValueOnce(
       new McpToolError('apply_recommended_edit', 'UnknownTool', 'Unknown tool')
