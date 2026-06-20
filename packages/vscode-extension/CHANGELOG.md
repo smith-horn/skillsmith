@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-06-20
+
 ### Added
 
 - **Apply inventory-audit fixes in one click** — the Audit Skill Inventory report now has **Apply rename…** buttons on suggested renames and **Apply edit…** buttons on confirmable prose edits. Each shows a preview and a confirmation before changing anything, writes a backup, and re-scans your inventory afterward so the report stays current. Edits that need manual judgement are labelled "Review and apply manually" rather than auto-applied.
