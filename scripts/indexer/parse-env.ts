@@ -170,7 +170,12 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
     // Per-dispatch skill cap: stop the crawl at a clean range boundary once
     // roughly this many skills are admitted, checkpoint, and exit. Default 0 = no
     // cap. Distinct from the per-repo cap BACKFILL_MAX_SKILLS_PER_REPO.
-    const BACKFILL_MAX_SKILLS_PER_DISPATCH = getInt('BACKFILL_MAX_SKILLS_PER_DISPATCH', 0)
+    // Clamp to >= 0: a negative value would be truthy in the cap guard and trip
+    // the per-dispatch break immediately (exit after the first range, 0 skills).
+    const BACKFILL_MAX_SKILLS_PER_DISPATCH = Math.max(
+      0,
+      getInt('BACKFILL_MAX_SKILLS_PER_DISPATCH', 0)
+    )
 
     // Concurrency: kill-switch (env=1) forces 1, else CONCURRENCY env or D-3 default of 2.
     const kill_switch_engaged = getBool('CONCURRENCY_KILL_SWITCH', false)

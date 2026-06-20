@@ -220,6 +220,11 @@ describe('parseEnv -- BACKFILL_MAX_SKILLS_PER_DISPATCH', () => {
     expect(parseEnv().BACKFILL_MAX_SKILLS_PER_DISPATCH).toBe(0)
   })
 
+  it('clamps a negative BACKFILL_MAX_SKILLS_PER_DISPATCH to 0 (no cap, not an immediate exit)', () => {
+    process.env.BACKFILL_MAX_SKILLS_PER_DISPATCH = '-1'
+    expect(parseEnv().BACKFILL_MAX_SKILLS_PER_DISPATCH).toBe(0)
+  })
+
   it('BACKFILL_MAX_SKILLS_PER_DISPATCH is present in the returned IndexerEnv shape', () => {
     const env = parseEnv()
     expect('BACKFILL_MAX_SKILLS_PER_DISPATCH' in env).toBe(true)
