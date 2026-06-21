@@ -19,17 +19,22 @@
  * a JSONL log (FAKE_MCP_LOG env, else a deterministic temp path) so specs can
  * assert what the extension actually sent (e.g. `confirmed: true`).
  */
-import { appendFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import process from 'node:process'
+import { FAKE_MCP_LOG } from './fake-mcp-log-path.mjs'
 
 const scenarioIdx = process.argv.indexOf('--scenario')
 const SCENARIO = scenarioIdx !== -1 ? process.argv[scenarioIdx + 1] : 'ok'
 
-/** Deterministic so specs can read it without env propagation through the VS Code launch. */
-export const FAKE_MCP_LOG =
-  process.env.FAKE_MCP_LOG || join(tmpdir(), 'skillsmith-e2e-fake-mcp.log')
+// Fresh log per server process (one is spawned per MCP connection / VS Code
+// session), so specs see only this run's calls.
+try {
+  mkdirSync(dirname(FAKE_MCP_LOG), { recursive: true })
+  writeFileSync(FAKE_MCP_LOG, '')
+} catch {
+  /* best-effort; logging is diagnostic, never break the protocol */
+}
 
 function log(entry) {
   try {

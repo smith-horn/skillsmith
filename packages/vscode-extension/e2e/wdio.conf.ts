@@ -21,16 +21,23 @@ const WORKSPACE_PATH = path.resolve(here, 'fixtures', 'workspace')
 /** The fake stdio MCP server the extension spawns instead of `npx @skillsmith/mcp-server`. */
 const FAKE_MCP_SERVER = path.resolve(here, 'fixtures', 'fake-mcp-server.mjs')
 
+// Absolute node binary. The extension host (Electron, launched by wdio without a
+// login shell) has no guaranteed `node` on PATH, so a bare 'node' serverCommand
+// fails to spawn (ENOENT) and the MCP client never connects. process.execPath is
+// the node running wdio — an absolute path that exists on this machine + in CI.
+const NODE_BIN = process.execPath
+
 // SAFE_SPAWN_CHARS guard (src/utils/security.ts:61). The extension rejects spawn
-// args containing characters outside this allowlist (e.g. a CI checkout path with
-// a '+' from a PR ref). Fail fast here with an actionable message rather than the
-// opaque "Unsafe server command/argument" throw inside the extension at connect time.
+// command/args containing characters outside this allowlist (e.g. a CI checkout
+// path with a '+' from a PR ref). Fail fast here with an actionable message rather
+// than the opaque "Unsafe server command/argument" throw inside the extension.
 const SAFE_SPAWN_CHARS = /^[a-zA-Z0-9._/@: -]+$/
-if (!SAFE_SPAWN_CHARS.test(FAKE_MCP_SERVER)) {
-  throw new Error(
-    `[wdio.conf] Resolved fake MCP server path is not SAFE_SPAWN_CHARS-clean and would be ` +
-      `rejected by the extension: ${FAKE_MCP_SERVER}`
-  )
+for (const p of [NODE_BIN, FAKE_MCP_SERVER]) {
+  if (!SAFE_SPAWN_CHARS.test(p)) {
+    throw new Error(
+      `[wdio.conf] Spawn path is not SAFE_SPAWN_CHARS-clean and would be rejected by the extension: ${p}`
+    )
+  }
 }
 
 // Concrete VS Code version, deliberately pinned (NOT 'stable') so the CI binary
@@ -57,12 +64,18 @@ export const config: WebdriverIO.Config = {
         extensionPath: EXTENSION_PATH,
         workspacePath: WORKSPACE_PATH,
         userSettings: {
-          'skillsmith.mcp.serverCommand': 'node',
+          'skillsmith.mcp.serverCommand': NODE_BIN,
           'skillsmith.mcp.serverArgs': [FAKE_MCP_SERVER],
           'skillsmith.mcp.autoConnect': true,
           // Keep the e2e run quiet / deterministic.
           'skillsmith.telemetry.enabled': false,
           'skillsmith.demoMode': false,
+          // Render modal dialogs (showWarningMessage({modal:true})) as the in-DOM
+          // .monaco-dialog-box widget instead of an OS-native dialog. Native is the
+          // default on macOS/Windows and is invisible to WebDriver; 'custom' makes
+          // the confirm modal automatable AND identical across macOS (local) and
+          // Linux (CI/xvfb).
+          'window.dialogStyle': 'custom',
         },
       },
     },
