@@ -1,1 +1,6 @@
 skillsmith.vsix
+
+# WebdriverIO E2E (SMI-5331): downloaded VS Code/chromedriver binaries + run artifacts
+.wdio-vscode-service/
+e2e/logs/
+

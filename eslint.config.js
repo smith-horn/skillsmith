@@ -40,6 +40,12 @@ const globalIgnores = {
     // that aren't represented in the TS project graph; they're executed by the VS Code
     // test runner, not Vitest. Lint them separately if needed.
     'packages/vscode-extension/src/__tests__/integration/**',
+    // VS Code extension E2E (SMI-5331): WebdriverIO specs/config under e2e/ use
+    // @wdio/* globals + their own tsconfig.e2e.json — not in the package TS project
+    // graph that root `eslint .` resolves via parserOptions.project, so they would
+    // fail "not in any project". Mirrors the integration-tests precedent above;
+    // typed-linted via `typecheck:e2e` instead.
+    'packages/vscode-extension/e2e/**',
   ],
 }
 
