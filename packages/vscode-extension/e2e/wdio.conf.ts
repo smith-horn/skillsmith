@@ -9,6 +9,7 @@
  *
  * Host-only (ADR-113): no Docker. Headless in CI via `xvfb-run`.
  */
+import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -90,16 +91,33 @@ export const config: WebdriverIO.Config = {
   // (CI only) and surface a ::warning:: from the afterTest hook on any retry.
   mochaOpts: {
     ui: 'bdd',
-    timeout: 60_000,
+    // The interactive-apply flow (openAuditPanel + preview + confirm modal +
+    // re-audit + re-enter webview) chains several multi-second waits and exceeds
+    // 60s on a cold CI runner. Give specs room; a genuine hang still trips the
+    // inner waitUntil/waitForExist timeouts (15-40s) with a specific message
+    // rather than this bare Mocha budget timeout.
+    timeout: 120_000,
     retries: process.env['CI'] ? 1 : 0,
   },
 
-  afterTest: function (test, _context, result) {
-    if (process.env['CI'] && (result as { retries?: { attempts?: number } })?.retries?.attempts) {
-      const attempts = (result as { retries: { attempts: number } }).retries.attempts
-      if (attempts > 0) {
-        // eslint-disable-next-line no-console
-        console.log(`::warning::e2e spec retried (${attempts}x): ${test.parent} > ${test.title}`)
+  afterTest: async function (test, _context, result) {
+    const r = result as { passed?: boolean; retries?: { attempts?: number } }
+    if (process.env['CI'] && r?.retries?.attempts && r.retries.attempts > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `::warning::e2e spec retried (${r.retries.attempts}x): ${test.parent} > ${test.title}`
+      )
+    }
+    // Capture the workbench on failure for CI diagnostics (uploaded as an
+    // artifact). Best-effort: never let screenshot capture mask the real error.
+    if (r?.passed === false) {
+      try {
+        const dir = path.resolve(here, 'logs', 'screenshots')
+        mkdirSync(dir, { recursive: true })
+        const safe = `${test.parent} ${test.title}`.replace(/[^a-z0-9]+/gi, '-').slice(0, 80)
+        await browser.saveScreenshot(path.join(dir, `${safe}.png`))
+      } catch {
+        /* screenshots are diagnostics only */
       }
     }
   },

@@ -99,8 +99,7 @@ jobs:
         with:
           name: e2e-smoke-logs
           path: |
-            packages/vscode-extension/logs
-            packages/vscode-extension/e2e/screenshots
+            packages/vscode-extension/e2e/logs
           if-no-files-found: ignore
           retention-days: 7
 
@@ -145,7 +144,6 @@ jobs:
         with:
           name: e2e-full-logs
           path: |
-            packages/vscode-extension/logs
-            packages/vscode-extension/e2e/screenshots
+            packages/vscode-extension/e2e/logs
           if-no-files-found: ignore
           retention-days: 7

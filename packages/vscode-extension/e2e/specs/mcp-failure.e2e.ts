@@ -116,6 +116,12 @@ describe('MCP failure + recovery (SMI-5331)', () => {
     // hang executeWorkbench. The serverArgs change below drives a reconnect via the
     // onDidChangeConfiguration handler (extension.ts:219-224) unconditionally — the
     // same path a user hits by editing settings.
+
+    // Close the panel test 1 left open: wdio's webview.close() exits the iframe
+    // context but does NOT dispose the editor, so without this the "no panel"
+    // assertion below would see the stale panel from test 1 and false-fail.
+    await (await browser.getWorkbench()).getEditorView().closeAllEditors()
+
     const origArgs = (await browser.executeWorkbench((vscode) =>
       vscode.workspace.getConfiguration('skillsmith').get('mcp.serverArgs')
     )) as string[] | undefined
