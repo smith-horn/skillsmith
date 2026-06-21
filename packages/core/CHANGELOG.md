@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
+- **Fix**: split search.ts under 500 + thread license through the local-DB path (SMI-5337) (#1521)
+- **Feature**: surface license to consumers (SMI-5327) (#1518)
+
 ## v0.8.0
 
 - **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the

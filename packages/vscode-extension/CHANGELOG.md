@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.6.3
+
+- **Feature**: interactive apply for inventory audit (SMI-5325) (#1515)
+- **Feature**: native "View full text diff" action for the update advisor (SMI-5323) (#1509)
+- **Feature**: SkillNotFound error code + inventory-audit deep opt-in (SMI-5322, SMI-5326) (#1508)
+- **Feature**: Audit Skill Inventory command + webview report (SMI-5318) (#1505)
+- **Feature**: security advisories + finding count in skill detail panel (SMI-5317) (#1504)
+- **Feature**: MCP-powered commands — recommend, compare, update-check (SMI-5314/5315/5316) (#1503)
+
 ## [0.6.2] - 2026-06-20
 
 ### Added

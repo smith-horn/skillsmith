@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.4
+
+- **Fix**: split search.ts under 500 + thread license through the local-DB path (SMI-5337) (#1521)
+- **Feature**: surface license to consumers (SMI-5327) (#1518)
 - **Feature**: SMI-5178 — `search` and `skill_recommend` MCP tools now default to
   installable-only results. Discovery-only entries (no `repo_url`, cannot be resolved
   by `install_skill`) are hidden by default (~71% of the registry). Pass
