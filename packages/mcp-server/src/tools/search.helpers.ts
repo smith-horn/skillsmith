@@ -12,7 +12,9 @@ import {
   type SkillSearchResult,
   type CompatibilityFilter,
   CLIENT_TO_COMPATIBILITY_SLUG,
+  type SearchResult,
 } from '@skillsmith/core'
+import { extractCategoryFromTags, mapTrustTierFromDb } from '../utils/validation.js'
 
 /**
  * SMI-2760: Filter search results by compatibility tags.
@@ -69,4 +71,49 @@ export function resolveDefaultCompatibility(
   const slug = CLIENT_TO_COMPATIBILITY_SLUG[client]
   if (!slug) return undefined
   return { ides: [slug] }
+}
+
+/**
+ * SMI-5337 retro: Map a local SearchService result item to the SkillSearchResult
+ * wire format used by the MCP search tool.
+ *
+ * Extracted from search.ts to keep that file under the 500-line governance limit.
+ * Mirrors the API-path mapping in executeSearchImpl with parity on all fields
+ * including the SMI-5327 license field.
+ *
+ * SMI-1491: repository field for installation source transparency.
+ * SMI-825:  security summary.
+ * SMI-2734: installHint guarded on real registry owner (not 'unknown').
+ * SMI-2760: compatibility tags.
+ * SMI-5327: SPDX license parity with the API path.
+ */
+export function mapLocalSkillToSearchResult(item: SearchResult): SkillSearchResult {
+  return {
+    id: item.skill.id,
+    name: item.skill.name,
+    description: item.skill.description || '',
+    author: item.skill.author || 'unknown',
+    category: extractCategoryFromTags(item.skill.tags),
+    trustTier: mapTrustTierFromDb(item.skill.trustTier),
+    score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
+    repository: item.skill.repoUrl || undefined,
+    // SMI-4954: installable when the local DB row carries a repoUrl
+    installable: Boolean(item.skill.repoUrl),
+    // SMI-2734: Only set installHint when author is a real registry owner (not 'unknown')
+    installHint:
+      item.skill.author && item.skill.author !== 'unknown'
+        ? item.skill.author + '/' + item.skill.name
+        : undefined,
+    // SMI-825: Security summary
+    security: {
+      passed: item.skill.securityPassed,
+      riskScore: item.skill.riskScore,
+      findingsCount: item.skill.securityFindingsCount,
+      scannedAt: item.skill.securityScannedAt,
+    },
+    // SMI-2760: Compatibility tags
+    compatibility: item.skill.compatibility,
+    // SMI-5327: SPDX license — parity with API path's `item.license ?? null`
+    license: item.skill.license ?? null,
+  }
 }
