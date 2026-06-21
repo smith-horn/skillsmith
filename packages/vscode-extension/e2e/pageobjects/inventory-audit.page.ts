@@ -85,25 +85,17 @@ export class InventoryAuditPage {
    * `webview.close()`). wdio-vscode-service@8 does not export its ModalDialog page
    * object, hence the direct selector.
    */
-  async confirmApply(button = 'Apply'): Promise<void> {
-    /* eslint-disable no-console */
-    const dialog = await $('.monaco-dialog-box')
-    await dialog.waitForExist({ timeout: 15_000 })
-    console.log('[E2E-TRACE] confirmApply: .monaco-dialog-box found')
-    const buttons = await dialog.$$('.monaco-button')
-    const labels: string[] = []
-    for (const b of buttons) {
-      const label = (await b.getText()).trim()
-      labels.push(label)
-      if (label.includes(button)) {
-        await b.click()
-        console.log(`[E2E-TRACE] confirmApply: clicked "${label}"`)
-        return
-      }
-    }
-    throw new Error(
-      `Confirm modal button "${button}" not found; available buttons: ${JSON.stringify(labels)}`
-    )
-    /* eslint-enable no-console */
+  /**
+   * Accept the active VS Code confirm modal's focused primary button ('Apply') via
+   * the keyboard. The confirm is `showWarningMessage({ modal: true }, 'Apply')`
+   * (InventoryAuditPanel.ts:211-214). Under WebDriver on Linux its DOM cannot be
+   * queried — a findElement against `.monaco-dialog-box` times out while the modal
+   * is shown — so we drive it by keystroke instead. The modal grabs focus and its
+   * primary button is the default, so Enter accepts it. The caller MUST be in the
+   * top frame (after `webview.close()`) so the keystroke reaches the dialog rather
+   * than the webview iframe.
+   */
+  async acceptConfirmModal(): Promise<void> {
+    await browser.keys('Enter')
   }
 }
