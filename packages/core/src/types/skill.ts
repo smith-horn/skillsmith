@@ -82,6 +82,11 @@ export interface Skill {
    * `SkillRepository.rowToSkill()` always populates it from the DB.
    */
   source?: SkillSource
+  /**
+   * SMI-5327: SPDX license identifier (e.g. "MIT", "Apache-2.0"). Null means
+   * "unknown / not detected" — NOT "no restrictions" or "freely usable".
+   */
+  license?: string | null
   createdAt: string
   updatedAt: string
   // SMI-skill-version-tracking Wave 1: version tracking fields

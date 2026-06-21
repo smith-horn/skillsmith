@@ -27,6 +27,8 @@ export interface FTSRow {
   security_passed: number | null // SQLite uses 0/1 for boolean
   // SMI-2760: Compatibility JSON array
   compatibility: string | null
+  // SMI-5327: SPDX license identifier (null = unknown / not detected)
+  license: string | null
   created_at: string
   updated_at: string
   rank: number

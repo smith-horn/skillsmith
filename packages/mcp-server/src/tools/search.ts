@@ -29,6 +29,7 @@ import { searchLocalSkills } from './LocalSkillSearch.js'
 import {
   filterByCompatibility,
   filterInstallable,
+  mapLocalSkillToSearchResult,
   resolveDefaultCompatibility,
 } from './search.helpers.js'
 export { formatSearchResults } from './search.formatter.js'
@@ -390,38 +391,10 @@ async function executeSearchImpl(
 
   const searchEnd = performance.now()
 
-  // Convert SearchResult to SkillSearchResult format
-  // SMI-1491: Added repository field for transparency
-  // SMI-825: Added security summary
-  // SMI-2734: installHint intentionally omitted — local DB results are registry skills fetched
-  // via the local cache. However the local DB also holds skills without a routable registry
-  // owner (e.g. seed data with author='unknown'). Guard on author being a real value.
-  const results: SkillSearchResult[] = searchResults.items.map((item) => ({
-    id: item.skill.id,
-    name: item.skill.name,
-    description: item.skill.description || '',
-    author: item.skill.author || 'unknown',
-    category: extractCategoryFromTags(item.skill.tags),
-    trustTier: mapTrustTierFromDb(item.skill.trustTier),
-    score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
-    repository: item.skill.repoUrl || undefined,
-    // SMI-4954: installable when the local DB row carries a repoUrl
-    installable: Boolean(item.skill.repoUrl),
-    // SMI-2734: Only set installHint when author is a real registry owner (not 'unknown')
-    installHint:
-      item.skill.author && item.skill.author !== 'unknown'
-        ? item.skill.author + '/' + item.skill.name
-        : undefined,
-    // SMI-825: Security summary
-    security: {
-      passed: item.skill.securityPassed,
-      riskScore: item.skill.riskScore,
-      findingsCount: item.skill.securityFindingsCount,
-      scannedAt: item.skill.securityScannedAt,
-    },
-    // SMI-2760: Compatibility tags
-    compatibility: item.skill.compatibility,
-  }))
+  // Convert SearchResult to SkillSearchResult format.
+  // SMI-5337 retro: mapping extracted to mapLocalSkillToSearchResult in search.helpers.ts
+  // to keep search.ts under the 500-line governance limit and to add SMI-5327 license parity.
+  const results: SkillSearchResult[] = searchResults.items.map(mapLocalSkillToSearchResult)
 
   // SMI-1809: Search local skills and merge with local DB results
   // Skip local search if trust_tier filter excludes local skills

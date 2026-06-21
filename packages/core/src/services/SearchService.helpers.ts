@@ -88,6 +88,8 @@ export function rowToSkill(row: FTSRow): Skill {
       row.compatibility && row.compatibility !== '[]'
         ? (JSON.parse(row.compatibility) as string[])
         : undefined,
+    // SMI-5327: SPDX license (null = unknown / not detected)
+    license: row.license ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
