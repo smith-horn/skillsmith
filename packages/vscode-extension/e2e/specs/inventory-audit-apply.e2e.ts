@@ -45,31 +45,48 @@ describe('Inventory audit — interactive apply (SMI-5325)', () => {
   const page = new InventoryAuditPage()
 
   it('webview click → native modal → confirmed apply → re-audit clean', async () => {
+    // [E2E-TRACE] step logs (greppable in CI stdout under the [0-N] worker prefix)
+    // pinpoint which step hangs; the log dumps survive the shared-log overwrite by
+    // a later spec because they go to stdout, not the (truncated) fake log file.
+    const trace = (msg: string): void => {
+      // eslint-disable-next-line no-console
+      console.log(`[E2E-TRACE] apply: ${msg}`)
+    }
+
     // autoConnect is skipped on first activation, so force a connection first.
     await page.forceConnect()
+    trace('forceConnect done')
 
     // Open the audit panel (retries the command until MCP is connected + the
     // panel renders the collision report).
     const webview = await page.openAuditPanel()
+    trace(`openAuditPanel done; log=${JSON.stringify(readLog())}`)
 
     // The rename suggestion renders inside the iframe with an Apply button.
     await expect($(`.apply-rename-btn[data-collision="${COLLISION_ID}"]`)).toBeExisting()
+    trace('apply-rename button exists')
     await page.clickApplyRename(COLLISION_ID)
+    trace('clickApplyRename done')
 
     // Back to the main frame to accept the native confirm modal.
     await webview.close()
+    trace(`webview.close done; log=${JSON.stringify(readLog())}`)
     await page.confirmApply('Apply')
+    trace('confirmApply done')
 
     // The extension must have applied with confirmed:true.
     await browser.waitUntil(appliedWithConfirm, {
       timeout: 15_000,
       timeoutMsg: 'fake MCP server never received apply_namespace_rename {confirmed:true}',
     })
+    trace(`appliedWithConfirm done; log=${JSON.stringify(readLog())}`)
 
     // After a successful apply the panel re-audits; the fake server returns a clean
     // report on the second call, so the resolved-state hero should render.
     const cleanView = await page.enterWebview()
+    trace('enterWebview done')
     await expect($('.hero h2')).toHaveText(/No namespace collisions found/i)
+    trace('hero asserted')
     await cleanView.close()
   })
 })

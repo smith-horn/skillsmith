@@ -44,6 +44,11 @@ function log(entry) {
   }
 }
 
+// First line after truncation: a per-process start marker carrying the scenario.
+// Specs sequence on this (e.g. "wait for the isError server to start") instead of
+// racing the previous server's entries, since the log is truncated per process.
+log({ t: 'start', scenario: SCENARIO })
+
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n')
 }

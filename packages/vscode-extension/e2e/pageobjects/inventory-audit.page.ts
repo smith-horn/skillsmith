@@ -86,16 +86,24 @@ export class InventoryAuditPage {
    * object, hence the direct selector.
    */
   async confirmApply(button = 'Apply'): Promise<void> {
+    /* eslint-disable no-console */
     const dialog = await $('.monaco-dialog-box')
     await dialog.waitForExist({ timeout: 15_000 })
+    console.log('[E2E-TRACE] confirmApply: .monaco-dialog-box found')
     const buttons = await dialog.$$('.monaco-button')
+    const labels: string[] = []
     for (const b of buttons) {
       const label = (await b.getText()).trim()
+      labels.push(label)
       if (label.includes(button)) {
         await b.click()
+        console.log(`[E2E-TRACE] confirmApply: clicked "${label}"`)
         return
       }
     }
-    throw new Error(`Confirm modal button "${button}" not found`)
+    throw new Error(
+      `Confirm modal button "${button}" not found; available buttons: ${JSON.stringify(labels)}`
+    )
+    /* eslint-enable no-console */
   }
 }
