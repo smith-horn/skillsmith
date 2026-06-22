@@ -53,6 +53,24 @@ if [ "$DELETE_ONLY" = true ]; then
   exit 0
 fi
 
+# node_modules freshness guard (SMI-5343 / SMI-5344 #1) — BLOCK (exit 1).
+# A stale host tree makes a host vitest / typecheck run fail with an opaque
+# module-resolution dump unrelated to the change in flight (the Docker tree is
+# typically stale in lock-step, failing the Phase 4 coverage too); surface the
+# actionable one-line fix instead. Severity is split from pre-commit (which
+# only warns): a push to remote is the right place to insist the tree is sane.
+#
+# STDIN-SILENT: the detector reads no stdin, and we redirect its fd 0 from
+# /dev/null as belt-and-suspenders so it can never consume the pre-push refs
+# (Phase 0 stashed them in PRE_PUSH_REFS via `$(cat)`; Phase 6 replays them to
+# the eval-baseline validator). READ-ONLY (P-5): never mutates the shared tree.
+FRESHNESS_LIB="$(dirname "$0")/../scripts/lib/check-node-modules-fresh.sh"
+if [ -r "$FRESHNESS_LIB" ]; then
+  if ! sh "$FRESHNESS_LIB" </dev/null; then
+    exit 1
+  fi
+fi
+
 # Phase 1: Check for uncommitted changes (SMI-1342)
 # This runs first to warn developers before they push
 bash "$(dirname "$0")/../scripts/pre-push-uncommitted-check.sh"

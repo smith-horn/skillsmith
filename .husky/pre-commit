@@ -78,6 +78,30 @@ else
     exit 1
 fi
 
+# =============================================================================
+# node_modules freshness guard (SMI-5343 / SMI-5344 #1) — WARN, never block.
+# Drift here is environmental (a stale tree vs package-lock.json), not a problem
+# with the staged change, so the highest-frequency gate must NOT manufacture
+# `--no-verify` pressure. The detector prints the one context-correct fix; we
+# always `exit 0` (continue) so the existing typecheck phase still surfaces real
+# type errors and this warning pre-explains any module-resolution noise.
+#
+# READ-ONLY by contract (P-5): the detector never runs npm install or mutates
+# the shared tree. We perform NO git stash/checkout/branch op here — the
+# SMI-2536 branch-integrity guard relies on the branch not moving.
+# The detector runs as a CHILD `sh` process (not sourced), so it does NOT
+# inherit USE_DOCKER / IS_WORKTREE / color vars from this hook. It defines its
+# own color fallbacks and prints the dual-tree fix (it cannot know the parent's
+# Docker/worktree context across the process boundary, and a stale lockfile
+# usually leaves both the host and container trees behind anyway).
+# =============================================================================
+FRESHNESS_LIB="$(dirname "$0")/../scripts/lib/check-node-modules-fresh.sh"
+if [ -r "$FRESHNESS_LIB" ]; then
+  if ! sh "$FRESHNESS_LIB"; then
+    echo "${YELLOW}  ⚠️  Continuing (pre-commit warns on stale deps; pre-push will block).${NC}"
+  fi
+fi
+
 # Phase 1: Clear TypeScript build cache (SMI-1348)
 # Only clear cache if FULL_TYPECHECK=1 (e.g., CI or explicit request)
 # Clearing cache causes ALL packages to rebuild, surfacing pre-existing errors

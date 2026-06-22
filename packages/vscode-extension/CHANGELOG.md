@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Added `npm run test:vscode` for a worktree-local vscode test path; local typecheck/test now warn on stale `node_modules` instead of failing opaquely (SMI-5343/5344).
+
 ### Fixed
 
 - **Skill details recover after reconnecting** — the skill detail panel no longer stays stuck on "Skillsmith server unavailable" once the MCP server is back (including after you change an MCP setting, which restarts the connection). The panel now reloads on its own when the connection is restored, and Retry / reopening the skill works reliably. The connection status indicator in the status bar also stays accurate after a settings change.
