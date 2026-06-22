@@ -114,6 +114,18 @@
         "icon": "$(versions)"
       },
       {
+        "command": "skillsmith.selectForCompare",
+        "title": "Select for Compare",
+        "category": "Skillsmith",
+        "icon": "$(compare-changes)"
+      },
+      {
+        "command": "skillsmith.compareWithSelected",
+        "title": "Compare with Selected",
+        "category": "Skillsmith",
+        "icon": "$(diff)"
+      },
+      {
         "command": "skillsmith.auditInventory",
         "title": "Audit Skill Inventory",
         "category": "Skillsmith",
@@ -230,6 +242,31 @@
         {
           "command": "skillsmith.uninstallSkill",
           "when": "view == skillsmith.skillsView && viewItem == installedSkill"
+        },
+        {
+          "command": "skillsmith.selectForCompare",
+          "when": "view == skillsmith.skillsView && viewItem =~ /^(skill|installedSkill)$/",
+          "group": "skillsmith_compare@1"
+        },
+        {
+          "command": "skillsmith.compareWithSelected",
+          "when": "view == skillsmith.skillsView && viewItem =~ /^(skill|installedSkill)$/ && skillsmith.compareSourceSet",
+          "group": "skillsmith_compare@2"
+        },
+        {
+          "command": "skillsmith.diffSkill",
+          "when": "view == skillsmith.skillsView && viewItem == installedSkill",
+          "group": "skillsmith_diff@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "skillsmith.selectForCompare",
+          "when": "false"
+        },
+        {
+          "command": "skillsmith.compareWithSelected",
+          "when": "false"
         }
       ]
     },

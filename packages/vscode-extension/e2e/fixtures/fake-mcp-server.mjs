@@ -54,6 +54,103 @@ function send(obj) {
 }
 
 // --- canned domain payloads (shapes mirror src/mcp/types.ts) ----------------
+
+// search — McpSearchResponse
+const searchResponse = () => ({
+  results: [
+    {
+      id: 'acme/skill-alpha',
+      name: 'skill-alpha',
+      description: 'Alpha skill for E2E compare',
+      author: 'acme',
+      category: 'development',
+      trustTier: 'verified',
+      score: 88,
+    },
+    {
+      id: 'acme/skill-beta',
+      name: 'skill-beta',
+      description: 'Beta skill for E2E compare',
+      author: 'acme',
+      category: 'development',
+      trustTier: 'community',
+      score: 72,
+    },
+  ],
+  total: 2,
+  query: '',
+  filters: {},
+  timing: { searchMs: 1, totalMs: 2 },
+})
+
+// get_skill — McpGetSkillResponse (CRITICAL: top-level `content` must be non-empty)
+const getSkillResponse = (id) => ({
+  skill: {
+    id: id || 'acme/skill-alpha',
+    name: id ? id.split('/').pop() : 'skill-alpha',
+    description: 'E2E fake skill',
+    author: 'acme',
+    category: 'development',
+    trustTier: 'verified',
+    score: 88,
+  },
+  installCommand: `npx skillsmith install ${id || 'acme/skill-alpha'}`,
+  // diffCommand reads detail.content — must be a non-empty markdown string
+  content: '# E2E Fake Skill\n\nRegistry content for E2E diff fixture.\n',
+  timing: { totalMs: 1 },
+})
+
+// skill_compare — McpCompareResponse
+const skillCompareResponse = (skill_a, skill_b) => ({
+  comparison: {
+    a: {
+      id: skill_a || 'acme/skill-alpha',
+      name: skill_a ? skill_a.split('/').pop() : 'skill-alpha',
+      description: 'Alpha skill',
+      author: 'acme',
+      quality_score: 88,
+      score_breakdown: null,
+      trust_tier: 'verified',
+      category: 'development',
+      tags: [],
+      version: null,
+      dependencies: [],
+    },
+    b: {
+      id: skill_b || 'acme/skill-beta',
+      name: skill_b ? skill_b.split('/').pop() : 'skill-beta',
+      description: 'Beta skill',
+      author: 'acme',
+      quality_score: 72,
+      score_breakdown: null,
+      trust_tier: 'community',
+      category: 'development',
+      tags: [],
+      version: null,
+      dependencies: [],
+    },
+  },
+  differences: [
+    { field: 'quality_score', a_value: 88, b_value: 72, winner: 'a' },
+    { field: 'trust_tier', a_value: 'verified', b_value: 'community', winner: 'a' },
+  ],
+  recommendation: 'skill-alpha has a higher quality score and verified trust tier.',
+  winner: 'a',
+  timing: { totalMs: 5 },
+})
+
+// skill_diff — McpSkillDiffResponse
+const skillDiffResponse = (skillId) => ({
+  skill: skillId || 'my-e2e-skill',
+  changeType: 'minor',
+  sectionsAdded: ['## New Section'],
+  sectionsRemoved: [],
+  sectionsModified: ['## Usage'],
+  riskScoreDelta: null,
+  changelog: null,
+  recommendation: 'review-then-update',
+})
+
 const RENAME_SUGGESTION = {
   collisionId: 'col-e2e-1',
   currentName: 'my-skill',
@@ -101,6 +198,18 @@ function toolResult(params) {
   }
 
   switch (name) {
+    case 'search':
+      return { content: [{ type: 'text', text: JSON.stringify(searchResponse()) }] }
+    case 'get_skill':
+      return { content: [{ type: 'text', text: JSON.stringify(getSkillResponse(args.id)) }] }
+    case 'skill_compare':
+      return {
+        content: [
+          { type: 'text', text: JSON.stringify(skillCompareResponse(args.skill_a, args.skill_b)) },
+        ],
+      }
+    case 'skill_diff':
+      return { content: [{ type: 'text', text: JSON.stringify(skillDiffResponse(args.skillId)) }] }
     case 'skill_inventory_audit': {
       inventoryAuditCalls += 1
       const payload = inventoryAuditCalls === 1 ? auditWithCollision() : auditClean()
