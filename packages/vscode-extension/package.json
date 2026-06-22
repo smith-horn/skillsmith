@@ -312,6 +312,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:integration": "vscode-test",
+    "test:e2e": "npm run test:e2e:setup && wdio run ./e2e/wdio.conf.ts",
+    "test:e2e:setup": "node e2e/scripts/fix-minimatch-esm.mjs",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
     "package": "vsce package --no-dependencies",
     "package:check": "vsce package --no-dependencies --out skillsmith.vsix && node scripts/validate-vsix.mjs skillsmith.vsix && rm skillsmith.vsix"
   },
@@ -328,8 +331,13 @@
     "@types/vscode": "1.110.0",
     "@vscode/test-electron": "2.5.2",
     "@vscode/vsce": "2.32.0",
+    "@wdio/cli": "9.29.0",
+    "@wdio/local-runner": "9.29.0",
+    "@wdio/mocha-framework": "9.29.0",
+    "@wdio/spec-reporter": "9.29.0",
     "esbuild": "0.28.1",
     "typescript": "5.9.3",
-    "vitest": "4.1.6"
+    "vitest": "4.1.6",
+    "wdio-vscode-service": "8.0.0"
   }
 }

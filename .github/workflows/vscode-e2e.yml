@@ -1,0 +1,149 @@
+# VS Code Extension E2E (SMI-5331 Phase 3)
+#
+# Runs the WebdriverIO + wdio-vscode-service E2E suite against a REAL VS Code
+# Extension Development Host with the locally-built dist/extension.js loaded.
+#
+# Host-only (ADR-113): NO Docker. The extension runs on the host VS Code build
+# tooling, and the E2E suite needs Electron + an X display, not a container.
+# This is intentionally NOT a Docker job; do NOT add a carve-out marker (the
+# audit:carveout-pure-js marker is scoped to ci.yml's pure-JS host jobs only).
+#
+# Two jobs, selected by trigger:
+#   - smoke (pull_request): runs only the three named Phase 2a specs via explicit
+#     --spec flags so per-PR time stays bounded as Phase 2b specs land later.
+#   - full (schedule + workflow_dispatch): runs the entire e2e glob via the
+#     package test:e2e script.
+#
+# This workflow is intended to be NON-REQUIRED in branch protection during the
+# bake-in period: a real failure is the signal we want, so no step soft-fails
+# (no error masking anywhere, which also keeps audit:standards Check 21 out of
+# scope entirely).
+name: VS Code Extension E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/vscode-extension/**'
+      - '.github/workflows/vscode-e2e.yml'
+  schedule:
+    # Nightly at 04:30 UTC.
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: vscode-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  # Pinned VS Code version downloaded by wdio-vscode-service. Must match the
+  # wdio.conf.ts default (VSCODE_VERSION) so the actions/cache key below targets
+  # the same binary that gets downloaded. Bump both together.
+  VSCODE_E2E_VERSION: '1.125.1'
+
+jobs:
+  # Per-PR smoke: the three Phase 2a specs only.
+  smoke:
+    name: E2E Smoke (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --workspace=packages/vscode-extension --include-workspace-root
+        env:
+          npm_config_engine_strict: false
+
+      - name: Build extension
+        run: npm run build -w packages/vscode-extension
+
+      # Cache the VS Code binary that wdio-vscode-service downloads into the
+      # package-root .wdio-vscode-service dir. Keyed on the pinned version so a
+      # version bump (env VSCODE_E2E_VERSION) is a fresh download.
+      - name: Cache VS Code binary
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: packages/vscode-extension/.wdio-vscode-service
+          key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
+
+      # test:e2e:setup patches minimatch ESM and MUST run before wdio. The
+      # package test:e2e script runs it for us, but the smoke path invokes wdio
+      # directly with --spec (which bypasses that chain), so run it explicitly.
+      - name: Patch minimatch ESM (test:e2e:setup)
+        run: npm run test:e2e:setup -w packages/vscode-extension
+
+      - name: Run E2E smoke specs (headless)
+        working-directory: packages/vscode-extension
+        run: >-
+          xvfb-run -a npx wdio run ./e2e/wdio.conf.ts
+          --spec ./e2e/specs/activation.e2e.ts
+          --spec ./e2e/specs/inventory-audit-apply.e2e.ts
+          --spec ./e2e/specs/mcp-failure.e2e.ts
+
+      - name: Upload wdio logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-smoke-logs
+          path: |
+            packages/vscode-extension/e2e/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Nightly + manual: the entire e2e glob (where Phase 2b specs will land).
+  full:
+    name: E2E Full (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --workspace=packages/vscode-extension --include-workspace-root
+        env:
+          npm_config_engine_strict: false
+
+      - name: Build extension
+        run: npm run build -w packages/vscode-extension
+
+      - name: Cache VS Code binary
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: packages/vscode-extension/.wdio-vscode-service
+          key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
+
+      # test:e2e runs test:e2e:setup itself, then wdio against the full glob.
+      - name: Run E2E full suite (headless)
+        working-directory: packages/vscode-extension
+        run: xvfb-run -a npm run test:e2e
+
+      - name: Upload wdio logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-full-logs
+          path: |
+            packages/vscode-extension/e2e/logs
+          if-no-files-found: ignore
+          retention-days: 7
