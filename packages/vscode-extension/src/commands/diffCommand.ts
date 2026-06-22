@@ -12,7 +12,7 @@
 import * as vscode from 'vscode'
 import { readFile } from 'node:fs/promises'
 import * as path from 'node:path'
-import type { SkillItemData } from '../sidebar/SkillTreeItem.js'
+import type { SkillItemData, SkillTreeItem } from '../sidebar/SkillTreeItem.js'
 import type { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
 import { getTrustTierCodicon } from '../sidebar/trustTier.js'
 import { getMcpClient } from '../mcp/McpClient.js'
@@ -59,10 +59,16 @@ async function pickInstalledSkill(
 async function diffCommandImpl(deps: {
   treeProvider: SkillTreeDataProvider
   context: vscode.ExtensionContext
+  preselected?: SkillTreeItem | undefined
 }): Promise<void> {
   track('vscode_diff_start')
 
-  const skill = await pickInstalledSkill(deps.treeProvider)
+  let skill: SkillItemData | undefined
+  if (deps.preselected?.skillData?.isInstalled && deps.preselected.skillData.path) {
+    skill = deps.preselected.skillData
+  } else {
+    skill = await pickInstalledSkill(deps.treeProvider)
+  }
   if (!skill || !skill.path) {
     return
   }
@@ -148,8 +154,8 @@ export function registerDiffCommand(
   context: vscode.ExtensionContext,
   treeProvider: SkillTreeDataProvider
 ): void {
-  const command = vscode.commands.registerCommand('skillsmith.diffSkill', () =>
-    diffCommandAction({ treeProvider, context })
+  const command = vscode.commands.registerCommand('skillsmith.diffSkill', (arg?: SkillTreeItem) =>
+    diffCommandAction({ treeProvider, context, preselected: arg })
   )
   context.subscriptions.push(command)
 }

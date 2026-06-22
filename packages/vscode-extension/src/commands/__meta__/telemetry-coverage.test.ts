@@ -29,7 +29,11 @@ import { installCommandAction } from '../installCommand.js'
 import { uninstallCommandAction } from '../uninstallCommand.js'
 import { createSkillAction } from '../createSkillCommand.js'
 import { recommendCommandAction } from '../recommendCommand.js'
-import { compareCommandAction } from '../compareCommand.js'
+import {
+  compareCommandAction,
+  selectForCompareAction,
+  compareWithSelectedAction,
+} from '../compareCommand.js'
 import { diffCommandAction } from '../diffCommand.js'
 import { auditInventoryCommandAction } from '../auditInventoryCommand.js'
 import type { TelemetryEvent } from '../../services/Telemetry.js'
@@ -44,6 +48,8 @@ const VSCODE_DISPATCHER_MAP: Record<string, (...args: never[]) => unknown> = {
   'skillsmith.createSkill': createSkillAction,
   'skillsmith.recommendSkills': recommendCommandAction,
   'skillsmith.compareSkills': compareCommandAction,
+  'skillsmith.selectForCompare': selectForCompareAction,
+  'skillsmith.compareWithSelected': compareWithSelectedAction,
   'skillsmith.diffSkill': diffCommandAction,
   'skillsmith.auditInventory': auditInventoryCommandAction,
 }
@@ -73,7 +79,7 @@ describe('SMI-5130: VS Code command telemetry coverage', () => {
   it('reports VS Code dispatcher coverage to CI output', () => {
     const count = Object.keys(VSCODE_DISPATCHER_MAP).length
     console.info(`[SMI-5130] VS Code telemetry coverage: ${count} panel actions wrapped.`)
-    expect(count).toBe(10)
+    expect(count).toBe(12)
   })
 
   // SMI-5308 (M5): the detail-panel open actions are postMessage handlers, not

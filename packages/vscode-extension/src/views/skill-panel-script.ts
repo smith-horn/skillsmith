@@ -44,6 +44,13 @@ export function getScript(nonce: string): string {
             });
         }
 
+        const diffBtn = document.getElementById('diffBtn');
+        if (diffBtn) {
+            diffBtn.addEventListener('click', function() {
+                vscode.postMessage({ command: 'diffSkill' });
+            });
+        }
+
         const repoBtn = document.getElementById('repoBtn');
         if (repoBtn) {
             repoBtn.addEventListener('click', function() {

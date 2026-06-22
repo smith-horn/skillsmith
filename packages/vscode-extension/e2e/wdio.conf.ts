@@ -21,6 +21,15 @@ const EXTENSION_PATH = path.resolve(here, '..')
 const WORKSPACE_PATH = path.resolve(here, 'fixtures', 'workspace')
 /** The fake stdio MCP server the extension spawns instead of `npx @skillsmith/mcp-server`. */
 const FAKE_MCP_SERVER = path.resolve(here, 'fixtures', 'fake-mcp-server.mjs')
+/**
+ * Fake installed-skills directory for the SMI-5340 diff E2E spec. Points the
+ * extension's `skillsmith.skillsDirectory` at our fixture tree so
+ * `doLoadInstalledSkills` finds `my-e2e-skill/SKILL.md` without touching
+ * `~/.claude/skills`. The diff command reads SKILL.md via the synthetic arg's
+ * `path` field (not from this directory), so this is informational only —
+ * it prevents the tree-view from emitting file-not-found warnings on CI.
+ */
+const FIXTURE_SKILLS_DIR = path.resolve(here, 'fixtures', 'skills')
 
 // Absolute node binary. The extension host (Electron, launched by wdio without a
 // login shell) has no guaranteed `node` on PATH, so a bare 'node' serverCommand
@@ -71,6 +80,10 @@ export const config: WebdriverIO.Config = {
           // Keep the e2e run quiet / deterministic.
           'skillsmith.telemetry.enabled': false,
           'skillsmith.demoMode': false,
+          // Point the installed-skills tree at our fixture dir (SMI-5340) so
+          // the extension finds `my-e2e-skill/SKILL.md` without scanning
+          // `~/.claude/skills` on the CI runner.
+          'skillsmith.skillsDirectory': FIXTURE_SKILLS_DIR,
           // Render modal dialogs (showWarningMessage({modal:true})) as the in-DOM
           // .monaco-dialog-box widget instead of an OS-native dialog. Native is the
           // default on macOS/Windows and is invisible to WebDriver; 'custom' makes

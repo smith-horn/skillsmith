@@ -207,6 +207,18 @@ export class SkillDetailPanel {
           track('vscode_open_folder', { surface: 'detail-panel' })
         }
         return
+      case 'diffSkill':
+        if (this._installed && this._skillPath) {
+          void vscode.commands.executeCommand('skillsmith.diffSkill', {
+            skillData: {
+              id: this._skillId,
+              name: this._skillData?.name ?? this._skillId,
+              isInstalled: true,
+              path: this._skillPath,
+            },
+          })
+        }
+        return
     }
   }
 

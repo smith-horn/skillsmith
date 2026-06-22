@@ -19,6 +19,7 @@ export interface SkillPanelMessage {
     | 'uninstall'
     | 'openSkillFile'
     | 'openFolder'
+    | 'diffSkill'
   url?: string
 }
 

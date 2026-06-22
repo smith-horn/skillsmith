@@ -6,11 +6,16 @@
  * installCommand's debounced `createQuickPick` search pattern + the
  * withTelemetry export/register shape.
  *
+ * SMI-5340 adds two tree-context commands:
+ *   - `skillsmith.selectForCompare`   — sets the compare source on a SkillTreeItem
+ *   - `skillsmith.compareWithSelected` — completes the comparison against the source
+ *
  * @module commands/compareCommand
  */
 import * as vscode from 'vscode'
 import type { SkillData } from '../types/skill.js'
 import type { SkillService } from '../services/SkillService.js'
+import { SkillTreeItem } from '../sidebar/SkillTreeItem.js'
 import { getTrustTierCodicon, getTrustTierLabel } from '../sidebar/trustTier.js'
 import { getMcpClient } from '../mcp/McpClient.js'
 import { McpToolError } from '../mcp/McpToolError.js'
@@ -18,6 +23,7 @@ import { handleTierDenied } from '../mcp/tierDenied.js'
 import { withTelemetry } from '../services/telemetry-wrap.js'
 import { track } from '../services/Telemetry.js'
 import { CompareSkillsPanel } from '../views/CompareSkillsPanel.js'
+import { getCompareSource, setCompareSource, clearCompareSource } from './compare-source.js'
 
 /** Debounce delay for search input (matches installCommand). */
 const SEARCH_DEBOUNCE_MS = 300
@@ -136,10 +142,62 @@ async function pickSecondSkill(
   }
 }
 
-async function compareCommandImpl(deps: {
+/** Shared deps passed to `runComparison`. */
+interface ComparisonDeps {
   skillService: SkillService
   context: vscode.ExtensionContext
-}): Promise<void> {
+}
+
+/**
+ * Core compare logic: calls `skill_compare` on the MCP client and opens
+ * `CompareSkillsPanel`. Extracted so both the QuickPick palette flow and the
+ * tree-context "Compare with Selected" flow share a single implementation.
+ *
+ * Handles: not-connected, TierDenied, SkillNotFound, and generic errors.
+ * Emits `vscode_compare_complete` on success only; callers emit
+ * `vscode_compare_start`. Returns `true` on success, `false` on any handled
+ * failure (so callers can decide whether to preserve a selected source).
+ */
+export async function runComparison(
+  skillAId: string,
+  skillBId: string,
+  deps: ComparisonDeps
+): Promise<boolean> {
+  const client = getMcpClient()
+  if (!client.isConnected()) {
+    void vscode.window.showInformationMessage(
+      'Skillsmith server is not connected. Start the MCP server and try again.'
+    )
+    return false
+  }
+
+  try {
+    const response = await client.skillCompare({ skill_a: skillAId, skill_b: skillBId })
+    CompareSkillsPanel.createOrShow(deps.context.extensionUri, response, skillAId, skillBId)
+    track('vscode_compare_complete')
+    return true
+  } catch (err) {
+    if (err instanceof McpToolError) {
+      if (err.code === 'TierDenied') {
+        await handleTierDenied('skillsmith.compareSkills', err)
+        return false
+      }
+      if (err.code === 'SkillNotFound') {
+        void vscode.window.showWarningMessage(
+          'One or both skills could not be found. Check the skill IDs and try again.'
+        )
+        return false
+      }
+      void vscode.window.showErrorMessage(err.message)
+      return false
+    }
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    void vscode.window.showErrorMessage(`Could not compare skills: ${message}`)
+    return false
+  }
+}
+
+async function compareCommandImpl(deps: ComparisonDeps): Promise<void> {
   track('vscode_compare_start')
 
   const first = await pickSkill(deps.skillService, 'Compare skills (1 of 2)')
@@ -152,35 +210,60 @@ async function compareCommandImpl(deps: {
     return
   }
 
-  const client = getMcpClient()
-  if (!client.isConnected()) {
-    void vscode.window.showInformationMessage(
-      'Skillsmith server is not connected. Start the MCP server and try again.'
+  await runComparison(first.id, second.id, deps)
+}
+
+// ── Tree-context: Select for Compare (SMI-5340) ───────────────────────────────
+
+async function selectForCompareImpl(_deps: ComparisonDeps, arg?: SkillTreeItem): Promise<void> {
+  if (!arg?.skillData) {
+    return
+  }
+  setCompareSource(arg.skillData.id)
+  void vscode.window.showInformationMessage(
+    `Selected "${arg.skillData.name}" for compare — pick a second skill.`
+  )
+}
+
+// ── Tree-context: Compare with Selected (SMI-5340) ───────────────────────────
+
+async function compareWithSelectedImpl(deps: ComparisonDeps, arg?: SkillTreeItem): Promise<void> {
+  if (!arg?.skillData) {
+    return
+  }
+
+  const sourceId = getCompareSource()
+  if (!sourceId) {
+    void vscode.window.showWarningMessage(
+      'No skill selected for compare. Right-click a skill and choose "Select for Compare" first.'
     )
     return
   }
 
+  const targetId = arg.skillData.id
+  if (sourceId === targetId) {
+    void vscode.window.showWarningMessage('Pick two different skills to compare.')
+    return
+  }
+
+  // Re-validate the source is still resolvable in the registry (compare is a
+  // registry operation; a source that 404s there can't be compared).
   try {
-    const response = await client.skillCompare({ skill_a: first.id, skill_b: second.id })
-    CompareSkillsPanel.createOrShow(deps.context.extensionUri, response, first.id, second.id)
-    track('vscode_compare_complete')
-  } catch (err) {
-    if (err instanceof McpToolError) {
-      if (err.code === 'TierDenied') {
-        await handleTierDenied('skillsmith.compareSkills', err)
-        return
-      }
-      if (err.code === 'SkillNotFound') {
-        void vscode.window.showWarningMessage(
-          'One or both skills could not be found. Check the skill IDs and try again.'
-        )
-        return
-      }
-      void vscode.window.showErrorMessage(err.message)
-      return
-    }
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    void vscode.window.showErrorMessage(`Could not compare skills: ${message}`)
+    await deps.skillService.getSkill(sourceId)
+  } catch {
+    void vscode.window.showWarningMessage(
+      'The first skill is no longer available. Please select it again.'
+    )
+    clearCompareSource()
+    return
+  }
+
+  track('vscode_compare_start')
+  const succeeded = await runComparison(sourceId, targetId, deps)
+  // Drop the selected source only on success — on a transient failure (e.g. MCP
+  // disconnected) keep it so the retry is a single click.
+  if (succeeded) {
+    clearCompareSource()
   }
 }
 
@@ -189,15 +272,39 @@ export const compareCommandAction = withTelemetry(compareCommandImpl, {
   extractSkillId: () => 'compare',
 })
 
+export const selectForCompareAction = withTelemetry(
+  (deps: ComparisonDeps, arg?: SkillTreeItem) => selectForCompareImpl(deps, arg),
+  {
+    source: 'vscode-extension',
+    extractSkillId: () => 'selectForCompare',
+  }
+)
+
+export const compareWithSelectedAction = withTelemetry(
+  (deps: ComparisonDeps, arg?: SkillTreeItem) => compareWithSelectedImpl(deps, arg),
+  {
+    source: 'vscode-extension',
+    extractSkillId: () => 'compareWithSelected',
+  }
+)
+
 /**
- * Registers the Compare Skills command (`skillsmith.compareSkills`).
+ * Registers the Compare Skills command (`skillsmith.compareSkills`) and the two
+ * tree-context compare commands added by SMI-5340.
  */
 export function registerCompareCommand(
   context: vscode.ExtensionContext,
   skillService: SkillService
 ): void {
-  const command = vscode.commands.registerCommand('skillsmith.compareSkills', () =>
-    compareCommandAction({ skillService, context })
+  const deps: ComparisonDeps = { skillService, context }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('skillsmith.compareSkills', () => compareCommandAction(deps)),
+    vscode.commands.registerCommand('skillsmith.selectForCompare', (arg?: SkillTreeItem) =>
+      selectForCompareAction(deps, arg)
+    ),
+    vscode.commands.registerCommand('skillsmith.compareWithSelected', (arg?: SkillTreeItem) =>
+      compareWithSelectedAction(deps, arg)
+    )
   )
-  context.subscriptions.push(command)
 }

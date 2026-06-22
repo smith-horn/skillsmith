@@ -453,6 +453,38 @@ describe('SkillDetailPanel', () => {
       expect(mock.panel.dispose).not.toHaveBeenCalled()
     })
 
+    it('dispatches skillsmith.diffSkill with a duck-typed installed arg when diffSkill message received', async () => {
+      const mock = await showInstalledPanel(true)
+      mock.sendMessage({ command: 'diffSkill' })
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+        'skillsmith.diffSkill',
+        expect.objectContaining({
+          skillData: expect.objectContaining({
+            id: 'test/skill',
+            isInstalled: true,
+            path: '/skills/skill',
+          }),
+        })
+      )
+    })
+
+    it('does not dispatch skillsmith.diffSkill when the skill is not installed', async () => {
+      SkillDetailPanel.setSkillService(createMockSkillService())
+      SkillDetailPanel.setTreeProvider(createMockTreeProvider([]))
+      const mock = createMockPanel()
+      vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(mock.panel)
+      SkillDetailPanel.createOrShow(EXTENSION_URI, 'test/skill')
+      await vi.waitFor(() => {
+        expect(mock.getHtmlHistory().at(-1) ?? '').toContain('id="installBtn"')
+      })
+
+      mock.sendMessage({ command: 'diffSkill' })
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+        'skillsmith.diffSkill',
+        expect.anything()
+      )
+    })
+
     it('aborts with a notice when the skill is gone at click time (M2)', async () => {
       SkillDetailPanel.setSkillService(createMockSkillService())
       // Provider reports the skill installed at load, but empty at click time.

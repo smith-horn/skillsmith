@@ -18,6 +18,7 @@ describe('getActionBlock', () => {
       expect(html).not.toContain('id="repoBtn"')
       expect(html).not.toContain('id="uninstallBtn"')
       expect(html).not.toContain('id="openFolderBtn"')
+      expect(html).not.toContain('id="diffBtn"')
     })
 
     it('adds the View Repository button when a repository is present', () => {
@@ -41,6 +42,25 @@ describe('getActionBlock', () => {
       expect(html).toContain('id="openSkillFileBtn"')
       expect(html).toContain('Open SKILL.md')
       expect(html).not.toContain('id="installBtn"')
+    })
+
+    it('renders diffBtn with btn-secondary and correct aria-label in installed state', () => {
+      const html = getActionBlock(
+        { installed: true, skillPath: '/skills/test-skill', hasSkillMd: true },
+        ''
+      )
+      expect(html).toContain('id="diffBtn"')
+      expect(html).toContain('btn-secondary')
+      expect(html).toContain('aria-label="View changes for this skill"')
+      expect(html).toContain('View changes')
+    })
+
+    it('renders diffBtn even when hasSkillMd is false', () => {
+      const html = getActionBlock(
+        { installed: true, skillPath: '/skills/test-skill', hasSkillMd: false },
+        ''
+      )
+      expect(html).toContain('id="diffBtn"')
     })
 
     it('omits Open SKILL.md when hasSkillMd is false', () => {

@@ -39,6 +39,7 @@ export function getActionBlock(ctx: SkillActionContext, safeRepository: string):
         <button class="btn-destructive" id="uninstallBtn" aria-label="Uninstall this skill">Uninstall</button>
         <button class="btn-secondary" id="openFolderBtn" aria-label="Open the skill folder">Open Folder</button>
         ${openSkillFileButton}
+        <button class="btn-secondary" id="diffBtn" aria-label="View changes for this skill">View changes</button>
         ${repoButton}
     </div>`
 }

@@ -235,6 +235,35 @@ describe('diffCommand', () => {
     expect(diffCreateOrShow).not.toHaveBeenCalled()
   })
 
+  it('skips the picker and diffs the preselected skill when arg has isInstalled + path', async () => {
+    const treeProvider = makeTreeProvider()
+    const preselected = {
+      skillData: { ...INSTALLED_SKILL, isInstalled: true },
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const deps = { treeProvider, context: FAKE_CONTEXT, preselected } as any
+    await diffCommandAction(deps)
+
+    expect(showQuickPick).not.toHaveBeenCalled()
+    expect(readFile).toHaveBeenCalledWith(expect.stringContaining('SKILL.md'), 'utf8')
+    expect(mcpGetSkill).toHaveBeenCalledWith(INSTALLED_SKILL.id)
+    expect(diffCreateOrShow).toHaveBeenCalled()
+  })
+
+  it('falls back to the picker when preselected arg is installed but has no path', async () => {
+    const treeProvider = makeTreeProvider()
+    const preselected = {
+      skillData: { ...INSTALLED_SKILL, isInstalled: true, path: undefined },
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const deps = { treeProvider, context: FAKE_CONTEXT, preselected } as any
+    await diffCommandAction(deps)
+
+    expect(showQuickPick).toHaveBeenCalled()
+  })
+
   it('shows info message and aborts when readFile fails', async () => {
     readFile.mockRejectedValue(new Error('ENOENT'))
 
