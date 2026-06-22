@@ -17,34 +17,15 @@
  *   `onDidChangeConfiguration → initializeMcpClientFromSettings() + void connectWithProgress()`
  */
 import { browser, expect } from '@wdio/globals'
-import { readFileSync } from 'node:fs'
 import { InventoryAuditPage } from '../pageobjects/inventory-audit.page.js'
-import { FAKE_MCP_LOG } from '../fixtures/fake-mcp-log-path.mjs'
-
-function readLog(): Array<Record<string, unknown>> {
-  try {
-    return readFileSync(FAKE_MCP_LOG, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as Record<string, unknown>
-        } catch {
-          return null
-        }
-      })
-      .filter((e): e is Record<string, unknown> => e !== null)
-  } catch {
-    return []
-  }
-}
+import { readFakeMcpLog } from '../fixtures/fake-mcp-log.js'
 
 const auditToolWasCalled = (): boolean =>
-  readLog().some((e) => e['t'] === 'tools/call' && e['name'] === 'skill_inventory_audit')
+  readFakeMcpLog().some((e) => e['t'] === 'tools/call' && e['name'] === 'skill_inventory_audit')
 
 /** A fake server with the given scenario has started (logs {start, scenario} after truncating). */
 const serverStarted = (scenario: string): boolean =>
-  readLog().some((e) => e['t'] === 'start' && e['scenario'] === scenario)
+  readFakeMcpLog().some((e) => e['t'] === 'start' && e['scenario'] === scenario)
 
 const PANEL_TITLE = 'Skill Inventory Audit'
 
@@ -71,7 +52,7 @@ describe('MCP failure + recovery (SMI-5331)', () => {
     )
     await browser.pause(3_000)
 
-    const logLenBefore = readLog().length
+    const logLenBefore = readFakeMcpLog().length
     await browser.executeWorkbench((vscode) =>
       vscode.commands.executeCommand('skillsmith.auditInventory')
     )
@@ -79,7 +60,7 @@ describe('MCP failure + recovery (SMI-5331)', () => {
 
     // No audit call must reach the fake server — the bad command never spawned it
     // and the isConnected() guard short-circuits first.
-    const newAuditCalls = readLog()
+    const newAuditCalls = readFakeMcpLog()
       .slice(logLenBefore)
       .filter((e) => e['t'] === 'tools/call' && e['name'] === 'skill_inventory_audit')
     expect(newAuditCalls.length).toBe(0)

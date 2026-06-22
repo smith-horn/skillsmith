@@ -17,35 +17,15 @@
  * modal, which is precisely the part unit tests cannot cover.
  */
 import { browser, $, expect } from '@wdio/globals'
-import { readFileSync } from 'node:fs'
 import { InventoryAuditPage } from '../pageobjects/inventory-audit.page.js'
-import { FAKE_MCP_LOG } from '../fixtures/fake-mcp-log-path.mjs'
+import { readFakeMcpLog } from '../fixtures/fake-mcp-log.js'
 
 /** The collision id the fake server's first audit surfaces (fake-mcp-server.mjs). */
 const COLLISION_ID = 'col-e2e-1'
 
-/** Parse the fake MCP server's JSONL call log (empty if not yet written). */
-function readLog(): Array<Record<string, unknown>> {
-  try {
-    return readFileSync(FAKE_MCP_LOG, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as Record<string, unknown>
-        } catch {
-          return null
-        }
-      })
-      .filter((e): e is Record<string, unknown> => e !== null)
-  } catch {
-    return []
-  }
-}
-
 /** The extension reached the preview phase: apply_namespace_rename {confirmed:false}. */
 const previewFired = (): boolean =>
-  readLog().some((e) => {
+  readFakeMcpLog().some((e) => {
     const args = e['args'] as { confirmed?: boolean } | undefined
     return (
       e['t'] === 'tools/call' && e['name'] === 'apply_namespace_rename' && args?.confirmed === false
