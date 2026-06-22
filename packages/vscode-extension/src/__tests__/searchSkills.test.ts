@@ -114,6 +114,15 @@ function makeService(result: { results: SkillData[]; isOffline: boolean }) {
   return { search: vi.fn(async () => result) }
 }
 
+/**
+ * SMI-5345: `performSearch` now routes banner/offline copy through the
+ * `SidebarMessageState` machine instead of writing `view.message` directly.
+ * Tests pass a mock so the (now required) dep is satisfied.
+ */
+function makeMessageState() {
+  return { setFirstRunHint: vi.fn(), setSearchBanner: vi.fn(), setOffline: vi.fn() }
+}
+
 describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -134,6 +143,7 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState: makeMessageState(),
     })
 
     expect(provider.setSearchResults).toHaveBeenCalledWith(expect.any(Array), 'docker', {
@@ -161,6 +171,7 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState: makeMessageState(),
     })
 
     const revealArg = view.reveal.mock.calls[0]?.[0]
@@ -185,6 +196,7 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState: makeMessageState(),
     })
 
     expect(executeCommand).toHaveBeenCalledWith('skillsmith.skillsView.focus')
@@ -205,6 +217,7 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState: makeMessageState(),
     })
 
     expect(provider.clearSearchResults).toHaveBeenCalledTimes(1)
@@ -230,6 +243,7 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState: makeMessageState(),
     })
 
     expect(showWarningMessage).toHaveBeenCalledWith(
@@ -255,6 +269,7 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState: makeMessageState(),
     })
 
     expect(service.search).not.toHaveBeenCalled()
@@ -278,6 +293,7 @@ describe('searchSkillsAction (#1431 / SMI-5298, #1434-P1)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState: makeMessageState(),
     })
 
     expect(service.search).not.toHaveBeenCalled()

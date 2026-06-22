@@ -27,7 +27,7 @@ const {
   validateSkillNameMock,
   runCliMock,
   existsMock,
-  showPostCreateChecklistMock,
+  showNextStepsMock,
 } = vi.hoisted(() => ({
   createWebviewPanel: vi.fn(),
   showWarningMessage: vi.fn(),
@@ -37,7 +37,7 @@ const {
   validateSkillNameMock: vi.fn(),
   runCliMock: vi.fn(),
   existsMock: vi.fn(),
-  showPostCreateChecklistMock: vi.fn(),
+  showNextStepsMock: vi.fn(),
 }))
 
 // ── vscode mock ──────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ vi.mock('../utils/createSkill.helpers.js', () => ({
   targetDirFor: (name: string) => `/home/user/.claude/skills/${name}`,
   runCli: runCliMock,
   exists: existsMock,
-  showPostCreateChecklist: showPostCreateChecklistMock,
+  runValidate: vi.fn(),
 }))
 
 // ── CSP / nonce mock ─────────────────────────────────────────────────────────
@@ -120,6 +120,7 @@ const refreshAndWait = vi.fn(async () => {})
 vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   SkillTreeDataProvider: class {
     refreshAndWait = refreshAndWait
+    showNextSteps = showNextStepsMock
   },
 }))
 
@@ -209,6 +210,7 @@ const FAKE_OUTPUT = {
 function makeTreeProvider(): SkillTreeDataProvider {
   return {
     refreshAndWait,
+    showNextSteps: showNextStepsMock,
     getInstalledSkills: vi.fn(() => []),
   } as unknown as SkillTreeDataProvider
 }
@@ -228,7 +230,7 @@ describe('CreateSkillPanel (guards / edge cases)', () => {
     validateSkillNameMock.mockReset().mockReturnValue(true)
     runCliMock.mockReset().mockResolvedValue(0)
     existsMock.mockReset().mockResolvedValue(false)
-    showPostCreateChecklistMock.mockReset().mockResolvedValue(undefined)
+    showNextStepsMock.mockReset()
     refreshAndWait.mockReset().mockResolvedValue(undefined)
     showWarningMessage.mockReset()
     openTextDocument.mockReset().mockRejectedValue(new Error('not found'))
@@ -324,6 +326,24 @@ describe('CreateSkillPanel (guards / edge cases)', () => {
         (call: unknown[]) => call[0] === 'vscode_create_cancelled'
       )
       expect(cancelledCalls).toHaveLength(0)
+    })
+
+    // SMI-5346: on success, showNextSteps is called instead of the old toast.
+    it('calls showNextSteps on the tree provider after a successful create', async () => {
+      runCliMock.mockResolvedValue(0)
+      existsMock.mockResolvedValue(false)
+      const mock = createMockPanel()
+      vi.mocked(createWebviewPanel).mockReturnValue(mock.panel)
+
+      CreateSkillPanel.createOrShow(EXTENSION_URI, FAKE_OUTPUT, makeTreeProvider())
+      mock.sendMessage({ command: 'submit', fields: VALID_FIELDS })
+
+      await vi.waitFor(() => {
+        expect(showNextStepsMock).toHaveBeenCalledWith(
+          VALID_FIELDS.name,
+          `/home/user/.claude/skills/${VALID_FIELDS.name}`
+        )
+      })
     })
   })
 

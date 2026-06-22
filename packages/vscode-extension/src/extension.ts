@@ -6,10 +6,13 @@
  */
 import * as vscode from 'vscode'
 import { SkillTreeDataProvider } from './sidebar/SkillTreeDataProvider.js'
+import { createSidebarMessageState } from './sidebar/message-state.js'
+import { registerMcpSidebarObserver } from './sidebar/mcp-status-observer.js'
 import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
 import { registerUninstallCommand } from './commands/uninstallCommand.js'
 import { registerCreateSkillCommand } from './commands/createSkillCommand.js'
+import { runValidate } from './utils/createSkill.helpers.js'
 import { registerRecommendCommand } from './commands/recommendCommand.js'
 import { registerCompareCommand } from './commands/compareCommand.js'
 import { registerDiffCommand } from './commands/diffCommand.js'
@@ -63,8 +66,9 @@ export function activate(context: vscode.ExtensionContext): void {
   )
   SkillDetailPanel.setSkillService(skillService)
 
-  // Initialize providers
-  skillTreeDataProvider = new SkillTreeDataProvider()
+  // Initialize providers. SMI-5346: the provider takes `context` so the
+  // post-create checklist section can persist its dismiss flag in globalState.
+  skillTreeDataProvider = new SkillTreeDataProvider(context)
 
   // Inject the tree provider into the detail panel so it can resolve installed
   // state (#1437 / SMI-5308). Always set before the only live createOrShow path.
@@ -108,10 +112,14 @@ export function activate(context: vscode.ExtensionContext): void {
         clipboardWrite: (text) => vscode.env.clipboard.writeText(text),
       })
     })
-    context.subscriptions.push(versionCheckSub)
   }
 
   registerVersionCheck()
+  // SMI-5345 (plan-review C3): push ONE stable disposable that always disposes
+  // the *current* versionCheckSub, instead of re-pushing inside
+  // registerVersionCheck() on every config-swap rebind — which grew
+  // context.subscriptions unboundedly across settings changes.
+  context.subscriptions.push({ dispose: () => versionCheckSub?.dispose() })
 
   // Register MCP commands
   registerMcpCommands(context)
@@ -126,6 +134,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(skillsView)
 
+  // SMI-5345 (#1438): a single owner for `skillsView.message`. The first-run
+  // hint, the search context banner, and the MCP-offline notice all route
+  // through this state machine (precedence: offline > search banner > hint),
+  // resolving the multi-writer clobber + reconnect-during-search race.
+  const messageState = createSidebarMessageState(skillsView)
+
   // #1438-P2 (SMI-5306): first-run / pre-search hint. `viewsWelcome` renders
   // ONLY for an empty tree, so an installed-but-never-searched user never sees
   // it (plan-review #2). Surface the affordance as a persistent
@@ -134,7 +148,17 @@ export function activate(context: vscode.ExtensionContext): void {
   // copy mirrors Wave 1's welcome message.
   const isMac = process.platform === 'darwin'
   const searchChord = isMac ? '⌘K ⌘Y' : 'Ctrl+K Ctrl+Y'
-  skillsView.message = `Press the search icon or ${searchChord} to discover skills.`
+  messageState.setFirstRunHint(`Press the search icon or ${searchChord} to discover skills.`)
+
+  // SMI-5345 (#1438): proactively mirror MCP connection drops into the sidebar
+  // (offline `.message` + a pinned Reconnect row) even when the drop happens
+  // outside of a search. Rebinds on the config-driven client swap below.
+  const mcpSidebarObserver = registerMcpSidebarObserver({
+    getClient: getMcpClient,
+    messageState,
+    offlineRow: skillTreeDataProvider,
+  })
+  context.subscriptions.push(mcpSidebarObserver)
 
   // Register intellisense providers
   const skillMdSelector = getSkillMdSelector()
@@ -179,7 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // Register commands — pass skillService to consumers
-  registerSearchCommand(context, skillTreeDataProvider, skillsView, skillService)
+  registerSearchCommand(context, skillTreeDataProvider, skillsView, skillService, messageState)
   registerQuickInstallCommand(context, skillService)
   registerUninstallCommand(context, skillTreeDataProvider)
   registerCreateSkillCommand(context, skillTreeDataProvider)
@@ -214,6 +238,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(refreshCommand, viewDetailsCommand)
 
+  // SMI-5346 (#1453): post-create checklist actions. Registered inline and
+  // unwrapped (like refreshSkills / viewSkillDetails) — they are not panel
+  // telemetry dispatchers, so they stay out of VSCODE_DISPATCHER_MAP.
+  const validateOutput = vscode.window.createOutputChannel('Skillsmith Validate')
+  const runValidateCommand = vscode.commands.registerCommand('skillsmith.runValidate', () => {
+    void runValidate(validateOutput)
+  })
+  const dismissNextStepsCommand = vscode.commands.registerCommand(
+    'skillsmith.dismissNextSteps',
+    () => skillTreeDataProvider.dismissNextSteps()
+  )
+  context.subscriptions.push(validateOutput, runValidateCommand, dismissNextStepsCommand)
+
   // Listen for configuration changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e: vscode.ConfigurationChangeEvent) => {
@@ -221,6 +258,7 @@ export function activate(context: vscode.ExtensionContext): void {
         initializeMcpClientFromSettings()
         registerVersionCheck()
         mcpStatusBar?.rebind()
+        mcpSidebarObserver.rebind()
         void connectWithProgress()
       }
     })

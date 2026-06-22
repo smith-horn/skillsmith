@@ -17,6 +17,7 @@ import * as vscode from 'vscode'
 import type { SkillTreeDataProvider } from '../sidebar/SkillTreeDataProvider.js'
 import type { SkillTreeItem } from '../sidebar/SkillTreeItem.js'
 import type { SkillService } from '../services/SkillService.js'
+import type { SidebarMessageState } from '../sidebar/message-state.js'
 import { withTelemetry } from '../services/telemetry-wrap.js'
 import { collectSearchFilters, type SearchFilters } from './searchFilters.js'
 
@@ -24,6 +25,11 @@ interface SearchSkillsDeps {
   treeDataProvider: SkillTreeDataProvider
   skillsView: vscode.TreeView<SkillTreeItem>
   skillService: SkillService
+  // SMI-5345 (#1438): the single owner of `skillsView.message`. `performSearch`
+  // routes its context banner / no-results / offline copy through this state
+  // machine instead of writing `skillsView.message` directly, which resolves
+  // the multi-writer race with the first-run hint and the MCP-offline observer.
+  messageState: SidebarMessageState
 }
 
 /** SMI-5288: whether explicit demo mode is enabled. */
@@ -142,8 +148,9 @@ async function performSearch(
               'Skillsmith server unavailable — start the Skillsmith MCP server and try again.'
             )
             treeDataProvider.clearSearchResults()
-            deps.skillsView.message =
+            deps.messageState.setSearchBanner(
               'Skillsmith server unavailable — start the MCP server and try again.'
+            )
             await syncActiveFiltersContext(deps)
             return
           }
@@ -151,7 +158,7 @@ async function performSearch(
           const noResultsMsg = buildNoResultsMessage(trimmedQuery, hasFilters)
           vscode.window.showInformationMessage(noResultsMsg)
           treeDataProvider.clearSearchResults()
-          deps.skillsView.message = noResultsMsg
+          deps.messageState.setSearchBanner(noResultsMsg)
           await syncActiveFiltersContext(deps)
           return
         }
@@ -161,7 +168,7 @@ async function performSearch(
         treeDataProvider.setSearchResults(results, trimmedQuery, { demo: isDemoResults })
 
         // #1432: persistent context banner derived from the single formatter.
-        deps.skillsView.message = formatContextBanner(deps)
+        deps.messageState.setSearchBanner(formatContextBanner(deps))
         await syncActiveFiltersContext(deps)
 
         // SMI-5298 (#1431): surface the Available group in the unified view.
@@ -252,9 +259,10 @@ export function registerSearchCommand(
   context: vscode.ExtensionContext,
   treeDataProvider: SkillTreeDataProvider,
   skillsView: vscode.TreeView<SkillTreeItem>,
-  skillService: SkillService
+  skillService: SkillService,
+  messageState: SidebarMessageState
 ): void {
-  const deps: SearchSkillsDeps = { treeDataProvider, skillsView, skillService }
+  const deps: SearchSkillsDeps = { treeDataProvider, skillsView, skillService, messageState }
   context.subscriptions.push(
     vscode.commands.registerCommand('skillsmith.searchSkills', () => searchSkillsAction(deps)),
     vscode.commands.registerCommand('skillsmith.filterSkills', () => filterSkillsAction(deps)),

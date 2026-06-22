@@ -19,7 +19,6 @@ const {
   validateSkillNameMock,
   runCliMock,
   existsMock,
-  showPostCreateChecklistMock,
 } = vi.hoisted(() => ({
   createWebviewPanel: vi.fn(),
   showWarningMessage: vi.fn(),
@@ -29,7 +28,6 @@ const {
   validateSkillNameMock: vi.fn(),
   runCliMock: vi.fn(),
   existsMock: vi.fn(),
-  showPostCreateChecklistMock: vi.fn(),
 }))
 
 // ── vscode mock ──────────────────────────────────────────────────────────────
@@ -83,7 +81,6 @@ vi.mock('../utils/createSkill.helpers.js', () => ({
   targetDirFor: (name: string) => `/home/user/.claude/skills/${name}`,
   runCli: runCliMock,
   exists: existsMock,
-  showPostCreateChecklist: showPostCreateChecklistMock,
 }))
 
 // ── CSP / nonce mock ─────────────────────────────────────────────────────────
@@ -109,9 +106,13 @@ vi.mock('../utils/skillNameValidation.js', () => ({
 
 // ── SkillTreeDataProvider mock ────────────────────────────────────────────────
 const refreshAndWait = vi.fn(async () => {})
+// SMI-5346: the post-create toast was replaced by the sidebar "Next steps"
+// section — the panel now calls `treeProvider.showNextSteps(name, targetDir)`.
+const showNextStepsMock = vi.fn()
 vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   SkillTreeDataProvider: class {
     refreshAndWait = refreshAndWait
+    showNextSteps = showNextStepsMock
   },
 }))
 
@@ -202,6 +203,7 @@ function makeTreeProvider(): SkillTreeDataProvider {
   return {
     refreshAndWait,
     getInstalledSkills: vi.fn(() => []),
+    showNextSteps: showNextStepsMock,
   } as unknown as SkillTreeDataProvider
 }
 
@@ -220,7 +222,7 @@ describe('CreateSkillPanel', () => {
     validateSkillNameMock.mockReset().mockReturnValue(true)
     runCliMock.mockReset().mockResolvedValue(0)
     existsMock.mockReset().mockResolvedValue(false)
-    showPostCreateChecklistMock.mockReset().mockResolvedValue(undefined)
+    showNextStepsMock.mockReset()
     refreshAndWait.mockReset().mockResolvedValue(undefined)
     showWarningMessage.mockReset()
     openTextDocument.mockReset().mockRejectedValue(new Error('not found'))
@@ -313,9 +315,9 @@ describe('CreateSkillPanel', () => {
       )
       expect(trackMock).toHaveBeenCalledWith('vscode_create_complete', { type: 'basic' })
       expect(refreshAndWait).toHaveBeenCalled()
-      expect(showPostCreateChecklistMock).toHaveBeenCalledWith(
-        '/home/user/.claude/skills/my-skill',
-        'my-skill'
+      expect(showNextStepsMock).toHaveBeenCalledWith(
+        'my-skill',
+        '/home/user/.claude/skills/my-skill'
       )
     })
   })

@@ -212,6 +212,8 @@ export class SkillTreeItem extends vscode.TreeItem {
         return new vscode.ThemeIcon('folder-library')
       case 'available':
         return new vscode.ThemeIcon('cloud')
+      case 'nextSteps':
+        return new vscode.ThemeIcon('checklist')
       default:
         return new vscode.ThemeIcon('symbol-misc')
     }
@@ -252,5 +254,60 @@ export class SkillTreeItem extends vscode.TreeItem {
       data,
       undefined
     )
+  }
+
+  /**
+   * Creates the 'Next steps' group header item (SMI-5346).
+   * contextValue is 'nextStepsGroup' so package.json can target a dismiss menu.
+   */
+  static createNextStepsGroup(): SkillTreeItem {
+    const item = new SkillTreeItem(
+      'Next steps',
+      vscode.TreeItemCollapsibleState.Expanded,
+      'group',
+      undefined,
+      'nextSteps'
+    )
+    item.contextValue = 'nextStepsGroup'
+    return item
+  }
+
+  /**
+   * Creates a pinned MCP-offline reconnect row (SMI-5345).
+   */
+  static createMcpOfflineRow(): SkillTreeItem {
+    const item = new SkillTreeItem(
+      'Skillsmith server unavailable — Reconnect',
+      vscode.TreeItemCollapsibleState.None,
+      'group',
+      undefined,
+      undefined
+    )
+    item.iconPath = new vscode.ThemeIcon('debug-disconnect')
+    item.contextValue = 'mcpOffline'
+    item.command = {
+      command: 'skillsmith.mcpReconnect',
+      title: 'Reconnect',
+    }
+    return item
+  }
+
+  /**
+   * Creates a checklist action row for the 'Next steps' section (SMI-5346).
+   *
+   * @param label - Display label
+   * @param command - VS Code command to execute when the row is clicked
+   */
+  static createChecklistRow(label: string, command: vscode.Command): SkillTreeItem {
+    const item = new SkillTreeItem(
+      label,
+      vscode.TreeItemCollapsibleState.None,
+      'group',
+      undefined,
+      undefined
+    )
+    item.command = command
+    item.contextValue = 'nextStepsRow'
+    return item
   }
 }

@@ -58,9 +58,30 @@ vi.mock('vscode', () => {
     ThemeColor: class {
       constructor(public id: string) {}
     },
-    Uri: { parse: (s: string) => ({ toString: () => s }) },
+    Uri: {
+      file: (s: string) => ({ toString: () => s, fsPath: s }),
+      parse: (s: string) => ({ toString: () => s }),
+    },
   }
 })
+
+vi.mock('../services/Telemetry.js', () => ({
+  track: vi.fn(),
+}))
+
+function makeContext(): import('vscode').ExtensionContext {
+  const store = new Map<string, unknown>()
+  return {
+    globalState: {
+      get: <T>(key: string) => store.get(key) as T | undefined,
+      update: async (key: string, value: unknown) => {
+        store.set(key, value)
+      },
+      keys: () => [...store.keys()],
+      setKeysForSync: vi.fn(),
+    },
+  } as unknown as import('vscode').ExtensionContext
+}
 
 describe('SkillTreeDataProvider installedElsewhere cross-reference (#1436 / SMI-5307)', () => {
   // C2: normalized id cross-reference — registry id `smith-horn/my-skill` must
@@ -78,7 +99,7 @@ describe('SkillTreeDataProvider installedElsewhere cross-reference (#1436 / SMI-
       } as any)
 
       const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-      const provider = new SkillTreeDataProvider()
+      const provider = new SkillTreeDataProvider(makeContext())
       await provider.refreshAndWait()
 
       provider.setSearchResults(
@@ -142,7 +163,7 @@ describe('SkillTreeDataProvider installedElsewhere cross-reference (#1436 / SMI-
       } as any)
 
       const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-      const provider = new SkillTreeDataProvider()
+      const provider = new SkillTreeDataProvider(makeContext())
 
       // Set search results immediately (before the constructor-fired load settles).
       provider.setSearchResults(
@@ -190,7 +211,7 @@ describe('SkillTreeDataProvider installedElsewhere cross-reference (#1436 / SMI-
       } as any)
 
       const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-      const provider = new SkillTreeDataProvider()
+      const provider = new SkillTreeDataProvider(makeContext())
       await provider.refreshAndWait()
 
       // Search arrives after load has settled.
@@ -237,7 +258,7 @@ describe('SkillTreeDataProvider installedElsewhere cross-reference (#1436 / SMI-
       } as any)
 
       const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-      const provider = new SkillTreeDataProvider()
+      const provider = new SkillTreeDataProvider(makeContext())
       await provider.refreshAndWait()
 
       provider.setSearchResults(
@@ -294,7 +315,7 @@ describe('SkillTreeDataProvider hasSkillMd (#1436 / SMI-5307)', () => {
       } as any)
 
       const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-      const provider = new SkillTreeDataProvider()
+      const provider = new SkillTreeDataProvider(makeContext())
       await provider.refreshAndWait()
 
       const installed = provider.getInstalledSkills()
@@ -319,7 +340,7 @@ describe('SkillTreeDataProvider hasSkillMd (#1436 / SMI-5307)', () => {
       } as any)
 
       const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-      const provider = new SkillTreeDataProvider()
+      const provider = new SkillTreeDataProvider(makeContext())
       await provider.refreshAndWait()
 
       const installed = provider.getInstalledSkills()

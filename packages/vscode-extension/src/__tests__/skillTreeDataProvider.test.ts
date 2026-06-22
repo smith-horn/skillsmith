@@ -49,9 +49,31 @@ vi.mock('vscode', () => {
     ThemeColor: class {
       constructor(public id: string) {}
     },
-    Uri: { parse: (s: string) => ({ toString: () => s }) },
+    Uri: {
+      file: (s: string) => ({ toString: () => s, fsPath: s }),
+      parse: (s: string) => ({ toString: () => s }),
+    },
   }
 })
+
+vi.mock('../services/Telemetry.js', () => ({
+  track: vi.fn(),
+}))
+
+/** In-memory ExtensionContext for tests. */
+function makeContext(): import('vscode').ExtensionContext {
+  const store = new Map<string, unknown>()
+  return {
+    globalState: {
+      get: <T>(key: string) => store.get(key) as T | undefined,
+      update: async (key: string, value: unknown) => {
+        store.set(key, value)
+      },
+      keys: () => [...store.keys()],
+      setKeysForSync: vi.fn(),
+    },
+  } as unknown as import('vscode').ExtensionContext
+}
 
 describe('SkillTreeDataProvider installed-skills API (SMI-4194)', () => {
   let tempRoot: string
@@ -66,7 +88,7 @@ describe('SkillTreeDataProvider installed-skills API (SMI-4194)', () => {
 
   it('getInstalledSkills returns empty array before any refresh', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
     expect(provider.getInstalledSkills()).toEqual([])
   })
 
@@ -86,7 +108,7 @@ describe('SkillTreeDataProvider installed-skills API (SMI-4194)', () => {
 
     // Mock must be set BEFORE constructor fires loadInstalledSkills.
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
     // The constructor-fired load shares its in-flight promise with refreshAndWait,
     // so awaiting refreshAndWait guarantees the initial load has settled.
     await provider.refreshAndWait()
@@ -126,7 +148,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('setSearchResults populates the Available group; clearSearchResults empties it', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     provider.setSearchResults(sampleResults, 'docker')
     expect(provider.getAvailableSkills()).toHaveLength(2)
@@ -139,7 +161,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('renders Available group first while searching, with the count-bearing label', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
     provider.setSearchResults(sampleResults, 'docker')
 
     const roots = provider.getChildren()
@@ -154,7 +176,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('renders Installed group first (only) when no search is active', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     const roots = provider.getChildren()
     expect(roots).toHaveLength(1)
@@ -163,7 +185,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('getChildren on the available group returns the search-result skill items', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
     provider.setSearchResults(sampleResults, 'docker')
 
     const roots = provider.getChildren()
@@ -176,7 +198,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('getAvailableGroupItem returns the group when results exist, undefined otherwise', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     expect(provider.getAvailableGroupItem()).toBeUndefined()
 
@@ -193,7 +215,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('group ids are stable across calls (so TreeView.reveal can match)', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
     provider.setSearchResults(sampleResults, 'docker')
 
     const first = provider.getAvailableGroupItem()
@@ -207,7 +229,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('getParent: group items resolve to undefined (root)', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
     provider.setSearchResults(sampleResults, 'docker')
 
     const roots = provider.getChildren()
@@ -218,7 +240,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
 
   it('getParent: an available (skill) item resolves to the Available group', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
     provider.setSearchResults(sampleResults, 'docker')
 
     const availableGroup = provider.getChildren().find((g) => g.groupId === 'available')
@@ -249,7 +271,7 @@ describe('SkillTreeDataProvider unified search surface (#1431 / SMI-5298)', () =
       } as any)
 
       const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-      const provider = new SkillTreeDataProvider()
+      const provider = new SkillTreeDataProvider(makeContext())
       await provider.refreshAndWait()
 
       const installedGroup = provider.getChildren().find((g) => g.groupId === 'installed')
@@ -282,7 +304,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('hasActiveFilters is false initially and true after setFilters', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     expect(provider.hasActiveFilters()).toBe(false)
     provider.setFilters({ trustTier: 'verified' })
@@ -292,7 +314,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('clearFilters resets to no active filters', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     provider.setFilters({ category: 'Testing', minScore: 70 })
     expect(provider.hasActiveFilters()).toBe(true)
@@ -303,7 +325,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('setFilters stores by value (later mutation does not leak in)', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     const input = { trustTier: 'verified' }
     provider.setFilters(input)
@@ -313,7 +335,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('describeActiveContext returns rawQuery + demo flag + ordered filter parts', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     provider.setFilters({ trustTier: 'verified', category: 'Testing', minScore: 70 })
     provider.setSearchResults(sampleResults, 'react', { demo: true })
@@ -327,7 +349,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('describeActiveContext has no filter parts when no filters are active', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     provider.setSearchResults(sampleResults, 'react')
     const ctx = provider.describeActiveContext()
@@ -337,7 +359,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('getLastSearchQuery returns the raw query, not the display label', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     provider.setSearchResults(sampleResults, 'react', { demo: true })
     // Raw query is stored separately from the demo annotation.
@@ -346,7 +368,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('group:available id is stable across filter/query changes (reveal guard)', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     provider.setSearchResults(sampleResults, 'react')
     const before = provider.getAvailableGroupItem()
@@ -361,7 +383,7 @@ describe('SkillTreeDataProvider filter state + active context (#1433 / #1432)', 
 
   it('clearSearchResults clears the query but preserves active filters', async () => {
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
+    const provider = new SkillTreeDataProvider(makeContext())
 
     provider.setFilters({ trustTier: 'verified' })
     provider.setSearchResults(sampleResults, 'react')

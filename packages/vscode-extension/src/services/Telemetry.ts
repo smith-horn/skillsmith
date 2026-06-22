@@ -6,7 +6,6 @@ export type TelemetryEvent =
   | 'vscode_create_complete'
   | 'vscode_create_failed'
   | 'vscode_create_cancelled'
-  | 'vscode_create_checklist_action'
   | 'vscode_uninstall_start'
   | 'vscode_uninstall_complete'
   | 'vscode_uninstall_failed'
@@ -39,6 +38,8 @@ export type TelemetryEvent =
   | 'vscode_inventory_apply_applied'
   | 'vscode_inventory_apply_failed'
   | 'vscode_inventory_apply_cancelled'
+  // SMI-5346: next-steps checklist view (sidebar section).
+  | 'vscode_create_checklist_view'
 
 // No hardcoded endpoint — telemetry is disabled by default at runtime
 // unless `skillsmith.telemetryEndpoint` is set or the production endpoint

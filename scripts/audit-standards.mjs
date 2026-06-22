@@ -2028,6 +2028,8 @@ console.log(`\n${BOLD}28. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
         'skillsmith.selectForCompare', // SMI-5340: tree-context compare; action tested in compareSkills.test.ts + compare-source.test.ts
         'skillsmith.compareWithSelected', // SMI-5340: tree-context compare; action tested in compareSkills.test.ts
         'skillsmith.clearSkillFilters', // SMI-5304: action exercised in searchSkills.test.ts
+        'skillsmith.runValidate', // SMI-5346: validate helper tested in createSkill.checklist.test.ts
+        'skillsmith.dismissNextSteps', // SMI-5346: dismiss tested in skillTreeDataProvider.nextSteps.test.ts
       ])
       const testFiles = readdirSync(testDir).filter((f) => f.endsWith('.test.ts'))
       const missing = []

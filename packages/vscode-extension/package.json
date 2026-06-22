@@ -130,6 +130,18 @@
         "title": "Audit Skill Inventory",
         "category": "Skillsmith",
         "icon": "$(search)"
+      },
+      {
+        "command": "skillsmith.runValidate",
+        "title": "Validate Skill",
+        "category": "Skillsmith",
+        "icon": "$(check)"
+      },
+      {
+        "command": "skillsmith.dismissNextSteps",
+        "title": "Dismiss",
+        "category": "Skillsmith",
+        "icon": "$(close)"
       }
     ],
     "keybindings": [
@@ -221,6 +233,11 @@
       ],
       "view/item/context": [
         {
+          "command": "skillsmith.dismissNextSteps",
+          "when": "view == skillsmith.skillsView && viewItem == nextStepsGroup",
+          "group": "inline"
+        },
+        {
           "command": "skillsmith.installSkill",
           "when": "view == skillsmith.skillsView && viewItem == skill",
           "group": "inline"
@@ -266,6 +283,10 @@
         },
         {
           "command": "skillsmith.compareWithSelected",
+          "when": "false"
+        },
+        {
+          "command": "skillsmith.dismissNextSteps",
           "when": "false"
         }
       ]
