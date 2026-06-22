@@ -87,7 +87,7 @@ describe('SkillService', () => {
     it('returns mapped SkillData[] from MCP when connected', async () => {
       const searchFn = vi.fn().mockResolvedValue(makeMcpSearchResponse())
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       const { results, isOffline } = await service.search('governance')
 
@@ -101,7 +101,7 @@ describe('SkillService', () => {
     it('passes options (category, trustTier, minScore) to MCP', async () => {
       const searchFn = vi.fn().mockResolvedValue(makeMcpSearchResponse())
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       const options = { category: 'development', trustTier: 'verified', minScore: 80 }
       await service.search('test', options)
@@ -114,7 +114,7 @@ describe('SkillService', () => {
     it('returns ExtendedSkillData with version/tags/scoreBreakdown', async () => {
       const getSkillFn = vi.fn().mockResolvedValue(makeMcpGetSkillResponse())
       const client = createMockClient({ getSkill: getSkillFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       const { skill, isOffline } = await service.getRichSkill('governance')
 
@@ -130,7 +130,7 @@ describe('SkillService', () => {
     it('returns basic SkillData from MCP', async () => {
       const getSkillFn = vi.fn().mockResolvedValue(makeMcpGetSkillResponse())
       const client = createMockClient({ getSkill: getSkillFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       const skill = await service.getSkill('governance')
 
@@ -148,7 +148,7 @@ describe('SkillService', () => {
         .mockRejectedValue(new McpToolError('search', 'TierDenied', 'requires the Team plan'))
       const client = createMockClient({ search: searchFn })
       // demo mode ON to prove TierDenied still wins over the mock branch
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       await expect(service.search('governance')).rejects.toMatchObject({
         code: 'TierDenied',
@@ -160,7 +160,7 @@ describe('SkillService', () => {
         .fn()
         .mockRejectedValue(new McpToolError('get_skill', 'TierDenied', 'requires the Team plan'))
       const client = createMockClient({ getSkill: getSkillFn })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       await expect(service.getRichSkill('governance')).rejects.toMatchObject({
         code: 'TierDenied',
@@ -171,7 +171,7 @@ describe('SkillService', () => {
   describe('offline + demo mode OFF (default)', () => {
     it('search returns empty results + isOffline true when MCP disconnected', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client) // demoMode defaults to off
+      service = new SkillService(() => client) // demoMode defaults to off
 
       const { results, isOffline } = await service.search('governance')
 
@@ -182,7 +182,7 @@ describe('SkillService', () => {
     it('search returns empty on transport error (no mock leak)', async () => {
       const searchFn = vi.fn().mockRejectedValue(new Error('ECONNRESET'))
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       const { results, isOffline } = await service.search('governance')
 
@@ -192,7 +192,7 @@ describe('SkillService', () => {
 
     it('getRichSkill throws McpToolError NotConnected when MCP disconnected', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       await expect(service.getRichSkill('governance')).rejects.toMatchObject({
         code: 'NotConnected',
@@ -203,7 +203,7 @@ describe('SkillService', () => {
     it('getRichSkill throws NotConnected on transport error', async () => {
       const getSkillFn = vi.fn().mockRejectedValue(new Error('network error'))
       const client = createMockClient({ getSkill: getSkillFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       await expect(service.getRichSkill('governance')).rejects.toBeInstanceOf(McpToolError)
     })
@@ -212,7 +212,7 @@ describe('SkillService', () => {
   describe('offline + demo mode ON', () => {
     it('search returns mock data + isOffline true when MCP disconnected', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const { results, isOffline } = await service.search('governance')
 
@@ -223,7 +223,7 @@ describe('SkillService', () => {
 
     it('empty-query returns all MOCK_SKILLS in demo mode', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const { results, isOffline } = await service.search('')
 
@@ -234,7 +234,7 @@ describe('SkillService', () => {
     it('getRichSkill returns mock data + isOffline true in demo mode', async () => {
       const getSkillFn = vi.fn().mockRejectedValue(new Error('network error'))
       const client = createMockClient({ getSkill: getSkillFn })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const { skill, isOffline } = await service.getRichSkill('governance')
 
@@ -245,7 +245,7 @@ describe('SkillService', () => {
 
     it('getSkill returns fallback (score 0, unverified) for unknown id in demo mode', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const skill = await service.getSkill('nonexistent-skill-xyz')
 
@@ -278,7 +278,7 @@ describe('SkillService', () => {
         })
       })
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       const [r1, r2] = await Promise.all([service.search('alpha'), service.search('beta')])
 
@@ -291,7 +291,7 @@ describe('SkillService', () => {
     it('returns empty offline result when connection drops during search (demo off)', async () => {
       const searchFn = vi.fn().mockRejectedValue(new Error('MCP server disconnected'))
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       const { results, isOffline } = await service.search('governance')
 
@@ -302,7 +302,7 @@ describe('SkillService', () => {
     it('falls back to mock when connection drops mid-call in demo mode', async () => {
       const searchFn = vi.fn().mockRejectedValue(new Error('MCP server disconnected'))
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const { results, isOffline } = await service.search('governance')
 
@@ -314,7 +314,7 @@ describe('SkillService', () => {
   describe('demo-mode filters (SMI-5304 plan-review #4)', () => {
     it('applies trustTier filter client-side to mock results', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const unfiltered = await service.search('')
       const filtered = await service.search('', { trustTier: 'community' })
@@ -326,7 +326,7 @@ describe('SkillService', () => {
 
     it('applies category filter case-insensitively (capitalized filter vs lowercase mock)', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       // Filter passes 'Testing'; mock data uses lowercase 'testing'.
       const { results } = await service.search('', { category: 'Testing' })
@@ -336,7 +336,7 @@ describe('SkillService', () => {
 
     it('applies minScore as an inclusive threshold to mock results', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const { results } = await service.search('', { minScore: 90 })
       expect(results.length).toBeGreaterThan(0)
@@ -345,7 +345,7 @@ describe('SkillService', () => {
 
     it('filtered vs unfiltered same query yield different mock results', async () => {
       const client = createMockClient({ isConnected: () => false })
-      service = new SkillService(client, demoOn)
+      service = new SkillService(() => client, demoOn)
 
       const unfiltered = await service.search('')
       const filtered = await service.search('', { minScore: 95 })
@@ -357,7 +357,7 @@ describe('SkillService', () => {
     it('filtered + unfiltered same query are cached separately (distinct keys)', async () => {
       const searchFn = vi.fn().mockImplementation(async () => makeMcpSearchResponse())
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       await service.search('governance')
       await service.search('governance', { trustTier: 'verified' })
@@ -373,7 +373,7 @@ describe('SkillService', () => {
     it('returns cached results within TTL without re-calling MCP', async () => {
       const searchFn = vi.fn().mockResolvedValue(makeMcpSearchResponse())
       const client = createMockClient({ search: searchFn })
-      service = new SkillService(client)
+      service = new SkillService(() => client)
 
       // First call — hits MCP
       const r1 = await service.search('governance')
@@ -385,6 +385,40 @@ describe('SkillService', () => {
       expect(r2.isOffline).toBe(false)
       expect(r2.results).toEqual(r1.results)
       expect(searchFn).toHaveBeenCalledTimes(1) // No additional call
+    })
+  })
+
+  describe('resolver swap recovery (SMI-5341 Fix 1)', () => {
+    it('reads the live client on every call so a singleton swap cannot orphan the service', async () => {
+      // Two distinct client mocks — one dead, one alive.
+      const deadClient = createMockClient({
+        isConnected: () => false,
+        getSkill: vi.fn(),
+      })
+      const getSkillFn = vi.fn().mockResolvedValue(makeMcpGetSkillResponse())
+      const liveClient = createMockClient({
+        isConnected: () => true,
+        getSkill: getSkillFn,
+      })
+
+      // Resolver returns whichever `current` points at — flip it between calls.
+      let current: ReturnType<typeof createMockClient> = deadClient
+      const svc = new SkillService(() => current)
+
+      // --- Phase 1: dead client ---
+      expect(svc.isConnected()).toBe(false)
+      await expect(svc.getRichSkill('governance')).rejects.toMatchObject({
+        code: 'NotConnected',
+        message: 'Skillsmith server unavailable',
+      })
+
+      // --- Phase 2: swap to live client (simulates initializeMcpClient) ---
+      current = liveClient
+      expect(svc.isConnected()).toBe(true)
+      const { skill, isOffline } = await svc.getRichSkill('governance')
+      expect(isOffline).toBe(false)
+      expect(skill.id).toBe('governance')
+      expect(getSkillFn).toHaveBeenCalledTimes(1)
     })
   })
 })

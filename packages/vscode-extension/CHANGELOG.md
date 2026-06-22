@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Skill details recover after reconnecting** — the skill detail panel no longer stays stuck on "Skillsmith server unavailable" once the MCP server is back (including after you change an MCP setting, which restarts the connection). The panel now reloads on its own when the connection is restored, and Retry / reopening the skill works reliably. The connection status indicator in the status bar also stays accurate after a settings change.
+
 ## [0.6.2] - 2026-06-20
 
 ### Added

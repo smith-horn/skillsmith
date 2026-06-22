@@ -135,6 +135,21 @@ export class SkillDetailPanel {
       null,
       this._disposables
     )
+
+    // Auto-recover an error/empty panel the moment the MCP server (re)connects,
+    // so the user doesn't have to click Retry after reconnecting (SMI-5341 Fix 2).
+    // NOTE: this subscription binds to the client live at construction time. If a
+    // settings change swaps the singleton AFTER this panel opens, the subscription
+    // is orphaned and won't fire for the new client — the SkillService lazy
+    // resolver (SMI-5341 Fix 1) is the swap-path safety net: Retry/reopen resolves
+    // the live client.
+    this._disposables.push(
+      getMcpClient().onStatusChange((status) => {
+        if (status === 'connected' && !this._disposed && this._skillData === null) {
+          void this._loadAndUpdate()
+        }
+      })
+    )
   }
 
   public dispose() {
