@@ -34,13 +34,21 @@ describe('Skills tree-view — installed skills from fixture dir (SMI-5339)', ()
   const page = new SkillsTreePage()
 
   it('installed skill row containing "my-e2e-skill" appears in the Skillsmith sidebar', async () => {
-    // Allow generous time for the sidebar to open and the tree to populate on
-    // activation. A cold CI runner may take several seconds for the extension
-    // host to finish loading installed skills via doLoadInstalledSkills().
+    // Force a fresh installed-skills load — by the time this spec runs in the
+    // full-suite sequence the tree may have drifted (other specs change view
+    // state). refreshSkills re-runs doLoadInstalledSkills() against the fixture
+    // dir. Non-modal; safe.
+    await browser.executeWorkbench((vscode) =>
+      vscode.commands.executeCommand('skillsmith.refreshSkills')
+    )
+
+    // Allow generous time for the sidebar to open and the tree to populate. A
+    // cold CI runner may take several seconds for the extension host to finish
+    // loading installed skills via doLoadInstalledSkills().
     let labels: string[] = []
     await browser.waitUntil(
       async () => {
-        labels = await page.getInstalledSkillLabels()
+        labels = await page.getVisibleTreeLabels()
         return labels.some((l) => l.includes('my-e2e-skill'))
       },
       {

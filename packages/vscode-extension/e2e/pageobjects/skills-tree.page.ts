@@ -1,40 +1,29 @@
 /**
  * Page object for the Skillsmith sidebar tree view (SMI-5339 Phase 2b).
  *
- * Opens the Skillsmith activity-bar panel via wdio-vscode-service and reads
- * the labels of skills listed under the 'Installed Skills' group.
+ * Opens the Skillsmith activity-bar panel via wdio-vscode-service and reads the
+ * labels of the rows currently visible in the tree.
  *
- * Tree structure (SkillTreeDataProvider):
- *   Skillsmith (activity-bar view container)
- *   └─ [SideBarView]
- *      └─ ViewContent
- *         └─ ViewSection: "Installed Skills"   ← group header
- *            └─ TreeItem: "my-e2e-skill"       ← skill row
- *
- * `getVisibleItems()` on the section returns only the collapsed group headers;
- * the 'Installed Skills' section must be expanded first before child item
- * labels are accessible. (governance H6)
+ * Tree structure (SkillTreeDataProvider): `skillsmith.skillsView` is a SINGLE
+ * VS Code view (one `ViewSection`). The "Installed Skills (N)" and "Available
+ * Skills" GROUPS are root TREE ITEMS *inside* that one section — they are NOT
+ * separate `ViewSection`s. The Installed group is created Expanded
+ * (`createGroup(..., expanded=true)`), so its child skill rows (label =
+ * `skill.name`, e.g. `my-e2e-skill`) are rendered and therefore returned by the
+ * section's flattened `getVisibleItems()`. So we read the single section's
+ * visible items directly rather than looking for a section titled
+ * "Installed Skills" (which does not exist — the earlier mistake).
  */
 import { browser } from '@wdio/globals'
-import type { ViewSection, CustomTreeSection, TreeItem } from 'wdio-vscode-service'
-
-/** Label set by SkillTreeDataProvider.buildInstalledGroupItem() (line 294). */
-const INSTALLED_SECTION_TITLE = 'Installed Skills'
+import type { CustomTreeSection, TreeItem } from 'wdio-vscode-service'
 
 export class SkillsTreePage {
   /**
-   * Opens the Skillsmith sidebar view and returns the labels of all items
-   * currently visible under the 'Installed Skills' group.
-   *
-   * Steps:
-   *  1. Open the Skillsmith activity-bar view control.
-   *  2. Get the ViewContent from the returned SideBarView.
-   *  3. Locate the 'Installed Skills' section.
-   *  4. Expand it if collapsed.
-   *  5. Call getVisibleItems() to collect the child rows.
-   *  6. Map each row to its label string.
+   * Opens the Skillsmith sidebar view and returns the labels of every tree row
+   * currently visible (group headers + their expanded children). The caller
+   * asserts on the presence of a specific installed-skill label.
    */
-  async getInstalledSkillLabels(): Promise<string[]> {
+  async getVisibleTreeLabels(): Promise<string[]> {
     const workbench = await browser.getWorkbench()
     const ctrl = await workbench.getActivityBar().getViewControl('Skillsmith')
     if (!ctrl) {
@@ -42,38 +31,18 @@ export class SkillsTreePage {
     }
     const view = await ctrl.openView()
 
-    // getSections() returns one ViewSection per collapsible group header.
     const content = view.getContent()
-    const sections: ViewSection[] = await content.getSections()
-
-    // Find the 'Installed Skills' section by title.
-    let installedSection: ViewSection | undefined
-    for (const section of sections) {
-      const title = await section.getTitle()
-      if (title.includes(INSTALLED_SECTION_TITLE)) {
-        installedSection = section
-        break
-      }
-    }
-
-    if (!installedSection) {
-      // No installed section yet (e.g. tree still loading) — return empty.
+    const sections = await content.getSections()
+    if (sections.length === 0) {
       return []
     }
 
-    // Expand the section so that child skill rows become visible.
-    const alreadyExpanded = await installedSection.isExpanded()
-    if (!alreadyExpanded) {
-      await installedSection.expand()
-    }
-
-    // Cast to CustomTreeSection: the Skillsmith tree is an extension-contributed
-    // tree view, so wdio-vscode-service wraps each section as a CustomTreeSection
-    // whose getVisibleItems() returns TreeItem[] (which has getLabel()).
-    // The abstract ViewSection.getVisibleItems() only guarantees ViewItem[], so
-    // the cast is required to reach the typed return.
-    const treeSection = installedSection as unknown as CustomTreeSection
-    const items: TreeItem[] = await treeSection.getVisibleItems()
+    // `skillsmith.skillsView` is a single tree section. Cast to CustomTreeSection
+    // (the concrete extension-tree wrapper) whose getVisibleItems() returns
+    // TreeItem[] (with getLabel()); the abstract ViewSection only guarantees
+    // ViewItem[] (no getLabel()).
+    const section = sections[0] as unknown as CustomTreeSection
+    const items: TreeItem[] = await section.getVisibleItems()
 
     const labels: string[] = []
     for (const item of items) {
