@@ -118,6 +118,10 @@ export function registerMcpSidebarObserver(deps: McpSidebarObserverDeps): McpSid
 
   return {
     rebind(): void {
+      // Cancel any in-flight offline debounce from the OLD client — otherwise a
+      // stale timer could fire goOffline() onto the freshly-swapped client even
+      // after it has already connected (governance, plan-review follow-up).
+      clearPendingTimer()
       subscription?.dispose()
       subscription = undefined
       // Preserve wasOffline across the swap; a reconnect on the new singleton

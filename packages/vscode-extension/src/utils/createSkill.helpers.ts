@@ -127,11 +127,27 @@ export async function runValidate(output: vscode.OutputChannel): Promise<void> {
   const TIMEOUT_MS = 30_000
 
   await new Promise<void>((resolve) => {
+    // Exactly one terminal path (timeout / error / exit) may report + resolve.
+    // `kill()` on timeout still fires `exit`, so without this guard the channel
+    // would get a spurious "exited with code null" line after the timeout
+    // message (governance follow-up).
+    let settled = false
+    const settle = (): boolean => {
+      if (settled) {
+        return false
+      }
+      settled = true
+      return true
+    }
+
     const child = crossSpawn('skillsmith', ['validate'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
     const timer = setTimeout(() => {
+      if (!settle()) {
+        return
+      }
       child.kill()
       output.appendLine('[error] skillsmith validate timed out after 30 s.')
       resolve()
@@ -145,12 +161,18 @@ export async function runValidate(output: vscode.OutputChannel): Promise<void> {
 
     child.on('error', (err) => {
       clearTimeout(timer)
+      if (!settle()) {
+        return
+      }
       output.appendLine(`[error] ${err.message}`)
       resolve()
     })
 
     child.on('exit', (code) => {
       clearTimeout(timer)
+      if (!settle()) {
+        return
+      }
       if (code === 0) {
         output.appendLine('skillsmith validate completed successfully.')
       } else {

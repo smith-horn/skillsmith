@@ -258,6 +258,29 @@ describe('registerMcpSidebarObserver — rebind / dispose', () => {
     observer.dispose()
   })
 
+  it('rebind cancels a pending offline debounce timer (no offline on the new client)', async () => {
+    const fake = makeFakeClient()
+    const { state, setOffline } = makeMessageState()
+    const { row, setMcpOffline } = makeOfflineRow()
+    const observer = registerMcpSidebarObserver({
+      getClient: () => fake.client,
+      messageState: state,
+      offlineRow: row,
+      debounceMs: 0,
+    })
+
+    // Old client drops; a config swap rebinds before the debounce timer fires.
+    fake.fire('disconnected')
+    observer.rebind()
+    await flush()
+
+    // The stale timer must NOT stamp offline onto the freshly-swapped client.
+    expect(setOffline).not.toHaveBeenCalled()
+    expect(setMcpOffline).not.toHaveBeenCalled()
+
+    observer.dispose()
+  })
+
   it('dispose tears down the subscription and clears a pending timer', async () => {
     const fake = makeFakeClient()
     const { state, setOffline } = makeMessageState()

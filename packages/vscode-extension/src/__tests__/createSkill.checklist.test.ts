@@ -134,4 +134,34 @@ describe('runValidate (SMI-5346)', () => {
       expect.stringContaining('validation output line')
     )
   })
+
+  it('on timeout: kills the child and writes ONLY the timeout line (post-kill exit is suppressed)', async () => {
+    const { runValidate } = await import('../utils/createSkill.helpers.js')
+    vi.useFakeTimers()
+    try {
+      // A child that never exits on its own — the 30s timeout must fire first.
+      const child = new EventEmitter() as FakeChild
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      child.kill = vi.fn()
+      spawnMock.mockImplementationOnce(() => child)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pending = runValidate(fakeOutput as any)
+      // Fire the 30s timeout: kill + timeout line + resolve.
+      await vi.advanceTimersByTimeAsync(30_000)
+      // kill() triggers `exit` on a real process — simulate it. The `settled`
+      // guard must suppress a second completion line.
+      child.emit('exit', null)
+      await pending
+
+      expect(child.kill).toHaveBeenCalled()
+      const lines = fakeOutput.appendLine.mock.calls.map((c: unknown[]) => String(c[0]))
+      expect(lines.some((l) => l.includes('timed out'))).toBe(true)
+      expect(lines.some((l) => l.includes('exited with code'))).toBe(false)
+      expect(lines.some((l) => l.includes('completed successfully'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

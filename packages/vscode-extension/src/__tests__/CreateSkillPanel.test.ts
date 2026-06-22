@@ -19,7 +19,6 @@ const {
   validateSkillNameMock,
   runCliMock,
   existsMock,
-  showPostCreateChecklistMock,
 } = vi.hoisted(() => ({
   createWebviewPanel: vi.fn(),
   showWarningMessage: vi.fn(),
@@ -29,7 +28,6 @@ const {
   validateSkillNameMock: vi.fn(),
   runCliMock: vi.fn(),
   existsMock: vi.fn(),
-  showPostCreateChecklistMock: vi.fn(),
 }))
 
 // ── vscode mock ──────────────────────────────────────────────────────────────
@@ -83,7 +81,6 @@ vi.mock('../utils/createSkill.helpers.js', () => ({
   targetDirFor: (name: string) => `/home/user/.claude/skills/${name}`,
   runCli: runCliMock,
   exists: existsMock,
-  showPostCreateChecklist: showPostCreateChecklistMock,
 }))
 
 // ── CSP / nonce mock ─────────────────────────────────────────────────────────
@@ -225,7 +222,6 @@ describe('CreateSkillPanel', () => {
     validateSkillNameMock.mockReset().mockReturnValue(true)
     runCliMock.mockReset().mockResolvedValue(0)
     existsMock.mockReset().mockResolvedValue(false)
-    showPostCreateChecklistMock.mockReset().mockResolvedValue(undefined)
     showNextStepsMock.mockReset()
     refreshAndWait.mockReset().mockResolvedValue(undefined)
     showWarningMessage.mockReset()
