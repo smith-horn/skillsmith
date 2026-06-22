@@ -1,6 +1,8 @@
 #!/bin/sh
 # Post-merge hook
 # - SMI-2552: Auto-install npm dependencies when package-lock.json changes
+# - SMI-5343: Also run/advise a HOST npm install (feeds host tooling + worktree
+#             symlinks) alongside the existing Docker path.
 # Fires after git pull (merge) and git merge. Non-blocking — cannot abort.
 
 # Color codes (match pre-commit style)
@@ -18,21 +20,41 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
   echo "${BLUE}=== Post-Merge: package-lock.json changed ===${NC}"
   echo ""
 
-  # Check if Docker container is running
+  # --- Docker path (SMI-2552, unchanged) -------------------------------------
   if command -v docker > /dev/null 2>&1 && \
      docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
     echo "${YELLOW}Installing updated dependencies in Docker...${NC}"
     if docker exec -w /app "$DOCKER_CONTAINER" npm install; then
-      echo "${GREEN}  Dependencies updated successfully.${NC}"
+      echo "${GREEN}  Docker dependencies updated successfully.${NC}"
     else
-      echo "${YELLOW}  npm install failed. Run manually:${NC}"
+      echo "${YELLOW}  Docker npm install failed. Run manually:${NC}"
       echo "    docker exec $DOCKER_CONTAINER npm install"
     fi
   else
     echo "${YELLOW}Docker container '${DOCKER_CONTAINER}' is not running.${NC}"
-    echo "  Start it and install deps:"
+    echo "  Start it and install Docker deps:"
     echo "    docker compose --profile dev up -d"
     echo "    docker exec $DOCKER_CONTAINER npm install"
+  fi
+
+  echo ""
+
+  # --- Host path (SMI-5343) --------------------------------------------------
+  # The host node_modules tree feeds host tooling (tsc, eslint) and is symlinked
+  # into every worktree — it must stay in sync with package-lock.json too.
+  # Always attempt the install; advisory-only if npm is unavailable (unlikely on
+  # a dev machine but graceful).
+  if command -v npm > /dev/null 2>&1; then
+    echo "${YELLOW}Installing updated dependencies on the host...${NC}"
+    if npm install; then
+      echo "${GREEN}  Host dependencies updated successfully.${NC}"
+    else
+      echo "${YELLOW}  Host npm install failed. Run manually:${NC}"
+      echo "    npm install"
+    fi
+  else
+    echo "${YELLOW}npm not found on host PATH — install dependencies manually:${NC}"
+    echo "  npm install"
   fi
 
   echo ""

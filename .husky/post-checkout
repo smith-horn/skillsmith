@@ -1,0 +1,91 @@
+#!/bin/sh
+# Post-checkout hook — SMI-5343: auto-install / advise when package-lock.json
+# differs between the old and new HEAD after a branch switch.
+#
+# Git invokes this hook with three positional arguments:
+#   $1 = prev_HEAD  (SHA before checkout)
+#   $2 = new_HEAD   (SHA after checkout)
+#   $3 = branch_flag  (1 = branch checkout, 0 = file checkout)
+#
+# Guard conditions — ALL must hold before attempting any install:
+#   1. $3 == 1   — branch checkout only; skip file/path checkouts ($3 == 0)
+#   2. $1 is NOT all-zeros — skip initial / orphan checkout (detached new worktree)
+#   3. $1 != $2  — skip no-op checkouts
+#   4. package-lock.json differs between $1 and $2
+#
+# Note: interactive rebase fires this hook once per applied commit. The lockfile
+# diff gate (condition 4) makes that a no-op for the common case where the
+# rebase doesn't change package-lock.json.
+#
+# Auto-install is confined to the Docker-running single-session path; if Docker
+# is down, an advisory is printed instead. Non-blocking (git ignores the exit
+# code of post-checkout; we always exit 0).
+
+# Color codes (match post-merge style)
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+DOCKER_CONTAINER="skillsmith-dev-1"
+PREV_HEAD="${1:-}"
+NEW_HEAD="${2:-}"
+BRANCH_FLAG="${3:-0}"
+ALL_ZEROS="0000000000000000000000000000000000000000"
+
+# Guard 1: branch checkout only
+if [ "$BRANCH_FLAG" != "1" ]; then
+  exit 0
+fi
+
+# Guard 2: skip initial/orphan checkout (prev_HEAD is all-zeros)
+if [ "$PREV_HEAD" = "$ALL_ZEROS" ]; then
+  exit 0
+fi
+
+# Guard 3: skip no-op checkout
+if [ "$PREV_HEAD" = "$NEW_HEAD" ]; then
+  exit 0
+fi
+
+# Guard 4: package-lock.json must differ between prev and new HEAD
+if ! git diff --name-only "$PREV_HEAD" "$NEW_HEAD" 2>/dev/null | grep -q '^package-lock\.json$'; then
+  exit 0
+fi
+
+echo ""
+echo "${BLUE}=== Post-Checkout: package-lock.json changed ===${NC}"
+echo ""
+
+# --- Docker path (single-session auto-install) --------------------------------
+# Confine auto-install to the case where Docker is running — this matches the
+# deliberate single-session scope of post-merge (P-5: check mode stays read-
+# only; writes are in install/post-merge/post-checkout only, not pre-commit/
+# pre-push which may run on a shared worktree tree).
+if command -v docker > /dev/null 2>&1 && \
+   docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
+  echo "${YELLOW}Installing updated dependencies in Docker...${NC}"
+  if docker exec -w /app "$DOCKER_CONTAINER" npm install; then
+    echo "${GREEN}  Docker dependencies updated successfully.${NC}"
+  else
+    echo "${YELLOW}  Docker npm install failed. Run manually:${NC}"
+    echo "    docker exec $DOCKER_CONTAINER npm install"
+  fi
+else
+  echo "${YELLOW}Docker container '${DOCKER_CONTAINER}' is not running.${NC}"
+  echo "  Dependencies may be stale — install when the container is up:"
+  echo "    docker compose --profile dev up -d"
+  echo "    docker exec $DOCKER_CONTAINER npm install"
+fi
+
+echo ""
+
+# --- Host advisory -----------------------------------------------------------
+# Always remind about the host tree; don't auto-run npm here because the hook
+# could fire in any interactive-rebase/worktree context where a silent install
+# would be surprising. The pre-commit/pre-push freshness guard is the backstop.
+echo "${YELLOW}Also run on the host to keep tooling + worktree symlinks in sync:${NC}"
+echo "  npm install"
+echo ""
+
+exit 0

@@ -81,6 +81,12 @@ Disable at any time by setting `skillsmith.telemetry.enabled: false` or by clear
 
 ## Testing
 
+Worktree-local vscode tests (host-only, resolving through symlinked node_modules):
+
+```bash
+npm run test:vscode
+```
+
 Unit tests run inside the Skillsmith Docker dev container:
 
 ```bash
