@@ -43,7 +43,11 @@ const { skillAudit, isConnected } = vi.hoisted(() => ({
   isConnected: vi.fn(() => true),
 }))
 vi.mock('../mcp/McpClient.js', () => ({
-  getMcpClient: () => ({ skillAudit, isConnected }),
+  getMcpClient: () => ({
+    skillAudit,
+    isConnected,
+    onStatusChange: vi.fn(() => ({ dispose: vi.fn() })),
+  }),
 }))
 
 import * as vscode from 'vscode'

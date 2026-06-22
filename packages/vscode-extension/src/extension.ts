@@ -58,7 +58,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Create centralized SkillService. SMI-5288: mock data is demo-only — the
   // demoMode resolver gates whether sample skills are shown when the server is
   // unavailable.
-  const skillService = new SkillService(getMcpClient(), () =>
+  const skillService = new SkillService(getMcpClient, () =>
     vscode.workspace.getConfiguration('skillsmith').get<boolean>('demoMode', false)
   )
   SkillDetailPanel.setSkillService(skillService)
@@ -220,6 +220,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration('skillsmith.mcp')) {
         initializeMcpClientFromSettings()
         registerVersionCheck()
+        mcpStatusBar?.rebind()
         void connectWithProgress()
       }
     })

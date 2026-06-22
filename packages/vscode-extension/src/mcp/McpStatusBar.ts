@@ -11,6 +11,7 @@ import { getMcpClient } from './McpClient.js'
 export class McpStatusBar {
   private statusBarItem: vscode.StatusBarItem
   private disposables: vscode.Disposable[] = []
+  private statusSub?: vscode.Disposable
 
   constructor() {
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)
@@ -18,19 +19,24 @@ export class McpStatusBar {
     this.updateStatus('disconnected')
   }
 
+  private subscribeToStatus(): void {
+    this.statusSub?.dispose()
+    const client = getMcpClient()
+    this.statusSub = client.onStatusChange((status) => this.updateStatus(status))
+    this.updateStatus(client.getStatus())
+  }
+
   /**
    * Initialize and show the status bar
    */
   initialize(): void {
-    const client = getMcpClient()
-    const subscription = client.onStatusChange((status) => {
-      this.updateStatus(status)
-    })
-    this.disposables.push(subscription)
-
-    // Show with initial status
-    this.updateStatus(client.getStatus())
+    this.subscribeToStatus()
     this.statusBarItem.show()
+  }
+
+  /** Re-bind to the current singleton after a settings-driven swap (SMI-5341 Fix 3). */
+  rebind(): void {
+    this.subscribeToStatus()
   }
 
   /**
@@ -71,6 +77,8 @@ export class McpStatusBar {
    */
   dispose(): void {
     this.statusBarItem.dispose()
+    this.statusSub?.dispose()
+    this.statusSub = undefined
     this.disposables.forEach((d) => d.dispose())
   }
 }

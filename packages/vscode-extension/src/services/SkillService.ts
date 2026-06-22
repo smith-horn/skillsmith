@@ -8,7 +8,10 @@
  * and `getRichSkill` throws so the UI can show an honest "server unavailable"
  * state. Tier-denied errors always propagate (never mocked).
  *
- * Accepts McpClient via constructor injection for testability.
+ * Accepts a McpClient RESOLVER (`() => McpClient`) via constructor injection —
+ * resolved lazily per call so a singleton swap (initializeMcpClient on a
+ * settings change) can't orphan the service with a dead client (SMI-5341).
+ * Testable by injecting a resolver.
  */
 import type { McpClient } from '../mcp/McpClient.js'
 import type { McpSkillSearchResult, McpGetSkillResponse } from '../mcp/types.js'
@@ -43,7 +46,7 @@ export class SkillService {
   private static readonly CACHE_TTL_MS = 60_000
 
   constructor(
-    private readonly client: McpClient,
+    private readonly getClient: () => McpClient,
     // SMI-5288: resolves whether explicit demo mode is on. Defaults to off so
     // mock data never leaks into the live product unless the caller opts in.
     private readonly demoMode: () => boolean = () => false
@@ -65,9 +68,9 @@ export class SkillService {
       return { results: cached.results, isOffline: false }
     }
 
-    if (this.client.isConnected()) {
+    if (this.getClient().isConnected()) {
       try {
-        const response = await this.client.search(query, options)
+        const response = await this.getClient().search(query, options)
         const results = response.results.map(mapSearchResultToSkillData)
         this.searchCache.set(cacheKey, { results, timestamp: Date.now() })
         return { results, isOffline: false }
@@ -102,9 +105,9 @@ export class SkillService {
    *   skill is not representable.
    */
   async getRichSkill(skillId: string): Promise<RichSkillResult> {
-    if (this.client.isConnected()) {
+    if (this.getClient().isConnected()) {
       try {
-        const response = await this.client.getSkill(skillId)
+        const response = await this.getClient().getSkill(skillId)
         return { skill: mapSkillDetailsToExtendedSkillData(response), isOffline: false }
       } catch (error) {
         if (error instanceof McpToolError && error.code === 'TierDenied') {
@@ -141,7 +144,7 @@ export class SkillService {
 
   /** Proxy for connection status */
   isConnected(): boolean {
-    return this.client.isConnected()
+    return this.getClient().isConnected()
   }
 
   /** Clear the search cache */

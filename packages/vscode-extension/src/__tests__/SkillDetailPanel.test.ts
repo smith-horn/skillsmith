@@ -49,12 +49,28 @@ vi.mock('../services/Telemetry.js', () => ({
 // after a successful render. Stub it inert here so these error/action tests stay
 // focused; the advisory behaviour itself is covered in
 // SkillDetailPanel.advisories.test.ts.
-vi.mock('../mcp/McpClient.js', () => ({
-  getMcpClient: () => ({
+//
+// SMI-5341: hoist statusListeners + onStatusChange so tests can fire 'connected'
+// events and exercise the auto-refresh guard added in Fix 2.
+const { skillAudit, isConnected, statusListeners, onStatusChange } = vi.hoisted(() => {
+  const statusListeners: Array<(s: string) => void> = []
+  return {
     skillAudit: vi.fn().mockResolvedValue({ advisoriesAvailable: false, advisories: [] }),
-    isConnected: () => true,
-  }),
+    isConnected: vi.fn(() => true),
+    statusListeners,
+    onStatusChange: vi.fn((cb: (s: string) => void) => {
+      statusListeners.push(cb)
+      return { dispose: vi.fn() }
+    }),
+  }
+})
+
+vi.mock('../mcp/McpClient.js', () => ({
+  getMcpClient: () => ({ skillAudit, isConnected, onStatusChange }),
 }))
+
+/** Fire a status event through all currently-registered listeners. */
+const fireStatus = (s: string) => statusListeners.forEach((l) => l(s))
 
 import * as vscode from 'vscode'
 import { SkillDetailPanel } from '../views/SkillDetailPanel.js'
@@ -151,6 +167,14 @@ describe('SkillDetailPanel', () => {
     vi.mocked(vscode.commands.executeCommand).mockReset()
     uninstallByTarget.mockReset()
     SkillDetailPanel.setTreeProvider(undefined)
+    // SMI-5341: drain listeners registered by previous tests so they don't
+    // cross-contaminate. Mutate in place so the hoisted reference stays valid.
+    statusListeners.length = 0
+    skillAudit.mockReset()
+    skillAudit.mockResolvedValue({ advisoriesAvailable: false, advisories: [] })
+    isConnected.mockReset()
+    isConnected.mockReturnValue(true)
+    onStatusChange.mockClear()
   })
 
   afterEach(() => {
@@ -460,6 +484,132 @@ describe('SkillDetailPanel', () => {
         )
       })
       expect(uninstallByTarget).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('reconnect auto-refresh guard (SMI-5341 Fix 2)', () => {
+    // (a) After a failed initial load (_skillData === null), 'connected' triggers
+    //     exactly one additional getRichSkill call (the auto-recovery reload).
+    it('fires one extra getRichSkill call when connected event arrives after a failed load (a)', async () => {
+      const getRichSkill = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')) // initial load fails
+        .mockResolvedValueOnce({
+          skill: {
+            id: 'test/skill',
+            name: 'Test Skill',
+            description: 'A test skill',
+            author: 'tester',
+            category: 'testing',
+            trustTier: 'verified',
+            score: 85,
+          },
+          isOffline: false,
+        }) // retry succeeds
+      SkillDetailPanel.setSkillService(createMockSkillService({ getRichSkill }))
+
+      const mock = createMockPanel()
+      vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(mock.panel)
+      SkillDetailPanel.createOrShow(EXTENSION_URI, 'test/skill')
+
+      // Wait for error state — _skillData remains null.
+      await vi.waitFor(() => {
+        expect(mock.getHtmlHistory().at(-1) ?? '').toContain('Error Loading Skill')
+      })
+      expect(getRichSkill).toHaveBeenCalledTimes(1)
+
+      // Fire 'connected' — the guard should trigger _loadAndUpdate once.
+      fireStatus('connected')
+
+      await vi.waitFor(() => {
+        expect(getRichSkill).toHaveBeenCalledTimes(2)
+      })
+      // The panel should now show success content.
+      await vi.waitFor(() => {
+        expect(mock.getHtmlHistory().at(-1) ?? '').toContain('Test Skill')
+      })
+    })
+
+    // (b) After a successful initial load (_skillData set), 'connected' does NOT
+    //     trigger another getRichSkill call.
+    it('does NOT call getRichSkill again when connected fires after a successful load (b)', async () => {
+      const getRichSkill = vi.fn().mockResolvedValue({
+        skill: {
+          id: 'test/skill',
+          name: 'Test Skill',
+          description: 'A test skill',
+          author: 'tester',
+          category: 'testing',
+          trustTier: 'verified',
+          score: 85,
+        },
+        isOffline: false,
+      })
+      SkillDetailPanel.setSkillService(createMockSkillService({ getRichSkill }))
+
+      const mock = createMockPanel()
+      vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(mock.panel)
+      SkillDetailPanel.createOrShow(EXTENSION_URI, 'test/skill')
+
+      // Wait for successful load — _skillData is now set.
+      await vi.waitFor(() => {
+        expect(mock.getHtmlHistory().at(-1) ?? '').toContain('Test Skill')
+      })
+      expect(getRichSkill).toHaveBeenCalledTimes(1)
+
+      // Fire 'connected' — guard should NOT reload since _skillData !== null.
+      fireStatus('connected')
+      // Allow microtasks to flush.
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(getRichSkill).toHaveBeenCalledTimes(1)
+    })
+
+    // (c) A non-'connected' status event ('error') does not trigger a reload
+    //     even when the panel is in error state.
+    it('does NOT reload on a non-connected status event like error (c)', async () => {
+      const getRichSkill = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'))
+      SkillDetailPanel.setSkillService(createMockSkillService({ getRichSkill }))
+
+      const mock = createMockPanel()
+      vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(mock.panel)
+      SkillDetailPanel.createOrShow(EXTENSION_URI, 'test/skill')
+
+      await vi.waitFor(() => {
+        expect(mock.getHtmlHistory().at(-1) ?? '').toContain('Error Loading Skill')
+      })
+      expect(getRichSkill).toHaveBeenCalledTimes(1)
+
+      // Fire 'error' — guard condition requires status === 'connected', so no reload.
+      fireStatus('error')
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(getRichSkill).toHaveBeenCalledTimes(1)
+    })
+
+    // (d) After the panel is disposed, a 'connected' event must NOT call
+    //     getRichSkill again and must not throw.
+    it('does NOT call getRichSkill after disposal when connected fires (d)', async () => {
+      const getRichSkill = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'))
+      SkillDetailPanel.setSkillService(createMockSkillService({ getRichSkill }))
+
+      const mock = createMockPanel()
+      vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(mock.panel)
+      SkillDetailPanel.createOrShow(EXTENSION_URI, 'test/skill')
+
+      await vi.waitFor(() => {
+        expect(mock.getHtmlHistory().at(-1) ?? '').toContain('Error Loading Skill')
+      })
+      expect(getRichSkill).toHaveBeenCalledTimes(1)
+
+      // Dispose the panel — _disposed flips to true, listeners are torn down.
+      SkillDetailPanel.currentPanel?.dispose()
+
+      // Fire 'connected' — must not call getRichSkill and must not throw.
+      expect(() => fireStatus('connected')).not.toThrow()
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(getRichSkill).toHaveBeenCalledTimes(1)
     })
   })
 })
