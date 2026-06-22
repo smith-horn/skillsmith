@@ -28,13 +28,7 @@ import type {
   CreatePanelOutbound,
   CreateFormFields,
 } from './create-panel-types.js'
-import {
-  buildCreateArgs,
-  runCli,
-  exists,
-  targetDirFor,
-  showPostCreateChecklist,
-} from '../utils/createSkill.helpers.js'
+import { buildCreateArgs, runCli, exists, targetDirFor } from '../utils/createSkill.helpers.js'
 import { getCreateSkillHtml } from './create-panel-html.js'
 
 const VALID_TYPES: ReadonlySet<string> = new Set(['basic', 'intermediate', 'advanced'])
@@ -228,7 +222,7 @@ export class CreateSkillPanel {
         // SKILL.md may be absent for an unexpected scaffold shape — not fatal.
       }
       this.dispose()
-      void showPostCreateChecklist(targetDir, fields.name)
+      this._treeProvider.showNextSteps(fields.name, targetDir)
       return
     }
 

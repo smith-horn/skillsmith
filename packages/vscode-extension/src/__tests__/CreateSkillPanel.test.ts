@@ -109,9 +109,13 @@ vi.mock('../utils/skillNameValidation.js', () => ({
 
 // ── SkillTreeDataProvider mock ────────────────────────────────────────────────
 const refreshAndWait = vi.fn(async () => {})
+// SMI-5346: the post-create toast was replaced by the sidebar "Next steps"
+// section — the panel now calls `treeProvider.showNextSteps(name, targetDir)`.
+const showNextStepsMock = vi.fn()
 vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   SkillTreeDataProvider: class {
     refreshAndWait = refreshAndWait
+    showNextSteps = showNextStepsMock
   },
 }))
 
@@ -202,6 +206,7 @@ function makeTreeProvider(): SkillTreeDataProvider {
   return {
     refreshAndWait,
     getInstalledSkills: vi.fn(() => []),
+    showNextSteps: showNextStepsMock,
   } as unknown as SkillTreeDataProvider
 }
 
@@ -221,6 +226,7 @@ describe('CreateSkillPanel', () => {
     runCliMock.mockReset().mockResolvedValue(0)
     existsMock.mockReset().mockResolvedValue(false)
     showPostCreateChecklistMock.mockReset().mockResolvedValue(undefined)
+    showNextStepsMock.mockReset()
     refreshAndWait.mockReset().mockResolvedValue(undefined)
     showWarningMessage.mockReset()
     openTextDocument.mockReset().mockRejectedValue(new Error('not found'))
@@ -313,9 +319,9 @@ describe('CreateSkillPanel', () => {
       )
       expect(trackMock).toHaveBeenCalledWith('vscode_create_complete', { type: 'basic' })
       expect(refreshAndWait).toHaveBeenCalled()
-      expect(showPostCreateChecklistMock).toHaveBeenCalledWith(
-        '/home/user/.claude/skills/my-skill',
-        'my-skill'
+      expect(showNextStepsMock).toHaveBeenCalledWith(
+        'my-skill',
+        '/home/user/.claude/skills/my-skill'
       )
     })
   })

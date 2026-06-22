@@ -15,7 +15,10 @@ vi.mock('vscode', () => {
     window: { showWarningMessage, showErrorMessage, showInformationMessage, showQuickPick },
     commands: { registerCommand },
     env: { openExternal: vi.fn() },
-    Uri: { parse: (s: string) => ({ toString: () => s }) },
+    Uri: {
+      file: (s: string) => ({ toString: () => s, fsPath: s }),
+      parse: (s: string) => ({ toString: () => s }),
+    },
     workspace: {
       getConfiguration: vi.fn(() => ({ get: vi.fn(() => undefined) })),
     },
@@ -43,6 +46,7 @@ vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   SkillTreeDataProvider: class {
     refreshAndWait = refreshAndWait
     getInstalledSkills = getInstalledSkills
+    showNextSteps = vi.fn()
   },
 }))
 
@@ -95,8 +99,17 @@ describe('uninstallCommand (SMI-4195)', () => {
     vi.resetModules()
     const { registerUninstallCommand } = await import('../commands/uninstallCommand.js')
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
     context = { subscriptions: [] }
+    const fakeCtx = {
+      globalState: {
+        get: vi.fn(),
+        update: vi.fn(async () => {}),
+        keys: vi.fn(() => []),
+        setKeysForSync: vi.fn(),
+      },
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const provider = new SkillTreeDataProvider(fakeCtx as any)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     registerUninstallCommand(context as any, provider as any)
     const call = registerCommand.mock.calls[0]
@@ -262,7 +275,16 @@ describe('uninstallByTarget core (SMI-5308 / detail-panel)', () => {
     const mod = await import('../commands/uninstallCommand.js')
     uninstallByTarget = mod.uninstallByTarget
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    provider = new SkillTreeDataProvider()
+    const fakeContext = {
+      globalState: {
+        get: vi.fn(),
+        update: vi.fn(async () => {}),
+        keys: vi.fn(() => []),
+        setKeysForSync: vi.fn(),
+      },
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    provider = new SkillTreeDataProvider(fakeContext as any)
   })
 
   afterEach(async () => {

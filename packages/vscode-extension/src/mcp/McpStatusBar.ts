@@ -11,7 +11,7 @@ import { getMcpClient } from './McpClient.js'
 export class McpStatusBar {
   private statusBarItem: vscode.StatusBarItem
   private disposables: vscode.Disposable[] = []
-  private statusSub?: vscode.Disposable
+  private statusSub: vscode.Disposable | undefined
 
   constructor() {
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)

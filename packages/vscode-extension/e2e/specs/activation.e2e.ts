@@ -9,7 +9,7 @@ import { browser, expect } from '@wdio/globals'
 
 const EXTENSION_ID = 'skillsmith.skillsmith-vscode'
 
-// The 15 commands contributed in package.json `contributes.commands`.
+// The 17 commands contributed in package.json `contributes.commands`.
 const EXPECTED_COMMANDS = [
   'skillsmith.searchSkills',
   'skillsmith.installSkill',
@@ -26,6 +26,8 @@ const EXPECTED_COMMANDS = [
   'skillsmith.compareWithSelected',
   'skillsmith.diffSkill',
   'skillsmith.auditInventory',
+  'skillsmith.runValidate',
+  'skillsmith.dismissNextSteps',
 ]
 
 describe('Skillsmith extension activation', () => {
@@ -45,7 +47,7 @@ describe('Skillsmith extension activation', () => {
     expect(isActive).toBe(true)
   })
 
-  it('registers all 15 contributed commands', async () => {
+  it('registers all 17 contributed commands', async () => {
     const registered: string[] = await browser.executeWorkbench((vscode) =>
       vscode.commands.getCommands(true)
     )

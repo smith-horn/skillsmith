@@ -13,6 +13,7 @@ import { type ExtensionTrustTier, normalizeTrustTier, getTrustTierLabel } from '
 import { type SkillData } from '../types/skill.js'
 import { type SearchFilters } from '../commands/searchFilters.js'
 import { buildInstalledKeySet, skillComparisonKey } from '../utils/skillId.js'
+import { NextStepsManager } from './SkillTreeDataProvider.nextSteps.js'
 
 /** Maximum length for skill descriptions */
 const MAX_DESCRIPTION_LENGTH = 100
@@ -52,8 +53,13 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   private demo = false
   /** Active discovery filters — single source of truth (#1433). Ephemeral. */
   private filters: SearchFilters = {}
+  /** Whether the MCP server is currently offline (SMI-5345). */
+  private mcpOffline = false
+  /** Next-steps checklist manager (SMI-5346). */
+  private readonly nextStepsManager: NextStepsManager
 
-  constructor() {
+  constructor(context: vscode.ExtensionContext) {
+    this.nextStepsManager = new NextStepsManager(context)
     // Load installed skills on initialization
     void this.loadInstalledSkills()
   }
@@ -66,28 +72,49 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
+   * Sets the MCP-offline state (SMI-5345).
+   * When offline, a pinned reconnect row is prepended to the root groups.
+   */
+  setMcpOffline(isOffline: boolean): void {
+    this.mcpOffline = isOffline
+    this._onDidChangeTreeData.fire()
+  }
+
+  /**
+   * Shows the next-steps checklist section for a newly-created skill (SMI-5346).
+   *
+   * - Resets the per-create dismissed flag (per-create reset).
+   * - Tracks 'vscode_create_checklist_view' exactly once, synchronously.
+   * - Fires _onDidChangeTreeData.
+   */
+  showNextSteps(name: string, targetDir: string): void {
+    this.nextStepsManager.show(name, targetDir, () => {
+      this._onDidChangeTreeData.fire()
+    })
+  }
+
+  /**
+   * Dismisses the next-steps section (SMI-5346).
+   * Persists dismissal in globalState so it survives reloads.
+   */
+  dismissNextSteps(): void {
+    this.nextStepsManager.dismiss(() => {
+      this._onDidChangeTreeData.fire()
+    })
+  }
+
+  /**
    * Sets search results as available skills.
-   *
-   * The raw query is stored SEPARATELY from any display suffix (#1432 / #1433):
-   * earlier code conflated the query with the `(Demo)`/`all skills` display
-   * label, so the context formatter could not recover the true query. Callers
-   * now pass the true `rawQuery` plus an optional `demo` flag; the demo
-   * annotation is composed at render time from `demo`, never baked into the
-   * stored query.
-   *
-   * @param results - Search results to display
+   * Raw query stored separately from display suffix (#1432 / #1433).
    * @param rawQuery - The true search query ('' for browse-all)
-   * @param meta.demo - Whether the results are demo-mode mock data
+   * @param meta.demo - Whether results are demo-mode mock data
    */
   setSearchResults(results: SkillData[], rawQuery: string, meta: { demo?: boolean } = {}): void {
     this.rawQuery = rawQuery
     this.demo = meta.demo ?? false
-    // `isInstalled` is intentionally false for all search results stored here.
-    // Whether a registry hit is ALSO installed locally is determined at render
-    // time in `getGroupChildren` via the normalized id cross-reference (H4).
-    // `installedElsewhere` (set there) is the authoritative "also installed"
-    // signal for the Available surface — it must never be baked into the stored
-    // item because the installed set can change between renders.
+    // `isInstalled` stays false here; `installedElsewhere` is computed at
+    // render time via cross-reference so getParent routes Available items
+    // correctly (#1431 / SMI-5298, H4 / C2).
     this.availableSkills = results.map((skill) => {
       const tier = normalizeTrustTier(skill.trustTier)
       const item: SkillItemData = {
@@ -107,11 +134,7 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
     this._onDidChangeTreeData.fire()
   }
 
-  /**
-   * Clears search results. Does NOT clear the active filters — clearing
-   * results (e.g. a no-results or offline run) must leave the user's filter
-   * selection intact so the Clear Filters action still reflects reality.
-   */
+  /** Clears search results without clearing active filters. */
   clearSearchResults(): void {
     this.availableSkills = []
     this.rawQuery = ''
@@ -210,18 +233,18 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Returns the parent of the given element.
-   *
-   * Required by `vscode.TreeView.reveal` (#1431 / SMI-5298). Implemented as a
-   * PURE DERIVATION rather than a mutable membership map: a skill can appear in
-   * BOTH the Installed and Available groups (installed AND a search hit), so any
-   * cached single-parent map would be wrong. Parentage is derived solely from
-   * the element's type and `contextValue`/`isInstalled`:
-   *   - group items → `undefined` (root)
-   *   - installed skill (`contextValue === 'installedSkill'`) → Installed group
-   *   - available skill (`contextValue === 'skill'`) → Available group
+   * Returns the parent of the given element (required by TreeView.reveal,
+   * #1431 / SMI-5298). Pure derivation — no cached map, since a skill can
+   * appear in both Installed and Available groups simultaneously.
    */
   getParent(element: SkillTreeItem): SkillTreeItem | undefined {
+    // Next-steps row items belong to the nextSteps group (must be checked BEFORE
+    // the general group guard, because checklist rows use itemType='group').
+    if (element.contextValue === 'nextStepsRow') {
+      return this.nextStepsManager.buildGroupItem()
+    }
+
+    // Group items (nextSteps group, offline row, installed, available) are root items.
     if (element.itemType === 'group') {
       return undefined
     }
@@ -235,11 +258,7 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
     return this.getAvailableGroupItem()
   }
 
-  /**
-   * Returns the Available group `SkillTreeItem` when search results exist, else
-   * `undefined` (so `reveal` no-ops). Shares the single group-builder with
-   * `getRootGroups()` so the id matches and `TreeView.reveal` can resolve it.
-   */
+  /** Returns the Available group item when search results exist, else undefined. */
   getAvailableGroupItem(): SkillTreeItem | undefined {
     if (this.availableSkills.length === 0) {
       return undefined
@@ -247,21 +266,12 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
     return this.buildAvailableGroupItem()
   }
 
-  /**
-   * Returns installed skills in a form suitable for quickPick consumers
-   * (e.g., uninstall/create commands) without requiring a tree selection.
-   * Data is refreshed via `refresh()`; callers awaiting fresh state should
-   * call `await provider.refreshAndWait()` first.
-   */
+  /** Returns installed skills for quickPick consumers (uninstall/create). */
   getInstalledSkills(): readonly SkillItemData[] {
     return this.installedSkills
   }
 
-  /**
-   * Triggers a reload and resolves when the installed-skills list is current.
-   * Preferred over `refresh()` when callers need to observe the post-refresh
-   * state (e.g., a command that enumerates after uninstalling).
-   */
+  /** Triggers a reload and resolves when the installed-skills list is current. */
   async refreshAndWait(): Promise<void> {
     await this.loadInstalledSkills()
   }
@@ -269,20 +279,34 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   /**
    * Gets the root level groups.
    *
-   * Ordering (#1431 / SMI-5298): when a search is active (`availableSkills`
-   * populated) the Available group renders FIRST so just-searched results lead;
-   * with no active search, Installed-first (the default browse layout).
+   * Ordering (#1431 / SMI-5298 / SMI-5345 / SMI-5346):
+   *   1. Pinned MCP-offline reconnect row (if offline)
+   *   2. Next steps group (if visible)
+   *   3. Available Skills (if search active) or Installed Skills (default)
+   *   4. Installed Skills (always present)
    */
   private getRootGroups(): SkillTreeItem[] {
-    const installedGroup = this.buildInstalledGroupItem()
+    const groups: SkillTreeItem[] = []
 
-    // Show available skills group only when there are search results.
-    if (this.availableSkills.length > 0) {
-      // Available-first while searching.
-      return [this.buildAvailableGroupItem(), installedGroup]
+    // (1) Pinned offline reconnect row (SMI-5345)
+    if (this.mcpOffline) {
+      groups.push(SkillTreeItem.createMcpOfflineRow())
     }
 
-    return [installedGroup]
+    // (2) Next-steps section (SMI-5346)
+    if (this.nextStepsManager.isVisible()) {
+      groups.push(this.nextStepsManager.buildGroupItem())
+    }
+
+    // (3+4) Available-first while searching; otherwise Installed only.
+    const installedGroup = this.buildInstalledGroupItem()
+    if (this.availableSkills.length > 0) {
+      groups.push(this.buildAvailableGroupItem(), installedGroup)
+    } else {
+      groups.push(installedGroup)
+    }
+
+    return groups
   }
 
   /**
@@ -299,16 +323,9 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Builds the Available group header. Single source of truth shared by
-   * `getRootGroups()`, `getAvailableGroupItem()`, and `getParent()` so the
-   * stable id (`group:available`) matches across all reveal/parent lookups.
-   *
-   * The label is now the COUNT-BEARING header only (#1432 plan-review #8): the
-   * query + filter context lives in the persistent `TreeView.message` banner,
-   * so the two surfaces are complementary, not duplicate. `createGroup` appends
-   * the `(N)` count; the stable `group:available` id is decoupled from the
-   * label (set from `groupId` in `SkillTreeItem.setupGroupItem`), so changing
-   * the label never regresses the reveal contract (#1431 / SMI-5298).
+   * Builds the Available group header (single source of truth for label/id).
+   * Label is count-bearing only (#1432); stable `group:available` id decoupled
+   * from label so TreeView.reveal never regresses (#1431 / SMI-5298).
    */
   private buildAvailableGroupItem(): SkillTreeItem {
     return SkillTreeItem.createGroup(
@@ -320,14 +337,8 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Gets children for a specific group.
-   *
-   * For the `available` branch the installed-key set is computed once per
-   * render call and used to mark each registry hit with `installedElsewhere`
-   * when its normalized slug matches a locally-installed skill. This is a
-   * render-time annotation — the stored `availableSkills` items are never
-   * mutated and `isInstalled` is left false so `getParent` continues routing
-   * Available items to the Available group (#1431 / SMI-5298, H4 / C2).
+   * Gets children for a specific group. Available branch computes the
+   * installedElsewhere marker at render time (H4 / #1431 / SMI-5298).
    */
   private getGroupChildren(groupId?: string): SkillTreeItem[] {
     switch (groupId) {
@@ -343,6 +354,8 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
           return SkillTreeItem.createSkill(skill)
         })
       }
+      case 'nextSteps':
+        return this.nextStepsManager.buildRows()
       default:
         return []
     }

@@ -9,11 +9,10 @@
  * The CLI is the source of truth for templates; this module never scaffolds inline.
  */
 import * as vscode from 'vscode'
-import * as path from 'node:path'
 import * as os from 'node:os'
+import * as path from 'node:path'
 import * as fs from 'node:fs/promises'
 import crossSpawn from 'cross-spawn'
-import { track } from '../services/Telemetry.js'
 
 /** The four fields the Create Skill form collects. */
 export interface CreateFormFields {
@@ -111,28 +110,55 @@ export async function exists(p: string): Promise<boolean> {
 }
 
 /**
- * Post-create authoring checklist (SMI-5312 / GH #1453). Best-effort: invoked
- * fire-and-forget (`void`), so it must never reject — `executeCommand`/`openExternal`
- * can throw (host shutting down, unregistered scheme) and an unhandled rejection
- * would surface to the user. Swallow; the actions are optional.
+ * Run `skillsmith validate` against the current skill (SMI-5346).
+ *
+ * Injection-safe: args are passed as an array to cross-spawn, never via shell.
+ * The command is intended to be registered as 'skillsmith.runValidate' and
+ * wrapped with withTelemetry by the queen (extension.ts).
+ *
+ * Races a 30-second timeout that kills the child and writes a timeout line to
+ * the output channel. On exit-0 writes a success line; on non-zero writes a
+ * failure line + hint.
  */
-export async function showPostCreateChecklist(targetDir: string, name: string): Promise<void> {
-  const OPEN_FOLDER = 'Open folder'
-  const DOCS = 'Authoring docs'
-  try {
-    const action = await vscode.window.showInformationMessage(
-      `Created skill "${name}". Next: fill in SKILL.md (frontmatter + instructions), add examples, then publish.`,
-      OPEN_FOLDER,
-      DOCS
-    )
-    if (action === OPEN_FOLDER) {
-      track('vscode_create_checklist_action', { action: 'open_folder' })
-      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targetDir))
-    } else if (action === DOCS) {
-      track('vscode_create_checklist_action', { action: 'docs' })
-      await vscode.env.openExternal(vscode.Uri.parse('https://skillsmith.app/docs'))
+export async function runValidate(output: vscode.OutputChannel): Promise<void> {
+  output.show(true)
+  output.appendLine('Running skillsmith validate…')
+
+  const TIMEOUT_MS = 30_000
+
+  await new Promise<void>((resolve) => {
+    const child = crossSpawn('skillsmith', ['validate'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    const timer = setTimeout(() => {
+      child.kill()
+      output.appendLine('[error] skillsmith validate timed out after 30 s.')
+      resolve()
+    }, TIMEOUT_MS)
+
+    const emit = (buf: Buffer): void => {
+      output.append(buf.toString('utf8'))
     }
-  } catch {
-    // Optional next-step action failed; nothing actionable to surface.
-  }
+    child.stdout?.on('data', emit)
+    child.stderr?.on('data', emit)
+
+    child.on('error', (err) => {
+      clearTimeout(timer)
+      output.appendLine(`[error] ${err.message}`)
+      resolve()
+    })
+
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      if (code === 0) {
+        output.appendLine('skillsmith validate completed successfully.')
+      } else {
+        output.appendLine(
+          `skillsmith validate exited with code ${String(code)}. Check the output above for details.`
+        )
+      }
+      resolve()
+    })
+  })
 }

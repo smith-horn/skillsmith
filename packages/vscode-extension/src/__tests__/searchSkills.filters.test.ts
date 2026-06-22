@@ -114,10 +114,23 @@ function makeService(result: { results: SkillData[]; isOffline: boolean }) {
   return { search: vi.fn(async () => result) }
 }
 
+/**
+ * SMI-5345: `performSearch` routes the persistent banner / no-results / offline
+ * copy through the `SidebarMessageState` machine (the single owner of
+ * `view.message`) instead of writing `view.message` directly. Tests assert on
+ * `setSearchBanner` and pass this mock as the (now required) dep.
+ */
+function makeMessageState() {
+  return { setFirstRunHint: vi.fn(), setSearchBanner: vi.fn(), setOffline: vi.fn() }
+}
+
+let messageState = makeMessageState()
+
 describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     currentToken = { isCancellationRequested: false }
+    messageState = makeMessageState()
   })
 
   it('performSearch threads stored filters into skillService.search (via search command)', async () => {
@@ -135,6 +148,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(service.search).toHaveBeenCalledWith('react', filters)
@@ -157,6 +171,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(provider.setFilters).toHaveBeenCalledWith({ trustTier: 'verified' })
@@ -182,6 +197,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(service.search).toHaveBeenCalledWith('', { category: 'DevOps' })
@@ -206,6 +222,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(provider.setFilters).not.toHaveBeenCalled()
@@ -230,6 +247,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(provider.clearFilters).toHaveBeenCalledTimes(1)
@@ -255,9 +273,12 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
-    expect(view.message).toBe('Showing results for "react" · Verified · Testing · 70+')
+    expect(messageState.setSearchBanner).toHaveBeenCalledWith(
+      'Showing results for "react" · Verified · Testing · 70+'
+    )
   })
 
   it('sets a persistent banner on no-results and clears the result set', async () => {
@@ -274,9 +295,10 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
-    expect(view.message).toBe('No skills found for "zzz"')
+    expect(messageState.setSearchBanner).toHaveBeenCalledWith('No skills found for "zzz"')
     expect(provider.clearSearchResults).toHaveBeenCalledTimes(1)
   })
 
@@ -297,6 +319,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(showInformationMessage).toHaveBeenCalledWith(
@@ -318,10 +341,13 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(showWarningMessage).toHaveBeenCalled()
-    expect(view.message).toBe('Skillsmith server unavailable — start the MCP server and try again.')
+    expect(messageState.setSearchBanner).toHaveBeenCalledWith(
+      'Skillsmith server unavailable — start the MCP server and try again.'
+    )
     expect(provider.clearSearchResults).toHaveBeenCalledTimes(1)
   })
 
@@ -342,6 +368,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(executeCommand).toHaveBeenCalledWith('setContext', 'skillsmith.hasActiveFilters', true)
@@ -361,6 +388,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(executeCommand).toHaveBeenCalledWith('setContext', 'skillsmith.hasActiveFilters', false)
@@ -380,6 +408,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     expect(executeCommand).toHaveBeenCalledWith('setContext', 'skillsmith.hasActiveFilters', false)
@@ -401,6 +430,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     })
 
     // clearFilters() flips the fake provider's hasActiveFilters to false.
@@ -433,6 +463,7 @@ describe('filter + banner + context-key (#1433 / #1432 / #1434-P2)', () => {
       skillsView: view as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       skillService: service as any,
+      messageState,
     }
 
     await searchSkillsAction(deps)

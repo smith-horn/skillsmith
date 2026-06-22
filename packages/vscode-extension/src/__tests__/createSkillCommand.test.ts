@@ -49,6 +49,7 @@ const refreshAndWait = vi.fn(async () => {})
 vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   SkillTreeDataProvider: class {
     refreshAndWait = refreshAndWait
+    showNextSteps = vi.fn()
   },
 }))
 
@@ -60,7 +61,7 @@ vi.mock('../utils/createSkill.helpers.js', () => ({
   exists: vi.fn(),
   buildCreateArgs: vi.fn(),
   targetDirFor: vi.fn(),
-  showPostCreateChecklist: vi.fn(),
+  runValidate: vi.fn(),
 }))
 
 // ── CreateSkillPanel mock ─────────────────────────────────────────────────────
@@ -101,11 +102,18 @@ describe('createSkillCommand (SMI-5313 rewire)', () => {
     vi.resetModules()
     const { registerCreateSkillCommand } = await import('../commands/createSkillCommand.js')
     const { SkillTreeDataProvider } = await import('../sidebar/SkillTreeDataProvider.js')
-    const provider = new SkillTreeDataProvider()
     const context = {
       subscriptions: [],
       extensionUri: FAKE_EXTENSION_URI,
+      globalState: {
+        get: vi.fn(),
+        update: vi.fn(async () => {}),
+        keys: vi.fn(() => []),
+        setKeysForSync: vi.fn(),
+      },
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const provider = new SkillTreeDataProvider(context as any)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     registerCreateSkillCommand(context as any, provider as any)
     const call = registerCommand.mock.calls[0]
