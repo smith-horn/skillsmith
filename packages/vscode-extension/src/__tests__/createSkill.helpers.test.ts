@@ -163,6 +163,27 @@ describe('resolveWindowsPath', () => {
     // PowerShell spawn count: only 1 even though called twice
     expect(spawnMock).toHaveBeenCalledTimes(1)
   })
+
+  it('kills the child and falls back to process.env.PATH on timeout', async () => {
+    vi.useFakeTimers()
+    const kill = vi.fn()
+    spawnMock.mockImplementationOnce(() => {
+      // A child that never emits 'exit'/'error' — simulates a hung PowerShell
+      // cold-start that must be killed when the 3 s timeout fires.
+      const c = new EventEmitter() as FakeChild & { kill: () => void }
+      c.stdout = new EventEmitter()
+      c.stderr = new EventEmitter()
+      c.kill = kill
+      return c
+    })
+    const { resolveWindowsPath } = await import('../utils/createSkill.helpers.js')
+    const pending = resolveWindowsPath()
+    await vi.advanceTimersByTimeAsync(3000)
+    const result = await pending
+    expect(kill).toHaveBeenCalledTimes(1)
+    expect(result).toBe(process.env['PATH'] ?? '')
+    vi.useRealTimers()
+  })
 })
 
 describe('buildCliEnv (Unix)', () => {
