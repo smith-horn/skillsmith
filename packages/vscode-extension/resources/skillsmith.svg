@@ -1,5 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-  <path d="M2 17l10 5 10-5"/>
-  <path d="M2 12l10 5 10-5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <g transform="translate(32, 32)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
+          stroke="currentColor" stroke-width="3" fill="none"/>
+    <circle cx="10" cy="-18" r="5" fill="currentColor"/>
+    <circle cx="-10" cy="-4" r="5" fill="currentColor"/>
+    <circle cx="10" cy="8" r="5" fill="currentColor"/>
+    <circle cx="-10" cy="20" r="5" fill="currentColor"/>
+  </g>
 </svg>
