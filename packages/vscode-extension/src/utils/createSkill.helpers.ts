@@ -65,7 +65,12 @@ export async function resolveWindowsPath(): Promise<string> {
   if (windowsPathCache !== undefined) return windowsPathCache
 
   const resolved = await new Promise<string | undefined>((resolve) => {
-    const timer = setTimeout(() => resolve(undefined), 3000)
+    const timer = setTimeout(() => {
+      // Kill the orphaned PowerShell child so a slow/hung cold-start does not
+      // linger past the timeout (mirrors runValidate's timeout handling).
+      child.kill()
+      resolve(undefined)
+    }, 3000)
     const child = crossSpawn('powershell', ['-NoProfile', '-Command', '$env:PATH'], {
       stdio: ['ignore', 'pipe', 'ignore'],
     })
@@ -108,8 +113,10 @@ export async function buildCliEnv(): Promise<NodeJS.ProcessEnv> {
   const nvmBin = resolveNvmBin(home)
 
   const extras = [
-    // fnm — stable alias symlink managed by `fnm default`
+    // fnm — stable alias symlink managed by `fnm default` (Linux default data dir)
     path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
+    // fnm — macOS default data dir (~/Library/Application Support/fnm)
+    path.join(home, 'Library', 'Application Support', 'fnm', 'aliases', 'default', 'bin'),
     // volta
     path.join(home, '.volta', 'bin'),
     // nvm — resolved from ~/.nvm/alias/default

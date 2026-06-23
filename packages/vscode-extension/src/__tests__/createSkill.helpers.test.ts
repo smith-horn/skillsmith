@@ -180,6 +180,14 @@ describe('buildCliEnv (Unix)', () => {
     )
   })
 
+  it('includes the macOS fnm data dir in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(
+      path.join(os.homedir(), 'Library', 'Application Support', 'fnm', 'aliases', 'default', 'bin')
+    )
+  })
+
   it('includes volta bin in PATH', async () => {
     const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
     const env = await buildCliEnv()
