@@ -26,6 +26,9 @@ vi.mock('vscode', () => ({
     file: (s: string) => ({ toString: () => s, fsPath: s }),
     parse: (s: string) => ({ toString: () => s }),
   },
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({ get: vi.fn().mockReturnValue('') }),
+  },
 }))
 
 // ── Telemetry mock ────────────────────────────────────────────────────────────

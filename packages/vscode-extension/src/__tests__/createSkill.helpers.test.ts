@@ -2,7 +2,7 @@
  * Unit tests for utils/createSkill.helpers.ts (SMI-5313 / GH #1454).
  *
  * Tests ensureCliAvailable, runCli (with onChunk), exists, buildCreateArgs,
- * and targetDirFor.
+ * targetDirFor, buildCliEnv, resolveCliCommand, and resolveWindowsPath.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
@@ -13,6 +13,7 @@ const showErrorMessage = vi.fn()
 const showInformationMessage = vi.fn()
 const clipboardWrite = vi.fn()
 const openExternal = vi.fn()
+const getConfigurationMock = vi.fn()
 
 vi.mock('vscode', () => ({
   window: {
@@ -26,6 +27,9 @@ vi.mock('vscode', () => ({
   Uri: {
     file: (s: string) => ({ toString: () => s, fsPath: s }),
     parse: (s: string) => ({ toString: () => s }),
+  },
+  workspace: {
+    getConfiguration: getConfigurationMock,
   },
 }))
 
@@ -74,6 +78,168 @@ function makeCliChild(exitCode: number, chunks?: string[], errorMsg?: string): F
   return c
 }
 
+/** Fake PowerShell child that emits a PATH string then exits. */
+function makePowerShellChild(winPath: string): FakeChild {
+  const c = new EventEmitter() as FakeChild
+  c.stdout = new EventEmitter()
+  c.stderr = new EventEmitter()
+  queueMicrotask(() => {
+    c.stdout.emit('data', Buffer.from(winPath, 'utf8'))
+    c.emit('exit', 0)
+  })
+  return c
+}
+
+function defaultConfigMock(cliPath = ''): void {
+  getConfigurationMock.mockReturnValue({ get: vi.fn().mockReturnValue(cliPath) })
+}
+
+describe('resolveCliCommand', () => {
+  beforeEach(() => {
+    getConfigurationMock.mockReset()
+    vi.resetModules()
+  })
+
+  it('returns "skillsmith" when cliPath setting is empty', async () => {
+    defaultConfigMock('')
+    const { resolveCliCommand } = await import('../utils/createSkill.helpers.js')
+    expect(resolveCliCommand()).toBe('skillsmith')
+  })
+
+  it('returns the configured path when cliPath is set', async () => {
+    defaultConfigMock('/custom/bin/skillsmith')
+    const { resolveCliCommand } = await import('../utils/createSkill.helpers.js')
+    expect(resolveCliCommand()).toBe('/custom/bin/skillsmith')
+  })
+
+  it('trims whitespace from the configured path', async () => {
+    defaultConfigMock('  /custom/bin/skillsmith  ')
+    const { resolveCliCommand } = await import('../utils/createSkill.helpers.js')
+    expect(resolveCliCommand()).toBe('/custom/bin/skillsmith')
+  })
+
+  it('treats a whitespace-only cliPath as unset', async () => {
+    defaultConfigMock('   ')
+    const { resolveCliCommand } = await import('../utils/createSkill.helpers.js')
+    expect(resolveCliCommand()).toBe('skillsmith')
+  })
+})
+
+describe('resolveWindowsPath', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    vi.resetModules()
+  })
+
+  it('returns PowerShell PATH output when spawn succeeds', async () => {
+    const fakePath = 'C:\\Windows\\system32;C:\\Users\\user\\AppData\\Local\\Volta\\bin'
+    spawnMock.mockImplementationOnce(() => makePowerShellChild(fakePath))
+    const { resolveWindowsPath } = await import('../utils/createSkill.helpers.js')
+    const result = await resolveWindowsPath()
+    expect(result).toBe(fakePath)
+  })
+
+  it('falls back to process.env.PATH when PowerShell spawn errors', async () => {
+    // Child must be built inside the factory so queueMicrotask fires after
+    // resolveWindowsPath attaches its 'error' listener (same pattern as makeVersionChild).
+    spawnMock.mockImplementationOnce(() => {
+      const c = new EventEmitter() as FakeChild
+      c.stdout = new EventEmitter()
+      c.stderr = new EventEmitter()
+      queueMicrotask(() => c.emit('error', new Error('ENOENT')))
+      return c
+    })
+    const { resolveWindowsPath } = await import('../utils/createSkill.helpers.js')
+    const result = await resolveWindowsPath()
+    expect(result).toBe(process.env['PATH'] ?? '')
+  })
+
+  it('caches the result so PowerShell is only spawned once', async () => {
+    const fakePath = 'C:\\some\\path'
+    spawnMock.mockImplementation(() => makePowerShellChild(fakePath))
+    const { resolveWindowsPath } = await import('../utils/createSkill.helpers.js')
+    await resolveWindowsPath()
+    await resolveWindowsPath()
+    // PowerShell spawn count: only 1 even though called twice
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('buildCliEnv (Unix)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    getConfigurationMock.mockReset()
+    vi.resetModules()
+  })
+
+  it('includes fnm aliases/default/bin in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(
+      path.join(os.homedir(), '.local', 'share', 'fnm', 'aliases', 'default', 'bin')
+    )
+  })
+
+  it('includes volta bin in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(path.join(os.homedir(), '.volta', 'bin'))
+  })
+
+  it('includes asdf shims in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(path.join(os.homedir(), '.asdf', 'shims'))
+  })
+
+  it('includes mise shims in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(path.join(os.homedir(), '.local', 'share', 'mise', 'shims'))
+  })
+
+  it('includes pnpm macOS bin in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(path.join(os.homedir(), 'Library', 'pnpm'))
+  })
+
+  it('includes pnpm Linux bin in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(path.join(os.homedir(), '.local', 'share', 'pnpm'))
+  })
+
+  it('includes npm-global bin in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(path.join(os.homedir(), '.npm-global', 'bin'))
+  })
+
+  it('includes yarn global bin in PATH', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['PATH']).toContain(path.join(os.homedir(), '.yarn', 'bin'))
+  })
+
+  it('preserves existing process.env keys', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    expect(env['HOME']).toBe(process.env['HOME'])
+  })
+
+  it('prepends extras before existing PATH so they take priority', async () => {
+    const { buildCliEnv } = await import('../utils/createSkill.helpers.js')
+    const env = await buildCliEnv()
+    const augmented = env['PATH'] ?? ''
+    const fnmIdx = augmented.indexOf(
+      path.join(os.homedir(), '.local', 'share', 'fnm', 'aliases', 'default', 'bin')
+    )
+    const existingIdx = augmented.indexOf(process.env['PATH'] ?? '')
+    expect(fnmIdx).toBeLessThan(existingIdx)
+  })
+})
+
 describe('ensureCliAvailable', () => {
   beforeEach(() => {
     spawnMock.mockReset()
@@ -81,6 +247,8 @@ describe('ensureCliAvailable', () => {
     clipboardWrite.mockReset()
     openExternal.mockReset()
     showInformationMessage.mockReset()
+    getConfigurationMock.mockReset()
+    defaultConfigMock()
     vi.resetModules()
   })
 
@@ -92,6 +260,31 @@ describe('ensureCliAvailable', () => {
 
     expect(result).toBe(true)
     expect(showErrorMessage).not.toHaveBeenCalled()
+  })
+
+  it('passes augmented PATH env to spawn so version managers are found', async () => {
+    spawnMock.mockImplementationOnce(() => makeVersionChild('found'))
+    const { ensureCliAvailable } = await import('../utils/createSkill.helpers.js')
+
+    await ensureCliAvailable()
+
+    const [, , opts] = spawnMock.mock.calls[0] as [unknown, unknown, { env?: NodeJS.ProcessEnv }]
+    expect(opts.env?.['PATH']).toContain(
+      path.join(os.homedir(), '.local', 'share', 'fnm', 'aliases', 'default', 'bin')
+    )
+    expect(opts.env?.['PATH']).toContain(path.join(os.homedir(), '.volta', 'bin'))
+    expect(opts.env?.['PATH']).toContain(path.join(os.homedir(), '.asdf', 'shims'))
+  })
+
+  it('uses the configured cliPath as the spawn command', async () => {
+    defaultConfigMock('/custom/bin/skillsmith')
+    spawnMock.mockImplementationOnce(() => makeVersionChild('found'))
+    const { ensureCliAvailable } = await import('../utils/createSkill.helpers.js')
+
+    await ensureCliAvailable()
+
+    const [cmd] = spawnMock.mock.calls[0] as [string, ...unknown[]]
+    expect(cmd).toBe('/custom/bin/skillsmith')
   })
 
   it('returns false and shows modal when CLI is not found', async () => {
@@ -145,6 +338,8 @@ describe('runCli', () => {
     spawnMock.mockReset()
     fakeOutput.append.mockReset()
     fakeOutput.appendLine.mockReset()
+    getConfigurationMock.mockReset()
+    defaultConfigMock()
     vi.resetModules()
   })
 
