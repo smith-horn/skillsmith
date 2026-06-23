@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+/**
+ * Deterministic `skillsmith` CLI shim for the VS Code E2E suite (SMI-5347).
+ *
+ * The real `@skillsmith/cli create` still interactively prompts for `category`
+ * and `behavior` when those flags are absent — and the extension's
+ * `buildCreateArgs` never passes them — so the real CLI would hang headless.
+ * This shim implements the minimum contract the create + Next-steps flow needs,
+ * deterministically and without building the CLI dependency chain. It is a TEST
+ * FIXTURE under e2e/, not shipped code; CI puts e2e/bin on PATH for the nightly
+ * `full` job only (see .github/workflows/vscode-e2e.yml).
+ *
+ * CommonJS (require, not import): the nearest package.json
+ * (packages/vscode-extension/package.json) has no top-level "type", so Node
+ * scopes this extension-less file to CommonJS regardless of the ESM root.
+ *
+ * Contract (driven by createSkill.helpers.ts):
+ *   - `--version` / `-v`      -> print a version line, exit 0 (ensureCliAvailable)
+ *   - `create <name> [flags]` -> scaffold ~/.claude/skills/<name>/ (SKILL.md +
+ *                                README/CHANGELOG/.gitignore + resources/), exit 0
+ *   - `validate`              -> print OK, exit 0 (the "Run skillsmith validate" row)
+ *   - anything else           -> exit 0
+ *
+ * Mirrors the real CLI's default install path (core getCanonicalInstallPath:
+ * ~/.claude/skills) so the extension's targetDirFor(name) and the scaffold agree.
+ */
+'use strict'
+
+const { mkdirSync, writeFileSync } = require('node:fs')
+const { homedir } = require('node:os')
+const { join } = require('node:path')
+
+const VERSION = '0.0.0-e2e-shim'
+const argv = process.argv.slice(2)
+
+function flagValue(names) {
+  for (let i = 0; i < argv.length; i += 1) {
+    if (names.includes(argv[i])) {
+      return argv[i + 1]
+    }
+  }
+  return undefined
+}
+
+function fail(message) {
+  process.stderr.write(`${message}\n`)
+  process.exit(1)
+}
+
+if (argv.includes('--version') || argv.includes('-v')) {
+  process.stdout.write(`${VERSION}\n`)
+  process.exit(0)
+}
+
+const command = argv[0]
+
+if (command === 'validate') {
+  // The Next-steps "Run skillsmith validate" row invokes this; always succeed.
+  process.stdout.write('skillsmith validate (e2e shim): OK\n')
+  process.exit(0)
+}
+
+if (command === 'create') {
+  // First positional after `create` is the skill name (flags start with `-`).
+  const name = argv.slice(1).find((a) => !a.startsWith('-'))
+  if (!name) {
+    fail('e2e shim: create requires a <name>')
+  }
+  // Refuse path separators / leading dot so a name can never escape the target
+  // dir (defence-in-depth; the spec always passes a plain kebab-case literal).
+  if (/[/\\]/.test(name) || name.startsWith('.')) {
+    fail('e2e shim: skill name must be a plain identifier (no path separators or leading dot)')
+  }
+  const author = flagValue(['-a', '--author']) || 'e2e'
+  const description = flagValue(['-d', '--description']) || 'created by the e2e shim'
+  const type = flagValue(['--type', '-t']) || 'basic'
+  const baseDir = flagValue(['-o', '--output']) || join(homedir(), '.claude', 'skills')
+  const dir = join(baseDir, name)
+
+  mkdirSync(join(dir, 'resources'), { recursive: true })
+  writeFileSync(
+    join(dir, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: ${description}\nauthor: ${author}\ntype: ${type}\n---\n\n# ${name}\n\nScaffolded by the e2e shim. Add your skill instructions and triggers here.\n`
+  )
+  writeFileSync(join(dir, 'README.md'), `# ${name}\n\n${description}\n`)
+  writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## 0.1.0\n\n- Initial scaffold.\n')
+  writeFileSync(join(dir, '.gitignore'), 'node_modules/\n')
+
+  process.stdout.write(`Created skill "${name}" at ${dir}\n`)
+  process.exit(0)
+}
+
+// Unknown command: succeed quietly so the shim never blocks the suite.
+process.exit(0)

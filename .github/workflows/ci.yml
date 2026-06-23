@@ -1026,6 +1026,23 @@ jobs:
       - name: Run TypeScript type check
         run: npm run typecheck
 
+      # SMI-5348: the root `npm run typecheck` (tsc --build) covers only the
+      # packages in root tsconfig references (core/mcp-server/cli/enterprise);
+      # vscode-extension is NOT in that graph, so its `tsc --noEmit` runs
+      # nowhere in CI and type regressions merged green (SMI-5341 / McpStatusBar).
+      # vscode-extension has no @skillsmith/* workspace deps, so a standalone
+      # typecheck needs no prior Turborepo build. Gated on the affected-dirs
+      # matrix (same source as the `test` job, see `mcp-server` at the
+      # test-mcp-server-integration job) so it runs ONLY on PRs that touch the
+      # extension, and is skipped otherwise to keep this required host job green.
+      - name: Type check vscode-extension (src)
+        if: contains(fromJson(needs.classify.outputs.affected_dirs), 'vscode-extension')
+        run: npm run -w packages/vscode-extension typecheck
+
+      - name: Type check vscode-extension (e2e specs)
+        if: contains(fromJson(needs.classify.outputs.affected_dirs), 'vscode-extension')
+        run: npm run -w packages/vscode-extension typecheck:e2e
+
       - name: Run standards audit
         run: npm run audit:standards
 
