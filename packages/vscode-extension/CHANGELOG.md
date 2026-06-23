@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - Added `npm run test:vscode` for a worktree-local vscode test path; local typecheck/test now warn on stale `node_modules` instead of failing opaquely (SMI-5343/5344).
+- **New `skillsmith.cliPath` setting** — point the extension directly at your Skillsmith CLI binary for setups that automatic detection can't cover (unusual Node version managers or custom npm prefixes). Leave it empty for automatic detection.
 
 ### Changed
 
@@ -16,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Create Skill, Run Validate, and skill scaffolding now work under Node version managers** — when the Skillsmith CLI was installed via fnm, nvm, volta, asdf, or mise (or a custom npm prefix), VS Code couldn't find it because GUI apps don't inherit your shell's PATH. The extension now searches the known install locations for every major version manager (including the macOS and Linux fnm data dirs) and uses the full PATH on Windows, so these features stop showing a false "CLI is not installed" error. If your setup still isn't found, set `skillsmith.cliPath`.
 - **Skill details recover after reconnecting** — the skill detail panel no longer stays stuck on "Skillsmith server unavailable" once the MCP server is back (including after you change an MCP setting, which restarts the connection). The panel now reloads on its own when the connection is restored, and Retry / reopening the skill works reliably. The connection status indicator in the status bar also stays accurate after a settings change.
 
 ## [0.6.2] - 2026-06-20

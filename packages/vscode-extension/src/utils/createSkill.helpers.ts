@@ -12,7 +12,146 @@ import * as vscode from 'vscode'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import * as fs from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import crossSpawn from 'cross-spawn'
+
+// ---------------------------------------------------------------------------
+// CLI resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the CLI executable to spawn — either the user-configured absolute
+ * path (`skillsmith.cliPath`) or the bare `'skillsmith'` command (resolved
+ * via the augmented PATH from `buildCliEnv`).
+ */
+export function resolveCliCommand(): string {
+  const configured = vscode.workspace.getConfiguration('skillsmith').get<string>('cliPath', '')
+  return configured.trim() || 'skillsmith'
+}
+
+/**
+ * Resolve the active nvm node version's bin dir by reading the default alias
+ * file (`~/.nvm/alias/default`). Returns undefined if nvm is absent or the
+ * alias is a symbolic ref like `lts/iron` rather than a concrete version.
+ */
+function resolveNvmBin(home: string): string | undefined {
+  try {
+    const raw = readFileSync(path.join(home, '.nvm', 'alias', 'default'), 'utf8').trim()
+    // Only handle concrete version strings ("20", "20.19.1", "v20.19.1").
+    // Symbolic refs like "lts/iron" or "lts/*" are not resolvable here.
+    if (!/^v?\d/.test(raw)) return undefined
+    const version = raw.startsWith('v') ? raw : `v${raw}`
+    return path.join(home, '.nvm', 'versions', 'node', version, 'bin')
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Session-scoped cache for the Windows PATH resolved via PowerShell.
+ * Reset between test runs via `vi.resetModules()`.
+ */
+let windowsPathCache: string | undefined
+
+/**
+ * Spawn `powershell -NoProfile -Command "$env:PATH"` to capture the full
+ * Windows PATH (which includes registry-level entries from version managers
+ * like Volta, pnpm, and Scoop that VS Code inherits at launch).
+ *
+ * Falls back to `process.env.PATH` on spawn error or 3 s timeout.
+ * Result is cached for the VS Code session.
+ */
+export async function resolveWindowsPath(): Promise<string> {
+  if (windowsPathCache !== undefined) return windowsPathCache
+
+  const resolved = await new Promise<string | undefined>((resolve) => {
+    const timer = setTimeout(() => {
+      // Kill the orphaned PowerShell child so a slow/hung cold-start does not
+      // linger past the timeout (mirrors runValidate's timeout handling).
+      child.kill()
+      resolve(undefined)
+    }, 3000)
+    const child = crossSpawn('powershell', ['-NoProfile', '-Command', '$env:PATH'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    let output = ''
+    child.stdout?.on('data', (buf: Buffer) => {
+      output += buf.toString('utf8')
+    })
+    child.on('error', () => {
+      clearTimeout(timer)
+      resolve(undefined)
+    })
+    child.on('exit', () => {
+      clearTimeout(timer)
+      resolve(output.trim() || undefined)
+    })
+  })
+
+  windowsPathCache = resolved ?? process.env['PATH'] ?? ''
+  return windowsPathCache
+}
+
+/**
+ * Build a PATH-augmented environment for spawning the Skillsmith CLI.
+ *
+ * VS Code's GUI process does not inherit the user's login-shell PATH, so node
+ * version managers that inject themselves via shell init scripts are absent.
+ *
+ * macOS / Linux — static list of stable bin dirs for every major version
+ * manager, plus a synchronous nvm alias-file read for the active version.
+ *
+ * Windows — PowerShell resolves the full registry-level PATH (which already
+ * includes Volta, pnpm, Scoop, etc.) and caches it for the session.
+ */
+export async function buildCliEnv(): Promise<NodeJS.ProcessEnv> {
+  if (process.platform === 'win32') {
+    return { ...process.env, PATH: await resolveWindowsPath() }
+  }
+
+  const home = os.homedir()
+  const nvmBin = resolveNvmBin(home)
+
+  const extras = [
+    // fnm — stable alias symlink managed by `fnm default` (Linux default data dir)
+    path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
+    // fnm — macOS default data dir (~/Library/Application Support/fnm)
+    path.join(home, 'Library', 'Application Support', 'fnm', 'aliases', 'default', 'bin'),
+    // volta
+    path.join(home, '.volta', 'bin'),
+    // nvm — resolved from ~/.nvm/alias/default
+    ...(nvmBin !== undefined ? [nvmBin] : []),
+    // asdf — shim directory (version-agnostic)
+    path.join(home, '.asdf', 'shims'),
+    // mise / rtx — shim directory
+    path.join(home, '.local', 'share', 'mise', 'shims'),
+    // pnpm global (macOS)
+    path.join(home, 'Library', 'pnpm'),
+    // pnpm global (Linux)
+    path.join(home, '.local', 'share', 'pnpm'),
+    // npm custom global prefix (common override)
+    path.join(home, '.npm-global', 'bin'),
+    // yarn global
+    path.join(home, '.yarn', 'bin'),
+    // user-local bin (Linux / some macOS setups)
+    path.join(home, '.local', 'bin'),
+    // snap packages (Linux)
+    '/snap/bin',
+    // Homebrew on Apple-Silicon Macs
+    '/opt/homebrew/bin',
+    // Homebrew on Intel Macs / traditional npm global
+    '/usr/local/bin',
+  ]
+
+  return {
+    ...process.env,
+    PATH: [...extras, process.env['PATH'] ?? ''].join(path.delimiter),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Form types
+// ---------------------------------------------------------------------------
 
 /** The four fields the Create Skill form collects. */
 export interface CreateFormFields {
@@ -42,13 +181,21 @@ export function buildCreateArgs(fields: CreateFormFields): string[] {
   ]
 }
 
+// ---------------------------------------------------------------------------
+// CLI invocation
+// ---------------------------------------------------------------------------
+
 /**
- * Verify the `skillsmith` CLI is on $PATH (`skillsmith --version` exits 0).
- * On miss, surface an actionable modal (copy install cmd / open docs) and return false.
+ * Verify the Skillsmith CLI is available (`skillsmith --version` exits 0).
+ * On miss, surface an actionable modal (copy install cmd / open docs) and
+ * return false. Respects `skillsmith.cliPath` when set.
  */
 export async function ensureCliAvailable(): Promise<boolean> {
+  const cmd = resolveCliCommand()
+  const env = await buildCliEnv()
+
   const ok = await new Promise<boolean>((resolve) => {
-    const child = crossSpawn('skillsmith', ['--version'], { stdio: 'ignore' })
+    const child = crossSpawn(cmd, ['--version'], { stdio: 'ignore', env })
     child.on('error', () => resolve(false))
     child.on('exit', (code) => resolve(code === 0))
   })
@@ -72,16 +219,20 @@ export async function ensureCliAvailable(): Promise<boolean> {
 
 /**
  * Spawn `skillsmith <args>` (array args — no shell, injection-safe). Streams
- * stdout/stderr to the OutputChannel and, when provided, to `onChunk` (e.g. the
- * webview log). Resolves the exit code (1 on spawn error).
+ * stdout/stderr to the OutputChannel and, when provided, to `onChunk` (e.g.
+ * the webview log). Resolves the exit code (1 on spawn error). Respects
+ * `skillsmith.cliPath` when set.
  */
-export function runCli(
+export async function runCli(
   args: string[],
   output: vscode.OutputChannel,
   onChunk?: (chunk: string) => void
 ): Promise<number> {
+  const cmd = resolveCliCommand()
+  const env = await buildCliEnv()
+
   return new Promise((resolve) => {
-    const child = crossSpawn('skillsmith', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = crossSpawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
     const emit = (buf: Buffer): void => {
       const text = buf.toString('utf8')
       output.append(text)
@@ -113,14 +264,13 @@ export async function exists(p: string): Promise<boolean> {
  * Run `skillsmith validate` against the current skill (SMI-5346).
  *
  * Injection-safe: args are passed as an array to cross-spawn, never via shell.
- * The command is intended to be registered as 'skillsmith.runValidate' and
- * wrapped with withTelemetry by the queen (extension.ts).
- *
- * Races a 30-second timeout that kills the child and writes a timeout line to
- * the output channel. On exit-0 writes a success line; on non-zero writes a
- * failure line + hint.
+ * Respects `skillsmith.cliPath` when set.
+ * Races a 30-second timeout that kills the child and writes a timeout line.
  */
 export async function runValidate(output: vscode.OutputChannel): Promise<void> {
+  const cmd = resolveCliCommand()
+  const env = await buildCliEnv()
+
   output.show(true)
   output.appendLine('Running skillsmith validate…')
 
@@ -133,21 +283,18 @@ export async function runValidate(output: vscode.OutputChannel): Promise<void> {
     // message (governance follow-up).
     let settled = false
     const settle = (): boolean => {
-      if (settled) {
-        return false
-      }
+      if (settled) return false
       settled = true
       return true
     }
 
-    const child = crossSpawn('skillsmith', ['validate'], {
+    const child = crossSpawn(cmd, ['validate'], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env,
     })
 
     const timer = setTimeout(() => {
-      if (!settle()) {
-        return
-      }
+      if (!settle()) return
       child.kill()
       output.appendLine('[error] skillsmith validate timed out after 30 s.')
       resolve()
@@ -161,18 +308,14 @@ export async function runValidate(output: vscode.OutputChannel): Promise<void> {
 
     child.on('error', (err) => {
       clearTimeout(timer)
-      if (!settle()) {
-        return
-      }
+      if (!settle()) return
       output.appendLine(`[error] ${err.message}`)
       resolve()
     })
 
     child.on('exit', (code) => {
       clearTimeout(timer)
-      if (!settle()) {
-        return
-      }
+      if (!settle()) return
       if (code === 0) {
         output.appendLine('skillsmith validate completed successfully.')
       } else {

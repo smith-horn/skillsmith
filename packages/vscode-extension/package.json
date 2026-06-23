@@ -354,6 +354,11 @@
           "default": false,
           "description": "Show sample/demo skills when the Skillsmith server is unavailable. Off by default; intended for demos and screenshots only."
         },
+        "skillsmith.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the Skillsmith CLI executable. Leave empty for automatic detection. Set this if auto-detection fails because you use a non-standard Node version manager or custom npm prefix (e.g. /home/user/.nvm/versions/node/v20.19.1/bin/skillsmith)."
+        },
         "skillsmith.inventoryAudit.deep": {
           "type": "boolean",
           "default": false,
