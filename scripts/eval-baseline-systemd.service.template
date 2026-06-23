@@ -34,6 +34,12 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=__REPO_PATH__
+# SMI-5353: cap total run time. The real eval is ~1h40m; the isolated-checkout
+# bring-up + npm ci adds a few minutes. 7200s (2h) leaves headroom while still
+# killing a hung `docker compose up` / wedged eval rather than blocking the
+# systemd slot indefinitely. The script's own EXIT trap still tears the
+# ephemeral eval container down on timeout-kill.
+TimeoutStartSec=7200
 # Login shell so PATH includes docker/gh/varlock per canonical dev's profile.
 ExecStart=/bin/bash -lc 'cd __REPO_PATH__ && ./scripts/eval-baseline-cron.sh'
 StandardOutput=append:%h/.skillsmith/logs/eval-cron-systemd-stdout.log

@@ -1,0 +1,35 @@
+# docker-compose.eval-cron.yml — SMI-5353
+#
+# Override layer for the retrieval-eval cron's ISOLATED container. Used ONLY by
+# scripts/eval-baseline-cron.sh against the ~/.skillsmith/eval-checkout clone —
+# never by the dev's normal `docker compose --profile dev up`.
+#
+# Why this exists: docker-compose.yml hardcodes `container_name: skillsmith-dev-1`
+# and publishes host port 3001. A second container (for the eval clone) would
+# collide on BOTH. This override renames the container and DROPS the host port
+# entirely (the eval is driven via `docker exec`, so it needs no published port).
+#
+# `ports: !reset []` — Compose merges sequences by APPENDING, so a plain
+# `ports:` override would keep the base 3001 mapping and still collide. The
+# `!reset` tag (Compose Spec >= 2.24; bundled docker compose is far newer)
+# clears the inherited list instead. Verified: the merged config has no
+# published ports.
+#
+# NOT auto-loaded: Compose only auto-merges `docker-compose.override.yml`. This
+# file must be passed explicitly via `-f docker-compose.yml -f docker-compose.eval-cron.yml`
+# (the cron does this), so it is inert for every other workflow.
+#
+# Volume scoping: the cron runs Compose with `--project-name skillsmith-eval-cron`,
+# so the `node_modules` named volume resolves to `skillsmith-eval-cron_node_modules`
+# — distinct from the dev's `skillsmith_node_modules`. Tear down with `down`
+# (NOT `down -v`) to preserve that volume across weekly runs.
+services:
+  dev:
+    container_name: skillsmith-eval-cron-1
+    # Ephemeral: the cron brings this up for the run and tears it down on EXIT.
+    # Must NOT auto-restart like the canonical dev container (base sets
+    # `restart: unless-stopped`).
+    restart: 'no'
+    # Drop the inherited 3001 host-port mapping — eval is exec-driven, no port
+    # needed, and keeping 3001 would collide with the canonical dev container.
+    ports: !reset []
