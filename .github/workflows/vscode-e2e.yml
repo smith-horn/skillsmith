@@ -133,6 +133,17 @@ jobs:
           path: packages/vscode-extension/.wdio-vscode-service
           key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
 
+      # SMI-5347: the create-skill spec shells out to a `skillsmith` binary
+      # (createSkill.helpers.ts). Put the deterministic e2e shim on PATH so the
+      # extension host resolves it. $GITHUB_PATH is shell-level and propagates to
+      # every later step's process tree (npm -> wdio -> VS Code extension host),
+      # which is the reliable way to make crossSpawn('skillsmith', ...) resolve.
+      # full job only; the per-PR smoke specs do not exercise create.
+      - name: Provision skillsmith CLI shim on PATH
+        run: |
+          chmod +x packages/vscode-extension/e2e/bin/skillsmith
+          echo "${{ github.workspace }}/packages/vscode-extension/e2e/bin" >> "$GITHUB_PATH"
+
       # test:e2e runs test:e2e:setup itself, then wdio against the full glob.
       - name: Run E2E full suite (headless)
         working-directory: packages/vscode-extension
