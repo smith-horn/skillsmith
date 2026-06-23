@@ -89,6 +89,16 @@ log() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FILE" >&2
 }
 
+# Portable SHA-256: macOS ships `shasum`; most Linux distros ship `sha256sum`
+# and may NOT ship `shasum` (it's a separate Perl package). Prefer sha256sum.
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 # `docker compose` wrapper: dedicated project + base file + eval override.
 compose() {
   docker compose --project-name "$EVAL_PROJECT" \
@@ -97,9 +107,18 @@ compose() {
     "$@"
 }
 
+# Regenerate the index fresh each run — wipe the clone's .ruvector. Defined here
+# (before any early-exit point) so the EXIT trap can call it even when the script
+# aborts before reaching the eval. Idempotent + safe if the clone is absent.
+# shellcheck disable=SC2329  # invoked indirectly via teardown / trap
+cleanup_index() {
+  rm -rf "$EVAL_CLONE/.ruvector" 2>/dev/null || true
+}
+
 # EXIT trap: always tear the ephemeral eval container down (NOT `down -v` — keep
-# the project-scoped node_modules volume warm for next week). Preserves the
-# triggering exit code.
+# the project-scoped node_modules volume warm for next week) AND wipe the clone's
+# index (so a failed/aborted run can't leave a stale index for next week).
+# Preserves the triggering exit code.
 # shellcheck disable=SC2329  # invoked indirectly via `trap teardown EXIT`
 teardown() {
   local code=$?
@@ -107,6 +126,7 @@ teardown() {
     log "Tearing down eval container (${EVAL_CONTAINER})..."
     compose down >>"$LOG_FILE" 2>&1 || log "WARNING: eval container teardown failed — inspect 'docker ps'."
   fi
+  cleanup_index
   exit "$code"
 }
 trap teardown EXIT
@@ -204,8 +224,11 @@ fi
 # ---------------------------------------------------------------------------
 
 log "Bringing up eval container (${EVAL_CONTAINER}) on project ${EVAL_PROJECT}..."
-compose --profile dev up -d --wait --wait-timeout 300 >>"$LOG_FILE" 2>&1
+# Mark up BEFORE the call: a timed-out/failed `up` aborts under set -e, and a
+# half-created container must still be torn down by the EXIT trap — otherwise it
+# orphans and the next run collides on container_name (governance High).
 CONTAINER_UP=1
+compose --profile dev up -d --wait --wait-timeout 300 >>"$LOG_FILE" 2>&1
 
 # Install deps (always — guarantees tsx + runtime deps; ~30-60s warm). M7.
 log "Installing dependencies in the eval container (npm ci)..."
@@ -242,7 +265,7 @@ fi
 # Capture baseline.json hash before the eval (drift detection)
 # ---------------------------------------------------------------------------
 
-PRE_HASH="$(shasum -a 256 "$BASELINE_FILE" | awk '{print $1}')"
+PRE_HASH="$(sha256_file "$BASELINE_FILE")"
 log "Pre-eval baseline.json sha256: $PRE_HASH"
 
 # ---------------------------------------------------------------------------
@@ -263,20 +286,18 @@ docker exec -w /app "$EVAL_CONTAINER" sh -c \
 # Status: FAIL (eval errored) | WARN-PARTIAL (.claude/skills not pinned) | OK.
 
 write_heartbeat() {
-  local status="$1"
-  printf '%s\t%s\t%s\n' \
+  local status="$1" line
+  # Write the SAME real status directly to BOTH files (no `cp` — the dev-tree
+  # write must carry the run's true status, not silently keep a stale prior line
+  # if a copy fails). Check 44 reads the dev-tree file.
+  line="$(printf '%s\t%s\t%s' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "$(git -C "$EVAL_CLONE" rev-parse HEAD)" \
-    "$status" \
-    > "$ISOLATED_HEARTBEAT_FILE"
+    "$status")"
+  printf '%s\n' "$line" > "$ISOLATED_HEARTBEAT_FILE"
   mkdir -p "$(dirname "$DEV_TREE_HEARTBEAT_FILE")"
-  if ! cp "$ISOLATED_HEARTBEAT_FILE" "$DEV_TREE_HEARTBEAT_FILE"; then
-    log "ERROR: heartbeat copy-back to the dev tree failed — Check 44 will stale despite a completed run."
-    # Propagate FAIL into the clone's heartbeat so the signal is not silently OK.
-    printf '%s\t%s\tFAIL\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      "$(git -C "$EVAL_CLONE" rev-parse HEAD)" \
-      > "$ISOLATED_HEARTBEAT_FILE"
+  if ! printf '%s\n' "$line" > "$DEV_TREE_HEARTBEAT_FILE" 2>/dev/null; then
+    log "ERROR: could not write heartbeat to the dev tree ($DEV_TREE_HEARTBEAT_FILE). Check 44 may not reflect this run until the 14-day staleness window expires."
   fi
 }
 
@@ -298,18 +319,12 @@ fi
 # Drift detection
 # ---------------------------------------------------------------------------
 
-POST_HASH="$(shasum -a 256 "$BASELINE_FILE" | awk '{print $1}')"
+POST_HASH="$(sha256_file "$BASELINE_FILE")"
 log "Post-eval baseline.json sha256: $POST_HASH"
 
-cleanup_index() {
-  # L1: regenerate the index fresh each run — wipe the clone's .ruvector.
-  rm -rf "$EVAL_CLONE/.ruvector" 2>/dev/null || true
-}
-
 if [ "$PRE_HASH" = "$POST_HASH" ]; then
-  log "No drift — baseline.json unchanged. Heartbeat copied back to the dev tree (no commit needed)."
-  cleanup_index
-  exit 0
+  log "No drift — baseline.json unchanged. Heartbeat written to the dev tree (no commit needed)."
+  exit 0  # EXIT trap tears down the container + wipes the index.
 fi
 
 log "Drift detected — opening auto-PR from the isolated clone..."
@@ -359,6 +374,7 @@ else
 fi
 
 git -C "$EVAL_CLONE" checkout main >>"$LOG_FILE" 2>&1 || log "WARNING: could not return clone to main."
-cleanup_index
+# Delete the per-run local branch so they don't accumulate in the clone (Low).
+git -C "$EVAL_CLONE" branch -D "$BRANCH" >>"$LOG_FILE" 2>&1 || true
 
-exit 0
+exit 0  # EXIT trap tears down the container + wipes the index.

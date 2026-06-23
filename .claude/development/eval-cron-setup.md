@@ -93,10 +93,12 @@ The cron writes a heartbeat row in the **isolated clone**, then **copies it back
 ```
 
 - `OK` — eval succeeded, full corpus.
-- `FAIL` — the eval errored (or copy-back failed; the copy-back failure path forces `FAIL` so the signal can't go silently stale).
+- `FAIL` — the eval errored.
 - `WARN-PARTIAL` — `.claude/skills` couldn't be pinned (e.g. expired PAT); the eval still ran against `docs/internal` + memory, but the corpus was partial.
 
-`audit:standards` Check 44 reads the **working-tree** copy in your primary tree, so the copy-back is the entire local freshness mechanism. **There is no manual weekly push** — the old "no-drift weeks need a manual heartbeat-only commit" step (and its forgotten-push failure mode) is gone.
+The cron writes the run's true status directly to **both** the clone's heartbeat and your primary tree's (no `cp` indirection), so the dev-tree file always carries the real status — never a silently-retained stale line. `audit:standards` Check 44 reads the **working-tree** copy in your primary tree, so this write-back is the entire local freshness mechanism. **There is no manual weekly push** — the old "no-drift weeks need a manual heartbeat-only commit" step (and its forgotten-push failure mode) is gone.
+
+If the dev-tree write itself fails (path not writable / disk full), the cron logs an `ERROR` to `~/.skillsmith/logs/eval-cron-<date>.log`; Check 44 then keeps reading the prior line and won't flag the run until the normal 14-day staleness window expires. The log is the authoritative signal in that (rare) case.
 
 | Cron run outcome | What lands in your primary tree | What gets committed to `main` |
 |---|---|---|
@@ -163,7 +165,7 @@ docker compose --project-name skillsmith-eval-cron \
 | Heartbeat shows `WARN-PARTIAL` | `.claude/skills` submodule couldn't be pinned (e.g. expired PAT); eval ran on a partial corpus | Restore strategy-submodule access; next run pins it and returns to `OK`. Baseline from a `WARN-PARTIAL` run may differ slightly — don't treat its drift as authoritative |
 | Eval container fails to start (`up --wait` times out) | Stale `skillsmith-eval-cron-1` / image build / native-module health | `docker compose --project-name skillsmith-eval-cron -f ~/.skillsmith/eval-checkout/docker-compose.yml -f ~/.skillsmith/eval-checkout/docker-compose.eval-cron.yml down -v` then re-run; inspect `~/.skillsmith/logs/eval-cron-<date>.log` |
 | `/skillsmith-memory is empty in the eval container` | `SKILLSMITH_PROJECT_DIR_ENCODED` unset at `compose up` → empty memory bind-mount | Export `SKILLSMITH_PROJECT_DIR_ENCODED` in the cron's environment (login shell / launchd `EnvironmentVariables` / systemd unit) |
-| `heartbeat copy-back to the dev tree failed` | Primary-tree path not writable / disk full | Check disk + permissions on `<primary-repo>/packages/doc-retrieval-mcp/eval/`; the cron forces `FAIL` in this case so Check 44 reflects the gap |
+| `could not write heartbeat to the dev tree` | Primary-tree path not writable / disk full | Check disk + permissions on `<primary-repo>/packages/doc-retrieval-mcp/eval/`. Check 44 keeps reading the prior line until the 14-day window expires; the log line is the authoritative signal for that run |
 | `eval invocation failed with exit N` | Eval-runner errored (network, OOM, indexer state) | Inspect `~/.skillsmith/logs/eval-cron-<date>.log`; `.cron-heartbeat` records `FAIL` so the audit distinguishes `not running` vs `running but failing` |
 | Auto-PR not opened despite drift | `gh` not authenticated, or branch already exists | Check `gh auth status`; the branch suffix is now minute-resolution (`-YYYYMMDDTHHMM`) so same-day collisions are unlikely. Remove a stale `chore/eval-baseline-cron-*` branch with `git branch -D` + `git push --delete origin <branch>` |
 
