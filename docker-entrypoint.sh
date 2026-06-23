@@ -109,12 +109,19 @@ fi
 echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 
 # List of native modules to validate.
-# Must match Dockerfile:73 `npm rebuild` list. With .npmrc ignore-scripts=true
-# (SMI-4672), this loop is the only runtime rebuild path on cache miss / ABI
-# mismatch — missing a module silently fails open (mock embedding fallback per
-# ADR-009, brute-force vector search per SMI-4577, esbuild platform-binary
-# breakage). Source-only packages (hnswlib-node) use --ignore-scripts=false so
-# node-gyp runs despite .npmrc (SMI-5200). Keep this array in sync with Dockerfile:73.
+# Must match the `RUN npm rebuild …` line in the Dockerfile (the NATIVE_MODULES
+# array is the canonical source; keep both in sync). With .npmrc ignore-scripts=true
+# (SMI-4672), plain `npm rebuild` is a verified no-op — it exits 0 but leaves
+# the binary byte-identical (SMI-5351 ground-truth investigation). ALL four
+# modules therefore require --ignore-scripts=false in the rebuild loop, not just
+# hnswlib-node. This includes prebuilt-binary packages (better-sqlite3,
+# onnxruntime-node, esbuild): their CDN download hooks (prebuild-install) ARE
+# install scripts and are blocked by ignore-scripts=true exactly as node-gyp is.
+# On the already-failed path, re-downloading the prebuilt IS the intended
+# self-heal. Source-only packages (hnswlib-node) have always needed the override
+# so node-gyp runs (SMI-5200); this change extends that to all four modules.
+# The override is scoped to the rebuild loop only (inside the
+# VALIDATION_FAILED guard) so healthy restarts pay nothing.
 NATIVE_MODULES=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node")
 
 # Track validation status
@@ -134,15 +141,17 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
     echo -e "${YELLOW}[entrypoint] Native module mismatch detected. Attempting rebuild...${NC}"
 
     for module in "${NATIVE_MODULES[@]}"; do
-        echo -e "${YELLOW}  Rebuilding ${module}...${NC}"
-        # hnswlib-node ships source-only (gypfile: true); --ignore-scripts=false overrides .npmrc
-        # so node-gyp runs (SMI-5200). Prebuilt-binary packages (others) don't need this and it
-        # would re-trigger their CDN download hooks unnecessarily.
-        if [ "${module}" = "hnswlib-node" ]; then
-            npm rebuild "${module}" --ignore-scripts=false || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
-        else
-            npm rebuild "${module}" || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
-        fi
+        # All four modules require --ignore-scripts=false: plain `npm rebuild` is a
+        # no-op under .npmrc ignore-scripts=true, verified SMI-5351 (exits 0 but
+        # leaves the binary byte-identical). This applies to prebuilt-binary packages
+        # (better-sqlite3, onnxruntime-node, esbuild) just as much as to the
+        # source-only package (hnswlib-node, SMI-5200) — CDN download hooks
+        # (prebuild-install) are install scripts and are blocked by ignore-scripts=true.
+        # Re-downloading a prebuilt only happens on this already-failed path and IS
+        # the intended self-heal. The --ignore-scripts=false override is scoped here,
+        # inside the VALIDATION_FAILED guard, so healthy restarts pay nothing.
+        echo -e "${YELLOW}  Rebuilding ${module} (first run may fetch a prebuilt)...${NC}"
+        npm rebuild "${module}" --ignore-scripts=false || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
     done
 
     # Re-validate after rebuild
@@ -158,8 +167,14 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
 
     if [ $REBUILD_FAILED -eq 1 ]; then
         echo -e "${RED}[entrypoint] Native module validation failed after rebuild.${NC}"
-        echo -e "${YELLOW}Try: docker compose down && docker compose build --no-cache${NC}"
-        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec skillsmith-dev-1 npm rebuild ${FAILED_MODULES}${NC}"
+        echo -e "${YELLOW}For verbose rebuild output (run on host): docker exec skillsmith-dev-1 npm rebuild ${FAILED_MODULES} --ignore-scripts=false${NC}"
+        # Probe CDN reachability before recommending a network-dependent recovery path.
+        # --max-time 5 is mandatory: a CDN hang must not stall container start (M11/F2).
+        if curl -fsS --max-time 5 https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo -e "${YELLOW}Try: docker compose down && docker compose build --no-cache${NC}"
+        else
+            echo -e "${YELLOW}Network unreachable — reconnect to the internet, then: docker compose restart dev${NC}"
+        fi
         exit 1
     fi
 
