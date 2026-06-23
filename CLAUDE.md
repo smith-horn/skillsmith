@@ -270,11 +270,11 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 | Problem | Fix |
 |---------|-----|
 | Container won't start | `docker compose --profile dev down && docker volume rm skillsmith_node_modules && docker compose --profile dev up -d` |
-| Native module errors | `docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
-| `hnswlib-node` fails validation after rebuild (`ignore-scripts=true` in `.npmrc` blocks node-gyp — see SMI-5200) | Permanent fix ships in PR #1365. Until merged, delete the stale volume so Docker re-initialises `node_modules` from the image layer (built without `.npmrc`): `docker compose --profile dev down && docker volume rm skillsmith_node_modules && docker compose --profile dev up -d` |
+| Native module errors | `docker compose restart dev` (entrypoint self-heals better-sqlite3 / onnxruntime-node / hnswlib-node on restart, SMI-5351; first run may re-download a prebuilt) or per-module `docker exec skillsmith-dev-1 npm rebuild <module> --ignore-scripts=false`. esbuild's binary loads lazily, so a corrupt esbuild binary isn't auto-detected — SMI-5352. |
+| `hnswlib-node` fails validation after rebuild (`ignore-scripts=true` in `.npmrc` blocks node-gyp — see SMI-5200) | The entrypoint now self-heals on restart (`docker compose restart dev`, SMI-5351 extended `--ignore-scripts=false` to all native modules). `docker volume rm skillsmith_node_modules` is a last resort only. |
 | Platform mismatch (SIGKILL 137) | `rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node` then rebuild |
 | Node ABI mismatch | WASM fallback auto-activates (core ≥0.4.10). Restore native: rebuild in Docker + `./scripts/repair-host-native-deps.sh` (SMI-4549) |
-| "invalid ELF header" in Docker (SMI-4698) | [git-crypt-guide.md § Host Native Bindings](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549) |
+| "invalid ELF header" in Docker (SMI-4698) | Try `docker compose restart dev` (self-heals) or `docker exec skillsmith-dev-1 npm rebuild <module> --ignore-scripts=false` first; for persistent host-binding leaks, see [git-crypt-guide.md § Host Native Bindings](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549) |
 | Worktree `npm run build` fails (SMI-4689) | SMI-4738 postinstall auto-regenerates override; bounce worktree container. Drift: `./scripts/repair-worktrees.sh` from main repo. macOS only. [Details](.claude/development/git-crypt-guide.md#worktree-docker-bind-mounts-smi-4689) |
 | Docker DNS failure | `docker network prune -f` then restart |
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
