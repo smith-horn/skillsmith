@@ -1,5 +1,5 @@
 #!/bin/bash
-# audit:host-npm-required — see SMI-4814 (npm runs inside a multi-line `docker exec -w /app sh -c '...'` block the per-line audit scanner cannot see)
+# audit:host-npm-required — see SMI-4814 (npm runs inside a `docker compose run … sh -c '…'` block the per-line audit scanner cannot see)
 # scripts/eval-baseline-cron.sh — SMI-4764 Wave 2; SMI-5353 decoupled-checkout rewrite
 #
 # Canonical-developer cron entry point for the retrieval-eval baseline.
@@ -19,7 +19,9 @@
 #   1. Guard: Docker daemon reachable.
 #   2. Preflight: distinct heartbeat paths, dev-tree heartbeat dir writable, disk.
 #   3. Ensure the isolated clone exists (clone origin once).
-#   4. Bring up the ephemeral eval container (compose + eval-cron override); trap teardown.
+#   4. Run the eval in a ONE-SHOT container (`compose run`, entrypoint overridden);
+#      trap teardown. (Not `up` — a fresh node_modules volume makes the dev
+#      entrypoint hard-exit, and its healthcheck races the native rebuild.)
 #   5. Sync the clone to origin/main + pin ALL corpus submodules (docs/internal + .claude/skills).
 #   6. npm ci inside the eval container.
 #   7. Memory bind-mount preflight (corpus REQUIRES the memory adapter).
@@ -69,8 +71,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"          # the canonical dev's PRIMARY
 
 # Isolated, cron-owned clone (OUTSIDE the repo — never the dev's live tree).
 EVAL_CLONE="${SKILLSMITH_EVAL_CLONE:-${HOME}/.skillsmith/eval-checkout}"
-EVAL_PROJECT="skillsmith-eval-cron"                # Compose project (scopes the node_modules volume)
-EVAL_CONTAINER="skillsmith-eval-cron-1"            # set by docker-compose.eval-cron.yml override
+EVAL_PROJECT="skillsmith-eval-cron"                # Compose project (scopes volumes + run-container names)
 
 REL_BASELINE="packages/doc-retrieval-mcp/eval/baseline.json"
 REL_HEARTBEAT="packages/doc-retrieval-mcp/eval/.cron-heartbeat"
@@ -99,11 +100,13 @@ sha256_file() {
   fi
 }
 
-# `docker compose` wrapper: dedicated project + base file + eval override.
+# `docker compose` wrapper: dedicated project, base compose file only. The
+# project name scopes the node_modules volume AND auto-names the one-shot `run`
+# container (`<project>-dev-run-<hash>`), so it never collides with the dev's
+# hardcoded `container_name: skillsmith-dev-1`. No override file needed.
 compose() {
   docker compose --project-name "$EVAL_PROJECT" \
     -f "$EVAL_CLONE/docker-compose.yml" \
-    -f "$EVAL_CLONE/docker-compose.eval-cron.yml" \
     "$@"
 }
 
@@ -123,7 +126,7 @@ cleanup_index() {
 teardown() {
   local code=$?
   if [ "$CONTAINER_UP" = "1" ]; then
-    log "Tearing down eval container (${EVAL_CONTAINER})..."
+    log "Tearing down eval containers (project ${EVAL_PROJECT})..."
     compose down >>"$LOG_FILE" 2>&1 || log "WARNING: eval container teardown failed — inspect 'docker ps'."
   fi
   cleanup_index
@@ -179,13 +182,6 @@ if [ ! -d "$EVAL_CLONE/.git" ]; then
   git clone "$ORIGIN_URL" "$EVAL_CLONE" >>"$LOG_FILE" 2>&1
 fi
 
-# Sanity: the eval override must be present in the clone (it ships on origin/main).
-if [ ! -f "$EVAL_CLONE/docker-compose.eval-cron.yml" ]; then
-  log "ERROR: $EVAL_CLONE/docker-compose.eval-cron.yml missing."
-  log "  The clone predates SMI-5353 on origin/main — 'git -C $EVAL_CLONE fetch && git -C $EVAL_CLONE reset --hard origin/main' or re-clone."
-  exit 1
-fi
-
 # ---------------------------------------------------------------------------
 # Sync the clone to origin/main
 # ---------------------------------------------------------------------------
@@ -223,63 +219,70 @@ if [ ! -f "$EVAL_CLONE/docs/internal/index.md" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Bring up the ephemeral eval container
-# ---------------------------------------------------------------------------
-
-log "Bringing up eval container (${EVAL_CONTAINER}) on project ${EVAL_PROJECT}..."
-# Mark up BEFORE the call: a timed-out/failed `up` aborts under set -e, and a
-# half-created container must still be torn down by the EXIT trap — otherwise it
-# orphans and the next run collides on container_name (governance High).
-CONTAINER_UP=1
-compose --profile dev up -d --wait --wait-timeout 300 >>"$LOG_FILE" 2>&1
-
-# Install deps (always — guarantees tsx + runtime deps; ~30-60s warm). M7.
-log "Installing dependencies in the eval container (npm ci)..."
-docker exec -w /app "$EVAL_CONTAINER" npm ci >>"$LOG_FILE" 2>&1
-
-# tsx must resolve — the eval runner is `tsx eval/eval-runner.ts`.
-if ! docker exec -w /app "$EVAL_CONTAINER" sh -c 'npm ls tsx >/dev/null 2>&1 || npx --no-install tsx --version >/dev/null 2>&1'; then
-  log "ERROR: tsx not resolvable in the eval container after npm ci."
-  exit 1
-fi
-
-# ---------------------------------------------------------------------------
 # Memory bind-mount preflight (H1)
 # ---------------------------------------------------------------------------
 #
-# The memory-topic-files adapter reads /skillsmith-memory (bind-mounted from
-# ${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED}/memory). If that env
-# var was empty at `compose up`, the mount is an empty dir and the eval's GAP 1
-# check would `process.exit(1)` mid-run with a cryptic message. Surface it here.
+# The memory-topic-files adapter reads /skillsmith-memory, bind-mounted from
+# ${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED}/memory. If that var
+# is unset/wrong the mount is empty and the eval's GAP 1 check process.exit(1)s
+# mid-run. Check the host bind-source directly (the one-shot model below has no
+# persistent container to exec into).
 
-if ! docker exec "$EVAL_CONTAINER" sh -c '[ -n "$(ls -A /skillsmith-memory 2>/dev/null)" ]'; then
-  log "ERROR: /skillsmith-memory is empty in the eval container."
-  log "  Export SKILLSMITH_PROJECT_DIR_ENCODED before launch (see eval-cron-setup.md) so the"
-  log "  memory bind-mount resolves. Refusing to run a degraded (memory-less) corpus."
+MEM_DIR="${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED:-__unset__}/memory"
+if [ ! -d "$MEM_DIR" ] || [ -z "$(ls -A "$MEM_DIR" 2>/dev/null)" ]; then
+  log "ERROR: memory dir empty or SKILLSMITH_PROJECT_DIR_ENCODED unset ($MEM_DIR)."
+  log "  Export SKILLSMITH_PROJECT_DIR_ENCODED (see eval-cron-setup.md) so the eval container's"
+  log "  /skillsmith-memory bind-mount resolves. Refusing to run a memory-less corpus."
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Run the eval in a ONE-SHOT container
+# ---------------------------------------------------------------------------
+#
+# `compose run` (NOT `up`): the dev entrypoint hard-exits when the fresh
+# node_modules volume is empty (first run / after a volume wipe), and its
+# healthcheck passes independently of the entrypoint's native-module rebuild —
+# so `up --wait` could report "healthy" while the rebuild is still mid-flight and
+# start the eval against half-rebuilt natives. A one-shot run with the entrypoint
+# overridden does deps + native rebuild + workspace build + eval SEQUENTIALLY in
+# one process. `--rm` cleans the run container; the EXIT trap's `compose down` is
+# the SIGKILL backstop.
+#
+# Run prelude: npm ci + rebuild native modules + build the workspace. npm ci
+# honours .npmrc ignore-scripts=true, so prebuilt/native binaries need an explicit
+# --ignore-scripts=false rebuild (mirrors docker-entrypoint.sh's NATIVE_MODULES).
+# The build is REQUIRED: the eval runs doc-retrieval-mcp's source via tsx, but its
+# cross-package imports resolve to @skillsmith/core's COMPILED dist/. Skip the
+# website package — the eval never imports it and it's the slow, Astro-heavy build.
+EVAL_PRELUDE='set -e; cd /app; npm ci; npm rebuild better-sqlite3 onnxruntime-node esbuild hnswlib-node --ignore-scripts=false; npm run build -- --filter=!@skillsmith/website'
+
 if [ "$DRY_RUN" = "1" ]; then
-  log "Dry-run OK: clone present, origin reachable, submodules initialized, container up, tsx resolvable, memory mount populated, heartbeat paths distinct. Exiting before eval."
+  CONTAINER_UP=1
+  log "Dry-run: validating container deps + native modules + workspace build + tsx (no eval)..."
+  compose --profile dev run --rm --no-deps --entrypoint sh dev -c \
+    "$EVAL_PRELUDE; npx --no-install tsx --version >/dev/null; echo '[dry-run] deps + native + build + tsx OK'" >>"$LOG_FILE" 2>&1
+  log "Dry-run OK: clone, submodules, memory mount, container deps/native/build/tsx, heartbeat paths — all validated. Exiting before eval."
   exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# Capture baseline.json hash before the eval (drift detection)
-# ---------------------------------------------------------------------------
-
+# Capture baseline.json hash before the eval (drift detection).
 PRE_HASH="$(sha256_file "$BASELINE_FILE")"
 log "Pre-eval baseline.json sha256: $PRE_HASH"
 
-# ---------------------------------------------------------------------------
-# Run the eval in canonical mode inside the eval container
-# ---------------------------------------------------------------------------
-
-log "Running canonical real-mode eval..."
+CONTAINER_UP=1
+log "Running canonical real-mode eval (one-shot container): reindex + eval..."
 EVAL_EXIT=0
-docker exec -w /app "$EVAL_CONTAINER" sh -c \
-  'SKILLSMITH_REPO_ROOT=/app SKILLSMITH_EVAL_CANONICAL=true RETRIEVAL_EVAL_REAL=1 \
-   npm run eval:retrieval --workspace=packages/doc-retrieval-mcp' \
+# REINDEX FIRST, then eval. The eval-runner READS the index (`.ruvector/.index-state.json`)
+# — it does NOT build it. In the dev's primary tree the index already existed (built
+# by the live doc-retrieval MCP server), so the original cron got away without an
+# explicit index step; the isolated clone has no index, so a missing reindex yields
+# Recall@5 = 0.0000. `reindex --full` (cli.ts → runIndexer) embeds the full corpus
+# (this is the ~1h40m cost). Both steps share SKILLSMITH_REPO_ROOT/EVAL_CANONICAL;
+# RETRIEVAL_EVAL_REAL is eval-only. SKILLSMITH_MEMORY_DIR_OVERRIDE comes from the
+# container env (docker-compose.yml).
+compose --profile dev run --rm --no-deps --entrypoint sh dev -c \
+  "$EVAL_PRELUDE; export SKILLSMITH_REPO_ROOT=/app SKILLSMITH_EVAL_CANONICAL=true; npx --no-install tsx packages/doc-retrieval-mcp/src/cli.ts reindex --full --quiet; RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval --workspace=packages/doc-retrieval-mcp" \
   >>"$LOG_FILE" 2>&1 || EVAL_EXIT=$?
 
 # ---------------------------------------------------------------------------
@@ -358,7 +361,13 @@ review the per-category breakdown in the gate output before merging.
 } >>"$LOG_FILE" 2>&1 || PR_OK=0
 
 if [ "$PR_OK" = "1" ]; then
-  ( cd "$EVAL_CLONE" && gh pr create \
+  ( cd "$EVAL_CLONE" &&
+    # Ensure the cron-specific label exists (idempotent) so `--label` can't fail the
+    # PR — the repo may not carry it. Non-fatal if it already exists or can't be made.
+    { gh label create eval-baseline-cron \
+        --description "Automated retrieval-eval baseline drift PR (SMI-4764)" \
+        --color "1d76db" 2>/dev/null || true; } &&
+    gh pr create \
     --base main \
     --head "$BRANCH" \
     --title "chore(eval): cron-detected baseline drift ($(date -u +%Y-%m-%d))" \
