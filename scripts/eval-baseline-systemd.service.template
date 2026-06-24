@@ -5,8 +5,11 @@
 #
 # Setup (canonical dev only — see .claude/development/eval-cron-setup.md):
 #
-#   1. Copy template, substituting __REPO_PATH__ and __USER__:
-#        sed "s|__REPO_PATH__|$(pwd)|g; s|__USER__|$USER|g" \
+#   1. Copy template, substituting __REPO_PATH__, __USER__, and
+#      __PROJECT_DIR_ENCODED__ (SKILLSMITH_PROJECT_DIR_ENCODED from .env via varlock
+#      AT SETUP TIME — the cron does NOT run under varlock):
+#        PROJ=$(varlock run -- sh -c 'printf %s "$SKILLSMITH_PROJECT_DIR_ENCODED"')
+#        sed "s|__REPO_PATH__|$(pwd)|g; s|__USER__|$USER|g; s|__PROJECT_DIR_ENCODED__|$PROJ|g" \
 #          scripts/eval-baseline-systemd.service.template \
 #          > ~/.config/systemd/user/skillsmith-eval-baseline-cron.service
 #
@@ -40,7 +43,12 @@ WorkingDirectory=__REPO_PATH__
 # systemd slot indefinitely. The script's own EXIT trap still tears the
 # ephemeral eval container down on timeout-kill.
 TimeoutStartSec=7200
-# Login shell so PATH includes docker/gh/varlock per canonical dev's profile.
+# Login shell so PATH includes docker/gh per canonical dev's profile.
+# SMI-5353: the decoupled cron starts its OWN container and needs
+# SKILLSMITH_PROJECT_DIR_ENCODED (for the /skillsmith-memory bind-mount) — provided
+# via Environment= below, NOT by wrapping in `varlock` (varlock can hang in a
+# keychain-less service context). gh/git/docker work natively, as the old cron did.
+Environment=SKILLSMITH_PROJECT_DIR_ENCODED=__PROJECT_DIR_ENCODED__
 ExecStart=/bin/bash -lc 'cd __REPO_PATH__ && ./scripts/eval-baseline-cron.sh'
 StandardOutput=append:%h/.skillsmith/logs/eval-cron-systemd-stdout.log
 StandardError=append:%h/.skillsmith/logs/eval-cron-systemd-stderr.log

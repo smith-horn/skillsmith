@@ -6,8 +6,12 @@
 
   Setup (canonical dev only — see .claude/development/eval-cron-setup.md):
 
-    1. Copy template, substituting __REPO_PATH__ and __HOME__:
-         sed "s|__REPO_PATH__|$(pwd)|g; s|__HOME__|$HOME|g" \
+    1. Copy template, substituting __REPO_PATH__, __HOME__, and
+       __PROJECT_DIR_ENCODED__ (SKILLSMITH_PROJECT_DIR_ENCODED, read from .env via
+       varlock AT SETUP TIME — the cron itself does NOT run under varlock, which
+       hangs in launchd's keychain-less context):
+         PROJ=$(varlock run -- sh -c 'printf %s "$SKILLSMITH_PROJECT_DIR_ENCODED"')
+         sed "s|__REPO_PATH__|$(pwd)|g; s|__HOME__|$HOME|g; s|__PROJECT_DIR_ENCODED__|$PROJ|g" \
            scripts/eval-baseline-launchd.plist.template \
            > ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
 
@@ -28,7 +32,7 @@
     - RunAtLoad=false: do NOT fire on `launchctl load`. Schedule-only.
     - StartCalendarInterval is the launchd equivalent of cron expressions.
     - SMI-5353: launchd has no per-invocation timeout key equivalent to
-      systemd's TimeoutStartSec. If a run wedges (hung `docker compose up`
+      systemd's TimeoutStartSec. If a run wedges (hung `docker compose run`
       or stuck eval), kill it manually:
         launchctl list | grep skillsmith         # find the PID
         launchctl kill TERM gui/$(id -u)/app.skillsmith.eval-baseline-cron
@@ -47,6 +51,12 @@
     <string>/bin/bash</string>
     <string>-l</string>
     <string>-c</string>
+    <!-- SMI-5353: the decoupled cron starts its OWN container and needs
+         SKILLSMITH_PROJECT_DIR_ENCODED (for the /skillsmith-memory bind-mount) —
+         provided via EnvironmentVariables below, NOT by wrapping in `varlock`.
+         varlock HANGS in launchd's keychain-less background context (it never
+         exec's the cron). gh/git/docker work in launchd natively, exactly as the
+         pre-SMI-5353 cron did. -->
     <string>cd __REPO_PATH__ &amp;&amp; ./scripts/eval-baseline-cron.sh</string>
   </array>
 
@@ -74,11 +84,14 @@
 
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- PATH inherited from /bin/bash -l (login shell) so docker, gh,
-         and varlock resolve correctly. Add explicit overrides here if
-         the canonical dev's shell init is non-standard. -->
+    <!-- PATH for docker/gh/git — launchd's `bash -l` env is minimal. Add explicit
+         entries here if the canonical dev's tools live elsewhere. -->
     <key>PATH</key>
     <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- SMI-5353: the eval container's /skillsmith-memory bind-mount needs this
+         (a path, NOT a secret). Substituted at setup from .env via varlock. -->
+    <key>SKILLSMITH_PROJECT_DIR_ENCODED</key>
+    <string>__PROJECT_DIR_ENCODED__</string>
   </dict>
 </dict>
 </plist>
