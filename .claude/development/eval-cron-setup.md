@@ -21,7 +21,7 @@ A weekly local cron that runs `RETRIEVAL_EVAL_REAL=1` against the corpus (`docs/
 - `gh` CLI authenticated with PR-create permissions
 - `varlock` set up if the dev container needs env injection
 - Private-submodule access: `git submodule update --init docs/internal .claude/skills` succeeds (the eval corpus reads both)
-- `SKILLSMITH_PROJECT_DIR_ENCODED` exported in the cron's environment (login shell / launchd `EnvironmentVariables` / systemd unit) so the eval container's `/skillsmith-memory` bind-mount resolves — the cron refuses to run a memory-less corpus
+- `.env` carries `SKILLSMITH_PROJECT_DIR_ENCODED` (for the eval container's `/skillsmith-memory` bind-mount). The setup `sed` reads its value from `.env` via `varlock` **at setup time** and bakes it into the plist `EnvironmentVariables` / systemd `Environment=`. The cron itself does **not** run under `varlock` — varlock hangs in launchd's keychain-less background context (it never exec's the cron). The cron refuses to run a memory-less corpus. _Existing installs predating SMI-5353 must re-generate the plist/unit (below) to pick up the baked-in env var._
 - **≥ 3 GB free** at `$HOME` (isolated clone ~100 MB + `node_modules` ~500 MB + `.ruvector` ~200 MB)
 
 ### One-time isolated-checkout setup (SMI-5353)
@@ -43,7 +43,10 @@ The cron auto-clones on first run if the directory is absent, but doing it manua
 
 ```bash
 # 1. Generate the LaunchAgent plist with substituted paths
-sed "s|__REPO_PATH__|$(pwd)|g; s|__HOME__|$HOME|g" \
+# __PROJECT_DIR_ENCODED__ → SKILLSMITH_PROJECT_DIR_ENCODED, read from .env via
+# varlock AT SETUP TIME (the cron does NOT run under varlock — it hangs in launchd).
+PROJ=$(varlock run -- sh -c 'printf %s "$SKILLSMITH_PROJECT_DIR_ENCODED"')
+sed "s|__REPO_PATH__|$(pwd)|g; s|__HOME__|$HOME|g; s|__PROJECT_DIR_ENCODED__|$PROJ|g" \
   scripts/eval-baseline-launchd.plist.template \
   > ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
 
@@ -67,7 +70,8 @@ tail ~/.skillsmith/logs/eval-cron-$(date -u +%Y-%m-%d).log
 
 ```bash
 # 1. Substitute paths into the systemd unit + timer
-sed "s|__REPO_PATH__|$(pwd)|g; s|__USER__|$USER|g" \
+PROJ=$(varlock run -- sh -c 'printf %s "$SKILLSMITH_PROJECT_DIR_ENCODED"')
+sed "s|__REPO_PATH__|$(pwd)|g; s|__USER__|$USER|g; s|__PROJECT_DIR_ENCODED__|$PROJ|g" \
   scripts/eval-baseline-systemd.service.template \
   > ~/.config/systemd/user/skillsmith-eval-baseline-cron.service
 
@@ -162,13 +166,13 @@ docker compose --project-name skillsmith-eval-cron \
 | `docs/internal not initialized in the clone (missing index.md sentinel)` / `docs/internal submodule update failed` | Lost private-submodule access (PAT/SSH) in the clone | Restore creds; `git -C ~/.skillsmith/eval-checkout submodule update --init --force docs/internal`. `docs/internal` is required — the cron aborts without it |
 | Heartbeat shows `WARN-PARTIAL` | `.claude/skills` submodule couldn't be pinned (e.g. expired PAT); eval ran on a partial corpus | Restore strategy-submodule access; next run pins it and returns to `OK`. Baseline from a `WARN-PARTIAL` run may differ slightly — don't treat its drift as authoritative |
 | Eval run fails during `npm ci` / native rebuild / image build | Network (prebuilt fetch), stale image, or disk | `docker compose --project-name skillsmith-eval-cron -f ~/.skillsmith/eval-checkout/docker-compose.yml down -v` (clears the node_modules volume) then re-run; inspect `~/.skillsmith/logs/eval-cron-<date>.log` |
-| `memory dir empty or SKILLSMITH_PROJECT_DIR_ENCODED unset` | `SKILLSMITH_PROJECT_DIR_ENCODED` unset when the cron ran → empty memory bind-mount | Export `SKILLSMITH_PROJECT_DIR_ENCODED` in the cron's environment (login shell / launchd `EnvironmentVariables` / systemd unit). The cron runs deps + eval under `varlock run --` so `.env` provides it |
+| `memory dir empty or SKILLSMITH_PROJECT_DIR_ENCODED unset` | The plist/unit doesn't carry the var (e.g. install predates SMI-5353, or `.env` lacked it at setup) → empty memory bind-mount | Re-generate the plist/unit (Prerequisites → setup) so the `sed` bakes `SKILLSMITH_PROJECT_DIR_ENCODED` (read from `.env` via varlock at setup time) into `EnvironmentVariables` / `Environment=`. The cron itself does not run under varlock |
 | `could not write heartbeat to the dev tree` | Primary-tree path not writable / disk full | Check disk + permissions on `<primary-repo>/packages/doc-retrieval-mcp/eval/`. Check 44 keeps reading the prior line until the 14-day window expires; the log line is the authoritative signal for that run |
 | `eval invocation failed with exit N` | Eval-runner errored (network, OOM, indexer state) | Inspect `~/.skillsmith/logs/eval-cron-<date>.log`; `.cron-heartbeat` records `FAIL` so the audit distinguishes `not running` vs `running but failing` |
 | Auto-PR not opened despite drift | `gh` not authenticated, or branch already exists | Check `gh auth status`; the branch suffix is now minute-resolution (`-YYYYMMDDTHHMM`) so same-day collisions are unlikely. Remove a stale `chore/eval-baseline-cron-*` branch with `git branch -D` + `git push --delete origin <branch>` |
 
 ## What this does NOT cover
 
-- **Hand-rolled baseline edits**: the cron is observability for *automated* baseline freshness. A developer hand-editing `baseline.json` and pushing with `--no-verify` bypasses the cron. The advisory `audit:standards` check 41 (Wave 3) catches that path.
+- **Hand-rolled baseline edits**: the cron is observability for _automated_ baseline freshness. A developer hand-editing `baseline.json` and pushing with `--no-verify` bypasses the cron. The advisory `audit:standards` check 41 (Wave 3) catches that path.
 - **Adversarial repo-write actors**: signature emission is observability, not security. ed25519 hardening tracked as Wave 5 follow-up if scenario materializes.
 - **Cross-platform Windows support**: not implemented. Current contributor base is macOS/Linux. File a Linear issue under SMI-4764 if a Windows canonical dev is ever needed.
