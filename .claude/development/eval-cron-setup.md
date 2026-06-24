@@ -8,7 +8,7 @@ Plan: [docs/internal/implementation/smi-4764-eval-baseline-automation.md](../../
 
 A weekly local cron that runs `RETRIEVAL_EVAL_REAL=1` against the corpus (`docs/internal` + `.claude/skills` + the memory adapter), opens an auto-PR if `baseline.json` drifts, and writes a heartbeat row to `packages/doc-retrieval-mcp/eval/.cron-heartbeat`. The heartbeat is read by `audit:standards` (check 44, advisory) — stale heartbeat (>14 days) emits a warning prompting the replacement protocol.
 
-**SMI-5353 — runs in an isolated checkout, never your live tree.** The eval runs against a dedicated clone at `~/.skillsmith/eval-checkout`, pinned to `origin/main`, inside its own ephemeral container (`skillsmith-eval-cron-1`). Your primary working tree and `skillsmith-dev-1` container are never reset, stashed, or guarded. After each run the heartbeat is **copied back** into your primary tree so `audit:standards` Check 44 stays fresh. This replaced the old design that ran in your live tree and refused (silently skipping the weekly run) whenever you had uncommitted `docs/internal` / `.claude/skills` work — which was effectively always.
+**SMI-5353 — runs in an isolated checkout, never your live tree.** The eval runs against a dedicated clone at `~/.skillsmith/eval-checkout`, pinned to `origin/main`, in a **one-shot container** (`docker compose run`, scoped to the `skillsmith-eval-cron` Compose project). Your primary working tree and `skillsmith-dev-1` container are never reset, stashed, or guarded. After each run the heartbeat is **written back** into your primary tree so `audit:standards` Check 44 stays fresh. This replaced the old design that ran in your live tree and refused (silently skipping the weekly run) whenever you had uncommitted `docs/internal` / `.claude/skills` work — which was effectively always.
 
 ## Why local, not CI
 
@@ -17,7 +17,7 @@ A weekly local cron that runs `RETRIEVAL_EVAL_REAL=1` against the corpus (`docs/
 ## Prerequisites
 
 - Repo cloned at a stable path (cron resolves it from the LaunchAgent / systemd unit)
-- Docker Desktop running (the cron brings up its own `skillsmith-eval-cron-1` container; the daemon must be reachable)
+- Docker Desktop running (the cron runs a one-shot eval container under its own `skillsmith-eval-cron` Compose project; the daemon must be reachable)
 - `gh` CLI authenticated with PR-create permissions
 - `varlock` set up if the dev container needs env injection
 - Private-submodule access: `git submodule update --init docs/internal .claude/skills` succeeds (the eval corpus reads both)
@@ -26,7 +26,7 @@ A weekly local cron that runs `RETRIEVAL_EVAL_REAL=1` against the corpus (`docs/
 
 ### One-time isolated-checkout setup (SMI-5353)
 
-Before first run (and on any replacement hand-off), create the dedicated clone the cron runs in. Do this **after** the SMI-5353 change is on `origin/main` (the clone needs `docker-compose.eval-cron.yml`):
+Before first run (and on any replacement hand-off), create the dedicated clone the cron runs in. Do this **after** the SMI-5353 changes are on `origin/main`:
 
 ```bash
 git clone https://github.com/smith-horn/skillsmith.git ~/.skillsmith/eval-checkout
@@ -124,10 +124,9 @@ If the canonical dev becomes unavailable for >2 weeks:
    rm ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
    # Linux
    systemctl --user disable --now skillsmith-eval-baseline-cron.timer
-   # Both: remove the isolated checkout + its container/volume (SMI-5353)
+   # Both: remove the isolated checkout + its Compose network/volume (SMI-5353)
    docker compose --project-name skillsmith-eval-cron \
-     -f ~/.skillsmith/eval-checkout/docker-compose.yml \
-     -f ~/.skillsmith/eval-checkout/docker-compose.eval-cron.yml down -v 2>/dev/null
+     -f ~/.skillsmith/eval-checkout/docker-compose.yml down -v 2>/dev/null
    rm -rf ~/.skillsmith/eval-checkout
    ```
 
@@ -147,12 +146,11 @@ systemctl --user stop --now skillsmith-eval-baseline-cron.timer
 
 The `audit:standards` warning will fire after 14 days of pause — that's intentional, it's the exact signal the system is supposed to surface.
 
-If a run is **in progress** when you unload (SMI-5353), the ephemeral eval container keeps going until the run finishes. To kill it immediately:
+If a run is **in progress** when you unload (SMI-5353), the one-shot eval container keeps going until the run finishes. To kill it immediately:
 
 ```bash
 docker compose --project-name skillsmith-eval-cron \
-  -f ~/.skillsmith/eval-checkout/docker-compose.yml \
-  -f ~/.skillsmith/eval-checkout/docker-compose.eval-cron.yml down
+  -f ~/.skillsmith/eval-checkout/docker-compose.yml down
 ```
 
 ## Troubleshooting
@@ -163,8 +161,8 @@ docker compose --project-name skillsmith-eval-cron \
 | `isolated clone missing at ~/.skillsmith/eval-checkout` (dry-run) | One-time setup not done, or the clone was deleted | Run the one-time isolated-checkout setup (see Prerequisites). A real (non-dry-run) run auto-clones |
 | `docs/internal not initialized in the clone (missing index.md sentinel)` / `docs/internal submodule update failed` | Lost private-submodule access (PAT/SSH) in the clone | Restore creds; `git -C ~/.skillsmith/eval-checkout submodule update --init --force docs/internal`. `docs/internal` is required — the cron aborts without it |
 | Heartbeat shows `WARN-PARTIAL` | `.claude/skills` submodule couldn't be pinned (e.g. expired PAT); eval ran on a partial corpus | Restore strategy-submodule access; next run pins it and returns to `OK`. Baseline from a `WARN-PARTIAL` run may differ slightly — don't treat its drift as authoritative |
-| Eval container fails to start (`up --wait` times out) | Stale `skillsmith-eval-cron-1` / image build / native-module health | `docker compose --project-name skillsmith-eval-cron -f ~/.skillsmith/eval-checkout/docker-compose.yml -f ~/.skillsmith/eval-checkout/docker-compose.eval-cron.yml down -v` then re-run; inspect `~/.skillsmith/logs/eval-cron-<date>.log` |
-| `/skillsmith-memory is empty in the eval container` | `SKILLSMITH_PROJECT_DIR_ENCODED` unset at `compose up` → empty memory bind-mount | Export `SKILLSMITH_PROJECT_DIR_ENCODED` in the cron's environment (login shell / launchd `EnvironmentVariables` / systemd unit) |
+| Eval run fails during `npm ci` / native rebuild / image build | Network (prebuilt fetch), stale image, or disk | `docker compose --project-name skillsmith-eval-cron -f ~/.skillsmith/eval-checkout/docker-compose.yml down -v` (clears the node_modules volume) then re-run; inspect `~/.skillsmith/logs/eval-cron-<date>.log` |
+| `memory dir empty or SKILLSMITH_PROJECT_DIR_ENCODED unset` | `SKILLSMITH_PROJECT_DIR_ENCODED` unset when the cron ran → empty memory bind-mount | Export `SKILLSMITH_PROJECT_DIR_ENCODED` in the cron's environment (login shell / launchd `EnvironmentVariables` / systemd unit). The cron runs deps + eval under `varlock run --` so `.env` provides it |
 | `could not write heartbeat to the dev tree` | Primary-tree path not writable / disk full | Check disk + permissions on `<primary-repo>/packages/doc-retrieval-mcp/eval/`. Check 44 keeps reading the prior line until the 14-day window expires; the log line is the authoritative signal for that run |
 | `eval invocation failed with exit N` | Eval-runner errored (network, OOM, indexer state) | Inspect `~/.skillsmith/logs/eval-cron-<date>.log`; `.cron-heartbeat` records `FAIL` so the audit distinguishes `not running` vs `running but failing` |
 | Auto-PR not opened despite drift | `gh` not authenticated, or branch already exists | Check `gh auth status`; the branch suffix is now minute-resolution (`-YYYYMMDDTHHMM`) so same-day collisions are unlikely. Remove a stale `chore/eval-baseline-cron-*` branch with `git branch -D` + `git push --delete origin <branch>` |
