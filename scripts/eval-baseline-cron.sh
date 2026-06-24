@@ -382,7 +382,12 @@ fi
 if [ "$PR_OK" = "1" ]; then
   log "Auto-PR opened on branch ${BRANCH}"
 else
-  log "WARNING: auto-PR creation failed (gh auth / existing branch?). Drift recorded; will retry next run. See $LOG_FILE."
+  log "WARNING: auto-PR creation failed (gh auth?). Drift recorded; will retry next run. See $LOG_FILE."
+  # The branch was already pushed before `gh pr create` ran, so a PR-create failure
+  # leaves an orphan remote branch. Delete it so failed runs don't accumulate refs
+  # on origin (governance High). Non-fatal — manual cleanup if this also fails.
+  git -C "$EVAL_CLONE" push --delete origin "$BRANCH" >>"$LOG_FILE" 2>&1 \
+    || log "WARNING: could not delete orphan remote branch ${BRANCH} — remove it manually."
 fi
 
 git -C "$EVAL_CLONE" checkout -f main >>"$LOG_FILE" 2>&1 || log "WARNING: could not return clone to main."
