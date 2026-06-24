@@ -27,6 +27,14 @@
       script itself writes detailed logs to ~/.skillsmith/logs/).
     - RunAtLoad=false: do NOT fire on `launchctl load`. Schedule-only.
     - StartCalendarInterval is the launchd equivalent of cron expressions.
+    - SMI-5353: launchd has no per-invocation timeout key equivalent to
+      systemd's TimeoutStartSec. If a run wedges (hung `docker compose up`
+      or stuck eval), kill it manually:
+        launchctl list | grep skillsmith         # find the PID
+        launchctl kill TERM gui/$(id -u)/app.skillsmith.eval-baseline-cron
+      The script's EXIT trap still tears the ephemeral eval container down on
+      kill. As a backstop, `launchctl remove app.skillsmith.eval-baseline-cron`
+      unloads the agent entirely.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

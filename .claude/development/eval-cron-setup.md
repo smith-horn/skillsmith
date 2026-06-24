@@ -6,7 +6,9 @@ Plan: [docs/internal/implementation/smi-4764-eval-baseline-automation.md](../../
 
 ## What this does
 
-A weekly local cron that runs `RETRIEVAL_EVAL_REAL=1` against `docs/internal` + the memory adapter, opens an auto-PR if `baseline.json` drifts, and writes a heartbeat row to `packages/doc-retrieval-mcp/eval/.cron-heartbeat`. The heartbeat is read by `audit:standards` (check 44, advisory) — stale heartbeat (>14 days) emits a warning prompting the replacement protocol.
+A weekly local cron that runs `RETRIEVAL_EVAL_REAL=1` against the corpus (`docs/internal` + `.claude/skills` + the memory adapter), opens an auto-PR if `baseline.json` drifts, and writes a heartbeat row to `packages/doc-retrieval-mcp/eval/.cron-heartbeat`. The heartbeat is read by `audit:standards` (check 44, advisory) — stale heartbeat (>14 days) emits a warning prompting the replacement protocol.
+
+**SMI-5353 — runs in an isolated checkout, never your live tree.** The eval runs against a dedicated clone at `~/.skillsmith/eval-checkout`, pinned to `origin/main`, inside its own ephemeral container (`skillsmith-eval-cron-1`). Your primary working tree and `skillsmith-dev-1` container are never reset, stashed, or guarded. After each run the heartbeat is **copied back** into your primary tree so `audit:standards` Check 44 stays fresh. This replaced the old design that ran in your live tree and refused (silently skipping the weekly run) whenever you had uncommitted `docs/internal` / `.claude/skills` work — which was effectively always.
 
 ## Why local, not CI
 
@@ -15,10 +17,27 @@ A weekly local cron that runs `RETRIEVAL_EVAL_REAL=1` against `docs/internal` + 
 ## Prerequisites
 
 - Repo cloned at a stable path (cron resolves it from the LaunchAgent / systemd unit)
-- Docker Desktop running with `skillsmith-dev-1` reachable
+- Docker Desktop running (the cron brings up its own `skillsmith-eval-cron-1` container; the daemon must be reachable)
 - `gh` CLI authenticated with PR-create permissions
 - `varlock` set up if the dev container needs env injection
-- `git submodule update --init docs/internal` succeeds (you have access to the private docs submodule)
+- Private-submodule access: `git submodule update --init docs/internal .claude/skills` succeeds (the eval corpus reads both)
+- `SKILLSMITH_PROJECT_DIR_ENCODED` exported in the cron's environment (login shell / launchd `EnvironmentVariables` / systemd unit) so the eval container's `/skillsmith-memory` bind-mount resolves — the cron refuses to run a memory-less corpus
+- **≥ 3 GB free** at `$HOME` (isolated clone ~100 MB + `node_modules` ~500 MB + `.ruvector` ~200 MB)
+
+### One-time isolated-checkout setup (SMI-5353)
+
+Before first run (and on any replacement hand-off), create the dedicated clone the cron runs in. Do this **after** the SMI-5353 change is on `origin/main` (the clone needs `docker-compose.eval-cron.yml`):
+
+```bash
+git clone https://github.com/smith-horn/skillsmith.git ~/.skillsmith/eval-checkout
+cd ~/.skillsmith/eval-checkout
+git submodule update --init --force docs/internal .claude/skills   # private — needs your creds
+# Validate the wiring without running the ~1h40m eval:
+cd /path/to/your/primary/repo
+./scripts/eval-baseline-cron.sh --dry-run
+```
+
+The cron auto-clones on first run if the directory is absent, but doing it manually lets you confirm submodule access + disk up front. `--dry-run` validates: clone present, `origin/main` reachable, submodules initialized, the eval container starts, `tsx` resolves, `/skillsmith-memory` is populated, and the two heartbeat paths are distinct. It does **not** run the eval or exercise copy-back.
 
 ## macOS setup (primary)
 
@@ -36,7 +55,7 @@ launchctl load   ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
 launchctl list | grep skillsmith
 mkdir -p ~/.skillsmith/logs    # for first-run log path
 
-# 4. Optional: dry-run the script to confirm guards pass
+# 4. Optional: dry-run the script to confirm the isolated checkout is wired (SMI-5353)
 ./scripts/eval-baseline-cron.sh --dry-run
 
 # 5. Optional: trigger manually for first-run smoke
@@ -65,22 +84,28 @@ systemctl --user list-timers | grep skillsmith
 journalctl --user -u skillsmith-eval-baseline-cron --since '1 day ago'
 ```
 
-## Heartbeat lifecycle
+## Heartbeat lifecycle (SMI-5353)
 
-The cron always writes a heartbeat row to `packages/doc-retrieval-mcp/eval/.cron-heartbeat`:
+The cron writes a heartbeat row in the **isolated clone**, then **copies it back** into your primary tree at `packages/doc-retrieval-mcp/eval/.cron-heartbeat`:
 
 ```text
-<ISO-timestamp>\t<git-HEAD-sha>\tOK
+<ISO-timestamp>\t<git-HEAD-sha>\t<OK|FAIL|WARN-PARTIAL>
 ```
 
-(Failed runs write `FAIL` instead of `OK`.)
+- `OK` — eval succeeded, full corpus.
+- `FAIL` — the eval errored.
+- `WARN-PARTIAL` — `.claude/skills` couldn't be pinned (e.g. expired PAT); the eval still ran against `docs/internal` + memory, but the corpus was partial.
 
-| Cron run outcome | What gets committed | When |
+The cron writes the run's true status directly to **both** the clone's heartbeat and your primary tree's (no `cp` indirection), so the dev-tree file always carries the real status — never a silently-retained stale line. `audit:standards` Check 44 reads the **working-tree** copy in your primary tree, so this write-back is the entire local freshness mechanism. **There is no manual weekly push** — the old "no-drift weeks need a manual heartbeat-only commit" step (and its forgotten-push failure mode) is gone.
+
+If the dev-tree write itself fails (path not writable / disk full), the cron logs an `ERROR` to `~/.skillsmith/logs/eval-cron-<date>.log`; Check 44 then keeps reading the prior line and won't flag the run until the normal 14-day staleness window expires. The log is the authoritative signal in that (rare) case.
+
+| Cron run outcome | What lands in your primary tree | What gets committed to `main` |
 |---|---|---|
-| Drift detected | `baseline.json` + `.cron-heartbeat` together via auto-PR | Automatic (cron opens PR with `eval-baseline-cron` label) |
-| No drift | `.cron-heartbeat` only | **Manual** — canonical dev pushes a heartbeat-only commit weekly |
+| Drift detected | Fresh heartbeat (copy-back) | `baseline.json` + `.cron-heartbeat` via auto-PR (`eval-baseline-cron` label), opened from the clone |
+| No drift | Fresh heartbeat (copy-back) | Nothing — copy-back alone keeps Check 44 fresh |
 
-**Why manual heartbeat-only push**: the cron deliberately does NOT auto-commit when there's no drift, to avoid spamming `main` with no-op commits. Canonical dev's weekly hygiene includes a `git add packages/doc-retrieval-mcp/eval/.cron-heartbeat && git commit -m 'chore(eval): cron heartbeat'` push when no drift PR fires. Forgetting this surfaces as the >14d audit warning.
+The copied-back heartbeat sits **untracked** in your primary tree; that's expected and harmless (Check 44 reads the working-tree file, and the cron no longer runs in your tree so it can't be tripped by it).
 
 ## Replacement protocol
 
@@ -88,10 +113,10 @@ If the canonical dev becomes unavailable for >2 weeks:
 
 1. **Verify staleness**: `audit:standards` warning will be live. Manually inspect `.cron-heartbeat` last timestamp.
 2. **Designate replacement**: file a Linear issue under SMI-4764 (or a successor parent). Tag `area:eval-baseline`. The replacement dev:
-   - Has access to `docs/internal` submodule (private)
+   - Has access to the `docs/internal` + `.claude/skills` submodules (private)
    - Has Docker + `gh` set up
-   - Commits to running the cron + manual weekly heartbeat-only pushes
-3. **Hand off the canonical role**: the new dev installs the cron locally per the macOS / Linux setup above. The old dev disables their cron:
+   - Commits to running the cron (no manual weekly push — the cron copies the heartbeat back automatically; SMI-5353)
+3. **Hand off the canonical role**: the new dev performs the **one-time isolated-checkout setup** (see Prerequisites → "One-time isolated-checkout setup") and then installs the cron locally per the macOS / Linux setup above. The old dev disables their cron and tears down their isolated checkout:
 
    ```bash
    # macOS
@@ -99,6 +124,11 @@ If the canonical dev becomes unavailable for >2 weeks:
    rm ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
    # Linux
    systemctl --user disable --now skillsmith-eval-baseline-cron.timer
+   # Both: remove the isolated checkout + its container/volume (SMI-5353)
+   docker compose --project-name skillsmith-eval-cron \
+     -f ~/.skillsmith/eval-checkout/docker-compose.yml \
+     -f ~/.skillsmith/eval-checkout/docker-compose.eval-cron.yml down -v 2>/dev/null
+   rm -rf ~/.skillsmith/eval-checkout
    ```
 
 4. **Document the hand-off**: comment on SMI-4764 (or successor) noting the date and new canonical dev.
@@ -117,16 +147,27 @@ systemctl --user stop --now skillsmith-eval-baseline-cron.timer
 
 The `audit:standards` warning will fire after 14 days of pause — that's intentional, it's the exact signal the system is supposed to surface.
 
+If a run is **in progress** when you unload (SMI-5353), the ephemeral eval container keeps going until the run finishes. To kill it immediately:
+
+```bash
+docker compose --project-name skillsmith-eval-cron \
+  -f ~/.skillsmith/eval-checkout/docker-compose.yml \
+  -f ~/.skillsmith/eval-checkout/docker-compose.eval-cron.yml down
+```
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `cron must run from 'main' (current: '<branch>')` | Canonical dev left feature branch checked out at scheduled time | Switch to main before the next scheduled run, or expect to skip a week |
-| `cron requires clean working tree` | Uncommitted local edits | Commit / stash; cron will retry next week |
-| `Docker container 'skillsmith-dev-1' is not running` | Docker Desktop not launched at scheduled time | Start container; verify launch-agent / timer is set to fire when machine wakes |
-| `eval invocation failed with exit N` | Eval-runner errored (network, OOM, indexer state) | Inspect `~/.skillsmith/logs/eval-cron-<date>.log`; .cron-heartbeat will record `FAIL` so the audit can distinguish `not running` vs `running but failing` |
-| Auto-PR not opened despite drift | `gh` not authenticated, or branch already exists | Check `gh auth status`; remove stale `chore/eval-baseline-cron-<date>` branch with `git branch -D` + `git push --delete origin <branch>` |
-| `audit:standards` heartbeat stale warning despite cron running | Forgetting the manual heartbeat-only push when there's no drift | Run `git add packages/doc-retrieval-mcp/eval/.cron-heartbeat && git commit -m 'chore(eval): cron heartbeat' && git push` |
+| `Docker daemon not reachable` | Docker Desktop not launched at scheduled time | Start Docker; verify the launch-agent / timer is set to fire when the machine wakes |
+| `isolated clone missing at ~/.skillsmith/eval-checkout` (dry-run) | One-time setup not done, or the clone was deleted | Run the one-time isolated-checkout setup (see Prerequisites). A real (non-dry-run) run auto-clones |
+| `docs/internal not initialized in the clone (missing index.md sentinel)` / `docs/internal submodule update failed` | Lost private-submodule access (PAT/SSH) in the clone | Restore creds; `git -C ~/.skillsmith/eval-checkout submodule update --init --force docs/internal`. `docs/internal` is required — the cron aborts without it |
+| Heartbeat shows `WARN-PARTIAL` | `.claude/skills` submodule couldn't be pinned (e.g. expired PAT); eval ran on a partial corpus | Restore strategy-submodule access; next run pins it and returns to `OK`. Baseline from a `WARN-PARTIAL` run may differ slightly — don't treat its drift as authoritative |
+| Eval container fails to start (`up --wait` times out) | Stale `skillsmith-eval-cron-1` / image build / native-module health | `docker compose --project-name skillsmith-eval-cron -f ~/.skillsmith/eval-checkout/docker-compose.yml -f ~/.skillsmith/eval-checkout/docker-compose.eval-cron.yml down -v` then re-run; inspect `~/.skillsmith/logs/eval-cron-<date>.log` |
+| `/skillsmith-memory is empty in the eval container` | `SKILLSMITH_PROJECT_DIR_ENCODED` unset at `compose up` → empty memory bind-mount | Export `SKILLSMITH_PROJECT_DIR_ENCODED` in the cron's environment (login shell / launchd `EnvironmentVariables` / systemd unit) |
+| `could not write heartbeat to the dev tree` | Primary-tree path not writable / disk full | Check disk + permissions on `<primary-repo>/packages/doc-retrieval-mcp/eval/`. Check 44 keeps reading the prior line until the 14-day window expires; the log line is the authoritative signal for that run |
+| `eval invocation failed with exit N` | Eval-runner errored (network, OOM, indexer state) | Inspect `~/.skillsmith/logs/eval-cron-<date>.log`; `.cron-heartbeat` records `FAIL` so the audit distinguishes `not running` vs `running but failing` |
+| Auto-PR not opened despite drift | `gh` not authenticated, or branch already exists | Check `gh auth status`; the branch suffix is now minute-resolution (`-YYYYMMDDTHHMM`) so same-day collisions are unlikely. Remove a stale `chore/eval-baseline-cron-*` branch with `git branch -D` + `git push --delete origin <branch>` |
 
 ## What this does NOT cover
 
