@@ -2,36 +2,41 @@
 /// <reference types="astro/client" />
 
 interface ImportMetaEnv {
-  readonly PUBLIC_API_BASE_URL: string;
-  readonly PUBLIC_SITE_URL: string;
-  readonly PUBLIC_SUPABASE_URL: string;
-  readonly PUBLIC_SUPABASE_ANON_KEY: string;
+  readonly PUBLIC_API_BASE_URL: string
+  readonly PUBLIC_SITE_URL: string
+  readonly PUBLIC_SUPABASE_URL: string
+  readonly PUBLIC_SUPABASE_ANON_KEY: string
 }
 
 interface ImportMeta {
-  readonly env: ImportMetaEnv;
+  readonly env: ImportMetaEnv
 }
 
 /**
  * Global type declarations for window augmentation
  */
 interface SupabaseWindowConfig {
-  url: string;
-  anonKey: string;
-  apiBaseUrl: string;
+  url: string
+  anonKey: string
+  apiBaseUrl: string
 }
 
 declare global {
   interface Window {
-    __SUPABASE_CONFIG__?: SupabaseWindowConfig;
-    __SUPABASE_CLIENT__?: import('@supabase/supabase-js').SupabaseClient;
-    __AUTH_REDIRECT_TO__?: string;
+    __SUPABASE_CONFIG__?: SupabaseWindowConfig
+    __SUPABASE_CLIENT__?: import('@supabase/supabase-js').SupabaseClient
+    __AUTH_REDIRECT_TO__?: string
     /** Google Analytics gtag function (injected by GA script in BaseLayout) */
-    gtag?: (...args: unknown[]) => void;
+    gtag?: (...args: unknown[]) => void
     /** SMI-4895/4896: device-login state — on window so it survives hard navigations. */
-    __deviceInited?: boolean;
-    __deviceState?: 'input' | 'preview' | 'approved' | 'expired' | 'denied';
+    __deviceInited?: boolean
+    __deviceState?: 'input' | 'preview' | 'approved' | 'expired' | 'denied'
+    /** SMI-5366: rate-limit countdown interval handle (skills browse page). */
+    _rateLimitInterval?: ReturnType<typeof setInterval>
+    /** Global rate-limit toast / suppression hooks (set by RateLimitToast.astro). */
+    showRateLimitToast?: (retryAfterSeconds: number, tierMessage?: string | null) => void
+    hideRateLimitToast?: () => void
   }
 }
 
-export {};
+export {}

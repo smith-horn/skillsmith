@@ -6,8 +6,10 @@ import SignedOutOverlay from '../../components/SignedOutOverlay.astro'
 import { isCrawlerUserAgent } from '../../lib/crawler-detect'
 // SMI-4838: featured-skills catalog seed — pinned author/name set verified against indexer DB.
 import featuredSkillsData from '../../data/featured-skills.json'
-// SMI-5217: shared 5-tier badge classes (single source of truth, canonical colors).
-import { TRUST_TIER_BADGE_CLASSES, DEFAULT_TRUST_TIER } from '../../constants/trust-tier-badges'
+// SMI-5217: canonical 5-tier order drives the trust-tier filter options below.
+// SMI-5365: the badge-class maps (TRUST_TIER_BADGE_CLASSES / DEFAULT_TRUST_TIER)
+// are now imported directly inside the bundled <script>, not injected via
+// define:vars, so they're no longer referenced in the frontmatter.
 import { TRUST_TIER_ORDER } from '../../constants/terminology'
 
 const FEATURED_SKILL_IDS: string[] = (featuredSkillsData.skills as Array<{ id: string }>).map(
@@ -316,6 +318,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       <div
         id="featured-skills-grid"
         class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6"
+        data-featured-ids={JSON.stringify(FEATURED_SKILL_IDS)}
       >
       </div>
       <div class="flex flex-wrap justify-center gap-2 max-w-md mx-auto mt-6">
@@ -390,20 +393,31 @@ const isCrawler = isCrawlerUserAgent(userAgent)
     </div>
   </div>
 
-  <script
-    is:inline
-    define:vars={{
-      apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
-      FEATURED_SKILL_IDS,
-      trustBadgeClasses: TRUST_TIER_BADGE_CLASSES,
-      defaultTrustTier: DEFAULT_TRUST_TIER,
-    }}
-  >
-    const API_BASE = apiBase
+  <script>
+    // SMI-5365: bundled (non-inline) module script so it can `import` the canonical
+    // helpers. Data that used to arrive via define:vars now comes from direct imports
+    // + import.meta.env (Vite-substituted at build) + the #featured-skills-grid
+    // data-attribute. SMI-4907 tracked this migration for index.astro.
+    import {
+      TRUST_TIER_BADGE_CLASSES as trustBadgeClasses,
+      DEFAULT_TRUST_TIER as defaultTrustTier,
+    } from '../../constants/trust-tier-badges'
+    import { getSupabaseClient } from '../../lib/supabase-client'
+    import { getQualityTier, escapeHtml, formatNumber } from '../../lib/skills-utils.js'
+    import type { WireSkill } from '../../types/skills.js'
+
+    // SMI-5365: reconstruct the edge-function base in-script. import.meta.env
+    // substitutes PUBLIC_API_BASE_URL (astro.config.mjs vite.define); the
+    // `|| fallback` AND the `/functions/v1` suffix MUST stay here — dropping
+    // either 404s every skills-search / skills-get call.
+    const API_BASE = `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`
     const ITEMS_PER_PAGE = 12
     const MIN_QUERY_LENGTH = 3 // SMI-1613: Minimum characters for search
 
-    // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
+    // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation).
+    // Bundled ES module evaluates once, so this binds exactly one listener; the early-bail below
+    // (search-input existence) is the state guard for the handler body across ClientRouter navigations.
+    // audit:concurrency-ok — single bind (module evals once) + early-bail state guard on the handler body
     document.addEventListener('astro:page-load', () => {
       // Document-level listeners persist across ClientRouter navigations. When the user
       // navigates /skills → /skills/[id] (or any non-/skills page), this handler still
@@ -412,7 +426,11 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // Mirrors the same defensive guard at packages/website/src/pages/skills/[id].astro:575.
       if (!document.getElementById('search-input')) return
 
-      // Get Supabase config for API authentication
+      // Get Supabase config for API authentication. The injected config object is written once
+      // by BaseLayout's inline script before any astro:page-load fires; read here only for the
+      // anon-key default — NOT the client singleton (that race surface goes through
+      // getSupabaseClient() below). Unchanged from the pre-migration code.
+      // audit:concurrency-ok — write-once config global, populated before page-load, anon-key read only
       const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
       const supabaseAnonKey = config.anonKey
 
@@ -421,18 +439,17 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       let authToken = supabaseAnonKey // Default to anon key
       let authMethod = 'anon_key'
       // SMI-4401 Wave 2 A-M9-2: authenticated user's GitHub orgs (for signal-boost re-sort).
-      let userGithubOrgs = []
-      let userId = null
+      let userGithubOrgs: string[] = []
+      let userId: string | null = null
 
       async function initAuth() {
         try {
-          // Use shared singleton from window.__SUPABASE_CLIENT__ (SMI-3595).
-          // is:inline + define:vars prevents ES import of getSupabaseClient(),
-          // so this consumer cannot use the canonical lazy helper. The null-check
-          // below degrades gracefully if BaseLayout hasn't populated the global
-          // yet. SMI-4907 tracks migrating this script to a bundled <script>.
-          // eslint-disable-next-line skillsmith-local/no-raw-window-global
-          const supabase = window.__SUPABASE_CLIENT__
+          // SMI-5365: now a bundled <script>, so this consumer uses the canonical
+          // lazy helper (SMI-3595 / SMI-4895) instead of the raw global. It returns
+          // the shared singleton, lazily creating it from the injected Supabase config
+          // when BaseLayout hasn't run yet — strictly safer than the prior raw read,
+          // and the singleton guard in getSupabaseClient() prevents a double-init.
+          const supabase = getSupabaseClient()
           if (!supabase) {
             console.debug('[Skills] No Supabase client, using anon key')
             return
@@ -462,59 +479,50 @@ const isCrawler = isCrawlerUserAgent(userAgent)
                     .filter(Boolean)
                 }
               } catch (orgErr) {
-                console.debug('[Skills] github_orgs fetch failed (non-fatal):', orgErr?.message)
+                console.debug(
+                  '[Skills] github_orgs fetch failed (non-fatal):',
+                  (orgErr as Error)?.message
+                )
               }
             }
           } else {
             console.debug('[Skills] Using anon key (community rate limits)')
           }
         } catch (e) {
-          console.warn('[Skills] Auth init failed, using anon key:', e.message)
+          console.warn('[Skills] Auth init failed, using anon key:', (e as Error).message)
         }
       }
 
       let currentPage = 1
       let totalPages = 1
-      let allResults = []
-      let debounceTimer = null
+      let allResults: WireSkill[] = []
+      let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
       // DOM Elements
-      const searchInput = document.getElementById('search-input')
-      const categoryFilter = document.getElementById('category-filter')
-      const trustFilter = document.getElementById('trust-filter')
-      const sortSelect = document.getElementById('sort-select')
-      const resultsGrid = document.getElementById('results-grid')
-      const resultsCount = document.getElementById('results-count')
-      const loadingState = document.getElementById('loading-state')
-      const emptyState = document.getElementById('empty-state')
-      const errorState = document.getElementById('error-state')
-      const errorMessage = document.getElementById('error-message')
-      const pagination = document.getElementById('pagination')
-      const prevPageBtn = document.getElementById('prev-page')
-      const nextPageBtn = document.getElementById('next-page')
-      const pageInfo = document.getElementById('page-info')
-      const retryButton = document.getElementById('retry-button')
-      const searchPromptState = document.getElementById('search-prompt-state')
-      const searchSuggestions = document.querySelectorAll('.search-suggestion')
+      const searchInput = document.getElementById('search-input') as HTMLInputElement
+      const categoryFilter = document.getElementById('category-filter') as HTMLSelectElement
+      const trustFilter = document.getElementById('trust-filter') as HTMLSelectElement
+      const sortSelect = document.getElementById('sort-select') as HTMLSelectElement
+      const resultsGrid = document.getElementById('results-grid') as HTMLElement
+      const resultsCount = document.getElementById('results-count') as HTMLElement
+      const loadingState = document.getElementById('loading-state') as HTMLElement
+      const emptyState = document.getElementById('empty-state') as HTMLElement
+      const errorState = document.getElementById('error-state') as HTMLElement
+      const errorMessage = document.getElementById('error-message') as HTMLElement
+      const pagination = document.getElementById('pagination') as HTMLElement
+      const prevPageBtn = document.getElementById('prev-page') as HTMLButtonElement
+      const nextPageBtn = document.getElementById('next-page') as HTMLButtonElement
+      const pageInfo = document.getElementById('page-info') as HTMLElement
+      const retryButton = document.getElementById('retry-button') as HTMLButtonElement
+      const searchPromptState = document.getElementById('search-prompt-state') as HTMLElement
+      const searchSuggestions = document.querySelectorAll<HTMLButtonElement>('.search-suggestion')
 
-      // SMI-5217: trustBadgeClasses + defaultTrustTier injected via define:vars
+      // SMI-5217 / SMI-5365: trustBadgeClasses + defaultTrustTier imported above
       // from the shared 5-tier map (constants/trust-tier-badges.ts).
-
-      // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
-      const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
-
-      // Get quality tier info from star count
-      function getQualityTier(stars) {
-        const count = stars ?? 0
-        if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
-        if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
-          return { color: 'text-green-400', label: 'High Quality' }
-        if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' }
-        return { color: 'text-red-400', label: 'New' }
-      }
+      // getQualityTier, escapeHtml, formatNumber imported from lib/skills-utils.js (SMI-5366).
 
       // SMI-4401 Wave 2 A-M9-2: render a "Matches your org" badge when signal-boost applies.
-      function createOrgMatchBadge(orgName) {
+      function createOrgMatchBadge(orgName: string | undefined) {
         if (!orgName) return ''
         return `<span class="inline-flex items-center gap-1 px-2 py-0.5 mt-2 rounded-full text-xs font-medium bg-primary-500/10 text-primary-300 border border-primary-500/30" aria-label="Matches your org: ${escapeHtml(orgName)}">
           <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2a6 6 0 100 12 6 6 0 000-12zm0 2a4 4 0 110 8 4 4 0 010-8z"/></svg>
@@ -523,9 +531,14 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       }
 
       // Create skill card HTML
-      function createSkillCard(skill) {
+      function createSkillCard(skill: WireSkill) {
+        // SMI-5365: preserve the original runtime fallback — an absent OR
+        // runtime-unknown trust_tier (legacy experimental/unknown the API
+        // shouldn't emit, but defend anyway) degrades to the default tier's
+        // class rather than rendering an `undefined` class fragment.
         const trustClass =
-          trustBadgeClasses[skill.trust_tier] || trustBadgeClasses[defaultTrustTier]
+          trustBadgeClasses[skill.trust_tier ?? defaultTrustTier] ??
+          trustBadgeClasses[defaultTrustTier]
         const stars = skill.stars ?? 0
         const tier = getQualityTier(stars)
         const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`
@@ -582,8 +595,8 @@ const isCrawler = isCrawlerUserAgent(userAgent)
 
       // SMI-5327: License badge. Null / absent / whitespace-only means "unknown / not detected" —
       // render as "License: Unknown". NEVER imply "no restrictions" or "freely usable".
-      // MIRRORS licenseLabel() in src/lib/license-label.ts (SMI-5327) — keep in sync; is:inline cannot import.
-      function createLicenseBadge(license) {
+      // MIRRORS licenseLabel() in src/lib/license-label.ts (SMI-5327) — keep in sync.
+      function createLicenseBadge(license: string | null | undefined) {
         const trimmed = license?.trim()
         const label = trimmed ? escapeHtml(trimmed) : 'Unknown'
         return `<div class="mt-2">
@@ -600,7 +613,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // map in @skillsmith/core (COMPATIBILITY_LABELS, compatibility/slugs.ts) —
       // the website client bundle cannot import core, so a parity test asserts
       // these stay in sync. Unknown slugs fall back to the raw (escaped) value.
-      const COMPAT_LABELS = {
+      const COMPAT_LABELS: Record<string, string> = {
         'claude-code': 'Claude Code',
         cursor: 'Cursor',
         copilot: 'GitHub Copilot',
@@ -616,14 +629,14 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // SMI-2760 / SMI-5178: compatibility badge row (max 4 visible; +N more
       // expands, keyboard-operable with aria-expanded/aria-controls). Renders
       // display labels, not raw slugs. `[]`/absent compatibility = no badges.
-      function createCompatibilityBadges(compatibility) {
+      function createCompatibilityBadges(compatibility: string[] | undefined) {
         if (!Array.isArray(compatibility) || compatibility.length === 0) return ''
 
         const MAX_VISIBLE = 4
         const visible = compatibility.slice(0, MAX_VISIBLE)
         const extra = compatibility.slice(MAX_VISIBLE)
 
-        const badge = (tag) => {
+        const badge = (tag: string) => {
           const label = COMPAT_LABELS[tag] || tag
           return `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">${escapeHtml(label)}</span>`
         }
@@ -653,21 +666,8 @@ const isCrawler = isCrawlerUserAgent(userAgent)
         </div>`
       }
 
-      // Format number with locale formatting
-      function formatNumber(num) {
-        return new Intl.NumberFormat().format(num)
-      }
-
-      // Escape HTML to prevent XSS
-      function escapeHtml(str) {
-        if (!str) return ''
-        const div = document.createElement('div')
-        div.textContent = str
-        return div.innerHTML
-      }
-
       // Show/hide states
-      function showState(state) {
+      function showState(state: 'loading' | 'empty' | 'error' | 'results' | 'search-prompt') {
         resultsGrid.classList.add('hidden')
         loadingState.classList.add('hidden')
         emptyState.classList.add('hidden')
@@ -798,7 +798,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
                 remaining--
                 if (remaining <= 0) {
                   clearInterval(window._rateLimitInterval)
-                  window._rateLimitInterval = null
+                  delete window._rateLimitInterval
                   retryButton.textContent = 'Try Again'
                   retryButton.disabled = false
                 } else {
@@ -838,11 +838,11 @@ const isCrawler = isCrawlerUserAgent(userAgent)
               }
             }
           } catch (headerErr) {
-            console.debug('[Skills] quota header parse failed:', headerErr?.message)
+            console.debug('[Skills] quota header parse failed:', (headerErr as Error)?.message)
           }
 
           const data = await response.json()
-          allResults = data.data || data.skills || data.results || []
+          allResults = (data.data || data.skills || data.results || []) as WireSkill[]
 
           // SMI-4401 Wave 2 A-M9-2: signal-boost — surface skills whose topics or author
           // substring match an org the user belongs to. Decorate matching cards + float
@@ -888,10 +888,10 @@ const isCrawler = isCrawlerUserAgent(userAgent)
         } catch (error) {
           clearTimeout(timeoutId)
           console.error('Search error:', error)
-          const isTimeout = error.name === 'AbortError'
+          const isTimeout = (error as Error).name === 'AbortError'
           errorMessage.textContent = isTimeout
             ? 'Request timed out. Please try again.'
-            : error.message
+            : (error as Error).message
           showState('error')
           resultsCount.textContent = 'Error'
         }
@@ -975,7 +975,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // Search suggestion buttons
       searchSuggestions.forEach((btn) => {
         btn.addEventListener('click', () => {
-          searchInput.value = btn.dataset.query
+          searchInput.value = btn.dataset.query ?? ''
           searchSkills()
         })
       })
@@ -985,10 +985,21 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // are non-fatal — a missing skill is silently skipped.
       async function loadFeaturedSkills() {
         const grid = document.getElementById('featured-skills-grid')
-        if (!grid || !Array.isArray(FEATURED_SKILL_IDS) || FEATURED_SKILL_IDS.length === 0) return
+        if (!grid) return
+        // SMI-5365: featured IDs are stamped on the grid as a data-attribute by the
+        // frontmatter (derived from featured-skills.json) so the curated JSON file
+        // never gets inlined into the client bundle.
+        let featuredIds: string[] = []
+        try {
+          const parsed = JSON.parse(grid.dataset.featuredIds || '[]')
+          if (Array.isArray(parsed)) featuredIds = parsed.filter((id) => typeof id === 'string')
+        } catch {
+          featuredIds = []
+        }
+        if (featuredIds.length === 0) return
         try {
           const results = await Promise.all(
-            FEATURED_SKILL_IDS.map(async (id) => {
+            featuredIds.map(async (id) => {
               try {
                 const res = await fetch(`${API_BASE}/skills-get/${encodeURIComponent(id)}`, {
                   headers: {
@@ -1008,7 +1019,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
           if (skills.length === 0) return
           grid.innerHTML = skills.map(createSkillCard).join('')
         } catch (e) {
-          console.debug('[Skills] featured-skills load failed:', e?.message)
+          console.debug('[Skills] featured-skills load failed:', (e as Error)?.message)
         }
       }
 
