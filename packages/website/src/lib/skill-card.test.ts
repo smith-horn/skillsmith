@@ -43,7 +43,14 @@ describe('renderSkillCard', () => {
   // Regenerate by running vitest with the -u flag (see file header).
   // Review the generated diff before committing — reject garbage output.
   it('renders a fully-populated skill card (inline snapshot)', () => {
-    const html = renderSkillCard({ skill: FULL_SKILL, href: FULL_HREF })
+    // SMI-5371: normalize the compat-extra-N id so this snapshot is independent
+    // of the module-scope compatBadgeSeq counter (no test-ordering fragility).
+    // The real id wiring (aria-controls === hidden-span id, monotonic increment)
+    // is covered by the aria-controls + monotonic-id tests further down.
+    const html = renderSkillCard({ skill: FULL_SKILL, href: FULL_HREF }).replace(
+      /compat-extra-\d+/g,
+      'compat-extra-N'
+    )
     expect(html).toMatchInlineSnapshot(`
       "
               <a href="/skills/acme%2Ftest-runner" class="card-hover block bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50">
@@ -85,14 +92,14 @@ describe('renderSkillCard', () => {
                   </div>
                 <div class="mt-3 pt-3 border-t border-dark-800 flex flex-wrap gap-1 items-center">
           <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Claude Code</span><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Cursor</span><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">GitHub Copilot</span><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Windsurf</span>
-          <span id="compat-extra-1" style="display:none"><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Codex</span></span>
+          <span id="compat-extra-N" style="display:none"><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Codex</span></span>
           <button
             type="button"
             class="px-1.5 py-0.5 rounded text-xs text-dark-400 hover:text-primary-400 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-500"
-            aria-label="Show 1 more compatibility tags"
+            aria-label="Show 1 more compatibility tag"
             aria-expanded="false"
-            aria-controls="compat-extra-1"
-            onclick="event.preventDefault(); event.stopPropagation(); document.getElementById('compat-extra-1').style.display='contents'; this.setAttribute('aria-expanded','true'); this.style.display='none';"
+            aria-controls="compat-extra-N"
+            onclick="event.preventDefault(); event.stopPropagation(); document.getElementById('compat-extra-N').style.display='contents'; this.setAttribute('aria-expanded','true'); this.style.display='none';"
           >+1 more</button>
         </div>
                 <div class="mt-2">
@@ -216,10 +223,22 @@ describe('renderSkillCard', () => {
       expect(html).toContain(`id="${extraId}"`)
     })
 
-    it('with >4 items, +N more button has aria-expanded="false" and correct aria-label', () => {
+    it('with exactly one hidden item, +N more uses aria-expanded="false" and a singular aria-label', () => {
+      // FULL_SKILL has 5 compat tags -> 1 hidden -> singular "tag" (SMI-5371).
       const html = renderSkillCard({ skill: FULL_SKILL, href: FULL_HREF })
       expect(html).toContain('aria-expanded="false"')
-      expect(html).toContain('aria-label="Show 1 more compatibility tags"')
+      expect(html).toContain('aria-label="Show 1 more compatibility tag"')
+      expect(html).not.toContain('Show 1 more compatibility tags')
+    })
+
+    it('pluralizes the +N more aria-label when more than one item is hidden (SMI-5371)', () => {
+      const skill: WireSkill = {
+        ...FULL_SKILL,
+        compatibility: ['claude-code', 'cursor', 'copilot', 'windsurf', 'codex', 'gemini'],
+      }
+      const html = renderSkillCard({ skill, href: FULL_HREF })
+      // 6 tags -> 2 hidden -> plural "tags".
+      expect(html).toContain('aria-label="Show 2 more compatibility tags"')
     })
 
     it('onclick contains event.preventDefault() and event.stopPropagation() (SMI-3529 nested-button-in-anchor guard)', () => {
