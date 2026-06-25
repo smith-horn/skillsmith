@@ -163,6 +163,17 @@
         "check_website_docs_vscode_extension_renders",
         "check_website_docs_authoring_redirect"
       ]
+    },
+    {
+      "id": "website-skills-page",
+      "owner": "website",
+      "trigger_globs": [
+        "packages/website/src/pages/skills/index.astro",
+        "packages/website/src/lib/skill-card.ts",
+        "packages/website/src/lib/skills-utils.ts"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_skills_page_renders", "check_skills_search_edge_fn"]
     }
   ]
 }

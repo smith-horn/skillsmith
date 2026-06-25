@@ -763,3 +763,69 @@ check_website_docs_authoring_redirect() {
   report_fail "website-docs-tutorials" "check_website_docs_authoring_redirect" "$url" "3xx-redirect" "$status" "$ms"
   return 1
 }
+
+# ---- check_skills_page_renders ----------------------------------------
+# SMI-5366: Verifies /skills renders the SSR shell with the search input and
+# featured-skills grid markup. The card grid is client-rendered so we assert
+# only the server-rendered structural IDs, not card content.
+check_skills_page_renders() {
+  local url="${SMOKE_WEBSITE_URL}/skills"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "website-skills-page" "check_skills_page_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'id="featured-skills-grid"' "skills-page-grid"; then
+    report_fail "website-skills-page" "check_skills_page_renders" "$url" 'id="featured-skills-grid"' "missing-fingerprint" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'id="search-input"' "skills-page-search"; then
+    report_fail "website-skills-page" "check_skills_page_renders" "$url" 'id="search-input"' "missing-fingerprint" "$ms"
+    return 1
+  fi
+  report_pass "website-skills-page" "check_skills_page_renders" "$url" "$ms"
+  return 0
+}
+
+# ---- check_skills_search_edge_fn --------------------------------------
+# SMI-5366: GET skills-search with no auth (no-verify-jwt trial tier). 200 +
+# JSON body containing "id" confirms the function is deployed and routing
+# correctly. 429 (trial rate-limit) is a soft pass — rate-limiting proves the
+# function is alive and enforcing quotas, not absent or broken.
+check_skills_search_edge_fn() {
+  _require_supabase_url || { report_fail "website-skills-page" "check_skills_search_edge_fn" "" "SUPABASE_URL" "unset"; return 1; }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/skills-search?limit=1"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  case "$status" in
+    429)
+      smoke_warn "check_skills_search_edge_fn: rate-limited (429) -- soft pass"
+      report_pass "website-skills-page" "check_skills_search_edge_fn" "$url" "$ms"
+      return 0
+      ;;
+    200) ;;
+    *)
+      report_fail "website-skills-page" "check_skills_search_edge_fn" "$url" "200" "$status" "$ms"
+      return 1
+      ;;
+  esac
+  if ! assert_contains "$body" '"id"' "skills-search-json"; then
+    report_fail "website-skills-page" "check_skills_search_edge_fn" "$url" '"id" in JSON' "missing-or-empty" "$ms"
+    return 1
+  fi
+  report_pass "website-skills-page" "check_skills_search_edge_fn" "$url" "$ms"
+  return 0
+}
