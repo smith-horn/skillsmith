@@ -44,7 +44,7 @@ on:
         default: '5'
         type: string
       run_type:
-        description: 'Run type: maintenance (stale cleanup) or discovery (new skills)'
+        description: 'Run type: discovery / maintenance / recheck / dequarantine (SMI-5356 FP sweep)'
         required: false
         default: 'discovery'
         type: choice
@@ -52,6 +52,7 @@ on:
           - discovery
           - maintenance
           - recheck
+          - dequarantine
       discovery_phase:
         description: 'Discovery phase (SMI-4870): empty = full sequential run; 1/2/3 = single phase'
         required: false
@@ -225,6 +226,13 @@ jobs:
           elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             # indexer-dispatch edge function forwards inputs via client_payload.
             RUN_TYPE="${{ github.event.client_payload.run_type || 'discovery' }}"
+            # SMI-5356 (M-1): dequarantine flips the live `quarantined` column, so it
+            # is workflow_dispatch-only. The automated indexer-dispatch path must
+            # never be able to trigger an apply. Reject it here, before any work.
+            if [ "$RUN_TYPE" = "dequarantine" ]; then
+              echo "::error::dequarantine run_type is workflow_dispatch-only; refusing repository_dispatch trigger."
+              exit 1
+            fi
             STALE_DAYS="${{ github.event.client_payload.stale_days || '30' }}"
             CRON_SLOT="${{ github.event.client_payload.cron_slot || '' }}"
             DISCOVERY_PHASE="${{ github.event.client_payload.discovery_phase || '' }}"
@@ -237,6 +245,10 @@ jobs:
               if [ "$RUN_TYPE" = "maintenance" ]; then
                 STALE_DAYS="7"
               elif [ "$RUN_TYPE" = "recheck" ]; then
+                STALE_DAYS=""
+              elif [ "$RUN_TYPE" = "dequarantine" ]; then
+                # SMI-5356 (M-2): no stale window. Leave empty so parse-env uses
+                # its 0 sentinel (the branch never reads STALE_DAYS anyway).
                 STALE_DAYS=""
               else
                 STALE_DAYS="30"
@@ -292,6 +304,11 @@ jobs:
           RECHECK_MAX_CANDIDATES: ${{ vars.RECHECK_MAX_CANDIDATES || '2000' }}
           RECHECK_BATCH: ${{ vars.RECHECK_BATCH || '5' }}
           RECHECK_DRY_RUN: ${{ vars.RECHECK_DRY_RUN || 'true' }}
+          # SMI-5356: dequarantine-sweep dry-run gate, independent of the workflow
+          # dry_run input (mirrors RECHECK_DRY_RUN). Defaults 'true' so a dispatch
+          # is read-only unless the repo var is deliberately flipped to 'false' for
+          # an apply run, then set back to 'true'. apply = !DEQUARANTINE_DRY_RUN.
+          DEQUARANTINE_DRY_RUN: ${{ vars.DEQUARANTINE_DRY_RUN || 'true' }}
         run: |
           # Issue #1: npx tsx (not node --experimental-strip-types).
           # The entrypoint emits one JSON line on success; capture for downstream steps.
@@ -371,6 +388,35 @@ jobs:
               echo "| CAS Skipped (row state changed mid-run) | $RC_CAS_SKIPPED |"
               echo "| Cap Saturated | $RC_CAP_SATURATED |"
               echo "| Fetch Error Rate | $RC_FETCH_ERR |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # SMI-5356: dequarantine-sweep counters from data.dequarantine sub-object.
+          # The generic table above reads the IndexerResult fields (all 0 here); the
+          # real numbers live under data.dequarantine (SweepCounts).
+          if [ "$RUN_TYPE" = "dequarantine" ]; then
+            DQ_TOTAL=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.total // 0')
+            DQ_CLEARED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.cleared // 0')
+            DQ_KEPT=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.kept // 0')
+            DQ_FETCH_FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.fetchFailed // 0')
+            DQ_PARSE_FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.parseFailed // 0')
+            DQ_CAS_SKIPPED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.casSkipped // 0')
+            DQ_ERRORS=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.errors // 0')
+            DQ_DRY_RUN=$(printf '%s' "$RESPONSE" | jq -r '.data.dryRun // true')
+            {
+              echo ""
+              echo "#### Dequarantine Sweep Detail (SMI-5356)"
+              echo ""
+              echo "| Dequarantine Metric | Value |"
+              echo "|---------------------|-------|"
+              echo "| Total candidates | $DQ_TOTAL |"
+              echo "| Cleared (would-clear when dry-run) | $DQ_CLEARED |"
+              echo "| Kept (still >=40) | $DQ_KEPT |"
+              echo "| Fetch Failed (repo gone / path drift) | $DQ_FETCH_FAILED |"
+              echo "| Parse Failed | $DQ_PARSE_FAILED |"
+              echo "| CAS Skipped (row changed mid-run) | $DQ_CAS_SKIPPED |"
+              echo "| Errors | $DQ_ERRORS |"
+              echo "| Dry Run | $DQ_DRY_RUN |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

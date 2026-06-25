@@ -21,12 +21,20 @@ export interface IndexerEnv {
   MAX_REPOS: number
   CODE_SEARCH_MAX_PAGES: number
   DRY_RUN: boolean
-  RUN_TYPE: 'discovery' | 'maintenance' | 'recheck'
+  RUN_TYPE: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine'
   STALE_DAYS: number
   RECHECK_THRESHOLD_DAYS: number
   RECHECK_MAX_CANDIDATES: number
   RECHECK_BATCH: number
   RECHECK_DRY_RUN: boolean
+  /**
+   * SMI-5356: independent dry-run-first failsafe for the `dequarantine` run-type
+   * (the SMI-5161 false-positive sweep). Defaults `true` — apply requires
+   * deliberately setting it `false`. Mirrors {@link RECHECK_DRY_RUN}: the
+   * workflow `dry_run` input defaults `false`, so the sweep reads its own
+   * repo-var instead and can never auto-apply on a misfired dispatch.
+   */
+  DEQUARANTINE_DRY_RUN: boolean
   concurrency: number
   kill_switch_engaged: boolean
   /** SMI-4870: per-phase cron sub-slot (1/2/3); undefined = legacy all-phases path. */
@@ -132,12 +140,20 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
     if (
       RUN_TYPE_RAW !== 'discovery' &&
       RUN_TYPE_RAW !== 'maintenance' &&
-      RUN_TYPE_RAW !== 'recheck'
+      RUN_TYPE_RAW !== 'recheck' &&
+      RUN_TYPE_RAW !== 'dequarantine'
     ) {
-      throw new Error(`Invalid RUN_TYPE: ${RUN_TYPE_RAW} (expected discovery|maintenance|recheck)`)
+      throw new Error(
+        `Invalid RUN_TYPE: ${RUN_TYPE_RAW} (expected discovery|maintenance|recheck|dequarantine)`
+      )
     }
     const RUN_TYPE = RUN_TYPE_RAW
-    const STALE_DAYS = getInt('STALE_DAYS', RUN_TYPE === 'maintenance' ? 7 : 30)
+    // SMI-5356 (M-2): `dequarantine` has no stale window — use a 0 sentinel so it
+    // never emits a misleading 30-day default (the branch never reads STALE_DAYS).
+    const STALE_DAYS = getInt(
+      'STALE_DAYS',
+      RUN_TYPE === 'maintenance' ? 7 : RUN_TYPE === 'dequarantine' ? 0 : 30
+    )
 
     // SMI-5166: recheck run-type configuration.
     // Defaults: threshold=5d, max candidates=2000, batch=5, dry-run=true.
@@ -148,6 +164,17 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
     const RECHECK_MAX_CANDIDATES = getInt('RECHECK_MAX_CANDIDATES', 2000)
     const RECHECK_BATCH = getInt('RECHECK_BATCH', 5)
     const RECHECK_DRY_RUN = getBool('RECHECK_DRY_RUN', true)
+
+    // SMI-5356: dequarantine-sweep dry-run gate (run-step gate is
+    // `apply = !DEQUARANTINE_DRY_RUN`, independent of DRY_RUN). Defaults true.
+    // HARDENED beyond getBool/RECHECK_DRY_RUN (opus-review M-1): because a false
+    // value flips the live prod `quarantined` column, apply requires an EXPLICIT
+    // canonical false token — any unset / whitespace / typo (`yes`, `on`,
+    // `True `) stays dry-run. getBool's "non-true ⇒ false" bias is backwards for
+    // a prod-mutating failsafe, so we don't use it here.
+    const DEQUARANTINE_DRY_RUN = !['0', 'false', 'False', 'FALSE'].includes(
+      (process.env.DEQUARANTINE_DRY_RUN ?? '').trim()
+    )
 
     // SMI-4870: parse DISCOVERY_PHASE — empty/unset → undefined; '1'/'2'/'3' →
     // numeric literal; any other non-empty value → hard error (mirrors RUN_TYPE
@@ -207,6 +234,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       RECHECK_MAX_CANDIDATES,
       RECHECK_BATCH,
       RECHECK_DRY_RUN,
+      DEQUARANTINE_DRY_RUN,
       concurrency,
       kill_switch_engaged,
       DISCOVERY_PHASE,

@@ -25,7 +25,14 @@ export interface IndexerRequest {
   minContentLength?: number
   maxRepos?: number
   staleThresholdDays?: number
-  /** Run type: 'maintenance' (stale cleanup) or 'discovery' (new skills) */
+  /**
+   * Run type: 'maintenance' (stale cleanup) or 'discovery' (new skills).
+   * SMI-5356 (L-1): intentionally omits the Node-entrypoint-only run-types
+   * `recheck` (SMI-5166) and `dequarantine` (SMI-5356) — those never build an
+   * IndexerRequest (they call runRecheck / runSweep directly from run.ts), so
+   * widening this union would imply a discovery/maintenance code path they
+   * don't have. The authoritative full union lives on `IndexerEnv.RUN_TYPE`.
+   */
   runType?: 'maintenance' | 'discovery'
   /** Max pages for GitHub code search (default: 3, max: 5) */
   codeSearchMaxPages?: number

@@ -55,12 +55,15 @@ import { writeIndexerAuditLog } from './indexer-audit-log.ts'
 // SMI-5311: periodic holder-scoped lock refresh + abort-on-steal. Armed only on
 // the acquire path so a long backfill dispatch never lets its lock go stale.
 import { startLockHeartbeat } from './lock-heartbeat.ts'
+// SMI-5356: dequarantine run-type — the CI-gated false-positive sweep. Branch
+// lives in a sibling module to keep run.ts under the 500-line gate.
+import { runDequarantineBranch } from './run-dequarantine-branch.ts'
 
 interface RunSummary {
   data: unknown
   meta: {
     request_id: string
-    run_type: 'discovery' | 'maintenance' | 'recheck'
+    run_type: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine'
     rate_limit_remaining_min: number
     // SMI-4918: per-bucket GitHub rate-limit minimums (core/search/code_search).
     core_remaining_min: number
@@ -391,6 +394,12 @@ async function main(): Promise<void> {
       result = await runMaintenanceBranch(env, requestId, telemetry)
     } else if (env.RUN_TYPE === 'recheck') {
       result = await runRecheckBranch(env, requestId, telemetry)
+    } else if (env.RUN_TYPE === 'dequarantine') {
+      // SMI-5356: self-contained CAS sweep — no discovery machinery, and it does
+      // not thread the lock-heartbeat signal (the sweep is fast and every clear
+      // is CAS-gated, so a steal is non-destructive). `data` carries
+      // `{ dequarantine: SweepCounts, dryRun }` for the Parse Results step.
+      result = await runDequarantineBranch(env, requestId)
     } else {
       const discovery = await runDiscoveryBranch(env, requestId, telemetry, heartbeat.signal)
       result = discovery.result
