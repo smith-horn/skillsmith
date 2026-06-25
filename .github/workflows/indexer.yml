@@ -246,6 +246,10 @@ jobs:
                 STALE_DAYS="7"
               elif [ "$RUN_TYPE" = "recheck" ]; then
                 STALE_DAYS=""
+              elif [ "$RUN_TYPE" = "dequarantine" ]; then
+                # SMI-5356 (M-2): no stale window. Leave empty so parse-env uses
+                # its 0 sentinel (the branch never reads STALE_DAYS anyway).
+                STALE_DAYS=""
               else
                 STALE_DAYS="30"
               fi
