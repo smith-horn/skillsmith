@@ -797,8 +797,15 @@ check_skills_page_renders() {
 # ---- check_skills_search_edge_fn --------------------------------------
 # SMI-5366: GET skills-search with no auth (no-verify-jwt trial tier). 200 +
 # JSON body containing "id" confirms the function is deployed and routing
-# correctly. 429 (trial rate-limit) is a soft pass — rate-limiting proves the
-# function is alive and enforcing quotas, not absent or broken.
+# correctly. Soft passes (function alive + enforcing policy, not absent/broken):
+#   - 429: trial rate-limit hit.
+#   - 401 WITH the app's structured trial/auth JSON ("signupUrl" / "trialUsed" /
+#     "Free trial"): the anonymous free-trial quota is exhausted. That structured
+#     body proves skills-search itself answered -- a missing/crashed function or a
+#     gateway reject returns 404/502/000 or a bare non-app 401. (SMI-5370: without
+#     this arm the check false-fails whenever the shared/per-IP trial is spent,
+#     paging support@ on a healthy function.)
+# A bare/gateway 401 (no app signature) is still a hard fail.
 check_skills_search_edge_fn() {
   _require_supabase_url || { report_fail "website-skills-page" "check_skills_search_edge_fn" "" "SUPABASE_URL" "unset"; return 1; }
   local url="${SMOKE_SUPABASE_URL}/functions/v1/skills-search?limit=1"
@@ -815,6 +822,16 @@ check_skills_search_edge_fn() {
       smoke_warn "check_skills_search_edge_fn: rate-limited (429) -- soft pass"
       report_pass "website-skills-page" "check_skills_search_edge_fn" "$url" "$ms"
       return 0
+      ;;
+    401)
+      # SMI-5370: a structured trial-exhausted 401 == function alive (see header).
+      if printf '%s' "$body" | grep -Eq '"signupUrl"|"trialUsed"|Free trial'; then
+        smoke_warn "check_skills_search_edge_fn: trial-exhausted 401 (structured) -- soft pass"
+        report_pass "website-skills-page" "check_skills_search_edge_fn" "$url" "$ms"
+        return 0
+      fi
+      report_fail "website-skills-page" "check_skills_search_edge_fn" "$url" "200|429|structured-401" "401-bare" "$ms"
+      return 1
       ;;
     200) ;;
     *)
