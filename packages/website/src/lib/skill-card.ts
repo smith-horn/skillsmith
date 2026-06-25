@@ -99,7 +99,7 @@ function renderCompatibilityBadges(compatibility: string[] | undefined): string 
     <button
       type="button"
       class="px-1.5 py-0.5 rounded text-xs text-dark-400 hover:text-primary-400 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-500"
-      aria-label="Show ${extra.length} more compatibility tags"
+      aria-label="Show ${extra.length} more compatibility tag${extra.length === 1 ? '' : 's'}"
       aria-expanded="false"
       aria-controls="${extraId}"
       onclick="event.preventDefault(); event.stopPropagation(); document.getElementById('${extraId}').style.display='contents'; this.setAttribute('aria-expanded','true'); this.style.display='none';"
