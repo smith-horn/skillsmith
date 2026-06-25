@@ -284,4 +284,43 @@ test.describe('Skills Filter-Only Browsing (SMI-1658)', () => {
       await verifyResultsDisplayed(page)
     })
   })
+
+  // SMI-5366 (GH #1377): the card markup now comes from the extracted
+  // renderSkillCard() module. These assert the rendered output in a real
+  // browser (the unit tests pin the string; these prove it mounts + behaves).
+  test.describe('SkillCard renderer (SMI-5366)', () => {
+    test('rendered cards expose the quality dot and license row', async ({ page }) => {
+      await page.locator('#category-filter').selectOption('development')
+      await waitForResults(page)
+
+      const firstCard = page.locator('#results-grid a').first()
+      await expect(firstCard).toBeVisible()
+      // renderSkillCard always emits a quality dot (role="img") and a license row.
+      await expect(firstCard.locator('[role="img"]')).toBeVisible()
+      await expect(firstCard.getByText('License:')).toBeVisible()
+    })
+
+    test('"+N more" compatibility toggle expands without navigating away (SMI-3529)', async ({
+      page,
+    }) => {
+      await page.locator('#category-filter').selectOption('development')
+      await waitForResults(page)
+
+      // The toggle only appears for skills with >4 compatibility tags; skip if
+      // none are on this page rather than flake on data shape.
+      const moreBtn = page.locator('#results-grid button', { hasText: /\+\d+ more/ }).first()
+      test.skip((await moreBtn.count()) === 0, 'no card with >4 compatibility tags on this page')
+
+      const urlBefore = page.url()
+      const controls = await moreBtn.getAttribute('aria-controls')
+      await moreBtn.click()
+
+      // The click must NOT bubble to the card <a> and navigate to the detail page.
+      await expect(page).toHaveURL(urlBefore)
+      await expect(moreBtn).toHaveAttribute('aria-expanded', 'true')
+      if (controls) {
+        await expect(page.locator(`#${controls}`)).toBeVisible()
+      }
+    })
+  })
 })

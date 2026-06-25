@@ -1,11 +1,12 @@
 /**
  * SMI-5327: Unit tests for the licenseLabel helper.
  *
- * The website renders license in two places that use identical logic:
- *   1. Skill card (createLicenseBadge in skills/index.astro inline script)
- *   2. Skill detail page (renderSkill in skills/[id].astro inline script)
+ * The website renders license in two places:
+ *   1. Skill card (renderLicenseBadge in lib/skill-card.ts — calls licenseLabel();
+ *      extracted from skills/index.astro in SMI-5366)
+ *   2. Skill detail page (renderSkill in skills/[id].astro is:inline script — still
+ *      mirrors the logic; SMI-4907 tracks bundling that page)
  *
- * Both sites are is:inline Astro scripts with no component-test harness.
  * The label logic is extracted here so it can be covered without a browser.
  *
  * CONTRACT: null / undefined / empty => "Unknown" (NOT "no license",
