@@ -34,6 +34,7 @@ describe('parseEnv', () => {
       'RECHECK_MAX_CANDIDATES',
       'RECHECK_BATCH',
       'RECHECK_DRY_RUN',
+      'DEQUARANTINE_DRY_RUN',
     ]) {
       delete process.env[k]
     }
@@ -128,5 +129,66 @@ describe('parseEnv', () => {
   it('RECHECK_THRESHOLD_DAYS non-finite throws (getInt contract — no clamping)', () => {
     process.env.RECHECK_THRESHOLD_DAYS = 'abc'
     expect(() => parseEnv()).toThrow(/RECHECK_THRESHOLD_DAYS/)
+  })
+
+  // SMI-5356: dequarantine run-type + DEQUARANTINE_DRY_RUN failsafe.
+  it('RUN_TYPE=dequarantine parses successfully and yields RUN_TYPE dequarantine', () => {
+    process.env.RUN_TYPE = 'dequarantine'
+    expect(() => parseEnv()).not.toThrow()
+    expect(parseEnv().RUN_TYPE).toBe('dequarantine')
+  })
+
+  it('DEQUARANTINE_DRY_RUN defaults true (dry-run-first failsafe)', () => {
+    expect(parseEnv().DEQUARANTINE_DRY_RUN).toBe(true)
+  })
+
+  it("DEQUARANTINE_DRY_RUN='false' yields false (the deliberate-apply gate)", () => {
+    process.env.DEQUARANTINE_DRY_RUN = 'false'
+    expect(parseEnv().DEQUARANTINE_DRY_RUN).toBe(false)
+  })
+
+  // SMI-5356 (M-1): fail-safe coercion — apply requires an explicit canonical
+  // false; any typo / non-canonical / whitespace stays dry-run (true).
+  it('DEQUARANTINE_DRY_RUN accepts only canonical false tokens for apply', () => {
+    for (const applyToken of ['false', 'False', 'FALSE', '0', ' false ']) {
+      process.env.DEQUARANTINE_DRY_RUN = applyToken
+      expect(parseEnv().DEQUARANTINE_DRY_RUN, `${JSON.stringify(applyToken)} should apply`).toBe(
+        false
+      )
+    }
+  })
+
+  it('DEQUARANTINE_DRY_RUN treats non-canonical/typo values as dry-run (fail-safe)', () => {
+    for (const safeToken of ['yes', 'on', 'no', 'true', 'True ', 'nope', 'apply', '00']) {
+      process.env.DEQUARANTINE_DRY_RUN = safeToken
+      expect(parseEnv().DEQUARANTINE_DRY_RUN, `${JSON.stringify(safeToken)} should stay dry`).toBe(
+        true
+      )
+    }
+  })
+
+  it('STALE_DAYS is the 0 sentinel for dequarantine (M-2: no stale window)', () => {
+    process.env.RUN_TYPE = 'dequarantine'
+    expect(parseEnv().STALE_DAYS).toBe(0)
+  })
+
+  // SMI-5356 (L-2): exactly the four valid RUN_TYPEs parse; everything else throws.
+  it('parses exactly the valid RUN_TYPE set and rejects the rest', () => {
+    for (const rt of ['discovery', 'maintenance', 'recheck', 'dequarantine']) {
+      process.env.RUN_TYPE = rt
+      expect(() => parseEnv(), `expected ${rt} to parse`).not.toThrow()
+      expect(parseEnv().RUN_TYPE).toBe(rt)
+    }
+    // `??` only defaults on null/undefined — an empty string is an explicit value
+    // and is rejected like any other non-member (case/whitespace/typo).
+    for (const bad of ['', 'Discovery', 'sweep', 'dequarantine ', 'recheckk']) {
+      process.env.RUN_TYPE = bad
+      expect(() => parseEnv(), `expected ${JSON.stringify(bad)} to throw`).toThrow(/RUN_TYPE/)
+    }
+  })
+
+  it('unset RUN_TYPE (deleted) defaults to discovery via ??', () => {
+    delete process.env.RUN_TYPE
+    expect(parseEnv().RUN_TYPE).toBe('discovery')
   })
 })

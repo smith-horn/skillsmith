@@ -18,6 +18,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { QUARANTINE_THRESHOLD } from './_shared/security-scanner-edge.ts'
 import type { ScoreDistribution } from './indexer-runners.ts'
+// SMI-5356: per-outcome tallies for the `dequarantine` run-type audit row.
+// Type-only import — no runtime edge, so no Deno/Node parity or cycle concern
+// (this whole AuditLogParams field is Node-only, like `recheck` above).
+import type { SweepCounts } from './dequarantine-false-positives.ts'
 
 /**
  * SMI-4857: Run-scoped meta envelope persisted alongside the flat metadata
@@ -30,7 +34,7 @@ import type { ScoreDistribution } from './indexer-runners.ts'
  */
 export interface AuditLogMeta {
   request_id: string
-  run_type: 'discovery' | 'maintenance' | 'recheck'
+  run_type: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine'
   rate_limit_remaining_min: number
   // SMI-4918: per-bucket GitHub rate-limit minimums. `core` is REST 5000/h,
   // `search` 30/min, `code_search` 10/min — `rate_limit_remaining_min` above
@@ -128,6 +132,16 @@ export interface AuditLogParams {
    * (recheck does not thread telemetry through fetchSkillMd in v1).
    */
   recheck?: RecheckAuditCounters
+  /**
+   * SMI-5356: dequarantine-sweep counters. Present only on `runType:
+   * 'dequarantine'` callers; undefined elsewhere so it is omitted from the
+   * persisted JSON (zero churn for discovery/maintenance/recheck rows).
+   * Persisted under `metadata.dequarantine`. The per-clear `quarantine:cleared`
+   * audit rows (written inside `runSweep`) remain the authoritative rollback
+   * record; this top-level `indexer:run` row is the run envelope for
+   * `v_indexer_health` / `GROUP BY run_type` dashboards.
+   */
+  dequarantine?: SweepCounts
 }
 
 /**
@@ -199,6 +213,9 @@ export async function writeIndexerAuditLog(
         // cleared, fetch_error_rate, cap/killswitch state). Undefined for
         // discovery/maintenance callers → omitted from the persisted JSON.
         recheck: params.recheck,
+        // SMI-5356: dequarantine-sweep counters (total/cleared/kept/fetchFailed
+        // /…). Undefined for non-dequarantine callers → omitted from the JSON.
+        dequarantine: params.dequarantine,
       },
     })
     if (auditError) {

@@ -68,7 +68,12 @@ export function countFindings(findings: unknown): number {
   return Array.isArray(findings) ? findings.length : 0
 }
 
-interface SweepCounts {
+/**
+ * Per-outcome tallies returned by {@link runSweep}. Exported (SMI-5356) so the
+ * `dequarantine` indexer run-type can carry these on its `indexer:run` audit row
+ * and surface them in the workflow step summary.
+ */
+export interface SweepCounts {
   total: number
   cleared: number
   kept: number
