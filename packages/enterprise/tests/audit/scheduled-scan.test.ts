@@ -23,6 +23,7 @@ import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ScheduledScanError, stripUrlSecrets } from '../../src/audit/scheduled-scan.js'
+import { acquireScanLock } from '../../src/audit/scheduled-scan.lock.js'
 
 // Mock @skillsmith/mcp-server/audit so we can control runInventoryAudit
 // without invoking the real audit pipeline (which scans the host inventory).
@@ -32,6 +33,23 @@ vi.mock('@skillsmith/mcp-server/audit', () => ({
     return mockRunInventoryAudit
   },
 }))
+
+/**
+ * Minimal deferred — an externally-resolvable promise. Used by the
+ * concurrent-fire lock test to park the lock-holder inside the mock until
+ * the test has provably driven the second caller into the held-lock
+ * branch. Removes the wall-clock (`setTimeout`) timing assumption that
+ * made the test flaky under saturated CPU (SMI-5372).
+ */
+function createDeferred<T = void>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 describe('runScheduledScan', () => {
   let tmpHome: string
@@ -267,18 +285,20 @@ describe('runScheduledScan — concurrent-fire lock (SMI-4752)', () => {
   })
 
   it('serializes two concurrent runScheduledScan calls — only one invokes runInventoryAudit', async () => {
-    // Mock runInventoryAudit so it takes long enough for both callers
-    // to be in flight simultaneously, and writes its result.json to
-    // the audits dir so the second caller can pick up the cache.
     let invocations = 0
+    const holderInMock = createDeferred() // resolves once the lock-holder is inside the mock
+    const releaseHolder = createDeferred() // test resolves this to let the holder finish + publish
+
     mockRunInventoryAudit.mockImplementation(async () => {
       invocations += 1
       const id = `AUDIT-CONCURRENT-${invocations}`
+      // Signal that we hold the lock, then park here until the test has
+      // confirmed the second caller observed the held lock. Deterministic —
+      // no setTimeout/wall-clock race.
+      holderInMock.resolve()
+      await releaseHolder.promise
       const dir = path.join(tmpHome, '.skillsmith', 'audits', id)
       await fs.mkdir(dir, { recursive: true, mode: 0o700 })
-      // Simulate audit work — long enough that the second caller enters
-      // the lock-acquire branch while we're still running.
-      await new Promise((r) => setTimeout(r, 100))
       const resultJson = {
         exactCollisions: [],
         genericFlags: [],
@@ -286,49 +306,69 @@ describe('runScheduledScan — concurrent-fire lock (SMI-4752)', () => {
       }
       await fs.writeFile(path.join(dir, 'result.json'), JSON.stringify(resultJson))
       await fs.writeFile(path.join(dir, 'report.md'), '# concurrent test')
-      return {
-        auditId: id,
-        reportPath: path.join(dir, 'report.md'),
-        ...resultJson,
-      }
+      return { auditId: id, reportPath: path.join(dir, 'report.md'), ...resultJson }
     })
 
-    const settled = await Promise.allSettled([
-      runScheduledScan({ homeDir: tmpHome }),
-      runScheduledScan({ homeDir: tmpHome }),
-    ])
+    // First caller acquires the lock and parks inside the mock.
+    const first = runScheduledScan({ homeDir: tmpHome })
+    await holderInMock.promise
 
-    // Exactly one runInventoryAudit invocation.
+    // Second caller starts only after the lock is provably held. The lock
+    // module does not wait-loop on a fresh, alive lock and the holder has not
+    // published a result yet, so the second caller must reject in_flight.
+    const second = runScheduledScan({ homeDir: tmpHome })
+    await expect(second).rejects.toBeInstanceOf(ScheduledScanError)
+    await expect(second).rejects.toMatchObject({ code: 'scheduled_scan.in_flight' })
+
+    // Exactly one runInventoryAudit invocation — the lock serialized the pair.
     expect(invocations).toBe(1)
 
-    // One caller must have produced a fresh result; the other must
-    // have either ridden the cache (after the peer wrote result.json)
-    // OR thrown ScheduledScanError with code 'scheduled_scan.in_flight'.
-    const fulfilled = settled.filter((s) => s.status === 'fulfilled') as Array<
-      PromiseFulfilledResult<Awaited<ReturnType<typeof runScheduledScan>>>
-    >
-    const rejected = settled.filter((s) => s.status === 'rejected') as Array<PromiseRejectedResult>
+    // Release the holder; it publishes result.json and releases the lock.
+    releaseHolder.resolve()
+    const firstResult = await first
+    expect(firstResult.cached).toBe(false)
+    expect(firstResult.auditId).toBe('AUDIT-CONCURRENT-1')
 
-    // At least one caller succeeds — the lock-holder.
-    expect(fulfilled.length).toBeGreaterThanOrEqual(1)
-
-    if (rejected.length > 0) {
-      // The losing caller threw — must be the typed in-flight error.
-      const err = rejected[0]?.reason
-      expect(err).toBeInstanceOf(ScheduledScanError)
-      expect((err as ScheduledScanError).code).toBe('scheduled_scan.in_flight')
-    } else {
-      // Both fulfilled — the second one must have ridden the cache.
-      const fresh = fulfilled.find((s) => !s.value.cached)
-      const cached = fulfilled.find((s) => s.value.cached)
-      expect(fresh).toBeDefined()
-      expect(cached).toBeDefined()
-      expect(fresh?.value.auditId).toBe(cached?.value.auditId)
-    }
-
-    // Lock file must be cleaned up.
+    // Lock file must be cleaned up after release.
     const lockPath = path.join(tmpHome, '.skillsmith', 'audits', '.scan.lock')
     await expect(fs.access(lockPath)).rejects.toThrow()
+  })
+
+  it('rides a peer-published cache when the lock is held (acquireScanLock cached outcome)', async () => {
+    // Deterministically exercise acquireScanLock's `kind: 'cached'` branch:
+    // the path a second caller takes when a peer has already published a
+    // result while still holding the lock. The concurrent-fire test above now
+    // resolves to in_flight (the lock does not wait-loop on a fresh, alive
+    // lock), so this unit test pins the cached branch directly instead of
+    // relying on the old setTimeout race window (SMI-5372).
+    const auditsDir = path.join(tmpHome, '.skillsmith', 'audits')
+    await fs.mkdir(auditsDir, { recursive: true, mode: 0o700 })
+    // Plant a fresh, alive lock owned by this very process so the acquire
+    // hits EEXIST → fresh-and-alive (not stale-reclaim) → cacheProbe.
+    await fs.writeFile(
+      path.join(auditsDir, '.scan.lock'),
+      JSON.stringify({ pid: process.pid, startedAt: Date.now(), hostname: os.hostname() }),
+      { mode: 0o600 }
+    )
+
+    const peerResult = {
+      auditId: 'AUDIT-PEER-1',
+      reportPath: path.join(auditsDir, 'AUDIT-PEER-1', 'report.md'),
+      counts: { exact: 1, generic: 0, semantic: 2 },
+    }
+    const outcome = await acquireScanLock(
+      tmpHome,
+      async () => peerResult,
+      (err) => {
+        throw err instanceof Error ? err : new Error(String(err))
+      }
+    )
+
+    expect(outcome.kind).toBe('cached')
+    if (outcome.kind === 'cached') {
+      expect(outcome.cached.auditId).toBe('AUDIT-PEER-1')
+      expect(outcome.cached.counts).toEqual({ exact: 1, generic: 0, semantic: 2 })
+    }
   })
 
   it('reclaims a stale lock (older than lock-stale window) and proceeds', async () => {
