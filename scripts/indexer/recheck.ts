@@ -406,6 +406,11 @@ export async function runRecheck(opts: {
         case 'error':
           errors++
           break
+        default:
+          // Defense-in-depth (mirrors runSweep's guard): a future outcome added
+          // without a case here would otherwise be silently dropped from the run
+          // counters — the exact invisible-success class SMI-5377 fixed.
+          console.warn(`recheck: unhandled processRow outcome ${r.outcome} — not counted`)
       }
     }
   }
