@@ -26,6 +26,7 @@ import { skillDiffInputSchema, executeSkillDiff } from './tools/skill-diff.js'
 import { dispatchAuditTool } from './audit-tool-dispatch.js'
 import { outdatedInputSchema, executeOutdated } from './tools/outdated.js'
 import { skillRescanInputSchema, executeSkillRescan } from './tools/skill-rescan.js'
+import { QuarantineRepository } from '@skillsmith/core'
 import {
   auditExportInputSchema,
   executeAuditExport,
@@ -215,7 +216,9 @@ export async function dispatchToolCall(
     case 'skill_rescan': {
       const parsed = safeParseOrError(skillRescanInputSchema, args, 'skill_rescan')
       if (!parsed.ok) return parsed.response
-      return ok(await executeSkillRescan(parsed.data))
+      // SMI-5358: pass QuarantineRepository so over-threshold findings are persisted
+      const quarantineRepo = new QuarantineRepository(toolContext.db)
+      return ok(await executeSkillRescan(parsed.data, undefined, quarantineRepo))
     }
 
     case 'audit_export':

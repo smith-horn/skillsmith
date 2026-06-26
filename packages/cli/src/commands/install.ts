@@ -12,11 +12,13 @@ import {
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
+  QuarantineRepository,
   emitInstallEvent,
   isGitHubUrl,
   type CoreInstallResult,
   type RegistryLookup,
   type RegistrySkillInfo,
+  type DatabaseType,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
@@ -70,23 +72,33 @@ function isValidSkillId(skillId: string): boolean {
 /**
  * Create a registry lookup backed by the local SQLite database.
  * Returns null for skills without a repo_url (metadata-only entries).
+ *
+ * SMI-5358 GAP-07: Quarantine enforcement is now live — QuarantineRepository.isQuarantined
+ * checks the local quarantine table so CLI installs block quarantined skills just as the
+ * MCP registry API path does.
  */
-function createDbRegistryLookup(skillRepo: SkillRepository): RegistryLookup {
+export function createDbRegistryLookup(
+  skillRepo: SkillRepository,
+  db: DatabaseType
+): RegistryLookup {
+  // Memoized-lazy: construct on the first real lookup() that needs it, then
+  // reuse. Lazy avoids running QuarantineRepository's constructor (schema init +
+  // prepared statements) at factory time — callers that never resolve a skill
+  // (and tests that mock the install service so lookup() is never reached) pay
+  // nothing; memoization avoids redoing it per dependency during resolution.
+  let quarantineRepo: QuarantineRepository | undefined
   return {
     async lookup(skillId: string): Promise<RegistrySkillInfo | null> {
       const skill = skillRepo.findById(skillId)
       if (!skill) return null
       if (!skill.repoUrl) return null
 
+      quarantineRepo ??= new QuarantineRepository(db)
       return {
         repoUrl: skill.repoUrl,
         name: skill.name,
         trustTier: skill.trustTier,
-        // GAP-07: Quarantine status is managed at the quarantine layer, not on
-        // the Skill type. CLI installs from local DB do not have quarantine
-        // data — default to false. This is a known limitation; quarantine
-        // enforcement is authoritative only via the MCP registry API path.
-        quarantined: false,
+        quarantined: quarantineRepo.isQuarantined(skill.id || skillId),
       }
     },
   }
@@ -235,7 +247,7 @@ async function installActionImpl(
         skillDependencyRepo,
         skillsDir,
         manifestPath: DEFAULT_MANIFEST_PATH,
-        registryLookup: createDbRegistryLookup(skillRepo),
+        registryLookup: createDbRegistryLookup(skillRepo, db),
         onProgress: (_stage: string, detail: string) => {
           if (spinner) {
             spinner.text = detail

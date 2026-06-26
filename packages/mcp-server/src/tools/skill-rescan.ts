@@ -12,7 +12,7 @@
 import { z } from 'zod'
 import { promises as fs } from 'fs'
 import { join } from 'path'
-import { SecurityScanner } from '@skillsmith/core'
+import { SecurityScanner, QuarantineRepository, type QuarantineSeverity } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { resolveClientPath } from '@skillsmith/core/install'
 
@@ -113,6 +113,24 @@ export const skillRescanToolSchema = {
 const MAX_FINDINGS_PER_SKILL = 5
 
 /**
+ * Map SecurityScanner finding severity counts to a QuarantineSeverity.
+ *
+ * Critical findings → MALICIOUS (permanent quarantine, confirmed threat)
+ * High findings (no critical) → SUSPICIOUS (manual review required)
+ * Risk score >= threshold only → RISKY (import with warnings)
+ *
+ * @see SMI-5358: advisory → quarantine linkage for rescan
+ */
+export function findingsToQuarantineSeverity(
+  hasCritical: boolean,
+  hasHigh: boolean
+): QuarantineSeverity {
+  if (hasCritical) return 'MALICIOUS'
+  if (hasHigh) return 'SUSPICIOUS'
+  return 'RISKY'
+}
+
+/**
  * Discover installed skill directories under ~/.claude/skills/.
  *
  * Skills are installed as either:
@@ -185,13 +203,25 @@ export async function discoverInstalledSkills(
  * Reads installed SKILL.md files from ~/.claude/skills/ and runs
  * SecurityScanner with current patterns against each.
  *
- * @param input       Validated tool input
- * @param overrideDir Optional skills directory override (for testing)
+ * When a skill fails the scan (critical/high findings or risk score at or above
+ * the quarantine threshold), a QuarantineRepository entry is created using the
+ * top findings as the detected patterns and the advisory details as the reason.
+ * Severity mapping: critical findings → MALICIOUS, high findings → SUSPICIOUS,
+ * risk-score-only failures → RISKY.
+ *
+ * @see SMI-5358: advisory → quarantine linkage for rescan (gap fix)
+ *
+ * @param input         Validated tool input
+ * @param overrideDir   Optional skills directory override (for testing)
+ * @param quarantineRepo Optional QuarantineRepository for persisting quarantine
+ *                       entries when findings exceed the threshold (production
+ *                       callers pass new QuarantineRepository(toolContext.db))
  * @returns SkillRescanResponse with per-skill scan results
  */
 async function executeSkillRescanImpl(
   input: SkillRescanInput,
-  overrideDir?: string
+  overrideDir?: string,
+  quarantineRepo?: QuarantineRepository
 ): Promise<SkillRescanResponse> {
   // SMI-4578: defaults to SKILLSMITH_CLIENT-resolved directory; override
   // wins for ad-hoc rescan of an arbitrary path.
@@ -252,7 +282,7 @@ async function executeSkillRescanImpl(
       (a, b) => severityOrder[a.severity] - severityOrder[b.severity]
     )
 
-    results.push({
+    const entry = {
       skill: skill.name,
       passed: report.passed,
       findingCount: report.findings.length,
@@ -264,7 +294,34 @@ async function executeSkillRescanImpl(
         message: f.message,
         lineNumber: f.lineNumber,
       })),
-    })
+    }
+    results.push(entry)
+
+    // SMI-5358: advisory → quarantine linkage.
+    // Persist a quarantine entry when the rescan finds over-threshold advisories
+    // so that local search (searchLocalSkills) hides the threat and the quarantine
+    // dashboard surfaces it. The key MUST match the LocalIndexer id scheme
+    // (`local/{name}`) so QuarantineRepository.isQuarantined() lines up on the
+    // search side — a bare name would never match and the filter would no-op.
+    if (!report.passed && quarantineRepo) {
+      const hasCritical = severityCounts.critical > 0
+      const hasHigh = severityCounts.high > 0
+      const quarantineSeverity = findingsToQuarantineSeverity(hasCritical, hasHigh)
+      const detectedPatterns = sortedFindings.slice(0, MAX_FINDINGS_PER_SKILL).map((f) => f.type)
+      quarantineRepo.create({
+        skillId: `local/${skill.name}`,
+        source: 'rescan',
+        quarantineReason:
+          `Security rescan detected ${report.findings.length} finding(s) ` +
+          `(riskScore=${report.riskScore}): ` +
+          sortedFindings
+            .slice(0, 2)
+            .map((f) => f.message.slice(0, 80))
+            .join('; '),
+        severity: quarantineSeverity,
+        detectedPatterns,
+      })
+    }
   }
 
   const failedCount = results.filter((r) => !r.passed).length
