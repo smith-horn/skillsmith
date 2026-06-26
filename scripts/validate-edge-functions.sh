@@ -53,6 +53,7 @@ AUTHENTICATED_FUNCTIONS=(
   "team-invite-send"
   "sync-oauth-email"
   "sync-stripe-email"
+  "inventory-upload"
 )
 
 # Service role functions (scheduled jobs, internal)

@@ -112,6 +112,7 @@ VERIFY_JWT_FUNCTIONS=(
   expire-complimentary
   indexer
   indexer-dispatch
+  inventory-upload
   ops-report
   process-pending-subscription
   skills-outreach
