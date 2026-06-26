@@ -231,6 +231,7 @@ function zeroCounters(killswitchEngaged: boolean): RecheckAuditCounters {
     live_touched: 0,
     cleared: 0,
     kept_security: 0,
+    requarantined: 0,
     repo_gone: 0,
     parse_failed: 0,
     fetch_error: 0,
@@ -366,6 +367,7 @@ export async function runRecheck(opts: {
   let cleared = 0
   let liveTouched = 0
   let keptSecurity = 0
+  let requarantined = 0
   let repoGone = 0
   let parseFailed = 0
   let fetchErrors = 0
@@ -385,6 +387,9 @@ export async function runRecheck(opts: {
           break
         case 'kept-security':
           keptSecurity++
+          break
+        case 'requarantined':
+          requarantined++
           break
         case 'repo-gone':
           repoGone++
@@ -416,6 +421,7 @@ export async function runRecheck(opts: {
     live_touched: liveTouched,
     cleared,
     kept_security: keptSecurity,
+    requarantined,
     repo_gone: repoGone,
     parse_failed: parseFailed,
     fetch_error: fetchErrors,
