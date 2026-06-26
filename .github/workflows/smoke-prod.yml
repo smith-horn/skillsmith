@@ -196,17 +196,36 @@ jobs:
           set -euo pipefail
           REPORT="$RUNNER_TEMP/smoke-report.json"
           if [ ! -f "$REPORT" ]; then
-            echo "::error::report missing — cannot alert"
+            echo "::error::report missing - cannot alert"
             exit 1
           fi
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
           SHORT_SHA="${SHA:0:8}"
 
-          # Idempotency: one issue per merge SHA. Adopts the
-          # post-merge-verify.yml lines 70-95 pattern (find-existing,
-          # comment-or-create) so workflow re-runs don't fan-out duplicate
-          # issues. See SMI-4459 plan § Wave 4 idempotency.
+          # (1) EMAIL FIRST (SMI-5373) - the only channel that reaches a human. Runs
+          # before the GitHub-issue ops so a failure there can never suppress it.
+          # Non-fatal here; if it fails we record it and fail the job at the very end
+          # (step 4). Only REPORT/RUN_URL/SHORT_SHA are needed - nothing but pure
+          # variable assignment precedes it, so "email first" is airtight.
+          EMAIL_OK=1
+          ./scripts/smoke-prod/alert.sh \
+            --report "$REPORT" \
+            --run-url "$RUN_URL" \
+            --sha "$SHORT_SHA" || EMAIL_OK=0
+          if [ "$EMAIL_OK" -eq 0 ]; then
+            echo "::error::alert.sh email failed - the human-reaching channel did not fire"
+          fi
+
+          # (2) Self-healing labels - a future label deletion or a fork without them
+          # cannot re-break issue create. --force updates in place (exit 0 if present);
+          # || true keeps a missing labels:write permission from aborting the step.
+          gh label create smoke-failure --color b60205 --force >/dev/null 2>&1 || true
+          gh label create ci-failure --color d73a4a --force >/dev/null 2>&1 || true
+
+          # TITLE/BODY are consumed only by the issue ops below, so compute them here
+          # (after the email). Idempotency: one issue per merge SHA (comment-or-create)
+          # so workflow re-runs don't fan-out duplicate issues. See SMI-4459 Wave 4.
           TITLE="Smoke-prod failure on $SHORT_SHA"
           BODY="$(cat <<EOF
           Smoke-prod failed on \`$SHORT_SHA\`.
@@ -218,25 +237,30 @@ jobs:
           See \`.claude/development/smoke-prod-guide.md\` for triage steps.
           EOF
           )"
+
+          # (3) Non-fatal issue ops - a tracking hiccup degrades to a warning; the
+          # email (the channel that matters) has already been attempted above.
           EXISTING=$(gh issue list \
             --label smoke-failure \
             --state open \
             --search "$TITLE in:title" \
             --json number \
-            --jq '.[0].number // empty')
+            --jq '.[0].number // empty') || EXISTING=""
           if [ -n "$EXISTING" ]; then
             echo "Commenting on existing issue #$EXISTING"
-            gh issue comment "$EXISTING" --body "$BODY"
+            gh issue comment "$EXISTING" --body "$BODY" \
+              || echo "::warning::issue tracking failed; email already attempted"
           else
             echo "Filing new auto-issue"
             gh issue create \
               --title "$TITLE ($RUN_URL)" \
               --body "$BODY" \
-              --label ci-failure,smoke-failure
+              --label ci-failure,smoke-failure \
+              || echo "::warning::issue tracking failed; email already attempted"
           fi
 
-          # Email via alert-notify (uses service-role key, scoped to this job).
-          ./scripts/smoke-prod/alert.sh \
-            --report "$REPORT" \
-            --run-url "$RUN_URL" \
-            --sha "$SHORT_SHA" || echo "::warning::alert.sh failed; issue still filed"
+          # (4) If the email failed, fail the job so the run goes red - issue-op
+          # hiccups above stay non-fatal, but a missed email must never be green.
+          if [ "$EMAIL_OK" -eq 0 ]; then
+            exit 1
+          fi
