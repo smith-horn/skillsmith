@@ -14,6 +14,7 @@ import {
   ErrorCodes,
   trackSkillSearch,
   emitSearchEvent,
+  QuarantineRepository,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
@@ -188,6 +189,13 @@ async function executeSearchImpl(
     )
   }
 
+  // SMI-5358: filter locally-quarantined skills out of local search results.
+  // QuarantineRepository.isQuarantined() is the single source of truth — no
+  // duplicate `quarantined` column on the local skills table (ADR-112 §Neutral).
+  // Constructed after the fast-reject validation so empty/short-query rejects
+  // don't pay for prepared-statement compilation.
+  const quarantineRepo = new QuarantineRepository(context.db)
+
   const filters: SearchFilters = {}
 
   // Apply category filter
@@ -298,7 +306,11 @@ async function executeSearchImpl(
       let localResults: SkillSearchResult[] = []
       if (!filters.trustTier || filters.trustTier === ('local' as TrustTier)) {
         try {
-          localResults = await searchLocalSkills(hasQuery ? input.query!.trim() : '', filters)
+          localResults = await searchLocalSkills(
+            hasQuery ? input.query!.trim() : '',
+            filters,
+            quarantineRepo
+          )
         } catch (localError) {
           console.warn('[skillsmith] Local skill search failed:', (localError as Error).message)
         }
@@ -401,7 +413,7 @@ async function executeSearchImpl(
   let localResults: SkillSearchResult[] = []
   if (!filters.trustTier || filters.trustTier === ('local' as TrustTier)) {
     try {
-      localResults = await searchLocalSkills(searchQuery, filters)
+      localResults = await searchLocalSkills(searchQuery, filters, quarantineRepo)
     } catch (localError) {
       console.warn('[skillsmith] Local skill search failed:', (localError as Error).message)
     }
