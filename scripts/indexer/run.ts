@@ -58,12 +58,15 @@ import { startLockHeartbeat } from './lock-heartbeat.ts'
 // SMI-5356: dequarantine run-type — the CI-gated false-positive sweep. Branch
 // lives in a sibling module to keep run.ts under the 500-line gate.
 import { runDequarantineBranch } from './run-dequarantine-branch.ts'
+// SMI-5357: purge run-type — CI-gated dead-quarantine purge. Same module
+// isolation rationale as dequarantine above.
+import { runPurgeBranch } from './run-purge-branch.ts'
 
 interface RunSummary {
   data: unknown
   meta: {
     request_id: string
-    run_type: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine'
+    run_type: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine' | 'purge'
     rate_limit_remaining_min: number
     // SMI-4918: per-bucket GitHub rate-limit minimums (core/search/code_search).
     core_remaining_min: number
@@ -400,6 +403,11 @@ async function main(): Promise<void> {
       // is CAS-gated, so a steal is non-destructive). `data` carries
       // `{ dequarantine: SweepCounts, dryRun }` for the Parse Results step.
       result = await runDequarantineBranch(env, requestId)
+    } else if (env.RUN_TYPE === 'purge') {
+      // SMI-5357: dead-quarantine purge — no discovery machinery, no heartbeat
+      // needed (errors throw; no partial tally). `data` carries
+      // `{ purge: PurgeCounts, dryRun }` for the Parse Results step.
+      result = await runPurgeBranch(env, requestId)
     } else {
       const discovery = await runDiscoveryBranch(env, requestId, telemetry, heartbeat.signal)
       result = discovery.result

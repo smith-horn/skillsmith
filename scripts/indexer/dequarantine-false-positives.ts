@@ -34,6 +34,9 @@ import {
   type EdgeScanResult,
 } from './_shared/security-scanner-edge.ts'
 import { parseSkillMdUrl, fetchSkillMd } from './_shared/skill-md-fetch.ts'
+// SMI-5357: retagUnreachable is shared with the stale-revalidation sweep so
+// both callers write a `Repository`-prefixed reason that feeds the purge predicate.
+import { retagUnreachable } from './revalidate-stale-quarantines.ts'
 
 // Re-export so existing consumers (tests, siblings) keep their import paths.
 export { parseSkillMdUrl, type ParsedSkillUrl } from './_shared/skill-md-fetch.ts'
@@ -54,6 +57,7 @@ export type SweepOutcome =
   | 'cleared'
   | 'kept'
   | 'fetch-failed'
+  | 'repo-gone'
   | 'parse-failed'
   | 'cas-skipped'
   | 'error'
@@ -78,6 +82,8 @@ export interface SweepCounts {
   cleared: number
   kept: number
   fetchFailed: number
+  /** SMI-5357: rows re-tagged Repository-prefixed for the purge sweep (SKILL.md 404). */
+  repoGone: number
   parseFailed: number
   casSkipped: number
   errors: number
@@ -90,7 +96,7 @@ interface RowResult {
 }
 
 /** Process a single quarantined row: parse → fetch → scan → (optionally) clear. */
-async function processRow(
+export async function processRow(
   row: QuarantinedRow,
   headers: Record<string, string>,
   apply: boolean,
@@ -100,9 +106,28 @@ async function processRow(
   if (!parsed) return { row, outcome: 'parse-failed' }
 
   const fetched = await fetchSkillMd(parsed, headers)
-  // not-found (genuine 404) and transient (rate limit / network) both leave the
-  // row quarantined here — this sweep never re-tags, so the distinction is moot.
-  if (fetched.kind !== 'content') return { row, outcome: 'fetch-failed' }
+  if (fetched.kind === 'transient') {
+    // Rate-limited / network / 5xx — never re-tag; a later re-run retries.
+    return { row, outcome: 'fetch-failed' }
+  }
+  if (fetched.kind === 'not-found') {
+    // SKILL.md returned 404: repo deleted, renamed, or path drifted. Re-tag with
+    // a `Repository`-prefixed reason so `purge-dead-quarantines` picks it up via
+    // the `ILIKE 'repository%'` predicate. `security_findings` is preserved —
+    // we are NOT clearing the quarantine, only re-categorizing it.
+    const reason = `Repository skill path unreachable (SKILL.md 404): ${parsed.apiUrl}`
+    if (apply) {
+      await retagUnreachable(row, reason, 'quarantine:repo_gone', db, {
+        smi: 'SMI-5357',
+        sweep: 'dequarantine',
+        // `action` is the snake_case OPERATION (so a GROUP BY action keeps every
+        // row from this sweep together, clears + repo-gones alike); the
+        // colon-namespaced 'quarantine:repo_gone' is the event_type (arg 3).
+        action: 'dequarantine_false_positives',
+      })
+    }
+    return { row, outcome: 'repo-gone' }
+  }
 
   const scan = await scanSkillContent(fetched.content)
   if (!isFalsePositive(scan)) return { row, outcome: 'kept', score: scan.riskScore }
@@ -176,6 +201,7 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
     cleared: 0,
     kept: 0,
     fetchFailed: 0,
+    repoGone: 0,
     parseFailed: 0,
     casSkipped: 0,
     errors: 0,
@@ -212,6 +238,11 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
           counts.fetchFailed++
           unreachable.push(r)
           break
+        case 'repo-gone':
+          // Re-tagged with Repository-prefixed reason; purge sweep can now dispose.
+          counts.repoGone++
+          unreachable.push(r)
+          break
         case 'parse-failed':
           counts.parseFailed++
           unreachable.push(r)
@@ -243,6 +274,7 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
       `  total:        ${counts.total}\n` +
       `  ${opts.apply ? 'cleared' : 'would-clear'}:  ${counts.cleared}\n` +
       `  kept (≥40):   ${counts.kept}\n` +
+      `  repo-gone:    ${counts.repoGone}${opts.apply ? ' (re-tagged for purge)' : ' (would re-tag)'}\n` +
       `  fetch-failed: ${counts.fetchFailed}\n` +
       `  parse-failed: ${counts.parseFailed}\n` +
       `  cas-skipped:  ${counts.casSkipped}\n` +

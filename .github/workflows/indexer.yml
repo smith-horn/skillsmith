@@ -44,7 +44,7 @@ on:
         default: '5'
         type: string
       run_type:
-        description: 'Run type: discovery / maintenance / recheck / dequarantine (SMI-5356 FP sweep)'
+        description: 'Run type: discovery / maintenance / recheck / dequarantine (SMI-5356 FP sweep) / purge (SMI-5357 dead-repo delete)'
         required: false
         default: 'discovery'
         type: choice
@@ -53,6 +53,7 @@ on:
           - maintenance
           - recheck
           - dequarantine
+          - purge
       discovery_phase:
         description: 'Discovery phase (SMI-4870): empty = full sequential run; 1/2/3 = single phase'
         required: false
@@ -65,6 +66,11 @@ on:
           - '3'
       stale_days:
         description: 'Days before stale quarantine (default: auto based on run_type)'
+        required: false
+        default: ''
+        type: string
+      purge_limit:
+        description: 'SMI-5357: cap rows deleted per purge apply (empty = no cap; e.g. 100 for a staged first run)'
         required: false
         default: ''
         type: string
@@ -229,8 +235,9 @@ jobs:
             # SMI-5356 (M-1): dequarantine flips the live `quarantined` column, so it
             # is workflow_dispatch-only. The automated indexer-dispatch path must
             # never be able to trigger an apply. Reject it here, before any work.
-            if [ "$RUN_TYPE" = "dequarantine" ]; then
-              echo "::error::dequarantine run_type is workflow_dispatch-only; refusing repository_dispatch trigger."
+            # SMI-5357: purge is permanently destructive (DELETE); same guard.
+            if [ "$RUN_TYPE" = "dequarantine" ] || [ "$RUN_TYPE" = "purge" ]; then
+              echo "::error::dequarantine and purge run_types are workflow_dispatch-only; refusing repository_dispatch trigger."
               exit 1
             fi
             STALE_DAYS="${{ github.event.client_payload.stale_days || '30' }}"
@@ -249,6 +256,9 @@ jobs:
               elif [ "$RUN_TYPE" = "dequarantine" ]; then
                 # SMI-5356 (M-2): no stale window. Leave empty so parse-env uses
                 # its 0 sentinel (the branch never reads STALE_DAYS anyway).
+                STALE_DAYS=""
+              elif [ "$RUN_TYPE" = "purge" ]; then
+                # SMI-5357: same - purge has no stale window.
                 STALE_DAYS=""
               else
                 STALE_DAYS="30"
@@ -309,6 +319,13 @@ jobs:
           # is read-only unless the repo var is deliberately flipped to 'false' for
           # an apply run, then set back to 'true'. apply = !DEQUARANTINE_DRY_RUN.
           DEQUARANTINE_DRY_RUN: ${{ vars.DEQUARANTINE_DRY_RUN || 'true' }}
+          # SMI-5357: purge dry-run gate (same fail-safe pattern as above).
+          # Defaults 'true' - permanently destructive; flip repo var to 'false'
+          # only for the single apply run, then immediately restore to 'true'.
+          PURGE_DRY_RUN: ${{ vars.PURGE_DRY_RUN || 'true' }}
+          # SMI-5357: optional per-apply row cap (workflow input; empty on
+          # schedule/repository_dispatch => no cap). Staged first prod apply.
+          PURGE_LIMIT: ${{ inputs.purge_limit }}
         run: |
           # Issue #1: npx tsx (not node --experimental-strip-types).
           # The entrypoint emits one JSON line on success; capture for downstream steps.
@@ -398,6 +415,7 @@ jobs:
             DQ_TOTAL=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.total // 0')
             DQ_CLEARED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.cleared // 0')
             DQ_KEPT=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.kept // 0')
+            DQ_REPO_GONE=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.repoGone // 0')
             DQ_FETCH_FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.fetchFailed // 0')
             DQ_PARSE_FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.parseFailed // 0')
             DQ_CAS_SKIPPED=$(printf '%s' "$RESPONSE" | jq -r '.data.dequarantine.casSkipped // 0')
@@ -412,11 +430,37 @@ jobs:
               echo "| Total candidates | $DQ_TOTAL |"
               echo "| Cleared (would-clear when dry-run) | $DQ_CLEARED |"
               echo "| Kept (still >=40) | $DQ_KEPT |"
-              echo "| Fetch Failed (repo gone / path drift) | $DQ_FETCH_FAILED |"
+              echo "| Repo Gone (re-tagged for purge) | $DQ_REPO_GONE |"
+              echo "| Fetch Failed (transient/rate-limit) | $DQ_FETCH_FAILED |"
               echo "| Parse Failed | $DQ_PARSE_FAILED |"
               echo "| CAS Skipped (row changed mid-run) | $DQ_CAS_SKIPPED |"
               echo "| Errors | $DQ_ERRORS |"
               echo "| Dry Run | $DQ_DRY_RUN |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # SMI-5357: purge-dead-quarantines counters from data.purge sub-object.
+          # The generic table above reads the IndexerResult fields (all 0 here); the
+          # real numbers live under data.purge (PurgeCounts).
+          if [ "$RUN_TYPE" = "purge" ]; then
+            PURGE_TOTAL=$(printf '%s' "$RESPONSE" | jq -r '.data.purge.total // 0')
+            PURGE_DELETED=$(printf '%s' "$RESPONSE" | jq -r '.data.purge.deleted // 0')
+            PURGE_APPROVALS=$(printf '%s' "$RESPONSE" | jq -r '.data.purge.approvalsDeleted // 0')
+            PURGE_NO_REPO=$(printf '%s' "$RESPONSE" | jq -r '.data.purge.byCohort["no-repo-url"] // 0')
+            PURGE_REPO=$(printf '%s' "$RESPONSE" | jq -r '.data.purge.byCohort.repository // 0')
+            PURGE_DRY=$(printf '%s' "$RESPONSE" | jq -r '.data.dryRun // true')
+            {
+              echo ""
+              echo "#### Purge Dead Quarantines Detail (SMI-5357)"
+              echo ""
+              echo "| Purge Metric | Value |"
+              echo "|--------------|-------|"
+              echo "| Total (dead set selected) | $PURGE_TOTAL |"
+              echo "| Skills Deleted | $PURGE_DELETED |"
+              echo "| Approvals Deleted | $PURGE_APPROVALS |"
+              echo "| No-repo-url cohort | $PURGE_NO_REPO |"
+              echo "| Repository* cohort | $PURGE_REPO |"
+              echo "| Dry Run | $PURGE_DRY |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

@@ -21,7 +21,7 @@ export interface IndexerEnv {
   MAX_REPOS: number
   CODE_SEARCH_MAX_PAGES: number
   DRY_RUN: boolean
-  RUN_TYPE: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine'
+  RUN_TYPE: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine' | 'purge'
   STALE_DAYS: number
   RECHECK_THRESHOLD_DAYS: number
   RECHECK_MAX_CANDIDATES: number
@@ -35,6 +35,20 @@ export interface IndexerEnv {
    * repo-var instead and can never auto-apply on a misfired dispatch.
    */
   DEQUARANTINE_DRY_RUN: boolean
+  /**
+   * SMI-5357: independent dry-run-first failsafe for the `purge` run-type
+   * (the SMI-5167 dead-quarantine purge). Same fail-safe coercion as
+   * {@link DEQUARANTINE_DRY_RUN} — apply requires an explicit canonical
+   * false token; any typo or unset value stays dry-run (never auto-deletes).
+   */
+  PURGE_DRY_RUN: boolean
+  /**
+   * SMI-5357: optional cap on rows the `purge` run-type deletes per apply
+   * (threads to `runPurge`'s `--limit`). Empty/unset = no cap (delete the full
+   * dead set). Enables a staged first prod apply via the gated CI path — the
+   * dev-box CLI is classifier-blocked, so CI is the only prod purge path.
+   */
+  PURGE_LIMIT?: number
   concurrency: number
   kill_switch_engaged: boolean
   /** SMI-4870: per-phase cron sub-slot (1/2/3); undefined = legacy all-phases path. */
@@ -141,18 +155,20 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       RUN_TYPE_RAW !== 'discovery' &&
       RUN_TYPE_RAW !== 'maintenance' &&
       RUN_TYPE_RAW !== 'recheck' &&
-      RUN_TYPE_RAW !== 'dequarantine'
+      RUN_TYPE_RAW !== 'dequarantine' &&
+      RUN_TYPE_RAW !== 'purge'
     ) {
       throw new Error(
-        `Invalid RUN_TYPE: ${RUN_TYPE_RAW} (expected discovery|maintenance|recheck|dequarantine)`
+        `Invalid RUN_TYPE: ${RUN_TYPE_RAW} (expected discovery|maintenance|recheck|dequarantine|purge)`
       )
     }
     const RUN_TYPE = RUN_TYPE_RAW
     // SMI-5356 (M-2): `dequarantine` has no stale window — use a 0 sentinel so it
     // never emits a misleading 30-day default (the branch never reads STALE_DAYS).
+    // SMI-5357: same 0 sentinel for `purge` (no stale window concept).
     const STALE_DAYS = getInt(
       'STALE_DAYS',
-      RUN_TYPE === 'maintenance' ? 7 : RUN_TYPE === 'dequarantine' ? 0 : 30
+      RUN_TYPE === 'maintenance' ? 7 : RUN_TYPE === 'dequarantine' || RUN_TYPE === 'purge' ? 0 : 30
     )
 
     // SMI-5166: recheck run-type configuration.
@@ -175,6 +191,27 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
     const DEQUARANTINE_DRY_RUN = !['0', 'false', 'False', 'FALSE'].includes(
       (process.env.DEQUARANTINE_DRY_RUN ?? '').trim()
     )
+
+    // SMI-5357: purge dry-run gate (`apply = !PURGE_DRY_RUN`). Same fail-safe
+    // coercion as DEQUARANTINE_DRY_RUN — purge is destructive (permanent DELETE),
+    // so any unset / whitespace / typo stays dry-run. Defaults true.
+    const PURGE_DRY_RUN = !['0', 'false', 'False', 'FALSE'].includes(
+      (process.env.PURGE_DRY_RUN ?? '').trim()
+    )
+
+    // SMI-5357: optional purge row cap. Empty/unset => undefined (no cap); else a
+    // positive integer (staged apply). Invalid values hard-error (fail-loud).
+    const purgeLimitRaw = (process.env.PURGE_LIMIT ?? '').trim()
+    let PURGE_LIMIT: number | undefined
+    if (purgeLimitRaw !== '') {
+      const n = Number.parseInt(purgeLimitRaw, 10)
+      if (!Number.isFinite(n) || n < 1) {
+        throw new Error(
+          `Invalid PURGE_LIMIT: "${purgeLimitRaw}" (expected a positive integer or empty)`
+        )
+      }
+      PURGE_LIMIT = n
+    }
 
     // SMI-4870: parse DISCOVERY_PHASE — empty/unset → undefined; '1'/'2'/'3' →
     // numeric literal; any other non-empty value → hard error (mirrors RUN_TYPE
@@ -235,6 +272,8 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       RECHECK_BATCH,
       RECHECK_DRY_RUN,
       DEQUARANTINE_DRY_RUN,
+      PURGE_DRY_RUN,
+      PURGE_LIMIT,
       concurrency,
       kill_switch_engaged,
       DISCOVERY_PHASE,

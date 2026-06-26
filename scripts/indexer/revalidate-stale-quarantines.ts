@@ -112,12 +112,21 @@ const MAX_FETCH_ERROR_RATE = 0.1
 // Per-row logic
 // ---------------------------------------------------------------------------
 
-/** Re-tag a stale row in apply mode (parse-failed or repo-gone). */
-async function retagUnreachable(
+/**
+ * Re-tag a quarantined row whose upstream repo/path is unreachable.
+ * Exported (SMI-5357) for reuse by dequarantine-false-positives.ts;
+ * auditMeta defaults keep the two existing callers in this file byte-stable.
+ */
+export async function retagUnreachable(
   row: StaleQuarantinedRow,
   reason: string,
   eventType: 'quarantine:repo_gone',
-  db: SupabaseClient
+  db: SupabaseClient,
+  auditMeta: { smi: string; sweep: string; action: string } = {
+    smi: 'SMI-5165',
+    sweep: 'stale-revalidation',
+    action: 'revalidate_stale_quarantines',
+  }
 ): Promise<void> {
   const now = new Date().toISOString()
   // SMI-5166 (E9): CAS-gate the re-tag and the audit insert. retagUnreachable is
@@ -142,11 +151,11 @@ async function retagUnreachable(
     event_type: eventType,
     actor: 'system',
     resource: row.id,
-    action: 'revalidate_stale_quarantines',
+    action: auditMeta.action,
     result: 'success',
     metadata: {
-      smi: 'SMI-5165',
-      sweep: 'stale-revalidation',
+      smi: auditMeta.smi,
+      sweep: auditMeta.sweep,
       skill_id: row.id,
       author: row.author,
       name: row.name,

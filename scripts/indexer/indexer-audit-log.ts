@@ -22,6 +22,8 @@ import type { ScoreDistribution } from './indexer-runners.ts'
 // Type-only import — no runtime edge, so no Deno/Node parity or cycle concern
 // (this whole AuditLogParams field is Node-only, like `recheck` above).
 import type { SweepCounts } from './dequarantine-false-positives.ts'
+// SMI-5357: purge-dead-quarantine counts for the `purge` run-type audit row.
+import type { PurgeCounts } from './purge-dead-quarantines.ts'
 
 /**
  * SMI-4857: Run-scoped meta envelope persisted alongside the flat metadata
@@ -34,7 +36,7 @@ import type { SweepCounts } from './dequarantine-false-positives.ts'
  */
 export interface AuditLogMeta {
   request_id: string
-  run_type: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine'
+  run_type: 'discovery' | 'maintenance' | 'recheck' | 'dequarantine' | 'purge'
   rate_limit_remaining_min: number
   // SMI-4918: per-bucket GitHub rate-limit minimums. `core` is REST 5000/h,
   // `search` 30/min, `code_search` 10/min — `rate_limit_remaining_min` above
@@ -142,6 +144,11 @@ export interface AuditLogParams {
    * `v_indexer_health` / `GROUP BY run_type` dashboards.
    */
   dequarantine?: SweepCounts
+  /**
+   * SMI-5357: purge-dead-quarantines counts. Present only on `runType: 'purge'`
+   * callers; undefined elsewhere. Persisted under `metadata.purge`.
+   */
+  purge?: PurgeCounts
 }
 
 /**
@@ -216,6 +223,9 @@ export async function writeIndexerAuditLog(
         // SMI-5356: dequarantine-sweep counters (total/cleared/kept/fetchFailed
         // /…). Undefined for non-dequarantine callers → omitted from the JSON.
         dequarantine: params.dequarantine,
+        // SMI-5357: purge-dead-quarantines counts (total/deleted/byCohort/…).
+        // Undefined for non-purge callers → omitted from the JSON.
+        purge: params.purge,
       },
     })
     if (auditError) {

@@ -106,7 +106,8 @@ export const CSV_COLUMNS: readonly (keyof DeadRow)[] = [
   'last_seen_at',
 ]
 
-interface PurgeCounts {
+/** SMI-5357: exported so `run-purge-branch` and `indexer-audit-log` can type-reference it. */
+export interface PurgeCounts {
   total: number
   byCohort: Record<DeadCohort, number>
   deleted: number
