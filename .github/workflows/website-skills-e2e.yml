@@ -20,6 +20,7 @@ on:
     paths:
       - 'packages/website/src/components/**'
       - 'packages/website/src/pages/skills/**'
+      - 'packages/website/src/styles/**'
       - 'packages/website/tests/e2e/skills-filter.spec.ts'
       - 'packages/website/playwright.config.ts'
       - '.github/workflows/website-skills-e2e.yml'
@@ -112,7 +113,10 @@ jobs:
         run: npx --yes wait-on http://127.0.0.1:4321/ -t 90000
 
       - name: Run skills-filter carve-out tests (SMI-5368, scoped via -g 5368)
-        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/skills-filter.spec.ts --project=desktop -g 5368 --reporter=list
+        # No --reporter override: the config's [list, html(open:never)] applies,
+        # so the console gets list output AND playwright-report/ is populated for
+        # the failure-artifact upload (pr-review F-G). open:never keeps CI non-blocking.
+        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/skills-filter.spec.ts --project=desktop -g 5368
 
       - name: Upload artifacts on failure
         if: failure()
