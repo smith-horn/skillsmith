@@ -29,14 +29,14 @@ export interface QuarantineFinding {
  * @param supabase - Admin Supabase client
  * @param skillId - Skill ID to quarantine
  * @param finding - Finding to append to security_findings
- * @param reason - Human-readable quarantine reason (optional)
+ * @param reason - Human-readable quarantine reason (required; recorded on quarantine_reason)
  * @returns Empty object on success, or `{ error: string }` on failure
  */
 export async function quarantineSkill(
   supabase: SupabaseClient,
   skillId: string,
   finding: QuarantineFinding,
-  reason?: string
+  reason: string
 ): Promise<{ error?: string }> {
   // Read existing findings first to avoid clobbering
   const { data: existing, error: readError } = await supabase
@@ -60,12 +60,9 @@ export async function quarantineSkill(
 
   const updateData: Record<string, unknown> = {
     quarantined: true,
+    quarantine_reason: reason,
     security_findings: [...existingFindings, finding],
     indexed_at: new Date().toISOString(),
-  }
-
-  if (reason) {
-    updateData.quarantine_reason = reason
   }
 
   const { error: updateError } = await supabase.from('skills').update(updateData).eq('id', skillId)
