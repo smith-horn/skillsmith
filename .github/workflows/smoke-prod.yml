@@ -1,4 +1,4 @@
-# SMI-4459 — post-deploy smoke harness.
+# SMI-4459 - post-deploy smoke harness.
 # Triggers AFTER edge-function deploys finish (workflow_run completion) and
 # after Vercel deploys (repository_dispatch from the Vercel deploy hook).
 # See docs/internal/implementation/smi-4459-smoke-prod-harness.md for the
@@ -11,7 +11,7 @@
 #            failure of smoke and only sees the report artifact, not the
 #            harness internals.
 #
-# Phase 1 (week 1, starting on merge): warning-only — no commit-status
+# Phase 1 (week 1, starting on merge): warning-only - no commit-status
 # post; just open a Linear issue + email on failure. Phase 2 wires the
 # commit status. Phase 3 splits a staging variant (separate SMI).
 name: Smoke Prod
@@ -129,7 +129,7 @@ jobs:
           # SUPABASE_URL (prod). Edge functions auto-deploy to both refs from
           # main, so smoking against staging exercises the same code without
           # polluting prod analytics or burning prod rate-limit budget.
-          # Provisioning: see .claude/development/smoke-prod-guide.md § Manual setup steps.
+          # Provisioning: see .claude/development/smoke-prod-guide.md - Manual setup steps.
           # When unset, checks skip gracefully (report_fail + return 1).
           SMOKE_SKILLS_API_KEY: ${{ secrets.SMOKE_SKILLS_API_KEY }}
           SMOKE_SKILLS_EMAIL: ${{ secrets.SMOKE_SKILLS_EMAIL }}
@@ -152,7 +152,7 @@ jobs:
             echo "passed=true" >> "$GITHUB_OUTPUT"
           elif [ "$RC" = "2" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::No surfaces matched (exit 2) — skipping"
+            echo "::notice::No surfaces matched (exit 2) - skipping"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
             exit 1
