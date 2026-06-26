@@ -35,6 +35,8 @@ describe('parseEnv', () => {
       'RECHECK_BATCH',
       'RECHECK_DRY_RUN',
       'DEQUARANTINE_DRY_RUN',
+      'PURGE_DRY_RUN',
+      'PURGE_LIMIT',
     ]) {
       delete process.env[k]
     }
@@ -172,9 +174,9 @@ describe('parseEnv', () => {
     expect(parseEnv().STALE_DAYS).toBe(0)
   })
 
-  // SMI-5356 (L-2): exactly the four valid RUN_TYPEs parse; everything else throws.
+  // SMI-5356 (L-2) / SMI-5357: exactly the five valid RUN_TYPEs parse; everything else throws.
   it('parses exactly the valid RUN_TYPE set and rejects the rest', () => {
-    for (const rt of ['discovery', 'maintenance', 'recheck', 'dequarantine']) {
+    for (const rt of ['discovery', 'maintenance', 'recheck', 'dequarantine', 'purge']) {
       process.env.RUN_TYPE = rt
       expect(() => parseEnv(), `expected ${rt} to parse`).not.toThrow()
       expect(parseEnv().RUN_TYPE).toBe(rt)
@@ -190,5 +192,58 @@ describe('parseEnv', () => {
   it('unset RUN_TYPE (deleted) defaults to discovery via ??', () => {
     delete process.env.RUN_TYPE
     expect(parseEnv().RUN_TYPE).toBe('discovery')
+  })
+
+  // SMI-5357: purge run-type + PURGE_DRY_RUN failsafe.
+  it('RUN_TYPE=purge parses successfully and yields RUN_TYPE purge', () => {
+    process.env.RUN_TYPE = 'purge'
+    expect(() => parseEnv()).not.toThrow()
+    expect(parseEnv().RUN_TYPE).toBe('purge')
+  })
+
+  it('PURGE_DRY_RUN defaults true (dry-run-first failsafe)', () => {
+    expect(parseEnv().PURGE_DRY_RUN).toBe(true)
+  })
+
+  it("PURGE_DRY_RUN='false' yields false (the deliberate-apply gate)", () => {
+    process.env.PURGE_DRY_RUN = 'false'
+    expect(parseEnv().PURGE_DRY_RUN).toBe(false)
+  })
+
+  it('PURGE_DRY_RUN accepts only canonical false tokens for apply', () => {
+    for (const applyToken of ['false', 'False', 'FALSE', '0', ' false ']) {
+      process.env.PURGE_DRY_RUN = applyToken
+      expect(parseEnv().PURGE_DRY_RUN, `${JSON.stringify(applyToken)} should apply`).toBe(false)
+    }
+  })
+
+  it('PURGE_DRY_RUN treats non-canonical/typo values as dry-run (fail-safe)', () => {
+    for (const safeToken of ['yes', 'on', 'no', 'true', 'True ', 'nope', 'apply', '00']) {
+      process.env.PURGE_DRY_RUN = safeToken
+      expect(parseEnv().PURGE_DRY_RUN, `${JSON.stringify(safeToken)} should stay dry`).toBe(true)
+    }
+  })
+
+  it('STALE_DAYS is the 0 sentinel for purge (no stale window)', () => {
+    process.env.RUN_TYPE = 'purge'
+    expect(parseEnv().STALE_DAYS).toBe(0)
+  })
+
+  it('PURGE_LIMIT is undefined when unset/empty (no cap)', () => {
+    expect(parseEnv().PURGE_LIMIT).toBeUndefined()
+    process.env.PURGE_LIMIT = '  '
+    expect(parseEnv().PURGE_LIMIT).toBeUndefined()
+  })
+
+  it('PURGE_LIMIT parses a positive integer (staged apply)', () => {
+    process.env.PURGE_LIMIT = '100'
+    expect(parseEnv().PURGE_LIMIT).toBe(100)
+  })
+
+  it('PURGE_LIMIT rejects non-positive / non-numeric values (fail-loud)', () => {
+    for (const bad of ['0', '-5', 'abc', 'foo']) {
+      process.env.PURGE_LIMIT = bad
+      expect(() => parseEnv(), `${JSON.stringify(bad)} should throw`).toThrow(/PURGE_LIMIT/)
+    }
   })
 })
