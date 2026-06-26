@@ -241,6 +241,26 @@ High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Ref
 
 ---
 
+## Default Execution Model — Ruflo Queen + Worktrees + Model Tiering
+
+**Default for any substantive, multi-step task: run a Ruflo queen-coordinator hive on a dedicated worktree** (`./scripts/create-worktree.sh`; the parent session is the queen). Trivial or purely conversational turns may run solo on the current branch.
+
+**Worktrees are the default workspace.** Doing implementation work directly on `main` (or in the main checkout) requires an **explicitly approved exception** — state the rationale and get sign-off before proceeding. This keeps parallel sessions from colliding (SMI-4776) and keeps `main` clean.
+
+**Route worker tasks by difficulty across model tiers** (the queen assigns each task to the cheapest tier that can do it well):
+
+| Model | Role | Tasks |
+|-------|------|-------|
+| **Opus** | Hardest reasoning / adversarial | Detection-rule & algorithm design, FP/FN tuning, security & data-integrity design, adversarial review, plan-review, interpreting ambiguous findings |
+| **Sonnet** | Core implementation | Feature code, edge<->core twin ports, tests, refactors, harness & report drafting |
+| **Haiku** | Mechanical / high-volume | Fixture scaffolding, regression-baseline bumps, CSV/data wrangling, `index.md` edits, drafting Linear comments, doc formatting |
+
+**The queen owns all side effects.** Workers/subagents never commit, push, post to Linear, or touch git — they hand their output (file edits, plus any `index.md` or Linear-comment drafts) back to the queen, who verifies and applies it. The `governance-specialist` subagent in particular must never commit to `main` or delete branches (SMI-5060). Foreground subagents only for interactive prompts; background subagents auto-deny unapproved tools.
+
+Full agent catalog, swarm topologies, hive-mind examples, and SPARC modes: [claude-flow-guide.md](.claude/development/claude-flow-guide.md).
+
+---
+
 ## Publishing Packages
 
 **Release prep**: `docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --all=patch` (also `--core=minor --cli=patch`, `--dry-run`). **Publish (CI-only)**: `git push && gh workflow run publish.yml -f dry_run=false`. Cadence: weekly (Sun 03:00 UTC) OR `[Unreleased]` ≥ 15 entries ([ADR-114](docs/internal/adr/114-release-cadence-and-gh-release-alignment.md)). Order: core → mcp-server, cli, enterprise. Local fallback deprecated (SMI-4533). Pre-publish checklist, version-pin rules, break-glass: [publishing-guide.md](.claude/development/publishing-guide.md).
