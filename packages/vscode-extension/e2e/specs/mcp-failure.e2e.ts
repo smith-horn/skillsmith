@@ -93,6 +93,66 @@ describe('MCP failure + recovery (SMI-5331)', () => {
     })
   })
 
+  it('failure detection + direct reconnect (F1 — no toast click)', async () => {
+    // Leg added for SMI-5398 F1: verifies that (a) setting an unreachable serverCommand
+    // drives the client into an error state (getStatus()==='error', proxied here via the
+    // audit early-return guard) and (b) a direct config-change reconnect — NOT a toast
+    // button click, which WDIO cannot reach — recovers the connection.
+    const origCmd = (await browser.executeWorkbench((vscode) =>
+      vscode.workspace.getConfiguration('skillsmith').get('mcp.serverCommand')
+    )) as string | undefined
+
+    // Point at an unreachable binary; onDidChangeConfiguration fires → connectWithProgress
+    // → ENOENT → client.status = 'error'.
+    await browser.executeWorkbench((vscode) =>
+      vscode.workspace
+        .getConfiguration('skillsmith')
+        .update(
+          'mcp.serverCommand',
+          '/nonexistent/smi-5398-unreachable-bin',
+          vscode.ConfigurationTarget.Workspace
+        )
+    )
+    await browser.pause(3_000)
+
+    // Proxy for getStatus()==='error': the audit command early-returns (isConnected()===false),
+    // so no new call reaches the fake server.
+    const logLenAfterBreak = readFakeMcpLog().length
+    await browser.executeWorkbench((vscode) =>
+      vscode.commands.executeCommand('skillsmith.auditInventory')
+    )
+    await browser.pause(1_000)
+    const newCallsDuringError = readFakeMcpLog()
+      .slice(logLenAfterBreak)
+      .filter((e) => e['t'] === 'tools/call' && e['name'] === 'skill_inventory_audit')
+    expect(newCallsDuringError.length).toBe(0)
+
+    // Direct reconnect: restore the original serverCommand via config update
+    // (mirrors what the toast self-heal button writes, but driven from the test
+    // directly — no WDIO toast-button interaction needed).
+    await browser.executeWorkbench(
+      (vscode, cmd) =>
+        vscode.workspace
+          .getConfiguration('skillsmith')
+          .update('mcp.serverCommand', cmd, vscode.ConfigurationTarget.Workspace),
+      origCmd
+    )
+    await browser.waitUntil(() => serverStarted('ok'), {
+      timeout: 20_000,
+      interval: 1_000,
+      timeoutMsg: 'F1 direct-reconnect: fake server never restarted after config restore',
+    })
+    // Confirm the extension is functional again: audit reaches the server.
+    await browser.executeWorkbench((vscode) =>
+      vscode.commands.executeCommand('skillsmith.auditInventory')
+    )
+    await browser.waitUntil(auditToolWasCalled, {
+      timeout: 15_000,
+      interval: 500,
+      timeoutMsg: 'F1 direct-reconnect: audit never reached fake server after restore',
+    })
+  })
+
   it('isError scenario: audit failure handled gracefully; host survives + recovers', async () => {
     // NB: no page.forceConnect() — test 1 leaves the client connected, and
     // skillsmith.mcpReconnect on a connected client opens a blocking
