@@ -100,6 +100,7 @@ export const INVENTORY_LIMITS = {
   SOURCE_MAX: 255,
   CONTENT_HASH_MAX: 128,
   PINNED_VERSION_MAX: 64,
+  UPDATE_POLICY_MAX: 16,
 } as const
 
 /** Allowed `update_policy` values (mirrors the DB CHECK constraint). */
