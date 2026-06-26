@@ -15,6 +15,7 @@ import { join } from 'path'
 import { SecurityScanner, QuarantineRepository, type QuarantineSeverity } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { resolveClientPath } from '@skillsmith/core/install'
+import { parseFrontmatter } from '../indexer/FrontmatterParser.js'
 
 // ============================================================================
 // Input / Output types
@@ -300,27 +301,41 @@ async function executeSkillRescanImpl(
     // SMI-5358: advisory → quarantine linkage.
     // Persist a quarantine entry when the rescan finds over-threshold advisories
     // so that local search (searchLocalSkills) hides the threat and the quarantine
-    // dashboard surfaces it. The key MUST match the LocalIndexer id scheme
-    // (`local/{name}`) so QuarantineRepository.isQuarantined() lines up on the
-    // search side — a bare name would never match and the filter would no-op.
+    // dashboard surfaces it.
+    //
+    // KEY PARITY (SMI-5358 retro): the key MUST equal the LocalIndexer id that
+    // searchLocalSkills filters on, which is `local/${frontmatter.name || dirName}`
+    // (LocalIndexer is top-level-only; indexLocalSkill derives name the same way).
+    // discoverInstalledSkills yields the DIRECTORY name, so a SKILL.md whose
+    // `name:` differs from its directory would be quarantined under the wrong key
+    // and silently evade the filter. Derive the canonical name from frontmatter
+    // first, mirroring LocalIndexer, then fall back to the directory name.
     if (!report.passed && quarantineRepo) {
-      const hasCritical = severityCounts.critical > 0
-      const hasHigh = severityCounts.high > 0
-      const quarantineSeverity = findingsToQuarantineSeverity(hasCritical, hasHigh)
-      const detectedPatterns = sortedFindings.slice(0, MAX_FINDINGS_PER_SKILL).map((f) => f.type)
-      quarantineRepo.create({
-        skillId: `local/${skill.name}`,
-        source: 'rescan',
-        quarantineReason:
-          `Security rescan detected ${report.findings.length} finding(s) ` +
-          `(riskScore=${report.riskScore}): ` +
-          sortedFindings
-            .slice(0, 2)
-            .map((f) => f.message.slice(0, 80))
-            .join('; '),
-        severity: quarantineSeverity,
-        detectedPatterns,
-      })
+      const canonicalName = parseFrontmatter(content).name || skill.name
+      const skillKey = `local/${canonicalName}`
+      // Idempotent: a persistently-failing skill rescanned repeatedly must not
+      // accumulate duplicate pending rows (the quarantine table has no
+      // UNIQUE(skill_id, source)). Skip if already quarantined; a previously
+      // APPROVED entry (isQuarantined === false) still re-quarantines as intended.
+      if (!quarantineRepo.isQuarantined(skillKey)) {
+        const hasCritical = severityCounts.critical > 0
+        const hasHigh = severityCounts.high > 0
+        const quarantineSeverity = findingsToQuarantineSeverity(hasCritical, hasHigh)
+        const detectedPatterns = sortedFindings.slice(0, MAX_FINDINGS_PER_SKILL).map((f) => f.type)
+        quarantineRepo.create({
+          skillId: skillKey,
+          source: 'rescan',
+          quarantineReason:
+            `Security rescan detected ${report.findings.length} finding(s) ` +
+            `(riskScore=${report.riskScore}): ` +
+            sortedFindings
+              .slice(0, 2)
+              .map((f) => f.message.slice(0, 80))
+              .join('; '),
+          severity: quarantineSeverity,
+          detectedPatterns,
+        })
+      }
     }
   }
 

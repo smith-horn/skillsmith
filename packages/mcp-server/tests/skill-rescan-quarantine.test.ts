@@ -254,4 +254,34 @@ describe('skill_rescan → QuarantineRepository linkage (SMI-5358)', () => {
     expect(entries.length).toBeGreaterThan(0)
     expect(entries[0].reviewStatus).toBe('pending')
   })
+
+  // --------------------------------------------------------------------------
+  // SMI-5358 retro: key parity + idempotency
+  // --------------------------------------------------------------------------
+
+  it('keys the quarantine entry on frontmatter name, not the directory name', async () => {
+    // MALICIOUS_SKILL has `name: evil-skill` in its frontmatter but is installed
+    // in a directory named `misnamed-dir`. LocalIndexer (and therefore
+    // searchLocalSkills) ids it `local/evil-skill` (frontmatter.name wins), so the
+    // quarantine entry MUST also key on `local/evil-skill` — keying on the
+    // directory name (`local/misnamed-dir`) would let it evade the search filter.
+    await writeSkill(skillsDir, 'misnamed-dir', MALICIOUS_SKILL)
+
+    await executeSkillRescan({}, skillsDir, quarantineRepo)
+
+    expect(quarantineRepo.findBySkillId('local/evil-skill')).toHaveLength(1)
+    expect(quarantineRepo.isQuarantined('local/evil-skill')).toBe(true)
+    // Directory-name key must NOT be used.
+    expect(quarantineRepo.findBySkillId('local/misnamed-dir')).toHaveLength(0)
+  })
+
+  it('does not create duplicate entries when the same failing skill is rescanned twice', async () => {
+    await writeSkill(skillsDir, 'evil-skill', MALICIOUS_SKILL)
+
+    await executeSkillRescan({}, skillsDir, quarantineRepo)
+    await executeSkillRescan({}, skillsDir, quarantineRepo)
+
+    // Idempotent: the second rescan must not accumulate a second pending row.
+    expect(quarantineRepo.findBySkillId('local/evil-skill')).toHaveLength(1)
+  })
 })
