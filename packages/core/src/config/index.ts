@@ -57,6 +57,15 @@ export interface SkillsmithConfig {
     /** Sync interval in milliseconds */
     intervalMs?: number
   }
+  /** Cross-harness inventory sync state (SMI-5391). */
+  inventory?: {
+    /** Stable client-generated device UUID (v4). */
+    deviceId?: string
+    /** Optional user-facing device label. */
+    deviceLabel?: string
+    /** ISO timestamp of the last successful inventory push (auto-push throttle). */
+    lastPushAt?: string
+  }
 }
 
 /** Default config directory name */
