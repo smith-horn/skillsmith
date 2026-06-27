@@ -187,6 +187,112 @@ async function safeRealpath(p: string): Promise<string> {
 }
 
 /**
+ * Per-harness/skill entry produced by {@link getInstalledSkillsPerHarness}.
+ * Feeds the cross-harness inventory builder (SMI-5390).
+ *
+ * `contentHash` is the sha256 hex digest of the skill's raw SKILL.md
+ * content — used by the inventory service for registry drift detection.
+ * It is `null` when SKILL.md is absent or unreadable.
+ */
+export interface HarnessSkillEntry {
+  /** Which harness directory the skill was found under. */
+  harness: ClientId | 'local'
+  /**
+   * Skill identifier: the `id` front-matter field when present (conventionally
+   * `author/name`), falling back to the `name` field, then the directory name.
+   */
+  skillId: string
+  /** Installed version string, or `null` if absent. */
+  version: string | null
+  /** sha256 hex digest of SKILL.md content; `null` if unreadable. */
+  contentHash: string | null
+  /** Absolute path to the skill directory. */
+  path: string
+}
+
+/**
+ * Reads `<skillPath>/SKILL.md`, returns its sha256 hex content hash and the
+ * `id` front-matter field. Both are `null` on any read/parse error.
+ * @internal
+ */
+async function readSkillMd(
+  skillPath: string
+): Promise<{ contentHash: string | null; skillId: string | null }> {
+  try {
+    const content = await readFile(join(skillPath, 'SKILL.md'), 'utf-8')
+    const contentHash = createHash('sha256').update(content, 'utf8').digest('hex')
+    const parser = new SkillParser()
+    const parsed = parser.parse(content)
+    const parsedAny = parsed as unknown as Record<string, unknown>
+    const skillId = (parsedAny['id'] as string | undefined) ?? null
+    return { contentHash, skillId }
+  } catch {
+    return { contentHash: null, skillId: null }
+  }
+}
+
+/**
+ * Returns one {@link HarnessSkillEntry} per (harness × skill) observed on
+ * disk, deduplicated by realpath only.
+ *
+ * Unlike {@link getInstalledSkills}, this function:
+ * - Does **not** deduplicate by skill name — the same skill present under two
+ *   distinct harness directories appears as two rows (different `path`).
+ * - Does deduplicate by realpath — a symlinked alias such as
+ *   `~/.agents/skills/foo` → `~/.claude/skills/foo` collapses to one row.
+ * - Enriches each surviving entry with a sha256 `contentHash` computed from
+ *   the SKILL.md content, for registry drift detection.
+ *
+ * Precedence order (first realpath wins when a symlink is detected): local
+ * (repo) > claude-code > cursor > copilot > windsurf > agents. Inherits the
+ * SMI-4578 ordering so local overrides are still respected.
+ *
+ * @see SMI-5390
+ */
+export async function getInstalledSkillsPerHarness(): Promise<HarnessSkillEntry[]> {
+  const localScan = getSkillsFromDirectory(getLocalSkillsDir(), undefined, 'local')
+  const clientScans = CLIENT_IDS.map((client) =>
+    getSkillsFromDirectory(CLIENT_NATIVE_PATHS[client], undefined, client)
+  )
+
+  const [localSkills, ...clientSkillsLists] = await Promise.all([localScan, ...clientScans])
+
+  // Same precedence order as getInstalledSkills — local first, then
+  // canonical, then remaining clients.
+  const ordered: InstalledSkill[] = [...localSkills]
+  const canonicalIdx = CLIENT_IDS.indexOf(CANONICAL_CLIENT)
+  if (canonicalIdx >= 0 && clientSkillsLists[canonicalIdx]) {
+    ordered.push(...clientSkillsLists[canonicalIdx])
+  }
+  for (let i = 0; i < CLIENT_IDS.length; i++) {
+    if (i === canonicalIdx) continue
+    const list = clientSkillsLists[i]
+    if (list) ordered.push(...list)
+  }
+
+  // Realpath-only dedup: collapses symlinked aliases (same inode) but keeps
+  // the same skill independently installed under two different harnesses as
+  // two distinct rows.
+  const seenPaths = new Set<string>()
+  const out: HarnessSkillEntry[] = []
+  for (const skill of ordered) {
+    const rp = await safeRealpath(skill.path)
+    if (seenPaths.has(rp)) continue
+    seenPaths.add(rp)
+
+    const { contentHash, skillId: parsedId } = await readSkillMd(skill.path)
+    out.push({
+      harness: skill.installedVia,
+      skillId: parsedId ?? skill.name,
+      version: skill.version,
+      contentHash,
+      path: skill.path,
+    })
+  }
+  return out
+}
+
+/**
  * Get list of installed skills across every client directory.
  *
  * SMI-4578: scans the union of `CLIENT_NATIVE_PATHS` (claude-code,
