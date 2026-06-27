@@ -42,3 +42,21 @@ export {
   type InventoryUploadPayload,
   type InventoryUploadResult,
 } from './inventory-types.js'
+
+// Cross-harness inventory service — shared local agent (SMI-5392)
+export { collectDeviceSkills } from './inventory-collector.js'
+export { buildInventoryDevice, type BuildInventoryDeviceOptions } from './inventory-device.js'
+export { buildInventoryPayload } from './inventory-builder.js'
+export {
+  uploadInventory,
+  InventoryAuthError,
+  InventoryConflictError,
+  InventoryValidationError,
+  InventoryUploadError,
+} from './inventory-client.js'
+export {
+  pushInventory,
+  maybeAutoPush,
+  type PushInventoryOptions,
+  type MaybeAutoPushOptions,
+} from './inventory-push.js'

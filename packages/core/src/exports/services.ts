@@ -311,6 +311,20 @@ export {
   type InventoryUpdatePolicy,
   type InventoryUploadPayload,
   type InventoryUploadResult,
+  // Cross-harness inventory service — shared local agent (SMI-5392)
+  collectDeviceSkills,
+  buildInventoryDevice,
+  buildInventoryPayload,
+  uploadInventory,
+  pushInventory,
+  maybeAutoPush,
+  InventoryAuthError,
+  InventoryConflictError,
+  InventoryValidationError,
+  InventoryUploadError,
+  type BuildInventoryDeviceOptions,
+  type PushInventoryOptions,
+  type MaybeAutoPushOptions,
 } from '../sync/index.js'
 
 // ============================================================================
