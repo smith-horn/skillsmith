@@ -7,15 +7,9 @@
 import type { SecurityFinding, ScanReport, ScannerOptions, FindingConfidence } from './types.js'
 import {
   DEFAULT_ALLOWED_DOMAINS,
-  SENSITIVE_PATH_PATTERNS,
   JAILBREAK_PATTERNS,
   SUSPICIOUS_PATTERNS,
-  SOCIAL_ENGINEERING_PATTERNS,
-  PROMPT_LEAKING_PATTERNS,
-  DATA_EXFILTRATION_PATTERNS,
-  PRIVILEGE_ESCALATION_PATTERNS,
   AI_DEFENCE_PATTERNS,
-  PII_PATTERNS,
 } from './patterns.js'
 import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
 
@@ -32,6 +26,24 @@ import {
 
 // Import SSRF scanner
 import { scanSsrfPatterns } from './SecurityScanner.ssrf.js'
+
+// Import per-category scanners (SMI-5359 Wave 4.2: extracted to keep this file
+// under the 500-line gate; pure functions of content + lineContexts).
+import {
+  scanSensitivePaths,
+  scanSocialEngineering,
+  scanPromptLeaking,
+  scanDataExfiltration,
+  scanPrivilegeEscalation,
+  scanPiiPatterns,
+} from './SecurityScanner.scanners.js'
+
+// Import code-execution & obfuscated-directive detectors (SMI-5359 Wave 4.2).
+import {
+  scanCodeExecution,
+  scanObfuscatedDirective,
+  escalateCodeExecution,
+} from './SecurityScanner.exec.js'
 
 // Import formatters (used for both re-export and static methods)
 import {
@@ -112,39 +124,6 @@ export class SecurityScanner {
     return findings
   }
 
-  private scanSensitivePaths(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-
-    lines.forEach((line, index) => {
-      const ctx = contexts[index]
-
-      for (const pattern of SENSITIVE_PATH_PATTERNS) {
-        if (safeRegexCheck(pattern, line)) {
-          const match = safeRegexTest(pattern, line)
-          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match?.index ?? 0)
-          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'medium' : 'high'
-
-          findings.push({
-            type: 'sensitive_path',
-            severity,
-            message: `Reference to potentially sensitive path: ${pattern.source}`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-
-    return findings
-  }
-
   private scanJailbreakPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     return scanPatternsWithMultilineSupport(
       content,
@@ -219,195 +198,6 @@ export class SecurityScanner {
     return findings
   }
 
-  private scanSocialEngineering(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-
-    lines.forEach((line, index) => {
-      const ctx = contexts[index]
-
-      for (const pattern of SOCIAL_ENGINEERING_PATTERNS) {
-        const match = safeRegexTest(pattern, line)
-        if (match) {
-          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
-          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'medium' : 'high'
-
-          findings.push({
-            type: 'social_engineering',
-            severity,
-            message: `Social engineering attempt detected: "${match[0]}"`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            category: 'social_engineering',
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-
-    return findings
-  }
-
-  private scanPromptLeaking(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-
-    lines.forEach((line, index) => {
-      const ctx = contexts[index]
-
-      for (const pattern of PROMPT_LEAKING_PATTERNS) {
-        const match = safeRegexTest(pattern, line)
-        if (match) {
-          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
-          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'high' : 'critical'
-
-          findings.push({
-            type: 'prompt_leaking',
-            severity,
-            message: `Prompt leaking attempt detected: "${match[0]}"`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            category: 'prompt_leaking',
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-
-    return findings
-  }
-
-  private scanDataExfiltration(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-
-    lines.forEach((line, index) => {
-      const ctx = contexts[index]
-
-      for (const pattern of DATA_EXFILTRATION_PATTERNS) {
-        const match = safeRegexTest(pattern, line)
-        if (match) {
-          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
-          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'medium' : 'high'
-
-          findings.push({
-            type: 'data_exfiltration',
-            severity,
-            message: `Potential data exfiltration pattern: "${match[0]}"`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            category: 'data_exfiltration',
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-
-    return findings
-  }
-
-  private scanPrivilegeEscalation(
-    content: string,
-    lineContexts?: LineContext[]
-  ): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-
-    lines.forEach((line, index) => {
-      const ctx = contexts[index]
-
-      for (const pattern of PRIVILEGE_ESCALATION_PATTERNS) {
-        const match = safeRegexTest(pattern, line)
-        if (match) {
-          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
-          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'high' : 'critical'
-
-          findings.push({
-            type: 'privilege_escalation',
-            severity,
-            message: `Privilege escalation pattern detected: "${match[0]}"`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            category: 'privilege_escalation',
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-
-    return findings
-  }
-
-  /** SMI-3864: Detect PII patterns. Email in YAML frontmatter gets low severity. */
-  private scanPiiPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-    let frontmatterEnd = -1
-    if (lines[0]?.trim() === '---') {
-      for (let i = 1; i < lines.length; i++) {
-        if (lines[i].trim() === '---') {
-          frontmatterEnd = i
-          break
-        }
-      }
-    }
-    const emailPatternIndex = 7
-    lines.forEach((line, index) => {
-      const ctx = contexts[index]
-      const inFrontmatter = index > 0 && index < frontmatterEnd
-      for (let pi = 0; pi < PII_PATTERNS.length; pi++) {
-        const pattern = PII_PATTERNS[pi]
-        const match = safeRegexTest(pattern, line)
-        if (match) {
-          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
-          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-          const isEmailPattern = pi === emailPatternIndex
-          const isAuthorLine = /^\s*(?:author|contact|support|email)\s*:/i.test(line)
-          const inEmailSafeContext = isEmailPattern && (inFrontmatter || isAuthorLine)
-          let severity: 'low' | 'medium' | 'high' | 'critical'
-          if (inEmailSafeContext) severity = 'low'
-          else if (inDocContext) severity = 'medium'
-          else if (pi <= 2 || pi === 9) severity = 'critical'
-          else severity = 'high'
-          const confidence: FindingConfidence = inDocContext || inEmailSafeContext ? 'low' : 'high'
-          findings.push({
-            type: 'pii',
-            severity,
-            message: `PII detected: ${match[0].slice(0, 40)}${match[0].length > 40 ? '...' : ''}`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            category: 'pii',
-            inDocumentationContext: inDocContext || inEmailSafeContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-    return findings
-  }
-
   private scanAIDefenceVulnerabilities(
     content: string,
     lineContexts?: LineContext[]
@@ -441,16 +231,23 @@ export class SecurityScanner {
     }
 
     findings.push(...this.scanUrls(content))
-    findings.push(...this.scanSensitivePaths(content, lineContexts))
+    findings.push(...scanSensitivePaths(content, lineContexts))
     findings.push(...this.scanJailbreakPatterns(content, lineContexts))
     findings.push(...this.scanSuspiciousPatterns(content, lineContexts))
-    findings.push(...this.scanSocialEngineering(content, lineContexts))
-    findings.push(...this.scanPromptLeaking(content, lineContexts))
-    findings.push(...this.scanDataExfiltration(content, lineContexts))
-    findings.push(...this.scanPrivilegeEscalation(content, lineContexts))
+    findings.push(...scanSocialEngineering(content, lineContexts))
+    findings.push(...scanPromptLeaking(content, lineContexts))
+    findings.push(...scanDataExfiltration(content, lineContexts))
+    findings.push(...scanPrivilegeEscalation(content, lineContexts))
     findings.push(...this.scanAIDefenceVulnerabilities(content, lineContexts))
     findings.push(...scanSsrfPatterns(content, lineContexts))
-    findings.push(...this.scanPiiPatterns(content, lineContexts))
+    findings.push(...scanPiiPatterns(content, lineContexts))
+    findings.push(...scanCodeExecution(content, lineContexts))
+    findings.push(...scanObfuscatedDirective(content))
+
+    // SMI-5359 Wave 4.2: promote code_execution to critical when it co-occurs with a
+    // non-documentation exfiltration / privilege / credential / obfuscation signal.
+    // Runs after every detector so all co-signals are present.
+    escalateCodeExecution(findings)
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

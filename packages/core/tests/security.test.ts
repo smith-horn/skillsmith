@@ -152,6 +152,9 @@ describe('SecurityScanner', () => {
       expect(f.length).toBeGreaterThan(0)
       expect(f[0].inDocumentationContext).toBe(true)
       expect(f[0].confidence).toBe('low')
+      // SMI-5359 Wave 4.1 retro: the inline-code path also drops severity to 'low'
+      // (inInlineCode => inDocContext === true) — pin both fields, matching the fenced test.
+      expect(f[0].severity).toBe('low')
     })
 
     it('keeps full severity + high confidence for a suspicious pattern in prose (no regression)', () => {

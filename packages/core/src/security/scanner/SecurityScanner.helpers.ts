@@ -289,6 +289,8 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
     aiDefence: 0,
     ssrf: 0,
     pii: 0,
+    codeExecution: 0,
+    obfuscatedDirective: 0,
   }
 
   const confidenceWeights: Record<FindingConfidence, number> = {
@@ -337,6 +339,12 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
       case 'pii':
         breakdown.pii += score
         break
+      case 'code_execution':
+        breakdown.codeExecution += score
+        break
+      case 'obfuscated_directive':
+        breakdown.obfuscatedDirective += score
+        break
     }
   }
 
@@ -352,7 +360,13 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   breakdown.aiDefence = Math.min(100, breakdown.aiDefence)
   breakdown.ssrf = Math.min(100, breakdown.ssrf)
   breakdown.pii = Math.min(100, breakdown.pii)
+  breakdown.codeExecution = Math.min(100, breakdown.codeExecution)
+  breakdown.obfuscatedDirective = Math.min(100, breakdown.obfuscatedDirective)
 
+  // SMI-5359 Wave 4.2: the two new categories use a 0.40 coefficient and are ADDITIVE
+  // (the original eleven coefficients sum to 1.0; these add on top). No code assumes the
+  // coefficients sum to 1.0, and the final Math.min(100, ...) cap is preserved — so a skill
+  // that triggers neither new category scores exactly as before (both breakdown entries 0).
   const total = Math.min(
     100,
     Math.round(
@@ -366,7 +380,9 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
         breakdown.externalUrls * 0.04 +
         breakdown.aiDefence * 0.12 +
         breakdown.ssrf * 0.04 +
-        breakdown.pii * 0.08
+        breakdown.pii * 0.08 +
+        breakdown.codeExecution * 0.4 +
+        breakdown.obfuscatedDirective * 0.4
     )
   )
 

@@ -25,6 +25,8 @@ function makeScanReport(overrides?: Partial<ScanReport>): ScanReport {
       aiDefence: 0,
       ssrf: 0,
       pii: 0,
+      codeExecution: 0,
+      obfuscatedDirective: 0,
     },
     passed: true,
     scannedAt: new Date(),
