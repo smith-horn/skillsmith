@@ -488,6 +488,13 @@ verify_jwt = true
 [functions.sync-oauth-email]
 verify_jwt = true
 
+# SMI-5389: inventory-upload — the local agent POSTs a per-device skill inventory
+# snapshot. Authenticated as the user (auth.uid() scopes the consent-gated
+# reconcile_device_inventory RPC). Deploy WITHOUT --no-verify-jwt; mirrors
+# team-invite-send.
+[functions.inventory-upload]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

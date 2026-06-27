@@ -303,6 +303,14 @@ export {
   type SyncResult,
   type BackgroundSyncOptions,
   type BackgroundSyncState,
+  // Cross-harness inventory payload contract (SMI-5389)
+  INVENTORY_LIMITS,
+  INVENTORY_UPDATE_POLICIES,
+  type InventoryDevice,
+  type InventorySkillEntry,
+  type InventoryUpdatePolicy,
+  type InventoryUploadPayload,
+  type InventoryUploadResult,
 } from '../sync/index.js'
 
 // ============================================================================
