@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.4
+
+- **Feature**: recover + backfill canonical GitHub source for local skills (SMI-5407) (#1589)
+- **Feature**: CLI install block + local-search filter + 9 missing quarantine tests (SMI-5358) (#1567)
+
 ## v0.6.3
 
 - **Refactor**: SMI-5036 split oversized billing test files (#1282)
