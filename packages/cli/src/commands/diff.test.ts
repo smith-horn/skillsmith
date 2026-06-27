@@ -325,6 +325,45 @@ describe('createDiffCommand', () => {
       expect(mockFetch).toHaveBeenCalledWith(rawUrl, expect.any(Object))
     })
 
+    it('converts the github:owner/repo shorthand (install_skill format) to a raw URL (SMI-5408)', async () => {
+      mockLoadManifest.mockResolvedValue(buildManifest('github:anthropic/test-skill'))
+      mockReadFile.mockResolvedValue(OLD_CONTENT)
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(NEW_CONTENT_MINOR),
+      })
+
+      const cmd = createDiffCommand()
+      await runCommand(cmd, ['test-skill', '--old-content', '/tmp/old.md'])
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://raw.githubusercontent.com/anthropic/test-skill/main/SKILL.md',
+        expect.objectContaining({ headers: { Accept: 'text/plain' } })
+      )
+    })
+
+    it('falls back to the master branch when main 404s (SMI-5408)', async () => {
+      mockLoadManifest.mockResolvedValue(buildManifest('github:anthropic/test-skill'))
+      mockReadFile.mockResolvedValue(OLD_CONTENT)
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(NEW_CONTENT_MINOR) })
+
+      const cmd = createDiffCommand()
+      await runCommand(cmd, ['test-skill', '--old-content', '/tmp/old.md'])
+
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        'https://raw.githubusercontent.com/anthropic/test-skill/main/SKILL.md',
+        expect.any(Object)
+      )
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'https://raw.githubusercontent.com/anthropic/test-skill/master/SKILL.md',
+        expect.any(Object)
+      )
+    })
+
     it('exits with error for non-GitHub source URLs', async () => {
       mockLoadManifest.mockResolvedValue(buildManifest('https://gitlab.com/anthropic/test-skill'))
       mockReadFile.mockResolvedValue(OLD_CONTENT)
