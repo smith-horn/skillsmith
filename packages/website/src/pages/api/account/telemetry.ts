@@ -17,6 +17,7 @@ export const prerender = false
 
 import type { APIRoute } from 'astro'
 import { createClient } from '@supabase/supabase-js'
+import { parseInventorySyncEnabled } from '../../../lib/telemetry-body'
 
 interface TelemetryPreferenceRow {
   user_id: string
@@ -24,11 +25,13 @@ interface TelemetryPreferenceRow {
   anonymous_id: string | null
   anonymous_id_created_at: string | null
   updated_at: string
+  inventory_sync_enabled: boolean
 }
 
 interface PutBody {
   enabled?: unknown
   anonymous_id?: unknown
+  inventory_sync_enabled?: unknown
 }
 
 const SUPABASE_URL = import.meta.env.PUBLIC_SUPABASE_URL ?? ''
@@ -84,6 +87,7 @@ function defaultRow(userId: string): TelemetryPreferenceRow {
     anonymous_id: null,
     anonymous_id_created_at: null,
     updated_at: new Date(0).toISOString(),
+    inventory_sync_enabled: false,
   }
 }
 
@@ -110,7 +114,9 @@ export const GET: APIRoute = async ({ request }) => {
 
   const { data, error } = await client
     .from('user_telemetry_preferences')
-    .select('user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at')
+    .select(
+      'user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at, inventory_sync_enabled'
+    )
     .eq('user_id', userId)
     .maybeSingle<TelemetryPreferenceRow>()
 
@@ -144,12 +150,26 @@ export const PUT: APIRoute = async ({ request }) => {
 
   // Read current row first so we preserve `anonymous_id_created_at` across
   // toggles: an anonymous_id supplied for the first time gets a creation
-  // timestamp; subsequent updates retain the original timestamp.
+  // timestamp; subsequent updates retain the original timestamp. We also read
+  // `inventory_sync_enabled` so an omitted field uses the stored value
+  // (read-modify-write semantics for optional fields).
   const { data: existing } = await client
     .from('user_telemetry_preferences')
-    .select('anonymous_id, anonymous_id_created_at')
+    .select('anonymous_id, anonymous_id_created_at, inventory_sync_enabled')
     .eq('user_id', userId)
-    .maybeSingle<{ anonymous_id: string | null; anonymous_id_created_at: string | null }>()
+    .maybeSingle<{
+      anonymous_id: string | null
+      anonymous_id_created_at: string | null
+      inventory_sync_enabled: boolean
+    }>()
+
+  const inventorySyncResult = parseInventorySyncEnabled(
+    body.inventory_sync_enabled,
+    existing?.inventory_sync_enabled ?? false
+  )
+  if (inventorySyncResult.error) {
+    return jsonResponse({ error: inventorySyncResult.error }, 400)
+  }
 
   const now = new Date().toISOString()
   const anonymousIdChanged = anonymousId !== null && existing?.anonymous_id !== anonymousId
@@ -163,12 +183,15 @@ export const PUT: APIRoute = async ({ request }) => {
     anonymous_id: anonymousId ?? existing?.anonymous_id ?? null,
     anonymous_id_created_at: anonymousIdCreatedAt,
     updated_at: now,
+    inventory_sync_enabled: inventorySyncResult.value,
   }
 
   const { data, error } = await client
     .from('user_telemetry_preferences')
     .upsert(upsertRow, { onConflict: 'user_id' })
-    .select('user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at')
+    .select(
+      'user_id, enabled, anonymous_id, anonymous_id_created_at, updated_at, inventory_sync_enabled'
+    )
     .single<TelemetryPreferenceRow>()
 
   if (error || !data) return jsonResponse({ error: 'upsert_failed' }, 500)
