@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ## v0.6.3
 
 - **Feature**: View Changes uses the recovered manifest source for local skills (SMI-5412) (#1599)
+- **Docs**: Marketplace README de-Claude-Code-specific — the audit/install copy now reflects multi-harness support; the skills directory is configurable (default `~/.claude/skills`) (SMI-5416)
 ### Added
 
 - Added `npm run test:vscode` for a worktree-local vscode test path; local typecheck/test now warn on stale `node_modules` instead of failing opaquely (SMI-5343/5344).
