@@ -72,6 +72,96 @@ describe('SourceRecoveryService.recoverOne', () => {
     expect(findCandidatesByName).not.toHaveBeenCalled()
   })
 
+  // SMI-5411: a git/plugin source whose repo IS in the local catalog gets its
+  // manifest id enriched with the registry UUID, while the (exact/high) SOURCE
+  // resolution stays unchanged. Enrichment is best-effort and never throws.
+  it('git remote enriches registryId from findRegistryIdByRepoUrl (UUID; source unchanged)', async () => {
+    const dir = tmpDir()
+    writeGitConfig(dir, 'git@github.com:owner/repo.git')
+    const findRegistryIdByRepoUrl = vi.fn(async (url: string) =>
+      url === 'https://github.com/owner/repo' ? 'reg-uuid-1' : null
+    )
+    const svc = new SourceRecoveryService({
+      hashContent,
+      findCandidatesByName: async () => [],
+      findRegistryIdByRepoUrl,
+    })
+
+    const result = await svc.recoverOne(dir, 'repo', null)
+
+    expect(result.method).toBe('git-remote')
+    expect(result.confidence).toBe('exact')
+    expect(result.registryId).toBe('reg-uuid-1')
+    expect(result.recoveredSource?.url).toBe('https://github.com/owner/repo')
+    expect(findRegistryIdByRepoUrl).toHaveBeenCalledWith('https://github.com/owner/repo')
+  })
+
+  it('plugin manifest enriches registryId from findRegistryIdByRepoUrl', async () => {
+    const dir = tmpDir()
+    writePlugin(dir, 'https://github.com/o/r')
+    const findRegistryIdByRepoUrl = vi.fn(async () => 'plugin-uuid')
+    const svc = new SourceRecoveryService({
+      hashContent,
+      findCandidatesByName: async () => [],
+      findRegistryIdByRepoUrl,
+    })
+
+    const result = await svc.recoverOne(dir, 'r', null)
+
+    expect(result.method).toBe('plugin-json')
+    expect(result.confidence).toBe('high')
+    expect(result.registryId).toBe('plugin-uuid')
+    expect(findRegistryIdByRepoUrl).toHaveBeenCalledWith('https://github.com/o/r')
+  })
+
+  it('git remote keeps registryId null when the repo is not catalog-known', async () => {
+    const dir = tmpDir()
+    writeGitConfig(dir, 'git@github.com:owner/repo.git')
+    const findRegistryIdByRepoUrl = vi.fn(async () => null)
+    const svc = new SourceRecoveryService({
+      hashContent,
+      findCandidatesByName: async () => [],
+      findRegistryIdByRepoUrl,
+    })
+
+    const result = await svc.recoverOne(dir, 'repo', null)
+
+    expect(result.method).toBe('git-remote')
+    expect(result.registryId).toBeNull()
+  })
+
+  it('git remote keeps registryId null when the enrichment dep is absent', async () => {
+    const dir = tmpDir()
+    writeGitConfig(dir, 'git@github.com:owner/repo.git')
+    const svc = new SourceRecoveryService({ hashContent, findCandidatesByName: async () => [] })
+
+    const result = await svc.recoverOne(dir, 'repo', null)
+
+    expect(result.method).toBe('git-remote')
+    expect(result.registryId).toBeNull()
+  })
+
+  it('git remote degrades to null registryId when the enrichment dep throws', async () => {
+    const dir = tmpDir()
+    writeGitConfig(dir, 'git@github.com:owner/repo.git')
+    const findRegistryIdByRepoUrl = vi.fn(async () => {
+      throw new Error('catalog unavailable')
+    })
+    const svc = new SourceRecoveryService({
+      hashContent,
+      findCandidatesByName: async () => [],
+      findRegistryIdByRepoUrl,
+    })
+
+    const result = await svc.recoverOne(dir, 'repo', null)
+
+    // The throw must NOT fail recovery — the source still resolves exact.
+    expect(result.method).toBe('git-remote')
+    expect(result.confidence).toBe('exact')
+    expect(result.recoveredSource?.url).toBe('https://github.com/owner/repo')
+    expect(result.registryId).toBeNull()
+  })
+
   it('a single name match resolves at medium with a registry id', async () => {
     const dir = tmpDir()
     const findCandidatesByName = vi.fn(async () => [candidate('uuid-1', 'foo', 'acme', 'foo')])

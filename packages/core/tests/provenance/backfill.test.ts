@@ -128,6 +128,26 @@ describe('backfillManifest', () => {
     expect(reg.source).toBe('https://github.com/acme/regrepo')
   })
 
+  it('SMI-5411: a git result carrying a registryId writes the UUID id with the git source', async () => {
+    const dir = mkSkillDir('gitskill')
+    const enriched: SkillRecoveryResult = {
+      ...gitResult(dir, 'gitskill'),
+      registryId: 'reg-uuid-5411', // git source IS catalog-known -> enriched id
+    }
+    const outcome = await backfillManifest(report(enriched), {
+      manifestPath,
+      apply: true,
+      now: NOW,
+    })
+
+    expect(outcome.written).toEqual(['gitskill'])
+    const entry = loadManifest().installedSkills.gitskill as SkillManifestEntry
+    // The id is the registry UUID (skill_outdated keys on it), NOT owner/skill-
+    // name; the source stays the exact git remote (View-Changes unchanged).
+    expect(entry.id).toBe('reg-uuid-5411')
+    expect(entry.source).toBe('https://github.com/acme/gitrepo')
+  })
+
   it('default min-confidence (high) excludes a medium registry-name match', async () => {
     const dir = mkSkillDir('namematch')
     const outcome = await backfillManifest(report(registryResult(dir, 'namematch', 'medium')), {

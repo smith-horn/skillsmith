@@ -100,6 +100,18 @@ export interface RecoveryDeps {
   ) => Promise<RecoveryCandidate[]>
   /** Opt-in local catalog hint; returns a GitHub repo_url or null. */
   lookupCatalogRepoUrl?: (name: string) => Promise<string | null>
+  /**
+   * Opt-in OFFLINE registry-UUID enrichment for a git/plugin-recovered source
+   * (SMI-5411). Given the canonical recovered URL (`https://github.com/<owner>/
+   * <repo>`), return the local catalog's registry UUID for that `repo_url`, else
+   * null. Lets `skill_outdated` resolve git/plugin-recovered skills that ARE
+   * registry-published, WITHOUT changing the (exact/high) SOURCE resolution:
+   * the source stays the https URL (View-Changes already works); only the
+   * manifest `id` is upgraded from `owner/skill-name` to the UUID when the repo
+   * is catalog-known. Best-effort and graceful — an absent dep, no match, or a
+   * throw all degrade to null (the source is never lost).
+   */
+  findRegistryIdByRepoUrl?: (repoUrl: string) => Promise<string | null>
 }
 
 /** Human-readable label per recovery method (CLI rendering). */

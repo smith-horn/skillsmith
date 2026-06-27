@@ -45,6 +45,10 @@ let dbCounter = 0
 
 // git tier: owner/skill-name id (no registry UUID).
 const GIT_ID = `${GIT_OWNER}/${FIXTURE_DIRS.git}`
+// git tier canonical recovered source (both git fixtures share owner/repo).
+const GIT_SOURCE = `https://github.com/${GIT_OWNER}/${GIT_REPO}`
+// SMI-5411: registry UUID a catalog-known git repo enriches its manifest id to.
+const GIT_REG_UUID = 'b2c3d4e5-0000-4000-8000-000000000002'
 // registry tier: a single-name match carrying the UUID.
 const REG_UUID = 'a1b2c3d4-0000-4000-8000-000000000001'
 const REG_OWNER = 'regowner'
@@ -126,5 +130,41 @@ describe('SMI-5407 e2e GATE (write) — recover -> backfill (scenario 2)', () =>
 
     expect(entry(FIXTURE_DIRS.registry)).toBeUndefined()
     expect(entry(FIXTURE_DIRS.git)).toBeDefined()
+  })
+
+  // SMI-5411: when the git skill's recovered repo_url IS in the local catalog,
+  // `audit sources --apply` enriches its manifest id from owner/skill-name to the
+  // registry UUID (so skill_outdated can resolve it) WITHOUT changing the exact
+  // git SOURCE (View-Changes unchanged). The READ half — that real
+  // skill_outdated resolves this UUID id and rejects decoy forms — lives in
+  // packages/mcp-server/src/__tests__/skill-outdated-resolution.test.ts.
+  it('enriches a catalog-known git skill id to the registry UUID at default confidence', async () => {
+    const db = path.join(tempHome, `rt-${dbCounter++}.db`)
+    // Seed a catalog row whose repo_url matches the git fixture's recovered
+    // source. `name` is distinct from the git fixture dir so the name-match tier
+    // is never reached — the git tier short-circuits and only the id is enriched.
+    await seedSkillsDb(db, [{ id: GIT_REG_UUID, name: GIT_REPO, repoUrl: GIT_SOURCE }])
+
+    await runAuditSources(makeOpts({ db, apply: true, yes: true }))
+
+    const git = entry(FIXTURE_DIRS.git)!
+    expect(git.id).toBe(GIT_REG_UUID) // enriched UUID, not owner/skill-name
+    expect(git.id).not.toBe(GIT_ID) // the un-enriched decoy form must not win
+    expect(git.source).toBe(GIT_SOURCE) // exact git source unchanged
+    expect(buildRawUrl(git.source)).toBe(
+      `https://raw.githubusercontent.com/${GIT_OWNER}/${GIT_REPO}/main/SKILL.md`
+    )
+  })
+
+  it('leaves the git id as owner/skill-name when the repo is NOT catalog-known (graceful)', async () => {
+    const db = path.join(tempHome, `rt-${dbCounter++}.db`)
+    // No skills row for the git repo_url -> findRegistryIdByRepoUrl returns null.
+    await seedSkillsDb(db, [{ id: REG_UUID, name: FIXTURE_DIRS.registry, repoUrl: REG_SOURCE }])
+
+    await runAuditSources(makeOpts({ db, apply: true, yes: true }))
+
+    const git = entry(FIXTURE_DIRS.git)!
+    expect(git.id).toBe(GIT_ID) // unchanged fallback
+    expect(git.source).toBe(GIT_SOURCE)
   })
 })

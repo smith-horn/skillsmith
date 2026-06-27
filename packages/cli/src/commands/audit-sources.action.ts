@@ -306,7 +306,24 @@ export async function runAuditSources(options: AuditSourcesOptions): Promise<voi
       return exact.length > 0 ? exact : candidates
     }
 
-    const service = new SourceRecoveryService({ hashContent, findCandidatesByName })
+    // SMI-5411: enrich a git/plugin-recovered source's manifest id with the
+    // registry UUID when the repo is catalog-known. The recovered URL is the
+    // canonical `https://github.com/<owner>/<repo>` form, and the catalog stores
+    // repo_url in that same canonical form, so an exact match is correct (and
+    // safer than normalizing, which would false-positive across monorepo
+    // siblings sharing one repo root). Returns null when no row matches.
+    const findRegistryIdByRepoUrl = async (repoUrl: string): Promise<string | null> => {
+      const row = db
+        .prepare<{ id: string }>('SELECT id FROM skills WHERE repo_url = ?')
+        .get(repoUrl)
+      return row?.id ?? null
+    }
+
+    const service = new SourceRecoveryService({
+      hashContent,
+      findCandidatesByName,
+      findRegistryIdByRepoUrl,
+    })
 
     report = await service.recoverSources({
       skillsRoot,

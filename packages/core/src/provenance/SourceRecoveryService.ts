@@ -8,8 +8,11 @@
  *   git remote (exact) -> plugin manifest (high) -> registry name
  *   (medium/low, review-only) -> embedding (opt-in) -> hints (opt-in) -> unknown.
  *
- * The git and plugin tiers are local file reads and return BEFORE any injected
- * dependency is invoked, so an offline run never touches the network.
+ * The git and plugin tiers are local file reads: they resolve the SOURCE
+ * before any injected dependency is invoked. They then make a best-effort,
+ * OFFLINE call to the optional `findRegistryIdByRepoUrl` (local catalog lookup)
+ * to enrich the manifest id with a registry UUID (SMI-5411) -- never network,
+ * never throws. An offline run never touches the network.
  */
 
 import * as os from 'os'
@@ -127,6 +130,22 @@ function computeSummary(skills: SkillRecoveryResult[]): RecoverySummary {
 export class SourceRecoveryService {
   constructor(private readonly deps: RecoveryDeps) {}
 
+  /**
+   * Best-effort OFFLINE registry-UUID enrichment for a git/plugin source URL.
+   * Returns the catalog UUID for `url`'s repo when the optional dep is wired and
+   * a match exists; null otherwise. NEVER throws -- a missing dep, a no-match, or
+   * a dep failure all degrade to null so the already-resolved (exact/high) source
+   * is never lost. SMI-5411.
+   */
+  private async enrichRegistryId(url: string): Promise<string | null> {
+    if (!this.deps.findRegistryIdByRepoUrl) return null
+    try {
+      return await this.deps.findRegistryIdByRepoUrl(url)
+    } catch {
+      return null
+    }
+  }
+
   /** Scan `skillsRoot` and resolve every (non-filtered) skill's source. */
   async recoverSources(opts: RecoverSourcesOptions = {}): Promise<RecoveryReport> {
     const skillsRoot = opts.skillsRoot ?? defaultSkillsRoot()
@@ -153,8 +172,10 @@ export class SourceRecoveryService {
   }
 
   /**
-   * Resolve a single skill directory. Tiers short-circuit on the first hit;
-   * the git and plugin tiers return before any dependency call.
+   * Resolve a single skill directory. Tiers short-circuit on the first hit; the
+   * git and plugin tiers resolve the source before any dependency call, then
+   * best-effort enrich the manifest id with a registry UUID via the optional,
+   * OFFLINE `findRegistryIdByRepoUrl`.
    */
   async recoverOne(
     dir: string,
@@ -162,13 +183,20 @@ export class SourceRecoveryService {
     skillMd: string | null,
     opts: RecoverOneOptions = {}
   ): Promise<SkillRecoveryResult> {
-    // Tier 1: git remote (exact) -- offline, returns before any dep call.
+    // Tier 1: git remote (exact) -- source is offline; the id enrichment is a
+    // best-effort offline catalog lookup (SMI-5411).
     const git = parseGitConfigRemote(dir)
-    if (git) return resolvedResult(skillName, dir, git, 'git-remote', 'exact', null)
+    if (git) {
+      const registryId = await this.enrichRegistryId(git.url)
+      return resolvedResult(skillName, dir, git, 'git-remote', 'exact', registryId)
+    }
 
-    // Tier 2: plugin manifest (high) -- offline.
+    // Tier 2: plugin manifest (high) -- same offline id enrichment.
     const plugin = parsePluginManifestRepository(dir)
-    if (plugin) return resolvedResult(skillName, dir, plugin, 'plugin-json', 'high', null)
+    if (plugin) {
+      const registryId = await this.enrichRegistryId(plugin.url)
+      return resolvedResult(skillName, dir, plugin, 'plugin-json', 'high', registryId)
+    }
 
     // Tier 3: registry name match (medium/low) -- REVIEW ONLY.
     const candidates = await this.deps.findCandidatesByName(skillName)
