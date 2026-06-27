@@ -12,6 +12,10 @@
  *   Offline — local DB: SELECT id, name, repo_url, quality_score FROM skills
  *              WHERE name = ? (same shape as CLI path).
  *
+ * findRegistryIdByRepoUrl wiring (SMI-5411): always the local catalog (SELECT id
+ * FROM skills WHERE repo_url = ?), enriching a git/plugin-recovered manifest id
+ * with the registry UUID so skill_outdated can resolve it. Best-effort/offline.
+ *
  * homeDir refinement: must resolve under os.homedir() or os.tmpdir() (test
  * fixtures). Rejects arbitrary paths such as /etc.
  */
@@ -192,6 +196,19 @@ function findCandidatesOffline(context: ToolContext, name: string): RecoveryCand
   return exact.length > 0 ? exact : candidates
 }
 
+/**
+ * SMI-5411: offline registry-UUID enrichment for a git/plugin-recovered source.
+ * The local catalog suffices (no online path) — the recovered URL is the
+ * canonical `https://github.com/<owner>/<repo>` form, matched exactly against
+ * the catalog's repo_url. Returns null on no match. Mirrors the CLI wiring.
+ */
+function findRegistryIdByRepoUrlOffline(context: ToolContext, repoUrl: string): string | null {
+  const row = context.db
+    .prepare<{ id: string }>('SELECT id FROM skills WHERE repo_url = ?')
+    .get(repoUrl)
+  return row?.id ?? null
+}
+
 // ============================================================================
 // Tool implementation
 // ============================================================================
@@ -227,9 +244,15 @@ async function skillRecoverSourceImpl(
     return findCandidatesOffline(context, name)
   }
 
+  // SMI-5411: enrich git/plugin-recovered ids with the registry UUID from the
+  // local catalog (offline, online or off — the local catalog suffices).
+  const findRegistryIdByRepoUrl = async (repoUrl: string): Promise<string | null> =>
+    findRegistryIdByRepoUrlOffline(context, repoUrl)
+
   const service = new SourceRecoveryService({
     hashContent,
     findCandidatesByName,
+    findRegistryIdByRepoUrl,
   })
 
   return service.recoverSources({

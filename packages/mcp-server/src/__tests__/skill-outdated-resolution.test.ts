@@ -15,6 +15,12 @@
  * git owner/skill-name id (no row) resolves to `unknown`, yet its `source` still
  * passes `buildRawUrl` so View-Changes works. id and source are independent.
  *
+ * SMI-5411 adds a third entry: a git-recovered skill whose repo IS catalog-known,
+ * so `audit sources` enriched its id from owner/skill-name to the registry UUID.
+ * Like the registry case, it resolves ONLY via that UUID (decoys under owner/
+ * skill-name, owner/repo, and URL must lose) — proving the enriched id, not the
+ * git tier's owner/skill-name, is what skill_outdated keys on.
+ *
  * $HOME is set BEFORE the dynamic import of outdated.js (its install.helpers
  * module-level MANIFEST_PATH freezes at import).
  */
@@ -39,6 +45,10 @@ type OutdatedFn = (
 
 const GIT_ID = `${GIT_OWNER}/${FIXTURE_DIRS.git}`
 const GIT_SOURCE = `https://github.com/${GIT_OWNER}/${GIT_REPO}`
+// SMI-5411: a git-recovered skill whose repo IS catalog-known — its manifest id
+// is enriched to the registry UUID (source stays the git remote). Mounted at the
+// `https` fixture dir (a real git checkout of the same owner/repo, real SKILL.md).
+const GIT_ENRICHED_UUID = 'c3d4e5f6-0000-4000-8000-000000000003'
 const REG_UUID = 'a1b2c3d4-0000-4000-8000-000000000001'
 const REG_OWNER = 'regowner'
 const REG_REPO = 'regrepo'
@@ -95,6 +105,15 @@ beforeAll(async () => {
         installedAt: now,
         lastUpdated: now,
       },
+      [FIXTURE_DIRS.https]: {
+        id: GIT_ENRICHED_UUID, // SMI-5411: git source, id enriched to the catalog UUID
+        name: FIXTURE_DIRS.https,
+        version: '1.0.0',
+        source: GIT_SOURCE,
+        installPath: path.join(skillsRoot, FIXTURE_DIRS.https),
+        installedAt: now,
+        lastUpdated: now,
+      },
     },
   }
   const manifestPath = path.join(tempHome, '.skillsmith', 'manifest.json')
@@ -139,6 +158,29 @@ describe('SMI-5407 e2e GATE (read) — skill_outdated keys on the manifest id', 
     expect(gitOut).toBeDefined()
     expect(gitOut!.status).toBe('unknown')
     expect(gitOut!.semver).toBeNull()
+    expect(buildRawUrl(GIT_SOURCE)).not.toBeNull()
+
+    closeDatabase(db)
+  })
+
+  it('SMI-5411: resolves a git skill via its enriched registry UUID, never a decoy', async () => {
+    const db = await createTestDatabase()
+    const versionRepo = new SkillVersionRepository(db)
+    await versionRepo.recordVersion(GIT_ENRICHED_UUID, 'deadbeefdeadbeef', '3.4.0') // correct enriched UUID key
+    await versionRepo.recordVersion(`${GIT_OWNER}/${FIXTURE_DIRS.https}`, 'aaaa1111', '9.9.9') // owner/skill-name decoy
+    await versionRepo.recordVersion(`${GIT_OWNER}/${GIT_REPO}`, 'bbbb2222', '8.8.8') // owner/repo decoy
+    await versionRepo.recordVersion(GIT_SOURCE, 'cccc3333', '7.7.7') // full-URL decoy
+
+    const result = await executeOutdated({ include_deps: false }, makeContext(db))
+    const enrichedOut = result.skills.find((s) => s.id === GIT_ENRICHED_UUID)
+
+    // Before SMI-5411 a git-recovered id was owner/skill-name and resolved
+    // `unknown`. The enriched UUID now resolves — and NOT owner/skill-name
+    // (9.9.9), owner/repo (8.8.8), or URL (7.7.7).
+    expect(enrichedOut).toBeDefined()
+    expect(enrichedOut!.semver).toBe('3.4.0')
+    expect(['current', 'outdated']).toContain(enrichedOut!.status)
+    // The SOURCE stays the git remote, so View-Changes is unchanged.
     expect(buildRawUrl(GIT_SOURCE)).not.toBeNull()
 
     closeDatabase(db)
