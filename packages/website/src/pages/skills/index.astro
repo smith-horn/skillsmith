@@ -412,6 +412,27 @@ const isCrawler = isCrawlerUserAgent(userAgent)
     const ITEMS_PER_PAGE = 12
     const MIN_QUERY_LENGTH = 3 // SMI-1613: Minimum characters for search
 
+    // SMI-5369: delegated "+N more" compatibility toggle. Bound ONCE at module scope
+    // (the bundled ES module evaluates a single time per SPA session) and OUTSIDE the
+    // astro:page-load callback — a document listener registered inside that callback
+    // would re-bind on every ClientRouter navigation and fire N times. At module scope
+    // it survives navigations and covers both #results-grid and #featured-skills-grid.
+    // SMI-5367: reveal the hidden region, then move focus INTO it (replaces the old
+    // display:none/display:contents hack that dumped focus to <body>).
+    // audit:concurrency-ok — single module-scope bind, no astro:page-load re-bind
+    document.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement | null)?.closest('[data-compat-toggle]')
+      if (!btn) return
+      e.preventDefault()
+      e.stopPropagation()
+      const region = document.getElementById(btn.getAttribute('data-compat-target') ?? '')
+      if (!region) return
+      region.hidden = false
+      btn.setAttribute('aria-expanded', 'true')
+      ;(btn as HTMLElement).style.display = 'none'
+      region.focus() // SMI-5367: focus the now-visible region (real focusable box)
+    })
+
     // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation).
     // Bundled ES module evaluates once, so this binds exactly one listener; the early-bail below
     // (search-input existence) is the state guard for the handler body across ClientRouter navigations.

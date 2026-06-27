@@ -89,20 +89,30 @@ function renderCompatibilityBadges(compatibility: string[] | undefined): string 
   const hiddenHtml = extra.map(badge).join('')
   const extraId = `compat-extra-${++compatBadgeSeq}`
 
-  // Expand-only: on reveal, show the hidden badges, mark aria-expanded, and hide
-  // the toggle (no collapse) so aria-expanded never desyncs. The inline onclick
-  // keeps event.preventDefault()+stopPropagation() so the click never bubbles to
-  // the card <a> and navigates (SMI-3529 nested-interactive guard).
+  // SMI-5367/5368/5369: expand-only "+N more" toggle. The hidden extra tags live in
+  // a REAL focusable region (role="group" + accessible name + tabindex="-1"),
+  // collapsed via the `hidden` attribute — not display:none / display:contents. On
+  // reveal the delegated handler (skills/index.astro, module scope) un-hides the
+  // region, marks aria-expanded, hides the toggle, then moves focus INTO the region
+  // (the old hack hid the toggle while it still held focus → focus dumped to <body>).
+  // The toggle is now a SIBLING of the card's stretched link (renderSkillCard wraps
+  // the title in the only <a>), so the structure — not preventDefault — is what stops
+  // navigation; `relative z-10` lifts the button above the stretched link's ::after
+  // overlay so the click lands on the button. The inline onclick is gone (delegated
+  // handler instead), so a strict CSP can drop `unsafe-inline`. preventDefault/
+  // stopPropagation in the handler are now defensive, not load-bearing (was the
+  // SMI-3529 nested-button-in-anchor guard).
   return `<div class="mt-3 pt-3 border-t border-dark-800 flex flex-wrap gap-1 items-center">
     ${visibleHtml}
-    <span id="${extraId}" style="display:none">${hiddenHtml}</span>
+    <span id="${extraId}" role="group" aria-label="Additional compatibility tags" tabindex="-1" hidden class="inline-flex flex-wrap gap-1">${hiddenHtml}</span>
     <button
       type="button"
-      class="px-1.5 py-0.5 rounded text-xs text-dark-400 hover:text-primary-400 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-500"
+      class="relative z-10 px-1.5 py-0.5 rounded text-xs text-dark-400 hover:text-primary-400 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-500"
+      data-compat-toggle
+      data-compat-target="${extraId}"
       aria-label="Show ${extra.length} more compatibility tag${extra.length === 1 ? '' : 's'}"
       aria-expanded="false"
       aria-controls="${extraId}"
-      onclick="event.preventDefault(); event.stopPropagation(); document.getElementById('${extraId}').style.display='contents'; this.setAttribute('aria-expanded','true'); this.style.display='none';"
     >+${extra.length} more</button>
   </div>`
 }
@@ -122,11 +132,17 @@ export function renderSkillCard({ skill, href }: SkillCardProps): string {
   const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`
   const orgMatchBadge = renderOrgMatchBadge(skill._orgMatch)
 
+  // SMI-5368: "card with stretched link" pattern. The card is a <div> (not an <a>),
+  // and the ONLY <a> is the title link, whose ::after overlay (after:absolute
+  // after:inset-0) makes the whole card clickable. The card carries `relative` to
+  // contain that overlay and `focus-within:border-primary-500/50` so keyboard users
+  // see the ring when the title link is focused. Interactive children that must NOT
+  // navigate (the +N more toggle) get `relative z-10` to sit above the overlay.
   return `
-        <a href="${href}" class="card-hover block bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50">
+        <div class="card-hover relative bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50 focus-within:border-primary-500/50">
           <div class="flex items-start justify-between mb-4">
             <div class="flex-1 min-w-0">
-              <h3 class="text-lg font-semibold text-white truncate">${escapeHtml(skill.name)}</h3>
+              <h3 class="text-lg font-semibold text-white truncate"><a href="${href}" class="after:absolute after:inset-0 after:content-['']">${escapeHtml(skill.name)}</a></h3>
               <p class="text-dark-500 text-sm">${escapeHtml(skill.author || 'Unknown author')}</p>
               ${orgMatchBadge}
             </div>
@@ -167,6 +183,6 @@ export function renderSkillCard({ skill, href }: SkillCardProps): string {
           }
           ${renderCompatibilityBadges(skill.compatibility)}
           ${renderLicenseBadge(skill.license)}
-        </a>
+        </div>
       `
 }

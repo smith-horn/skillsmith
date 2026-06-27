@@ -104,37 +104,62 @@ async function readInstalledSkillContent(skillName: string): Promise<string | nu
 }
 
 /**
- * Convert a GitHub repo URL to the raw SKILL.md URL.
- * Returns null for non-GitHub or unrecognised URL shapes.
+ * Convert a GitHub repo source to the raw SKILL.md URL on `branch`.
+ * Accepts `github:owner/repo` (the shorthand install_skill writes,
+ * skill-installation.service.ts), `https://github.com/owner/repo` (optionally
+ * `/tree/<ref>`), and raw.githubusercontent.com passthrough. An explicit
+ * `/tree/<ref>` always wins; otherwise `branch` is used (drives the main->master
+ * fallback in fetchLatestContent). Returns null for non-GitHub shapes. SMI-5408.
  */
-function buildRawUrl(source: string): string | null {
+function buildRawUrl(source: string, branch = 'main'): string | null {
   if (source.startsWith('https://raw.githubusercontent.com/')) return source
+
+  const shorthand = /^github:([^/]+)\/([^/]+)$/.exec(source)
+  if (shorthand) {
+    const owner = shorthand[1]
+    const repo = shorthand[2]?.replace(/\.git$/, '')
+    if (owner && repo) {
+      return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/SKILL.md`
+    }
+  }
 
   const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/tree\/([^/]+))?/.exec(source)
   if (!m) return null
 
-  const [, owner, repo, ref = 'main'] = m
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/SKILL.md`
+  const [, owner, repo, ref] = m
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${ref ?? branch}/SKILL.md`
 }
 
-async function fetchLatestContent(skillName: string): Promise<string | null> {
+async function fetchLatestContent(
+  skillName: string
+): Promise<{ content: string | null; sourceTracked: boolean }> {
   try {
     const manifest = await loadManifest()
     const entry = manifest.installedSkills[skillName]
-    if (!entry?.source) return null
+    if (!entry?.source) return { content: null, sourceTracked: false }
 
-    const rawUrl = buildRawUrl(entry.source)
-    if (!rawUrl) return null
+    // Try main then master (raw URLs are branch-specific); dedup so a
+    // branch-fixed source (explicit /tree/<ref> or raw passthrough) fetches once.
+    const rawUrls = [
+      ...new Set(
+        ['main', 'master']
+          .map((b) => buildRawUrl(entry.source, b))
+          .filter((u): u is string => u !== null)
+      ),
+    ]
+    if (rawUrls.length === 0) return { content: null, sourceTracked: true }
 
-    const response = await fetch(rawUrl, {
-      headers: { Accept: 'text/plain' },
-      signal: AbortSignal.timeout(10_000),
-    })
-
-    if (!response.ok) return null
-    return await response.text()
+    for (const rawUrl of rawUrls) {
+      const response = await fetch(rawUrl, {
+        headers: { Accept: 'text/plain' },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (response.ok) return { content: await response.text(), sourceTracked: true }
+      if (response.status !== 404) return { content: null, sourceTracked: true }
+    }
+    return { content: null, sourceTracked: true }
   } catch {
-    return null
+    return { content: null, sourceTracked: true }
   }
 }
 
@@ -195,17 +220,21 @@ async function diffActionImpl(
     if (opts.newContent) {
       newContent = await readFile(opts.newContent, 'utf-8')
     } else {
-      newContent = await fetchLatestContent(skillName)
-    }
-
-    if (!newContent) {
-      console.error(
-        chalk.red(
-          `Could not fetch latest version for "${skillName}". ` +
-            `Check your network connection or provide --new-content.`
+      const fetched = await fetchLatestContent(skillName)
+      newContent = fetched.content
+      if (!newContent) {
+        const noSourceHint = !fetched.sourceTracked
+          ? ` Source not tracked for "${skillName}". Run \`sklx audit sources\` (or MCP skill_recover_source) to recover.`
+          : ''
+        console.error(
+          chalk.red(
+            `Could not fetch latest version for "${skillName}". ` +
+              `Check your network connection or provide --new-content.` +
+              noSourceHint
+          )
         )
-      )
-      process.exit(1)
+        process.exit(1)
+      }
     }
 
     const diff = diffSections(oldContent, newContent)

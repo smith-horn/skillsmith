@@ -12,8 +12,8 @@ import * as vscode from 'vscode'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import * as fs from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
 import crossSpawn from 'cross-spawn'
+import { buildAugmentedEnv } from './nodePath.js'
 
 // ---------------------------------------------------------------------------
 // CLI resolution
@@ -30,124 +30,23 @@ export function resolveCliCommand(): string {
 }
 
 /**
- * Resolve the active nvm node version's bin dir by reading the default alias
- * file (`~/.nvm/alias/default`). Returns undefined if nvm is absent or the
- * alias is a symbolic ref like `lts/iron` rather than a concrete version.
- */
-function resolveNvmBin(home: string): string | undefined {
-  try {
-    const raw = readFileSync(path.join(home, '.nvm', 'alias', 'default'), 'utf8').trim()
-    // Only handle concrete version strings ("20", "20.19.1", "v20.19.1").
-    // Symbolic refs like "lts/iron" or "lts/*" are not resolvable here.
-    if (!/^v?\d/.test(raw)) return undefined
-    const version = raw.startsWith('v') ? raw : `v${raw}`
-    return path.join(home, '.nvm', 'versions', 'node', version, 'bin')
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Session-scoped cache for the Windows PATH resolved via PowerShell.
- * Reset between test runs via `vi.resetModules()`.
- */
-let windowsPathCache: string | undefined
-
-/**
- * Spawn `powershell -NoProfile -Command "$env:PATH"` to capture the full
- * Windows PATH (which includes registry-level entries from version managers
- * like Volta, pnpm, and Scoop that VS Code inherits at launch).
+ * PATH-augmented environment for spawning the Skillsmith CLI. Generalized into
+ * nodePath.ts (SMI-5398); kept here as a named alias so the three CLI consumers
+ * (`ensureCliAvailable`, `runCli`, `runValidate`) and the back-compat tests are
+ * unchanged.
  *
- * Falls back to `process.env.PATH` on spawn error or 3 s timeout.
- * Result is cached for the VS Code session.
+ * F4 behavioral note: `buildAugmentedEnv` now awaits a ≤2.5 s unix login-shell
+ * PATH probe on its FIRST call when the cache is cold. With the default
+ * `mcp.autoConnect=true`, the MCP connect warms that cache during activation, so
+ * the CLI path normally sees a warm cache; with `autoConnect=false` the first
+ * Create Skill / Validate spawn can wait up to 2.5 s (the timeout + fail-soft
+ * guarantee no hang). The login-shell PATH is strictly more correct for CLI
+ * users too — it finds toolchains the static dir list misses.
  */
-export async function resolveWindowsPath(): Promise<string> {
-  if (windowsPathCache !== undefined) return windowsPathCache
+export const buildCliEnv = buildAugmentedEnv
 
-  const resolved = await new Promise<string | undefined>((resolve) => {
-    const timer = setTimeout(() => {
-      // Kill the orphaned PowerShell child so a slow/hung cold-start does not
-      // linger past the timeout (mirrors runValidate's timeout handling).
-      child.kill()
-      resolve(undefined)
-    }, 3000)
-    const child = crossSpawn('powershell', ['-NoProfile', '-Command', '$env:PATH'], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-    let output = ''
-    child.stdout?.on('data', (buf: Buffer) => {
-      output += buf.toString('utf8')
-    })
-    child.on('error', () => {
-      clearTimeout(timer)
-      resolve(undefined)
-    })
-    child.on('exit', () => {
-      clearTimeout(timer)
-      resolve(output.trim() || undefined)
-    })
-  })
-
-  windowsPathCache = resolved ?? process.env['PATH'] ?? ''
-  return windowsPathCache
-}
-
-/**
- * Build a PATH-augmented environment for spawning the Skillsmith CLI.
- *
- * VS Code's GUI process does not inherit the user's login-shell PATH, so node
- * version managers that inject themselves via shell init scripts are absent.
- *
- * macOS / Linux — static list of stable bin dirs for every major version
- * manager, plus a synchronous nvm alias-file read for the active version.
- *
- * Windows — PowerShell resolves the full registry-level PATH (which already
- * includes Volta, pnpm, Scoop, etc.) and caches it for the session.
- */
-export async function buildCliEnv(): Promise<NodeJS.ProcessEnv> {
-  if (process.platform === 'win32') {
-    return { ...process.env, PATH: await resolveWindowsPath() }
-  }
-
-  const home = os.homedir()
-  const nvmBin = resolveNvmBin(home)
-
-  const extras = [
-    // fnm — stable alias symlink managed by `fnm default` (Linux default data dir)
-    path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
-    // fnm — macOS default data dir (~/Library/Application Support/fnm)
-    path.join(home, 'Library', 'Application Support', 'fnm', 'aliases', 'default', 'bin'),
-    // volta
-    path.join(home, '.volta', 'bin'),
-    // nvm — resolved from ~/.nvm/alias/default
-    ...(nvmBin !== undefined ? [nvmBin] : []),
-    // asdf — shim directory (version-agnostic)
-    path.join(home, '.asdf', 'shims'),
-    // mise / rtx — shim directory
-    path.join(home, '.local', 'share', 'mise', 'shims'),
-    // pnpm global (macOS)
-    path.join(home, 'Library', 'pnpm'),
-    // pnpm global (Linux)
-    path.join(home, '.local', 'share', 'pnpm'),
-    // npm custom global prefix (common override)
-    path.join(home, '.npm-global', 'bin'),
-    // yarn global
-    path.join(home, '.yarn', 'bin'),
-    // user-local bin (Linux / some macOS setups)
-    path.join(home, '.local', 'bin'),
-    // snap packages (Linux)
-    '/snap/bin',
-    // Homebrew on Apple-Silicon Macs
-    '/opt/homebrew/bin',
-    // Homebrew on Intel Macs / traditional npm global
-    '/usr/local/bin',
-  ]
-
-  return {
-    ...process.env,
-    PATH: [...extras, process.env['PATH'] ?? ''].join(path.delimiter),
-  }
-}
+// Re-exported for back-compat of the existing resolveWindowsPath test.
+export { resolveWindowsPath } from './nodePath.js'
 
 // ---------------------------------------------------------------------------
 // Form types

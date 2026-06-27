@@ -100,9 +100,13 @@ export class SkillService {
   /**
    * Get rich skill details (ExtendedSkillData). MCP-first.
    * - TierDenied errors propagate (never mocked).
-   * - Other errors / not-connected: demo mode returns mock; otherwise throws
-   *   `McpToolError(NotConnected)` since `skill` is non-nullable and an empty
-   *   skill is not representable.
+   * - Connected + tool failure: re-throw the REAL cause — the original
+   *   `McpToolError`, or a wrapped `McpToolError('get_skill','Unknown', msg)` for
+   *   a plain `Error` — so the UI shows the true reason. Exception: in demo mode
+   *   fall through to the mock (SMI-5401, preserving SMI-5288 demo behavior).
+   * - Not connected (demo off): throw `McpToolError(NotConnected)` since `skill`
+   *   is non-nullable and an empty skill is not representable. This is the ONLY
+   *   path that fabricates "Skillsmith server unavailable".
    */
   async getRichSkill(skillId: string): Promise<RichSkillResult> {
     if (this.getClient().isConnected()) {
@@ -114,6 +118,19 @@ export class SkillService {
           throw error
         }
         console.warn('[Skillsmith] MCP get_skill failed:', error)
+        // SMI-5401: a connected get_skill that throws is a real tool-level
+        // failure, not a transport outage — surface the true cause instead of
+        // masking it as "server unavailable". The `!demoMode()` guard is
+        // load-bearing: in demo mode we still fall through to the mock below.
+        if (!this.demoMode()) {
+          throw error instanceof McpToolError
+            ? error
+            : new McpToolError(
+                'get_skill',
+                'Unknown',
+                error instanceof Error ? error.message : String(error)
+              )
+        }
       }
     }
 

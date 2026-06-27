@@ -72,6 +72,7 @@ export interface RecheckAuditCounters {
   live_touched: number
   cleared: number
   kept_security: number
+  requarantined: number
   repo_gone: number
   parse_failed: number
   fetch_error: number

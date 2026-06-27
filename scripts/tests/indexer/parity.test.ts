@@ -83,6 +83,17 @@ const NODE_SCANNER_CONTEXT = resolve(
   REPO_ROOT,
   'scripts/indexer/_shared/security-scanner-edge.context.ts'
 )
+// SMI-5359 Wave 4.2c: the code_execution + obfuscated_directive detectors live in a
+// new sibling twin (500-line limit). Drift here means the two indexers would detect
+// supply-chain execution / Unicode-concealed directives differently.
+const DENO_SCANNER_EXEC = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.exec.ts'
+)
+const NODE_SCANNER_EXEC = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.exec.ts'
+)
 
 describe('Deno <-> Node helper parity', () => {
   const denoEncrypted = isGitCryptEncrypted(DENO_HELPERS)
@@ -222,6 +233,7 @@ describe('Deno <-> Node AuditLogMeta interface parity (SMI-4879)', () => {
 describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
   const denoEncrypted = isGitCryptEncrypted(DENO_SCANNER)
   const denoContextEncrypted = isGitCryptEncrypted(DENO_SCANNER_CONTEXT)
+  const denoExecEncrypted = isGitCryptEncrypted(DENO_SCANNER_EXEC)
 
   // Whole-body byte-identity (everything after the leading doc-comment header)
   // for the main scanner file (patterns + scanners + scanSkillContent).
@@ -260,6 +272,27 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
     it.skipIf(denoContextEncrypted)(`${fn} body is byte-identical (normalized whitespace)`, () => {
       const deno = normalizeWs(extractBody(DENO_SCANNER_CONTEXT, fn))
       const node = normalizeWs(extractBody(NODE_SCANNER_CONTEXT, fn))
+      expect(node).toBe(deno)
+    })
+  }
+
+  // SMI-5359 Wave 4.2c: the code_execution + obfuscated_directive detector twin —
+  // whole-body byte-identity + per-detector spot-checks.
+  it.skipIf(denoExecEncrypted)(
+    'scanner exec body is byte-identical from the first section marker (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractScannerBody(DENO_SCANNER_EXEC))
+      const node = normalizeWs(extractScannerBody(NODE_SCANNER_EXEC))
+      expect(
+        node,
+        'security-scanner-edge.exec.ts drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins'
+      ).toBe(deno)
+    }
+  )
+  for (const fn of ['scanCodeExecution', 'scanObfuscatedDirective', 'escalateCodeExecution']) {
+    it.skipIf(denoExecEncrypted)(`${fn} body is byte-identical (normalized whitespace)`, () => {
+      const deno = normalizeWs(extractBody(DENO_SCANNER_EXEC, fn))
+      const node = normalizeWs(extractBody(NODE_SCANNER_EXEC, fn))
       expect(node).toBe(deno)
     })
   }

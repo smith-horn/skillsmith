@@ -81,6 +81,8 @@ describe('runValidate (SMI-5346)', () => {
   })
 
   it('calls output.show(true) before spawning', async () => {
+    // calls[0] = login-shell probe (buildCliEnv = buildAugmentedEnv); calls[1] = CLI spawn
+    spawnMock.mockImplementationOnce(() => makeCliChild(0))
     spawnMock.mockImplementationOnce(() => makeCliChild(0))
     const { runValidate } = await import('../utils/createSkill.helpers.js')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -90,9 +92,11 @@ describe('runValidate (SMI-5346)', () => {
 
   it('spawns skillsmith with ["validate"] args (array, injection-safe)', async () => {
     spawnMock.mockImplementationOnce(() => makeCliChild(0))
+    spawnMock.mockImplementationOnce(() => makeCliChild(0))
     const { runValidate } = await import('../utils/createSkill.helpers.js')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await runValidate(fakeOutput as any)
+    // toHaveBeenCalledWith checks all calls — the CLI call matches 'skillsmith' + ['validate']
     expect(spawnMock).toHaveBeenCalledWith(
       'skillsmith',
       ['validate'],
@@ -101,6 +105,7 @@ describe('runValidate (SMI-5346)', () => {
   })
 
   it('writes a success line on exit 0', async () => {
+    spawnMock.mockImplementationOnce(() => makeCliChild(0))
     spawnMock.mockImplementationOnce(() => makeCliChild(0))
     const { runValidate } = await import('../utils/createSkill.helpers.js')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -111,6 +116,7 @@ describe('runValidate (SMI-5346)', () => {
   })
 
   it('writes a failure line + hint on non-zero exit', async () => {
+    spawnMock.mockImplementationOnce(() => makeCliChild(0))
     spawnMock.mockImplementationOnce(() => makeCliChild(1))
     const { runValidate } = await import('../utils/createSkill.helpers.js')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,6 +126,7 @@ describe('runValidate (SMI-5346)', () => {
   })
 
   it('writes an error line on spawn error', async () => {
+    spawnMock.mockImplementationOnce(() => makeCliChild(0))
     spawnMock.mockImplementationOnce(() => makeCliChild(0, [], 'ENOENT: spawn failed'))
     const { runValidate } = await import('../utils/createSkill.helpers.js')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,6 +136,7 @@ describe('runValidate (SMI-5346)', () => {
   })
 
   it('streams stdout chunks to the output channel', async () => {
+    spawnMock.mockImplementationOnce(() => makeCliChild(0))
     spawnMock.mockImplementationOnce(() => makeCliChild(0, ['validation output line\n']))
     const { runValidate } = await import('../utils/createSkill.helpers.js')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -147,6 +155,8 @@ describe('runValidate (SMI-5346)', () => {
       child.stdout = new EventEmitter()
       child.stderr = new EventEmitter()
       child.kill = vi.fn()
+      // calls[0] = login-shell probe (resolves via queueMicrotask before fake timers advance)
+      spawnMock.mockImplementationOnce(() => makeCliChild(0))
       spawnMock.mockImplementationOnce(() => child)
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

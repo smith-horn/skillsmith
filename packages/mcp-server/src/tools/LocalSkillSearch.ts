@@ -14,6 +14,7 @@ import {
   type SkillSearchResult,
   type SearchFilters,
   type MCPTrustTier as TrustTier,
+  QuarantineRepository,
 } from '@skillsmith/core'
 import { extractCategoryFromTags } from '../utils/validation.js'
 import { LocalIndexer, type LocalSkill } from '../indexer/LocalIndexer.js'
@@ -62,11 +63,16 @@ export function localSkillToSearchResult(skill: LocalSkill): SkillSearchResult {
  *
  * @param query - Search query string
  * @param filters - Search filters to apply
+ * @param quarantineRepo - Optional local quarantine repository. When provided,
+ *   skills recorded as quarantined in the local quarantine table are excluded
+ *   from results (SMI-5358). Omitted in contexts without a DB for backward
+ *   compatibility — callers without a repo get the legacy unfiltered behavior.
  * @returns Array of matching local skills as SkillSearchResult
  */
 export async function searchLocalSkills(
   query: string,
-  filters: SearchFilters
+  filters: SearchFilters,
+  quarantineRepo?: QuarantineRepository
 ): Promise<SkillSearchResult[]> {
   const indexer = getLocalIndexer()
 
@@ -95,6 +101,15 @@ export async function searchLocalSkills(
     })
   }
 
+  // SMI-5358: exclude locally-quarantined skills. Local search surfaces the
+  // user's own ~/.claude/skills inventory; a skill recorded as quarantined in
+  // the local quarantine table (e.g. by skill_rescan) must not resurface here.
+  // No duplicate `quarantined` column is introduced — QuarantineRepository
+  // .isQuarantined() is the single source of truth (ADR-112 §Neutral, SMI-5358).
+  const visibleSkills = quarantineRepo
+    ? matchingSkills.filter((skill) => !quarantineRepo.isQuarantined(skill.id))
+    : matchingSkills
+
   // Convert to SkillSearchResult format
-  return matchingSkills.map(localSkillToSearchResult)
+  return visibleSkills.map(localSkillToSearchResult)
 }
