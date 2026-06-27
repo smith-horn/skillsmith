@@ -90,6 +90,24 @@ export async function writeInstallFiles(
 ): Promise<WriteInstallResult> {
   const writtenFiles: string[] = []
   let subagentPath: string | undefined
+  // SMI-5359 (retro): lexically reject an escaping installPath BEFORE any filesystem
+  // mutation. path.resolve normalizes `..`, so an unsanitized skillName like '..'
+  // (e.g. path.basename('foo/..')) or a compromised registry skillName cannot drive
+  // installPath outside skillsDir and reach the rollback below. Thrown here, nothing
+  // has been created, so no cleanup is needed.
+  const resolvedInstall = path.resolve(installPath)
+  const resolvedSkillsDir = path.resolve(skillsDir)
+  if (
+    resolvedInstall !== resolvedSkillsDir &&
+    !resolvedInstall.startsWith(resolvedSkillsDir + path.sep)
+  ) {
+    throw new Error('Install path escapes skills directory (lexical): ' + installPath)
+  }
+  // Only set true once installPath is PROVEN inside skillsDir (both the lexical check
+  // above and the realpath check below). The recursive rollback rm keys off this so it
+  // can never force-delete an out-of-bounds path (e.g. a symlink-escape the realpath
+  // check rejects after mkdir).
+  let pathValidated = false
   try {
     await fs.mkdir(installPath, { recursive: true })
     // SMI-4692: realpath both sides — macOS /var/folders symlinks to /private/var/folders.
@@ -99,8 +117,9 @@ export async function writeInstallFiles(
       !realInstallPath.startsWith(expectedPrefix + path.sep) &&
       realInstallPath !== expectedPrefix
     ) {
-      throw new Error('Install path escapes skills directory: ' + installPath)
+      throw new Error('Install path escapes skills directory (realpath): ' + installPath)
     }
+    pathValidated = true
 
     const mainSkillPath = path.join(installPath, 'SKILL.md')
     await safeWriteFile(mainSkillPath, finalSkillContent)
@@ -125,13 +144,20 @@ export async function writeInstallFiles(
     }
   } catch (writeError) {
     // Rollback on failure. Unlink tracked files first (subagentPath lives OUTSIDE
-    // installPath, under ~/.claude/agents). Then recursively remove installPath so
-    // an untracked orphan from a mid-batch Promise.all write can't survive — the
-    // escape guard above proved installPath is inside skillsDir, so this is safe.
+    // installPath, under ~/.claude/agents).
     for (const filePath of writtenFiles) {
       await fs.unlink(filePath).catch(() => {})
     }
-    await fs.rm(installPath, { recursive: true, force: true }).catch(() => {})
+    // Only recursively remove installPath once it has been PROVEN inside skillsDir
+    // (pathValidated) — so an untracked orphan from a mid-batch Promise.all write can't
+    // survive. If mkdir or the realpath escape guard threw, installPath was never
+    // validated; fall back to a non-recursive rmdir, a safe no-op on a non-empty or
+    // out-of-bounds directory (NEVER a recursive force-delete of an unvalidated path).
+    if (pathValidated) {
+      await fs.rm(installPath, { recursive: true, force: true }).catch(() => {})
+    } else {
+      await fs.rmdir(installPath).catch(() => {})
+    }
     throw writeError
   }
   return { writtenFiles, subagentPath }

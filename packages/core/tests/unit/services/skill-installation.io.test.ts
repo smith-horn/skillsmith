@@ -9,7 +9,13 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { fetchAndScanOptionalFiles } from '../../../src/services/skill-installation.io.js'
+import * as fs from 'fs/promises'
+import * as os from 'os'
+import * as path from 'path'
+import {
+  fetchAndScanOptionalFiles,
+  writeInstallFiles,
+} from '../../../src/services/skill-installation.io.js'
 import type { ScannerOptions } from '../../../src/security/index.js'
 
 // SKILL.md-shaped content that saturates the scanner (riskScore >= 40).
@@ -100,5 +106,62 @@ describe('fetchAndScanOptionalFiles (SMI-5359 Gap-1)', () => {
     // No scanner -> no scan -> no rejection; README is a doc and is queued.
     expect(result.failedScans).toHaveLength(0)
     expect(result.filesToWrite.find((f) => f.filename === 'README.md')).toBeDefined()
+  })
+})
+
+/**
+ * SMI-5359 (4.3 retro): the rollback in writeInstallFiles must NEVER recursively
+ * force-delete a path that was not proven inside skillsDir. A regression guard for
+ * the data-loss bug where an escaping installPath (e.g. an unsanitized skillName
+ * resolving to a parent dir) would have nuked an out-of-bounds directory.
+ */
+describe('writeInstallFiles rollback safety (SMI-5359 retro)', () => {
+  it('does NOT delete an out-of-bounds directory when installPath escapes skillsDir', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wif-escape-'))
+    try {
+      const skillsDir = path.join(root, 'skills')
+      await fs.mkdir(skillsDir, { recursive: true })
+      // A sibling dir OUTSIDE skillsDir with a sentinel that MUST survive.
+      const sibling = path.join(root, 'precious')
+      await fs.mkdir(sibling, { recursive: true })
+      const sentinel = path.join(sibling, 'keep.txt')
+      await fs.writeFile(sentinel, 'do not delete')
+      // installPath escapes skillsDir (skillsDir/../precious === sibling).
+      const escaping = path.join(skillsDir, '..', 'precious')
+
+      await expect(
+        writeInstallFiles(escaping, skillsDir, 'precious', '# skill', [], undefined)
+      ).rejects.toThrow(/escapes skills directory/)
+
+      // Pre-fix (recursive fs.rm in the catch) deleted the sibling + sentinel. The
+      // sentinel and sibling must be fully intact.
+      await expect(fs.access(sentinel)).resolves.toBeUndefined()
+      await expect(fs.access(sibling)).resolves.toBeUndefined()
+    } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  it('writes SKILL.md for a valid in-bounds installPath', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wif-ok-'))
+    try {
+      const skillsDir = path.join(root, 'skills')
+      await fs.mkdir(skillsDir, { recursive: true })
+      const installPath = path.join(skillsDir, 'my-skill')
+
+      const result = await writeInstallFiles(
+        installPath,
+        skillsDir,
+        'my-skill',
+        '# hello',
+        [],
+        undefined
+      )
+
+      expect(await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf8')).toBe('# hello')
+      expect(result.writtenFiles.length).toBeGreaterThan(0)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
   })
 })
