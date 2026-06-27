@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.5
+
+- **Feature**: enrich git/plugin-recovered skills with the registry UUID (SMI-5411) (#1600)
+- **Fix**: tighten get_skill quarantine-block message + local id fallback (SMI-5360 Wave 5 PR1 retro) (#1598)
+- **Fix**: get_skill installable:false for quarantined skills + run the SSRF e2e suite in CI (SMI-5360 Wave 5 PR1) (#1597)
+- **Feature**: affix-tolerant registry-name matching for source recovery (SMI-5413) (#1592)
+
 ## v0.5.4
 
 - **Feature**: recover + backfill canonical GitHub source for local skills (SMI-5407) (#1589)

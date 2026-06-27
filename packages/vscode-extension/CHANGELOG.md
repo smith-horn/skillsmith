@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.6.3
+
+- **Feature**: View Changes uses the recovered manifest source for local skills (SMI-5412) (#1599)
 ### Added
 
 - Added `npm run test:vscode` for a worktree-local vscode test path; local typecheck/test now warn on stale `node_modules` instead of failing opaquely (SMI-5343/5344).
