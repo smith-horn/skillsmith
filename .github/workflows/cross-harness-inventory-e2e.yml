@@ -168,8 +168,12 @@ jobs:
               break
             fi
             COUNT=""  # connect/query failed -- never treat empty as a real count
-            echo "drift preflight: psql attempt ${attempt} could not connect; retrying in 10s..." >&2
-            sleep 10
+            if [ "$attempt" -lt 3 ]; then
+              echo "drift preflight: psql attempt ${attempt} could not connect; retrying in 10s..." >&2
+              sleep 10
+            else
+              echo "drift preflight: psql attempt ${attempt} could not connect; no more retries." >&2
+            fi
           done
           if [ -z "$COUNT" ]; then
             # Never connected: transient infra, NOT drift. Distinct message; do NOT
@@ -252,7 +256,11 @@ jobs:
 
       - name: Run cross-harness inventory spec
         id: spec
-        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts --reporter=list
+        # Both spec files are passed explicitly: Playwright treats a positional
+        # path as the test set, so naming only the round-trip spec would silently
+        # skip cross-harness-inventory.rls.spec.ts (Test E). Keep both in sync with
+        # the pull_request path filter glob `cross-harness-inventory.*` above.
+        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts packages/website/tests/e2e/cross-harness-inventory.rls.spec.ts --reporter=list
 
       - name: Surface real e2e result (Phase-1 invisible-success guard)
         # The job is continue-on-error during Phase 1, so its conclusion is
