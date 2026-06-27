@@ -27,6 +27,7 @@ vi.mock('../install/paths.js', () => ({
 }))
 
 import { collectDeviceSkills } from './inventory-collector.js'
+import { INVENTORY_LIMITS } from './inventory-types.js'
 
 function skillMd(name: string, version?: string): string {
   const versionLine = version ? `\nversion: ${version}` : ''
@@ -89,6 +90,27 @@ describe('inventory-collector', () => {
     expect(bar).toHaveLength(1)
     // claude-code precedes agents in CLIENT_IDS, so it wins the dedup.
     expect(bar[0]?.harness).toBe('claude-code')
+  })
+
+  // IC-4: No truncation at MAX_SKILLS boundary.
+  //
+  // The collector is intentionally uncapped — it returns EVERY on-disk entry.
+  // The >5000 ceiling is enforced server-side via the `too_many_skills` 400 error
+  // (see inventory-client tests) and will be covered end-to-end in Wave 5. This
+  // test verifies the guarantee cheaply using a small K so the suite stays fast.
+  it('IC-4: returned entry count equals the number of on-disk skills with no local cap applied', async () => {
+    const K = 4
+    for (let i = 0; i < K; i++) {
+      await createSkill('claude-code', `skill-ic4-${i}`, { version: `1.0.${i}` })
+    }
+
+    const entries = await collectDeviceSkills()
+    const ic4 = entries.filter((e) => e.skill_id.startsWith('skill-ic4-'))
+
+    // The collector must not truncate: returned count must equal the on-disk count.
+    expect(ic4).toHaveLength(K)
+    // K is well below the server-enforced limit — no false ceiling here.
+    expect(K).toBeLessThan(INVENTORY_LIMITS.MAX_SKILLS)
   })
 
   it('IC-3: populates content_hash + version for readable SKILL.md, nulls for missing', async () => {

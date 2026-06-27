@@ -1,10 +1,11 @@
 /**
  * @fileoverview Unit tests for the `inventory_push` MCP tool (SMI-5392, umbrella SMI-5382).
  *
- * Strategy: mock `pushInventory` from `@skillsmith/core` via vi.hoisted + vi.mock
- * (importActual spread) so the real error classes are preserved — `instanceof`
- * checks inside `buildErrorMessage` therefore work correctly without a separate
- * mock-class shim.
+ * Strategy: mock `pushInventory` from `@skillsmith/core` via vi.hoisted + vi.mock,
+ * defining the typed error classes INSIDE the hoisted factory so the subject module
+ * and this test share the SAME class identities — `instanceof` checks in
+ * `buildErrorMessage` resolve regardless of how @skillsmith/core is physically
+ * resolved (importActual would yield a second core instance under a git worktree).
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -197,5 +198,25 @@ describe('inventory_push MCP tool (SMI-5392)', () => {
 
     expect(result.isError).toBe(true)
     expect(contentText(result)).toContain('unexpected network failure')
+  })
+
+  // --------------------------------------------------------------------------
+  // Defensive: edge-contract violation (applied:false, unrecognised reason)
+  // --------------------------------------------------------------------------
+
+  it('returns "was not applied (reason)" without "undefined" for an unrecognised non-applied reason', async () => {
+    mockPushInventory.mockResolvedValue({
+      ok: true,
+      applied: false,
+      reason: 'unexpected_state',
+    })
+
+    const result = await inventoryPush({})
+    const text = contentText(result)
+
+    expect(result.isError).toBe(false)
+    expect(text).toContain('was not applied')
+    expect(text).toContain('(unexpected_state)')
+    expect(text).not.toContain('undefined')
   })
 })

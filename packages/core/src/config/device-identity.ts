@@ -23,7 +23,7 @@
  *
  * const deviceId = getOrCreateDeviceId()
  * if (shouldAutoPush(Date.now(), getLastInventoryPushAt())) {
- *   await pushInventory(deviceId)
+ *   // ...build + upload the snapshot for `deviceId`...
  *   recordInventoryPush(new Date().toISOString())
  * }
  * ```

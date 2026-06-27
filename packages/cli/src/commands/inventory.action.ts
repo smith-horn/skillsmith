@@ -153,7 +153,7 @@ export async function runStatus(opts?: { verbose?: boolean }): Promise<void> {
   const localCount = countByHarness.get('local') ?? 0
   if (localCount > 0) {
     console.log(
-      `  Local skills:   ${chalk.dim(`${localCount} skill${localCount === 1 ? '' : 's'} in ./.claude/skills`)}`
+      `  Local skills:   ${chalk.dim(`${localCount} skill${localCount === 1 ? '' : 's'} in ./.claude/skills (repo-local — not synced to your account)`)}`
     )
     if (opts?.verbose) {
       for (const s of allSkills.filter((e) => e.harness === 'local')) {

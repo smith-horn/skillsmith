@@ -99,4 +99,32 @@ describe('inventory-push', () => {
     expect(result).toBeNull()
     expect(errorSpy).toHaveBeenCalled()
   })
+
+  it('IP-6: maybeAutoPush returns null without uploading when sync is locally disabled', async () => {
+    process.env.SKILLSMITH_INVENTORY_DISABLE = '1'
+
+    const result = await maybeAutoPush()
+
+    expect(result).toBeNull()
+    expect(buildInventoryPayload).not.toHaveBeenCalled()
+    expect(uploadInventory).not.toHaveBeenCalled()
+  })
+
+  it('IP-7: maybeAutoPush returns the applied result and records the push timestamp', async () => {
+    // getLastInventoryPushAt returns undefined (set in beforeEach) so shouldAutoPush is true.
+    const applied = {
+      ok: true as const,
+      applied: true as const,
+      device_id: 'd',
+      skills_present: 5,
+      skills_absent: 0,
+    }
+    vi.mocked(uploadInventory).mockResolvedValue(applied)
+
+    const result = await maybeAutoPush()
+
+    expect(result).toEqual(applied)
+    expect(recordInventoryPush).toHaveBeenCalledTimes(1)
+    expect(recordInventoryPush).toHaveBeenCalledWith(expect.any(String))
+  })
 })

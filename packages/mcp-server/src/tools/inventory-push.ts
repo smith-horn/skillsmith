@@ -77,8 +77,12 @@ async function inventoryPushImpl(_input: unknown): Promise<CallToolResult> {
     } else if (!result.applied && result.reason === 'consent_disabled') {
       text =
         'Inventory sync is off for your account; enable it in account settings. Nothing was stored.'
-    } else {
+    } else if (result.applied) {
       text = `Pushed inventory for device ${result.device_id}: ${result.skills_present} present, ${result.skills_absent} marked absent.`
+    } else {
+      // Defensive: a non-applied result without a known reason is an edge-contract
+      // violation — report it as a non-success rather than rendering `undefined`s.
+      text = `Inventory was not applied${result.reason ? ` (${result.reason})` : ''}; nothing was stored.`
     }
 
     return { content: [{ type: 'text' as const, text }], isError: false }

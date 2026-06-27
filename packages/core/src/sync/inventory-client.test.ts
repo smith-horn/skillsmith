@@ -163,4 +163,33 @@ describe('inventory-client', () => {
 
     await expect(uploadInventory(payload)).rejects.toBeInstanceOf(InventoryUploadError)
   })
+
+  // Security invariant: tokens must never appear in error message strings.
+  // Covers both the non-200 response path and the network-throw path.
+  it('UC-7: error messages do not leak access tokens or refresh tokens (security invariant)', async () => {
+    const sentinelCreds = {
+      accessToken: 'at_SECRET_5392',
+      refreshToken: 'rt_SECRET_5392',
+      expiresAt: Date.now() + 3_600_000,
+      version: 2 as const,
+    }
+
+    // Non-200 path: 500 → InventoryUploadError whose message must not contain tokens.
+    vi.mocked(loadCredentials).mockResolvedValue(sentinelCreds)
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'server_error' }, 500))
+
+    const err500 = await uploadInventory(payload).catch((e: unknown) => e)
+    expect(err500).toBeInstanceOf(InventoryUploadError)
+    expect((err500 as Error).message).not.toContain('at_SECRET_5392')
+    expect((err500 as Error).message).not.toContain('rt_SECRET_5392')
+
+    // Network-throw path: fetch rejects → InventoryUploadError whose message must not contain tokens.
+    vi.mocked(loadCredentials).mockResolvedValue(sentinelCreds)
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+
+    const errNet = await uploadInventory(payload).catch((e: unknown) => e)
+    expect(errNet).toBeInstanceOf(InventoryUploadError)
+    expect((errNet as Error).message).not.toContain('at_SECRET_5392')
+    expect((errNet as Error).message).not.toContain('rt_SECRET_5392')
+  })
 })

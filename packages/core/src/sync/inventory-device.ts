@@ -5,7 +5,10 @@
  * Produces the {@link InventoryDevice} half of an {@link InventoryUploadPayload}.
  * Field minimization follows ADR-124: the raw hostname is NEVER sent by default
  * (`hostname_display` is `null` this wave); only a salt-free sha256 `hostname_hash`
- * is included as a soft duplicate-device hint (never reversible to the raw value).
+ * is included as a soft duplicate-device hint. The hash is not trivially
+ * reversible, but a low-entropy hostname is dictionary-recoverable — this is
+ * acceptable per ADR-124 because the hash is scoped to the user's own
+ * authenticated account, never exposed cross-tenant.
  *
  * @module @skillsmith/core/sync/inventory-device
  */
