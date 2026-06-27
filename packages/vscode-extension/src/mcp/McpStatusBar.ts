@@ -4,6 +4,7 @@
 import * as vscode from 'vscode'
 import { type McpConnectionStatus } from './types.js'
 import { getMcpClient } from './McpClient.js'
+import { handleConnectFailure, defaultConnectFailureDeps } from './connectFailureUx.js'
 
 /**
  * Status bar item for showing MCP connection status
@@ -133,8 +134,13 @@ export async function connectWithProgress(): Promise<boolean> {
         vscode.window.showInformationMessage('Connected to Skillsmith MCP server')
         return true
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        vscode.window.showErrorMessage(`Failed to connect to MCP server: ${message}`)
+        // SMI-5398: one of the two INITIAL-connect catch sites. handleConnectFailure
+        // centralizes the actionable toast + self-heal write (never wired into the
+        // autoReconnect retry loop).
+        await handleConnectFailure(
+          error,
+          defaultConnectFailureDeps(() => connectWithProgress())
+        )
         return false
       }
     }

@@ -66,6 +66,11 @@ export interface OutdatedSkillInfo {
   semver: string | null
   /** Dependency satisfaction details (omitted when include_deps is false) */
   dependencies?: DependencyStatus
+  /**
+   * SMI-5407: Present when manifest entry lacks a `source` URL. Directs the
+   * user to `sklx audit sources` / `skill_recover_source` to recover.
+   */
+  hint?: string
 }
 
 /**
@@ -265,6 +270,14 @@ async function executeOutdatedImpl(
       latest_hash: latestHash,
       status,
       semver,
+      // SMI-5407: surface a recovery hint when the manifest entry has no source.
+      // The source is needed by skill_diff / View-Changes to fetch the latest
+      // SKILL.md content. Recovering it requires `sklx audit sources`.
+      ...(typeof entry.source !== 'string' || entry.source.trim().length === 0
+        ? {
+            hint: `Source not tracked for ${entry.id}. Run \`sklx audit sources\` (or MCP skill_recover_source) to recover.`,
+          }
+        : {}),
     }
 
     // Dependency satisfaction

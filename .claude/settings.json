@@ -185,6 +185,6 @@
   "enabledMcpjsonServers": ["skillsmith", "skillsmith-doc-retrieval", "ruflo"],
   "statusLine": {
     "type": "command",
-    "command": "npx @claude-flow/cli@latest hooks statusline || node .claude/helpers/statusline.cjs || echo Claude Flow V3"
+    "command": "npx -y ruflo@3.14.2 hooks statusline || node .claude/helpers/statusline.cjs || echo RuFlo V3"
   }
 }

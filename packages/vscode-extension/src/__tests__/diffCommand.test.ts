@@ -1,8 +1,10 @@
 /**
- * Tests for diffCommand.ts (SMI-5316 / #1457).
+ * Tests for diffCommand.ts (SMI-5316 / #1457, SMI-5412).
  *
  * Covers: happy path, empty local SKILL.md abort, missing registry content abort,
  * TierDenied before panel open, no installed skills guard.
+ * SMI-5412: local-with-source path (manifest entry + raw fetch → skillDiff + panel),
+ * local-no-source actionable message, raw fetch failure, TierDenied on local path.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -71,6 +73,14 @@ vi.mock('../views/SkillDiffPanel.js', () => ({
   SkillDiffPanel: { createOrShow: diffCreateOrShow },
 }))
 
+// ── manifestReader mock (SMI-5412) ────────────────────────────────────────────
+const readManifestEntry = vi.hoisted(() => vi.fn())
+const fetchRawSkillMd = vi.hoisted(() => vi.fn())
+vi.mock('../services/manifestReader.js', () => ({
+  readManifestEntry,
+  fetchRawSkillMd,
+}))
+
 // ── McpToolError: real class so instanceof works ──────────────────────────────
 import { McpToolError } from '../mcp/McpToolError.js'
 
@@ -110,6 +120,9 @@ describe('diffCommand', () => {
     mcpGetSkill.mockResolvedValue({ content: REGISTRY_CONTENT })
     mcpSkillDiff.mockResolvedValue(DIFF_RESPONSE)
     showQuickPick.mockResolvedValue({ item: INSTALLED_SKILL })
+    // SMI-5412: default — no manifest entry (no source tracked)
+    readManifestEntry.mockResolvedValue(null)
+    fetchRawSkillMd.mockResolvedValue(null)
   })
 
   it('reads local SKILL.md, fetches registry content, calls skillDiff, and opens SkillDiffPanel', async () => {
@@ -210,6 +223,24 @@ describe('diffCommand', () => {
     expect(diffCreateOrShow).not.toHaveBeenCalled()
   })
 
+  it('shows a local-skill message and skips the registry for a bare-id (local) skill (SMI-5406)', async () => {
+    const localSkill = { ...INSTALLED_SKILL, id: 'ci-doctor', name: 'CI Doctor' }
+    showQuickPick.mockResolvedValue({ item: localSkill })
+
+    const treeProvider = makeTreeProvider([localSkill])
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
+
+    // A bare-id local skill short-circuits BEFORE the registry call: no get_skill,
+    // no diff, no panel, and NOT the misleading "removed or renamed" warning.
+    expect(mcpGetSkill).not.toHaveBeenCalled()
+    expect(mcpSkillDiff).not.toHaveBeenCalled()
+    expect(diffCreateOrShow).not.toHaveBeenCalled()
+    expect(showWarningMessage).not.toHaveBeenCalled()
+    expect(showInformationMessage).toHaveBeenCalledWith(expect.stringContaining('is a local skill'))
+  })
+
   it('shows info message when there are no installed skills', async () => {
     const treeProvider = makeTreeProvider([])
 
@@ -276,6 +307,97 @@ describe('diffCommand', () => {
     expect(diffCreateOrShow).not.toHaveBeenCalled()
     expect(showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining("Couldn't read SKILL.md")
+    )
+  })
+
+  // ── SMI-5412: local-skill-with-source path ───────────────────────────────────
+
+  it('SMI-5412: local skill WITH manifest source — fetches raw, calls skillDiff, opens panel', async () => {
+    const localSkill = { ...INSTALLED_SKILL, id: 'ci-doctor', name: 'CI Doctor' }
+    const RAW_CONTENT = '# CI Doctor\n\nLatest from GitHub.'
+    showQuickPick.mockResolvedValue({ item: localSkill })
+    readManifestEntry.mockResolvedValue({ source: 'https://github.com/owner/ci-doctor' })
+    fetchRawSkillMd.mockResolvedValue(RAW_CONTENT)
+
+    const treeProvider = makeTreeProvider([localSkill])
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
+
+    // registry getSkill must NOT be called — we fetched from GitHub directly
+    expect(mcpGetSkill).not.toHaveBeenCalled()
+    expect(readManifestEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ci-doctor', name: 'CI Doctor' })
+    )
+    expect(fetchRawSkillMd).toHaveBeenCalledWith('https://github.com/owner/ci-doctor')
+    expect(mcpSkillDiff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: 'ci-doctor',
+        oldContent: LOCAL_CONTENT,
+        newContent: RAW_CONTENT,
+      })
+    )
+    expect(diffCreateOrShow).toHaveBeenCalledWith(
+      FAKE_CONTEXT.extensionUri,
+      'CI Doctor',
+      DIFF_RESPONSE,
+      expect.objectContaining({ skillId: 'ci-doctor' })
+    )
+    expect(showInformationMessage).not.toHaveBeenCalled()
+  })
+
+  it('SMI-5412: local skill WITH source — TierDenied on skillDiff routes to handleTierDenied', async () => {
+    const localSkill = { ...INSTALLED_SKILL, id: 'ci-doctor', name: 'CI Doctor' }
+    const tierErr = new McpToolError('skill_diff', 'TierDenied', 'requires the Individual plan')
+    showQuickPick.mockResolvedValue({ item: localSkill })
+    readManifestEntry.mockResolvedValue({ source: 'https://github.com/owner/ci-doctor' })
+    fetchRawSkillMd.mockResolvedValue('# CI Doctor')
+    mcpSkillDiff.mockRejectedValue(tierErr)
+
+    const treeProvider = makeTreeProvider([localSkill])
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
+
+    expect(handleTierDenied).toHaveBeenCalledWith('skillsmith.diffSkill', tierErr)
+    expect(diffCreateOrShow).not.toHaveBeenCalled()
+  })
+
+  it('SMI-5412: local skill WITHOUT manifest source — shows actionable "sklx audit sources" message', async () => {
+    const localSkill = { ...INSTALLED_SKILL, id: 'ci-doctor', name: 'CI Doctor' }
+    // readManifestEntry returns null by default (no source tracked)
+    showQuickPick.mockResolvedValue({ item: localSkill })
+
+    const treeProvider = makeTreeProvider([localSkill])
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
+
+    expect(fetchRawSkillMd).not.toHaveBeenCalled()
+    expect(mcpGetSkill).not.toHaveBeenCalled()
+    expect(mcpSkillDiff).not.toHaveBeenCalled()
+    expect(diffCreateOrShow).not.toHaveBeenCalled()
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('sklx audit sources')
+    )
+  })
+
+  it('SMI-5412: local skill WITH source — raw fetch failure shows clear info message, no crash', async () => {
+    const localSkill = { ...INSTALLED_SKILL, id: 'ci-doctor', name: 'CI Doctor' }
+    showQuickPick.mockResolvedValue({ item: localSkill })
+    readManifestEntry.mockResolvedValue({ source: 'https://github.com/owner/ci-doctor' })
+    // fetchRawSkillMd returns null (both branches 404 or network failure)
+
+    const treeProvider = makeTreeProvider([localSkill])
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
+
+    expect(mcpSkillDiff).not.toHaveBeenCalled()
+    expect(diffCreateOrShow).not.toHaveBeenCalled()
+    expect(showErrorMessage).not.toHaveBeenCalled()
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Couldn't fetch the latest version from")
     )
   })
 })

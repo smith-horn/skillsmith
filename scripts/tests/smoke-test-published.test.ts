@@ -1,24 +1,26 @@
 /**
  * Unit tests for smoke-test-published helper functions.
- * SMI-4923: verify buildCliSmokeCommand produces the correct npx form for
- * multi-bin packages (explicit -p <pkg>@<version> <bin> instead of bare
- * `npx -y <pkg>@<version>` which fails when no bin matches the package-name
- * segment).
+ * SMI-5414: verify buildCliBinSmokeCommand produces the LOCAL-bin command
+ * (`<tempDir>/node_modules/.bin/<bin> --help`) — the CLI smoke runs each bin
+ * from test 1's local install instead of `npx -y -p <pkg>@<ver> <bin>`, which
+ * races the npx cache on Ubuntu CI runners (was the SMI-4923 multi-bin npx
+ * form; the bin link was intermittently absent → false "<bin>: not found").
  */
 
 import { describe, it, expect } from 'vitest'
-import { buildCliSmokeCommand } from '../smoke-test-published'
+import { join } from 'path'
+import { buildCliBinSmokeCommand } from '../smoke-test-published'
 
-describe('buildCliSmokeCommand', () => {
-  it('returns correct npx command for the skillsmith bin', () => {
-    expect(buildCliSmokeCommand('@skillsmith/cli', '1.2.3', 'skillsmith')).toBe(
-      'npx -y -p @skillsmith/cli@1.2.3 skillsmith --help'
+describe('buildCliBinSmokeCommand', () => {
+  it('returns the local-bin command for the skillsmith bin', () => {
+    expect(buildCliBinSmokeCommand('/tmp/x', 'skillsmith')).toBe(
+      `${join('/tmp/x', 'node_modules', '.bin', 'skillsmith')} --help`
     )
   })
 
-  it('returns correct npx command for the sklx bin', () => {
-    expect(buildCliSmokeCommand('@skillsmith/cli', '1.2.3', 'sklx')).toBe(
-      'npx -y -p @skillsmith/cli@1.2.3 sklx --help'
+  it('returns the local-bin command for the sklx bin', () => {
+    expect(buildCliBinSmokeCommand('/tmp/x', 'sklx')).toBe(
+      `${join('/tmp/x', 'node_modules', '.bin', 'sklx')} --help`
     )
   })
 })

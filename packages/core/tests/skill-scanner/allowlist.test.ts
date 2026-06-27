@@ -67,6 +67,8 @@ function makeReport(
       aiDefence: 0,
       ssrf: 0,
       pii: 0,
+      codeExecution: 0,
+      obfuscatedDirective: 0,
     },
     ...overrides,
   }

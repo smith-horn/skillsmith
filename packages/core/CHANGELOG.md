@@ -4,6 +4,20 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.2
+
+- **Feature**: enrich git/plugin-recovered skills with the registry UUID (SMI-5411) (#1600)
+- **Feature**: affix-tolerant registry-name matching for source recovery (SMI-5413) (#1592)
+
+## v0.8.1
+
+- **Feature**: recover + backfill canonical GitHub source for local skills (SMI-5407) (#1589)
+- **Fix**: harden writeInstallFiles rollback against out-of-bounds delete (SMI-5359 retro) (#1586)
+- **Fix**: scan optional files before write; reject malicious config (SMI-5359 Wave 4.3, Gap-1) (#1580)
+- **Feature**: code_execution + obfuscated_directive scoring categories (SMI-5359 Wave 4.2, core) (#1582)
+- **Feature**: wire doc-context downgrade into core scanSuspiciousPatterns (SMI-5359 Wave 4.1) (#1578)
+- **Feature**: CLI install block + local-search filter + 9 missing quarantine tests (SMI-5358) (#1567)
+
 ## v0.8.0
 
 - **Feature**: SMI-5039 — new `./embeddings/probe` subpath export. Extracts the

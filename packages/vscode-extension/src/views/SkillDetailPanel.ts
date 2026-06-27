@@ -12,7 +12,8 @@ import type {
   SkillPanelMessage,
   SkillActionContext,
 } from './skill-panel-types.js'
-import { skillComparisonKey } from '../utils/skillId.js'
+import { isLocalSkillId, skillComparisonKey } from '../utils/skillId.js'
+import { loadLocalSkillById } from '../services/localSkillReader.js'
 import { uninstallByTarget } from '../commands/uninstallCommand.js'
 import { track } from '../services/Telemetry.js'
 import { getMcpClient } from '../mcp/McpClient.js'
@@ -23,6 +24,7 @@ import {
   getSkillDetailHtml,
   getErrorHtml,
   mapErrorToUserMessage,
+  mapToolErrorToUserMessage,
 } from './skill-panel-html.js'
 
 // Re-export types for backwards compatibility
@@ -297,6 +299,26 @@ export class SkillDetailPanel {
     this._advisories = null
     this._advisoryTierDenied = SkillDetailPanel._advisoryTierDeniedSession
 
+    // SMI-5401: installed skills are keyed by their bare on-disk directory slug,
+    // which the registry `get_skill` tool always rejects. Read local-shaped ids
+    // straight from <skills-root>/<slug>/SKILL.md, bypassing the MCP round-trip.
+    if (isLocalSkillId(this._skillId)) {
+      try {
+        const knownPath = SkillDetailPanel._treeProvider
+          ?.getInstalledSkills()
+          .find((s) => skillComparisonKey(s.id) === skillComparisonKey(this._skillId))?.path
+        this._skillData = await loadLocalSkillById(this._skillId, knownPath)
+        this._resolveInstalledState()
+        this._update()
+        // bare-id: skill_audit also rejects bare slugs — skip advisories on the
+        // local branch (no registry-backed security data exists for it anyway).
+        return
+      } catch (error) {
+        this._renderError(error)
+        return
+      }
+    }
+
     if (!SkillDetailPanel._skillService) {
       const nonce = this._getNonce()
       this._panel.webview.html = getErrorHtml(
@@ -316,12 +338,24 @@ export class SkillDetailPanel {
       // panel render on the gated call (it throws TierDenied for free users).
       void this._loadAdvisories(this._skillId)
     } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : String(error)
-      const userMessage = mapErrorToUserMessage(rawMessage)
-      const nonce = this._getNonce()
-      this._panel.title = `Error: ${this._skillId}`
-      this._panel.webview.html = getErrorHtml(userMessage, this._skillId, nonce, rawMessage)
+      this._renderError(error)
     }
+  }
+
+  /**
+   * Render the error page for a failed load. `McpToolError`s map by code
+   * (SMI-5401) so "server unavailable" surfaces only for a true `NotConnected`;
+   * everything else falls through the string-based `mapErrorToUserMessage`.
+   */
+  private _renderError(error: unknown): void {
+    const rawMessage = error instanceof Error ? error.message : String(error)
+    const userMessage =
+      error instanceof McpToolError
+        ? mapToolErrorToUserMessage(error)
+        : mapErrorToUserMessage(rawMessage)
+    const nonce = this._getNonce()
+    this._panel.title = `Error: ${this._skillId}`
+    this._panel.webview.html = getErrorHtml(userMessage, this._skillId, nonce, rawMessage)
   }
 
   /**

@@ -24,6 +24,8 @@ export type SecurityFindingType =
   | 'data_exfiltration'
   | 'privilege_escalation'
   | 'prompt_injection'
+  | 'code_execution'
+  | 'obfuscated_directive'
 
 /**
  * Severity levels for findings
@@ -104,6 +106,9 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   data_exfiltration: 1.7,
   privilege_escalation: 1.9,
   prompt_injection: 1.9, // mapped to core ai_defence
+  // SMI-5359 Wave 4.2c: mirror of core's two new top-tier categories.
+  code_execution: 2.0,
+  obfuscated_directive: 2.0,
 }
 
 /**
@@ -117,6 +122,10 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   data_exfiltration: 0.08,
   privilege_escalation: 0.11,
   prompt_injection: 0.12, // mapped to core ai_defence
+  // SMI-5359 Wave 4.2c: additive 0.40 each (mirror of core). One CRITICAL reaches
+  // exactly the 40 quarantine threshold: 50 * 2.0 * 1.0 = 100 -> cap 100 -> * 0.40 = 40.
+  code_execution: 0.4,
+  obfuscated_directive: 0.4,
 }
 
 /**
@@ -326,6 +335,8 @@ export function calculateRiskScore(findings: SecurityFinding[]): number {
     data_exfiltration: 0,
     privilege_escalation: 0,
     prompt_injection: 0,
+    code_execution: 0,
+    obfuscated_directive: 0,
   }
 
   for (const finding of findings) {

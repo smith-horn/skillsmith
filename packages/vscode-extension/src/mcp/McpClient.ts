@@ -4,8 +4,8 @@
  */
 import * as vscode from 'vscode'
 import type { ChildProcess } from 'child_process'
-import crossSpawn from 'cross-spawn'
-import { validateSpawnArgs } from '../utils/security.js'
+import { spawnMcpServer } from './spawnServer.js'
+import { logMcp } from './mcpLog.js'
 import {
   type McpConnectionStatus,
   type McpClientConfig,
@@ -93,61 +93,35 @@ export class McpClient {
     }
 
     this.setStatus('connecting')
+    logMcp('connecting…')
 
     try {
       await this.spawnServer()
       await this.initialize()
       this.setStatus('connected')
+      logMcp('connected')
       this.reconnectAttempts = 0
     } catch (error) {
       this.setStatus('error')
+      logMcp(`connect failed: ${error instanceof Error ? error.message : String(error)}`)
       throw error
     }
   }
 
   /**
-   * Spawn the MCP server process
+   * Spawn the MCP server process. SMI-5398: the resolve + crossSpawn + listener
+   * wiring lives in spawnServer.ts (file-length shed); it resolves the configured
+   * command against an augmented PATH, injects the resolved env so a GUI-launched
+   * VS Code can find node/npx, and throws ServerCommandUnresolvedError (carrying a
+   * self-heal suggestion) when the command cannot be found.
    */
   private async spawnServer(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('MCP server connection timeout'))
-      }, this.config.connectionTimeout)
-
-      validateSpawnArgs(this.config.serverCommand, this.config.serverArgs)
-
-      this.process = crossSpawn(this.config.serverCommand, this.config.serverArgs, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-
-      this.process.stdout?.on('data', (data: Buffer) => {
-        this.handleData(data.toString())
-      })
-
-      this.process.stderr?.on('data', (data: Buffer) => {
-        console.error('[MCP Server]', data.toString())
-      })
-
-      this.process.on('error', (error) => {
-        clearTimeout(timeout)
-        this.handleDisconnect()
-        reject(error)
-      })
-
-      this.process.on('close', (code) => {
-        console.log(`[MCP Server] Process exited with code ${code}`)
-        this.handleDisconnect()
-      })
-
-      // Wait a bit for the process to start
-      setTimeout(() => {
-        clearTimeout(timeout)
-        if (this.process?.pid) {
-          resolve()
-        } else {
-          reject(new Error('Failed to start MCP server process'))
-        }
-      }, 500)
+    this.process = await spawnMcpServer({
+      serverCommand: this.config.serverCommand,
+      serverArgs: this.config.serverArgs,
+      connectionTimeout: this.config.connectionTimeout,
+      onData: (chunk) => this.handleData(chunk),
+      onDisconnect: () => this.handleDisconnect(),
     })
   }
 
@@ -175,6 +149,7 @@ export class McpClient {
 
     // Send initialized notification
     this.sendNotification('notifications/initialized', {})
+    logMcp('initialized')
   }
 
   /**
@@ -247,6 +222,9 @@ export class McpClient {
         )
         setTimeout(() => void this.connect(), 1000 * this.reconnectAttempts)
       } else {
+        // handleConnectFailure is NOT called here — retry failures are swallowed by
+        // void this.connect(). Wire McpClientConfig.onRetriesExhausted if retry-exhaustion
+        // UX is later needed (SMI-5398 scoped it out).
         this.setStatus('error')
       }
     } else {
