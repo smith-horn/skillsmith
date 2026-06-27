@@ -24,20 +24,21 @@ vi.mock('../../src/tools/install.helpers.js', async (importActual) => {
 })
 
 // SMI-5260: SkillInstallationService imports `fetchFromGitHub` +
-// `fetchOptionalInstallFiles` DIRECTLY from `skill-installation.io` — NOT from the
+// `fetchAndScanOptionalFiles` DIRECTLY from `skill-installation.io` — NOT from the
 // `-helpers` re-export the prior mock targeted (which is why the UUID install test
 // silently 404'd against the real network). Mock the `.io` module so the service
-// uses the test doubles. `fetchOptionalInstallFiles` must also be mocked: its
-// internal `fetchFromGitHub` call is a lexical module-local reference (not the
-// mocked export), so the un-mocked real version would still hit the network for
-// README/examples/config.json. `writeInstallFiles` is intentionally left REAL so the
-// install actually writes SKILL.md to the per-test temp skillsDir (asserted below).
+// uses the test doubles. `fetchAndScanOptionalFiles` (SMI-5359 Wave 4.3 rename of
+// `fetchOptionalInstallFiles`) must also be mocked: its internal `fetchFromGitHub`
+// call is a lexical module-local reference (not the mocked export), so the un-mocked
+// real version would still hit the network for README/examples/config.json.
+// `writeInstallFiles` is intentionally left REAL so the install actually writes
+// SKILL.md to the per-test temp skillsDir (asserted below).
 vi.mock('@skillsmith/core/services/skill-installation-io', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>()
   return {
     ...actual,
     fetchFromGitHub: vi.fn(),
-    fetchOptionalInstallFiles: vi.fn(),
+    fetchAndScanOptionalFiles: vi.fn(),
   }
 })
 
@@ -328,7 +329,7 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
     let coreFetchFromGitHub: ReturnType<typeof vi.fn>
     // SMI-5260: core `.io` optional-files double + the install-path resolvers,
     // redirected per-test to the temp skillsDir.
-    let coreFetchOptionalInstallFiles: ReturnType<typeof vi.fn>
+    let coreFetchAndScanOptionalFiles: ReturnType<typeof vi.fn>
     let resolveClientPath: ReturnType<typeof vi.fn>
     let getInstallPath: ReturnType<typeof vi.fn>
 
@@ -351,8 +352,8 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
       coreFetchFromGitHub = vi.mocked(
         coreIoModule.fetchFromGitHub as (...args: unknown[]) => unknown
       )
-      coreFetchOptionalInstallFiles = vi.mocked(
-        coreIoModule.fetchOptionalInstallFiles as (...args: unknown[]) => unknown
+      coreFetchAndScanOptionalFiles = vi.mocked(
+        coreIoModule.fetchAndScanOptionalFiles as (...args: unknown[]) => unknown
       )
       const coreInstallModule = await import('@skillsmith/core/install')
       resolveClientPath = vi.mocked(
@@ -372,7 +373,11 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
       // SKILL.md fetch return explicitly.
       resolveClientPath.mockReturnValue(fsContext.skillsDir)
       getInstallPath.mockReturnValue(fsContext.skillsDir)
-      coreFetchOptionalInstallFiles.mockResolvedValue([])
+      coreFetchAndScanOptionalFiles.mockResolvedValue({
+        configWarnings: [],
+        failedScans: [],
+        filesToWrite: [],
+      })
     })
 
     it('UUID with valid repo_url resolves and installs the skill', async () => {
