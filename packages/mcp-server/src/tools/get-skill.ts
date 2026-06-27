@@ -244,7 +244,7 @@ async function executeGetSkillImpl(
   // no repoUrl is non-installable regardless) — this matches install.helpers.ts,
   // which constructs the repo only inside its repoUrl guard.
   const isLocalQuarantined = dbSkill.repoUrl
-    ? new QuarantineRepository(context.db).isQuarantined(dbSkill.id)
+    ? new QuarantineRepository(context.db).isQuarantined(dbSkill.id || skillId)
     : false
 
   // Convert database skill to MCP skill format
