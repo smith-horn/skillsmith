@@ -27,6 +27,7 @@ import {
   defaultSkillsRoot,
   backfillManifest,
   parseRepoUrl,
+  skillNameVariants,
   METHOD_LABELS,
   type RecoveryCandidate,
   type RecoveryConfidence,
@@ -274,9 +275,13 @@ export async function runAuditSources(options: AuditSourcesOptions): Promise<voi
         repo_url: string | null
         quality_score: number | null
       }
+      const variants = skillNameVariants(name)
+      const placeholders = variants.map(() => '?').join(', ')
       const rows = db
-        .prepare<SkillRow>('SELECT id, name, repo_url, quality_score FROM skills WHERE name = ?')
-        .all(name)
+        .prepare<SkillRow>(
+          `SELECT id, name, repo_url, quality_score FROM skills WHERE name IN (${placeholders})`
+        )
+        .all(...variants)
 
       const candidates: RecoveryCandidate[] = []
       for (const row of rows) {
@@ -295,7 +300,10 @@ export async function runAuditSources(options: AuditSourcesOptions): Promise<voi
           // Non-GitHub repo_url — skip candidate.
         }
       }
-      return candidates
+      // Prefer an exact-name match so the affix-broadened query never downgrades
+      // a clean exact hit to ambiguous; fall back to affix variants. SMI-5413.
+      const exact = candidates.filter((c) => c.name.toLowerCase() === name.toLowerCase())
+      return exact.length > 0 ? exact : candidates
     }
 
     const service = new SourceRecoveryService({ hashContent, findCandidatesByName })
