@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.4
+
+- **Feature**: recover + backfill canonical GitHub source for local skills (SMI-5407) (#1589)
+- **Fix**: scan optional files before write; reject malicious config (SMI-5359 Wave 4.3, Gap-1) (#1580)
+- **Fix**: key rescan quarantine on frontmatter name + idempotency (SMI-5358 retro) (#1569)
+- **Feature**: CLI install block + local-search filter + 9 missing quarantine tests (SMI-5358) (#1567)
 - **Feature**: SMI-5178 — `search` and `skill_recommend` MCP tools now default to
   installable-only results. Discovery-only entries (no `repo_url`, cannot be resolved
   by `install_skill`) are hidden by default (~71% of the registry). Pass
