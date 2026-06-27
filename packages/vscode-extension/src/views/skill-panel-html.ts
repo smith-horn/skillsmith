@@ -5,6 +5,7 @@
 import { escapeHtml } from '../utils/security.js'
 import { getSkillDetailCsp } from '../utils/csp.js'
 import type { McpAdvisory } from '../mcp/types.js'
+import type { McpToolError } from '../mcp/McpToolError.js'
 import type { ExtendedSkillData, ScoreBreakdown, SkillActionContext } from './skill-panel-types.js'
 import { getContentHtml, renderMarkdown } from './skill-panel-content.js'
 import { inferRepositoryUrl } from './skill-panel-helpers.js'
@@ -333,6 +334,24 @@ export function getSkillDetailHtml(
     ${getScript(nonce)}
 </body>
 </html>`
+}
+
+/**
+ * Map a structured `McpToolError` to a user-friendly panel message by its code
+ * (SMI-5401). "Skillsmith server unavailable" now appears ONLY for a true
+ * `NotConnected` (i.e. `client.isConnected() === false`); a connected tool
+ * rejection surfaces its real cause. Non-`McpToolError` errors keep flowing
+ * through `mapErrorToUserMessage`.
+ */
+export function mapToolErrorToUserMessage(err: McpToolError): string {
+  switch (err.code) {
+    case 'NotConnected':
+      return 'Skillsmith server unavailable. Check that the MCP server is running.'
+    case 'SkillNotFound':
+      return "This skill isn't in the registry."
+    default:
+      return err.message
+  }
 }
 
 /** Map common error strings to user-friendly messages */

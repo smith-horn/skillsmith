@@ -19,6 +19,8 @@ export type SecurityFindingType =
   | 'ai_defence' // SMI-1532: CVE-hardened AI injection detection
   | 'ssrf' // SMI-3509: SSRF instruction detection
   | 'pii' // SMI-3864: PII detection
+  | 'code_execution' // SMI-5359 Wave 4.2: remote-fetch piped to an interpreter
+  | 'obfuscated_directive' // SMI-5359 Wave 4.2: security directive concealed via Unicode obfuscation
 
 /**
  * Severity levels for security findings
@@ -65,6 +67,8 @@ export interface RiskScoreBreakdown {
   aiDefence: number // SMI-1532: AI injection detection score
   ssrf: number // SMI-3509: SSRF instruction detection score
   pii: number // SMI-3864: PII detection score
+  codeExecution: number // SMI-5359 Wave 4.2: remote-fetch-to-interpreter score
+  obfuscatedDirective: number // SMI-5359 Wave 4.2: concealed-directive score
 }
 
 /**

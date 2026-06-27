@@ -3,11 +3,7 @@
  * Uses constructor-injected mock McpClient (no vi.mock).
  */
 import { describe, it, expect, vi } from 'vitest'
-import {
-  SkillService,
-  mapSearchResultToSkillData,
-  mapSkillDetailsToExtendedSkillData,
-} from '../services/SkillService.js'
+import { SkillService } from '../services/SkillService.js'
 import type { McpClient } from '../mcp/McpClient.js'
 import type { McpSearchResponse, McpGetSkillResponse } from '../mcp/types.js'
 import { McpToolError } from '../mcp/McpToolError.js'
@@ -200,12 +196,18 @@ describe('SkillService', () => {
       })
     })
 
-    it('getRichSkill throws NotConnected on transport error', async () => {
+    it('getRichSkill propagates real cause on connected transport error', async () => {
       const getSkillFn = vi.fn().mockRejectedValue(new Error('network error'))
       const client = createMockClient({ getSkill: getSkillFn })
-      service = new SkillService(() => client)
+      service = new SkillService(() => client) // demo mode OFF
 
-      await expect(service.getRichSkill('governance')).rejects.toBeInstanceOf(McpToolError)
+      // connected + getSkill throws a plain Error → wrapped as McpToolError('Unknown', 'network error').
+      // "Skillsmith server unavailable" must NOT appear here — that string is reserved for the
+      // disconnected path (isConnected() === false), tested in the describe block above.
+      await expect(service.getRichSkill('governance')).rejects.toMatchObject({
+        code: 'Unknown',
+        message: 'network error',
+      })
     })
   })
 
@@ -420,108 +422,5 @@ describe('SkillService', () => {
       expect(skill.id).toBe('governance')
       expect(getSkillFn).toHaveBeenCalledTimes(1)
     })
-  })
-})
-
-// --- Mapper unit tests ---
-
-describe('mapSearchResultToSkillData', () => {
-  it('maps all fields correctly', () => {
-    const result = mapSearchResultToSkillData({
-      id: 'test',
-      name: 'Test',
-      description: 'desc',
-      author: 'auth',
-      category: 'cat',
-      trustTier: 'verified',
-      score: 90,
-    })
-
-    expect(result).toEqual({
-      id: 'test',
-      name: 'Test',
-      description: 'desc',
-      author: 'auth',
-      category: 'cat',
-      trustTier: 'verified',
-      score: 90,
-    })
-  })
-
-  it('maps repository field when present', () => {
-    const result = mapSearchResultToSkillData({
-      id: 'smith-horn/governance',
-      name: 'Governance',
-      description: 'Enforces standards',
-      author: 'smith-horn',
-      category: 'development',
-      trustTier: 'verified',
-      score: 95,
-      repository: 'https://github.com/smith-horn/governance',
-    })
-
-    expect(result.repository).toBe('https://github.com/smith-horn/governance')
-  })
-
-  it('maps undefined repository when not present', () => {
-    const result = mapSearchResultToSkillData({
-      id: 'test',
-      name: 'Test',
-      description: 'desc',
-      author: 'auth',
-      category: 'cat',
-      trustTier: 'community',
-      score: 70,
-    })
-
-    expect(result.repository).toBeUndefined()
-  })
-})
-
-describe('mapSkillDetailsToExtendedSkillData', () => {
-  it('maps all fields including extended data', () => {
-    const result = mapSkillDetailsToExtendedSkillData(makeMcpGetSkillResponse())
-
-    expect(result.id).toBe('governance')
-    expect(result.version).toBe('1.2.0')
-    expect(result.tags).toEqual(['quality', 'standards'])
-    expect(result.installCommand).toBe('npx @skillsmith/cli install governance')
-    expect(result.scoreBreakdown?.quality).toBe(95)
-  })
-
-  // SMI-3672: Content mapping tests
-  it('maps content from response top-level', () => {
-    const response = makeMcpGetSkillResponse({ content: '# My Skill\n\nDoes things.' })
-    const result = mapSkillDetailsToExtendedSkillData(response)
-    expect(result.content).toBe('# My Skill\n\nDoes things.')
-  })
-
-  it('maps undefined content when not present', () => {
-    const response = makeMcpGetSkillResponse()
-    const result = mapSkillDetailsToExtendedSkillData(response)
-    expect(result.content).toBeUndefined()
-  })
-
-  // SMI-3857: Security scan field mapping
-  it('maps security scan data when present', () => {
-    const response = makeMcpGetSkillResponse()
-    response.skill.security = {
-      passed: true,
-      riskScore: 15,
-      findingsCount: 0,
-      scannedAt: '2026-04-03T12:00:00Z',
-    }
-    const result = mapSkillDetailsToExtendedSkillData(response)
-    expect(result.securityPassed).toBe(true)
-    expect(result.securityRiskScore).toBe(15)
-    expect(result.securityScannedAt).toBe('2026-04-03T12:00:00Z')
-  })
-
-  it('maps null security scan data when not present', () => {
-    const response = makeMcpGetSkillResponse()
-    const result = mapSkillDetailsToExtendedSkillData(response)
-    expect(result.securityPassed).toBeNull()
-    expect(result.securityRiskScore).toBeNull()
-    expect(result.securityScannedAt).toBeNull()
   })
 })

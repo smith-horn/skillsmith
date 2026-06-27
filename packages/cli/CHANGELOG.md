@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.5
+
+- **Fix**: View-Changes accepts install's `github:owner/repo` source + main->master fallback (SMI-5408) (#1602)
+- **Feature**: enrich git/plugin-recovered skills with the registry UUID (SMI-5411) (#1600)
+- **Feature**: affix-tolerant registry-name matching for source recovery (SMI-5413) (#1592)
+
+## v0.6.4
+
+- **Feature**: recover + backfill canonical GitHub source for local skills (SMI-5407) (#1589)
+- **Feature**: CLI install block + local-search filter + 9 missing quarantine tests (SMI-5358) (#1567)
+
 ## v0.6.3
 
 - **Refactor**: SMI-5036 split oversized billing test files (#1282)

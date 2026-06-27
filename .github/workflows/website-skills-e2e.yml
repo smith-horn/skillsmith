@@ -1,0 +1,139 @@
+# Gates the SMI-5368 stretched-link z-index carve-out in a real Chromium on
+# every PR that touches the SkillCard renderer or the /skills page shell.
+#
+# Phase 1 shadow: job-level continue-on-error keeps this non-blocking during
+# burn-in. Promote after 10 consecutive green runs: remove continue-on-error
+# and add website-skills-e2e to branch-protection required checks.
+#
+# -g 5368 scopes the run to the 2 deterministic mocked tests (SMI-5375):
+#   - "+N more" compat toggle expands without navigating away (SMI-3529/5367/5368/5369)
+#   - card stretched-link navigates to skill detail (SMI-5368 positive case)
+# These 2 tests self-mock via page.route() so they pass against any served
+# /skills shell with no live-backend dependency. The other 12 live-data tests
+# in the suite are not run here (follow-up: add page.route fixtures to the
+# SMI-1658 suite before wiring those into PR CI).
+
+name: Website Skills E2E
+
+on:
+  pull_request:
+    paths:
+      - 'packages/website/src/components/**'
+      - 'packages/website/src/pages/skills/**'
+      - 'packages/website/src/styles/**'
+      - 'packages/website/tests/e2e/skills-filter.spec.ts'
+      - 'packages/website/playwright.config.ts'
+      - '.github/workflows/website-skills-e2e.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: website-skills-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Website Skills E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Allow same-repo PRs and manual workflow_dispatch runs.
+    # For workflow_dispatch, github.event.pull_request is null so the
+    # head.repo.full_name check evaluates to empty-string != github.repository
+    # and the job would skip. The event_name guard permits workflow_dispatch
+    # explicitly while the PR guard blocks fork PRs (VERCEL_TOKEN unavailable).
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    continue-on-error: true # audit:allow-continue-on-error -- Phase 1 shadow; remove after 10 consecutive green runs
+    env:
+      NODE_VERSION: '22'
+      SKILLSMITH_WEBSITE_URL: 'http://127.0.0.1:4321'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Cache Vercel build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
+      - name: Install dependencies (no scripts -- host has no native module compiler chain)
+        run: npm ci --ignore-scripts
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Vercel CLI (pinned to root devDep)
+        run: |
+          set -eu
+          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
+          echo "Installing vercel@$PINNED (pinned from root package.json)"
+          npm i -g "vercel@$PINNED"
+          vercel --version
+
+      - name: Vercel pull + build website
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -eu
+          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          vercel build --token "$VERCEL_TOKEN"
+
+      - name: Start vercel dev (Astro SSR + static skills page)
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -eu
+          mkdir -p "$GITHUB_WORKSPACE/test-results"
+          # PATH augmentation: vercel auto-detects Astro and spawns `astro dev`
+          # in a sub-shell that does not inherit npm .bin lookup -- prepend both
+          # workspace and root .bin so `astro` resolves (SMI-4493/4508).
+          export PATH="$GITHUB_WORKSPACE/packages/website/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          nohup vercel dev --token "$VERCEL_TOKEN" --listen 127.0.0.1:4321 \
+            > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
+
+      - name: Wait for preview server
+        # IPv4 to match `vercel dev --listen 127.0.0.1` (SMI-4493/4496: Chromium
+        # hangs on IPv6 ::1 when the server only listens on IPv4).
+        # 90s timeout -- vercel dev cold-start is ~20-30 s.
+        run: npx --yes wait-on http://127.0.0.1:4321/ -t 90000
+
+      - name: Run skills-filter carve-out tests (SMI-5368, scoped via -g 5368)
+        # No --reporter override: the config's [list, html(open:never)] applies,
+        # so the console gets list output AND playwright-report/ is populated for
+        # the failure-artifact upload (pr-review F-G). open:never keeps CI non-blocking.
+        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/skills-filter.spec.ts --project=desktop -g 5368
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: website-skills-e2e-${{ github.run_id }}
+          path: |
+            packages/website/playwright-report/
+            packages/website/test-results/
+            test-results/preview.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: SIGTERM preview server
+        if: always()
+        run: |
+          if [ -f test-results/preview.pid ]; then
+            PID="$(cat test-results/preview.pid)"
+            if kill -0 "$PID" 2>/dev/null; then kill -TERM "$PID" || true; fi
+          fi

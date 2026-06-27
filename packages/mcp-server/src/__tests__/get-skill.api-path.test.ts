@@ -222,4 +222,61 @@ describe('executeGetSkill (API path)', () => {
       expect(result.skill.repository).toBeUndefined()
     })
   })
+
+  // SMI-5360: a quarantined skill must report installable:false even though it
+  // carries a repo_url. install_skill already refuses quarantined skills
+  // (validate.ts:149); returning installable:true here would contradict the
+  // accompanying security warning.
+  describe('installability gate (SMI-5360)', () => {
+    it('reports installable=false for a quarantined skill that has a repo_url', async () => {
+      context = await createApiMockContext({
+        apiSkill: {
+          id: 'evil/exfil',
+          name: 'exfil',
+          trust_tier: 'community',
+          repo_url: 'https://github.com/evil/exfil',
+          last_scanned_at: '2026-06-01T00:00:00.000Z',
+          security_score: 85,
+          security_findings: [{ rule: 'data-exfiltration' }],
+          quarantined: true,
+        },
+      })
+
+      const result = await executeGetSkill({ id: 'evil/exfil' }, context)
+      expect(result.skill.installable).toBe(false)
+    })
+
+    it('reports installable=true for a clean skill that has a repo_url', async () => {
+      context = await createApiMockContext({
+        apiSkill: {
+          id: 'good/clean',
+          name: 'clean',
+          trust_tier: 'verified',
+          repo_url: 'https://github.com/good/clean',
+          last_scanned_at: '2026-06-01T00:00:00.000Z',
+          security_score: 0,
+          security_findings: [],
+          quarantined: false,
+        },
+      })
+
+      const result = await executeGetSkill({ id: 'good/clean' }, context)
+      expect(result.skill.installable).toBe(true)
+    })
+
+    it('still reports installable=false for a discovery-only entry (no repo_url)', async () => {
+      context = await createApiMockContext({
+        apiSkill: {
+          id: 'disc/only',
+          name: 'only',
+          trust_tier: 'community',
+          repo_url: null,
+          quarantined: false,
+        },
+      })
+
+      const result = await executeGetSkill({ id: 'disc/only' }, context)
+      expect(result.skill.installable).toBe(false)
+    })
+  })
 })

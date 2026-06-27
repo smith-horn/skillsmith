@@ -2,7 +2,7 @@
   "name": "skillsmith-vscode",
   "displayName": "Skillsmith",
   "description": "Discover and install agent skills directly in VS Code",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "publisher": "skillsmith",
   "engines": {
     "vscode": "^1.110.0"
@@ -307,7 +307,7 @@
         "skillsmith.mcp.serverCommand": {
           "type": "string",
           "default": "npx",
-          "description": "Command to run the MCP server"
+          "description": "Command to run the MCP server. Defaults to `npx`, which is auto-resolved against your login-shell PATH and common Node version-manager directories (nvm, fnm, volta, asdf, Homebrew). Set an absolute path only if auto-resolution fails."
         },
         "skillsmith.mcp.serverArgs": {
           "type": "array",
@@ -317,7 +317,7 @@
           "default": [
             "@skillsmith/mcp-server"
           ],
-          "description": "Arguments for the MCP server command"
+          "description": "Arguments for the MCP server command. Paired with the resolved server command."
         },
         "skillsmith.mcp.autoConnect": {
           "type": "boolean",

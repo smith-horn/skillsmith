@@ -40,7 +40,8 @@ async function verifyResultsDisplayed(page: Page): Promise<number> {
   const resultsGrid = page.locator('#results-grid')
   await expect(resultsGrid).toBeVisible()
 
-  // Count skill cards (each card is an anchor tag inside the grid)
+  // Count skill cards via their title links. The new card root is a <div class="card-hover">,
+  // but each card still renders exactly one <a> (the stretched title link), so the count is valid.
   const skillCards = resultsGrid.locator('a')
   const count = await skillCards.count()
 
@@ -289,38 +290,102 @@ test.describe('Skills Filter-Only Browsing (SMI-1658)', () => {
   // renderSkillCard() module. These assert the rendered output in a real
   // browser (the unit tests pin the string; these prove it mounts + behaves).
   test.describe('SkillCard renderer (SMI-5366)', () => {
+    // Fixture with 6 compatibility tags: 4 visible + "+2 more" toggle rendered.
+    // Injected via page.route() so the toggle is ALWAYS present in CI; no more
+    // test.skip on live data shape (plan-review High-5).
+    const FIXTURE_SKILL = {
+      id: 'smith-horn/e2e-fixture-skill',
+      name: 'E2E Fixture Skill',
+      author: 'smith-horn',
+      description: 'Fixture skill for deterministic compat toggle testing.',
+      trust_tier: 'verified',
+      stars: 42,
+      categories: ['development'],
+      version: '1.0.0',
+      compatibility: ['claude-code', 'cursor', 'copilot', 'windsurf', 'antigravity', 'codex'],
+      license: 'MIT',
+    }
+
     test('rendered cards expose the quality dot and license row', async ({ page }) => {
       await page.locator('#category-filter').selectOption('development')
       await waitForResults(page)
 
-      const firstCard = page.locator('#results-grid a').first()
+      // SMI-5368: card root is now <div class="card-hover">, not an <a>.
+      // Locate the card container so sub-locators reach siblings of the title link.
+      const firstCard = page.locator('#results-grid .card-hover').first()
       await expect(firstCard).toBeVisible()
       // renderSkillCard always emits a quality dot (role="img") and a license row.
       await expect(firstCard.locator('[role="img"]')).toBeVisible()
       await expect(firstCard.getByText('License:')).toBeVisible()
     })
 
-    test('"+N more" compatibility toggle expands without navigating away (SMI-3529)', async ({
+    test('"+N more" compat toggle expands without navigating away (SMI-3529/5367/5368/5369)', async ({
       page,
     }) => {
+      // Intercept the skills-search edge function to guarantee a card with >4 compat
+      // tags renders -- makes this test deterministic in CI regardless of live data.
+      await page.route('**/skills-search**', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ skills: [FIXTURE_SKILL] }),
+        })
+      })
+
       await page.locator('#category-filter').selectOption('development')
       await waitForResults(page)
 
-      // The toggle only appears for skills with >4 compatibility tags; skip if
-      // none are on this page rather than flake on data shape.
-      const moreBtn = page.locator('#results-grid button', { hasText: /\+\d+ more/ }).first()
-      test.skip((await moreBtn.count()) === 0, 'no card with >4 compatibility tags on this page')
+      const moreBtn = page.locator('[data-compat-toggle]').first()
+      await expect(moreBtn).toBeVisible()
+      await expect(moreBtn).toContainText(/\+\d+ more/)
 
       const urlBefore = page.url()
-      const controls = await moreBtn.getAttribute('aria-controls')
-      await moreBtn.click()
+      // aria-label is unique to compat-extra regions; .first() guards against
+      // hypothetical future duplicates in the fixture grid.
+      const region = page.locator('[aria-label="Additional compatibility tags"]').first()
 
-      // The click must NOT bubble to the card <a> and navigate to the detail page.
+      // SMI-5368/5369 regression net: click must NOT bubble to the stretched
+      // link and navigate away from the list page.
+      await moreBtn.click()
       await expect(page).toHaveURL(urlBefore)
-      await expect(moreBtn).toHaveAttribute('aria-expanded', 'true')
-      if (controls) {
-        await expect(page.locator(`#${controls}`)).toBeVisible()
-      }
+
+      // Hidden region is now revealed.
+      await expect(region).toBeVisible()
+
+      // SMI-5367: focus must land INSIDE the revealed region, not dump to <body>.
+      await expect(region).toBeFocused()
+
+      // Toggle button is now hidden (delegated handler sets style.display=none).
+      await expect(moreBtn).toBeHidden()
+    })
+
+    test('card stretched-link navigates to skill detail (SMI-5368 positive case)', async ({
+      page,
+    }) => {
+      // Same fixture so we know the exact encoded id for the detail-page URL.
+      await page.route('**/skills-search**', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ skills: [FIXTURE_SKILL] }),
+        })
+      })
+
+      await page.locator('#category-filter').selectOption('development')
+      await waitForResults(page)
+
+      // Click the card description -- it sits under the stretched ::after overlay
+      // (NOT the toggle button's z-10 carve-out). force:true is required because
+      // the overlay intercepts the pointer events at the description's coordinates
+      // (that interception IS what we are testing). Proves the overlay makes the
+      // whole card clickable and the button carves out its own area via z-10.
+      const description = page.locator('#results-grid .card-hover p.text-dark-400').first()
+      await expect(description).toBeVisible()
+
+      await Promise.all([page.waitForURL(/\/skills\/.+/), description.click({ force: true })])
+
+      // URL must contain the skill id segment -- confirms the stretched link fired.
+      await expect(page).toHaveURL(/\/skills\//)
     })
   })
 })
