@@ -236,6 +236,39 @@ describe('createDiffCommand', () => {
 
       expect(exitCode).toBe(1)
     })
+
+    // SMI-5407: source-recovery hint surfaces in diff error when source is missing
+    it('includes sklx audit sources hint when source is not tracked', async () => {
+      const manifest = {
+        version: '1.0.0',
+        installedSkills: {
+          'orphan-skill': {
+            id: 'test/orphan-skill',
+            name: 'orphan-skill',
+            version: '1.0.0',
+            source: '', // no source URL
+            installPath: '/home/user/.claude/skills/orphan-skill',
+            installedAt: '2024-01-01T00:00:00.000Z',
+            lastUpdated: '2024-01-01T00:00:00.000Z',
+          },
+        },
+      }
+      mockLoadManifest.mockResolvedValue(manifest)
+      mockReadFile.mockResolvedValue(OLD_CONTENT)
+
+      const cmd = createDiffCommand()
+      const { exitCode, consoleOutput } = await runCommand(cmd, [
+        'orphan-skill',
+        '--old-content',
+        '/tmp/old-skill.md',
+      ])
+
+      expect(exitCode).toBe(1)
+      // SMI-5407: error message must include the source-recovery hint
+      const joined = consoleOutput.join('\n')
+      expect(joined).toContain('audit sources')
+      expect(joined).toContain('skill_recover_source')
+    })
   })
 
   describe('content resolution — file override path', () => {

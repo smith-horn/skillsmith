@@ -268,6 +268,9 @@ export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './utils/github-ur
 // SMI-2274: Safe filesystem operations
 export { safeWriteFile, SymlinkError, HardlinkError } from './utils/safe-fs.js'
 
+// SMI-5407: Skill source provenance recovery
+export * from './provenance/index.js'
+
 // SMI-4124: Curated stoplists for skill_pack_audit trigger-quality checks
 export { GENERIC_TRIGGERS } from './data/generic-triggers.js'
 export type { GenericTriggersStoplist } from './data/generic-triggers.js'
