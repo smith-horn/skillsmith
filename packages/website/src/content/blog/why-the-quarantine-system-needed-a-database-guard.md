@@ -182,7 +182,7 @@ No alert was configured for `quarantine_reason IS NULL`. The rows were written b
   "@graph": [
     {
       "@type": "TechArticle",
-      "@id": "https://www.skillsmith.app/blog/quarantine-data-integrity-hardening#article",
+      "@id": "https://www.skillsmith.app/blog/why-the-quarantine-system-needed-a-database-guard#article",
       "headline": "163 Rows, No Alarm: Auditing and Hardening Skillsmith's Quarantine System",
       "description": "We audited our own quarantine database and found 163 quietly-broken rows across three defect classes. One untended twin file was responsible. Here is what we fixed, and how a database-level CHECK constraint means it cannot happen again.",
       "datePublished": "2026-06-25",
@@ -203,7 +203,7 @@ No alert was configured for `quarantine_reason IS NULL`. The rows were written b
       },
       "mainEntityOfPage": {
         "@type": "WebPage",
-        "@id": "https://www.skillsmith.app/blog/quarantine-data-integrity-hardening"
+        "@id": "https://www.skillsmith.app/blog/why-the-quarantine-system-needed-a-database-guard"
       },
       "image": {
         "@type": "ImageObject",
@@ -213,7 +213,7 @@ No alert was configured for `quarantine_reason IS NULL`. The rows were written b
     },
     {
       "@type": "FAQPage",
-      "@id": "https://www.skillsmith.app/blog/quarantine-data-integrity-hardening#faq",
+      "@id": "https://www.skillsmith.app/blog/why-the-quarantine-system-needed-a-database-guard#faq",
       "mainEntity": [
         {
           "@type": "Question",
