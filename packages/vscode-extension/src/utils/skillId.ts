@@ -38,3 +38,31 @@ export function skillComparisonKey(id: string): string {
 export function buildInstalledKeySet(installedIds: readonly string[]): Set<string> {
   return new Set(installedIds.map(skillComparisonKey))
 }
+
+/** Canonical UUID v4-shaped id (the server's registry accepts these). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * True when a skill id is a bare on-disk install slug (a locally-installed
+ * skill) rather than a registry id the MCP `get_skill` tool can resolve.
+ *
+ * This is the exact complement of the server's `parseSkillIdInternal`
+ * (`@skillsmith/core/services/skill-installation.validate`): that function
+ * accepts a GitHub URL, an `owner/repo` (or longer slash path), and a UUID —
+ * and throws on anything else. So a bare, non-UUID, no-slash id is precisely
+ * what the registry rejects and what the detail panel must instead read from
+ * `<skills-root>/<id>/SKILL.md` (SMI-5401).
+ *
+ * Note (mirrors the server): a UUID-named on-disk directory routes to
+ * `get_skill`, not disk — surprising but correct, since the server accepts UUID
+ * ids and a UUID directory slug is not a real-world installed-skill name.
+ *
+ * @param id - A skill id from the tree (bare slug) or search view (`owner/repo`)
+ * @returns `true` iff the id is a local install slug
+ */
+export function isLocalSkillId(id: string): boolean {
+  if (id.startsWith('https://github.com/')) return false // URL -> registry
+  if (id.includes('/')) return false // owner/repo or path -> registry
+  if (UUID_RE.test(id)) return false // UUID -> registry
+  return true // bare slug -> local
+}

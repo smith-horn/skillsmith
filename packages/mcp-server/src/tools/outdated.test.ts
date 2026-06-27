@@ -368,4 +368,55 @@ describe('executeOutdated', () => {
     expect(result.skills[0].status).toBe('unknown')
     expect(result.skills[0].dependencies).toBeUndefined()
   })
+
+  // SMI-5407: source-recovery hint surfaces in outdated results when source is missing
+  it('includes hint when manifest entry has no source URL', async () => {
+    const noSourceManifest: SkillManifest = {
+      version: '1',
+      installedSkills: {
+        'orphan-skill': {
+          id: 'test/orphan-skill',
+          name: 'orphan-skill',
+          version: '1.0.0',
+          source: '', // no source — should trigger SMI-5407 hint
+          installPath: '/tmp/no-source',
+          installedAt: '2026-01-01T00:00:00Z',
+          lastUpdated: '2026-01-01T00:00:00Z',
+        },
+      },
+    }
+    mockedLoadManifest.mockResolvedValue(noSourceManifest)
+
+    const result = await executeOutdated({ include_deps: false }, makeContext(db))
+
+    const skill = result.skills[0]
+    expect(skill).toBeDefined()
+    expect(typeof skill?.hint).toBe('string')
+    expect(skill?.hint).toContain('audit sources')
+    expect(skill?.hint).toContain('skill_recover_source')
+  })
+
+  it('does not include hint when manifest entry has a source URL', async () => {
+    const withSourceManifest: SkillManifest = {
+      version: '1',
+      installedSkills: {
+        'tracked-skill': {
+          id: 'test/tracked-skill',
+          name: 'tracked-skill',
+          version: '1.0.0',
+          source: 'https://github.com/test/tracked-skill', // has source
+          installPath: '/tmp/has-source',
+          installedAt: '2026-01-01T00:00:00Z',
+          lastUpdated: '2026-01-01T00:00:00Z',
+        },
+      },
+    }
+    mockedLoadManifest.mockResolvedValue(withSourceManifest)
+
+    const result = await executeOutdated({ include_deps: false }, makeContext(db))
+
+    const skill = result.skills[0]
+    expect(skill).toBeDefined()
+    expect(skill?.hint).toBeUndefined()
+  })
 })

@@ -46,13 +46,16 @@ function formatError(e: unknown): string {
 }
 
 /**
- * Build the npx command for a CLI bin smoke test.
- * Uses `-p <pkg>@<version> <bin>` so npx resolves a specific package and
- * invokes an explicit bin — the correct form for multi-bin packages where
- * the bin name does not match the package-name segment.
+ * Build the command to smoke-test a CLI bin from the LOCAL install (the temp
+ * dir from the `install` test) rather than a fresh `npx`. The `npx -y -p <pkg>
+ * <bin>` form re-installs into the npx cache and races on Ubuntu CI runners, so
+ * the bin link is intermittently absent ("<bin>: not found") even when the
+ * package is fine (SMI-5414; the mcp-server test migrated off npx for the same
+ * reason — was the SMI-4923 multi-bin npx form). Returns an ABSOLUTE path so the
+ * result is independent of the caller's cwd.
  */
-export function buildCliSmokeCommand(pkg: string, version: string, bin: string): string {
-  return `npx -y -p ${pkg}@${version} ${bin} --help`
+export function buildCliBinSmokeCommand(tempDir: string, bin: string): string {
+  return `${join(tempDir, 'node_modules', '.bin', bin)} --help`
 }
 
 async function runTest(name: string, fn: () => void | Promise<void>): Promise<TestResult> {
@@ -231,25 +234,28 @@ export async function smokeTestPackage(
     }
 
     if (packageName === '@skillsmith/cli') {
-      // Test 2: skillsmith bin --help works (SMI-4923: use -p + explicit bin for multi-bin packages)
-      tests.push(
-        await runTest('cli-help-skillsmith', () => {
-          execSync(buildCliSmokeCommand(packageName, version, 'skillsmith'), {
-            stdio: 'pipe',
-            timeout: 30000,
+      // Tests 2-3: each CLI bin --help works, run from the LOCAL install (test 1's
+      // tempDir) rather than `npx -y -p` — the npx form races the npx cache on
+      // Ubuntu CI runners and intermittently reports "<bin>: not found" even when
+      // the package is fine (SMI-5414; mirrors the mcp-server bin-link approach).
+      for (const bin of ['skillsmith', 'sklx'] as const) {
+        tests.push(
+          await runTest(`cli-help-${bin}`, () => {
+            const binPath = join(tempDir, 'node_modules', '.bin', bin)
+            if (!existsSync(binPath)) {
+              throw new Error(`bin link not found at ${binPath}`)
+            }
+            const out = execSync(buildCliBinSmokeCommand(tempDir, bin), {
+              cwd: tempDir,
+              stdio: 'pipe',
+              timeout: 30000,
+            })
+            if (!/Usage|skillsmith/i.test(out.toString())) {
+              throw new Error(`${bin} --help produced no usage output`)
+            }
           })
-        })
-      )
-
-      // Test 3: sklx alias bin --help works
-      tests.push(
-        await runTest('cli-help-sklx', () => {
-          execSync(buildCliSmokeCommand(packageName, version, 'sklx'), {
-            stdio: 'pipe',
-            timeout: 30000,
-          })
-        })
-      )
+        )
+      }
     }
 
     return {

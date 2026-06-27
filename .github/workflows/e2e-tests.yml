@@ -330,6 +330,91 @@ jobs:
             test-results/mcp-*.json
           retention-days: 7
 
+  # SMI-5360: Security E2E lane. Runs the SSRF / DNS-rebinding suite
+  # (packages/core/tests/e2e/security/security.e2e.test.ts) that the CLI/MCP
+  # runners never reach. Fully offline: no network, no secrets. Reuses the
+  # pre-built Docker image + node_modules from docker-build, like the CLI lane.
+  security-e2e-tests:
+    name: Security E2E Tests
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event.inputs.test_scope != 'cli' && github.event.inputs.test_scope != 'mcp'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      # No git-crypt unlock and no `npm run build`: this lane runs one offline
+      # test that imports @skillsmith/core via relative src paths (vitest
+      # transpiles on the fly) and touches no encrypted supabase/** files. The
+      # extracted node_modules already carry the prebuilt better-sqlite3 binary.
+      - name: Download Docker image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: docker-image-e2e
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: node-modules-e2e
+          path: /tmp
+
+      # SMI-2240: re-tag if the loaded tag differs from the expected SHA.
+      - name: Load Docker image
+        run: |
+          zstd -d --stdout /tmp/skillsmith-e2e.tar.zst | docker load
+          LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            if ! docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
+          fi
+
+      - name: Extract node_modules
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
+
+      - name: Run Security E2E tests in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            -e SKILLSMITH_E2E=true \
+            skillsmith-e2e:${{ github.sha }} \
+            npm run test:e2e:security -- --reporter=default --reporter=json --outputFile.json=test-results/security-results.json
+
+      # SMI-5360 AC#2: vitest exits non-zero on zero matched files, but assert
+      # the executed count explicitly so an inert lane (wrong glob/positional)
+      # can never read as a pass.
+      - name: Assert the security suite actually executed
+        run: |
+          COUNT=$(docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-e2e:${{ github.sha }} \
+            node -p "require('./test-results/security-results.json').numTotalTests")
+          echo "Security E2E numTotalTests=$COUNT"
+          case "$COUNT" in
+            '' | *[!0-9]*)
+              echo "::error::Security E2E test count is not a positive integer ($COUNT) - the lane is inert or broken"
+              exit 1
+              ;;
+          esac
+          if [ "$COUNT" -lt 1 ]; then
+            echo "::error::Security E2E suite matched 0 tests - the CI lane is inert"
+            exit 1
+          fi
+
+      - name: Upload security test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: security-e2e-results
+          path: test-results/security-results.json
+          retention-days: 7
+
   # Generate reports and create Linear issues for failures
   # SMI-969: Uses pre-built Docker image and node_modules from docker-build job
   report-results:

@@ -6,7 +6,7 @@ Discover, search, and install agent skills directly in VS Code. Works with any M
 
 - **Browse the Skillsmith skill registry** from your VS Code sidebar
 - **View skill details** with rendered SKILL.md documentation
-- **One-click install** skills to `~/.claude/skills`
+- **One-click install** skills to your configured skills directory (default `~/.claude/skills`)
 
 ## Features
 
@@ -18,7 +18,7 @@ Discover, search, and install agent skills directly in VS Code. Works with any M
 | Recommend Skills | Contextual skill recommendations based on your installed skills, surfaced in a quick pick |
 | Compare Skills | Side-by-side comparison of two skills in a panel with quality, trust tier, key differences, and a recommendation |
 | Check for Updates | Compares an installed skill against the latest registry version and advises whether to update (Individual plan or higher) |
-| Audit Skill Inventory | Scans your local `~/.claude/` for namespace collisions and shows a report with suggested renames |
+| Audit Skill Inventory | Scans your local skill inventory for namespace collisions and shows a report with suggested renames |
 | MCP Integration | Live data from the Skillsmith API via Model Context Protocol |
 | Offline Fallback | Works offline with cached local skill data |
 

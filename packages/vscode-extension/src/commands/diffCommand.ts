@@ -7,6 +7,12 @@
  * which leads with the recommendation verdict. `skill_diff` is tier-gated to
  * Individual+ — a denial routes to the upgrade UX BEFORE any panel opens.
  *
+ * SMI-5412: bare-id (local) skills now resolve their upstream source from
+ * ~/.skillsmith/manifest.json (written by SMI-5407) and diff against the raw
+ * GitHub SKILL.md instead of immediately blocking with the "not published"
+ * message (SMI-5406). When no source is tracked, an actionable prompt guides
+ * the user to run `sklx audit sources` / MCP `skill_recover_source`.
+ *
  * @module commands/diffCommand
  */
 import * as vscode from 'vscode'
@@ -22,6 +28,8 @@ import { withTelemetry } from '../services/telemetry-wrap.js'
 import { track } from '../services/Telemetry.js'
 import { SkillDiffPanel } from '../views/SkillDiffPanel.js'
 import type { SkillDiffArgs } from '../views/diff-panel-types.js'
+import { isLocalSkillId } from '../utils/skillId.js'
+import { readManifestEntry, fetchRawSkillMd } from '../services/manifestReader.js'
 
 interface InstalledPickItem extends vscode.QuickPickItem {
   item: SkillItemData
@@ -73,7 +81,8 @@ async function diffCommandImpl(deps: {
     return
   }
 
-  // Read the locally-installed SKILL.md (oldContent).
+  // Read the locally-installed SKILL.md (oldContent). Both the registry path and
+  // the local-source path need this, so we resolve it before branching on skill type.
   let oldContent: string
   try {
     oldContent = await readFile(path.join(skill.path, 'SKILL.md'), 'utf8')
@@ -97,14 +106,39 @@ async function diffCommandImpl(deps: {
   }
 
   try {
-    // Registry-latest content (newContent).
-    const detail = await client.getSkill(skill.id)
-    const newContent = detail.content
-    if (!newContent || !newContent.trim()) {
-      void vscode.window.showInformationMessage(
-        `"${skill.name}" isn't in the registry, so there's no newer version to compare against.`
-      )
-      return
+    let newContent: string
+
+    if (isLocalSkillId(skill.id)) {
+      // Local (bare-id) skill: attempt to diff against the upstream source
+      // recorded in ~/.skillsmith/manifest.json (recovered by SMI-5407).
+      // If no source is tracked, prompt the user to run the recovery tool
+      // rather than showing the old "not published" copy (SMI-5406).
+      const entry = await readManifestEntry({ name: skill.name, id: skill.id, path: skill.path })
+      if (!entry?.source) {
+        void vscode.window.showInformationMessage(
+          `"${skill.name}" is a local skill. Run \`sklx audit sources\` (or MCP \`skill_recover_source\`) to recover its source, then try View Changes again.`
+        )
+        return
+      }
+      const fetched = await fetchRawSkillMd(entry.source)
+      if (fetched === null) {
+        void vscode.window.showInformationMessage(
+          `Couldn't fetch the latest version from ${entry.source}. Check your network connection and try again.`
+        )
+        return
+      }
+      newContent = fetched
+    } else {
+      // Registry-latest content (newContent).
+      const detail = await client.getSkill(skill.id)
+      const content = detail.content
+      if (!content || !content.trim()) {
+        void vscode.window.showInformationMessage(
+          `"${skill.name}" isn't in the registry, so there's no newer version to compare against.`
+        )
+        return
+      }
+      newContent = content
     }
 
     const args: SkillDiffArgs = {

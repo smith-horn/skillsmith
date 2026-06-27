@@ -34,6 +34,7 @@ import {
   SSRF_INSTRUCTION_PATTERNS,
   AI_DEFENCE_PATTERNS,
   PII_PATTERNS,
+  CODE_EXECUTION_PATTERNS,
 } from '../../src/security/scanner/index.js'
 
 /**
@@ -52,6 +53,7 @@ const BASELINE_PATTERN_COUNTS = {
   SSRF_INSTRUCTION_PATTERNS: 13,
   AI_DEFENCE_PATTERNS: 16,
   PII_PATTERNS: 11,
+  CODE_EXECUTION_PATTERNS: 6, // SMI-5359 Wave 4.2: remote-fetch-to-interpreter detector
 } as const
 
 describe('Scanner Regression Guard (SMI-3864)', () => {
@@ -112,6 +114,12 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
 
     it('PII_PATTERNS should not regress below baseline', () => {
       expect(PII_PATTERNS.length).toBeGreaterThanOrEqual(BASELINE_PATTERN_COUNTS.PII_PATTERNS)
+    })
+
+    it('CODE_EXECUTION_PATTERNS should not regress below baseline', () => {
+      expect(CODE_EXECUTION_PATTERNS.length).toBeGreaterThanOrEqual(
+        BASELINE_PATTERN_COUNTS.CODE_EXECUTION_PATTERNS
+      )
     })
   })
 

@@ -32,6 +32,12 @@ import {
 } from './mcp/McpClient.js'
 import { promptIfOutdated } from './mcp/versionCheck.js'
 import { McpStatusBar, registerMcpCommands, connectWithProgress } from './mcp/McpStatusBar.js'
+import { setMcpOutputChannel } from './mcp/mcpLog.js'
+import {
+  handleConnectFailure,
+  defaultConnectFailureDeps,
+  resetConnectFailureNag,
+} from './mcp/connectFailureUx.js'
 import {
   SkillCompletionProvider,
   SkillHoverProvider,
@@ -54,6 +60,13 @@ export function activate(context: vscode.ExtensionContext): void {
   // or the default telemetry endpoint is not configured.
   const ext = vscode.extensions.getExtension('skillsmith.skillsmith-vscode')
   initializeTelemetry(context, (ext?.packageJSON as { version?: string })?.version ?? 'unknown')
+
+  // SMI-5398: dedicated MCP diagnostics channel — logs the configured + resolved
+  // command, the PATH dirs added, server stderr, spawn errors, and the connect
+  // timeline. Created before the first connect so the launch is fully traced.
+  const mcpOutput = vscode.window.createOutputChannel('Skillsmith MCP')
+  setMcpOutputChannel(mcpOutput)
+  context.subscriptions.push(mcpOutput)
 
   // Initialize MCP client with configuration from settings
   initializeMcpClientFromSettings()
@@ -101,6 +114,9 @@ export function activate(context: vscode.ExtensionContext): void {
         alreadyPromptedServerVersion = null
         return
       }
+      // SMI-5398: a successful connect clears the connect-failure anti-nag guard
+      // so a later initial-connect failure can surface its actionable toast again.
+      resetConnectFailureNag()
       const version = getMcpClient().getServerVersion()
       if (version === null || version === alreadyPromptedServerVersion) return
       alreadyPromptedServerVersion = version
@@ -291,8 +307,14 @@ export function activate(context: vscode.ExtensionContext): void {
     const autoConnect = config.get<boolean>('mcp.autoConnect', true)
     if (autoConnect) {
       const client = getMcpClient()
-      void client.connect().catch((error) => {
-        console.log('[Skillsmith] Auto-connect failed:', error)
+      // SMI-5398: surface an actionable, self-healing error instead of swallowing
+      // the failure — this is one of the two INITIAL-connect catch sites (never
+      // the autoReconnect retry loop, which handleConnectFailure must not touch).
+      void client.connect().catch((error: unknown) => {
+        void handleConnectFailure(
+          error,
+          defaultConnectFailureDeps(() => connectWithProgress())
+        )
       })
     }
   }

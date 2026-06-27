@@ -27,6 +27,7 @@ export {
   AI_DEFENCE_PATTERNS,
   SSRF_INSTRUCTION_PATTERNS,
   PII_PATTERNS,
+  CODE_EXECUTION_PATTERNS,
 } from './patterns.js'
 
 // Weights (for testing/extending)

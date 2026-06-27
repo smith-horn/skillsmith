@@ -11,11 +11,10 @@
  */
 import BaseLayout from '../../layouts/BaseLayout.astro'
 // SMI-5217: shared 5-tier badge classes (single source of truth, canonical colors).
-import {
-  TRUST_TIER_BADGE_CLASSES,
-  TRUST_TIER_PILL_CLASSES,
-  DEFAULT_TRUST_TIER,
-} from '../../constants/trust-tier-badges'
+// SMI-4907: TRUST_TIER_BADGE_CLASSES / DEFAULT_TRUST_TIER are now also imported inside
+// the bundled <script> below (no longer injected via define:vars). The frontmatter keeps
+// TRUST_TIER_PILL_CLASSES + DEFAULT_TRUST_TIER for the SSR related-skills pill.
+import { TRUST_TIER_PILL_CLASSES, DEFAULT_TRUST_TIER } from '../../constants/trust-tier-badges'
 
 export const prerender = false
 
@@ -331,7 +330,7 @@ const categoryJsonLd =
           </ol>
         </nav>
 
-        <div id="loading-state" class="text-center py-20">
+        <div id="loading-state" class="text-center py-20" data-skill-id={id}>
           <div class="inline-block animate-spin rounded-full h-12 w-12 border-2 border-primary-500 border-t-transparent" />
           <p class="text-dark-400 mt-6">Loading skill details...</p>
         </div>
@@ -572,23 +571,73 @@ const categoryJsonLd =
   )
 }
 
-<script
-  is:inline
-  define:vars={{
-    skillId: id,
-    apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
-    trustBadgeClasses: TRUST_TIER_BADGE_CLASSES,
-    defaultTrustTier: DEFAULT_TRUST_TIER,
-  }}
->
-  const API_BASE = apiBase
+<script>
+  // SMI-4907: bundled (non-inline) module script so it can `import` the canonical
+  // helpers. Data that used to arrive via define:vars now comes from direct imports
+  // + import.meta.env (Vite-substituted at build) + the #loading-state data-skill-id
+  // attribute. Mirrors the Wave A migration of skills/index.astro (SMI-5365).
+  import {
+    TRUST_TIER_BADGE_CLASSES as trustBadgeClasses,
+    DEFAULT_TRUST_TIER as defaultTrustTier,
+  } from '../../constants/trust-tier-badges'
+  import type { TrustTierId } from '../../constants/terminology'
+  import { getSupabaseClient } from '../../lib/supabase-client'
+  // SMI-5327: license display helper — replaces the prior inline-mirrored fallback so
+  // the "Unknown" contract lives in one place. NEVER render null as "no license".
+  import { licenseLabel } from '../../lib/license-label'
 
-  // Use astro:page-load for View Transitions compatibility
+  // Skill-detail wire shape from skills-get: a superset of types/skills.ts WireSkill that
+  // adds the detail-only fields (downloads/updated_at/tags/content/also_installed/
+  // related_skills) the browse card never reads.
+  interface AlsoInstalledSkill {
+    skillId: string
+    name?: string
+    description?: string
+  }
+  interface SkillDetail {
+    id: string
+    name?: string
+    author?: string
+    version?: string
+    trust_tier?: TrustTierId
+    stars?: number
+    description?: string
+    categories?: string[]
+    downloads?: number
+    updated_at?: string
+    license?: string | null
+    content?: string
+    repo_url?: string
+    tags?: string[]
+    also_installed?: AlsoInstalledSkill[]
+    related_skills?: string[]
+  }
+
+  // SMI-4907: reconstruct the edge-function base in-script. import.meta.env substitutes
+  // PUBLIC_API_BASE_URL (astro.config.mjs vite.define); the `|| fallback` AND the
+  // `/functions/v1` suffix MUST stay here — dropping either 404s every skills-get call.
+  const API_BASE = `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`
+
+  // Use astro:page-load for View Transitions compatibility (fires on both initial load
+  // and client-side navigation). Bundled ES module evaluates once, so this binds exactly
+  // one listener; the early-bail below (loading-state existence) is the state guard for
+  // the handler body across ClientRouter navigations.
+  // audit:concurrency-ok — single bind (module evals once) + early-bail state guard on the handler body
   document.addEventListener('astro:page-load', () => {
     // Only run on skill detail pages (not category pages)
     if (!document.getElementById('loading-state')) return
 
-    // Get Supabase config for API authentication
+    // SMI-4907: skillId now arrives via the #loading-state data-skill-id attribute
+    // (stamped by the frontmatter from Astro.params) since define:vars is gone. The
+    // non-null cast holds because the early-bail above proves the element exists, and
+    // it carries that type into the renderSkill/showError closures.
+    const loadingState = document.getElementById('loading-state') as HTMLElement
+    const skillId = loadingState.dataset.skillId ?? ''
+
+    // Get Supabase config for API authentication. Written once by BaseLayout's inline
+    // script before any astro:page-load fires; read here only for the anon-key default —
+    // NOT the client singleton (that goes through getSupabaseClient() below).
+    // audit:concurrency-ok — write-once config global, populated before page-load, anon-key read only
     const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
     const supabaseAnonKey = config.anonKey
 
@@ -598,13 +647,12 @@ const categoryJsonLd =
 
     async function initAuth() {
       try {
-        // Use shared singleton from window.__SUPABASE_CLIENT__ (SMI-3595).
-        // is:inline + define:vars prevents ES import of getSupabaseClient(),
-        // so this consumer cannot use the canonical lazy helper. The null-check
-        // below degrades gracefully if BaseLayout hasn't populated the global
-        // yet. SMI-4907 tracks migrating this script to a bundled <script>.
-        // eslint-disable-next-line skillsmith-local/no-raw-window-global
-        const supabase = window.__SUPABASE_CLIENT__
+        // SMI-4907: now a bundled <script>, so this consumer uses the canonical lazy
+        // helper (SMI-3595 / SMI-4895) instead of the raw global. It returns the shared
+        // singleton, lazily creating it from the injected Supabase config when BaseLayout
+        // hasn't run yet — strictly safer than the prior raw read, and the singleton guard
+        // in getSupabaseClient() prevents a double-init.
+        const supabase = getSupabaseClient()
         if (!supabase) {
           console.debug('[Skills] No Supabase client, using anon key')
           return
@@ -620,18 +668,18 @@ const categoryJsonLd =
           console.debug('[Skills] Using anon key (community rate limits)')
         }
       } catch (e) {
-        console.warn('[Skills] Auth init failed, using anon key:', e.message)
+        console.warn('[Skills] Auth init failed, using anon key:', (e as Error).message)
       }
     }
 
-    // SMI-5217: trustBadgeClasses + defaultTrustTier injected via define:vars
-    // from the shared 5-tier map (constants/trust-tier-badges.ts).
+    // SMI-5217 / SMI-4907: trustBadgeClasses + defaultTrustTier imported above from the
+    // shared 5-tier map (constants/trust-tier-badges.ts).
 
     // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
     const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
 
     // Get quality tier info from star count
-    function getQualityTier(stars) {
+    function getQualityTier(stars: number | null | undefined) {
       const count = stars ?? 0
       if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
       if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
@@ -641,14 +689,13 @@ const categoryJsonLd =
     }
 
     // DOM Elements
-    const loadingState = document.getElementById('loading-state')
-    const errorState = document.getElementById('error-state')
-    const errorMessage = document.getElementById('error-message')
-    const skillContent = document.getElementById('skill-content')
-    const breadcrumbName = document.getElementById('breadcrumb-name')
+    const errorState = document.getElementById('error-state') as HTMLElement
+    const errorMessage = document.getElementById('error-message') as HTMLElement
+    const skillContent = document.getElementById('skill-content') as HTMLElement
+    const breadcrumbName = document.getElementById('breadcrumb-name') as HTMLElement
 
     // Escape HTML to prevent XSS
-    function escapeHtml(str) {
+    function escapeHtml(str: string | null | undefined) {
       if (!str) return ''
       const div = document.createElement('div')
       div.textContent = str
@@ -656,23 +703,23 @@ const categoryJsonLd =
     }
 
     // Format number with commas
-    function formatNumber(num) {
+    function formatNumber(num: number) {
       return new Intl.NumberFormat().format(num)
     }
 
     // Format date
-    function formatDate(dateStr) {
+    function formatDate(dateStr: string | null | undefined) {
       if (!dateStr) return 'Unknown'
       const date = new Date(dateStr)
       return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
     }
 
     // Show error state
-    function showError(message) {
-      // Defensive: refs are normally captured at lines 630-634 against markup
-      // that always renders for !isCategory pages. Guard anyway — a failure here
-      // (e.g. async fetchSkill catch firing after a ClientRouter detach) should
-      // not throw a confusing null-deref over the underlying error message.
+    function showError(message: string) {
+      // Defensive: refs are normally captured above against markup that always renders
+      // for !isCategory pages. Guard anyway — a failure here (e.g. async fetchSkill catch
+      // firing after a ClientRouter detach) should not throw a confusing null-deref over
+      // the underlying error message.
       if (loadingState) loadingState.classList.add('hidden')
       if (skillContent) skillContent.classList.add('hidden')
       if (errorState) errorState.classList.remove('hidden')
@@ -680,7 +727,7 @@ const categoryJsonLd =
     }
 
     // Render skill details
-    function renderSkill(skill) {
+    function renderSkill(skill: SkillDetail) {
       // Update breadcrumb
       breadcrumbName.textContent = skill.name || skillId
 
@@ -688,14 +735,15 @@ const categoryJsonLd =
       document.title = `${skill.name || skillId} | Skillsmith`
 
       // Header
-      document.getElementById('skill-name').textContent = skill.name || skillId
-      document.getElementById('skill-author').textContent = `by ${skill.author || 'Unknown author'}`
-      document.getElementById('skill-version').textContent = skill.version
+      ;(document.getElementById('skill-name') as HTMLElement).textContent = skill.name || skillId
+      ;(document.getElementById('skill-author') as HTMLElement).textContent =
+        `by ${skill.author || 'Unknown author'}`
+      ;(document.getElementById('skill-version') as HTMLElement).textContent = skill.version
         ? `Version ${skill.version}`
         : ''
 
       // Trust badge
-      const trustBadge = document.getElementById('skill-trust-badge')
+      const trustBadge = document.getElementById('skill-trust-badge') as HTMLElement
       const trustTier = skill.trust_tier || defaultTrustTier
       trustBadge.textContent = trustTier
       trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses[defaultTrustTier]}`
@@ -703,49 +751,57 @@ const categoryJsonLd =
       // Quality tier based on stars
       const stars = skill.stars ?? 0
       const tier = getQualityTier(stars)
-      const tierEl = document.getElementById('skill-tier')
+      const tierEl = document.getElementById('skill-tier') as HTMLElement
       tierEl.textContent = tier.label
       tierEl.className = `text-2xl font-bold ${tier.color}`
-      document.getElementById('skill-stars').textContent = `${formatNumber(stars)} ★`
+      ;(document.getElementById('skill-stars') as HTMLElement).textContent =
+        `${formatNumber(stars)} ★`
 
       // Description
-      document.getElementById('skill-description').textContent =
+      ;(document.getElementById('skill-description') as HTMLElement).textContent =
         skill.description || 'No description available.'
 
       // Installation commands
       const skillName = skill.name || skillId.split('/').pop()
-      document.getElementById('install-command-npx').textContent =
+      ;(document.getElementById('install-command-npx') as HTMLElement).textContent =
         `npx @skillsmith/cli install ${skill.id || skillId}`
-      document.getElementById('install-command-cli').textContent =
+      ;(document.getElementById('install-command-cli') as HTMLElement).textContent =
         `skillsmith install ${skill.id || skillId}`
-      document.getElementById('install-command-claude').textContent =
+      ;(document.getElementById('install-command-claude') as HTMLElement).textContent =
         `"Install the ${skillName} skill"`
 
       // Details
-      document.getElementById('skill-category').textContent =
+      ;(document.getElementById('skill-category') as HTMLElement).textContent =
         skill.categories?.[0] || 'Uncategorized'
-      document.getElementById('skill-trust-tier').textContent =
+      ;(document.getElementById('skill-trust-tier') as HTMLElement).textContent =
         trustTier.charAt(0).toUpperCase() + trustTier.slice(1)
-      document.getElementById('skill-version-detail').textContent = skill.version || 'Unknown'
+      ;(document.getElementById('skill-version-detail') as HTMLElement).textContent =
+        skill.version || 'Unknown'
 
       // Optional fields
       if (skill.downloads) {
-        document.getElementById('downloads-row').classList.remove('hidden')
-        document.getElementById('skill-downloads').textContent = formatNumber(skill.downloads)
+        ;(document.getElementById('downloads-row') as HTMLElement).classList.remove('hidden')
+        ;(document.getElementById('skill-downloads') as HTMLElement).textContent = formatNumber(
+          skill.downloads
+        )
       }
       if (skill.updated_at) {
-        document.getElementById('updated-row').classList.remove('hidden')
-        document.getElementById('skill-updated').textContent = formatDate(skill.updated_at)
+        ;(document.getElementById('updated-row') as HTMLElement).classList.remove('hidden')
+        ;(document.getElementById('skill-updated') as HTMLElement).textContent = formatDate(
+          skill.updated_at
+        )
       }
       // SMI-5327: License — null / absent / whitespace-only means "unknown / not detected".
-      // NEVER render null as "no license", "unrestricted", or "freely usable".
-      // MIRRORS licenseLabel() in src/lib/license-label.ts (SMI-5327) — keep in sync; is:inline cannot import.
-      document.getElementById('license-row').classList.remove('hidden')
-      document.getElementById('skill-license').textContent = skill.license?.trim() || 'Unknown'
+      // NEVER render null as "no license", "unrestricted", or "freely usable". licenseLabel()
+      // (src/lib/license-label.ts) is now imported directly (the bundled <script> can import).
+      ;(document.getElementById('license-row') as HTMLElement).classList.remove('hidden')
+      ;(document.getElementById('skill-license') as HTMLElement).textContent = licenseLabel(
+        skill.license
+      )
 
       // Tags
-      const tagsContainer = document.getElementById('skill-tags')
-      const noTagsEl = document.getElementById('no-tags')
+      const tagsContainer = document.getElementById('skill-tags') as HTMLElement
+      const noTagsEl = document.getElementById('no-tags') as HTMLElement
       const tags = skill.tags || []
 
       if (tags.length > 0) {
@@ -763,8 +819,8 @@ const categoryJsonLd =
 
       // SMI-3687: Render SKILL.md content if present
       if (skill.content) {
-        const readmeEl = document.getElementById('skill-readme')
-        const contentSection = document.getElementById('skill-content-section')
+        const readmeEl = document.getElementById('skill-readme') as HTMLElement
+        const contentSection = document.getElementById('skill-content-section') as HTMLElement
         readmeEl.textContent = skill.content
         contentSection.classList.remove('hidden')
       }
@@ -812,10 +868,10 @@ const categoryJsonLd =
     }
 
     // SMI-2761: Render "Users also installed" section — omit entirely when empty
-    function loadAlsoInstalled(alsoInstalled) {
+    function loadAlsoInstalled(alsoInstalled: AlsoInstalledSkill[]) {
       if (!alsoInstalled || alsoInstalled.length === 0) return
-      const section = document.getElementById('also-installed-section')
-      const container = document.getElementById('also-installed-skills')
+      const section = document.getElementById('also-installed-section') as HTMLElement
+      const container = document.getElementById('also-installed-skills') as HTMLElement
       container.innerHTML = alsoInstalled
         .map(
           (s) => `
@@ -829,9 +885,9 @@ const categoryJsonLd =
     }
 
     // Load related skills
-    async function loadRelatedSkills(relatedIds) {
-      const relatedSection = document.getElementById('related-section')
-      const relatedContainer = document.getElementById('related-skills')
+    function loadRelatedSkills(relatedIds: string[]) {
+      const relatedSection = document.getElementById('related-section') as HTMLElement
+      const relatedContainer = document.getElementById('related-skills') as HTMLElement
 
       try {
         // For now, just show the IDs as links
@@ -847,7 +903,7 @@ const categoryJsonLd =
           .join('')
 
         relatedSection.classList.remove('hidden')
-      } catch (error) {
+      } catch {
         // Silent fail for related skills (non-critical feature)
       }
     }
@@ -880,16 +936,17 @@ const categoryJsonLd =
         }
         renderSkill(result.data)
       } catch (error) {
-        showError(error.message)
+        showError((error as Error).message)
       }
     }
 
     // Copy to clipboard
-    document.querySelectorAll('.copy-button').forEach((button) => {
+    document.querySelectorAll<HTMLButtonElement>('.copy-button').forEach((button) => {
       button.addEventListener('click', async () => {
         const targetId = button.getAttribute('data-target')
+        if (!targetId) return
         const targetEl = document.getElementById(targetId)
-        const text = targetEl.textContent
+        const text = targetEl?.textContent ?? ''
 
         try {
           await navigator.clipboard.writeText(text)
@@ -913,7 +970,7 @@ const categoryJsonLd =
           setTimeout(() => {
             button.innerHTML = originalHTML
           }, 2000)
-        } catch (error) {
+        } catch {
           // Silent fail for clipboard
         }
       })

@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.8.0'
+export const VERSION = '0.8.2'
 
 // ============================================================================
 // Grouped Exports from Barrel Files
@@ -267,6 +267,9 @@ export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './utils/github-ur
 
 // SMI-2274: Safe filesystem operations
 export { safeWriteFile, SymlinkError, HardlinkError } from './utils/safe-fs.js'
+
+// SMI-5407: Skill source provenance recovery
+export * from './provenance/index.js'
 
 // SMI-4124: Curated stoplists for skill_pack_audit trigger-quality checks
 export { GENERIC_TRIGGERS } from './data/generic-triggers.js'

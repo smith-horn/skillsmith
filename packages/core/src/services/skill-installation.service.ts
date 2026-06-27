@@ -39,7 +39,7 @@ import {
 import {
   fetchFromGitHub,
   writeInstallFiles,
-  fetchOptionalInstallFiles,
+  fetchAndScanOptionalFiles,
 } from './skill-installation.io.js'
 import { buildInstallFailure, buildConfirmationRequired } from './skill-installation.errors.js'
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
@@ -284,21 +284,11 @@ export class SkillInstallationService {
 
       const { finalSkillContent, subSkillFiles, subagentContent, optimizationInfo } = optimizeResult
       const contentHash = hashContent(finalSkillContent)
-      this.onProgress('write', 'Writing skill files')
-      const writeResult = await writeInstallFiles(
-        installPath,
-        this.skillsDir,
-        skillName,
-        finalSkillContent,
-        subSkillFiles,
-        subagentContent
-      )
-      if (writeResult.subagentPath) {
-        optimizationInfo.subagentPath = writeResult.subagentPath
-      }
-      // Fetch optional files
-      const configWarnings = await fetchOptionalInstallFiles(
-        installPath,
+      // SMI-5359 Gap-1: fetch + scan optional files BEFORE writing anything, so a
+      // malicious optional file rejects the install with no files stranded on disk.
+      // (H4: previously writeInstallFiles ran first, so a post-write reject left
+      // SKILL.md orphaned; the optional scan also silently `continue`d on failure.)
+      const optionalFiles = await fetchAndScanOptionalFiles(
         owner,
         repo,
         basePath,
@@ -306,6 +296,52 @@ export class SkillInstallationService {
         skillId,
         options.skipScan ? null : TRUST_TIER_SCANNER_OPTIONS[trustTier]
       )
+      if (optionalFiles.failedScans.length > 0) {
+        const first = optionalFiles.failedScans[0]
+        const crit = first.report.findings.filter(
+          (f) => f.severity === 'critical' || f.severity === 'high'
+        )
+        const others = optionalFiles.failedScans.slice(1).map((s) => s.file)
+        return buildInstallFailure('SCAN_REJECTED', {
+          skillId,
+          installPath,
+          trustTier,
+          securityReport: first.report,
+          error:
+            'Optional file "' +
+            first.file +
+            '" failed the security scan with ' +
+            crit.length +
+            ' critical/high finding(s) (risk score ' +
+            first.report.riskScore +
+            ').',
+          tips: [
+            'Rejected optional file: ' + first.file,
+            'Risk score: ' + first.report.riskScore,
+            ...(others.length > 0 ? ['Other rejected optional files: ' + others.join(', ')] : []),
+          ],
+        })
+      }
+      this.onProgress('write', 'Writing skill files')
+      // Optional files ride writeInstallFiles' rollback alongside the sub-skills.
+      // Dedupe by filename first: a generated sub-skill and a repo optional file
+      // could collide (e.g. examples.md), which would race in writeInstallFiles'
+      // Promise.all. Drop the colliding sub-skill so the optional wins — matching
+      // the prior behavior (optional files were written last, after the sub-skills).
+      const subSkillsNoCollision = subSkillFiles.filter(
+        (s) => !optionalFiles.filesToWrite.some((o) => o.filename === s.filename)
+      )
+      const writeResult = await writeInstallFiles(
+        installPath,
+        this.skillsDir,
+        skillName,
+        finalSkillContent,
+        [...subSkillsNoCollision, ...optionalFiles.filesToWrite],
+        subagentContent
+      )
+      if (writeResult.subagentPath) {
+        optimizationInfo.subagentPath = writeResult.subagentPath
+      }
       // Update manifest
       this.onProgress('manifest', 'Updating manifest')
       await this.manifest.updateSafely((currentManifest) => ({
@@ -369,7 +405,7 @@ export class SkillInstallationService {
       this.onProgress('done', 'Installation complete')
       const tips = generateTips(skillName, optimizationInfo)
       tips.unshift(...trendWarnings)
-      tips.push(...configWarnings)
+      tips.push(...optionalFiles.configWarnings)
       if (options.skipScan) {
         tips.unshift('Security scan was skipped. This skill was not scanned for malicious content.')
       }

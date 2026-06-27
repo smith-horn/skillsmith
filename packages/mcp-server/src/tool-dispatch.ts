@@ -24,8 +24,10 @@ import { publishInputSchema, executePublish } from './tools/publish.js'
 import { skillUpdatesInputSchema, executeSkillUpdates } from './tools/skill-updates.js'
 import { skillDiffInputSchema, executeSkillDiff } from './tools/skill-diff.js'
 import { dispatchAuditTool } from './audit-tool-dispatch.js'
+import { isProvenanceToolName, dispatchProvenanceTool } from './provenance-tool-dispatch.js'
 import { outdatedInputSchema, executeOutdated } from './tools/outdated.js'
 import { skillRescanInputSchema, executeSkillRescan } from './tools/skill-rescan.js'
+import { QuarantineRepository } from '@skillsmith/core'
 import {
   auditExportInputSchema,
   executeAuditExport,
@@ -215,7 +217,9 @@ export async function dispatchToolCall(
     case 'skill_rescan': {
       const parsed = safeParseOrError(skillRescanInputSchema, args, 'skill_rescan')
       if (!parsed.ok) return parsed.response
-      return ok(await executeSkillRescan(parsed.data))
+      // SMI-5358: pass QuarantineRepository so over-threshold findings are persisted
+      const quarantineRepo = new QuarantineRepository(toolContext.db)
+      return ok(await executeSkillRescan(parsed.data, undefined, quarantineRepo))
     }
 
     case 'audit_export':
@@ -439,6 +443,12 @@ export async function dispatchToolCall(
       )
 
     default: {
+      // SMI-5407: provenance-family tools (`skill_recover_source`) live in
+      // `provenance-tool-dispatch.ts` to keep this file under the 500-LOC gate.
+      if (isProvenanceToolName(name)) {
+        return dispatchProvenanceTool(name, args, toolContext)
+      }
+
       // SMI-3913: Return comingSoon response for tools in TOOL_FEATURES that
       // don't have a dispatch handler yet, instead of throwing Unknown tool.
       // null = community tool (handled above), non-null = gated tool on roadmap.
