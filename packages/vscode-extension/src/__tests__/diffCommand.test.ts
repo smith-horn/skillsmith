@@ -210,6 +210,24 @@ describe('diffCommand', () => {
     expect(diffCreateOrShow).not.toHaveBeenCalled()
   })
 
+  it('shows a local-skill message and skips the registry for a bare-id (local) skill (SMI-5406)', async () => {
+    const localSkill = { ...INSTALLED_SKILL, id: 'ci-doctor', name: 'CI Doctor' }
+    showQuickPick.mockResolvedValue({ item: localSkill })
+
+    const treeProvider = makeTreeProvider([localSkill])
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await diffCommandAction({ treeProvider: treeProvider as any, context: FAKE_CONTEXT as any })
+
+    // A bare-id local skill short-circuits BEFORE the registry call: no get_skill,
+    // no diff, no panel, and NOT the misleading "removed or renamed" warning.
+    expect(mcpGetSkill).not.toHaveBeenCalled()
+    expect(mcpSkillDiff).not.toHaveBeenCalled()
+    expect(diffCreateOrShow).not.toHaveBeenCalled()
+    expect(showWarningMessage).not.toHaveBeenCalled()
+    expect(showInformationMessage).toHaveBeenCalledWith(expect.stringContaining('is a local skill'))
+  })
+
   it('shows info message when there are no installed skills', async () => {
     const treeProvider = makeTreeProvider([])
 

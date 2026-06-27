@@ -22,6 +22,7 @@ import { withTelemetry } from '../services/telemetry-wrap.js'
 import { track } from '../services/Telemetry.js'
 import { SkillDiffPanel } from '../views/SkillDiffPanel.js'
 import type { SkillDiffArgs } from '../views/diff-panel-types.js'
+import { isLocalSkillId } from '../utils/skillId.js'
 
 interface InstalledPickItem extends vscode.QuickPickItem {
   item: SkillItemData
@@ -70,6 +71,17 @@ async function diffCommandImpl(deps: {
     skill = await pickInstalledSkill(deps.treeProvider)
   }
   if (!skill || !skill.path) {
+    return
+  }
+
+  // A local (bare-id) skill is not published to the registry, so the update
+  // advisor has no published version to diff against. Show an accurate message
+  // rather than letting the get_skill rejection below render the misleading
+  // registry "removed or renamed" copy. SMI-5406.
+  if (isLocalSkillId(skill.id)) {
+    void vscode.window.showInformationMessage(
+      `"${skill.name}" is a local skill (not published to the Skillsmith registry), so there's no published version to compare against.`
+    )
     return
   }
 
