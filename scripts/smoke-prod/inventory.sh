@@ -82,10 +82,13 @@ check_get_user_inventory_rpc_denies_anon() {
   }
   local anon="${SUPABASE_ANON_KEY:-}"
   if [ -z "$anon" ]; then
-    # Anon key absent (e.g. a local run) -- skip without pass/fail, mirroring
-    # events.sh row-visibility. CI always supplies SUPABASE_ANON_KEY.
-    smoke_warn "SUPABASE_ANON_KEY not set -- skipping anon-denial RPC check"
-    return 0
+    # This is a load-bearing security gate (NOT optional like events.sh
+    # row-visibility): a missing key must FAIL loudly, never silently pass, so a
+    # misconfigured/rotated CI secret cannot let the run report green while this
+    # check ran nothing. Mirrors the SUPABASE_URL guard above.
+    report_fail "edge-fn-inventory-upload" "check_get_user_inventory_rpc_denies_anon" \
+      "" "SUPABASE_ANON_KEY" "unset"
+    return 1
   fi
   local url="${SMOKE_SUPABASE_URL}/rest/v1/rpc/get_user_inventory"
   local t0 t1 ms status

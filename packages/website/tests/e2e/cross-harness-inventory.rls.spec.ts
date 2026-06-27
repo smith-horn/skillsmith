@@ -103,10 +103,13 @@ test.describe('Cross-Harness Skill Inventory — RLS isolation (staging)', () =>
       expect(upStatus, `X upload status; body: ${JSON.stringify(upBody)}`).toBe(200)
       expect((upBody as Record<string, unknown>)['applied']).toBe(true)
 
-      // ─── 2. User Y reads get_user_inventory under their OWN JWT (RLS-enforced) ───
-      // Y is a distinct auth.users row; the RPC filters on auth.uid() and the
-      // tables' SELECT policies are auth.uid() = user_id, so Y must see none of
-      // X's rows. (Y owns no devices, so Y's own result is empty.)
+      // ─── 2. User Y reads get_user_inventory under their OWN JWT ───
+      // get_user_inventory (migration 20260626000001) is LANGUAGE sql filtering
+      // ONLY on `WHERE d.user_id = auth.uid()` — it does NOT gate reads on
+      // inventory_sync_enabled (consent gates writes, not reads), so Y's empty
+      // result is due to the auth.uid() filter, not consent suppression. Y is a
+      // distinct auth.users row and owns no devices, so Y must see none of X's
+      // rows; a broken filter would leak them.
       const yClient = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
         auth: { persistSession: false, autoRefreshToken: false },
       })
@@ -136,6 +139,24 @@ test.describe('Cross-Harness Skill Inventory — RLS isolation (staging)', () =>
       expect(
         yResult.some((r) => r['skill_id'] === secretSkillId),
         "Y's inventory must not contain X's secret skill_id (RLS read isolation)"
+      ).toBe(false)
+
+      // ─── 2b. Direct PostgREST table read as Y — exercises the *_owner_select
+      // RLS POLICIES directly (get_user_inventory is SECURITY DEFINER and
+      // self-filters on auth.uid(); the table policies protect direct REST
+      // reads). X's row EXISTS and is owned by X, so a correct policy returns it
+      // to nobody but X. Either RLS filters it to [] or the authenticated role
+      // lacks direct table SELECT — both mean "no leak"; the ONLY failure is X's
+      // row appearing in Y's direct read, which would be a real RLS regression.
+      const { data: yDirect } = await withTimeout(
+        yClient.from('device_skills').select('device_id, skill_id').eq('device_id', deviceId),
+        STAGING_CALL_TIMEOUT_MS,
+        'Test E / direct device_skills read (Y)'
+      )
+      const directRows = (yDirect ?? []) as Array<Record<string, unknown>>
+      expect(
+        directRows.some((r) => r['device_id'] === deviceId),
+        "Y's direct device_skills read must not leak X's row (RLS *_owner_select policy)"
       ).toBe(false)
 
       // ─── 3. Browser: Y's /account/skills must not render X's card ───
