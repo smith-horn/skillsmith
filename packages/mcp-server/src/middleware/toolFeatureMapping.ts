@@ -57,6 +57,8 @@ export const TOOL_FEATURES: Record<string, FeatureFlag | null> = {
   skill_compare: null,
   skill_suggest: null,
   skill_outdated: null,
+  // SMI-5407: source provenance recovery (Community, read-only)
+  skill_recover_source: null,
 
   // Individual tools
   skill_updates: 'version_tracking',

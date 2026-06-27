@@ -117,24 +117,27 @@ function buildRawUrl(source: string): string | null {
   return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/SKILL.md`
 }
 
-async function fetchLatestContent(skillName: string): Promise<string | null> {
+async function fetchLatestContent(
+  skillName: string
+): Promise<{ content: string | null; sourceTracked: boolean }> {
   try {
     const manifest = await loadManifest()
     const entry = manifest.installedSkills[skillName]
-    if (!entry?.source) return null
+    if (!entry?.source) return { content: null, sourceTracked: false }
 
     const rawUrl = buildRawUrl(entry.source)
-    if (!rawUrl) return null
+    if (!rawUrl) return { content: null, sourceTracked: true }
 
     const response = await fetch(rawUrl, {
       headers: { Accept: 'text/plain' },
       signal: AbortSignal.timeout(10_000),
     })
 
-    if (!response.ok) return null
-    return await response.text()
+    if (!response.ok) return { content: null, sourceTracked: true }
+    const text = await response.text()
+    return { content: text, sourceTracked: true }
   } catch {
-    return null
+    return { content: null, sourceTracked: true }
   }
 }
 
@@ -195,17 +198,21 @@ async function diffActionImpl(
     if (opts.newContent) {
       newContent = await readFile(opts.newContent, 'utf-8')
     } else {
-      newContent = await fetchLatestContent(skillName)
-    }
-
-    if (!newContent) {
-      console.error(
-        chalk.red(
-          `Could not fetch latest version for "${skillName}". ` +
-            `Check your network connection or provide --new-content.`
+      const fetched = await fetchLatestContent(skillName)
+      newContent = fetched.content
+      if (!newContent) {
+        const noSourceHint = !fetched.sourceTracked
+          ? ` Source not tracked for "${skillName}". Run \`sklx audit sources\` (or MCP skill_recover_source) to recover.`
+          : ''
+        console.error(
+          chalk.red(
+            `Could not fetch latest version for "${skillName}". ` +
+              `Check your network connection or provide --new-content.` +
+              noSourceHint
+          )
         )
-      )
-      process.exit(1)
+        process.exit(1)
+      }
     }
 
     const diff = diffSections(oldContent, newContent)
