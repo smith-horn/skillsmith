@@ -35,6 +35,7 @@ import {
   makeLoadDb,
   makeRunDb,
   stubFetchCleanAlways,
+  stubFetchMaliciousAlways,
   stubFetchTransientAlways,
   BASE_OPTS,
 } from './recheck.test-helpers.ts'
@@ -224,6 +225,49 @@ describe('runRecheck — self-heal (quarantined clean row cleared)', () => {
     // A clear is a state transition → audited.
     expect(handle.auditInserts).toHaveLength(1)
     expect(handle.auditInserts[0].event_type).toBe('quarantine:cleared')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5377 retro: the run-level `requarantined` counter aggregation (the switch
+// case + assembly into RecheckAuditCounters) was unit-tested only at processRow
+// level by the sibling requarantine test — never end-to-end through runRecheck.
+// A typo (`keptSecurity++` under `case 'requarantined'`) would compile, pass all
+// other tests, and silently undercount re-quarantines in the audit metadata —
+// the same invisible-success class SMI-5377 fixed. This pins the run-level path.
+
+describe('runRecheck — re-quarantine (clean LIVE row turned malicious, SMI-5377)', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('counts requarantined (not kept_security/live_touched) and audits quarantine:requarantined', async () => {
+    stubFetchMaliciousAlways()
+    // A LIVE (quarantined=false) row enters via the pass-1 prevention cohort;
+    // its upstream content has turned malicious.
+    const row = makeRow({ id: 'req-1', quarantined: false, quarantine_reason: null })
+    const handle = makeRunDb({
+      pass1: [row],
+      pass2: [],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    // The run-level aggregation increments requarantined, NOT kept_security/live_touched.
+    expect(result.recheck.requarantined).toBe(1)
+    expect(result.recheck.kept_security).toBe(0)
+    expect(result.recheck.live_touched).toBe(0)
+    // The re-quarantine payload flips quarantined=true with a reason.
+    expect(handle.updatePayloads).toHaveLength(1)
+    expect(handle.updatePayloads[0].quarantined).toBe(true)
+    expect(handle.updatePayloads[0].quarantine_reason).toBeTruthy()
+    // A live→malicious transition is the distinct requarantined audit event.
+    expect(handle.auditInserts).toHaveLength(1)
+    expect(handle.auditInserts[0].event_type).toBe('quarantine:requarantined')
   })
 })
 

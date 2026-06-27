@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { executeGetSkill, formatSkillDetails } from '../tools/get-skill.js'
-import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import { SkillsmithError, ErrorCodes, QuarantineRepository } from '@skillsmith/core'
 import { createSeededTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 
 let context: ToolContext
@@ -480,5 +480,94 @@ describe('formatSkillDetails — license display (SMI-5327)', () => {
   it('renders "License: Unknown" when license is whitespace-only', () => {
     const formatted = formatSkillDetails(baseResponse('   '))
     expect(formatted).toContain('License: Unknown')
+  })
+})
+
+/**
+ * SMI-5360: formatSkillDetails installability line. A skill that carries a
+ * repository but is not installable is blocked (quarantined / failed scan), NOT
+ * discovery-only — the reason text must distinguish the two.
+ */
+describe('formatSkillDetails — installability (SMI-5360)', () => {
+  const baseSkill = {
+    id: 'test/skill',
+    name: 'test-skill',
+    description: 'A test skill',
+    author: 'test',
+    category: 'development' as const,
+    trustTier: 'community' as const,
+    score: 80,
+    tags: [] as string[],
+    installCommand: 'claude skill add test/skill',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+  }
+  const responseWith = (overrides: { installable?: boolean; repository?: string }) => ({
+    skill: { ...baseSkill, ...overrides },
+    installCommand: 'claude skill add test/skill',
+    timing: { totalMs: 10 },
+  })
+
+  it('prints "Installable: yes" when installable', () => {
+    const formatted = formatSkillDetails(
+      responseWith({ installable: true, repository: 'https://github.com/test/skill' })
+    )
+    expect(formatted).toContain('Installable: yes')
+  })
+
+  it('labels a non-installable skill that has a repository as blocked, not discovery-only', () => {
+    const formatted = formatSkillDetails(
+      responseWith({ installable: false, repository: 'https://github.com/test/skill' })
+    )
+    expect(formatted).toContain('Installable: NO')
+    expect(formatted).toContain('blocked')
+    expect(formatted).not.toContain('discovery-only')
+  })
+
+  it('labels a non-installable skill with no repository as discovery-only', () => {
+    const formatted = formatSkillDetails(responseWith({ installable: false }))
+    expect(formatted).toContain('Installable: NO')
+    expect(formatted).toContain('discovery-only')
+    expect(formatted).not.toContain('blocked')
+  })
+})
+
+/**
+ * SMI-5360: end-to-end local-DB path. Local quarantine lives in
+ * QuarantineRepository (a separate table), not on the skill row, so the offline
+ * get_skill fallback must consult it before reporting installability.
+ */
+describe('Get Skill Tool — local-DB quarantine gate (SMI-5360)', () => {
+  it('reports installable=false and labels it blocked for a quarantined seeded skill', async () => {
+    const ctx = await createSeededTestContext()
+    try {
+      const quarantineRepo = new QuarantineRepository(ctx.db)
+      quarantineRepo.create({
+        skillId: 'anthropic/commit',
+        source: 'security-scanner',
+        quarantineReason: 'test: simulated malicious finding',
+        severity: 'MALICIOUS',
+      })
+
+      const result = await executeGetSkill({ id: 'anthropic/commit' }, ctx)
+      expect(result.skill.installable).toBe(false)
+
+      const formatted = formatSkillDetails(result)
+      expect(formatted).toContain('Installable: NO')
+      expect(formatted).toContain('blocked')
+    } finally {
+      await disposeTestContext(ctx)
+    }
+  })
+
+  it('keeps installable=true for a non-quarantined seeded skill (regression guard)', async () => {
+    const ctx = await createSeededTestContext()
+    try {
+      const result = await executeGetSkill({ id: 'anthropic/commit' }, ctx)
+      expect(result.skill.installable).toBe(true)
+      expect(formatSkillDetails(result)).toContain('Installable: yes')
+    } finally {
+      await disposeTestContext(ctx)
+    }
   })
 })

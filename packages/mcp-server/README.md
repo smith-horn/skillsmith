@@ -268,6 +268,7 @@ All tiers include:
 | `index_local` | Index skills from a local directory | Community |
 | `skill_publish` | Prepare a skill for publishing | Community |
 | `skill_rescan` | Re-scan an installed skill's content | Community |
+| `skill_recover_source` | Recover the canonical GitHub source of locally-installed skills (read-only report + candidates) | Community |
 | `skill_updates` | Check registry for newer skill versions | Individual+ |
 | `skill_diff` | Section-level diff between skill versions | Individual+ |
 | `skill_pack_audit` | Audit all skills in a directory | Individual+ |

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Claude Flow V3 Statusline Generator
+ * RuFlo V3 Statusline Generator
  * Displays real-time V3 implementation progress and system status
  *
  * Usage: node statusline.cjs [options]
@@ -349,7 +349,7 @@ function generateStatusline() {
   const lines = []
 
   // Header Line
-  let header = `${c.bold}${c.brightPurple}▊ Claude Flow V3 ${c.reset}`
+  let header = `${c.bold}${c.brightPurple}▊ RuFlo V3 ${c.reset}`
   header += `${swarm.coordinationActive ? c.brightCyan : c.dim}● ${c.brightCyan}${user.name}${c.reset}`
   if (user.gitBranch) {
     header += `  ${c.dim}│${c.reset}  ${c.brightBlue}⎇ ${user.gitBranch}${c.reset}`
@@ -445,7 +445,7 @@ function generateSingleLine() {
   const securityStatus = security.status === 'CLEAN' ? '✓' : security.cvesFixed > 0 ? '~' : '✗'
 
   return (
-    `${c.brightPurple}CF-V3${c.reset} ${c.dim}|${c.reset} ` +
+    `${c.brightPurple}RuFlo${c.reset} ${c.dim}|${c.reset} ` +
     `${c.cyan}D:${progress.domainsCompleted}/${progress.totalDomains}${c.reset} ${c.dim}|${c.reset} ` +
     `${c.yellow}S:${swarmIndicator}${swarm.activeAgents}/${swarm.maxAgents}${c.reset} ${c.dim}|${c.reset} ` +
     `${security.status === 'CLEAN' ? c.green : c.red}CVE:${securityStatus}${security.cvesFixed}/${security.totalCves}${c.reset} ${c.dim}|${c.reset} ` +
@@ -470,7 +470,7 @@ function generateSafeStatusline() {
   const lines = []
 
   // Header Line
-  let header = `${c.bold}${c.brightPurple}▊ Claude Flow V3 ${c.reset}`
+  let header = `${c.bold}${c.brightPurple}▊ RuFlo V3 ${c.reset}`
   header += `${swarm.coordinationActive ? c.brightCyan : c.dim}● ${c.brightCyan}${user.name}${c.reset}`
   if (user.gitBranch) {
     header += `  ${c.dim}│${c.reset}  ${c.brightBlue}⎇ ${user.gitBranch}${c.reset}`

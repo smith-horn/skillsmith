@@ -29,6 +29,14 @@ import {
   classifyMatch,
   calculateRiskScore,
 } from './security-scanner-edge.context.ts'
+// SMI-5359 Wave 4.2c: code_execution + obfuscated_directive detectors (mirror of
+// core SecurityScanner.exec.ts). Split into a sibling to stay under the 500-line
+// limit; byte-identical body across both _shared twins.
+import {
+  scanCodeExecution,
+  scanObfuscatedDirective,
+  escalateCodeExecution,
+} from './security-scanner-edge.exec.ts'
 
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
@@ -391,6 +399,12 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
   findings.push(...scanDataExfiltration(lines, contexts))
   findings.push(...scanPrivilegeEscalation(lines, contexts))
   findings.push(...scanPromptInjection(lines, contexts))
+  // SMI-5359 Wave 4.2c: remote-fetch-to-interpreter + Unicode-concealed directives.
+  findings.push(...scanCodeExecution(lines, contexts))
+  findings.push(...scanObfuscatedDirective(lines))
+  // Promote code_execution to critical when it co-occurs with a non-doc
+  // exfil/privilege/obfuscation signal (runs after every detector).
+  escalateCodeExecution(findings)
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)

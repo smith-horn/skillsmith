@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import * as cheerio from 'cheerio'
 import type { WireSkill } from '../types/skills'
 import { renderSkillCard } from './skill-card'
 import { formatNumber, getQualityTier } from './skills-utils'
@@ -53,10 +54,10 @@ describe('renderSkillCard', () => {
     )
     expect(html).toMatchInlineSnapshot(`
       "
-              <a href="/skills/acme%2Ftest-runner" class="card-hover block bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50">
+              <div class="card-hover relative bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50 focus-within:border-primary-500/50">
                 <div class="flex items-start justify-between mb-4">
                   <div class="flex-1 min-w-0">
-                    <h3 class="text-lg font-semibold text-white truncate">Test Runner</h3>
+                    <h3 class="text-lg font-semibold text-white truncate"><a href="/skills/acme%2Ftest-runner" class="after:absolute after:inset-0 after:content-['']">Test Runner</a></h3>
                     <p class="text-dark-500 text-sm">acme</p>
                     <span class="inline-flex items-center gap-1 px-2 py-0.5 mt-2 rounded-full text-xs font-medium bg-primary-500/10 text-primary-300 border border-primary-500/30" aria-label="Matches your org: acme">
           <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2a6 6 0 100 12 6 6 0 000-12zm0 2a4 4 0 110 8 4 4 0 010-8z"/></svg>
@@ -92,14 +93,15 @@ describe('renderSkillCard', () => {
                   </div>
                 <div class="mt-3 pt-3 border-t border-dark-800 flex flex-wrap gap-1 items-center">
           <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Claude Code</span><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Cursor</span><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">GitHub Copilot</span><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Windsurf</span>
-          <span id="compat-extra-N" style="display:none"><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Codex</span></span>
+          <span id="compat-extra-N" role="group" aria-label="Additional compatibility tags" tabindex="-1" hidden class="inline-flex flex-wrap gap-1"><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">Codex</span></span>
           <button
             type="button"
-            class="px-1.5 py-0.5 rounded text-xs text-dark-400 hover:text-primary-400 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-500"
+            class="relative z-10 px-1.5 py-0.5 rounded text-xs text-dark-400 hover:text-primary-400 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-500"
+            data-compat-toggle
+            data-compat-target="compat-extra-N"
             aria-label="Show 1 more compatibility tag"
             aria-expanded="false"
             aria-controls="compat-extra-N"
-            onclick="event.preventDefault(); event.stopPropagation(); document.getElementById('compat-extra-N').style.display='contents'; this.setAttribute('aria-expanded','true'); this.style.display='none';"
           >+1 more</button>
         </div>
                 <div class="mt-2">
@@ -110,7 +112,7 @@ describe('renderSkillCard', () => {
             <span>License: <span class="font-medium">MIT</span></span>
           </span>
         </div>
-              </a>
+              </div>
             "
     `)
   })
@@ -241,23 +243,56 @@ describe('renderSkillCard', () => {
       expect(html).toContain('aria-label="Show 2 more compatibility tags"')
     })
 
-    it('onclick contains event.preventDefault() and event.stopPropagation() (SMI-3529 nested-button-in-anchor guard)', () => {
+    it('toggle button has NO inline onclick — delegated handler instead (SMI-5369, CSP-safe)', () => {
       const html = renderSkillCard({ skill: FULL_SKILL, href: FULL_HREF })
-      expect(html).toContain('event.preventDefault()')
-      expect(html).toContain('event.stopPropagation()')
+      // Durable CSP guard: the toggle must never carry an inline handler, regardless
+      // of whether a strict CSP header (no `unsafe-inline`) is deployed. The toggle
+      // is wired via a delegated [data-compat-toggle] listener in skills/index.astro.
+      expect(html).not.toContain('onclick')
     })
 
-    it('max 4 badges are visible before the hidden extra span', () => {
+    it('toggle button exposes data-compat-toggle + data-compat-target === region id, with relative z-10 (SMI-5368/5369)', () => {
+      const html = renderSkillCard({ skill: FULL_SKILL, href: FULL_HREF })
+      const $ = cheerio.load(html)
+      const btn = $('[data-compat-toggle]')
+      expect(btn.length).toBe(1)
+      const target = btn.attr('data-compat-target') ?? ''
+      expect(target).toMatch(/^compat-extra-\d+$/)
+      // data-compat-target points at the real hidden region's id.
+      expect($(`#${target}`).length).toBe(1)
+      // relative z-10 lifts the button above the stretched-link ::after overlay so a
+      // click toggles instead of navigating (plan-review Critical-1).
+      const cls = btn.attr('class') ?? ''
+      expect(cls).toContain('relative')
+      expect(cls).toContain('z-10')
+      expect(btn.attr('onclick')).toBeUndefined()
+    })
+
+    it('hidden extra-tags region is a real focusable group: role/aria-label/tabindex/hidden (SMI-5367)', () => {
+      const html = renderSkillCard({ skill: FULL_SKILL, href: FULL_HREF })
+      const $ = cheerio.load(html)
+      const region = $('[role="group"]')
+      expect(region.length).toBe(1)
+      expect(region.attr('aria-label')).toBe('Additional compatibility tags')
+      expect(region.attr('tabindex')).toBe('-1')
+      // Collapsed via the `hidden` attribute — not the old display:none/display:contents hack.
+      expect(region.is('[hidden]')).toBe(true)
+      expect(html).not.toContain('display:none')
+      expect(html).not.toContain("display='contents'")
+    })
+
+    it('max 4 badges are visible before the hidden extra region', () => {
       const skill: WireSkill = {
         id: 'test',
         name: 'Test',
         compatibility: ['claude-code', 'cursor', 'copilot', 'windsurf', 'codex'],
       }
       const html = renderSkillCard({ skill, href: '/skills/test' })
-      const hiddenIdx = html.indexOf('style="display:none"')
+      // The hidden region starts at role="group" (unique to the compat extra box).
+      const hiddenIdx = html.indexOf('role="group"')
       expect(hiddenIdx).toBeGreaterThan(0)
-      // Everything before the hidden span — only the 4 visible badge spans land here.
-      // The +N more button (also has px-1.5 py-0.5 classes) comes after the hidden span.
+      // Everything before the hidden region — only the 4 visible badge spans land here.
+      // The +N more button (also has px-1.5 py-0.5 classes) comes after the hidden region.
       const visibleSection = html.slice(0, hiddenIdx)
       const visibleBadgeMatches = visibleSection.match(/px-1\.5 py-0\.5 rounded text-xs/g)
       expect(visibleBadgeMatches).toHaveLength(4)

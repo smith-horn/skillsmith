@@ -31,4 +31,10 @@ export const CATEGORY_WEIGHTS: Record<string, number> = {
   ai_defence: 1.9, // SMI-1532: High weight for AI injection attacks
   ssrf: 1.6, // SMI-3509: SSRF instruction detection
   pii: 1.8, // SMI-3864: PII in skill content is high-risk
+  // SMI-5359 Wave 4.2: remote-fetch-to-interpreter and concealed directives are
+  // top-tier risks. Paired with a 0.40 coefficient in calculateRiskScore, a single
+  // CRITICAL finding in either category reaches exactly the 40 quarantine threshold
+  // on its own (50 * 2.0 * 1.0 = 100 -> capped 100 -> * 0.40 = 40).
+  code_execution: 2.0,
+  obfuscated_directive: 2.0,
 }

@@ -65,6 +65,8 @@ import { dispatchToolCall } from './tool-dispatch.js'
 // builder gates `apply_recommended_edit` on APPLY_TEMPLATE_REGISTRY and
 // omits the already-registered `skill_audit` / `skill_pack_audit`.
 import { newAuditToolDefinitions } from './audit-tool-dispatch.js'
+// SMI-5407: skill_recover_source — Community read-only provenance tool
+import { provenanceToolDefinitions } from './provenance-tool-dispatch.js'
 import {
   isFirstRun,
   markFirstRunComplete,
@@ -93,7 +95,7 @@ export type {
 } from './webhooks/stripe-webhook-endpoint.js'
 
 // Package version - keep in sync with package.json
-const PACKAGE_VERSION = '0.5.3'
+const PACKAGE_VERSION = '0.5.5'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 import {
   installBundledSkills,
@@ -158,6 +160,8 @@ const toolDefinitions = [
   // Runtime may register fewer; that correctness is covered by the
   // ListTools-registry test, not Check 25.
   ...newAuditToolDefinitions(),
+  // SMI-5407: skill_recover_source — Community read-only source provenance recovery
+  ...provenanceToolDefinitions(),
 ]
 
 // Create server

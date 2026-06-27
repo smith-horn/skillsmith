@@ -1,47 +1,27 @@
 #!/usr/bin/env tsx
 /**
- * SMI-5165: One-time sweep to re-validate stale-quarantined skills.
+ * SMI-5165: re-validate stale-quarantined skills. `processRow` is also the shared
+ * row-processor for the SMI-5166 recheck cron (recheck.ts imports it + retagUnreachable).
  *
- * Candidate cohort: rows where `quarantined = true` AND `repo_url ILIKE
- * 'https://github.com/%'` AND (`quarantine_reason IS NULL` OR
- * `quarantine_reason = 'stale'`). These were quarantined by the stale-
- * reconciliation path (not by the security scanner), so a security re-scan was
- * never performed. Many are false-positives: the repo still exists and the
- * SKILL.md passes the FIXED scanner (SMI-4960).
+ * Candidate cohort: `quarantined = true` AND `repo_url ILIKE 'https://github.com/%'`
+ * AND (`quarantine_reason IS NULL` OR `= 'stale'`) — quarantined by stale-reconciliation,
+ * not the security scanner, so never security-rescanned; many are false positives.
  *
- * Decision tree per row:
- *   1. parse-failed  — `repo_url` is not a parseable GitHub URL.
- *                      KEEP quarantined; in apply mode re-tag
- *                      `quarantine_reason` = "Repository deleted or not found:
- *                      <repo_url>" so it won't be re-swept.
- *   2. repo-gone     — GitHub Contents API returns non-200 (repo deleted/moved,
- *                      private, or SKILL.md path drifted).
- *                      KEEP quarantined; in apply mode re-tag reason + set
- *                      `last_seen_at` = now so it isn't re-swept next run.
- *   3. kept-security — SKILL.md fetched but `shouldQuarantine(scan)` = true.
- *                      KEEP quarantined; in apply mode re-tag reason with real
- *                      security-finding summary + update `security_score`,
- *                      `security_findings`, `last_scanned_at`.
- *   4. cleared       — SKILL.md fetched and scanner passes (riskScore < 40).
- *                      CAS update gated on `.eq('quarantined', true)` setting
- *                      `quarantined=false, quarantine_reason=null,
- *                      security_findings=[], security_score, last_scanned_at,
- *                      last_seen_at`. Audit log row written for rollback.
+ * Decision tree per row (processRow):
+ *   parse-failed  — repo_url not a parseable GitHub URL → keep; apply re-tags reason.
+ *   repo-gone     — GitHub Contents API non-200 → keep; apply re-tags reason + last_seen_at.
+ *   kept-security — fetched, shouldQuarantine=true, already quarantined → re-tag findings.
+ *   requarantined — fetched, shouldQuarantine=true, row was LIVE (quarantined=false) →
+ *                   set quarantined=true (SMI-5377: re-quarantine the prevention cohort).
+ *   cleared       — scanner passes (riskScore < 40) → CAS clear (gated quarantined=true).
+ *   live-touched  — LIVE clean row → refresh last_seen_at (CAS gated quarantined=false).
  *
- * Safety model:
- *   - `--dry-run` is the DEFAULT; `--apply` performs writes.
- *   - Every clear is a CAS update (gated on `quarantined = true`), so a
- *     concurrent indexer run cannot be double-flipped.
- *   - Every `cleared` row writes an `audit_logs` `quarantine:cleared` row
- *     carrying pre-state for rollback.
- *   - Every `repo-gone`/`parse-failed` re-tag in apply mode writes a
- *     `quarantine:repo_gone` audit row.
- *   - Run OUTSIDE the 00/06/12/18 UTC indexer cron window.
+ * Safety: `--dry-run` is DEFAULT (`--apply` writes); clear/prevention use CAS guards so a
+ * concurrent indexer cannot double-flip; every write audits pre-state for rollback; run
+ * OUTSIDE the 00/06/12/18 UTC indexer cron window.
  *
- * Usage (host tool — requires Docker container running for varlock):
- *   varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts           # dry-run
- *   varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts --apply   # live
- *   varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts --limit 50
+ * Usage (host tool; needs Docker for varlock):
+ *   varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts [--apply] [--limit N]
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -77,6 +57,7 @@ export type StaleOutcome =
   | 'cleared'
   | 'live-touched'
   | 'kept-security'
+  | 'requarantined'
   | 'repo-gone'
   | 'parse-failed'
   | 'fetch-error'
@@ -203,43 +184,57 @@ export async function processRow(
   const scan = await scanSkillContent(fetched.content)
 
   if (shouldQuarantine(scan)) {
-    // Row is genuinely risky — keep quarantined, re-tag with real findings so it
-    // leaves the stale candidate set (won't be re-fetched every run).
+    // Genuinely risky. Already-quarantined rows re-tag; a LIVE row (quarantined ===
+    // false, routed via recheck.ts pass-1) is re-quarantined — SMI-5377 (the prior
+    // code CAS-gated on quarantined=true and never set it, so live rows no-oped).
+    const wasLive = row.quarantined === false
     if (apply) {
       const summary = summarizeFindings(scan.findings) || 'security scan'
       const now = new Date().toISOString()
-      await db
+      // Match by id only + set quarantined:true explicitly. Fail-closed/race-safe:
+      // the demanded end-state is unconditionally quarantined; the rows-affected check
+      // below only needs to guard a row deleted in the interim.
+      const { data: updated, error: updateErr } = await db
         .from('skills')
         .update({
+          quarantined: true,
           quarantine_reason: summary,
           security_score: scan.riskScore,
           security_findings: scan.findings,
           last_scanned_at: now,
         })
         .eq('id', row.id)
-        .eq('quarantined', true)
+        .select('id')
+      if (updateErr) {
+        console.error(`  ERROR re-quarantining ${row.author}/${row.name}: ${updateErr.message}`)
+        return { row, outcome: 'error', score: scan.riskScore }
+      }
 
-      // Audit the security re-tag for parity with the cleared/repo-gone paths.
-      await db.from('audit_logs').insert({
-        event_type: 'quarantine:retagged',
-        actor: 'system',
-        resource: row.id,
-        action: 'revalidate_stale_quarantines',
-        result: 'success',
-        metadata: {
-          smi: 'SMI-5165',
-          sweep: 'stale-revalidation',
-          skill_id: row.id,
-          author: row.author,
-          name: row.name,
-          repo_url: row.repo_url,
-          new_score: scan.riskScore,
-          new_reason: summary,
-          prev_quarantine_reason: row.quarantine_reason,
-        },
-      })
+      // Audit the change (parity with cleared/repo-gone). A live->malicious transition
+      // is a distinct event from a stale re-tag, for ops observability.
+      if (updated && updated.length > 0) {
+        await db.from('audit_logs').insert({
+          event_type: wasLive ? 'quarantine:requarantined' : 'quarantine:retagged',
+          actor: 'system',
+          resource: row.id,
+          action: 'revalidate_stale_quarantines',
+          result: 'success',
+          metadata: {
+            smi: wasLive ? 'SMI-5377' : 'SMI-5165',
+            sweep: 'stale-revalidation',
+            skill_id: row.id,
+            author: row.author,
+            name: row.name,
+            repo_url: row.repo_url,
+            new_score: scan.riskScore,
+            new_reason: summary,
+            prev_quarantine_reason: row.quarantine_reason,
+            prev_quarantined: row.quarantined ?? null,
+          },
+        })
+      }
     }
-    return { row, outcome: 'kept-security', score: scan.riskScore }
+    return { row, outcome: wasLive ? 'requarantined' : 'kept-security', score: scan.riskScore }
   }
 
   // Step 4: scanner passes.
@@ -431,6 +426,10 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
           counts.errors++
           console.error(`  ERROR  ${tag} — left quarantined (DB update failed)`)
           break
+        default:
+          // 'requarantined' can't arise here (loadCandidates filters quarantined=true);
+          // guard so a future filter change can never silently drop an outcome.
+          console.warn(`  WARN   ${tag} — unhandled outcome ${r.outcome}`)
       }
     }
   }

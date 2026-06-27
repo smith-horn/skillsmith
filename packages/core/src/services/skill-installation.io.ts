@@ -9,7 +9,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { safeWriteFile } from '../utils/safe-fs.js'
 import { SecurityScanner } from '../security/index.js'
-import type { ScannerOptions } from '../security/index.js'
+import type { ScannerOptions, ScanReport } from '../security/index.js'
 import { validateOptionalConfig } from './skill-installation.validate.js'
 
 export function assertNotEncrypted(content: string, filePath: string): void {
@@ -90,6 +90,24 @@ export async function writeInstallFiles(
 ): Promise<WriteInstallResult> {
   const writtenFiles: string[] = []
   let subagentPath: string | undefined
+  // SMI-5359 (retro): lexically reject an escaping installPath BEFORE any filesystem
+  // mutation. path.resolve normalizes `..`, so an unsanitized skillName like '..'
+  // (e.g. path.basename('foo/..')) or a compromised registry skillName cannot drive
+  // installPath outside skillsDir and reach the rollback below. Thrown here, nothing
+  // has been created, so no cleanup is needed.
+  const resolvedInstall = path.resolve(installPath)
+  const resolvedSkillsDir = path.resolve(skillsDir)
+  if (
+    resolvedInstall !== resolvedSkillsDir &&
+    !resolvedInstall.startsWith(resolvedSkillsDir + path.sep)
+  ) {
+    throw new Error('Install path escapes skills directory (lexical): ' + installPath)
+  }
+  // Only set true once installPath is PROVEN inside skillsDir (both the lexical check
+  // above and the realpath check below). The recursive rollback rm keys off this so it
+  // can never force-delete an out-of-bounds path (e.g. a symlink-escape the realpath
+  // check rejects after mkdir).
+  let pathValidated = false
   try {
     await fs.mkdir(installPath, { recursive: true })
     // SMI-4692: realpath both sides — macOS /var/folders symlinks to /private/var/folders.
@@ -99,8 +117,9 @@ export async function writeInstallFiles(
       !realInstallPath.startsWith(expectedPrefix + path.sep) &&
       realInstallPath !== expectedPrefix
     ) {
-      throw new Error('Install path escapes skills directory: ' + installPath)
+      throw new Error('Install path escapes skills directory (realpath): ' + installPath)
     }
+    pathValidated = true
 
     const mainSkillPath = path.join(installPath, 'SKILL.md')
     await safeWriteFile(mainSkillPath, finalSkillContent)
@@ -124,44 +143,88 @@ export async function writeInstallFiles(
       writtenFiles.push(subagentPath)
     }
   } catch (writeError) {
-    // Rollback on failure
+    // Rollback on failure. Unlink tracked files first (subagentPath lives OUTSIDE
+    // installPath, under ~/.claude/agents).
     for (const filePath of writtenFiles) {
       await fs.unlink(filePath).catch(() => {})
     }
-    await fs.rmdir(installPath).catch(() => {})
+    // Only recursively remove installPath once it has been PROVEN inside skillsDir
+    // (pathValidated) — so an untracked orphan from a mid-batch Promise.all write can't
+    // survive. If mkdir or the realpath escape guard threw, installPath was never
+    // validated; fall back to a non-recursive rmdir, a safe no-op on a non-empty or
+    // out-of-bounds directory (NEVER a recursive force-delete of an unvalidated path).
+    if (pathValidated) {
+      await fs.rm(installPath, { recursive: true, force: true }).catch(() => {})
+    } else {
+      await fs.rmdir(installPath).catch(() => {})
+    }
     throw writeError
   }
   return { writtenFiles, subagentPath }
 }
 
-export async function fetchOptionalInstallFiles(
-  installPath: string,
+export interface OptionalInstallFilesResult {
+  /** Validation warnings from config.json (surfaced as install tips). */
+  configWarnings: string[]
+  /**
+   * SMI-5359 Gap-1: non-doc optional files whose security scan failed.
+   * A non-empty list MUST reject the install BEFORE any file is written.
+   */
+  failedScans: Array<{ file: string; report: ScanReport }>
+  /** Validated optional files to write only AFTER the install gate passes. */
+  filesToWrite: Array<{ filename: string; content: string }>
+}
+
+/**
+ * Prose-documentation optional files: they routinely quote attack strings as
+ * examples, so a scan failure on these is skipped (FP control, H6) rather than
+ * rejecting the install. Non-doc optional files (config.json) DO hard-reject.
+ */
+const DOC_OPTIONAL_FILES = new Set(['README.md', 'examples.md'])
+
+/**
+ * SMI-5359 Gap-1: fetch + scan the optional install files WITHOUT writing them.
+ * The caller runs this BEFORE writeInstallFiles, rejects on any `failedScans`,
+ * and only then writes `filesToWrite` (so a malicious optional file can never
+ * leave a partially-installed skill on disk). A fetch/404 error is a silent
+ * skip (NOT a scan failure); a config.json that fails scanning IS a rejection.
+ */
+export async function fetchAndScanOptionalFiles(
   owner: string,
   repo: string,
   basePath: string,
   branch: string,
   skillId: string,
   scannerOptions: ScannerOptions | null
-): Promise<string[]> {
+): Promise<OptionalInstallFilesResult> {
   const optionalFileScanner = scannerOptions ? new SecurityScanner(scannerOptions) : null
   const optionalFiles = ['README.md', 'examples.md', 'config.json']
   const configWarnings: string[] = []
+  const failedScans: Array<{ file: string; report: ScanReport }> = []
+  const filesToWrite: Array<{ filename: string; content: string }> = []
   for (const file of optionalFiles) {
+    let content: string
     try {
-      const content = await fetchFromGitHub(owner, repo, basePath + file, branch)
-      if (optionalFileScanner) {
-        const fileScan = optionalFileScanner.scan(skillId + '/' + file, content)
-        if (!fileScan.passed) continue
-      }
-      if (file === 'config.json') {
-        const configCheck = validateOptionalConfig(content)
-        if (!configCheck.valid) continue // SMI-3870: skip invalid config
-        configWarnings.push(...configCheck.warnings)
-      }
-      await safeWriteFile(path.join(installPath, file), content)
+      content = await fetchFromGitHub(owner, repo, basePath + file, branch)
     } catch {
-      // Optional files are fine to skip
+      // Optional file absent / fetch failed — fine to skip (NOT a scan failure).
+      continue
     }
+    if (optionalFileScanner) {
+      const fileScan = optionalFileScanner.scan(skillId + '/' + file, content)
+      if (!fileScan.passed) {
+        // H6: prose docs quote attack strings — skip, never reject the install.
+        if (DOC_OPTIONAL_FILES.has(file)) continue
+        failedScans.push({ file, report: fileScan })
+        continue
+      }
+    }
+    if (file === 'config.json') {
+      const configCheck = validateOptionalConfig(content)
+      if (!configCheck.valid) continue // SMI-3870: skip invalid config
+      configWarnings.push(...configCheck.warnings)
+    }
+    filesToWrite.push({ filename: file, content })
   }
-  return configWarnings
+  return { configWarnings, failedScans, filesToWrite }
 }

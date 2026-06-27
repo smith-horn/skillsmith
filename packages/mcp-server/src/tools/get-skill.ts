@@ -27,12 +27,11 @@ import {
   type MCPSkill as Skill,
   type GetSkillResponse,
   type AlsoInstalledSkill,
-  type MCPTrustTier as TrustTier,
   type SecuritySummary,
-  TrustTierDescriptions,
   SkillsmithError,
   ErrorCodes,
   trackSkillView,
+  QuarantineRepository,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
@@ -168,7 +167,10 @@ async function executeGetSkillImpl(
         repository: apiSkill.repo_url || undefined,
         // SMI-4954: installable when the registry row carries a repo_url —
         // discovery-only entries (repo_url null, SMI-2723) cannot be installed.
-        installable: Boolean(apiSkill.repo_url),
+        // SMI-5360: a quarantined skill is never installable — install_skill
+        // refuses it (validate.ts:149), so reporting installable:true here would
+        // be a self-contradictory response next to the security warning.
+        installable: Boolean(apiSkill.repo_url) && apiSkill.quarantined !== true,
         version: undefined,
         // SMI-4240: Prefer the category joined from skill_categories by the API
         // (populated by the indexer's classifier) over tag-based inference.
@@ -236,6 +238,15 @@ async function executeGetSkillImpl(
     })
   }
 
+  // SMI-5360: mirror the API-path quarantine gate on the local DB fallback.
+  // Local quarantine lives in a separate table (QuarantineRepository), not on
+  // the skill row. Only consult it when the skill has a repoUrl (a skill with
+  // no repoUrl is non-installable regardless) — this matches install.helpers.ts,
+  // which constructs the repo only inside its repoUrl guard.
+  const isLocalQuarantined = dbSkill.repoUrl
+    ? new QuarantineRepository(context.db).isQuarantined(dbSkill.id || skillId)
+    : false
+
   // Convert database skill to MCP skill format
   const skill: Skill = {
     id: dbSkill.id,
@@ -244,7 +255,8 @@ async function executeGetSkillImpl(
     author: dbSkill.author || 'unknown',
     repository: dbSkill.repoUrl || undefined,
     // SMI-4954: installable when the local DB row carries a repoUrl
-    installable: Boolean(dbSkill.repoUrl),
+    // SMI-5360: ...and the skill is not locally quarantined.
+    installable: Boolean(dbSkill.repoUrl) && !isLocalQuarantined,
     version: undefined, // Version not stored in current schema
     category: extractCategoryFromTags(dbSkill.tags),
     trustTier: mapTrustTierFromDb(dbSkill.trustTier as import('@skillsmith/core').TrustTier),
@@ -301,184 +313,10 @@ async function executeGetSkillImpl(
   }
 }
 
-/**
- * Format skill details for terminal/CLI display.
- *
- * Produces a comprehensive human-readable string including:
- * - Basic info (ID, author, version, category)
- * - Full description
- * - Trust tier with explanation
- * - Visual score breakdown bars
- * - Repository and tags
- * - Installation command
- *
- * @param response - Get skill response from executeGetSkill
- * @returns Formatted string suitable for terminal output
- *
- * @example
- * const response = await executeGetSkill({ id: 'getsentry/commit' });
- * console.log(formatSkillDetails(response));
- * // Output:
- * // === commit ===
- * // ID: getsentry/commit
- * // Author: getsentry
- * // Version: 1.2.0
- * // ...
- */
-export function formatSkillDetails(response: GetSkillResponse): string {
-  const skill = response.skill
-  const lines: string[] = []
-
-  lines.push('\n=== ' + skill.name + ' ===\n')
-
-  // Basic info
-  lines.push('ID: ' + skill.id)
-  lines.push('Author: ' + skill.author)
-  lines.push('Version: ' + (skill.version || 'N/A'))
-  lines.push('Category: ' + skill.category)
-  // SMI-4954: surface installability so callers don't try to install a
-  // discovery-only entry that install_skill cannot resolve.
-  if (skill.installable === false) {
-    lines.push('Installable: NO — discovery-only entry (install_skill will not resolve this)')
-  } else if (skill.installable === true) {
-    lines.push('Installable: yes')
-  }
-  lines.push('')
-
-  // Description
-  lines.push('Description:')
-  lines.push('  ' + skill.description)
-  lines.push('')
-
-  // Trust tier with explanation
-  lines.push('Trust Tier: ' + formatTrustTier(skill.trustTier))
-  lines.push('  ' + TrustTierDescriptions[skill.trustTier])
-  lines.push('')
-
-  // Score breakdown
-  lines.push('Overall Score: ' + skill.score + '/100')
-  if (skill.scoreBreakdown) {
-    lines.push('Score Breakdown:')
-    lines.push('  Quality:       ' + formatScoreBar(skill.scoreBreakdown.quality))
-    lines.push('  Popularity:    ' + formatScoreBar(skill.scoreBreakdown.popularity))
-    lines.push('  Maintenance:   ' + formatScoreBar(skill.scoreBreakdown.maintenance))
-    lines.push('  Security:      ' + formatScoreBar(skill.scoreBreakdown.security))
-    lines.push('  Documentation: ' + formatScoreBar(skill.scoreBreakdown.documentation))
-  }
-  lines.push('')
-
-  // Repository
-  if (skill.repository) {
-    lines.push('Repository: ' + skill.repository)
-  }
-
-  // SMI-5327: License — null / whitespace-only means "unknown / not detected", NOT "no license".
-  lines.push('License: ' + (skill.license?.trim() || 'Unknown'))
-
-  // Tags
-  if (skill.tags && skill.tags.length > 0) {
-    lines.push('Tags: ' + skill.tags.join(', '))
-  }
-  lines.push('')
-
-  // SMI-825: Security information
-  lines.push('--- Security ---')
-  if (skill.security) {
-    if (skill.security.passed === null) {
-      lines.push('  Status: Not scanned')
-    } else if (skill.security.passed) {
-      lines.push('  Status: PASSED')
-      lines.push('  Risk Score: ' + (skill.security.riskScore ?? 0) + '/100')
-      lines.push('  Findings: ' + (skill.security.findingsCount ?? 0))
-    } else {
-      lines.push('  Status: FAILED')
-      lines.push('  Risk Score: ' + (skill.security.riskScore ?? 0) + '/100 (HIGH)')
-      lines.push('  Findings: ' + (skill.security.findingsCount ?? 0))
-      lines.push('  WARNING: This skill has security issues. Review carefully before use.')
-    }
-    if (skill.security.scannedAt) {
-      lines.push('  Scanned: ' + skill.security.scannedAt)
-    }
-  } else {
-    lines.push('  Status: Not scanned')
-  }
-  lines.push('')
-
-  // SMI-3137: Dependency intelligence
-  if (response.dependencies && response.dependencies.length > 0) {
-    lines.push('--- Dependencies ---')
-    for (const dep of response.dependencies) {
-      const version = dep.dep_version ? '@' + dep.dep_version : ''
-      const source = dep.dep_source === 'declared' ? '' : ' (inferred)'
-      lines.push('  [' + dep.dep_type + '] ' + dep.dep_target + version + source)
-    }
-    lines.push('')
-  }
-
-  // SMI-2761: Co-install recommendations
-  if (response.also_installed && response.also_installed.length > 0) {
-    lines.push('--- Users Also Installed ---')
-    for (const co of response.also_installed) {
-      lines.push('  ' + co.skillId + (co.description ? ' — ' + co.description : ''))
-    }
-    lines.push('')
-  }
-
-  // SMI-3672: Skill content (SKILL.md)
-  if (response.content) {
-    lines.push('--- Skill Content ---')
-    lines.push(response.content)
-    lines.push('')
-  }
-
-  // Installation
-  lines.push('--- Installation ---')
-  lines.push('  ' + response.installCommand)
-  lines.push('')
-
-  // Timing
-  lines.push('---')
-  lines.push('Retrieved in ' + response.timing.totalMs + 'ms')
-
-  return lines.join('\n')
-}
-
-/**
- * Format trust tier with visual indicator
- * SMI-1809: Added 'local' tier
- * SMI-2381 / SMI-4520: Added 'curated' tier
- * SMI-5205: Added 'official' and 'unverified' tiers
- */
-function formatTrustTier(tier: TrustTier): string {
-  switch (tier) {
-    case 'official':
-      return '[!] OFFICIAL' // SMI-5205: Platform/partner with full security review
-    case 'verified':
-      return '[*] VERIFIED'
-    case 'community':
-      return '[+] COMMUNITY'
-    case 'curated':
-      return '[#] CURATED' // SMI-2381: Third-party publisher
-    case 'local':
-      return '[@] LOCAL' // SMI-1809: Local skills from ~/.claude/skills/
-    case 'experimental':
-      return '[~] EXPERIMENTAL'
-    case 'unknown':
-      return '[?] UNKNOWN'
-    case 'unverified':
-      return '[?] UNVERIFIED' // SMI-5205: Public alias for unknown
-  }
-}
-
-/**
- * Format score as a visual bar
- */
-function formatScoreBar(score: number): string {
-  const filled = Math.round(score / 10)
-  const empty = 10 - filled
-  const bar = '='.repeat(filled) + '-'.repeat(empty)
-  return '[' + bar + '] ' + score + '/100'
-}
+// SMI-5360: formatSkillDetails (+ its trust-tier / score-bar helpers) lives in
+// get-skill.format.ts to keep this file under the 500-line limit. Re-exported
+// here so existing imports from '../tools/get-skill.js' keep working.
+export { formatSkillDetails } from './get-skill.format.js'
 
 // SMI-5017 W2.S2: wrap at export boundary
 export const executeGetSkill = withTelemetry(executeGetSkillImpl, {

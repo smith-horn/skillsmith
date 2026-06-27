@@ -241,6 +241,26 @@ High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Ref
 
 ---
 
+## Default Execution Model — Ruflo Queen + Worktrees + Model Tiering
+
+**Default for any substantive, multi-step task: run a Ruflo queen-coordinator hive on a dedicated worktree** (`./scripts/create-worktree.sh`; the parent session is the queen). Trivial or purely conversational turns may run solo on the current branch.
+
+**Worktrees are the default workspace.** Doing implementation work directly on `main` (or in the main checkout) requires an **explicitly approved exception** — state the rationale and get sign-off before proceeding. This keeps parallel sessions from colliding (SMI-4776) and keeps `main` clean.
+
+**Route worker tasks by difficulty across model tiers** (the queen assigns each task to the cheapest tier that can do it well):
+
+| Model | Role | Tasks |
+|-------|------|-------|
+| **Opus** | Hardest reasoning / adversarial | Detection-rule & algorithm design, FP/FN tuning, security & data-integrity design, adversarial review, plan-review, interpreting ambiguous findings |
+| **Sonnet** | Core implementation | Feature code, edge<->core twin ports, tests, refactors, harness & report drafting |
+| **Haiku** | Mechanical / high-volume | Fixture scaffolding, regression-baseline bumps, CSV/data wrangling, `index.md` edits, drafting Linear comments, doc formatting |
+
+**The queen owns all side effects.** Workers/subagents never commit, push, post to Linear, or touch git — they hand their output (file edits, plus any `index.md` or Linear-comment drafts) back to the queen, who verifies and applies it. The `governance-specialist` subagent in particular must never commit to `main` or delete branches (SMI-5060). Foreground subagents only for interactive prompts; background subagents auto-deny unapproved tools.
+
+Full agent catalog, swarm topologies, hive-mind examples, and SPARC modes: [claude-flow-guide.md](.claude/development/claude-flow-guide.md).
+
+---
+
 ## Publishing Packages
 
 **Release prep**: `docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --all=patch` (also `--core=minor --cli=patch`, `--dry-run`). **Publish (CI-only)**: `git push && gh workflow run publish.yml -f dry_run=false`. Cadence: weekly (Sun 03:00 UTC) OR `[Unreleased]` ≥ 15 entries ([ADR-114](docs/internal/adr/114-release-cadence-and-gh-release-alignment.md)). Order: core → mcp-server, cli, enterprise. Local fallback deprecated (SMI-4533). Pre-publish checklist, version-pin rules, break-glass: [publishing-guide.md](.claude/development/publishing-guide.md).
@@ -276,6 +296,7 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 | Node ABI mismatch | WASM fallback auto-activates (core ≥0.4.10). Restore native: rebuild in Docker + `./scripts/repair-host-native-deps.sh` (SMI-4549) |
 | "invalid ELF header" in Docker (SMI-4698) | Try `docker compose restart dev` (self-heals) or `docker exec skillsmith-dev-1 npm rebuild <module> --ignore-scripts=false` first; for persistent host-binding leaks, see [git-crypt-guide.md § Host Native Bindings](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549) |
 | Worktree `npm run build` fails (SMI-4689) | SMI-4738 postinstall auto-regenerates override; bounce worktree container. Drift: `./scripts/repair-worktrees.sh` from main repo. macOS only. [Details](.claude/development/git-crypt-guide.md#worktree-docker-bind-mounts-smi-4689) |
+| Worktree edits not reaching the container (stale `wc -l`, prettier "No files matching", stale test runs) | macOS bind-mount freeze — `docker cp <hostfile> <container>:/app/<path>` to sync (pre-commit reads host files, so commits are unaffected). And never `npm install` in a worktree container to "fix" a blip — it wipes native modules (`.npmrc` ignore-scripts); `docker compose --profile dev restart dev` self-heals (SMI-5351). [Details](.claude/development/git-crypt-guide.md#worktree-bind-mount-freeze-and-npm-install-native-wipe-smi-5375) |
 | Docker DNS failure | `docker network prune -f` then restart |
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Tool missing in `skillsmith-dev-1` (e.g. `psql: executable file not found`) after a Dockerfile change merged on `main` (SMI-4820) | Stale local image — your container predates the Dockerfile commit. `docker compose --profile dev down && docker compose --profile dev build --no-cache dev && docker compose --profile dev up -d`. `--no-cache` ensures the cached `dev` layer doesn't shadow new `RUN apt-get install` lines. |
