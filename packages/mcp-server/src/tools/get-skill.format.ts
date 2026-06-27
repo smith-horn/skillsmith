@@ -49,14 +49,13 @@ export function formatSkillDetails(response: GetSkillResponse): string {
   lines.push('Category: ' + skill.category)
   // SMI-4954: surface installability so callers don't try to install a
   // discovery-only entry that install_skill cannot resolve.
-  // SMI-5360: a skill that carries a repository but is still not installable is
-  // blocked (quarantined / failed security scan), NOT discovery-only — say so
-  // rather than printing the misleading "discovery-only entry" reason.
+  // SMI-5360: installable only flips false for quarantine, so a skill that
+  // carries a repository but is still not installable is quarantine-blocked,
+  // NOT discovery-only — say so rather than printing the misleading
+  // "discovery-only entry" reason.
   if (skill.installable === false) {
     if (skill.repository) {
-      lines.push(
-        'Installable: NO — blocked (quarantined or failed security scan; install_skill will refuse this)'
-      )
+      lines.push('Installable: NO — blocked (quarantined; install_skill will refuse this)')
     } else {
       lines.push('Installable: NO — discovery-only entry (install_skill will not resolve this)')
     }
