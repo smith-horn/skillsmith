@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.8.2
+
+- **Feature**: enrich git/plugin-recovered skills with the registry UUID (SMI-5411) (#1600)
+- **Feature**: affix-tolerant registry-name matching for source recovery (SMI-5413) (#1592)
+
 ## v0.8.1
 
 - **Feature**: recover + backfill canonical GitHub source for local skills (SMI-5407) (#1589)
