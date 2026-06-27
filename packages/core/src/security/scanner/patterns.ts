@@ -85,6 +85,34 @@ export const SUSPICIOUS_PATTERNS = [
   /wget\s+.*\|\s*(bash|sh)/i,
 ]
 
+/**
+ * SMI-5359 Wave 4.2: Remote-fetch-to-interpreter ("code_execution") patterns.
+ *
+ * These detect a skill instructing the agent to download remote content and pipe
+ * it straight into a shell/interpreter — the canonical "curl | bash" supply-chain
+ * primitive and its PowerShell / process-substitution / decode-then-exec variants.
+ *
+ * Scope discipline (SMI-4396): every pattern requires BOTH a fetch verb
+ * (curl/wget/irm/iwr/Invoke-WebRequest/Net.WebClient) AND an execution sink
+ * (| sh, <(...), eval $(...), iex, -EncodedCommand). A bare package install
+ * (npm/pip/brew/cargo/apt install) matches none of these. Quantifiers are bounded
+ * and exclude the pipe / newline so there is no catastrophic backtracking.
+ */
+export const CODE_EXECUTION_PATTERNS = [
+  // curl|wget <url> | [sudo] <interpreter>  (fetch piped to a shell or scripting interpreter)
+  /(?:curl|wget)\b[^\n|]{0,200}?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
+  // process substitution: bash/sh/zsh/source/. <(curl|wget ...)
+  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b/i,
+  // command substitution into eval or `sh -c`: eval "$(curl...)", bash -c "`wget...`"
+  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b/i,
+  // PowerShell download-and-execute: iex(irm ...), Invoke-Expression(... DownloadString/Invoke-WebRequest)
+  /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
+  // PowerShell encoded command (base64 payload handed to the interpreter)
+  /\bpowershell\b[^\n]{0,60}?\s-e(?:nc|ncodedcommand)?\b\s*[A-Za-z0-9+/=]{16,}/i,
+  // decode-then-exec: ... base64 -d ... | <interpreter>
+  /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]{0,60}?\|\s*(?:(?:ba|z)?sh|python[23]?|node|ruby|perl|php)\b/i,
+]
+
 // SMI-685: Social engineering attempt patterns
 export const SOCIAL_ENGINEERING_PATTERNS = [
   /pretend\s+(to\s+be|you\s+are|that\s+you)/i,
