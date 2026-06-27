@@ -107,11 +107,11 @@ export const SUSPICIOUS_PATTERNS = [
  */
 export const CODE_EXECUTION_PATTERNS = [
   // curl|wget <target> | [sudo] <interpreter>  (fetch piped to a shell or scripting interpreter)
-  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,150}?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
+  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,150}?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
   // process substitution: bash/sh/zsh/source/. <(curl|wget <target> ...)
-  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})/i,
+  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})/i,
   // command substitution into eval or `sh -c`: eval "$(curl <target>...)", bash -c "`wget <target>...`"
-  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})/i,
+  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})/i,
   // PowerShell download-and-execute: iex(irm ...), Invoke-Expression(... DownloadString/Invoke-WebRequest)
   /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
   // PowerShell encoded command (base64 payload handed to the interpreter)

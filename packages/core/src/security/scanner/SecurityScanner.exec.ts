@@ -150,7 +150,7 @@ function hasConfusable(s: string): boolean {
  * (ReDoS-safe). Non-global so .test / .match never carry lastIndex between calls.
  */
 const OBFUSCATION_DIRECTIVE_PATTERN =
-  /(?:ignore|disregard|forget)\s+(?:all\s+|the\s+)?(?:previous|prior|above|earlier)\s+(?:instruction|prompt|rule|direction)|bypass\s+(?:all\s+)?(?:restriction|filter|safety|guard|security)|(?:reveal|show|print|dump|leak)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:system\s+)?(?:prompt|instruction)|(?:curl|wget)\b[^\n|]{0,120}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,120}?\|\s*(?:ba|z)?sh\b/i
+  /(?:ignore|disregard|forget)\s+(?:all\s+|the\s+)?(?:previous|prior|above|earlier)\s+(?:instruction|prompt|rule|direction)|bypass\s+(?:all\s+)?(?:restriction|filter|safety|guard|security)|(?:reveal|show|print|dump|leak)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:system\s+)?(?:prompt|instruction)|(?:curl|wget)\b[^\n|]{0,120}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,120}?\|\s*(?:ba|z)?sh\b/i
 
 // ============================================================================
 // Detectors

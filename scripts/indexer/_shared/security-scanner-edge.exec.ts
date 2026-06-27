@@ -55,11 +55,11 @@ function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null 
  */
 const CODE_EXECUTION_PATTERNS: RegExp[] = [
   // curl|wget <target> | [sudo] <interpreter>
-  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,150}?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
+  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,150}?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
   // process substitution: bash/sh/zsh/source/. <(curl|wget <target> ...)
-  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})/i,
+  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})/i,
   // command substitution into eval or `sh -c` with a remote target
-  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})/i,
+  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})/i,
   // PowerShell download-and-execute
   /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
   // PowerShell encoded command
@@ -186,7 +186,7 @@ function hasConfusable(s: string): boolean {
  * in fullwidth/math glyphs) cannot trip it. Bounded (ReDoS-safe), non-global.
  */
 const OBFUSCATION_DIRECTIVE_PATTERN =
-  /(?:ignore|disregard|forget)\s+(?:all\s+|the\s+)?(?:previous|prior|above|earlier)\s+(?:instruction|prompt|rule|direction)|bypass\s+(?:all\s+)?(?:restriction|filter|safety|guard|security)|(?:reveal|show|print|dump|leak)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:system\s+)?(?:prompt|instruction)|(?:curl|wget)\b[^\n|]{0,120}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,120}?\|\s*(?:ba|z)?sh\b/i
+  /(?:ignore|disregard|forget)\s+(?:all\s+|the\s+)?(?:previous|prior|above|earlier)\s+(?:instruction|prompt|rule|direction)|bypass\s+(?:all\s+)?(?:restriction|filter|safety|guard|security)|(?:reveal|show|print|dump|leak)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:system\s+)?(?:prompt|instruction)|(?:curl|wget)\b[^\n|]{0,120}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,120}?\|\s*(?:ba|z)?sh\b/i
 
 /**
  * obfuscated_directive: single-emission CRITICAL. Delta-gated — a directive
