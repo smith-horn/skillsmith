@@ -78,6 +78,7 @@ import {
   executeApiKeyManage,
 } from './tools/integration-tools.js'
 import { complianceReportInputSchema, executeComplianceReport } from './tools/compliance-tools.js'
+import { inventoryPush } from './tools/inventory-push.js'
 import {
   ok,
   errResponse,
@@ -217,6 +218,11 @@ export async function dispatchToolCall(
       if (!parsed.ok) return parsed.response
       return ok(await executeSkillRescan(parsed.data))
     }
+
+    // SMI-5392: inventory_push returns a CallToolResult directly (success or
+    // typed-error content) — no ok() wrapping needed.
+    case 'inventory_push':
+      return await inventoryPush(args)
 
     case 'audit_export':
       return withLicenseAndQuota(

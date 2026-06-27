@@ -255,6 +255,18 @@ export {
 } from './config/token-credentials.js'
 export { tryRefreshToken, loadStoredAccessToken } from './api/client.token-refresh.js'
 
+// SMI-5391: Cross-harness inventory device identity + local consent/throttle gate
+export {
+  getDeviceId,
+  getOrCreateDeviceId,
+  setDeviceLabel,
+  forgetDevice,
+  isInventorySyncDisabledLocally,
+  getLastInventoryPushAt,
+  recordInventoryPush,
+  shouldAutoPush,
+} from './config/device-identity.js'
+
 // Version Check (SMI-1952)
 export {
   checkForUpdates,

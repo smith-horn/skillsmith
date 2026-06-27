@@ -59,6 +59,7 @@ import {
 } from './tools/rbac-tools.js'
 import { webhookConfigureToolSchema, apiKeyManageToolSchema } from './tools/integration-tools.js'
 import { complianceReportToolSchema } from './tools/compliance-tools.js'
+import { inventoryPushToolSchema } from './tools/inventory-push.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 // SMI-5213: make the three audit-family tools client-discoverable. The
 // builder gates `apply_recommended_edit` on APPLY_TEMPLATE_REGISTRY and
@@ -147,6 +148,8 @@ const toolDefinitions = [
   webhookConfigureToolSchema,
   apiKeyManageToolSchema,
   complianceReportToolSchema,
+  // SMI-5392: push installed-skill inventory to the user's Skillsmith account.
+  inventoryPushToolSchema,
   // SMI-5213: skill_inventory_audit, apply_namespace_rename, and (gated)
   // apply_recommended_edit. Spread so apply_recommended_edit is omitted
   // when APPLY_TEMPLATE_REGISTRY is empty. audit:standards Check 25 resolves

@@ -70,3 +70,6 @@ export { createConfigCommand } from './config.js'
 
 // SMI-5021 Wave 3: telemetry management subcommands
 export { createTelemetryCommand } from './telemetry.js'
+
+// SMI-5392 Wave 3: cross-harness inventory push/status/forget-device
+export { createInventoryCommand } from './inventory.js'

@@ -65,6 +65,7 @@ const DISPATCHER_MAP: Record<string, string[]> = {
   'index-local': ['executeIndexLocal'],
   install: ['installSkill'],
   'integration-tools': ['executeWebhookConfigure', 'executeApiKeyManage'],
+  'inventory-push': ['inventoryPush'],
   outdated: ['executeOutdated'],
   publish: ['executePublish'],
   'publish-private': ['executePublishPrivate'],
@@ -233,6 +234,6 @@ describe('SMI-5018: MCP tool telemetry coverage (v1, MCP tree only)', () => {
       `[SMI-5018] MCP telemetry coverage: ${dispatcherCount} dispatchers across ${fileCount} files.`
     )
     console.info('[SMI-5018] Scope: MCP tree only (v1). CLI + VS Code: blocked by SMI-5040.')
-    expect(dispatcherCount).toBeGreaterThanOrEqual(40)
+    expect(dispatcherCount).toBeGreaterThanOrEqual(41)
   })
 })

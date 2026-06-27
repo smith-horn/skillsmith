@@ -49,6 +49,7 @@ import {
   createImportLocalCommand,
   createConfigCommand,
   createTelemetryCommand,
+  createInventoryCommand,
 } from './commands/index.js'
 import { displayStartupHeader } from './utils/license.js'
 import { checkNodeVersion } from './utils/node-version.js'
@@ -163,5 +164,8 @@ program.addCommand(createConfigCommand())
 
 // SMI-5021 Wave 3: telemetry opt-in + Claude Code hook management
 program.addCommand(createTelemetryCommand())
+
+// SMI-5392 Wave 3: cross-harness inventory push/status/forget-device
+program.addCommand(createInventoryCommand())
 
 program.parse()
