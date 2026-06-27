@@ -113,3 +113,11 @@ packages/website/src/pages/invite/[token].astro
 # Smoke verification requires a real OAuth email-change event which the
 # harness cannot synthesize. Gateway-verified (no --no-verify-jwt).
 supabase/functions/sync-oauth-email/**
+
+# SMI-5389: inventory-upload is NOT deployed to prod yet (Wave 6 / SMI-5396
+# gates the prod apply behind the demand gate). Gateway-verified; smoke
+# verification needs a real authenticated session + consent ON, which the
+# harness cannot synthesize without persisting test data. Wave 6 moves this
+# into surfaces.json with the unauth-401 + consent-off-no-op checks from the
+# plan's "Smoke vs CI" table.
+supabase/functions/inventory-upload/**
