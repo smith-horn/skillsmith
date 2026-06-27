@@ -181,3 +181,43 @@ is intentionally not cached — it's small (~50 MB) and pinning to
 | `wait-on http://127.0.0.1:4321/ -t 90000` timeout, preview.log empty/short | `vercel dev` cold-start exceeded 90s before producing output | Raise the wait-on timeout to 120000; check whether Vercel CLI install or first-build is dominating cold-start |
 | `Content-Security-Policy` blocks `connect-src` to staging Supabase | `vercel.json` CSP regression | `grep connect-src packages/website/vercel.json` should include `*.supabase.co`; if missing, restore it (P-1 surface check) |
 | 4xx/5xx from `/device?user_code=…` in `preview.log` | Staging supabase down or migration drift | Check `audit_logs` via pooler-psql; verify `claim_device_token` body (drift preflight should have already failed) |
+
+---
+
+## Cross-Harness Skill Inventory e2e (SMI-5395)
+
+Sibling harness to `device-login-roundtrip`, in the **same** `e2e-staging` GitHub Environment. Workflows: `.github/workflows/cross-harness-inventory-e2e.yml` (the gate) + `cross-harness-inventory-e2e-cleanup.yml` (weekly orphan purge). Proves `push → device_skills → /account/skills render` against staging via a Playwright round-trip driven by a POST to the `inventory-upload` edge fn with a seeded user JWT.
+
+### Required secrets (in addition to the shared `STAGING_*` / `VERCEL_*` above)
+
+| Secret | Purpose |
+|---|---|
+| `E2E_INV_CONSENT_ON_USER_ID` | UUID of the consent-ON seeded user (`inventory_sync_enabled=true`) |
+| `E2E_INV_CONSENT_OFF_USER_ID` | UUID of the consent-OFF seeded user (`inventory_sync_enabled=false`) |
+| `E2E_INV_USER_PASSWORD` | shared password for both seeded users (also kept locally in `.env`, never committed) |
+
+### One-time setup
+
+1. **Deploy the edge fn to staging** (gateway-verified — no `--no-verify-jwt`):
+   `varlock run -- npx supabase functions deploy inventory-upload --project-ref ovhcifugwqnzoebwfuku`
+   (the data-plane migrations `20260626000001/2` must already be on staging — verify via the REST RPCs or the workflow's drift preflight).
+2. **Seed the two users** (idempotent, fail-closed prod guard):
+   `E2E_INV_USER_PASSWORD='<pick>' varlock run -- npx tsx scripts/seed-e2e-inventory-users.ts` → prints both user IDs.
+3. **Set the three secrets**: `gh secret set <NAME> --env e2e-staging --body '<value>'` for each (read the password from `.env` to avoid exposing it).
+
+### Reading the gate — invisible-success guard (SMI-5395 C3)
+
+During Phase 1 the `test` job is `continue-on-error: true`, so **the run conclusion is masked to "success" even when the spec fails.** The true signal is:
+
+- the **`Run cross-harness inventory spec`** step conclusion (`gh run view <id> --json jobs`), and
+- the **`Surface real e2e result`** guard step, which emits a `::warning::` annotation + a run-summary line (`spec FAILED ... masked by Phase-1 continue-on-error`) on any non-pass.
+
+Never treat a green run *conclusion* as a pass — confirm the spec step / the guard annotation.
+
+### Hard gate before Wave 6 prod (umbrella SMI-5382)
+
+Wave 6 is blocked until **either** (a) **post-merge**, the workflow is promoted to a required check after 10 consecutive green nightly runs (nightlies only run once the file is on the default branch), **or** (b) **pre-merge**, a specific green PR/`workflow_dispatch` run is signed off by `run_id` in the Linear gate after confirming the spec step passed. Promotion also removes `continue-on-error` and wires the `alert-notify` failure step.
+
+### Cleanup
+
+The weekly `cross-harness-inventory-e2e-cleanup.yml` (Sundays 04:00 UTC, via `STAGING_POOLER_URL`) deletes `user_devices WHERE label LIKE 'e2e-inv-%' AND last_seen_at < now() - interval '1 day'` (FK-cascades `device_skills`). The main job also runs a `run_id`-scoped defensive delete every run. The two seeded users persist by design.

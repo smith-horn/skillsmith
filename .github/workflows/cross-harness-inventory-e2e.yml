@@ -1,14 +1,22 @@
 # SMI-5395 -- cross-harness skill inventory staging e2e round-trip.
 # Proves the full push -> device_skills -> /account/skills render path against
 # staging Supabase (ovhcifugwqnzoebwfuku -- never prod)
-# before Wave 6 production rollout. Hard gate: Wave 6 is blocked until this
-# workflow is (a) promoted to a required check after 10 consecutive green
-# nightly runs, or (b) a specific green nightly run_id is manually signed off
-# in the Linear gate comment (C3).
+# before Wave 6 production rollout.
 #
-# Phase 1 rollout: nightly + paths-filtered PR with continue-on-error: true.
-# Phase 3 promotion: remove continue-on-error and add to required checks
-# after 10 consecutive green nightly runs.
+# Hard gate (C3): "green" means the SPEC STEP conclusion = success (surfaced by
+# the "Surface real e2e result" guard below + the run summary), NOT the job
+# conclusion -- which Phase-1 continue-on-error masks to "success" even on a spec
+# failure. Wave 6 is blocked until EITHER:
+#   (a) post-merge, this workflow is promoted to a REQUIRED check after 10
+#       consecutive green NIGHTLY runs (nightlies only run once the workflow is on
+#       the default branch, i.e. after the Wave-6 merge); OR
+#   (b) pre-merge, a specific green RUN (a paths-triggered PR run or a manual
+#       workflow_dispatch -- nightlies cannot run pre-merge) is signed off by
+#       run_id in the Linear gate, after confirming the spec step passed.
+#
+# Phase 1 rollout: PR + dispatch (+ nightly post-merge) with continue-on-error:
+# true. Promotion: remove continue-on-error, wire the alert-notify failure step,
+# and add to required checks after 10 consecutive green nightly runs.
 #
 # Docker carve-out: runs on ubuntu-latest outside the dev container.
 # Justification: no native modules in the spec surface (Playwright + Astro +
@@ -223,10 +231,29 @@ jobs:
         run: npx --yes wait-on http://127.0.0.1:4321/ -t 90000
 
       - name: Run cross-harness inventory spec
+        id: spec
         run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts --reporter=list
 
-      - name: Upload artifacts on failure (allowlisted paths only -- no secrets)
-        if: failure()
+      - name: Surface real e2e result (Phase-1 invisible-success guard)
+        # The job is continue-on-error during Phase 1, so its conclusion is
+        # "success" even when the spec FAILS. This reads the spec step's raw
+        # outcome and emits a ::warning:: + a run-summary line so a masked failure
+        # is never silently green -- the true gate signal lives here, not in the
+        # job conclusion. (Hardens the SMI-5395 invisible-success finding.)
+        if: always()
+        run: |
+          if [ "${{ steps.spec.outcome }}" = "success" ]; then
+            echo "### Cross-Harness Inventory E2E -- spec PASSED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=Inventory E2E spec FAILED::spec outcome=${{ steps.spec.outcome }}. The job is green ONLY due to Phase-1 continue-on-error -- do NOT treat this run as a passing gate. Inspect the spec step + uploaded artifacts."
+            echo "### Cross-Harness Inventory E2E -- spec FAILED (outcome=${{ steps.spec.outcome }}), masked by Phase-1 continue-on-error" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload artifacts on spec failure (allowlisted paths only -- no secrets)
+        # Keyed on the spec step's raw outcome (not failure()) so ONLY the spec
+        # step's own failure triggers upload -- not an earlier step's failure that
+        # would leave the spec skipped with no Playwright artifacts to collect.
+        if: steps.spec.outcome == 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cross-harness-inventory-${{ github.run_id }}
