@@ -158,20 +158,34 @@ export class SecurityScanner {
     )
   }
 
-  private scanSuspiciousPatterns(content: string): SecurityFinding[] {
+  private scanSuspiciousPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
 
     lines.forEach((line, index) => {
+      const ctx = contexts[index]
+
       for (const pattern of SUSPICIOUS_PATTERNS) {
         const match = safeRegexTest(pattern, line)
         if (match) {
+          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+          // Non-doc keeps the original medium/implicit-high score (confidence
+          // defaults to 'high'); doc-context downgrades both so a fenced/quoted
+          // example cannot reach the trust-scorer.ts:58 high/critical short-circuit.
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity: SecurityFinding['severity'] = inDocContext ? 'low' : 'medium'
+
           findings.push({
             type: 'suspicious_pattern',
-            severity: 'medium',
+            severity,
             message: `Suspicious pattern detected: "${match[0]}"`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
+            category: 'suspicious_pattern',
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break
         }
@@ -180,12 +194,22 @@ export class SecurityScanner {
       for (const pattern of this.blockedPatterns) {
         const match = safeRegexTest(pattern, line)
         if (match) {
+          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+          // Non-doc keeps the original high score; doc-context drops to medium
+          // so a quoted "blocked" example cannot trip trust-scorer.ts:58.
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity: SecurityFinding['severity'] = inDocContext ? 'medium' : 'high'
+
           findings.push({
             type: 'suspicious_pattern',
-            severity: 'high',
+            severity,
             message: `Blocked pattern detected: "${match[0]}"`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
+            category: 'suspicious_pattern',
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break
         }
@@ -419,7 +443,7 @@ export class SecurityScanner {
     findings.push(...this.scanUrls(content))
     findings.push(...this.scanSensitivePaths(content, lineContexts))
     findings.push(...this.scanJailbreakPatterns(content, lineContexts))
-    findings.push(...this.scanSuspiciousPatterns(content))
+    findings.push(...this.scanSuspiciousPatterns(content, lineContexts))
     findings.push(...this.scanSocialEngineering(content, lineContexts))
     findings.push(...this.scanPromptLeaking(content, lineContexts))
     findings.push(...this.scanDataExfiltration(content, lineContexts))

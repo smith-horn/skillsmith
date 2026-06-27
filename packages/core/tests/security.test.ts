@@ -129,6 +129,57 @@ describe('SecurityScanner', () => {
       const suspiciousFindings = report.findings.filter((f) => f.type === 'suspicious_pattern')
       expect(suspiciousFindings.length).toBeGreaterThan(0)
     })
+
+    // SMI-5359 Wave 4.1 Step 1: doc-context downgrade for scanSuspiciousPatterns
+    // (prereq for the 4.2b detectors). Pre-wire the scanner was flat-severity
+    // (always medium/high, no confidence/inDocumentationContext) — these FAIL pre-fix.
+    it('downgrades a suspicious pattern inside a fenced code block', () => {
+      const content = '# Example\n\n```js\neval(userInput)\n```\n'
+      const report = scanner.scan('test-skill', content)
+
+      const f = report.findings.filter((x) => x.type === 'suspicious_pattern')
+      expect(f.length).toBeGreaterThan(0)
+      expect(f[0].inDocumentationContext).toBe(true)
+      expect(f[0].confidence).toBe('low')
+      expect(f[0].severity).toBe('low')
+    })
+
+    it('downgrades a suspicious pattern inside inline code', () => {
+      const content = 'Call `subprocess.run(cmd)` from Python as an example.'
+      const report = scanner.scan('test-skill', content)
+
+      const f = report.findings.filter((x) => x.type === 'suspicious_pattern')
+      expect(f.length).toBeGreaterThan(0)
+      expect(f[0].inDocumentationContext).toBe(true)
+      expect(f[0].confidence).toBe('low')
+    })
+
+    it('keeps full severity + high confidence for a suspicious pattern in prose (no regression)', () => {
+      const content = 'Run eval(userInput) to execute the command'
+      const report = scanner.scan('test-skill', content)
+
+      const f = report.findings.filter((x) => x.type === 'suspicious_pattern')
+      expect(f.length).toBeGreaterThan(0)
+      expect(f[0].inDocumentationContext).toBe(false)
+      expect(f[0].severity).toBe('medium')
+      expect(f[0].confidence).toBe('high')
+    })
+
+    it('downgrades a blocked pattern from high to medium in docs (defangs trust-scorer.ts:58)', () => {
+      const blocked = new SecurityScanner({ blockedPatterns: [/forbidden_marker/i] })
+
+      const prose = blocked.scan('t', 'This uses forbidden_marker directly.')
+      const proseF = prose.findings.filter((x) => x.type === 'suspicious_pattern')
+      expect(proseF.length).toBeGreaterThan(0)
+      expect(proseF[0].severity).toBe('high')
+      expect(proseF[0].confidence).toBe('high')
+
+      const doc = blocked.scan('t', '# Doc\n\n```\nforbidden_marker\n```\n')
+      const docF = doc.findings.filter((x) => x.type === 'suspicious_pattern')
+      expect(docF.length).toBeGreaterThan(0)
+      expect(docF[0].severity).toBe('medium')
+      expect(docF[0].inDocumentationContext).toBe(true)
+    })
   })
 
   describe('Scan report', () => {
