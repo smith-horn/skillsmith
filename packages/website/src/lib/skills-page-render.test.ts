@@ -42,6 +42,14 @@ describe('buildStateBadgeHtml', () => {
       expect(html).toContain('aria-hidden="true"')
     }
   })
+
+  it('carries data-testid="skill-badge" and the correct data-state for every state', () => {
+    for (const state of states) {
+      const html = buildStateBadgeHtml(state)
+      expect(html).toContain('data-testid="skill-badge"')
+      expect(html).toContain(`data-state="${state}"`)
+    }
+  })
 })
 
 describe('deviceDisplayName', () => {
@@ -124,5 +132,20 @@ describe('buildDeviceCardHtml', () => {
     const html = buildDeviceCardHtml(stale)
     expect(html).toContain('device-card--stale')
     expect(html).toContain('(stale)')
+  })
+
+  it('carries data-testid="device-card" on the section element', () => {
+    const device: DeviceView = {
+      deviceId: 'abcdef12-3456-4789-8abc-def012345678',
+      label: 'test box',
+      hostnameDisplay: null,
+      platform: 'darwin',
+      lastSeen: '2026-06-26T00:00:00.000Z',
+      deviceState: 'fresh',
+      neverSynced: true,
+      skills: [],
+    }
+    const html = buildDeviceCardHtml(device)
+    expect(html).toContain('data-testid="device-card"')
   })
 })

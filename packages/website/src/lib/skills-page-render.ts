@@ -86,7 +86,7 @@ export function buildStateBadgeHtml(state: SkillState): string {
     `border:1px solid ${cfg.border};background:${cfg.bg};color:${cfg.color}`,
   ].join(';')
   return (
-    `<span style="${st}" title="${escapeHtml(meta.description)}">` +
+    `<span style="${st}" title="${escapeHtml(meta.description)}" data-testid="skill-badge" data-state="${state}">` +
     `<svg width="12" height="12" style="flex-shrink:0" fill="none" stroke="currentColor"` +
     ` viewBox="0 0 24 24" aria-hidden="true">` +
     `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${cfg.icon}"/>` +
@@ -140,7 +140,7 @@ export function buildDeviceCardHtml(device: DeviceView): string {
   }
 
   return (
-    `<section class="device-card${isStale ? ' device-card--stale' : ''}" aria-label="Device: ${name}">` +
+    `<section class="device-card${isStale ? ' device-card--stale' : ''}" aria-label="Device: ${name}" data-testid="device-card">` +
     `<div class="device-header">` +
     `<div class="device-name-row"><h3 class="device-name">${name}</h3>` +
     (platform ? `<span class="device-platform">${platform}</span>` : '') +
