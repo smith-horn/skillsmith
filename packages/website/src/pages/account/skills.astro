@@ -113,6 +113,7 @@ const supabaseConfig = getSupabaseConfig()
         </div>
 
         <!-- Populated device list — built client-side by skills-page-render.ts -->
+        <h2 id="devices-heading" class="devices-heading" style="display: none;">Your machines</h2>
         <div id="devices-container"></div>
 
         <!-- Always visible inside content: reload affordance -->
@@ -192,7 +193,9 @@ const supabaseConfig = getSupabaseConfig()
       supabase.rpc('get_user_inventory'),
     ])
 
-    if (invResult.error) {
+    if (invResult.error || consentResult.error) {
+      // Surface the error rather than defaulting consent to off — otherwise a
+      // user with sync ON + devices would be wrongly shown the "turn it on" prompt.
       showError('Could not load inventory. Check your connection and try again.')
       return
     }
@@ -215,7 +218,12 @@ const supabaseConfig = getSupabaseConfig()
       noDevicesEl.style.display = emptyState === 'opted-in-no-devices' ? 'block' : 'none'
     if (hintEl) hintEl.style.display = emptyState === 'single-machine' ? 'block' : 'none'
 
-    if (devContainer && (emptyState === 'single-machine' || emptyState === 'populated')) {
+    const devicesHeadingEl = document.getElementById('devices-heading')
+    const showDevices = emptyState === 'single-machine' || emptyState === 'populated'
+    // Keep an <h2> before the h3 device names so the SR heading order is h1->h2->h3
+    // (the state-card <h2>s above are hidden in the device states).
+    if (devicesHeadingEl) devicesHeadingEl.style.display = showDevices ? 'block' : 'none'
+    if (devContainer && showDevices) {
       devContainer.innerHTML = devices.map(buildDeviceCardHtml).join('')
     }
 
@@ -288,6 +296,13 @@ const supabaseConfig = getSupabaseConfig()
 
   .page-header {
     margin-bottom: 2rem;
+  }
+
+  .devices-heading {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fafafa;
+    margin: 0 0 1rem;
   }
 
   .back-link {

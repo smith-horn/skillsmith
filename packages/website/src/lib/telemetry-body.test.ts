@@ -10,7 +10,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { parseInventorySyncEnabled } from './telemetry-body'
+import {
+  parseInventorySyncEnabled,
+  buildTelemetryUpsertRow,
+  type ExistingTelemetryRow,
+} from './telemetry-body'
 
 describe('parseInventorySyncEnabled — absent field (undefined)', () => {
   it('returns fallback=false when value is undefined', () => {
@@ -80,5 +84,94 @@ describe('parseInventorySyncEnabled — present non-boolean values (error cases)
       value: null,
       error: 'invalid_inventory_sync_enabled',
     })
+  })
+})
+
+describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governance)', () => {
+  const NOW = '2026-06-26T12:00:00.000Z'
+  const existing: ExistingTelemetryRow = {
+    anonymous_id: 'anon-original',
+    anonymous_id_created_at: '2026-01-01T00:00:00.000Z',
+    inventory_sync_enabled: true,
+  }
+
+  it('preserves stored anonymous_id + created_at when the id is omitted', () => {
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: false,
+      anonymousId: null,
+      inventorySyncEnabled: true,
+      existing,
+      now: NOW,
+    })
+    expect(row.anonymous_id).toBe('anon-original')
+    expect(row.anonymous_id_created_at).toBe('2026-01-01T00:00:00.000Z')
+    expect(row.enabled).toBe(false)
+    expect(row.inventory_sync_enabled).toBe(true)
+    expect(row.updated_at).toBe(NOW)
+  })
+
+  it('stamps a fresh created_at when a NEW anonymous_id is supplied', () => {
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: true,
+      anonymousId: 'anon-new',
+      inventorySyncEnabled: false,
+      existing,
+      now: NOW,
+    })
+    expect(row.anonymous_id).toBe('anon-new')
+    expect(row.anonymous_id_created_at).toBe(NOW)
+  })
+
+  it('retains created_at when the supplied id is unchanged', () => {
+    const row = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: true,
+      anonymousId: 'anon-original',
+      inventorySyncEnabled: true,
+      existing,
+      now: NOW,
+    })
+    expect(row.anonymous_id_created_at).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('does not clobber inventory consent — passes the resolved value through', () => {
+    // The route resolves omitted -> stored via parseInventorySyncEnabled BEFORE this
+    // call, so here we just confirm the boolean is carried verbatim.
+    expect(
+      buildTelemetryUpsertRow({
+        userId: 'u1',
+        enabled: true,
+        anonymousId: null,
+        inventorySyncEnabled: false,
+        existing,
+        now: NOW,
+      }).inventory_sync_enabled
+    ).toBe(false)
+  })
+
+  it('handles a first-time row (no existing): new id gets created_at, null id stays null', () => {
+    const withId = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: true,
+      anonymousId: 'anon-first',
+      inventorySyncEnabled: true,
+      existing: null,
+      now: NOW,
+    })
+    expect(withId.anonymous_id).toBe('anon-first')
+    expect(withId.anonymous_id_created_at).toBe(NOW)
+
+    const noId = buildTelemetryUpsertRow({
+      userId: 'u1',
+      enabled: false,
+      anonymousId: null,
+      inventorySyncEnabled: false,
+      existing: null,
+      now: NOW,
+    })
+    expect(noId.anonymous_id).toBeNull()
+    expect(noId.anonymous_id_created_at).toBeNull()
   })
 })

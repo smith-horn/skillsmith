@@ -153,15 +153,17 @@ export function buildDeviceCardHtml(device: DeviceView): string {
 
 // ─── CSS injection for dynamically-built content ───────────────────────────────
 
-let _stylesInjected = false
-
 /**
  * Injects the CSS required by dynamically-built device card elements into
  * `document.head`. Safe to call on every `astro:page-load` — idempotent.
+ *
+ * The guard checks actual DOM presence, NOT a module flag: ClientRouter swaps
+ * <head> on SPA navigation and drops this runtime <style> (it is neither a
+ * stylesheet link nor transition-persisted), so a module flag would stay true
+ * and the cards would render unstyled after a navigate-away-and-back.
  */
 export function injectSkillsPageStyles(): void {
-  if (_stylesInjected) return
-  _stylesInjected = true
+  if (document.querySelector('style[data-skills-page]')) return
   const style = document.createElement('style')
   style.dataset['skillsPage'] = '1'
   style.textContent = `

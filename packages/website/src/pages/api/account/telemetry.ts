@@ -17,7 +17,7 @@ export const prerender = false
 
 import type { APIRoute } from 'astro'
 import { createClient } from '@supabase/supabase-js'
-import { parseInventorySyncEnabled } from '../../../lib/telemetry-body'
+import { parseInventorySyncEnabled, buildTelemetryUpsertRow } from '../../../lib/telemetry-body'
 
 interface TelemetryPreferenceRow {
   user_id: string
@@ -167,24 +167,20 @@ export const PUT: APIRoute = async ({ request }) => {
     body.inventory_sync_enabled,
     existing?.inventory_sync_enabled ?? false
   )
-  if (inventorySyncResult.error) {
+  if (inventorySyncResult.error !== null) {
     return jsonResponse({ error: inventorySyncResult.error }, 400)
   }
+  // After the null check the discriminated union narrows `value` to `boolean`.
 
   const now = new Date().toISOString()
-  const anonymousIdChanged = anonymousId !== null && existing?.anonymous_id !== anonymousId
-  const anonymousIdCreatedAt = anonymousIdChanged
-    ? now
-    : (existing?.anonymous_id_created_at ?? (anonymousId !== null ? now : null))
-
-  const upsertRow = {
-    user_id: userId,
+  const upsertRow = buildTelemetryUpsertRow({
+    userId,
     enabled: body.enabled,
-    anonymous_id: anonymousId ?? existing?.anonymous_id ?? null,
-    anonymous_id_created_at: anonymousIdCreatedAt,
-    updated_at: now,
-    inventory_sync_enabled: inventorySyncResult.value,
-  }
+    anonymousId,
+    inventorySyncEnabled: inventorySyncResult.value,
+    existing,
+    now,
+  })
 
   const { data, error } = await client
     .from('user_telemetry_preferences')
