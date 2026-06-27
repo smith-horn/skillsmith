@@ -25,6 +25,7 @@ import {
   SourceRecoveryService,
   defaultSkillsRoot,
   parseRepoUrl,
+  skillNameVariants,
   type RecoveryCandidate,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
@@ -160,9 +161,13 @@ function findCandidatesOffline(context: ToolContext, name: string): RecoveryCand
     repo_url: string | null
     quality_score: number | null
   }
+  const variants = skillNameVariants(name)
+  const placeholders = variants.map(() => '?').join(', ')
   const rows = context.db
-    .prepare<SkillRow>('SELECT id, name, repo_url, quality_score FROM skills WHERE name = ?')
-    .all(name)
+    .prepare<SkillRow>(
+      `SELECT id, name, repo_url, quality_score FROM skills WHERE name IN (${placeholders})`
+    )
+    .all(...variants)
 
   const candidates: RecoveryCandidate[] = []
   for (const row of rows) {
@@ -181,7 +186,10 @@ function findCandidatesOffline(context: ToolContext, name: string): RecoveryCand
       // Non-GitHub repo_url — skip.
     }
   }
-  return candidates
+  // Prefer an exact-name match so the affix-broadened query never downgrades a
+  // clean exact hit to ambiguous; fall back to affix-variant candidates. SMI-5413.
+  const exact = candidates.filter((c) => c.name.toLowerCase() === name.toLowerCase())
+  return exact.length > 0 ? exact : candidates
 }
 
 // ============================================================================

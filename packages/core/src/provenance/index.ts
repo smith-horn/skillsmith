@@ -14,6 +14,7 @@ export {
   type RecoverOneOptions,
 } from './SourceRecoveryService.js'
 export { backfillManifest, type BackfillOptions, type BackfillOutcome } from './backfill.js'
+export { normalizeSkillName, skillNameVariants } from './name-variants.js'
 export {
   METHOD_LABELS,
   type RecoveryMethod,
