@@ -109,8 +109,8 @@ export const CODE_EXECUTION_PATTERNS = [
   /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
   // PowerShell encoded command (base64 payload handed to the interpreter)
   /\bpowershell\b[^\n]{0,60}?\s-e(?:nc|ncodedcommand)?\b\s*[A-Za-z0-9+/=]{16,}/i,
-  // decode-then-exec: ... base64 -d ... | <interpreter>
-  /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]{0,60}?\|\s*(?:(?:ba|z)?sh|python[23]?|node|ruby|perl|php)\b/i,
+  // decode-then-exec: ... base64 -d ... | <interpreter> (SMI-5359 retro NIT: da sink, matches the curl pattern)
+  /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]{0,60}?\|\s*(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php)\b/i,
 ]
 
 // SMI-685: Social engineering attempt patterns

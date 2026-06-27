@@ -117,9 +117,12 @@ function confusableSkeleton(s: string): string {
     if (isFullwidthLatin(cp)) {
       out += String.fromCodePoint(cp - 0xfee0)
     } else if (isMathAlphanumeric(cp)) {
-      // NFKC folds a math-styled letter/digit to its ASCII form; safe here because
-      // the range contains no CJK. A reserved hole stays unchanged (won't match).
-      out += ch.normalize('NFKC')
+      // NFKC folds a math-styled glyph to its base; chain through CONFUSABLES so a
+      // math-styled Greek/Cyrillic homoglyph (folds to Greek/Cyrillic) still maps
+      // to Latin (SMI-5359 retro NIT). Safe: the range contains no CJK; a reserved
+      // hole stays unchanged (won't match).
+      const folded = ch.normalize('NFKC')
+      out += CONFUSABLES[folded] ?? folded
     } else if (CONFUSABLES[ch]) {
       out += CONFUSABLES[ch]
     } else {
