@@ -2358,6 +2358,14 @@ console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`
     ]) {
       if (!sh.includes(fn)) problems.push(`${SHELL_MIRROR} missing function ${fn}`)
     }
+    // The shell encoder is bash parameter expansion (${1//\//-}), not a JS
+    // .replace(), so ENCODER_REGEX can't reach it. Assert the slash->dash form
+    // structurally here too — otherwise a silent shell-encoder change would only
+    // be caught by the parity test, leaving Check 34's "all 3 mirrors agree" claim
+    // unenforced for the shell side (SMI-5419 retro M1).
+    if (!/\$\{1\/\/\\\/\/-\}/.test(sh)) {
+      problems.push(`${SHELL_MIRROR} missing the canonical slash->dash encoder (\${1//\\//-})`)
+    }
   }
   const SHELL_CONSUMER = 'scripts/check-retrieval-events.sh'
   if (existsSync(SHELL_CONSUMER)) {

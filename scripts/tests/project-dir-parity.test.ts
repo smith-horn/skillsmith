@@ -14,7 +14,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -268,6 +268,17 @@ describe('shell mirror parity (project-dir.sh)', () => {
       state: r.state,
       encoded: r.encoded,
     })
+  })
+
+  it('reconcile reconciled when the on-disk entry is a BROKEN symlink (SMI-5419 retro L1)', () => {
+    // readdirSync lists a broken symlink by name, so TS reports "reconciled".
+    // The bash loop must include it too — it guards with `[ -e ] || [ -L ]`, not
+    // `[ -e ]` alone (which follows the link and skips broken ones). Without that
+    // guard the shell would diverge to "miss". This case fails if the guard regresses.
+    symlinkSync('/nonexistent-parity-target', join(projectsDir, '-Users-Foo-Bar'))
+    const r = ts.reconcileEncodedDir('-users-foo-bar')
+    expect(r.state).toBe('reconciled')
+    expect(shell(['reconcile', '-users-foo-bar'])).toEqual({ state: r.state, encoded: r.encoded })
   })
 
   it('resolve-shared exact via main repo root', () => {
