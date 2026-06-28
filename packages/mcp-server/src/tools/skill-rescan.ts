@@ -11,10 +11,11 @@
 
 import { z } from 'zod'
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { SecurityScanner, QuarantineRepository, type QuarantineSeverity } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { resolveClientPath } from '@skillsmith/core/install'
+import { scanLocalBundleSiblings } from '@skillsmith/core/services/bundled-sibling-scan'
 import { parseFrontmatter } from '../indexer/FrontmatterParser.js'
 
 // ============================================================================
@@ -41,7 +42,12 @@ export type SkillRescanInput = z.infer<typeof skillRescanInputSchema>
 export interface SkillRescanEntry {
   /** Skill directory name (e.g. "author/skill-name" or "skill-name") */
   skill: string
-  /** Whether the scan passed (no high/critical findings, risk below threshold) */
+  /**
+   * Whether the scan passed. Reflects the SKILL.md gate (no high/critical
+   * findings, risk below threshold) AND the absence of any sibling execution
+   * threat (code_execution/obfuscated_directive). Non-execution sibling findings
+   * do NOT flip this (SMI-5422 Phase 2 FP-safety).
+   */
   passed: boolean
   /** Number of findings */
   findingCount: number
@@ -60,7 +66,21 @@ export interface SkillRescanEntry {
     severity: string
     message: string
     lineNumber?: number
+    /** Relative sibling path when the finding came from a bundled sibling (SMI-5422 Phase 2). */
+    location?: string
   }>
+  /**
+   * SMI-5422 Phase 2: bundled-sibling scan summary. Present only when the skill
+   * has scannable siblings or any were dropped/skipped. Surfaces dropped/skipped
+   * files so a count/size cap is never a silent omission (CLAUDE.md no-silent-cap).
+   */
+  bundledSiblings?: {
+    scannedFiles: string[]
+    rejectableFiles: string[]
+    droppedForCount: string[]
+    skippedOversize: string[]
+    skippedSymlinkEscape: string[]
+  }
   /** Error message if skill could not be read */
   error?: string
 }
@@ -272,29 +292,71 @@ async function executeSkillRescanImpl(
     }
     const report = scanner.scan(skill.name, content)
 
+    // SMI-5422 Phase 2: also scan sibling bundled files (.mcp.json, settings,
+    // package.json lifecycle, config.json, scripts/*.sh). A malicious sibling —
+    // not the SKILL.md — quarantines the skill so local search hides it. The
+    // sibling rejection is FP-safe: driven only by code_execution/
+    // obfuscated_directive (see scanLocalBundleSiblings module header).
+    const siblingScan = await scanLocalBundleSiblings(dirname(skill.skillMdPath), scanner)
+
+    const siblingRejected = siblingScan.rejectable
+
+    // Display set = SKILL.md findings + sibling DRIVER findings only. Non-driver
+    // sibling findings (e.g. a benign `chmod`/`cp .env` that fires high/critical
+    // in a non-markdown file with no doc-context downgrade) are deliberately
+    // EXCLUDED so the entry's severityCounts/findingCount/topFindings/riskScore
+    // stay consistent with `passed` and never show a contradictory
+    // `critical:1, passed:true`. What was scanned/skipped is still surfaced via
+    // `bundledSiblings`.
+    const displayFindings = [...report.findings, ...siblingScan.rejectableFindings]
     const severityCounts = { critical: 0, high: 0, medium: 0, low: 0 }
-    for (const finding of report.findings) {
+    for (const finding of displayFindings) {
       severityCounts[finding.severity]++
     }
 
     // Take top findings sorted by severity (critical > high > medium > low)
     const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 }
-    const sortedFindings = [...report.findings].sort(
+    const sortedFindings = [...displayFindings].sort(
       (a, b) => severityOrder[a.severity] - severityOrder[b.severity]
     )
 
-    const entry = {
+    const hasSiblingActivity =
+      siblingScan.scannedFiles.length > 0 ||
+      siblingScan.droppedForCount.length > 0 ||
+      siblingScan.skippedOversize.length > 0 ||
+      siblingScan.skippedSymlinkEscape.length > 0
+
+    const entry: SkillRescanEntry = {
       skill: skill.name,
-      passed: report.passed,
-      findingCount: report.findings.length,
-      riskScore: report.riskScore,
+      // passed reflects BOTH SKILL.md and sibling execution threats.
+      passed: report.passed && !siblingRejected,
+      findingCount: displayFindings.length,
+      // riskScore is per-source max for display; rejection can be type-driven
+      // (a lone code_execution scores < threshold) so consumers MUST NOT gate
+      // on riskScore — gate on `passed`. The sibling score is folded in only on
+      // rejection so a benign sibling never inflates a passing skill's score.
+      riskScore: siblingRejected
+        ? Math.max(report.riskScore, siblingScan.maxSiblingRiskScore)
+        : report.riskScore,
       severityCounts,
       topFindings: sortedFindings.slice(0, MAX_FINDINGS_PER_SKILL).map((f) => ({
         type: f.type,
         severity: f.severity,
         message: f.message,
         lineNumber: f.lineNumber,
+        ...(f.location ? { location: f.location } : {}),
       })),
+      ...(hasSiblingActivity
+        ? {
+            bundledSiblings: {
+              scannedFiles: siblingScan.scannedFiles,
+              rejectableFiles: siblingScan.rejectableFiles,
+              droppedForCount: siblingScan.droppedForCount,
+              skippedOversize: siblingScan.skippedOversize,
+              skippedSymlinkEscape: siblingScan.skippedSymlinkEscape,
+            },
+          }
+        : {}),
     }
     results.push(entry)
 
@@ -310,7 +372,7 @@ async function executeSkillRescanImpl(
     // `name:` differs from its directory would be quarantined under the wrong key
     // and silently evade the filter. Derive the canonical name from frontmatter
     // first, mirroring LocalIndexer, then fall back to the directory name.
-    if (!report.passed && quarantineRepo) {
+    if ((!report.passed || siblingRejected) && quarantineRepo) {
       const canonicalName = parseFrontmatter(content).name || skill.name
       const skillKey = `local/${canonicalName}`
       // Idempotent: a persistently-failing skill rescanned repeatedly must not
@@ -318,20 +380,41 @@ async function executeSkillRescanImpl(
       // UNIQUE(skill_id, source)). Skip if already quarantined; a previously
       // APPROVED entry (isQuarantined === false) still re-quarantines as intended.
       if (!quarantineRepo.isQuarantined(skillKey)) {
-        const hasCritical = severityCounts.critical > 0
-        const hasHigh = severityCounts.high > 0
-        const quarantineSeverity = findingsToQuarantineSeverity(hasCritical, hasHigh)
-        const detectedPatterns = sortedFindings.slice(0, MAX_FINDINGS_PER_SKILL).map((f) => f.type)
+        // Quarantine-driving findings: SKILL.md findings only when SKILL.md
+        // itself failed, plus the sibling execution-threat drivers. Doc-class
+        // siblings are excluded upstream and so can never reach this set (B2).
+        const drivingFindings = [
+          ...(report.passed ? [] : report.findings),
+          ...siblingScan.rejectableFindings,
+        ]
+        const hasCritical = drivingFindings.some((f) => f.severity === 'critical')
+        const hasHigh = drivingFindings.some((f) => f.severity === 'high')
+        let quarantineSeverity = findingsToQuarantineSeverity(hasCritical, hasHigh)
+        // A lone code_execution finding is only MEDIUM but represents a real
+        // remote-fetch-execute threat; floor a sibling-driven quarantine at
+        // SUSPICIOUS so it does not land at the mildest dashboard tier.
+        if (siblingRejected && quarantineSeverity === 'RISKY') {
+          quarantineSeverity = 'SUSPICIOUS'
+        }
+        // ALL driving types (deduped, not sort/slice-limited) so a lone
+        // code_execution cannot be sliced out by higher-severity prose findings.
+        const detectedPatterns = [...new Set(drivingFindings.map((f) => f.type))]
+        const reasonParts: string[] = []
+        if (!report.passed) {
+          reasonParts.push(`${report.findings.length} finding(s) in SKILL.md`)
+        }
+        if (siblingScan.rejectableFiles.length > 0) {
+          reasonParts.push(
+            `${siblingScan.rejectableFindings.length} finding(s) in ` +
+              siblingScan.rejectableFiles.join(', ')
+          )
+        }
         quarantineRepo.create({
           skillId: skillKey,
           source: 'rescan',
           quarantineReason:
-            `Security rescan detected ${report.findings.length} finding(s) ` +
-            `(riskScore=${report.riskScore}): ` +
-            sortedFindings
-              .slice(0, 2)
-              .map((f) => f.message.slice(0, 80))
-              .join('; '),
+            `Security rescan detected ${reasonParts.join('; ')} ` +
+            `(riskScore=${Math.max(report.riskScore, siblingScan.maxSiblingRiskScore)})`,
           severity: quarantineSeverity,
           detectedPatterns,
         })
