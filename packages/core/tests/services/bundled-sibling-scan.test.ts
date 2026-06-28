@@ -77,6 +77,9 @@ describe('scanLocalBundleSiblings', () => {
     const r = await scanLocalBundleSiblings(dir, scanner)
     expect(r.rejectable).toBe(false)
     expect(r.rejectableFiles).toEqual([])
+    // A benign sibling that scores > 0 (chmod => privilege_escalation) must NOT
+    // contribute to maxSiblingRiskScore — only rejecting siblings do.
+    expect(r.maxSiblingRiskScore).toBe(0)
   })
 
   it('does NOT quarantine a benign scripts/build.sh (chmod/cp .env/npm build)', async () => {

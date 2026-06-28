@@ -90,7 +90,12 @@ export interface BundledSiblingScanResult {
   rejectableFiles: string[]
   /** Relative paths actually scanned. */
   scannedFiles: string[]
-  /** Max riskScore across sibling reports (display only; rejection is type-driven). */
+  /**
+   * Max riskScore across REJECTING sibling reports only (display only; rejection
+   * is type-driven so this can be below the threshold). Non-rejecting siblings
+   * (e.g. a benign `chmod` that scores high) are excluded so they cannot
+   * mis-attribute a quarantine's surfaced score.
+   */
   maxSiblingRiskScore: number
   /** `.sh` files beyond the count cap — surfaced, never silently dropped. */
   droppedForCount: string[]
@@ -205,7 +210,6 @@ export async function scanLocalBundleSiblings(
 
     const report: ScanReport = scanner.scan(`${skillDir}/${rel}`, textToScan)
     result.scannedFiles.push(rel)
-    result.maxSiblingRiskScore = Math.max(result.maxSiblingRiskScore, report.riskScore)
 
     // Fresh objects (no mutation of the report's findings array) tagged with the file.
     const tagged = report.findings.map((f) => ({ ...f, location: rel }))
@@ -216,6 +220,9 @@ export async function scanLocalBundleSiblings(
       result.rejectable = true
       result.rejectableFindings.push(...drivers)
       result.rejectableFiles.push(rel)
+      // Only a REJECTING sibling contributes to the surfaced score, so a benign
+      // high-scoring sibling cannot mis-attribute the quarantine's riskScore.
+      result.maxSiblingRiskScore = Math.max(result.maxSiblingRiskScore, report.riskScore)
     }
   }
 
