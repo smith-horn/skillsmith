@@ -88,10 +88,13 @@ export const PRIVILEGE_ESCALATION_PATTERNS: RegExp[] = [
   /sudo\s+.*(-S|--stdin)/i,
   /echo\s+.*\|\s*sudo/i,
   /sudo\s+-S/i,
-  /\bchmod\s+[0-7]*[4-7][0-7][0-7]\b/i,
-  /\bchmod\s+\+s\b/i,
-  /\bchmod\s+777\b/i,
-  /\bchmod\s+666\b/i,
+  // SMI-5424 PR2: standalone-critical chmod — genuine privilege threats. Owner-perm
+  // chmod (755/644/600/700…) is NOT here (it false-fired on benign `chmod 755 ./bin/cli`);
+  // it is now a COMPOUND signal via scanChmodFetchCompound, preserving the
+  // curl|bash+chmod co-signal (escalateCodeExecution needs high/crit).
+  /\bchmod\s+[0-7]?[0-7][0-7][2367]\b/i, // world-writable (others-write bit set: …2/3/6/7)
+  /\bchmod\s+0?[2-7][0-7]{3}\b/i, // setuid/setgid octal (incl. leading-zero 04755/02755 + 3xxx/5xxx)
+  /\bchmod\s+[ugoa]*\+s\b/i, // setuid/setgid symbolic (u+s / g+s / +s)
   /\bchown\s+root/i,
   /\bchgrp\s+root/i,
   /visudo/i,

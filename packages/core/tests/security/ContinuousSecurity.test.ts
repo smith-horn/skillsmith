@@ -275,15 +275,21 @@ describe('ContinuousSecurity - SecurityScanner', () => {
   // ==========================================================================
   describe('Sensitive Path Detection', () => {
     describe('Environment Files', () => {
+      // SMI-5359 Wave 4 (MF-2): a LONE `.env`-family reference no longer fires HIGH.
+      // Real env files (.env / .env.local / .env.production / .env.development / .ENV)
+      // surface at MEDIUM so they contribute to the score but cannot single-handedly
+      // trip the Gate-A high/critical short-circuit; the benign committed family and
+      // `.envrc` (direnv config) produce no finding at all. HIGH is reserved for a
+      // `.env` co-located with a read/exfil verb or pipe/redirect (see
+      // sensitive-path-fp.test.ts for the co-occurrence cases).
       it.each(toTestCases(edgeCases.categories.pathEdgeCases.envFiles))(
-        'should detect .env reference: %s',
+        'flags a lone .env reference at most MEDIUM (no quarantine): %s',
         (content) => {
           const report = scanner.scan('test-skill', content)
           const pathFindings = report.findings.filter((f) => f.type === 'sensitive_path')
 
-          expect(pathFindings.length).toBeGreaterThan(0)
-          expect(pathFindings[0].severity).toBe('high')
-          expect(report.passed).toBe(false)
+          expect(pathFindings.every((f) => f.severity === 'medium')).toBe(true)
+          expect(report.passed).toBe(true)
         }
       )
     })

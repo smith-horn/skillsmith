@@ -233,6 +233,53 @@ function scanPrivilegeEscalation(lines: string[], contexts: LineContext[]): Secu
   return findings
 }
 
+// SMI-5424 PR2: owner-permission chmod is a COMPOUND signal, not standalone.
+// `chmod 755 ./bin/cli` / `chmod 600 .env` / `chmod +x build.sh` are benign idioms
+// that the broad owner-perm pattern previously false-fired as
+// privilege_escalation:critical. Owner-perm chmod now emits ONLY when co-located
+// (±1 line) with a fetch/download verb — the "download a payload, chmod it, run it"
+// supply-chain shape — which kills the standalone FP AND preserves the chmod
+// co-signal that escalateCodeExecution requires (it only accepts high/critical
+// non-doc co-signals, so chmod cannot simply be downgraded). World-writable and
+// setuid/setgid chmod stay standalone-critical in PRIVILEGE_ESCALATION_PATTERNS;
+// `alreadyFlaggedLines` skips those so we never double-emit on one line.
+const OWNER_PERM_CHMOD = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\b/i
+const CHMOD_FETCH_CONTEXT =
+  /\b(?:curl|wget|fetch|downloads?|downloaded|npx)\b|https?:\/\/|\bgit\s+clone\b/i
+
+/**
+ * Owner-perm chmod compound signal — see comment above. Emits HIGH (non-doc) /
+ * low (doc) privilege_escalation ONLY when an owner-perm chmod is within ±1 line
+ * of a fetch verb; lines already flagged critical by the standalone patterns are
+ * skipped to avoid double-emitting.
+ */
+function scanChmodFetchCompound(
+  lines: string[],
+  contexts: LineContext[],
+  alreadyFlaggedLines: ReadonlySet<number>
+): SecurityFinding[] {
+  const findings: SecurityFinding[] = []
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1
+    if (alreadyFlaggedLines.has(lineNumber)) continue
+    const match = safeRegexTest(OWNER_PERM_CHMOD, line)
+    if (!match) continue
+    const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
+    if (!CHMOD_FETCH_CONTEXT.test(window)) continue
+    const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
+    findings.push({
+      type: 'privilege_escalation',
+      severity: inDocContext ? 'low' : 'high',
+      message: `chmod of a fetched/downloaded file (compound with a download verb): "${match[0].slice(0, 50)}"`,
+      lineNumber,
+      location: line.trim().slice(0, 100),
+      inDocumentationContext: inDocContext,
+      confidence,
+    })
+  }
+  return findings
+}
+
 /**
  * Scan content for prompt injection patterns
  * SMI-4960: documentation-context matches downgrade to low confidence.
@@ -286,6 +333,16 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
   findings.push(...scanSuspiciousPatterns(lines, contexts))
   findings.push(...scanDataExfiltration(lines, contexts))
   findings.push(...scanPrivilegeEscalation(lines, contexts))
+  // SMI-5424 PR2: owner-perm chmod compound signal (download-then-chmod). After
+  // scanPrivilegeEscalation so we can skip lines it already flagged critical, and
+  // before escalateCodeExecution so a compound chmod HIGH can serve as the
+  // code_execution co-signal.
+  const privEscLines = new Set(
+    findings
+      .filter((f) => f.type === 'privilege_escalation' && f.lineNumber)
+      .map((f) => f.lineNumber as number)
+  )
+  findings.push(...scanChmodFetchCompound(lines, contexts, privEscLines))
   findings.push(...scanPromptInjection(lines, contexts))
   // SMI-5359 Wave 4.2c: remote-fetch-to-interpreter + Unicode-concealed directives.
   findings.push(...scanCodeExecution(lines, contexts))
