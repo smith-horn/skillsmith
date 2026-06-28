@@ -182,4 +182,50 @@ describe('assessInstrumentationHealth', () => {
     expect(result.stale).toBe(true)
     expect(result.reason).toBe('no_recent_rows')
   })
+
+  // --- SMI-5419 negative / boundary cases (precedence + false-positive guards) ---
+
+  it('a fresh marker takes precedence over an otherwise-healthy DB', async () => {
+    // Marker is read before the row-count path: a real outage must not be masked
+    // by recent rows that happened to land after recovery.
+    seedDb([1, 2, 3]) // would be 'healthy' on its own
+    writeMarker({
+      ts: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString(),
+      reason: 'binding_unavailable',
+      error: 'native binding not found',
+      hint: 'run ./scripts/repair-host-native-deps.sh',
+    })
+    const result = await probe({ jsonlSessionCount24h: 4 })
+    expect(result.stale).toBe(true)
+    expect(result.reason).toBe('outage_marker_present')
+  })
+
+  it('does NOT flag stale at exactly 50% capture rate (no false positive)', async () => {
+    // The gate is `count < 0.5 * sessionCount` — exactly half must read healthy,
+    // so the detector does not cry wolf on the boundary.
+    seedDb([1, 2]) // 2 rows
+    const result = await probe({ jsonlSessionCount24h: 4 }) // 2 == 0.5 * 4
+    expect(result.stale).toBe(false)
+    expect(result.reason).toBe('healthy')
+  })
+
+  it('classifies 5 sessions with 0 rows as low_capture_rate, not no_recent_rows', async () => {
+    // no_recent_rows requires sessionCount > 5; the boundary value 5 falls to the
+    // capture-rate branch (0 < 0.5 * 5). Guards the off-by-one at the gate.
+    const result = await probe({ jsonlSessionCount24h: 5 }) // no DB → 0 rows
+    expect(result.stale).toBe(true)
+    expect(result.reason).toBe('low_capture_rate')
+  })
+
+  it('treats a valid-JSON marker missing a required field as absent', async () => {
+    // Distinct from the malformed-JSON case: parses cleanly but fails the field
+    // shape check, so it must fall through rather than surface a bogus banner.
+    writeFileSync(
+      outageMarkerPath,
+      JSON.stringify({ ts: new Date(NOW.getTime()).toISOString(), reason: 'x', error: 'y' }) // no `hint`
+    )
+    const result = await probe({ jsonlSessionCount24h: 0 })
+    expect(result.outageMarker).toBeNull()
+    expect(result.reason).toBe('healthy')
+  })
 })
