@@ -153,10 +153,34 @@ jobs:
           # and scripts/pooler-psql.sh for short reads (session pooler 5432 is for
           # long-running maintenance only). No `2>&1`: keep psql stderr out of the
           # capture so a NOTICE can't masquerade as a non-2 row count.
-          COUNT="$(printf '%s' "SELECT count(*) FROM pg_proc WHERE proname IN ('reconcile_device_inventory','get_user_inventory');" \
-            | psql \
-              "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
-              -P pager=off -At || echo '0')"
+          # Robustness (SMI-5396): a transient pooler connection timeout from the
+          # runner must NOT masquerade as "migration drift". Each attempt is bounded
+          # by connect_timeout (a blip fails fast instead of the ~7-min hangs seen in
+          # run 28295585862); we retry on connection failure and declare drift ONLY
+          # when psql actually CONNECTS and returns a numeric count != 2.
+          CONN="host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require connect_timeout=15"
+          QUERY="SELECT count(*) FROM pg_proc WHERE proname IN ('reconcile_device_inventory','get_user_inventory');"
+          COUNT=""
+          for attempt in 1 2 3; do
+            # `if` guards the command so set -e does not abort on a connect failure;
+            # on success COUNT is authoritative (count(*) always returns one row).
+            if COUNT="$(printf '%s' "$QUERY" | psql "$CONN" -P pager=off -At)"; then
+              break
+            fi
+            COUNT=""  # connect/query failed -- never treat empty as a real count
+            if [ "$attempt" -lt 3 ]; then
+              echo "drift preflight: psql attempt ${attempt} could not connect; retrying in 10s..." >&2
+              sleep 10
+            else
+              echo "drift preflight: psql attempt ${attempt} could not connect; no more retries." >&2
+            fi
+          done
+          if [ -z "$COUNT" ]; then
+            # Never connected: transient infra, NOT drift. Distinct message; do NOT
+            # advise applying migrations (that would be the wrong remedy).
+            echo "::error::staging pooler unreachable after 3 attempts (transient pooler/network timeout on port 6543) -- NOT migration drift; re-run the workflow."
+            exit 1
+          fi
           if [ "$COUNT" != "2" ]; then
             echo "::error::staging migration drift detected: expected exactly 2 procs (reconcile_device_inventory, get_user_inventory), got ${COUNT}. Apply migrations via supabase db push --db-url (never --linked)."
             exit 1
@@ -232,7 +256,11 @@ jobs:
 
       - name: Run cross-harness inventory spec
         id: spec
-        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts --reporter=list
+        # Both spec files are passed explicitly: Playwright treats a positional
+        # path as the test set, so naming only the round-trip spec would silently
+        # skip cross-harness-inventory.rls.spec.ts (Test E). Keep both in sync with
+        # the pull_request path filter glob `cross-harness-inventory.*` above.
+        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts packages/website/tests/e2e/cross-harness-inventory.rls.spec.ts --reporter=list
 
       - name: Surface real e2e result (Phase-1 invisible-success guard)
         # The job is continue-on-error during Phase 1, so its conclusion is
@@ -290,7 +318,7 @@ jobs:
           # FK cascade on device_skills is intentional.
           echo "DELETE FROM user_devices WHERE label LIKE 'e2e-inv-${{ github.run_id }}-%';" \
             | psql \
-              "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+              "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require connect_timeout=15" \
               -P pager=off -At || true
 
       # Phase-1 failure visibility is the GitHub Actions tab: a red nightly run

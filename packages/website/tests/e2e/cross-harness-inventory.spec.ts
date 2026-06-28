@@ -23,6 +23,9 @@
  *     Two identical uploadInventory calls in Promise.all; asserts no 23505 /
  *     duplicate-key and all skills present=true.
  *
+ * Read-path cross-user RLS isolation (Test E, SMI-5396 C2) lives in the sibling
+ * cross-harness-inventory.rls.spec.ts (split out to keep each file under 500).
+ *
  * Staging-only: STAGING_SUPABASE_URL must contain `ovhcifugwqnzoebwfuku`.
  * Config/helpers refuse to boot if the prod project ref appears in the URL.
  *
