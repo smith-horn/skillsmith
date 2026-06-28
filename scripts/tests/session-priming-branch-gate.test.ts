@@ -12,11 +12,12 @@
  * still don't prime.
  *
  * Detection mechanism: if the script reaches the `mkdir -p "$LOG_DIR"` line
- * (post-Gate-2, pre-Gate-4), the encoded log directory under $HOME exists
- * after the script returns. We redirect HOME to a per-test scratch dir so
- * we don't pollute the real ~/.claude/projects/. The query script is missing
- * inside the fixture's REPO_ROOT, so Gate 4 trips and exits cleanly without
- * touching the real writer DB.
+ * (post-Gate-2, pre-Gate-4), $HOME/.skillsmith/logs exists after the script
+ * returns (SMI-5419 moved LOG_DIR there from the case-fragile encoded
+ * ~/.claude/projects/ dir). We redirect HOME to a per-test scratch dir so we
+ * don't pollute the real ~/.skillsmith/. The query script is missing inside
+ * the fixture's REPO_ROOT, so Gate 4 trips and exits cleanly without touching
+ * the real writer DB.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -94,10 +95,11 @@ function runHook(repo: string, branch: string, home: string): RunResult {
     timeout: 10_000,
   })
 
-  // The encoded LOG_DIR is $HOME/.claude/projects/-<repo-path-with-/-as--->
-  // matching the bash sed: 's|^/|-|;s|/|-|g' (leading / → -, all other / → -).
-  const encoded = repo.replace(/^\//, '-').replace(/\//g, '-')
-  const logDir = join(home, '.claude', 'projects', encoded)
+  // SMI-5419: LOG_DIR moved to the case-independent $HOME/.skillsmith/logs (was
+  // the case-fragile encoded ~/.claude/projects/<encoded> dir). Reaching the
+  // `mkdir -p "$LOG_DIR"` step is still the Gate-2 pass signal — every skip path
+  // calls emit_empty and exits before it.
+  const logDir = join(home, '.skillsmith', 'logs')
 
   return {
     exitCode: proc.status,
@@ -122,8 +124,9 @@ function setupFixtureRepo(branch: string): { repo: string; home: string } {
     execFileSync('git', ['checkout', '-b', branch], { cwd: repo, env, stdio: 'pipe' })
   }
 
-  // Ensure $HOME/.claude exists but NOT the encoded project dir — that's the
-  // signal we're testing for.
+  // Fresh scratch HOME: $HOME/.skillsmith/logs must NOT pre-exist — its creation
+  // by the hook is the Gate-2 pass signal we test for. ($HOME/.claude is created
+  // to mimic a realistic home; the hook no longer keys the log dir off it.)
   mkdirSync(join(home, '.claude'), { recursive: true })
 
   return { repo, home }
@@ -193,8 +196,7 @@ describe('session-start-priming.sh Gate 2 (SMI-4809)', () => {
       timeout: 10_000,
     })
 
-    const encoded = repo.replace(/^\//, '-').replace(/\//g, '-')
-    const logDir = join(home, '.claude', 'projects', encoded)
+    const logDir = join(home, '.skillsmith', 'logs')
 
     expect(proc.status).toBe(0)
     expect(existsSync(logDir)).toBe(false) // Gate 1 still rejects, doesn't reach Gate 2
@@ -229,8 +231,7 @@ describe('session-start-priming.sh Gate 2 (SMI-4809)', () => {
       timeout: 10_000,
     })
 
-    const encoded = repo.replace(/^\//, '-').replace(/\//g, '-')
-    const logDir = join(home, '.claude', 'projects', encoded)
+    const logDir = join(home, '.skillsmith', 'logs')
 
     expect(proc.status).toBe(0)
     expect(existsSync(logDir)).toBe(false) // empty branch is in deny list
