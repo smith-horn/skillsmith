@@ -430,7 +430,7 @@ describe.skipIf(!nativeSqliteAvailable)('SMI-4549 Wave 2 — outage marker', () 
 })
 
 describe('ambiguous project dir guard', () => {
-  it('no-ops when resolveTelemetryProjectDir returns ambiguous state', async () => {
+  it('no-ops when resolveSharedProjectDir returns ambiguous state', async () => {
     // The ambiguity check in openDb() fires before require('better-sqlite3'), so
     // this test does NOT need nativeSqliteAvailable — it runs in all environments.
     //

@@ -20,10 +20,13 @@
  * unambiguous.
  *
  * Two input policies, exposed as two resolvers:
- *   - {@link resolveTelemetryProjectDir} — keyed on the MAIN repo root so all
- *     worktrees of one project share a single `retrieval-logs.db`.
- *   - {@link resolveClaudeProjectDir} — keyed on the raw cwd (memory / sessions
- *     state, which Claude Code stores per actual working directory).
+ *   - {@link resolveSharedProjectDir} — keyed on the MAIN repo root so all
+ *     worktrees of one project share a single store: the `retrieval-logs.db`
+ *     telemetry feed AND the curated `/memory` topic-file corpus (both are
+ *     project-level knowledge, not per-worktree state).
+ *   - {@link resolveClaudeProjectDir} — keyed on the raw cwd for per-working-
+ *     directory state: the session `*.jsonl` transcripts Claude Code writes
+ *     under the actual launch dir.
  *
  * `CLAUDE_PROJECT_DIR` is intentionally NOT used as the source: in a worktree
  * session it is the worktree path, which would shard the deliberately-shared
@@ -188,11 +191,14 @@ function build(encoded: string, state: ReconcileState, candidates?: string[]): R
 }
 
 /**
- * Resolve the encoded project dir for SHARED telemetry (one DB per project,
- * across all its worktrees). Memoized at module scope — separate from the DB
- * handle cache, because the writer's no-op paths re-enter resolution per event.
+ * Resolve the encoded project dir for SHARED, project-level state — keyed on the
+ * MAIN repo root so all worktrees of one project resolve to a single dir. Used by
+ * both the telemetry DB (`retrieval-logs.db`) and the curated `/memory` corpus,
+ * which are project knowledge rather than per-worktree state. Memoized at module
+ * scope — separate from the DB handle cache, because the writer's no-op paths
+ * re-enter resolution per event.
  */
-export function resolveTelemetryProjectDir(cwd: string = process.cwd()): ResolvedProjectDir {
+export function resolveSharedProjectDir(cwd: string = process.cwd()): ResolvedProjectDir {
   if (telemetryMemo) return telemetryMemo
   const root = findMainRepoRoot(cwd) ?? cwd
   const r = reconcileEncodedDir(encodeProjectSegment(root))
@@ -201,8 +207,10 @@ export function resolveTelemetryProjectDir(cwd: string = process.cwd()): Resolve
 }
 
 /**
- * Resolve the encoded project dir for PER-CWD state (memory / sessions), which
- * Claude Code stores per actual working directory. Memoized per cwd.
+ * Resolve the encoded project dir for PER-CWD state — the session `*.jsonl`
+ * transcripts Claude Code writes under the actual working directory. NOT for
+ * memory, which is shared project knowledge (see {@link resolveSharedProjectDir}).
+ * Memoized per cwd.
  */
 export function resolveClaudeProjectDir(cwd: string = process.cwd()): ResolvedProjectDir {
   const key = resolve(cwd)

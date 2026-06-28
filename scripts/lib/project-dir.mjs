@@ -107,8 +107,9 @@ function build(encoded, state, candidates) {
   }
 }
 
-/** SHARED telemetry dir (one DB per project across worktrees). Memoized. */
-export function resolveTelemetryProjectDir(cwd = process.cwd()) {
+/** SHARED project-level dir (telemetry DB + /memory corpus), keyed on the main
+ * repo root so all worktrees share one. Memoized. */
+export function resolveSharedProjectDir(cwd = process.cwd()) {
   if (telemetryMemo) return telemetryMemo
   const root = findMainRepoRoot(cwd) ?? cwd
   const r = reconcileEncodedDir(encodeProjectSegment(root))
@@ -116,7 +117,8 @@ export function resolveTelemetryProjectDir(cwd = process.cwd()) {
   return telemetryMemo
 }
 
-/** PER-CWD dir (memory / sessions). Memoized per cwd. */
+/** PER-CWD dir for session *.jsonl transcripts (NOT memory — that's shared via
+ * resolveSharedProjectDir). Memoized per cwd. */
 export function resolveClaudeProjectDir(cwd = process.cwd()) {
   const key = resolve(cwd)
   const cached = cwdMemo.get(key)

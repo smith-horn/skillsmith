@@ -147,10 +147,10 @@ describe('resolveClaudeProjectDir parity', () => {
 })
 
 // ---------------------------------------------------------------------------
-// resolveTelemetryProjectDir
+// resolveSharedProjectDir
 // ---------------------------------------------------------------------------
 
-describe('resolveTelemetryProjectDir parity', () => {
+describe('resolveSharedProjectDir parity', () => {
   it('exact: identical result when the main repo root has a verbatim on-disk entry', () => {
     // Create a temp dir with .git as a DIRECTORY so findMainRepoRoot returns it.
     const repo = mkdtempSync(join(tmpdir(), 'repo-parity-exact-'))
@@ -159,13 +159,13 @@ describe('resolveTelemetryProjectDir parity', () => {
     mkEntry(encoded) // place the entry in our fake ~/.claude/projects/
     try {
       // Call TS resolver first (after fresh reset from beforeEach), capture result.
-      const tsResult = ts.resolveTelemetryProjectDir(repo)
+      const tsResult = ts.resolveSharedProjectDir(repo)
 
       // Reset both caches so the mjs resolver also starts cold.
       ts.resetProjectDirCache()
       m.resetProjectDirCache()
 
-      const mjsResult = m.resolveTelemetryProjectDir(repo)
+      const mjsResult = m.resolveSharedProjectDir(repo)
       expect(mjsResult).toEqual(tsResult)
     } finally {
       rmSync(repo, { recursive: true, force: true })
@@ -175,12 +175,12 @@ describe('resolveTelemetryProjectDir parity', () => {
   it('miss: identical fallback to cwd encoding when no .git ancestor exists', () => {
     const dir = mkdtempSync(join(tmpdir(), 'nogit-parity-'))
     try {
-      const tsResult = ts.resolveTelemetryProjectDir(dir)
+      const tsResult = ts.resolveSharedProjectDir(dir)
 
       ts.resetProjectDirCache()
       m.resetProjectDirCache()
 
-      const mjsResult = m.resolveTelemetryProjectDir(dir)
+      const mjsResult = m.resolveSharedProjectDir(dir)
       expect(mjsResult).toEqual(tsResult)
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -196,12 +196,12 @@ describe('resolveTelemetryProjectDir parity', () => {
     const variant = computed.toUpperCase()
     mkEntry(variant)
     try {
-      const tsResult = ts.resolveTelemetryProjectDir(repo)
+      const tsResult = ts.resolveSharedProjectDir(repo)
 
       ts.resetProjectDirCache()
       m.resetProjectDirCache()
 
-      const mjsResult = m.resolveTelemetryProjectDir(repo)
+      const mjsResult = m.resolveSharedProjectDir(repo)
       expect(mjsResult).toEqual(tsResult)
     } finally {
       rmSync(repo, { recursive: true, force: true })

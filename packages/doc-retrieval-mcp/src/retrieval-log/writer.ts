@@ -20,11 +20,7 @@ import { dirname, join, resolve } from 'node:path'
 
 import type BetterSqlite3 from 'better-sqlite3'
 
-import {
-  findMainRepoRoot,
-  resetProjectDirCache,
-  resolveTelemetryProjectDir,
-} from './project-dir.js'
+import { findMainRepoRoot, resetProjectDirCache, resolveSharedProjectDir } from './project-dir.js'
 import {
   CURRENT_SCHEMA_VERSION,
   SCHEMA_SQL,
@@ -84,7 +80,7 @@ export function resolveDbPath(): { dir: string; dbPath: string } {
     const dir = resolve(override)
     return { dir, dbPath: join(dir, 'retrieval-logs.db') }
   }
-  const dir = resolveTelemetryProjectDir().dir
+  const dir = resolveSharedProjectDir().dir
   return { dir, dbPath: join(dir, 'retrieval-logs.db') }
 }
 
@@ -181,7 +177,7 @@ function openDb(): BetterSqlite3.Database | null {
     // ~/.skillsmith/logs/) lands with the W0.1 diagnostics follow-up.
     const overrideActive =
       !!process.env.RETRIEVAL_LOG_DIR_OVERRIDE && process.env.NODE_ENV !== 'production'
-    const telemetryDir = overrideActive ? null : resolveTelemetryProjectDir()
+    const telemetryDir = overrideActive ? null : resolveSharedProjectDir()
     if (telemetryDir?.state === 'ambiguous') {
       if (!ambiguousWarningEmitted) {
         console.warn(

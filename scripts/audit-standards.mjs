@@ -2321,8 +2321,8 @@ console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`
       problems.push(`${f} missing the canonical slash->dash encoder`)
     }
   }
-  if (existsSync(WRITER) && !/resolveTelemetryProjectDir/.test(readFileSync(WRITER, 'utf8'))) {
-    problems.push(`${WRITER} must delegate to resolveTelemetryProjectDir`)
+  if (existsSync(WRITER) && !/resolveSharedProjectDir/.test(readFileSync(WRITER, 'utf8'))) {
+    problems.push(`${WRITER} must delegate to resolveSharedProjectDir`)
   }
   if (existsSync(CLI) && !/from '\.\/lib\/project-dir\.mjs'/.test(readFileSync(CLI, 'utf8'))) {
     problems.push(`${CLI} must import the shared resolver from ./lib/project-dir.mjs`)

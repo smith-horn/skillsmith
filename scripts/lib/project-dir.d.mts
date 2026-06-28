@@ -27,5 +27,5 @@ export function reconcileEncodedDir(computed: string): {
   candidates?: string[]
 }
 export function resetProjectDirCache(): void
-export function resolveTelemetryProjectDir(cwd?: string): ResolvedProjectDir
+export function resolveSharedProjectDir(cwd?: string): ResolvedProjectDir
 export function resolveClaudeProjectDir(cwd?: string): ResolvedProjectDir

@@ -25,7 +25,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
-import { resolveTelemetryProjectDir } from './lib/project-dir.mjs'
+import { resolveSharedProjectDir } from './lib/project-dir.mjs'
 
 const ALLOWED_OUTCOMES = ['complete', 'incomplete', 'bypassed_no_verify']
 
@@ -83,14 +83,14 @@ function main() {
  * cwd (not the MAIN repo root), so in any worktree it wrote frontmatter_lint_events
  * to a DIFFERENT DB than the writer — silently splitting the feed.
  *   1. `RETRIEVAL_LOG_DIR_OVERRIDE` (test-only; ignored in production NODE_ENV).
- *   2. `resolveTelemetryProjectDir()` — main-repo root, casing reconciled.
+ *   2. `resolveSharedProjectDir()` — main-repo root, casing reconciled.
  */
 function resolveDbPath() {
   const override = process.env.RETRIEVAL_LOG_DIR_OVERRIDE
   if (override && process.env.NODE_ENV !== 'production') {
     return join(override, 'retrieval-logs.db')
   }
-  return join(resolveTelemetryProjectDir().dir, 'retrieval-logs.db')
+  return join(resolveSharedProjectDir().dir, 'retrieval-logs.db')
 }
 
 process.exit(main())

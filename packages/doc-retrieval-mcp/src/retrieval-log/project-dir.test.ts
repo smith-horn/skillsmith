@@ -19,7 +19,7 @@ import {
   reconcileEncodedDir,
   resetProjectDirCache,
   resolveClaudeProjectDir,
-  resolveTelemetryProjectDir,
+  resolveSharedProjectDir,
 } from './project-dir.js'
 
 let homeDir: string
@@ -111,14 +111,14 @@ describe('resolveClaudeProjectDir', () => {
   })
 })
 
-describe('resolveTelemetryProjectDir', () => {
+describe('resolveSharedProjectDir', () => {
   it('exact: resolves to the exact on-disk entry when the main repo root is present', () => {
     const repo = mkdtempSync(join(tmpdir(), 'repo-exact-'))
     mkdirSync(join(repo, '.git')) // .git as a DIRECTORY → findMainRepoRoot returns repo
     const encoded = encodeProjectSegment(repo)
     mkEntry(encoded) // create ~/.claude/projects/<encoded>
     try {
-      const r = resolveTelemetryProjectDir(repo)
+      const r = resolveSharedProjectDir(repo)
       expect(r.state).toBe('exact')
       expect(r.encoded).toBe(encoded)
     } finally {
@@ -130,7 +130,7 @@ describe('resolveTelemetryProjectDir', () => {
     const dir = mkdtempSync(join(tmpdir(), 'no-git-'))
     try {
       // No entry in projectsDir → miss state on a fresh HOME.
-      const r = resolveTelemetryProjectDir(dir)
+      const r = resolveSharedProjectDir(dir)
       expect(r.state).toBe('miss')
       expect(r.encoded).toBe(encodeProjectSegment(dir))
     } finally {
@@ -142,10 +142,10 @@ describe('resolveTelemetryProjectDir', () => {
     const dir = mkdtempSync(join(tmpdir(), 'memo-'))
     try {
       // beforeEach already called resetProjectDirCache(), so telemetryMemo is null.
-      const a = resolveTelemetryProjectDir(dir)
+      const a = resolveSharedProjectDir(dir)
       // Second call with a different arg — the arg is IGNORED because telemetryMemo
       // is already set; the very same object must be returned.
-      const b = resolveTelemetryProjectDir(dir + '/sub')
+      const b = resolveSharedProjectDir(dir + '/sub')
       expect(a).toBe(b)
     } finally {
       rmSync(dir, { recursive: true, force: true })
