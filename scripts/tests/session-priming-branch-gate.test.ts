@@ -97,8 +97,9 @@ function runHook(repo: string, branch: string, home: string): RunResult {
 
   // SMI-5419: LOG_DIR moved to the case-independent $HOME/.skillsmith/logs (was
   // the case-fragile encoded ~/.claude/projects/<encoded> dir). Reaching the
-  // `mkdir -p "$LOG_DIR"` step is still the Gate-2 pass signal — every skip path
-  // calls emit_empty and exits before it.
+  // `mkdir -p "$LOG_DIR"` step is still the Gate-2 pass signal: deny-list/no-token
+  // skip paths emit_empty before it, and Gate 3 (idempotency) can't trigger here
+  // (random session_id → no pre-existing transient).
   const logDir = join(home, '.skillsmith', 'logs')
 
   return {
