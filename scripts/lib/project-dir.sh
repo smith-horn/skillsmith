@@ -34,6 +34,11 @@ ascii_fold() { printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z'; }
 
 # Walk up for the first ancestor whose .git is a DIRECTORY (worktrees have .git
 # as a file). Echoes the path and returns 0, or returns 1 before filesystem root.
+#
+# Unlike project-dir.ts (which calls path.resolve first), this assumes an already
+# absolute, lexically-normalized input — every caller derives it via `cd && pwd`
+# or `git rev-parse --show-toplevel`, so there is no relative/`..` form to resolve.
+# We deliberately do NOT use realpath here (it resolves symlinks; see project-dir.ts).
 find_main_repo_root() {
   local current parent depth
   current="$1"
