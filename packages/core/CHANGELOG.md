@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.9.0
+
+- **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)
+- **Feature**: cross-harness skill inventory — Wave 1+2 (data plane + write path) [SMI-5382] (#1574)
+
 ## v0.8.2
 
 - **Feature**: enrich git/plugin-recovered skills with the registry UUID (SMI-5411) (#1600)
