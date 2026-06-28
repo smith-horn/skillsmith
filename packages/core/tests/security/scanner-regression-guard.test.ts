@@ -53,7 +53,7 @@ const BASELINE_PATTERN_COUNTS = {
   SSRF_INSTRUCTION_PATTERNS: 13,
   AI_DEFENCE_PATTERNS: 16,
   PII_PATTERNS: 11,
-  CODE_EXECUTION_PATTERNS: 6, // SMI-5359 Wave 4.2: remote-fetch-to-interpreter detector
+  CODE_EXECUTION_PATTERNS: 9, // SMI-5424: 6 → 9 (FN-1 chained download-then-exec, FN-2 npx-remote, FN-4 node/python inline-eval; FN-3 fish/bun/deno folded into existing sinks)
 } as const
 
 describe('Scanner Regression Guard (SMI-3864)', () => {
