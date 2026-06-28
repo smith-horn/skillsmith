@@ -302,6 +302,9 @@ export class SkillInstallationService {
           (f) => f.severity === 'critical' || f.severity === 'high'
         )
         const others = optionalFiles.failedScans.slice(1).map((s) => s.file)
+        // SMI-5422: surface the matched finding type so the author knows what to fix.
+        const topFinding = crit[0] ?? first.report.findings[0]
+        const matchedLabel = topFinding ? (topFinding.category ?? topFinding.type) : 'unknown'
         return buildInstallFailure('SCAN_REJECTED', {
           skillId,
           installPath,
@@ -314,11 +317,14 @@ export class SkillInstallationService {
             crit.length +
             ' critical/high finding(s) (risk score ' +
             first.report.riskScore +
-            ').',
+            ', matched: ' +
+            matchedLabel +
+            '). See https://skillsmith.app/docs/security/scanner',
           tips: [
-            'Rejected optional file: ' + first.file,
+            'Rejected file: ' + first.file + ' (matched: ' + matchedLabel + ')',
             'Risk score: ' + first.report.riskScore,
-            ...(others.length > 0 ? ['Other rejected optional files: ' + others.join(', ')] : []),
+            'Security scanner docs: https://skillsmith.app/docs/security/scanner',
+            ...(others.length > 0 ? ['Other rejected files: ' + others.join(', ')] : []),
           ],
         })
       }
