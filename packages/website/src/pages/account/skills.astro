@@ -204,6 +204,12 @@ const supabaseConfig = getSupabaseConfig()
     const rows = (invResult.data as InventoryRow[]) ?? []
     const devices = buildInventoryView(rows)
     const emptyState = detectEmptyState(consentEnabled, devices.length)
+    // Observability hook: exposes the resolved activation state (typed EmptyState
+    // enum, no user input) as one attribute. The e2e deliberately does NOT assert
+    // on it — it is device-count-derived and would be flaky across shared-user
+    // runs; the e2e asserts on run-scoped [data-testid="device-card"]/[data-state]
+    // instead. Useful for the manual dev-browser dress rehearsal + debugging.
+    pageEl?.setAttribute('data-state', emptyState)
 
     if (loadingEl) loadingEl.style.display = 'none'
     if (pageEl) pageEl.style.display = 'block'

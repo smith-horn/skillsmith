@@ -1,0 +1,304 @@
+# SMI-5395 -- cross-harness skill inventory staging e2e round-trip.
+# Proves the full push -> device_skills -> /account/skills render path against
+# staging Supabase (ovhcifugwqnzoebwfuku -- never prod)
+# before Wave 6 production rollout.
+#
+# Hard gate (C3): "green" means the SPEC STEP conclusion = success (surfaced by
+# the "Surface real e2e result" guard below + the run summary), NOT the job
+# conclusion -- which Phase-1 continue-on-error masks to "success" even on a spec
+# failure. Wave 6 is blocked until EITHER:
+#   (a) post-merge, this workflow is promoted to a REQUIRED check after 10
+#       consecutive green NIGHTLY runs (nightlies only run once the workflow is on
+#       the default branch, i.e. after the Wave-6 merge); OR
+#   (b) pre-merge, a specific green RUN (a paths-triggered PR run or a manual
+#       workflow_dispatch -- nightlies cannot run pre-merge) is signed off by
+#       run_id in the Linear gate, after confirming the spec step passed.
+#
+# Phase 1 rollout: PR + dispatch (+ nightly post-merge) with continue-on-error:
+# true. Promotion: remove continue-on-error, wire the alert-notify failure step,
+# and add to required checks after 10 consecutive green nightly runs.
+#
+# Docker carve-out: runs on ubuntu-latest outside the dev container.
+# Justification: no native modules in the spec surface (Playwright + Astro +
+# supabase-js); ADR-113 precedent (vscode-extension); ~6 min wallclock saving.
+#
+# H3: prod-ref grep gate is scoped to the UNENCRYPTED inventory file list only.
+# Do NOT add supabase/migrations/** or supabase/functions/** -- grep reads
+# ciphertext and would false-alarm on encrypted bytes.
+
+name: Cross-Harness Skill Inventory E2E
+
+on:
+  schedule:
+    - cron: '30 6 * * *' # 06:30 UTC daily -- offset from device-login's 0 6 to avoid pooler contention
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - 'packages/website/tests/e2e/cross-harness-inventory.*'
+      - '.github/workflows/cross-harness-inventory-e2e.yml'
+      - '.github/workflows/cross-harness-inventory-e2e-cleanup.yml'
+      - 'scripts/seed-e2e-inventory-users.ts'
+      - 'supabase/functions/inventory-upload/**'
+      - 'supabase/migrations/2026062600000*.sql'
+      - 'packages/website/src/pages/account/skills.astro'
+      - 'packages/website/src/lib/inventory-view.ts'
+      - 'packages/website/src/lib/skills-page-render.ts'
+
+concurrency:
+  group: cross-harness-inventory-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight (prod-ref grep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Refuse if prod project ref present in inventory test surface (non-negotiable)
+        run: |
+          set -eu
+          # Prod ref must not appear in the inventory test surface EXCEPT on lines
+          # bearing the explicit allowlist marker `SMI-5395-allow-prod-ref` (used
+          # in cross-harness-inventory.config.ts to refuse-on-match guards --
+          # the very thing this gate protects). Any other occurrence is presumed
+          # to be an accidentally-pasted prod URL.
+          # The needle is split across two parts so the literal never appears
+          # contiguously in this file (avoids the gate matching its own source).
+          # H3: grep ONLY the unencrypted inventory file list -- NOT the inherited
+          # device-login glob, NOT encrypted paths (supabase/migrations,
+          # supabase/functions -- grep reads ciphertext and false-alarms).
+          # SMI-5395-allow-prod-ref-needle.
+          NEEDLE="vrcnzpmnd""troqxxoqkzy"
+          MATCHES="$(grep -rEn "$NEEDLE" \
+             packages/website/tests/e2e/cross-harness-inventory.* \
+             scripts/seed-e2e-inventory-users.ts \
+             .github/workflows/cross-harness-inventory-e2e.yml \
+             .github/workflows/cross-harness-inventory-e2e-cleanup.yml \
+             | grep -vE 'SMI-5395-allow-prod-ref' || true)"
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Prod project ref detected in inventory test surface -- refusing to run"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "Prod-ref grep gate clean."
+
+  test:
+    name: Inventory round-trip test
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: e2e-staging
+    permissions:
+      contents: read
+    continue-on-error: true # audit:allow-continue-on-error
+    # H2: the marker above is REQUIRED. Device-login satisfies audit:standards
+    # Check 21 via its downstream negative-control-assertion job that references
+    # needs.test.result. This workflow drops that job (M4 -- no CLI, no
+    # negative-control input), so the explicit marker is the substitute.
+    env:
+      NODE_VERSION: '22'
+      # Build-time PUBLIC_* envs flow through to the Astro bundle so
+      # /account/skills talks to staging Supabase instead of api.skillsmith.app.
+      PUBLIC_API_BASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      PUBLIC_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+      # Spec-side env (helpers + spec read these via getConfig()).
+      STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+      STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      # C2: two dedicated users with fixed consent -- never toggled mid-suite.
+      E2E_INV_CONSENT_ON_USER_ID: ${{ secrets.E2E_INV_CONSENT_ON_USER_ID }}
+      E2E_INV_CONSENT_OFF_USER_ID: ${{ secrets.E2E_INV_CONSENT_OFF_USER_ID }}
+      E2E_INV_USER_PASSWORD: ${{ secrets.E2E_INV_USER_PASSWORD }}
+      # SMI-4496 IPv4 lesson: bind to 127.0.0.1 to match vercel dev --listen.
+      WEBSITE_BASE_URL: 'http://127.0.0.1:4321'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies (no scripts -- host has no native module compiler chain)
+        run: npm ci --ignore-scripts
+
+      - name: Migration drift preflight (reconcile_device_inventory + get_user_inventory must exist)
+        env:
+          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+        run: |
+          set -eu
+          # Build pooler connection from STAGING_SUPABASE_URL's project ref.
+          REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
+          if [ -z "$REF" ]; then
+            echo "::error::Could not derive project ref from STAGING_SUPABASE_URL"; exit 1
+          fi
+          # Fail-closed runtime ref guard (defense-in-depth beyond the file-content
+          # grep gate): refuse to connect unless the derived ref is staging.
+          if [ "$REF" != "ovhcifugwqnzoebwfuku" ]; then
+            echo "::error::derived project ref '${REF}' is not the staging ref -- refusing to connect"; exit 1
+          fi
+          # H6: assert exact count == 2 (P2-2 -- a half-applied state must fail).
+          # Transaction pooler (port 6543) -- matches device-login-roundtrip.yml
+          # and scripts/pooler-psql.sh for short reads (session pooler 5432 is for
+          # long-running maintenance only). No `2>&1`: keep psql stderr out of the
+          # capture so a NOTICE can't masquerade as a non-2 row count.
+          COUNT="$(printf '%s' "SELECT count(*) FROM pg_proc WHERE proname IN ('reconcile_device_inventory','get_user_inventory');" \
+            | psql \
+              "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+              -P pager=off -At || echo '0')"
+          if [ "$COUNT" != "2" ]; then
+            echo "::error::staging migration drift detected: expected exactly 2 procs (reconcile_device_inventory, get_user_inventory), got ${COUNT}. Apply migrations via supabase db push --db-url (never --linked)."
+            exit 1
+          fi
+          echo "Migration drift preflight clean (both inventory RPCs confirmed, count=${COUNT})."
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Edge-fn warmup (CORS preflight on inventory-upload)
+        run: |
+          # L6: send Origin + Access-Control-Request-Method/Headers so the CORS
+          # path matches a real browser preflight (not just an unauth HEAD).
+          curl -fsS -X OPTIONS "${STAGING_SUPABASE_URL}/functions/v1/inventory-upload" \
+            -H 'Origin: https://skillsmith.app' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: authorization,apikey,content-type' \
+            -o /dev/null
+          echo "inventory-upload warmed."
+
+      - name: Cache Vercel build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
+      - name: Install Vercel CLI (pinned to root devDep)
+        run: |
+          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
+          echo "Installing vercel@$PINNED (pinned from root package.json)"
+          npm i -g "vercel@$PINNED"
+          vercel --version
+
+      - name: Vercel pull + build website
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -eu
+          # SMI-4508: vercel pull is the canonical CI primitive for retrieving
+          # project settings non-interactively. PUBLIC_* staging envs already
+          # set at job level flow through the Astro bundle via build-time inlining.
+          # VERCEL_TOKEN/ORG_ID/PROJECT_ID are read from the step env (not passed
+          # as --token) so the token never enters the runner process table (governance Low #5).
+          vercel pull --yes --environment=preview
+          vercel build
+
+      - name: Start vercel dev (Astro SSR + edge functions)
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -eu
+          mkdir -p "$GITHUB_WORKSPACE/test-results"
+          # SMI-4508: vercel dev serves /account/skills (SSR) via the same edge
+          # runtime as prod. SMI-4493 IPv4 family lesson: bind to 127.0.0.1.
+          # PATH augmentation: vercel auto-detects Astro and runs `astro dev
+          # --port $PORT` in a sub-shell that doesn't inherit npm .bin lookup.
+          export PATH="$GITHUB_WORKSPACE/packages/website/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          # VERCEL_TOKEN read from the step env (not --token) -- governance Low #5.
+          nohup vercel dev --listen 127.0.0.1:4321 \
+            > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
+
+      - name: Wait for preview server
+        # IPv4 to match vercel dev --listen 127.0.0.1 and SMI-4493 wait-on lesson.
+        # 90s budget -- vercel dev cold-start is ~20-30s.
+        run: npx --yes wait-on http://127.0.0.1:4321/ -t 90000
+
+      - name: Run cross-harness inventory spec
+        id: spec
+        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/cross-harness-inventory.spec.ts --reporter=list
+
+      - name: Surface real e2e result (Phase-1 invisible-success guard)
+        # The job is continue-on-error during Phase 1, so its conclusion is
+        # "success" even when the spec FAILS. This reads the spec step's raw
+        # outcome and emits a ::warning:: + a run-summary line so a masked failure
+        # is never silently green -- the true gate signal lives here, not in the
+        # job conclusion. (Hardens the SMI-5395 invisible-success finding.)
+        if: always()
+        run: |
+          if [ "${{ steps.spec.outcome }}" = "success" ]; then
+            echo "### Cross-Harness Inventory E2E -- spec PASSED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=Inventory E2E spec FAILED::spec outcome=${{ steps.spec.outcome }}. The job is green ONLY due to Phase-1 continue-on-error -- do NOT treat this run as a passing gate. Inspect the spec step + uploaded artifacts."
+            echo "### Cross-Harness Inventory E2E -- spec FAILED (outcome=${{ steps.spec.outcome }}), masked by Phase-1 continue-on-error" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload artifacts on spec failure (allowlisted paths only -- no secrets)
+        # Keyed on the spec step's raw outcome (not failure()) so ONLY the spec
+        # step's own failure triggers upload -- not an earlier step's failure that
+        # would leave the spec skipped with no Playwright artifacts to collect.
+        if: steps.spec.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cross-harness-inventory-${{ github.run_id }}
+          path: |
+            packages/website/playwright-report/
+            test-results/inventory-*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: SIGTERM preview server
+        if: always()
+        run: |
+          if [ -f test-results/preview.pid ]; then
+            PID="$(cat test-results/preview.pid)"
+            if kill -0 "$PID" 2>/dev/null; then kill -TERM "$PID" || true; fi
+          fi
+
+      - name: Defensive cleanup (run-scoped user_devices for this run)
+        if: always()
+        env:
+          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+        run: |
+          set -eu
+          REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
+          # Fail-closed runtime ref guard: never DELETE against a non-staging DB.
+          # exit 0 (skip, not fail) so this always()-step doesn't go red spuriously.
+          if [ "$REF" != "ovhcifugwqnzoebwfuku" ]; then
+            echo "::warning::derived project ref '${REF}' is not staging -- skipping defensive cleanup"; exit 0
+          fi
+          # P2-1: LIKE pattern is BOUND to this run_id so concurrent PR/nightly
+          # runs under different concurrency groups cannot wipe each other's
+          # in-flight devices mid-test. The broad `e2e-inv-%` catch-all lives
+          # in the weekly cleanup workflow (M3/cross-harness-inventory-e2e-cleanup.yml).
+          # FK cascade on device_skills is intentional.
+          echo "DELETE FROM user_devices WHERE label LIKE 'e2e-inv-${{ github.run_id }}-%';" \
+            | psql \
+              "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+              -P pager=off -At || true
+
+      # Phase-1 failure visibility is the GitHub Actions tab: a red nightly run
+      # plus the PR annotation. An alert-notify failure step is intentionally NOT
+      # added while `continue-on-error: true` is in effect -- the job reports
+      # success, so a `failure()`-gated alert is unreliable in Phase 1. The alert
+      # step is wired as part of the Step-6 promotion (when continue-on-error is
+      # removed and the job becomes a required check), mirroring the alert-notify
+      # step in cross-harness-inventory-e2e-cleanup.yml. This matches
+      # device-login-roundtrip.yml, whose main test job likewise has no alert
+      # step during Phase 1.
