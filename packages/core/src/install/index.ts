@@ -14,6 +14,7 @@ export {
   CLIENT_IDS,
   CLIENT_NATIVE_PATHS,
   assertClientId,
+  enumerateHarnessPresence,
   getCanonicalInstallPath,
   getInstallPath,
   resolveClientId,

@@ -8,6 +8,7 @@
  *
  * @module @skillsmith/core/install/paths
  */
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -69,4 +70,30 @@ export function resolveClientId(raw: string | undefined): ClientId {
 export function resolveClientPath(override?: string | undefined): string {
   const raw = override !== undefined ? override : process.env['SKILLSMITH_CLIENT']
   return getInstallPath(resolveClientId(raw))
+}
+
+/**
+ * Returns the filesystem presence status of every known harness.
+ *
+ * A harness is considered "present" when its skill directory exists on disk.
+ * This lets the cross-harness inventory (SMI-5390) report a harness as
+ * "installed but zero skills" rather than omitting it entirely.
+ *
+ * Synchronous and O(CLIENT_IDS.length) — safe to call on the startup path.
+ *
+ * @see SMI-5390
+ */
+export function enumerateHarnessPresence(): Array<{
+  harness: ClientId
+  present: boolean
+  path: string
+}> {
+  return CLIENT_IDS.map((harness) => {
+    const harnessPath = CLIENT_NATIVE_PATHS[harness]
+    return {
+      harness,
+      present: existsSync(harnessPath),
+      path: harnessPath,
+    }
+  })
 }
