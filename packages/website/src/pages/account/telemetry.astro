@@ -133,6 +133,52 @@ const supabaseConfig = getSupabaseConfig()
             <li>Anything linking the anonymous ID to your real identity outside this dashboard</li>
           </ul>
         </section>
+
+        <section class="card">
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <h2>Cross-machine skill inventory</h2>
+              <p id="inventory-state-summary" class="state-summary">Off</p>
+            </div>
+            <label class="switch" for="inventory-toggle">
+              <input
+                id="inventory-toggle"
+                type="checkbox"
+                aria-describedby="inventory-state-summary"
+              />
+              <span class="switch-slider" aria-hidden="true"></span>
+            </label>
+          </div>
+          <p class="toggle-description">
+            Push your installed-skill inventory to Skillsmith so you can see it across machines at
+            <a href="/account/skills" class="inline-link">skillsmith.app/account/skills</a>.
+            Inventory sync is <strong>off by default</strong>.
+          </p>
+        </section>
+
+        <section class="card info-card">
+          <h2>What's shared when cross-machine inventory is on</h2>
+          <ul>
+            <li>A random device ID (generated locally; never linked to your name)</li>
+            <li>An optional device label you set (e.g. <code>work-laptop</code>)</li>
+            <li>OS platform and architecture (e.g. <code>darwin/arm64</code>)</li>
+            <li>CLI version</li>
+            <li>A one-way hash of your hostname — the raw hostname is never uploaded</li>
+            <li>
+              Per installed skill: harness, skill ID, version, content hash, source, pinned version,
+              and update policy
+            </li>
+          </ul>
+          <h2>What we never upload</h2>
+          <ul>
+            <li>Your raw hostname or any identifying system information</li>
+            <li>File contents, file paths, or skill source code</li>
+          </ul>
+          <p class="info-note">
+            Turning inventory sync off stops future uploads immediately (enforced server-side). A
+            future control on this page will let you purge your stored inventory.
+          </p>
+        </section>
       </div>
     </main>
 
@@ -147,6 +193,7 @@ const supabaseConfig = getSupabaseConfig()
         anonymous_id: string | null
         anonymous_id_created_at: string | null
         updated_at: string
+        inventory_sync_enabled: boolean
       }
 
       function formatAnonId(id: string | null | undefined): string {
@@ -215,6 +262,12 @@ const supabaseConfig = getSupabaseConfig()
         const saveBtnEl = document.getElementById('save-btn') as HTMLButtonElement | null
         const rotateBtnEl = document.getElementById('rotate-btn') as HTMLButtonElement | null
         const saveResultEl = document.getElementById('save-result') as HTMLParagraphElement | null
+        const inventoryToggleEl = document.getElementById(
+          'inventory-toggle'
+        ) as HTMLInputElement | null
+        const inventoryStateSummaryEl = document.getElementById(
+          'inventory-state-summary'
+        ) as HTMLParagraphElement | null
 
         function showError(msg: string) {
           if (loadingEl) loadingEl.style.display = 'none'
@@ -261,6 +314,7 @@ const supabaseConfig = getSupabaseConfig()
         const initial = {
           enabled: pref?.enabled ?? false,
           anonymousId: pref?.anonymous_id ?? null,
+          inventorySyncEnabled: pref?.inventory_sync_enabled ?? false,
         }
         const draft = { ...initial }
 
@@ -272,13 +326,19 @@ const supabaseConfig = getSupabaseConfig()
           if (anonRotatedEl)
             anonRotatedEl.textContent = formatDate(snapshot?.anonymous_id_created_at)
           if (updatedAtEl) updatedAtEl.textContent = formatDate(snapshot?.updated_at)
+          const inventoryEnabled = draft.inventorySyncEnabled
+          if (inventoryToggleEl) inventoryToggleEl.checked = inventoryEnabled
+          if (inventoryStateSummaryEl)
+            inventoryStateSummaryEl.textContent = inventoryEnabled ? 'On' : 'Off'
           updateSaveButton()
         }
 
         function updateSaveButton() {
           if (!saveBtnEl) return
           const dirty =
-            draft.enabled !== initial.enabled || draft.anonymousId !== initial.anonymousId
+            draft.enabled !== initial.enabled ||
+            draft.anonymousId !== initial.anonymousId ||
+            draft.inventorySyncEnabled !== initial.inventorySyncEnabled
           saveBtnEl.disabled = !dirty
           saveBtnEl.setAttribute('aria-disabled', dirty ? 'false' : 'true')
         }
@@ -307,6 +367,15 @@ const supabaseConfig = getSupabaseConfig()
           })
         }
 
+        if (inventoryToggleEl) {
+          inventoryToggleEl.addEventListener('change', () => {
+            draft.inventorySyncEnabled = inventoryToggleEl.checked
+            if (inventoryStateSummaryEl)
+              inventoryStateSummaryEl.textContent = draft.inventorySyncEnabled ? 'On' : 'Off'
+            updateSaveButton()
+          })
+        }
+
         if (saveBtnEl) {
           saveBtnEl.addEventListener('click', async () => {
             saveBtnEl.disabled = true
@@ -325,6 +394,7 @@ const supabaseConfig = getSupabaseConfig()
                 body: JSON.stringify({
                   enabled: draft.enabled,
                   anonymous_id: draft.anonymousId,
+                  inventory_sync_enabled: draft.inventorySyncEnabled,
                 }),
               })
               if (!res.ok) {
@@ -340,6 +410,7 @@ const supabaseConfig = getSupabaseConfig()
               pref = body.preference
               initial.enabled = pref.enabled
               initial.anonymousId = pref.anonymous_id ?? null
+              initial.inventorySyncEnabled = pref.inventory_sync_enabled
               draft.anonymousId = pref.anonymous_id ?? null
               render(pref)
               if (saveResultEl) {
@@ -634,6 +705,29 @@ const supabaseConfig = getSupabaseConfig()
       .btn-secondary:hover:not(:disabled) {
         background: #27272a;
         color: #fafafa;
+      }
+
+      .toggle-description {
+        margin: 0;
+        font-size: 0.875rem;
+        color: #a1a1aa;
+        line-height: 1.6;
+      }
+
+      .inline-link {
+        color: #a78bfa;
+        text-decoration: none;
+      }
+
+      .inline-link:hover {
+        text-decoration: underline;
+      }
+
+      .info-note {
+        margin: 0.5rem 0 0;
+        font-size: 0.875rem;
+        color: #71717a;
+        line-height: 1.6;
       }
     </style>
   </body>

@@ -1,0 +1,106 @@
+---
+/**
+ * InventoryStateBadge — SMI-5393
+ *
+ * Renders a WCAG-AA compliant badge for a SkillState. Each state uses a
+ * distinct label (from SKILL_STATE_META), icon shape, and foreground/background
+ * color pair — never color alone (WCAG 1.4.1). Mirrors Badge.astro's structure.
+ */
+import { SKILL_STATE_META } from '../lib/inventory-view'
+import type { SkillState } from '../lib/inventory-view'
+
+interface Props {
+  state: SkillState
+  size?: 'sm' | 'md'
+  class?: string
+}
+
+const { state, size = 'md', class: className = '' } = Astro.props
+
+// Each entry carries a distinct icon path so the badge conveys meaning via
+// shape (checkmark / arrow-up / X-circle / bookmark / question-circle),
+// not color alone — satisfying WCAG 1.4.1.
+const stateConfig: Record<
+  SkillState,
+  {
+    bgColor: string
+    textColor: string
+    borderColor: string
+    /** Heroicons outline SVG path (viewBox 0 0 24 24). */
+    icon: string
+  }
+> = {
+  current: {
+    bgColor: 'bg-green-500/10',
+    textColor: 'text-green-400',
+    borderColor: 'border-green-500/30',
+    // Checkmark-inside-circle — closed circular shape with tick
+    icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
+  },
+  drifted: {
+    bgColor: 'bg-yellow-500/10',
+    textColor: 'text-yellow-400',
+    borderColor: 'border-yellow-500/30',
+    // Arrow-up — upward directional shape distinct from others
+    icon: 'M7 11l5-5m0 0l5 5m-5-5v12',
+  },
+  missing: {
+    bgColor: 'bg-red-500/10',
+    textColor: 'text-red-400',
+    borderColor: 'border-red-500/30',
+    // X-circle — closed circular shape with cross; distinct from checkmark
+    icon: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z',
+  },
+  pinned: {
+    bgColor: 'bg-blue-500/10',
+    textColor: 'text-blue-400',
+    borderColor: 'border-blue-500/30',
+    // Bookmark/flag — v-notch at bottom; pin shape distinct from circular icons
+    icon: 'M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z',
+  },
+  unknown: {
+    bgColor: 'bg-zinc-500/10',
+    textColor: 'text-zinc-300',
+    borderColor: 'border-zinc-500/30',
+    // Question-circle — question mark inside circle; distinct from X-circle
+    icon: 'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  },
+}
+
+// Degrade gracefully if an unexpected state value is passed at runtime.
+const safeState: SkillState = state in stateConfig ? state : 'unknown'
+const config = stateConfig[safeState]
+const meta = SKILL_STATE_META[safeState]
+
+const sizeStyles = {
+  sm: 'px-2 py-0.5 text-xs gap-1',
+  md: 'px-2.5 py-1 text-sm gap-1.5',
+}
+
+const iconSizes = {
+  sm: 'w-3 h-3 flex-shrink-0',
+  md: 'w-4 h-4 flex-shrink-0',
+}
+
+const classes = [
+  'inline-flex items-center font-medium rounded-full border',
+  config.bgColor,
+  config.textColor,
+  config.borderColor,
+  sizeStyles[size],
+  className,
+].join(' ')
+---
+
+<span class={classes} title={meta.description}>
+  <svg
+    class={iconSizes[size]}
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={config.icon}></path>
+  </svg>
+  {meta.label}
+</span>

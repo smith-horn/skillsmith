@@ -34,6 +34,7 @@ const SIBLINGS = [
   { href: '/account/cli-token/', url: '/account/cli-token' },
   { href: '/account/outreach-preferences', url: '/account/outreach-preferences' },
   { href: '/account/telemetry', url: '/account/telemetry' },
+  { href: '/account/skills', url: '/account/skills' },
 ]
 
 function collectNullDerefs(page: Page): string[] {
