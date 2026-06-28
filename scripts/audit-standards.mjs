@@ -2300,33 +2300,41 @@ console.log(`\n${BOLD}33. PL/pgSQL RETURNS TABLE + RETURNING Ambiguity (R-3, SMI
   }
 }
 
-// 34. SMI-5419: encoded-project-dir resolver drift. The canonical resolver now
-// lives in project-dir.ts (the slash→dash encoder literal must exist there) and
-// writer.ts must delegate via resolveTelemetryProjectDir rather than re-deriving
-// the path. The remaining per-cwd encoder sites (session-priming-query.ts
-// memory/sessions, retrieval-log-cli.mjs, retro-frontmatter.mjs) migrate to the
-// scripts/lib .mjs mirror in the wiring step; a cross-runtime parity test then
-// guards behavioral agreement and this check tightens to "all sites import the
-// shared resolver".
+// 34. SMI-5419: encoded-project-dir resolver drift. The canonical resolver lives
+// in project-dir.ts (TS) with a behavior-equivalent scripts/lib/project-dir.mjs
+// mirror (for plain-node sites that avoid tsx); a cross-runtime parity test guards
+// agreement. writer.ts + retrieval-log-cli.mjs delegate via the shared resolver.
+// Still-to-migrate per-cwd sites (session-priming-query.ts memory/sessions,
+// memory-topic-files.ts, retro-frontmatter.mjs /memory) land in the next wiring
+// step, after which this check tightens to cover them too.
 console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`)
 {
   const CANONICAL = 'packages/doc-retrieval-mcp/src/retrieval-log/project-dir.ts'
+  const MJS_MIRROR = 'scripts/lib/project-dir.mjs'
   const WRITER = 'packages/doc-retrieval-mcp/src/retrieval-log/writer.ts'
+  const CLI = 'scripts/retrieval-log-cli.mjs'
   // Canonical slash→dash encoder; match regex form (/\//g) or string form ('/').
   const ENCODER_REGEX = /\.replace\(\s*\/\\?\/\/?g\s*,\s*['"]-['"]\s*\)/
   const problems = []
-  if (!existsSync(CANONICAL) || !ENCODER_REGEX.test(readFileSync(CANONICAL, 'utf8'))) {
-    problems.push(`${CANONICAL} missing the canonical slash->dash encoder`)
+  for (const f of [CANONICAL, MJS_MIRROR]) {
+    if (!existsSync(f) || !ENCODER_REGEX.test(readFileSync(f, 'utf8'))) {
+      problems.push(`${f} missing the canonical slash->dash encoder`)
+    }
   }
   if (existsSync(WRITER) && !/resolveTelemetryProjectDir/.test(readFileSync(WRITER, 'utf8'))) {
     problems.push(`${WRITER} must delegate to resolveTelemetryProjectDir`)
   }
+  if (existsSync(CLI) && !/from '\.\/lib\/project-dir\.mjs'/.test(readFileSync(CLI, 'utf8'))) {
+    problems.push(`${CLI} must import the shared resolver from ./lib/project-dir.mjs`)
+  }
   if (problems.length === 0) {
-    pass('encoded-project-dir resolver canonical in project-dir.ts; writer.ts delegates')
+    pass(
+      'encoded-project-dir resolver canonical (project-dir.ts + .mjs mirror); writer.ts + retrieval-log-cli.mjs delegate'
+    )
   } else {
     fail(
       `encoded-project-dir resolver drift: ${problems.join('; ')}`,
-      `SMI-5419: keep the encoder canonical in project-dir.ts and have writer.ts (and, after wiring, every other site) resolve through it.`
+      `SMI-5419: keep the encoder canonical in project-dir.ts + scripts/lib/project-dir.mjs (parity-tested) and have all sites resolve through the shared resolver.`
     )
   }
 }
