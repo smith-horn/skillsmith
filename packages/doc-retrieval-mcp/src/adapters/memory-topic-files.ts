@@ -1,9 +1,10 @@
 import { existsSync, statSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
-import { homedir, userInfo } from 'node:os'
+import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 
 import { chunkBlocks, chunkId, estimateTokens, parseMarkdown } from '../indexer.helpers.js'
+import { resolveSharedProjectDir } from '../retrieval-log/project-dir.js'
 import type { AdapterContext, AdapterFile, ChunkMetadata, SourceAdapter } from '../types.js'
 
 /**
@@ -195,14 +196,12 @@ function isIndexable(name: string): boolean {
  *    Empty/whitespace value falls through to the derivation path so a
  *    contributor explicitly clearing the var doesn't accidentally bypass
  *    the encoded fallback.
- * 2. **Derivation path** — derive `~/.claude/projects/<encoded-cwd>/memory/`
- *    from `cwd`. Encoding per Claude Code harness: replace `/` with `-`,
- *    drop the leading `-`. Documented in SPARC §S2a L2 — if the directory
- *    derives cleanly but doesn't exist on disk, return `null` (soft skip);
- *    we do NOT throw on encoding-drift here because the adapter runs inside
- *    the indexer's per-adapter try-free loop and a throw would abort the
- *    full ingest run. The SPARC note's "throw on encoding drift" intent is
- *    preserved via the roundtrip unit test instead.
+ * 2. **Derivation path** — resolve `<shared>/memory/` via the canonical
+ *    `resolveSharedProjectDir` (SMI-5419), which keys on the MAIN repo root
+ *    (so every worktree of one project shares the memory store) and reconciles
+ *    the encoded name's casing against the on-disk `~/.claude/projects/`
+ *    entries. `listFiles` soft-skips when the dir doesn't exist (SPARC §S2a L2);
+ *    the resolver never throws, so the indexer's per-adapter loop is safe.
  */
 export function resolveMemoryDir(cwd: string): string | null {
   // SMI-4677 §S0 override path. Explicit length check (not truthiness) per
@@ -213,8 +212,8 @@ export function resolveMemoryDir(cwd: string): string | null {
     return override
   }
   if (!cwd || cwd[0] !== '/') return null
-  const encoded = '-' + cwd.slice(1).replace(/\//g, '-')
-  const home = homedir()
-  if (!home) return null
-  return join(home, '.claude', 'projects', encoded, 'memory')
+  // SMI-5419: resolve via the shared main-repo resolver so all worktrees of one
+  // project read the same curated memory store, with on-disk casing reconciled.
+  // Memory is project knowledge, not per-worktree state — same dir as telemetry.
+  return join(resolveSharedProjectDir(cwd).dir, 'memory')
 }

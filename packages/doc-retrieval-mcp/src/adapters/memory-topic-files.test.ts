@@ -4,6 +4,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 
 import { createMemoryTopicFilesAdapter, resolveMemoryDir } from './memory-topic-files.js'
+import { resetProjectDirCache } from '../retrieval-log/project-dir.js'
 import type { AdapterContext } from '../types.js'
 import type { CorpusConfig } from '../config.js'
 
@@ -82,9 +83,13 @@ beforeEach(() => {
   delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
   memoryDir = join(scratch, '.claude', 'projects', ENCODED, 'memory')
   mkdirSync(memoryDir, { recursive: true })
+  // SMI-5419: resolveMemoryDir now delegates to the module-memoized shared
+  // resolver — reset between cases so a prior test's cwd can't leak through.
+  resetProjectDirCache()
 })
 
 afterEach(() => {
+  resetProjectDirCache()
   vi.mocked(homedirMock).mockReset()
   if (origMemoryOverride === undefined) delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
   else process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = origMemoryOverride

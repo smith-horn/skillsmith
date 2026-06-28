@@ -16,10 +16,11 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, join } from 'node:path'
+
+import { resolveSharedProjectDir } from './project-dir.mjs'
 
 const require = createRequire(import.meta.url)
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -250,31 +251,14 @@ function firstCommitDate(path) {
 }
 
 /**
- * Mirror writer.ts: walk up from cwd until finding a directory whose `.git`
- * is itself a directory (worktrees have `.git` as a file pointing at the
- * main repo's gitdir, so they're skipped — this resolves the worktree to
- * its main repo). Encode the result the way Claude Code encodes project
- * paths under `~/.claude/projects/`.
+ * Resolve the per-project auto-memory dir via the shared main-repo resolver
+ * (scripts/lib/project-dir.mjs). Keyed on the MAIN repo root — worktrees resolve
+ * to the same shared memory store — with the encoded name's casing reconciled
+ * against the on-disk `~/.claude/projects/` entries (SMI-5419). Memory is shared
+ * project knowledge, the same dir as the telemetry DB.
  */
 function memoryDirForCwd() {
-  let current = resolve(process.cwd())
-  for (let i = 0; i < 64; i += 1) {
-    const gitPath = join(current, '.git')
-    if (existsSync(gitPath)) {
-      try {
-        if (statSync(gitPath).isDirectory()) {
-          const encoded = current.replace(/\//g, '-')
-          return join(homedir(), '.claude', 'projects', encoded, 'memory')
-        }
-      } catch {
-        /* unreadable — keep walking */
-      }
-    }
-    const parent = dirname(current)
-    if (parent === current) break
-    current = parent
-  }
-  return null
+  return join(resolveSharedProjectDir().dir, 'memory')
 }
 
 function memoryFileExists(fileBasename) {

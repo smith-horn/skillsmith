@@ -2302,34 +2302,50 @@ console.log(`\n${BOLD}33. PL/pgSQL RETURNS TABLE + RETURNING Ambiguity (R-3, SMI
 
 // 34. SMI-5419: encoded-project-dir resolver drift. The canonical resolver lives
 // in project-dir.ts (TS) with a behavior-equivalent scripts/lib/project-dir.mjs
-// mirror (for plain-node sites that avoid tsx); a cross-runtime parity test guards
-// agreement. writer.ts + retrieval-log-cli.mjs delegate via the shared resolver.
-// Still-to-migrate per-cwd sites (session-priming-query.ts memory/sessions,
-// memory-topic-files.ts, retro-frontmatter.mjs /memory) land in the next wiring
-// step, after which this check tightens to cover them too.
+// mirror (for plain-node sites that avoid the tsx startup cost); a cross-runtime
+// parity test guards agreement. Every site that needs a `~/.claude/projects/<dir>`
+// path delegates to the shared resolver instead of re-deriving the encoding:
+//   - shared main-repo dir (resolveSharedProjectDir): writer.ts + retrieval-log-cli.mjs
+//     (telemetry DB), session-priming-query.ts (MEMORY.md), memory-topic-files.ts +
+//     retro-frontmatter.mjs (/memory corpus)
+//   - per-cwd dir (resolveClaudeProjectDir): session-priming-query.ts (session *.jsonl)
 console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`)
 {
   const CANONICAL = 'packages/doc-retrieval-mcp/src/retrieval-log/project-dir.ts'
   const MJS_MIRROR = 'scripts/lib/project-dir.mjs'
-  const WRITER = 'packages/doc-retrieval-mcp/src/retrieval-log/writer.ts'
-  const CLI = 'scripts/retrieval-log-cli.mjs'
   // Canonical slash→dash encoder; match regex form (/\//g) or string form ('/').
   const ENCODER_REGEX = /\.replace\(\s*\/\\?\/\/?g\s*,\s*['"]-['"]\s*\)/
+  // Sites that MUST resolve via the shared resolver rather than re-deriving the
+  // encoded dir inline; each entry is the resolver symbol the file must reference.
+  const DELEGATES = [
+    ['packages/doc-retrieval-mcp/src/retrieval-log/writer.ts', /resolveSharedProjectDir/],
+    ['scripts/retrieval-log-cli.mjs', /resolveSharedProjectDir/],
+    ['scripts/session-priming-query.ts', /resolveSharedProjectDir/],
+    ['scripts/session-priming-query.ts', /resolveClaudeProjectDir/],
+    ['packages/doc-retrieval-mcp/src/adapters/memory-topic-files.ts', /resolveSharedProjectDir/],
+    ['scripts/lib/retro-frontmatter.mjs', /resolveSharedProjectDir/],
+  ]
+  // Plain-node consumers must IMPORT the .mjs mirror, not re-implement it.
+  const MJS_IMPORTERS = ['scripts/retrieval-log-cli.mjs', 'scripts/lib/retro-frontmatter.mjs']
   const problems = []
   for (const f of [CANONICAL, MJS_MIRROR]) {
     if (!existsSync(f) || !ENCODER_REGEX.test(readFileSync(f, 'utf8'))) {
       problems.push(`${f} missing the canonical slash->dash encoder`)
     }
   }
-  if (existsSync(WRITER) && !/resolveSharedProjectDir/.test(readFileSync(WRITER, 'utf8'))) {
-    problems.push(`${WRITER} must delegate to resolveSharedProjectDir`)
+  for (const [f, re] of DELEGATES) {
+    if (existsSync(f) && !re.test(readFileSync(f, 'utf8'))) {
+      problems.push(`${f} must resolve the encoded project dir via ${re.source}`)
+    }
   }
-  if (existsSync(CLI) && !/from '\.\/lib\/project-dir\.mjs'/.test(readFileSync(CLI, 'utf8'))) {
-    problems.push(`${CLI} must import the shared resolver from ./lib/project-dir.mjs`)
+  for (const f of MJS_IMPORTERS) {
+    if (existsSync(f) && !/from '\.\/(lib\/)?project-dir\.mjs'/.test(readFileSync(f, 'utf8'))) {
+      problems.push(`${f} must import the shared resolver from project-dir.mjs`)
+    }
   }
   if (problems.length === 0) {
     pass(
-      'encoded-project-dir resolver canonical (project-dir.ts + .mjs mirror); writer.ts + retrieval-log-cli.mjs delegate'
+      'encoded-project-dir resolver canonical (project-dir.ts + .mjs mirror); all sites delegate (memory/telemetry main-repo, sessions per-cwd)'
     )
   } else {
     fail(

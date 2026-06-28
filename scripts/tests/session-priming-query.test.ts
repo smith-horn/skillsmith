@@ -37,13 +37,17 @@ vi.mock('../../packages/doc-retrieval-mcp/src/retrieval-log/writer.js', () => ({
 }))
 
 import {
-  encodeProjectPath,
+  countRecentJsonlSessions,
   extractRecentBullets,
   parseCliArgs,
   renderPrimingMarkdown,
   runQuery,
   truncateBytes,
 } from '../session-priming-query.js'
+import {
+  encodeProjectSegment,
+  resetProjectDirCache,
+} from '../../packages/doc-retrieval-mcp/src/retrieval-log/project-dir.js'
 import type { SearchHit } from '../../packages/doc-retrieval-mcp/src/types.js'
 
 let tmp: string
@@ -69,11 +73,16 @@ beforeEach(() => {
   logRetrievalEventMock.mockReset()
   delete process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING
   delete process.env.LINEAR_API_KEY
+  // SMI-5419: buildSignal3/countRecentJsonlSessions now resolve via the
+  // module-memoized shared/per-cwd resolvers — reset so cases don't leak.
+  resetProjectDirCache()
 })
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true })
   delete process.env.RETRIEVAL_LOG_DIR_OVERRIDE
+  vi.unstubAllEnvs()
+  resetProjectDirCache()
 })
 
 describe('parseCliArgs', () => {
@@ -107,16 +116,6 @@ describe('parseCliArgs', () => {
     const args = parseCliArgs(['--session-id', 'abc', '--cwd', '/x', '--out', '/y'])
     expect(args?.branch).toBe('')
     expect(args?.smi).toBe('')
-  })
-})
-
-describe('encodeProjectPath', () => {
-  it('matches writer.ts encoding contract', () => {
-    expect(encodeProjectPath('/Users/foo/Documents/Projects')).toBe('-Users-foo-Documents-Projects')
-  })
-
-  it('handles deep paths', () => {
-    expect(encodeProjectPath('/a/b/c')).toBe('-a-b-c')
   })
 })
 
@@ -244,19 +243,54 @@ describe('runQuery', () => {
     expect(queryArg).toContain('smi-4451')
   })
 
-  it('reads memory bullets when MEMORY.md is present at encoded path', async () => {
-    const encoded = encodeProjectPath(tmp)
-    const memDir = join(tmp, '.claude-fake-home', '.claude', 'projects', encoded, 'memory')
+  it('reads memory bullets from the shared main-repo dir (SMI-5419)', async () => {
+    // cwd is a git repo so findMainRepoRoot resolves it as the main root, and
+    // HOME points at a fake home so resolveSharedProjectDir's ~/.claude/projects/
+    // lookup is fully controlled. Exercises the real read path that was
+    // previously asserted only at the encoder level.
+    const repo = mkdtempSync(join(tmpdir(), 'priming-repo-'))
+    mkdirSync(join(repo, '.git'))
+    const fakeHome = mkdtempSync(join(tmpdir(), 'priming-home-'))
+    vi.stubEnv('HOME', fakeHome)
+    resetProjectDirCache()
+    const memDir = join(fakeHome, '.claude', 'projects', encodeProjectSegment(repo), 'memory')
     mkdirSync(memDir, { recursive: true })
     writeFileSync(
       join(memDir, 'MEMORY.md'),
       '# Project\n\n## Recent\n- alpha bullet\n- beta bullet\n',
       'utf8'
     )
-    // homedir() can't be re-pointed easily — test the encoder + extractor path
-    // via direct invocation; runQuery's full read-from-homedir is exercised in
-    // integration / smoke (S9). Here we verify the encoding contract holds.
-    expect(encodeProjectPath(tmp)).toBe(encoded)
+    searchMock.mockResolvedValueOnce([makeHit('h1', 0.7, 'docs/foo.md')])
+    try {
+      await runQuery({ ...baseArgs, cwd: repo })
+      const queryArg = searchMock.mock.calls[0][0].query as string
+      expect(queryArg).toContain('alpha bullet')
+      expect(queryArg).toContain('beta bullet')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(fakeHome, { recursive: true, force: true })
+    }
+  })
+
+  it('countRecentJsonlSessions counts *.jsonl under the per-cwd sessions dir (SMI-5419)', () => {
+    // Sessions are PER-CWD (resolveClaudeProjectDir), not main-repo. Verify the
+    // count reads ~/.claude/projects/<encoded-cwd>/sessions/ under a fake HOME.
+    const cwd = mkdtempSync(join(tmpdir(), 'priming-sess-'))
+    const fakeHome = mkdtempSync(join(tmpdir(), 'priming-sess-home-'))
+    vi.stubEnv('HOME', fakeHome)
+    resetProjectDirCache()
+    const sessionsDir = join(fakeHome, '.claude', 'projects', encodeProjectSegment(cwd), 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(join(sessionsDir, 'a.jsonl'), '{}', 'utf8')
+    writeFileSync(join(sessionsDir, 'b.jsonl'), '{}', 'utf8')
+    writeFileSync(join(sessionsDir, 'note.txt'), 'x', 'utf8') // ignored — not .jsonl
+    try {
+      // Freshly-written files have mtime ~now, so they fall inside the 24h window.
+      expect(countRecentJsonlSessions(cwd, new Date(), 24)).toBe(2)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+      rmSync(fakeHome, { recursive: true, force: true })
+    }
   })
 
   it('passes minScore=0.35 and k=8 to search()', async () => {
