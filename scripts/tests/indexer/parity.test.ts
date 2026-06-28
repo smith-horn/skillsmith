@@ -402,6 +402,21 @@ describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
       )
     }
   })
+
+  // SMI-5424: same superset guard for CODE_EXECUTION_PATTERNS. The edge array
+  // lives in the .exec.ts twin (exported for this assertion); behavioral parity
+  // alone let the SUSPICIOUS_PATTERNS drift slip (SMI-5402) — close the gap here.
+  it('edge CODE_EXECUTION_PATTERNS is a superset of core CODE_EXECUTION_PATTERNS', async () => {
+    const core = await import(CORE_PATTERNS)
+    const edge = await import(NODE_SCANNER_EXEC)
+    const edgeSet = new Set(edge.CODE_EXECUTION_PATTERNS.map(regexKey))
+    for (const r of core.CODE_EXECUTION_PATTERNS) {
+      expect(
+        edgeSet.has(regexKey(r)),
+        `core CODE_EXECUTION_PATTERNS entry /${r.source}/${r.flags} missing from the edge twin — drift`
+      ).toBe(true)
+    }
+  })
 })
 
 /**
