@@ -33,8 +33,8 @@ import {
   type RetrievalLogOutageMarker,
 } from './schema.js'
 
-// Re-exported for back-compat: callers (and the writer test) historically
-// imported `findMainRepoRoot` from this module (SMI-5419 moved it to project-dir).
+// Re-exported for back-compat: writer.test.ts imports findMainRepoRoot from this
+// module (SMI-5419 moved the implementation to project-dir.ts).
 export { findMainRepoRoot }
 
 // ESM-compatible require for native module (matches search.ts pattern for
@@ -174,23 +174,21 @@ function openDb(): BetterSqlite3.Database | null {
 
   try {
     // SMI-5419: refuse to write into an ambiguous (multiple case-variant) project
-    // dir — picking one silently could split the DB. Surface it loudly instead.
+    // dir — picking one silently could split the DB. We deliberately do NOT write
+    // an outage marker here: its dir does not yet exist, so creating it would add a
+    // THIRD case-variant dir and compound the corruption. The warn-once is the
+    // surface; richer banner surfacing (a marker under the case-independent
+    // ~/.skillsmith/logs/) lands with the W0.1 diagnostics follow-up.
     const overrideActive =
       !!process.env.RETRIEVAL_LOG_DIR_OVERRIDE && process.env.NODE_ENV !== 'production'
-    if (!overrideActive && resolveTelemetryProjectDir().state === 'ambiguous') {
-      const { candidates } = resolveTelemetryProjectDir()
+    const telemetryDir = overrideActive ? null : resolveTelemetryProjectDir()
+    if (telemetryDir?.state === 'ambiguous') {
       if (!ambiguousWarningEmitted) {
         console.warn(
-          `[retrieval-logs] ambiguous project dir; refusing to write: ${candidates?.join(', ')}`
+          `[retrieval-logs] ambiguous project dir; refusing to write: ${telemetryDir.candidates?.join(', ')}`
         )
         ambiguousWarningEmitted = true
       }
-      writeOutageMarker({
-        ts: new Date().toISOString(),
-        reason: 'project_dir_ambiguous',
-        error: `multiple case-variant ~/.claude/projects dirs: ${candidates?.join(', ')}`,
-        hint: 'consolidate the duplicate dirs (back up + merge retrieval-logs.db)',
-      })
       return null
     }
     const { dir, dbPath } = resolveDbPath()

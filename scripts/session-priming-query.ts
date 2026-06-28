@@ -80,9 +80,11 @@ export interface PrimingResult {
 }
 
 /**
- * Encoded-cwd helper — paired with `encodeProjectPath` in
- * `packages/doc-retrieval-mcp/src/retrieval-log/writer.ts` (line ~67).
- * Drift caught by `audit:standards` Section 34 regex.
+ * Local slash->dash encoder for per-cwd state (memory / sessions). Canonical form
+ * is `encodeProjectSegment` in
+ * `packages/doc-retrieval-mcp/src/retrieval-log/project-dir.ts`; this site is
+ * migrated to the scripts/lib .mjs mirror in the SMI-5419 wiring step, after
+ * which a cross-runtime parity test enforces agreement.
  */
 function encodeProjectPath(absPath: string): string {
   return '-' + absPath.slice(1).replace(/\//g, '-')
