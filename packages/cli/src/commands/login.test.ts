@@ -43,35 +43,8 @@ vi.mock('@inquirer/prompts', () => ({
 
 vi.mock('open', () => ({ default: vi.fn() }))
 
-// SMI-4917: postLoginSync opens a DB and syncs the registry after login.
-// Stub the helper, the sync, and ora so the post-login sync is a controlled
-// no-op here — its behavior is covered by login.post-login-sync.test.ts.
-vi.mock('../utils/open-database.js', () => ({
-  openCliDatabase: vi.fn().mockResolvedValue({ close: vi.fn() }),
-}))
-vi.mock('./run-registry-sync.js', () => ({
-  runRegistrySync: vi.fn().mockResolvedValue({
-    success: true,
-    skillsAdded: 0,
-    skillsUpdated: 0,
-    skillsUnchanged: 0,
-    totalProcessed: 0,
-    errors: [],
-    durationMs: 1,
-    dryRun: false,
-  }),
-}))
-vi.mock('ora', () => {
-  const spinner = {
-    start: vi.fn(() => spinner),
-    succeed: vi.fn(() => spinner),
-    warn: vi.fn(() => spinner),
-    fail: vi.fn(() => spinner),
-    stop: vi.fn(() => spinner),
-    text: '',
-  }
-  return { default: vi.fn(() => spinner) }
-})
+// SMI-5427: login no longer opens a DB or runs a registry sync — those imports
+// were removed, so no open-database / run-registry-sync / ora mocks are needed.
 
 import { createLoginCommand } from './login.js'
 import { mockDeviceCodeSuccess } from './login.test-helpers.js'
@@ -184,9 +157,11 @@ describe('createLoginCommand', () => {
       )
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Logged in successfully')
-      // SMI-4447: post-login hint closes the "did it work?" gap that drove users
-      // to visit /account/cli-token just to confirm the session worked.
-      expect(output).toContain('Try it: skillsmith search mcp')
+      // SMI-5427: login authenticates only — no 20-min registry auto-sync — and the
+      // hint avoids `search` so users don't trip the same sync on first query.
+      expect(output).toContain('Run `skillsmith --help`')
+      expect(output).not.toContain('Synced')
+      expect(output).not.toContain('search mcp')
     })
 
     it('LC-3: network error on device-code request exits 5', async () => {
@@ -379,6 +354,11 @@ describe('createLoginCommand', () => {
       expect(mockStoreApiKey).toHaveBeenCalledWith(VALID_KEY)
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Logged in successfully')
+      // SMI-5427: the paste-legacy path emits the same neutral hint and runs no
+      // registry sync — assert parity with the device-code path (governance C8 gap).
+      expect(output).toContain('Run `skillsmith --help`')
+      expect(output).not.toContain('Synced')
+      expect(output).not.toContain('search mcp')
       // SMI-4454: post-paste echo gives a ground-truth signal when the mask
       // bullet is stripped by the terminal (Claude Code's embedded PTY, etc).
       expect(output).toMatch(/Received \d+ characters — validating…/)
