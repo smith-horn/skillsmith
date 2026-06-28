@@ -58,7 +58,7 @@ const BASELINE_PATTERN_COUNTS = {
   SUSPICIOUS_PATTERNS: 11,
   SOCIAL_ENGINEERING_PATTERNS: 12,
   PROMPT_LEAKING_PATTERNS: 14,
-  DATA_EXFILTRATION_PATTERNS: 23, // SMI-4396 Wave 2: 20 → 22 (word-boundary + key-upload + verb-object prose); SMI-5359 Wave 4: 22 → 23 (outbound-curl credential-in-URL exfil)
+  DATA_EXFILTRATION_PATTERNS: 24, // SMI-4396 Wave 2: 20 → 22 (word-boundary + key-upload + verb-object prose); SMI-5359 Wave 4: 22 → 24 (outbound-curl credential-in-URL query + POST/form body exfil)
   PRIVILEGE_ESCALATION_PATTERNS: 25, // SMI-4396 Wave 2: 23 → 25 (-1 bare +3 contextual); SMI-5424 PR2 relocated owner-perm chmod to scanChmodFetchCompound (count unchanged — world-writable/setuid stay standalone)
   SSRF_INSTRUCTION_PATTERNS: 13,
   AI_DEFENCE_PATTERNS: 16,

