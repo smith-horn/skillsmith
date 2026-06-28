@@ -20,6 +20,8 @@ import { join } from 'node:path'
 import type BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { encodeProjectSegment } from './project-dir.js'
+
 // Same native gate as writer.test.ts: require() succeeds even for a Mach-O
 // binary on Linux, so probe by actually opening an in-memory DB.
 const require = createRequire(import.meta.url)
@@ -56,7 +58,8 @@ afterEach(async () => {
   const { closeRetrievalLog } = await import('./writer.js')
   closeRetrievalLog()
   warnSpy.mockRestore()
-  vi.unstubAllEnvs()
+  // Each test unstubs its own HOME/cwd in a finally; no afterEach unstub needed
+  // (matches writer.test.ts), and a skipped test never stubbed anything.
   rmSync(scratch, { recursive: true, force: true })
 })
 
@@ -65,15 +68,18 @@ describe.skipIf(!nativeSqliteAvailable)('SMI-5419 mis-cased cwd write->read roun
     // Fake HOME with an EXISTING title-cased project dir (what Claude Code wrote).
     const fakeHome = join(scratch, 'home')
     const projects = join(fakeHome, '.claude', 'projects')
-    const onDisk = '-Users-Foo-Bar' // canonical casing already on disk
+    // Two case-variants of the SAME repo path, both UNDER scratch so the
+    // findMainRepoRoot walk is hermetic (no real .git ancestor on any host) and
+    // the test doesn't depend on a fictional absolute path's (non-)existence.
+    const lowerCwd = join(scratch, 'work', 'myrepo') // what process.cwd() reports (the bug: lower-cased)
+    const onDisk = encodeProjectSegment(join(scratch, 'work', 'MyRepo')) // canonical casing on disk
     mkdirSync(join(projects, onDisk), { recursive: true })
     vi.stubEnv('HOME', fakeHome)
 
-    // Mis-cased cwd (the bug shape). findMainRepoRoot('/users/foo/bar') => null
-    // (no .git ancestor) so the resolver keys on the cwd directly:
-    //   encode('/users/foo/bar')      = '-users-foo-bar'
-    //   asciiFold('-Users-Foo-Bar')   = '-users-foo-bar'  → single variant → reconciled
-    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/users/foo/bar')
+    // Mis-cased cwd (the bug shape). findMainRepoRoot(lowerCwd) => null (no .git
+    // ancestor under scratch), so the resolver keys on the cwd directly and the
+    // encoding of lowerCwd ASCII-folds to onDisk's single on-disk variant → reconciled.
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(lowerCwd)
 
     try {
       const { logRetrievalEvent } = await freshWriter()
