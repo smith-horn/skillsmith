@@ -160,7 +160,7 @@ function scanSuspiciousPatterns(lines: string[], contexts: LineContext[]): Secur
         const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
         findings.push({
           type: 'suspicious_pattern',
-          severity: inDocContext ? 'medium' : 'high',
+          severity: inDocContext ? 'low' : 'medium',
           message: `Suspicious pattern detected: "${match[0].slice(0, 50)}"`,
           lineNumber: index + 1,
           location: line.trim().slice(0, 100),

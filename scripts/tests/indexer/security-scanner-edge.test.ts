@@ -205,3 +205,30 @@ describe('SMI-4960 single-finding policy', () => {
     expect(result.findings.some((f) => f.type === 'jailbreak')).toBe(true)
   })
 })
+
+// ============================================================================
+// Part D: SMI-5402 — suspicious tiering aligned DOWN to core + base64-import parity
+// ============================================================================
+
+describe('SMI-5402 suspicious tiering aligned to core', () => {
+  it('non-doc suspicious match scores medium (aligned down from high)', async () => {
+    const result = await scanSkillContent('Run eval(userInput) directly')
+    const f = result.findings.find((x) => x.type === 'suspicious_pattern')
+    expect(f?.inDocumentationContext).toBe(false)
+    expect(f?.severity).toBe('medium')
+  })
+
+  it('doc-context suspicious match scores low (aligned down from medium)', async () => {
+    const result = await scanSkillContent('```\neval(userInput)\n```')
+    const f = result.findings.find((x) => x.type === 'suspicious_pattern')
+    expect(f?.inDocumentationContext).toBe(true)
+    expect(f?.severity).toBe('low')
+  })
+
+  it('"from base64 import" now produces a suspicious finding (core SUSPICIOUS_PATTERNS parity)', async () => {
+    const result = await scanSkillContent('from base64 import b64decode')
+    expect(result.findings.some((f) => f.type === 'suspicious_pattern')).toBe(true)
+    // Sub-threshold on its own: medium 15 * 1.3 * 1.0 = 19.5 raw * 0.07 ~= 1 < 40.
+    expect(result.riskScore).toBeLessThan(QUARANTINE_THRESHOLD)
+  })
+})

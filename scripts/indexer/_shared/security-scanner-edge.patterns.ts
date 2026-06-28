@@ -43,6 +43,7 @@ export const SUSPICIOUS_PATTERNS: RegExp[] = [
   /child_process/i,
   /\$\(\s*[`'"]/i, // Command substitution
   /base64\s*\.\s*decode/i,
+  /from\s+base64\s+import/i,
   /subprocess\s*\.\s*(run|call|Popen)/i,
   /os\s*\.\s*(system|popen|exec)/i,
   /\brm\s+-rf\b/i,

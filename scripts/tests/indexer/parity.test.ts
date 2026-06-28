@@ -105,6 +105,11 @@ const NODE_SCANNER_PATTERNS = resolve(
   REPO_ROOT,
   'scripts/indexer/_shared/security-scanner-edge.patterns.ts'
 )
+// SMI-5402: the authoritative core sources. The edge SUSPICIOUS_PATTERNS set must
+// remain a superset of core's, and the edge suspicious severity tiering must match
+// core's. Host-side plaintext (no git-crypt).
+const CORE_PATTERNS = resolve(REPO_ROOT, 'packages/core/src/security/scanner/patterns.ts')
+const CORE_SCANNER = resolve(REPO_ROOT, 'packages/core/src/security/scanner/SecurityScanner.ts')
 
 describe('Deno <-> Node helper parity', () => {
   const denoEncrypted = isGitCryptEncrypted(DENO_HELPERS)
@@ -349,6 +354,54 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
       }
     }
   )
+})
+
+// SMI-5402: core <-> edge suspicious_pattern parity. The twin-pair guards above
+// only prove edge==edge; these prove edge tracks the authoritative core source —
+// the exact gap that let the 10-vs-11 SUSPICIOUS_PATTERNS drift go undetected.
+// Both tests use the NODE edge twin (scripts/indexer/_shared, never git-crypt
+// encrypted) + host-plaintext core, so no git-crypt skip is needed; the Node twin
+// is byte-identical to the Deno twin (enforced by the twin-pair parity above).
+describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
+  const regexKey = (r: RegExp) => `${r.source} ${r.flags}`
+
+  it('edge SUSPICIOUS_PATTERNS is a superset of core SUSPICIOUS_PATTERNS', async () => {
+    const core = await import(CORE_PATTERNS)
+    const edge = await import(NODE_SCANNER_PATTERNS)
+    const edgeSet = new Set(edge.SUSPICIOUS_PATTERNS.map(regexKey))
+    for (const r of core.SUSPICIOUS_PATTERNS) {
+      expect(
+        edgeSet.has(regexKey(r)),
+        `core SUSPICIOUS_PATTERNS entry /${r.source}/${r.flags} missing from the edge twin — drift`
+      ).toBe(true)
+    }
+  })
+
+  it('suspicious_pattern severity/confidence/doc-flag match core <-> edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const cases = [
+      { label: 'non-doc', content: 'Run eval(userInput) directly' },
+      { label: 'doc-context', content: '```\neval(userInput)\n```' },
+    ]
+    for (const { label, content } of cases) {
+      const coreFinding = scanner
+        .scan('parity', content)
+        .findings.find((f: { type: string }) => f.type === 'suspicious_pattern')
+      const edgeRes = await edgeMod.scanSkillContent(content)
+      const edgeFinding = edgeRes.findings.find(
+        (f: { type: string }) => f.type === 'suspicious_pattern'
+      )
+      expect(coreFinding, `core produced no suspicious finding for ${label}`).toBeDefined()
+      expect(edgeFinding, `edge produced no suspicious finding for ${label}`).toBeDefined()
+      expect(edgeFinding?.severity, `${label} severity`).toBe(coreFinding?.severity)
+      expect(edgeFinding?.confidence, `${label} confidence`).toBe(coreFinding?.confidence)
+      expect(edgeFinding?.inDocumentationContext, `${label} doc flag`).toBe(
+        coreFinding?.inDocumentationContext
+      )
+    }
+  })
 })
 
 /**
