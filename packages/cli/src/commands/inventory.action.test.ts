@@ -154,7 +154,7 @@ beforeEach(() => {
 
   // Defaults so tests that don't care about these still get sensible values.
   getDeviceIdMock.mockReturnValue('test-device-uuid-1234')
-  getLastInventoryPushAtMock.mockReturnValue(null)
+  getLastInventoryPushAtMock.mockReturnValue(undefined)
   isInventorySyncDisabledLocallyMock.mockReturnValue(false)
   getInstalledSkillsPerHarnessMock.mockResolvedValue([])
 })
@@ -288,7 +288,7 @@ describe('inventory status', () => {
   })
 
   it('shows "never" when no push has occurred', async () => {
-    getLastInventoryPushAtMock.mockReturnValue(null)
+    getLastInventoryPushAtMock.mockReturnValue(undefined)
     const cap = captureConsole()
     await runStatus()
     expect(cap.log.join('\n')).toContain('never')
