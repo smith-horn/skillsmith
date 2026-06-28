@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -425,6 +426,69 @@ describe.skipIf(!nativeSqliteAvailable)('SMI-4549 Wave 2 — outage marker', () 
       topKResults: '[]',
     })
     expect(existsSync(markerPath)).toBe(false)
+  })
+})
+
+describe('ambiguous project dir guard', () => {
+  it('no-ops when resolveSharedProjectDir returns ambiguous state', async () => {
+    // The ambiguity check in openDb() fires before require('better-sqlite3'), so
+    // this test does NOT need nativeSqliteAvailable — it runs in all environments.
+    //
+    // The guard is only reached when RETRIEVAL_LOG_DIR_OVERRIDE is unset (the
+    // outer beforeEach sets it; we delete it here for this test).
+    delete process.env.RETRIEVAL_LOG_DIR_OVERRIDE
+
+    // Redirect HOME so we control ~/.claude/projects/ without touching the real one.
+    const fakeHome = join(scratch, 'home-ambig')
+    mkdirSync(join(fakeHome, '.claude', 'projects'), { recursive: true })
+    vi.stubEnv('HOME', fakeHome)
+
+    // Create TWO conflicting case-variant project dir entries that ASCII-fold to
+    // the same string. reconcileEncodedDir() returns 'ambiguous' when it finds
+    // more than one full-string case-variant.
+    const candidate1 = '-Users-Foo-Bar'
+    const candidate2 = '-Users-FOO-Bar'
+    mkdirSync(join(fakeHome, '.claude', 'projects', candidate1), { recursive: true })
+    mkdirSync(join(fakeHome, '.claude', 'projects', candidate2), { recursive: true })
+
+    // Spy on cwd to return a path whose encoding folds to both candidates:
+    //   encodeProjectSegment('/users/foo/bar') = '-users-foo-bar'
+    //   asciiFold('-Users-Foo-Bar') = '-users-foo-bar'  ✓
+    //   asciiFold('-Users-FOO-Bar') = '-users-foo-bar'  ✓
+    // findMainRepoRoot('/users/foo/bar') returns null (no .git ancestor) so the
+    // resolver keys on the cwd directly, producing the ambiguous encoded form.
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/users/foo/bar')
+
+    try {
+      // freshWriter() calls vi.resetModules() so the fresh project-dir.ts module
+      // has telemetryMemo = null and will call process.cwd() on the first event.
+      const { logRetrievalEvent } = await freshWriter()
+      logRetrievalEvent({
+        sessionId: 's',
+        ts: '2026-04-24T12:00:00Z',
+        trigger: 'other',
+        query: 'q',
+        topKResults: '[]',
+      })
+
+      // Must emit the one-shot ambiguity warning.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/ambiguous project dir/))
+
+      // No DB must have been written into either candidate dir.
+      expect(
+        existsSync(join(fakeHome, '.claude', 'projects', candidate1, 'retrieval-logs.db'))
+      ).toBe(false)
+      expect(
+        existsSync(join(fakeHome, '.claude', 'projects', candidate2, 'retrieval-logs.db'))
+      ).toBe(false)
+
+      // No third (new) project dir must have been created — only the two we seeded.
+      const entries = readdirSync(join(fakeHome, '.claude', 'projects'))
+      expect(entries).toHaveLength(2)
+    } finally {
+      cwdSpy.mockRestore()
+      vi.unstubAllEnvs()
+    }
   })
 })
 

@@ -23,8 +23,9 @@
 
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+import { resolveSharedProjectDir } from './lib/project-dir.mjs'
 
 const ALLOWED_OUTCOMES = ['complete', 'incomplete', 'bypassed_no_verify']
 
@@ -77,20 +78,19 @@ function main() {
 }
 
 /**
- * Resolve the DB path. Mirrors writer.ts:
- *   1. `RETRIEVAL_LOG_DIR_OVERRIDE` (test-only; ignored in production NODE_ENV)
- *      → use that dir verbatim.
- *   2. Encode current working directory: `~/.claude/projects/<encoded>/retrieval-logs.db`.
+ * Resolve the DB path via the shared resolver so this CLI writes to the SAME
+ * telemetry DB as writer.ts. SMI-5419 fixed a prior bug here: it encoded the raw
+ * cwd (not the MAIN repo root), so in any worktree it wrote frontmatter_lint_events
+ * to a DIFFERENT DB than the writer — silently splitting the feed.
+ *   1. `RETRIEVAL_LOG_DIR_OVERRIDE` (test-only; ignored in production NODE_ENV).
+ *   2. `resolveSharedProjectDir()` — main-repo root, casing reconciled.
  */
 function resolveDbPath() {
   const override = process.env.RETRIEVAL_LOG_DIR_OVERRIDE
   if (override && process.env.NODE_ENV !== 'production') {
     return join(override, 'retrieval-logs.db')
   }
-  const cwd = process.cwd()
-  if (!cwd || !cwd.startsWith('/')) return null
-  const encoded = '-' + cwd.slice(1).replace(/\//g, '-')
-  return join(homedir(), '.claude', 'projects', encoded, 'retrieval-logs.db')
+  return join(resolveSharedProjectDir().dir, 'retrieval-logs.db')
 }
 
 process.exit(main())

@@ -4,6 +4,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 
 import { createMemoryTopicFilesAdapter, resolveMemoryDir } from './memory-topic-files.js'
+import { resetProjectDirCache } from '../retrieval-log/project-dir.js'
 import type { AdapterContext } from '../types.js'
 import type { CorpusConfig } from '../config.js'
 
@@ -82,9 +83,13 @@ beforeEach(() => {
   delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
   memoryDir = join(scratch, '.claude', 'projects', ENCODED, 'memory')
   mkdirSync(memoryDir, { recursive: true })
+  // SMI-5419: resolveMemoryDir now delegates to the module-memoized shared
+  // resolver — reset between cases so a prior test's cwd can't leak through.
+  resetProjectDirCache()
 })
 
 afterEach(() => {
+  resetProjectDirCache()
   vi.mocked(homedirMock).mockReset()
   if (origMemoryOverride === undefined) delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
   else process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = origMemoryOverride
@@ -93,8 +98,16 @@ afterEach(() => {
 
 describe('resolveMemoryDir', () => {
   it('encodes the cwd by swapping slashes for dashes and prepending a leading dash', () => {
-    const dir = resolveMemoryDir('/Users/williamsmith/code')
-    expect(dir?.endsWith(`.claude/projects/-Users-williamsmith-code/memory`)).toBe(true)
+    // SMI-5419 M-1: use a real temp dir (no .git ancestor under /tmp) so the
+    // shared resolver's findMainRepoRoot walk falls back to the cwd encoding
+    // deterministically, independent of the host's real filesystem layout.
+    const cwd = mkdtempSync(join(tmpdir(), 'encode-cwd-'))
+    try {
+      const expected = '-' + cwd.slice(1).replace(/\//g, '-')
+      expect(resolveMemoryDir(cwd)).toBe(join(scratch, '.claude', 'projects', expected, 'memory'))
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 
   it('returns null for empty or non-absolute cwd', () => {

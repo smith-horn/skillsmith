@@ -15,14 +15,15 @@
  *     linear-api.mjs. ~25 LOC scoped to this feature.
  *   - `disabled` outcome already in RetrievalHookOutcome union (schema.ts:30)
  *     — no schema migration needed, just emit the value.
- *   - Encoded-cwd helper inlined (4 LOC) per addendum §S4 — drift caught by
- *     audit:standards Section 34.
+ *   - Encoded-cwd resolution delegates to the shared resolver in
+ *     `packages/doc-retrieval-mcp/src/retrieval-log/project-dir.ts` (SMI-5419):
+ *     MEMORY.md via the main-repo `resolveSharedProjectDir`, sessions via the
+ *     per-cwd `resolveClaudeProjectDir`. Drift caught by audit:standards §34.
  */
 
 import { execFile } from 'node:child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { promisify } from 'node:util'
@@ -30,6 +31,10 @@ import {
   assessInstrumentationHealth,
   type ProbeResult,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
+import {
+  resolveClaudeProjectDir,
+  resolveSharedProjectDir,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/project-dir.js'
 import {
   logRetrievalEvent,
   resolveRetrievalLogPaths,
@@ -77,15 +82,6 @@ interface CliArgs {
 
 export interface PrimingResult {
   additionalContext: string
-}
-
-/**
- * Encoded-cwd helper — paired with `encodeProjectPath` in
- * `packages/doc-retrieval-mcp/src/retrieval-log/writer.ts` (line ~67).
- * Drift caught by `audit:standards` Section 34 regex.
- */
-function encodeProjectPath(absPath: string): string {
-  return '-' + absPath.slice(1).replace(/\//g, '-')
 }
 
 function parseCliArgs(argv: string[]): CliArgs | null {
@@ -160,8 +156,10 @@ async function buildSignal2(args: CliArgs): Promise<string> {
 
 async function buildSignal3(args: CliArgs): Promise<string> {
   try {
-    const encoded = encodeProjectPath(args.cwd)
-    const memPath = join(homedir(), '.claude', 'projects', encoded, 'memory', 'MEMORY.md')
+    // SMI-5419: MEMORY.md is shared project knowledge — resolve via the main-repo
+    // resolver (casing reconciled) so a worktree session reads the same curated
+    // memory store as the main checkout, not an empty per-worktree dir.
+    const memPath = join(resolveSharedProjectDir(args.cwd).dir, 'memory', 'MEMORY.md')
     if (!existsSync(memPath)) return ''
     const text = await readFileTruncated(memPath, MEMORY_FILE_MAX_READ)
     return extractRecentBullets(text, SIGNAL_3_BULLETS)
@@ -215,11 +213,22 @@ function truncateBytes(s: string, maxBytes: number): string {
  * files modified in the last `staleHours`. The probe uses this as the
  * denominator for its capture-rate gate so the threshold is session-relative
  * rather than absolute (plan-review H3).
+ *
+ * SMI-5419: sessions are PER-CWD — Claude Code writes transcripts under the
+ * actual launch dir — so this resolves the raw cwd (casing reconciled), unlike
+ * the memory/telemetry sites which key on the shared main-repo dir.
+ *
+ * SCOPE-MISMATCH CAVEAT (flagged, not fixed here): the capture-rate ratio divides
+ * a main-repo-SHARED telemetry numerator (`retrieval_events` aggregates every
+ * worktree into one DB) by this PER-CWD sessions denominator (this launch dir
+ * only). In a worktree the denominator undercounts, so capture-rate reads high.
+ * Aligning the scopes (aggregate sessions across the main + worktree dirs, or
+ * scope telemetry per-cwd) is a probe / metrics-foundation refinement, tracked
+ * there — out of scope for the W0.1 case-fix.
  */
 function countRecentJsonlSessions(cwd: string, now: Date, staleHours: number): number {
   try {
-    const encoded = encodeProjectPath(cwd)
-    const sessionsDir = join(homedir(), '.claude', 'projects', encoded, 'sessions')
+    const sessionsDir = join(resolveClaudeProjectDir(cwd).dir, 'sessions')
     if (!existsSync(sessionsDir)) return 0
     const cutoff = now.getTime() - staleHours * 60 * 60 * 1000
     let n = 0
@@ -417,4 +426,4 @@ if (process.argv[1]?.endsWith('session-priming-query.ts')) {
   void main()
 }
 
-export { encodeProjectPath, parseCliArgs, truncateBytes }
+export { countRecentJsonlSessions, parseCliArgs, truncateBytes }

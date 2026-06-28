@@ -2300,30 +2300,82 @@ console.log(`\n${BOLD}33. PL/pgSQL RETURNS TABLE + RETURNING Ambiguity (R-3, SMI
   }
 }
 
-// 34. SMI-4451 Step 7: encoded-cwd helper drift between writer.ts and
-// session-priming-query.ts. The 4-LOC `'-' + cwd.slice(1).replace(/\//g, '-')`
-// helper is duplicated by design (plan-review #11) instead of extracted to a
-// shared utils/ module — too small to justify a new directory. This check
-// fails if either file lacks the canonical regex form, signaling drift.
-console.log(`\n${BOLD}34. encoded-cwd helper drift (SMI-4451 Step 7)${RESET}`)
+// 34. SMI-5419: encoded-project-dir resolver drift. The canonical resolver lives
+// in project-dir.ts (TS) with two behavior-equivalent mirrors — scripts/lib/
+// project-dir.mjs (plain-node sites that avoid the tsx startup cost) and scripts/
+// lib/project-dir.sh (shell paths that must survive a dead-node/dead-binding
+// state) — all three kept in lock-step by a cross-runtime parity test. Every site
+// that needs a `~/.claude/projects/<dir>` path delegates to a shared resolver
+// instead of re-deriving the encoding:
+//   - shared main-repo dir (resolveSharedProjectDir): writer.ts + retrieval-log-cli.mjs
+//     (telemetry DB), session-priming-query.ts (MEMORY.md), memory-topic-files.ts +
+//     retro-frontmatter.mjs (/memory corpus), check-retrieval-events.sh (diagnostic)
+//   - per-cwd dir (resolveClaudeProjectDir): session-priming-query.ts (session *.jsonl)
+console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`)
 {
-  const PAIR = [
-    'packages/doc-retrieval-mcp/src/retrieval-log/writer.ts',
-    'scripts/session-priming-query.ts',
+  const CANONICAL = 'packages/doc-retrieval-mcp/src/retrieval-log/project-dir.ts'
+  const MJS_MIRROR = 'scripts/lib/project-dir.mjs'
+  // Canonical slash→dash encoder; match regex form (/\//g) or string form ('/').
+  const ENCODER_REGEX = /\.replace\(\s*\/\\?\/\/?g\s*,\s*['"]-['"]\s*\)/
+  // Sites that MUST resolve via the shared resolver rather than re-deriving the
+  // encoded dir inline; each entry is the resolver symbol the file must reference.
+  const DELEGATES = [
+    ['packages/doc-retrieval-mcp/src/retrieval-log/writer.ts', /resolveSharedProjectDir/],
+    ['scripts/retrieval-log-cli.mjs', /resolveSharedProjectDir/],
+    ['scripts/session-priming-query.ts', /resolveSharedProjectDir/],
+    ['scripts/session-priming-query.ts', /resolveClaudeProjectDir/],
+    ['packages/doc-retrieval-mcp/src/adapters/memory-topic-files.ts', /resolveSharedProjectDir/],
+    ['scripts/lib/retro-frontmatter.mjs', /resolveSharedProjectDir/],
   ]
-  // Canonical pattern: replace forward-slashes with hyphens. Match either
-  // regex form (/\//g) or string form ('/'). Both files must match.
-  const ENCODED_CWD_REGEX = /\.replace\(\s*\/\\?\/\/?g\s*,\s*['"]-['"]\s*\)/
-  const missing = PAIR.filter((p) => {
-    if (!existsSync(p)) return true
-    return !ENCODED_CWD_REGEX.test(readFileSync(p, 'utf8'))
-  })
-  if (missing.length === 0) {
-    pass(`Both encoded-cwd duplicates present and aligned (${PAIR.length} files)`)
+  // Plain-node consumers must IMPORT the .mjs mirror, not re-implement it.
+  const MJS_IMPORTERS = ['scripts/retrieval-log-cli.mjs', 'scripts/lib/retro-frontmatter.mjs']
+  const problems = []
+  for (const f of [CANONICAL, MJS_MIRROR]) {
+    if (!existsSync(f) || !ENCODER_REGEX.test(readFileSync(f, 'utf8'))) {
+      problems.push(`${f} missing the canonical slash->dash encoder`)
+    }
+  }
+  for (const [f, re] of DELEGATES) {
+    if (existsSync(f) && !re.test(readFileSync(f, 'utf8'))) {
+      problems.push(`${f} must resolve the encoded project dir via ${re.source}`)
+    }
+  }
+  for (const f of MJS_IMPORTERS) {
+    if (existsSync(f) && !/from '\.\/(lib\/)?project-dir\.mjs'/.test(readFileSync(f, 'utf8'))) {
+      problems.push(`${f} must import the shared resolver from project-dir.mjs`)
+    }
+  }
+  // Shell mirror (must survive a dead-node/dead-binding state) + its consumer.
+  const SHELL_MIRROR = 'scripts/lib/project-dir.sh'
+  if (!existsSync(SHELL_MIRROR)) {
+    problems.push(`${SHELL_MIRROR} missing (shell mirror of the resolver)`)
+  } else {
+    const sh = readFileSync(SHELL_MIRROR, 'utf8')
+    for (const fn of [
+      'encode_project_segment',
+      'reconcile_encoded_dir',
+      'resolve_shared_project_dir',
+    ]) {
+      if (!sh.includes(fn)) problems.push(`${SHELL_MIRROR} missing function ${fn}`)
+    }
+  }
+  const SHELL_CONSUMER = 'scripts/check-retrieval-events.sh'
+  if (existsSync(SHELL_CONSUMER)) {
+    const c = readFileSync(SHELL_CONSUMER, 'utf8')
+    if (!/lib\/project-dir\.sh/.test(c) || !/resolve_shared_project_dir/.test(c)) {
+      problems.push(
+        `${SHELL_CONSUMER} must source lib/project-dir.sh and call resolve_shared_project_dir`
+      )
+    }
+  }
+  if (problems.length === 0) {
+    pass(
+      'encoded-project-dir resolver canonical (project-dir.ts + .mjs + .sh mirrors); all sites delegate (memory/telemetry main-repo, sessions per-cwd)'
+    )
   } else {
     fail(
-      `encoded-cwd helper drift in: ${missing.join(', ')}`,
-      `Both writer.ts and session-priming-query.ts must contain \`replace(/\\//g, '-')\` (or string-form '/'). Helper is duplicated by design per smi-4450-step7-session-start-hook.md §S4 (plan-review #11) — extract to a shared module if this drift fires repeatedly.`
+      `encoded-project-dir resolver drift: ${problems.join('; ')}`,
+      `SMI-5419: keep the encoder canonical in project-dir.ts + scripts/lib/project-dir.mjs (parity-tested) and have all sites resolve through the shared resolver.`
     )
   }
 }
