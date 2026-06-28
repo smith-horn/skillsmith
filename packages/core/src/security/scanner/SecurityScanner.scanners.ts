@@ -213,6 +213,61 @@ export function scanPrivilegeEscalation(
 }
 
 /**
+ * SMI-5424 PR2: owner-permission chmod is a COMPOUND signal, not standalone.
+ * `chmod 755 ./bin/cli` / `chmod 600 .env` / `chmod +x build.sh` are benign
+ * idioms that previously false-fired privilege_escalation:critical. Owner-perm
+ * chmod now emits ONLY when co-located (±1 line) with a fetch/download verb —
+ * the "download a payload, chmod it, run it" supply-chain shape — which both
+ * kills the standalone FP and PRESERVES the chmod co-signal that
+ * escalateCodeExecution requires (it only accepts high/critical non-doc
+ * co-signals, so the chmod cannot simply be downgraded). World-writable and
+ * setuid/setgid chmod remain standalone-critical in PRIVILEGE_ESCALATION_PATTERNS;
+ * `alreadyFlaggedLines` skips those so we never double-emit on one line.
+ */
+const OWNER_PERM_CHMOD = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\b/i
+const CHMOD_FETCH_CONTEXT =
+  /\b(?:curl|wget|fetch|downloads?|downloaded|npx)\b|https?:\/\/|\bgit\s+clone\b/i
+
+export function scanChmodFetchCompound(
+  content: string,
+  alreadyFlaggedLines: ReadonlySet<number>,
+  lineContexts?: LineContext[]
+): SecurityFinding[] {
+  const findings: SecurityFinding[] = []
+  const lines = content.split('\n')
+  const contexts = lineContexts ?? analyzeMarkdownContext(content)
+
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1
+    // World-writable / setuid already emitted critical for this line — skip.
+    if (alreadyFlaggedLines.has(lineNumber)) return
+    const match = safeRegexTest(OWNER_PERM_CHMOD, line)
+    if (!match) return
+    // Bounded ±1-line window for the download-then-chmod adjacency.
+    const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
+    if (!CHMOD_FETCH_CONTEXT.test(window)) return // benign standalone chmod — no finding
+
+    const ctx = contexts[index]
+    const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+    const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+    findings.push({
+      type: 'privilege_escalation',
+      // HIGH (not critical): enough to trip Gate-A AND serve as an
+      // escalateCodeExecution co-signal, without re-introducing a critical FP.
+      severity: inDocContext ? 'low' : 'high',
+      message: `chmod of a fetched/downloaded file (compound with a download verb): "${match[0]}"`,
+      location: line.trim().slice(0, 100),
+      lineNumber,
+      category: 'privilege_escalation',
+      inDocumentationContext: inDocContext,
+      confidence: inDocContext ? 'low' : 'high',
+    })
+  })
+
+  return findings
+}
+
+/**
  * SMI-5420: credential PII pattern indices (api/secret/access key, provider
  * tokens, password) whose matched VALUE can be a documentation placeholder.
  * Excludes email (7), SSN (8), and the private-key marker (9) — those have no
