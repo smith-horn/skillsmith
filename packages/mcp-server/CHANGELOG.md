@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.6.0
+
+- **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)
+
 ## v0.5.5
 
 - **Feature**: enrich git/plugin-recovered skills with the registry UUID (SMI-5411) (#1600)

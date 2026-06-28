@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.0
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.6.3).
+
 ## v0.6.3
 
 - **Feature**: View Changes uses the recovered manifest source for local skills (SMI-5412) (#1599)

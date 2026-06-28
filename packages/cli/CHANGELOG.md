@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.7.0
+
+- **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)
+
 ## v0.6.5
 
 - **Fix**: View-Changes accepts install's `github:owner/repo` source + main->master fallback (SMI-5408) (#1602)
