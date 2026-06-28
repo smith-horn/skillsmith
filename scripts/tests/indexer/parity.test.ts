@@ -94,6 +94,17 @@ const NODE_SCANNER_EXEC = resolve(
   REPO_ROOT,
   'scripts/indexer/_shared/security-scanner-edge.exec.ts'
 )
+// SMI-5402: the five high-risk pattern arrays were extracted to a sibling twin
+// (500-line limit). Drift here means the two indexers would match different
+// jailbreak / suspicious / exfil / priv-esc / prompt-injection patterns.
+const DENO_SCANNER_PATTERNS = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.patterns.ts'
+)
+const NODE_SCANNER_PATTERNS = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.patterns.ts'
+)
 
 describe('Deno <-> Node helper parity', () => {
   const denoEncrypted = isGitCryptEncrypted(DENO_HELPERS)
@@ -296,6 +307,25 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
       expect(node).toBe(deno)
     })
   }
+
+  // SMI-5402: the five pattern arrays were extracted to a sibling twin — guard
+  // its whole body (all 5 arrays incl. the 11th SUSPICIOUS entry) across the twin
+  // pair from the `// ===` section marker. Uses extractScannerBody (whole-body
+  // slice) NOT extractArrayBody — the latter enters string-mode on quotes/
+  // backticks inside regex char classes (e.g. `[`'"]`, `[\w\s']`) and cannot
+  // parse regex-literal arrays.
+  const denoPatternsEncrypted = isGitCryptEncrypted(DENO_SCANNER_PATTERNS)
+  it.skipIf(denoPatternsEncrypted)(
+    'scanner patterns body is byte-identical from the first section marker (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractScannerBody(DENO_SCANNER_PATTERNS))
+      const node = normalizeWs(extractScannerBody(NODE_SCANNER_PATTERNS))
+      expect(
+        node,
+        'security-scanner-edge.patterns.ts drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins'
+      ).toBe(deno)
+    }
+  )
 
   // Behavior parity: import BOTH twins and assert scanSkillContent produces an
   // identical risk score + quarantine decision on representative inputs (one
