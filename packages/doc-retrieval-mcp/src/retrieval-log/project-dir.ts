@@ -36,10 +36,11 @@
  *
  * This module is the canonical implementation. Two mirrors exist for runtime
  * boundaries that cannot import it: `scripts/lib/project-dir.mjs` (plain-node
- * scripts that avoid the tsx startup cost) and a shell function in
- * `scripts/check-retrieval-events.sh` (must survive a dead-node/dead-binding
- * state). A cross-runtime parity test keeps all three in agreement; audit
- * Check 34 enforces that every site references its canonical resolver.
+ * scripts that avoid the tsx startup cost) and `scripts/lib/project-dir.sh`
+ * (shell paths — e.g. check-retrieval-events.sh — that must survive a
+ * dead-node/dead-binding state). A cross-runtime parity test keeps all three in
+ * agreement; audit Check 34 enforces that every site references its canonical
+ * resolver.
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs'

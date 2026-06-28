@@ -2301,13 +2301,15 @@ console.log(`\n${BOLD}33. PL/pgSQL RETURNS TABLE + RETURNING Ambiguity (R-3, SMI
 }
 
 // 34. SMI-5419: encoded-project-dir resolver drift. The canonical resolver lives
-// in project-dir.ts (TS) with a behavior-equivalent scripts/lib/project-dir.mjs
-// mirror (for plain-node sites that avoid the tsx startup cost); a cross-runtime
-// parity test guards agreement. Every site that needs a `~/.claude/projects/<dir>`
-// path delegates to the shared resolver instead of re-deriving the encoding:
+// in project-dir.ts (TS) with two behavior-equivalent mirrors — scripts/lib/
+// project-dir.mjs (plain-node sites that avoid the tsx startup cost) and scripts/
+// lib/project-dir.sh (shell paths that must survive a dead-node/dead-binding
+// state) — all three kept in lock-step by a cross-runtime parity test. Every site
+// that needs a `~/.claude/projects/<dir>` path delegates to a shared resolver
+// instead of re-deriving the encoding:
 //   - shared main-repo dir (resolveSharedProjectDir): writer.ts + retrieval-log-cli.mjs
 //     (telemetry DB), session-priming-query.ts (MEMORY.md), memory-topic-files.ts +
-//     retro-frontmatter.mjs (/memory corpus)
+//     retro-frontmatter.mjs (/memory corpus), check-retrieval-events.sh (diagnostic)
 //   - per-cwd dir (resolveClaudeProjectDir): session-priming-query.ts (session *.jsonl)
 console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`)
 {
@@ -2343,9 +2345,32 @@ console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`
       problems.push(`${f} must import the shared resolver from project-dir.mjs`)
     }
   }
+  // Shell mirror (must survive a dead-node/dead-binding state) + its consumer.
+  const SHELL_MIRROR = 'scripts/lib/project-dir.sh'
+  if (!existsSync(SHELL_MIRROR)) {
+    problems.push(`${SHELL_MIRROR} missing (shell mirror of the resolver)`)
+  } else {
+    const sh = readFileSync(SHELL_MIRROR, 'utf8')
+    for (const fn of [
+      'encode_project_segment',
+      'reconcile_encoded_dir',
+      'resolve_shared_project_dir',
+    ]) {
+      if (!sh.includes(fn)) problems.push(`${SHELL_MIRROR} missing function ${fn}`)
+    }
+  }
+  const SHELL_CONSUMER = 'scripts/check-retrieval-events.sh'
+  if (existsSync(SHELL_CONSUMER)) {
+    const c = readFileSync(SHELL_CONSUMER, 'utf8')
+    if (!/lib\/project-dir\.sh/.test(c) || !/resolve_shared_project_dir/.test(c)) {
+      problems.push(
+        `${SHELL_CONSUMER} must source lib/project-dir.sh and call resolve_shared_project_dir`
+      )
+    }
+  }
   if (problems.length === 0) {
     pass(
-      'encoded-project-dir resolver canonical (project-dir.ts + .mjs mirror); all sites delegate (memory/telemetry main-repo, sessions per-cwd)'
+      'encoded-project-dir resolver canonical (project-dir.ts + .mjs + .sh mirrors); all sites delegate (memory/telemetry main-repo, sessions per-cwd)'
     )
   } else {
     fail(
