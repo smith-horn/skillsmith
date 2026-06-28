@@ -27,6 +27,7 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+import { scanBundledSiblings } from './validate-bundled-scan.js'
 import type { ToolContext } from '../context.js'
 
 // Import types
@@ -142,6 +143,19 @@ async function executeValidateImpl(
 
   // SMI-3137: Dependency intelligence warnings
   errors.push(...validateDependencies(metadata ?? {}, body))
+
+  // SMI-5422 Phase 1: when validating a skill directory, also scan sibling
+  // bundled files that install_skill would scan. This closes the gap where
+  // skill_validate gives a green pass but install_skill rejects the same skill
+  // due to a malicious .mcp.json or package.json postinstall hook.
+  //
+  // Uses the community-tier threshold (40) as a reasonable default since
+  // skill_validate has no trust-tier context. Only hard-reject classes are
+  // checked here (structured + package-json); doc and config are skipped —
+  // config.json already has its own structural validation path.
+  if (isDirectory) {
+    errors.push(...(await scanBundledSiblings(skill_path)))
+  }
 
   // Determine validity
   const hasErrors = errors.some((e) => e.severity === 'error')

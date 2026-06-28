@@ -66,6 +66,11 @@
       "import": "./dist/src/services/skill-installation.validate.js",
       "default": "./dist/src/services/skill-installation.validate.js"
     },
+    "./services/skill-installation-policy": {
+      "types": "./dist/src/services/skill-installation.policy.d.ts",
+      "import": "./dist/src/services/skill-installation.policy.js",
+      "default": "./dist/src/services/skill-installation.policy.js"
+    },
     "./config/audit-mode": {
       "types": "./dist/src/config/audit-mode.d.ts",
       "import": "./dist/src/config/audit-mode.js",

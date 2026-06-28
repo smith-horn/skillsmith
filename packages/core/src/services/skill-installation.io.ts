@@ -11,6 +11,12 @@ import { safeWriteFile } from '../utils/safe-fs.js'
 import { SecurityScanner } from '../security/index.js'
 import type { ScannerOptions, ScanReport } from '../security/index.js'
 import { validateOptionalConfig } from './skill-installation.validate.js'
+import {
+  BUNDLED_SCAN_FILES,
+  classifyBundledFile,
+  extractPackageJsonLifecycleScripts,
+  isRejectableScan,
+} from './skill-installation.policy.js'
 
 export function assertNotEncrypted(content: string, filePath: string): void {
   if (content.startsWith('\x00GITCRYPT')) {
@@ -176,18 +182,22 @@ export interface OptionalInstallFilesResult {
 }
 
 /**
- * Prose-documentation optional files: they routinely quote attack strings as
- * examples, so a scan failure on these is skipped (FP control, H6) rather than
- * rejecting the install. Non-doc optional files (config.json) DO hard-reject.
- */
-const DOC_OPTIONAL_FILES = new Set(['README.md', 'examples.md'])
-
-/**
- * SMI-5359 Gap-1: fetch + scan the optional install files WITHOUT writing them.
- * The caller runs this BEFORE writeInstallFiles, rejects on any `failedScans`,
- * and only then writes `filesToWrite` (so a malicious optional file can never
- * leave a partially-installed skill on disk). A fetch/404 error is a silent
- * skip (NOT a scan failure); a config.json that fails scanning IS a rejection.
+ * SMI-5359 Gap-1 / SMI-5422 Phase 1: fetch + scan the optional install files
+ * WITHOUT writing them. The caller runs this BEFORE writeInstallFiles, rejects
+ * on any `failedScans`, and only then writes `filesToWrite` (so a malicious
+ * optional file can never leave a partially-installed skill on disk).
+ *
+ * Per-file policy (see skill-installation.policy.ts for the authoritative spec):
+ *   doc          – scan failure is a silent skip (FP control H6).
+ *   config       – hard-reject on scan failure (pre-existing behaviour).
+ *   structured   – hard-reject on scan failure, all trust tiers.
+ *   package-json – KEY-LEVEL: only lifecycle-hook script values are scanned.
+ *                  A package.json with no lifecycle hooks is never rejected.
+ *
+ * A fetch/404 error is always a silent skip (NOT a scan failure).
+ *
+ * Phase 3 follow-up: directory-glob scanning (e.g. scripts/*.sh) is out of
+ * scope here — fetchFromGitHub fetches by exact path only.
  */
 export async function fetchAndScanOptionalFiles(
   owner: string,
@@ -198,25 +208,42 @@ export async function fetchAndScanOptionalFiles(
   scannerOptions: ScannerOptions | null
 ): Promise<OptionalInstallFilesResult> {
   const optionalFileScanner = scannerOptions ? new SecurityScanner(scannerOptions) : null
-  const optionalFiles = ['README.md', 'examples.md', 'config.json']
   const configWarnings: string[] = []
   const failedScans: Array<{ file: string; report: ScanReport }> = []
   const filesToWrite: Array<{ filename: string; content: string }> = []
-  for (const file of optionalFiles) {
+  for (const file of BUNDLED_SCAN_FILES) {
     let content: string
     try {
       content = await fetchFromGitHub(owner, repo, basePath + file, branch)
     } catch {
-      // Optional file absent / fetch failed — fine to skip (NOT a scan failure).
+      // Optional file absent / fetch failed — silent skip (NOT a scan failure).
       continue
     }
     if (optionalFileScanner) {
-      const fileScan = optionalFileScanner.scan(skillId + '/' + file, content)
-      if (!fileScan.passed) {
-        // H6: prose docs quote attack strings — skip, never reject the install.
-        if (DOC_OPTIONAL_FILES.has(file)) continue
-        failedScans.push({ file, report: fileScan })
-        continue
+      const fileClass = classifyBundledFile(file)
+      // Determine the text to scan. For package-json, only lifecycle hook values;
+      // for everything else, the full file content.
+      let textToScan: string | null
+      if (fileClass === 'package-json') {
+        const lifecycle = extractPackageJsonLifecycleScripts(content)
+        // Empty string means no install-time hooks — nothing risky to scan.
+        textToScan = lifecycle.length > 0 ? lifecycle : null
+      } else {
+        textToScan = content
+      }
+      if (textToScan !== null) {
+        const fileScan = optionalFileScanner.scan(skillId + '/' + file, textToScan)
+        // Hard-reject classes also reject on a lone code_execution / obfuscated_
+        // directive finding (medium severity), which `passed` alone would miss —
+        // remote-fetch-execute / concealed directives have no place in a hook
+        // or config file (SMI-5422 Phase 1; isRejectableScan is FP-safe).
+        if (isRejectableScan(fileScan)) {
+          // H6 FP control: prose docs quote attack strings — never hard-reject.
+          if (fileClass === 'doc') continue
+          // config, structured, and package-json all hard-reject on failure.
+          failedScans.push({ file, report: fileScan })
+          continue
+        }
       }
     }
     if (file === 'config.json') {
