@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.7.1
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.0).
+
 ## v0.7.0
 
 - **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)

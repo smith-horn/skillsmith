@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.9.1
+
+- **Fix**: guard short PII placeholder markers against coincidental substrings (SMI-5423) (#1614)
+
 ## v0.9.0
 
 - **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)
