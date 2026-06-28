@@ -71,6 +71,11 @@
       "import": "./dist/src/services/skill-installation.policy.js",
       "default": "./dist/src/services/skill-installation.policy.js"
     },
+    "./services/bundled-sibling-scan": {
+      "types": "./dist/src/services/bundled-sibling-scan.d.ts",
+      "import": "./dist/src/services/bundled-sibling-scan.js",
+      "default": "./dist/src/services/bundled-sibling-scan.js"
+    },
     "./config/audit-mode": {
       "types": "./dist/src/config/audit-mode.d.ts",
       "import": "./dist/src/config/audit-mode.js",
