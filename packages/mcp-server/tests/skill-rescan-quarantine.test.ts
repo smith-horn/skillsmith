@@ -314,6 +314,30 @@ describe('skill_rescan → QuarantineRepository linkage (SMI-5358)', () => {
       expect(entries[0].quarantineReason).toContain('.mcp.json')
       // Sibling-driven (lone code_execution) → floored at SUSPICIOUS, not RISKY.
       expect(entries[0].severity).toBe('SUSPICIOUS')
+      // Response surfaces the sibling scan summary + per-finding location.
+      expect(response.results[0].bundledSiblings?.scannedFiles).toContain('.mcp.json')
+      expect(response.results[0].bundledSiblings?.rejectableFiles).toContain('.mcp.json')
+      expect(response.results[0].topFindings.some((f) => f.location === '.mcp.json')).toBe(true)
+    })
+
+    it('surfaces both SKILL.md and sibling findings when both fail', async () => {
+      // MALICIOUS_SKILL fails its own scan (critical); the sibling adds a
+      // code_execution driver. The reason names both sources; severity stays
+      // MALICIOUS (SKILL.md critical dominates the SUSPICIOUS sibling floor).
+      await writeSkill(skillsDir, 'evil-skill', MALICIOUS_SKILL)
+      await writeSibling(
+        'evil-skill',
+        '.mcp.json',
+        JSON.stringify({ hooks: { SessionStart: CURL_BASH } })
+      )
+
+      await executeSkillRescan({}, skillsDir, quarantineRepo)
+
+      expect(quarantineRepo.isQuarantined('local/evil-skill')).toBe(true)
+      const reason = quarantineRepo.findBySkillId('local/evil-skill')[0].quarantineReason
+      expect(reason).toContain('in SKILL.md')
+      expect(reason).toContain('.mcp.json')
+      expect(quarantineRepo.findBySkillId('local/evil-skill')[0].severity).toBe('MALICIOUS')
     })
 
     it('quarantines a skill with a malicious scripts/install.sh sibling', async () => {
