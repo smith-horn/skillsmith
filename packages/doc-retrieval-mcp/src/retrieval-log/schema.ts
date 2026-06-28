@@ -74,7 +74,7 @@ export interface RetrievalEvent {
  */
 export interface RetrievalLogOutageMarker {
   ts: string // ISO-8601 UTC of the failed open attempt
-  reason: 'binding_unavailable' | 'owner_mismatch'
+  reason: 'binding_unavailable' | 'owner_mismatch' | 'project_dir_ambiguous'
   error: string // truncated stringified error (≤500 chars)
   hint: string // remediation pointer surfaced in the priming banner
 }

@@ -2300,30 +2300,33 @@ console.log(`\n${BOLD}33. PL/pgSQL RETURNS TABLE + RETURNING Ambiguity (R-3, SMI
   }
 }
 
-// 34. SMI-4451 Step 7: encoded-cwd helper drift between writer.ts and
-// session-priming-query.ts. The 4-LOC `'-' + cwd.slice(1).replace(/\//g, '-')`
-// helper is duplicated by design (plan-review #11) instead of extracted to a
-// shared utils/ module — too small to justify a new directory. This check
-// fails if either file lacks the canonical regex form, signaling drift.
-console.log(`\n${BOLD}34. encoded-cwd helper drift (SMI-4451 Step 7)${RESET}`)
+// 34. SMI-5419: encoded-project-dir resolver drift. The canonical resolver now
+// lives in project-dir.ts (the slash→dash encoder literal must exist there) and
+// writer.ts must delegate via resolveTelemetryProjectDir rather than re-deriving
+// the path. The remaining per-cwd encoder sites (session-priming-query.ts
+// memory/sessions, retrieval-log-cli.mjs, retro-frontmatter.mjs) migrate to the
+// scripts/lib .mjs mirror in the wiring step; a cross-runtime parity test then
+// guards behavioral agreement and this check tightens to "all sites import the
+// shared resolver".
+console.log(`\n${BOLD}34. encoded-project-dir resolver drift (SMI-5419)${RESET}`)
 {
-  const PAIR = [
-    'packages/doc-retrieval-mcp/src/retrieval-log/writer.ts',
-    'scripts/session-priming-query.ts',
-  ]
-  // Canonical pattern: replace forward-slashes with hyphens. Match either
-  // regex form (/\//g) or string form ('/'). Both files must match.
-  const ENCODED_CWD_REGEX = /\.replace\(\s*\/\\?\/\/?g\s*,\s*['"]-['"]\s*\)/
-  const missing = PAIR.filter((p) => {
-    if (!existsSync(p)) return true
-    return !ENCODED_CWD_REGEX.test(readFileSync(p, 'utf8'))
-  })
-  if (missing.length === 0) {
-    pass(`Both encoded-cwd duplicates present and aligned (${PAIR.length} files)`)
+  const CANONICAL = 'packages/doc-retrieval-mcp/src/retrieval-log/project-dir.ts'
+  const WRITER = 'packages/doc-retrieval-mcp/src/retrieval-log/writer.ts'
+  // Canonical slash→dash encoder; match regex form (/\//g) or string form ('/').
+  const ENCODER_REGEX = /\.replace\(\s*\/\\?\/\/?g\s*,\s*['"]-['"]\s*\)/
+  const problems = []
+  if (!existsSync(CANONICAL) || !ENCODER_REGEX.test(readFileSync(CANONICAL, 'utf8'))) {
+    problems.push(`${CANONICAL} missing the canonical slash->dash encoder`)
+  }
+  if (existsSync(WRITER) && !/resolveTelemetryProjectDir/.test(readFileSync(WRITER, 'utf8'))) {
+    problems.push(`${WRITER} must delegate to resolveTelemetryProjectDir`)
+  }
+  if (problems.length === 0) {
+    pass('encoded-project-dir resolver canonical in project-dir.ts; writer.ts delegates')
   } else {
     fail(
-      `encoded-cwd helper drift in: ${missing.join(', ')}`,
-      `Both writer.ts and session-priming-query.ts must contain \`replace(/\\//g, '-')\` (or string-form '/'). Helper is duplicated by design per smi-4450-step7-session-start-hook.md §S4 (plan-review #11) — extract to a shared module if this drift fires repeatedly.`
+      `encoded-project-dir resolver drift: ${problems.join('; ')}`,
+      `SMI-5419: keep the encoder canonical in project-dir.ts and have writer.ts (and, after wiring, every other site) resolve through it.`
     )
   }
 }

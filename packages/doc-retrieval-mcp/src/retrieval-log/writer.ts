@@ -13,13 +13,18 @@
  * module" contract. Tests call `closeRetrievalLog()` between cases.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir, userInfo } from 'node:os'
+import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import type BetterSqlite3 from 'better-sqlite3'
 
+import {
+  findMainRepoRoot,
+  resetProjectDirCache,
+  resolveTelemetryProjectDir,
+} from './project-dir.js'
 import {
   CURRENT_SCHEMA_VERSION,
   SCHEMA_SQL,
@@ -27,6 +32,10 @@ import {
   type RetrievalEvent,
   type RetrievalLogOutageMarker,
 } from './schema.js'
+
+// Re-exported for back-compat: callers (and the writer test) historically
+// imported `findMainRepoRoot` from this module (SMI-5419 moved it to project-dir).
+export { findMainRepoRoot }
 
 // ESM-compatible require for native module (matches search.ts pattern for
 // @ruvector/core and betterSqlite3Driver.ts in @skillsmith/core).
@@ -38,6 +47,7 @@ let cachedDb: BetterSqlite3.Database | null = null
 let rowCountWarningEmitted = false
 let dockerWarningEmitted = false
 let ownerMismatchWarningEmitted = false
+let ambiguousWarningEmitted = false
 
 /**
  * Close the cached DB handle (if any). Test-only; production code never
@@ -55,57 +65,8 @@ export function closeRetrievalLog(): void {
   rowCountWarningEmitted = false
   dockerWarningEmitted = false
   ownerMismatchWarningEmitted = false
-}
-
-/**
- * Encode an absolute filesystem path the way Claude Code does for its
- * `~/.claude/projects/` subdirectories: replace each `/` with `-`.
- *
- * `/Users/foo/bar` → `-Users-foo-bar`
- */
-function encodeProjectPath(abs: string): string {
-  return abs.replace(/\//g, '-')
-}
-
-/**
- * Walk up from `start` until a directory is found that contains `.git` as
- * a directory (not a file — worktrees have `.git` as a file pointing to
- * the main repo's gitdir). Returns the first such ancestor, or `null` if
- * none is found before filesystem root.
- *
- * Exported for unit testing; production callers use `resolveProjectDir`.
- */
-export function findMainRepoRoot(start: string): string | null {
-  let current = resolve(start)
-  // Safety cap — git worktrees live inside the main repo, so depth is small.
-  for (let i = 0; i < 64; i += 1) {
-    const gitPath = join(current, '.git')
-    if (existsSync(gitPath)) {
-      try {
-        const st = statSync(gitPath)
-        if (st.isDirectory()) return current
-      } catch {
-        // unreadable — treat as missing, keep walking
-      }
-    }
-    const parent = dirname(current)
-    if (parent === current) return null
-    current = parent
-  }
-  return null
-}
-
-/**
- * Resolve the canonical project dir for the DB path. For worktrees inside
- * `<repo>/.worktrees/<name>/`, this returns `<repo>` (the main repo) so
- * all worktrees on the same project share one `retrieval-logs.db`.
- *
- * Falls back to `process.cwd()` if no main repo ancestor is found.
- */
-function resolveProjectDir(): string {
-  const cwd = process.cwd()
-  const mainRepo = findMainRepoRoot(cwd)
-  return mainRepo ?? cwd
+  ambiguousWarningEmitted = false
+  resetProjectDirCache()
 }
 
 /**
@@ -123,9 +84,7 @@ export function resolveDbPath(): { dir: string; dbPath: string } {
     const dir = resolve(override)
     return { dir, dbPath: join(dir, 'retrieval-logs.db') }
   }
-  const project = resolveProjectDir()
-  const encoded = encodeProjectPath(project)
-  const dir = join(homedir(), '.claude', 'projects', encoded)
+  const dir = resolveTelemetryProjectDir().dir
   return { dir, dbPath: join(dir, 'retrieval-logs.db') }
 }
 
@@ -214,6 +173,26 @@ function openDb(): BetterSqlite3.Database | null {
   }
 
   try {
+    // SMI-5419: refuse to write into an ambiguous (multiple case-variant) project
+    // dir — picking one silently could split the DB. Surface it loudly instead.
+    const overrideActive =
+      !!process.env.RETRIEVAL_LOG_DIR_OVERRIDE && process.env.NODE_ENV !== 'production'
+    if (!overrideActive && resolveTelemetryProjectDir().state === 'ambiguous') {
+      const { candidates } = resolveTelemetryProjectDir()
+      if (!ambiguousWarningEmitted) {
+        console.warn(
+          `[retrieval-logs] ambiguous project dir; refusing to write: ${candidates?.join(', ')}`
+        )
+        ambiguousWarningEmitted = true
+      }
+      writeOutageMarker({
+        ts: new Date().toISOString(),
+        reason: 'project_dir_ambiguous',
+        error: `multiple case-variant ~/.claude/projects dirs: ${candidates?.join(', ')}`,
+        hint: 'consolidate the duplicate dirs (back up + merge retrieval-logs.db)',
+      })
+      return null
+    }
     const { dir, dbPath } = resolveDbPath()
 
     // mode 0700 — user-scoped, private log store (SPARC §S4).
