@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { userInfo } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 
 import { chunkBlocks, chunkId, estimateTokens, parseMarkdown } from '../indexer.helpers.js'
 import { resolveSharedProjectDir } from '../retrieval-log/project-dir.js'
@@ -215,5 +215,9 @@ export function resolveMemoryDir(cwd: string): string | null {
   // SMI-5419: resolve via the shared main-repo resolver so all worktrees of one
   // project read the same curated memory store, with on-disk casing reconciled.
   // Memory is project knowledge, not per-worktree state — same dir as telemetry.
-  return join(resolveSharedProjectDir(cwd).dir, 'memory')
+  const dir = join(resolveSharedProjectDir(cwd).dir, 'memory')
+  // Preserve the prior null-on-no-home contract (SMI-5419 L-2): if homedir()
+  // resolved empty, the shared dir would be relative — treat as unresolvable so
+  // listFiles' `dir === null` guard still fires.
+  return isAbsolute(dir) ? dir : null
 }

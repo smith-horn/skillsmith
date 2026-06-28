@@ -262,9 +262,9 @@ function memoryDirForCwd() {
 }
 
 function memoryFileExists(fileBasename) {
-  const dir = memoryDirForCwd()
-  if (!dir) return false
-  return existsSync(join(dir, `${fileBasename}.md`))
+  // memoryDirForCwd() always returns a string (the shared resolver never returns
+  // null), so existsSync handles a non-existent dir directly (SMI-5419 L-1).
+  return existsSync(join(memoryDirForCwd(), `${fileBasename}.md`))
 }
 
 function defaultRetros() {
