@@ -212,6 +212,67 @@ export function scanPrivilegeEscalation(
   return findings
 }
 
+/**
+ * SMI-5420: credential PII pattern indices (api/secret/access key, provider
+ * tokens, password) whose matched VALUE can be a documentation placeholder.
+ * Excludes email (7), SSN (8), and the private-key marker (9) — those have no
+ * placeholder-secret failure mode.
+ */
+const CREDENTIAL_PII_INDICES = new Set([0, 1, 2, 3, 4, 5, 6, 10])
+
+/**
+ * SMI-5420: named-placeholder markers that indicate an example, not a real
+ * secret. Intentionally NO `X{4,}` rule — it would test the raw match string and
+ * short-circuit before the entropy check, downgrading a REAL high-entropy secret
+ * that coincidentally contains `xxxx` (governance FN). An all-repeated-char value
+ * (e.g. `xxxx…`) is caught by the `/^(.)\1+$/` check in looksLikePlaceholderSecret
+ * instead, and partial-repeat low-variety values by the entropy floor.
+ */
+const PLACEHOLDER_SECRET_RE =
+  /EXAMPLE|YOUR[_-]?|PLACEHOLDER|CHANGE[_-]?ME|DUMMY|FAKE|SAMPLE|REDACTED|INSERT[_-]|\.\.\.|<[^>]+>/i
+
+/** SMI-5420: minimum Shannon entropy (bits/char) for a value to read as a real secret. */
+const SECRET_ENTROPY_FLOOR = 3.0
+
+/** SMI-5420: Shannon entropy (bits per character) of a string. */
+export function shannonEntropy(s: string): number {
+  if (!s) return 0
+  const freq = new Map<string, number>()
+  for (const ch of s) freq.set(ch, (freq.get(ch) ?? 0) + 1)
+  let h = 0
+  for (const c of freq.values()) {
+    const p = c / s.length
+    h -= p * Math.log2(p)
+  }
+  return h
+}
+
+/**
+ * SMI-5420: extract the secret token from a credential match by stripping a
+ * leading `<key>:`/`<key>=` assignment prefix and surrounding quotes.
+ */
+function extractSecretValue(match: string): string {
+  return match
+    .replace(/^[^:=]*[:=]\s*/, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim()
+}
+
+/**
+ * SMI-5420: a credential match is a documentation placeholder (not a real leaked
+ * secret) when it carries a named placeholder marker, is a single repeated
+ * character, or its value has sub-secret Shannon entropy. Such matches must NOT
+ * emit critical/high severity — the batch trust-scorer (trust-scorer.ts) and the
+ * install gate quarantine on severity, so an example secret would falsely flag.
+ */
+export function looksLikePlaceholderSecret(match: string): boolean {
+  if (PLACEHOLDER_SECRET_RE.test(match)) return true
+  const value = extractSecretValue(match)
+  if (value.length === 0) return false
+  if (/^(.)\1+$/.test(value)) return true
+  return shannonEntropy(value) < SECRET_ENTROPY_FLOOR
+}
+
 /** SMI-3864: Detect PII patterns. Email in YAML frontmatter gets low severity. */
 export function scanPiiPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
@@ -244,7 +305,15 @@ export function scanPiiPatterns(content: string, lineContexts?: LineContext[]): 
         else if (inDocContext) severity = 'medium'
         else if (pi <= 2 || pi === 9) severity = 'critical'
         else severity = 'high'
-        const confidence: FindingConfidence = inDocContext || inEmailSafeContext ? 'low' : 'high'
+        let confidence: FindingConfidence = inDocContext || inEmailSafeContext ? 'low' : 'high'
+        // SMI-5420: a credential match that reads as a documentation placeholder
+        // (named placeholder, repeated char, or low entropy) must not emit
+        // critical/high — the batch trust-scorer quarantines on severity, so an
+        // example secret like `api_key: "YOUR_API_KEY_HERE"` would falsely flag.
+        if (CREDENTIAL_PII_INDICES.has(pi) && looksLikePlaceholderSecret(match[0])) {
+          severity = 'low'
+          confidence = 'low'
+        }
         findings.push({
           type: 'pii',
           severity,
