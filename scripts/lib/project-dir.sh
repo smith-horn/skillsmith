@@ -82,7 +82,7 @@ reconcile_encoded_dir() {
   # 2. reconciled — exactly one entry equals computed under ASCII fold.
   local full=()
   for entry in "$root"/*; do
-    [ -e "$entry" ] || continue
+    [ -e "$entry" ] || [ -L "$entry" ] || continue # incl. broken symlinks (readdirSync parity)
     name="${entry##*/}"
     if [ "$(ascii_fold "$name")" = "$folded_computed" ]; then
       full+=("$name")
@@ -101,7 +101,7 @@ reconcile_encoded_dir() {
   prefix="${folded_computed}-"
   local anchors=()
   for entry in "$root"/*; do
-    [ -e "$entry" ] || continue
+    [ -e "$entry" ] || [ -L "$entry" ] || continue # incl. broken symlinks (readdirSync parity)
     name="${entry##*/}"
     folded_name="$(ascii_fold "$name")"
     case "$folded_name" in
