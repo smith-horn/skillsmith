@@ -227,9 +227,23 @@ const CREDENTIAL_PII_INDICES = new Set([0, 1, 2, 3, 4, 5, 6, 10])
  * that coincidentally contains `xxxx` (governance FN). An all-repeated-char value
  * (e.g. `xxxx…`) is caught by the `/^(.)\1+$/` check in looksLikePlaceholderSecret
  * instead, and partial-repeat low-variety values by the entropy floor.
+ *
+ * SMI-5423: the SHORT markers (FAKE/DUMMY/SAMPLE/YOUR, ≤6 chars) are guarded with
+ * a negative lookbehind `(?<![A-Za-z0-9])` so they only match as a delimited token
+ * (`FAKE_KEY`, `<FAKE>`, value-start) — NOT mid-random-string (`k7FAKE1abc`), which
+ * is the same raw-match short-circuit FN class as the removed `X{4,}`. Longer
+ * markers (EXAMPLE/PLACEHOLDER/CHANGEME/REDACTED, 7+ chars) stay unbounded: their
+ * coincidence probability is negligible AND `AKIA…7EXAMPLE` needs EXAMPLE to match
+ * mid-token.
+ *
+ * Accepted tradeoff (SMI-5423 governance): a digit-immediately-prefixed token like
+ * `1FAKE_KEY` fails the lookbehind and scores critical rather than low. This is the
+ * FP-SAFE direction (over-flag a rare contrived placeholder) — strictly preferable
+ * in a security scanner to the FN it replaces (a real secret downgraded); and a
+ * longer such value falls under the entropy floor anyway.
  */
 const PLACEHOLDER_SECRET_RE =
-  /EXAMPLE|YOUR[_-]?|PLACEHOLDER|CHANGE[_-]?ME|DUMMY|FAKE|SAMPLE|REDACTED|INSERT[_-]|\.\.\.|<[^>]+>/i
+  /EXAMPLE|(?<![A-Za-z0-9])YOUR[_-]?|PLACEHOLDER|CHANGE[_-]?ME|(?<![A-Za-z0-9])DUMMY|(?<![A-Za-z0-9])FAKE|(?<![A-Za-z0-9])SAMPLE|REDACTED|INSERT[_-]|\.\.\.|<[^>]+>/i
 
 /** SMI-5420: minimum Shannon entropy (bits/char) for a value to read as a real secret. */
 const SECRET_ENTROPY_FLOOR = 3.0

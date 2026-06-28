@@ -161,6 +161,28 @@ describe('PII Detection (SMI-3864)', () => {
       expect(pii[0].severity).toBe('critical')
     })
 
+    it('keeps real secrets that coincidentally contain a short marker word at critical (SMI-5423)', () => {
+      // FAKE/DUMMY/SAMPLE/YOUR embedded mid-random-string must NOT downgrade (lookbehind guard).
+      for (const v of [
+        'api_key = "k7FAKE1abc2efgh3ijkl"',
+        'api_key = "k7DUMMY1abc2efgh3ijk"',
+        'api_key = "k7SAMPLE1abc2efgh3ij"',
+        'api_key = "k7YOUR1abc2efgh3ijkl"',
+      ]) {
+        const pii = scanner.scan('test', v).findings.filter((f) => f.type === 'pii')
+        expect(pii.length).toBeGreaterThan(0)
+        expect(pii[0].severity).toBe('critical')
+      }
+    })
+
+    it('still downgrades a delimited-token short-marker placeholder to low (SMI-5423)', () => {
+      const pii = scanner
+        .scan('test', 'api_key = "FAKE_API_KEY_1234567890"')
+        .findings.filter((f) => f.type === 'pii')
+      expect(pii.length).toBeGreaterThan(0)
+      expect(pii[0].severity).toBe('low')
+    })
+
     it('keeps a real high-entropy password at high (no FN regression)', () => {
       const pii = scanner
         .scan('test', 'password = "Tr0ub4dor3xKq9Zp"')
@@ -225,6 +247,10 @@ describe('PII Detection (SMI-3864)', () => {
       expect(looksLikePlaceholderSecret('api_key = "aB3xK9mQ7zP2wL5nR8tY1vC4"')).toBe(false)
       expect(looksLikePlaceholderSecret('api_key = "k7xxxx1abc2efgh3ijkl"')).toBe(false)
       expect(looksLikePlaceholderSecret(STRIPE_REAL)).toBe(false)
+      // SMI-5423: short marker word embedded mid-random-string is NOT a placeholder,
+      // but a delimited-token short marker still is.
+      expect(looksLikePlaceholderSecret('api_key = "k7FAKE1abc2efgh3ijkl"')).toBe(false)
+      expect(looksLikePlaceholderSecret('api_key = "FAKE_API_KEY_1234567890"')).toBe(true)
     })
   })
 })
