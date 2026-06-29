@@ -22,6 +22,7 @@ on:
       - 'scripts/session-start-audit.sh'
       - 'scripts/lib/session-start-audit-helper.ts'
       - 'scripts/retrieval-autoheal.sh'
+      - 'scripts/retrieval-liveness-check.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/session-start-audit.test.sh'
       - 'scripts/check-file-length.mjs'
@@ -50,6 +51,7 @@ jobs:
             scripts/repair-worktrees.sh \
             scripts/session-start-audit.sh \
             scripts/retrieval-autoheal.sh \
+            scripts/retrieval-liveness-check.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/session-start-audit.test.sh
 
@@ -61,6 +63,7 @@ jobs:
           bash -n scripts/repair-worktrees.sh
           bash -n scripts/session-start-audit.sh
           bash -n scripts/retrieval-autoheal.sh
+          bash -n scripts/retrieval-liveness-check.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
           sh -n .husky/pre-commit

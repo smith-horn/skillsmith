@@ -92,6 +92,11 @@
          (a path, NOT a secret). Substituted at setup from .env via varlock. -->
     <key>SKILLSMITH_PROJECT_DIR_ENCODED</key>
     <string>__PROJECT_DIR_ENCODED__</string>
+    <!-- SMI-5432 W0.2 telemetry-liveness alert ships shadow-by-default (an absent
+         var → the script defaults SHADOW=1). After the 4-week zero-FP soak + the
+         W0.1-live verification, UNCOMMENT the single line below and reload to
+         enable GitHub-issue paging (see eval-cron-setup.md § Liveness alert). -->
+    <!-- <key>SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW</key><string>0</string> -->
   </dict>
 </dict>
 </plist>

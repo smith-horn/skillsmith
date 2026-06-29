@@ -286,6 +286,15 @@ compose --profile dev run --rm --no-deps --entrypoint sh dev -c \
   >>"$LOG_FILE" 2>&1 || EVAL_EXIT=$?
 
 # ---------------------------------------------------------------------------
+# Telemetry-liveness detection backstop (SMI-5432 W0.2 C2)
+# ---------------------------------------------------------------------------
+# Run BEST-EFFORT (|| true) — never block the heartbeat on a liveness failure.
+# Runs even when EVAL_EXIT != 0 (the "eval just died" case is exactly when the
+# stale-feed symptom is most diagnostic). Shadow mode ships as default (see
+# launchd/systemd template); set SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW=0 to go live.
+"$SCRIPT_DIR/retrieval-liveness-check.sh" >> "$LOG_FILE" 2>&1 || true
+
+# ---------------------------------------------------------------------------
 # Heartbeat: write in the clone, copy back to the dev tree (H4)
 # ---------------------------------------------------------------------------
 #

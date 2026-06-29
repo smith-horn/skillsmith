@@ -38,6 +38,11 @@ import {
   type ProbeResult,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
 import {
+  readEntry as readLivenessEntry,
+  renderLivenessBanner,
+  resolveLivenessLogPath,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/liveness-state.js'
+import {
   resolveClaudeProjectDir,
   resolveSharedProjectDir,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/project-dir.js'
@@ -362,6 +367,30 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     // Probe must never crash the priming hook. Silent degrade.
   }
 
+  // SMI-5432 W0.2 — scheduled liveness backstop banner (M2).
+  // When the feed is stale AND the host auto-heal also failed, renderLivenessBanner
+  // appends the M2 causal phrase "likely the host auto-heal failure above" so both
+  // surfaces point at the same root cause instead of producing two separate alerts.
+  let livenessLine = ''
+  try {
+    const livenessKey = resolveMainRepoKey(args.cwd)
+    if (livenessKey) {
+      const le = readLivenessEntry(livenessKey)
+      if (le && le.lastVerdict === 'stale') {
+        livenessLine = renderLivenessBanner(le, {
+          now,
+          logPath: resolveLivenessLogPath(now),
+          autohealFailed: autohealLine.length > 0,
+        })
+      }
+    }
+  } catch {
+    /* fail-soft — must never crash the priming hook */
+  }
+
+  // Combined banner: stale-probe section first, liveness one-liner below.
+  const contextBanner = [probeBanner, livenessLine].filter(Boolean).join('\n')
+
   if (process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING === '1') {
     logRetrievalEvent({
       sessionId: args.sessionId,
@@ -373,7 +402,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     })
     // Even when priming is disabled, surface the stale-instrumentation
     // banner so a long-running outage doesn't go silent.
-    return { additionalContext: probeBanner }
+    return { additionalContext: contextBanner }
   }
 
   const [signal1, signal2, signal3] = await Promise.all([
@@ -400,7 +429,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       topKResults: '[]',
       hookOutcome: 'partial_failure',
     })
-    return { additionalContext: probeBanner }
+    return { additionalContext: contextBanner }
   }
 
   let hits: SearchHit[]
@@ -415,7 +444,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       topKResults: '[]',
       hookOutcome: 'partial_failure',
     })
-    return { additionalContext: probeBanner }
+    return { additionalContext: contextBanner }
   }
 
   if (hits.length === 0) {
@@ -427,7 +456,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       topKResults: '[]',
       hookOutcome: 'partial_failure',
     })
-    return { additionalContext: probeBanner }
+    return { additionalContext: contextBanner }
   }
 
   logRetrievalEvent({
@@ -446,7 +475,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     hookOutcome: 'primed',
   })
 
-  return { additionalContext: probeBanner + renderPrimingMarkdown(query, hits) }
+  return { additionalContext: contextBanner + renderPrimingMarkdown(query, hits) }
 }
 
 async function main(): Promise<void> {
