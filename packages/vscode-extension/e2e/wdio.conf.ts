@@ -100,6 +100,13 @@ export const config: WebdriverIO.Config = {
   reporters: ['spec'],
   logLevel: 'warn',
 
+  // Connection-layer slack for a slow CI host (SMI-5438): the time wdio waits for
+  // a single command round-trip to the VS Code host before erroring. This is NOT a
+  // result retry — it does not re-run or mask a failing assertion; it only widens
+  // the per-command transport budget so a momentarily-busy Extension Host doesn't
+  // trip "Remote command timeout exceeded". mochaOpts.retries stays at 1 (below).
+  connectionRetryTimeout: 120_000,
+
   // Retries hide the iframe-timing races this suite exists to catch; cap at 1
   // (CI only) and surface a ::warning:: from the afterTest hook on any retry.
   mochaOpts: {
