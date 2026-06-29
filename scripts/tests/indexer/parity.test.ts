@@ -117,10 +117,7 @@ const DENO_SKILL_PROC_SECURITY = resolve(
   REPO_ROOT,
   'supabase/functions/indexer/skill-processor.security.ts'
 )
-const NODE_SKILL_PROC_SECURITY = resolve(
-  REPO_ROOT,
-  'scripts/indexer/skill-processor.security.ts'
-)
+const NODE_SKILL_PROC_SECURITY = resolve(REPO_ROOT, 'scripts/indexer/skill-processor.security.ts')
 const CORE_INSTALL_POLICY = resolve(
   REPO_ROOT,
   'packages/core/src/services/skill-installation.policy.ts'

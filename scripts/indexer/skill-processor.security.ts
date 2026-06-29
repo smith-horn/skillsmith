@@ -84,4 +84,3 @@ export async function readResponseWithLimit(response: Response, maxBytes: number
   const decoder = new TextDecoder()
   return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join('') + decoder.decode()
 }
-
