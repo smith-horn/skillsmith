@@ -268,10 +268,8 @@ export function scanPrivilegeEscalation(
  * standalone-critical in PRIVILEGE_ESCALATION_PATTERNS; `alreadyFlaggedLines` prevents
  * double-emit. SMI-5431: "destination" covers explicit (-o/-O/--output<space>/>) AND
  * implicit (wget no -O / git clone / curl --output=) targets; a bare `curl <url>` GET
- * writes to STDOUT so it is NOT correlated (the URL-path-segment FP a prior review
- * caught). The ONLY uncaught residual: a SPACED `curl … | bash` (no downloaded
- * filename) + a NON-adjacent chmod — no filename to correlate; the remote-exec
- * (code_execution) signal owns that shape.
+ * writes to STDOUT so it is NOT correlated (the URL-path-segment FP a prior review caught).
+ * The ONLY uncaught residual: a SPACED `curl … | bash` (no filename) + a NON-adjacent chmod.
  */
 const OWNER_PERM_CHMOD = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\b/i
 // FIX-1: actual fetch COMMANDS only — bare prose tokens (`# downloaded`, `See https://…`,
@@ -287,8 +285,13 @@ function escapeRegExp(s: string): string {
 // `git clone <url>` → repo dir (minus `.git`); `curl --output=<file>` (equals form, missed by
 // the explicit regex). A bare `curl <url>` GET writes to STDOUT → '' (never correlates). ReDoS-safe.
 function implicitDownloadBasename(line: string): string {
-  const lastSegment = (url: string): string =>
-    url.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop() ?? ''
+  const lastSegment = (urlAfterScheme: string): string => {
+    const noFrag = urlAfterScheme.split(/[?#]/)[0]
+    const slash = noFrag.indexOf('/') // first slash = end of host
+    if (slash < 0) return '' // host only -> wget writes index.html
+    const path = noFrag.slice(slash + 1).replace(/\/+$/, '')
+    return path === '' ? '' : (path.split('/').pop() ?? '')
+  }
   const wget = line.match(/\bwget\b(?![^\n]{0,200}\s-[oO]\b)[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
   if (wget) return lastSegment(wget[1])
   const clone = line.match(/\bgit\s+clone\b[^\n]{0,200}?https?:\/\/(\S{1,400})/i)

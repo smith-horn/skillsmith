@@ -264,8 +264,13 @@ function escapeRegExp(s: string): string {
 // `git clone <url>` → repo dir (minus `.git`); `curl --output=<file>` (equals form, missed by
 // the explicit regex). A bare `curl <url>` GET writes to STDOUT → '' (never correlates). ReDoS-safe.
 function implicitDownloadBasename(line: string): string {
-  const lastSegment = (url: string): string =>
-    url.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop() ?? ''
+  const lastSegment = (urlAfterScheme: string): string => {
+    const noFrag = urlAfterScheme.split(/[?#]/)[0]
+    const slash = noFrag.indexOf('/') // first slash = end of host
+    if (slash < 0) return '' // host only -> wget writes index.html
+    const path = noFrag.slice(slash + 1).replace(/\/+$/, '')
+    return path === '' ? '' : (path.split('/').pop() ?? '')
+  }
   const wget = line.match(/\bwget\b(?![^\n]{0,200}\s-[oO]\b)[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
   if (wget) return lastSegment(wget[1])
   const clone = line.match(/\bgit\s+clone\b[^\n]{0,200}?https?:\/\/(\S{1,400})/i)

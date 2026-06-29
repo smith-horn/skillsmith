@@ -569,6 +569,11 @@ describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
         content: 'chmod 755 build\necho a\necho b\ncurl https://ci.example.com/build',
         expectFire: false,
       },
+      {
+        label: 'spaced host-only wget URL … chmod host (writes index.html, no fire)',
+        content: 'wget https://example.com/\necho a\necho b\nchmod 755 example.com',
+        expectFire: false,
+      },
     ]
     for (const { label, content, expectFire, expectSeverity } of cases) {
       const coreReport = scanner.scan('parity', content)

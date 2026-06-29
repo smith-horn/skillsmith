@@ -187,6 +187,22 @@ describe('SMI-5424 chmod compound-signal', () => {
     expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
   })
 
+  // SMI-5431 governance FP-control: a host-only / trailing-slash wget URL writes
+  // `index.html`, NOT a file named after the host — the implicit-destination helper must
+  // strip the host before taking the last path segment and return '' for an empty path.
+  it.each([
+    [
+      'host-only trailing slash',
+      'wget https://example.com/\necho a\necho b\nchmod 755 example.com',
+    ],
+    ['host-only no path', 'wget https://x.com\necho a\necho b\nchmod 755 x.com'],
+  ])(
+    'does NOT fire on a host-only/trailing-slash wget URL (no real filename): %s',
+    (_l, content) => {
+      expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
+    }
+  )
+
   // Accepted residual, pinned so it stays intentional (not a silent gap): a SPACED
   // `curl … | bash` (pipe-to-interpreter, no downloaded filename) followed by a
   // NON-adjacent chmod is NOT caught by this helper — there is no filename to
