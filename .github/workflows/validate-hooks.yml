@@ -21,6 +21,7 @@ on:
       - 'scripts/_lib.sh'
       - 'scripts/session-start-audit.sh'
       - 'scripts/lib/session-start-audit-helper.ts'
+      - 'scripts/retrieval-autoheal.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/session-start-audit.test.sh'
       - 'scripts/check-file-length.mjs'
@@ -48,6 +49,7 @@ jobs:
             scripts/remove-worktree.sh \
             scripts/repair-worktrees.sh \
             scripts/session-start-audit.sh \
+            scripts/retrieval-autoheal.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/session-start-audit.test.sh
 
@@ -58,9 +60,11 @@ jobs:
           bash -n scripts/remove-worktree.sh
           bash -n scripts/repair-worktrees.sh
           bash -n scripts/session-start-audit.sh
+          bash -n scripts/retrieval-autoheal.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
           sh -n .husky/pre-commit
+          sh -n .husky/post-merge
 
       - name: Setup Node (for session-audit hook tsx invocations)
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6

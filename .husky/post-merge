@@ -57,6 +57,21 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
     echo "  npm install"
   fi
 
+  # --- Host retrieval auto-heal (SMI-5426) -----------------------------------
+  # Out-of-band: after the host install above completes, kick a detached, guarded
+  # auto-heal of the host better-sqlite3 binding so ~6-week-dead retrieval
+  # telemetry self-revives (SMI-4549 / SMI-5419). The script is fail-soft,
+  # Docker-no-op, cheap-exits on a healthy host, serializes via a lock, backs off
+  # on repeated failure, and is opt-out via SKILLSMITH_RETRIEVAL_AUTOHEAL_DISABLE=1.
+  # --print-banner runs synchronously (prints only when broken); the heal runs
+  # detached so it never blocks the hook. Firing AFTER the install above closes
+  # the "wait for the parent install" gap. See
+  # docs/internal/implementation/smi-5426-w01-host-autoheal.md.
+  if command -v node > /dev/null 2>&1 && [ -f scripts/retrieval-autoheal.sh ]; then
+    bash scripts/retrieval-autoheal.sh --print-banner 2>/dev/null || true
+    nohup bash scripts/retrieval-autoheal.sh </dev/null >/dev/null 2>&1 &
+  fi
+
   echo ""
 fi
 

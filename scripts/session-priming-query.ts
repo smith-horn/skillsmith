@@ -28,6 +28,12 @@ import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { promisify } from 'node:util'
 import {
+  readEntry,
+  renderAutohealBanner,
+  resolveAutohealLogPath,
+  resolveMainRepoKey,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/autoheal-state.js'
+import {
   assessInstrumentationHealth,
   type ProbeResult,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
@@ -263,20 +269,32 @@ function formatRelativeAge(tsIso: string, now: Date): string {
  * because GitHub `[!WARNING]` callouts render as literal text inside the
  * SessionStart `additionalContext` payload.
  */
-export function renderInstrumentationBanner(probe: ProbeResult, now: Date): string {
+export function renderInstrumentationBanner(
+  probe: ProbeResult,
+  now: Date,
+  autohealLine?: string
+): string {
   const lastReal =
     probe.lastRealSessionTs !== null
       ? `${probe.lastRealSessionTs} (${formatRelativeAge(probe.lastRealSessionTs, now)})`
       : 'never'
   const markerTs = probe.outageMarker?.ts ?? 'absent'
   const dockerLine = probe.isDockerOnHost ? 'set' : 'unset'
+  // D5: when the host auto-heal has a FAILED entry, surface its one-liner in
+  // place of the generic repair hint so the developer knows healing has been
+  // attempted and gets the copy-paste escape hatch. Otherwise keep the static
+  // repair hint for backward compatibility.
+  const repairLine =
+    autohealLine && autohealLine.length > 0
+      ? `- ${autohealLine}`
+      : '- Repair: `./scripts/repair-host-native-deps.sh`'
   return [
     '**Warning — SessionStart instrumentation appears stale.**',
     '',
     `- Last real-session retrieval_events row: ${lastReal}.`,
     `- Outage marker: ${markerTs}. Reason: ${probe.reason}.`,
     `- IS_DOCKER on host: ${dockerLine}.`,
-    '- Repair: `./scripts/repair-host-native-deps.sh`',
+    repairLine,
     '',
   ].join('\n')
 }
@@ -311,6 +329,25 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   const staleHours =
     Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : PROBE_DEFAULT_STALE_HOURS
   const { dbPath, outageMarkerPath } = resolveRetrievalLogPaths()
+
+  // D5 (SMI-5426 W0.1): if the host auto-heal has a FAILED entry for this
+  // repo, surface its banner in place of the generic repair hint so the
+  // developer sees the cooldown state and copy-paste escape hatch. Only shows
+  // when the binding is already broken (probe.stale is the gating condition),
+  // and only when there is a real FAILED entry — no noise on a healthy host.
+  let autohealLine = ''
+  try {
+    const key = resolveMainRepoKey(args.cwd)
+    if (key) {
+      const e = readEntry(key)
+      if (e && e.lastVerdict === 'fail') {
+        autohealLine = renderAutohealBanner(e, { now, logPath: resolveAutohealLogPath(now) })
+      }
+    }
+  } catch {
+    /* fail-soft — must never crash the priming hook */
+  }
+
   let probeBanner = ''
   try {
     const probe = await assessInstrumentationHealth({
@@ -320,7 +357,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       staleHours,
       jsonlSessionCount24h: countRecentJsonlSessions(args.cwd, now, staleHours),
     })
-    if (probe.stale) probeBanner = renderInstrumentationBanner(probe, now)
+    if (probe.stale) probeBanner = renderInstrumentationBanner(probe, now, autohealLine)
   } catch {
     // Probe must never crash the priming hook. Silent degrade.
   }
