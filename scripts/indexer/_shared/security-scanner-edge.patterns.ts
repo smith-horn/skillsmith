@@ -72,6 +72,13 @@ export const DATA_EXFILTRATION_PATTERNS: RegExp[] = [
   /post\s+data\s+to/i,
   /to\s+external\s+(api|server|endpoint)/i,
   /(?:send|transmit|leak|dump|steal|extract)\s+[\w\s']{0,40}(?:passwords?|credentials?|secrets?)\b/i,
+  // SMI-5429: ported verbatim from core DATA_EXFILTRATION_PATTERNS — an outbound
+  // curl/wget carrying a credential env-var INSIDE the fetched URL's query string
+  // (GET) or in a -d/--data/-F/--form request body (POST). A header-borne auth call
+  // (curl -H "Authorization: Bearer $TOKEN") matches neither (no `?`-query, the var
+  // is outside any -d/-F arg). Bounded lazy-then-anchored quantifiers → ReDoS-safe.
+  /\b(?:curl|wget)\b[^\n]{0,150}?https?:\/\/[^\n\s?]{0,200}\?[^\n\s]{0,200}?\$\{?[A-Za-z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASS|CRED)/i,
+  /\b(?:curl|wget)\b[^\n]{0,200}?(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b[^\n]{0,100}?\$\{?[A-Za-z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASS|CRED)/i,
 ]
 
 /**
@@ -95,6 +102,10 @@ export const PRIVILEGE_ESCALATION_PATTERNS: RegExp[] = [
   /\bchmod\s+[0-7]?[0-7][0-7][2367]\b/i, // world-writable (others-write bit set: …2/3/6/7)
   /\bchmod\s+0?[2-7][0-7]{3}\b/i, // setuid/setgid octal (incl. leading-zero 04755/02755 + 3xxx/5xxx)
   /\bchmod\s+[ugoa]*\+s\b/i, // setuid/setgid symbolic (u+s / g+s / +s)
+  // SMI-5428: world/others-writable symbolic chmod (o+w / a+w / go+w). The
+  // (?=[ugoa]*[oa]) lookahead requires o/a in the target set and [rwxX]*w a `w` perm,
+  // so owner/group-only writes (u+w, g+w) and non-write perms (u+x, a+x, o+r) do not match.
+  /\bchmod\s+(?=[ugoa]*[oa])[ugoa]*\+[rwxX]*w/i, // world/others-writable symbolic (o+w / a+w / go+w)
   /\bchown\s+root/i,
   /\bchgrp\s+root/i,
   /visudo/i,

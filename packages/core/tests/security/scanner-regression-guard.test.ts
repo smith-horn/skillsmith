@@ -27,6 +27,12 @@
  * outbound-curl-credential-in-URL exfil pattern that now carries the `$API_KEY`-in-curl
  * signal previously riding on the (now value-gated) /api[_-]?key/i sensitive_path keyword.
  *
+ * SMI-5428 (FN-widening): PRIVILEGE_ESCALATION_PATTERNS 25 → 26 — added the symbolic
+ * world/others-writable chmod entry (`chmod o+w` / `a+w` / `go+w` / `a+rwx`). The array
+ * already covered world-writable OCTAL + setuid octal + setuid symbolic, but symbolic
+ * world/others-write was a gap; the (?=[ugoa]*[oa]) lookahead + [rwxX]*w keep owner/
+ * group-only writes (u+w, g+w) and non-write perms (u+x, a+x, o+r) from firing.
+ *
  * Reference: docs/internal/security/two-scanner-runbook.md
  *            docs/internal/implementation/smi-4396-imported-skills-security-triage.md
  */
@@ -59,7 +65,7 @@ const BASELINE_PATTERN_COUNTS = {
   SOCIAL_ENGINEERING_PATTERNS: 12,
   PROMPT_LEAKING_PATTERNS: 14,
   DATA_EXFILTRATION_PATTERNS: 24, // SMI-4396 Wave 2: 20 → 22 (word-boundary + key-upload + verb-object prose); SMI-5359 Wave 4: 22 → 24 (outbound-curl credential-in-URL query + POST/form body exfil)
-  PRIVILEGE_ESCALATION_PATTERNS: 25, // SMI-4396 Wave 2: 23 → 25 (-1 bare +3 contextual); SMI-5424 PR2 relocated owner-perm chmod to scanChmodFetchCompound (count unchanged — world-writable/setuid stay standalone)
+  PRIVILEGE_ESCALATION_PATTERNS: 26, // SMI-4396 Wave 2: 23 → 25 (-1 bare +3 contextual); SMI-5424 PR2 relocated owner-perm chmod to scanChmodFetchCompound (count unchanged — world-writable/setuid stay standalone); SMI-5428: 25 → 26 (symbolic world/others-writable chmod o+w / a+w / go+w)
   SSRF_INSTRUCTION_PATTERNS: 13,
   AI_DEFENCE_PATTERNS: 16,
   PII_PATTERNS: 11,

@@ -259,17 +259,35 @@ const CHMOD_TARGET = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\s+(\S+)/i
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
+// SMI-5431: the IMPLICIT download destination of a fetch command — the file written with
+// NO explicit -o/-O/--output<space>/> redirect: `wget <url>` (no -O/-o) → URL last segment;
+// `git clone <url>` → repo dir (minus `.git`); `curl --output=<file>` (equals form, missed by
+// the explicit regex). A bare `curl <url>` GET writes to STDOUT → '' (never correlates). ReDoS-safe.
+function implicitDownloadBasename(line: string): string {
+  const lastSegment = (urlAfterScheme: string): string => {
+    const noFrag = urlAfterScheme.split(/[?#]/)[0]
+    const slash = noFrag.indexOf('/') // first slash = end of host
+    if (slash < 0) return '' // host only -> wget writes index.html
+    const path = noFrag.slice(slash + 1).replace(/\/+$/, '')
+    return path === '' ? '' : (path.split('/').pop() ?? '')
+  }
+  const wget = line.match(/\bwget\b(?![^\n]{0,200}\s-[oO]\b)[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
+  if (wget) return lastSegment(wget[1])
+  const clone = line.match(/\bgit\s+clone\b[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
+  if (clone) return lastSegment(clone[1]).replace(/\.git$/i, '')
+  const curlEq = line.match(/\bcurl\b[^\n]{0,200}?--output=['"]?(\S{1,400})/i)
+  if (curlEq) return curlEq[1].replace(/['"]/g, '').split('/').pop() ?? ''
+  return ''
+}
 
 /**
- * Owner-perm chmod compound signal — see comment above. Emits HIGH (non-doc) /
- * low (doc) privilege_escalation when an owner-perm chmod is within ±1 line of a
- * fetch command OR targets the download DESTINATION (`-o`/`-O`/`--output`/`>`/`>>`)
- * of a fetch command anywhere; lines
- * already flagged critical by the standalone patterns are skipped to avoid
- * double-emitting. Accepted residual: a spaced `curl … | bash` (pipe-to-
- * interpreter, no downloaded filename) followed by a non-adjacent chmod is not
- * caught — there is no filename to correlate, and the remote-exec signal itself is
- * the appropriate detector for that shape (tracked separately).
+ * Owner-perm chmod compound signal — see comment above. Emits HIGH (non-doc) / low
+ * (doc) privilege_escalation when an owner-perm chmod is within ±1 line of a fetch
+ * command OR targets that command's DOWNLOAD DESTINATION anywhere — explicit
+ * (-o/-O/--output<space>/>) or, per SMI-5431, implicit (wget no -O / git clone / curl
+ * --output=). A bare `curl <url>` GET writes no file so it is never correlated. Lines
+ * already flagged critical by the standalone patterns are skipped to avoid double-emit.
+ * The ONLY uncaught residual: a spaced `curl … | bash` (no filename) + a non-adjacent chmod.
  */
 function scanChmodFetchCompound(
   lines: string[],
@@ -286,11 +304,11 @@ function scanChmodFetchCompound(
     if (!match) continue
     const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
     const adjacentFetch = CHMOD_FETCH_CONTEXT.test(window)
-    // FIX-2: correlate the chmod's target basename against the DOWNLOAD DESTINATION
-    // (the `-o`/`-O`/`--output`/`>`/`>>` target, optional leading path) of a fetch
-    // command anywhere in the content — catches a download-then-chmod that filler lines
-    // pushed outside the ±1 window, WITHOUT matching the basename in a URL path / query
-    // value / header value (governance FP class). Basename ≥3 chars excludes `.`/`*`.
+    // FIX-2 + SMI-5431: correlate the chmod target basename (≥3 chars) against a fetch
+    // command's DOWNLOAD DESTINATION anywhere — explicit (-o/-O/--output<space>/>, with an
+    // optional leading path) via regex, OR implicit (wget/git-clone/curl --output=) via
+    // exact-token equality. Anchored on the destination, NOT basename-anywhere, so a URL
+    // path / query / header value (governance FP class) and a bare curl GET do not correlate.
     let correlated = false
     const tm = line.match(CHMOD_TARGET)
     if (tm) {
@@ -299,7 +317,7 @@ function scanChmodFetchCompound(
         const re = new RegExp(
           `(?:-o|-O|--output|>>?)\\s*['"]?(?:[^\\s'"]*/)?${escapeRegExp(base)}(?:[\\s'"?]|$)`
         )
-        correlated = fetchLines.some((l) => re.test(l))
+        correlated = fetchLines.some((l) => re.test(l) || implicitDownloadBasename(l) === base)
       }
     }
     if (!adjacentFetch && !correlated) continue
