@@ -154,6 +154,12 @@ const supabaseConfig = getSupabaseConfig()
             <a href="/account/skills" class="inline-link">skillsmith.app/account/skills</a>.
             Inventory sync is <strong>off by default</strong>.
           </p>
+          <div class="actions-row">
+            <button id="inventory-save-btn" class="btn btn-primary" disabled aria-disabled="true">
+              Save
+            </button>
+          </div>
+          <p id="inventory-save-result" class="save-result" role="status" aria-live="polite"></p>
         </section>
 
         <section class="card info-card">
@@ -268,6 +274,12 @@ const supabaseConfig = getSupabaseConfig()
         const inventoryStateSummaryEl = document.getElementById(
           'inventory-state-summary'
         ) as HTMLParagraphElement | null
+        const inventorySaveBtnEl = document.getElementById(
+          'inventory-save-btn'
+        ) as HTMLButtonElement | null
+        const inventorySaveResultEl = document.getElementById(
+          'inventory-save-result'
+        ) as HTMLParagraphElement | null
 
         function showError(msg: string) {
           if (loadingEl) loadingEl.style.display = 'none'
@@ -334,13 +346,73 @@ const supabaseConfig = getSupabaseConfig()
         }
 
         function updateSaveButton() {
-          if (!saveBtnEl) return
-          const dirty =
+          const anyDirty =
             draft.enabled !== initial.enabled ||
             draft.anonymousId !== initial.anonymousId ||
             draft.inventorySyncEnabled !== initial.inventorySyncEnabled
-          saveBtnEl.disabled = !dirty
-          saveBtnEl.setAttribute('aria-disabled', dirty ? 'false' : 'true')
+          if (saveBtnEl) {
+            saveBtnEl.disabled = !anyDirty
+            saveBtnEl.setAttribute('aria-disabled', anyDirty ? 'false' : 'true')
+          }
+          const inventoryDirty = draft.inventorySyncEnabled !== initial.inventorySyncEnabled
+          if (inventorySaveBtnEl) {
+            inventorySaveBtnEl.disabled = !inventoryDirty
+            inventorySaveBtnEl.setAttribute('aria-disabled', inventoryDirty ? 'false' : 'true')
+          }
+        }
+
+        async function doSave(
+          activeBtnEl: HTMLButtonElement,
+          resultEl: HTMLParagraphElement | null
+        ): Promise<void> {
+          activeBtnEl.disabled = true
+          activeBtnEl.setAttribute('aria-disabled', 'true')
+          if (resultEl) {
+            resultEl.style.display = 'none'
+            resultEl.textContent = ''
+          }
+          try {
+            const res = await fetch('/api/account/telemetry', {
+              method: 'PUT',
+              headers: {
+                Authorization: `Bearer ${session!.access_token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                enabled: draft.enabled,
+                anonymous_id: draft.anonymousId,
+                inventory_sync_enabled: draft.inventorySyncEnabled,
+              }),
+            })
+            if (!res.ok) {
+              if (resultEl) {
+                resultEl.style.color = '#ef4444'
+                resultEl.textContent = 'Save failed. Please try again.'
+                resultEl.style.display = 'block'
+              }
+              updateSaveButton()
+              return
+            }
+            const body = (await res.json()) as { preference: TelemetryPreference }
+            pref = body.preference
+            initial.enabled = pref.enabled
+            initial.anonymousId = pref.anonymous_id ?? null
+            initial.inventorySyncEnabled = pref.inventory_sync_enabled
+            draft.anonymousId = pref.anonymous_id ?? null
+            render(pref)
+            if (resultEl) {
+              resultEl.style.color = '#10b981'
+              resultEl.textContent = 'Preferences saved.'
+              resultEl.style.display = 'block'
+            }
+          } catch {
+            if (resultEl) {
+              resultEl.style.color = '#ef4444'
+              resultEl.textContent = 'Network error. Please try again.'
+              resultEl.style.display = 'block'
+            }
+            updateSaveButton()
+          }
         }
 
         render(pref)
@@ -377,56 +449,13 @@ const supabaseConfig = getSupabaseConfig()
         }
 
         if (saveBtnEl) {
-          saveBtnEl.addEventListener('click', async () => {
-            saveBtnEl.disabled = true
-            saveBtnEl.setAttribute('aria-disabled', 'true')
-            if (saveResultEl) {
-              saveResultEl.style.display = 'none'
-              saveResultEl.textContent = ''
-            }
-            try {
-              const res = await fetch('/api/account/telemetry', {
-                method: 'PUT',
-                headers: {
-                  Authorization: `Bearer ${session.access_token}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  enabled: draft.enabled,
-                  anonymous_id: draft.anonymousId,
-                  inventory_sync_enabled: draft.inventorySyncEnabled,
-                }),
-              })
-              if (!res.ok) {
-                if (saveResultEl) {
-                  saveResultEl.style.color = '#ef4444'
-                  saveResultEl.textContent = 'Save failed. Please try again.'
-                  saveResultEl.style.display = 'block'
-                }
-                updateSaveButton()
-                return
-              }
-              const body = (await res.json()) as { preference: TelemetryPreference }
-              pref = body.preference
-              initial.enabled = pref.enabled
-              initial.anonymousId = pref.anonymous_id ?? null
-              initial.inventorySyncEnabled = pref.inventory_sync_enabled
-              draft.anonymousId = pref.anonymous_id ?? null
-              render(pref)
-              if (saveResultEl) {
-                saveResultEl.style.color = '#10b981'
-                saveResultEl.textContent = 'Preferences saved.'
-                saveResultEl.style.display = 'block'
-              }
-            } catch {
-              if (saveResultEl) {
-                saveResultEl.style.color = '#ef4444'
-                saveResultEl.textContent = 'Network error. Please try again.'
-                saveResultEl.style.display = 'block'
-              }
-              updateSaveButton()
-            }
-          })
+          saveBtnEl.addEventListener('click', () => doSave(saveBtnEl, saveResultEl))
+        }
+
+        if (inventorySaveBtnEl) {
+          inventorySaveBtnEl.addEventListener('click', () =>
+            doSave(inventorySaveBtnEl, inventorySaveResultEl)
+          )
         }
       })
     </script>
