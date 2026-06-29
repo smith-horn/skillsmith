@@ -53,21 +53,6 @@ describe('Diff skill (update advisor) — tree-context flow (SMI-5340)', () => {
   const page = new DiffSkillPage()
 
   it('diffSkill with installed arg fires get_skill + skill_diff and opens the Updates panel', async () => {
-    // Host-ready gate (SMI-5438): confirm the VS Code workbench is reachable before
-    // any command dispatch or the heavy Updates-panel interaction. On a cold/slow CI
-    // host the Extension Host can still be coming up when the spec starts; gating on
-    // getWorkbench() (the idiom in activation.e2e.ts / mcp-failure.e2e.ts) fails fast
-    // with a clear message instead of a later opaque "Remote command timeout".
-    const workbench = await browser.getWorkbench()
-    await browser.waitUntil(
-      async () => Boolean(await workbench.getActivityBar().getViewControl('Skillsmith')),
-      {
-        timeout: 30_000,
-        interval: 500,
-        timeoutMsg: 'VS Code workbench / Skillsmith activity-bar not ready before diff interaction',
-      }
-    )
-
     // autoConnect is skipped on first activation — force an explicit connection.
     await page.forceConnect()
 

@@ -73,6 +73,9 @@ export const config: WebdriverIO.Config = {
       'wdio:vscodeOptions': {
         extensionPath: EXTENSION_PATH,
         workspacePath: WORKSPACE_PATH,
+        vscodeProxyOptions: {
+          commandTimeout: 120_000,
+        },
         userSettings: {
           'skillsmith.mcp.serverCommand': NODE_BIN,
           'skillsmith.mcp.serverArgs': [FAKE_MCP_SERVER],
