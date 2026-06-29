@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.7.1
+
+- **Fix**: login authenticate-only + quiet banner on machine-readable subcommands (SMI-5427) (#1628)
+
 ## v0.7.0
 
 - **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)
