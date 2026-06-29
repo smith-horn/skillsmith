@@ -209,6 +209,18 @@ describe('static-source assertions', () => {
     expect(src).not.toContain('disown')
   })
 
+  it('parses the worktree path with sed (space-safe), not space-truncating awk (retro Low-1)', () => {
+    expect(src).toContain("sed -n 's/^worktree //p'")
+    expect(src).not.toMatch(/worktree list[^\n]*awk '\/\^worktree \/\{print \$2/)
+  })
+
+  it('strips ANSI with a literal-ESC form portable to BSD sed, not GNU-only \\x1b (retro Low-2)', () => {
+    expect(src).toContain('strip_ansi()')
+    // No ACTIVE sed command may use the GNU-only \x1b escape (a comment may
+    // still mention it to explain why it's avoided).
+    expect(src).not.toMatch(/sed[^\n]*\\x1b/)
+  })
+
   it('real probe uses better-sqlite3', () => {
     expect(src).toContain('better-sqlite3')
   })

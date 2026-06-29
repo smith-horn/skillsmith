@@ -27,7 +27,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # --- Resolve the main repo (state key + probe cwd + repair target) -----------
 # Identical derivation to autoheal-state.ts resolveMainRepoKey(): the first
 # `worktree` entry of `git worktree list --porcelain` is always the main tree.
-MAIN_REPO="$(git -C "$SCRIPT_DIR" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')"
+# Use sed (full line after the prefix), NOT `awk '{print $2}'` — awk would
+# truncate a path containing a space, diverging from the TS full-path slice and
+# silently breaking the heal + banner on such a path (round-2 retro Low-1).
+MAIN_REPO="$(git -C "$SCRIPT_DIR" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
 if [ -z "${MAIN_REPO:-}" ]; then
   MAIN_REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")"
 fi
@@ -194,10 +197,17 @@ acquire_lock() {
   return 1
 }
 
+# --- ANSI strip — portable across BSD (macOS) + GNU sed --------------------
+# The GNU hex-escape form for ESC is a no-op on BSD/macOS sed (it matches the
+# literal characters, not the control byte), so the prior strip silently did
+# nothing on the host target (round-2 retro Low-2). A bash $'\033' yields a real
+# ESC byte that BOTH seds match.
+strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
+
 # --- Reason extraction from repair output (strip ANSI; prefer the Error: line)-
 extract_reason() {
   local raw="$1" clean
-  clean="$(printf '%s' "$raw" | sed -E 's/\x1b\[[0-9;]*m//g')"
+  clean="$(printf '%s' "$raw" | strip_ansi)"
   local reason
   reason="$(printf '%s\n' "$clean" | grep -m1 -E 'Error:' | sed -E 's/^.*Error:[[:space:]]*//' | cut -c1-200)"
   if [ -z "$reason" ]; then
@@ -271,7 +281,7 @@ fi
 #    we waited. Re-probe under the lock; if healthy now, record + skip the rebuild.
 if probe_binding; then
   log "double-check: binding already healed by another instance — recording ok, skipping rebuild"
-  run_state_cli record --cwd "$SCRIPT_DIR" --result ok || true
+  run_state_cli record --cwd "$SCRIPT_DIR" --result ok --module better-sqlite3 || true
   exit 0
 fi
 
@@ -322,7 +332,7 @@ else
   log "heal: FAILED (repair rc=$REPAIR_RC): $REASON"
   {
     printf -- '--- repair output (tail) ---\n'
-    printf '%s\n' "$REPAIR_OUT" | sed -E 's/\x1b\[[0-9;]*m//g' | tail -20
+    printf '%s\n' "$REPAIR_OUT" | strip_ansi | tail -20
     printf -- '--- end repair output ---\n'
   } >> "$LOG_FILE" 2>/dev/null || true
   run_state_cli record --cwd "$SCRIPT_DIR" --result fail --reason "$REASON" --module better-sqlite3 || true
