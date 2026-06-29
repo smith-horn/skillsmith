@@ -380,6 +380,14 @@ describe('registerMcpCommands (mcpReconnect — SMI-5438)', () => {
     reconnectConnect.mockReset().mockResolvedValue(undefined)
   })
 
+  it('registers the mcpReconnect command and pushes its disposable to subscriptions', () => {
+    expect(mockRegisterCommand).toHaveBeenCalledWith(
+      'skillsmith.mcpReconnect',
+      expect.any(Function)
+    )
+    expect(contextStub.subscriptions.push).toHaveBeenCalledTimes(1)
+  })
+
   it('resolves immediately when already connected — dialog is fire-and-forget', async () => {
     reconnectIsConnected.mockReturnValue(true)
     // Dialog never resolves — simulates nobody clicking in an E2E test.
@@ -414,6 +422,20 @@ describe('registerMcpCommands (mcpReconnect — SMI-5438)', () => {
 
     expect(reconnectDisconnect).toHaveBeenCalledTimes(1)
     expect(reconnectConnect).toHaveBeenCalledTimes(1)
+    expect(reconnectDisconnect).toHaveBeenCalledBefore(reconnectConnect)
+  })
+
+  it('disconnects without reconnecting when "Disconnect" button is clicked', async () => {
+    reconnectIsConnected.mockReturnValue(true)
+    mockShowInfoMsg.mockResolvedValueOnce('Disconnect').mockResolvedValue(undefined)
+
+    await handler()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(reconnectDisconnect).toHaveBeenCalledTimes(1)
+    expect(reconnectConnect).not.toHaveBeenCalled()
+    expect(mockShowInfoMsg).toHaveBeenCalledWith('Disconnected from MCP server')
   })
 
   it('calls connectWithProgress when not connected — dialog is not shown', async () => {

@@ -132,7 +132,7 @@ export async function connectWithProgress(): Promise<boolean> {
       try {
         await client.connect()
         progress.report({ increment: 100 })
-        vscode.window.showInformationMessage('Connected to Skillsmith MCP server')
+        void vscode.window.showInformationMessage('Connected to Skillsmith MCP server')
         return true
       } catch (error) {
         // SMI-5398: one of the two INITIAL-connect catch sites. handleConnectFailure
