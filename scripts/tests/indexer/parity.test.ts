@@ -110,6 +110,8 @@ const NODE_SCANNER_PATTERNS = resolve(
 // core's. Host-side plaintext (no git-crypt).
 const CORE_PATTERNS = resolve(REPO_ROOT, 'packages/core/src/security/scanner/patterns.ts')
 const CORE_SCANNER = resolve(REPO_ROOT, 'packages/core/src/security/scanner/SecurityScanner.ts')
+// SMI-5436 Wave 1: core↔edge SecurityFinding interface parity.
+const CORE_TYPES = resolve(REPO_ROOT, 'packages/core/src/security/scanner/types.ts')
 
 describe('Deno <-> Node helper parity', () => {
   const denoEncrypted = isGitCryptEncrypted(DENO_HELPERS)
@@ -650,6 +652,51 @@ describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
         res.findings.some((f: { type: string }) => f.type === 'data_exfiltration'),
         `benign edge input should not fire data_exfiltration: ${benign}`
       ).toBe(false)
+    }
+  })
+})
+
+// SMI-5436 Wave 1: core <-> edge SecurityFinding interface parity.
+// The Deno<->Node twin test (above) already enforces that both edge twins are
+// byte-identical. This block guards the orthogonal axis: that the shared
+// optional fields introduced by Phase 3 (filePath) are present in BOTH the
+// authoritative core SecurityFinding (packages/core/src/security/scanner/types.ts)
+// AND the edge SecurityFinding (security-scanner-edge.context.ts). Core and edge
+// intentionally diverge on some fields (core has `category`, edge does not), so
+// we assert the SHARED intersection — not byte-identity.
+describe('core <-> edge SecurityFinding interface parity (SMI-5436)', () => {
+  // Parse an interface body (content between the braces) and return the set of
+  // declared field names, stripping JSDoc comments and blank lines.
+  function fieldNames(interfaceBody: string): Set<string> {
+    const names = new Set<string>()
+    const lineRe = /^[ \t]+([a-zA-Z_]\w*)\??[ \t]*:/gm
+    let m: RegExpExecArray | null
+    while ((m = lineRe.exec(interfaceBody)) !== null) {
+      names.add(m[1])
+    }
+    return names
+  }
+
+  it('SecurityFinding: shared fields are present in both core types.ts and edge context.ts (SMI-5436)', () => {
+    const coreBody = extractInterface(CORE_TYPES, 'SecurityFinding')
+    const edgeBody = extractInterface(NODE_SCANNER_CONTEXT, 'SecurityFinding')
+    const coreFields = fieldNames(coreBody)
+    const edgeFields = fieldNames(edgeBody)
+    // These are the fields that MUST appear in both interfaces.
+    // `category` is intentionally core-only (edge has no scoring category for it).
+    const sharedRequired = [
+      'type',
+      'severity',
+      'message',
+      'location',
+      'lineNumber',
+      'inDocumentationContext',
+      'confidence',
+      'filePath', // SMI-5436 Wave 1
+    ]
+    for (const f of sharedRequired) {
+      expect(coreFields.has(f), `core SecurityFinding missing shared field: ${f}`).toBe(true)
+      expect(edgeFields.has(f), `edge SecurityFinding missing shared field: ${f}`).toBe(true)
     }
   })
 })
