@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.7.2
+
+- **Fix**: tolerate EISDIR when SKILL.md is a directory in skills scan (SMI-5440) (#1640)
+
 ## v0.7.1
 
 - **Fix**: login authenticate-only + quiet banner on machine-readable subcommands (SMI-5427) (#1628)
