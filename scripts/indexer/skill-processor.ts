@@ -22,7 +22,6 @@ import {
 import {
   scanSkillContent,
   shouldQuarantine,
-  summarizeFindings,
   QUARANTINE_THRESHOLD,
   type EdgeScanResult,
 } from './_shared/security-scanner-edge.ts'
@@ -42,6 +41,10 @@ import {
   computeQualityScore,
 } from './skill-processor.helpers.ts'
 export * from './skill-processor.helpers.ts'
+
+// SMI-5436 Wave 0: security helpers extracted to keep this file ≤500 lines.
+import { buildQuarantineReason, readResponseWithLimit } from './skill-processor.security.ts'
+export { buildQuarantineReason } from './skill-processor.security.ts'
 
 /**
  * SKILL.md validation result
@@ -93,63 +96,6 @@ export function sanitizeSkillName(name: string): string {
     .replace(/[^a-z0-9-]/g, '') // strip special chars
     .replace(/-{2,}/g, '-') // collapse multiple hyphens
     .replace(/^-|-$/g, '') // trim leading/trailing hyphens
-}
-
-/**
- * SMI-2384: Build a human-readable quarantine reason for authors.
- *
- * When a skill is quarantined, this produces a message summarizing:
- * - Number of findings and risk score
- * - Types of patterns found with line numbers (max 5)
- * - Appeal URL with the skill identifier pre-filled
- */
-export function buildQuarantineReason(
-  scanResult: EdgeScanResult,
-  owner: string,
-  name: string
-): string {
-  if (!shouldQuarantine(scanResult)) {
-    return ''
-  }
-
-  const findingSummary = summarizeFindings(scanResult.findings)
-  const appealUrl = `https://skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
-
-  return `Security scan detected ${scanResult.findings.length} finding${scanResult.findings.length === 1 ? '' : 's'} (risk score: ${scanResult.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
-}
-
-/**
- * SMI-2283: Read response body with byte-counted limit to prevent memory exhaustion.
- * Streams the body and aborts if the accumulated size exceeds the limit.
- * @throws Error if response body exceeds maxBytes
- */
-async function readResponseWithLimit(response: Response, maxBytes: number): Promise<string> {
-  const reader = response.body?.getReader()
-  if (!reader) {
-    throw new Error('Response body is not readable')
-  }
-
-  const chunks: Uint8Array[] = []
-  let totalBytes = 0
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      totalBytes += value.byteLength
-      if (totalBytes > maxBytes) {
-        reader.cancel()
-        throw new Error(`Response body exceeds maximum size of ${maxBytes} bytes`)
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-
-  const decoder = new TextDecoder()
-  return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join('') + decoder.decode()
 }
 
 /**

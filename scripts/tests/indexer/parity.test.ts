@@ -27,7 +27,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest'
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -112,6 +112,19 @@ const CORE_PATTERNS = resolve(REPO_ROOT, 'packages/core/src/security/scanner/pat
 const CORE_SCANNER = resolve(REPO_ROOT, 'packages/core/src/security/scanner/SecurityScanner.ts')
 // SMI-5436 Wave 1: core↔edge SecurityFinding interface parity.
 const CORE_TYPES = resolve(REPO_ROOT, 'packages/core/src/security/scanner/types.ts')
+// SMI-5436 Wave 0: skill-processor.security.ts twins (extraction parity + BUNDLED_SCAN_FILES sync).
+const DENO_SKILL_PROC_SECURITY = resolve(
+  REPO_ROOT,
+  'supabase/functions/indexer/skill-processor.security.ts'
+)
+const NODE_SKILL_PROC_SECURITY = resolve(
+  REPO_ROOT,
+  'scripts/indexer/skill-processor.security.ts'
+)
+const CORE_INSTALL_POLICY = resolve(
+  REPO_ROOT,
+  'packages/core/src/services/skill-installation.policy.ts'
+)
 
 describe('Deno <-> Node helper parity', () => {
   const denoEncrypted = isGitCryptEncrypted(DENO_HELPERS)
@@ -653,6 +666,54 @@ describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
         `benign edge input should not fire data_exfiltration: ${benign}`
       ).toBe(false)
     }
+  })
+})
+
+describe('Deno <-> Node skill-processor.security parity (SMI-5436 Wave 0)', () => {
+  const denoSecEncrypted = isGitCryptEncrypted(DENO_SKILL_PROC_SECURITY)
+
+  it.skipIf(denoSecEncrypted)(
+    'buildQuarantineReason body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractBody(DENO_SKILL_PROC_SECURITY, 'buildQuarantineReason'))
+      const node = normalizeWs(extractBody(NODE_SKILL_PROC_SECURITY, 'buildQuarantineReason'))
+      expect(
+        node,
+        'buildQuarantineReason drift between scripts/indexer/ and supabase/functions/indexer/ twins'
+      ).toBe(deno)
+    }
+  )
+
+  // Whole-file comparison covers readResponseWithLimit (async — extractBody only matches
+  // 'export function', not 'export async function'), the Wave 2 stubs, interfaces, and
+  // constants. The sole permitted difference is the import path: Node './_shared/',
+  // Deno '../_shared/'.
+  it.skipIf(denoSecEncrypted)(
+    'security.ts twins are byte-identical modulo the import path prefix',
+    () => {
+      const node = readFileSync(NODE_SKILL_PROC_SECURITY, 'utf-8')
+      const deno = readFileSync(DENO_SKILL_PROC_SECURITY, 'utf-8')
+      const normalizedDeno = deno.replace(
+        "from '../_shared/security-scanner-edge.ts'",
+        "from './_shared/security-scanner-edge.ts'"
+      )
+      expect(
+        normalizeWs(node),
+        'security.ts twins have drifted (beyond the permitted import-path difference)'
+      ).toBe(normalizeWs(normalizedDeno))
+    }
+  )
+
+  // BUNDLED_SCAN_FILES is duplicated in skill-processor.security.ts (both twins) with a sync
+  // comment pointing to the core installation policy. This assertion catches any drift.
+  // Uses the Node twin (never git-crypt encrypted); twin-pair identity above ensures Deno==Node.
+  it('BUNDLED_SCAN_FILES in skill-processor.security.ts matches core installation policy', async () => {
+    const secMod = await import(NODE_SKILL_PROC_SECURITY)
+    const coreMod = await import(CORE_INSTALL_POLICY)
+    expect(
+      Array.from(secMod.BUNDLED_SCAN_FILES as readonly string[]),
+      'BUNDLED_SCAN_FILES in skill-processor.security.ts has drifted from packages/core/src/services/skill-installation.policy.ts'
+    ).toEqual(Array.from(coreMod.BUNDLED_SCAN_FILES as readonly string[]))
   })
 })
 
