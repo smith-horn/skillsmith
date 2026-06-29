@@ -118,12 +118,25 @@ jobs:
           echo "### E2E Docker Build" >> $GITHUB_STEP_SUMMARY
           echo "GHCR registry-cache login: \`${{ steps.ghcr-login.outcome }}\` — see the build log for \`importing cache manifest from ghcr.io/...\`." >> $GITHUB_STEP_SUMMARY
 
+      # SMI-5441: Free BuildKit intermediate cache before save so the runner
+      # does not run out of disk space mid-write (docker save pipes to zstd;
+      # without pipefail a partial write still exits 0 and uploads a corrupt
+      # archive). The built image layers are kept; only unreferenced cache
+      # blobs are removed.
+      - name: Free BuildKit cache before image save
+        run: docker builder prune -f
+
       # SMI-2240: Save image with current SHA tag for downstream jobs
       # SMI-4646: zstd -T0 -3 (parallel, level 3) is ~3x faster than gzip with similar ratio
+      # SMI-5441: set -o pipefail so a daemon disk-full error in `docker save`
+      # propagates through the pipe and fails this step (preventing upload of a
+      # corrupt archive that would silently break every downstream load).
       - name: Save Docker image
         run: |
+          set -o pipefail
           docker save skillsmith-e2e:${{ github.sha }} | zstd -T0 -3 > /tmp/skillsmith-e2e.tar.zst
-          echo "✓ Saved image with tag: ${{ github.sha }}"
+          SAVED_BYTES=$(stat -c%s /tmp/skillsmith-e2e.tar.zst 2>/dev/null || stat -f%z /tmp/skillsmith-e2e.tar.zst)
+          echo "✓ Saved image with tag: ${{ github.sha }} (${SAVED_BYTES} bytes)"
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
