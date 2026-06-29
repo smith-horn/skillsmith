@@ -269,6 +269,14 @@ export const PRIVILEGE_ESCALATION_PATTERNS = [
   /\bchmod\s+[0-7]?[0-7][0-7][2367]\b/i, // world-writable (others-write bit set: …2/3/6/7)
   /\bchmod\s+0?[2-7][0-7]{3}\b/i, // setuid/setgid octal (incl. leading-zero 04755/02755 + 3xxx/5xxx)
   /\bchmod\s+[ugoa]*\+s\b/i, // setuid/setgid symbolic (u+s / g+s / +s)
+  // SMI-5428: world/others-writable symbolic chmod (o+w / a+w / go+w / a+rwx / o+rwx).
+  // The (?=[ugoa]*[oa]) lookahead requires `o` or `a` in the target set and [rwxX]*w
+  // requires a `w` perm — so owner/group-only writes (u+w, g+w) and non-write perms
+  // (u+x, a+x, o+r) do NOT match. Standalone-critical: a skill granting the world write
+  // access to a path is a genuine privilege threat on its own (mirrors the octal
+  // world-writable entry above for symbolic syntax). Single bounded char-class
+  // quantifiers → ReDoS-safe.
+  /\bchmod\s+(?=[ugoa]*[oa])[ugoa]*\+[rwxX]*w/i, // world/others-writable symbolic (o+w / a+w / go+w)
   /\bchown\s+root/i,
   /\bchgrp\s+root/i,
   /visudo/i,
