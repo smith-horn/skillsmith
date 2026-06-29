@@ -140,10 +140,12 @@ export async function getSkillsFromDirectory(
             installedVia,
           })
         } catch (error) {
-          // Only treat ENOENT (file not found) as "no SKILL.md"
-          // Re-throw permission errors and other unexpected errors
+          // ENOENT: SKILL.md absent — treat as unknown skill.
+          // EISDIR: SKILL.md is itself a directory (e.g. .backups/SKILL.md created
+          // by apply_recommended_edit — SMI-5440). Treat the same as absent.
+          // Re-throw permission errors and other unexpected errors.
           const errno = (error as NodeJS.ErrnoException).code
-          if (errno !== 'ENOENT') {
+          if (errno !== 'ENOENT' && errno !== 'EISDIR') {
             throw error
           }
 
