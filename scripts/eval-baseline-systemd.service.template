@@ -49,6 +49,10 @@ TimeoutStartSec=7200
 # via Environment= below, NOT by wrapping in `varlock` (varlock can hang in a
 # keychain-less service context). gh/git/docker work natively, as the old cron did.
 Environment=SKILLSMITH_PROJECT_DIR_ENCODED=__PROJECT_DIR_ENCODED__
+# SMI-5432 W0.2: telemetry-liveness alert (ships shadow-by-default = 1).
+# Set to 0 after 4-week zero-FP soak to go live. Remove this comment block
+# when lifting shadow mode.
+#Environment=SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW=0
 ExecStart=/bin/bash -lc 'cd __REPO_PATH__ && ./scripts/eval-baseline-cron.sh'
 StandardOutput=append:%h/.skillsmith/logs/eval-cron-systemd-stdout.log
 StandardError=append:%h/.skillsmith/logs/eval-cron-systemd-stderr.log

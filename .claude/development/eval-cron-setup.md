@@ -111,6 +111,57 @@ If the dev-tree write itself fails (path not writable / disk full), the cron log
 
 The copied-back heartbeat sits **untracked** in your primary tree; that's expected and harmless (Check 44 reads the working-tree file, and the cron no longer runs in your tree so it can't be tripped by it).
 
+## Liveness alert — retrieval-telemetry stale-feed backstop (SMI-5432)
+
+**What this is.** After the eval finishes (success or failure), the cron runs `scripts/retrieval-liveness-check.sh` as a best-effort step, placed **before** the eval-fail exit guard so it runs even when the eval has errored (dead binding is a leading cause of eval failure). This step checks whether the local `~/.claude/projects/<encoded>/retrieval-logs.db` has produced any row in the `retrieval_events` or `frontmatter_lint_events` tables within N days (default 7; configurable via `SKILLSMITH_RETRIEVAL_LIVENESS_STALE_DAYS`). If the feed is stale or a binding-outage marker is present, the script records the verdict in `~/.skillsmith/retrieval-liveness.state` (keyed by main-repo path, JSON, deduped 14-day re-notify cooldown) and either logs the finding (if in shadow) or opens/updates a deduped GitHub issue labeled `telemetry-liveness` (production mode).
+
+**Shadow-first operator gate.** The alert ships **shadow-on by default** (`SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW` defaults to `1`). In shadow, the check still reads the DB, computes the verdict, and writes state/logs (`~/.skillsmith/logs/retrieval-liveness-<date>.log`) — but does not touch GitHub. This keeps the build safe even if the liveness logic has edge-case false positives. **Lifting shadow is a separate, gated operator milestone**, done only after both (a) the SMI-5426 auto-heal has been verified firing live end-to-end on a real `post-merge` (explicit user confirmation required — the binding self-heals), and (b) ≥4 consecutive weekly eval-cron runs show zero *false* `stale` verdicts (use `scripts/retrieval-liveness-check.sh --soak-report` over `~/.skillsmith/logs/retrieval-liveness-*.log` for an auditable tally). Record both criteria met on SMI-5432 before lifting.
+
+**Lifting shadow on macOS:**
+
+```bash
+# 1. Verify gh auth
+gh auth status
+
+# 2. Uncomment the single shadow-lift line in the plist and reload
+sed -i '' 's|<!-- <key>SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW</key><string>0</string> -->|<key>SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW</key><string>0</string>|' \
+  ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
+launchctl unload ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
+launchctl load   ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
+
+# 3. Verify
+launchctl list | grep skillsmith
+```
+
+**Lifting shadow on Linux:**
+
+```bash
+# 1. Verify gh auth
+gh auth status
+
+# 2. Uncomment the env var in the systemd unit
+sed -i 's|#Environment="SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW=0"|Environment="SKILLSMITH_RETRIEVAL_LIVENESS_SHADOW=0"|' \
+  ~/.config/systemd/user/skillsmith-eval-baseline-cron.service
+
+# 3. Reload + restart
+systemctl --user daemon-reload
+systemctl --user restart skillsmith-eval-baseline-cron.timer
+```
+
+**Snooze pattern** (known away-window suppress, e.g., vacation). This keeps the check's state/log recording live while silencing GitHub paging:
+
+```bash
+# On leave
+export SKILLSMITH_RETRIEVAL_LIVENESS_SNOOZE_UNTIL=$(date -d "+14 days" +%s)  # Linux
+# or macOS
+export SKILLSMITH_RETRIEVAL_LIVENESS_SNOOZE_UNTIL=$(date -v+14d +%s)
+# Then set in the plist/unit's EnvironmentVariables / Environment= and reload, or just set it in your shell for interactive sessions
+
+# Return from leave — clear the var (unset from plist/unit, or re-run the cron setup with a fresh .env)
+```
+
+**Invariant: no self-silencing TTL.** The script deliberately does **not** apply the interactive `probe.ts` function's `OUTAGE_MARKER_TTL_DAYS = 7` self-silencing — a present outage marker always alerts. The interactive banner stops nagging after 7 days; the *scheduled backstop's* whole purpose is the opposite — keep alerting until the binding actually heals (self-detected on the next successful row write).
+
 ## Replacement protocol
 
 If the canonical dev becomes unavailable for >2 weeks:
