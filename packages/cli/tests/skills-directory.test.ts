@@ -112,4 +112,17 @@ describe('getInstalledSkills (SMI-4578)', () => {
     expect(winners).toHaveLength(1)
     expect(winners[0]?.installedVia).toBe('claude-code')
   })
+
+  it('does not crash when a subdirectory contains a SKILL.md that is itself a directory (SMI-5440)', async () => {
+    // Reproduces the .backups/SKILL.md layout created by apply_recommended_edit
+    const claudeDir = path.join(homeDir, '.claude', 'skills')
+    await plantSkill(claudeDir, 'real-skill')
+    // .backups has a SKILL.md dir (not file) — the backup store
+    await mkdir(path.join(claudeDir, '.backups', 'SKILL.md'), { recursive: true })
+
+    const { getInstalledSkills } = await import('../src/utils/skills-directory.js')
+    // Must not throw EISDIR; real-skill must still be returned
+    const skills = await getInstalledSkills('/nonexistent.db')
+    expect(skills.some((s) => s.name === 'real-skill')).toBe(true)
+  })
 })
