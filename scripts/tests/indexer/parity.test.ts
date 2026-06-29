@@ -516,6 +516,14 @@ describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
         content: 'curl x -o config.json\necho a\necho b\nchmod 755 config',
         expectFire: false,
       },
+      // SMI-5424 PR2 FIX-2 (governance re-review): basename only in a URL path of a
+      // non-adjacent GET (no `-o`/`-O`/`--output`/`>`) must NOT correlate — anchored on
+      // the download destination, not basename-anywhere. core and edge must agree.
+      {
+        label: 'spaced curl URL-path basename … chmod (not a destination, no fire)',
+        content: 'curl https://ci.example.com/build\necho a\necho b\nchmod 755 build',
+        expectFire: false,
+      },
     ]
     for (const { label, content, expectFire, expectSeverity } of cases) {
       const coreReport = scanner.scan('parity', content)

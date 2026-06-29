@@ -238,9 +238,10 @@ function scanPrivilegeEscalation(lines: string[], contexts: LineContext[]): Secu
 // that the broad owner-perm pattern previously false-fired as
 // privilege_escalation:critical. Owner-perm chmod now emits ONLY when either a fetch
 // COMMAND (curl/wget/git-clone/npx-to-URL) is within ±1 line of it, OR the file it
-// targets is referenced by a fetch command anywhere in the content (distance-
-// independent correlation, so filler lines between the download and the chmod can't
-// evade the ±1 window) — the "download a payload, chmod it, run it" supply-chain
+// targets is the download DESTINATION (the `-o`/`-O`/`--output`/`>`/`>>` target) of a
+// fetch command anywhere in the content (distance-independent correlation, so filler
+// lines between the download and the chmod can't evade the ±1 window) — the "download
+// a payload, chmod it, run it" supply-chain
 // shape — which kills the standalone FP AND preserves the chmod co-signal that
 // escalateCodeExecution requires (it only accepts high/critical non-doc co-signals,
 // so chmod cannot simply be downgraded). World-writable and setuid/setgid chmod stay
@@ -262,7 +263,8 @@ function escapeRegExp(s: string): string {
 /**
  * Owner-perm chmod compound signal — see comment above. Emits HIGH (non-doc) /
  * low (doc) privilege_escalation when an owner-perm chmod is within ±1 line of a
- * fetch command OR targets a file a fetch command references anywhere; lines
+ * fetch command OR targets the download DESTINATION (`-o`/`-O`/`--output`/`>`/`>>`)
+ * of a fetch command anywhere; lines
  * already flagged critical by the standalone patterns are skipped to avoid
  * double-emitting. Accepted residual: a spaced `curl … | bash` (pipe-to-
  * interpreter, no downloaded filename) followed by a non-adjacent chmod is not
@@ -284,15 +286,19 @@ function scanChmodFetchCompound(
     if (!match) continue
     const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
     const adjacentFetch = CHMOD_FETCH_CONTEXT.test(window)
-    // FIX-2: correlate the chmod's target basename against any fetch command anywhere
-    // in the content — catches a download-then-chmod that filler lines pushed outside
-    // the ±1 window. Exact path-token match; basename ≥3 chars excludes `.`/`*`.
+    // FIX-2: correlate the chmod's target basename against the DOWNLOAD DESTINATION
+    // (the `-o`/`-O`/`--output`/`>`/`>>` target, optional leading path) of a fetch
+    // command anywhere in the content — catches a download-then-chmod that filler lines
+    // pushed outside the ±1 window, WITHOUT matching the basename in a URL path / query
+    // value / header value (governance FP class). Basename ≥3 chars excludes `.`/`*`.
     let correlated = false
     const tm = line.match(CHMOD_TARGET)
     if (tm) {
       const base = tm[1].replace(/['"]/g, '').split('/').pop() ?? ''
       if (base.length >= 3) {
-        const re = new RegExp(`(?:^|[\\s/'"=])${escapeRegExp(base)}(?:[\\s'"]|$)`)
+        const re = new RegExp(
+          `(?:-o|-O|--output|>>?)\\s*['"]?(?:[^\\s'"]*/)?${escapeRegExp(base)}(?:[\\s'"?]|$)`
+        )
         correlated = fetchLines.some((l) => re.test(l))
       }
     }

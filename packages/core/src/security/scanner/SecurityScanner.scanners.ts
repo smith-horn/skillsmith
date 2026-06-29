@@ -261,10 +261,11 @@ export function scanPrivilegeEscalation(
  * `chmod 755 ./bin/cli` / `chmod 600 .env` / `chmod +x build.sh` are benign
  * idioms that previously false-fired privilege_escalation:critical. Owner-perm
  * chmod now emits HIGH when EITHER (a) a fetch COMMAND (curl/wget/git-clone/
- * npx-to-URL) is within ±1 line of it, OR (b) the file it targets is referenced
- * by a fetch command ANYWHERE in the content (distance-independent correlation,
- * so inserting filler lines between the download and the chmod can't evade the
- * ±1 window) — the "download a payload, chmod it, run it" supply-chain shape.
+ * npx-to-URL) is within ±1 line of it, OR (b) the file it targets is the download
+ * DESTINATION (the `-o`/`-O`/`--output`/`>`/`>>` target) of a fetch command ANYWHERE
+ * in the content (distance-independent correlation, so inserting filler lines between
+ * the download and the chmod can't evade the ±1 window) — the "download a payload,
+ * chmod it, run it" supply-chain shape.
  * This both kills the standalone FP and PRESERVES the chmod co-signal that
  * escalateCodeExecution requires (it only accepts high/critical non-doc
  * co-signals, so the chmod cannot simply be downgraded). World-writable and
@@ -310,16 +311,20 @@ export function scanChmodFetchCompound(
     // Bounded ±1-line window for the download-then-chmod adjacency.
     const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
     const adjacentFetch = CHMOD_FETCH_CONTEXT.test(window)
-    // FIX-2: correlate the chmod's target basename against any fetch command
-    // anywhere in the content — catches a download-then-chmod that filler lines
-    // pushed outside the ±1 window. Exact path-token match; basename ≥3 chars
-    // excludes single-char targets like `.`/`*`.
+    // FIX-2: correlate the chmod's target basename against the DOWNLOAD DESTINATION
+    // (the `-o`/`-O`/`--output`/`>`/`>>` target, with an optional leading path) of a
+    // fetch command anywhere in the content — catches a download-then-chmod that filler
+    // lines pushed outside the ±1 window, WITHOUT matching the basename in a URL path /
+    // query value / header value (governance FP class). Basename ≥3 chars excludes
+    // single-char targets like `.`/`*`.
     let correlated = false
     const tm = line.match(CHMOD_TARGET)
     if (tm) {
       const base = tm[1].replace(/['"]/g, '').split('/').pop() ?? ''
       if (base.length >= 3) {
-        const re = new RegExp(`(?:^|[\\s/'"=])${escapeRegExp(base)}(?:[\\s'"]|$)`)
+        const re = new RegExp(
+          `(?:-o|-O|--output|>>?)\\s*['"]?(?:[^\\s'"]*/)?${escapeRegExp(base)}(?:[\\s'"?]|$)`
+        )
         correlated = fetchLines.some((l) => re.test(l))
       }
     }

