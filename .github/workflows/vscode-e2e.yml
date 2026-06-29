@@ -73,8 +73,31 @@ jobs:
       # Cache the VS Code binary that wdio-vscode-service downloads into the
       # package-root .wdio-vscode-service dir. Keyed on the pinned version so a
       # version bump (env VSCODE_E2E_VERSION) is a fresh download.
-      - name: Cache VS Code binary
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      # Hygiene mirror of the full job's cache resilience (SMI-5438). PR-scoped and
+      # runs only the smoke specs (no diff.e2e.ts), so it does NOT warm the
+      # main-scoped nightly cache - kept only to speed PR smoke and keep the jobs
+      # consistent. The existing minimatch-patch + smoke-spec steps below are unchanged.
+      - name: Restore VS Code binary cache
+        id: cache-restore
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: packages/vscode-extension/.wdio-vscode-service
+          key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
+          restore-keys: |
+            wdio-vscode-${{ runner.os }}-
+
+      - name: Pre-download VS Code binary (decoupled from test clock)
+        id: predownload
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        working-directory: packages/vscode-extension
+        run: |
+          npm run test:e2e:setup
+          xvfb-run -a npx wdio run ./e2e/wdio.conf.ts --spec ./e2e/specs/activation.e2e.ts
+
+      - name: Save VS Code binary cache
+        if: steps.cache-restore.outputs.cache-hit != 'true' && steps.predownload.outcome == 'success'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: packages/vscode-extension/.wdio-vscode-service
           key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
@@ -127,8 +150,38 @@ jobs:
       - name: Build extension
         run: npm run build -w packages/vscode-extension
 
-      - name: Cache VS Code binary
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      - name: Restore VS Code binary cache
+        id: cache-restore
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: packages/vscode-extension/.wdio-vscode-service
+          key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
+          restore-keys: |
+            wdio-vscode-${{ runner.os }}-
+
+      # Decouple the VS Code download from the wdio test clock (SMI-5438).
+      # wdio-vscode-service's onPrepare downloads into
+      # packages/vscode-extension/.wdio-vscode-service (constants.js
+      # DEFAULT_CACHE_PATH = <cwd>/.wdio-vscode-service) and writes versions.txt -
+      # exactly the cache shape the real test run treats as a HIT. We warm it via
+      # the lightest spec (activation) so the heavy diff spec never pays the cold
+      # download. test:e2e:setup (minimatch ESM patch) must run first or wdio aborts
+      # at config load; xvfb is needed because wdio boots VS Code after onPrepare.
+      - name: Pre-download VS Code binary (decoupled from test clock)
+        id: predownload
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        working-directory: packages/vscode-extension
+        run: |
+          npm run test:e2e:setup
+          xvfb-run -a npx wdio run ./e2e/wdio.conf.ts --spec ./e2e/specs/activation.e2e.ts
+
+      # Save BEFORE Run E2E and success-gated: a bare post-test `if: always()` save
+      # is SKIPPED on the 20-min job-timeout cancellation; success-gating prevents
+      # persisting a partial/corrupt download under the un-rotated version key.
+      - name: Save VS Code binary cache
+        if: steps.cache-restore.outputs.cache-hit != 'true' && steps.predownload.outcome == 'success'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: packages/vscode-extension/.wdio-vscode-service
           key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
