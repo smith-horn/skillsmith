@@ -7,15 +7,25 @@
  *
  * Baseline validated: 2026-04-03
  * SMI-4396 Wave 2 (2026-04-21): adjusted baselines for FP-rate tuning.
- * - SENSITIVE_PATH_PATTERNS: 12 → 14 (tightened bare-keyword patterns
- *   to require assignment/path/file-ext context, expanding some into
- *   multiple variants).
- * - DATA_EXFILTRATION_PATTERNS: 20 → 21 (word-boundary `\bcloud\b` fix
- *   plus new key/secret upload detector to preserve attack-shape coverage).
+ * - SENSITIVE_PATH_PATTERNS: 12 → 15 (tightened bare-keyword patterns to require
+ *   assignment/path/file-ext context, expanding some into multiple variants, then
+ *   adding explicit /etc/passwd system-file coverage to offset the tightening).
+ * - DATA_EXFILTRATION_PATTERNS: 20 → 22 (word-boundary `\bcloud\b` fix plus new
+ *   key/secret upload detector + verb-object prose to preserve attack-shape coverage).
  * - PRIVILEGE_ESCALATION_PATTERNS: 23 → 25 (removed bare `/escalat(e|ion)/i`
  *   documentation-keyword trigger; added 3 contextual variants).
- * - Additionally: 12 → 15 ends up at 15 after adding explicit /etc/passwd
- *   system-file coverage (offsets the bare-keyword tightening).
+ *
+ * SMI-5424 PR2: owner-permission chmod (755/644/600/700/+x) was REMOVED from
+ * PRIVILEGE_ESCALATION_PATTERNS (it false-fired on benign `chmod 755 ./bin/cli`) and
+ * relocated to the scanChmodFetchCompound helper as a download-then-chmod compound
+ * signal. World-writable / setuid-setgid chmod remain standalone-critical in the
+ * array, so the PRIVILEGE_ESCALATION_PATTERNS count stayed at 25.
+ *
+ * SMI-5359 Wave 4 (FP-narrowing): the `.env` and api_key/auth_token sensitive_path
+ * entries were narrowed in PLACE (severity policy moved into scanSensitivePaths), so
+ * SENSITIVE_PATH_PATTERNS is still 15. DATA_EXFILTRATION_PATTERNS: 22 → 23 — added the
+ * outbound-curl-credential-in-URL exfil pattern that now carries the `$API_KEY`-in-curl
+ * signal previously riding on the (now value-gated) /api[_-]?key/i sensitive_path keyword.
  *
  * Reference: docs/internal/security/two-scanner-runbook.md
  *            docs/internal/implementation/smi-4396-imported-skills-security-triage.md
@@ -43,13 +53,13 @@ import {
  * removing patterns requires updating this file with justification.
  */
 const BASELINE_PATTERN_COUNTS = {
-  SENSITIVE_PATH_PATTERNS: 15, // SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit)
+  SENSITIVE_PATH_PATTERNS: 15, // SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit); SMI-5359 Wave 4 narrowed .env/api_key/auth_token in place (count unchanged)
   JAILBREAK_PATTERNS: 15,
   SUSPICIOUS_PATTERNS: 11,
   SOCIAL_ENGINEERING_PATTERNS: 12,
   PROMPT_LEAKING_PATTERNS: 14,
-  DATA_EXFILTRATION_PATTERNS: 22, // SMI-4396 Wave 2: 20 → 22 (word-boundary + key-upload + verb-object prose)
-  PRIVILEGE_ESCALATION_PATTERNS: 25, // SMI-4396 Wave 2: 23 → 25 (-1 bare +3 contextual)
+  DATA_EXFILTRATION_PATTERNS: 24, // SMI-4396 Wave 2: 20 → 22 (word-boundary + key-upload + verb-object prose); SMI-5359 Wave 4: 22 → 24 (outbound-curl credential-in-URL query + POST/form body exfil)
+  PRIVILEGE_ESCALATION_PATTERNS: 25, // SMI-4396 Wave 2: 23 → 25 (-1 bare +3 contextual); SMI-5424 PR2 relocated owner-perm chmod to scanChmodFetchCompound (count unchanged — world-writable/setuid stay standalone)
   SSRF_INSTRUCTION_PATTERNS: 13,
   AI_DEFENCE_PATTERNS: 16,
   PII_PATTERNS: 11,

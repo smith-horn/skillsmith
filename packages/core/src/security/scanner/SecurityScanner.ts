@@ -35,6 +35,7 @@ import {
   scanPromptLeaking,
   scanDataExfiltration,
   scanPrivilegeEscalation,
+  scanChmodFetchCompound,
   scanPiiPatterns,
 } from './SecurityScanner.scanners.js'
 
@@ -238,6 +239,17 @@ export class SecurityScanner {
     findings.push(...scanPromptLeaking(content, lineContexts))
     findings.push(...scanDataExfiltration(content, lineContexts))
     findings.push(...scanPrivilegeEscalation(content, lineContexts))
+    // SMI-5424 PR2: owner-perm chmod is a compound signal — emit only when
+    // co-located with a fetch/download verb. Pass the lines already flagged by
+    // the standalone (world-writable/setuid) privesc patterns so we never
+    // double-emit. Runs before escalateCodeExecution so a compound chmod (HIGH)
+    // can serve as the code_execution co-signal.
+    const privEscLines = new Set(
+      findings
+        .filter((f) => f.type === 'privilege_escalation' && f.lineNumber)
+        .map((f) => f.lineNumber as number)
+    )
+    findings.push(...scanChmodFetchCompound(content, privEscLines, lineContexts))
     findings.push(...this.scanAIDefenceVulnerabilities(content, lineContexts))
     findings.push(...scanSsrfPatterns(content, lineContexts))
     findings.push(...scanPiiPatterns(content, lineContexts))
