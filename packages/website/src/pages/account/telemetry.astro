@@ -375,7 +375,7 @@ const supabaseConfig = getSupabaseConfig()
             const res = await fetch('/api/account/telemetry', {
               method: 'PUT',
               headers: {
-                Authorization: `Bearer ${session.access_token}`,
+                Authorization: `Bearer ${session!.access_token}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
