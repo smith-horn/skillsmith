@@ -226,6 +226,9 @@ if [ -z "$VERDICT" ]; then
   # Cutoff via node (same ISO format as stored ts values). SQLite's datetime('now')
   # returns space-separated format where ' ' < 'T', breaking lexicographic compare.
   STALE_DAYS="${SKILLSMITH_RETRIEVAL_LIVENESS_STALE_DAYS:-7}"
+  # Validate as a positive integer before embedding in `node -e` (prevents env-var
+  # code injection; falls back to the 7-day default on any non-integer value).
+  [[ "$STALE_DAYS" =~ ^[1-9][0-9]*$ ]] || STALE_DAYS=7
   CUTOFF="$(node -e "console.log(new Date(Date.now()-${STALE_DAYS}*864e5).toISOString())" 2>/dev/null || echo "")"
   if [ -z "$CUTOFF" ]; then
     log "[liveness] probe-failed: node not on PATH (needed to compute ISO cutoff)"
@@ -281,10 +284,13 @@ STABLE_LABEL="telemetry-liveness"
 
 DAYS_STALE="unknown"
 if [ -n "${MAX_TS:-}" ] && command -v node >/dev/null 2>&1; then
-  DAYS_STALE="$(node -e "const d=(Date.now()-Date.parse('${MAX_TS}'))/(864e5);console.log(Math.round(d))" 2>/dev/null || echo "unknown")"
+  # Pass MAX_TS as a positional arg, NOT interpolated into the JS source — a
+  # non-ISO ts (future writer / hand-edited DB) can't break or inject into the script.
+  DAYS_STALE="$(node -e "const d=(Date.now()-Date.parse(process.argv[1]))/(864e5);console.log(Math.round(d))" -- "$MAX_TS" 2>/dev/null || echo "unknown")"
 fi
 
-# Build issue body (M1 — four graded responses; no hostname/username leakage).
+# Build issue body (four graded responses). DB_PATH embeds the absolute home dir,
+# but the issue targets the owner's own private repo — no external disclosure.
 BODY="## Retrieval telemetry feed stale
 
 **DB path:** \`${DB_PATH}\`
