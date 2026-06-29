@@ -13,12 +13,13 @@
  *   5. Navigate browser to /device?user_code=…, wait for state-preview,
  *   6. Click Approve (#btn-approve) → wait for state-approved,
  *   7. Wait for CLI to exit 0 with `Logged in successfully` in stdout,
- *   8. Cross-validate the post-login hint subcommand against `--help` (B3 protection),
+ *   8. Assert the post-login hint text "Run skillsmith --help" (B3 protection, SMI-5427),
  *   9. Assert device_codes.consumed_at IS NOT NULL (B2 protection),
  *  10. Assert audit_logs row with event_type='auth:device_code:consumed' exists.
  *
- * Catches B1 (relative URL), B2 (claim_device_token ambiguity), B3 (nonexistent
- * post-login command) in a single run — see SMI-4454 retro lesson #5.
+ * Catches B1 (relative URL), B2 (claim_device_token ambiguity), B3 (post-login hint
+ * regression — SMI-5427 made the hint a static `--help`) in a single run — see the
+ * SMI-4454 retro lesson #5.
  *
  * Staging-only: STAGING_SUPABASE_URL must contain `ovhcifugwqnzoebwfuku`.
  * Helpers/config refuse to boot if the prod project ref appears in the URL.
@@ -28,8 +29,6 @@ import { test, expect } from '@playwright/test'
 import {
   spawnCli,
   parseUserCode,
-  assertCommandExists,
-  registeredCliCommands,
   injectRealSupabase,
   signInTestUser,
   queryDeviceCode,
@@ -139,18 +138,17 @@ test.describe('SMI-4460 — Device-code login round-trip (staging)', () => {
     expect(result.code, `CLI stderr: ${result.stderr.slice(0, 500)}`).toBe(0)
     expect(result.stdout).toMatch(/Logged in successfully/i)
 
-    // Extract the post-login hint (B3 shape).
-    const hintMatch = result.stdout.match(/Try it:\s+skillsmith\s+(\S+)/)
-    expect(hintMatch, `Stdout did not contain hint: ${result.stdout.slice(-500)}`).not.toBeNull()
-    const hintSubcommand = hintMatch![1]
-
-    // ─── 7. Cross-validate hint against the actual command surface (B3 protection) ───
-    // TWO-SOURCE check: the registered list + a `<cmd> --help` exit-0 probe.
-    await assertCommandExists({ cliPath: cli.path, cmd: hintSubcommand })
-
-    // Diagnostic surface kept handy: registered list still asserted via positive match.
-    const registered = await registeredCliCommands({ cliPath: cli.path })
-    expect(registered).toContain(hintSubcommand)
+    // ─── 7. Validate the post-login hint (B3 protection) ───
+    // SMI-5427: login now authenticates only (no registry sync), and the hint points
+    // to `skillsmith --help` — a commander built-in flag, not a `search` subcommand
+    // (which would trigger the first-run registry sync that 0.7.1 removed from login;
+    // the search UX lands in 0.7.2). The original B3 risk was a hint to a NONEXISTENT
+    // subcommand; `--help` cannot be nonexistent, and the CLI already exited 0 above,
+    // so the guard reduces to asserting the exact, current hint text.
+    expect(
+      result.stdout,
+      `Stdout did not contain the expected hint: ${result.stdout.slice(-500)}`
+    ).toMatch(/Run `skillsmith --help` to get started/)
 
     // ─── 8. Assert DB invariants (B2 protection) ───
     // claim_device_token must have run successfully → consumed_at set.

@@ -52,6 +52,7 @@ import {
   createInventoryCommand,
 } from './commands/index.js'
 import { displayStartupHeader } from './utils/license.js'
+import { resolveCommandPath, shouldShowStartupHeader } from './utils/startup-header-gate.js'
 import { checkNodeVersion } from './utils/node-version.js'
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
@@ -81,11 +82,12 @@ program
   .version(CLI_VERSION)
 
 // Display startup header with license status before parsing commands.
-// Skip for auth commands (login/logout/whoami) which manage credentials and
-// must not emit extra output that could interfere with scripted use.
-const NO_HEADER_COMMANDS = ['login', 'logout', 'whoami']
+// SMI-5427: gated by startup-header-gate — suppressed for non-TTY / piped use,
+// auth commands, and machine-readable subcommands (matched by full parent+leaf
+// path so a bare `status` does not over-exempt `sync status`/`telemetry status`).
 program.hook('preAction', async (_thisCommand, actionCommand) => {
-  if (NO_HEADER_COMMANDS.includes(actionCommand.name())) return
+  const path = resolveCommandPath(actionCommand.name(), actionCommand.parent?.name(), commandName)
+  if (!shouldShowStartupHeader(path, Boolean(process.stdout.isTTY))) return
   await displayStartupHeader(CLI_VERSION)
 })
 
