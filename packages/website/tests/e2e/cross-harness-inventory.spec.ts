@@ -163,9 +163,12 @@ test.describe('Cross-Harness Skill Inventory (staging)', () => {
       await expect(card, 'device-card for this run should be visible after push').toBeVisible({
         timeout: 15_000,
       })
+      // SMI-5442: an unmatched skill_id with no declared provenance now resolves
+      // to 'local' (was the flat 'unknown'). 'unknown' is no longer emitted by
+      // get_user_inventory.
       await expect(
-        card.locator('[data-testid="skill-badge"][data-state="unknown"]'),
-        'skill badge should show data-state="unknown" for an unmatched skill_id'
+        card.locator('[data-testid="skill-badge"][data-state="local"]'),
+        'skill badge should show data-state="local" for an unmatched skill_id with no provenance (SMI-5442)'
       ).toBeVisible()
     } finally {
       try {
