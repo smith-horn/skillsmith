@@ -32,13 +32,22 @@ describe('escapeHtml', () => {
 })
 
 describe('buildStateBadgeHtml', () => {
-  const states: SkillState[] = ['current', 'drifted', 'missing', 'pinned', 'unknown']
+  const states: SkillState[] = [
+    'current',
+    'drifted',
+    'missing',
+    'pinned',
+    'unknown',
+    'local',
+    'source-identified',
+    'pending',
+  ]
   it('renders label + svg path + tooltip for every state', () => {
     for (const state of states) {
       const html = buildStateBadgeHtml(state)
       expect(html).toContain(SKILL_STATE_META[state].label)
       expect(html).toContain('<path')
-      expect(html).toContain(`title="${SKILL_STATE_META[state].description}"`)
+      expect(html).toContain(`title="${escapeHtml(SKILL_STATE_META[state].description)}"`)
       expect(html).toContain('aria-hidden="true"')
     }
   })
@@ -88,6 +97,9 @@ describe('buildDeviceCardHtml', () => {
           present: true,
           pinned: false,
           state: 'drifted',
+          author: null,
+          repository: null,
+          license: null,
         },
       ],
     }
@@ -147,5 +159,100 @@ describe('buildDeviceCardHtml', () => {
     }
     const html = buildDeviceCardHtml(device)
     expect(html).toContain('data-testid="device-card"')
+  })
+
+  it('source-identified: renders author+repository as plain text with (unverified) label — no hyperlink', () => {
+    const device: DeviceView = {
+      deviceId: 'abcdef12-3456-4789-8abc-def012345678',
+      label: 'my-box',
+      hostnameDisplay: null,
+      platform: 'darwin',
+      lastSeen: '2026-06-26T00:00:00.000Z',
+      deviceState: 'fresh',
+      neverSynced: false,
+      skills: [
+        {
+          harness: 'zed',
+          skillId: 'acme/widget',
+          version: '1.0.0',
+          present: true,
+          pinned: false,
+          state: 'source-identified',
+          author: 'acme-org',
+          repository: 'https://github.com/acme/widget',
+          license: 'MIT',
+        },
+      ],
+    }
+    const html = buildDeviceCardHtml(device)
+    // Label and badge present
+    expect(html).toContain(SKILL_STATE_META['source-identified'].label)
+    // Author and repository rendered as plain text
+    expect(html).toContain('acme-org')
+    expect(html).toContain('https://github.com/acme/widget')
+    // Unverified marker present
+    expect(html).toContain('(unverified)')
+    // Must NOT render the repository URL as a plain href= link (trust-laundering guard)
+    expect(html).not.toMatch(/href="https:\/\/github\.com\/acme\/widget"/)
+  })
+
+  it('registry-matched state: renders repository as a link with rel=noopener', () => {
+    const device: DeviceView = {
+      deviceId: 'abcdef12-3456-4789-8abc-def012345678',
+      label: 'my-box',
+      hostnameDisplay: null,
+      platform: 'darwin',
+      lastSeen: '2026-06-26T00:00:00.000Z',
+      deviceState: 'fresh',
+      neverSynced: false,
+      skills: [
+        {
+          harness: 'zed',
+          skillId: 'verified/skill',
+          version: '2.0.0',
+          present: true,
+          pinned: false,
+          state: 'current',
+          author: 'verified-org',
+          repository: 'https://github.com/verified/skill',
+          license: 'MIT',
+        },
+      ],
+    }
+    const html = buildDeviceCardHtml(device)
+    // Repository rendered as a link
+    expect(html).toContain('href="https://github.com/verified/skill"')
+    expect(html).toContain('rel="noopener noreferrer"')
+    // No unverified label for registry-matched states
+    expect(html).not.toContain('(unverified)')
+  })
+
+  it('local state: renders no source affordance', () => {
+    const device: DeviceView = {
+      deviceId: 'abcdef12-3456-4789-8abc-def012345678',
+      label: 'my-box',
+      hostnameDisplay: null,
+      platform: 'darwin',
+      lastSeen: '2026-06-26T00:00:00.000Z',
+      deviceState: 'fresh',
+      neverSynced: false,
+      skills: [
+        {
+          harness: 'cursor',
+          skillId: 'my-local/tool',
+          version: null,
+          present: true,
+          pinned: false,
+          state: 'local',
+          author: null,
+          repository: null,
+          license: null,
+        },
+      ],
+    }
+    const html = buildDeviceCardHtml(device)
+    expect(html).toContain(SKILL_STATE_META.local.label)
+    expect(html).not.toContain('skill-source')
+    expect(html).not.toContain('(unverified)')
   })
 })

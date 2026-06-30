@@ -65,6 +65,27 @@ const stateConfig: Record<
     // Question-circle — question mark inside circle; distinct from X-circle
     icon: 'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   },
+  local: {
+    bgColor: 'bg-teal-500/10',
+    textColor: 'text-teal-400',
+    borderColor: 'border-teal-500/30',
+    // Desktop/computer — local machine shape; distinct from all circular and bookmark icons
+    icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+  },
+  'source-identified': {
+    bgColor: 'bg-amber-500/10',
+    textColor: 'text-amber-400',
+    borderColor: 'border-amber-500/30',
+    // Tag/label — metadata shape; conveys "attributed" without alarm; distinct from all others
+    icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+  },
+  pending: {
+    bgColor: 'bg-violet-500/10',
+    textColor: 'text-violet-400',
+    borderColor: 'border-violet-500/30',
+    // Clock — time/in-progress shape; distinct from all other icons
+    icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+  },
 }
 
 // Degrade gracefully if an unexpected state value is passed at runtime.

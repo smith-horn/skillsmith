@@ -8,7 +8,7 @@
  */
 
 import { SKILL_STATE_META, formatRelativeTime, formatAbsoluteTime } from './inventory-view'
-import type { SkillState, DeviceView } from './inventory-view'
+import type { SkillState, DeviceView, SkillView } from './inventory-view'
 
 // ─── Badge config (mirrors InventoryStateBadge.astro) ─────────────────────────
 // Distinct icon shape + WCAG-AA color pair per state — not color alone (WCAG 1.4.1).
@@ -52,6 +52,24 @@ export const BADGE_CONFIG: Record<SkillState, BadgeEntry> = {
     border: 'rgba(161,161,170,0.3)',
     icon: 'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z', // question-circle
   },
+  local: {
+    bg: 'rgba(20,184,166,0.1)',
+    color: '#2dd4bf',
+    border: 'rgba(20,184,166,0.3)',
+    icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', // desktop/computer
+  },
+  'source-identified': {
+    bg: 'rgba(245,158,11,0.1)',
+    color: '#fbbf24',
+    border: 'rgba(245,158,11,0.3)',
+    icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z', // tag/label
+  },
+  pending: {
+    bg: 'rgba(139,92,246,0.1)',
+    color: '#a78bfa',
+    border: 'rgba(139,92,246,0.3)',
+    icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', // clock
+  },
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,6 +112,44 @@ export function buildStateBadgeHtml(state: SkillState): string {
   )
 }
 
+// States whose author/repository values are registry-verified (safe to hyperlink).
+const REGISTRY_MATCHED_STATES = new Set<SkillState>(['current', 'drifted', 'missing', 'pinned'])
+
+/**
+ * Builds an optional HTML snippet showing skill provenance below the badge.
+ *
+ * Trust model:
+ * - Registry-matched states (current/drifted/missing/pinned): repository is
+ *   registry-verified — rendered as an anchor with rel="noopener noreferrer".
+ * - source-identified: author/repository are SELF-ASSERTED and UNVERIFIED.
+ *   Rendered as plain text with an explicit "(unverified)" label to prevent
+ *   trust-laundering a self-asserted URL (WCAG 1.4.1 — non-color cue).
+ * - local / pending / unknown: no source to display.
+ */
+function buildSkillSourceHtml(sk: SkillView): string {
+  if (REGISTRY_MATCHED_STATES.has(sk.state) && sk.repository) {
+    const repo = escapeHtml(sk.repository)
+    return (
+      `<span class="skill-source">` +
+      `<a href="${repo}" rel="noopener noreferrer" class="skill-source-link">${repo}</a>` +
+      `</span>`
+    )
+  }
+  if (sk.state === 'source-identified') {
+    const parts: string[] = []
+    if (sk.author) parts.push(escapeHtml(sk.author))
+    if (sk.repository) parts.push(escapeHtml(sk.repository))
+    if (parts.length === 0) return ''
+    return (
+      `<span class="skill-source skill-source--unverified" ` +
+      `title="Source declared in the skill&#39;s own metadata (not registry-verified)">` +
+      parts.join(' \xB7 ') +
+      ` <span class="skill-source-tag">(unverified)</span></span>`
+    )
+  }
+  return ''
+}
+
 /** Resolved human-readable label for a device, falling back to a truncated ID. */
 export function deviceDisplayName(d: DeviceView): string {
   return d.label ?? d.hostnameDisplay ?? `Device ${d.deviceId.slice(0, 8)}`
@@ -133,6 +189,7 @@ export function buildDeviceCardHtml(device: DeviceView): string {
           `<span class="skill-id">${escapeHtml(sk.skillId)}</span>` +
           `<span class="skill-version">${ver}</span>` +
           buildStateBadgeHtml(sk.state) +
+          buildSkillSourceHtml(sk) +
           `</li>`
       }
       skillsHtml += '</ul>'
@@ -183,6 +240,11 @@ export function injectSkillsPageStyles(): void {
 .skill-item{display:flex;align-items:center;gap:.625rem;padding:.4rem .625rem;background:#18181b;border-radius:6px;flex-wrap:wrap}
 .skill-id{font-family:'SF Mono','Fira Code',monospace;font-size:.8125rem;color:#d4d4d8;flex:1;min-width:0;word-break:break-all}
 .skill-version{font-family:'SF Mono','Fira Code',monospace;font-size:.75rem;color:#52525b;white-space:nowrap}
+.skill-source{font-size:.75rem;color:#71717a;flex-basis:100%;margin-top:.25rem;word-break:break-all}
+.skill-source--unverified{font-style:italic}
+.skill-source-tag{font-size:.6875rem;color:#52525b}
+.skill-source-link{color:#71717a;text-decoration:none}
+.skill-source-link:hover{color:#a1a1aa;text-decoration:underline}
 `
   document.head.appendChild(style)
 }

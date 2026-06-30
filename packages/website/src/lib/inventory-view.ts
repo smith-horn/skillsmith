@@ -22,13 +22,41 @@ export interface InventoryRow {
   present: boolean | null
   pinned: boolean | null
   registry_hash: string | null
-  skill_state: 'current' | 'drifted' | 'missing' | 'pinned' | 'unknown' | null
+  skill_state:
+    | 'current'
+    | 'drifted'
+    | 'missing'
+    | 'pinned'
+    | 'unknown'
+    | 'local'
+    | 'source-identified'
+    | null
+  /** Skill author. Registry-verified for matched states; self-asserted for source-identified. */
+  author: string | null
+  /** Repository URL. Registry-verified for matched states; self-asserted for source-identified. */
+  repository: string | null
+  /** License identifier from the registry or the skill's own front-matter. */
+  license: string | null
 }
 
 // ─── View model types ─────────────────────────────────────────────────────────
 
-/** Possible lifecycle states for a skill entry on a device. */
-export type SkillState = 'current' | 'drifted' | 'missing' | 'pinned' | 'unknown'
+/**
+ * Possible lifecycle states for a skill entry on a device.
+ *
+ * Terminal states emitted by the RPC: current | drifted | missing | pinned | unknown |
+ * local | source-identified.
+ * Display-only (never emitted by the RPC): pending — shown while resolution is underway.
+ */
+export type SkillState =
+  | 'current'
+  | 'drifted'
+  | 'missing'
+  | 'pinned'
+  | 'unknown'
+  | 'local'
+  | 'source-identified'
+  | 'pending'
 
 /** A single resolved skill entry on a device. */
 export interface SkillView {
@@ -42,6 +70,18 @@ export interface SkillView {
   /** Whether the skill is pinned; drift checks are suppressed for pinned skills. */
   pinned: boolean
   state: SkillState
+  /**
+   * Skill author. For registry-matched states this is registry-verified.
+   * For `source-identified` this is self-asserted from the skill's own front-matter.
+   */
+  author: string | null
+  /**
+   * Repository URL. Registry-verified for current/drifted/missing/pinned.
+   * Self-asserted (unverified) for `source-identified`.
+   */
+  repository: string | null
+  /** License identifier from the registry or the skill's front-matter. */
+  license: string | null
 }
 
 /** A device row, expanded with its resolved skill list. */
@@ -106,6 +146,18 @@ export const SKILL_STATE_META: Record<SkillState, { label: string; description: 
     label: 'Unknown',
     description: 'Not matched to a registry skill (local or custom)',
   },
+  local: {
+    label: 'Local',
+    description: 'Installed locally; no registry or declared source',
+  },
+  'source-identified': {
+    label: 'Claimed source',
+    description: "Source declared in the skill's own metadata (not registry-verified)",
+  },
+  pending: {
+    label: 'Checking…',
+    description: 'Resolving source — check back shortly',
+  },
 }
 
 // ─── View-model builder ───────────────────────────────────────────────────────
@@ -155,6 +207,9 @@ export function buildInventoryView(rows: InventoryRow[]): DeviceView[] {
         present: row.present ?? false,
         pinned: row.pinned ?? false,
         state: row.skill_state,
+        author: row.author ?? null,
+        repository: row.repository ?? null,
+        license: row.license ?? null,
       })
     }
   }
