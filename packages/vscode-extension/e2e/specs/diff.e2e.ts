@@ -29,9 +29,14 @@ import { waitForTabWithPrefix } from '../helpers/tabs.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
-/** The fixture skill directory — must match the dir name used as the skill id. */
+/** Fixture skill directory (filesystem path, independent of the registry id). */
 const SKILL_DIR = path.resolve(here, '..', 'fixtures', 'skills', 'my-e2e-skill')
-const SKILL_ID = 'my-e2e-skill'
+/**
+ * Use a namespaced registry id so isLocalSkillId() returns false and
+ * diffCommandImpl takes the registry path (client.getSkill → get_skill MCP
+ * call) rather than the local-manifest path added in SMI-5412.
+ */
+const SKILL_ID = 'acme/my-e2e-skill'
 
 /** Returns true once get_skill fires for our fixture skill id. */
 const getSkillFired = (): boolean =>
@@ -68,7 +73,7 @@ describe('Diff skill (update advisor) — tree-context flow (SMI-5340)', () => {
     await page.diffSkill({
       skillData: {
         id: SKILL_ID,
-        name: SKILL_ID,
+        name: 'my-e2e-skill',
         isInstalled: true,
         path: SKILL_DIR,
       },
