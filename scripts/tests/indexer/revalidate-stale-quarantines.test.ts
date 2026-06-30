@@ -16,6 +16,16 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { processRow, loadCandidates } from '../../indexer/revalidate-stale-quarantines.ts'
 import type { StaleQuarantinedRow } from '../../indexer/revalidate-stale-quarantines.ts'
 
+// SMI-5437 Wave 2: processRow now runs sibling re-scan on quarantined=true/undefined
+// rows with clean SKILL.md before clearing. Existing processRow tests (SMI-5165/5166)
+// test pre-sibling-scan paths; mock the sibling module so those tests aren't broken
+// by sibling network calls and focus on the SKILL.md / CAS / audit paths they own.
+vi.mock('../../indexer/revalidate-stale-quarantines.sibling.ts', () => ({
+  runSiblingRescan: vi.fn(async () => ({ status: 'clean' })),
+  buildSiblingQuarantineReason: vi.fn(() => '[recheck-sibling] test-reason'),
+  writeSiblingRequarantine: vi.fn(async () => 'ok'),
+}))
+
 // ---------------------------------------------------------------------------
 // Shared fixtures
 // ---------------------------------------------------------------------------
@@ -229,15 +239,19 @@ describe('processRow — kept-security', () => {
   })
 })
 
-describe('processRow — cleared', () => {
+// SMI-5437 Wave 2: quarantined=undefined/true rows with clean SKILL.md now go through
+// sibling rescan before clearing. The sibling module is mocked above to return 'clean'.
+// Outcome is 'sibling-recovered' (not 'cleared') so recheck.ts can track both
+// cleared + sibling_recovered additively. Existing CAS/audit assertions still hold.
+describe('processRow — sibling-recovered (clear after sibling rescan)', () => {
   beforeEach(() => vi.restoreAllMocks())
 
-  it('returns cleared in dry-run mode without DB writes', async () => {
+  it('returns sibling-recovered in dry-run mode without DB writes', async () => {
     stubFetchOk(CLEAN_CONTENT)
     const row = makeRow()
     const db = makeDb({ updateError: null, updatedRows: [], insertError: null })
     const result = await processRow(row, {}, false, db as never)
-    expect(result.outcome).toBe('cleared')
+    expect(result.outcome).toBe('sibling-recovered')
     expect(result.score).toBeLessThan(40)
     expect(db.update).not.toHaveBeenCalled()
     expect(db.insert).not.toHaveBeenCalled()
@@ -252,26 +266,27 @@ describe('processRow — cleared', () => {
       insertError: null,
     })
     const result = await processRow(row, {}, true, db as never)
-    expect(result.outcome).toBe('cleared')
+    expect(result.outcome).toBe('sibling-recovered')
     expect(db.update).toHaveBeenCalledOnce()
     const updateArg = db.update.mock.calls[0][0]
     expect(updateArg.quarantined).toBe(false)
     expect(updateArg.quarantine_reason).toBeNull()
     expect(updateArg.security_findings).toEqual([])
     expect(typeof updateArg.security_score).toBe('number')
-    // Audit log
+    // Audit log — SMI-5437 W2 clear path uses 'recheck-sibling' sweep tag.
     expect(db.insert).toHaveBeenCalledOnce()
     const insertArg = db.insert.mock.calls[0][0]
     expect(insertArg.event_type).toBe('quarantine:cleared')
-    expect(insertArg.metadata.smi).toBe('SMI-5165')
+    expect(insertArg.metadata.smi).toBe('SMI-5437')
     expect(insertArg.metadata.skill_id).toBe(row.id)
   })
 
-  it('checks the CAS .eq(quarantined, true) guard is applied', async () => {
+  it('checks the CAS .eq(quarantined, true) guard is applied on the clear write', async () => {
     stubFetchOk(CLEAN_CONTENT)
     const row = makeRow()
     const db = makeDb({ updateError: null, updatedRows: [{ id: row.id }], insertError: null })
-    await processRow(row, {}, true, db as never)
+    const result = await processRow(row, {}, true, db as never)
+    expect(result.outcome).toBe('sibling-recovered')
     // Both .eq('id', ...) and .eq('quarantined', true) must be called.
     const eqCalls = db.eq.mock.calls as [string, unknown][]
     const hasIdEq = eqCalls.some(([col]) => col === 'id')
@@ -383,10 +398,13 @@ describe('loadCandidates — pagination', () => {
 // `.eq('quarantined', false)` and leave genuinely-quarantined rows stuck).
 // ---------------------------------------------------------------------------
 
+// SMI-5437 Wave 2: E4 pin updated — quarantined=undefined rows now go through sibling
+// rescan (mocked clean above) and return 'sibling-recovered', not 'cleared'. The core
+// invariant (must NOT take the live-touched path) and the CAS guard remain.
 describe('processRow — E4 strict ===false guard (Wave-1 cohort still clears)', () => {
   beforeEach(() => vi.restoreAllMocks())
 
-  it('a loadCandidates-shaped row (no quarantined field) clears, not live-touched', async () => {
+  it('a loadCandidates-shaped row (no quarantined field) sibling-recovers, not live-touched', async () => {
     stubFetchOk(CLEAN_CONTENT)
     // Shape a row exactly like loadCandidates returns: no `quarantined` and no
     // `last_seen_at` keys at all (both undefined).
@@ -405,8 +423,8 @@ describe('processRow — E4 strict ===false guard (Wave-1 cohort still clears)',
     const db = makeDb({ updateError: null, updatedRows: [{ id: row.id }], insertError: null })
     const result = await processRow(row, {}, true, db as never)
 
-    // MUST be the clear path, NOT the prevention live-touched path.
-    expect(result.outcome).toBe('cleared')
+    // MUST be the sibling-recovered path (sibling rescan ran, found clean), NOT live-touched.
+    expect(result.outcome).toBe('sibling-recovered')
     // The clear CAS is gated on `.eq('quarantined', true)`, never on `false`.
     const eqCalls = db.eq.mock.calls as [string, unknown][]
     expect(eqCalls.some(([col, val]) => col === 'quarantined' && val === true)).toBe(true)

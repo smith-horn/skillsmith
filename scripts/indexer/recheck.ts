@@ -238,6 +238,8 @@ function zeroCounters(killswitchEngaged: boolean): RecheckAuditCounters {
     cas_skipped: 0,
     errors: 0,
     sibling_gate_skipped: 0,
+    sibling_requarantined: 0,
+    sibling_recovered: 0,
     fetch_error_rate: 0,
     cap_saturated: false,
     killswitch_engaged: killswitchEngaged,
@@ -354,38 +356,33 @@ export async function runRecheck(opts: {
   let fetchErrors = 0
   let casSkipped = 0
   let errors = 0
-  let siblingGateSkipped = 0
+  // SMI-5436 Wave 2: sibling gate counter preserved for audit log schema compatibility.
+  // Always 0 post-SMI-5437 (gate removed — sibling re-scan now runs inside processRow).
+  const siblingGateSkipped = 0
+  // SMI-5437 Wave 2: sibling re-scan outcome counters.
+  let siblingRequarantined = 0
+  let siblingRecovered = 0
 
   for (let i = 0; i < rows.length; i += batch) {
     const slice = rows.slice(i, i + batch)
-    // SMI-5436 Wave 2 minimal gate: skip automatic unquarantine for sibling-triggered
-    // quarantines (any finding with filePath != null). Full recheck extension (re-scan
-    // the named sibling) is filed as SMI-5437.
-    const eligibleForProcess: (typeof rows)[number][] = []
-    for (const row of slice) {
-      if (row.quarantined) {
-        const findings = Array.isArray(row.security_findings) ? row.security_findings : []
-        const hasSiblingFinding = findings.some(
-          (f): f is Record<string, unknown> =>
-            typeof f === 'object' && f !== null && 'filePath' in f && f.filePath != null
-        )
-        if (hasSiblingFinding) {
-          siblingGateSkipped++
-          console.warn(
-            `[recheck] sibling-triggered quarantine requires manual review or Phase 3 recheck — skipping ${row.author}/${row.name}`
-          )
-          continue
-        }
-      }
-      eligibleForProcess.push(row)
-    }
+    // SMI-5437: sibling gate removed. All rows now pass to processRow, which runs
+    // sibling re-scan internally on quarantined=true rows with clean SKILL.md.
     const results = await Promise.all(
-      eligibleForProcess.map((r) => processRow(r, headers, apply, supabase))
+      slice.map((r) =>
+        processRow(r, headers, apply, supabase, opts.telemetry ?? newRateLimitTelemetry())
+      )
     )
     for (const r of results) {
       switch (r.outcome) {
         case 'cleared':
           cleared++
+          break
+        // SMI-5437 Wave 2: sibling-recovered is additive — increments both
+        // cleared AND sibling_recovered (the skill was unquarantined after sibling
+        // rescan confirmed all siblings clean).
+        case 'sibling-recovered':
+          cleared++
+          siblingRecovered++
           break
         case 'live-touched':
           liveTouched++
@@ -395,6 +392,12 @@ export async function runRecheck(opts: {
           break
         case 'requarantined':
           requarantined++
+          break
+        // SMI-5437 Wave 2: sibling-requarantined is additive — increments both
+        // requarantined AND sibling_requarantined (sibling still/newly malicious).
+        case 'sibling-requarantined':
+          requarantined++
+          siblingRequarantined++
           break
         case 'repo-gone':
           repoGone++
@@ -438,6 +441,9 @@ export async function runRecheck(opts: {
     cas_skipped: casSkipped,
     errors,
     sibling_gate_skipped: siblingGateSkipped,
+    // SMI-5437 Wave 2: sibling re-scan outcome counters. Additive with cleared/requarantined.
+    sibling_requarantined: siblingRequarantined,
+    sibling_recovered: siblingRecovered,
     fetch_error_rate: fetchErrorRate,
     cap_saturated: capSaturated,
     killswitch_engaged: false,

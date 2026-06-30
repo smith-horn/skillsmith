@@ -1,27 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * SMI-5165: re-validate stale-quarantined skills. `processRow` is also the shared
+ * SMI-5165/5437: Re-validate stale-quarantined skills. `processRow` is the shared
  * row-processor for the SMI-5166 recheck cron (recheck.ts imports it + retagUnreachable).
+ * SMI-5437 Wave 2: processRow now runs sibling re-scan before clearing quarantined=true rows.
  *
- * Candidate cohort: `quarantined = true` AND `repo_url ILIKE 'https://github.com/%'`
- * AND (`quarantine_reason IS NULL` OR `= 'stale'`) — quarantined by stale-reconciliation,
- * not the security scanner, so never security-rescanned; many are false positives.
+ * Safety: `--dry-run` is DEFAULT (`--apply` writes); CAS guards prevent double-flip;
+ * run OUTSIDE the 00/06/12/18 UTC indexer cron window.
  *
- * Decision tree per row (processRow):
- *   parse-failed  — repo_url not a parseable GitHub URL → keep; apply re-tags reason.
- *   repo-gone     — GitHub Contents API non-200 → keep; apply re-tags reason + last_seen_at.
- *   kept-security — fetched, shouldQuarantine=true, already quarantined → re-tag findings.
- *   requarantined — fetched, shouldQuarantine=true, row was LIVE (quarantined=false) →
- *                   set quarantined=true (SMI-5377: re-quarantine the prevention cohort).
- *   cleared       — scanner passes (riskScore < 40) → CAS clear (gated quarantined=true).
- *   live-touched  — LIVE clean row → refresh last_seen_at (CAS gated quarantined=false).
- *
- * Safety: `--dry-run` is DEFAULT (`--apply` writes); clear/prevention use CAS guards so a
- * concurrent indexer cannot double-flip; every write audits pre-state for rollback; run
- * OUTSIDE the 00/06/12/18 UTC indexer cron window.
- *
- * Usage (host tool; needs Docker for varlock):
- *   varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts [--apply] [--limit N]
+ * Usage: varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts [--apply] [--limit N]
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -32,7 +18,13 @@ import {
   shouldQuarantine,
   summarizeFindings,
 } from './_shared/security-scanner-edge.ts'
+import { newRateLimitTelemetry, type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { parseSkillMdUrl, fetchSkillMd } from './_shared/skill-md-fetch.ts'
+import {
+  runSiblingRescan,
+  buildSiblingQuarantineReason,
+  writeSiblingRequarantine,
+} from './revalidate-stale-quarantines.sibling.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,6 +55,8 @@ export type StaleOutcome =
   | 'fetch-error'
   | 'cas-skipped'
   | 'error'
+  | 'sibling-requarantined' // SMI-5437 W2: additive with requarantined + sibling_requarantined
+  | 'sibling-recovered' //     SMI-5437 W2: additive with cleared + sibling_recovered
 
 interface RowResult {
   row: StaleQuarantinedRow
@@ -81,12 +75,7 @@ interface SweepCounts {
   casSkipped: number
   errors: number
 }
-
-/**
- * If transient fetch failures (rate limits / 5xx) exceed this fraction of all
- * rows, the run is being throttled and its `repo-gone` classifications can't be
- * trusted — abort rather than under-recover or (in apply) under-process.
- */
+/** Above this fraction of transient fetch errors the run is throttled; repo-gone counts unreliable. */
 const MAX_FETCH_ERROR_RATE = 0.1
 
 // ---------------------------------------------------------------------------
@@ -110,15 +99,8 @@ export async function retagUnreachable(
   }
 ): Promise<void> {
   const now = new Date().toISOString()
-  // SMI-5166 (E9): CAS-gate the re-tag and the audit insert. retagUnreachable is
-  // reused by the recurring recheck, whose candidate set includes quarantined=false
-  // rows. A quarantined=false row whose GitHub repo 404s must NOT be re-tagged or
-  // have last_seen_at bumped — that would keep a dead repo artificially alive (see
-  // E8); maintenance ages it out at 7 days instead. The .eq('quarantined', true)
-  // guard already no-ops the UPDATE for such rows; gating the audit insert on
-  // rows-affected stops a no-op write from emitting a misleading
-  // quarantine:repo_gone row. Wave-1 (loadCandidates) rows are all quarantined=true,
-  // so the CAS always hits and behavior is unchanged.
+  // SMI-5166 E9: CAS-gate on quarantined=true — a 404 on a live row must NOT retag
+  // it (maintenance ages it out). Audit insert gated on rows-affected.
   const { data: retagged } = await db
     .from('skills')
     .update({ quarantine_reason: reason, last_seen_at: now })
@@ -149,14 +131,16 @@ export async function retagUnreachable(
 }
 
 /**
- * Process a single stale-quarantined row:
- * parse → fetch → scan → clear | keep-security | repo-gone | parse-failed.
+ * Process a single stale-quarantined row (SMI-5437 Wave 2: extended with sibling rescan).
+ * Decision tree: parse → fetch SKILL.md → scan SKILL.md → (live? CAS touch) →
+ * sibling rescan (quarantined=true clean only) → CAS clear | requarantined | fetch-error.
  */
 export async function processRow(
   row: StaleQuarantinedRow,
   headers: Record<string, string>,
   apply: boolean,
-  db: SupabaseClient
+  db: SupabaseClient,
+  telemetry: RateLimitTelemetry = newRateLimitTelemetry()
 ): Promise<RowResult> {
   // Step 1: parse the repo URL into a GitHub Contents API URL.
   const parsed = parseSkillMdUrl(row.repo_url, row.skill_path)
@@ -210,8 +194,7 @@ export async function processRow(
         return { row, outcome: 'error', score: scan.riskScore }
       }
 
-      // Audit the change (parity with cleared/repo-gone). A live->malicious transition
-      // is a distinct event from a stale re-tag, for ops observability.
+      // Audit: live→malicious is a distinct event from a stale re-tag.
       if (updated && updated.length > 0) {
         await db.from('audit_logs').insert({
           event_type: wasLive ? 'quarantine:requarantined' : 'quarantine:retagged',
@@ -237,24 +220,12 @@ export async function processRow(
     return { row, outcome: wasLive ? 'requarantined' : 'kept-security', score: scan.riskScore }
   }
 
-  // Step 4: scanner passes.
+  // Scanner passes. quarantined===false → CAS last_seen_at touch; quarantined===undefined
+  // (runSweep CLI) intentionally falls to the fail-closed sibling rescan below (SMI-5437; E4).
   const now = new Date().toISOString()
-
-  // SMI-5166 prevention branch: an aging-but-not-yet-quarantined LIVE row
-  // (quarantined === false) just needs its last_seen_at refreshed so the
-  // 7-day maintenance reconcile never quarantines it. The strict `=== false`
-  // guard means Wave-1 loadCandidates rows (quarantined undefined) fall through
-  // to the existing clear path unchanged (SMI-5166 E4 regression pin).
   if (row.quarantined === false) {
     if (!apply) return { row, outcome: 'live-touched', score: scan.riskScore }
-    // E1: the CAS guard `.eq('quarantined', false)` is REQUIRED, not optional.
-    // Candidates are loaded up front and the run takes minutes; if the daily
-    // maintenance pass quarantines this row between load and this write, an
-    // unconditional last_seen_at write would stamp a fresh timestamp onto a
-    // now-quarantined row WITHOUT clearing quarantined — leaving it stuck
-    // quarantined-but-fresh, invisible to Phase 6 AND to the next recheck's
-    // self-heal cohort. The CAS no-ops in that race, so the row keeps its old
-    // timestamp and is correctly picked up as quarantined=true stale next run.
+    // E1: CAS guards against a row quarantined by maintenance between load and write.
     const { data: touched, error: touchErr } = await db
       .from('skills')
       .update({ last_seen_at: now })
@@ -267,13 +238,36 @@ export async function processRow(
     }
     if (!touched || touched.length === 0)
       return { row, outcome: 'cas-skipped', score: scan.riskScore }
-    // Pure liveness touch — emit NO audit row (silent, like the indexer's
-    // unchangedIds touch). last_seen_at refresh is not a state transition worth auditing.
     return { row, outcome: 'live-touched', score: scan.riskScore }
   }
 
-  // Existing quarantined=true clear path (self-heal): clear the quarantine.
-  if (!apply) return { row, outcome: 'cleared', score: scan.riskScore }
+  // SMI-5437 Wave 2: sibling re-scan for quarantined=true rows with clean SKILL.md.
+  // Fail-closed: transient fetch → 'fetch-error' (quarantine stays, retry next cycle).
+  const sibRescan = await runSiblingRescan(
+    parsed.owner,
+    parsed.repo,
+    parsed.ref ?? 'main',
+    parsed.dir,
+    telemetry
+  )
+  if (sibRescan.status === 'unknown') {
+    // Transient: can't verify sibling state; don't change quarantine status.
+    return { row, outcome: 'fetch-error' }
+  }
+  if (sibRescan.status === 'malicious') {
+    if (apply) {
+      const sibReason = buildSiblingQuarantineReason(sibRescan, parsed.owner, row.name)
+      const writeResult = await writeSiblingRequarantine(db, row, sibRescan, sibReason)
+      if (writeResult === 'error') {
+        console.error(`  ERROR requarantining sibling ${row.author}/${row.name}`)
+        return { row, outcome: 'error', score: scan.riskScore }
+      }
+    }
+    // Additive: recheck.ts increments both requarantined + sibling_requarantined.
+    return { row, outcome: 'sibling-requarantined', score: scan.riskScore }
+  }
+  // sibRescan.status === 'clean'. Additive: recheck.ts increments both cleared + sibling_recovered.
+  if (!apply) return { row, outcome: 'sibling-recovered', score: scan.riskScore }
 
   const { data: updated, error } = await db
     .from('skills')
@@ -303,8 +297,8 @@ export async function processRow(
     action: 'revalidate_stale_quarantines',
     result: 'success',
     metadata: {
-      smi: 'SMI-5165',
-      sweep: 'stale-revalidation',
+      smi: 'SMI-5437',
+      sweep: 'recheck-sibling',
       skill_id: row.id,
       author: row.author,
       name: row.name,
@@ -315,7 +309,7 @@ export async function processRow(
     },
   })
 
-  return { row, outcome: 'cleared', score: scan.riskScore }
+  return { row, outcome: 'sibling-recovered', score: scan.riskScore }
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +395,14 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
           counts.cleared++
           console.log(`  CLEAR  ${tag} (score ${r.score})`)
           break
+        case 'sibling-recovered': // SMI-5437 W2: sibling rescan clean
+          counts.cleared++
+          console.log(`  CLEAR  ${tag} [sibling-clean] (score ${r.score})`)
+          break
+        case 'sibling-requarantined': // SMI-5437 W2: sibling still/newly malicious
+          keptRows.push(r)
+          console.warn(`  KEEP   ${tag} — sibling malicious`)
+          break
         case 'live-touched':
           counts.liveTouched++
           break
@@ -434,10 +436,9 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
     }
   }
 
-  if (keptRows.length > 0) {
-    console.log(`\nStill quarantined — genuine security findings (score >= 40):`)
-    for (const r of keptRows) console.log(`  * ${r.row.author}/${r.row.name} (score ${r.score})`)
-  }
+  if (keptRows.length > 0)
+    for (const r of keptRows)
+      console.log(`  KEEP   ${r.row.author}/${r.row.name} (score ${r.score})`)
 
   if (goneRows.length > 0) {
     console.log(`\nLeft quarantined — repo/SKILL.md unreachable:`)
