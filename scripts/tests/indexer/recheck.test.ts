@@ -40,6 +40,7 @@ import {
   stubFetchCleanSkillMdMaliciousSiblings,
   stubFetchCleanSkillMdTransientSiblings,
   stubFetchTransientAlways,
+  isRawGithubUrl,
   BASE_OPTS,
 } from './recheck.test-helpers.ts'
 
@@ -620,9 +621,7 @@ describe('runRecheck — SMI-5437 sibling re-scan: SKILL.md malicious → siblin
     expect(result.recheck.sibling_requarantined).toBe(0)
     expect(result.recheck.sibling_recovered).toBe(0)
     // Only the SKILL.md fetch (api.github.com) should have fired; NO raw.githubusercontent.com.
-    const rawCalls = fetchSpy.mock.calls.filter((c) =>
-      String(c[0]).includes('raw.githubusercontent.com')
-    )
+    const rawCalls = fetchSpy.mock.calls.filter((c) => isRawGithubUrl(c[0]))
     expect(rawCalls).toHaveLength(0)
     warnSpy.mockRestore()
   })

@@ -12,6 +12,20 @@ import { vi, type MockInstance } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { StaleQuarantinedRow } from '../../indexer/revalidate-stale-quarantines.ts'
 
+/**
+ * SMI-5437: route mock fetches by EXACT hostname (sibling fetches hit
+ * raw.githubusercontent.com). Parses the URL rather than substring-matching the
+ * host, so it is not flagged by CodeQL `js/incomplete-url-substring-sanitization`
+ * (a spoof host like `raw.githubusercontent.com.evil.com` cannot match).
+ */
+export function isRawGithubUrl(url: unknown): boolean {
+  try {
+    return new URL(String(url)).hostname === 'raw.githubusercontent.com'
+  } catch {
+    return false
+  }
+}
+
 /** A recheck candidate row (loadRecheckCandidates selects quarantined + last_seen_at). */
 export function makeRow(overrides: Partial<StaleQuarantinedRow> = {}): StaleQuarantinedRow {
   return {
@@ -69,7 +83,7 @@ function makeBodyStream(text: string): ReadableStream<Uint8Array> {
 export function stubFetchCleanAlways(): MockInstance {
   return vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
     const urlStr = String(url)
-    if (urlStr.includes('raw.githubusercontent.com')) {
+    if (isRawGithubUrl(urlStr)) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -115,7 +129,7 @@ export const MALICIOUS_SIBLING_CONTENT = `
 export function stubFetchMaliciousSkillMdCleanSiblings(): MockInstance {
   return vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
     const urlStr = String(url)
-    if (urlStr.includes('raw.githubusercontent.com')) {
+    if (isRawGithubUrl(urlStr)) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -139,7 +153,7 @@ export function stubFetchMaliciousSkillMdCleanSiblings(): MockInstance {
 export function stubFetchMaliciousAlways(): MockInstance {
   return vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
     const urlStr = String(url)
-    if (urlStr.includes('raw.githubusercontent.com')) {
+    if (isRawGithubUrl(urlStr)) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -166,7 +180,7 @@ export function stubFetchMaliciousAlways(): MockInstance {
 export function stubFetchCleanSkillMdMaliciousSiblings(): MockInstance {
   return vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
     const urlStr = String(url)
-    if (urlStr.includes('raw.githubusercontent.com')) {
+    if (isRawGithubUrl(urlStr)) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -199,7 +213,7 @@ export function stubFetchTransientAlways(status = 403): MockInstance {
 export function stubFetchCleanSkillMdTransientSiblings(status = 403): MockInstance {
   return vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
     const urlStr = String(url)
-    if (urlStr.includes('raw.githubusercontent.com')) {
+    if (isRawGithubUrl(urlStr)) {
       return Promise.resolve({
         ok: false,
         status,
