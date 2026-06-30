@@ -27,6 +27,9 @@ import {
   type TreeHashCache,
   type TreeHashCacheCounters,
 } from '../../indexer/tree-hash-cache.ts'
+// SMI-5436 Wave 2: each SKILL.md validation now also fires one CDN fetch per BUNDLED_SCAN_FILES
+// entry (sibling scan). All return null from the undefined mock — fail-open, skill not quarantined.
+import { BUNDLED_SCAN_FILES } from '../../indexer/skill-processor.security.ts'
 
 const AUTHOR: HighTrustAuthor = {
   owner: 'anthropics',
@@ -196,8 +199,9 @@ describe('indexSkillsFromContents — tree-hash cache round-trip (SMI-4878)', ()
     expect(counters.hits).toBe(0)
     // SHA was present + cache wired → the fall-through increments misses.
     expect(counters.misses).toBe(1)
-    // Two fetches: Contents listing + the raw SKILL.md the gate did NOT skip.
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // Fetches: Contents listing + SKILL.md + BUNDLED_SCAN_FILES.length sibling CDN
+    // probes (SMI-5436 Wave 2; all return null from the exhausted mock — fail-open).
+    expect(fetchMock).toHaveBeenCalledTimes(2 + BUNDLED_SCAN_FILES.length)
     expect(fetchMock.mock.calls[1][0]).toContain(
       'raw.githubusercontent.com/anthropics/skills/main/skills/web-search/SKILL.md'
     )
@@ -222,7 +226,9 @@ describe('indexSkillsFromContents — tree-hash cache round-trip (SMI-4878)', ()
       newRateLimitTelemetry()
     )
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // Fetches: Contents listing + SKILL.md + BUNDLED_SCAN_FILES.length sibling CDN
+    // probes (SMI-5436 Wave 2; all return null from the exhausted mock — fail-open).
+    expect(fetchMock).toHaveBeenCalledTimes(2 + BUNDLED_SCAN_FILES.length)
     expect(result.skills).toHaveLength(1)
     expect(result.skills[0].skillPath).toBe(SKILL_PATH)
   })

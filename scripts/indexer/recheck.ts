@@ -237,6 +237,7 @@ function zeroCounters(killswitchEngaged: boolean): RecheckAuditCounters {
     fetch_error: 0,
     cas_skipped: 0,
     errors: 0,
+    sibling_gate_skipped: 0,
     fetch_error_rate: 0,
     cap_saturated: false,
     killswitch_engaged: killswitchEngaged,
@@ -248,27 +249,7 @@ function zeroCounters(killswitchEngaged: boolean): RecheckAuditCounters {
  * recheck audit row carries the same flat keys as discovery/maintenance rows
  * (v_indexer_health / ops-report don't branch on run type).
  */
-function recheckAuditZeroFills(): {
-  topics: string[]
-  found: number
-  indexed: number
-  updated: number
-  failed: number
-  stale: number
-  quality_gate_filtered: number
-  unchanged: number
-  quarantined: number
-  github_skill_count: number
-  code_search: { repos_found: number; retries: number }
-  scoreDistribution: { highTrust: number; community: number; scores: number[] }
-  categorizedCount: number
-  categoryAssignments: number
-  wildcard_expansion_count: number
-  cron_slot: number | null
-  rotation_source: 'fallback'
-  discovery_path_counts: Record<string, number>
-  high_trust_fallback_hits: number
-} {
+function recheckAuditZeroFills() {
   return {
     topics: [],
     found: 0,
@@ -286,7 +267,7 @@ function recheckAuditZeroFills(): {
     categoryAssignments: 0,
     wildcard_expansion_count: 0,
     cron_slot: null,
-    rotation_source: 'fallback',
+    rotation_source: 'fallback' as const,
     discovery_path_counts: {},
     high_trust_fallback_hits: 0,
   }
@@ -373,10 +354,34 @@ export async function runRecheck(opts: {
   let fetchErrors = 0
   let casSkipped = 0
   let errors = 0
+  let siblingGateSkipped = 0
 
   for (let i = 0; i < rows.length; i += batch) {
     const slice = rows.slice(i, i + batch)
-    const results = await Promise.all(slice.map((r) => processRow(r, headers, apply, supabase)))
+    // SMI-5436 Wave 2 minimal gate: skip automatic unquarantine for sibling-triggered
+    // quarantines (any finding with filePath != null). Full recheck extension (re-scan
+    // the named sibling) is filed as SMI-5437.
+    const eligibleForProcess: (typeof rows)[number][] = []
+    for (const row of slice) {
+      if (row.quarantined) {
+        const findings = Array.isArray(row.security_findings) ? row.security_findings : []
+        const hasSiblingFinding = findings.some(
+          (f): f is Record<string, unknown> =>
+            typeof f === 'object' && f !== null && 'filePath' in f && f.filePath != null
+        )
+        if (hasSiblingFinding) {
+          siblingGateSkipped++
+          console.warn(
+            `[recheck] sibling-triggered quarantine requires manual review or Phase 3 recheck — skipping ${row.author}/${row.name}`
+          )
+          continue
+        }
+      }
+      eligibleForProcess.push(row)
+    }
+    const results = await Promise.all(
+      eligibleForProcess.map((r) => processRow(r, headers, apply, supabase))
+    )
     for (const r of results) {
       switch (r.outcome) {
         case 'cleared':
@@ -432,6 +437,7 @@ export async function runRecheck(opts: {
     fetch_error: fetchErrors,
     cas_skipped: casSkipped,
     errors,
+    sibling_gate_skipped: siblingGateSkipped,
     fetch_error_rate: fetchErrorRate,
     cap_saturated: capSaturated,
     killswitch_engaged: false,
