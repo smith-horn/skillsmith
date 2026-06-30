@@ -22,7 +22,7 @@ const __dirname = dirname(__filename)
 
 // Test configuration
 const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-author')
-const CLI_PATH = join(__dirname, '../../dist/src/index.js')
+const CLI_PATH = join(__dirname, '../../dist/cli.js')
 
 // Valid SKILL.md content for validation tests
 const VALID_SKILL_MD = `---

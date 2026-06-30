@@ -23,7 +23,7 @@ const __dirname = dirname(__filename)
 // Test configuration
 const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-manage')
 const TEST_SKILLS_DIR = join(TEST_DIR, '.claude', 'skills')
-const CLI_PATH = join(__dirname, '../../dist/src/index.js')
+const CLI_PATH = join(__dirname, '../../dist/cli.js')
 
 // Mock skill for testing
 const MOCK_SKILL = {

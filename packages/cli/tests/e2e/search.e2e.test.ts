@@ -26,7 +26,7 @@ const __dirname = dirname(__filename)
 // Test configuration
 const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-search')
 const TEST_DB_PATH = join(TEST_DIR, 'search-test.db')
-const CLI_PATH = join(__dirname, '../../dist/src/index.js')
+const CLI_PATH = join(__dirname, '../../dist/cli.js')
 
 // Seed data for search tests
 // Uses configurable URLs from test-config.ts to avoid hardcoded values

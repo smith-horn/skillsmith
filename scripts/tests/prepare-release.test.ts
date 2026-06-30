@@ -161,13 +161,17 @@ describe('updateWorkspaceDependencies (SMI-5057)', () => {
     expect(updated).toContain('packages/mcp-server/package.json')
 
     // Inspect the writes: cli's mcp-server dep range should be ^0.5.3.
+    // SMI-5427: the CLI bundles (esbuild-inlines) @skillsmith/core + mcp-server,
+    // so they live in devDependencies (resolvable at build, stripped from the
+    // published install). updateWorkspaceDependencies syncs all dep kinds, so the
+    // bumped ranges land in devDependencies here, not dependencies.
     const cliWrite = mockedWriteFileSync.mock.calls.find((c) =>
       String(c[0]).endsWith('packages/cli/package.json')
     )
     expect(cliWrite).toBeDefined()
     const cliPkg = JSON.parse(String(cliWrite![1]))
-    expect(cliPkg.dependencies['@skillsmith/mcp-server']).toBe('^0.5.3')
-    expect(cliPkg.dependencies['@skillsmith/core']).toBe('^0.7.3')
+    expect(cliPkg.devDependencies['@skillsmith/mcp-server']).toBe('^0.5.3')
+    expect(cliPkg.devDependencies['@skillsmith/core']).toBe('^0.7.3')
   })
 
   it('skips skillsmith-vscode (skipDepRangeUpdate=true) even if a future contributor adds @skillsmith/* deps', () => {
