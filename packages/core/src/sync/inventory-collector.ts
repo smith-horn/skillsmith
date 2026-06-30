@@ -65,19 +65,35 @@ async function resolvesToDirectory(
  * - `skill_id` is the parsed `id` front-matter field, falling back to the parsed
  *   `name`, then the directory name (same precedence as the CLI scanner).
  * - A directory with no readable SKILL.md still counts as a skill: `skill_id` is
- *   the directory name, with `version` and `content_hash` both `null`.
+ *   the directory name, with `version`, `content_hash`, and provenance fields `null`.
+ * - `author`, `license`, `repository` are self-asserted values from the SKILL.md
+ *   front-matter (SMI-5442 Wave 3). They are `null` when absent or unparseable.
  */
 async function readSkillFields(
   skillDir: string,
   dirName: string
-): Promise<{ skillId: string; version: string | null; contentHash: string | null }> {
+): Promise<{
+  skillId: string
+  version: string | null
+  contentHash: string | null
+  author: string | null
+  license: string | null
+  repository: string | null
+}> {
   try {
     const content = await readFile(join(skillDir, 'SKILL.md'), 'utf-8')
     const contentHash = createHash('sha256').update(content, 'utf8').digest('hex')
     const parsed = new SkillParser().parse(content)
     if (!parsed) {
       // SKILL.md is readable but has no valid frontmatter — hash still applies.
-      return { skillId: dirName, version: null, contentHash }
+      return {
+        skillId: dirName,
+        version: null,
+        contentHash,
+        author: null,
+        license: null,
+        repository: null,
+      }
     }
     // Match the CLI scanner: read `id` off the parsed metadata, then `name`.
     const parsedId = (parsed as unknown as Record<string, unknown>)['id'] as string | undefined
@@ -85,10 +101,20 @@ async function readSkillFields(
       skillId: parsedId ?? parsed.name ?? dirName,
       version: parsed.version ?? null,
       contentHash,
+      author: parsed.author ?? null,
+      license: parsed.license ?? null,
+      repository: parsed.repository ?? null,
     }
   } catch {
-    // No readable SKILL.md — still a skill, but version/hash are unknown.
-    return { skillId: dirName, version: null, contentHash: null }
+    // No readable SKILL.md — still a skill, but version/hash/provenance are unknown.
+    return {
+      skillId: dirName,
+      version: null,
+      contentHash: null,
+      author: null,
+      license: null,
+      repository: null,
+    }
   }
 }
 
@@ -114,6 +140,11 @@ async function collectHarness(
   }
 
   for (const dirent of dirents) {
+    // Skip dot-prefixed directories: they are harness internals, not skills.
+    // Covers .backups (created by apply_recommended_edit — SMI-5440) and any
+    // other dot-dir that must not surface as inventory rows. (SMI-5442)
+    if (dirent.name.startsWith('.')) continue
+
     const entryPath = join(harnessDir, dirent.name)
     if (!(await resolvesToDirectory(entryPath, dirent.isDirectory(), dirent.isSymbolicLink()))) {
       continue
@@ -125,13 +156,19 @@ async function collectHarness(
     if (seenRealpaths.has(realDir)) continue
     seenRealpaths.add(realDir)
 
-    const { skillId, version, contentHash } = await readSkillFields(entryPath, dirent.name)
+    const { skillId, version, contentHash, author, license, repository } = await readSkillFields(
+      entryPath,
+      dirent.name
+    )
     entries.push({
       harness,
       skill_id: skillId,
       version,
       content_hash: contentHash,
       source: null,
+      author,
+      license,
+      repository,
       pinned_version: null,
       update_policy: null,
     })

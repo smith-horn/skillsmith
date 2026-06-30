@@ -40,6 +40,9 @@ function makeRow(partial: Partial<InventoryRow>): InventoryRow {
     pinned: null,
     registry_hash: null,
     skill_state: null,
+    author: null,
+    repository: null,
+    license: null,
     ...partial,
   }
 }
@@ -136,9 +139,18 @@ describe('buildInventoryView', () => {
     expect(result[1].deviceId).toBe('second')
   })
 
-  it('passes all five SkillStates through to SkillView.state', () => {
-    const states: SkillState[] = ['current', 'drifted', 'missing', 'pinned', 'unknown']
-    const rows = states.map((s, i) =>
+  it('passes all seven RPC-emittable SkillStates through to SkillView.state', () => {
+    // 'pending' is display-only and never emitted by the RPC; not included here.
+    const rpcStates: Array<NonNullable<InventoryRow['skill_state']>> = [
+      'current',
+      'drifted',
+      'missing',
+      'pinned',
+      'unknown',
+      'local',
+      'source-identified',
+    ]
+    const rows = rpcStates.map((s, i) =>
       makeRow({
         device_id: 'dev-all-states',
         skill_id: `skill-${i}`,
@@ -148,8 +160,43 @@ describe('buildInventoryView', () => {
     )
     const result = buildInventoryView(rows)
     expect(result).toHaveLength(1)
-    expect(result[0].skills).toHaveLength(5)
-    expect(result[0].skills.map((sk) => sk.state)).toEqual(states)
+    expect(result[0].skills).toHaveLength(7)
+    expect(result[0].skills.map((sk) => sk.state)).toEqual(rpcStates)
+  })
+
+  it('threads author, repository, license from RPC row into SkillView', () => {
+    const rows = [
+      makeRow({
+        device_id: 'dev-src',
+        skill_id: 'acme/widget',
+        harness: 'zed',
+        skill_state: 'source-identified',
+        author: 'acme-org',
+        repository: 'https://github.com/acme/widget',
+        license: 'MIT',
+      }),
+    ]
+    const result = buildInventoryView(rows)
+    const skill = result[0].skills[0]
+    expect(skill.author).toBe('acme-org')
+    expect(skill.repository).toBe('https://github.com/acme/widget')
+    expect(skill.license).toBe('MIT')
+  })
+
+  it('preserves null for author/repository/license when RPC row omits them', () => {
+    const rows = [
+      makeRow({
+        device_id: 'dev-local',
+        skill_id: 'my/local-skill',
+        harness: 'cursor',
+        skill_state: 'local',
+      }),
+    ]
+    const result = buildInventoryView(rows)
+    const skill = result[0].skills[0]
+    expect(skill.author).toBeNull()
+    expect(skill.repository).toBeNull()
+    expect(skill.license).toBeNull()
   })
 
   it('drops null-skill_state sentinel rows even when mixed with real skill rows', () => {
@@ -263,7 +310,16 @@ describe('formatAbsoluteTime', () => {
 // ─── SKILL_STATE_META ─────────────────────────────────────────────────────────
 
 describe('SKILL_STATE_META', () => {
-  const allStates: SkillState[] = ['current', 'drifted', 'missing', 'pinned', 'unknown']
+  const allStates: SkillState[] = [
+    'current',
+    'drifted',
+    'missing',
+    'pinned',
+    'unknown',
+    'local',
+    'source-identified',
+    'pending',
+  ]
 
   it('has an entry for every SkillState', () => {
     for (const state of allStates) {
@@ -279,7 +335,7 @@ describe('SKILL_STATE_META', () => {
     }
   })
 
-  it('descriptions match the spec copy', () => {
+  it('descriptions match the spec copy for existing states', () => {
     expect(SKILL_STATE_META.current.description).toBe('Up to date with the registry')
     expect(SKILL_STATE_META.drifted.description).toBe(
       'A newer version is available in the registry'
@@ -291,6 +347,25 @@ describe('SKILL_STATE_META', () => {
     expect(SKILL_STATE_META.unknown.description).toBe(
       'Not matched to a registry skill (local or custom)'
     )
+  })
+
+  it('local state has a neutral label and description (no warning/error connotation)', () => {
+    expect(SKILL_STATE_META.local.label).toBe('Local')
+    expect(SKILL_STATE_META.local.description).toBe(
+      'Installed locally; no registry or declared source'
+    )
+  })
+
+  it('source-identified state conveys claimed-but-unverified provenance', () => {
+    expect(SKILL_STATE_META['source-identified'].label).toBe('Claimed source')
+    expect(SKILL_STATE_META['source-identified'].description).toBe(
+      "Source declared in the skill's own metadata (not registry-verified)"
+    )
+  })
+
+  it('pending state conveys transient resolution (not a terminal error)', () => {
+    expect(SKILL_STATE_META.pending.label).toBe('Checking…')
+    expect(SKILL_STATE_META.pending.description).toBe('Resolving source — check back shortly')
   })
 })
 

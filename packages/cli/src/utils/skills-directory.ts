@@ -94,6 +94,11 @@ export async function getSkillsFromDirectory(
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
+        // Skip dot-prefixed directories: they are harness internals, not skills.
+        // Covers .backups (created by apply_recommended_edit — SMI-5440) and any
+        // other dot-dir that must not appear in inventory status. (SMI-5442)
+        if (entry.name.startsWith('.')) continue
+
         const skillPath = join(skillsDir, entry.name)
         const skillMdPath = join(skillPath, 'SKILL.md')
 
@@ -210,16 +215,27 @@ export interface HarnessSkillEntry {
   contentHash: string | null
   /** Absolute path to the skill directory. */
   path: string
+  /** Author claim from SKILL.md front-matter — self-asserted (SMI-5442). */
+  author: string | null
+  /** License claim from SKILL.md front-matter — self-asserted (SMI-5442). */
+  license: string | null
+  /** Repository URL claim from SKILL.md front-matter — self-asserted (SMI-5442). */
+  repository: string | null
 }
 
 /**
- * Reads `<skillPath>/SKILL.md`, returns its sha256 hex content hash and the
- * `id` front-matter field. Both are `null` on any read/parse error.
+ * Reads `<skillPath>/SKILL.md`, returns its sha256 hex content hash, the `id`
+ * front-matter field, and the three provenance fields (author/license/repository).
+ * All fields are `null` on any read/parse error. (SMI-5442)
  * @internal
  */
-async function readSkillMd(
-  skillPath: string
-): Promise<{ contentHash: string | null; skillId: string | null }> {
+async function readSkillMd(skillPath: string): Promise<{
+  contentHash: string | null
+  skillId: string | null
+  author: string | null
+  license: string | null
+  repository: string | null
+}> {
   try {
     const content = await readFile(join(skillPath, 'SKILL.md'), 'utf-8')
     const contentHash = createHash('sha256').update(content, 'utf8').digest('hex')
@@ -227,9 +243,15 @@ async function readSkillMd(
     const parsed = parser.parse(content)
     const parsedAny = parsed as unknown as Record<string, unknown>
     const skillId = (parsedAny['id'] as string | undefined) ?? null
-    return { contentHash, skillId }
+    return {
+      contentHash,
+      skillId,
+      author: parsed?.author ?? null,
+      license: parsed?.license ?? null,
+      repository: parsed?.repository ?? null,
+    }
   } catch {
-    return { contentHash: null, skillId: null }
+    return { contentHash: null, skillId: null, author: null, license: null, repository: null }
   }
 }
 
@@ -282,13 +304,22 @@ export async function getInstalledSkillsPerHarness(): Promise<HarnessSkillEntry[
     if (seenPaths.has(rp)) continue
     seenPaths.add(rp)
 
-    const { contentHash, skillId: parsedId } = await readSkillMd(skill.path)
+    const {
+      contentHash,
+      skillId: parsedId,
+      author,
+      license,
+      repository,
+    } = await readSkillMd(skill.path)
     out.push({
       harness: skill.installedVia,
       skillId: parsedId ?? skill.name,
       version: skill.version,
       contentHash,
       path: skill.path,
+      author,
+      license,
+      repository,
     })
   }
   return out
