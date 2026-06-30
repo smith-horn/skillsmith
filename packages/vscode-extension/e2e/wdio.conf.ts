@@ -74,7 +74,10 @@ export const config: WebdriverIO.Config = {
         extensionPath: EXTENSION_PATH,
         workspacePath: WORKSPACE_PATH,
         vscodeProxyOptions: {
-          commandTimeout: 120_000,
+          // Set 17% below the Mocha budget (120 s) so a bridge-call that times
+          // out surfaces the more-actionable "Remote command timeout exceeded"
+          // error rather than Mocha's bare spec-level timeout.
+          commandTimeout: 100_000,
         },
         userSettings: {
           'skillsmith.mcp.serverCommand': NODE_BIN,
@@ -103,11 +106,10 @@ export const config: WebdriverIO.Config = {
   reporters: ['spec'],
   logLevel: 'warn',
 
-  // Connection-layer slack for a slow CI host (SMI-5438): the time wdio waits for
-  // a single command round-trip to the VS Code host before erroring. This is NOT a
-  // result retry — it does not re-run or mask a failing assertion; it only widens
-  // the per-command transport budget so a momentarily-busy Extension Host doesn't
-  // trip "Remote command timeout exceeded". mochaOpts.retries stays at 1 (below).
+  // Widens the WebDriver session-connection budget — the time wdio waits for the
+  // initial WS handshake with the wdio-vscode-service proxy (NOT per-command
+  // round-trips; that is vscodeProxyOptions.commandTimeout above). Provides slack
+  // on a slow CI host spinning up Electron. Does NOT mask assertion failures.
   connectionRetryTimeout: 120_000,
 
   // Retries hide the iframe-timing races this suite exists to catch; cap at 1

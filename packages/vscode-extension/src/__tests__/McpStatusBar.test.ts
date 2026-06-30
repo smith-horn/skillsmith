@@ -184,6 +184,10 @@ describe('McpStatusBar (SMI-5341 Fix 3)', () => {
     clientBOnStatusChangeDispose.mockClear()
     currentClientRef.current = 'A'
     vi.mocked(vscode.window.createStatusBarItem).mockClear()
+    // Reset stubs that the registerMcpCommands suite (below) adds to the shared
+    // vscode mock — prevents cross-suite call-count pollution.
+    mockShowInfoMsg.mockReset()
+    mockWithProgress.mockReset()
     const stub = getStub()
     if (stub) {
       stub.show.mockClear()
