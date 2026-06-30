@@ -282,10 +282,11 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
     const result = await executeRecommend({ project_context: 'git', limit: 5 }, onlineContext)
 
     // Default is ON — discovery-only entry must be absent.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(
-      result.recommendations.find((r: any) => r.skill_id === 'community/discovery-only')
-    ).toBeUndefined()
+    const hiddenEntry = result.recommendations.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (r: any) => r.skill_id === 'community/discovery-only'
+    )
+    expect(hiddenEntry).toBeUndefined()
     expect(result.discovery_only_hidden).toBe(1)
   })
 
@@ -313,10 +314,11 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
       onlineContext
     )
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(
-      result.recommendations.find((r: any) => r.skill_id === 'community/discovery-only')
-    ).toBeDefined()
+    const includedEntry = result.recommendations.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (r: any) => r.skill_id === 'community/discovery-only'
+    )
+    expect(includedEntry).toBeDefined()
     expect(result.discovery_only_hidden ?? 0).toBe(0)
   })
 

@@ -30,6 +30,9 @@
 # SMI-5211 split follow-up
 packages/core/tests/RawUrlSourceAdapter.security.test.ts
 
+# SMI-5439 split follow-up
+scripts/tests/indexer/parity.test.ts
+
 # (SMI-5263 split follow-up cleared 2026-06-12: install.integration.test.ts was
 #  split into 3 concern-scoped siblings under 500 lines each —
 #  install.{parsing,execution}.integration.test.ts; suite still 174 passed / 6 skipped.)

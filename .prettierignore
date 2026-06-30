@@ -22,6 +22,7 @@ docs/
 .claude/skills/
 .claude/plans/
 .claude/hive-mind/
+supabase/.temp/
 supabase/functions/
 supabase/migrations/
 
