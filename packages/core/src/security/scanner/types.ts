@@ -50,6 +50,8 @@ export interface SecurityFinding {
   inDocumentationContext?: boolean
   /** Confidence level - lower for findings in documentation context */
   confidence?: FindingConfidence
+  /** SMI-5436: Path of the skill bundle file that triggered this finding, relative to the skill root. Absent for SKILL.md-only findings. */
+  filePath?: string
 }
 
 /**
