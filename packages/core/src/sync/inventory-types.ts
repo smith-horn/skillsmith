@@ -51,6 +51,12 @@ export interface InventorySkillEntry {
   version?: string | null
   /** Where it was installed from (registry, local path, git, …). */
   source?: string | null
+  /** Author claim from SKILL.md front-matter — self-asserted (unverified). */
+  author?: string | null
+  /** License claim from SKILL.md front-matter — self-asserted (unverified). */
+  license?: string | null
+  /** Repository URL claim from SKILL.md front-matter — self-asserted (unverified). */
+  repository?: string | null
   /** Content hash of the installed skill, for registry drift detection. */
   content_hash?: string | null
   /** Pinned version, if the user pinned it (suppresses drift/stale flags). */
@@ -98,6 +104,9 @@ export const INVENTORY_LIMITS = {
   SKILL_ID_MAX: 255,
   VERSION_MAX: 64,
   SOURCE_MAX: 255,
+  AUTHOR_MAX: 200,
+  LICENSE_MAX: 64,
+  REPOSITORY_MAX: 512,
   CONTENT_HASH_MAX: 128,
   PINNED_VERSION_MAX: 64,
   UPDATE_POLICY_MAX: 16,
