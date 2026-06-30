@@ -64,6 +64,9 @@ Quality Score Formula:
     // SMI-825: Security filters
     .option('--safe-only', 'Only show skills that passed security scan')
     .option('--max-risk <number>', 'Maximum risk score (0-100, lower is safer)')
+    // SMI-5427: output-control flags for scripted / CI use.
+    .option('-q, --quiet', 'Suppress all non-result output (spinners, probe warnings)')
+    .option('--no-progress', 'Suppress progress spinners without silencing other output')
     .action(searchAction)
 
   return cmd

@@ -343,6 +343,11 @@ export class SkillsmithApiClient {
     if (options.minQualityScore !== undefined)
       params.set('min_score', String(options.minQualityScore))
     if (options.category) params.set('category', options.category)
+    // SMI-5427: security filters forwarded to skills-search edge fn.
+    if (options.safeOnly) params.set('safe_only', 'true')
+    if (options.maxRiskScore !== undefined && options.maxRiskScore !== null) {
+      params.set('max_risk', String(options.maxRiskScore))
+    }
 
     const endpoint = `/skills-search?${params.toString()}`
     return withResponseCache(

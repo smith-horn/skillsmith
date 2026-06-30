@@ -94,6 +94,10 @@ async function runCommand(args: string[], timeoutMs = 30000): Promise<CommandRes
         ...process.env,
         NODE_ENV: 'test',
         SKILLSMITH_E2E: 'true',
+        // SMI-5427: force offline mode so E2E tests use the seeded local DB
+        // rather than the production skills-search endpoint. Remote-first
+        // path is covered by unit tests in tests/search-helpers.test.ts.
+        SKILLSMITH_OFFLINE_MODE: 'true',
       },
     })
 
