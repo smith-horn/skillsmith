@@ -6,7 +6,7 @@
  * - rebind() disposes the previous subscription and binds to the new client.
  * - dispose() disposes the active statusSub.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // Hoist per-client stubs so the vi.mock factory can reference them.
@@ -21,6 +21,14 @@ const {
   clientBGetStatus,
   clientBOnStatusChangeDispose,
   currentClientRef,
+  // registerMcpCommands test helpers (SMI-5438)
+  cmdHandlers,
+  mockRegisterCommand,
+  mockShowInfoMsg,
+  mockWithProgress,
+  reconnectIsConnected,
+  reconnectDisconnect,
+  reconnectConnect,
 } = vi.hoisted(() => {
   // Per-client listener registries — mutated in place so the mock stays valid.
   const clientAListeners: Array<(s: string) => void> = []
@@ -43,6 +51,20 @@ const {
   // Pointer that the getMcpClient mock follows — flip to swap the "singleton".
   const currentClientRef = { current: 'A' as 'A' | 'B' }
 
+  // Stubs for registerMcpCommands / mcpReconnect tests (SMI-5438).
+  const cmdHandlers = new Map<string, () => Promise<void>>()
+  const mockRegisterCommand = vi.fn((name: string, handler: () => Promise<void>) => {
+    cmdHandlers.set(name, handler)
+    return { dispose: vi.fn() }
+  })
+  const mockShowInfoMsg = vi.fn()
+  const mockWithProgress = vi.fn(
+    (_opts: unknown, cb: (p: { report: () => void }) => Promise<unknown>) => cb({ report: vi.fn() })
+  )
+  const reconnectIsConnected = vi.fn()
+  const reconnectDisconnect = vi.fn()
+  const reconnectConnect = vi.fn(() => Promise.resolve())
+
   return {
     clientAListeners,
     clientAOnStatusChange,
@@ -53,6 +75,13 @@ const {
     clientBGetStatus,
     clientBOnStatusChangeDispose,
     currentClientRef,
+    cmdHandlers,
+    mockRegisterCommand,
+    mockShowInfoMsg,
+    mockWithProgress,
+    reconnectIsConnected,
+    reconnectDisconnect,
+    reconnectConnect,
   }
 })
 
@@ -73,11 +102,17 @@ vi.mock('vscode', () => {
   }
 
   return {
+    commands: {
+      registerCommand: mockRegisterCommand,
+    },
     window: {
       createStatusBarItem: vi.fn(() => statusBarItemStub),
+      showInformationMessage: mockShowInfoMsg,
+      withProgress: mockWithProgress,
     },
     StatusBarAlignment,
     ThemeColor,
+    ProgressLocation: { Notification: 15, Window: 10, SourceControl: 1 },
     Disposable: class {
       constructor(private cb: () => void) {}
       dispose() {
@@ -93,17 +128,28 @@ vi.mock('../mcp/McpClient.js', () => ({
       return {
         onStatusChange: clientAOnStatusChange,
         getStatus: clientAGetStatus,
+        isConnected: reconnectIsConnected,
+        disconnect: reconnectDisconnect,
+        connect: reconnectConnect,
       }
     }
     return {
       onStatusChange: clientBOnStatusChange,
       getStatus: clientBGetStatus,
+      isConnected: reconnectIsConnected,
+      disconnect: reconnectDisconnect,
+      connect: reconnectConnect,
     }
   },
 }))
 
+vi.mock('../mcp/connectFailureUx.js', () => ({
+  handleConnectFailure: vi.fn(),
+  defaultConnectFailureDeps: vi.fn(() => ({})),
+}))
+
 import * as vscode from 'vscode'
-import { McpStatusBar } from '../mcp/McpStatusBar.js'
+import { McpStatusBar, registerMcpCommands } from '../mcp/McpStatusBar.js'
 
 /** Fire a status through all of client A's registered listeners. */
 const fireA = (s: string) => clientAListeners.forEach((l) => l(s))
@@ -300,5 +346,109 @@ describe('McpStatusBar (SMI-5341 Fix 3)', () => {
       bar.dispose()
       expect(clientBOnStatusChangeDispose).toHaveBeenCalledTimes(1)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// registerMcpCommands — mcpReconnect command (SMI-5438)
+//
+// The "already connected" branch must NOT await the dialog — if it did,
+// browser.executeWorkbench() in E2E tests would hang indefinitely (nobody
+// clicks the button). The command must resolve immediately, with the dialog
+// callbacks wired asynchronously via .then().
+// ---------------------------------------------------------------------------
+describe('registerMcpCommands (mcpReconnect — SMI-5438)', () => {
+  const contextStub = { subscriptions: { push: vi.fn() } }
+  let handler: () => Promise<void>
+
+  beforeAll(() => {
+    registerMcpCommands(contextStub as unknown as Parameters<typeof registerMcpCommands>[0])
+    const h = cmdHandlers.get('skillsmith.mcpReconnect')
+    if (!h) throw new Error('mcpReconnect was not registered')
+    handler = h
+  })
+
+  beforeEach(() => {
+    mockShowInfoMsg.mockReset()
+    mockWithProgress
+      .mockReset()
+      .mockImplementation((_opts: unknown, cb: (p: { report: () => void }) => Promise<unknown>) =>
+        cb({ report: vi.fn() })
+      )
+    reconnectIsConnected.mockReset()
+    reconnectDisconnect.mockReset()
+    reconnectConnect.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('registers the mcpReconnect command and pushes its disposable to subscriptions', () => {
+    expect(mockRegisterCommand).toHaveBeenCalledWith(
+      'skillsmith.mcpReconnect',
+      expect.any(Function)
+    )
+    expect(contextStub.subscriptions.push).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves immediately when already connected — dialog is fire-and-forget', async () => {
+    reconnectIsConnected.mockReturnValue(true)
+    // Dialog never resolves — simulates nobody clicking in an E2E test.
+    mockShowInfoMsg.mockReturnValue(new Promise(() => {}))
+
+    // Must settle without waiting for the dialog.
+    await expect(
+      Promise.race([
+        handler(),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('blocked by dialog')), 50)),
+      ])
+    ).resolves.toBeUndefined()
+
+    // Dialog was still shown (fire-and-forget, not skipped).
+    expect(mockShowInfoMsg).toHaveBeenCalledWith(
+      'Already connected to MCP server',
+      'Reconnect',
+      'Disconnect'
+    )
+    // Not connected path was not taken.
+    expect(mockWithProgress).not.toHaveBeenCalled()
+  })
+
+  it('disconnects and reconnects when "Reconnect" button is clicked', async () => {
+    reconnectIsConnected.mockReturnValue(true)
+    mockShowInfoMsg.mockResolvedValue('Reconnect')
+
+    await handler()
+    // Fire-and-forget .then() runs in the next microtask(s).
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(reconnectDisconnect).toHaveBeenCalledTimes(1)
+    expect(reconnectConnect).toHaveBeenCalledTimes(1)
+    expect(reconnectDisconnect).toHaveBeenCalledBefore(reconnectConnect)
+  })
+
+  it('disconnects without reconnecting when "Disconnect" button is clicked', async () => {
+    reconnectIsConnected.mockReturnValue(true)
+    mockShowInfoMsg.mockResolvedValueOnce('Disconnect').mockResolvedValue(undefined)
+
+    await handler()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(reconnectDisconnect).toHaveBeenCalledTimes(1)
+    expect(reconnectConnect).not.toHaveBeenCalled()
+    expect(mockShowInfoMsg).toHaveBeenCalledWith('Disconnected from MCP server')
+  })
+
+  it('calls connectWithProgress when not connected — dialog is not shown', async () => {
+    reconnectIsConnected.mockReturnValue(false)
+
+    await handler()
+
+    expect(reconnectConnect).toHaveBeenCalledTimes(1)
+    // "Already connected" dialog must NOT appear when client is disconnected.
+    expect(mockShowInfoMsg).not.toHaveBeenCalledWith(
+      'Already connected to MCP server',
+      'Reconnect',
+      'Disconnect'
+    )
   })
 })

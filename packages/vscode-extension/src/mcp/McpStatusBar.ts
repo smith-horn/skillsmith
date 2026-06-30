@@ -92,19 +92,20 @@ export function registerMcpCommands(context: vscode.ExtensionContext): void {
     const client = getMcpClient()
 
     if (client.isConnected()) {
-      const action = await vscode.window.showInformationMessage(
-        'Already connected to MCP server',
-        'Reconnect',
-        'Disconnect'
-      )
-
-      if (action === 'Reconnect') {
-        client.disconnect()
-        await connectWithProgress()
-      } else if (action === 'Disconnect') {
-        client.disconnect()
-        vscode.window.showInformationMessage('Disconnected from MCP server')
-      }
+      // Fire-and-forget: resolve immediately so callers (e.g. executeWorkbench in E2E
+      // helpers) are not blocked waiting for a dialog the user may never click.
+      // The notification still appears and button callbacks still execute async.
+      void vscode.window
+        .showInformationMessage('Already connected to MCP server', 'Reconnect', 'Disconnect')
+        .then((action) => {
+          if (action === 'Reconnect') {
+            client.disconnect()
+            void connectWithProgress()
+          } else if (action === 'Disconnect') {
+            client.disconnect()
+            void vscode.window.showInformationMessage('Disconnected from MCP server')
+          }
+        })
     } else {
       await connectWithProgress()
     }
@@ -131,7 +132,7 @@ export async function connectWithProgress(): Promise<boolean> {
       try {
         await client.connect()
         progress.report({ increment: 100 })
-        vscode.window.showInformationMessage('Connected to Skillsmith MCP server')
+        void vscode.window.showInformationMessage('Connected to Skillsmith MCP server')
         return true
       } catch (error) {
         // SMI-5398: one of the two INITIAL-connect catch sites. handleConnectFailure
