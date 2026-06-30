@@ -52,7 +52,7 @@ export function buildQuarantineReason(
   }
 
   const findingSummary = summarizeFindings(scanResult.findings)
-  const appealUrl = `https://skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
+  const appealUrl = `https://www.skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
 
   return `Security scan detected ${scanResult.findings.length} finding${scanResult.findings.length === 1 ? '' : 's'} (risk score: ${scanResult.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
 }
@@ -215,7 +215,7 @@ export function buildMergedQuarantineReason(
 
   const locationStr = merged.primarySiblingPath ? ` in ${merged.primarySiblingPath}` : ''
   const findingSummary = summarizeFindings(merged.findings)
-  const appealUrl = `https://skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
+  const appealUrl = `https://www.skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
 
   return `Security scan detected ${merged.findings.length} finding${merged.findings.length === 1 ? '' : 's'}${locationStr} (risk score: ${merged.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
 }

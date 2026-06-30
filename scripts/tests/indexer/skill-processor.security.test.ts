@@ -285,7 +285,7 @@ describe('buildMergedQuarantineReason', () => {
   it('includes appeal URL with correct skill identifier', () => {
     const merged = buildQuarantinedMerged('package.json')
     const reason = buildMergedQuarantineReason(merged, 'org-name', 'the-skill')
-    expect(reason).toContain('https://skillsmith.app/contact?topic=quarantine&skill=')
+    expect(reason).toContain('https://www.skillsmith.app/contact?topic=quarantine&skill=')
     expect(reason).toContain(encodeURIComponent('org-name/the-skill'))
   })
 })
