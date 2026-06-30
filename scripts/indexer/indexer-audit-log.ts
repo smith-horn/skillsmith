@@ -78,6 +78,8 @@ export interface RecheckAuditCounters {
   fetch_error: number
   cas_skipped: number
   errors: number
+  /** SMI-5436 Wave 2: rows skipped because they have sibling-triggered quarantines (filePath != null). */
+  sibling_gate_skipped: number
   fetch_error_rate: number
   cap_saturated: boolean
   killswitch_engaged: boolean

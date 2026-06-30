@@ -42,9 +42,18 @@ import {
 } from './skill-processor.helpers.ts'
 export * from './skill-processor.helpers.ts'
 
-// SMI-5436 Wave 0: security helpers extracted to keep this file ≤500 lines.
-import { buildQuarantineReason, readResponseWithLimit } from './skill-processor.security.ts'
-export { buildQuarantineReason } from './skill-processor.security.ts'
+// SMI-5436 Wave 0+2: security helpers extracted to keep this file ≤500 lines.
+import {
+  buildQuarantineReason,
+  buildMergedQuarantineReason,
+  readResponseWithLimit,
+  enumerateSiblingTargets,
+  fetchSiblingContent,
+  mergeSiblingScans,
+  type SiblingEdgeScan,
+  type MergedEdgeScanResult,
+} from './skill-processor.security.ts'
+export { buildQuarantineReason, buildMergedQuarantineReason } from './skill-processor.security.ts'
 
 /**
  * SKILL.md validation result
@@ -66,6 +75,8 @@ export interface SkillMdValidation {
   content?: string
   /** SMI-2272: Security scan result */
   securityScan?: EdgeScanResult
+  /** SMI-5436 Wave 2: merged scan (SKILL.md + sibling files); present when siblings were fetched */
+  mergedSecurityScan?: MergedEdgeScanResult
 }
 
 /** Default minimum content length for SKILL.md */
@@ -243,12 +254,32 @@ export async function validateSkillMd(
       )
     }
 
+    // SMI-5436 Wave 2: scan sibling files (CDN fetch, zero core quota)
+    const siblingPaths = enumerateSiblingTargets(skillPath ?? '')
+    const siblingScans: SiblingEdgeScan[] = []
+    for (const relPath of siblingPaths) {
+      const sibContent = await fetchSiblingContent(owner, repo, branch, relPath, telemetry)
+      if (sibContent !== null) {
+        const sibScan = await scanSkillContent(sibContent)
+        siblingScans.push({ relPath, scan: sibScan })
+      }
+    }
+    const mergedSecurityScan =
+      siblingScans.length > 0 ? mergeSiblingScans(securityScan, siblingScans) : undefined
+
+    if (mergedSecurityScan?.quarantine && !securityScan.findings.length) {
+      console.log(
+        `[SecurityScan] ${owner}/${repo}: sibling triggered quarantine (${mergedSecurityScan.primarySiblingPath})`
+      )
+    }
+
     return {
       valid: errors.length === 0,
       errors,
       metadata,
       content, // Store content for hash tracking
       securityScan, // Include security scan results
+      mergedSecurityScan,
     }
   } catch (error) {
     if (error instanceof ValidationError) {
@@ -368,15 +399,24 @@ export function repositoryToSkill(
   }
 
   const securityScan = validation?.securityScan
-  const quarantined = securityScan ? shouldQuarantine(securityScan) : false
+  const mergedScan = validation?.mergedSecurityScan
 
-  const quarantineReason = securityScan
-    ? buildQuarantineReason(securityScan, repo.owner, name)
-    : null
+  // SMI-5436 Wave 2: prefer merged scan (SKILL.md + siblings) when available
+  const quarantined = mergedScan
+    ? mergedScan.quarantine
+    : securityScan
+      ? shouldQuarantine(securityScan)
+      : false
+
+  const quarantineReason = mergedScan
+    ? buildMergedQuarantineReason(mergedScan, repo.owner, name)
+    : securityScan
+      ? buildQuarantineReason(securityScan, repo.owner, name)
+      : null
 
   if (quarantined) {
     console.log(
-      `[SecurityScan] QUARANTINE: ${repo.fullName} riskScore=${securityScan?.riskScore} threshold=${QUARANTINE_THRESHOLD}`
+      `[SecurityScan] QUARANTINE: ${repo.fullName} riskScore=${mergedScan?.riskScore ?? securityScan?.riskScore} threshold=${QUARANTINE_THRESHOLD}`
     )
   }
 
@@ -404,8 +444,8 @@ export function repositoryToSkill(
     indexed_at: new Date().toISOString(),
     content_hash: securityScan?.contentHash ?? null,
     last_scanned_at: securityScan?.scannedAt ?? null,
-    security_score: securityScan?.riskScore ?? null,
-    security_findings: securityScan?.findings ?? [],
+    security_score: mergedScan?.riskScore ?? securityScan?.riskScore ?? null,
+    security_findings: mergedScan?.findings ?? securityScan?.findings ?? [],
     quarantined,
     quarantine_reason: quarantineReason || null,
     last_seen_at: new Date().toISOString(),
