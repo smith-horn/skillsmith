@@ -95,6 +95,12 @@ jobs:
           npm run test:e2e:setup
           xvfb-run -a npx wdio run ./e2e/wdio.conf.ts --spec ./e2e/specs/activation.e2e.ts
 
+      # outcome == 'success' excludes 'failure', 'cancelled', and 'skipped'.
+      # The cache-hit guard already ensures predownload was not skipped, so this
+      # guard's purpose is to avoid persisting a partial download under the
+      # un-rotated version key. A bare if:always() save would be skipped on
+      # 20-min job-timeout cancellation anyway, so success-gating is the correct
+      # and safe choice.
       - name: Save VS Code binary cache
         if: steps.cache-restore.outputs.cache-hit != 'true' && steps.predownload.outcome == 'success'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -102,9 +108,11 @@ jobs:
           path: packages/vscode-extension/.wdio-vscode-service
           key: wdio-vscode-${{ runner.os }}-${{ env.VSCODE_E2E_VERSION }}
 
-      # test:e2e:setup patches minimatch ESM and MUST run before wdio. The
-      # package test:e2e script runs it for us, but the smoke path invokes wdio
-      # directly with --spec (which bypasses that chain), so run it explicitly.
+      # test:e2e:setup patches minimatch ESM. The smoke path invokes wdio directly
+      # with --spec (which bypasses the package test:e2e chain), so the patch must
+      # be applied explicitly. On cache-miss the pre-download step above already
+      # called test:e2e:setup (wdio requires it); this step is the canonical call
+      # that covers the cache-hit path and the real smoke spec run below.
       - name: Patch minimatch ESM (test:e2e:setup)
         run: npm run test:e2e:setup -w packages/vscode-extension
 
@@ -167,6 +175,9 @@ jobs:
       # the lightest spec (activation) so the heavy diff spec never pays the cold
       # download. test:e2e:setup (minimatch ESM patch) must run first or wdio aborts
       # at config load; xvfb is needed because wdio boots VS Code after onPrepare.
+      # Note: this runs the full activation.e2e.ts spec assertions, not just
+      # onPrepare. A spec failure here blocks the cache save; the binary is still
+      # downloaded. The real test run below re-executes and surfaces the failure.
       - name: Pre-download VS Code binary (decoupled from test clock)
         id: predownload
         if: steps.cache-restore.outputs.cache-hit != 'true'
