@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Skillsmith CLI - Agent Skill Discovery Tools
  *
@@ -55,8 +54,8 @@ import { displayStartupHeader } from './utils/license.js'
 import { resolveCommandPath, shouldShowStartupHeader } from './utils/startup-header-gate.js'
 import { checkNodeVersion } from './utils/node-version.js'
 import { readFileSync } from 'fs'
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
+import { packageRoot } from './utils/package-root.js'
 
 // SMI-1629: Check Node.js version before anything else
 const versionError = checkNodeVersion()
@@ -66,8 +65,7 @@ if (versionError) {
 }
 
 // Read version from package.json dynamically
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const packageJsonPath = join(__dirname, '..', '..', 'package.json')
+const packageJsonPath = join(packageRoot(), 'package.json')
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
 const CLI_VERSION = packageJson.version
 

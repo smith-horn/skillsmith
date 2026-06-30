@@ -396,20 +396,8 @@ export function createImportCommand(): Command {
     .action(importAction)
 }
 
-// CLI entry point — preserved so `node packages/cli/dist/src/commands/import.js`
-// still works for ad-hoc batch runs invoked outside the main `skillsmith` shell.
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const args = process.argv.slice(2)
-  const verbose = args.includes('--verbose') || args.includes('-v')
-  const maxSkills = parseInt(args.find((a) => a.startsWith('--max='))?.split('=')[1] || '1000')
-  const dbPath = args.find((a) => a.startsWith('--db='))?.split('=')[1] || DEFAULT_DB_PATH
-
-  importSkills({ verbose, maxSkills, dbPath })
-    .then((result) => {
-      process.exit(result.errors > 0 ? 1 : 0)
-    })
-    .catch((error) => {
-      console.error('Import failed:', error)
-      process.exit(1)
-    })
-}
+// SMI-5427: Self-exec guard removed — post-bundle, import.meta.url equals the
+// bundle's own URL (dist/cli.js), which also equals process.argv[1] for any
+// `skillsmith` invocation. The guard would fire on EVERY command, kicking off
+// a 1000-skill GitHub import. Ad-hoc batch runs should use `skillsmith import`
+// via the registered command instead.

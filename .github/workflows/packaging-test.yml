@@ -1,6 +1,8 @@
 # SMI-2216: Weekly packaging test to catch issues between releases
-# Runs fresh-install-test on a schedule to verify packages work correctly
-# when installed from npm pack tarballs
+# SMI-5427: Hardened to verify esbuild bundle, deprecation-free install, and
+# asset/template resolution. CLI is now a self-contained bundle; core and
+# mcp-server are inlined. The test installs ONLY the CLI tarball in a nested
+# (non-root) wrapper package to mirror a real downstream user's install.
 name: Packaging Test
 
 # SMI-2268: Explicit permissions for CodeQL compliance
@@ -35,101 +37,137 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build packages
-        run: npm run build
+      - name: Build CLI bundle (with inlined workspace deps)
+        # SMI-5427: the esbuild bundle inlines @skillsmith/core + @skillsmith/mcp-server,
+        # whose package exports resolve to dist/. After `npm ci` those packages are
+        # unbuilt, so build the CLI WITH its workspace deps in dependency order
+        # (turbo builds core -> mcp-server -> cli; the cli build is the esbuild bundle).
+        run: npx turbo build --filter=@skillsmith/cli
 
-      - name: Create package tarballs
+      - name: Verify bundle exists
         run: |
-          mkdir -p /tmp/packages
-          cd packages/core && npm pack --pack-destination /tmp/packages
-          cd ../mcp-server && npm pack --pack-destination /tmp/packages
-          cd ../cli && npm pack --pack-destination /tmp/packages
-          cd ../..
-          echo "=== Created packages ==="
-          ls -la /tmp/packages
-
-      - name: Create clean test directory
-        run: |
-          mkdir -p /tmp/fresh-install-test
-          cd /tmp/fresh-install-test
-          npm init -y
-
-      - name: Test CLI fresh install from local tarballs
-        working-directory: /tmp/fresh-install-test
-        run: |
-          echo "Testing fresh install from local build..."
-
-          # Install packages in dependency order from local tarballs
-          CORE_TAR=$(ls /tmp/packages/skillsmith-core-*.tgz)
-          MCP_TAR=$(ls /tmp/packages/skillsmith-mcp-server-*.tgz)
-          CLI_TAR=$(ls /tmp/packages/skillsmith-cli-*.tgz)
-
-          echo "Installing core: $CORE_TAR"
-          npm install "$CORE_TAR" --save
-
-          echo "Installing mcp-server: $MCP_TAR"
-          npm install "$MCP_TAR" --save
-
-          echo "Installing cli: $CLI_TAR"
-          npm install "$CLI_TAR" --save-dev
-
-          # Verify the packages installed correctly
-          if [ ! -d "node_modules/@skillsmith/cli" ]; then
-            echo "::error::CLI package not found in node_modules"
+          if [ ! -f packages/cli/dist/cli.js ]; then
+            echo "::error::dist/cli.js not produced by build"
             exit 1
           fi
+          echo "Bundle size: $(wc -c < packages/cli/dist/cli.js) bytes"
 
-          echo "✓ Packages installed successfully"
+      - name: Pack CLI tarball only
+        run: |
+          mkdir -p /tmp/packages
+          cd packages/cli && npm pack --pack-destination /tmp/packages
+          echo "=== Created CLI tarball ==="
+          ls -la /tmp/packages
+
+      - name: Install CLI as nested (non-root) dependency
+        # SMI-5427: install the packed CLI inside a wrapper package so the
+        # test-root's overrides and dedup cannot mask a deprecation a real
+        # downstream user would hit. This is the canonical "fresh user" scenario.
+        run: |
+          mkdir -p /tmp/fresh-install-test/wrapper
+          cd /tmp/fresh-install-test/wrapper
+          npm init -y
+
+          CLI_TAR=$(ls /tmp/packages/skillsmith-cli-*.tgz)
+          echo "Installing CLI tarball: $CLI_TAR"
+
+          # Capture install output and check for the specific deprecated packages
+          # that the bundle must shed: prebuild-install, boolean, @isaacs/keytar.
+          INSTALL_OUT=$(npm install "$CLI_TAR" --save 2>&1)
+          echo "$INSTALL_OUT"
+
+          DEPRECATED_HITS=$(echo "$INSTALL_OUT" | grep -E "npm warn deprecated.*(prebuild-install@|boolean@|keytar|@isaacs/keytar)" || true)
+          if [ -n "$DEPRECATED_HITS" ]; then
+            echo "::error::Deprecated transitive packages still present in CLI install:"
+            echo "$DEPRECATED_HITS"
+            exit 1
+          fi
+          echo "No prebuild-install / boolean / keytar deprecation warnings found"
+
+      - name: Verify binary is the bundle
+        run: |
+          CLI_BIN=/tmp/fresh-install-test/wrapper/node_modules/.bin/skillsmith
+          if [ ! -f "$CLI_BIN" ]; then
+            echo "::error::skillsmith binary not found at $CLI_BIN"
+            exit 1
+          fi
+          # The shebang line must point to the bundle (dist/cli.js target)
+          RESOLVED=$(readlink -f "$CLI_BIN")
+          if echo "$RESOLVED" | grep -q "dist/cli.js"; then
+            echo "Binary correctly resolves to dist/cli.js: $RESOLVED"
+          else
+            echo "::warning::Binary resolves to unexpected path: $RESOLVED"
+          fi
 
       - name: Test CLI commands
-        working-directory: /tmp/fresh-install-test
+        working-directory: /tmp/fresh-install-test/wrapper
+        env:
+          SKILLSMITH_USE_MOCK_EMBEDDINGS: 'true'
         run: |
-          # Test help command
-          npx skillsmith --help || npx sklx --help
-          echo "✓ Help command works"
+          NODE_PATH=./node_modules node ./node_modules/@skillsmith/cli/dist/cli.js --version
+          echo "version command OK"
 
-          # Test version command
-          npx skillsmith --version || npx sklx --version
-          echo "✓ Version command works"
+          node ./node_modules/@skillsmith/cli/dist/cli.js --help
+          echo "help command OK"
 
-          # Test search command (should work without database)
-          npx skillsmith search --help || npx sklx search --help
-          echo "✓ Search help works"
+          node ./node_modules/@skillsmith/cli/dist/cli.js search --help
+          echo "search --help OK"
 
-      - name: Test native module loading
-        working-directory: /tmp/fresh-install-test
+          node ./node_modules/@skillsmith/cli/dist/cli.js setup --help
+          echo "setup --help OK"
+
+          node ./node_modules/@skillsmith/cli/dist/cli.js telemetry --help
+          echo "telemetry --help OK"
+
+      - name: Assert --version does not trigger import
+        working-directory: /tmp/fresh-install-test/wrapper
         run: |
-          node -e "
-            try {
-              const cliPath = require.resolve('@skillsmith/cli');
-              console.log('CLI resolved to:', cliPath);
-              console.log('✓ Native modules load correctly');
-            } catch (e) {
-              console.error('Failed to load:', e.message);
-              if (e.message.includes('NODE_MODULE_VERSION')) {
-                console.error('::error::Native module version mismatch');
-                process.exit(1);
-              }
-              if (e.message.includes('GLIBC')) {
-                console.error('::error::GLIBC compatibility issue');
-                process.exit(1);
-              }
-              console.log('Warning: Non-critical load issue');
-            }
-          "
+          # If the self-exec guard was still present, --version would start a
+          # 1000-skill GitHub import. Assert the output does not contain import
+          # progress markers.
+          OUT=$(node ./node_modules/@skillsmith/cli/dist/cli.js --version 2>&1)
+          if echo "$OUT" | grep -qE "import|Importing|Fetching repos|GitHub"; then
+            echo "::error::--version triggered import logic (self-exec guard not removed)"
+            echo "$OUT"
+            exit 1
+          fi
+          echo "No import triggered by --version: OK"
+          echo "Output was: $OUT"
+
+      - name: Verify deprecation severance
+        working-directory: /tmp/fresh-install-test/wrapper
+        run: |
+          # npm ls exits non-zero if a package is missing or extraneous but
+          # that is fine here -- we only care about presence/absence.
+          if npm ls prebuild-install 2>/dev/null | grep -q "prebuild-install"; then
+            echo "::error::prebuild-install still in dependency tree"
+            exit 1
+          fi
+          if npm ls boolean 2>/dev/null | grep -q "boolean@"; then
+            echo "::error::boolean still in dependency tree"
+            exit 1
+          fi
+          if npm ls "@isaacs/keytar" 2>/dev/null | grep -q "@isaacs/keytar"; then
+            echo "::error::@isaacs/keytar still in dependency tree"
+            exit 1
+          fi
+          echo "All three deprecated packages are absent from the install tree"
 
       - name: Generate test report
         if: always()
         run: |
-          echo "## Weekly Packaging Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Weekly Packaging Test Results (SMI-5427 hardened)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| npm pack | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| npm install (local) | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| CLI --help | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| CLI --version | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Native modules | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| esbuild bundle produced | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| CLI tarball (no core/mcp-server) | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| Nested install (real-user scenario) | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| No prebuild-install deprecation | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| No boolean deprecation | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| No keytar deprecation | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| --version no-import guard | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| CLI help commands | checked |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Run triggered: $(date -u)" >> $GITHUB_STEP_SUMMARY
 
@@ -143,9 +181,5 @@ jobs:
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           else
-            gh issue create --repo "${{ github.repository }}" --title "CI: Packaging Test failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "**Workflow**: Packaging Test
-          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          **Branch**: ${{ github.ref_name }}
-
-          This issue was auto-created by SMI-3335. Close when resolved."
+            gh issue create --repo "${{ github.repository }}" --title "CI: Packaging Test failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "Workflow: Packaging Test Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} Branch: ${{ github.ref_name }} This issue was auto-created by SMI-3335. Close when resolved."
           fi

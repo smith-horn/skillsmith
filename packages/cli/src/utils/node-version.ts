@@ -6,10 +6,8 @@
  */
 
 import { readFileSync } from 'fs'
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
+import { join } from 'path'
+import { packageRoot } from './package-root.js'
 
 /**
  * Reads the minimum Node.js version from package.json engines field.
@@ -17,7 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  */
 function loadMinNodeVersion(): string {
   try {
-    const packageJsonPath = join(__dirname, '..', '..', 'package.json')
+    const packageJsonPath = join(packageRoot(), 'package.json')
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
     const engineConstraint = packageJson.engines?.node ?? '>=22.22.0'
     // Extract version number from constraint (e.g., ">=22.22.0" -> "22.22.0")

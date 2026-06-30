@@ -4,34 +4,42 @@
   "description": "CLI tools for Skillsmith skill discovery and authentication",
   "type": "module",
   "bin": {
-    "skillsmith": "dist/src/index.js",
-    "sklx": "dist/src/index.js"
+    "skillsmith": "dist/cli.js",
+    "sklx": "dist/cli.js"
   },
   "scripts": {
     "prepublishOnly": "node ../../scripts/lib/forbid-local-publish.mjs && npm run build && npm run test",
-    "build": "tsc",
+    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/cli.js \"--banner:js=#!/usr/bin/env node\" --legal-comments=linked --external:fts5-sql-bundle --external:web-tree-sitter --external:tree-sitter-wasms --external:typescript --external:@opentelemetry/api --external:@opentelemetry/instrumentation-http --external:@opentelemetry/instrumentation-runtime-node --external:@opentelemetry/instrumentation-undici --external:@opentelemetry/resources --external:@opentelemetry/sdk-node --external:@opentelemetry/sdk-trace-base --external:@opentelemetry/semantic-conventions --external:posthog-node --external:better-sqlite3 --external:@huggingface/transformers --external:hnswlib-node --external:onnxruntime-node --external:@inquirer/prompts --external:ora --external:commander --external:gray-matter --external:chokidar --external:cli-table3",
     "dev": "tsc --watch",
-    "import": "node dist/import.js",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@inquirer/prompts": "7.10.1",
-    "@skillsmith/core": "^0.9.0",
-    "@skillsmith/mcp-server": "^0.6.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/instrumentation-http": "0.219.0",
+    "@opentelemetry/instrumentation-runtime-node": "0.32.0",
+    "@opentelemetry/instrumentation-undici": "0.29.0",
+    "@opentelemetry/resources": "2.8.0",
+    "@opentelemetry/sdk-node": "0.219.0",
+    "@opentelemetry/sdk-trace-base": "2.8.0",
+    "@opentelemetry/semantic-conventions": "1.41.1",
     "chalk": "5.6.2",
     "chokidar": "4.0.3",
     "cli-table3": "0.6.5",
     "commander": "14.0.3",
+    "fts5-sql-bundle": "1.0.2",
     "gray-matter": "4.0.3",
     "open": "11.0.0",
-    "ora": "9.3.0"
-  },
-  "optionalDependencies": {
-    "@isaacs/keytar": "7.9.0"
+    "ora": "9.3.0",
+    "posthog-node": "5.29.2",
+    "tree-sitter-wasms": "0.1.13",
+    "typescript": "5.9.3",
+    "web-tree-sitter": "0.25.10"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
+    "esbuild": "0.28.1",
     "vitest": "4.1.6"
   },
   "peerDependencies": {

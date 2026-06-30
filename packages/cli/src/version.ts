@@ -7,14 +7,12 @@
 // dist, which fights with npm publish's file layout.
 
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { packageRoot } from './utils/package-root.js'
 
 function readVersion(): string {
   try {
-    // Compiled output lives at dist/src/version.js; package.json is two dirs up.
-    const here = dirname(fileURLToPath(import.meta.url))
-    const pkgPath = join(here, '..', '..', 'package.json')
+    const pkgPath = join(packageRoot(), 'package.json')
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string }
     return pkg.version ?? '0.0.0'
   } catch {

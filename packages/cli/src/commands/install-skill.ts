@@ -10,19 +10,16 @@ import chalk from 'chalk'
 import ora from 'ora'
 import { mkdir, copyFile, stat, readdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
+import { packageRoot } from '../utils/package-root.js'
 
 /**
  * Get the path to bundled skill assets
  */
 function getAssetsPath(): string {
-  // Assets are in packages/cli/assets/skillsmith-skill/ relative to dist/src/commands/
-  return join(__dirname, '..', '..', '..', 'assets', 'skillsmith-skill')
+  return join(packageRoot(), 'assets', 'skillsmith-skill')
 }
 
 /**
