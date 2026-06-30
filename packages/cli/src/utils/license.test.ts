@@ -316,7 +316,9 @@ describe('license utilities', () => {
     let consoleSpy: ReturnType<typeof vi.spyOn>
 
     beforeEach(() => {
-      consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      // SMI-5427: displayLicenseStatus writes to stderr so license status does
+      // not contaminate stdout of machine-readable commands (e.g. JSON output).
+      consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     })
 
     afterEach(() => {

@@ -6,6 +6,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
+// SMI-5427: mocked at runtime via vi.mock('@skillsmith/core') below; the real
+// type is preserved for the GAP-07 regression block (no cast on the instance).
+import { SkillRepository, type DatabaseType } from '@skillsmith/core'
 
 // ============================================================================
 // Mock Setup - Must be before imports
@@ -26,6 +29,12 @@ const mocks = vi.hoisted(() => ({
   dbClose: vi.fn(),
   // SMI-4795: hoisted so tests can assert install-telemetry payloads.
   emitInstallEvent: vi.fn(async (_payload: unknown) => undefined),
+  // SMI-5427: hoisted so the createApiBackedRegistryLookup API-fallback path is
+  // exercisable. Default offline (() => true) keeps existing install tests on the
+  // local-only path; the GAP-07 regression tests flip it per-call with
+  // mockReturnValueOnce so there is no cross-test leak.
+  apiIsOffline: vi.fn(() => true),
+  apiGetSkill: vi.fn(),
 }))
 
 vi.mock('ora', () => ({
@@ -51,6 +60,21 @@ vi.mock('@skillsmith/core', () => ({
       install: mocks.installFn,
     }
   }),
+  // SMI-5427: createApiBackedRegistryLookup calls these. Default offline (via the
+  // hoisted apiIsOffline) skips the API fallback so existing install tests are
+  // unaffected; the GAP-07 regression tests flip apiIsOffline + apiGetSkill to
+  // drive the remote path. SkillsmithApiClient.toSkill must be a real static.
+  QuarantineRepository: vi.fn().mockImplementation(function () {
+    return { isQuarantined: vi.fn(() => false) }
+  }),
+  SkillsmithApiClient: Object.assign(vi.fn(), {
+    toSkill: (r: { trust_tier?: string }) => ({ trustTier: r.trust_tier ?? 'community' }),
+  }),
+  loadStoredAccessToken: vi.fn().mockResolvedValue(null),
+  createApiClient: vi.fn(() => ({
+    isOffline: mocks.apiIsOffline,
+    getSkill: mocks.apiGetSkill,
+  })),
   isGitHubUrl: vi.fn((url: string) => url.startsWith('https://github.com/')),
   emitInstallEvent: (payload: unknown) => mocks.emitInstallEvent(payload),
 }))
@@ -620,5 +644,73 @@ describe('SMI-3484: CLI Install Command', () => {
       expect(payload.trustTier).toBeUndefined()
       expect(payload.success).toBe(false)
     })
+  })
+})
+
+// ============================================================================
+// SMI-5427 GAP-07: createApiBackedRegistryLookup must honor the quarantine flag
+// returned by the remote skills-get API. skills-get does NOT filter quarantined
+// skills (it returns them with quarantined:true / installable:false), so the
+// API-fallback path must surface quarantined:true rather than hardcoding false —
+// otherwise `install <quarantined-id>` on an empty local DB would BYPASS the
+// quarantine block that the local QuarantineRepository path enforces.
+// ============================================================================
+
+describe('SMI-5427: createApiBackedRegistryLookup honors remote quarantine (GAP-07)', () => {
+  // findById -> null (mock default) so the local lookup misses and the API
+  // fallback runs. Per-test mockReturnValueOnce/mockResolvedValueOnce so neither
+  // the offline flag nor the API response leaks across tests.
+  const minimalDb = {} as unknown as DatabaseType
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('marks a quarantined remote skill as quarantined (does not bypass the block)', async () => {
+    const { createApiBackedRegistryLookup } = await import('../../../src/commands/install.js')
+    const skillRepo = new SkillRepository(minimalDb)
+
+    mocks.apiIsOffline.mockReturnValueOnce(false)
+    mocks.apiGetSkill.mockResolvedValueOnce({
+      data: {
+        repo_url: 'https://github.com/acme/evil-skill',
+        name: 'evil-skill',
+        trust_tier: 'community',
+        quarantined: true,
+        installable: false,
+      },
+    })
+
+    const lookup = await createApiBackedRegistryLookup(skillRepo, minimalDb)
+    const result = await lookup.lookup('acme/evil-skill')
+
+    expect(mocks.apiGetSkill).toHaveBeenCalledWith('acme/evil-skill')
+    expect(result).not.toBeNull()
+    expect(result?.quarantined).toBe(true)
+    expect(result?.repoUrl).toBe('https://github.com/acme/evil-skill')
+  })
+
+  it('marks a healthy remote skill as installable (quarantined:false)', async () => {
+    const { createApiBackedRegistryLookup } = await import('../../../src/commands/install.js')
+    const skillRepo = new SkillRepository(minimalDb)
+
+    mocks.apiIsOffline.mockReturnValueOnce(false)
+    mocks.apiGetSkill.mockResolvedValueOnce({
+      data: {
+        repo_url: 'https://github.com/acme/good-skill',
+        name: 'good-skill',
+        trust_tier: 'verified',
+        quarantined: false,
+        installable: true,
+      },
+    })
+
+    const lookup = await createApiBackedRegistryLookup(skillRepo, minimalDb)
+    const result = await lookup.lookup('acme/good-skill')
+
+    expect(result).not.toBeNull()
+    expect(result?.quarantined).toBe(false)
+    expect(result?.repoUrl).toBe('https://github.com/acme/good-skill')
+    expect(result?.trustTier).toBe('verified')
   })
 })

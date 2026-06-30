@@ -15,10 +15,8 @@
 import { existsSync, copyFileSync, chmodSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { readdirSync, unlinkSync, statSync } from 'node:fs'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
+import { packageRoot } from '../utils/package-root.js'
 
 import chalk from 'chalk'
 
@@ -223,15 +221,10 @@ async function runInstallHook(options: {
   scope: 'user' | 'project'
   endpoint?: string
 }): Promise<void> {
-  // Resolve the template source — relative to this file's compiled output.
-  // src/commands/telemetry.action.ts → ../../templates/skill-telemetry.sh (via dist/commands)
-  // and one level up for the src layout during tests.
-  const templateCandidates = [
-    join(__dirname, '..', '..', 'templates', 'skill-telemetry.sh'),
-    join(__dirname, '..', 'templates', 'skill-telemetry.sh'),
-  ]
-  const templateSrc = templateCandidates.find((p) => existsSync(p))
-  if (!templateSrc) {
+  // Resolve the template source via packageRoot() — works correctly in the
+  // esbuild bundle (dist/cli.js -> .. = package root) and tests mock existsSync.
+  const templateSrc = join(packageRoot(), 'templates', 'skill-telemetry.sh')
+  if (!existsSync(templateSrc)) {
     throw new Error(
       'skill-telemetry.sh template not found. ' +
         'Ensure the CLI package is fully built: npm run build'

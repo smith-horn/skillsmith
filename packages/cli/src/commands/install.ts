@@ -13,8 +13,11 @@ import {
   SkillDependencyRepository,
   SkillInstallationService,
   QuarantineRepository,
+  SkillsmithApiClient,
   emitInstallEvent,
   isGitHubUrl,
+  createApiClient,
+  loadStoredAccessToken,
   type CoreInstallResult,
   type RegistryLookup,
   type RegistrySkillInfo,
@@ -99,6 +102,54 @@ export function createDbRegistryLookup(
         name: skill.name,
         trustTier: skill.trustTier,
         quarantined: quarantineRepo.isQuarantined(skill.id || skillId),
+      }
+    },
+  }
+}
+
+/**
+ * Create a registry lookup that tries local DB first, then falls back to the
+ * remote API for skills not present in the local index.
+ *
+ * SMI-5427: with remote-default search, a user may select a skill from remote
+ * results and try to install it before their local DB has been synced.
+ * The API fallback (via skills-get) resolves repoUrl + trustTier in that case.
+ * quarantined is read from the API response: skills-get does NOT filter
+ * quarantined skills — it returns them with quarantined:true / installable:false
+ * / a quarantine_warning (SMI-2383/5360). We honor that so the API-backed path
+ * BLOCKS quarantined installs just like the local QuarantineRepository path
+ * (GAP-07), rather than bypassing it.
+ */
+export async function createApiBackedRegistryLookup(
+  skillRepo: SkillRepository,
+  db: DatabaseType
+): Promise<RegistryLookup> {
+  const dbLookup = createDbRegistryLookup(skillRepo, db)
+  const jwtToken = await loadStoredAccessToken()
+  const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
+  return {
+    async lookup(skillId: string): Promise<RegistrySkillInfo | null> {
+      const local = await dbLookup.lookup(skillId)
+      if (local) return local
+      // API fallback for remote-only skills.
+      if (apiClient.isOffline()) return null
+      try {
+        const response = await apiClient.getSkill(skillId)
+        const r = response.data
+        if (!r.repo_url) return null
+        // skills-get returns quarantined skills (it does not filter them), so
+        // derive the flag from the response. Past the repo_url guard above,
+        // installable === false can only mean quarantined (installable =
+        // repo_url != null && !isQuarantined), so it is a belt-and-suspenders
+        // signal alongside the explicit quarantined field.
+        return {
+          repoUrl: r.repo_url,
+          name: r.name,
+          trustTier: SkillsmithApiClient.toSkill(r).trustTier,
+          quarantined: r.quarantined === true || r.installable === false,
+        }
+      } catch {
+        return null
       }
     },
   }
@@ -241,13 +292,17 @@ async function installActionImpl(
       const skillRepo = new SkillRepository(db)
       const skillDependencyRepo = new SkillDependencyRepository(db)
 
+      // SMI-5427: API-backed lookup falls through to remote for skills not in
+      // the local index (remote-default world — local DB may be empty).
+      const registryLookup = await createApiBackedRegistryLookup(skillRepo, db)
+
       const service = new SkillInstallationService({
         db,
         skillRepo,
         skillDependencyRepo,
         skillsDir,
         manifestPath: DEFAULT_MANIFEST_PATH,
-        registryLookup: createDbRegistryLookup(skillRepo, db),
+        registryLookup,
         onProgress: (_stage: string, detail: string) => {
           if (spinner) {
             spinner.text = detail

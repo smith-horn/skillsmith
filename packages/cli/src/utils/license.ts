@@ -136,20 +136,23 @@ export function displayQuotaWarning(quota: QuotaInfo, tier: LicenseTier): void {
  *
  * @param status - License status to display
  */
+// SMI-5427: displayLicenseStatus and displayStartupHeader use console.error so
+// the decorative banner never mixes with a command's stdout payload. Only these
+// two display functions are changed — command result output is unaffected.
 export function displayLicenseStatus(status: LicenseStatus): void {
   const tierBadge = formatTierBadge(status.tier)
 
   if (status.tier === 'community') {
-    console.log(`License: ${tierBadge} ${chalk.dim('(free tier - 1,000 API calls/month)')}`)
+    console.error(`License: ${tierBadge} ${chalk.dim('(free tier - 1,000 API calls/month)')}`)
   } else if (status.tier === 'individual') {
     const expiresInfo = status.expiresAt
       ? chalk.green(`(expires: ${status.expiresAt.toISOString().split('T')[0]})`)
       : ''
-    console.log(`License: ${tierBadge} ${expiresInfo}`)
+    console.error(`License: ${tierBadge} ${expiresInfo}`)
   } else if (status.valid && status.expiresAt) {
     const expiresFormatted = status.expiresAt.toISOString().split('T')[0]
-    console.log(`License: ${tierBadge} ${chalk.green(`(expires: ${expiresFormatted})`)}`)
-    console.log(`Features: ${chalk.dim(status.features.join(', '))}`)
+    console.error(`License: ${tierBadge} ${chalk.green(`(expires: ${expiresFormatted})`)}`)
+    console.error(`Features: ${chalk.dim(status.features.join(', '))}`)
   }
 
   // Display quota information if available
@@ -158,38 +161,38 @@ export function displayLicenseStatus(status: LicenseStatus): void {
     const resetFormatted = resetAt.toISOString().split('T')[0]
 
     if (percentUsed >= 100) {
-      console.log(
+      console.error(
         chalk.red.bold(
           `API Quota: EXCEEDED (${used.toLocaleString()}/${limit.toLocaleString()} calls)`
         )
       )
-      console.log(chalk.red(`Quota resets on ${resetFormatted}. Upgrade to continue.`))
+      console.error(chalk.red(`Quota resets on ${resetFormatted}. Upgrade to continue.`))
     } else if (percentUsed >= 90) {
-      console.log(
+      console.error(
         chalk.yellow.bold(
           `API Quota: ${used.toLocaleString()}/${limit.toLocaleString()} (${percentUsed.toFixed(0)}%)`
         )
       )
-      console.log(chalk.yellow(`Warning: Approaching limit. Resets ${resetFormatted}`))
+      console.error(chalk.yellow(`Warning: Approaching limit. Resets ${resetFormatted}`))
     } else if (percentUsed >= 80) {
-      console.log(
+      console.error(
         chalk.yellow(
           `API Quota: ${used.toLocaleString()}/${limit.toLocaleString()} (${percentUsed.toFixed(0)}%)`
         )
       )
     } else {
-      console.log(
+      console.error(
         chalk.dim(`API Quota: ${used.toLocaleString()}/${limit.toLocaleString()} calls used`)
       )
     }
   } else if (status.tier === 'enterprise') {
-    console.log(chalk.dim('API Quota: Unlimited'))
+    console.error(chalk.dim('API Quota: Unlimited'))
   }
 
   // Show warnings for invalid/expired licenses
   if (status.error) {
-    console.log(chalk.red(`Warning: ${status.error}`))
-    console.log(chalk.dim('Continuing with community tier features'))
+    console.error(chalk.red(`Warning: ${status.error}`))
+    console.error(chalk.dim('Continuing with community tier features'))
   }
 }
 
@@ -199,9 +202,9 @@ export function displayLicenseStatus(status: LicenseStatus): void {
  * @param version - CLI version string
  */
 export async function displayStartupHeader(version: string): Promise<void> {
-  console.log(`Skillsmith CLI v${version}`)
+  console.error(`Skillsmith CLI v${version}`)
 
   const status = await getLicenseStatus()
   displayLicenseStatus(status)
-  console.log() // Empty line after header
+  console.error() // Empty line after header
 }

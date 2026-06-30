@@ -140,7 +140,9 @@ case "$TARGET" in
     MCP_CORE_DEP=$(node -e "process.stdout.write(require('$MCP_DIR/package.json').dependencies['@skillsmith/core'])")
     verify_dep "@skillsmith/core" "${MCP_CORE_DEP#^}"
     publish_package "$MCP_DIR"
-    CLI_CORE_DEP=$(node -e "process.stdout.write(require('$CLI_DIR/package.json').dependencies['@skillsmith/core'])")
+    # SMI-5427: the CLI bundle inlines @skillsmith/core, so it lives in
+    # devDependencies (stripped from the published install). Read either section.
+    CLI_CORE_DEP=$(node -e "const p=require('$CLI_DIR/package.json'); process.stdout.write((p.dependencies||{})['@skillsmith/core'] || (p.devDependencies||{})['@skillsmith/core'] || '')")
     verify_dep "@skillsmith/core" "${CLI_CORE_DEP#^}"
     publish_package "$CLI_DIR"
     ;;
@@ -155,7 +157,9 @@ case "$TARGET" in
     ;;
   cli)
     # Verify core dep is live before publishing CLI
-    CLI_CORE_DEP=$(node -e "process.stdout.write(require('$CLI_DIR/package.json').dependencies['@skillsmith/core'])")
+    # SMI-5427: the CLI bundle inlines @skillsmith/core, so it lives in
+    # devDependencies (stripped from the published install). Read either section.
+    CLI_CORE_DEP=$(node -e "const p=require('$CLI_DIR/package.json'); process.stdout.write((p.dependencies||{})['@skillsmith/core'] || (p.devDependencies||{})['@skillsmith/core'] || '')")
     verify_dep "@skillsmith/core" "${CLI_CORE_DEP#^}"
     publish_package "$CLI_DIR"
     ;;

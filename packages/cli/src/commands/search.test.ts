@@ -1,18 +1,19 @@
 /**
- * @fileoverview Unit tests for `skillsmith search` empty-index hinting.
- * @see SMI-4926
+ * @fileoverview Unit tests for `skillsmith search` helpers.
  *
- * A 0-result search against an EMPTY local index (not yet synced) must surface
- * an actionable, sync-state-aware hint instead of the bare "no skills found
- * matching your criteria" message used for a genuine no-match.
+ * SMI-5427: autoSyncIfEmpty is removed (remote-default). Tests updated:
+ *   - formatEmptyIndexHint now reflects offline-unavailable message (no
+ *     sync hint, no SyncHistoryRepository dependency).
+ *   - isLocalIndexEmpty behavior unchanged.
+ *   - empty-index hinting now means remote is also offline.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { SearchService, SkillRepository, SyncHistoryRepository } from '@skillsmith/core'
+import { SearchService, SkillRepository } from '@skillsmith/core'
 import { createTestDatabase, closeDatabase } from '@skillsmith/core/testkit'
 import type { Database as DatabaseType } from '@skillsmith/core'
 import { displayResults } from './search-formatters.js'
-import { isLocalIndexEmpty, formatEmptyIndexHint, AUTO_SYNC_COOLDOWN_MS } from './search.helpers.js'
+import { isLocalIndexEmpty, formatEmptyIndexHint } from './search.helpers.js'
 
 // ============================================================================
 // Helpers
@@ -20,8 +21,9 @@ import { isLocalIndexEmpty, formatEmptyIndexHint, AUTO_SYNC_COOLDOWN_MS } from '
 
 const NO_MATCH_SUBSTRING = 'matching your criteria'
 const HINT_MARKER = 'ℹ'
+const OFFLINE_HINT_SUBSTRING = 'offline'
 
-/** Strip ANSI color codes so newline-padding assertions are color-agnostic. */
+/** Strip ANSI color codes so assertions are color-agnostic. */
 const ANSI_RE = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g')
 function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '')
@@ -37,15 +39,6 @@ function seedSkill(db: DatabaseType): void {
     trustTier: 'community',
     tags: ['authentication'],
   })
-}
-
-/**
- * Record a sync attempt and force its `started_at` to a given ISO timestamp,
- * since SyncHistoryRepository.startRun() always stamps "now".
- */
-function seedSyncAttempt(db: DatabaseType, startedAt: string): void {
-  const id = new SyncHistoryRepository(db).startRun()
-  db.prepare('UPDATE sync_history SET started_at = ? WHERE id = ?').run(startedAt, id)
 }
 
 /** Capture console.log output produced by `fn`. */
@@ -64,71 +57,25 @@ function captureOutput(fn: () => void): string {
 }
 
 // ============================================================================
-// Tests — search output: empty vs no-match vs match
+// Tests — formatEmptyIndexHint
 // ============================================================================
 
-describe('search — empty-index hinting (SMI-4926)', () => {
-  let db: DatabaseType
-
-  beforeEach(async () => {
-    db = await createTestDatabase()
+describe('formatEmptyIndexHint (SMI-5427)', () => {
+  it('carries leading and trailing newlines for displayResults padding', () => {
+    const hint = stripAnsi(formatEmptyIndexHint())
+    expect(hint.startsWith('\n')).toBe(true)
+    expect(hint.endsWith('\n')).toBe(true)
   })
 
-  afterEach(() => {
-    closeDatabase(db)
+  it('contains the ℹ marker', () => {
+    expect(formatEmptyIndexHint()).toContain(HINT_MARKER)
   })
 
-  it('empty index + query → shows the hint, not the bare no-match message', () => {
-    const results = new SearchService(db).search({ query: 'anything', limit: 20 })
-    expect(results.items).toHaveLength(0)
-    expect(isLocalIndexEmpty(db)).toBe(true)
-
-    const output = captureOutput(() => {
-      if (results.items.length === 0 && isLocalIndexEmpty(db)) {
-        console.log(formatEmptyIndexHint(db))
-      } else {
-        displayResults(results.items, results.total, 0, 20)
-      }
-    })
-
-    expect(output).toContain(HINT_MARKER)
-    expect(output).not.toContain(NO_MATCH_SUBSTRING)
-  })
-
-  it('populated index + no-match query → shows the bare no-match message, not the hint', () => {
-    seedSkill(db)
-    const results = new SearchService(db).search({ query: 'zzz-nonexistent-zzz', limit: 20 })
-    expect(results.items).toHaveLength(0)
-    expect(isLocalIndexEmpty(db)).toBe(false)
-
-    const output = captureOutput(() => {
-      if (results.items.length === 0 && isLocalIndexEmpty(db)) {
-        console.log(formatEmptyIndexHint(db))
-      } else {
-        displayResults(results.items, results.total, 0, 20)
-      }
-    })
-
-    expect(output).toContain(NO_MATCH_SUBSTRING)
-    expect(output).not.toContain(HINT_MARKER)
-  })
-
-  it('populated index + matching query → renders results, no hint', () => {
-    seedSkill(db)
-    const results = new SearchService(db).search({ query: 'auth', limit: 20 })
-    expect(results.items.length).toBeGreaterThan(0)
-
-    const output = captureOutput(() => {
-      if (results.items.length === 0 && isLocalIndexEmpty(db)) {
-        console.log(formatEmptyIndexHint(db))
-      } else {
-        displayResults(results.items, results.total, 0, 20)
-      }
-    })
-
-    expect(output).toContain('auth-helper')
-    expect(output).not.toContain(HINT_MARKER)
-    expect(output).not.toContain(NO_MATCH_SUBSTRING)
+  it('contains offline-relevant wording (not sync push)', () => {
+    const hint = stripAnsi(formatEmptyIndexHint())
+    expect(hint).toContain(OFFLINE_HINT_SUBSTRING)
+    // SMI-5427: must NOT push skillsmith sync (sync requires connectivity too)
+    expect(hint).not.toContain('skillsmith sync')
   })
 })
 
@@ -158,10 +105,10 @@ describe('isLocalIndexEmpty (SMI-4926)', () => {
 })
 
 // ============================================================================
-// Tests — formatEmptyIndexHint (sync-state aware)
+// Tests — search output: empty vs no-match vs match
 // ============================================================================
 
-describe('formatEmptyIndexHint (SMI-4926)', () => {
+describe('search display — empty vs no-match vs match (SMI-4926)', () => {
   let db: DatabaseType
 
   beforeEach(async () => {
@@ -172,41 +119,56 @@ describe('formatEmptyIndexHint (SMI-4926)', () => {
     closeDatabase(db)
   })
 
-  it('no recent sync attempt → "run `skillsmith sync`" wording with the ℹ prefix', () => {
-    const hint = formatEmptyIndexHint(db)
-    expect(hint).toContain(HINT_MARKER)
-    expect(hint).toContain('skillsmith sync')
-    expect(hint).not.toContain('in progress')
+  it('empty index + query → shows offline/empty hint, not the bare no-match message', () => {
+    const results = new SearchService(db).search({ query: 'anything', limit: 20 })
+    expect(results.items).toHaveLength(0)
+    expect(isLocalIndexEmpty(db)).toBe(true)
+
+    const output = captureOutput(() => {
+      if (results.items.length === 0 && isLocalIndexEmpty(db)) {
+        console.log(formatEmptyIndexHint())
+      } else {
+        displayResults(results.items, results.total, 0, 20)
+      }
+    })
+
+    expect(output).toContain(HINT_MARKER)
+    expect(output).not.toContain(NO_MATCH_SUBSTRING)
   })
 
-  it('stale sync attempt (outside cooldown) → still "run `skillsmith sync`" wording', () => {
-    const stale = new Date(Date.now() - AUTO_SYNC_COOLDOWN_MS - 60_000).toISOString()
-    seedSyncAttempt(db, stale)
+  it('populated index + no-match query → shows the bare no-match message, not the hint', () => {
+    seedSkill(db)
+    const results = new SearchService(db).search({ query: 'zzz-nonexistent-zzz', limit: 20 })
+    expect(results.items).toHaveLength(0)
+    expect(isLocalIndexEmpty(db)).toBe(false)
 
-    const hint = formatEmptyIndexHint(db)
-    expect(hint).toContain(HINT_MARKER)
-    expect(hint).toContain('skillsmith sync')
-    expect(hint).not.toContain('in progress')
+    const output = captureOutput(() => {
+      if (results.items.length === 0 && isLocalIndexEmpty(db)) {
+        console.log(formatEmptyIndexHint())
+      } else {
+        displayResults(results.items, results.total, 0, 20)
+      }
+    })
+
+    expect(output).toContain(NO_MATCH_SUBSTRING)
+    expect(output).not.toContain(HINT_MARKER)
   })
 
-  it('recent sync attempt (within cooldown) → "in progress" wording with the ℹ prefix', () => {
-    const recent = new Date(Date.now() - 60_000).toISOString()
-    seedSyncAttempt(db, recent)
+  it('populated index + matching query → renders results, no hint', () => {
+    seedSkill(db)
+    const results = new SearchService(db).search({ query: 'auth', limit: 20 })
+    expect(results.items.length).toBeGreaterThan(0)
 
-    const hint = formatEmptyIndexHint(db)
-    expect(hint).toContain(HINT_MARKER)
-    expect(hint).toContain('in progress')
-    expect(hint).not.toContain('skillsmith sync')
-  })
+    const output = captureOutput(() => {
+      if (results.items.length === 0 && isLocalIndexEmpty(db)) {
+        console.log(formatEmptyIndexHint())
+      } else {
+        displayResults(results.items, results.total, 0, 20)
+      }
+    })
 
-  it('both wordings carry leading and trailing newlines for displayResults padding', () => {
-    const noAttempt = stripAnsi(formatEmptyIndexHint(db))
-    expect(noAttempt.startsWith('\n')).toBe(true)
-    expect(noAttempt.endsWith('\n')).toBe(true)
-
-    seedSyncAttempt(db, new Date(Date.now() - 60_000).toISOString())
-    const recent = stripAnsi(formatEmptyIndexHint(db))
-    expect(recent.startsWith('\n')).toBe(true)
-    expect(recent.endsWith('\n')).toBe(true)
+    expect(output).toContain('auth-helper')
+    expect(output).not.toContain(HINT_MARKER)
+    expect(output).not.toContain(NO_MATCH_SUBSTRING)
   })
 })

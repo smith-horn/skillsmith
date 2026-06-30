@@ -8,7 +8,12 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import { SkillRepository, createApiClient, loadStoredAccessToken } from '@skillsmith/core'
+import {
+  SkillRepository,
+  SkillsmithApiClient,
+  createApiClient,
+  loadStoredAccessToken,
+} from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
@@ -36,26 +41,45 @@ async function infoActionImpl(skillId: string, options: InfoOptions): Promise<vo
     const db = await openCliDatabase(options.db)
     const skillRepo = new SkillRepository(db)
 
-    // Try local DB first
-    const skill = skillRepo.findById(skillId)
+    // Try local DB first.
+    let skill = skillRepo.findById(skillId)
+    let content: string | undefined
+
+    if (!skill) {
+      // SMI-5427: API fallback — resolve the full record from remote when the
+      // local DB has never been synced (remote-default search world).
+      try {
+        const jwtToken = await loadStoredAccessToken()
+        const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
+        if (!apiClient.isOffline()) {
+          const apiResponse = await apiClient.getSkill(skillId, { includeContent: true })
+          skill = SkillsmithApiClient.toSkill(apiResponse.data)
+          content = apiResponse.data.content || undefined
+        }
+      } catch {
+        // API failed — fall through to not-found error below.
+      }
+    }
+
     if (!skill) {
       spinner.fail(`Skill "${skillId}" not found`)
       process.exit(1)
     }
 
-    // Fetch content from local DB (raw_content column)
-    let content: string | undefined
-    try {
-      const row = db.prepare('SELECT raw_content FROM skills WHERE id = ?').get(skillId) as
-        | { raw_content: string | null }
-        | undefined
-      content = row?.raw_content || undefined
-    } catch {
-      // raw_content column may not exist in pre-migration databases
-      content = undefined
+    // Fetch content from local DB (raw_content column) when skill came from local.
+    if (content === undefined) {
+      try {
+        const row = db.prepare('SELECT raw_content FROM skills WHERE id = ?').get(skillId) as
+          | { raw_content: string | null }
+          | undefined
+        content = row?.raw_content || undefined
+      } catch {
+        // raw_content column may not exist in pre-migration databases
+        content = undefined
+      }
     }
 
-    // Try API for content if not available locally
+    // Try API for content if still not available.
     if (!content) {
       try {
         // SMI-4474: auto-load JWT so logged-in users count toward quota.

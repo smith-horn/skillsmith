@@ -24,7 +24,7 @@ const __dirname = dirname(__filename)
 // Test configuration
 const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-import')
 const TEST_DB_PATH = join(TEST_DIR, 'test-skills.db')
-const CLI_PATH = join(__dirname, '../../dist/src/index.js')
+const CLI_PATH = join(__dirname, '../../dist/cli.js')
 
 interface CommandResult {
   exitCode: number
