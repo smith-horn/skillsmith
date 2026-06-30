@@ -113,16 +113,23 @@ describe('getInstalledSkills (SMI-4578)', () => {
     expect(winners[0]?.installedVia).toBe('claude-code')
   })
 
-  it('does not crash when a subdirectory contains a SKILL.md that is itself a directory (SMI-5440)', async () => {
+  it('does not crash and skips dot-prefixed directories like .backups (SMI-5440/SMI-5442)', async () => {
     // Reproduces the .backups/SKILL.md layout created by apply_recommended_edit
     const claudeDir = path.join(homeDir, '.claude', 'skills')
     await plantSkill(claudeDir, 'real-skill')
-    // .backups has a SKILL.md dir (not file) — the backup store
+    // .backups is a dot-prefixed directory. Previously the EISDIR tolerance kept
+    // the scan alive but still listed .backups as an unknown skill. The dot-dir
+    // skip (SMI-5442) now silences it entirely before the SKILL.md read occurs.
     await mkdir(path.join(claudeDir, '.backups', 'SKILL.md'), { recursive: true })
 
     const { getInstalledSkills } = await import('../src/utils/skills-directory.js')
-    // Must not throw EISDIR; real-skill must still be returned
     const skills = await getInstalledSkills('/nonexistent.db')
+
+    // Must not throw, and real-skill must be present.
     expect(skills.some((s) => s.name === 'real-skill')).toBe(true)
+    // .backups must be absent — it is a harness internal, not a skill.
+    expect(skills.some((s) => s.name === '.backups')).toBe(false)
+    // No dot-prefixed entry of any kind should surface.
+    expect(skills.some((s) => s.name.startsWith('.'))).toBe(false)
   })
 })

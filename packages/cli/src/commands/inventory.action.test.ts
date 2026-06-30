@@ -330,6 +330,9 @@ describe('inventory status', () => {
         skillId: 'foo/bar',
         version: '1.0.0',
         contentHash: null,
+        author: null,
+        license: null,
+        repository: null,
         path: '/mock/foo-bar',
       },
       {
@@ -337,6 +340,9 @@ describe('inventory status', () => {
         skillId: 'baz/qux',
         version: null,
         contentHash: null,
+        author: null,
+        license: null,
+        repository: null,
         path: '/mock/baz-qux',
       },
     ])
@@ -355,6 +361,9 @@ describe('inventory status', () => {
         skillId: 'author/my-skill',
         version: '1.0.0',
         contentHash: null,
+        author: null,
+        license: null,
+        repository: null,
         path: '/mock/my-skill',
       },
     ])
@@ -373,6 +382,9 @@ describe('inventory status', () => {
         skillId: 'author/hidden-skill',
         version: null,
         contentHash: null,
+        author: null,
+        license: null,
+        repository: null,
         path: '/mock/hidden',
       },
     ])
