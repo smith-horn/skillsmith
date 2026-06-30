@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.7.3
+
+- **Feature**: 0.7.3 — esbuild bundle + remote-default search + skills-search safety filters (SMI-5427) (#1651)
+- **Feature**: SMI-5442 — provenance + matching fix (Local / source-identified / Pending) (#1650)
+
 ## v0.7.2
 
 - **Fix**: tolerate EISDIR when SKILL.md is a directory in skills scan (SMI-5440) (#1640)
