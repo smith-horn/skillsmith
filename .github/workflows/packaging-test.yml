@@ -119,6 +119,28 @@ jobs:
           node ./node_modules/@skillsmith/cli/dist/cli.js telemetry --help
           echo "telemetry --help OK"
 
+      - name: Exercise the WASM DB-open fallback (SMI-5427)
+        working-directory: /tmp/fresh-install-test/wrapper
+        env:
+          SKILLSMITH_USE_MOCK_EMBEDDINGS: 'true'
+          # Force the local branch so search opens the local DB, exercising the
+          # fts5-sql-bundle WASM fallback (better-sqlite3 is externalized + NOT
+          # declared, so it is absent here). A lazy-require MODULE_NOT_FOUND on the
+          # DB-open path would otherwise ship undetected — the --help smokes above
+          # never open a database.
+          SKILLSMITH_OFFLINE_MODE: 'true'
+        run: |
+          # Empty local DB + offline is a normal, handled state (prints a hint,
+          # exits 0). The assertion is that opening the WASM DB does not crash with
+          # a missing-module error.
+          OUT=$(node ./node_modules/@skillsmith/cli/dist/cli.js search "test" 2>&1) || true
+          echo "$OUT"
+          if echo "$OUT" | grep -qiE "Cannot find module|MODULE_NOT_FOUND|Error: No SQLite driver"; then
+            echo "::error::search 'test' failed to open the WASM DB (native/WASM fallback missing)"
+            exit 1
+          fi
+          echo "WASM DB-open fallback OK"
+
       - name: Assert --version does not trigger import
         working-directory: /tmp/fresh-install-test/wrapper
         run: |

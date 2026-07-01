@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.7.4
+
+- **Security**: fix an interactive-search install path that bypassed the quarantine gate — `skillsmith search -i` → "Install this skill" no longer installs a quarantined skill (consolidated onto the quarantine-aware registry lookup shared with `install`) (SMI-5447).
+
 ## v0.7.3
 
 - **Feature**: 0.7.3 — esbuild bundle + remote-default search + skills-search safety filters (SMI-5427) (#1651)
