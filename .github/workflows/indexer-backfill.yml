@@ -81,6 +81,16 @@ on:
         required: false
         default: '0'
         type: string
+      max_elapsed_minutes:
+        description: 'SMI-5448: per-dispatch wall-clock budget in MINUTES (default 280, safely below the 330-min GHA timeout). The crawl checkpoints and exits at a clean boundary before the GHA kill, turning a timeout rollback into forward progress. 0 = disabled. A single in-flight page can run ~10-15 min past the trip point before the page loop breaks.'
+        required: false
+        default: '280'
+        type: string
+      accept_truncation:
+        description: 'SMI-5321/5448: when true, a saturated unbisectable leaf (>=1000 identical-byte-size files) is processed (page-1 results, recorded truncated) instead of skipped. Default false.'
+        required: false
+        default: false
+        type: boolean
       supabase_env:
         description: 'Target Supabase environment'
         required: false
@@ -212,6 +222,14 @@ jobs:
           # roughly this many skills are admitted, checkpoint, and exit so the next
           # dispatch resumes. 0 = no cap. Distinct from max_skills_per_repo.
           BACKFILL_MAX_SKILLS_PER_DISPATCH: ${{ github.event.inputs.max_skills_per_dispatch || '0' }}
+          # SMI-5448: per-dispatch wall-clock budget (minutes). The facet crawl
+          # checkpoints and exits at a clean boundary once elapsed >= this budget,
+          # turning a 330-min GHA-timeout rollback into forward progress. Default
+          # 280 leaves a 50-min margin. 0 = disabled.
+          BACKFILL_MAX_ELAPSED_MINUTES: ${{ github.event.inputs.max_elapsed_minutes || '280' }}
+          # SMI-5321: opt-in fetch-with-truncation floor for saturated unbisectable
+          # leaves. Default false = current skip-only behavior.
+          BACKFILL_ACCEPT_TRUNCATION: ${{ github.event.inputs.accept_truncation || 'false' }}
           # Raised caps for backfill mode (per SPARC section #3).
           # These override the conservative cron defaults.
           CODE_SEARCH_MAX_PAGES: '10'

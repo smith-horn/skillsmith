@@ -93,6 +93,15 @@ export interface BackfillFacetPlan {
    */
   maxSkillsPerDispatch?: number
   /**
+   * SMI-5448: per-dispatch wall-clock budget (ms). When > 0, the crawl
+   * checkpoint-and-exits at a clean boundary once elapsed >= this budget,
+   * converting a GHA-timeout rollback into forward progress. Two checks:
+   * mid-range (between pages -- the cursor holds at state.lastPage, the range
+   * is NOT advanced) and range-boundary (after advance/bisect, like
+   * maxSkillsPerDispatch). 0/undefined = disabled (byte-identical to pre-5448).
+   */
+  maxElapsedMs?: number
+  /**
    * SMI-5321: opt-in fetch-with-truncation floor. When true, a saturated
    * unbisectable leaf (>=1000 identical-byte-size SKILL.md files) is processed
    * instead of skipped. The leaf is still recorded truncated=true so
@@ -158,6 +167,8 @@ export async function runBackfillFacetCrawl(
   let capSaturated = false
   let truncatedRanges = 0
   let rangesCrawled = 0
+  // SMI-5448: per-dispatch wall-clock anchor for the elapsed-budget guard.
+  const startedAt = Date.now()
 
   while (rangesCrawled < plan.maxRangesPerDispatch) {
     const range = currentFacetRange(state, facets)
@@ -166,6 +177,10 @@ export async function runBackfillFacetCrawl(
 
     let saturated = false
     let errored = false
+    // SMI-5448: write-once-true flag set only after `state.lastPage = page`
+    // (never on the saturation/error path), so a timed-out range is not
+    // advanced/bisected -- resume re-enters this facet at lastPage+1.
+    let timedOut = false
     // SMI-5321: capture page-1 repos during saturation detection so the
     // acceptTruncation floor can reuse them without a second code-search fetch.
     let saturatedPageRepos: GitHubRepository[] | null = null
@@ -204,6 +219,10 @@ export async function runBackfillFacetCrawl(
       )
       state.lastPage = page
       if (result.repos.length < plan.perPage) break // short page -> range exhausted
+      if (plan.maxElapsedMs && Date.now() - startedAt >= plan.maxElapsedMs) {
+        timedOut = true
+        break // range NOT exhausted -- hold cursor at lastPage, resume next dispatch
+      }
       await delay(6000) // 10 code-search req/min -> 6s between pages
     }
 
@@ -259,9 +278,25 @@ export async function runBackfillFacetCrawl(
         }
         advanceFacet(state)
       }
+    } else if (timedOut) {
+      // SMI-5448: elapsed budget tripped mid-range -- the range is NOT exhausted.
+      // Do NOT advance/bisect; hold the cursor at state.lastPage so the next
+      // dispatch resumes at lastPage+1 for this same facet. Outer loop breaks below.
     } else {
       // Range exhausted (short page, or page cap reached with total <= cap).
       advanceFacet(state)
+    }
+
+    // SMI-5448: mid-range elapsed break -- the facet was NOT advanced (the
+    // `else if (timedOut)` branch above left the cursor at state.lastPage), so
+    // the next dispatch resumes at lastPage+1 for this same facet. Break before
+    // the skill-cap check to avoid double-logging on the same exit.
+    if (timedOut) {
+      console.log(
+        `[Backfill] elapsed budget ${plan.maxElapsedMs}ms reached mid-range ` +
+          `(facet ${facetId(range)}, resuming at page ${state.lastPage + 1}), checkpointing and exiting`
+      )
+      break
     }
 
     // Per-dispatch skill cap: checked at the range boundary (after bisect/advance)
@@ -272,6 +307,17 @@ export async function runBackfillFacetCrawl(
     if (plan.maxSkillsPerDispatch && repos.length >= plan.maxSkillsPerDispatch) {
       console.log(
         `[Backfill] Skill cap reached: ${repos.length} skills >= cap ${plan.maxSkillsPerDispatch}, checkpointing and exiting`
+      )
+      break
+    }
+
+    // SMI-5448: range-boundary elapsed break -- the last range fully completed
+    // (advanced/bisected), so the cursor is clean. This bounds cumulative
+    // multi-range dispatches, mirroring the skill-cap check above.
+    if (plan.maxElapsedMs && Date.now() - startedAt >= plan.maxElapsedMs) {
+      console.log(
+        `[Backfill] elapsed budget ${plan.maxElapsedMs}ms reached at range boundary ` +
+          `(${rangesCrawled} ranges), checkpointing and exiting`
       )
       break
     }
