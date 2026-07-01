@@ -177,7 +177,11 @@ export function runAudit(opts = {}) {
     if (!existsSync(pkgPath)) continue
 
     const pkgJson = readJson(pkgPath)
-    const deps = { ...pkgJson.dependencies }
+    // SMI-5427: include devDependencies — the CLI moved @skillsmith/core +
+    // @skillsmith/mcp-server there (esbuild inlines them; they are stripped from
+    // the published install). Spreading only `dependencies` would silently make
+    // the CLI's workspace version-consistency check a no-op.
+    const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies }
     let siblingCount = 0
 
     for (const [depName, depRange] of Object.entries(deps)) {

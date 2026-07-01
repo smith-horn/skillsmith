@@ -17,18 +17,16 @@ import {
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
-  SkillsmithApiClient,
-  createApiClient,
-  loadStoredAccessToken,
   type SearchOptions,
   type TrustTier,
-  type RegistryLookup,
-  type RegistrySkillInfo,
 } from '@skillsmith/core'
 // SMI-5039: lazy embedding-capability probe.
 import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
+// SMI-5427 hotfix: reuse the quarantine-aware registry lookup from install so the
+// interactive "Install this skill" path does NOT bypass the quarantine gate.
+import { createApiBackedRegistryLookup } from './install.js'
 import { isLocalIndexEmpty, formatEmptyIndexHint, searchRemoteOrLocal } from './search.helpers.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { type InteractiveSearchState, type SearchPhase, PAGE_SIZE } from './search-types.js'
@@ -215,9 +213,12 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
               try {
                 const skillRepo = new SkillRepository(db)
                 const skillDependencyRepo = new SkillDependencyRepository(db)
-                // SMI-5427: API-backed registry lookup — falls through to API
-                // when the skill is not in the local DB (remote-only result).
-                const registryLookup = buildRegistryLookupWithApiFallback(skillRepo)
+                // SMI-5427: quarantine-aware, API-backed registry lookup — falls
+                // through to the API for remote-only results while still honoring
+                // the local QuarantineRepository and the API's quarantined/installable
+                // flags (shared with `install`), so a quarantined skill cannot be
+                // installed from interactive search.
+                const registryLookup = await createApiBackedRegistryLookup(skillRepo, db)
                 const installService = new SkillInstallationService({
                   db,
                   skillRepo,
@@ -257,46 +258,6 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
   }
 
   console.log(chalk.dim('\nGoodbye!\n'))
-}
-
-/**
- * Build a RegistryLookup that tries local DB first, then falls back to the
- * remote API. This ensures `skillsmith install` works for skills discovered
- * via remote search even when the local DB has never been synced.
- *
- * SMI-5427: install path requires a repoUrl; remote getSkill provides it.
- */
-function buildRegistryLookupWithApiFallback(skillRepo: SkillRepository): RegistryLookup {
-  return {
-    async lookup(sid: string): Promise<RegistrySkillInfo | null> {
-      const s = skillRepo.findById(sid)
-      if (s?.repoUrl) {
-        return {
-          repoUrl: s.repoUrl,
-          name: s.name,
-          trustTier: s.trustTier,
-          quarantined: false,
-        }
-      }
-      // API fallback for remote-only results.
-      try {
-        const jwtToken = await loadStoredAccessToken()
-        const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
-        if (apiClient.isOffline()) return null
-        const response = await apiClient.getSkill(sid)
-        const r = response.data
-        if (!r.repo_url) return null
-        return {
-          repoUrl: r.repo_url,
-          name: r.name,
-          trustTier: SkillsmithApiClient.toSkill(r).trustTier,
-          quarantined: false,
-        }
-      } catch {
-        return null
-      }
-    },
-  }
 }
 
 /**
