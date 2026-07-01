@@ -36,7 +36,11 @@ import {
   makeRunDb,
   stubFetchCleanAlways,
   stubFetchMaliciousAlways,
+  stubFetchMaliciousSkillMdCleanSiblings,
+  stubFetchCleanSkillMdMaliciousSiblings,
+  stubFetchCleanSkillMdTransientSiblings,
   stubFetchTransientAlways,
+  isRawGithubUrl,
   BASE_OPTS,
 } from './recheck.test-helpers.ts'
 
@@ -453,5 +457,172 @@ describe('runRecheck — audit shape', () => {
     // Result payload mirrors the counters and is not skipped.
     expect(result.skipped).toBe(false)
     expect(result.recheck.candidate_count).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5437 Wave 2 — sibling re-scan outcomes through runRecheck
+// ---------------------------------------------------------------------------
+
+describe('runRecheck — SMI-5437 sibling re-scan: quarantined row with malicious sibling', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('increments both requarantined AND sibling_requarantined; writes sibling requarantine audit', async () => {
+    // SKILL.md is clean; sibling (package.json etc.) is malicious.
+    stubFetchCleanSkillMdMaliciousSiblings()
+    const row = makeRow({ id: 'sib-req-1', quarantined: true, quarantine_reason: 'stale' })
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    // Additive: both requarantined and sibling_requarantined increment.
+    expect(result.recheck.requarantined).toBe(1)
+    expect(result.recheck.sibling_requarantined).toBe(1)
+    expect(result.recheck.cleared).toBe(0)
+    expect(result.recheck.sibling_recovered).toBe(0)
+    // Sibling requarantine is audited with 'quarantine:requarantined' event.
+    const sibAudit = handle.auditInserts.find(
+      (a) => (a as { event_type: string }).event_type === 'quarantine:requarantined'
+    )
+    expect(sibAudit).toBeDefined()
+    expect((sibAudit as { metadata: { sweep: string } }).metadata.sweep).toBe('recheck-sibling')
+  })
+})
+
+describe('runRecheck — SMI-5437 sibling re-scan: quarantined row with clean sibling', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('increments both cleared AND sibling_recovered; writes quarantine:cleared audit', async () => {
+    // SKILL.md clean; siblings clean → skill is unquarantined.
+    stubFetchCleanAlways()
+    const row = makeRow({ id: 'sib-rec-1', quarantined: true, quarantine_reason: 'stale' })
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    // Additive: both cleared and sibling_recovered increment.
+    expect(result.recheck.cleared).toBe(1)
+    expect(result.recheck.sibling_recovered).toBe(1)
+    expect(result.recheck.requarantined).toBe(0)
+    expect(result.recheck.sibling_requarantined).toBe(0)
+    // The clear write sets quarantined=false with the SMI-5437 audit sweep tag.
+    expect(handle.auditInserts).toHaveLength(1)
+    expect(handle.auditInserts[0].event_type).toBe('quarantine:cleared')
+    expect((handle.auditInserts[0] as { metadata: { sweep: string } }).metadata.sweep).toBe(
+      'recheck-sibling'
+    )
+  })
+})
+
+describe('runRecheck — SMI-5437 sibling re-scan: transient sibling fetch → stay quarantined (fail-closed)', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('increments fetch_error; does NOT write a skills update (quarantine unchanged)', async () => {
+    // SKILL.md clean, but sibling fetch is 403 transient → runSiblingRescan returns 'unknown'.
+    stubFetchCleanSkillMdTransientSiblings(403)
+    const row = makeRow({ id: 'sib-trans-1', quarantined: true, quarantine_reason: 'stale' })
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    // Transient sibling fetch → fetch-error outcome, no DB change.
+    expect(result.recheck.fetch_error).toBe(1)
+    expect(result.recheck.cleared).toBe(0)
+    expect(result.recheck.sibling_recovered).toBe(0)
+    expect(result.recheck.sibling_requarantined).toBe(0)
+    // CRITICAL: no skills UPDATE must have been issued (quarantine column unchanged).
+    expect(handle.updatePayloads).toHaveLength(0)
+    expect(handle.auditInserts).toHaveLength(0)
+  })
+})
+
+describe('runRecheck — SMI-5437 sibling re-scan: live rows (quarantined=false) skip sibling rescan', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('live row with malicious sibling still gets live-touched (sibling rescan is quarantine-review-only)', async () => {
+    // Per plan step 4: quarantined===false rows exit at the CAS touch, before sibling rescan.
+    // A malicious sibling stub should NOT trigger sibling_requarantined on a live row.
+    stubFetchCleanSkillMdMaliciousSiblings()
+    const row = makeRow({ id: 'live-sib-1', quarantined: false })
+    const handle = makeRunDb({
+      pass1: [row],
+      pass2: [],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    // Live row: exits at the CAS touch — sibling rescan never runs.
+    expect(result.recheck.live_touched).toBe(1)
+    expect(result.recheck.sibling_requarantined).toBe(0)
+    expect(result.recheck.sibling_recovered).toBe(0)
+    // Only one write: the last_seen_at CAS touch.
+    expect(handle.updatePayloads).toHaveLength(1)
+    expect(Object.keys(handle.updatePayloads[0])).toEqual(['last_seen_at'])
+  })
+})
+
+describe('runRecheck — SMI-5437 sibling re-scan: SKILL.md malicious → sibling rescan not invoked', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('quarantined=true row with malicious SKILL.md counts kept_security without invoking sibling scan', async () => {
+    // SKILL.md is malicious → shouldQuarantine(scan) = true → processRow returns 'kept-security'
+    // before reaching the sibling rescan block. Sibling fetch should never be called.
+    stubFetchMaliciousSkillMdCleanSiblings()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const row = makeRow({ id: 'kept-1', quarantined: true, quarantine_reason: 'security scan' })
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    expect(result.recheck.kept_security).toBe(1)
+    expect(result.recheck.sibling_requarantined).toBe(0)
+    expect(result.recheck.sibling_recovered).toBe(0)
+    // Only the SKILL.md fetch (api.github.com) should have fired; NO raw.githubusercontent.com.
+    const rawCalls = fetchSpy.mock.calls.filter((c) => isRawGithubUrl(c[0]))
+    expect(rawCalls).toHaveLength(0)
+    warnSpy.mockRestore()
   })
 })

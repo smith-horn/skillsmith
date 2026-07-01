@@ -15,6 +15,7 @@ import {
   enumerateSiblingTargets,
   mergeSiblingScans,
   buildMergedQuarantineReason,
+  type FetchSiblingResult,
   type SiblingEdgeScan,
   type MergedEdgeScanResult,
 } from '../../indexer/skill-processor.security.ts'
@@ -292,12 +293,32 @@ describe('buildMergedQuarantineReason', () => {
 
 // ---------------------------------------------------------------------------
 // 429 transient — sibling skipped, skill NOT quarantined
-// (tests fetchSiblingContent's 429 handling indirectly via the null-return contract)
+// SMI-5437 Wave 1: type-level assertions that FetchSiblingResult shape is correct.
+// Mock signatures for fetchSiblingContent must satisfy FetchSiblingResult to avoid
+// silent any-typed regressions if the return type ever changes.
 // ---------------------------------------------------------------------------
 
 describe('fetchSiblingContent — 429 transient handling contract', () => {
+  it('null is a valid FetchSiblingResult (type check for 429 / network-error path)', () => {
+    // If fetchSiblingContent drops `null` from its return union, this line fails to compile.
+    const skipped: FetchSiblingResult = null
+    expect(skipped).toBeNull()
+  })
+
+  it('{ removed: true } is a valid FetchSiblingResult (type check for 404 path)', () => {
+    // 404 must produce this shape — bare null was previously conflated with removal.
+    const removed: FetchSiblingResult = { removed: true }
+    expect(removed).toStrictEqual({ removed: true })
+  })
+
+  it('{ content: string } is a valid FetchSiblingResult (type check for success path)', () => {
+    // Success must produce this shape — bare string was the previous (wrong) return type.
+    const fetched: FetchSiblingResult = { content: 'some content' }
+    expect(fetched).toStrictEqual({ content: 'some content' })
+  })
+
   it('mergeSiblingScans with empty siblings (all 429-skipped) does not quarantine clean skill', () => {
-    // When all sibling fetches return null (429 or 404), siblingScans is empty.
+    // When all sibling fetches return null (429 or network error), siblingScans is empty.
     // mergeSiblingScans is NOT called in that case (caller guard). If called with
     // empty siblings, it should not quarantine a clean root scan.
     const result = mergeSiblingScans(cleanScan(), [])

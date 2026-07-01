@@ -258,11 +258,13 @@ export async function validateSkillMd(
     const siblingPaths = enumerateSiblingTargets(skillPath ?? '')
     const siblingScans: SiblingEdgeScan[] = []
     for (const relPath of siblingPaths) {
-      const sibContent = await fetchSiblingContent(owner, repo, branch, relPath, telemetry)
-      if (sibContent !== null) {
+      const sibResult = await fetchSiblingContent(owner, repo, branch, relPath, telemetry)
+      if (sibResult !== null && !('removed' in sibResult)) {
+        const sibContent = sibResult.content
         const sibScan = await scanSkillContent(sibContent)
         siblingScans.push({ relPath, scan: sibScan })
       }
+      // null (error) and { removed: true } (404) both skip — same behavior as before
     }
     const mergedSecurityScan =
       siblingScans.length > 0 ? mergeSiblingScans(securityScan, siblingScans) : undefined

@@ -78,8 +78,12 @@ export interface RecheckAuditCounters {
   fetch_error: number
   cas_skipped: number
   errors: number
-  /** SMI-5436 Wave 2: rows skipped because they have sibling-triggered quarantines (filePath != null). */
+  /** SMI-5436 Wave 2: rows skipped because they have sibling-triggered quarantines (filePath != null). Always 0 post-SMI-5437 (gate removed); retained for audit log schema compatibility. */
   sibling_gate_skipped: number
+  /** SMI-5437 Wave 2: rows requarantined by sibling re-scan (or confirmed still malicious). Incremented regardless of whether a DB write was issued (skill may already be quarantined). */
+  sibling_requarantined: number
+  /** SMI-5437 Wave 2: rows unquarantined after sibling re-scan confirmed all siblings clean and the CAS clear write succeeded. */
+  sibling_recovered: number
   fetch_error_rate: number
   cap_saturated: boolean
   killswitch_engaged: boolean

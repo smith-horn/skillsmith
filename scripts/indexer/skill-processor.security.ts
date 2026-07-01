@@ -102,7 +102,7 @@ export const MAX_SIBLING_BLOB_FETCHES_PER_SKILL = BUNDLED_SCAN_FILES.length
 export const MAX_SIBLING_CONTENT_BYTES = 256_000
 
 /** Files that are doc-class: we scan them but do NOT reject on findings (consistent with Phase 2 B1). */
-const DOC_CLASS_BASENAMES = new Set(['README.md', 'examples.md'])
+export const DOC_CLASS_BASENAMES = new Set(['README.md', 'examples.md'])
 
 export interface SiblingEdgeScan {
   relPath: string
@@ -130,13 +130,23 @@ export function enumerateSiblingTargets(skillDir: string): readonly string[] {
 }
 
 /**
+ * SMI-5437 Wave 1: Discriminated return type for fetchSiblingContent.
+ * Distinguishes confirmed removal (404) from transient failures (429 / network error / oversized).
+ * The recheck unquarantine path requires this distinction: 404 is a positive removal signal,
+ * while a network error must not release a quarantine (fail-closed).
+ */
+export type FetchSiblingResult = { content: string } | { removed: true } | null
+
+/**
  * SMI-5436 Wave 2: Fetch a sibling file via raw.githubusercontent.com CDN (zero core quota).
+ * SMI-5437 Wave 1: Returns a discriminated result (FetchSiblingResult) to distinguish
+ * confirmed removal (404) from transient failures (429 / network error / oversized).
  *
- * Returns the content string, or null on:
- *   - HTTP 404 (file absent — not an error)
- *   - HTTP 429 (transient rate-limit — skip silently; do NOT quarantine)
- *   - Content-Length exceeds MAX_SIBLING_CONTENT_BYTES
- *   - Any network error (fail-open: missing siblings never trigger quarantine)
+ * Returns:
+ *   - `{ content: string }` — successful fetch
+ *   - `{ removed: true }` — HTTP 404 (file confirmed absent; positive signal for recheck path)
+ *   - `null` — HTTP 429, oversized, or network error (unknown state; fail-open / fail-closed
+ *     semantics differ by caller: quarantine path is fail-open, unquarantine path is fail-closed)
  */
 export async function fetchSiblingContent(
   owner: string,
@@ -144,7 +154,7 @@ export async function fetchSiblingContent(
   branch: string,
   relPath: string,
   telemetry: RateLimitTelemetry
-): Promise<string | null> {
+): Promise<FetchSiblingResult> {
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${relPath}`
   try {
     const response = await withRateLimitTracking(telemetry, url, {
@@ -153,10 +163,13 @@ export async function fetchSiblingContent(
     })
     // 429 = transient; silently skip (same as validateSkillMd transient handling)
     if (response.status === 429) return null
+    // 404 = file confirmed absent from repo (positive removal signal for recheck path)
+    if (response.status === 404) return { removed: true }
     if (!response.ok) return null
     const contentLength = response.headers.get('content-length')
     if (contentLength && parseInt(contentLength, 10) > MAX_SIBLING_CONTENT_BYTES) return null
-    return await readResponseWithLimit(response, MAX_SIBLING_CONTENT_BYTES)
+    const text = await readResponseWithLimit(response, MAX_SIBLING_CONTENT_BYTES)
+    return { content: text }
   } catch {
     return null
   }
