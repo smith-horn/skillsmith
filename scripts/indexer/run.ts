@@ -184,6 +184,9 @@ async function runDiscoveryBranch(
       maxSkillsPerDispatch: env.BACKFILL_MAX_SKILLS_PER_DISPATCH,
       // SMI-5321: opt-in fetch for saturated unbisectable leaves (default false).
       acceptTruncation: env.BACKFILL_ACCEPT_TRUNCATION,
+      // SMI-5448: per-dispatch wall-clock budget (ms). 0 = disabled.
+      maxElapsedMs:
+        env.BACKFILL_MAX_ELAPSED_MINUTES > 0 ? env.BACKFILL_MAX_ELAPSED_MINUTES * 60_000 : 0,
     }
   }
 

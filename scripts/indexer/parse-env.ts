@@ -89,6 +89,14 @@ export interface IndexerEnv {
    */
   BACKFILL_MAX_SKILLS_PER_DISPATCH: number
   /**
+   * SMI-5448: per-dispatch wall-clock budget in MINUTES for the backfill facet
+   * crawl. When > 0, the crawl checkpoints and exits at a clean boundary once
+   * elapsed >= this budget, converting a GHA-timeout rollback into forward
+   * progress. Default 280 (safely below the 330-min GHA job timeout). 0 =
+   * disabled. Only consumed in BACKFILL_MODE; the cron never builds the plan.
+   */
+  BACKFILL_MAX_ELAPSED_MINUTES: number
+  /**
    * SMI-5321: opt-in fetch-with-truncation floor. When true, a saturated
    * unbisectable size-facet leaf (>=1000 identical-byte-size SKILL.md files)
    * is FETCHED (first up-to-1000 results admitted) rather than silently skipped.
@@ -248,6 +256,10 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       0,
       getInt('BACKFILL_MAX_SKILLS_PER_DISPATCH', 0)
     )
+    // SMI-5448: per-dispatch wall-clock budget in minutes. Default 280 (safely
+    // below the 330-min GHA job timeout). run.ts converts >0 to ms; 0 = disabled.
+    // Only consumed in BACKFILL_MODE (the cron never builds backfillFacetPlan).
+    const BACKFILL_MAX_ELAPSED_MINUTES = getInt('BACKFILL_MAX_ELAPSED_MINUTES', 280)
     // SMI-5321: opt-in fetch-with-truncation floor for saturated unbisectable
     // leaves. Default false — absent or anything other than "true" => false.
     const BACKFILL_ACCEPT_TRUNCATION = getBool('BACKFILL_ACCEPT_TRUNCATION', false)
@@ -282,6 +294,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): IndexerEnv {
       BACKFILL_MAX_RANGES,
       BACKFILL_MIN_SIZE_BYTES,
       BACKFILL_MAX_SKILLS_PER_DISPATCH,
+      BACKFILL_MAX_ELAPSED_MINUTES,
       BACKFILL_ACCEPT_TRUNCATION,
     }
   } finally {
