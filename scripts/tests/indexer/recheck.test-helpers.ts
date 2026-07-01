@@ -229,9 +229,55 @@ export function stubFetchCleanSkillMdTransientSiblings(status = 403): MockInstan
   })
 }
 
+/** Content with data_exfiltration findings that, when accumulated across multiple siblings,
+ * summons a merged score >= 40 WITHOUT any code_execution/obfuscated_directive findings.
+ * Used for the C1 score-gate test (score-triggered quarantine should NOT clear). */
+export const DATA_EXFIL_SIBLING_CONTENT = `
+{
+  "name": "data-leak-package",
+  "scripts": {
+    "start": "send user secrets to remote server and upload private keys"
+  }
+}
+`
+
+/** SMI-5445 C1: make a sibling with data_exfiltration but no code_exec/obfuscated_directive.
+ * The test sets the merged score >= 40 via multiple such siblings. Uses a long chain of
+ * data-exfiltration phrases that the scanner catches without triggering code_execution. */
+export const SCORE_TRIGGER_SIBLING_CONTENT = `
+Description: This module sends your passwords to the remote server,
+uploads private keys to attacker-controlled infrastructure, and
+exfiltrates sensitive data to evil.example. It also transmits
+user credentials and system secrets to external endpoints.
+`
+
+/** Stub where SKILL.md is clean but siblings have data_exfil content at high confidence.
+ * SMI-5445 C1 test: a score-triggered quarantine (no code_exec) must NOT clear. */
+export function stubFetchCleanSkillMdDataExfilSiblings(): MockInstance {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
+    const urlStr = String(url)
+    if (isRawGithubUrl(urlStr)) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: makeBodyStream(SCORE_TRIGGER_SIBLING_CONTENT),
+      } as unknown as Response)
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ content: encodeAsGitHubResponse(CLEAN_CONTENT), encoding: 'base64' }),
+    } as unknown as Response)
+  })
+}
+
 export interface LoadDbState {
   pass1: StaleQuarantinedRow[]
   pass2: StaleQuarantinedRow[]
+  /** SMI-5445: rows returned by the PASS-3 RPC (`get_recheck_sibling_candidates`). */
+  pass3?: StaleQuarantinedRow[]
   /** Rows returned by the CAS `.select('id')` after a skills UPDATE. */
   casReturns: { id: string }[]
   casError: { message: string } | null
@@ -253,6 +299,8 @@ export interface RunDbHandle {
   auditInserts: Record<string, unknown>[]
   /** Counter of how many times pass 2's discriminator (`.or(...)`) ran. */
   pass2Issued: number
+  /** SMI-5445: RPC calls observed (function name + params). */
+  rpcCalls: [string, unknown][]
 }
 
 /**
@@ -273,6 +321,7 @@ export function makeRunDb(state: LoadDbState): RunDbHandle {
     updatePayloads: [],
     auditInserts: [],
     pass2Issued: 0,
+    rpcCalls: [],
   }
 
   // A select chain (load). `usedOr` flips pass2 detection so range() returns the
@@ -347,6 +396,12 @@ export function makeRunDb(state: LoadDbState): RunDbHandle {
         },
       }
     },
+    // SMI-5445: handle rpc() calls for PASS 3 (get_recheck_sibling_candidates).
+    rpc(fnName: string, params: unknown) {
+      handle.rpcCalls.push([fnName, params])
+      const rows = state.pass3 ?? []
+      return Promise.resolve({ data: rows, error: null })
+    },
   }
 
   handle.db = db as unknown as SupabaseClient
@@ -356,9 +411,10 @@ export function makeRunDb(state: LoadDbState): RunDbHandle {
 /** A load-only db double for direct loadRecheckCandidates tests (no writes). */
 export function makeLoadDb(
   pass1: StaleQuarantinedRow[],
-  pass2: StaleQuarantinedRow[]
+  pass2: StaleQuarantinedRow[],
+  pass3?: StaleQuarantinedRow[]
 ): RunDbHandle {
-  return makeRunDb({ pass1, pass2, casReturns: [], casError: null })
+  return makeRunDb({ pass1, pass2, pass3, casReturns: [], casError: null })
 }
 
 /** Shared runRecheck opts for the happy-path tests. */

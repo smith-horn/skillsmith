@@ -87,6 +87,16 @@ export interface RecheckAuditCounters {
   fetch_error_rate: number
   cap_saturated: boolean
   killswitch_engaged: boolean
+  /** SMI-5445 M3: number of candidates loaded from PASS 1 (prevention cohort). */
+  pass1_count: number
+  /** SMI-5445 M3: number of candidates loaded from PASS 2 (self-heal stale cohort). */
+  pass2_count: number
+  /** SMI-5445 M3: number of candidates loaded from PASS 3 (sibling-quarantined cohort via RPC). */
+  pass3_count: number
+  /** SMI-5445 M3: rows from PASS 3 that were unquarantined in this run (subset of sibling_recovered). */
+  pass3_sibling_recovered: number
+  /** SMI-5445 C2: rows that would have been cleared but hit the per-run sibling-clear cap; deferred to next run. */
+  deferred_cap: number
 }
 
 /**

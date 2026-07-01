@@ -24,6 +24,7 @@ import {
   runSiblingRescan,
   buildSiblingQuarantineReason,
   writeSiblingRequarantine,
+  writeSiblingRecovery,
 } from './revalidate-stale-quarantines.sibling.ts'
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ export type StaleOutcome =
   | 'error'
   | 'sibling-requarantined' // SMI-5437 W2: additive with requarantined + sibling_requarantined
   | 'sibling-recovered' //     SMI-5437 W2: additive with cleared + sibling_recovered
+  | 'deferred-cap' //          SMI-5445 C2: PASS-3 row that would have cleared but hit the per-run sibling-clear cap
 
 interface RowResult {
   row: StaleQuarantinedRow
@@ -134,13 +136,22 @@ export async function retagUnreachable(
  * Process a single stale-quarantined row (SMI-5437 Wave 2: extended with sibling rescan).
  * Decision tree: parse → fetch SKILL.md → scan SKILL.md → (live? CAS touch) →
  * sibling rescan (quarantined=true clean only) → CAS clear | requarantined | fetch-error.
+ *
+ * SMI-5445 C2: `clearBudget` is an optional mutable budget bounding how many
+ * sibling-quarantine clears may happen per recheck run. It is checked AND
+ * decremented synchronously (before any DB await) on the sibling-recovery path; on
+ * `remaining <= 0` processRow returns 'deferred-cap' WITHOUT writing (row stays
+ * quarantined, retried next run). The synchronous check-then-decrement is race-free
+ * in Node.js even under Promise.all batching — all checks run before the first async
+ * I/O resumes, so two rows can't both claim the last slot.
  */
 export async function processRow(
   row: StaleQuarantinedRow,
   headers: Record<string, string>,
   apply: boolean,
   db: SupabaseClient,
-  telemetry: RateLimitTelemetry = newRateLimitTelemetry()
+  telemetry: RateLimitTelemetry = newRateLimitTelemetry(),
+  clearBudget?: { remaining: number }
 ): Promise<RowResult> {
   // Step 1: parse the repo URL into a GitHub Contents API URL.
   const parsed = parseSkillMdUrl(row.repo_url, row.skill_path)
@@ -242,13 +253,16 @@ export async function processRow(
   }
 
   // SMI-5437 Wave 2: sibling re-scan for quarantined=true rows with clean SKILL.md.
+  // SMI-5445 C1: pass the fresh SKILL.md scan so runSiblingRescan can compute the
+  // collective merged score (root + siblings) and apply the symmetric recovery gate.
   // Fail-closed: transient fetch → 'fetch-error' (quarantine stays, retry next cycle).
   const sibRescan = await runSiblingRescan(
     parsed.owner,
     parsed.repo,
     parsed.ref ?? 'main',
     parsed.dir,
-    telemetry
+    telemetry,
+    scan
   )
   if (sibRescan.status === 'unknown') {
     // Transient: can't verify sibling state; don't change quarantine status.
@@ -269,45 +283,30 @@ export async function processRow(
   // sibRescan.status === 'clean'. Additive: recheck.ts increments both cleared + sibling_recovered.
   if (!apply) return { row, outcome: 'sibling-recovered', score: scan.riskScore }
 
-  const { data: updated, error } = await db
-    .from('skills')
-    .update({
-      quarantined: false,
-      quarantine_reason: null,
-      security_findings: [],
-      security_score: scan.riskScore,
-      last_scanned_at: now,
-      last_seen_at: now,
-    })
-    .eq('id', row.id)
-    .eq('quarantined', true)
-    .select('id')
+  // SMI-5445 C2: enforce the per-run sibling-clear cap BEFORE the DB write (see the
+  // processRow doc comment for the race-free rationale). Exhausted budget → the row
+  // stays quarantined=true, no DB/audit write, outcome 'deferred-cap' (retried next run).
+  if (clearBudget !== undefined) {
+    if (clearBudget.remaining <= 0) {
+      console.warn(
+        `[processRow] sibling-clear budget exhausted — deferring ${row.author ?? '?'}/${row.name} to next run`
+      )
+      return { row, outcome: 'deferred-cap', score: scan.riskScore }
+    }
+    clearBudget.remaining-- // synchronous decrement before any DB await (race-free)
+  }
 
-  if (error) {
-    console.error(`  ERROR updating ${row.author}/${row.name}: ${error.message}`)
+  // SMI-5445: the CAS clear + forensic-persist audit write lives in
+  // writeSiblingRecovery (revalidate-stale-quarantines.sibling.ts) to keep this
+  // file under the 500-line gate. It preserves the `.eq('quarantined', true)` CAS
+  // guard and the fail-closed semantics. M4 forensic findings, M3 merged_score,
+  // and M2 was_security_quarantine are set inside the helper.
+  const writeResult = await writeSiblingRecovery(db, row, sibRescan, scan.riskScore)
+  if (writeResult === 'error') {
+    console.error(`  ERROR updating ${row.author}/${row.name}`)
     return { row, outcome: 'error', score: scan.riskScore }
   }
-  if (!updated || updated.length === 0)
-    return { row, outcome: 'cas-skipped', score: scan.riskScore }
-
-  await db.from('audit_logs').insert({
-    event_type: 'quarantine:cleared',
-    actor: 'system',
-    resource: row.id,
-    action: 'revalidate_stale_quarantines',
-    result: 'success',
-    metadata: {
-      smi: 'SMI-5437',
-      sweep: 'recheck-sibling',
-      skill_id: row.id,
-      author: row.author,
-      name: row.name,
-      repo_url: row.repo_url,
-      new_score: scan.riskScore,
-      prev_quarantine_reason: row.quarantine_reason,
-      prev_security_findings: row.security_findings,
-    },
-  })
+  if (writeResult === 'cas-skipped') return { row, outcome: 'cas-skipped', score: scan.riskScore }
 
   return { row, outcome: 'sibling-recovered', score: scan.riskScore }
 }

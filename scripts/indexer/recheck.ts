@@ -66,6 +66,18 @@ import {
 import { writeIndexerAuditLog } from './indexer-audit-log.ts'
 import type { RecheckAuditCounters } from './indexer-audit-log.ts'
 import { processRow, type StaleQuarantinedRow } from './revalidate-stale-quarantines.ts'
+import {
+  getRecheckMaxSiblingClears,
+  loadPass3Candidates,
+  buildRecheckResult,
+  zeroCounters,
+  recheckAuditZeroFills,
+  pageCandidates,
+  isSiblingQuarantineRow,
+  type RecheckResult,
+} from './recheck.helpers.ts'
+// Re-export so existing callers (run.ts) importing from recheck.ts still resolve.
+export type { RecheckResult }
 
 // ---------------------------------------------------------------------------
 // Constants (clamps, E7)
@@ -83,52 +95,16 @@ const CAP_MAX = 5000
  *  this fraction the run is throttled and its last_seen_at touches are
  *  unreliable — a PREVENTION OUTAGE, not a quiet 0-cleared run. */
 const MAX_FETCH_ERROR_RATE = 0.1
-/** PostgREST caps a single response at 1000 rows; candidate sets are larger. */
-const PAGE_SIZE = 1000
 
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, Math.trunc(n)))
 
 // ---------------------------------------------------------------------------
-// Candidate loading (two-pass preventive-priority)
+// Candidate loading (three-pass preventive-priority)
 // ---------------------------------------------------------------------------
 
-const SELECT_COLUMNS =
-  'id, author, name, repo_url, skill_path, quarantine_reason, security_findings, quarantined, last_seen_at'
-
 /**
- * Page a single PostgREST filter set, ordered by `last_seen_at` ASC, accumulating
- * up to `limit` rows. Stops when a page returns fewer than requested or `limit`
- * is filled. `pass` is folded into the error message for diagnosability.
- */
-async function pageCandidates(
-  db: SupabaseClient,
-  pass: string,
-  limit: number,
-  applyFilters: (
-    q: ReturnType<ReturnType<SupabaseClient['from']>['select']>
-  ) => ReturnType<ReturnType<SupabaseClient['from']>['select']>
-): Promise<StaleQuarantinedRow[]> {
-  const out: StaleQuarantinedRow[] = []
-  for (let page = 0; ; page++) {
-    const remaining = Math.min(PAGE_SIZE, limit - out.length)
-    if (remaining <= 0) break
-    const from = page * PAGE_SIZE
-    const { data, error } = await applyFilters(db.from('skills').select(SELECT_COLUMNS))
-      .order('last_seen_at', { ascending: true })
-      .range(from, from + remaining - 1)
-    if (error) {
-      throw new Error(`Failed to load recheck candidates (${pass}, page ${page}): ${error.message}`)
-    }
-    const rows = (data ?? []) as unknown as StaleQuarantinedRow[]
-    out.push(...rows)
-    if (rows.length < remaining) break
-  }
-  return out.slice(0, limit)
-}
-
-/**
- * Load recheck candidates with two-pass preventive priority inside a single cap.
+ * Load recheck candidates with three-pass preventive priority inside a single cap.
  *
  * PASS 1 (prevention): `quarantined = false` AND `last_seen_at < cutoff` AND
  * GitHub repo_url — the hard-deadline cohort. Served first (see file header):
@@ -139,7 +115,14 @@ async function pageCandidates(
  * PASS 2 (self-heal), ONLY if cap remains: `quarantined = true` AND
  * (reason null OR 'stale') AND `last_seen_at < cutoff` AND GitHub repo_url.
  *
- * Both passes order by `last_seen_at` ASC — oldest rows are closest to the
+ * PASS 3 (sibling-quarantined cohort, SMI-5445), ONLY if cap remains after
+ * PASS 1+2: calls the DB-side RPC `get_recheck_sibling_candidates` which
+ * filters on `jsonb_path_exists(security_findings, '$[*].filePath ? (@ != null && @ != "")')`.
+ * Dedup by id across passes (M1) — a row can match both PASS 2 (reason null) and
+ * PASS 3 (filePath) if it has both conditions; it is served only once (PASS 2 wins
+ * position/priority, PASS 3 adds the rest).
+ *
+ * Both PASS 1+2 order by `last_seen_at` ASC — oldest rows are closest to the
  * 7-day gate (pass 1) or quarantined longest (pass 2), so most urgent first.
  */
 export async function loadRecheckCandidates(
@@ -154,10 +137,10 @@ export async function loadRecheckCandidates(
   )
 
   // PASS 2 — self-heal, only if cap remains after prevention.
-  const remaining = opts.cap - pass1.length
-  if (remaining <= 0) return pass1
+  const remaining2 = opts.cap - pass1.length
+  if (remaining2 <= 0) return pass1
 
-  const pass2 = await pageCandidates(db, 'pass2-selfheal', remaining, (q) =>
+  const pass2 = await pageCandidates(db, 'pass2-selfheal', remaining2, (q) =>
     q
       .eq('quarantined', true)
       .or('quarantine_reason.is.null,quarantine_reason.eq.stale')
@@ -165,114 +148,29 @@ export async function loadRecheckCandidates(
       .ilike('repo_url', 'https://github.com/%')
   )
 
-  return pass1.concat(pass2)
-}
+  // PASS 3 (SMI-5445 H1): sibling-quarantined rows, only if cap remains after PASS 1+2.
+  // Uses the DB-side RPC predicate to avoid the starvation-correctness bug of the
+  // naive in-code post-filter (see plan §3 for the starvation analysis).
+  const remaining3 = opts.cap - pass1.length - pass2.length
+  if (remaining3 <= 0) return pass1.concat(pass2)
 
-// ---------------------------------------------------------------------------
-// Result payload
-// ---------------------------------------------------------------------------
+  // SMI-5445 M1: dedup by id — a row that matches both PASS 2 and PASS 3
+  // (reason null AND filePath != null) must not appear twice.
+  const seen = new Set([...pass1, ...pass2].map((r) => r.id))
 
-/**
- * Data payload returned to run.ts / printed to stdout. Mirrors the maintenance
- * zero-fill shape so the existing `.github/workflows/indexer.yml` Parse Results
- * jq keys (found/indexed/updated/...) all exist, PLUS the namespaced `recheck`
- * object carrying the recheck-specific counters.
- */
-export interface RecheckResult {
-  found: number
-  indexed: number
-  updated: number
-  failed: number
-  quarantined: number
-  skipped: boolean
-  stale: number
-  quality_gate_filtered: number
-  meta_list_filtered: number
-  unchanged: number
-  github_skill_count: number
-  code_search: { repos_found: number; retries: number }
-  errors: string[]
-  dryRun: boolean
-  repositories_found: number
-  recheck: RecheckAuditCounters
-}
-
-/** Build the zero-filled RecheckResult around a given counters object. */
-function buildRecheckResult(
-  counters: RecheckAuditCounters,
-  dryRun: boolean,
-  skipped: boolean,
-  errors: string[]
-): RecheckResult {
-  return {
-    found: 0,
-    indexed: 0,
-    updated: 0,
-    failed: 0,
-    quarantined: 0,
-    skipped,
-    stale: 0,
-    quality_gate_filtered: 0,
-    meta_list_filtered: 0,
-    unchanged: 0,
-    github_skill_count: 0,
-    code_search: { repos_found: 0, retries: 0 },
-    errors,
-    dryRun,
-    repositories_found: 0,
-    recheck: counters,
+  let pass3: StaleQuarantinedRow[] = []
+  try {
+    const rawPass3 = await loadPass3Candidates(db, cutoff, remaining3)
+    pass3 = rawPass3.filter((r) => !seen.has(r.id))
+  } catch (err) {
+    // PASS 3 failure is non-fatal: log and continue with PASS 1+2 results.
+    // The sibling cohort will be retried on the next cron run.
+    console.warn(
+      `[recheck] PASS 3 RPC failed — sibling-quarantined candidates not loaded this run: ${err instanceof Error ? err.message : String(err)}`
+    )
   }
-}
 
-/** All-zero counters with explicit cap/killswitch flags. */
-function zeroCounters(killswitchEngaged: boolean): RecheckAuditCounters {
-  return {
-    candidate_count: 0,
-    live_touched: 0,
-    cleared: 0,
-    kept_security: 0,
-    requarantined: 0,
-    repo_gone: 0,
-    parse_failed: 0,
-    fetch_error: 0,
-    cas_skipped: 0,
-    errors: 0,
-    sibling_gate_skipped: 0,
-    sibling_requarantined: 0,
-    sibling_recovered: 0,
-    fetch_error_rate: 0,
-    cap_saturated: false,
-    killswitch_engaged: killswitchEngaged,
-  }
-}
-
-/**
- * Build the maintenance-style zero-fill block for writeIndexerAuditLog so a
- * recheck audit row carries the same flat keys as discovery/maintenance rows
- * (v_indexer_health / ops-report don't branch on run type).
- */
-function recheckAuditZeroFills() {
-  return {
-    topics: [],
-    found: 0,
-    indexed: 0,
-    updated: 0,
-    failed: 0,
-    stale: 0,
-    quality_gate_filtered: 0,
-    unchanged: 0,
-    quarantined: 0,
-    github_skill_count: 0,
-    code_search: { repos_found: 0, retries: 0 },
-    scoreDistribution: { highTrust: 0, community: 0, scores: [] },
-    categorizedCount: 0,
-    categoryAssignments: 0,
-    wildcard_expansion_count: 0,
-    cron_slot: null,
-    rotation_source: 'fallback' as const,
-    discovery_path_counts: {},
-    high_trust_fallback_hits: 0,
-  }
+  return [...pass1, ...pass2, ...pass3]
 }
 
 // ---------------------------------------------------------------------------
@@ -342,9 +240,27 @@ export async function runRecheck(opts: {
   if (cap !== opts.cap) console.warn(`[recheck] cap clamped ${opts.cap} -> ${cap}`)
   if (batch !== opts.batch) console.warn(`[recheck] batch clamped ${opts.batch} -> ${batch}`)
 
-  // (c) Build GitHub headers; (d) load candidates (two-pass preventive priority).
+  // (c) Build GitHub headers; (d) load candidates (three-pass preventive priority).
   const headers = await buildGitHubHeaders()
   const rows = await loadRecheckCandidates(supabase, { thresholdDays, cap })
+
+  // SMI-5445 M3: per-pass candidate counts. PASS 1 = quarantined=false rows;
+  // PASS 2 = quarantined=true, reason null/'stale'; PASS 3 = sibling-quarantined.
+  // We infer counts from the row shape because loadRecheckCandidates returns a flat
+  // merged list. PASS 3 rows are identified by the SINGLE canonical predicate
+  // isSiblingQuarantineRow — the same predicate pass3_sibling_recovered uses below,
+  // so the two counters can never diverge (SMI-5445 C2-low reconciliation).
+  const pass1Count = rows.filter((r) => r.quarantined === false).length
+  const pass3Count = rows.filter(isSiblingQuarantineRow).length
+  const pass2Count = rows.length - pass1Count - pass3Count
+
+  // SMI-5445 C2: per-run sibling-clear cap. Once this many sibling-quarantine
+  // clears have occurred in this run, further sibling-recovered outcomes are
+  // deferred to the next cycle (outcome: 'deferred-cap').
+  const maxSiblingClears = getRecheckMaxSiblingClears()
+  // SPIKE_THRESHOLD: if more than half the cap is consumed in one run, emit a WARN.
+  // Operators should investigate unusual auto-clear bursts.
+  const siblingClearSpikeThreshold = Math.max(1, Math.floor(maxSiblingClears / 2))
 
   // (e) Tally per-row outcomes in batches (polite GitHub concurrency).
   let cleared = 0
@@ -362,14 +278,34 @@ export async function runRecheck(opts: {
   // SMI-5437 Wave 2: sibling re-scan outcome counters.
   let siblingRequarantined = 0
   let siblingRecovered = 0
+  // SMI-5445 C2: deferred-cap tally (rows processRow returned 'deferred-cap' for).
+  let deferredCap = 0
+  // SMI-5445 M3: PASS-3 sibling-recovered sub-counter.
+  let pass3SiblingRecovered = 0
+
+  // SMI-5445 C2: mutable clear budget threaded into processRow so the cap is
+  // enforced BEFORE the DB write, not post-hoc in the switch below. processRow
+  // checks-then-decrements synchronously before any DB await, which is race-free
+  // in Node.js even under Promise.all: all budget checks complete in the current
+  // tick before any I/O resumes in microtask queue callbacks.
+  const clearBudget = { remaining: maxSiblingClears }
 
   for (let i = 0; i < rows.length; i += batch) {
     const slice = rows.slice(i, i + batch)
     // SMI-5437: sibling gate removed. All rows now pass to processRow, which runs
     // sibling re-scan internally on quarantined=true rows with clean SKILL.md.
+    // SMI-5445 C2: clearBudget is shared across all rows so processRow can gate
+    // the write before it happens — the cap is enforced at the source, not post-hoc.
     const results = await Promise.all(
       slice.map((r) =>
-        processRow(r, headers, apply, supabase, opts.telemetry ?? newRateLimitTelemetry())
+        processRow(
+          r,
+          headers,
+          apply,
+          supabase,
+          opts.telemetry ?? newRateLimitTelemetry(),
+          clearBudget
+        )
       )
     )
     for (const r of results) {
@@ -380,9 +316,17 @@ export async function runRecheck(opts: {
         // SMI-5437 Wave 2: sibling-recovered is additive — increments both
         // cleared AND sibling_recovered (the skill was unquarantined after sibling
         // rescan confirmed all siblings clean).
+        // SMI-5445 C2: the cap was enforced inside processRow before the DB write;
+        // a 'sibling-recovered' outcome here means the clear already happened.
         case 'sibling-recovered':
           cleared++
           siblingRecovered++
+          // SMI-5445 M3: track whether this was a PASS-3 sibling-quarantine row.
+          // Keyed on the SAME canonical predicate as pass3Count above so the two
+          // counters stay consistent (SMI-5445 C2-low reconciliation).
+          if (isSiblingQuarantineRow(r.row)) {
+            pass3SiblingRecovered++
+          }
           break
         case 'live-touched':
           liveTouched++
@@ -414,6 +358,12 @@ export async function runRecheck(opts: {
         case 'error':
           errors++
           break
+        // SMI-5445 C2: 'deferred-cap' is now emitted directly by processRow when
+        // the clearBudget is exhausted before the DB write. The row stays
+        // quarantined=true; no DB write or audit row was issued.
+        case 'deferred-cap':
+          deferredCap++
+          break
         default:
           // Defense-in-depth (mirrors runSweep's guard): a future outcome added
           // without a case here would otherwise be silently dropped from the run
@@ -421,6 +371,15 @@ export async function runRecheck(opts: {
           console.warn(`recheck: unhandled processRow outcome ${r.outcome} — not counted`)
       }
     }
+  }
+
+  // SMI-5445 C2: spike alert — an abnormal auto-clear wave should be investigated.
+  if (siblingRecovered > siblingClearSpikeThreshold) {
+    console.warn(
+      `[recheck] SPIKE ALERT: ${siblingRecovered} sibling-quarantine clears in a single run ` +
+        `(threshold ${siblingClearSpikeThreshold}). Investigate for evidence-scrubbing or ` +
+        `unusual fixture state. Run: sibling_recovered=${siblingRecovered}, deferredCap=${deferredCap}`
+    )
   }
 
   // (f) Derive run-level signals.
@@ -447,6 +406,13 @@ export async function runRecheck(opts: {
     fetch_error_rate: fetchErrorRate,
     cap_saturated: capSaturated,
     killswitch_engaged: false,
+    // SMI-5445 M3: per-pass candidate counts for dashboard disambiguation.
+    pass1_count: pass1Count,
+    pass2_count: pass2Count,
+    pass3_count: pass3Count,
+    pass3_sibling_recovered: pass3SiblingRecovered,
+    // SMI-5445 C2: deferred-cap count (rows that hit the per-run sibling-clear cap).
+    deferred_cap: deferredCap,
   }
 
   // (h) Classify the audit result; a throttled recheck is a prevention OUTAGE.

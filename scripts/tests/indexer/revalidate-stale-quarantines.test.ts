@@ -20,11 +20,27 @@ import type { StaleQuarantinedRow } from '../../indexer/revalidate-stale-quarant
 // rows with clean SKILL.md before clearing. Existing processRow tests (SMI-5165/5166)
 // test pre-sibling-scan paths; mock the sibling module so those tests aren't broken
 // by sibling network calls and focus on the SKILL.md / CAS / audit paths they own.
-vi.mock('../../indexer/revalidate-stale-quarantines.sibling.ts', () => ({
-  runSiblingRescan: vi.fn(async () => ({ status: 'clean' })),
-  buildSiblingQuarantineReason: vi.fn(() => '[recheck-sibling] test-reason'),
-  writeSiblingRequarantine: vi.fn(async () => 'ok'),
-}))
+// SMI-5445: the sibling module's `runSiblingRescan` returns a clean verdict with a
+// recovery-time mergedScore + the merged-scan findings (root + siblings). M4 persists
+// those findings on the clear write instead of []. `writeSiblingRecovery` is NOT mocked
+// — the real helper (which reads sibRescan.findings/mergedScore into the DB update +
+// audit row) runs against the chainable db double so the M2/M3/M4 assertions exercise
+// the true write path.
+const RECOVERY_FINDINGS = [{ type: 'suspicious_pattern', filePath: 'config.json' }]
+vi.mock('../../indexer/revalidate-stale-quarantines.sibling.ts', async (importOriginal) => {
+  const real =
+    await importOriginal<typeof import('../../indexer/revalidate-stale-quarantines.sibling.ts')>()
+  return {
+    ...real,
+    runSiblingRescan: vi.fn(async () => ({
+      status: 'clean',
+      findings: RECOVERY_FINDINGS,
+      mergedScore: 12,
+    })),
+    buildSiblingQuarantineReason: vi.fn(() => '[recheck-sibling] test-reason'),
+    writeSiblingRequarantine: vi.fn(async () => 'ok'),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -271,14 +287,23 @@ describe('processRow — sibling-recovered (clear after sibling rescan)', () => 
     const updateArg = db.update.mock.calls[0][0]
     expect(updateArg.quarantined).toBe(false)
     expect(updateArg.quarantine_reason).toBeNull()
-    expect(updateArg.security_findings).toEqual([])
+    // SMI-5445 M4: the clear write persists the recovery-time merged-scan findings
+    // (root + siblings), NOT [] — documents WHY the row passed for forensic review.
+    expect(updateArg.security_findings).toEqual(RECOVERY_FINDINGS)
     expect(typeof updateArg.security_score).toBe('number')
-    // Audit log — SMI-5437 W2 clear path uses 'recheck-sibling' sweep tag.
+    // Audit log — the recovery-clear EVENT is the SMI-5437 recovery mechanism, so
+    // metadata.smi stays 'SMI-5437'; it uses the 'recheck-sibling' sweep tag.
     expect(db.insert).toHaveBeenCalledOnce()
     const insertArg = db.insert.mock.calls[0][0]
     expect(insertArg.event_type).toBe('quarantine:cleared')
     expect(insertArg.metadata.smi).toBe('SMI-5437')
     expect(insertArg.metadata.skill_id).toBe(row.id)
+    // SMI-5445 M2: forensic flag distinguishing a security (non-stale) quarantine.
+    // The fixture row has quarantine_reason 'stale' → false; the field must be present.
+    expect(insertArg.metadata).toHaveProperty('was_security_quarantine')
+    expect(insertArg.metadata.was_security_quarantine).toBe(false)
+    // SMI-5445 M3: recovery-time merged score carried on the audit row.
+    expect(insertArg.metadata.merged_score).toBe(12)
   })
 
   it('checks the CAS .eq(quarantined, true) guard is applied on the clear write', async () => {
