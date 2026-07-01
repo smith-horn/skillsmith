@@ -1,5 +1,7 @@
 /**
  * SMI-5437 Wave 2: sibling re-scan helper for the recheck path.
+ * SMI-5445 Wave 1: C1 — merged-score gate added to runSiblingRescan so recovery
+ * is symmetric with the quarantine criterion (mergedScore >= 40 OR siblingRejectable).
  *
  * Extracted from revalidate-stale-quarantines.ts to keep that file ≤500 lines.
  * Imported by processRow (revalidate-stale-quarantines.ts) when a quarantined
@@ -17,9 +19,11 @@ import {
   enumerateSiblingTargets,
   fetchSiblingContent,
   DOC_CLASS_BASENAMES,
+  mergeSiblingScans,
+  type SiblingEdgeScan,
 } from './skill-processor.security.ts'
 import { scanSkillContent, summarizeFindings } from './_shared/security-scanner-edge.ts'
-import type { SecurityFinding } from './_shared/security-scanner-edge.context.ts'
+import type { EdgeScanResult, SecurityFinding } from './_shared/security-scanner-edge.ts'
 import type { RateLimitTelemetry } from './_shared/rate-limit.ts'
 import type { StaleQuarantinedRow } from './revalidate-stale-quarantines.ts'
 
@@ -33,6 +37,8 @@ export interface SiblingRescanResult {
   status: SiblingRescanStatus
   findings?: SecurityFinding[]
   siblingPath?: string
+  /** SMI-5445 C1: recomputed merged risk score (root + all siblings). Present when status is 'clean' or 'malicious'. */
+  mergedScore?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -41,12 +47,27 @@ export interface SiblingRescanResult {
 
 /**
  * SMI-5437 Wave 2: Re-scan all sibling targets for a skill whose SKILL.md
- * is now clean. Returns:
+ * is now clean.
+ * SMI-5445 C1: Now accepts the fresh SKILL.md scan from processRow and applies
+ * the collective merged-score gate (root + all siblings). A 'clean' verdict
+ * requires BOTH (a) no siblingRejectable AND (b) mergedScore < QUARANTINE_THRESHOLD.
+ *
+ * Returns:
  *   - `{ status: 'unknown' }` if any sibling fetch fails (fail-closed; stays
- *     quarantined, retries next cycle).
- *   - `{ status: 'malicious', findings, siblingPath }` if any non-doc sibling
- *     has code_execution or obfuscated_directive findings.
- *   - `{ status: 'clean' }` if all siblings are removed or scan clean.
+ *     quarantined, retries next cycle), OR if `rootScan` was not supplied on the
+ *     clear path (SMI-5445 C1-low fail-closed — a missing root scan must never
+ *     yield 'clean').
+ *   - `{ status: 'malicious', findings, siblingPath, mergedScore }` the MOMENT any
+ *     non-doc sibling has code_execution or obfuscated_directive findings — the
+ *     loop breaks immediately and remaining siblings are NOT fetched (rejectable ⇒
+ *     malicious regardless of score; SMI-5437 early-abort + GitHub fetch-budget).
+ *     `mergedScore` here is the PARTIAL merged score over root + the siblings
+ *     fetched so far (not necessarily >= 40).
+ *   - `{ status: 'malicious', findings: merged.findings, mergedScore }` if the loop
+ *     completes with NO rejectable sibling but the collective merged score over
+ *     root + ALL siblings is >= QUARANTINE_THRESHOLD (40) — the C1 score gate.
+ *   - `{ status: 'clean', mergedScore }` if the loop completes with no rejectable
+ *     sibling AND the full merged score is < QUARANTINE_THRESHOLD.
  *
  * Fetches are sequential (BUNDLED_SCAN_FILES order). A transient error on an
  * early file aborts the entire rescan — intentionally fail-closed.
@@ -56,9 +77,27 @@ export async function runSiblingRescan(
   repo: string,
   branch: string,
   skillPath: string,
-  telemetry: RateLimitTelemetry
+  telemetry: RateLimitTelemetry,
+  rootScan?: EdgeScanResult
 ): Promise<SiblingRescanResult> {
   const targets = enumerateSiblingTargets(skillPath ?? '')
+
+  // SMI-5445 C1: accumulate every fetched sibling scan so the collective merged
+  // score can include all sibling findings on the no-rejectable path (mirrors
+  // mergeSiblingScans in skill-processor.security.ts).
+  const fetchedSiblingScans: SiblingEdgeScan[] = []
+
+  // SMI-5445 C1-low: fail-closed on a missing rootScan. rootScan is always passed
+  // on the recheck path (processRow supplies the fresh SKILL.md scan); this is
+  // defense-in-depth — a missing root scan must NOT be able to yield 'clean', or
+  // the merged-score gate would silently degrade to sibling-only. Treat it as
+  // 'unknown' so the row stays quarantined and retries next cycle.
+  if (rootScan === undefined) {
+    console.warn(
+      `[recheck-sibling] rootScan missing for ${owner}/${repo} — failing closed (staying quarantined)`
+    )
+    return { status: 'unknown' }
+  }
 
   for (const relPath of targets) {
     const sibResult = await fetchSiblingContent(owner, repo, branch, relPath, telemetry)
@@ -79,6 +118,8 @@ export async function runSiblingRescan(
 
     // Successful fetch: scan the content.
     const scan = await scanSkillContent(sibResult.content)
+    fetchedSiblingScans.push({ relPath, scan })
+
     const basename = relPath.split('/').pop() ?? relPath
     const isDocClass = DOC_CLASS_BASENAMES.has(basename)
     const siblingRejectable =
@@ -86,13 +127,42 @@ export async function runSiblingRescan(
       scan.findings.some((f) => f.type === 'code_execution' || f.type === 'obfuscated_directive')
 
     if (siblingRejectable) {
+      // SMI-5437 early-abort: a rejectable sibling ⇒ malicious regardless of the
+      // score, so there is no reason to scan further. Break immediately to stop
+      // fetching remaining siblings (protects the GitHub fetch budget). Report the
+      // PARTIAL merged score over root + siblings fetched so far.
+      const merged = mergeSiblingScans(rootScan, fetchedSiblingScans)
       console.warn(`[recheck-sibling] malicious sibling ${relPath} for ${owner}/${repo}`)
-      return { status: 'malicious', findings: scan.findings, siblingPath: relPath }
+      return {
+        status: 'malicious',
+        findings: scan.findings,
+        siblingPath: relPath,
+        mergedScore: merged.riskScore,
+      }
+    }
+  }
+
+  // SMI-5445 C1: no rejectable sibling was found — this is exactly the case C1
+  // protects. Compute the collective merged score over root + ALL siblings using
+  // the same mergeSiblingScans function that applied the original quarantine.
+  const merged = mergeSiblingScans(rootScan, fetchedSiblingScans)
+
+  // SMI-5445 C1: Gate (b) — collective merged score >= QUARANTINE_THRESHOLD (40).
+  // merged.quarantine encodes (mergedScore >= QUARANTINE_THRESHOLD || siblingRejectable);
+  // no siblingRejectable reached here, so this fires only on the score gate.
+  if (merged.quarantine) {
+    console.warn(
+      `[recheck-sibling] merged score ${merged.riskScore} >= threshold for ${owner}/${repo} — staying quarantined`
+    )
+    return {
+      status: 'malicious',
+      findings: merged.findings,
+      mergedScore: merged.riskScore,
     }
   }
 
   console.log(`[recheck-sibling] all siblings clean for ${owner}/${repo}`)
-  return { status: 'clean' }
+  return { status: 'clean', mergedScore: merged.riskScore }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +238,92 @@ export async function writeSiblingRequarantine(
       repo_url: row.repo_url,
       sibling_path: sibRescan.siblingPath,
       new_reason: sibReason,
+    },
+  })
+  return 'ok'
+}
+
+// ---------------------------------------------------------------------------
+// DB write helper (sibling recovery / clear)
+// ---------------------------------------------------------------------------
+
+/**
+ * SMI-5437 Wave 2 recovery mechanism + SMI-5445 forensic-persist: write the CAS
+ * clear + audit row for a sibling-quarantined skill whose SKILL.md is clean and
+ * whose siblings re-scan clean (runSiblingRescan → status 'clean').
+ *
+ * Extracted from processRow (SMI-5445) so revalidate-stale-quarantines.ts stays
+ * under the 500-line gate — mirrors writeSiblingRequarantine above.
+ *
+ * The CAS clear guard `.eq('quarantined', true)` is load-bearing: a row
+ * re-quarantined by maintenance between load and write must NOT be flipped clean.
+ * Returns 'cas-skipped' when the guard no-ops (0 rows), 'error' on a DB error,
+ * 'ok' on a successful clear.
+ *
+ * The recovery-clear EVENT is the SMI-5437 recovery mechanism, so the audit
+ * `metadata.smi` stays 'SMI-5437'. The SMI-5445 additions are the NEW fields:
+ *   - `merged_score` (M3): the recovery-time collective merged score.
+ *   - `was_security_quarantine` (M2): distinguishes a PASS-3 sibling-recovered row
+ *     (security reason) from a PASS-2 stale row.
+ * M4: `security_findings` on the clear write persists the recovery-time merged
+ * scan findings (from sibRescan), not `[]`, documenting WHY the row passed.
+ */
+export async function writeSiblingRecovery(
+  db: SupabaseClient,
+  row: StaleQuarantinedRow,
+  sibRescan: SiblingRescanResult,
+  scanRiskScore: number
+): Promise<'ok' | 'error' | 'cas-skipped'> {
+  const now = new Date().toISOString()
+
+  // SMI-5445 M4: persist the recovery-time merged scan findings (root + siblings)
+  // instead of []. For genuinely-clean rows this array is empty anyway; for
+  // borderline rows that scraped under the threshold, the findings are retained
+  // for the audit trail / forensic investigation.
+  const recoveryFindings = sibRescan.findings ?? []
+
+  // SMI-5445 M2: flag whether the row carried a security (non-stale/null) reason so
+  // operators can distinguish PASS-3 sibling-recovered rows from PASS-2 stale rows.
+  const wasSecurityQuarantine = row.quarantine_reason !== null && row.quarantine_reason !== 'stale'
+
+  const { data: updated, error } = await db
+    .from('skills')
+    .update({
+      quarantined: false,
+      quarantine_reason: null,
+      security_findings: recoveryFindings,
+      security_score: scanRiskScore,
+      last_scanned_at: now,
+      last_seen_at: now,
+    })
+    .eq('id', row.id)
+    .eq('quarantined', true)
+    .select('id')
+
+  if (error) return 'error'
+  if (!updated || updated.length === 0) return 'cas-skipped'
+
+  await db.from('audit_logs').insert({
+    event_type: 'quarantine:cleared',
+    actor: 'system',
+    resource: row.id,
+    action: 'revalidate_stale_quarantines',
+    result: 'success',
+    metadata: {
+      // The recovery-clear event is the SMI-5437 recovery mechanism.
+      smi: 'SMI-5437',
+      sweep: 'recheck-sibling',
+      skill_id: row.id,
+      author: row.author,
+      name: row.name,
+      repo_url: row.repo_url,
+      new_score: scanRiskScore,
+      // SMI-5445 M3: recovery-time collective merged score.
+      merged_score: sibRescan.mergedScore,
+      prev_quarantine_reason: row.quarantine_reason,
+      prev_security_findings: row.security_findings,
+      // SMI-5445 M2: forensic flag — true when this was a security (non-stale) quarantine.
+      was_security_quarantine: wasSecurityQuarantine,
     },
   })
   return 'ok'
