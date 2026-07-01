@@ -282,6 +282,11 @@ export async function runBackfillFacetCrawl(
       // SMI-5448: elapsed budget tripped mid-range -- the range is NOT exhausted.
       // Do NOT advance/bisect; hold the cursor at state.lastPage so the next
       // dispatch resumes at lastPage+1 for this same facet. Outer loop breaks below.
+      // Edge case (page-cap boundary): if the trip landed on the final page
+      // (state.lastPage == maxPagesPerRange), the next dispatch's page loop opens
+      // at lastPage+1 > maxPagesPerRange, its body never runs, no flags are set,
+      // and the outer `else` advances the facet -- correct: this range is treated
+      // as page-cap exhausted, identical to the pre-5448 exhaustion path.
     } else {
       // Range exhausted (short page, or page cap reached with total <= cap).
       advanceFacet(state)
