@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `sklx agent install` / `uninstall` command group — installs portable agent pack (SKILL.md + shims + hooks) to detected harnesses with per-harness MCP registration (SMI-5456)
+
 ## v0.7.4
 
 - **Security**: fix an interactive-search install path that bypassed the quarantine gate — `skillsmith search -i` → "Install this skill" no longer installs a quarantined skill (consolidated onto the quarantine-aware registry lookup shared with `install`) (SMI-5447).

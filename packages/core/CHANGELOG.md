@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: telemetry marker channel for agent-mediated calls — `agent_session`/`nudge_origin`/`trigger_id` wire fields + `_meta` MCP marker extraction + harness-side attribution (SMI-5456)
+- **Feature**: change journal module — hash-chained, fsync'd records; foundation for undo (SMI-5456)
+- **Feature**: multi-target agent-pack generator emitting SKILL.md, Claude/Codex/OpenCode/Copilot shims, hooks (SMI-5456)
+- **Feature**: agent-pack installer/uninstaller with JSON-merge, manifest, path guard, per-harness reporting (SMI-5456)
+- **Feature**: paywall-triggers store for Community/Individual funnel state (SMI-5456)
+- **Feature**: extend ClientIds — add `opencode` and `hermes` skill paths (SMI-5456)
+
 ## v0.9.0
 
 - **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)

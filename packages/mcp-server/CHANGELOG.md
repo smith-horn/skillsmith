@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `SKILLSMITH_TOOL_PROFILE=agent` curated tool listing (~15 tools) for harness integration (SMI-5456)
+- **Feature**: `undo_apply` tool — session-scoped undo of apply_namespace_rename/apply_recommended_edit via journal (SMI-5456)
+- **Feature**: extract `_meta` marker (`agent_session`, `nudge_origin`, `trigger_id`) from MCP tool calls (SMI-5456)
+- **Fix**: dispatch-routing for skill_inventory_audit/apply_namespace_rename/apply_recommended_edit (now callable over MCP CallTool) (SMI-5456)
+- **Feature**: inventory-audit dual-path dedup + self-exemption for agent pack (SMI-5456)
+- **Feature**: committed agent-pack assets (shims, hooks) + `generate:agent-pack` build script (SMI-5456)
+
 ## v0.6.0
 
 - **Feature**: Wave 3 — local CLI/MCP push agent (SMI-5390/5391/5392) (#1579)
