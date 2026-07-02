@@ -90,6 +90,11 @@
       "types": "./dist/src/telemetry/index.d.ts",
       "import": "./dist/src/telemetry/index.js",
       "default": "./dist/src/telemetry/index.js"
+    },
+    "./journal": {
+      "types": "./dist/src/journal/index.d.ts",
+      "import": "./dist/src/journal/index.js",
+      "default": "./dist/src/journal/index.js"
     }
   },
   "scripts": {

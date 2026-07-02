@@ -284,12 +284,14 @@ describe('audit-tool-dispatch — apply_recommended_edit conditional registratio
 
   // SMI-5213: newAuditToolDefinitions feeds index.ts's toolDefinitions so
   // the three tools are client-discoverable via ListTools.
-  it('newAuditToolDefinitions returns the 3 new tools (live registry) and excludes skill_audit', async () => {
+  // SMI-5456 §7 / SMI-5470: undo_apply joined the always-registered set.
+  it('newAuditToolDefinitions returns the 4 new tools (live registry) and excludes skill_audit', async () => {
     const dispatch = await import('../../src/audit-tool-dispatch.js')
     const names = dispatch.newAuditToolDefinitions().map((d) => d.name)
     expect(names).toEqual([
       'skill_inventory_audit',
       'apply_namespace_rename',
+      'undo_apply',
       'apply_recommended_edit',
     ])
     // Must NOT re-list the already-registered audit tools.
@@ -309,7 +311,7 @@ describe('audit-tool-dispatch — apply_recommended_edit conditional registratio
     try {
       const dispatch = await import('../../src/audit-tool-dispatch.js')
       const names = dispatch.newAuditToolDefinitions().map((d) => d.name)
-      expect(names).toEqual(['skill_inventory_audit', 'apply_namespace_rename'])
+      expect(names).toEqual(['skill_inventory_audit', 'apply_namespace_rename', 'undo_apply'])
       expect(names).not.toContain('apply_recommended_edit')
     } finally {
       vi.doUnmock('../../src/audit/edit-applier.js')

@@ -42,6 +42,7 @@ import {
   applyRecommendedEditTool,
   applyRecommendedEditToolSchema,
 } from './tools/apply-recommended-edit.js'
+import { undoApply, undoApplyToolSchema } from './tools/undo-apply.js'
 import { APPLY_TEMPLATE_REGISTRY } from './audit/edit-applier.js'
 import { withLicenseAndQuota } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
@@ -71,6 +72,10 @@ function buildAuditToolNames(): string[] {
     'skill_pack_audit',
     'skill_inventory_audit',
     'apply_namespace_rename',
+    // SMI-5456 §7 / SMI-5470: session-scoped undo for the apply family.
+    // Always registered (like apply_namespace_rename) — not gated on any
+    // registry, since undo has no per-template surface to gate.
+    'undo_apply',
   ]
   if (APPLY_TEMPLATE_REGISTRY.size > 0) {
     names.push('apply_recommended_edit')
@@ -116,6 +121,7 @@ export function newAuditToolDefinitions(): NewAuditToolDefinition[] {
   const defs: NewAuditToolDefinition[] = [
     skillInventoryAuditToolSchema,
     applyNamespaceRenameToolSchema,
+    undoApplyToolSchema,
   ]
   if (APPLY_TEMPLATE_REGISTRY.size > 0) {
     defs.push(applyRecommendedEditToolSchema)
@@ -180,6 +186,9 @@ export async function dispatchAuditTool(
 
     case 'apply_namespace_rename':
       return okBody(await applyNamespaceRename(args))
+
+    case 'undo_apply':
+      return okBody(await undoApply(args))
 
     case 'apply_recommended_edit':
       // Defense-in-depth: even if the parent dispatcher routes this name

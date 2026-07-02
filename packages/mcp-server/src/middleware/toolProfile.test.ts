@@ -35,9 +35,15 @@ function tool(name: string): FixtureTool {
 
 /**
  * A representative slice of `index.ts`'s real `toolDefinitions` array:
- * every one of today's 15 agent-profile members, plus a sample of
- * non-member tools (Team/Enterprise-only surfaces) to prove exclusion.
- * Deliberately excludes `undo_apply` — it does not exist yet (SMI-5470).
+ * every one of today's 15 pre-SMI-5470 agent-profile members, plus a
+ * sample of non-member tools (Team/Enterprise-only surfaces) to prove
+ * exclusion. Deliberately excludes `undo_apply`: as of SMI-5470 it IS a
+ * real, registered tool (`audit-tool-dispatch.ts`), but this file tests
+ * `filterToolsForAgentProfile` as a pure listing-filter mechanism against
+ * a hand-maintained fixture, independent of any one tool's registration
+ * state — omitting it here exercises the "profile name with no matching
+ * registration is silently inert" contract, which stays true regardless
+ * of whether that's a hypothetical or (now) a stale example.
  */
 const TODAY_REGISTERED_TOOLS: readonly FixtureTool[] = [
   tool('search'),
@@ -91,11 +97,11 @@ const EXPECTED_PROFILE_MEMBER_NAMES = [
 ]
 
 describe('AGENT_TOOL_PROFILE_NAMES', () => {
-  it('has exactly 16 entries (15 today-registered + undo_apply, SMI-5470)', () => {
+  it('has exactly 16 entries (15 pre-SMI-5470 + undo_apply)', () => {
     expect(AGENT_TOOL_PROFILE_NAMES).toHaveLength(16)
   })
 
-  it('includes undo_apply, which is not yet a registered tool', () => {
+  it('includes undo_apply (registered as of SMI-5470; kept out of this fixture on purpose, see TODAY_REGISTERED_TOOLS)', () => {
     expect(AGENT_TOOL_PROFILE_NAMES).toContain('undo_apply')
   })
 
@@ -179,7 +185,7 @@ describe('filterToolsForAgentProfile — profile unset (zero behavior change)', 
 })
 
 describe('filterToolsForAgentProfile — SKILLSMITH_TOOL_PROFILE=agent', () => {
-  it('returns exactly the profile ∩ registered set (15 today; undo_apply inert)', () => {
+  it('returns exactly the profile ∩ fixture set (undo_apply inert against this fixture — see TODAY_REGISTERED_TOOLS)', () => {
     const env = { [AGENT_TOOL_PROFILE_ENV_VAR]: 'agent' }
     const result = filterToolsForAgentProfile(TODAY_REGISTERED_TOOLS, env)
 
@@ -200,8 +206,9 @@ describe('filterToolsForAgentProfile — SKILLSMITH_TOOL_PROFILE=agent', () => {
   })
 
   it('is silently inert for a profile name with no matching registration', () => {
-    // undo_apply is in AGENT_TOOL_PROFILE_NAMES but not in the registered
-    // fixture — must not throw, and must not appear in the result.
+    // undo_apply is in AGENT_TOOL_PROFILE_NAMES but (deliberately, see the
+    // fixture comment above) not in TODAY_REGISTERED_TOOLS — must not
+    // throw, and must not appear in the result.
     expect(() =>
       filterToolsForAgentProfile(TODAY_REGISTERED_TOOLS, { [AGENT_TOOL_PROFILE_ENV_VAR]: 'agent' })
     ).not.toThrow()
