@@ -73,6 +73,16 @@ export {
   type LocalFilesystemConfig,
 } from './LocalFilesystemAdapter.js'
 
+// SMI-4287 root-confinement helper — reused outside the adapter by
+// `@skillsmith/mcp-server`'s `undo_apply` tool (SMI-5456 Wave 1 Step 3) to
+// scope-fence undo restore targets the same way the scan loop does.
+export {
+  resolveSafeRealpath,
+  isRealpathContained,
+  type FsResult,
+  type ResolveSafeRealpathOptions,
+} from './LocalFilesystemAdapter.helpers.js'
+
 export {
   GitLabSourceAdapter,
   createGitLabAdapter,

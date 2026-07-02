@@ -9,7 +9,7 @@
   },
   "scripts": {
     "prepublishOnly": "node ../../scripts/lib/forbid-local-publish.mjs && npm run build && npm run test",
-    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/cli.js \"--banner:js=#!/usr/bin/env node\" --legal-comments=linked --external:fts5-sql-bundle --external:web-tree-sitter --external:tree-sitter-wasms --external:typescript --external:@opentelemetry/api --external:@opentelemetry/instrumentation-http --external:@opentelemetry/instrumentation-runtime-node --external:@opentelemetry/instrumentation-undici --external:@opentelemetry/resources --external:@opentelemetry/sdk-node --external:@opentelemetry/sdk-trace-base --external:@opentelemetry/semantic-conventions --external:posthog-node --external:better-sqlite3 --external:@huggingface/transformers --external:hnswlib-node --external:onnxruntime-node --external:@inquirer/prompts --external:ora --external:commander --external:gray-matter --external:chokidar --external:cli-table3",
+    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/cli.js \"--banner:js=#!/usr/bin/env node\" --legal-comments=linked --external:fts5-sql-bundle --external:web-tree-sitter --external:tree-sitter-wasms --external:typescript --external:@opentelemetry/api --external:@opentelemetry/instrumentation-http --external:@opentelemetry/instrumentation-runtime-node --external:@opentelemetry/instrumentation-undici --external:@opentelemetry/resources --external:@opentelemetry/sdk-node --external:@opentelemetry/sdk-trace-base --external:@opentelemetry/semantic-conventions --external:posthog-node --external:better-sqlite3 --external:@huggingface/transformers --external:hnswlib-node --external:onnxruntime-node --external:@inquirer/prompts --external:ora --external:commander --external:gray-matter --external:chokidar --external:cli-table3 --external:yaml",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
@@ -35,7 +35,8 @@
     "posthog-node": "5.29.2",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "5.9.3",
-    "web-tree-sitter": "0.25.10"
+    "web-tree-sitter": "0.25.10",
+    "yaml": "2.8.3"
   },
   "devDependencies": {
     "@skillsmith/core": "^0.9.0",

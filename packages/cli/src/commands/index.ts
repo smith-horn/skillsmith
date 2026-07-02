@@ -73,3 +73,6 @@ export { createTelemetryCommand } from './telemetry.js'
 
 // SMI-5392 Wave 3: cross-harness inventory push/status/forget-device
 export { createInventoryCommand } from './inventory.js'
+
+// SMI-5456 Wave 1 Step 5: `sklx agent install` / `sklx agent uninstall`
+export { createAgentCommand } from './agent.js'

@@ -46,6 +46,12 @@ const globalIgnores = {
     // fail "not in any project". Mirrors the integration-tests precedent above;
     // typed-linted via `typecheck:e2e` instead.
     'packages/vscode-extension/e2e/**',
+    // SMI-5456: build-time agent-pack generation script lives beside the package
+    // but outside its tsconfig `include` (src/tests only), so it is not in the TS
+    // project graph that typed `eslint .` resolves via parserOptions.project and
+    // would fail "not in any project". It is run via tsx; its logic (the pure
+    // generator) is typechecked in @skillsmith/core and covered by tests.
+    'packages/mcp-server/scripts/**',
   ],
 }
 

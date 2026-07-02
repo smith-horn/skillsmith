@@ -27,6 +27,8 @@
  *     The inner Wave 2 error kind is preserved in the `error` message.
  */
 
+import * as path from 'node:path'
+
 import { z } from 'zod'
 
 import { readAuditSuggestions } from '../audit/audit-suggestions.js'
@@ -34,7 +36,21 @@ import { applyRename } from '../audit/rename-engine.js'
 import type { ApplyRenameRequest } from '../audit/rename-engine.types.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 
+import { journalApplyError, journalApplySuccess } from './apply-journal.helpers.js'
 import type { ApplyNamespaceRenameResponse } from './apply-namespace-rename.types.js'
+
+/**
+ * SMI-5456 §7: the content-hashable file the journal + `undo_apply` track
+ * for a completed rename. A whole directory has no single content hash, so
+ * a skill-directory rename is tracked via its `SKILL.md` (the one file the
+ * mutation actually rewrites) — see `apply-journal.helpers.ts`'s module
+ * header for why directory-path reversal is deliberately out of scope here.
+ */
+function journalTargetPath(toPath: string, appliedAction: string): string {
+  return appliedAction === 'rename_skill_dir_and_frontmatter'
+    ? path.join(toPath, 'SKILL.md')
+    : toPath
+}
 
 /**
  * Zod input schema with conditional refinement: `customName` is required
@@ -199,7 +215,17 @@ async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceR
   }
   const result = await applyRename(renameRequest)
 
+  // SMI-5456 §7: journal every real mutation attempt (apply already ran
+  // above the confirmation gate) on both the success and failure paths.
+  // Fail-soft — `journalApplySuccess` / `journalApplyError` never throw.
   if (!result.success) {
+    await journalApplyError({
+      tool: 'apply_namespace_rename',
+      suggestionId: result.collisionId,
+      targetPath: result.toPath || result.fromPath || null,
+      approval: validInput.action,
+      errorKind: result.error?.kind ?? 'namespace.rename.unknown',
+    })
     return {
       success: false,
       collisionId: result.collisionId,
@@ -208,6 +234,14 @@ async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceR
       result,
     }
   }
+
+  await journalApplySuccess({
+    tool: 'apply_namespace_rename',
+    suggestionId: result.collisionId,
+    targetPath: journalTargetPath(result.toPath, result.appliedAction),
+    backupRef: result.backupPath,
+    approval: validInput.action,
+  })
 
   return {
     success: true,

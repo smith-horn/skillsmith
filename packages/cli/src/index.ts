@@ -49,6 +49,7 @@ import {
   createConfigCommand,
   createTelemetryCommand,
   createInventoryCommand,
+  createAgentCommand,
 } from './commands/index.js'
 import { displayStartupHeader } from './utils/license.js'
 import { resolveCommandPath, shouldShowStartupHeader } from './utils/startup-header-gate.js'
@@ -167,5 +168,8 @@ program.addCommand(createTelemetryCommand())
 
 // SMI-5392 Wave 3: cross-harness inventory push/status/forget-device
 program.addCommand(createInventoryCommand())
+
+// SMI-5456 Wave 1 Step 5: install/uninstall the portable Skillsmith Agent pack
+program.addCommand(createAgentCommand())
 
 program.parse()

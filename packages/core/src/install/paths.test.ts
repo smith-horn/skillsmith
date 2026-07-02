@@ -46,6 +46,8 @@ describe('enumerateHarnessPresence (SMI-5390)', () => {
     expect(result.find((r) => r.harness === 'copilot')?.present).toBe(false)
     expect(result.find((r) => r.harness === 'windsurf')?.present).toBe(false)
     expect(result.find((r) => r.harness === 'agents')?.present).toBe(false)
+    expect(result.find((r) => r.harness === 'opencode')?.present).toBe(false)
+    expect(result.find((r) => r.harness === 'hermes')?.present).toBe(false)
   })
 
   it('reports all harnesses absent when existsSync returns false for every path', () => {
@@ -70,5 +72,21 @@ describe('enumerateHarnessPresence (SMI-5390)', () => {
   it('calls existsSync exactly once per harness', () => {
     enumerateHarnessPresence()
     expect(existsSyncSpy).toHaveBeenCalledTimes(CLIENT_IDS.length)
+  })
+})
+
+describe('opencode + hermes ClientIds (SMI-5456 Wave 1 Step 5)', () => {
+  it('CLIENT_IDS includes opencode and hermes', () => {
+    expect(CLIENT_IDS).toContain('opencode')
+    expect(CLIENT_IDS).toContain('hermes')
+    expect(CLIENT_IDS).toHaveLength(7)
+  })
+
+  it('opencode resolves to ~/.config/opencode/skills', () => {
+    expect(CLIENT_NATIVE_PATHS.opencode.endsWith('/.config/opencode/skills')).toBe(true)
+  })
+
+  it('hermes resolves to ~/.hermes/skills', () => {
+    expect(CLIENT_NATIVE_PATHS.hermes.endsWith('/.hermes/skills')).toBe(true)
   })
 })

@@ -18,7 +18,28 @@ import { join } from 'node:path'
 //   - Copilot:     code.visualstudio.com/docs/copilot/customization/agent-skills
 //   - Codex:       developers.openai.com/codex/skills (reads ONLY ~/.agents/skills — no separate codex ID)
 //   - Windsurf:    docs.windsurf.com/windsurf/cascade/skills
-export type ClientId = 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents'
+//
+// SMI-5456 Wave 1 Step 5 additions, verified 2026-07-01 against the Step-0
+// spike report (docs/internal/product/prd-skillsmith-agent.md §3.1 + spike
+// report §(b)/§(c)):
+//   - OpenCode: ~/.config/opencode/skills — opencode.ai/docs (XDG-config-style
+//     root distinct from the `~/.<tool>` pattern used above; NOT re-verified
+//     live in this step, carried forward from the Step-5 task brief pending
+//     Step-6 L2a/L3 harness-simulation confirmation).
+//   - Hermes:   ~/.hermes/skills — spike report §(b), well-verified (3
+//     independent official doc pages agree): "the primary directory and
+//     source of truth" for bundled/hub/agent-created skills, respects
+//     $HERMES_HOME override. Hermes has no session-start hook equivalent
+//     (spike-verified absent) — the installer must not claim hook/nudge
+//     support for this harness.
+export type ClientId =
+  | 'claude-code'
+  | 'cursor'
+  | 'copilot'
+  | 'windsurf'
+  | 'agents'
+  | 'opencode'
+  | 'hermes'
 
 export const CLIENT_NATIVE_PATHS: Record<ClientId, string> = {
   'claude-code': join(homedir(), '.claude', 'skills'),
@@ -26,6 +47,8 @@ export const CLIENT_NATIVE_PATHS: Record<ClientId, string> = {
   copilot: join(homedir(), '.copilot', 'skills'),
   windsurf: join(homedir(), '.codeium', 'windsurf', 'skills'),
   agents: join(homedir(), '.agents', 'skills'),
+  opencode: join(homedir(), '.config', 'opencode', 'skills'),
+  hermes: join(homedir(), '.hermes', 'skills'),
 }
 
 export const CANONICAL_CLIENT: ClientId = 'claude-code'
@@ -36,6 +59,8 @@ export const CLIENT_IDS: ReadonlyArray<ClientId> = Object.freeze([
   'copilot',
   'windsurf',
   'agents',
+  'opencode',
+  'hermes',
 ])
 
 export function getCanonicalInstallPath(): string {

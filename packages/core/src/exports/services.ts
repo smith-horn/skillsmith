@@ -63,6 +63,47 @@ export {
   type ClaudeModel,
 } from '../services/SubagentGenerator.js'
 
+// SMI-5456 Wave 1 Step 4: multi-target portable agent-pack generator.
+export {
+  generateAgentPack,
+  renderAgentSkillMd,
+  renderAgentSkillBody,
+  renderClaudeShim,
+  renderCodexToml,
+  renderCopilotShim,
+  renderOpenCodeShim,
+  renderSessionStartHook,
+  renderSessionEndHook,
+  AGENT_PACK_SKILL_NAME,
+  AGENT_PACK_DISPLAY_NAME,
+  AGENT_PACK_SCHEMA_VERSION,
+  AGENT_PACK_VERSION,
+  AGENT_PACK_REPOSITORY,
+  AGENT_PACK_COMPATIBILITY,
+  HOOK_HARNESSES,
+  SHIM_DESCRIPTION,
+  PACK_DESCRIPTION,
+  JOBS as AGENT_PACK_JOBS,
+  TRUST_CLAUSES,
+  PAYWALL_TRIGGERS,
+  type AgentPackArtifact,
+  type AgentPackInput,
+  type AgentArtifactKind,
+  type HarnessId,
+  type JobDefinition,
+  type TrustClause,
+  type PaywallTrigger,
+} from '../services/agent-pack/index.js'
+
+// SMI-5456 Wave 1 Step 5 (QD-1): curated agent tool profile constants,
+// relocated from @skillsmith/mcp-server so the CLI installer can call
+// generateAgentPack without depending on @skillsmith/mcp-server.
+export {
+  AGENT_TOOL_PROFILE_ENV_VAR,
+  AGENT_TOOL_PROFILE_NAMES,
+  AGENT_TOOL_PROFILE_VALUE,
+} from '../services/agent-tool-profile.js'
+
 export {
   TransformationService,
   transformSkill,

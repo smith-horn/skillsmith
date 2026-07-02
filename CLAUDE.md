@@ -181,6 +181,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `skill_inventory_audit` | Audit local `~/.claude/` inventory for namespace collisions; returns rename + edit suggestions (SMI-4590) |
 | `apply_namespace_rename` | Apply a rename suggestion from an audit (`apply` / `custom` / `skip`) (SMI-4590) |
 | `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (SMI-4590) |
+| `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s), restored from the apply tool's own backup (SMI-5456/SMI-5470) |
 | `audit_export` | Export audit log events for a time range (Enterprise) |
 | `audit_query` | Query audit logs with filters (Enterprise) |
 | `siem_export` | Export audit events for SIEM ingestion (Enterprise) |

@@ -269,6 +269,7 @@ All tiers include:
 | `skill_publish` | Prepare a skill for publishing | Community |
 | `skill_rescan` | Re-scan an installed skill's content | Community |
 | `skill_recover_source` | Recover the canonical GitHub source of locally-installed skills (read-only report + candidates) | Community |
+| `inventory_push` | Push this machine's installed-skill inventory to your Skillsmith account for the web dashboard (read-only; requires `skillsmith login`) | Community |
 | `skill_updates` | Check registry for newer skill versions | Individual+ |
 | `skill_diff` | Section-level diff between skill versions | Individual+ |
 | `skill_pack_audit` | Audit all skills in a directory | Individual+ |
@@ -276,6 +277,7 @@ All tiers include:
 | `skill_inventory_audit` | Audit local `~/.claude/` inventory for namespace collisions; returns rename + edit suggestions | Team+ |
 | `apply_namespace_rename` | Apply a rename suggestion from an inventory audit (`apply`/`custom`/`skip`) | Team+ |
 | `apply_recommended_edit` | Apply a recommended prose edit from an inventory audit (gated on APPLY_TEMPLATE_REGISTRY) | Team+ |
+| `undo_apply` | Session-scoped undo for the most recent apply_namespace_rename / apply_recommended_edit changeset(s), restored from the apply tool's own backup | Team+ |
 | `team_workspace` | Manage team workspaces (create, list, get, delete) | Team+ |
 | `share_skill` | Add, remove, or list skills in a team workspace | Team+ |
 | `publish_private` | Mark a skill as private to your team | Team+ |
