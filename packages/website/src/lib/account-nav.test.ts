@@ -47,6 +47,7 @@ describe('isActiveAccountNav', () => {
       '/account',
       '/account/profile',
       '/account/cli-token/',
+      '/account/skills',
       '/account/subscription',
       '/account/billing',
       '/account/team',

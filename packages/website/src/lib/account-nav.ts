@@ -25,6 +25,7 @@ export const ACCOUNT_NAV_SECTIONS: AccountNavSection[] = [
       { href: '/account/profile', label: 'Email Address', icon: 'mail' },
       // Trailing slash matches the page's own path guard, which accepts both forms.
       { href: '/account/cli-token/', label: 'CLI Token', icon: 'terminal' },
+      { href: '/account/skills', label: 'Skill Inventory', icon: 'grid' },
     ],
   },
   {
