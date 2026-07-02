@@ -22,7 +22,7 @@
  * dependency probe actually runs) while stand-in-ing the final server exec.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import {
   mkdtempSync,
   mkdirSync,
@@ -45,24 +45,24 @@ interface RunResult {
   stderr: string
 }
 
-/** Run the launcher copied into `root`, returning exit code + captured output. */
+/**
+ * Run the launcher copied into `root`, returning exit code + captured output.
+ * Uses spawnSync (not execFileSync) so stderr is captured on SUCCESS too —
+ * execFileSync only exposes stderr via the thrown error, which made
+ * zero-exit stderr assertions (fail-open warning, absence checks) vacuous.
+ */
 function runLauncher(root: string, extraPath?: string): RunResult {
   const launcher = join(root, 'scripts', 'mcp-skillsmith-launcher.sh')
   const env = { ...process.env }
   if (extraPath) {
     env.PATH = `${extraPath}:${env.PATH ?? ''}`
   }
-  try {
-    const stdout = execFileSync('bash', [launcher], {
-      encoding: 'utf8',
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (err) {
-    const e = err as { status?: number; stdout?: string; stderr?: string }
-    return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' }
-  }
+  const r = spawnSync('bash', [launcher], {
+    encoding: 'utf8',
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 
 function makeRoot(): string {
@@ -291,6 +291,25 @@ describe('mcp-skillsmith-launcher.sh', () => {
     expect(res.status).toBe(1)
     expect(res.stderr).toContain('ulid dependency missing')
     expect(res.stderr).toContain('npm install')
+  })
+
+  it('fails open with a warning when the probe itself cannot run (M5)', () => {
+    const root = makeRoot()
+    roots.push(root)
+    addNodeModules(root)
+    addDist(root)
+    // Malformed package.json → probe exits 2 (infra error). A bug in the
+    // check must not brick the MCP server: launcher warns and execs node.
+    const pkgDir = join(root, 'packages', 'mcp-server')
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), '{ this is not JSON', 'utf8')
+    const { binDir, marker } = makeNodeStub()
+    stubs.push(binDir)
+    const res = runLauncher(root, binDir)
+    expect(res.status).toBe(0)
+    expect(res.stderr).toContain('preflight warning')
+    expect(res.stderr).not.toContain('cannot start')
+    expect(() => execFileSync('test', ['-f', marker])).not.toThrow()
   })
 
   it('never suggests rm -rf for @skillsmith/* workspace deps (C2)', () => {
