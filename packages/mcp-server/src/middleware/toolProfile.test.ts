@@ -122,6 +122,26 @@ describe('isAgentToolProfileActive', () => {
     expect(isAgentToolProfileActive({ [AGENT_TOOL_PROFILE_ENV_VAR]: 'true' })).toBe(false)
     expect(isAgentToolProfileActive({ [AGENT_TOOL_PROFILE_ENV_VAR]: '' })).toBe(false)
   })
+
+  // Every other case in this file passes `env` explicitly. The real call
+  // site in `index.ts` (`filterToolsForAgentProfile(toolDefinitions)`) never
+  // passes a second argument, relying entirely on the `= process.env`
+  // default. Without this test that exact production call shape — the one
+  // "zero behavior change for existing installs" is actually staked on — is
+  // never exercised.
+  it('defaults to process.env when no env argument is passed', () => {
+    const savedEnv = process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+    try {
+      delete process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+      expect(isAgentToolProfileActive()).toBe(false)
+
+      process.env[AGENT_TOOL_PROFILE_ENV_VAR] = 'agent'
+      expect(isAgentToolProfileActive()).toBe(true)
+    } finally {
+      if (savedEnv === undefined) delete process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+      else process.env[AGENT_TOOL_PROFILE_ENV_VAR] = savedEnv
+    }
+  })
 })
 
 describe('filterToolsForAgentProfile — profile unset (zero behavior change)', () => {
@@ -139,6 +159,22 @@ describe('filterToolsForAgentProfile — profile unset (zero behavior change)', 
     const arbitrary = [tool('foo'), tool('bar'), tool('undo_apply')]
 
     expect(filterToolsForAgentProfile(arbitrary, {})).toEqual(arbitrary)
+  })
+
+  // The real call site in `index.ts` is `filterToolsForAgentProfile(toolDefinitions)`
+  // — no second argument. Every other test in this file passes `env` explicitly,
+  // so without this one the production default-parameter path (`= process.env`)
+  // is never proven to preserve the full surface.
+  it('defaults to process.env and is still a no-op when no env argument is passed', () => {
+    const savedEnv = process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+    try {
+      delete process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+      const result = filterToolsForAgentProfile(TODAY_REGISTERED_TOOLS)
+      expect(result.map((t) => t.name)).toEqual(TODAY_REGISTERED_TOOLS.map((t) => t.name))
+    } finally {
+      if (savedEnv === undefined) delete process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+      else process.env[AGENT_TOOL_PROFILE_ENV_VAR] = savedEnv
+    }
   })
 })
 
@@ -169,6 +205,21 @@ describe('filterToolsForAgentProfile — SKILLSMITH_TOOL_PROFILE=agent', () => {
     expect(() =>
       filterToolsForAgentProfile(TODAY_REGISTERED_TOOLS, { [AGENT_TOOL_PROFILE_ENV_VAR]: 'agent' })
     ).not.toThrow()
+  })
+
+  // Real `process.env`, no second argument — the exact call shape used at
+  // the `index.ts` ListTools call site — actually narrows the surface.
+  it('narrows the surface via process.env when no env argument is passed', () => {
+    const savedEnv = process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+    try {
+      process.env[AGENT_TOOL_PROFILE_ENV_VAR] = 'agent'
+      const result = filterToolsForAgentProfile(TODAY_REGISTERED_TOOLS)
+
+      expect(result.map((t) => t.name).sort()).toEqual([...EXPECTED_PROFILE_MEMBER_NAMES].sort())
+    } finally {
+      if (savedEnv === undefined) delete process.env[AGENT_TOOL_PROFILE_ENV_VAR]
+      else process.env[AGENT_TOOL_PROFILE_ENV_VAR] = savedEnv
+    }
   })
 })
 
