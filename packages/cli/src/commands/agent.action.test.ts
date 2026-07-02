@@ -176,6 +176,7 @@ describe('agent uninstall — report rendering', () => {
       removed: ['/a', '/b'],
       restored: ['/c'],
       alreadyGone: [],
+      rejected: [],
     }
     uninstallAgentPackMock.mockReturnValue(result)
 
@@ -188,17 +189,41 @@ describe('agent uninstall — report rendering', () => {
   })
 
   it('notes already-gone entries as a no-op, not an error', async () => {
-    uninstallAgentPackMock.mockReturnValue({ removed: [], restored: [], alreadyGone: ['/a'] })
+    uninstallAgentPackMock.mockReturnValue({
+      removed: [],
+      restored: [],
+      alreadyGone: ['/a'],
+      rejected: [],
+    })
     const cap = captureConsole()
     await runUninstall()
     expect(cap.all().join('\n')).toContain('already gone:  1')
   })
 
   it('reports nothing-to-uninstall when the pack was never installed', async () => {
-    uninstallAgentPackMock.mockReturnValue({ removed: [], restored: [], alreadyGone: [] })
+    uninstallAgentPackMock.mockReturnValue({
+      removed: [],
+      restored: [],
+      alreadyGone: [],
+      rejected: [],
+    })
     const cap = captureConsole()
     await runUninstall()
     expect(cap.all().join('\n')).toContain('Nothing to uninstall')
+  })
+
+  it('surfaces rejected entries (manifest pointing outside known install targets) as a warning', async () => {
+    uninstallAgentPackMock.mockReturnValue({
+      removed: [],
+      restored: [],
+      alreadyGone: [],
+      rejected: ['/etc/passwd'],
+    })
+    const cap = captureConsole()
+    await runUninstall()
+    const output = cap.all().join('\n')
+    expect(output).toContain('rejected:      1')
+    expect(output).not.toContain('Nothing to uninstall')
   })
 })
 

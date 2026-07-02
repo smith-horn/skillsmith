@@ -15,6 +15,17 @@
  *   - A path already missing on disk (user deleted it manually) is a no-op,
  *     not an error.
  *
+ * SECURITY (governance follow-up, 2026-07-01): before touching the
+ * filesystem, every entry's `path` is checked against
+ * {@link isAllowedManifestEntryPath} (must structurally match one of the
+ * installer's known per-harness target locations) and, when `backupPath` is
+ * set, {@link isAllowedManifestBackupPath} (must resolve under this run's
+ * manifest backups directory). The manifest is an ordinary user-writable
+ * JSON file, not a signed record — a corrupted or tampered manifest must
+ * never become an arbitrary-file-delete/overwrite primitive. An entry
+ * failing either check is skipped entirely (added to `result.rejected`,
+ * counted toward neither `removed` nor `restored`) rather than acted on.
+ *
  * After removing all installer-created files, now-empty directories we
  * likely created (the parents of removed paths) are cleaned up bottom-up —
  * a non-empty directory is left alone (`rmdirSync` only removes empty ones).
@@ -32,6 +43,10 @@ import { dirname } from 'node:path'
 import { existsSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 
 import { loadAgentManifest, saveAgentManifest } from './agent-manifest.js'
+import {
+  isAllowedManifestBackupPath,
+  isAllowedManifestEntryPath,
+} from './agent-manifest-path-guard.js'
 import type { AgentUninstallOptions, AgentUninstallResult } from './agent-pack-installer.types.js'
 
 export function uninstallAgentPack(_opts: AgentUninstallOptions = {}): AgentUninstallResult {
@@ -39,9 +54,22 @@ export function uninstallAgentPack(_opts: AgentUninstallOptions = {}): AgentUnin
   const removed: string[] = []
   const restored: string[] = []
   const alreadyGone: string[] = []
+  const rejected: string[] = []
   const touchedDirs = new Set<string>()
 
   for (const entry of manifest.entries) {
+    if (!isAllowedManifestEntryPath(entry.path)) {
+      rejected.push(entry.path)
+      continue
+    }
+    if (entry.backupPath && !isAllowedManifestBackupPath(entry.backupPath)) {
+      // A validated destination path but an untrusted backup SOURCE — never
+      // restore from it (that would be an attacker-controlled read into a
+      // safe write target) and never fall through to delete either (the
+      // entry's true install-time shape can't be determined). Skip it whole.
+      rejected.push(entry.path)
+      continue
+    }
     if (!existsSync(entry.path)) {
       alreadyGone.push(entry.path)
       continue
@@ -70,7 +98,7 @@ export function uninstallAgentPack(_opts: AgentUninstallOptions = {}): AgentUnin
     entries: [],
   })
 
-  return { removed, restored, alreadyGone }
+  return { removed, restored, alreadyGone, rejected }
 }
 
 /** Remove now-empty directories, deepest first, stopping at the first non-empty one per branch. */

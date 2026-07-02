@@ -55,4 +55,12 @@ export interface AgentUninstallResult {
   restored: string[]
   /** Manifest entries that referenced a path already missing on disk (no-op, not an error). */
   alreadyGone: string[]
+  /**
+   * Manifest entries whose `path` or `backupPath` did not match a known
+   * installer target (see `agent-manifest-path-guard.ts`) — skipped
+   * entirely, neither deleted nor restored. Non-empty only for a corrupted
+   * or hand-tampered manifest; empty on every normal install/uninstall
+   * cycle.
+   */
+  rejected: string[]
 }

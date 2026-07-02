@@ -107,10 +107,18 @@ export async function runUninstall(): Promise<void> {
       chalk.dim(`  already gone:  ${result.alreadyGone.length} (deleted outside sklx — no-op)`)
     )
   }
+  if (result.rejected.length > 0) {
+    console.log(
+      chalk.yellow(
+        `  rejected:      ${result.rejected.length} (manifest entries pointing outside known install targets — left untouched, manifest may be corrupted)`
+      )
+    )
+  }
   if (
     result.removed.length === 0 &&
     result.restored.length === 0 &&
-    result.alreadyGone.length === 0
+    result.alreadyGone.length === 0 &&
+    result.rejected.length === 0
   ) {
     console.log(chalk.dim('  Nothing to uninstall — the agent pack was not installed.'))
   }

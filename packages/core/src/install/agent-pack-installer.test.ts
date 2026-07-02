@@ -138,6 +138,39 @@ describe('installAgentPack — dual-path + shim + hook + MCP', () => {
     expect(report?.shimWritten).toBe(true)
     expect(report?.mcpConfig?.status).toBe('created')
   })
+
+  // Governance follow-up (2026-07-01): hermes is the ONLY detected harness
+  // whose MCP config is YAML (`agent-config-merge.yaml.ts`) — before this
+  // test, nothing in the installer suite ever created `~/.hermes`, so the
+  // YAML merge path had zero coverage end-to-end through `installAgentPack`.
+  it('merges the skillsmith MCP entry into hermes config.yaml (YAML format) when hermes is detected', () => {
+    mkdirSync(join(homeDir, '.hermes', 'skills'), { recursive: true })
+    const result = installAgentPack({ homeDir })
+    const configPath = join(homeDir, '.hermes', 'config.yaml')
+    const content = readFileSync(configPath, 'utf-8')
+    expect(content).toContain('mcp_servers:')
+    expect(content).toContain('skillsmith:')
+    expect(content).toContain('SKILLSMITH_TOOL_PROFILE')
+    const report = result.harnessReports.find((r) => r.harness === 'hermes')
+    expect(report?.detected).toBe(true)
+    expect(report?.skillPackWritten).toBe(true)
+    expect(report?.mcpConfig?.status).toBe('created')
+  })
+
+  it('hermes YAML merge preserves pre-existing comments and unrelated keys', () => {
+    mkdirSync(join(homeDir, '.hermes', 'skills'), { recursive: true })
+    const configPath = join(homeDir, '.hermes', 'config.yaml')
+    writeFileSync(
+      configPath,
+      ['# my hermes config', 'some_setting: true # inline note', ''].join('\n')
+    )
+    installAgentPack({ homeDir })
+    const content = readFileSync(configPath, 'utf-8')
+    expect(content).toContain('# my hermes config')
+    expect(content).toContain('some_setting: true')
+    expect(content).toContain('# inline note')
+    expect(content).toContain('mcp_servers:')
+  })
 })
 
 describe('installAgentPack — double-install idempotency', () => {
@@ -162,11 +195,58 @@ describe('installAgentPack — double-install idempotency', () => {
     expect(backupCountAfterSecond).toBe(backupCountAfterFirst)
   })
 
+  // Governance regression test (2026-07-01): the marker-delimited Codex TOML
+  // block must be updated in place on re-install, never appended as a SECOND
+  // block — a naive "no match found → append" fallback would duplicate the
+  // `[mcp_servers.skillsmith]` / `[agents.skillsmith-agent]` tables on every
+  // subsequent install.
+  it('does not duplicate the codex TOML marker blocks on a second install', () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    installAgentPack({ homeDir })
+    installAgentPack({ homeDir })
+    const configPath = join(homeDir, '.codex', 'config.toml')
+    const content = readFileSync(configPath, 'utf-8')
+    const countOccurrences = (needle: string): number => content.split(needle).length - 1
+    expect(countOccurrences('# >>> skillsmith:mcp_servers.skillsmith >>>')).toBe(1)
+    expect(countOccurrences('# >>> skillsmith:agents.skillsmith-agent >>>')).toBe(1)
+    expect(countOccurrences('[mcp_servers.skillsmith]')).toBe(1)
+  })
+
   it('reports mcpConfig status "unchanged" on the second install', () => {
     installAgentPack({ homeDir })
     const second = installAgentPack({ homeDir })
     const report = second.harnessReports.find((r) => r.harness === 'claude-code')
     expect(report?.mcpConfig?.status).toBe('unchanged')
+  })
+
+  // Governance regression test (2026-07-01) for the commit-message-claimed
+  // fix: "duplicate backups when hooks+MCP share a config file". Within a
+  // SINGLE install run, claude-code's settings.json is merged into THREE
+  // times (SessionStart hook, SessionEnd hook, MCP registration) — without
+  // `alreadyBackedUpPaths` sharing across those calls, the second and third
+  // merges would each independently "back up" content THIS SAME RUN already
+  // wrote, producing 3 backup files for one genuine pre-install state instead
+  // of 1, and (per `agent-manifest.ts`'s `dedupeEntriesByPath` last-non-null-
+  // wins rule) the manifest would end up pointing `uninstall` at the WRONG,
+  // polluted backup rather than the true pre-install content.
+  it('writes exactly ONE backup file for settings.json even though 3 separate merges touch it in one run', () => {
+    mkdirSync(join(homeDir, '.claude'), { recursive: true })
+    const settingsPath = join(homeDir, '.claude', 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ preExisting: true }, null, 2))
+
+    installAgentPack({ homeDir })
+
+    const backupsDir = getAgentInstallBackupsDir()
+    const backupFiles = readdirSync(backupsDir).filter((f) => f.includes('settings.json'))
+    expect(backupFiles).toHaveLength(1)
+    const backupContent = JSON.parse(readFileSync(join(backupsDir, backupFiles[0]!), 'utf-8')) as {
+      preExisting: boolean
+      mcpServers?: unknown
+      hooks?: unknown
+    }
+    // The ONE backup that exists must be the GENUINE pre-install content —
+    // not an intermediate state polluted by an earlier merge THIS run.
+    expect(backupContent).toEqual({ preExisting: true })
   })
 })
 
@@ -238,13 +318,102 @@ describe('uninstallAgentPack — exact reversal', () => {
 
     // settings.json is restored to its pre-install content (someOtherKey
     // survives, skillsmith/hooks keys are gone) rather than deleted, since
-    // it pre-existed with unrelated content.
+    // it pre-existed with unrelated content. Asserting the FULL document
+    // (not just `mcpServers`) is the regression test for the "duplicate
+    // backups when hooks+MCP share a config file" bug the commit message
+    // claims fixed: a stray SECOND backup captured mid-install (after hooks
+    // were merged in but before MCP was) would restore a `hooks` key that
+    // never existed pre-install while still passing a narrower
+    // `mcpServers`-only assertion.
     const doc = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
-    expect(doc.someOtherKey).toBe(true)
+    expect(doc).toEqual({ someOtherKey: true })
     expect(doc.mcpServers).toBeUndefined()
+    expect(doc.hooks).toBeUndefined()
 
     expect(result.restored).toContain(settingsPath)
     expect(result.removed.length).toBeGreaterThan(0)
+  })
+
+  // Governance regression test (2026-07-01): a hand-tampered or corrupted
+  // manifest must never become an arbitrary-file-delete primitive. See
+  // `agent-manifest-path-guard.ts`.
+  it('refuses to delete or overwrite a manifest entry pointing outside any known installer target', () => {
+    installAgentPack({ homeDir })
+
+    // Simulate a tampered manifest: a "sensitive" file the installer never
+    // wrote, with a fabricated entry pointing `uninstallAgentPack` at it.
+    const sensitivePath = join(homeDir, 'not-an-installer-path.txt')
+    writeFileSync(sensitivePath, 'do not touch me')
+
+    const manifestPath = getAgentManifestPath()
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
+      entries: Array<{
+        path: string
+        kind: string
+        harness: string | null
+        backupPath: string | null
+        executable: boolean
+      }>
+    }
+    manifest.entries.push({
+      path: sensitivePath,
+      kind: 'skill',
+      harness: null,
+      backupPath: null,
+      executable: false,
+    })
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    const result = uninstallAgentPack()
+
+    // The sensitive file survives untouched...
+    expect(existsSync(sensitivePath)).toBe(true)
+    expect(readFileSync(sensitivePath, 'utf-8')).toBe('do not touch me')
+    // ...and is reported as rejected, not silently dropped or counted as removed.
+    expect(result.rejected).toContain(sensitivePath)
+    expect(result.removed).not.toContain(sensitivePath)
+  })
+
+  it('refuses to restore from a backupPath outside the manifest backups directory', () => {
+    mkdirSync(join(homeDir, '.claude'), { recursive: true })
+    const settingsPath = join(homeDir, '.claude', 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ realCurrentContent: true }))
+
+    // A forged "backup" living OUTSIDE the trusted backups directory, whose
+    // content an attacker fully controls.
+    const forgedBackupPath = join(homeDir, 'forged-backup.json')
+    writeFileSync(forgedBackupPath, JSON.stringify({ attackerControlled: true }))
+
+    const manifestPath = getAgentManifestPath()
+    writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          installedAt: new Date().toISOString(),
+          packSchemaVersion: 1,
+          entries: [
+            {
+              path: settingsPath,
+              kind: 'mcp-config',
+              harness: 'claude-code',
+              backupPath: forgedBackupPath,
+              executable: false,
+            },
+          ],
+        },
+        null,
+        2
+      )
+    )
+
+    const result = uninstallAgentPack()
+
+    // settingsPath must NOT be overwritten with the forged backup's content.
+    const doc = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+    expect(doc).toEqual({ realCurrentContent: true })
+    expect(result.rejected).toContain(settingsPath)
+    expect(result.restored).not.toContain(settingsPath)
   })
 
   it('deletes a config file entirely when install created it fresh (no backup)', () => {

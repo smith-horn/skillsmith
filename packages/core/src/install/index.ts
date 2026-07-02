@@ -73,3 +73,7 @@ export {
   type HookInstallTarget,
 } from './agent-harness-targets.js'
 export { type MergeResult, type MergeStatus } from './agent-config-merge.types.js'
+export {
+  isAllowedManifestEntryPath,
+  isAllowedManifestBackupPath,
+} from './agent-manifest-path-guard.js'
