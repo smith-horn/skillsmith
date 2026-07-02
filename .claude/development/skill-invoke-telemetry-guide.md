@@ -199,6 +199,7 @@ The MCP server resolves the three marker fields per tool call from two channels.
    - `agent_session` defaults **true** for a valid marker (presence ⇒ agent session); set `false` to opt out.
    - `nudge_origin` defaults false; `trigger_id` defaults null.
    - **TTL = 12h** (`AGENT_MARKER_TTL_MS`), measured from `started_at`. Rationale: comfortably spans a long interactive working day so a live session is never expired mid-flight, while a marker left by a crashed session cannot mislabel invocations a day later. A missing / corrupt / expired file is simply "no marker" — never an error.
+   - **Read guard (`AGENT_MARKER_MAX_FILE_BYTES` = 16 KiB):** the reader runs synchronously on every tool call, so before `readFileSync` it `lstat`s the entry and skips anything that is not a regular file (symlinks are never followed — the directory is server-read-only, so a symlink here is unexpected) or that exceeds the byte cap (treated as corrupt). This bounds the synchronous read+parse cost on the hot dispatch path regardless of what lands in the directory.
    - **Wave-1 correlation caveat:** the server cannot know its own harness session id, so it picks the most recently started live marker. Concurrent sessions on one machine may observe each other's marker — an accepted, documented imprecision (`_meta` is exact and wins). `SKILLSMITH_AGENT_MARKER_DIR` overrides the directory (test isolation; mirrors `SKILLSMITH_CACHE_DIR_OVERRIDE`).
 
 3. **Neither** ⇒ `agent_session=false`, `nudge_origin=false`, `trigger_id=null`.

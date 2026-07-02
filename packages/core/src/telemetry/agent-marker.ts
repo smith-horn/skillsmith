@@ -20,7 +20,7 @@
  * A missing / corrupt / expired file is simply "no marker" — never an error.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { getConfigDir } from '../config/index.js'
 
@@ -42,6 +42,20 @@ export const AGENT_MARKER_SCHEMA_VERSION = 1
  * marker abandoned by a crash cannot mislabel invocations a day or more later.
  */
 export const AGENT_MARKER_TTL_MS = 12 * 60 * 60 * 1000
+
+/**
+ * Max bytes read from a single marker file.
+ *
+ * `readSessionMarker` runs synchronously on the MCP dispatch hot path (every
+ * tool call). A well-formed marker is a handful of scalar fields — a few
+ * hundred bytes; 16 KiB is generous headroom. Without this cap a corrupt or
+ * hostile file of unbounded size would block the event loop for the full
+ * synchronous `readFileSync` + `JSON.parse` on every single tool call until
+ * the hook cleans it up (or the TTL elapses, which only affects staleness,
+ * not the read cost). Oversized files are treated as corrupt: skipped, never
+ * thrown.
+ */
+export const AGENT_MARKER_MAX_FILE_BYTES = 16 * 1024
 
 /** The "no marker present" resolution — all fields at their neutral default. */
 export const NO_AGENT_MARKER: AgentMarker = Object.freeze({
@@ -118,11 +132,18 @@ interface ParsedMarker {
 /**
  * Read + validate a single marker file. Returns null for anything that is not
  * a well-formed, non-expired marker (corrupt JSON, wrong shape, missing/invalid
- * `started_at`, empty `session_id`, or past the TTL). Never throws.
+ * `started_at`, empty `session_id`, past the TTL, not a regular file, or over
+ * `AGENT_MARKER_MAX_FILE_BYTES`). Never throws.
  */
 function readMarkerFile(path: string, now: number): ParsedMarker | null {
   let raw: string
   try {
+    // `lstatSync` (not `stat`) so a symlink is rejected outright rather than
+    // followed — the directory is documented read-only server-side, so a
+    // symlink here is never something the reader itself created.
+    const stat = lstatSync(path)
+    if (!stat.isFile()) return null
+    if (stat.size > AGENT_MARKER_MAX_FILE_BYTES) return null
     raw = readFileSync(path, 'utf-8')
   } catch {
     return null

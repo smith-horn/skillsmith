@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -21,6 +21,7 @@ import {
   NO_AGENT_MARKER,
   AGENT_MARKER_TTL_MS,
   AGENT_MARKER_SCHEMA_VERSION,
+  AGENT_MARKER_MAX_FILE_BYTES,
   type AgentMarkerFile,
 } from './agent-marker.js'
 
@@ -118,6 +119,28 @@ describe('readSessionMarker', () => {
     writeFileSync(join(markerDir, 'note.txt'), 'ignored', 'utf-8')
     writeMarker('a.json', freshMarker({ trigger_id: 'T2' }))
     expect(readSessionMarker({ now: NOW })?.triggerId).toBe('T2')
+  })
+
+  it('ignores a marker file over AGENT_MARKER_MAX_FILE_BYTES without throwing', () => {
+    // A well-formed marker is a few hundred bytes; pad `trigger_id` past the
+    // cap to simulate a corrupt/hostile oversized file on the hot read path.
+    const oversizedTriggerId = 'x'.repeat(AGENT_MARKER_MAX_FILE_BYTES + 1)
+    writeMarker('huge.json', freshMarker({ trigger_id: oversizedTriggerId }))
+    expect(readSessionMarker({ now: NOW })).toBeNull()
+  })
+
+  it('ignores a symlink instead of following it', () => {
+    // Target lives OUTSIDE markerDir and is otherwise perfectly valid — if the
+    // reader followed the symlink it would resolve `trigger_id: 'OUTSIDE'`.
+    // `lstat` must reject the symlink entry before `readFileSync` ever runs.
+    const outsideDir = mkdtempSync(join(tmpdir(), 'skillsmith-marker-outside-'))
+    const outsidePath = join(outsideDir, 'target.json')
+    writeFileSync(outsidePath, JSON.stringify(freshMarker({ trigger_id: 'OUTSIDE' })), 'utf-8')
+    symlinkSync(outsidePath, join(markerDir, 'link.json'))
+
+    expect(readSessionMarker({ now: NOW })).toBeNull()
+
+    rmSync(outsideDir, { recursive: true, force: true })
   })
 })
 
