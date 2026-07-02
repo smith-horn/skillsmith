@@ -94,6 +94,12 @@ jobs:
     environment: e2e-staging
     permissions:
       contents: read
+    # Dependabot PRs are same-repo but receive no repository secrets (SMI-5485).
+    # Event-scoped (not a bare actor check): on `schedule`, github.actor is
+    # attributed to the last workflow editor, which can be dependabot[bot]
+    # after a merged github-actions bump -- a bare check would silently skip
+    # the nightly burn-in run. This form only excludes dependabot *PRs*.
+    if: github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'
     continue-on-error: true # Phase 1 — nightly observability mode; remove after 10 green runs
     env:
       NEGATIVE_CONTROL: ${{ github.event.inputs.negative_control || 'none' }}
