@@ -89,6 +89,11 @@ const supabaseConfig = getSupabaseConfig()
             your OS platform, and per-skill metadata (name, version, content hash) — never file contents
             or paths.
           </p>
+          <p class="state-body">
+            <a href="/docs/inventory" class="inline-link"
+              >Learn more about cross-machine inventory</a
+            >
+          </p>
         </div>
 
         <!-- State: opted-in-no-devices -->
@@ -105,11 +110,17 @@ const supabaseConfig = getSupabaseConfig()
             >
           </div>
           <p id="copy-status" role="status" aria-live="polite" class="copy-status"></p>
+          <p class="state-body">
+            <a href="/docs/inventory" class="inline-link"
+              >Learn more about cross-machine inventory</a
+            >
+          </p>
         </div>
 
         <!-- State: single-machine hint (shown above devices) -->
         <div id="single-machine-hint" class="inline-hint" style="display: none;">
           Push from another machine to compare your skills across machines.
+          <a href="/docs/inventory" class="inline-link">Learn more</a>
         </div>
 
         <!-- Populated device list — built client-side by skills-page-render.ts -->
