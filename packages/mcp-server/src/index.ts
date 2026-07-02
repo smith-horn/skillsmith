@@ -86,6 +86,10 @@ import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 import { resolveStartupFlag } from './cli-flags.js'
+// SMI-5456: curated agent tool profile — narrows ListTools to ~15 tools when
+// SKILLSMITH_TOOL_PROFILE=agent; no-op (full surface) otherwise. Listing-only,
+// see middleware/toolProfile.ts for the full contract.
+import { filterToolsForAgentProfile } from './middleware/toolProfile.js'
 
 // SMI-5125: re-export the inline Stripe webhook contract interfaces so the
 // canonical contract in `@smith-horn/enterprise/billing` can be type-equality
@@ -188,7 +192,7 @@ const server = new Server(
 // Handle list tools request
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: toolDefinitions.map((tool) => ({
+    tools: filterToolsForAgentProfile(toolDefinitions).map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
