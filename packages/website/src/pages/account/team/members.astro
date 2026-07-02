@@ -11,6 +11,7 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import Footer from '../../../components/Footer.astro'
+import AccountSidebar from '../../../components/AccountSidebar.astro'
 import Nav from '../../../components/Nav.astro'
 import TeamInviteModal from '../../../components/TeamInviteModal.astro'
 import TeamNav from '../../../components/TeamNav.astro'
@@ -41,54 +42,58 @@ const supabaseConfig = getSupabaseConfig()
   <body>
     <Nav activePath="/account/team" />
 
-    <main class="members-container">
-      <h1>Team Members</h1>
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
 
-      <TeamNav activePath="/account/team/members" />
+      <main class="members-container">
+        <h1>Team Members</h1>
 
-      <!-- Loading skeleton -->
-      <div id="loading-state" class="loading-state">
-        <p>Loading members...</p>
-      </div>
+        <TeamNav activePath="/account/team/members" />
 
-      <!-- Error alert -->
-      <div
-        id="error-state"
-        class="error-state"
-        style="display: none;"
-        role="alert"
-        aria-live="polite"
-      >
-        <h3>Failed to load members</h3>
-        <p id="error-message">Something went wrong.</p>
-        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
-      </div>
+        <!-- Loading skeleton -->
+        <div id="loading-state" class="loading-state">
+          <p>Loading members...</p>
+        </div>
 
-      <div id="content" style="display: none;">
-        <section class="section">
-          <div class="section-header">
-            <h2 id="members-heading">Members</h2>
-            <button
-              class="btn btn-primary"
-              id="invite-btn"
-              type="button"
-              data-action="open-invite-modal"
-              aria-haspopup="dialog"
-              aria-controls="team-invite-modal"
-            >
-              Invite Member
-            </button>
-          </div>
+        <!-- Error alert -->
+        <div
+          id="error-state"
+          class="error-state"
+          style="display: none;"
+          role="alert"
+          aria-live="polite"
+        >
+          <h3>Failed to load members</h3>
+          <p id="error-message">Something went wrong.</p>
+          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+        </div>
 
-          <div class="member-list" id="member-list"></div>
-        </section>
+        <div id="content" style="display: none;">
+          <section class="section">
+            <div class="section-header">
+              <h2 id="members-heading">Members</h2>
+              <button
+                class="btn btn-primary"
+                id="invite-btn"
+                type="button"
+                data-action="open-invite-modal"
+                aria-haspopup="dialog"
+                aria-controls="team-invite-modal"
+              >
+                Invite Member
+              </button>
+            </div>
 
-        <section class="section">
-          <h2>Pending Invites</h2>
-          <div id="pending-list" class="pending-list" aria-live="polite"></div>
-        </section>
-      </div>
-    </main>
+            <div class="member-list" id="member-list"></div>
+          </section>
+
+          <section class="section">
+            <h2>Pending Invites</h2>
+            <div id="pending-list" class="pending-list" aria-live="polite"></div>
+          </section>
+        </div>
+      </main>
+    </div>
 
     <TeamInviteModal />
 

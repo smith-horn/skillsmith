@@ -13,6 +13,7 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
+import AccountSidebar from '../../components/AccountSidebar.astro'
 import Footer from '../../components/Footer.astro'
 import Nav from '../../components/Nav.astro'
 
@@ -47,227 +48,155 @@ const supabaseConfig = getSupabaseConfig()
   <body>
     <Nav activePath="/account" />
 
-    <main class="dashboard-container">
-      <!-- SMI-4463: Quota banner — populated client-side after the
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
+      <main class="dashboard-container">
+        <!-- SMI-4463: Quota banner — populated client-side after the
            tier-aware billing-period RPC resolves. Hidden until then.
            Placed above the page heading per WCAG landmark conventions. -->
-      <div id="quota-banner-container" aria-live="polite" style="display: none;"></div>
+        <div id="quota-banner-container" aria-live="polite" style="display: none;"></div>
 
-      <!-- Loading State -->
-      <div id="loading-state" class="loading-state">
-        <div class="spinner-container">
-          <svg class="spinner" viewBox="0 0 24 24">
-            <circle
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-              fill="none"
-              opacity="0.25"></circle>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-            ></path>
-          </svg>
-        </div>
-        <p>Loading your account...</p>
-      </div>
-
-      <!-- Error State -->
-      <div id="error-state" class="error-state" style="display: none;">
-        <div class="error-content">
-          <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            ></path>
-          </svg>
-          <h3>Failed to load account data</h3>
-          <p id="error-message">Something went wrong</p>
-          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
-        </div>
-      </div>
-
-      <!-- Dashboard Content (hidden until loaded) -->
-      <div id="dashboard-content" style="display: none;">
-        <!-- Welcome Section -->
-        <div class="welcome-section">
-          <h1>Welcome back, <span id="user-name">User</span></h1>
-          <p class="user-email" id="user-email">user@example.com</p>
-          <p class="github-username" id="github-username" style="display: none;">
-            <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-                d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
+        <!-- Loading State -->
+        <div id="loading-state" class="loading-state">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
               ></path>
             </svg>
-            <a
-              id="github-link"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="GitHub profile">GitHub</a
-            >
-          </p>
+          </div>
+          <p>Loading your account...</p>
         </div>
 
-        <!-- Stats Cards -->
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-label">Current Plan</div>
-            <div class="stat-value" id="current-tier">Community</div>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-label">API Usage</div>
-            <div class="stat-value" id="api-usage">0 / 1,000</div>
-            <span class="stat-subtext">total API calls</span>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-label">License Keys</div>
-            <div class="stat-value" id="key-count">0 / 1</div>
-            <span class="stat-subtext">active keys</span>
+        <!-- Error State -->
+        <div id="error-state" class="error-state" style="display: none;">
+          <div class="error-content">
+            <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              ></path>
+            </svg>
+            <h3>Failed to load account data</h3>
+            <p id="error-message">Something went wrong</p>
+            <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
           </div>
         </div>
 
-        <!-- Subscription Section -->
-        <section class="dashboard-section">
-          <div class="section-header">
-            <h2>Subscription</h2>
-            <a href="/account/subscription/" class="btn btn-secondary btn-sm">Manage</a>
-          </div>
-
-          <div class="subscription-card" id="subscription-card">
-            <div class="subscription-info">
-              <div class="subscription-tier">
-                <span class="tier-badge community" id="tier-badge">Community</span>
-                <span class="tier-price" id="tier-price">Free</span>
-              </div>
-              <div class="subscription-details" id="subscription-details">
-                <p>Free forever with 1,000 API calls per month</p>
-              </div>
-            </div>
-            <div class="subscription-actions" id="subscription-actions">
-              <a href="/pricing" class="btn btn-primary">Upgrade Plan</a>
-            </div>
-          </div>
-        </section>
-
-        <!-- License Keys Section -->
-        <section class="dashboard-section">
-          <div class="section-header">
-            <h2>License Keys</h2>
-            <button id="generate-key-btn" class="btn btn-primary btn-sm">Generate New Key</button>
-          </div>
-
-          <div id="keys-list" class="keys-list">
-            <div class="empty-state">
-              <p>No license keys yet.</p>
-              <p class="text-muted">Generate a key to authenticate your CLI or MCP server.</p>
-            </div>
-          </div>
-
-          <!-- New Key Modal -->
-          <div id="new-key-modal" class="modal" style="display: none;">
-            <div class="modal-content">
-              <div class="modal-header">
-                <h3>New License Key Generated</h3>
-                <button class="modal-close" id="close-modal">&times;</button>
-              </div>
-              <div class="modal-body">
-                <p class="warning-text">
-                  <strong>Important:</strong> Copy this key now. It will not be shown again.
-                </p>
-                <div class="key-display">
-                  <code id="new-key-value">sk_live_...</code>
-                  <button id="copy-key-btn" class="btn btn-secondary btn-sm">Copy</button>
-                </div>
-              </div>
-              <div class="modal-footer">
-                <button id="done-btn" class="btn btn-primary">Done</button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Quick Links Section -->
-        <section class="dashboard-section">
-          <h2>Quick Links</h2>
-          <div class="quick-links">
-            <a href="/docs/quickstart" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
-              </svg>
-              <span>Getting Started</span>
-            </a>
-            <a href="/docs/api" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-              </svg>
-              <span>API Documentation</span>
-            </a>
-            <a href="/account/team" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                <circle cx="9" cy="7" r="4"></circle>
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-              </svg>
-              <span>Team</span>
-            </a>
-            <a href="/account/billing" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
-                <line x1="1" y1="10" x2="23" y2="10"></line>
-              </svg>
-              <span>Billing History</span>
-            </a>
-            <a href="/account/cli-token/" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="4 17 10 11 4 5"></polyline>
-                <line x1="12" y1="19" x2="20" y2="19"></line>
-              </svg>
-              <span>CLI Token</span>
-            </a>
-            <a href="/account/profile" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
-                <path d="M22 7l-10 6L2 7"></path>
-              </svg>
-              <span>Email Address</span>
-            </a>
-            <a href="/account/outreach-preferences" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <!-- Dashboard Content (hidden until loaded) -->
+        <div id="dashboard-content" style="display: none;">
+          <!-- Welcome Section -->
+          <div class="welcome-section">
+            <h1>Welcome back, <span id="user-name">User</span></h1>
+            <p class="user-email" id="user-email">user@example.com</p>
+            <p class="github-username" id="github-username" style="display: none;">
+              <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path
-                  d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"
+                  fill-rule="evenodd"
+                  clip-rule="evenodd"
+                  d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
                 ></path>
               </svg>
-              <span>Outreach Preferences</span>
-            </a>
-            <a href="/account/telemetry" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 12h4l3-9 4 18 3-9h4"></path>
-              </svg>
-              <span>Telemetry Preferences</span>
-            </a>
-            <a href="/account/skills" class="quick-link">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="7" height="7"></rect>
-                <rect x="14" y="3" width="7" height="7"></rect>
-                <rect x="14" y="14" width="7" height="7"></rect>
-                <rect x="3" y="14" width="7" height="7"></rect>
-              </svg>
-              <span>Skill Inventory</span>
-            </a>
+              <a
+                id="github-link"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub profile">GitHub</a
+              >
+            </p>
           </div>
-        </section>
-      </div>
-    </main>
+
+          <!-- Stats Cards -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Current Plan</div>
+              <div class="stat-value" id="current-tier">Community</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label">API Usage</div>
+              <div class="stat-value" id="api-usage">0 / 1,000</div>
+              <span class="stat-subtext">total API calls</span>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label">License Keys</div>
+              <div class="stat-value" id="key-count">0 / 1</div>
+              <span class="stat-subtext">active keys</span>
+            </div>
+          </div>
+
+          <!-- Subscription Section -->
+          <section class="dashboard-section">
+            <div class="section-header">
+              <h2>Subscription</h2>
+              <a href="/account/subscription/" class="btn btn-secondary btn-sm">Manage</a>
+            </div>
+
+            <div class="subscription-card" id="subscription-card">
+              <div class="subscription-info">
+                <div class="subscription-tier">
+                  <span class="tier-badge community" id="tier-badge">Community</span>
+                  <span class="tier-price" id="tier-price">Free</span>
+                </div>
+                <div class="subscription-details" id="subscription-details">
+                  <p>Free forever with 1,000 API calls per month</p>
+                </div>
+              </div>
+              <div class="subscription-actions" id="subscription-actions">
+                <a href="/pricing" class="btn btn-primary">Upgrade Plan</a>
+              </div>
+            </div>
+          </section>
+
+          <!-- License Keys Section -->
+          <section class="dashboard-section">
+            <div class="section-header">
+              <h2>License Keys</h2>
+              <button id="generate-key-btn" class="btn btn-primary btn-sm">Generate New Key</button>
+            </div>
+
+            <div id="keys-list" class="keys-list">
+              <div class="empty-state">
+                <p>No license keys yet.</p>
+                <p class="text-muted">Generate a key to authenticate your CLI or MCP server.</p>
+              </div>
+            </div>
+
+            <!-- New Key Modal -->
+            <div id="new-key-modal" class="modal" style="display: none;">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h3>New License Key Generated</h3>
+                  <button class="modal-close" id="close-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                  <p class="warning-text">
+                    <strong>Important:</strong> Copy this key now. It will not be shown again.
+                  </p>
+                  <div class="key-display">
+                    <code id="new-key-value">sk_live_...</code>
+                    <button id="copy-key-btn" class="btn btn-secondary btn-sm">Copy</button>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button id="done-btn" class="btn btn-primary">Done</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
 
     <Footer compact />
   </body>
@@ -614,36 +543,6 @@ const supabaseConfig = getSupabaseConfig()
     font-size: 0.875rem;
   }
 
-  /* Quick Links */
-  .quick-links {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-    margin-top: 1rem;
-  }
-
-  .quick-link {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: #1a1a1f;
-    border-radius: 0.5rem;
-    text-decoration: none;
-    color: #fafafa;
-    transition: background 0.2s;
-  }
-
-  .quick-link:hover {
-    background: #2a2a2f;
-  }
-
-  .quick-link svg {
-    width: 1.25rem;
-    height: 1.25rem;
-    color: #e07a5f;
-  }
-
   /* Buttons */
   .btn {
     display: inline-flex;
@@ -833,6 +732,27 @@ const supabaseConfig = getSupabaseConfig()
     const doneBtn = document.getElementById('done-btn') as HTMLButtonElement
     const copyKeyBtn = document.getElementById('copy-key-btn') as HTMLButtonElement
     const newKeyValue = document.getElementById('new-key-value') as HTMLElement
+
+    // On popstate-driven ClientRouter transitions (WebKit especially) the
+    // pathname can already read /account while the swapped-in DOM still
+    // belongs to the previous page, so the guard above passes against a
+    // foreign DOM and the lookups return null. Bail out; the transition's
+    // own astro:page-load re-fires this handler once the real dashboard
+    // DOM is in place. Caught by account-page-load-guards.spec.ts (SMI-5475).
+    if (
+      !loadingState ||
+      !dashboardContent ||
+      !errorState ||
+      !errorMessage ||
+      !generateKeyBtn ||
+      !newKeyModal ||
+      !closeModalBtn ||
+      !doneBtn ||
+      !copyKeyBtn ||
+      !newKeyValue
+    ) {
+      return
+    }
 
     // State management function for consistent UI transitions
     function showState(state: 'loading' | 'content' | 'error') {

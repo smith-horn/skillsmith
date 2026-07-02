@@ -17,6 +17,7 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
+import AccountSidebar from '../../components/AccountSidebar.astro'
 import Nav from '../../components/Nav.astro'
 
 const supabaseConfig = getSupabaseConfig()
@@ -59,98 +60,103 @@ const supabaseConfig = getSupabaseConfig()
   <body>
     <Nav activePath="/account" />
 
-    <main class="page-container">
-      <!-- Loading State -->
-      <div id="loading-state" class="loading-state">
-        <div class="spinner-container">
-          <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
-            <circle
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-              fill="none"
-              opacity="0.25"></circle>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-            ></path>
-          </svg>
-        </div>
-        <p>Loading...</p>
-      </div>
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
 
-      <!-- Error State -->
-      <div id="error-state" class="error-state" style="display: none;">
-        <div class="error-content">
-          <h2>Something went wrong</h2>
-          <p id="error-message">Please try again.</p>
-          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
-        </div>
-      </div>
-
-      <!-- Page Content (hidden until authenticated) -->
-      <div id="page-content" style="display: none;">
-        <div class="page-header">
-          <a href="/account" class="back-link">← Account</a>
-          <h1>CLI Token</h1>
-          <p class="page-description">
-            Generate an API key to authenticate the <code>skillsmith login</code> command.
-          </p>
+      <main class="page-container">
+        <!-- Loading State -->
+        <div id="loading-state" class="loading-state">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <p>Loading...</p>
         </div>
 
-        <!-- Instructions -->
-        <div class="instructions-card">
-          <h2>How to use</h2>
-          <ol class="steps">
-            <li>Run <code>skillsmith login</code> in your terminal</li>
-            <li>Click <strong>Generate CLI Token</strong> below</li>
-            <li>Click <strong>Copy</strong> to copy the key</li>
-            <li>Return to your terminal and paste the key when prompted</li>
-          </ol>
+        <!-- Error State -->
+        <div id="error-state" class="error-state" style="display: none;">
+          <div class="error-content">
+            <h2>Something went wrong</h2>
+            <p id="error-message">Please try again.</p>
+            <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+          </div>
         </div>
 
-        <!-- Key Generation Section -->
-        <div class="token-card">
-          <!-- Initial state: generate button -->
-          <div id="generate-section">
-            <p class="token-hint">
-              Each key is shown <strong>once only</strong> — copy it immediately.
+        <!-- Page Content (hidden until authenticated) -->
+        <div id="page-content" style="display: none;">
+          <div class="page-header">
+            <a href="/account" class="back-link">← Account</a>
+            <h1>CLI Token</h1>
+            <p class="page-description">
+              Generate an API key to authenticate the <code>skillsmith login</code> command.
             </p>
-            <button id="generate-btn" class="btn btn-primary"> Generate CLI Token </button>
-            <p id="generate-error" class="error-text" style="display: none;"></p>
           </div>
 
-          <!-- Key display state (hidden until generated) -->
-          <div id="key-section" style="display: none;">
-            <div id="key-container" aria-live="polite" aria-atomic="true" class="key-container">
-              <p class="key-label">Your CLI API key:</p>
-              <div class="key-display-row">
-                <code id="key-value" class="key-value">sk_live_...</code>
-                <button
-                  id="copy-btn"
-                  class="btn btn-secondary btn-sm"
-                  aria-label="Copy API key to clipboard"
-                >
-                  Copy
-                </button>
-              </div>
-              <p class="key-warning">
-                <strong>Save this key now.</strong> It will not be shown again after you close this page.
+          <!-- Instructions -->
+          <div class="instructions-card">
+            <h2>How to use</h2>
+            <ol class="steps">
+              <li>Run <code>skillsmith login</code> in your terminal</li>
+              <li>Click <strong>Generate CLI Token</strong> below</li>
+              <li>Click <strong>Copy</strong> to copy the key</li>
+              <li>Return to your terminal and paste the key when prompted</li>
+            </ol>
+          </div>
+
+          <!-- Key Generation Section -->
+          <div class="token-card">
+            <!-- Initial state: generate button -->
+            <div id="generate-section">
+              <p class="token-hint">
+                Each key is shown <strong>once only</strong> — copy it immediately.
               </p>
+              <button id="generate-btn" class="btn btn-primary"> Generate CLI Token </button>
+              <p id="generate-error" class="error-text" style="display: none;"></p>
             </div>
 
-            <p class="return-hint">Return to your terminal and paste the key when prompted.</p>
+            <!-- Key display state (hidden until generated) -->
+            <div id="key-section" style="display: none;">
+              <div id="key-container" aria-live="polite" aria-atomic="true" class="key-container">
+                <p class="key-label">Your CLI API key:</p>
+                <div class="key-display-row">
+                  <code id="key-value" class="key-value">sk_live_...</code>
+                  <button
+                    id="copy-btn"
+                    class="btn btn-secondary btn-sm"
+                    aria-label="Copy API key to clipboard"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p class="key-warning">
+                  <strong>Save this key now.</strong> It will not be shown again after you close this
+                  page.
+                </p>
+              </div>
 
-            <button id="done-btn" class="btn btn-primary" aria-label="Close">
-              I've copied it — close
-            </button>
+              <p class="return-hint">Return to your terminal and paste the key when prompted.</p>
+
+              <button id="done-btn" class="btn btn-primary" aria-label="Close">
+                I've copied it — close
+              </button>
+            </div>
           </div>
-        </div>
 
-        <!-- Tier info -->
-        <p class="tier-note" id="tier-note" style="display: none;"></p>
-      </div>
-    </main>
+          <!-- Tier info -->
+          <p class="tier-note" id="tier-note" style="display: none;"></p>
+        </div>
+      </main>
+    </div>
 
     <script>
       import { createClient } from '@supabase/supabase-js'

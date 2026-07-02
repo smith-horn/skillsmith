@@ -8,7 +8,9 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
+import AccountSidebar from '../../components/AccountSidebar.astro'
 import Footer from '../../components/Footer.astro'
+import Nav from '../../components/Nav.astro'
 import '../../styles/outreach-preferences.css'
 
 const supabaseConfig = getSupabaseConfig()
@@ -37,101 +39,106 @@ const supabaseConfig = getSupabaseConfig()
     <ClientRouter />
   </head>
   <body>
-    <main class="container">
-      <div id="loading-state" class="center-state">
-        <svg class="spinner" viewBox="0 0 24 24">
-          <circle
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            stroke-width="4"
-            fill="none"
-            opacity="0.25"></circle>
-          <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-          ></path>
-        </svg>
-        <p>Loading...</p>
-      </div>
+    <Nav activePath="/account" />
 
-      <div id="error-state" class="center-state" style="display:none;">
-        <p id="error-message" class="error-text">Something went wrong</p>
-        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
-      </div>
-
-      <div id="page-content" style="display:none;">
-        <div class="page-header">
-          <a href="/account" class="back-link">&larr; Account</a>
-          <h1>Outreach Preferences</h1>
-          <p class="subtitle">
-            Control which repositories receive Skillsmith quality-report issues.
-          </p>
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
+      <main class="container">
+        <div id="loading-state" class="center-state">
+          <svg class="spinner" viewBox="0 0 24 24">
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+              fill="none"
+              opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+            ></path>
+          </svg>
+          <p>Loading...</p>
         </div>
 
-        <div id="no-github-state" class="card center-card" style="display:none;">
-          <h2>GitHub Account Required</h2>
-          <p>Connect your GitHub account to manage outreach preferences.</p>
-          <button id="connect-github-btn" class="btn btn-primary">Connect GitHub</button>
+        <div id="error-state" class="center-state" style="display:none;">
+          <p id="error-message" class="error-text">Something went wrong</p>
+          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
         </div>
 
-        <div id="prefs-content" style="display:none;">
-          <div
-            id="pre-save-notice"
-            role="status"
-            aria-live="polite"
-            class="notice"
-            style="display:none;"
-          >
-            <strong>Before you save:</strong> Opting out will immediately create a suppression record.
-            Any open quality-report issues will be auto-closed within 24 hours. To re-enable outreach
-            for a repo, toggle it back on this page.
+        <div id="page-content" style="display:none;">
+          <div class="page-header">
+            <a href="/account" class="back-link">&larr; Account</a>
+            <h1>Outreach Preferences</h1>
+            <p class="subtitle">
+              Control which repositories receive Skillsmith quality-report issues.
+            </p>
           </div>
 
-          <div class="toolbar">
-            <input
-              id="filter-input"
-              type="text"
-              class="filter-input"
-              placeholder="Filter repositories..."
-              aria-label="Filter repositories"
-            />
-            <button id="select-all-btn" class="btn btn-secondary btn-sm">Select All</button>
-            <button id="deselect-all-btn" class="btn btn-secondary btn-sm">Deselect All</button>
+          <div id="no-github-state" class="card center-card" style="display:none;">
+            <h2>GitHub Account Required</h2>
+            <p>Connect your GitHub account to manage outreach preferences.</p>
+            <button id="connect-github-btn" class="btn btn-primary">Connect GitHub</button>
           </div>
 
-          <div id="repo-list" class="repo-list" aria-label="Repository list"></div>
-          <p id="empty-state" class="empty-text" style="display:none;">
-            No indexed repos found. Skillsmith has not yet indexed any repositories under your
-            GitHub account or your GitHub organizations. Skills are indexed daily.
-          </p>
-
-          <div class="save-row">
-            <button id="save-btn" class="btn btn-primary" disabled aria-disabled="true"
-              >Save Preferences</button
-            >
-            <svg
-              id="save-spinner"
-              class="spinner spinner-sm"
-              viewBox="0 0 24 24"
+          <div id="prefs-content" style="display:none;">
+            <div
+              id="pre-save-notice"
+              role="status"
+              aria-live="polite"
+              class="notice"
               style="display:none;"
-              aria-hidden="true"
             >
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-                fill="none"
-                opacity="0.25"></circle>
-              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-              ></path>
-            </svg>
+              <strong>Before you save:</strong> Opting out will immediately create a suppression record.
+              Any open quality-report issues will be auto-closed within 24 hours. To re-enable outreach
+              for a repo, toggle it back on this page.
+            </div>
+
+            <div class="toolbar">
+              <input
+                id="filter-input"
+                type="text"
+                class="filter-input"
+                placeholder="Filter repositories..."
+                aria-label="Filter repositories"
+              />
+              <button id="select-all-btn" class="btn btn-secondary btn-sm">Select All</button>
+              <button id="deselect-all-btn" class="btn btn-secondary btn-sm">Deselect All</button>
+            </div>
+
+            <div id="repo-list" class="repo-list" aria-label="Repository list"></div>
+            <p id="empty-state" class="empty-text" style="display:none;">
+              No indexed repos found. Skillsmith has not yet indexed any repositories under your
+              GitHub account or your GitHub organizations. Skills are indexed daily.
+            </p>
+
+            <div class="save-row">
+              <button id="save-btn" class="btn btn-primary" disabled aria-disabled="true"
+                >Save Preferences</button
+              >
+              <svg
+                id="save-spinner"
+                class="spinner spinner-sm"
+                viewBox="0 0 24 24"
+                style="display:none;"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                  fill="none"
+                  opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+                ></path>
+              </svg>
+            </div>
+            <p id="save-result" style="display:none;font-size:.875rem;"></p>
           </div>
-          <p id="save-result" style="display:none;font-size:.875rem;"></p>
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
 
     <Footer compact />
   </body>
