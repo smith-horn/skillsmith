@@ -53,6 +53,24 @@ test.describe('account sidebar (SMI-5475)', () => {
     await expect(page.locator('.account-sidebar nav a')).toHaveCount(11)
   })
 
+  test('marks exactly one matching item active on subpages', async ({ page }) => {
+    await page.goto('/account/billing')
+    let active = page.locator('.account-sidebar a[aria-current="page"]')
+    await expect(active).toHaveCount(1)
+    await expect(active).toHaveAttribute('href', '/account/billing')
+
+    // Trailing-slash normalization: the nav href is /account/cli-token/.
+    await page.goto('/account/cli-token/')
+    active = page.locator('.account-sidebar a[aria-current="page"]')
+    await expect(active).toHaveCount(1)
+    await expect(active).toHaveAttribute('href', '/account/cli-token/')
+
+    await page.goto('/account/skills')
+    active = page.locator('.account-sidebar a[aria-current="page"]')
+    await expect(active).toHaveCount(1)
+    await expect(active).toHaveAttribute('href', '/account/skills')
+  })
+
   test('visibility follows the docs breakpoint (hidden below 1024px)', async ({ page }) => {
     await page.goto('/account')
 
