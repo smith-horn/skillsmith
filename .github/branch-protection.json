@@ -15,7 +15,8 @@
       "PR Validation (Node)",
       "PR Validation (Shell)",
       "Test (root)",
-      "Test (root colocated)"
+      "Test (root colocated)",
+      "Test (mcp-server integration)"
     ]
   },
   "enforce_admins": false,

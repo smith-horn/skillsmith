@@ -26,9 +26,33 @@
 # Playwright needs host browsers; no native modules load on this path.
 # Precedent: website-skills-e2e.yml, device-login-roundtrip.yml, ADR-113.
 #
-# Phase 1 shadow: job-level continue-on-error keeps this non-blocking during
-# burn-in. Promote after 10 consecutive green runs: remove continue-on-error
-# and add website-account-e2e to branch-protection required checks.
+# Honest-shadow semantics (SMI-5485): this workflow is shadow (non-required)
+# but honest -- there is no job-level `continue-on-error` here, so a real
+# spec failure produces a real red run conclusion. Shadow means "not in
+# required_status_checks.contexts", NOT "allowed to lie" -- a red check here
+# is informational only and does not block merges while shadow.
+#
+# Dependabot rationale: Dependabot PRs pass the same-repo fork guard (they
+# are branches on this repo) but receive NO repository secrets, so the
+# VERCEL_TOKEN-dependent steps would fail on every monthly `github-actions`
+# bump. The job `if:` below excludes `github.actor == 'dependabot[bot]'` so
+# those PRs skip the job entirely rather than surface a misleading red run.
+# No `schedule:` trigger on this workflow, so the bare actor check is safe
+# (contrast device-login-roundtrip.yml / cross-harness-inventory-e2e.yml,
+# which need the event-scoped form).
+#
+# Streak counting: gh run list --workflow=website-account-e2e.yml --limit 30
+#   --json conclusion,status,event,headSha,createdAt
+# counts toward the 10-consecutive-green promotion streak only when
+# `status == 'completed' && conclusion == 'success'`; `cancelled` runs
+# (concurrency-superseded) are excluded from the count.
+#
+# Promotion: this workflow is still `pull_request.paths`-filtered, so it
+# cannot yet join required_status_checks.contexts (an unreported check-run
+# on unrelated PRs would block merges forever). Its promotion is weeks out;
+# when it matures, restructure it to the changes/e2e/gate always-report
+# shape introduced in website-skills-e2e.yml (SMI-5485) before registering
+# it as a required check.
 
 name: Website Account E2E
 
@@ -73,8 +97,9 @@ jobs:
     # head.repo.full_name check evaluates to empty-string != github.repository
     # and the job would skip. The event_name guard permits workflow_dispatch
     # explicitly while the PR guard blocks fork PRs (VERCEL_TOKEN unavailable).
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-    continue-on-error: true # audit:allow-continue-on-error -- Phase 1 shadow; remove after 10 consecutive green runs
+    # Dependabot PRs are same-repo (pass the guard above) but receive no
+    # repository secrets -- excluded explicitly (SMI-5485; see header).
+    if: github.actor != 'dependabot[bot]' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
     env:
       NODE_VERSION: '22'
       # Account specs goto() relative paths against baseURL. vercel dev binds

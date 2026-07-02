@@ -74,6 +74,8 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 
 ### Required Checks
 
+**Drift correction (SMI-5485)**: this table and `.github/branch-protection.json` had drifted from the live `gh api repos/Smith-Horn/skillsmith/branches/main/protection` config -- the table listed a "Dependency Guard" row that is not (and was never) in `required_status_checks.contexts`, and both the table and the JSON were missing `Test (mcp-server integration)` (added when `test-mcp-server-integration` landed in `ci.yml`; never back-filled here). Reconciled below against a live `gh api` read taken the same session as this edit -- 13 required contexts, no PUT performed (catch-up only; the JSON already matches what GitHub enforces, this is a config-drift fix, not a policy change).
+
 | Check | Workflow | Purpose |
 |-------|----------|---------|
 | Secret Scan | ci.yml, docs-only.yml | Detect committed credentials |
@@ -86,13 +88,32 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Markdown Lint | docs-only.yml | Documentation quality |
 | PR Validation (Node) | ci.yml | Verify PRs with SMI refs contain source changes + doc-drift (bundled — SMI-4924) |
 | PR Validation (Shell) | ci.yml | Edge function structure + smoke-prod pre-ship validation + migration SQL lint (bundled — SMI-4924) |
-| Dependency Guard | ci.yml | Block known-vulnerable dep upgrades (SMI-3985, promoted 2026-04-21) |
+| Test (root) | ci.yml | Root-scoped vitest suite (`scripts/tests`, `supabase/functions`) — SMI-4958 |
+| Test (root colocated) | ci.yml | Colocated `packages/*/src/**/*.test.ts` suite — SMI-3502 |
+| Test (mcp-server integration) | ci.yml | `packages/mcp-server` integration suite (`test-mcp-server-integration` job) |
+
+Note: `Dependency Guard` (ci.yml) runs on every PR but is NOT a required context — it is intentionally excluded from `required_status_checks.contexts`, so it does not appear above.
 
 ### How It Works
 
-- **Code PRs**: All 10 required checks must pass (the `required_status_checks.contexts` set in `.github/branch-protection.json`)
+- **Code PRs**: All 13 required checks must pass (the `required_status_checks.contexts` set in `.github/branch-protection.json`)
 - **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`)
 - **Mixed PRs**: Full CI runs
+
+### Path-Filtered Workflows Cannot Be Required Checks (SMI-5485)
+
+A workflow triggered by `on.pull_request.paths` produces **no check-run at all** on a PR that doesn't touch the listed paths — not a skipped check, an *unreported* one. If that workflow's job is ever added to `required_status_checks.contexts`, every unrelated PR gets stuck on "Expected — waiting for status" forever, because GitHub has nothing to reconcile the requirement against. (Contrast a job that *runs but is conditionally skipped inside* an always-triggered workflow — e.g. a code-tier job in `ci.yml` on a docs-only PR — which GitHub correctly treats as a passed required check.)
+
+The only shape that can be promoted to a required check is **always-report gate**: the workflow triggers on every PR (no `paths` filter), a cheap first job (`changes`) detects relevant changes, a second job (`e2e`) runs conditionally on that output, and a third job (`gate`) `needs: [changes, e2e]` with `if: !cancelled()` and unconditionally reports success or failure — real result when the conditional job ran, success when it was legitimately skipped. See `.github/workflows/website-skills-e2e.yml` (`Website Skills E2E Gate`) for the canonical implementation, including the fail-closed evaluation order (fork PR → Dependabot → changes-job-failure → e2e-success → e2e-legitimately-skipped → else-red) and why the gate job uses `if: !cancelled()` rather than `if: always()` (the latter would report a spurious red during concurrency-cancellation on every force-push, polluting the promotion streak).
+
+### Dependabot Actor Guard (SMI-5485)
+
+Any PR job that depends on repository secrets must exclude `github.actor == 'dependabot[bot]'`. Dependabot PRs are same-repo branches, so they pass the ordinary fork guard (`github.event.pull_request.head.repo.full_name == github.repository`) — but Dependabot-triggered runs receive **no repository secrets**, so a `VERCEL_TOKEN`/`STAGING_SUPABASE_*`-dependent step fails under `set -eu` on every monthly `github-actions` grouped bump. Without this guard and without `continue-on-error`, that failure is a real, misleading red run; with the pre-SMI-5485 `continue-on-error: true` shadow pattern it was worse — a masked invisible-skip that inflated the promotion streak.
+
+Two guard forms, chosen by trigger surface:
+
+- **Bare form** (`github.actor != 'dependabot[bot]'`) — safe only for workflows with **no `schedule:` trigger** (e.g. `website-skills-e2e.yml`, `website-account-e2e.yml`), where the only non-`pull_request` event is `workflow_dispatch` (always a human actor).
+- **Event-scoped form** (`github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'`) — **required** for any workflow with a `schedule:` trigger (e.g. `device-login-roundtrip.yml`, `cross-harness-inventory-e2e.yml`). On a scheduled run, `github.actor` is attributed to the last person who edited the workflow file, which can legitimately be `dependabot[bot]` after a merged `github-actions` version bump — a bare actor check would then silently skip the nightly burn-in run, the exact invisible-skip failure class this convention exists to prevent.
 
 ### Emergency Bypass
 

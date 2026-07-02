@@ -1,9 +1,51 @@
-# Gates the SMI-5368 stretched-link z-index carve-out in a real Chromium on
-# every PR that touches the SkillCard renderer or the /skills page shell.
+# Gates the SMI-5368 stretched-link z-index carve-out in a real Chromium.
 #
-# Phase 1 shadow: job-level continue-on-error keeps this non-blocking during
-# burn-in. Promote after 10 consecutive green runs: remove continue-on-error
-# and add website-skills-e2e to branch-protection required checks.
+# SMI-5485 restructure -- previously `pull_request.paths`-filtered, which can
+# NEVER become a required branch-protection check: on a PR that doesn't touch
+# the listed paths, GitHub emits no check-run at all for this workflow, and a
+# required-but-unreported context blocks the merge forever ("Expected --
+# waiting for status"). This workflow now triggers on every PR and always
+# reports via the `gate` job below.
+#
+# Shape: `changes` (cheap relevance detection, every PR) -> `e2e` (runs only
+# when relevant) -> `gate` (ALWAYS reports; `Website Skills E2E Gate` is the
+# future required-check context -- see Wave 2 protocol below).
+#
+# Honest-shadow semantics: this workflow is NOT YET a required check. During
+# shadow, a red `Website Skills E2E Gate` does NOT block merge -- it is
+# informational only, surfacing real e2e health ahead of promotion. There is
+# no job-level `continue-on-error` anywhere in this file (removed by
+# SMI-5485 -- it was masking Dependabot-PR failures as green), so every run
+# conclusion is truthful and the promotion streak below is trustworthy.
+#
+# Streak counting (AC-5): a run counts toward the 10-consecutive-green
+# promotion streak only when `status == 'completed' && conclusion ==
+# 'success'`. Runs with `conclusion == 'cancelled'` (concurrency-superseded
+# by a force-push or rebase) are EXCLUDED from the count -- they neither
+# break nor extend the streak (the `gate` job's `if: !cancelled()` keeps a
+# superseded run `cancelled`, not a spurious red).
+#   gh run list --workflow=website-skills-e2e.yml --limit 30 \
+#     --json conclusion,status,event,headSha,createdAt
+#
+# Wave 2 promotion protocol (separate PR, after a real 10-consecutive-green
+# streak and explicit operator confirmation -- NOT part of this PR): add
+# `Website Skills E2E Gate` to the `contexts` array in
+# .github/branch-protection.json, apply with
+#   gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT \
+#     --input .github/branch-protection.json
+# then run ./scripts/validate-branch-protection.sh, then remove this Phase-1
+# shadow note from the header.
+#
+# Dependabot rationale: Dependabot PRs pass the same-repo fork guard (they
+# are branches on this repo) but receive NO repository secrets, so the
+# VERCEL_TOKEN-dependent steps would fail under `set -eu` on every monthly
+# `github-actions` bump -- with continue-on-error removed that would be a
+# real, expected red run. The `e2e` job's `if:` excludes
+# `github.actor == 'dependabot[bot]'`, and the `gate` job passes Dependabot
+# PRs explicitly (a legitimate skip, not a failure). Neither this workflow
+# nor website-account-e2e.yml has a `schedule:` trigger, so the bare actor
+# check is safe here -- contrast device-login-roundtrip.yml /
+# cross-harness-inventory-e2e.yml, which need the event-scoped form.
 #
 # -g 5368 scopes the run to the 2 deterministic mocked tests (SMI-5375):
 #   - "+N more" compat toggle expands without navigating away (SMI-3529/5367/5368/5369)
@@ -16,14 +58,7 @@
 name: Website Skills E2E
 
 on:
-  pull_request:
-    paths:
-      - 'packages/website/src/components/**'
-      - 'packages/website/src/pages/skills/**'
-      - 'packages/website/src/styles/**'
-      - 'packages/website/tests/e2e/skills-filter.spec.ts'
-      - 'packages/website/playwright.config.ts'
-      - '.github/workflows/website-skills-e2e.yml'
+  pull_request: {}
   workflow_dispatch: {}
 
 concurrency:
@@ -32,19 +67,58 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  changes:
+    name: Detect Relevant Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      relevant: ${{ steps.detect.outputs.relevant }}
+    steps:
+      - name: Detect relevant changes
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          # workflow_dispatch has no PR number (github.event.pull_request is
+          # null) -- branch BEFORE the API call so it never resolves to the
+          # malformed "pulls//files" URL (AC-4).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "workflow_dispatch: full e2e leg, skipping changed-files API call"
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # No checkout needed -- list changed files via the pulls/files API.
+          # Fails closed: any gh/grep error aborts under set -eu, leaving
+          # `relevant` unset (never defaulted to 'false') and the job
+          # non-zero, which the gate treats as changes.result != 'success'.
+          # Include rename SOURCES (previous_filename) -- the former `paths:`
+          # filter matched a rename on both its old and new path; .filename
+          # alone would miss a file renamed OUT of a relevant path.
+          FILES="$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')"
+          # Relevance list == the workflow's former 6 `paths` entries.
+          # Regex-anchored to the start of the repo-relative path.
+          if echo "$FILES" | grep -qE '^(packages/website/src/components/|packages/website/src/pages/skills/|packages/website/src/styles/|packages/website/tests/e2e/skills-filter\.spec\.ts$|packages/website/playwright\.config\.ts$|\.github/workflows/website-skills-e2e\.yml$)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   e2e:
-    name: Website Skills E2E
+    name: Website Skills E2E Run
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Allow same-repo PRs and manual workflow_dispatch runs.
+    # Relevant same-repo PRs and manual workflow_dispatch runs only.
     # For workflow_dispatch, github.event.pull_request is null so the
     # head.repo.full_name check evaluates to empty-string != github.repository
     # and the job would skip. The event_name guard permits workflow_dispatch
-    # explicitly while the PR guard blocks fork PRs (VERCEL_TOKEN unavailable).
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-    continue-on-error: true # audit:allow-continue-on-error -- Phase 1 shadow; remove after 10 consecutive green runs
+    # explicitly while the PR guard blocks fork PRs (VERCEL_TOKEN
+    # unavailable). Dependabot PRs are excluded -- see header rationale.
+    if: needs.changes.outputs.relevant == 'true' && github.actor != 'dependabot[bot]' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
     env:
       NODE_VERSION: '22'
       SKILLSMITH_WEBSITE_URL: 'http://127.0.0.1:4321'
@@ -116,7 +190,10 @@ jobs:
         # No --reporter override: the config's [list, html(open:never)] applies,
         # so the console gets list output AND playwright-report/ is populated for
         # the failure-artifact upload (pr-review F-G). open:never keeps CI non-blocking.
-        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/skills-filter.spec.ts --project=desktop -g 5368
+        # --timeout=90000 (SMI-5485): the one genuine failure in 18 shadow runs
+        # was a 30s locator.click timeout that passed on retry; timeout-shaped
+        # fix, retries stay 0 (config default).
+        run: npx playwright test --config=packages/website/playwright.config.ts --timeout=90000 packages/website/tests/e2e/skills-filter.spec.ts --project=desktop -g 5368
 
       - name: Upload artifacts on failure
         if: failure()
@@ -137,3 +214,48 @@ jobs:
             PID="$(cat test-results/preview.pid)"
             if kill -0 "$PID" 2>/dev/null; then kill -TERM "$PID" || true; fi
           fi
+
+  gate:
+    name: Website Skills E2E Gate
+    needs: [changes, e2e]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate gate (fail-closed, fork/dependabot precedence first)
+        run: |
+          set -eu
+          # 1. Fork PR: e2e is intentionally skipped (no secrets) -- pass with
+          #    a visible warning. Guarded by event_name == 'pull_request' so a
+          #    workflow_dispatch run (github.event.pull_request is null) never
+          #    misclassifies as a fork.
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::warning::e2e skipped on fork PR (no secrets); gate passes without coverage"
+            exit 0
+          fi
+          # 2. Dependabot PR: e2e is intentionally skipped (no repository
+          #    secrets) -- legitimate skip, not a failure.
+          if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
+            echo "Dependabot PR: e2e skipped (no repository secrets); gate passes (legitimate skip)."
+            exit 0
+          fi
+          # 3. Fail-closed: the changes job itself errored (gh api/grep
+          #    failure) on a same-repo non-Dependabot PR.
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::changes job did not succeed (result=${{ needs.changes.result }}) -- failing closed"
+            exit 1
+          fi
+          # 4. e2e ran and passed.
+          if [ "${{ needs.e2e.result }}" = "success" ]; then
+            echo "e2e passed."
+            exit 0
+          fi
+          # 5. e2e legitimately skipped (no relevant changes).
+          if [ "${{ needs.e2e.result }}" = "skipped" ] && [ "${{ needs.changes.outputs.relevant }}" = "false" ]; then
+            echo "No relevant changes; e2e legitimately skipped. Gate passes."
+            exit 0
+          fi
+          # 6. Everything else (e2e failure/cancellation, or an unreachable
+          #    relevant-but-not-success state) -- red.
+          echo "::error::e2e result=${{ needs.e2e.result }} relevant=${{ needs.changes.outputs.relevant }} -- gate fails"
+          exit 1
