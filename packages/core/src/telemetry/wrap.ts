@@ -175,7 +175,15 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
           trackSkillInvoke({
             skillId,
             source: opts.source,
-            framework,
+            // Per-harness attribution: the marker channel's vocabulary-validated
+            // `harness` wins over the extractor result — every MCP-tool call
+            // site hardcodes `extractFramework: () => 'unknown'`, so without
+            // this the per-harness split never survives to the wire. H4
+            // (per-call, never memoised) is preserved: the ALS store IS
+            // per-request state, read here on every emit. CLI / VS Code
+            // callers never install marker context, so `getStore()` is
+            // undefined there and their real extractors keep winning.
+            framework: marker?.harness ?? framework,
             durationMs: Date.now() - start,
             success,
             agentSession: marker?.agentSession ?? false,

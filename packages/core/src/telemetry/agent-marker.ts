@@ -4,7 +4,9 @@
  * Wave 1 needs to distinguish agent-mediated skill invocations from ambient
  * ones so the mediation gate (≥25% agent-mediated share by day 30) is
  * measurable. Two channels feed the three per-event telemetry fields
- * (`agent_session`, `nudge_origin`, `trigger_id`):
+ * (`agent_session`, `nudge_origin`, `trigger_id`) plus the per-harness
+ * `framework` attribution (via the vocabulary-validated `harness` hint —
+ * the mediation dashboard's per-harness denominator):
  *
  *  1. MCP `_meta` on the tool call (spec-clean; wins when present). No Tier-1
  *     harness can inject `_meta` on a genuine agent tool call today (Step-0
@@ -57,6 +59,39 @@ export const AGENT_MARKER_TTL_MS = 12 * 60 * 60 * 1000
  */
 export const AGENT_MARKER_MAX_FILE_BYTES = 16 * 1024
 
+/**
+ * Accepted `harness` vocabulary — the SMI-5012 wire format's `framework` enum
+ * (authoritative list: skill-invoke-telemetry-guide.md § Wire format) minus
+ * `'unknown'`. `'unknown'` is the extractor's absence fallback, not a value a
+ * marker may assert: accepting it would let a marker file overwrite a real
+ * extractor result with noise. Anything outside this set (junk from disk or
+ * `_meta`) resolves to `undefined` and never flows into telemetry.
+ */
+export const KNOWN_HARNESS_FRAMEWORKS = [
+  'claude-code',
+  'cursor',
+  'continue',
+  'cline',
+  'copilot',
+  'windsurf',
+  'codex',
+  'vscode',
+  'opencode',
+  'hermes',
+] as const
+
+/** A validated harness/framework value from the marker channel. */
+export type HarnessFramework = (typeof KNOWN_HARNESS_FRAMEWORKS)[number]
+
+const KNOWN_HARNESS_SET: ReadonlySet<string> = new Set(KNOWN_HARNESS_FRAMEWORKS)
+
+/** Validate an untrusted harness value; anything not in the vocabulary → undefined. */
+function validHarness(value: unknown): HarnessFramework | undefined {
+  return typeof value === 'string' && KNOWN_HARNESS_SET.has(value)
+    ? (value as HarnessFramework)
+    : undefined
+}
+
 /** The "no marker present" resolution — all fields at their neutral default. */
 export const NO_AGENT_MARKER: AgentMarker = Object.freeze({
   agentSession: false,
@@ -79,6 +114,13 @@ export interface AgentMarker {
   nudgeOrigin: boolean
   /** Paywall / nudge trigger id, or `null` when none applies. */
   triggerId: string | null
+  /**
+   * Validated harness identity from the marker channel (the file's `harness`
+   * hint or `_meta.harness`). Feeds the event's `framework` field when the
+   * per-call extractor has nothing better (see wrap.ts). Absent when the
+   * channel supplied no value or an out-of-vocabulary one.
+   */
+  harness?: HarnessFramework
 }
 
 /**
@@ -177,6 +219,8 @@ function markerFromFile(file: AgentMarkerFile): AgentMarker {
     agentSession: file.agent_session === false ? false : true,
     nudgeOrigin: file.nudge_origin === true,
     triggerId: typeof file.trigger_id === 'string' ? file.trigger_id : null,
+    // Vocabulary-gated: junk from disk must not flow into telemetry.
+    harness: validHarness(file.harness),
   }
 }
 
@@ -221,8 +265,9 @@ export function readSessionMarker(opts: { now?: number } = {}): AgentMarker | nu
  *
  * `_meta` is a loose passthrough schema (SDK 1.29.0), so junk keys and wrong
  * types must be ignored. Keys are snake_case to match the wire format:
- * `agent_session`, `nudge_origin`, `trigger_id`. Only well-typed values are
- * returned; everything else is dropped.
+ * `agent_session`, `nudge_origin`, `trigger_id`, `harness`. Only well-typed
+ * values are returned; everything else is dropped (`harness` additionally
+ * gated on the `KNOWN_HARNESS_FRAMEWORKS` vocabulary).
  */
 export function extractMarkerMeta(meta: unknown): Partial<AgentMarker> {
   if (!meta || typeof meta !== 'object') return {}
@@ -232,6 +277,8 @@ export function extractMarkerMeta(meta: unknown): Partial<AgentMarker> {
   if (typeof m.nudge_origin === 'boolean') out.nudgeOrigin = m.nudge_origin
   if (typeof m.trigger_id === 'string') out.triggerId = m.trigger_id
   else if (m.trigger_id === null) out.triggerId = null
+  const metaHarness = validHarness(m.harness)
+  if (metaHarness !== undefined) out.harness = metaHarness
   return out
 }
 
@@ -255,5 +302,6 @@ export function resolveAgentMarker(meta: unknown, opts: { now?: number } = {}): 
     agentSession: fromMeta.agentSession ?? fromFile.agentSession,
     nudgeOrigin: fromMeta.nudgeOrigin ?? fromFile.nudgeOrigin,
     triggerId: fromMeta.triggerId !== undefined ? fromMeta.triggerId : fromFile.triggerId,
+    harness: fromMeta.harness ?? fromFile.harness,
   }
 }

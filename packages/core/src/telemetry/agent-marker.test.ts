@@ -62,12 +62,13 @@ describe('readSessionMarker', () => {
     expect(readSessionMarker({ now: NOW })).toBeNull()
   })
 
-  it('reads a fresh marker file (presence ⇒ agent session)', () => {
+  it('reads a fresh marker file (presence ⇒ agent session, harness threaded)', () => {
     writeMarker('a.json', freshMarker())
     expect(readSessionMarker({ now: NOW })).toEqual({
       agentSession: true,
       nudgeOrigin: false,
       triggerId: null,
+      harness: 'claude-code',
     })
   })
 
@@ -77,7 +78,20 @@ describe('readSessionMarker', () => {
       agentSession: true,
       nudgeOrigin: true,
       triggerId: 'T1',
+      harness: 'claude-code',
     })
+  })
+
+  it('drops an out-of-vocabulary harness value but keeps the marker', () => {
+    writeMarker('a.json', freshMarker({ harness: 'my-cool-editor' }))
+    const resolved = readSessionMarker({ now: NOW })
+    expect(resolved?.agentSession).toBe(true)
+    expect(resolved?.harness).toBeUndefined()
+  })
+
+  it('drops a wrongly-typed harness value', () => {
+    writeMarker('a.json', freshMarker({ harness: 42 as unknown as string }))
+    expect(readSessionMarker({ now: NOW })?.harness).toBeUndefined()
   })
 
   it('honours an explicit agent_session:false opt-out', () => {
@@ -172,9 +186,14 @@ describe('extractMarkerMeta', () => {
         agent_session: 'true', // string, not boolean
         nudge_origin: 1, // number, not boolean
         trigger_id: 123, // number, not string
+        harness: 'my-cool-editor', // string, but out of vocabulary
         unrelated: 'ignored',
       })
     ).toEqual({})
+  })
+
+  it('accepts a vocabulary harness value', () => {
+    expect(extractMarkerMeta({ harness: 'opencode' })).toEqual({ harness: 'opencode' })
   })
 })
 
@@ -193,6 +212,7 @@ describe('resolveAgentMarker', () => {
       agentSession: true,
       nudgeOrigin: true,
       triggerId: 'FILE',
+      harness: 'claude-code',
     })
   })
 
@@ -202,8 +222,26 @@ describe('resolveAgentMarker', () => {
       freshMarker({ agent_session: true, nudge_origin: true, trigger_id: 'FILE' })
     )
     const resolved = resolveAgentMarker({ agent_session: false, trigger_id: 'META' }, { now: NOW })
-    // agent_session + trigger_id come from _meta; nudge_origin falls back to file.
-    expect(resolved).toEqual({ agentSession: false, nudgeOrigin: true, triggerId: 'META' })
+    // agent_session + trigger_id come from _meta; nudge_origin + harness fall
+    // back to the file.
+    expect(resolved).toEqual({
+      agentSession: false,
+      nudgeOrigin: true,
+      triggerId: 'META',
+      harness: 'claude-code',
+    })
+  })
+
+  it('lets a _meta harness win over the file harness', () => {
+    writeMarker('a.json', freshMarker()) // file harness: claude-code
+    expect(resolveAgentMarker({ harness: 'cursor' }, { now: NOW })?.harness).toBe('cursor')
+  })
+
+  it('a junk _meta harness falls back to the file harness', () => {
+    writeMarker('a.json', freshMarker()) // file harness: claude-code
+    expect(resolveAgentMarker({ harness: 'my-cool-editor' }, { now: NOW })?.harness).toBe(
+      'claude-code'
+    )
   })
 
   it('lets _meta provide fields with no marker file at all', () => {

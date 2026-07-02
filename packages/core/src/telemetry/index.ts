@@ -85,6 +85,8 @@ export {
   NO_AGENT_MARKER,
   AGENT_MARKER_TTL_MS,
   AGENT_MARKER_SCHEMA_VERSION,
+  KNOWN_HARNESS_FRAMEWORKS,
+  type HarnessFramework,
   type AgentMarker,
   type AgentMarkerFile,
 } from './agent-marker.js'

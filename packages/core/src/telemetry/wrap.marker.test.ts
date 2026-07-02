@@ -9,10 +9,13 @@
  *   - concurrent no-bleed (P-5 invariant) — parallel calls each emit their
  *     OWN marker; an unscoped call stays neutral while others' scopes are live
  *   - per-framework emission incl. the opencode / hermes enum additions
+ *   - marker `harness` feeds the event's `framework` (single-point per-harness
+ *     attribution — MCP call sites hardcode `extractFramework: () => 'unknown'`)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { withTelemetry, setEmissionGate, runWithMarkerContext } from './wrap.js'
+import { resolveAgentMarker } from './agent-marker.js'
 
 vi.mock('./posthog.js', () => ({
   trackSkillInvoke: vi.fn(),
@@ -169,4 +172,67 @@ describe('per-framework emission (opencode / hermes)', () => {
       expect(mockTrack).toHaveBeenLastCalledWith(expect.objectContaining({ framework: fw }))
     }
   )
+})
+
+// ---------------------------------------------------------------------------
+// Marker harness → event framework (SMI-5456 per-harness attribution)
+// ---------------------------------------------------------------------------
+//
+// Every MCP-tool call site hardcodes `extractFramework: () => 'unknown'`, so
+// the marker channel's validated `harness` is the single point where the
+// per-harness split reaches the wire. CLI / VS Code never install marker
+// context, so their real extractors keep winning (asserted below via the
+// no-scope case).
+
+describe('marker harness feeds framework', () => {
+  // The MCP call sites' literal shape.
+  const MCP_OPTS = { ...BASE_OPTS, extractFramework: () => 'unknown' }
+
+  it('marker with harness beats the hardcoded extractor', async () => {
+    const wrapped = withTelemetry(() => 'ok', MCP_OPTS)
+    await runWithMarkerContext(
+      { agentSession: true, nudgeOrigin: false, triggerId: null, harness: 'opencode' },
+      () => wrapped()
+    )
+    expect(mockTrack).toHaveBeenLastCalledWith(expect.objectContaining({ framework: 'opencode' }))
+  })
+
+  it('marker without harness falls back to the extractor result', async () => {
+    const wrapped = withTelemetry(() => 'ok', {
+      ...BASE_OPTS,
+      extractFramework: () => 'cursor',
+    })
+    await runWithMarkerContext({ agentSession: true, nudgeOrigin: false, triggerId: null }, () =>
+      wrapped()
+    )
+    expect(mockTrack).toHaveBeenLastCalledWith(expect.objectContaining({ framework: 'cursor' }))
+  })
+
+  it('no marker scope → extractor result untouched (the CLI / VS Code path)', async () => {
+    const wrapped = withTelemetry(() => 'ok', {
+      ...BASE_OPTS,
+      extractFramework: () => 'vscode',
+    })
+    await wrapped()
+    expect(mockTrack).toHaveBeenLastCalledWith(expect.objectContaining({ framework: 'vscode' }))
+  })
+
+  it('junk harness never reaches the wire — resolver drops it, extractor wins', async () => {
+    // End-to-end through resolveAgentMarker: a junk `_meta.harness` is dropped
+    // by the vocabulary gate, so the emit falls back to the extractor. Marker
+    // dir isolated to a nonexistent path so no real ~/.skillsmith is read.
+    const prevDir = process.env.SKILLSMITH_AGENT_MARKER_DIR
+    process.env.SKILLSMITH_AGENT_MARKER_DIR = '/nonexistent/skillsmith-marker-isolation'
+    try {
+      const marker = resolveAgentMarker({ agent_session: true, harness: 'my-cool-editor' })
+      const wrapped = withTelemetry(() => 'ok', MCP_OPTS)
+      await runWithMarkerContext(marker, () => wrapped())
+      expect(mockTrack).toHaveBeenLastCalledWith(
+        expect.objectContaining({ framework: 'unknown', agentSession: true })
+      )
+    } finally {
+      if (prevDir === undefined) delete process.env.SKILLSMITH_AGENT_MARKER_DIR
+      else process.env.SKILLSMITH_AGENT_MARKER_DIR = prevDir
+    }
+  })
 })
