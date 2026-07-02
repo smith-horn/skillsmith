@@ -113,6 +113,44 @@ function newReport(harness: string): HarnessInstallReport {
 }
 
 /**
+ * Carry forward pre-install backup references from a PRIOR install so a
+ * re-install cannot silently strand them.
+ *
+ * A re-install takes NO fresh backup for a path whose owned-file content
+ * already matches, nor for a shared-config merge that is a no-op — so this
+ * run's freshly-built `entries` record `backupPath: null` for those paths.
+ * Persisting that as-is would overwrite the prior manifest's genuine
+ * pre-install backup ref with null, and `uninstallAgentPack` would then treat
+ * a MODIFIED pre-existing file (e.g. a `~/.claude/settings.json` the user
+ * already had) as "created fresh" and DELETE it instead of restoring it —
+ * silent user-data loss on the `install → install → uninstall` sequence
+ * (SMI-5456 adversarial-review fix, verified by the double-install reversal
+ * test).
+ *
+ * The prior manifest's `backupPath` is the authoritative restore target for a
+ * path (the true pre-FIRST-install content), so it WINS over any fresh backup
+ * this run may have taken — a mid-lifecycle backup captured on a version-bump
+ * re-install would itself contain our own already-merged blocks. `uninstall`
+ * clears the manifest to `entries: []`, so an install-AFTER-uninstall carries
+ * nothing forward (this run's fresh backups win); only a re-install WITHOUT an
+ * intervening uninstall reaches this path. A prior ref whose backup file no
+ * longer exists is ignored (nothing to restore from).
+ */
+function carryForwardPriorBackups(entries: AgentManifestEntry[]): AgentManifestEntry[] {
+  const priorBackupByPath = new Map<string, string>()
+  for (const prior of loadAgentManifest().entries) {
+    if (prior.backupPath && existsSync(prior.backupPath)) {
+      priorBackupByPath.set(prior.path, prior.backupPath)
+    }
+  }
+  if (priorBackupByPath.size === 0) return entries
+  return entries.map((entry) => {
+    const carried = priorBackupByPath.get(entry.path)
+    return carried ? { ...entry, backupPath: carried } : entry
+  })
+}
+
+/**
  * Detect + install the portable Skillsmith Agent pack across every
  * supported harness. See module header for the full per-harness matrix.
  */
@@ -233,7 +271,7 @@ export function installAgentPack(opts: AgentInstallOptions = {}): AgentInstallRe
     schemaVersion: 1,
     installedAt: new Date().toISOString(),
     packSchemaVersion: 1,
-    entries,
+    entries: carryForwardPriorBackups(entries),
   })
 
   return {

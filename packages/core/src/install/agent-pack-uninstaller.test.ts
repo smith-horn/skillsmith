@@ -211,3 +211,59 @@ describe('uninstallAgentPack — exact reversal', () => {
     expect(readFileSync(untouchedPath, 'utf-8')).toBe('unrelated content\n')
   })
 })
+
+// SMI-5456 adversarial-review regression: a RE-install (no intervening
+// uninstall) takes no fresh backup for already-installed paths, so the fresh
+// manifest recorded `backupPath: null` for the shared config files — silently
+// dropping install #1's genuine pre-install backup reference. uninstall then
+// treated the modified pre-existing file as "created fresh" and DELETED it.
+// `carryForwardPriorBackups` in `agent-pack-installer.ts` fixes this; these
+// tests lock it in. See that helper's doc comment.
+describe('uninstallAgentPack — double-install reversal (pre-install backup not stranded)', () => {
+  it('restores a pre-existing claude-code settings.json after install → install → uninstall', () => {
+    mkdirSync(join(homeDir, '.claude'), { recursive: true })
+    const settingsPath = join(homeDir, '.claude', 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ someOtherKey: true }, null, 2))
+
+    installAgentPack({ homeDir })
+    installAgentPack({ homeDir }) // re-install (byte-identical pack, no fresh backup taken)
+
+    const result = uninstallAgentPack()
+
+    // The user's pre-install settings.json must survive — restored to its
+    // exact pre-install content, NOT deleted.
+    expect(existsSync(settingsPath)).toBe(true)
+    const doc = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+    expect(doc).toEqual({ someOtherKey: true })
+    expect(result.restored).toContain(settingsPath)
+    expect(result.removed).not.toContain(settingsPath)
+  })
+
+  it('restores a pre-existing codex config.toml after install → install → uninstall', () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    const configPath = join(homeDir, '.codex', 'config.toml')
+    const preInstall = '# my codex config\nmodel = "gpt-x"\n'
+    writeFileSync(configPath, preInstall)
+
+    installAgentPack({ homeDir })
+    installAgentPack({ homeDir })
+
+    const result = uninstallAgentPack()
+
+    expect(existsSync(configPath)).toBe(true)
+    expect(readFileSync(configPath, 'utf-8')).toBe(preInstall)
+    expect(result.restored).toContain(configPath)
+  })
+
+  it('still DELETES a config file the installer created fresh, even after a re-install', () => {
+    // No pre-existing settings.json: install created it. A re-install must not
+    // spuriously invent a backup — uninstall still deletes it.
+    installAgentPack({ homeDir })
+    installAgentPack({ homeDir })
+    const settingsPath = join(homeDir, '.claude', 'settings.json')
+    expect(existsSync(settingsPath)).toBe(true)
+
+    uninstallAgentPack()
+    expect(existsSync(settingsPath)).toBe(false)
+  })
+})
