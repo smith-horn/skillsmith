@@ -160,6 +160,31 @@ check_website_docs_quickstart_renders() {
   return 1
 }
 
+# ---- check_website_docs_inventory_renders ------------------------------
+# SMI-5464: /docs/inventory is the beta-tester onboarding URL for the
+# cross-machine skill inventory (SMI-5397). Fingerprint on the h1 so a
+# 200-with-error-shell page still fails.
+check_website_docs_inventory_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/inventory"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-inventory" "check_website_docs_inventory_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Cross-Machine Skill Inventory' "inventory-fingerprint"; then
+    report_fail "website-docs-inventory" "check_website_docs_inventory_renders" "$url" "inventory-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-inventory" "check_website_docs_inventory_renders" "$url" "$ms"
+  return 0
+}
+
 # ---- check_website_sitemap_index --------------------------------------
 # SMI-4184 lastmod must be present for GSC crawl prioritization. Sitemap
 # regression would silently degrade Discovered-not-indexed metrics.

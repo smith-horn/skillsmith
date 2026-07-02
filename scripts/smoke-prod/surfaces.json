@@ -21,6 +21,16 @@
       "checks": ["check_device_page_renders"]
     },
     {
+      "id": "website-docs-inventory",
+      "owner": "website",
+      "trigger_globs": [
+        "packages/website/src/pages/docs/inventory.astro",
+        "packages/website/src/pages/account/skills.astro"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_website_docs_inventory_renders"]
+    },
+    {
       "id": "website-homepage-canary",
       "owner": "always-on-canary",
       "trigger_globs": [],
