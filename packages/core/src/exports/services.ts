@@ -77,6 +77,9 @@ export {
   AGENT_PACK_SKILL_NAME,
   AGENT_PACK_DISPLAY_NAME,
   AGENT_PACK_SCHEMA_VERSION,
+  AGENT_PACK_VERSION,
+  AGENT_PACK_REPOSITORY,
+  AGENT_PACK_COMPATIBILITY,
   HOOK_HARNESSES,
   SHIM_DESCRIPTION,
   PACK_DESCRIPTION,
@@ -91,6 +94,15 @@ export {
   type TrustClause,
   type PaywallTrigger,
 } from '../services/agent-pack/index.js'
+
+// SMI-5456 Wave 1 Step 5 (QD-1): curated agent tool profile constants,
+// relocated from @skillsmith/mcp-server so the CLI installer can call
+// generateAgentPack without depending on @skillsmith/mcp-server.
+export {
+  AGENT_TOOL_PROFILE_ENV_VAR,
+  AGENT_TOOL_PROFILE_NAMES,
+  AGENT_TOOL_PROFILE_VALUE,
+} from '../services/agent-tool-profile.js'
 
 export {
   TransformationService,

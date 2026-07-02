@@ -17,45 +17,24 @@
  * @see SMI-5456
  */
 
-/** Env var that activates the curated agent profile. */
-export const AGENT_TOOL_PROFILE_ENV_VAR = 'SKILLSMITH_TOOL_PROFILE'
+// SMI-5456 Wave 1 Step 5 (QD-1): the three constants below moved to
+// @skillsmith/core so the CLI installer can call `generateAgentPack` without
+// depending on @skillsmith/mcp-server (a devDependency that bundles the full
+// MCP SDK + server bootstrap). Re-exported here so every existing import of
+// `AGENT_TOOL_PROFILE_NAMES` / `AGENT_TOOL_PROFILE_ENV_VAR` /
+// `AGENT_TOOL_PROFILE_VALUE` from this module (the generation script,
+// `agent-pack.assets.test.ts`, this file's own test) keeps working
+// unchanged. Canonical definition + doc comment: `@skillsmith/core`'s
+// `services/agent-tool-profile.ts`.
+import {
+  AGENT_TOOL_PROFILE_ENV_VAR,
+  AGENT_TOOL_PROFILE_NAMES,
+  AGENT_TOOL_PROFILE_VALUE,
+} from '@skillsmith/core'
 
-/** The only value of {@link AGENT_TOOL_PROFILE_ENV_VAR} that activates the profile. */
-export const AGENT_TOOL_PROFILE_VALUE = 'agent'
-
-/**
- * Membership list for the curated agent profile.
- *
- * The first 15 names were verified against actual `tools/*.ts`
- * registrations on 2026-07-01 via:
- *
- *   grep -rhoE "name: '[a-z_]+'" packages/mcp-server/src/tools/ \
- *     --include='*.ts' | grep -v test | sort -u
- *
- * `undo_apply` does NOT exist yet — it ships in SMI-5470 (Wave 1 Step 3,
- * the change-journal + undo tool). It is listed here now so this constant
- * doesn't need a second edit when that tool lands. {@link filterToolsForAgentProfile}
- * intersects this list against the tools actually passed in at call time,
- * so a not-yet-registered name is silently inert rather than an error.
- */
-export const AGENT_TOOL_PROFILE_NAMES: readonly string[] = [
-  'search',
-  'get_skill',
-  'install_skill',
-  'uninstall_skill',
-  'skill_recommend',
-  'skill_validate',
-  'skill_compare',
-  'skill_outdated',
-  'skill_updates',
-  'skill_diff',
-  'skill_pack_audit',
-  'skill_inventory_audit',
-  'apply_namespace_rename',
-  'apply_recommended_edit',
-  'skill_audit',
-  'undo_apply', // SMI-5470 — not yet registered; inert until it ships.
-]
+// Re-export (not `export ... from`, which would not create the local
+// bindings `isAgentToolProfileActive`/`filterToolsForAgentProfile` need below).
+export { AGENT_TOOL_PROFILE_ENV_VAR, AGENT_TOOL_PROFILE_NAMES, AGENT_TOOL_PROFILE_VALUE }
 
 const AGENT_TOOL_PROFILE_NAME_SET: ReadonlySet<string> = new Set(AGENT_TOOL_PROFILE_NAMES)
 

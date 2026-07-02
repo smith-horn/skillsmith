@@ -58,6 +58,32 @@ describe('scanLocalInventory', () => {
     expect(skill?.triggerSurface).toContain('docker')
   })
 
+  it('SMI-5456: also scans ~/.agents/skills (Source 1b, dual-path agent pack)', async () => {
+    writeFile(
+      path.join(TEST_HOME, '.agents', 'skills', 'skillsmith-agent', 'SKILL.md'),
+      `---\nname: skillsmith-agent\ndescription: The Skillsmith Agent\n---\nbody\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const skill = result.entries.find(
+      (e) => e.kind === 'skill' && e.identifier === 'skillsmith-agent'
+    )
+    expect(skill).toBeDefined()
+    expect(skill?.source_path).toBe(
+      path.join(TEST_HOME, '.agents', 'skills', 'skillsmith-agent', 'SKILL.md')
+    )
+  })
+
+  it('SMI-5456: sees the SAME identifier from both .claude/skills and .agents/skills as two distinct entries', async () => {
+    const content = `---\nname: skillsmith-agent\ndescription: The Skillsmith Agent\n---\nbody\n`
+    writeFile(path.join(TEST_HOME, '.claude', 'skills', 'skillsmith-agent', 'SKILL.md'), content)
+    writeFile(path.join(TEST_HOME, '.agents', 'skills', 'skillsmith-agent', 'SKILL.md'), content)
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const matches = result.entries.filter(
+      (e) => e.kind === 'skill' && e.identifier === 'skillsmith-agent'
+    )
+    expect(matches).toHaveLength(2)
+  })
+
   it('falls back to directory name when SKILL.md missing and warns', async () => {
     fs.mkdirSync(path.join(TEST_HOME, '.claude', 'skills', 'orphan'), { recursive: true })
     const result = await scanLocalInventory({ homeDir: TEST_HOME })

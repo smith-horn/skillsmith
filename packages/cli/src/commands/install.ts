@@ -30,7 +30,8 @@ import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 
 const VALID_CLIENT_HINT =
-  'Valid IDs: claude-code | cursor | copilot | windsurf | agents (Codex users pass --client agents).'
+  'Valid IDs: claude-code | cursor | copilot | windsurf | agents | opencode | hermes ' +
+  '(Codex users pass --client agents).'
 
 /**
  * SMI-4578: parse and validate the comma-separated `--also-link` value.
