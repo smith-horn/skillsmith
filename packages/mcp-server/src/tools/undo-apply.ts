@@ -10,8 +10,11 @@
  *
  * Restore procedure per changeset, most-recent-first:
  *   1. Scope fence — the target must resolve (post-symlink) under the
- *      user's home directory (or, for test fixtures, `os.tmpdir()`), reusing
- *      the SMI-4287 root-confinement helper (`resolveSafeRealpath`).
+ *      user's home directory, reusing the SMI-4287 root-confinement helper
+ *      (`resolveSafeRealpath`). Test isolation is an explicit opt-in seam
+ *      (`UNDO_SCOPE_TEST_ROOT_ENV_VAR`, unset in every real deployment) —
+ *      NOT a blanket `os.tmpdir()` carve-out on the production fence. See
+ *      that constant's doc comment for the SMI-4691 precedent this mirrors.
  *   2. Never-clobber guard — the target's CURRENT content hash must match
  *      the journaled `after_hash`. A mismatch means the file changed since
  *      the apply (a user edit, or something else entirely) and undo refuses
@@ -28,7 +31,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { z } from 'zod'
@@ -100,16 +103,39 @@ type RestoreOutcome =
       message: string
     }
 
+/**
+ * Test-only additional confinement root, honored ONLY when explicitly set.
+ * Mirrors `SKILLSMITH_CACHE_DIR_OVERRIDE` (SMI-4691, `@skillsmith/core`'s
+ * `config/index.ts`) and this same commit's `SKILLSMITH_JOURNAL_DIR`
+ * (`@skillsmith/core/journal/path.ts`): an explicit opt-in env-var test
+ * seam, not a blanket `os.tmpdir()` carve-out baked into the production
+ * scope fence. `os.tmpdir()` (e.g. `/tmp`) is a shared, often
+ * world-writable directory on multi-user systems — accepting it
+ * unconditionally as a valid undo-restore root would have widened the
+ * SMI-4287 fence for every real deployment, not just tests, for a
+ * marginal test-isolation gain that `process.env.HOME` mutation already
+ * covers on every platform this tool actually ships on (Docker/Linux —
+ * see `getConfigDir()`'s doc comment for the macOS `os.homedir()` caveat
+ * this constant exists to route around on the rare host-side run).
+ * Unset (and therefore inert) in every real deployment.
+ */
+export const UNDO_SCOPE_TEST_ROOT_ENV_VAR = 'SKILLSMITH_UNDO_SCOPE_TEST_ROOT'
+
 /** SMI-4287 scope fence: confine the restore target to the user's home
- * directory tree, or (test-fixture carve-out, mirrors
- * `skill-inventory-audit.ts`'s `isHomeDirUnderAllowedRoot`) `os.tmpdir()`. */
+ * directory tree. See `UNDO_SCOPE_TEST_ROOT_ENV_VAR` for the test-only
+ * escape hatch. */
 async function checkUndoScopeFence(
   targetPath: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const home = await resolveSafeRealpath(targetPath, homedir())
   if (home.ok) return { ok: true }
-  const tmp = await resolveSafeRealpath(targetPath, tmpdir())
-  if (tmp.ok) return { ok: true }
+
+  const testRoot = process.env[UNDO_SCOPE_TEST_ROOT_ENV_VAR]
+  if (testRoot !== undefined && testRoot.length > 0) {
+    const test = await resolveSafeRealpath(targetPath, testRoot)
+    if (test.ok) return { ok: true }
+  }
+
   return { ok: false, message: home.error.message }
 }
 

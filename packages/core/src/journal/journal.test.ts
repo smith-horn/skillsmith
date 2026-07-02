@@ -18,7 +18,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-import { appendJournalRecord } from './writer.js'
+import { appendJournalRecord, isCorruptTailError } from './writer.js'
 import { verifyJournalChain } from './reader.js'
 import { getJournalFilePath, resetJournalSessionIdForTests } from './path.js'
 import type { JournalRecordInput } from './types.js'
@@ -114,6 +114,58 @@ describe('journal chain verification', () => {
     expect(outcome.valid).toBe(false)
     expect(outcome.breakAt).toBe(2)
     expect(outcome.records).toHaveLength(2)
+  })
+})
+
+describe('journal writer refuses to append past a corrupt tail (governance follow-up, SMI-5456)', () => {
+  it('rejects with a typed isCorruptTailError when the last line is unparseable', async () => {
+    await appendJournalRecord(fixtureRecord('a'))
+    const filePath = getJournalFilePath()
+    fs.appendFileSync(filePath, 'this is not json\n', 'utf-8')
+
+    let caught: unknown
+    try {
+      await appendJournalRecord(fixtureRecord('b'))
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeDefined()
+    expect(isCorruptTailError(caught)).toBe(true)
+    expect((caught as Error).message).toMatch(/corrupt|unverifiable/)
+
+    // The writer never wrote 'b' past the corrupt tail — the file still
+    // has exactly the original record plus the corrupt line.
+    const lines = fs
+      .readFileSync(filePath, 'utf-8')
+      .split('\n')
+      .filter((l) => l.length > 0)
+    expect(lines).toHaveLength(2)
+  })
+
+  it('does not wedge the write queue for subsequent callers — a fixed tail lets the next append through', async () => {
+    await appendJournalRecord(fixtureRecord('a'))
+    const filePath = getJournalFilePath()
+    fs.appendFileSync(filePath, 'this is not json\n', 'utf-8')
+
+    await expect(appendJournalRecord(fixtureRecord('b'))).rejects.toSatisfy(isCorruptTailError)
+
+    // Repair the tail (what a real operator/future recovery tool would do)
+    // and prove the queue moved forward rather than staying wedged on the
+    // rejected promise.
+    const lines = fs
+      .readFileSync(filePath, 'utf-8')
+      .split('\n')
+      .filter((l) => l.length > 0)
+    lines.pop()
+    fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf-8')
+
+    const record = await appendJournalRecord(fixtureRecord('c'))
+    expect(record.suggestion_id).toBe('c')
+
+    const result = await verifyJournalChain()
+    expect(result.valid).toBe(true)
+    expect(result.records.map((r) => r.suggestion_id)).toEqual(['a', 'c'])
   })
 })
 

@@ -18,7 +18,10 @@
  *      refuses and leaves the file untouched (never clobbers user edits).
  *   3. Scope fence — a restore target that escapes the confined skill root
  *      via a symlink is refused (reuses the SMI-4287 root-confinement
- *      helper, `resolveSafeRealpath`).
+ *      helper, `resolveSafeRealpath`); and (governance follow-up, SMI-5456)
+ *      a bare `os.tmpdir()` target outside both HOME and the explicit
+ *      `UNDO_SCOPE_TEST_ROOT_ENV_VAR` seam is refused — proves the fence
+ *      has no blanket `os.tmpdir()` carve-out.
  *
  * Pattern for (1)/(2) mirrors `apply-recommended-edit.test.ts`: seed
  * `~/.skillsmith/audits/<auditId>/` directly with a fixture `RecommendedEdit`
@@ -37,7 +40,7 @@ import {
 } from '@skillsmith/core/journal'
 
 import { applyRecommendedEditTool } from '../../src/tools/apply-recommended-edit.js'
-import { undoApply } from '../../src/tools/undo-apply.js'
+import { undoApply, UNDO_SCOPE_TEST_ROOT_ENV_VAR } from '../../src/tools/undo-apply.js'
 import {
   listSessionApplies,
   recordSessionApply,
@@ -59,11 +62,19 @@ afterEach(() => {
 
 let TEST_HOME: string
 let PREV_HOME: string | undefined
+let PREV_UNDO_SCOPE_TEST_ROOT: string | undefined
 
 beforeEach(() => {
   TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-undo-apply-'))
   PREV_HOME = process.env['HOME']
   process.env['HOME'] = TEST_HOME
+  // Explicit opt-in test seam for `undo-apply.ts`'s scope fence (see
+  // `UNDO_SCOPE_TEST_ROOT_ENV_VAR`'s doc comment) — set alongside `HOME`
+  // rather than relying solely on `os.homedir()` honoring the `HOME`
+  // mutation, which is platform-dependent (true on Docker/Linux, NOT true
+  // on macOS — see `getConfigDir()`'s doc comment).
+  PREV_UNDO_SCOPE_TEST_ROOT = process.env[UNDO_SCOPE_TEST_ROOT_ENV_VAR]
+  process.env[UNDO_SCOPE_TEST_ROOT_ENV_VAR] = TEST_HOME
   resetSessionAppliesForTests()
   resetJournalSessionIdForTests()
 })
@@ -71,6 +82,11 @@ beforeEach(() => {
 afterEach(() => {
   if (PREV_HOME !== undefined) process.env['HOME'] = PREV_HOME
   else delete process.env['HOME']
+  if (PREV_UNDO_SCOPE_TEST_ROOT !== undefined) {
+    process.env[UNDO_SCOPE_TEST_ROOT_ENV_VAR] = PREV_UNDO_SCOPE_TEST_ROOT
+  } else {
+    delete process.env[UNDO_SCOPE_TEST_ROOT_ENV_VAR]
+  }
   if (TEST_HOME && fs.existsSync(TEST_HOME)) {
     fs.rmSync(TEST_HOME, { recursive: true, force: true })
   }
@@ -249,6 +265,41 @@ describe('undo_apply — scope fence (SMI-4287 reuse)', () => {
       expect(listSessionApplies()).toHaveLength(1)
     } finally {
       fs.rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a bare os.tmpdir() target that is outside both HOME and the explicit test-root seam (regression: no blanket tmpdir carve-out)', async () => {
+    // Explicitly clear the test-root seam this suite's beforeEach sets, so
+    // this case exercises exactly what a real deployment sees: HOME-only
+    // confinement, nothing else. Prior to the fix, `checkUndoScopeFence`
+    // additionally accepted ANY path under `os.tmpdir()` unconditionally —
+    // this proves that carve-out is gone.
+    delete process.env[UNDO_SCOPE_TEST_ROOT_ENV_VAR]
+
+    const looseTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-undo-loose-'))
+    try {
+      const targetPath = path.join(looseTmpDir, 'not-under-home.md')
+      fs.writeFileSync(targetPath, 'content after apply', 'utf-8')
+      const hash = sha256Hex(fs.readFileSync(targetPath, 'utf-8'))
+
+      recordSessionApply({
+        tool: 'apply_recommended_edit',
+        suggestionId: 'loose-tmpdir-fixture',
+        targetPath,
+        beforeHash: hash,
+        afterHash: hash,
+        backupRef: looseTmpDir,
+        backupFileName: 'not-under-home.md',
+        ts: Date.now(),
+      })
+
+      const undoResponse = await undoApply({})
+      expect(undoResponse.success).toBe(false)
+      expect(undoResponse.errorCode).toBe('undo.scope_violation')
+      expect(undoResponse.undone).toEqual([])
+      expect(listSessionApplies()).toHaveLength(1)
+    } finally {
+      fs.rmSync(looseTmpDir, { recursive: true, force: true })
     }
   })
 })
