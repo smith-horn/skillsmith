@@ -82,7 +82,7 @@
     "@types/node": "^25.9.3",
     "@typescript-eslint/eslint-plugin": "8.59.1",
     "@typescript-eslint/parser": "8.59.1",
-    "@vitest/coverage-v8": "4.1.6",
+    "@vitest/coverage-v8": "4.1.9",
     "astro": "6.4.7",
     "chalk": "5.6.2",
     "cloudinary": "2.10.0",
@@ -104,7 +104,7 @@
     "typescript-eslint": "8.59.1",
     "varlock": "0.1.4",
     "vercel": "52.2.0",
-    "vitest": "4.1.6"
+    "vitest": "4.1.9"
   },
   "dependencies": {
     "@claude-flow/aidefence": "3.0.2",
