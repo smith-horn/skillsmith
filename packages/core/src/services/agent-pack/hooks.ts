@@ -73,7 +73,11 @@ function commonHeader(kind: 'SessionStart' | 'SessionEnd', harness: HarnessId): 
     // default; guard it explicitly so a stripped-down invocation environment
     // (HOME unset) cannot trip `set -u` and abort before reaching `exit 0`.
     'HOME="${HOME:-/tmp}"',
-    'if [ "${SKILLSMITH_AGENT_HOOK_DISABLE:-}" = "1" ]; then exit 0; fi',
+    // The disable branch must DRAIN stdin before exiting: every other path
+    // reads stdin to EOF via `input=$(cat ...)`, and an exit while the harness
+    // (or execFileSync in tests) is still writing the stdin payload races into
+    // EPIPE on the writer's side. `/dev/null` is exempt from noclobber (-C).
+    'if [ "${SKILLSMITH_AGENT_HOOK_DISABLE:-}" = "1" ]; then cat >/dev/null 2>&1 || true; exit 0; fi',
     'MARKER_DIR="${SKILLSMITH_AGENT_MARKER_DIR:-$HOME/.skillsmith/agent-markers}"',
   ].join('\n')
 }

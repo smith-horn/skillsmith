@@ -4,7 +4,7 @@
 # POSIX sh, no CLI dependency; every path exits 0 so it never fails a session.
 set -uC
 HOME="${HOME:-/tmp}"
-if [ "${SKILLSMITH_AGENT_HOOK_DISABLE:-}" = "1" ]; then exit 0; fi
+if [ "${SKILLSMITH_AGENT_HOOK_DISABLE:-}" = "1" ]; then cat >/dev/null 2>&1 || true; exit 0; fi
 MARKER_DIR="${SKILLSMITH_AGENT_MARKER_DIR:-$HOME/.skillsmith/agent-markers}"
 
 input=$(cat 2>/dev/null || true)
