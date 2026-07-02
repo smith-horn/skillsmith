@@ -31,7 +31,11 @@ export default defineConfig({
 
   /* Shared settings for all projects */
   use: {
-    baseURL: 'http://localhost:4321',
+    /* SMI-5481: CI boots `vercel dev --listen 127.0.0.1:4321`; on GH runners
+     * `localhost` can resolve to ::1 and browsers hang against an IPv4-only
+     * server (SMI-4493/4496). CI sets PLAYWRIGHT_BASE_URL; local default is
+     * unchanged (`||` so an empty string also falls back). */
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:4321',
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
