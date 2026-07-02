@@ -151,10 +151,15 @@ Public docs at [skillsmith.app/docs](https://skillsmith.app/docs):
 | Quickstart | `/docs/quickstart` |
 | CLI Reference | `/docs/cli` |
 | MCP Server | `/docs/mcp-server` |
+| VS Code Extension | `/docs/vscode-extension` |
 | API Reference | `/docs/api` |
 | Security | `/docs/security` |
 | Quarantine | `/docs/quarantine` |
 | Trust Tiers | `/docs/trust-tiers` |
+| Dependencies | `/docs/dependencies` |
+| Cross-machine Inventory | `/docs/inventory` |
+| FAQ | `/docs/faq` |
+| Tutorials (index + discover, evaluate, install-and-use, maintain, author, govern, retire) | `/docs/tutorials`, `/docs/tutorials/<name>` |
 
 Contact form at `/contact` supports `?topic=` param. `/verify` redirects to `/contact?topic=verification`.
 

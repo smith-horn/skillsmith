@@ -1,5 +1,13 @@
 # Vercel deploy hook → smoke-prod trigger
 
+> **Status: dormant backup path (verified 2026-07-01, SMI-5464 PR #1666 retro).**
+> Since the SMI-5246/5247 cutover to git-disconnected prebuilt-CI deploys, smoke-prod
+> fires via `workflow_run` on CI completion — the `vercel-prod-deployed`
+> `repository_dispatch` trigger has not fired in 40+ consecutive smoke runs and is
+> retained only as a manual/backup entry point. If smoke "never fires", check the
+> `workflow_run` chain (CI conclusion + concurrency-group cancellation) FIRST — do
+> not start with the PAT-rotation table below; that applies only to this dormant path.
+
 The smoke-prod workflow (`.github/workflows/smoke-prod.yml`) needs to fire
 after Vercel finishes deploying the website. Vercel's webhook surface does
 not natively trigger GitHub workflows, so we route through GitHub's
