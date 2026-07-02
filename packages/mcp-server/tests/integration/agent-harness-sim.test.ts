@@ -37,20 +37,25 @@
  * reader by importing `@skillsmith/core/telemetry` directly in-process, per
  * the worker brief's explicit fallback instruction.
  *
- * KNOWN GAP surfaced by this suite (reported, not fixed — out of this
- * worker's write surface, `packages/mcp-server/src/` / `packages/core/src/
- * telemetry/` production files): every tool's `withTelemetry` call site uses
- * `extractFramework: () => 'unknown'` (verified via
- * `grep -rn "extractFramework: () => 'unknown'" packages/mcp-server/src/tools/`),
- * and `AgentMarkerFile.harness` is read off disk but dropped by
- * `markerFromFile()` in `agent-marker.ts` — never threaded into the resolved
- * `AgentMarker` or `withTelemetry`'s `framework` field. So the per-harness
- * `framework` value the plan's telemetry wire format targets (`opencode`,
- * `hermes`, etc.) is `'unknown'` for every MCP-tool event today, regardless
- * of which harness's SessionStart hook wrote the marker file. This suite
- * cannot observe `framework` over the wire (it isn't part of any tool
- * response), so it does not assert per-framework values — it only proves the
- * `harness` field round-trips through a marker file without crashing.
+ * FIXED (was a KNOWN GAP at this suite's original writing): every tool's
+ * `withTelemetry` call site still hardcodes `extractFramework: () =>
+ * 'unknown'` (verified via `grep -rn "extractFramework: () => 'unknown'"
+ * packages/mcp-server/src/tools/`), but `agent-marker.ts` now threads the
+ * marker file's (or `_meta`'s) `harness` hint into the resolved `AgentMarker`
+ * as a vocabulary-gated `harness` field, and `wrap.ts`'s emit path prefers
+ * `marker.harness` over the per-call extractor result
+ * (`framework: marker?.harness ?? framework`) — see SMI-5456
+ * `packages/core/src/telemetry/agent-marker.ts` (`KNOWN_HARNESS_FRAMEWORKS`)
+ * and `wrap.ts`. So the per-harness `framework` value the plan's telemetry
+ * wire format targets (`opencode`, `hermes`, etc.) now reaches the wire for
+ * every MCP-tool event whose marker channel supplied a valid harness hint.
+ * This suite still cannot observe `framework` over the wire (it isn't part
+ * of any tool response) — process-boundary limitation above — so it does not
+ * assert per-framework emission values itself; that is proven at the unit
+ * level by `packages/core/src/telemetry/wrap.marker.test.ts` ("marker
+ * harness feeds framework"). This suite only proves the `harness` field
+ * round-trips through a marker file without crashing, i.e. the round-trip
+ * half of the SMI-5456 fix, not the emission half.
  */
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -194,7 +199,16 @@ describe('marker channel precedence — unit-level fallback', () => {
       })
     )
     const marker = resolveAgentMarker(undefined)
-    expect(marker).toEqual({ agentSession: true, nudgeOrigin: true, triggerId: 'unit-trigger' })
+    // harness: 'opencode' round-trips too (SMI-5456 marker->framework fix,
+    // 37def2f9) — the vocabulary-gated `harness` field threads from the
+    // marker file into the resolved AgentMarker alongside the three
+    // pre-existing fields.
+    expect(marker).toEqual({
+      agentSession: true,
+      nudgeOrigin: true,
+      triggerId: 'unit-trigger',
+      harness: 'opencode',
+    })
   })
 
   it('`_meta` wins per-field over a live marker file', () => {

@@ -24,7 +24,7 @@ check_binary() {
 # directory next to the calling script, resolved absolutely regardless of
 # the caller's cwd.
 agent_eval_results_dir() {
-  script_dir=$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)
+  script_dir=$(CDPATH="" cd -- "$(dirname -- "$1")" && pwd)
   results_dir="$script_dir/results"
   mkdir -p "$results_dir"
   echo "$results_dir"

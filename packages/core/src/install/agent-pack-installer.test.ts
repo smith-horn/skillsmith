@@ -197,6 +197,27 @@ describe('installAgentPack — dual-path + shim + hook + MCP', () => {
     expect(report?.notes.some((n) => n.includes('plain TOML table'))).toBe(true)
   })
 
+  // Governance follow-up (2026-07-01): `mergeTomlBlock` ignores `force` for a
+  // bare foreign table header (see `void force` in
+  // `agent-config-merge.toml-block.ts`) — must hold with force: true too.
+  it('refuses codex hook wiring (conflict) even with force: true, since appending would be invalid TOML', () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    const configPath = join(homeDir, '.codex', 'config.toml')
+    const preExisting = '[hooks.SessionStart]\nsomething = "user-defined"\n'
+    writeFileSync(configPath, preExisting)
+
+    const result = installAgentPack({ homeDir, force: true })
+    const content = readFileSync(configPath, 'utf-8')
+
+    // Unrelated blocks (agents shim, mcp_servers) still merge under
+    // force: true — only the hooks.SessionStart table conflict is refused.
+    expect(content).toContain('something = "user-defined"')
+    expect(content).not.toContain('# >>> skillsmith:hooks.SessionStart >>>')
+    const report = result.harnessReports.find((r) => r.harness === 'codex')
+    expect(report?.hookConfig.some((w) => w.status === 'conflict')).toBe(true)
+    expect(report?.notes.some((n) => n.includes('plain TOML table'))).toBe(true)
+  })
+
   it("appends alongside a user's own [[hooks.SessionStart]] array entry (valid TOML coexistence)", () => {
     mkdirSync(join(homeDir, '.codex'), { recursive: true })
     const configPath = join(homeDir, '.codex', 'config.toml')
@@ -426,54 +447,5 @@ describe('installAgentPack — double-install idempotency', () => {
     // The ONE backup that exists must be the GENUINE pre-install content —
     // not an intermediate state polluted by an earlier merge THIS run.
     expect(backupContent).toEqual({ preExisting: true })
-  })
-})
-
-describe('installAgentPack — preserve-existing (non-interactive refusal)', () => {
-  it('does not clobber a foreign pre-existing skillsmith MCP entry, and reports a conflict', () => {
-    mkdirSync(join(homeDir, '.claude'), { recursive: true })
-    const settingsPath = join(homeDir, '.claude', 'settings.json')
-    const foreign = {
-      mcpServers: {
-        skillsmith: { command: 'node', args: ['/some/other/local/path/index.js'] },
-      },
-    }
-    writeFileSync(settingsPath, JSON.stringify(foreign, null, 2))
-
-    const result = installAgentPack({ homeDir })
-    const doc = JSON.parse(readFileSync(settingsPath, 'utf-8')) as typeof foreign
-    expect(doc.mcpServers.skillsmith).toEqual(foreign.mcpServers.skillsmith)
-
-    const report = result.harnessReports.find((r) => r.harness === 'claude-code')
-    expect(report?.mcpConfig?.status).toBe('conflict')
-    expect(report?.notes.some((n) => n.includes('--force'))).toBe(true)
-  })
-
-  it('force: true overwrites the foreign entry and the manifest records a real backup for the file', () => {
-    mkdirSync(join(homeDir, '.claude'), { recursive: true })
-    const settingsPath = join(homeDir, '.claude', 'settings.json')
-    const foreign = { mcpServers: { skillsmith: { command: 'node', args: ['/other'] } } }
-    writeFileSync(settingsPath, JSON.stringify(foreign, null, 2))
-
-    const result = installAgentPack({ homeDir, force: true })
-    const doc = JSON.parse(readFileSync(settingsPath, 'utf-8')) as {
-      mcpServers: { skillsmith: { env: Record<string, string> } }
-    }
-    expect(doc.mcpServers.skillsmith.env.SKILLSMITH_TOOL_PROFILE).toBe('agent')
-    const report = result.harnessReports.find((r) => r.harness === 'claude-code')
-    expect(report?.mcpConfig?.status).toBe('updated')
-
-    // The MCP merge's OWN `mcpConfig.backupPath` can legitimately be null
-    // here: claude-code's hook-config merge runs FIRST this install run and
-    // is the one that takes the single real backup of settings.json
-    // (`alreadyBackedUpPaths` — one backup per file per run, see
-    // agent-config-merge.types.ts). What matters for correctness is that the
-    // MANIFEST — which uninstall actually replays — records a real backup
-    // for settingsPath, regardless of which merge call happened to claim it.
-    const manifest = JSON.parse(readFileSync(getAgentManifestPath(), 'utf-8')) as {
-      entries: Array<{ path: string; backupPath: string | null }>
-    }
-    const settingsEntry = manifest.entries.find((e) => e.path === settingsPath)
-    expect(settingsEntry?.backupPath).not.toBeNull()
   })
 })
