@@ -35,7 +35,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resolveAgentMarker } from '../../telemetry/agent-marker.js'
 import { generateAgentPack } from './index.js'
 import { JOBS, PAYWALL_TRIGGERS, TRUST_CLAUSES } from './prompt-source.js'
-import { AGENT_PACK_SKILL_NAME } from './types.js'
+import {
+  AGENT_PACK_COMPATIBILITY,
+  AGENT_PACK_REPOSITORY,
+  AGENT_PACK_SKILL_NAME,
+  AGENT_PACK_VERSION,
+} from './types.js'
 
 /**
  * Local mirror of the curated profile. The real constant is mcp-server's
@@ -143,6 +148,14 @@ describe('SKILL.md (A1) — assembly + frontmatter', () => {
     expect(typeof fm.description).toBe('string')
     expect((fm.description as string).length).toBeGreaterThan(40)
     expect((fm.description as string).includes('\n')).toBe(false)
+    // `version` is required by the repo's own skill_validate (semver string);
+    // AGENT_PACK_VERSION is its single definition site.
+    expect(fm.version).toBe(AGENT_PACK_VERSION)
+    expect(fm.version).toMatch(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)
+    // `repository` + `compatibility` keep the published pack at zero validator
+    // warnings; each is pinned to its single-definition-site constant.
+    expect(fm.repository).toBe(AGENT_PACK_REPOSITORY)
+    expect(fm.compatibility).toEqual([...AGENT_PACK_COMPATIBILITY])
   })
 
   it('contains each job heading exactly once', () => {
@@ -232,13 +245,24 @@ describe('prompt-pack lint (A1)', () => {
     /system prompt/i,
   ]
 
-  it('has no model- or vendor-specific idioms', () => {
-    const body = artifact('SKILL.md')
+  /**
+   * The lint targets the pack's PROSE — the operating instructions a model
+   * reads as guidance. Structured frontmatter metadata is excluded: the
+   * `compatibility` field legitimately carries harness slugs like
+   * `claude-code` (validator vocabulary, SMI-2760), which are identifiers,
+   * not model idioms.
+   */
+  function skillBody(): string {
+    return artifact('SKILL.md').replace(/^---\n[\s\S]*?\n---\n/, '')
+  }
+
+  it('has no model- or vendor-specific idioms in the prose body', () => {
+    const body = skillBody()
     for (const re of BANNED_IDIOMS) expect(re.test(body), re.source).toBe(false)
   })
 
   it('has no agent-addressed injection-shape patterns', () => {
-    const body = artifact('SKILL.md')
+    const body = skillBody()
     for (const re of INJECTION_SHAPES) expect(re.test(body), re.source).toBe(false)
   })
 

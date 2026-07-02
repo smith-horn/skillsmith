@@ -18,7 +18,13 @@ import {
   UNDO_PARAGRAPHS,
   WILL_NOT,
 } from './prompt-source.js'
-import { AGENT_PACK_DISPLAY_NAME, AGENT_PACK_SKILL_NAME } from './types.js'
+import {
+  AGENT_PACK_COMPATIBILITY,
+  AGENT_PACK_DISPLAY_NAME,
+  AGENT_PACK_REPOSITORY,
+  AGENT_PACK_SKILL_NAME,
+  AGENT_PACK_VERSION,
+} from './types.js'
 
 /** Render an ordered markdown list from strings. */
 function numberedOrProse(paragraphs: readonly string[]): string {
@@ -90,12 +96,23 @@ export function renderAgentSkillBody(): string {
  * spec requires the frontmatter name to match the parent skill directory, and
  * the installer writes the pack to `<skills-root>/${AGENT_PACK_SKILL_NAME}/`.
  * The human display name appears only in the H1 title and the description.
+ *
+ * `version` is required by the repo's own `skill_validate` (semver string);
+ * `repository` + `compatibility` are its published-skill recommendations —
+ * emitting all three keeps the pack validating with zero errors AND zero
+ * warnings. Each is sourced from its `types.ts` constant (single definition
+ * site); `compatibility` values must stay within the validator's SMI-2760
+ * vocabulary (see {@link AGENT_PACK_COMPATIBILITY}).
  */
 export function renderAgentSkillMd(): string {
+  const compatibility = AGENT_PACK_COMPATIBILITY.map((slug) => JSON.stringify(slug)).join(', ')
   const frontmatter = [
     '---',
     `name: ${AGENT_PACK_SKILL_NAME}`,
     `description: ${JSON.stringify(PACK_DESCRIPTION)}`,
+    `version: ${JSON.stringify(AGENT_PACK_VERSION)}`,
+    `repository: ${JSON.stringify(AGENT_PACK_REPOSITORY)}`,
+    `compatibility: [${compatibility}]`,
     '---',
   ].join('\n')
 

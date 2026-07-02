@@ -1,6 +1,9 @@
 ---
 name: skillsmith-agent
 description: "Delegate your agent-skill lifecycle: keep skills current, audit and clean up your inventory, and vet skills before you install them. The Skillsmith Agent diagnoses in full for free, proposes a batched fix plan, and changes files only with your per-changeset approval, with one-step undo. Triggers: \"ask the Skillsmith Agent\", \"clean up my skills\", \"what skills are outdated\", \"audit my skills\", \"vet this skill before I install it\"."
+version: "1.0.0"
+repository: "https://github.com/smith-horn/skillsmith"
+compatibility: ["claude-code", "cursor", "vscode", "windsurf"]
 ---
 
 # Skillsmith Agent

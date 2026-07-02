@@ -30,6 +30,33 @@ export const AGENT_PACK_DISPLAY_NAME = 'Skillsmith Agent'
  */
 export const AGENT_PACK_SCHEMA_VERSION = 1
 
+/**
+ * SKILL.md frontmatter `version` (semver string — the repo's own
+ * `skill_validate` requires it). Static for Wave 1; bump when the pack's
+ * CONTENT changes materially. Independent of {@link AGENT_PACK_SCHEMA_VERSION}
+ * (artifact shape) and of the npm release number (determinism: artifacts must
+ * not churn with every release).
+ */
+export const AGENT_PACK_VERSION = '1.0.0'
+
+/** SKILL.md frontmatter `repository` (source transparency for a published skill). */
+export const AGENT_PACK_REPOSITORY = 'https://github.com/smith-horn/skillsmith'
+
+/**
+ * SKILL.md frontmatter `compatibility`, constrained to the validator's SMI-2760
+ * vocabulary (`KNOWN_IDES`/`KNOWN_LLMS` in mcp-server `utils/validation.ts`) so
+ * the pack validates with ZERO warnings. In Tier order; `vscode` is that
+ * vocabulary's designated slug for the Copilot/VS Code surface. `codex`,
+ * `opencode`, and `hermes` are supported harnesses but have no slug in the
+ * vocabulary yet — add them here when the SMI-2760 enum gains them.
+ */
+export const AGENT_PACK_COMPATIBILITY: readonly string[] = [
+  'claude-code',
+  'cursor',
+  'vscode',
+  'windsurf',
+]
+
 /** Harness identifiers the pack targets. */
 export type HarnessId = 'claude-code' | 'cursor' | 'codex' | 'copilot' | 'opencode'
 
