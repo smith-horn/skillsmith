@@ -28,6 +28,8 @@
  * audit hook (PR 6) passes the user's resolved tier from license info.
  */
 
+import * as crypto from 'node:crypto'
+import * as fs from 'node:fs'
 import * as os from 'node:os'
 
 import {
@@ -36,6 +38,7 @@ import {
   loadExclusions,
   isExcluded as isExcludedCore,
 } from '@skillsmith/core/audit'
+import { AGENT_PACK_SKILL_NAME } from '@skillsmith/core'
 import type { Tier } from '@skillsmith/core/config/audit-mode'
 
 import { scanLocalInventory } from '../utils/local-inventory.js'
@@ -138,7 +141,19 @@ export async function runInventoryAudit(
   if (opts.deep) {
     detectorOpts.auditModeOverride = 'power_user'
   }
-  const detectorResult = await detectCollisions(scan.entries, detectorOpts)
+  const rawDetectorResult = await detectCollisions(scan.entries, detectorOpts)
+
+  // Step 2b (SMI-5456 Wave 1 Step 5, plan §6): dedupe + self-exempt the
+  // dual-path Skillsmith Agent pack. `scanLocalInventory` now scans BOTH
+  // `.claude/skills` and `.agents/skills` (Step 1b in local-inventory.ts) —
+  // the installer's mandatory dual-path write means a byte-identical copy of
+  // the `skillsmith-agent` pack legitimately exists at both paths, which
+  // would otherwise surface as a spurious exact-name collision every single
+  // audit run. Applied unconditionally (not gated by `applyExclusions`) —
+  // this is dedup of a known-intentional duplicate, not a user-configured
+  // exclusion — and BEFORE exclusions/rename-suggestion building so a
+  // self-exempted collision never produces a rename suggestion either.
+  const detectorResult = dedupeAgentPackCollisions(rawDetectorResult)
 
   // Step 3: build rename suggestions for each exact collision.
   const renameSuggestions = buildRenameSuggestions(detectorResult, scan.entries)
@@ -277,6 +292,74 @@ function inventoryKindToRenameAction(entry: InventoryEntry): RenameAction | null
       return null
     default:
       return null
+  }
+}
+
+/**
+ * SMI-5456 Wave 1 Step 5 (plan §6): drop an exact-collision flag when it is
+ * the dual-path Skillsmith Agent pack colliding with itself.
+ *
+ * Dedupe key is name+content-hash, NOT name alone: a flag is dropped only
+ * when EVERY entry in it is `kind: 'skill'`, has `identifier ===
+ * AGENT_PACK_SKILL_NAME` ('skillsmith-agent'), AND shares an identical
+ * SHA-256 of its `source_path` file content. The content-hash check is the
+ * load-bearing part — a namespace-squatting skill hand-named
+ * "skillsmith-agent" with DIFFERENT content must still be flagged (that is
+ * exactly the collision detector's job); only a genuine byte-identical
+ * dual-path copy (which the installer guarantees per-release, per
+ * `AgentInstallResult` P-5 "Dual-path pack copies" invariant) is self-exempt.
+ *
+ * A read/hash failure on any entry (e.g. a symlink race) is treated as
+ * "cannot prove identity" — the flag is KEPT (fail toward showing the
+ * finding, never toward silently hiding a real collision).
+ *
+ * Exported (not just used internally) so it is directly unit-testable
+ * without invoking the full `runInventoryAudit` pipeline, which writes to
+ * the real `~/.skillsmith/audits/` (no test-isolation override exists for
+ * that path today — see `run-inventory-audit.dedup.test.ts`'s header).
+ */
+export function dedupeAgentPackCollisions(result: InventoryAuditResult): InventoryAuditResult {
+  const exactCollisions = result.exactCollisions.filter((flag) => !isAgentPackSelfCollision(flag))
+
+  if (exactCollisions.length === result.exactCollisions.length) return result
+
+  const errorCount = exactCollisions.length
+  const warningCount = result.genericFlags.length + result.semanticCollisions.length
+  return {
+    ...result,
+    exactCollisions,
+    summary: {
+      ...result.summary,
+      totalFlags: errorCount + warningCount,
+      errorCount,
+    },
+  }
+}
+
+/** Is `flag` entirely explained by byte-identical dual-path copies of the Skillsmith Agent pack? */
+function isAgentPackSelfCollision(flag: ExactCollisionFlag): boolean {
+  if (flag.entries.length < 2) return false
+  if (
+    !flag.entries.every(
+      (entry) => entry.kind === 'skill' && entry.identifier === AGENT_PACK_SKILL_NAME
+    )
+  ) {
+    return false
+  }
+
+  const hashes = flag.entries.map((entry) => hashFileContent(entry.source_path))
+  if (hashes.some((h) => h === null)) return false // unreadable — fail toward keeping the flag.
+  const [first, ...rest] = hashes
+  return rest.every((h) => h === first)
+}
+
+/** SHA-256 hex of a file's content, or null on any read failure (never throws). */
+function hashFileContent(filePath: string): string | null {
+  try {
+    const content = fs.readFileSync(filePath)
+    return crypto.createHash('sha256').update(content).digest('hex')
+  } catch {
+    return null
   }
 }
 

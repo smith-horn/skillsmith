@@ -374,3 +374,8 @@ describe('emission gate (SMI-5019 wire-in)', () => {
     expect(mockTrack).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// SMI-5456 agent-mediation marker threading + opencode/hermes framework
+// emission live in the sibling `wrap.marker.test.ts` (500-line file gate).
+// ---------------------------------------------------------------------------

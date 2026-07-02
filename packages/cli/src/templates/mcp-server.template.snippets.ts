@@ -23,7 +23,7 @@ export interface ClientSnippet {
   /** Path to the config file the user edits */
   configPath: string
   /** File format hint for the syntax highlighter */
-  format: 'json' | 'toml'
+  format: 'json' | 'toml' | 'yaml'
   /** Snippet body — interpolated with `{{name}}` for the package name */
   body: string
   /** Notes shown beneath the snippet */
@@ -137,6 +137,44 @@ SKILLSMITH_API_KEY = "sk_live_..."`,
     notes:
       'Codex uses TOML, not JSON. Skill discovery still reads ~/.agents/skills (set --client agents when installing via Skillsmith CLI).',
   },
+  // SMI-5456 Wave 1 Step 5: opencode + hermes added to ClientId (paths.ts);
+  // this Record<SnippetClientId, ClientSnippet> is exhaustive over ClientId,
+  // so both entries are required for the type to compile.
+  opencode: {
+    label: 'OpenCode',
+    configPath: '~/.config/opencode/opencode.json',
+    format: 'json',
+    // OpenCode's own entry schema (verified opencode.ai/docs/mcp-servers/):
+    // typed local|remote, `command` is an ARRAY (command + args combined),
+    // env vars live under `environment` (not `env`).
+    body: `{
+  "mcp": {
+    "{{name}}": {
+      "type": "local",
+      "command": ["npx", "-y", "{{name}}"],
+      "enabled": true,
+      "environment": {
+        "SKILLSMITH_API_KEY": "sk_live_..."
+      }
+    }
+  }
+}`,
+    notes:
+      'OpenCode also reads .claude/skills and .agents/skills for skill discovery. Note the OpenCode-specific entry shape: command is an array and the env-var field is named environment.',
+  },
+  hermes: {
+    label: 'Hermes (Nous Research)',
+    configPath: '~/.hermes/config.yaml',
+    format: 'yaml',
+    body: `mcp_servers:
+  {{name}}:
+    command: "npx"
+    args: ["-y", "{{name}}"]
+    env:
+      SKILLSMITH_API_KEY: "sk_live_..."`,
+    notes:
+      'Hermes config is YAML. Hermes has no SessionStart hook equivalent — nudge/attribution is unsupported on this harness.',
+  },
 }
 
 /**
@@ -183,4 +221,6 @@ export const SNIPPET_DISPLAY_ORDER: ReadonlyArray<SnippetClientId> = Object.free
   'windsurf',
   'codex',
   'agents',
+  'opencode',
+  'hermes',
 ])

@@ -51,6 +51,11 @@
       "import": "./dist/src/install/index.js",
       "default": "./dist/src/install/index.js"
     },
+    "./paywall-triggers": {
+      "types": "./dist/src/paywall-triggers/index.d.ts",
+      "import": "./dist/src/paywall-triggers/index.js",
+      "default": "./dist/src/paywall-triggers/index.js"
+    },
     "./services/skill-installation-helpers": {
       "types": "./dist/src/services/skill-installation.helpers.d.ts",
       "import": "./dist/src/services/skill-installation.helpers.js",
@@ -90,6 +95,11 @@
       "types": "./dist/src/telemetry/index.d.ts",
       "import": "./dist/src/telemetry/index.js",
       "default": "./dist/src/telemetry/index.js"
+    },
+    "./journal": {
+      "types": "./dist/src/journal/index.d.ts",
+      "import": "./dist/src/journal/index.js",
+      "default": "./dist/src/journal/index.js"
     }
   },
   "scripts": {

@@ -209,10 +209,18 @@ export async function dispatchToolCall(
 
     case 'skill_audit':
     case 'skill_pack_audit':
+    case 'skill_inventory_audit':
+    case 'apply_namespace_rename':
+    case 'apply_recommended_edit':
+    case 'undo_apply':
       // SMI-4590 Step 0b: audit-family tools live in `audit-tool-dispatch.ts`
-      // to keep this file under the 500-LOC gate. Wave 4 PRs 3–4 add three
-      // more audit tools (`skill_inventory_audit`, `apply_namespace_rename`,
-      // `apply_recommended_edit`) to that module without growing this one.
+      // to keep this file under the 500-LOC gate. SMI-5456 §7 / SMI-5470:
+      // added the explicit cases for `skill_inventory_audit` /
+      // `apply_namespace_rename` / `apply_recommended_edit` / `undo_apply` —
+      // they were previously routed nowhere (fell through to `default`'s
+      // "Unknown tool" throw despite being ListTools-discoverable and
+      // dispatch-implemented in `audit-tool-dispatch.ts`); a call to any of
+      // them from a real MCP client would have failed.
       return dispatchAuditTool(name, args, toolContext, licenseMiddleware, quotaMiddleware)
 
     case 'skill_rescan': {

@@ -1,0 +1,5 @@
+# Skillsmith Agent - Codex agent entry. Generated; do not edit by hand.
+[agents.skillsmith-agent]
+description = "Named entry point for the Skillsmith Agent: delegate keeping your agent skills current, auditing your inventory, and vetting skills before install. Operating instructions live in the Skillsmith Agent skill pack."
+instructions = "See the Skillsmith Agent skill pack (SKILL.md installed as skillsmith-agent) for operating instructions. This entry carries no behavior of its own."
+tools = ["search", "get_skill", "install_skill", "uninstall_skill", "skill_recommend", "skill_validate", "skill_compare", "skill_outdated", "skill_updates", "skill_diff", "skill_pack_audit", "skill_inventory_audit", "apply_namespace_rename", "apply_recommended_edit", "skill_audit", "undo_apply"]

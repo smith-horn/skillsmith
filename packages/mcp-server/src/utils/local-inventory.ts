@@ -64,6 +64,21 @@ export async function scanLocalInventory(
   // Source 1: ~/.claude/skills/*/SKILL.md
   entries.push(...scanSkills(path.join(claudeDir, 'skills'), manifest, warnings))
 
+  // Source 1b (SMI-5456 Wave 1 Step 5): ~/.agents/skills/*/SKILL.md — the
+  // second leg of the dual-path Skillsmith Agent pack install (Codex reads
+  // ONLY this path, never .claude/skills). Scanning it here is what makes
+  // `skill_inventory_audit`'s dual-path dedup + self-exemption (Scope 6 of
+  // the SMI-5456 plan) actually reachable — without this, the audit never
+  // sees the second copy and there is nothing to dedupe. `scanSkills` is
+  // reused verbatim; a directory-name collision between two DIFFERENT skills
+  // that both happen to live under `.claude/skills` and `.agents/skills` is
+  // exactly the kind of finding the exact-collision pass is supposed to
+  // catch, so this is intentionally additive, not a filtered subset.
+  const agentsSkillsDir = opts.homeDir
+    ? path.join(opts.homeDir, '.agents', 'skills')
+    : path.join(os.homedir(), '.agents', 'skills')
+  entries.push(...scanSkills(agentsSkillsDir, manifest, warnings))
+
   // Source 2: ~/.claude/commands/*.md
   entries.push(...scanCommands(path.join(claudeDir, 'commands'), warnings))
 

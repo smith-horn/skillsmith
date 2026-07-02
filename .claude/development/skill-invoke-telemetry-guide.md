@@ -125,18 +125,31 @@ Full payload schema (all fields required unless noted):
     "sdk_version": "0.7.2",
     "platform": "darwin",
     "is_subagent": false,
-    "success": true
+    "success": true,
+    "agent_session": false,
+    "nudge_origin": false,
+    "trigger_id": null
   }
 }
 ```
 
 > The example above is a **`claude-code-hook`** payload, so its `skill_id` is the registry `author/name`. `skill_id` is **surface-specific** — see [`skill_id` contract](#skill_id-contract-surface-specific). For tool surfaces it is the tool/command name (`'search'`, `'config set'`), not `author/name`.
 
+### Agent-mediation marker fields (SMI-5456)
+
+Three net-new per-event fields distinguish agent-mediated invocations (the Wave-1 mediation gate). They are non-identifying — per-event booleans + one opaque id — so the annual ID-rotation policy is unaffected.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `agent_session` | boolean | `false` | The invocation is part of an agent-mediated session (the portable agent pack routed it). |
+| `nudge_origin` | boolean | `false` | The invocation originated from a nudge (job-9 onboarding), not an organic ask. |
+| `trigger_id` | string \| null | `null` | Paywall / nudge trigger id when the call is attributable to one. |
+
 Allowed enum values:
 
 - `event` must be in `ALLOWED_EVENTS` (see above)
 - `source` in `{ 'claude-code-hook', 'mcp-tool', 'cli', 'vscode-extension' }` for v1; `{ 'cursor-rule-beacon', 'agents-md-beacon', 'copilot-beacon' }` are v2
-- `framework` in `{ 'claude-code', 'cursor', 'continue', 'cline', 'copilot', 'windsurf', 'codex', 'vscode', 'unknown' }`
+- `framework` in `{ 'claude-code', 'cursor', 'continue', 'cline', 'copilot', 'windsurf', 'codex', 'vscode', 'opencode', 'hermes', 'unknown' }` (`opencode` + `hermes` added in SMI-5456 for the Tier-2 harnesses)
 
 **`cwd_hash` note (L1):** Groups invocations by anonymous project — enables "skills invoked across N distinct projects" cohort analysis without leaking file system paths. Used by `analytics_skill_top.framework_breakdown` extension in v2.
 
@@ -155,6 +168,42 @@ Allowed enum values:
 **MCP-only users without an account:** Telemetry stays off permanently (default opt-out). The preference record is never created; `withTelemetry` short-circuits at the consent check.
 
 **Environment override:** `SKILLSMITH_TELEMETRY_DISABLE=1` overrides all stored preferences and blocks all emissions. Checked in `withTelemetry` before the consent lookup.
+
+The SMI-5456 marker fields ride the same gate: they are attached to the `skill_invoke` event *inside* `withTelemetry`, so a suppressed gate emits nothing — no separate consent path exists for them (consent parity).
+
+---
+
+## Agent-mediation marker channel (SMI-5456)
+
+The MCP server resolves the three marker fields per tool call from two channels. Code: `packages/core/src/telemetry/agent-marker.ts` (resolver + reader) and `packages/mcp-server/src/index.ts` (`CallToolRequestSchema` dispatch runs each call inside `runWithMarkerContext`, an `AsyncLocalStorage` scope — concurrency-safe under the parallel tool calls harnesses batch routinely, so one call's completion can never clear another in-flight call's marker).
+
+**Precedence (per field): `_meta` wins → else the session marker file → else the neutral default.**
+
+1. **MCP `_meta`** (spec-clean, wins when present). The server reads `agent_session` / `nudge_origin` / `trigger_id` / `harness` off `request.params._meta` (a loose passthrough schema on SDK 1.29.0). Values are validated defensively — a wrong type or junk key is dropped. As of Wave 1 **no Tier-1 harness can inject `_meta` on a genuine agent tool call** (Step-0 spike: hooks only mutate `arguments`, the model has no `_meta` schema affordance), so this is forward-looking infrastructure that activates the day a harness ships native support.
+
+2. **Session marker file** (PRIMARY channel for Wave 1). A harness `SessionStart` hook writes a JSON file under `~/.skillsmith/agent-markers/<session_id>.json`. The server treats the directory as **read-only** — it never writes, updates, or deletes files (hook cleanup at `SessionEnd` is the primary staleness control). The reader selects the freshest **non-expired** marker.
+
+   ```json
+   {
+     "schema": 1,
+     "session_id": "<harness session id>",
+     "started_at": 1720000000000,
+     "harness": "claude-code",
+     "agent_session": true,
+     "nudge_origin": false,
+     "trigger_id": null
+   }
+   ```
+
+   - `session_id` (string, required) + `started_at` (epoch-ms, required) — a file missing either is treated as corrupt and ignored.
+   - `agent_session` defaults **true** for a valid marker (presence ⇒ agent session); set `false` to opt out.
+   - `nudge_origin` defaults false; `trigger_id` defaults null.
+   - **`harness` is consumed — it supplies the event's `framework`.** Every MCP-tool call site hardcodes `extractFramework: () => 'unknown'`, so the marker channel's `harness` is the single point where the per-harness split (the mediation dashboard's denominator) reaches the wire: `framework = marker.harness ?? extractor result`. Accepted vocabulary (`KNOWN_HARNESS_FRAMEWORKS` in `agent-marker.ts` — the wire-format `framework` enum minus `'unknown'`): `claude-code`, `cursor`, `continue`, `cline`, `copilot`, `windsurf`, `codex`, `vscode`, `opencode`, `hermes`. Anything else (junk from disk or `_meta`) is dropped at resolution — it never reaches telemetry; the emit falls back to the extractor result. Per-field precedence applies: a valid `_meta.harness` beats the file's. CLI / VS Code surfaces never install marker context, so their real extractors are unaffected.
+   - **TTL = 12h** (`AGENT_MARKER_TTL_MS`), measured from `started_at`. Rationale: comfortably spans a long interactive working day so a live session is never expired mid-flight, while a marker left by a crashed session cannot mislabel invocations a day later. A missing / corrupt / expired file is simply "no marker" — never an error.
+   - **Read guard (`AGENT_MARKER_MAX_FILE_BYTES` = 16 KiB):** the reader runs synchronously on every tool call, so before `readFileSync` it `lstat`s the entry and skips anything that is not a regular file (symlinks are never followed — the directory is server-read-only, so a symlink here is unexpected) or that exceeds the byte cap (treated as corrupt). This bounds the synchronous read+parse cost on the hot dispatch path regardless of what lands in the directory.
+   - **Wave-1 correlation caveat:** the server cannot know its own harness session id, so it picks the most recently started live marker. Concurrent sessions on one machine may observe each other's marker — an accepted, documented imprecision (`_meta` is exact and wins). `SKILLSMITH_AGENT_MARKER_DIR` overrides the directory (test isolation; mirrors `SKILLSMITH_CACHE_DIR_OVERRIDE`).
+
+3. **Neither** ⇒ `agent_session=false`, `nudge_origin=false`, `trigger_id=null`.
 
 ---
 

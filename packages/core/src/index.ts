@@ -201,9 +201,17 @@ export {
   isSourceAdapter,
   LocalFilesystemAdapter,
   createLocalFilesystemAdapter,
+  // SMI-4287 root confinement, reused by `undo_apply`'s scope fence
+  // (SMI-5456 Wave 1 Step 3).
+  resolveSafeRealpath,
+  isRealpathContained,
 } from './sources/index.js'
 
-export type { LocalFilesystemConfig } from './sources/index.js'
+export type {
+  LocalFilesystemConfig,
+  FsResult,
+  ResolveSafeRealpathOptions,
+} from './sources/index.js'
 
 export type {
   ISourceAdapter,

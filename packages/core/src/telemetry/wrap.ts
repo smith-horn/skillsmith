@@ -11,7 +11,9 @@
  * Applied review change H4: `framework` is captured per-call, not memoised.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { trackSkillInvoke } from './posthog.js'
+import type { AgentMarker } from './agent-marker.js'
 
 // ---------------------------------------------------------------------------
 // Module-scoped registry (NOT exported — access only via isTelemetered)
@@ -58,6 +60,36 @@ let emissionGate: (() => boolean) | undefined
  */
 export function setEmissionGate(gate: (() => boolean) | undefined): void {
   emissionGate = gate
+}
+
+// ---------------------------------------------------------------------------
+// Agent-mediation marker context (SMI-5456)
+// ---------------------------------------------------------------------------
+//
+// The three per-event marker fields (`agent_session`, `nudge_origin`,
+// `trigger_id`) do not live in the handler's arguments — they arrive on the MCP
+// request's `_meta` or a session marker file, both resolved by the dispatch
+// layer. The dispatcher runs each dispatch inside `runWithMarkerContext` and
+// `withTelemetry` reads the store live in its emit path — never memoised,
+// mirroring the per-call `framework` capture (H4).
+//
+// `AsyncLocalStorage` (not a module-scoped variable) because harnesses batch
+// PARALLEL tool calls to one server process (Claude Code emits multiple
+// tool_use blocks in one response). A module-scoped slot would let call A's
+// completion clear call B's still-in-flight marker — silently zeroing
+// `agent_session` on genuinely mediated calls and undercounting the mediation
+// gate metric. ALS scopes the marker to each call's own async continuation, so
+// concurrent calls cannot observe or clear each other's context.
+const markerStorage = new AsyncLocalStorage<AgentMarker>()
+
+/**
+ * Run `fn` with `marker` installed as the agent-mediation context for every
+ * telemetry emit inside its async continuation. Concurrency-safe: parallel
+ * invocations each see only their own marker; code outside any
+ * `runWithMarkerContext` scope sees no marker (fields default false/false/null).
+ */
+export function runWithMarkerContext<T>(marker: AgentMarker, fn: () => Promise<T>): Promise<T> {
+  return markerStorage.run(marker, fn)
 }
 
 // ---------------------------------------------------------------------------
@@ -134,12 +166,29 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
         // SMI-5019 wire-in: consult the emission gate. Default-suppress when
         // no gate is installed — see module-level comment for the rationale.
         if (emissionGate && emissionGate()) {
+          // SMI-5456: thread the marker from this call's ALS scope into the
+          // event. Read here (not memoised) so it reflects the marker installed
+          // for THIS call's async continuation — concurrent calls each see
+          // their own. Consent parity is automatic — these fields only ride an
+          // event that the emission gate already permitted.
+          const marker = markerStorage.getStore()
           trackSkillInvoke({
             skillId,
             source: opts.source,
-            framework,
+            // Per-harness attribution: the marker channel's vocabulary-validated
+            // `harness` wins over the extractor result — every MCP-tool call
+            // site hardcodes `extractFramework: () => 'unknown'`, so without
+            // this the per-harness split never survives to the wire. H4
+            // (per-call, never memoised) is preserved: the ALS store IS
+            // per-request state, read here on every emit. CLI / VS Code
+            // callers never install marker context, so `getStore()` is
+            // undefined there and their real extractors keep winning.
+            framework: marker?.harness ?? framework,
             durationMs: Date.now() - start,
             success,
+            agentSession: marker?.agentSession ?? false,
+            nudgeOrigin: marker?.nudgeOrigin ?? false,
+            triggerId: marker?.triggerId ?? null,
           })
         }
       } catch {

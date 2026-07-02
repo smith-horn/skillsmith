@@ -32,6 +32,7 @@ import { readAuditSuggestions } from '../audit/audit-suggestions.js'
 import { applyRecommendedEdit } from '../audit/edit-applier.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 
+import { journalApplyError, journalApplySuccess } from './apply-journal.helpers.js'
 import type { ApplyRecommendedEditResponse } from './apply-recommended-edit.types.js'
 
 /**
@@ -147,7 +148,17 @@ async function applyRecommendedEditToolImpl(input: unknown): Promise<ApplyRecomm
     mode: 'apply_with_confirmation',
   })
 
+  // SMI-5456 §7: journal every real mutation attempt (apply already ran
+  // above the confirmation gate) on both the success and failure paths.
+  // Fail-soft — `journalApplySuccess` / `journalApplyError` never throw.
   if (!result.success) {
+    await journalApplyError({
+      tool: 'apply_recommended_edit',
+      suggestionId: result.collisionId,
+      targetPath: result.filePath || null,
+      approval: 'apply_with_confirmation',
+      errorKind: result.error?.kind ?? 'edit.unknown',
+    })
     // Surface the registry guard explicitly — callers branch on it to
     // know that the persisted edit will never apply (vs a transient
     // failure they can retry).
@@ -168,6 +179,14 @@ async function applyRecommendedEditToolImpl(input: unknown): Promise<ApplyRecomm
       result,
     }
   }
+
+  await journalApplySuccess({
+    tool: 'apply_recommended_edit',
+    suggestionId: result.collisionId,
+    targetPath: result.filePath,
+    backupRef: result.backupPath,
+    approval: 'apply_with_confirmation',
+  })
 
   return {
     success: true,

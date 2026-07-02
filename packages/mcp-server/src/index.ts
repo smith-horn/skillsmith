@@ -74,6 +74,11 @@ import {
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
+// SMI-5456: agent-mediation marker channel. Resolve the marker per tool call
+// (`_meta` wins, else the session marker file) and run the dispatch inside
+// its AsyncLocalStorage scope so `agent_session` / `nudge_origin` /
+// `trigger_id` land on the event — concurrency-safe under parallel tool calls.
+import { resolveAgentMarker, runWithMarkerContext } from '@skillsmith/core/telemetry'
 // SMI-5039: probe extracted from this file to @skillsmith/core/embeddings/probe.
 // The call site (before server.connect) is unchanged; only the implementation
 // moved so doc-retrieval-mcp + cli can share the same audited probe contract.
@@ -81,6 +86,10 @@ import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 import { resolveStartupFlag } from './cli-flags.js'
+// SMI-5456: curated agent tool profile — narrows ListTools to ~15 tools when
+// SKILLSMITH_TOOL_PROFILE=agent; no-op (full surface) otherwise. Listing-only,
+// see middleware/toolProfile.ts for the full contract.
+import { filterToolsForAgentProfile } from './middleware/toolProfile.js'
 
 // SMI-5125: re-export the inline Stripe webhook contract interfaces so the
 // canonical contract in `@smith-horn/enterprise/billing` can be type-equality
@@ -183,7 +192,7 @@ const server = new Server(
 // Handle list tools request
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: toolDefinitions.map((tool) => ({
+    tools: filterToolsForAgentProfile(toolDefinitions).map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
@@ -195,13 +204,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params
 
+  // SMI-5456: resolve the agent-mediation marker BEFORE dispatch and run the
+  // dispatch inside its AsyncLocalStorage scope so the withTelemetry emit
+  // (which fires in the wrapped handler's `finally`, inside this continuation)
+  // reads THIS call's marker. `_meta` is a loose passthrough field;
+  // resolveAgentMarker validates it defensively and falls back to the session
+  // marker file. ALS auto-scopes — no manual clearing, and parallel tool calls
+  // (harnesses batch them routinely) cannot observe or clear each other's
+  // marker.
+  const requestMeta = (request.params as { _meta?: unknown })._meta
+
   try {
-    return await dispatchToolCall(
-      name,
-      args as Record<string, unknown> | undefined,
-      toolContext,
-      licenseMiddleware,
-      quotaMiddleware
+    return await runWithMarkerContext(resolveAgentMarker(requestMeta), () =>
+      dispatchToolCall(
+        name,
+        args as Record<string, unknown> | undefined,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
     )
   } catch (error) {
     // SMI-4313: Validation now runs through `safeParseOrError` at every

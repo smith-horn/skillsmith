@@ -320,6 +320,16 @@ export interface TrackSkillInvokeParams {
   durationMs: number
   success: boolean
   distinctId?: string
+  /**
+   * SMI-5456 agent-mediation marker fields. Per-event, non-identifying; they
+   * ride the same consent-gated event as the rest of the payload.
+   */
+  /** True when the invocation is part of an agent-mediated session. */
+  agentSession?: boolean
+  /** True when the invocation originated from a nudge. */
+  nudgeOrigin?: boolean
+  /** Paywall / nudge trigger id, or null. */
+  triggerId?: string | null
 }
 
 /**
@@ -327,13 +337,27 @@ export interface TrackSkillInvokeParams {
  * Mirrors `trackSkillInstall()` — positional for resolved-ID callers.
  */
 export function trackSkillInvoke(params: TrackSkillInvokeParams): void {
-  const { skillId, source, framework, durationMs, success, distinctId = 'anonymous' } = params
+  const {
+    skillId,
+    source,
+    framework,
+    durationMs,
+    success,
+    distinctId = 'anonymous',
+    agentSession = false,
+    nudgeOrigin = false,
+    triggerId = null,
+  } = params
   trackEvent(distinctId, 'skill_invoke', {
     skill_id: skillId,
     invoke_source: source,
     framework,
     duration_ms: durationMs,
     success,
+    // SMI-5456: agent-mediation marker (per-event booleans + trigger id).
+    agent_session: agentSession,
+    nudge_origin: nudgeOrigin,
+    trigger_id: triggerId,
   })
 }
 
