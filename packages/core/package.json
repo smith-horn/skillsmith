@@ -135,6 +135,7 @@
     "tree-sitter-wasms": "0.1.13",
     "typescript": "5.9.3",
     "web-tree-sitter": "0.25.10",
+    "yaml": "^2.8.3",
     "zod": "4.2.1"
   },
   "optionalDependencies": {
@@ -144,8 +145,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
-    "vitest": "4.1.6",
-    "yaml": "^2.8.3"
+    "vitest": "4.1.6"
   },
   "files": [
     "dist",
