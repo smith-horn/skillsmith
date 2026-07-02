@@ -19,6 +19,7 @@ import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import { pricingTiers } from '../../lib/pricing-data'
 import Footer from '../../components/Footer.astro'
+import AccountSidebar from '../../components/AccountSidebar.astro'
 import Nav from '../../components/Nav.astro'
 
 // Read env vars at SSR time to inject into client script
@@ -62,200 +63,204 @@ const tierLookup = Object.fromEntries(
   <body>
     <Nav activePath="/account/subscription" />
 
-    <main class="subscription-container">
-      <!-- Team tier-gate notice (SMI-4321) — shown when the user was redirected
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
+
+      <main class="subscription-container">
+        <!-- Team tier-gate notice (SMI-4321) — shown when the user was redirected
            here from /account/team/** because their tier or subscription no longer
            qualifies for Team access. Populated client-side from ?gated=<reason>. -->
-      <div
-        id="team-gated-notice"
-        class="gated-notice"
-        style="display: none;"
-        role="status"
-        aria-live="polite"
-      >
-        <p id="team-gated-notice-text"></p>
-      </div>
-
-      <!-- Loading State -->
-      <div id="loading-state" class="loading-state">
-        <div class="spinner-container">
-          <svg class="spinner" viewBox="0 0 24 24">
-            <circle
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-              fill="none"
-              opacity="0.25"></circle>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-            ></path>
-          </svg>
+        <div
+          id="team-gated-notice"
+          class="gated-notice"
+          style="display: none;"
+          role="status"
+          aria-live="polite"
+        >
+          <p id="team-gated-notice-text"></p>
         </div>
-        <p>Loading subscription details...</p>
-      </div>
 
-      <!-- Error State -->
-      <div id="error-state" class="error-state" style="display: none;">
-        <div class="error-content">
-          <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            ></path>
-          </svg>
-          <h3>Failed to load subscription data</h3>
-          <p id="error-message">Something went wrong</p>
-          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+        <!-- Loading State -->
+        <div id="loading-state" class="loading-state">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <p>Loading subscription details...</p>
         </div>
-      </div>
 
-      <!-- Content -->
-      <div id="subscription-content" style="display: none;">
-        <h1>Manage Subscription</h1>
-
-        <!-- Current Plan Section -->
-        <section class="section">
-          <h2>Current Plan</h2>
-          <div class="current-plan-card">
-            <div class="plan-info">
-              <span class="tier-badge" id="current-tier-badge">Community</span>
-              <div class="plan-details">
-                <div class="plan-name" id="plan-name">Community Plan</div>
-                <div class="plan-price" id="plan-price">Free</div>
-              </div>
-            </div>
-            <div class="plan-meta" id="plan-meta">
-              <p>1,000 API calls per month</p>
-            </div>
+        <!-- Error State -->
+        <div id="error-state" class="error-state" style="display: none;">
+          <div class="error-content">
+            <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              ></path>
+            </svg>
+            <h3>Failed to load subscription data</h3>
+            <p id="error-message">Something went wrong</p>
+            <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
           </div>
+        </div>
 
-          <!-- Subscription Details (for paid tiers) -->
-          <div id="subscription-details" style="display: none;">
-            <div class="detail-row">
-              <span>Billing Period</span>
-              <span id="billing-period">Monthly</span>
-            </div>
-            <div class="detail-row">
-              <span>Next Billing Date</span>
-              <span id="next-billing">-</span>
-            </div>
-            <div class="detail-row" id="seat-count-row" style="display: none;">
-              <span>Team Seats</span>
-              <span id="seat-count">1</span>
-            </div>
-            <div class="detail-row">
-              <span>Status</span>
-              <span id="subscription-status" class="status-badge">Active</span>
-            </div>
-          </div>
-        </section>
+        <!-- Content -->
+        <div id="subscription-content" style="display: none;">
+          <h1>Manage Subscription</h1>
 
-        <!-- Seat Management Section (for team/enterprise) -->
-        <section class="section" id="seat-management-section" style="display: none;">
-          <h2>Team Seats</h2>
-          <div class="seat-management">
-            <div class="seat-info">
-              <p>Current seats: <strong id="current-seats">1</strong></p>
-              <p class="text-muted">Each additional seat is billed at your plan rate.</p>
-            </div>
-            <div class="seat-controls">
-              <button class="btn btn-secondary" id="decrease-seats">-</button>
-              <input type="number" id="new-seat-count" min="1" max="1000" value="1" />
-              <button class="btn btn-secondary" id="increase-seats">+</button>
-            </div>
-            <button class="btn btn-primary" id="update-seats-btn" disabled>Update Seats</button>
-            <p
-              id="seat-unavailable-note"
-              class="text-muted"
-              role="note"
-              aria-live="polite"
-              style="display: none;"
-            >
-            </p>
-          </div>
-        </section>
-
-        <!-- Upgrade/Downgrade Section -->
-        <section class="section">
-          <h2>Change Plan</h2>
-          <div class="plans-grid">
-            <div class="plan-option" data-tier="individual">
-              <div class="plan-header">
-                <span class="plan-tier">Individual</span>
-                <div class="plan-pricing">
-                  <span class="price">$9.99</span>
-                  <span class="period">/month</span>
+          <!-- Current Plan Section -->
+          <section class="section">
+            <h2>Current Plan</h2>
+            <div class="current-plan-card">
+              <div class="plan-info">
+                <span class="tier-badge" id="current-tier-badge">Community</span>
+                <div class="plan-details">
+                  <div class="plan-name" id="plan-name">Community Plan</div>
+                  <div class="plan-price" id="plan-price">Free</div>
                 </div>
               </div>
-              <ul class="plan-features">
-                <li>10,000 API calls/month</li>
-                <li>3 license keys</li>
-                <li>Email support</li>
-              </ul>
-              <button class="btn btn-primary btn-full select-plan-btn" data-tier="individual">
-                Select Individual
-              </button>
-            </div>
-
-            <div class="plan-option featured" data-tier="team">
-              <div class="featured-badge">Most Popular</div>
-              <div class="plan-header">
-                <span class="plan-tier">Team</span>
-                <div class="plan-pricing">
-                  <span class="price">$25</span>
-                  <span class="period">/user/month</span>
-                </div>
+              <div class="plan-meta" id="plan-meta">
+                <p>1,000 API calls per month</p>
               </div>
-              <ul class="plan-features">
-                <li>100,000 API calls/month</li>
-                <li>10 license keys</li>
-                <li>Priority support</li>
-              </ul>
-              <button class="btn btn-primary btn-full select-plan-btn" data-tier="team">
-                Select Team
-              </button>
             </div>
 
-            <div class="plan-option" data-tier="enterprise">
-              <div class="plan-header">
-                <span class="plan-tier">Enterprise</span>
-                <div class="plan-pricing">
-                  <span class="price">$55</span>
-                  <span class="period">/user/month</span>
-                </div>
+            <!-- Subscription Details (for paid tiers) -->
+            <div id="subscription-details" style="display: none;">
+              <div class="detail-row">
+                <span>Billing Period</span>
+                <span id="billing-period">Monthly</span>
               </div>
-              <ul class="plan-features">
-                <li>Unlimited API calls</li>
-                <li>50 license keys</li>
-                <li>99.9% SLA guarantee</li>
-                <li>Dedicated support</li>
-              </ul>
-              <button class="btn btn-primary btn-full select-plan-btn" data-tier="enterprise">
-                Select Enterprise
-              </button>
+              <div class="detail-row">
+                <span>Next Billing Date</span>
+                <span id="next-billing">-</span>
+              </div>
+              <div class="detail-row" id="seat-count-row" style="display: none;">
+                <span>Team Seats</span>
+                <span id="seat-count">1</span>
+              </div>
+              <div class="detail-row">
+                <span>Status</span>
+                <span id="subscription-status" class="status-badge">Active</span>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- Cancel Section -->
-        <section class="section" id="cancel-section" style="display: none;">
-          <h2>Cancel Subscription</h2>
-          <div class="cancel-info">
-            <p>
-              If you cancel, your subscription will remain active until the end of your current
-              billing period.
-            </p>
-            <p class="text-muted">
-              After cancellation, you'll be downgraded to the free Community plan.
-            </p>
-            <button class="btn btn-danger" id="cancel-btn">Cancel Subscription</button>
-          </div>
-        </section>
-      </div>
-    </main>
+          <!-- Seat Management Section (for team/enterprise) -->
+          <section class="section" id="seat-management-section" style="display: none;">
+            <h2>Team Seats</h2>
+            <div class="seat-management">
+              <div class="seat-info">
+                <p>Current seats: <strong id="current-seats">1</strong></p>
+                <p class="text-muted">Each additional seat is billed at your plan rate.</p>
+              </div>
+              <div class="seat-controls">
+                <button class="btn btn-secondary" id="decrease-seats">-</button>
+                <input type="number" id="new-seat-count" min="1" max="1000" value="1" />
+                <button class="btn btn-secondary" id="increase-seats">+</button>
+              </div>
+              <button class="btn btn-primary" id="update-seats-btn" disabled>Update Seats</button>
+              <p
+                id="seat-unavailable-note"
+                class="text-muted"
+                role="note"
+                aria-live="polite"
+                style="display: none;"
+              >
+              </p>
+            </div>
+          </section>
+
+          <!-- Upgrade/Downgrade Section -->
+          <section class="section">
+            <h2>Change Plan</h2>
+            <div class="plans-grid">
+              <div class="plan-option" data-tier="individual">
+                <div class="plan-header">
+                  <span class="plan-tier">Individual</span>
+                  <div class="plan-pricing">
+                    <span class="price">$9.99</span>
+                    <span class="period">/month</span>
+                  </div>
+                </div>
+                <ul class="plan-features">
+                  <li>10,000 API calls/month</li>
+                  <li>3 license keys</li>
+                  <li>Email support</li>
+                </ul>
+                <button class="btn btn-primary btn-full select-plan-btn" data-tier="individual">
+                  Select Individual
+                </button>
+              </div>
+
+              <div class="plan-option featured" data-tier="team">
+                <div class="featured-badge">Most Popular</div>
+                <div class="plan-header">
+                  <span class="plan-tier">Team</span>
+                  <div class="plan-pricing">
+                    <span class="price">$25</span>
+                    <span class="period">/user/month</span>
+                  </div>
+                </div>
+                <ul class="plan-features">
+                  <li>100,000 API calls/month</li>
+                  <li>10 license keys</li>
+                  <li>Priority support</li>
+                </ul>
+                <button class="btn btn-primary btn-full select-plan-btn" data-tier="team">
+                  Select Team
+                </button>
+              </div>
+
+              <div class="plan-option" data-tier="enterprise">
+                <div class="plan-header">
+                  <span class="plan-tier">Enterprise</span>
+                  <div class="plan-pricing">
+                    <span class="price">$55</span>
+                    <span class="period">/user/month</span>
+                  </div>
+                </div>
+                <ul class="plan-features">
+                  <li>Unlimited API calls</li>
+                  <li>50 license keys</li>
+                  <li>99.9% SLA guarantee</li>
+                  <li>Dedicated support</li>
+                </ul>
+                <button class="btn btn-primary btn-full select-plan-btn" data-tier="enterprise">
+                  Select Enterprise
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Cancel Section -->
+          <section class="section" id="cancel-section" style="display: none;">
+            <h2>Cancel Subscription</h2>
+            <div class="cancel-info">
+              <p>
+                If you cancel, your subscription will remain active until the end of your current
+                billing period.
+              </p>
+              <p class="text-muted">
+                After cancellation, you'll be downgraded to the free Community plan.
+              </p>
+              <button class="btn btn-danger" id="cancel-btn">Cancel Subscription</button>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
 
     <Footer compact />
   </body>

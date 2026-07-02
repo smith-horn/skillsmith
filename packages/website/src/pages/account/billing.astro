@@ -16,6 +16,7 @@
 export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
+import AccountSidebar from '../../components/AccountSidebar.astro'
 import Nav from '../../components/Nav.astro'
 import Footer from '../../components/Footer.astro'
 import { getSupabaseConfig } from '../../lib/supabase-config'
@@ -48,113 +49,117 @@ const supabaseConfig = getSupabaseConfig()
   <body>
     <Nav activePath="/account/billing" />
 
-    <main class="billing-container">
-      <!-- Loading State -->
-      <div id="loading-state" class="loading-state">
-        <div class="spinner-container">
-          <svg class="spinner" viewBox="0 0 24 24">
-            <circle
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-              fill="none"
-              opacity="0.25"></circle>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-            ></path>
-          </svg>
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
+
+      <main class="billing-container">
+        <!-- Loading State -->
+        <div id="loading-state" class="loading-state">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <p>Loading billing history...</p>
         </div>
-        <p>Loading billing history...</p>
-      </div>
 
-      <!-- Error State -->
-      <div id="error-state" class="error-state" style="display: none;">
-        <div class="error-content">
-          <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            ></path>
-          </svg>
-          <h3>Failed to load billing data</h3>
-          <p id="error-message">Something went wrong</p>
-          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+        <!-- Error State -->
+        <div id="error-state" class="error-state" style="display: none;">
+          <div class="error-content">
+            <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              ></path>
+            </svg>
+            <h3>Failed to load billing data</h3>
+            <p id="error-message">Something went wrong</p>
+            <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+          </div>
         </div>
-      </div>
 
-      <!-- Content -->
-      <div id="billing-content" style="display: none;">
-        <h1>Billing History</h1>
+        <!-- Content -->
+        <div id="billing-content" style="display: none;">
+          <h1>Billing History</h1>
 
-        <!-- Current Subscription Summary -->
-        <section class="section">
-          <h2>Current Subscription</h2>
-          <div class="subscription-summary" id="subscription-summary">
-            <div class="summary-item">
-              <span class="label">Plan</span>
-              <span class="value" id="current-plan">Community</span>
+          <!-- Current Subscription Summary -->
+          <section class="section">
+            <h2>Current Subscription</h2>
+            <div class="subscription-summary" id="subscription-summary">
+              <div class="summary-item">
+                <span class="label">Plan</span>
+                <span class="value" id="current-plan">Community</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Status</span>
+                <span class="status-badge" id="subscription-status">Active</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Next Payment</span>
+                <span class="value" id="next-payment">-</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Amount</span>
+                <span class="value" id="payment-amount">Free</span>
+              </div>
             </div>
-            <div class="summary-item">
-              <span class="label">Status</span>
-              <span class="status-badge" id="subscription-status">Active</span>
-            </div>
-            <div class="summary-item">
-              <span class="label">Next Payment</span>
-              <span class="value" id="next-payment">-</span>
-            </div>
-            <div class="summary-item">
-              <span class="label">Amount</span>
-              <span class="value" id="payment-amount">Free</span>
-            </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- Payment Method -->
-        <section class="section">
-          <div class="section-header">
-            <h2>Payment Method</h2>
-            <button class="btn btn-secondary btn-sm" id="manage-payment-btn">Manage</button>
-          </div>
-          <div class="payment-method" id="payment-method">
-            <div class="no-payment">
-              <p>No payment method on file</p>
-              <p class="text-muted">Add a payment method to upgrade to a paid plan.</p>
+          <!-- Payment Method -->
+          <section class="section">
+            <div class="section-header">
+              <h2>Payment Method</h2>
+              <button class="btn btn-secondary btn-sm" id="manage-payment-btn">Manage</button>
             </div>
-          </div>
-        </section>
-
-        <!-- Invoice History -->
-        <section class="section">
-          <h2>Invoice History</h2>
-          <div class="invoices-list" id="invoices-list">
-            <div class="empty-state">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                <line x1="16" y1="2" x2="16" y2="6"></line>
-                <line x1="8" y1="2" x2="8" y2="6"></line>
-                <line x1="3" y1="10" x2="21" y2="10"></line>
-              </svg>
-              <p>No invoices yet</p>
-              <p class="text-muted">
-                Invoices will appear here once you have an active subscription.
-              </p>
+            <div class="payment-method" id="payment-method">
+              <div class="no-payment">
+                <p>No payment method on file</p>
+                <p class="text-muted">Add a payment method to upgrade to a paid plan.</p>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- Billing Contact -->
-        <section class="section">
-          <h2>Billing Contact</h2>
-          <div class="billing-contact" id="billing-contact">
-            <p class="text-muted">Invoices are sent to your account email.</p>
-            <p id="billing-email">-</p>
-          </div>
-        </section>
-      </div>
-    </main>
+          <!-- Invoice History -->
+          <section class="section">
+            <h2>Invoice History</h2>
+            <div class="invoices-list" id="invoices-list">
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="16" y1="2" x2="16" y2="6"></line>
+                  <line x1="8" y1="2" x2="8" y2="6"></line>
+                  <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                <p>No invoices yet</p>
+                <p class="text-muted">
+                  Invoices will appear here once you have an active subscription.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Billing Contact -->
+          <section class="section">
+            <h2>Billing Contact</h2>
+            <div class="billing-contact" id="billing-contact">
+              <p class="text-muted">Invoices are sent to your account email.</p>
+              <p id="billing-email">-</p>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
 
     <Footer compact />
   </body>
