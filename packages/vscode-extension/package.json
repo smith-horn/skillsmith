@@ -391,7 +391,7 @@
     "@types/mocha": "10.0.10",
     "@types/node": "^25.9.3",
     "@types/sanitize-html": "2.16.1",
-    "@types/vscode": "1.110.0",
+    "@types/vscode": "1.125.0",
     "@vscode/test-electron": "2.5.2",
     "@vscode/vsce": "2.32.0",
     "@wdio/cli": "9.29.0",
