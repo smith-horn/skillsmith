@@ -79,22 +79,30 @@ export function markBackedUp(path: string, alreadyBackedUpPaths: Set<string> | u
  *
  * There is no injected marker field in the entry value itself (that would
  * pollute a config another tool's strict-schema client might read) — instead
- * this checks for the structural fingerprint our own entries always carry:
- * an `args` array mentioning `@skillsmith/mcp-server`, or an `env.SKILLSMITH_TOOL_PROFILE`
- * key. Either is a strong, low-false-positive signal.
+ * this checks for the structural fingerprint our own entries always carry,
+ * across BOTH entry conventions the installer writes:
+ *   - mcpServers convention (claude-code/cursor/copilot/windsurf/hermes):
+ *     an `args` array mentioning `@skillsmith/mcp-server`, or an
+ *     `env.SKILLSMITH_TOOL_PROFILE` key.
+ *   - OpenCode convention (`buildOpenCodeMcpEntryValue`): a `command` ARRAY
+ *     mentioning `@skillsmith/mcp-server`, or an
+ *     `environment.SKILLSMITH_TOOL_PROFILE` key. Without these two checks, a
+ *     re-install after any entry-value change would misclassify our own
+ *     prior OpenCode entry as foreign and refuse to update it.
+ * Any one is a strong, low-false-positive signal.
  */
 export function looksLikeOurMcpEntry(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
-  const args = v.args
-  if (
-    Array.isArray(args) &&
-    args.some((a) => typeof a === 'string' && a.includes('@skillsmith/mcp-server'))
-  ) {
-    return true
-  }
-  const env = v.env
-  if (env && typeof env === 'object' && 'SKILLSMITH_TOOL_PROFILE' in (env as object)) return true
+  const mentionsOurPackage = (arr: unknown): boolean =>
+    Array.isArray(arr) &&
+    arr.some((a) => typeof a === 'string' && a.includes('@skillsmith/mcp-server'))
+  if (mentionsOurPackage(v.args)) return true
+  if (mentionsOurPackage(v.command)) return true
+  const hasProfileKey = (obj: unknown): boolean =>
+    !!obj && typeof obj === 'object' && 'SKILLSMITH_TOOL_PROFILE' in (obj as object)
+  if (hasProfileKey(v.env)) return true
+  if (hasProfileKey(v.environment)) return true
   return false
 }
 

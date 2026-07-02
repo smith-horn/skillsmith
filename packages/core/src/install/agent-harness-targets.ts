@@ -10,27 +10,35 @@
  * Confidence levels (documented per plan's own Validation Ladder philosophy —
  * Level 2a/3 in docs/internal/implementation/smi-5456-skillsmith-agent-wave1.md
  * is explicitly where per-harness wire formats get confirmed against real
- * harness binaries):
+ * harness binaries; Step-6 eval-worker web-verification 2026-07-01 upgraded
+ * three rows from the original Step-5 estimates):
  *   - claude-code, cursor, windsurf: HIGH — MCP config path/shape verified
  *     against `packages/cli/src/templates/mcp-server.template.snippets.ts`
  *     (SMI-4580, already shipped and used in docs/website).
  *   - hermes: HIGH for the skill path + YAML config shape (spike report §(b),
  *     3 independent official doc pages agree); hooks are spike-verified
- *     ABSENT (no SessionStart equivalent) — {@link AGENT_HARNESS_TARGETS}
+ *     ABSENT (no SessionStart equivalent) — {@link AGENT_HOOK_TARGETS}
  *     therefore carries no hook target for hermes.
  *   - codex: HIGH for the config file path (`~/.codex/config.toml`, same
- *     snippet table); MEDIUM for the exact `[hooks]` table shape (spike
- *     report §(e) confirms Codex hooks exist and cites `updatedInput` on
- *     `arguments`, not the SessionStart hook-registration TOML shape itself).
- *   - copilot: MEDIUM — targets `~/.copilot/mcp.json` (mirrors the existing
- *     `~/.copilot/skills` convention in `paths.ts`) rather than VS Code's
- *     workspace-scoped `.vscode/mcp.json`, since `sklx agent install` is a
- *     global (not per-project) command; workspace-level registration is a
- *     known Wave-1 gap (see the Step-5 worker report).
- *   - opencode: LOW-MEDIUM — `~/.config/opencode/opencode.json` under a
- *     `mcp` key is a best-effort placement pending Step-6 confirmation; the
- *     installer's merge is fail-soft (a wrong path/shape here degrades to a
- *     per-harness report warning, never a crash of the whole install).
+ *     snippet table) AND — per Step-6 verification of
+ *     developers.openai.com/codex/hooks — HIGH for the hook-registration
+ *     shape: inline `[[hooks.SessionStart]]` / `[[hooks.SessionStart.hooks]]`
+ *     array-of-tables carrying `{type, command, timeout, statusMessage}`.
+ *     Codex has NO SessionEnd event, and its Stop event fires PER-TURN (not
+ *     per-session) — see `installCodexHooks` in
+ *     `agent-pack-installer.harness.ts` for why nothing is wired for cleanup.
+ *   - copilot: HIGH — `~/.copilot/mcp-config.json`, top-level `mcpServers`
+ *     key (Step-6 verified; the earlier `mcp.json` guess was wrong). Global,
+ *     not VS Code's workspace `.vscode/mcp.json`, remains correct: Copilot
+ *     CLI removed `.vscode/mcp.json` support, and `sklx agent install` is a
+ *     global (not per-project) command.
+ *   - opencode: HIGH — `~/.config/opencode/opencode.json` under the `mcp`
+ *     key, entries typed `local|remote` (Step-6 verified against
+ *     opencode.ai/docs; entry VALUE shape differs from the mcpServers
+ *     convention — see `buildOpenCodeMcpEntryValue` in
+ *     `agent-pack-installer.entry.ts`). Agent markdown lives at
+ *     `~/.config/opencode/agents/` — plural (opencode.ai/docs/agents/; the
+ *     earlier singular `agent/` guess was wrong).
  */
 
 import { homedir } from 'node:os'
@@ -101,7 +109,7 @@ export const AGENT_MCP_TARGETS: Readonly<Record<McpHarnessId, McpConfigTarget>> 
   },
   copilot: {
     harness: 'copilot',
-    path: join(home, '.copilot', 'mcp.json'),
+    path: join(home, '.copilot', 'mcp-config.json'),
     format: 'json',
     keyPath: ['mcpServers'],
   },
@@ -151,9 +159,9 @@ export const AGENT_SHIM_TARGETS: Readonly<Record<HarnessId, ShimTarget | null>> 
   },
   opencode: {
     harness: 'opencode',
-    // Best-effort (LOW-MEDIUM confidence, see module header) — pending
-    // Step-6 confirmation of OpenCode's agent-file directory convention.
-    path: join(home, '.config', 'opencode', 'agent', 'skillsmith-agent.md'),
+    // Step-6 verified (opencode.ai/docs/agents/): global agent markdown
+    // lives at ~/.config/opencode/agents/ — plural.
+    path: join(home, '.config', 'opencode', 'agents', 'skillsmith-agent.md'),
   },
   // Codex's shim is a TOML `[agents.*]` table entry merged into
   // ~/.codex/config.toml, not a standalone file — see AGENT_MCP_TARGETS.codex
@@ -188,6 +196,9 @@ export const AGENT_HOOK_TARGETS: Readonly<
     scriptDir: join(home, '.codex', 'hooks'),
     configPath: join(home, '.codex', 'config.toml'),
     configFormat: 'toml-block',
+    // Unused for toml-block wiring (the block text carries its own
+    // `[[hooks.SessionStart]]` headers); SessionEnd does not exist as a
+    // Codex event at all — see `installCodexHooks`.
     sessionStartKeyPath: [],
     sessionEndKeyPath: [],
   },

@@ -144,19 +144,23 @@ SKILLSMITH_API_KEY = "sk_live_..."`,
     label: 'OpenCode',
     configPath: '~/.config/opencode/opencode.json',
     format: 'json',
+    // OpenCode's own entry schema (verified opencode.ai/docs/mcp-servers/):
+    // typed local|remote, `command` is an ARRAY (command + args combined),
+    // env vars live under `environment` (not `env`).
     body: `{
   "mcp": {
     "{{name}}": {
-      "command": "npx",
-      "args": ["-y", "{{name}}"],
-      "env": {
+      "type": "local",
+      "command": ["npx", "-y", "{{name}}"],
+      "enabled": true,
+      "environment": {
         "SKILLSMITH_API_KEY": "sk_live_..."
       }
     }
   }
 }`,
     notes:
-      'OpenCode also reads .claude/skills and .agents/skills for skill discovery. Config path/key are best-effort pending live confirmation.',
+      'OpenCode also reads .claude/skills and .agents/skills for skill discovery. Note the OpenCode-specific entry shape: command is an array and the env-var field is named environment.',
   },
   hermes: {
     label: 'Hermes (Nous Research)',

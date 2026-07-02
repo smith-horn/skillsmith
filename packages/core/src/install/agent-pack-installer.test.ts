@@ -1,6 +1,5 @@
 /**
- * @fileoverview Tests for `installAgentPack` / `uninstallAgentPack`
- *               (SMI-5456 Wave 1 Step 5).
+ * @fileoverview Tests for `installAgentPack` (SMI-5456 Wave 1 Step 5).
  * @module @skillsmith/core/install/agent-pack-installer.test
  *
  * Covers the P-5 "Harness MCP config files" + "Dual-path pack copies"
@@ -8,11 +7,12 @@
  * docs/internal/implementation/smi-5456-skillsmith-agent-wave1.md:
  *   - install to a temp HOME: dual-path byte-identical
  *   - shims only for detected harnesses
- *   - hooks +x
- *   - MCP config JSON-merge result correct
+ *   - hooks +x (incl. Codex SessionStart TOML wiring, Step-6 corrected)
+ *   - MCP config JSON/YAML/TOML merge results correct
  *   - double-install idempotency (no duplicate backups/manifest entries)
  *   - preserve-existing (non-interactive refusal path)
- *   - uninstall exact-reversal
+ * The uninstall exact-reversal + manifest-path-guard suites live in
+ * `agent-pack-uninstaller.test.ts` (split at the 500-line gate).
  */
 import {
   existsSync,
@@ -29,7 +29,6 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { installAgentPack } from './agent-pack-installer.js'
-import { uninstallAgentPack } from './agent-pack-uninstaller.js'
 import {
   AGENT_INSTALL_DIR_ENV_VAR,
   getAgentInstallBackupsDir,
@@ -139,6 +138,176 @@ describe('installAgentPack — dual-path + shim + hook + MCP', () => {
     expect(report?.mcpConfig?.status).toBe('created')
   })
 
+  // Step-6 correction (2026-07-01): Codex hook wiring is now implemented —
+  // the inline `[[hooks.SessionStart]]` array-of-tables shape was verified
+  // against developers.openai.com/codex/hooks.
+  it('wires the codex SessionStart hook as a marker-delimited [[hooks.SessionStart]] TOML block', () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    const result = installAgentPack({ homeDir })
+    const configPath = join(homeDir, '.codex', 'config.toml')
+    const content = readFileSync(configPath, 'utf-8')
+    const startScript = join(homeDir, '.codex', 'hooks', 'session-start.sh')
+
+    expect(content).toContain('# >>> skillsmith:hooks.SessionStart >>>')
+    expect(content).toContain('[[hooks.SessionStart]]')
+    expect(content).toContain('[[hooks.SessionStart.hooks]]')
+    expect(content).toContain('type = "command"')
+    expect(content).toContain(JSON.stringify(startScript))
+
+    const report = result.harnessReports.find((r) => r.harness === 'codex')
+    expect(report?.hooksInstalled).toBe(true)
+    expect(report?.hookConfig.some((w) => w.status === 'created')).toBe(true)
+  })
+
+  it('does NOT wire any codex SessionEnd/Stop cleanup (no SessionEnd event; Stop is per-turn)', () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    const result = installAgentPack({ homeDir })
+    const configPath = join(homeDir, '.codex', 'config.toml')
+    const content = readFileSync(configPath, 'utf-8')
+
+    expect(content).not.toContain('SessionEnd')
+    expect(content).not.toContain('hooks.Stop')
+    expect(content).not.toContain('session-end.sh')
+
+    // session-end.sh is still INSTALLED (inert, manifest-tracked) so the
+    // script tree stays uniform across hook-capable harnesses.
+    const endScript = join(homeDir, '.codex', 'hooks', 'session-end.sh')
+    expect(existsSync(endScript)).toBe(true)
+    expect((statSync(endScript).mode & 0o111) !== 0).toBe(true)
+
+    const report = result.harnessReports.find((r) => r.harness === 'codex')
+    expect(report?.notes.some((n) => n.includes('no SessionEnd event'))).toBe(true)
+  })
+
+  it('refuses codex hook wiring (conflict) when the user defined [hooks.SessionStart] as a plain table', () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    const configPath = join(homeDir, '.codex', 'config.toml')
+    // Single-bracket TABLE — appending our [[...]] array entry would make
+    // the file invalid TOML, so this must be a non-destructive refusal.
+    const preExisting = '[hooks.SessionStart]\nsomething = "user-defined"\n'
+    writeFileSync(configPath, preExisting)
+
+    const result = installAgentPack({ homeDir })
+    const content = readFileSync(configPath, 'utf-8')
+
+    expect(content).toContain('something = "user-defined"')
+    expect(content).not.toContain('# >>> skillsmith:hooks.SessionStart >>>')
+    const report = result.harnessReports.find((r) => r.harness === 'codex')
+    expect(report?.hookConfig.some((w) => w.status === 'conflict')).toBe(true)
+    expect(report?.notes.some((n) => n.includes('plain TOML table'))).toBe(true)
+  })
+
+  it("appends alongside a user's own [[hooks.SessionStart]] array entry (valid TOML coexistence)", () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    const configPath = join(homeDir, '.codex', 'config.toml')
+    const userHook = [
+      '[[hooks.SessionStart]]',
+      '',
+      '[[hooks.SessionStart.hooks]]',
+      'type = "command"',
+      'command = "/usr/local/bin/my-own-hook.sh"',
+      '',
+    ].join('\n')
+    writeFileSync(configPath, userHook)
+
+    installAgentPack({ homeDir })
+    const content = readFileSync(configPath, 'utf-8')
+
+    // Both hooks present: the user's untouched, ours marker-delimited.
+    expect(content).toContain('/usr/local/bin/my-own-hook.sh')
+    expect(content).toContain('# >>> skillsmith:hooks.SessionStart >>>')
+    expect(content.split('[[hooks.SessionStart]]').length - 1).toBe(2)
+  })
+
+  // Step-6 corrections (2026-07-01): opencode agent dir is `agents/`
+  // (plural, opencode.ai/docs/agents/) and its MCP entry uses OpenCode's own
+  // schema (type local|remote, command ARRAY, `environment` not `env`).
+  it('writes the opencode shim to agents/ (plural) and an OpenCode-schema MCP entry when detected', () => {
+    mkdirSync(join(homeDir, '.config', 'opencode', 'skills'), { recursive: true })
+    const result = installAgentPack({ homeDir })
+
+    const shimPath = join(homeDir, '.config', 'opencode', 'agents', 'skillsmith-agent.md')
+    expect(existsSync(shimPath)).toBe(true)
+    expect(existsSync(join(homeDir, '.config', 'opencode', 'agent', 'skillsmith-agent.md'))).toBe(
+      false
+    )
+
+    const configPath = join(homeDir, '.config', 'opencode', 'opencode.json')
+    const doc = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      mcp: {
+        skillsmith: {
+          type: string
+          command: string[]
+          environment: Record<string, string>
+          env?: unknown
+          args?: unknown
+        }
+      }
+    }
+    expect(doc.mcp.skillsmith.type).toBe('local')
+    expect(Array.isArray(doc.mcp.skillsmith.command)).toBe(true)
+    expect(doc.mcp.skillsmith.command).toContain('@skillsmith/mcp-server')
+    expect(doc.mcp.skillsmith.environment.SKILLSMITH_TOOL_PROFILE).toBe('agent')
+    expect(doc.mcp.skillsmith.env).toBeUndefined()
+    expect(doc.mcp.skillsmith.args).toBeUndefined()
+
+    const report = result.harnessReports.find((r) => r.harness === 'opencode')
+    expect(report?.detected).toBe(true)
+    expect(report?.shimWritten).toBe(true)
+    expect(report?.mcpConfig?.status).toBe('created')
+  })
+
+  it('recognizes a prior-install OpenCode-schema entry as OURS and updates it without --force', () => {
+    mkdirSync(join(homeDir, '.config', 'opencode', 'skills'), { recursive: true })
+    const configPath = join(homeDir, '.config', 'opencode', 'opencode.json')
+    // Simulates an entry a PREVIOUS sklx version wrote: same OpenCode schema,
+    // same package, but stale field content. Without the command-array /
+    // `environment` checks in looksLikeOurMcpEntry, this would be
+    // misclassified as foreign and refuse to update.
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          mcp: {
+            skillsmith: {
+              type: 'local',
+              command: ['npx', '-y', '@skillsmith/mcp-server@0.0.1'],
+              environment: { SKILLSMITH_TOOL_PROFILE: 'agent', STALE_VAR: 'x' },
+            },
+          },
+        },
+        null,
+        2
+      )
+    )
+
+    const result = installAgentPack({ homeDir })
+    const report = result.harnessReports.find((r) => r.harness === 'opencode')
+    expect(report?.mcpConfig?.status).toBe('updated')
+
+    const doc = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      mcp: { skillsmith: { command: string[]; environment: Record<string, string> } }
+    }
+    expect(doc.mcp.skillsmith.command).toContain('@skillsmith/mcp-server')
+    expect(doc.mcp.skillsmith.environment.STALE_VAR).toBeUndefined()
+  })
+
+  it('writes the copilot MCP entry to mcp-config.json (Step-6 corrected filename)', () => {
+    mkdirSync(join(homeDir, '.copilot', 'skills'), { recursive: true })
+    const result = installAgentPack({ homeDir })
+
+    const configPath = join(homeDir, '.copilot', 'mcp-config.json')
+    expect(existsSync(configPath)).toBe(true)
+    expect(existsSync(join(homeDir, '.copilot', 'mcp.json'))).toBe(false)
+    const doc = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      mcpServers: { skillsmith: { env: Record<string, string> } }
+    }
+    expect(doc.mcpServers.skillsmith.env.SKILLSMITH_TOOL_PROFILE).toBe('agent')
+
+    const report = result.harnessReports.find((r) => r.harness === 'copilot')
+    expect(report?.mcpConfig?.status).toBe('created')
+  })
+
   // Governance follow-up (2026-07-01): hermes is the ONLY detected harness
   // whose MCP config is YAML (`agent-config-merge.yaml.ts`) — before this
   // test, nothing in the installer suite ever created `~/.hermes`, so the
@@ -209,7 +378,17 @@ describe('installAgentPack — double-install idempotency', () => {
     const countOccurrences = (needle: string): number => content.split(needle).length - 1
     expect(countOccurrences('# >>> skillsmith:mcp_servers.skillsmith >>>')).toBe(1)
     expect(countOccurrences('# >>> skillsmith:agents.skillsmith-agent >>>')).toBe(1)
+    expect(countOccurrences('# >>> skillsmith:hooks.SessionStart >>>')).toBe(1)
     expect(countOccurrences('[mcp_servers.skillsmith]')).toBe(1)
+    expect(countOccurrences('[[hooks.SessionStart]]')).toBe(1)
+  })
+
+  it('reports the codex hook wiring as "unchanged" on the second install', () => {
+    mkdirSync(join(homeDir, '.codex'), { recursive: true })
+    installAgentPack({ homeDir })
+    const second = installAgentPack({ homeDir })
+    const report = second.harnessReports.find((r) => r.harness === 'codex')
+    expect(report?.hookConfig.some((w) => w.status === 'unchanged')).toBe(true)
   })
 
   it('reports mcpConfig status "unchanged" on the second install', () => {
@@ -296,152 +475,5 @@ describe('installAgentPack — preserve-existing (non-interactive refusal)', () 
     }
     const settingsEntry = manifest.entries.find((e) => e.path === settingsPath)
     expect(settingsEntry?.backupPath).not.toBeNull()
-  })
-})
-
-describe('uninstallAgentPack — exact reversal', () => {
-  it('removes everything install wrote and restores foreign entries it modified (not conflicted)', () => {
-    mkdirSync(join(homeDir, '.claude'), { recursive: true })
-    const settingsPath = join(homeDir, '.claude', 'settings.json')
-    writeFileSync(settingsPath, JSON.stringify({ someOtherKey: true }, null, 2))
-
-    installAgentPack({ homeDir })
-    expect(existsSync(skillPath('claude-code'))).toBe(true)
-    expect(existsSync(skillPath('agents'))).toBe(true)
-    expect(existsSync(join(homeDir, '.claude', 'agents', 'skillsmith-agent.md'))).toBe(true)
-
-    const result = uninstallAgentPack()
-
-    expect(existsSync(skillPath('claude-code'))).toBe(false)
-    expect(existsSync(skillPath('agents'))).toBe(false)
-    expect(existsSync(join(homeDir, '.claude', 'agents', 'skillsmith-agent.md'))).toBe(false)
-
-    // settings.json is restored to its pre-install content (someOtherKey
-    // survives, skillsmith/hooks keys are gone) rather than deleted, since
-    // it pre-existed with unrelated content. Asserting the FULL document
-    // (not just `mcpServers`) is the regression test for the "duplicate
-    // backups when hooks+MCP share a config file" bug the commit message
-    // claims fixed: a stray SECOND backup captured mid-install (after hooks
-    // were merged in but before MCP was) would restore a `hooks` key that
-    // never existed pre-install while still passing a narrower
-    // `mcpServers`-only assertion.
-    const doc = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
-    expect(doc).toEqual({ someOtherKey: true })
-    expect(doc.mcpServers).toBeUndefined()
-    expect(doc.hooks).toBeUndefined()
-
-    expect(result.restored).toContain(settingsPath)
-    expect(result.removed.length).toBeGreaterThan(0)
-  })
-
-  // Governance regression test (2026-07-01): a hand-tampered or corrupted
-  // manifest must never become an arbitrary-file-delete primitive. See
-  // `agent-manifest-path-guard.ts`.
-  it('refuses to delete or overwrite a manifest entry pointing outside any known installer target', () => {
-    installAgentPack({ homeDir })
-
-    // Simulate a tampered manifest: a "sensitive" file the installer never
-    // wrote, with a fabricated entry pointing `uninstallAgentPack` at it.
-    const sensitivePath = join(homeDir, 'not-an-installer-path.txt')
-    writeFileSync(sensitivePath, 'do not touch me')
-
-    const manifestPath = getAgentManifestPath()
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
-      entries: Array<{
-        path: string
-        kind: string
-        harness: string | null
-        backupPath: string | null
-        executable: boolean
-      }>
-    }
-    manifest.entries.push({
-      path: sensitivePath,
-      kind: 'skill',
-      harness: null,
-      backupPath: null,
-      executable: false,
-    })
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
-
-    const result = uninstallAgentPack()
-
-    // The sensitive file survives untouched...
-    expect(existsSync(sensitivePath)).toBe(true)
-    expect(readFileSync(sensitivePath, 'utf-8')).toBe('do not touch me')
-    // ...and is reported as rejected, not silently dropped or counted as removed.
-    expect(result.rejected).toContain(sensitivePath)
-    expect(result.removed).not.toContain(sensitivePath)
-  })
-
-  it('refuses to restore from a backupPath outside the manifest backups directory', () => {
-    mkdirSync(join(homeDir, '.claude'), { recursive: true })
-    const settingsPath = join(homeDir, '.claude', 'settings.json')
-    writeFileSync(settingsPath, JSON.stringify({ realCurrentContent: true }))
-
-    // A forged "backup" living OUTSIDE the trusted backups directory, whose
-    // content an attacker fully controls.
-    const forgedBackupPath = join(homeDir, 'forged-backup.json')
-    writeFileSync(forgedBackupPath, JSON.stringify({ attackerControlled: true }))
-
-    const manifestPath = getAgentManifestPath()
-    writeFileSync(
-      manifestPath,
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          installedAt: new Date().toISOString(),
-          packSchemaVersion: 1,
-          entries: [
-            {
-              path: settingsPath,
-              kind: 'mcp-config',
-              harness: 'claude-code',
-              backupPath: forgedBackupPath,
-              executable: false,
-            },
-          ],
-        },
-        null,
-        2
-      )
-    )
-
-    const result = uninstallAgentPack()
-
-    // settingsPath must NOT be overwritten with the forged backup's content.
-    const doc = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
-    expect(doc).toEqual({ realCurrentContent: true })
-    expect(result.rejected).toContain(settingsPath)
-    expect(result.restored).not.toContain(settingsPath)
-  })
-
-  it('deletes a config file entirely when install created it fresh (no backup)', () => {
-    installAgentPack({ homeDir })
-    const settingsPath = join(homeDir, '.claude', 'settings.json')
-    expect(existsSync(settingsPath)).toBe(true)
-
-    uninstallAgentPack()
-    // settings.json was created fresh by install (no pre-existing content) —
-    // it is a "removed" (deleted) entry, not "restored".
-    expect(existsSync(settingsPath)).toBe(false)
-  })
-
-  it('is a no-op (not an error) for a manifest entry the user already deleted manually', () => {
-    installAgentPack({ homeDir })
-    rmSync(skillPath('claude-code'))
-    const result = uninstallAgentPack()
-    expect(result.alreadyGone).toContain(skillPath('claude-code'))
-  })
-
-  it('leaves foreign entries in OTHER, never-touched files untouched', () => {
-    mkdirSync(join(homeDir, '.gitconfig-like-dir'), { recursive: true })
-    const untouchedPath = join(homeDir, '.gitconfig-like-dir', 'config')
-    writeFileSync(untouchedPath, 'unrelated content\n')
-
-    installAgentPack({ homeDir })
-    uninstallAgentPack()
-
-    expect(readFileSync(untouchedPath, 'utf-8')).toBe('unrelated content\n')
   })
 })

@@ -23,9 +23,12 @@ import { mergeTomlBlock } from './agent-config-merge.toml-block.js'
 import { mergeJsonArrayEntry } from './agent-config-merge.json-array.js'
 import {
   CODEX_AGENTS_FOREIGN_HEADER,
+  CODEX_HOOKS_TABLE_CONFLICT_HEADER,
   CODEX_MCP_FOREIGN_HEADER,
   buildAgentMcpEntryValue,
   buildCodexMcpTomlBlock,
+  buildCodexSessionStartHookBlock,
+  buildOpenCodeMcpEntryValue,
 } from './agent-pack-installer.entry.js'
 import { relocateUnderHome } from './agent-home-relocate.js'
 import { writeOwnedArtifactFile } from './agent-pack-installer.fs-helpers.js'
@@ -168,14 +171,29 @@ export function installJsonHooks(
 }
 
 /**
- * Install hook scripts for Codex, chmod +x, but do NOT attempt hook-config
- * wiring — the Codex `[hooks]` TOML shape is not well-grounded (see
- * `agent-harness-targets.ts` module header, MEDIUM confidence). Shipping a
- * guessed shape risks writing meaningless TOML into the user's config; the
- * honest choice is to install the script and say so in the report rather
- * than fabricate the wiring. Flagged for the Step-6 eval-matrix worker.
+ * Install hook scripts for Codex (+x) and wire the SessionStart hook into
+ * `~/.codex/config.toml` as a marker-delimited `[[hooks.SessionStart]]`
+ * array-of-tables block (shape Step-6-verified against
+ * developers.openai.com/codex/hooks).
+ *
+ * SessionStart ONLY — deliberate, do not "complete" this:
+ *   - Codex has NO SessionEnd event. There is nothing to wire the
+ *     session-end.sh cleanup script to.
+ *   - Codex's Stop event fires PER-TURN, not per-session. Wiring the marker
+ *     cleanup there would delete the agent-mediation marker file after the
+ *     FIRST turn, silently unmarking every subsequent tool call in the same
+ *     session and corrupting the mediation-share metric the whole Wave-1
+ *     bet is measured by.
+ *   - Cleanup therefore rides the server's 12h marker TTL
+ *     (`telemetry/agent-marker.ts` `AGENT_MARKER_TTL_MS`) — the same
+ *     crash-backstop path every harness already relies on.
+ *
+ * session-end.sh is still installed (inert on Codex — nothing invokes it):
+ * it keeps the on-disk script tree identical across hook-capable harnesses
+ * and stays manifest-tracked, so uninstall removes it like any other owned
+ * file. Zero uninstall complication.
  */
-export function installCodexHookScriptsOnly(
+export function installCodexHooks(
   startArtifact: AgentPackArtifact | undefined,
   endArtifact: AgentPackArtifact | undefined,
   ctx: HarnessInstallCtx,
@@ -215,8 +233,37 @@ export function installCodexHookScriptsOnly(
     }
   )
   report.hooksInstalled = true
+
+  const configPath = relocateUnderHome(target.configPath, ctx.homeDir)
+  const wire = mergeTomlBlock({
+    path: configPath,
+    markerId: 'hooks.SessionStart',
+    blockContent: buildCodexSessionStartHookBlock(startPath),
+    foreignHeaderPattern: CODEX_HOOKS_TABLE_CONFLICT_HEADER,
+    backupDir: ctx.backupDir,
+    force: ctx.force,
+    alreadyBackedUpPaths: ctx.backedUpPaths,
+  })
+  report.hookConfig.push(wire)
+  if (mergeSucceeded(wire.status)) {
+    ctx.entries.push({
+      path: configPath,
+      kind: 'hook-config',
+      harness: 'codex',
+      backupPath: wire.backupPath,
+      executable: false,
+    })
+  }
+  if (wire.status === 'conflict') {
+    report.notes.push(
+      `Codex hook wiring skipped: ${configPath} defines [hooks.SessionStart] as a plain TOML table — appending our [[hooks.SessionStart]] array entry would make the file invalid TOML. Wire ${startPath} manually.`
+    )
+  }
+  if (wire.status === 'error') {
+    report.notes.push(`Codex hook wiring failed at ${configPath}: ${wire.errorMessage}`)
+  }
   report.notes.push(
-    `hook scripts installed at ${scriptDir} but NOT wired into ~/.codex/config.toml — the Codex [hooks] TOML shape is unverified (see agent-harness-targets.ts); wire manually or await Step-6 confirmation.`
+    'Codex: session-end.sh installed but not wired — Codex has no SessionEnd event and its Stop event fires per-turn (wiring cleanup there would break session-scoped mediation marking); marker cleanup rides the server-side 12h TTL.'
   )
 }
 
@@ -285,7 +332,11 @@ export function installMcpConfig(
 ): void {
   const target = AGENT_MCP_TARGETS[harness]
   const path = relocateUnderHome(target.path, ctx.homeDir)
-  const entryValue = buildAgentMcpEntryValue()
+  // OpenCode's entry schema is structurally different from the mcpServers
+  // convention (typed local|remote, command-array, `environment`) — see
+  // buildOpenCodeMcpEntryValue.
+  const entryValue =
+    harness === 'opencode' ? buildOpenCodeMcpEntryValue() : buildAgentMcpEntryValue()
 
   const result =
     target.format === 'json'

@@ -12,8 +12,10 @@
  *     own TOML-merge "shim").
  *   - SessionStart/SessionEnd hooks (+x) for claude-code (always), cursor
  *     and codex when detected — hook CONFIG wiring ships for claude-code/
- *     cursor (JSON); Codex hook wiring is deliberately NOT attempted (see
- *     `agent-pack-installer.harness.ts`).
+ *     cursor (JSON arrays) and codex (SessionStart ONLY, as a
+ *     marker-delimited `[[hooks.SessionStart]]` TOML block; Codex has no
+ *     SessionEnd event and its Stop event is per-turn — see
+ *     `installCodexHooks` in `agent-pack-installer.harness.ts`).
  *   - The `skillsmith` MCP server registration (`SKILLSMITH_TOOL_PROFILE=agent`)
  *     for every detected MCP-capable harness (all 7), backup-first,
  *     idempotent, preserve-and-prompt on a foreign entry.
@@ -45,7 +47,7 @@ import {
 } from './agent-manifest.js'
 import {
   installCodexAgentsShim,
-  installCodexHookScriptsOnly,
+  installCodexHooks,
   installJsonHooks,
   installMcpConfig,
   installShim,
@@ -203,7 +205,7 @@ export function installAgentPack(opts: AgentInstallOptions = {}): AgentInstallRe
         )
       }
       if (harness === 'codex') {
-        installCodexHookScriptsOnly(
+        installCodexHooks(
           hookStartByHarness.get('codex'),
           hookEndByHarness.get('codex'),
           ctx,
