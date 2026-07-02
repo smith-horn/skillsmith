@@ -80,6 +80,20 @@ test.describe('account sidebar (SMI-5475)', () => {
     }
   })
 
+  test('formerly Nav-less pages now render top Nav + sidebar', async ({ page }) => {
+    // profile and outreach-preferences shipped without <Nav> until SMI-5475.
+    for (const { path, href } of [
+      { path: '/account/profile', href: '/account/profile' },
+      { path: '/account/outreach-preferences', href: '/account/outreach-preferences' },
+    ]) {
+      await page.goto(path)
+      await expect(page.locator('nav.nav-container')).toHaveCount(1)
+      const active = page.locator('.account-sidebar a[aria-current="page"]')
+      await expect(active).toHaveCount(1)
+      await expect(active).toHaveAttribute('href', href)
+    }
+  })
+
   test('visibility follows the docs breakpoint (hidden below 1024px)', async ({ page }) => {
     await page.goto('/account')
 

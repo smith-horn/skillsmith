@@ -14,7 +14,9 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
+import AccountSidebar from '../../components/AccountSidebar.astro'
 import Footer from '../../components/Footer.astro'
+import Nav from '../../components/Nav.astro'
 import '../../styles/account-profile.css'
 
 const supabaseConfig = getSupabaseConfig()
@@ -40,185 +42,192 @@ const supabaseConfig = getSupabaseConfig()
     <ClientRouter />
   </head>
   <body>
-    <main class="container">
-      <div id="loading-state" class="center-state">
-        <svg class="spinner" viewBox="0 0 24 24">
-          <circle
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            stroke-width="4"
-            fill="none"
-            opacity="0.25"></circle>
-          <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-          ></path>
-        </svg>
-        <p>Loading...</p>
-      </div>
+    <Nav activePath="/account" />
 
-      <div id="error-state" class="center-state" style="display:none;">
-        <p id="error-message" class="error-text">Something went wrong</p>
-        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
-      </div>
-
-      <div id="page-content" style="display:none;">
-        <div class="page-header">
-          <a href="/account" class="back-link">&larr; Account</a>
-          <h1>Email Address</h1>
-          <p class="subtitle">Change the email address associated with your Skillsmith account.</p>
+    <div class="account-shell">
+      <AccountSidebar currentPath={Astro.url.pathname} />
+      <main class="container">
+        <div id="loading-state" class="center-state">
+          <svg class="spinner" viewBox="0 0 24 24">
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+              fill="none"
+              opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+            ></path>
+          </svg>
+          <p>Loading...</p>
         </div>
 
-        <div class="card">
-          <p class="field-label">Current email</p>
-          <p id="current-email" class="current-email">&nbsp;</p>
+        <div id="error-state" class="center-state" style="display:none;">
+          <p id="error-message" class="error-text">Something went wrong</p>
+          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
         </div>
 
-        <!-- Pending change banner (a change is awaiting inbox confirmation) -->
-        <div
-          id="pending-banner"
-          class="card notice"
-          role="status"
-          aria-live="polite"
-          style="display:none;"
-        >
-          <strong>Email change pending.</strong>
-          <span id="pending-text"></span>
-          Your account email won't change until both inboxes are confirmed.
-        </div>
+        <div id="page-content" style="display:none;">
+          <div class="page-header">
+            <a href="/account" class="back-link">&larr; Account</a>
+            <h1>Email Address</h1>
+            <p class="subtitle">
+              Change the email address associated with your Skillsmith account.
+            </p>
+          </div>
 
-        <!-- Password-account form -->
-        <form id="password-form" class="card" style="display:none;" novalidate>
-          <div class="form-field">
-            <label for="new-email">New email address</label>
-            <input
-              id="new-email"
-              name="new-email"
-              type="email"
-              autocomplete="email"
-              aria-describedby="email-error"
-              required
-            />
+          <div class="card">
+            <p class="field-label">Current email</p>
+            <p id="current-email" class="current-email">&nbsp;</p>
           </div>
-          <div class="form-field">
-            <label for="confirm-email">Confirm new email address</label>
-            <input
-              id="confirm-email"
-              name="confirm-email"
-              type="email"
-              autocomplete="email"
-              aria-describedby="email-error"
-              required
-            />
-            <p id="email-error" class="field-error" role="alert" style="display:none;"></p>
+
+          <!-- Pending change banner (a change is awaiting inbox confirmation) -->
+          <div
+            id="pending-banner"
+            class="card notice"
+            role="status"
+            aria-live="polite"
+            style="display:none;"
+          >
+            <strong>Email change pending.</strong>
+            <span id="pending-text"></span>
+            Your account email won't change until both inboxes are confirmed.
           </div>
-          <div class="form-field">
-            <label for="current-password">Current password</label>
-            <input
-              id="current-password"
-              name="current-password"
-              type="password"
-              autocomplete="current-password"
-              aria-describedby="password-error"
-              required
-            />
-            <p id="password-error" class="field-error" role="alert" style="display:none;"></p>
+
+          <!-- Password-account form -->
+          <form id="password-form" class="card" style="display:none;" novalidate>
+            <div class="form-field">
+              <label for="new-email">New email address</label>
+              <input
+                id="new-email"
+                name="new-email"
+                type="email"
+                autocomplete="email"
+                aria-describedby="email-error"
+                required
+              />
+            </div>
+            <div class="form-field">
+              <label for="confirm-email">Confirm new email address</label>
+              <input
+                id="confirm-email"
+                name="confirm-email"
+                type="email"
+                autocomplete="email"
+                aria-describedby="email-error"
+                required
+              />
+              <p id="email-error" class="field-error" role="alert" style="display:none;"></p>
+            </div>
+            <div class="form-field">
+              <label for="current-password">Current password</label>
+              <input
+                id="current-password"
+                name="current-password"
+                type="password"
+                autocomplete="current-password"
+                aria-describedby="password-error"
+                required
+              />
+              <p id="password-error" class="field-error" role="alert" style="display:none;"></p>
+            </div>
+            <div class="save-row">
+              <button id="submit-btn" type="submit" class="btn btn-primary"
+                >Send confirmation links</button
+              >
+              <svg
+                id="submit-spinner"
+                class="spinner spinner-sm"
+                viewBox="0 0 24 24"
+                style="display:none;"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                  fill="none"
+                  opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+                ></path>
+              </svg>
+            </div>
+            <p class="hint">
+              We'll email a confirmation link to <strong>both</strong> your current and new address. Your
+              email changes only after you confirm both.
+            </p>
+          </form>
+
+          <!-- Sent confirmation (after a successful request) -->
+          <div
+            id="sent-state"
+            class="card success-card"
+            role="status"
+            aria-live="polite"
+            style="display:none;"
+          >
+            <h2>Check both inboxes</h2>
+            <p id="sent-text"></p>
+            <p class="hint">
+              Didn't get an email? Check the address you entered and try again — for security, you
+              can request another change in up to an hour.
+            </p>
           </div>
-          <div class="save-row">
-            <button id="submit-btn" type="submit" class="btn btn-primary"
-              >Send confirmation links</button
-            >
-            <svg
-              id="submit-spinner"
-              class="spinner spinner-sm"
-              viewBox="0 0 24 24"
-              style="display:none;"
-              aria-hidden="true"
-            >
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-                fill="none"
-                opacity="0.25"></circle>
-              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-              ></path>
-            </svg>
+
+          <!-- OAuth-account guidance -->
+          <div id="oauth-guidance" class="card" style="display:none;">
+            <h2 id="oauth-heading">Your email comes from your sign-in provider</h2>
+            <p id="oauth-body"></p>
+            <ol class="steps">
+              <li id="oauth-step1"></li>
+              <li id="oauth-step2"></li>
+              <li id="oauth-step3"></li>
+            </ol>
+            <div class="save-row">
+              <button id="oauth-sync-btn" type="button" class="btn btn-primary"
+                >Update my email</button
+              >
+              <svg
+                id="oauth-sync-spinner"
+                class="spinner spinner-sm"
+                viewBox="0 0 24 24"
+                style="display:none;"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                  fill="none"
+                  opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+                ></path>
+              </svg>
+            </div>
+            <p id="oauth-sync-hint" class="hint"></p>
+            <p id="oauth-sync-result" role="status" aria-live="polite" style="display:none;"></p>
+            <p class="hint">
+              Can't access your old provider email?
+              <a href="mailto:support@smithhorn.ca?subject=Change%20account%20email"
+                >Contact support</a
+              >
+              to verify your identity.
+            </p>
           </div>
-          <p class="hint">
-            We'll email a confirmation link to <strong>both</strong> your current and new address. Your
-            email changes only after you confirm both.
+
+          <!-- Applies to both paths -->
+          <p class="hint footnote">
+            Note: pending team invitations sent to your old address won't transfer automatically —
+            ask the team owner to re-invite your new address.
           </p>
-        </form>
-
-        <!-- Sent confirmation (after a successful request) -->
-        <div
-          id="sent-state"
-          class="card success-card"
-          role="status"
-          aria-live="polite"
-          style="display:none;"
-        >
-          <h2>Check both inboxes</h2>
-          <p id="sent-text"></p>
-          <p class="hint">
-            Didn't get an email? Check the address you entered and try again — for security, you can
-            request another change in up to an hour.
-          </p>
         </div>
-
-        <!-- OAuth-account guidance -->
-        <div id="oauth-guidance" class="card" style="display:none;">
-          <h2 id="oauth-heading">Your email comes from your sign-in provider</h2>
-          <p id="oauth-body"></p>
-          <ol class="steps">
-            <li id="oauth-step1"></li>
-            <li id="oauth-step2"></li>
-            <li id="oauth-step3"></li>
-          </ol>
-          <div class="save-row">
-            <button id="oauth-sync-btn" type="button" class="btn btn-primary"
-              >Update my email</button
-            >
-            <svg
-              id="oauth-sync-spinner"
-              class="spinner spinner-sm"
-              viewBox="0 0 24 24"
-              style="display:none;"
-              aria-hidden="true"
-            >
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-                fill="none"
-                opacity="0.25"></circle>
-              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-              ></path>
-            </svg>
-          </div>
-          <p id="oauth-sync-hint" class="hint"></p>
-          <p id="oauth-sync-result" role="status" aria-live="polite" style="display:none;"></p>
-          <p class="hint">
-            Can't access your old provider email?
-            <a href="mailto:support@smithhorn.ca?subject=Change%20account%20email"
-              >Contact support</a
-            >
-            to verify your identity.
-          </p>
-        </div>
-
-        <!-- Applies to both paths -->
-        <p class="hint footnote">
-          Note: pending team invitations sent to your old address won't transfer automatically — ask
-          the team owner to re-invite your new address.
-        </p>
-      </div>
-    </main>
+      </main>
+    </div>
 
     <Footer compact />
   </body>
