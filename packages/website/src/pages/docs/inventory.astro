@@ -1,0 +1,422 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Cross-Machine Skill Inventory" description="See the agent skills installed across every machine and harness you use — opt-in, read-only, and synced from a CLI push">
+  <script is:inline type="application/ld+json" slot="head">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "How to Set Up Cross-Machine Skill Inventory",
+    "description": "Push your installed agent skills to your Skillsmith account so you can compare what's installed across every machine and harness you use",
+    "totalTime": "PT5M",
+    "tool": [
+      { "@type": "HowToTool", "name": "Skillsmith CLI (npm install -g @skillsmith/cli)" }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Create or sign in to a Skillsmith account",
+        "text": "Create a free account, or sign in if you already have one, at https://www.skillsmith.app."
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Install the CLI",
+        "text": "Run 'npm install -g @skillsmith/cli'. Requires Node.js 22.22 or newer."
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Log in",
+        "text": "Run 'skillsmith login' to complete a device login in your browser, linking the CLI to the same account as your web session."
+      },
+      {
+        "@type": "HowToStep",
+        "position": 4,
+        "name": "Enable cross-machine skill inventory",
+        "text": "Visit https://www.skillsmith.app/account/telemetry, turn on 'Cross-machine skill inventory', and press Save."
+      },
+      {
+        "@type": "HowToStep",
+        "position": 5,
+        "name": "Push your inventory",
+        "text": "Run 'skillsmith inventory push'."
+      },
+      {
+        "@type": "HowToStep",
+        "position": 6,
+        "name": "View your inventory",
+        "text": "Visit https://www.skillsmith.app/account/skills to see the skills installed across your machines."
+      }
+    ]
+  }
+  </script>
+
+  <h1>Cross-Machine Skill Inventory</h1>
+
+  <p class="lead">
+    See which agent skills are installed on every machine and harness you use, in one place — opt-in,
+    read-only, and updated only when you push.
+  </p>
+
+  <h2 id="overview">What it is</h2>
+
+  <p>
+    Cross-machine skill inventory is a read-only view of the agent skills installed across every
+    machine and harness you use — Claude Code, Cursor, Copilot, Windsurf, and the shared,
+    open-standard directory that Codex reads. It isn't scoped to one agent; it scans wherever any
+    supported harness looks for skills.
+  </p>
+
+  <p>
+    Data flows one way: from a machine you control, through the Skillsmith cloud, into your
+    browser. There is no channel back — nothing you do at
+    <a href="/account/skills">skillsmith.app/account/skills</a> can install, remove, or change a
+    file on any machine. Each device's row is a snapshot as of that device's last
+    <code>skillsmith inventory push</code>, not a live view.
+  </p>
+
+  <div class="callout">
+    <p class="callout-heading">Read-only, one-way</p>
+    <p>
+      The dashboard shows what a machine last reported. It never writes back to a machine and never
+      triggers a scan remotely — only running <code>skillsmith inventory push</code> (or the MCP
+      <code>inventory_push</code> tool) on that machine updates its row.
+    </p>
+  </div>
+
+  <h2 id="privacy">Privacy &amp; Consent</h2>
+
+  <p>
+    Cross-machine skill inventory is opt-in and <strong>off by default</strong>. Nothing is stored
+    until you turn it on in your account settings — a push made before you opt in sends a snapshot
+    the server rejects and discards without storing.
+  </p>
+
+  <h3>What's shared when it's on</h3>
+
+  <ul>
+    <li>A random device ID (generated locally; never linked to your name)</li>
+    <li>An optional device label (e.g. <code>work-laptop</code>; the ability to set one from the CLI is coming — labels are unset today)</li>
+    <li>OS platform and architecture (e.g. <code>darwin/arm64</code>)</li>
+    <li>CLI version</li>
+    <li>A one-way hash of your hostname — the raw hostname is never uploaded</li>
+    <li>
+      Per installed skill: harness, skill ID, version, content hash, source, pinned version, update
+      policy, and any author, license, and repository values declared in the skill's own SKILL.md
+      front-matter
+    </li>
+  </ul>
+
+  <h3>What we never upload</h3>
+
+  <ul>
+    <li>Your raw hostname or any identifying system information</li>
+    <li>File contents, file paths, or skill source code</li>
+  </ul>
+
+  <div class="callout warning">
+    <p class="callout-heading">No purge control yet</p>
+    <p>
+      Turning inventory sync off stops future uploads immediately — this is enforced server-side,
+      not just by the CLI. A control to purge your already-stored inventory is planned but not
+      available yet.
+    </p>
+  </div>
+
+  <p>
+    Want to block uploads on one machine regardless of your account setting? Set
+    <code>SKILLSMITH_INVENTORY_DISABLE=1</code> (or <code>true</code>, case-insensitive — any other
+    value is ignored) in that machine's environment. It's a local, offline switch: when set,
+    <code>skillsmith inventory push</code> returns immediately without creating a device ID or
+    making a network call.
+  </p>
+
+  <h2 id="setup">Setup</h2>
+
+  <ol>
+    <li>Create a free account, or sign in if you already have one, at <a href="/signup">skillsmith.app</a>.</li>
+    <li>Install the CLI: <code>npm install -g @skillsmith/cli</code> (requires Node.js 22.22 or newer).</li>
+    <li>
+      Run <code>skillsmith login</code>. It opens a device login page in your browser and links the
+      CLI to the same account as your web session.
+    </li>
+    <li>
+      Enable <strong>"Cross-machine skill inventory"</strong> at
+      <a href="/account/telemetry">skillsmith.app/account/telemetry</a> and press <strong>Save</strong>.
+    </li>
+    <li>Run <code>skillsmith inventory push</code>.</li>
+    <li>View the result at <a href="/account/skills">skillsmith.app/account/skills</a>.</li>
+  </ol>
+
+  <p>
+    It's safe to run <code>skillsmith inventory push</code> before step 4 — nothing is stored. The
+    server discards the snapshot and the CLI prints an informational message instead:
+    <code>Inventory sync is OFF for your account. Enable it in account settings; nothing stored.</code>
+  </p>
+
+  <p>
+    The comparison view is most useful once more than one machine has reported in — with a single
+    device, the page just shows that device's own snapshot.
+  </p>
+
+  <h2 id="commands">Commands</h2>
+
+  <h3>skillsmith inventory push</h3>
+
+  <p>
+    Builds a snapshot of installed skills across the harnesses listed in
+    <a href="#harness-coverage">Harness Coverage</a> and uploads it to your account. If inventory
+    sync is off for your account, or disabled locally via <code>SKILLSMITH_INVENTORY_DISABLE</code>,
+    the CLI prints an informational message and stores nothing.
+  </p>
+
+  <pre><code>{`skillsmith inventory push`}</code></pre>
+
+  <h3>skillsmith inventory status</h3>
+
+  <p>
+    Local and read-only — makes no network calls. Shows your device ID, last push time, whether
+    inventory sync is disabled locally, and which harnesses have skills installed on this machine.
+  </p>
+
+  <pre><code>{`skillsmith inventory status
+skillsmith inventory status --verbose`}</code></pre>
+
+  <p>
+    <code>--verbose</code> additionally lists the individual skill IDs found under each harness
+    (and under the repo-local <code>./.claude/skills</code> folder, if the directory you're standing
+    in has one).
+  </p>
+
+  <h3>skillsmith inventory forget-device</h3>
+
+  <p>
+    Clears this machine's local device registration. The next <code>skillsmith inventory push</code>
+    generates a fresh device ID and registers again, as if it were a new machine.
+  </p>
+
+  <pre><code>{`skillsmith inventory forget-device`}</code></pre>
+
+  <div class="callout">
+    <p class="callout-heading">Using Claude Code?</p>
+    <p>
+      If you have the Skillsmith MCP server configured, ask your assistant to use the
+      <code>inventory_push</code> tool instead of running the CLI — it pushes the same snapshot.
+      See the <a href="/docs/mcp-server">MCP Server</a> reference.
+    </p>
+  </div>
+
+  <h2 id="harness-coverage">Harness Coverage</h2>
+
+  <p>
+    <code>skillsmith inventory push</code> scans the following harness-specific directories on your
+    machine. A harness only shows up in your inventory if its directory exists and contains at
+    least one skill.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Harness</th>
+        <th>Directory scanned</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Claude Code</td>
+        <td><code>~/.claude/skills</code></td>
+      </tr>
+      <tr>
+        <td>Cursor</td>
+        <td><code>~/.cursor/skills</code></td>
+      </tr>
+      <tr>
+        <td>GitHub Copilot</td>
+        <td><code>~/.copilot/skills</code></td>
+      </tr>
+      <tr>
+        <td>Windsurf</td>
+        <td><code>~/.codeium/windsurf/skills</code></td>
+      </tr>
+      <tr>
+        <td>Shared / Codex</td>
+        <td><code>~/.agents/skills</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Codex doesn't have its own directory — it reads skills from the shared, open-standard
+    <code>~/.agents/skills</code> path, so Codex-managed skills appear under the shared harness
+    above.
+  </p>
+
+  <p>
+    <code>skillsmith inventory status</code> also reports skills found in the repo-local
+    <code>./.claude/skills</code> folder of the directory you run it from — handy for checking a
+    project-scoped skills folder locally. That count is local-only:
+    <code>skillsmith inventory push</code> does not upload it, so repo-local skills never appear at
+    <a href="/account/skills">skillsmith.app/account/skills</a>.
+  </p>
+
+  <p>OpenCode and Antigravity aren't scanned yet.</p>
+
+  <h2 id="state-badges">State Badges</h2>
+
+  <p>
+    Every skill shown at <a href="/account/skills">skillsmith.app/account/skills</a> carries one of
+    eight states. Each pairs a distinct icon shape with its own color, so the badge stays meaningful
+    without relying on color alone.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Icon</th>
+        <th>Label</th>
+        <th>What it means</th>
+        <th>Suggested action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </td>
+        <td>Up to date</td>
+        <td>Up to date with the registry</td>
+        <td>No action needed.</td>
+      </tr>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#facc15" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 11l5-5m0 0l5 5m-5-5v12"></path>
+          </svg>
+        </td>
+        <td>Update available</td>
+        <td>A newer version is available in the registry</td>
+        <td>Run <code>skillsmith update &lt;skill&gt;</code> on that machine.</td>
+      </tr>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </td>
+        <td>Missing</td>
+        <td>Installed before but not seen in the latest sync</td>
+        <td>
+          Confirm the skill is still installed, then re-run <code>skillsmith inventory push</code>
+          from that machine — or reinstall it if it was removed intentionally.
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"></path>
+          </svg>
+        </td>
+        <td>Pinned</td>
+        <td>Pinned to a version; drift checks suppressed</td>
+        <td>No action needed. Run <code>skillsmith unpin &lt;skill&gt;</code> if you want drift checks again.</td>
+      </tr>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d4d4d8" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </td>
+        <td>Unknown</td>
+        <td>Not matched to a registry skill (local or custom)</td>
+        <td>No action needed — expected for skills you wrote yourself or installed outside the registry.</td>
+      </tr>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+          </svg>
+        </td>
+        <td>Local</td>
+        <td>Installed locally; no registry or declared source</td>
+        <td>
+          No action needed. Add <code>author</code>, <code>repository</code>, and
+          <code>license</code> front-matter to the skill's <code>SKILL.md</code> if you'd like it to
+          show as Claimed source instead.
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+          </svg>
+        </td>
+        <td>Claimed source</td>
+        <td>Source declared in the skill's own metadata (not registry-verified)</td>
+        <td>No action needed — the author/repository shown is self-reported and hasn't been verified by the registry.</td>
+      </tr>
+      <tr>
+        <td>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </td>
+        <td>Checking…</td>
+        <td>Resolving source — check back shortly</td>
+        <td>None — this is a transient state. Refresh the page in a few seconds.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Devices carry their own freshness signal next to their name: <strong>fresh</strong> if the
+    device pushed within the last 24 hours, <strong>stale</strong> if its last push is older than
+    that. A device that has registered (it has a device ID) but has never completed a skill push
+    shows as <strong>never synced</strong> — its skill list stays empty until the first successful
+    push.
+  </p>
+
+  <h2 id="troubleshooting">Troubleshooting</h2>
+
+  <details>
+    <summary><strong>"Inventory sync is OFF for your account. Enable it in account settings; nothing stored."</strong></summary>
+    <p>
+      You'll see this after running <code>skillsmith inventory push</code> before turning sync on
+      for your account. Nothing was uploaded. Enable
+      <strong>"Cross-machine skill inventory"</strong> at
+      <a href="/account/telemetry">Telemetry Preferences</a>, then push again.
+    </p>
+  </details>
+
+  <details>
+    <summary><strong>Device-conflict error</strong></summary>
+    <p>
+      If <code>skillsmith inventory push</code> reports
+      <code>This device is registered to another account. Run `skillsmith inventory forget-device` and push again.</code>,
+      this machine's local device ID was previously registered to a different account — for
+      example, after logging in as someone else on a shared machine.
+    </p>
+    <pre><code>{`skillsmith inventory forget-device
+skillsmith inventory push`}</code></pre>
+  </details>
+
+  <details>
+    <summary><strong>"Not logged in. Run `skillsmith login` and try again."</strong></summary>
+    <p>
+      Your CLI session doesn't have valid credentials. Run <code>skillsmith login</code> to complete
+      a device login, then retry the command.
+    </p>
+  </details>
+
+  <div class="callout">
+    <p class="callout-heading">Need Help?</p>
+    <p>
+      Still stuck? Email <a href="mailto:support@smithhorn.ca">support@smithhorn.ca</a> with the
+      command you ran and any error output.
+    </p>
+  </div>
+</DocsLayout>

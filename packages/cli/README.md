@@ -9,6 +9,7 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 - [What's New](#whats-new-in-v050)
 - [Installation](#installation)
 - [Commands](#commands)
+  - [inventory](#inventory)
 - [Configuration](#configuration)
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
@@ -141,6 +142,48 @@ skillsmith update
 # Update specific skill
 skillsmith update author/skill-name
 ```
+
+### inventory
+
+Cross-machine skill inventory for viewing which agent skills are installed across your machines and harnesses. Requires `skillsmith login` and opt-in via the [Cross-machine skill inventory toggle](https://www.skillsmith.app/account/telemetry) at skillsmith.app/account/telemetry (off by default). Once enabled, view your inventory at [skillsmith.app/account/skills](https://www.skillsmith.app/account/skills).
+
+**Privacy:** Only skill IDs, versions, content hashes, declared SKILL.md front-matter fields (author, license, repository), and device platform metadata are uploaded. File contents, paths, and your raw hostname are never transmitted. Set `SKILLSMITH_INVENTORY_DISABLE=1` to hard-disable.
+
+#### inventory push
+
+Push this device's installed-skill snapshot to your Skillsmith account.
+
+```bash
+skillsmith inventory push
+```
+
+Requires:
+- Active authentication via `skillsmith login`
+- "Cross-machine skill inventory" toggle enabled at skillsmith.app/account/telemetry
+
+#### inventory status
+
+Show local device inventory status (read-only, no network call).
+
+```bash
+skillsmith inventory status
+
+# Verbose output
+skillsmith inventory status --verbose
+```
+
+**Options:**
+- `--verbose` - List the individual skill IDs found under each harness
+
+#### inventory forget-device
+
+Clear the local device registration; the next push creates a fresh device ID and registers as a new machine.
+
+```bash
+skillsmith inventory forget-device
+```
+
+See [Cross-machine skill inventory](https://www.skillsmith.app/docs/inventory) for details.
 
 ### init
 
