@@ -26,6 +26,7 @@
     "build": "tsc",
     "postbuild": "chmod +x dist/src/index.js || true",
     "dev": "tsx watch src/index.ts",
+    "generate:agent-pack": "tsx scripts/generate-agent-pack.ts",
     "start": "node dist/src/index.js",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

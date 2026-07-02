@@ -63,6 +63,35 @@ export {
   type ClaudeModel,
 } from '../services/SubagentGenerator.js'
 
+// SMI-5456 Wave 1 Step 4: multi-target portable agent-pack generator.
+export {
+  generateAgentPack,
+  renderAgentSkillMd,
+  renderAgentSkillBody,
+  renderClaudeShim,
+  renderCodexToml,
+  renderCopilotShim,
+  renderOpenCodeShim,
+  renderSessionStartHook,
+  renderSessionEndHook,
+  AGENT_PACK_SKILL_NAME,
+  AGENT_PACK_DISPLAY_NAME,
+  AGENT_PACK_SCHEMA_VERSION,
+  HOOK_HARNESSES,
+  SHIM_DESCRIPTION,
+  PACK_DESCRIPTION,
+  JOBS as AGENT_PACK_JOBS,
+  TRUST_CLAUSES,
+  PAYWALL_TRIGGERS,
+  type AgentPackArtifact,
+  type AgentPackInput,
+  type AgentArtifactKind,
+  type HarnessId,
+  type JobDefinition,
+  type TrustClause,
+  type PaywallTrigger,
+} from '../services/agent-pack/index.js'
+
 export {
   TransformationService,
   transformSkill,
