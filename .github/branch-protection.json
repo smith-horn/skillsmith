@@ -16,7 +16,8 @@
       "PR Validation (Shell)",
       "Test (root)",
       "Test (root colocated)",
-      "Test (mcp-server integration)"
+      "Test (mcp-server integration)",
+      "Website Skills E2E Gate"
     ]
   },
   "enforce_admins": false,
