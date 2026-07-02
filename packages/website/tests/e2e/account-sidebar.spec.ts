@@ -71,6 +71,15 @@ test.describe('account sidebar (SMI-5475)', () => {
     await expect(active).toHaveAttribute('href', '/account/skills')
   })
 
+  test('keeps Team active across the TeamNav sub-tabs (prefix match)', async ({ page }) => {
+    for (const path of ['/account/team', '/account/team/members', '/account/team/analytics']) {
+      await page.goto(path)
+      const active = page.locator('.account-sidebar a[aria-current="page"]')
+      await expect(active).toHaveCount(1)
+      await expect(active).toHaveAttribute('href', '/account/team')
+    }
+  })
+
   test('visibility follows the docs breakpoint (hidden below 1024px)', async ({ page }) => {
     await page.goto('/account')
 
