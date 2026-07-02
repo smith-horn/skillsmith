@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "tsx": "4.21.0",
-    "vitest": "4.1.6"
+    "vitest": "4.1.9"
   },
   "files": [
     "dist",

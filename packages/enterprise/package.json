@@ -59,7 +59,7 @@
     "@smithy/smithy-client": "4.12.13",
     "@smithy/types": "4.13.1",
     "@smithy/util-retry": "4.1.2",
-    "vitest": "4.1.6"
+    "vitest": "4.1.9"
   },
   "peerDependencies": {
     "@skillsmith/mcp-server": "^0.6.0"
