@@ -68,7 +68,26 @@ export {
 
 // In-process HOF + registry (SMI-5016)
 // Emission gate (SMI-5019 wire-in) — privacy-safe default-suppress.
-export { withTelemetry, isTelemetered, setEmissionGate, type WithTelemetryOpts } from './wrap.js'
+// Marker context (SMI-5456) — AsyncLocalStorage-scoped agent-mediation marker.
+export {
+  withTelemetry,
+  isTelemetered,
+  setEmissionGate,
+  runWithMarkerContext,
+  type WithTelemetryOpts,
+} from './wrap.js'
+
+// Agent-mediation marker channel (SMI-5456) — `_meta` + session marker file.
+export {
+  resolveAgentMarker,
+  readSessionMarker,
+  extractMarkerMeta,
+  NO_AGENT_MARKER,
+  AGENT_MARKER_TTL_MS,
+  AGENT_MARKER_SCHEMA_VERSION,
+  type AgentMarker,
+  type AgentMarkerFile,
+} from './agent-marker.js'
 
 /**
  * Initialize all telemetry (tracing + metrics)
