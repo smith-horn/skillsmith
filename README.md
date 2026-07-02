@@ -409,3 +409,5 @@ Smith Horn Group Ltd
 ---
 
 _Skillsmith is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic._
+
+<!-- SMI-5485 skip-leg verification scratch PR: proves the Website Skills E2E Gate passes in seconds on PRs with no relevant changes. Closed unmerged. -->
