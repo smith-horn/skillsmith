@@ -76,6 +76,8 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 
 **Drift correction (SMI-5485)**: this table and `.github/branch-protection.json` had drifted from the live `gh api repos/Smith-Horn/skillsmith/branches/main/protection` config -- the table listed a "Dependency Guard" row that is not (and was never) in `required_status_checks.contexts`, and both the table and the JSON were missing `Test (mcp-server integration)` (added when `test-mcp-server-integration` landed in `ci.yml`; never back-filled here). Reconciled below against a live `gh api` read taken the same session as this edit -- 13 required contexts, no PUT performed (catch-up only; the JSON already matches what GitHub enforces, this is a config-drift fix, not a policy change).
 
+**Promotion (SMI-5485 Wave 2, 2026-07-02)**: `Website Skills E2E Gate` added as the 14th required context -- the first non-ci.yml/docs-only.yml context, backed by the always-report gate shape described below. `scripts/chronic-red-monitor.sh` `REQUIRED_BACKING_FILES` gained `website-skills-e2e.yml` in the same PR (required-backing workflows are exempt from chronic-red alerting).
+
 | Check | Workflow | Purpose |
 |-------|----------|---------|
 | Secret Scan | ci.yml, docs-only.yml | Detect committed credentials |
@@ -91,13 +93,14 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Test (root) | ci.yml | Root-scoped vitest suite (`scripts/tests`, `supabase/functions`) — SMI-4958 |
 | Test (root colocated) | ci.yml | Colocated `packages/*/src/**/*.test.ts` suite — SMI-3502 |
 | Test (mcp-server integration) | ci.yml | `packages/mcp-server` integration suite (`test-mcp-server-integration` job) |
+| Website Skills E2E Gate | website-skills-e2e.yml | Skills-page e2e carve-out (SMI-5485); auto-passes via relevance skip on unrelated PRs |
 
 Note: `Dependency Guard` (ci.yml) runs on every PR but is NOT a required context — it is intentionally excluded from `required_status_checks.contexts`, so it does not appear above.
 
 ### How It Works
 
-- **Code PRs**: All 13 required checks must pass (the `required_status_checks.contexts` set in `.github/branch-protection.json`)
-- **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`)
+- **Code PRs**: All 14 required checks must pass (the `required_status_checks.contexts` set in `.github/branch-protection.json`)
+- **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`) — plus `Website Skills E2E Gate`, which reports on every PR and auto-passes in seconds when no skills-page paths changed
 - **Mixed PRs**: Full CI runs
 
 ### Path-Filtered Workflows Cannot Be Required Checks (SMI-5485)

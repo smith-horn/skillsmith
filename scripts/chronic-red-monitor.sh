@@ -45,14 +45,20 @@ update_stored_sha() {
 # branch-protection.json's required_status_checks.contexts. Maintained
 # explicitly because `gh api` returns context names (job-level `name:`)
 # while `gh run list --workflow` requires file names; no direct mapping.
-# Confirmed 2026-05-19 by grep over .github/workflows/*.yml job names:
-#   - ci.yml provides: Secret Scan, Classify Changes, Package Validation,
-#     PR Validation (Node/Shell), Quality Checks, plus Build, Build Docker
-#     Image, Security Audit, Test (root), Test (root colocated), Markdown
-#     Lint (10+ of 12 required contexts)
-#   - docs-only.yml provides: Secret Scan + Markdown Lint for docs-only PRs
+# Ground truth, verified 2026-07-02 by grep over .github/workflows/*.yml
+# job names (SMI-5485 Wave 2). Deliberately NOT a summing partition —
+# Secret Scan is emitted by two workflows:
+#   - ci.yml emits 12 of the 14 required contexts — all except Markdown
+#     Lint and Website Skills E2E Gate: Secret Scan, Classify Changes,
+#     Package Validation, Quality Checks, Security Audit, Build, Build
+#     Docker Image, PR Validation (Node/Shell), Test (root), Test (root
+#     colocated), Test (mcp-server integration)
+#   - docs-only.yml emits Markdown Lint (sole emitter) + Secret Scan
+#     (dual-emitted — ci.yml also emits it)
+#   - website-skills-e2e.yml emits Website Skills E2E Gate (promoted
+#     2026-07-02, SMI-5485 Wave 2)
 # Adding a new required workflow? Add its file name here.
-REQUIRED_BACKING_FILES=("ci.yml" "docs-only.yml")
+REQUIRED_BACKING_FILES=("ci.yml" "docs-only.yml" "website-skills-e2e.yml")
 
 is_required_backing() {
   local f="$1"

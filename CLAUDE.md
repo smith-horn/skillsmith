@@ -67,7 +67,7 @@ Zero ESLint warnings/errors. TypeScript strict (no unjustified `any`). All files
 
 **Post-deploy smoke (SMI-4459)**: `smoke-prod.yml` runs `scripts/smoke-prod.sh` against prod after each merge. Failure → Linear + email. Skip: `[skip-smoke]` in PR body. [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md).
 
-**Build**: Turborepo (`npm run build`); legacy fallback `npm run build:legacy` ([ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md)). **Change tiers**: `docs` ~30s, `config` validation, `code` ~11 min full, `deps` rebuild+audit. **Branch protection**: 10 checks (code) / 2 checks (docs-only). **npm overrides, release-PR carve-out, vitest split rationale**: [ci-reference.md](.claude/development/ci-reference.md).
+**Build**: Turborepo (`npm run build`); legacy fallback `npm run build:legacy` ([ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md)). **Change tiers**: `docs` ~30s, `config` validation, `code` ~11 min full, `deps` rebuild+audit. **Branch protection**: 14 checks (code) / 3 checks (docs-only). **npm overrides, release-PR carve-out, vitest split rationale**: [ci-reference.md](.claude/development/ci-reference.md).
 
 **Dependabot lockfile stability (SMI-5272)**: the root `jose: "5.10.0"` devDependency is a **load-bearing anchor** — it pins an otherwise optional-peer-only `jose@5.10.0` (reachable solely via `ruflo → @claude-flow/cli → fastmcp`) as a regular root edge so Dependabot's lockfile regen can't drop it. If Dependabot or `npm ci` ever fails with `Missing: jose@5.10.0 from lock file`, the anchor was removed — restore it. Root cause + manual-consolidated-bump fallback: [ci-reference.md § Dependabot lockfile regen](.claude/development/ci-reference.md).
 

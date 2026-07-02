@@ -8,33 +8,11 @@
 # reports via the `gate` job below.
 #
 # Shape: `changes` (cheap relevance detection, every PR) -> `e2e` (runs only
-# when relevant) -> `gate` (ALWAYS reports; `Website Skills E2E Gate` is the
-# future required-check context -- see Wave 2 protocol below).
+# when relevant) -> `gate` (ALWAYS reports as the required-check context).
 #
-# Honest-shadow semantics: this workflow is NOT YET a required check. During
-# shadow, a red `Website Skills E2E Gate` does NOT block merge -- it is
-# informational only, surfacing real e2e health ahead of promotion. There is
-# no job-level `continue-on-error` anywhere in this file (removed by
-# SMI-5485 -- it was masking Dependabot-PR failures as green), so every run
-# conclusion is truthful and the promotion streak below is trustworthy.
-#
-# Streak counting (AC-5): a run counts toward the 10-consecutive-green
-# promotion streak only when `status == 'completed' && conclusion ==
-# 'success'`. Runs with `conclusion == 'cancelled'` (concurrency-superseded
-# by a force-push or rebase) are EXCLUDED from the count -- they neither
-# break nor extend the streak (the `gate` job's `if: !cancelled()` keeps a
-# superseded run `cancelled`, not a spurious red).
-#   gh run list --workflow=website-skills-e2e.yml --limit 30 \
-#     --json conclusion,status,event,headSha,createdAt
-#
-# Wave 2 promotion protocol (separate PR, after a real 10-consecutive-green
-# streak and explicit operator confirmation -- NOT part of this PR): add
-# `Website Skills E2E Gate` to the `contexts` array in
-# .github/branch-protection.json, apply with
-#   gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT \
-#     --input .github/branch-protection.json
-# then run ./scripts/validate-branch-protection.sh, then remove this Phase-1
-# shadow note from the header.
+# `Website Skills E2E Gate` is a REQUIRED branch-protection context (SMI-5485
+# Wave 2, 2026-07-02) -- see .github/branch-protection.json and the Required
+# Checks section of ci-reference.md.
 #
 # Dependabot rationale: Dependabot PRs pass the same-repo fork guard (they
 # are branches on this repo) but receive NO repository secrets, so the
