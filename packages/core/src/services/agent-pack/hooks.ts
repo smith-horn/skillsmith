@@ -61,7 +61,18 @@ function commonHeader(kind: 'SessionStart' | 'SessionEnd', harness: HarnessId): 
     `# Skillsmith Agent - ${kind} hook (${harness}). Generated; do not edit by hand.`,
     '# Writes/removes the agent-mediation marker file (SMI-5456). Self-contained',
     '# POSIX sh, no CLI dependency; every path exits 0 so it never fails a session.',
-    'set -u',
+    // -u: fail fast on unset vars (caught defensively below, never propagates).
+    // -C: noclobber - a plain `>` refuses to write through a pre-existing path
+    // (including an attacker-planted symlink) at the temp-file names below,
+    // which have a guessable $$-based name if SKILLSMITH_AGENT_MARKER_DIR is
+    // ever pointed at a shared/multi-tenant directory. /dev/null and other
+    // non-regular-file targets are exempt from noclobber, so the `2>/dev/null`
+    // redirects throughout are unaffected.
+    'set -uC',
+    // HOME is the only variable this script reads without a shell-level
+    // default; guard it explicitly so a stripped-down invocation environment
+    // (HOME unset) cannot trip `set -u` and abort before reaching `exit 0`.
+    'HOME="${HOME:-/tmp}"',
     'if [ "${SKILLSMITH_AGENT_HOOK_DISABLE:-}" = "1" ]; then exit 0; fi',
     'MARKER_DIR="${SKILLSMITH_AGENT_MARKER_DIR:-$HOME/.skillsmith/agent-markers}"',
   ].join('\n')

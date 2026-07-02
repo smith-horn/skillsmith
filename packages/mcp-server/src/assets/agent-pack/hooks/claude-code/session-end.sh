@@ -2,7 +2,8 @@
 # Skillsmith Agent - SessionEnd hook (claude-code). Generated; do not edit by hand.
 # Writes/removes the agent-mediation marker file (SMI-5456). Self-contained
 # POSIX sh, no CLI dependency; every path exits 0 so it never fails a session.
-set -u
+set -uC
+HOME="${HOME:-/tmp}"
 if [ "${SKILLSMITH_AGENT_HOOK_DISABLE:-}" = "1" ]; then exit 0; fi
 MARKER_DIR="${SKILLSMITH_AGENT_MARKER_DIR:-$HOME/.skillsmith/agent-markers}"
 
