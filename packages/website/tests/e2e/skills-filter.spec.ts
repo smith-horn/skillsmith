@@ -51,6 +51,25 @@ async function verifyResultsDisplayed(page: Page): Promise<number> {
 
 test.describe('Skills Filter-Only Browsing (SMI-1658)', () => {
   test.beforeEach(async ({ page }) => {
+    // SMI-5504 deflake: suppress SignedOutOverlay (SMI-4401/4837) deterministically.
+    // Anonymous contexts have no Supabase session, so the overlay's deferred script
+    // reveals a full-viewport pointer-blocking backdrop ~250ms+ after astro:page-load,
+    // racing every click in this suite (~7% loss in CI). Both historical failures'
+    // error-context artifacts (run 28305673909; run 28626331405 attempt 1 -- after a
+    // rerun the red evidence survives only in the run's ARTIFACTS, not its logs) name
+    // "signed-out-overlay ... intercepts pointer events". Seeding the component's own
+    // dismissal key (+24h here; the component's real TTL is 7 days) makes
+    // setupOverlay() remove the overlay before it can reveal.
+    await page.addInitScript(() => {
+      try {
+        window.localStorage.setItem(
+          'skills_overlay_dismissed_until',
+          new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        )
+      } catch {
+        /* localStorage unavailable — overlay suppression falls back to the race */
+      }
+    })
     await page.goto(`${BASE_URL}/skills`)
     // Wait for the page to be fully loaded
     await expect(page.locator('#category-filter')).toBeVisible()
