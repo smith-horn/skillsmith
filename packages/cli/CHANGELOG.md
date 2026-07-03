@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.0
+
+- **Feature**: per-user inventory purge, hard-delete (SMI-5510, R0 Wave 1a) (#1684)
+- **Fix**: 0.7.4 security hotfix — interactive-search quarantine bypass (SMI-5447) (#1656)
 - **Feature**: `sklx agent install` / `uninstall` command group — installs portable agent pack (SKILL.md + shims + hooks) to detected harnesses with per-harness MCP registration (SMI-5456)
 
 ## v0.7.4

@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.10.0
+
+- **Feature**: per-user inventory purge, hard-delete (SMI-5510, R0 Wave 1a) (#1684)
+- **Feature**: quarantine-hardening balance — scanner split + chmod evasion + recheck sibling re-scan (SMI-5434/5433/5437) (#1653)
 - **Feature**: telemetry marker channel for agent-mediated calls — `agent_session`/`nudge_origin`/`trigger_id` wire fields + `_meta` MCP marker extraction + harness-side attribution (SMI-5456)
 - **Feature**: change journal module — hash-chained, fsync'd records; foundation for undo (SMI-5456)
 - **Feature**: multi-target agent-pack generator emitting SKILL.md, Claude/Codex/OpenCode/Copilot shims, hooks (SMI-5456)

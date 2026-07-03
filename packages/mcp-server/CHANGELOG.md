@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.0
+
+- **Fix**: launcher dep-integrity preflight + zod runtime dep (SMI-5451) (#1664)
 - **Feature**: `SKILLSMITH_TOOL_PROFILE=agent` curated tool listing (~15 tools) for harness integration (SMI-5456)
 - **Feature**: `undo_apply` tool — session-scoped undo of apply_namespace_rename/apply_recommended_edit via journal (SMI-5456)
 - **Feature**: extract `_meta` marker (`agent_session`, `nudge_origin`, `trigger_id`) from MCP tool calls (SMI-5456)
