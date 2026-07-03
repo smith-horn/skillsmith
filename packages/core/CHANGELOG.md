@@ -10,6 +10,7 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Feature**: agent-pack installer/uninstaller with JSON-merge, manifest, path guard, per-harness reporting (SMI-5456)
 - **Feature**: paywall-triggers store for Community/Individual funnel state (SMI-5456)
 - **Feature**: extend ClientIds — add `opencode` and `hermes` skill paths (SMI-5456)
+- **Feature**: `runWithEmissionGate` — AsyncLocalStorage-scoped, per-call telemetry emission gate; `setEmissionGate` retained as a deprecated process-wide fallback (SMI-5479)
 
 ## v0.9.0
 

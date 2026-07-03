@@ -10,6 +10,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 - **Fix**: dispatch-routing for skill_inventory_audit/apply_namespace_rename/apply_recommended_edit (now callable over MCP CallTool) (SMI-5456)
 - **Feature**: inventory-audit dual-path dedup + self-exemption for agent pack (SMI-5456)
 - **Feature**: committed agent-pack assets (shims, hooks) + `generate:agent-pack` build script (SMI-5456)
+- **Feature**: consent-gated telemetry emission wired into the CallTool dispatch path for all 18 previously-never-emitting direct-dispatch tools, live-ing the agent-mediation denominator (SMI-5479)
+- **Feature**: flush-on-shutdown for buffered telemetry — bounded PostHog flush on `SIGTERM`/`SIGINT`/transport close (SMI-5479)
+- **Refactor**: extract `CallToolRequestSchema` handler from `index.ts` into `call-tool-handler.ts` to stay under the 500-LOC file-size gate (SMI-5479)
 
 ## v0.6.0
 

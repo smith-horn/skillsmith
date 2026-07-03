@@ -284,7 +284,7 @@ needed.
 
 ## `withTelemetry` HOF
 
-Location: `packages/mcp-server/src/telemetry/with-telemetry.ts`
+Location: `packages/core/src/telemetry/wrap.ts` (exported as `@skillsmith/core/telemetry`)
 
 Key design decisions (from plan-review):
 
@@ -297,7 +297,7 @@ Key design decisions (from plan-review):
 1. Wrap the handler with `withTelemetry`:
 
    ```typescript
-   import { withTelemetry } from '../telemetry/with-telemetry.js';
+   import { withTelemetry } from '@skillsmith/core/telemetry';
 
    export const myNewTool = withTelemetry(
      async (params, context) => { /* handler */ },
@@ -352,7 +352,7 @@ Added in Wave 4 Step 4. Greps that previously lived in plan-review commentary ar
 
 - Assert `trackSkill*` event names exist in `packages/core/src/telemetry/posthog.ts` `SkillsmithEventType` union
 - Assert `ALLOWED_EVENTS` in `supabase/functions/events/index.ts` includes all three telemetry event types
-- Assert no parallel `withTelemetry` definition outside `with-telemetry.ts` (single source of truth)
+- Assert no parallel `withTelemetry` definition outside `wrap.ts` (single source of truth)
 - Assert `/tmp/skillsmith-` is not used anywhere (run files must live in `~/.skillsmith/run/`)
 
 ---
