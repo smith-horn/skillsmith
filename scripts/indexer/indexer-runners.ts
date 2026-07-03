@@ -220,7 +220,10 @@ export async function runUpsertPhase(
   let high_trust_fallback_hits = 0
   // SMI-3540: Collect IDs of hash-matched (unchanged) skills to touch last_seen_at
   const unchangedIds: string[] = []
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  // SMI-5278: Touch last_seen_at on unchanged skills at most once per 12h (was 1h) — each
+  // touch is a non-HOT UPDATE (last_seen_at is indexed) that rewrites the row + all skills
+  // indexes. Safe: stale-quarantine fires at stale_days=7 = 168h of margin (SMI-4203).
+  const lastSeenTouchCutoff = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()
 
   // SMI-4651: Per-run cache for GitHub-verified org lookups. Scoped to this
   // upsert phase so the same owner is fetched at most once per indexer run.
@@ -302,12 +305,12 @@ export async function runUpsertPhase(
         // SMI-3540: Collect ID for last_seen_at touch (skip if recently touched).
         const id = repoUrlToId.get(repo.url)
         const lastSeen = repoUrlToLastSeen.get(repo.url)
-        if (id && (!lastSeen || lastSeen < oneHourAgo)) {
+        if (id && (!lastSeen || lastSeen < lastSeenTouchCutoff)) {
           unchangedIds.push(id)
         }
         // Push minimal payload so the row's `repo_updated_at` column is reaffirmed
-        // even when the value hasn't changed (no-op on the column itself; touches
-        // last_seen_at to reflect this run's sighting).
+        // even when the value hasn't changed (SMI-5491: this skinny write no longer
+        // touches last_seen_at — the 12h-gated post-batch touch is its sole writer).
         accumulator.push({ repo, skillData: minimalSkillPayload(repo), unchangedSkip: true })
         continue
       }
@@ -364,7 +367,7 @@ export async function runUpsertPhase(
         unchanged++
         const id = repoUrlToId.get(repo.url)
         const lastSeen = repoUrlToLastSeen.get(repo.url)
-        if (id && (!lastSeen || lastSeen < oneHourAgo)) {
+        if (id && (!lastSeen || lastSeen < lastSeenTouchCutoff)) {
           unchangedIds.push(id)
         }
         // Still write the new repo_updated_at so the next run hits the prehash

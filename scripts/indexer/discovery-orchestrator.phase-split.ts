@@ -37,9 +37,12 @@ export type DiscoveryPhase = 1 | 2 | 3
  * repos (empty today — Phase 3 is env-gated off), so iterating it would
  * silently categorize nothing. Instead we query the `skills` table for rows
  * this cycle could have touched: `last_seen_at` within the cycle window.
- * Phase 4's upsert refreshes `last_seen_at` for every sighting (new and
- * unchanged), so this set covers every repo discovered in phases 1/2/3 of
- * the current cycle.
+ * The full upsert refreshes `last_seen_at` on every sighting for NEW/CHANGED
+ * skills only; unchanged skills advance `last_seen_at` via the 12h-gated
+ * post-batch touch (SMI-5491), not a per-sighting write. So this 4h window
+ * intentionally selects new/changed skills (whose tags/description may have
+ * changed) and skips unchanged ones (categorization inputs are frozen —
+ * recomputing them is pure churn).
  *
  * The returned `repo_url`s are fed straight into the existing
  * `runCategorization(supabase, repoUrls)` — no change to its body.
@@ -57,8 +60,10 @@ export async function selectCategorizationRepoUrls(
   const since = new Date(Date.now() - cycleWindowHours * 60 * 60 * 1000).toISOString()
   const urls = new Set<string>()
 
-  // Rows touched this cycle (Phase 4 upsert refreshes `last_seen_at` for both
-  // new and unchanged sightings — see indexer-runners.ts SMI-3540 touch path).
+  // Rows with a fresh `last_seen_at` this window. The full upsert writes it on
+  // every new/changed sighting; unchanged skills advance via the 12h-gated
+  // post-batch touch (SMI-5491), so this window intentionally targets
+  // new/changed skills and skips unchanged ones (categorization inputs frozen).
   const { data: recentRows, error: recentError } = await supabase
     .from('skills')
     .select('repo_url')

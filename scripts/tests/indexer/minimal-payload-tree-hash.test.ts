@@ -3,13 +3,19 @@
 // Wave 1 PR #1089 introduced a tree-hash TTL cache but the SMI-4846 skip-gate
 // at indexer-runners.ts:280-298 short-circuits BEFORE repositoryToSkill is
 // called. For 89% of skills, the upsert path uses minimalSkillPayload — which
-// returned only {repo_url, last_seen_at, repo_updated_at}, so tree_hash never
-// got backfilled and the cache never warmed.
+// at the time returned only {repo_url, last_seen_at, repo_updated_at}, so
+// tree_hash never got backfilled and the cache never warmed.
 //
-// This test pins the fix: when repo.treeHash is set (from the wildcard Trees
-// fetch), minimalSkillPayload must persist tree_hash + last_tree_hash_check
-// alongside the existing fields. When repo.treeHash is undefined (plain-path
-// without SKILLSMITH_TREE_HASH_PLAIN_PATH=true), behaviour is unchanged.
+// SMI-5491 subsequently removed last_seen_at from minimalSkillPayload's return
+// entirely (both from the object and its TypeScript type) — the base shape is
+// now {repo_url, repo_updated_at}. The 12h-gated post-batch touch is the sole
+// remaining writer of last_seen_at for unchanged skills.
+//
+// This test pins the tree-hash fix: when repo.treeHash is set (from the
+// wildcard Trees fetch), minimalSkillPayload must persist tree_hash +
+// last_tree_hash_check alongside the base fields. When repo.treeHash is
+// undefined (plain-path without SKILLSMITH_TREE_HASH_PLAIN_PATH=true),
+// behaviour is unchanged.
 
 import { describe, it, expect } from 'vitest'
 import { minimalSkillPayload } from '../../indexer/skill-processor.helpers.ts'
@@ -35,13 +41,16 @@ function makeRepo(overrides: Partial<GitHubRepository> = {}): GitHubRepository {
 }
 
 describe('minimalSkillPayload — tree_hash backfill (SMI-4887)', () => {
-  it('without repo.treeHash: returns the original 3-field shape', () => {
+  it('without repo.treeHash: returns the base 2-field shape (no last_seen_at)', () => {
     const payload = minimalSkillPayload(makeRepo({ treeHash: undefined }))
     expect(payload).toMatchObject({
       repo_url: 'https://github.com/anthropics/skills/tree/main/skills/foo',
       repo_updated_at: '2026-05-12T00:00:00Z',
     })
-    expect(payload.last_seen_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    // SMI-5491: last_seen_at was removed from the object AND its TS return
+    // type — use the `in` operator, never typed property access (the latter
+    // is a TS2339 compile error post-change).
+    expect('last_seen_at' in payload).toBe(false)
     expect('tree_hash' in payload).toBe(false)
     expect('last_tree_hash_check' in payload).toBe(false)
   })
