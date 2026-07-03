@@ -187,9 +187,23 @@ const supabaseConfig = getSupabaseConfig()
               <li>File contents, file paths, or skill source code</li>
             </ul>
             <p class="info-note">
-              Turning inventory sync off stops future uploads immediately (enforced server-side). A
-              future control on this page will let you purge your stored inventory.
+              Turning inventory sync off stops future uploads immediately (enforced server-side).
             </p>
+          </section>
+
+          <section class="card">
+            <h2>Purge stored inventory</h2>
+            <p class="toggle-description">
+              Permanently delete all inventory Skillsmith has stored for your account across every
+              machine. This cannot be undone — each machine will re-appear here only if you push
+              again with <code>skillsmith inventory push</code>.
+            </p>
+            <div class="actions-row">
+              <button id="purge-btn" class="btn btn-danger" type="button">
+                Purge stored inventory
+              </button>
+            </div>
+            <p id="purge-result" class="save-result" role="status" aria-live="polite"></p>
           </section>
         </div>
       </main>
@@ -198,7 +212,7 @@ const supabaseConfig = getSupabaseConfig()
     <Footer compact />
 
     <script>
-      import { createClient } from '@supabase/supabase-js'
+      import { getSupabaseClient } from '../../lib/supabase-client'
 
       interface TelemetryPreference {
         user_id: string
@@ -256,10 +270,6 @@ const supabaseConfig = getSupabaseConfig()
           })
         })
 
-        const config = window.__SUPABASE_CONFIG__
-        const supabaseUrl = config?.url
-        const supabaseAnonKey = config?.anonKey
-
         const loadingEl = document.getElementById('loading-state') as HTMLDivElement | null
         const errorEl = document.getElementById('error-state') as HTMLDivElement | null
         const errorMsgEl = document.getElementById('error-message') as HTMLParagraphElement | null
@@ -295,12 +305,13 @@ const supabaseConfig = getSupabaseConfig()
           if (errorMsgEl) errorMsgEl.textContent = msg
         }
 
-        if (!supabaseUrl || !supabaseAnonKey) {
+        // Shared singleton (SMI-3595) — never call createClient() directly, or a
+        // second GoTrueClient competes for the same auth-storage keys.
+        const supabase = getSupabaseClient()
+        if (!supabase) {
           showError('Auth service not configured.')
           return
         }
-
-        const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
         const {
           data: { session },
@@ -463,6 +474,143 @@ const supabaseConfig = getSupabaseConfig()
           inventorySaveBtnEl.addEventListener('click', () =>
             doSave(inventorySaveBtnEl, inventorySaveResultEl)
           )
+        }
+
+        // Purge control (SMI-5510) — destructive, so gated behind a focus-trapped
+        // confirmation modal. Mirrors the revoke-modal pattern in cli-token.astro:
+        // the modal is created via document.createElement() and appended to body,
+        // so its CSS lives in :global() rules (Astro's cid scoping never applies).
+        const purgeBtnEl = document.getElementById('purge-btn') as HTMLButtonElement | null
+        const purgeResultEl = document.getElementById('purge-result') as HTMLParagraphElement | null
+
+        function ensurePurgeModal(): HTMLDivElement {
+          let modal = document.getElementById('purge-confirm-modal') as HTMLDivElement | null
+          if (modal) return modal
+          modal = document.createElement('div')
+          modal.id = 'purge-confirm-modal'
+          modal.className = 'purge-modal-backdrop'
+          modal.setAttribute('role', 'dialog')
+          modal.setAttribute('aria-modal', 'true')
+          modal.setAttribute('aria-labelledby', 'purge-modal-title')
+          modal.setAttribute('aria-describedby', 'purge-modal-desc')
+          modal.setAttribute('hidden', 'true')
+          modal.innerHTML = `
+            <div class="purge-modal">
+              <h2 id="purge-modal-title">Purge stored inventory?</h2>
+              <p id="purge-modal-desc">
+                This permanently deletes all inventory Skillsmith has stored for your account across
+                every machine. This cannot be undone.
+              </p>
+              <div class="purge-modal-actions">
+                <button type="button" class="btn btn-secondary" data-modal-cancel>Cancel</button>
+                <button type="button" class="btn btn-danger" data-modal-confirm>Purge</button>
+              </div>
+            </div>
+          `
+          document.body.appendChild(modal)
+          return modal
+        }
+
+        function openPurgeModal(onConfirm: () => void) {
+          const modal = ensurePurgeModal()
+          modal.removeAttribute('hidden')
+          const cancelBtn = modal.querySelector<HTMLButtonElement>('[data-modal-cancel]')
+          const confirmBtn = modal.querySelector<HTMLButtonElement>('[data-modal-confirm]')
+          const previouslyFocused = document.activeElement as HTMLElement | null
+          const focusables = [cancelBtn, confirmBtn].filter(
+            (el): el is HTMLButtonElement => el !== null
+          )
+          if (confirmBtn) confirmBtn.focus()
+
+          function close() {
+            modal.setAttribute('hidden', 'true')
+            cancelBtn?.removeEventListener('click', onCancel)
+            confirmBtn?.removeEventListener('click', onConfirmClick)
+            modal.removeEventListener('keydown', onKeydown)
+            if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+              previouslyFocused.focus()
+            }
+          }
+          function onCancel() {
+            close()
+          }
+          function onConfirmClick() {
+            close()
+            onConfirm()
+          }
+          function onKeydown(ev: KeyboardEvent) {
+            if (ev.key === 'Escape') {
+              ev.preventDefault()
+              close()
+            } else if (ev.key === 'Tab' && focusables.length > 0) {
+              const first = focusables[0]
+              const last = focusables[focusables.length - 1]
+              if (ev.shiftKey && document.activeElement === first) {
+                ev.preventDefault()
+                last.focus()
+              } else if (!ev.shiftKey && document.activeElement === last) {
+                ev.preventDefault()
+                first.focus()
+              }
+            }
+          }
+          cancelBtn?.addEventListener('click', onCancel)
+          confirmBtn?.addEventListener('click', onConfirmClick)
+          modal.addEventListener('keydown', onKeydown)
+        }
+
+        async function doPurge(): Promise<void> {
+          if (!purgeBtnEl) return
+          const originalText = purgeBtnEl.textContent
+          purgeBtnEl.disabled = true
+          purgeBtnEl.setAttribute('aria-disabled', 'true')
+          purgeBtnEl.setAttribute('aria-busy', 'true')
+          purgeBtnEl.textContent = 'Purging...'
+          if (purgeResultEl) {
+            purgeResultEl.style.display = 'none'
+            purgeResultEl.textContent = ''
+          }
+
+          function fail(message: string) {
+            if (purgeResultEl) {
+              purgeResultEl.style.color = '#ef4444'
+              purgeResultEl.textContent = message
+              purgeResultEl.style.display = 'block'
+            }
+            if (purgeBtnEl) {
+              purgeBtnEl.disabled = false
+              purgeBtnEl.setAttribute('aria-disabled', 'false')
+              purgeBtnEl.removeAttribute('aria-busy')
+              if (originalText) purgeBtnEl.textContent = originalText
+            }
+          }
+
+          try {
+            const res = await fetch('/api/account/purge-inventory', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${session!.access_token}` },
+            })
+            if (!res.ok) {
+              fail('Purge failed. Please try again.')
+              return
+            }
+            // Success — leave the button in a terminal disabled state so the
+            // action reads as complete, and confirm via the aria-live region.
+            purgeBtnEl.removeAttribute('aria-busy')
+            purgeBtnEl.textContent = 'Inventory purged'
+            if (purgeResultEl) {
+              purgeResultEl.style.color = '#10b981'
+              purgeResultEl.textContent =
+                'Your stored inventory was purged. Push again from any machine to re-populate it.'
+              purgeResultEl.style.display = 'block'
+            }
+          } catch {
+            fail('Network error. Please try again.')
+          }
+        }
+
+        if (purgeBtnEl) {
+          purgeBtnEl.addEventListener('click', () => openPurgeModal(doPurge))
         }
       })
     </script>
@@ -743,11 +891,32 @@ const supabaseConfig = getSupabaseConfig()
         color: #fafafa;
       }
 
+      .btn-danger {
+        background: #7f1d1d;
+        color: #fca5a5;
+        border-color: #991b1b;
+      }
+
+      .btn-danger:hover:not(:disabled) {
+        background: #991b1b;
+        border-color: #b91c1c;
+        color: #fecaca;
+      }
+
       .toggle-description {
         margin: 0;
         font-size: 0.875rem;
         color: #a1a1aa;
         line-height: 1.6;
+      }
+
+      .toggle-description code {
+        background: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 4px;
+        padding: 0.1em 0.4em;
+        font-size: 0.875em;
+        color: #a78bfa;
       }
 
       .inline-link {
@@ -764,6 +933,53 @@ const supabaseConfig = getSupabaseConfig()
         font-size: 0.875rem;
         color: #71717a;
         line-height: 1.6;
+      }
+
+      /* SMI-5510: focus-trapped purge confirmation modal.
+         :global() required — the modal is created via document.createElement()
+         and appended to body, so Astro's data-astro-cid scoping never applies. */
+      :global(.purge-modal-backdrop[hidden]) {
+        display: none;
+      }
+
+      :global(.purge-modal-backdrop) {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.65);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        z-index: 9999;
+      }
+
+      :global(.purge-modal) {
+        background: #121214;
+        border: 1px solid #2a2a2f;
+        border-radius: 12px;
+        padding: 1.5rem;
+        max-width: 420px;
+        width: 100%;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+      }
+
+      :global(.purge-modal h2) {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin: 0 0 0.75rem;
+      }
+
+      :global(.purge-modal p) {
+        color: #a1a1aa;
+        font-size: 0.9375rem;
+        line-height: 1.5;
+        margin: 0 0 1.25rem;
+      }
+
+      :global(.purge-modal-actions) {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
       }
     </style>
   </body>

@@ -9,6 +9,7 @@
  *   skillsmith inventory push
  *   skillsmith inventory status [--verbose]
  *   skillsmith inventory forget-device
+ *   skillsmith inventory purge [--yes]   (SMI-5510)
  */
 
 import { Command } from 'commander'
@@ -17,6 +18,7 @@ import {
   inventoryPushAction,
   inventoryStatusAction,
   inventoryForgetDeviceAction,
+  inventoryPurgeAction,
 } from './inventory.action.js'
 
 // ---------------------------------------------------------------------------
@@ -49,6 +51,12 @@ export function createInventoryCommand(): Command {
     .description('Clear the local device registration; the next push will create a fresh device')
     .action(inventoryForgetDeviceAction)
 
+  inventory
+    .command('purge')
+    .description("Permanently delete your stored cross-machine inventory from Skillsmith's servers")
+    .option('-y, --yes', 'Skip the confirmation prompt (for scripts)')
+    .action(inventoryPurgeAction)
+
   return inventory
 }
 
@@ -57,7 +65,9 @@ export {
   runPush,
   runStatus,
   runForgetDevice,
+  runPurge,
   inventoryPushActionImpl,
   inventoryStatusActionImpl,
   inventoryForgetDeviceActionImpl,
+  inventoryPurgeActionImpl,
 } from './inventory.action.js'

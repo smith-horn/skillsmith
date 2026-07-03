@@ -49,6 +49,7 @@ export { buildInventoryDevice, type BuildInventoryDeviceOptions } from './invent
 export { buildInventoryPayload } from './inventory-builder.js'
 export {
   uploadInventory,
+  purgeInventory,
   InventoryAuthError,
   InventoryConflictError,
   InventoryValidationError,

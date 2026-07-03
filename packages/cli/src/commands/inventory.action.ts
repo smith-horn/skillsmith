@@ -5,18 +5,25 @@
  *   (umbrella SMI-5382). Follows the SMI-5128 sibling-split convention: the run*
  *   business logic + typed-error handling + withTelemetry-wrapped exports live here;
  *   the commander factory stays in inventory.ts.
+ * @see SMI-5510 R0 Wave 1a — adds the `inventory purge` subcommand.
  *
  * Error-mapping contract for `push`:
  *   InventoryAuthError      → "Not logged in. Run `skillsmith login` and try again."
  *   InventoryConflictError  → device already owned; instruct forget-device
  *   InventoryValidationError → err.message (server-supplied reason)
  *   InventoryUploadError    → "Inventory upload failed. " + err.message
+ *
+ * Error-mapping contract for `purge`:
+ *   InventoryAuthError      → "Not logged in. Run `skillsmith login` and try again."
+ *   InventoryUploadError    → "Inventory purge failed. " + err.message
  */
 
 import chalk from 'chalk'
+import { confirm } from '@inquirer/prompts'
 
 import {
   pushInventory,
+  purgeInventory,
   getDeviceId,
   forgetDevice,
   getLastInventoryPushAt,
@@ -224,5 +231,59 @@ export async function inventoryForgetDeviceActionImpl(): Promise<void> {
 export const inventoryForgetDeviceAction = withTelemetry(inventoryForgetDeviceActionImpl, {
   source: 'cli',
   extractSkillId: () => 'inventory forget-device',
+  extractFramework: () => 'cli',
+})
+
+// ---------------------------------------------------------------------------
+// purge
+// ---------------------------------------------------------------------------
+
+/**
+ * Permanently delete this user's stored cross-harness inventory from the
+ * registry. Prompts for confirmation unless `--yes` is passed (for scripts).
+ *
+ * @param opts.yes - When true, skip the confirmation prompt.
+ * @see SMI-5510
+ */
+export async function runPurge(opts?: { yes?: boolean }): Promise<void> {
+  if (!opts?.yes) {
+    const confirmed = await confirm({
+      message:
+        "This permanently deletes your stored cross-machine inventory from Skillsmith's servers. Continue?",
+      default: false,
+    })
+    if (!confirmed) {
+      console.log(chalk.dim('Cancelled. Nothing was deleted.'))
+      return
+    }
+  }
+
+  const deleted = await purgeInventory()
+  console.log(
+    chalk.green(
+      `Purged ${deleted} device${deleted === 1 ? '' : 's'} from your Skillsmith inventory.`
+    )
+  )
+}
+
+/** @internal Exported for unit tests. */
+export async function inventoryPurgeActionImpl(options: { yes?: boolean }): Promise<void> {
+  try {
+    await runPurge(options)
+  } catch (err) {
+    if (err instanceof InventoryAuthError) {
+      console.error(chalk.red('Not logged in. Run `skillsmith login` and try again.'))
+    } else if (err instanceof InventoryUploadError) {
+      console.error(chalk.red('Inventory purge failed. ' + err.message))
+    } else {
+      console.error(chalk.red('Error:'), sanitizeError(err))
+    }
+    process.exit(1)
+  }
+}
+
+export const inventoryPurgeAction = withTelemetry(inventoryPurgeActionImpl, {
+  source: 'cli',
+  extractSkillId: () => 'inventory purge',
   extractFramework: () => 'cli',
 })

@@ -26,6 +26,7 @@ import {
 } from '../config/token-credentials.js'
 import {
   uploadInventory,
+  purgeInventory,
   InventoryAuthError,
   InventoryConflictError,
   InventoryValidationError,
@@ -191,5 +192,92 @@ describe('inventory-client', () => {
     expect(errNet).toBeInstanceOf(InventoryUploadError)
     expect((errNet as Error).message).not.toContain('at_SECRET_5392')
     expect((errNet as Error).message).not.toContain('rt_SECRET_5392')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// purgeInventory (SMI-5510) — reuses the same auth + error-typing as upload.
+//
+// PC-1: 200 { ok, deleted_device_count } -> returns the count.
+// PC-2: no credentials -> InventoryAuthError, no fetch.
+// PC-3: expired credentials + failed refresh -> InventoryAuthError.
+// PC-4: 401 -> InventoryAuthError.
+// PC-5: 500 -> InventoryUploadError.
+// PC-6: network throw -> InventoryUploadError.
+// PC-7: unexpected 200 body shape -> InventoryUploadError.
+// ---------------------------------------------------------------------------
+
+describe('purgeInventory', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('PC-1: returns the deleted device count and POSTs to /purge-inventory with the bearer token', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, deleted_device_count: 3 }, 200))
+
+    const deleted = await purgeInventory()
+
+    expect(deleted).toBe(3)
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/purge-inventory'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer at_valid' }),
+      })
+    )
+  })
+
+  it('PC-2: throws InventoryAuthError when no credentials are stored', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(null)
+
+    await expect(purgeInventory()).rejects.toBeInstanceOf(InventoryAuthError)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('PC-3: throws InventoryAuthError when the refresh fails', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue({
+      accessToken: 'at_expired',
+      refreshToken: 'rt_old',
+      expiresAt: Date.now() - 1_000,
+      version: 2,
+    })
+    vi.mocked(refreshAccessToken).mockResolvedValue(null)
+
+    await expect(purgeInventory()).rejects.toBeInstanceOf(InventoryAuthError)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('PC-4: maps 401 to InventoryAuthError', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'authentication_required' }, 401))
+
+    await expect(purgeInventory()).rejects.toBeInstanceOf(InventoryAuthError)
+  })
+
+  it('PC-5: maps 500 to InventoryUploadError', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'server_error' }, 500))
+
+    await expect(purgeInventory()).rejects.toBeInstanceOf(InventoryUploadError)
+  })
+
+  it('PC-6: wraps a network throw in InventoryUploadError', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+
+    await expect(purgeInventory()).rejects.toBeInstanceOf(InventoryUploadError)
+  })
+
+  it('PC-7: throws InventoryUploadError on an unexpected 200 body shape', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true }, 200))
+
+    await expect(purgeInventory()).rejects.toBeInstanceOf(InventoryUploadError)
   })
 })

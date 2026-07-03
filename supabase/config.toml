@@ -495,6 +495,12 @@ verify_jwt = true
 [functions.inventory-upload]
 verify_jwt = true
 
+# purge-inventory: user-initiated hard-delete of the caller's inventory
+# (purge_user_inventory RPC, SMI-5510). Deploy WITHOUT --no-verify-jwt; mirrors
+# inventory-upload.
+[functions.purge-inventory]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

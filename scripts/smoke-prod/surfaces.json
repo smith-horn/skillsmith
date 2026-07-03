@@ -195,6 +195,16 @@
       ],
       "script": "scripts/smoke-prod/inventory.sh",
       "checks": ["check_inventory_upload_requires_jwt", "check_get_user_inventory_rpc_denies_anon"]
+    },
+    {
+      "id": "edge-fn-purge-inventory",
+      "owner": "edge-functions",
+      "trigger_globs": [
+        "supabase/functions/purge-inventory/**",
+        "supabase/migrations/20260702000001_purge_user_inventory_rpc.sql"
+      ],
+      "script": "scripts/smoke-prod/inventory.sh",
+      "checks": ["check_purge_inventory_requires_jwt", "check_purge_user_inventory_rpc_denies_anon"]
     }
   ]
 }
