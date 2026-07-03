@@ -4,12 +4,17 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.10.0
+
+- **Feature**: per-user inventory purge, hard-delete (SMI-5510, R0 Wave 1a) (#1684)
+- **Feature**: quarantine-hardening balance — scanner split + chmod evasion + recheck sibling re-scan (SMI-5434/5433/5437) (#1653)
 - **Feature**: telemetry marker channel for agent-mediated calls — `agent_session`/`nudge_origin`/`trigger_id` wire fields + `_meta` MCP marker extraction + harness-side attribution (SMI-5456)
 - **Feature**: change journal module — hash-chained, fsync'd records; foundation for undo (SMI-5456)
 - **Feature**: multi-target agent-pack generator emitting SKILL.md, Claude/Codex/OpenCode/Copilot shims, hooks (SMI-5456)
 - **Feature**: agent-pack installer/uninstaller with JSON-merge, manifest, path guard, per-harness reporting (SMI-5456)
 - **Feature**: paywall-triggers store for Community/Individual funnel state (SMI-5456)
 - **Feature**: extend ClientIds — add `opencode` and `hermes` skill paths (SMI-5456)
+- **Feature**: `runWithEmissionGate` — AsyncLocalStorage-scoped, per-call telemetry emission gate; `setEmissionGate` retained as a deprecated process-wide fallback (SMI-5479)
 
 ## v0.9.0
 
