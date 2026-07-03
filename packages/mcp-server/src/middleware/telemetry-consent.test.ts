@@ -390,3 +390,8 @@ describe('TELEMETRY_PRIVACY_URL', () => {
     expect(TELEMETRY_PRIVACY_URL).toBe('https://skillsmith.app/account/telemetry')
   })
 })
+
+// SMI-5479 additions (consent-cache eviction-on-rejection, the
+// once-per-process prompt primitives, and the annotateResponseWithConsent
+// reference-identity contract) live in the sibling `telemetry-consent-gate.
+// test.ts` — this file was approaching the audit:standards 500-line gate.

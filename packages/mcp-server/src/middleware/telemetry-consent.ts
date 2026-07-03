@@ -131,14 +131,35 @@ async function fetchConsentState(anonymousId: string): Promise<ConsentState> {
  * Passing `null`/`undefined`/empty triggers the no-id branch — telemetry is
  * suppressed but no prompt is shown (there's nothing to link the user's
  * eventual web-dashboard choice back to).
+ *
+ * `fetchState` defaults to {@link fetchConsentState} and exists purely as a
+ * test seam (SMI-5479) — `fetchConsentState` is written so every internal
+ * error path resolves to a `DEFAULT_*` state instead of rejecting, which
+ * means the eviction-on-rejection behavior below is unreachable through the
+ * real fetcher today. Passing a rejecting `fetchState` in a test exercises
+ * that defense-in-depth path deterministically without weakening
+ * `fetchConsentState`'s own never-rejects contract.
  */
-export function resolveConsent(anonymousId: string | null | undefined): Promise<ConsentState> {
+export function resolveConsent(
+  anonymousId: string | null | undefined,
+  fetchState: (id: string) => Promise<ConsentState> = fetchConsentState
+): Promise<ConsentState> {
   if (!anonymousId) {
     return Promise.resolve({ ...DEFAULT_NO_ID })
   }
   const cached = consentCache.get(anonymousId)
   if (cached) return cached
-  const promise = fetchConsentState(anonymousId)
+  // SMI-5479: eviction-on-rejection. Without this, a single rejecting fetch
+  // would poison the cache entry for `anonymousId` for the rest of the
+  // process lifetime — every subsequent call would replay the SAME rejected
+  // promise instead of re-querying. Evicting immediately means the NEXT call
+  // gets a fresh attempt; THIS call's caller still observes the failure
+  // (rethrow) so callers that `await` it (e.g. the CallTool handler) see the
+  // error and can fall back to their own error envelope.
+  const promise = fetchState(anonymousId).catch((error: unknown) => {
+    consentCache.delete(anonymousId)
+    throw error
+  })
   consentCache.set(anonymousId, promise)
   return promise
 }
@@ -218,8 +239,49 @@ export function annotateResponseWithConsent<T extends { content?: unknown }>(
 }
 
 /**
+ * Per-process set of anonymous_ids that have already received a
+ * `consent_required` annotation on a DIRECT-DISPATCH response (SMI-5479
+ * Step 3, Option A — ratified at plan kickoff). Distinct from `consentCache`
+ * (which caches the resolved *preference*, not "have we prompted yet").
+ *
+ * Scope: this governs ONLY the dispatch-level annotation the CallTool
+ * handler applies (`call-tool-handler.ts`'s `maybeAnnotate`). The
+ * `withLicenseAndQuota` middleware path (`license.gate.ts`) is UNCHANGED —
+ * it keeps its own unconditional per-call annotation. Gated tools (~4 of 24
+ * always-emitting tools) are an accepted exception to the once-per-process
+ * behavior; see the plan's decision note.
+ */
+const promptedIds = new Set<string>()
+
+/**
+ * True iff `anonymousId` has already been annotated with `consent_required`
+ * on a direct-dispatch response this process. A peek, not a mutation — pair
+ * with {@link markConsentPrompted}, called only after annotation actually
+ * happens, so a fail-open no-op (e.g. a non-JSON response body) never
+ * consumes the one-shot prompt for a user who never actually saw it.
+ */
+export function wasConsentPrompted(anonymousId: string | null | undefined): boolean {
+  if (!anonymousId) return false
+  return promptedIds.has(anonymousId)
+}
+
+/**
+ * Record that `anonymousId` has now been shown the `consent_required`
+ * prompt on a direct-dispatch response. No-ops for a falsy id.
+ */
+export function markConsentPrompted(anonymousId: string | null | undefined): void {
+  if (!anonymousId) return
+  promptedIds.add(anonymousId)
+}
+
+/**
  * Test-only helper. Not exported from the package index.
+ *
+ * Clears both the consent-preference cache AND the once-per-process
+ * `promptedIds` set — the two share a process-lifetime scope and every
+ * existing caller of this helper wants a fully clean slate between tests.
  */
 export function _resetConsentCacheForTests(): void {
   consentCache.clear()
+  promptedIds.clear()
 }
