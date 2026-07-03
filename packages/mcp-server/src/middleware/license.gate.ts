@@ -6,7 +6,7 @@ import type { ToolContext } from '../context.types.js'
 import type { QuotaMiddleware } from './quota-types.js'
 import { safeParseOrError } from '../validation.js'
 import { ApiClientError, SkillsmithError, ErrorCodes } from '@skillsmith/core'
-import { setEmissionGate } from '@skillsmith/core/telemetry'
+import { runWithEmissionGate } from '@skillsmith/core/telemetry'
 import type { LicenseMiddleware } from './license.js'
 import { createLicenseErrorResponse } from './license.js'
 import { resolveConsent, annotateResponseWithConsent } from './telemetry-consent.js'
@@ -149,45 +149,37 @@ export async function withLicenseAndQuota<S extends ZodTypeAny>(
   // `resolveConsent` call is process-cached, so this await is one round-trip
   // on first call for a given anonymous_id and zero-cost on subsequent calls.
   const consent = await resolveConsent(toolContext.distinctId)
-  // Install a per-request emission gate so `withTelemetry` only emits when
-  // this anonymous_id's consent has resolved AND is enabled. The gate is
-  // reset to `undefined` (default-suppress) in `finally` so it never leaks
-  // emission permission to the next request.
-  //
-  // Multi-tenancy caveat: this gate is module-scoped at the
-  // `@skillsmith/core/telemetry` layer, so two CONCURRENT requests in the same
-  // process from DIFFERENT anonymous_ids would observe the gate of whichever
-  // one ran setEmissionGate most recently. The v1 MCP server is single-tenant
-  // (one stdio subprocess per user), so this is correct today. A future
-  // multi-tenant transport (e.g. a shared HTTP server fronting many users)
-  // MUST switch this to `AsyncLocalStorage`-backed per-request state — see
-  // the matching caveat in `packages/core/src/telemetry/wrap.ts`.
-  const emit = consent.enabled
-  setEmissionGate(() => emit)
-  try {
-    const handlerResult = await handler(parsed.data, toolContext)
-    return annotateResponseWithConsent(ok(handlerResult), consent)
-  } catch (err) {
-    if (
-      err instanceof ApiClientError &&
-      err.statusCode === 403 &&
-      err.message === 'profile_incomplete'
-    ) {
-      return errResponse(createProfileIncompleteResponse())
+  // SMI-5479: run the handler inside an `AsyncLocalStorage`-scoped emission
+  // gate (`runWithEmissionGate`) rather than installing/clearing the old
+  // process-wide module `let` (`setEmissionGate`). This scope nests INSIDE
+  // the dispatch-level `runWithEmissionGate` scope the CallTool handler
+  // (`index.ts`) installs around the whole dispatch — both resolve from the
+  // same cached `resolveConsent(toolContext.distinctId)` call, so they always
+  // agree on the value; the inner (this) scope simply shadows the outer one
+  // for this handler's own emit. No `finally` reset is needed: the ALS scope
+  // auto-unwinds when the callback returns or throws, so it can never leak
+  // emission permission to a later request or bleed into a concurrent
+  // sibling call's scope — see the matching note in
+  // `packages/core/src/telemetry/wrap.ts`.
+  return runWithEmissionGate(consent.enabled, async () => {
+    try {
+      const handlerResult = await handler(parsed.data, toolContext)
+      return annotateResponseWithConsent(ok(handlerResult), consent)
+    } catch (err) {
+      if (
+        err instanceof ApiClientError &&
+        err.statusCode === 403 &&
+        err.message === 'profile_incomplete'
+      ) {
+        return errResponse(createProfileIncompleteResponse())
+      }
+      // SMI-4463: monthly_quota_exceeded translates to JSON-RPC -32050 with
+      // structured quotaInfo. Disambiguates from per-minute rate-limit by
+      // the `error: 'monthly_quota_exceeded'` body field, not status code.
+      if (err instanceof SkillsmithError && err.code === ErrorCodes.NETWORK_QUOTA_EXCEEDED) {
+        return errResponse(createMonthlyQuotaExceededResponse(err))
+      }
+      throw err
     }
-    // SMI-4463: monthly_quota_exceeded translates to JSON-RPC -32050 with
-    // structured quotaInfo. Disambiguates from per-minute rate-limit by
-    // the `error: 'monthly_quota_exceeded'` body field, not status code.
-    if (err instanceof SkillsmithError && err.code === ErrorCodes.NETWORK_QUOTA_EXCEEDED) {
-      return errResponse(createMonthlyQuotaExceededResponse(err))
-    }
-    throw err
-  } finally {
-    // SMI-5019 wire-in: revert to default-suppress so a misconfigured next
-    // request can't inherit this request's emission permission. The
-    // `withTelemetry` HOF's finally has already fired by now (the handler
-    // awaited above, including its synchronous-finally emit path), so
-    // clearing the gate here only affects subsequent requests.
-    setEmissionGate(undefined)
-  }
+  })
 }
