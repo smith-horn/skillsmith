@@ -62,14 +62,14 @@ jobs:
       version_files: ${{ steps.filter.outputs.version_files }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-3999: Pinned to SHA for reproducibility (v4 release). Keep in sync with
       # docs-only.yml and website-build job (ci.yml:1415) — any drift is a bug.
       # To update: check https://github.com/dorny/paths-filter/releases
       - name: Filter non-doc paths
         id: filter
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
         with:
           # SMI-3997 Finding #2: Explicit base so push-event behavior does not rely
           # on action defaults. On pull_request, compares HEAD against PR base ref.
@@ -118,7 +118,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0 # Full history for scanning all commits in PR
 
@@ -158,7 +158,7 @@ jobs:
       affected_count: ${{ steps.affected.outputs.affected_count || '0' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
@@ -206,7 +206,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
       - name: Setup Node.js
@@ -239,7 +239,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-1317: Verify required dependencies are available
       - name: Verify dependencies
@@ -348,7 +348,7 @@ jobs:
       # eval baseline delta comment.
       pull-requests: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -356,7 +356,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Path filter -- only run if ranking/eval files changed
         id: filter
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
         with:
           base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
           filters: |
@@ -468,7 +468,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
@@ -525,7 +525,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
@@ -722,7 +722,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-2159: Decrypt git-crypt encrypted files before Docker build
       # Narrowed scope (SMI-2604): .claude/skills/**, .claude/plans/**, .claude/hive-mind/**,
@@ -741,7 +741,7 @@ jobs:
       # NOTE: No restore-keys - we only want exact matches to avoid loading stale images
       - name: Restore Docker image from cache
         id: docker-image-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: /tmp/docker-cache
           # SMI-4646: cache key suffixed with -zstd to invalidate previous gzip-based cache entries.
@@ -771,7 +771,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       # SMI-4927: GHCR auth for the registry BuildKit cache. Skipped on fork PRs
       # (read-only GITHUB_TOKEN has no packages: scope) — fork PRs then cold-build
@@ -779,7 +779,7 @@ jobs:
       - name: Log in to ghcr.io
         id: ghcr-login
         if: (steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true') && github.event.pull_request.head.repo.fork != true
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -787,7 +787,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: skillsmith-ci
           tags: |
@@ -807,7 +807,7 @@ jobs:
       # SMI-2194: Only build if cache miss or load failed
       - name: Build and cache Docker image
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           push: false
@@ -948,7 +948,7 @@ jobs:
       # Key includes: package source files, tsconfig, and lockfile
       # This allows downstream jobs to skip rebuilding unchanged packages
       - name: Cache package builds and Turbo
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: |
             packages/core/dist
@@ -989,7 +989,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # SMI-4764 Wave 4 finding 2: audit:standards check 45 needs full
           # history to compute origin/${baseRef}...HEAD diff. Default depth=1
@@ -1065,7 +1065,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1207,7 +1207,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-2250: Decrypt git-crypt encrypted files (supabase/functions tests are encrypted)
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1294,7 +1294,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Note: colocated tests don't read git-crypt content, but unlock matches
       # `Test (root)` so devs see consistent setup across jobs.
@@ -1415,7 +1415,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
@@ -1499,7 +1499,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1601,7 +1601,7 @@ jobs:
     steps:
       - name: Check for website changes
         id: changes
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
         with:
           filters: |
             website:
@@ -1609,7 +1609,7 @@ jobs:
 
       - name: Checkout
         if: steps.changes.outputs.website == 'true'
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1731,7 +1731,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -1801,7 +1801,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -1901,7 +1901,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
