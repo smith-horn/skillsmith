@@ -1,16 +1,17 @@
 {
   "name": "skillsmith-cli",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Convenience wrapper for @skillsmith/cli — Claude Code skill discovery and management",
   "type": "module",
   "bin": {
     "skillsmith-cli": "./bin.js"
   },
   "scripts": {
+    "prepublishOnly": "node ../../scripts/lib/forbid-local-publish.mjs",
     "test": "echo 'No tests — thin wrapper package'"
   },
   "dependencies": {
-    "@skillsmith/cli": "^0.6.0"
+    "@skillsmith/cli": "^0.7.0"
   },
   "files": [
     "bin.js"

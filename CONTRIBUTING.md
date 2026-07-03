@@ -302,18 +302,12 @@ Skillsmith publishes four public packages to npm (`@skillsmith/core`, `@skillsmi
 
 ### GitHub Release creation
 
-Two paths, both automatic:
+GitHub Releases are created automatically:
 
-1. **CI publish** (preferred): `gh workflow run publish.yml -f dry_run=false`. On success, a `create-gh-release` job extracts the version's CHANGELOG section and calls `gh release create` per package. Tag convention: `@skillsmith/<name>-v<X.Y.Z>` (matches the 2026-03-07 precedent).
-2. **Local fallback** (`npm publish --ignore-scripts -w`, documented in CLAUDE.md): if used, a scheduled workflow (`detect-release-drift.yml`) runs hourly and creates any missing GH Releases it finds by comparing `npm view <pkg>` against the latest GH Release tag. Drift-healed releases are indistinguishable from CI-created ones downstream.
+1. **CI publish** (the only supported path): `gh workflow run publish.yml -f dry_run=false`. Auth is **OIDC trusted-publisher — no npm token**. On success, a `create-gh-release` job extracts the version's CHANGELOG section and calls `gh release create` per package. Tag convention: `@skillsmith/<name>-v<X.Y.Z>`.
+2. **Drift backstop**: a scheduled workflow (`detect-release-drift.yml`) runs hourly and creates any missing GH Releases by comparing `npm view <pkg>` against the latest GH Release tag.
 
-**If you local-publish, create the GH Release yourself** immediately after:
-
-```bash
-gh release create "@skillsmith/core-v$(jq -r .version packages/core/package.json)" \
-  --title "@skillsmith/core v$(jq -r .version packages/core/package.json)" \
-  --notes-file <(node scripts/extract-changelog-section.mjs --package packages/core --version $(jq -r .version packages/core/package.json))
-```
+**Local publish is forbidden and impossible — do not use it.** The `prepublishOnly` guard blocks it (SMI-4533); the npm token was revoked (SMI-4540, 2026-05-19); and npm dropped new authenticator/TOTP enrollment (Sept 2025), so `npm login` / `--otp` is a dead end. If CI publish fails, **fix CI** — check the package's npmjs.com Trusted Publisher config. See `.claude/development/publishing-guide.md` and `docs/internal/runbooks/publish-ci-recovery.md`. The only sanctioned manual path is the `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` break-glass in publishing-guide.md (which still requires valid OIDC/registry auth).
 
 Reason: between the local publish and the drift detector's next tick (up to 60 min), users installing from npm see the new version without any release notes discoverable via normal channels. The drift detector is a safety net, not the primary path.
 
