@@ -234,6 +234,7 @@ ONLY on that PostHog path (the claude-code-hook edge-function payload in the
 [Wire format](#wire-format) section above carries none of them). So the
 predicates below are **flat top-level PostHog properties**, and they do NOT
 match the nested `metadata.*` field names in the Wire-format section:
+
 - the invocation-surface discriminator is **`invoke_source`**, NOT `source`
   (`trackSkillInvoke` maps its `source` argument to the `invoke_source`
   property — `posthog.ts` `trackEvent(..., 'skill_invoke', { invoke_source }`).
