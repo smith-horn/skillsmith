@@ -7,6 +7,7 @@
     "skillsmith-cli": "./bin.js"
   },
   "scripts": {
+    "prepublishOnly": "node ../../scripts/lib/forbid-local-publish.mjs",
     "test": "echo 'No tests — thin wrapper package'"
   },
   "dependencies": {
