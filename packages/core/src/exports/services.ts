@@ -357,6 +357,7 @@ export {
   buildInventoryDevice,
   buildInventoryPayload,
   uploadInventory,
+  purgeInventory,
   pushInventory,
   maybeAutoPush,
   InventoryAuthError,

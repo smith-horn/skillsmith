@@ -61,6 +61,7 @@ vi.mock('@skillsmith/core', () => {
 
   return {
     pushInventory: vi.fn(),
+    purgeInventory: vi.fn(),
     getDeviceId: vi.fn(),
     forgetDevice: vi.fn(),
     getLastInventoryPushAt: vi.fn(),
@@ -71,6 +72,14 @@ vi.mock('@skillsmith/core', () => {
     InventoryUploadError,
   }
 })
+
+// ---------------------------------------------------------------------------
+// @inquirer/prompts — mock confirm so the purge tests never block on stdin
+// ---------------------------------------------------------------------------
+
+vi.mock('@inquirer/prompts', () => ({
+  confirm: vi.fn(),
+}))
 
 // ---------------------------------------------------------------------------
 // @skillsmith/core/install — sync function, mock to return a fixed presence set
@@ -101,13 +110,16 @@ import {
   runPush,
   runStatus,
   runForgetDevice,
+  runPurge,
   inventoryPushActionImpl,
   inventoryStatusActionImpl,
   inventoryForgetDeviceActionImpl,
+  inventoryPurgeActionImpl,
 } from './inventory.action.js'
 
 import {
   pushInventory,
+  purgeInventory,
   getDeviceId,
   forgetDevice,
   getLastInventoryPushAt,
@@ -118,10 +130,13 @@ import {
   InventoryUploadError,
 } from '@skillsmith/core'
 
+import { confirm } from '@inquirer/prompts'
 import { enumerateHarnessPresence } from '@skillsmith/core/install'
 import { getInstalledSkillsPerHarness } from '../utils/skills-directory.js'
 
 const pushInventoryMock = vi.mocked(pushInventory)
+const purgeInventoryMock = vi.mocked(purgeInventory)
+const confirmMock = vi.mocked(confirm)
 const getDeviceIdMock = vi.mocked(getDeviceId)
 const forgetDeviceMock = vi.mocked(forgetDevice)
 const getLastInventoryPushAtMock = vi.mocked(getLastInventoryPushAt)
@@ -447,5 +462,81 @@ describe('inventory forget-device', () => {
     captureConsole()
     await expect(inventoryForgetDeviceActionImpl()).rejects.toThrow('process.exit(1)')
     expect(exitSpy).toHaveBeenCalledWith(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// purge (SMI-5510)
+// ---------------------------------------------------------------------------
+
+describe('inventory purge — confirm flow', () => {
+  it('purges after the user confirms, printing the deleted device count', async () => {
+    confirmMock.mockResolvedValue(true)
+    purgeInventoryMock.mockResolvedValue(3)
+    const cap = captureConsole()
+
+    await runPurge()
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(purgeInventoryMock).toHaveBeenCalledTimes(1)
+    expect(cap.log.join('\n')).toContain('Purged 3 devices')
+  })
+
+  it('singularizes the count when exactly one device is deleted', async () => {
+    confirmMock.mockResolvedValue(true)
+    purgeInventoryMock.mockResolvedValue(1)
+    const cap = captureConsole()
+
+    await runPurge()
+
+    expect(cap.log.join('\n')).toContain('Purged 1 device from')
+  })
+
+  it('aborts without purging when the user declines the prompt', async () => {
+    confirmMock.mockResolvedValue(false)
+    const cap = captureConsole()
+
+    await runPurge()
+
+    expect(purgeInventoryMock).not.toHaveBeenCalled()
+    expect(cap.log.join('\n')).toContain('Cancelled')
+  })
+
+  it('bypasses the prompt when --yes is passed', async () => {
+    purgeInventoryMock.mockResolvedValue(2)
+    const cap = captureConsole()
+
+    await runPurge({ yes: true })
+
+    expect(confirmMock).not.toHaveBeenCalled()
+    expect(purgeInventoryMock).toHaveBeenCalledTimes(1)
+    expect(cap.log.join('\n')).toContain('Purged 2 devices')
+  })
+})
+
+describe('inventory purge — typed error mapping', () => {
+  function mockExit() {
+    return vi.spyOn(process, 'exit').mockImplementation((code) => {
+      throw new Error(`process.exit(${String(code)})`)
+    })
+  }
+
+  it('maps InventoryAuthError → "Not logged in" message + exit(1)', async () => {
+    const exitSpy = mockExit()
+    purgeInventoryMock.mockRejectedValue(new InventoryAuthError())
+    const cap = captureConsole()
+    await expect(inventoryPurgeActionImpl({ yes: true })).rejects.toThrow('process.exit(1)')
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(cap.err.join(' ')).toContain('Not logged in')
+  })
+
+  it('maps InventoryUploadError → "Inventory purge failed." prefix + exit(1)', async () => {
+    const exitSpy = mockExit()
+    purgeInventoryMock.mockRejectedValue(new InventoryUploadError('HTTP 503'))
+    const cap = captureConsole()
+    await expect(inventoryPurgeActionImpl({ yes: true })).rejects.toThrow('process.exit(1)')
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(cap.err.join(' ')).toContain('Inventory purge failed.')
+    expect(cap.err.join(' ')).toContain('HTTP 503')
   })
 })

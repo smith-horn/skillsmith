@@ -115,6 +115,7 @@ VERIFY_JWT_FUNCTIONS=(
   inventory-upload
   ops-report
   process-pending-subscription
+  purge-inventory
   skills-outreach
   skills-refresh-metadata
   sync-oauth-email

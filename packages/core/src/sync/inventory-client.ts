@@ -165,3 +165,61 @@ export async function uploadInventory(
       )
   }
 }
+
+/**
+ * Permanently delete this user's entire stored cross-machine inventory.
+ *
+ * POSTs to the gateway-verified `purge-inventory` edge function, which removes
+ * the user's device rows (and their skill rows via cascade) server-side. This is
+ * irreversible; callers (CLI command, website) confirm before invoking. Reuses
+ * the same base-URL resolution, auth header/token handling, and typed errors as
+ * {@link uploadInventory} — a purge accepts no payload, so there is no 400/409
+ * mapping; only 401 (auth) and the catch-all (5xx / network) apply.
+ *
+ * @returns The number of device rows the server deleted.
+ * @throws {InventoryAuthError} HTTP 401, or no/expired session.
+ * @throws {InventoryUploadError} HTTP 5xx, network failure, or unexpected 200 body.
+ * @see SMI-5510
+ */
+export async function purgeInventory(): Promise<number> {
+  const accessToken = await resolveAccessToken()
+
+  let res: Response
+  try {
+    res = await fetch(`${DEFAULT_BASE_URL}/purge-inventory`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: PRODUCTION_ANON_KEY,
+        Authorization: `Bearer ${accessToken}`,
+      },
+    })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new InventoryUploadError(`Inventory purge request failed: ${detail}`)
+  }
+
+  if (res.ok) {
+    let body: { deleted_device_count?: unknown }
+    try {
+      body = (await res.json()) as { deleted_device_count?: unknown }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new InventoryUploadError(`Inventory purge returned an unreadable body: ${detail}`)
+    }
+    if (typeof body.deleted_device_count !== 'number') {
+      throw new InventoryUploadError('Inventory purge returned an unexpected body shape.')
+    }
+    return body.deleted_device_count
+  }
+
+  const serverError = await readServerError(res)
+  switch (res.status) {
+    case 401:
+      throw new InventoryAuthError()
+    default:
+      throw new InventoryUploadError(
+        `Inventory purge failed (HTTP ${res.status})${serverError ? `: ${serverError}` : ''}`
+      )
+  }
+}

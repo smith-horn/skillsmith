@@ -112,3 +112,62 @@ check_get_user_inventory_rpc_denies_anon() {
       ;;
   esac
 }
+
+# ---- check_purge_inventory_requires_jwt ----------------------------------
+# purge-inventory is a destructive, gateway-verified endpoint. An unauthenticated
+# POST must be denied (401). A 200 here would mean anyone could trigger a purge.
+check_purge_inventory_requires_jwt() {
+  _require_inventory_supabase_url || {
+    report_fail "edge-fn-purge-inventory" "check_purge_inventory_requires_jwt" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/purge-inventory"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status POST "$url" -H "Content-Type: application/json" -d '{}')
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  if [ "$status" = "401" ]; then
+    report_pass "edge-fn-purge-inventory" "check_purge_inventory_requires_jwt" "$url" "$ms"
+    return 0
+  fi
+  report_fail "edge-fn-purge-inventory" "check_purge_inventory_requires_jwt" "$url" "401" "$status" "$ms"
+  return 1
+}
+
+# ---- check_purge_user_inventory_rpc_denies_anon --------------------------
+# The purge_user_inventory RPC is granted only to authenticated, so a direct
+# anon-key PostgREST call must be denied (401/403/404). A 200 is a destructive
+# leak and fails loudly; a transient/unexpected status also fails.
+check_purge_user_inventory_rpc_denies_anon() {
+  _require_inventory_supabase_url || {
+    report_fail "edge-fn-purge-inventory" "check_purge_user_inventory_rpc_denies_anon" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local anon="${SUPABASE_ANON_KEY:-}"
+  if [ -z "$anon" ]; then
+    report_fail "edge-fn-purge-inventory" "check_purge_user_inventory_rpc_denies_anon" \
+      "" "SUPABASE_ANON_KEY" "unset"
+    return 1
+  fi
+  local url="${SMOKE_SUPABASE_URL}/rest/v1/rpc/purge_user_inventory"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status POST "$url" \
+    -H "apikey: ${anon}" \
+    -H "Authorization: Bearer ${anon}" \
+    -H "Content-Type: application/json" \
+    -d '{}')
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  case "$status" in
+    401 | 403 | 404)
+      report_pass "edge-fn-purge-inventory" "check_purge_user_inventory_rpc_denies_anon" "$url" "$ms"
+      return 0
+      ;;
+    *)
+      report_fail "edge-fn-purge-inventory" "check_purge_user_inventory_rpc_denies_anon" "$url" "401|403|404" "$status" "$ms"
+      return 1
+      ;;
+  esac
+}
