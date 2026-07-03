@@ -71,6 +71,20 @@ if [ -r "$FRESHNESS_LIB" ]; then
   fi
 fi
 
+# Container native-binding health guard (SMI-5513) — BLOCK (exit 1).
+# A bare `npm install` in the dev container (with .npmrc ignore-scripts=true)
+# leaves better-sqlite3 unbuilt ("invalid ELF header"); catch it HERE with a
+# one-line remedy instead of ~51 cryptic db.close() failures in the Phase 2/4
+# test runs. No-op on the host-fallback route (USE_DOCKER=0) and when
+# SKILLSMITH_SKIP_NATIVE_CHECK=1. STDIN-SILENT (</dev/null) like the freshness
+# guard so it can never consume the pre-push refs. READ-ONLY (P-5).
+NATIVE_LIB="$(dirname "$0")/../scripts/lib/check-native-modules.sh"
+if [ -r "$NATIVE_LIB" ]; then
+  if ! sh "$NATIVE_LIB" </dev/null; then
+    exit 1
+  fi
+fi
+
 # Phase 1: Check for uncommitted changes (SMI-1342)
 # This runs first to warn developers before they push
 bash "$(dirname "$0")/../scripts/pre-push-uncommitted-check.sh"
