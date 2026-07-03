@@ -225,6 +225,7 @@ npx supabase functions deploy advance-notice-email --no-verify-jwt
 npx supabase functions deploy auth-device-code --no-verify-jwt
 npx supabase functions deploy auth-device-token --no-verify-jwt
 npx supabase functions deploy quota-monitor --no-verify-jwt
+npx supabase functions deploy webhook-heartbeat-monitor --no-verify-jwt
 ```
 
 **Gateway-verified auth** (SMI-4291; deploy without `--no-verify-jwt`): `webhook-dlq`, `auth-device-approve`, `auth-device-preview`, `indexer-dispatch` (SMI-4852), `team-invite-send` (SMI-4294), `sync-stripe-email` (SMI-5168), `sync-oauth-email` (SMI-5173), `inventory-upload` (SMI-5389), `purge-inventory` (SMI-5510). **CORS, auto-deploy & monitoring**: [deployment-guide.md](.claude/development/deployment-guide.md), [edge-function-patterns.md § Auto-deploy](.claude/development/edge-function-patterns.md#auto-deploy).

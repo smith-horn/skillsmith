@@ -71,6 +71,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "skills-outreach"
   "advance-notice-email"
   "quota-monitor"
+  "webhook-heartbeat-monitor"
 )
 
 echo ""

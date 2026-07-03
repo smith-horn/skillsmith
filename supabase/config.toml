@@ -459,6 +459,11 @@ verify_jwt = true
 [functions.quota-monitor]
 verify_jwt = false
 
+# webhook-heartbeat-monitor: pg_cron-invoked, service-role internal (SMI-5510).
+# Deploy WITH --no-verify-jwt; mirrors quota-monitor.
+[functions.webhook-heartbeat-monitor]
+verify_jwt = false
+
 # SMI-4294: team-invite-send — gateway-verified user-action endpoint that
 # sends (or resends) the team invitation email. Calls
 # resend_team_invitation_email_check RPC as the authenticated user so the
