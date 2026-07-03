@@ -225,12 +225,29 @@ emitter, is what keeps the metric correct. This section is the committed
 query spec (not a from-memory dashboard convention) — update it in the same
 PR as any change to the predicate below.
 
+**Wire-property note — this query reads PostHog, NOT the edge-function
+`metadata.*` shape.** The 18 newly-emitting tools emit through the in-process
+`trackSkillInvoke` HOF (`packages/core/src/telemetry/posthog.ts`) straight to
+PostHog — they do NOT POST to `/functions/v1/events`, and the marker fields
+(`agent_session` / `nudge_origin` / `trigger_id`) the numerator needs exist
+ONLY on that PostHog path (the claude-code-hook edge-function payload in the
+[Wire format](#wire-format) section above carries none of them). So the
+predicates below are **flat top-level PostHog properties**, and they do NOT
+match the nested `metadata.*` field names in the Wire-format section:
+- the invocation-surface discriminator is **`invoke_source`**, NOT `source`
+  (`trackSkillInvoke` maps its `source` argument to the `invoke_source`
+  property — `posthog.ts` `trackEvent(..., 'skill_invoke', { invoke_source }`).
+  A query filtered on a bare `source` property matches **zero** of these
+  events and silently zeroes the go/no-go denominator.
+- `skill_id`, `framework`, `agent_session`, `nudge_origin`, `trigger_id`,
+  `success`, `duration_ms` are all present as top-level properties.
+
 **`skill_id` alone is the WRONG predicate.** CLI and VS Code emit the SAME
 bare `skill_id` values as the MCP-tool surface (see the [`skill_id`
 contract](#skill_id-contract-surface-specific) above), distinguished only by
-`source`. Filtering the denominator on `skill_id` alone would let a
+`invoke_source`. Filtering the denominator on `skill_id` alone would let a
 consented partner's plain CLI `search` calls contaminate the agent-mediation
-metric — the `source` filter below is load-bearing.
+metric — the `invoke_source` filter below is load-bearing.
 
 **Denominator** — `skill_invoke` events where ALL of:
 
@@ -240,7 +257,7 @@ metric — the `source` filter below is load-bearing.
   agent profile, NOT the full 18-tool newly-emitting set — the 6 non-profile
   tools listed above stay OUT of the denominator by this filter alone; no
   separate emitter-side scoping is needed.
-- `source = 'mcp-tool'`
+- `invoke_source = 'mcp-tool'`
 - `framework ∉ { 'windsurf', 'hermes' }`
 
 **Numerator** — the denominator subset where `agent_session = true`.
