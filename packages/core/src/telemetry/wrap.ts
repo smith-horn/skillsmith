@@ -27,36 +27,72 @@ type AnyFunction = (...args: never[]) => unknown
 const wrapped = new Set<AnyFunction>()
 
 // ---------------------------------------------------------------------------
-// Emission gate (SMI-5019 wire-in)
+// Emission gate (SMI-5019 wire-in; SMI-5479 AsyncLocalStorage refactor)
 // ---------------------------------------------------------------------------
 //
-// Default-suppress: until an emission gate is installed via `setEmissionGate`,
-// `withTelemetry` does NOT emit. Privacy-safe by construction — consumers
-// (e.g. the mcp-server license-gate middleware) MUST call `setEmissionGate`
-// during request handling to enable emission for their context.
-//
-// The alternative (default-emit) would be backwards-compatible but risks
+// Default-suppress: until an emission gate is active, `withTelemetry` does NOT
+// emit. Privacy-safe by construction — the alternative (default-emit) risks
 // emitting telemetry for an unknown anonymous_id before consent has been
-// resolved. We pick the privacy-safe default per SMI-5019; a misconfigured
-// host that forgets to install a gate simply emits no telemetry, which is
-// observable (counts stay at zero) and recoverable.
+// resolved. We pick the privacy-safe default per SMI-5019; a misconfigured host
+// that never opens a gate simply emits no telemetry, which is observable
+// (counts stay at zero) and recoverable.
 //
-// Multi-tenancy caveat: the gate is module-scoped. For a single-tenant MCP
-// server process (the v1 shape) this is correct. A future multi-tenant
-// transport would need `AsyncLocalStorage`-backed per-request state — see
-// the matching caveat in `license.gate.ts`.
+// Two gates feed the emit-path read (in the `finally` block below), in
+// precedence order:
+//
+//   1. `emissionGateStorage` (PRIMARY) — an `AsyncLocalStorage<boolean>`
+//      scoped per tool call via `runWithEmissionGate`. New call sites (the
+//      mcp-server dispatch handler + license-gate middleware) resolve consent
+//      ONCE at dispatch and pass that resolved VALUE into the scope; the store
+//      then governs every emit for the whole of that call's async
+//      continuation. Mirrors the marker-context ALS below one-for-one — the
+//      reason nested / concurrent installs are safe: `.run()` is reentrant and
+//      each async continuation is isolated, so a sibling call can never observe
+//      or clear this call's gate.
+//   2. `emissionGate` (FALLBACK) — a process-wide module `let`, a THUNK
+//      installed via `setEmissionGate`, consulted only when no ALS store is
+//      present. Retained solely as a test seam and a deprecated fallback for
+//      the pre-SMI-5479 shape; new production code MUST use
+//      `runWithEmissionGate`.
+//
+// Multi-tenancy caveat (RESOLVED by SMI-5479): the gate used to be purely
+// module-scoped, which a future multi-tenant transport could not share safely.
+// The `AsyncLocalStorage`-backed per-request state that caveat deferred is now
+// applied here — per-call scope isolates concurrent consents. See the matching
+// note in `license.gate.ts`.
+const emissionGateStorage = new AsyncLocalStorage<boolean>()
+
+/**
+ * Run `fn` with `enabled` installed as the emission-gate decision for every
+ * telemetry emit inside its async continuation. Concurrency-safe: parallel
+ * invocations each see only their own value; code outside any
+ * `runWithEmissionGate` scope falls back to the module `let` (default-suppress
+ * when that too is unset).
+ *
+ * Takes a resolved boolean VALUE (consent resolved once at dispatch) — contrast
+ * `setEmissionGate`, which takes a predicate thunk. The value is read live in
+ * the emit path, so an in-flight call always observes the gate active for ITS
+ * OWN scope, never a sibling's.
+ */
+export function runWithEmissionGate<T>(enabled: boolean, fn: () => Promise<T>): Promise<T> {
+  return emissionGateStorage.run(enabled, fn)
+}
+
+// Process-wide FALLBACK gate — a module `let` thunk (test-only / deprecated).
+// Superseded by `runWithEmissionGate`; retained so existing unit tests and any
+// pre-SMI-5479 caller keep working with zero churn.
 let emissionGate: (() => boolean) | undefined
 
 /**
- * Install (or clear) the per-process emission gate.
+ * Install (or clear) the process-wide FALLBACK emission gate.
  *
- * Pass a predicate to enable telemetry only when the predicate returns true;
- * pass `undefined` to revert to the default-suppress behaviour. Callers should
- * always reset to `undefined` in a `finally` so a thrown handler does not
- * leak emission permission to the next request.
- *
- * The predicate is evaluated once per call to a wrapped function, inside the
- * `finally` block, so it sees the live state of any per-request resolver.
+ * @deprecated Prefer `runWithEmissionGate`, which scopes the decision to a
+ * single call's async continuation and auto-unwinds — no reset discipline, no
+ * cross-call leak. `setEmissionGate` survives only as a test seam and the
+ * pre-SMI-5479 fallback: its predicate is consulted (evaluated once per wrapped
+ * call, in the `finally` block) ONLY when no `runWithEmissionGate` scope is
+ * active. Pass a predicate to enable emission when it returns true; pass
+ * `undefined` to revert to default-suppress.
  */
 export function setEmissionGate(gate: (() => boolean) | undefined): void {
   emissionGate = gate
@@ -163,9 +199,14 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
       // Emit BEFORE the catch re-throw lands; swallow telemetry errors so they
       // never affect the wrapped function's observable behaviour.
       try {
-        // SMI-5019 wire-in: consult the emission gate. Default-suppress when
-        // no gate is installed — see module-level comment for the rationale.
-        if (emissionGate && emissionGate()) {
+        // SMI-5019 wire-in / SMI-5479 refactor: consult the emission gate. The
+        // per-call ALS store (PRIMARY) wins over the module `let` thunk
+        // (FALLBACK). `??` — not `||` — so an ALS `false` suppresses even when a
+        // permissive module gate is installed: a consent-off scope must never
+        // leak emission. Default-suppress holds when neither is present (no
+        // store + no thunk → `undefined` → no emit).
+        const gateOn = emissionGateStorage.getStore() ?? (emissionGate ? emissionGate() : undefined)
+        if (gateOn) {
           // SMI-5456: thread the marker from this call's ALS scope into the
           // event. Read here (not memoised) so it reflects the marker installed
           // for THIS call's async continuation — concurrent calls each see

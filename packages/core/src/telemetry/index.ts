@@ -68,11 +68,14 @@ export {
 
 // In-process HOF + registry (SMI-5016)
 // Emission gate (SMI-5019 wire-in) — privacy-safe default-suppress.
+//   - `runWithEmissionGate` (SMI-5479) — AsyncLocalStorage-scoped, per-call
+//     primary gate; `setEmissionGate` — deprecated process-wide fallback thunk.
 // Marker context (SMI-5456) — AsyncLocalStorage-scoped agent-mediation marker.
 export {
   withTelemetry,
   isTelemetered,
   setEmissionGate,
+  runWithEmissionGate,
   runWithMarkerContext,
   type WithTelemetryOpts,
 } from './wrap.js'
