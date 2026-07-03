@@ -172,7 +172,9 @@ describe('repositoryToSkill — name fallback (SMI-4858)', () => {
     // Skinny rows went through direct UPDATE, one per row.
     expect(updateCalls).toHaveLength(2)
     for (const call of updateCalls) {
-      expect(call.patch).toHaveProperty('last_seen_at')
+      // SMI-5491: last_seen_at is no longer written on the skinny path — the
+      // 12h-gated post-batch touch is the sole writer now.
+      expect(call.patch).not.toHaveProperty('last_seen_at')
       expect(call.patch).toHaveProperty('repo_updated_at')
       expect(call.patch).not.toHaveProperty('name')
     }
@@ -191,6 +193,12 @@ describe('repositoryToSkill — name fallback (SMI-4858)', () => {
     // flushUpsertAccumulator only picked out last_seen_at/repo_updated_at,
     // dropping the cache columns. Cache never warmed (2 of 8344 rows had
     // tree_hash after 3 post-Wave-1 crons). Fix: thread tree_hash through.
+    //
+    // SMI-5491: the skinny payload has since dropped last_seen_at entirely —
+    // it now writes only repo_updated_at always, plus tree_hash +
+    // last_tree_hash_check when the repo carried a treeHash. The 12h-gated
+    // post-batch touch (not this UPDATE) is the sole writer of last_seen_at
+    // for unchanged rows.
     const updateCalls: Array<{ url: string; patch: Record<string, unknown> }> = []
 
     const fakeSupabase = {
@@ -228,7 +236,8 @@ describe('repositoryToSkill — name fallback (SMI-4858)', () => {
     expect(updateCalls).toHaveLength(1)
     expect(updateCalls[0].patch.tree_hash).toBe('a1b2c3d4e5f6')
     expect(updateCalls[0].patch.last_tree_hash_check).toBeDefined()
-    expect(updateCalls[0].patch.last_seen_at).toBeDefined()
+    // SMI-5491: last_seen_at is no longer part of this skinny UPDATE payload.
+    expect(updateCalls[0].patch.last_seen_at).toBeUndefined()
     expect(updateCalls[0].patch.repo_updated_at).toBeDefined()
   })
 

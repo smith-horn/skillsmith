@@ -5,13 +5,16 @@
  * THE 7-DAY REALITY
  * -----------------
  * Daily maintenance reconcile (Phase 6, `reconcileStaleSkills`) quarantines any
- * skill whose `last_seen_at` is older than 7 days. The ONLY writer of
- * `last_seen_at` is discovery: a skill's timestamp is refreshed when the indexer
- * re-discovers its repo via topic/code search. A live-but-undiscovered GitHub
- * skill (the repo still exists and SKILL.md still passes the scanner, but the
- * repo no longer surfaces in any discovery query) therefore has NO
- * discovery-independent writer of `last_seen_at` — it ages past 7 days and
- * slides into permanent stale quarantine, never to return.
+ * skill whose `last_seen_at` is older than 7 days. `last_seen_at` is written by
+ * several paths — discovery's full upsert (new/changed skills), the 12h-gated
+ * post-batch touch (unchanged; SMI-5491), auto-unquarantine, this recheck's own
+ * CAS touch, dequarantine, and refresh-metadata — but every path except this
+ * recheck reaches a skill only when its repo surfaces in discovery or a related
+ * lifecycle event. A live-but-undiscovered GitHub skill (the repo still exists
+ * and SKILL.md still passes the scanner, but the repo no longer surfaces in any
+ * discovery query) therefore, absent this recheck, has NO writer of
+ * `last_seen_at` reaching it — it ages past 7 days and slides into permanent
+ * stale quarantine, never to return.
  *
  * THE FIX — TWO MECHANISMS
  * ------------------------

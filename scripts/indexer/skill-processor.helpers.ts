@@ -18,19 +18,17 @@ export function repoUpdatedAtKey(repo: GitHubRepository): string {
 
 export function minimalSkillPayload(repo: GitHubRepository): {
   repo_url: string
-  last_seen_at: string
   repo_updated_at: string | null
   tree_hash?: string
   last_tree_hash_check?: string
 } {
   const base = {
     repo_url: repo.url,
-    last_seen_at: new Date().toISOString(),
     repo_updated_at: repo.updatedAt ?? null,
   }
   // SMI-4861 Wave 1 fix (SMI-4887): backfill tree_hash on the skip-gate path.
   // repo.treeHash, when set, came from the wildcard Trees fetch this run — fresh,
-  // not the stale metadata the docstring above warns about. Without this, the
+  // not stale persisted repo metadata. Without this, the
   // 89% of skills hitting the SMI-4846 prehash gate never get tree_hash written,
   // and the SMI-4861 cache never warms.
   if (repo.treeHash) {

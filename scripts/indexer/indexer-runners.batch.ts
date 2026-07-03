@@ -96,8 +96,9 @@ export async function flushUpsertAccumulator(
 
   // SMI-4858: Split skinny (unchanged-skip) vs full payloads BEFORE the batch
   // upsert. PostgREST unifies the column set across a heterogeneous array, so
-  // mixing `minimalSkillPayload` (3 keys: repo_url, last_seen_at,
-  // repo_updated_at) with full `repositoryToSkill` payloads (~20 keys) caused
+  // mixing `minimalSkillPayload` (2 base keys: repo_url, repo_updated_at
+  // (+ optional tree_hash pair)) with full `repositoryToSkill` payloads
+  // (~20 keys) caused
   // PostgREST to send `name: null` for every skinny row. On ON CONFLICT UPDATE,
   // `excluded.name = null` propagated into the existing row and tripped the
   // `skills.name NOT NULL` constraint, failing the entire batch
@@ -106,10 +107,13 @@ export async function flushUpsertAccumulator(
   // failed=376 with kill_switch_engaged=true blocking all upserts.
   //
   // Skinny rows are guaranteed-existing (matched prehash OR content_hash gate),
-  // so a direct UPDATE is correct: no INSERT branch needed. `last_seen_at` is
-  // refreshed by the post-batch unchangedIds touch in indexer-runners.ts; here
-  // we only need to advance `repo_updated_at` so the next run's prehash gate
-  // works (especially for content_hash-skip rows whose repo_updated_at moved).
+  // so a direct UPDATE is correct: no INSERT branch needed. As of SMI-5491,
+  // `last_seen_at` is written EXCLUSIVELY by the 12h-gated post-batch
+  // unchangedIds touch in indexer-runners.ts; the skinny update here
+  // deliberately touches only unindexed columns (`repo_updated_at` + optional
+  // tree_hash pair) so it is a HOT update that rewrites no indexes — advancing
+  // `repo_updated_at` keeps the next run's prehash gate working (especially for
+  // content_hash-skip rows whose repo_updated_at moved).
   const skinnyItems = validUrlItems.filter((a) => a.unchangedSkip === true)
   const fullItems = validUrlItems.filter((a) => a.unchangedSkip !== true)
 
@@ -117,7 +121,6 @@ export async function flushUpsertAccumulator(
     const url = skillData.repo_url as string
     upsertOkUrls.add(url)
     const update: Record<string, unknown> = {
-      last_seen_at: skillData.last_seen_at,
       repo_updated_at: skillData.repo_updated_at,
     }
     // SMI-4861 Wave 1 (SMI-4887 follow-up): when minimalSkillPayload carried a
