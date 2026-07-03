@@ -78,10 +78,15 @@ jobs:
           # SMI-3999 Revision 2 (Stage 2 Finding M2): Intentionally DOES NOT
           # exclude `docs/internal/**` even though docs-only.yml's symmetric
           # filter does include it. Rationale: docs/internal is a git submodule,
-          # so parent-repo PRs touching it actually bump `.gitmodules` (which
-          # is NOT excluded -> code='true' -> full CI runs, which is correct —
-          # submodule bumps must validate the parent's state). If docs/internal
-          # is ever de-submoduled, this filter MUST be updated to add
+          # so a parent-repo PR touching it only ever changes the literal gitlink
+          # path `docs/internal` (no trailing slash) -- .gitmodules is NOT
+          # touched by an ordinary pointer bump (SMI-5523 correction; verified via
+          # `git diff --submodule=short docs/internal` across many real bump
+          # commits). The literal `docs/internal` path itself is not excluded by
+          # any `!...` pattern below, so it matches the `'**'` catch-all directly
+          # -> code='true' -> full CI runs, which is correct -- submodule bumps
+          # must validate the parent's state. If docs/internal is ever
+          # de-submoduled, this filter MUST be updated to add
           # `'!docs/internal/**'` or pure doc PRs touching internal docs will
           # incorrectly trigger full CI. Keep this comment load-bearing.
           filters: |

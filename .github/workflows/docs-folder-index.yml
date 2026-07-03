@@ -22,6 +22,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
+      # SMI-5523: docs/internal is a git submodule, so a pointer-bump PR's only
+      # changed path is the literal gitlink 'docs/internal' (no trailing slash) —
+      # that never matches 'docs/internal/**'. This gate had 0 lifetime runs
+      # across 87 pointer-bump PRs until this literal entry was added.
+      - 'docs/internal'
       - 'docs/internal/**'
       - '.gitmodules'
 

@@ -26,6 +26,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
+      # SMI-5523: docs/internal is a git submodule, so a pointer-bump PR's only
+      # changed path is the literal gitlink 'docs/internal' (no trailing slash) —
+      # that never matches 'docs/internal/**'. Same bug as docs-folder-index.yml
+      # (0 of this guard's 2 lifetime runs were ever from a pointer bump).
+      - 'docs/internal'
       - 'docs/internal/**'
       - '.gitmodules'
       - 'packages/website/public/openapi.yaml'
