@@ -320,6 +320,11 @@ describe('T2 — double-gate reconciliation with runWithEmissionGate (SMI-5479)'
     })
 
     expect(captureSpy).toHaveBeenCalledTimes(2)
+    // `EventMessage.properties` is `Record<string | number, any>` — narrowing
+    // straight to a required `skill_id` literal key trips TS2352 ("neither
+    // type sufficiently overlaps"), so the `unknown` bridge is required here
+    // (unlike the direct cast at line ~277, which narrows only to an index
+    // signature and doesn't hit that check).
     const skillIds = captureSpy.mock.calls.map(
       (call) => (call[0] as unknown as { properties: { skill_id: string } }).properties.skill_id
     )
