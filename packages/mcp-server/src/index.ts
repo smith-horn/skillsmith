@@ -60,7 +60,8 @@ import {
 import { webhookConfigureToolSchema, apiKeyManageToolSchema } from './tools/integration-tools.js'
 import { complianceReportToolSchema } from './tools/compliance-tools.js'
 import { inventoryPushToolSchema } from './tools/inventory-push.js'
-import { dispatchToolCall } from './tool-dispatch.js'
+// SMI-5479: CallTool handler extracted to a sibling module (index.ts LOC gate).
+import { handleCallToolRequest } from './call-tool-handler.js'
 // SMI-5213: make the three audit-family tools client-discoverable. The
 // builder gates `apply_recommended_edit` on APPLY_TEMPLATE_REGISTRY and
 // omits the already-registered `skill_audit` / `skill_pack_audit`.
@@ -74,11 +75,12 @@ import {
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
-// SMI-5456: agent-mediation marker channel. Resolve the marker per tool call
-// (`_meta` wins, else the session marker file) and run the dispatch inside
-// its AsyncLocalStorage scope so `agent_session` / `nudge_origin` /
-// `trigger_id` land on the event — concurrency-safe under parallel tool calls.
-import { resolveAgentMarker, runWithMarkerContext } from '@skillsmith/core/telemetry'
+// SMI-5456: agent-mediation marker channel — resolution + AsyncLocalStorage
+// scoping now live in call-tool-handler.js (SMI-5479 extraction).
+// SMI-5479: flush-on-shutdown wiring lives in shutdown.js (own module — no
+// top-level side effects, so it stays independently unit-testable; this file
+// has `main().catch(...)` at module scope, which importing would trigger).
+import { createShutdownTrigger } from './shutdown.js'
 // SMI-5039: probe extracted from this file to @skillsmith/core/embeddings/probe.
 // The call site (before server.connect) is unchanged; only the implementation
 // moved so doc-retrieval-mcp + cli can share the same audited probe contract.
@@ -200,53 +202,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   }
 })
 
-// Handle tool calls — dispatch delegated to tool-dispatch.ts (SMI-skill-version-tracking Wave 2)
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params
-
-  // SMI-5456: resolve the agent-mediation marker BEFORE dispatch and run the
-  // dispatch inside its AsyncLocalStorage scope so the withTelemetry emit
-  // (which fires in the wrapped handler's `finally`, inside this continuation)
-  // reads THIS call's marker. `_meta` is a loose passthrough field;
-  // resolveAgentMarker validates it defensively and falls back to the session
-  // marker file. ALS auto-scopes — no manual clearing, and parallel tool calls
-  // (harnesses batch them routinely) cannot observe or clear each other's
-  // marker.
-  const requestMeta = (request.params as { _meta?: unknown })._meta
-
-  try {
-    return await runWithMarkerContext(resolveAgentMarker(requestMeta), () =>
-      dispatchToolCall(
-        name,
-        args as Record<string, unknown> | undefined,
-        toolContext,
-        licenseMiddleware,
-        quotaMiddleware
-      )
-    )
-  } catch (error) {
-    // SMI-4313: Validation now runs through `safeParseOrError` at every
-    // dispatch site, so a `ZodError` reaching this catch is a regression
-    // signal (a new site was added without going through the helper).
-    // Log a warn on stderr so production telemetry surfaces it within a
-    // day; the outer envelope still returns an isError response so
-    // clients aren't broken by the observability alarm.
-    if (error instanceof Error && error.name === 'ZodError') {
-      console.error(
-        `[skillsmith:dispatch] Unexpected ZodError reached outer catch — validation helper missed a site (tool=${name}): ${error.message}`
-      )
-    }
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: 'Error: ' + (error instanceof Error ? error.message : 'Unknown error'),
-        },
-      ],
-      isError: true,
-    }
-  }
-})
+// Handle tool calls — request handling delegated to call-tool-handler.ts
+// (SMI-5479 extraction; dispatch itself stays in tool-dispatch.ts,
+// SMI-skill-version-tracking Wave 2). `deps` is read fresh on every call —
+// `toolContext` is a module-level `let` assigned inside main() AFTER this
+// handler registers, so capturing it once here would freeze it at
+// `undefined`. See call-tool-handler.ts's module doc (LATE-BINDING TRAP).
+server.setRequestHandler(CallToolRequestSchema, (request) =>
+  handleCallToolRequest(request, { toolContext, licenseMiddleware, quotaMiddleware })
+)
 
 /**
  * Handle --docs flag to open user documentation
@@ -416,6 +380,14 @@ function runStartupDiagnostics(): void {
 // contract (hard 2 s timeout, try/catch wrapper, stderr-only, never throws).
 // Call site below preserved verbatim — invoke before server.connect(transport).
 
+// SMI-5479 (pass 2): flush-on-shutdown trigger — see shutdown.ts for the
+// rationale and the bounded-flush implementation. Registering ANY listener
+// for SIGTERM/SIGINT overrides Node's default terminate-on-signal behavior,
+// so this explicitly exits once the bounded flush settles, preserving
+// today's default (process exits promptly on those signals) instead of
+// leaving the process hanging.
+const shutdownAndExit = createShutdownTrigger(() => process.exit(0))
+
 // Start server
 async function main() {
   // SMI-4805: --version / --help must short-circuit before diagnostics, DB
@@ -490,6 +462,12 @@ async function main() {
   await probeEmbeddingCapability()
 
   const transport = new StdioServerTransport()
+  // SMI-5479: flush-on-shutdown wiring — see flushTelemetryOnShutdown above.
+  // `onclose` covers the common MCP-host shutdown path (host closes stdio
+  // without a signal); SIGTERM/SIGINT cover process-manager-driven shutdown.
+  transport.onclose = shutdownAndExit
+  process.on('SIGTERM', shutdownAndExit)
+  process.on('SIGINT', shutdownAndExit)
   await server.connect(transport)
   console.error('Skillsmith MCP server running')
 }

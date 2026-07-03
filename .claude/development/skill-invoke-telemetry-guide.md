@@ -163,7 +163,7 @@ Allowed enum values:
 2. Web dashboard writes consent to `user_telemetry_preferences` table (keyed by `user_id`)
 3. On each MCP request, the MCP server reads the preference via the API key header
 4. `withTelemetry` HOF checks consent before emitting; if disabled, the handler executes normally but no event is sent
-5. First-time MCP response for users without a preference includes `consent_required: true` + the privacy URL (`TELEMETRY_PRIVACY_URL = 'https://skillsmith.app/account/telemetry'`); no event is sent
+5. MCP responses for users without a preference row include `consent_required: true` + the privacy URL (`TELEMETRY_PRIVACY_URL = 'https://skillsmith.app/account/telemetry'`); no event is sent. **Frequency (SMI-5479):** for the direct-dispatch tool surface (everything NOT routed through `withLicenseAndQuota`), this is genuinely **first-time-only** — `call-tool-handler.ts`'s dispatch-level annotation is gated by a per-process `promptedIds` set (`middleware/telemetry-consent.ts`'s `wasConsentPrompted`/`markConsentPrompted`), so a given `anonymous_id` sees the prompt once per server process, not on every call (avoids per-call prompt-noise on agent loops that call `search`/`get_skill`/`skill_recommend` repeatedly). Gated tools (`withLicenseAndQuota` in `middleware/license.gate.ts`) are the one exception — that middleware annotates **every** call while `consentRequired` is true, unchanged by SMI-5479 (a small, accepted surface: ~4 of the ~24 always-emitting gated tools).
 
 **MCP-only users without an account:** Telemetry stays off permanently (default opt-out). The preference record is never created; `withTelemetry` short-circuits at the consent check.
 
@@ -204,6 +204,63 @@ The MCP server resolves the three marker fields per tool call from two channels.
    - **Wave-1 correlation caveat:** the server cannot know its own harness session id, so it picks the most recently started live marker. Concurrent sessions on one machine may observe each other's marker — an accepted, documented imprecision (`_meta` is exact and wins). `SKILLSMITH_AGENT_MARKER_DIR` overrides the directory (test isolation; mirrors `SKILLSMITH_CACHE_DIR_OVERRIDE`).
 
 3. **Neither** ⇒ `agent_session=false`, `nudge_origin=false`, `trigger_id=null`.
+
+---
+
+## Mediation-gate dashboard query (SMI-5479)
+
+Before SMI-5479 the mediation-gate metric (≥25% agent-mediated share by day
+30) had a structurally-empty denominator: only the 4 tools routed through
+`withLicenseAndQuota` ever emitted (`skill_updates`, `skill_diff`,
+`skill_audit`, `skill_pack_audit`). SMI-5479 wires a dispatch-level emission
+gate into `call-tool-handler.ts`'s `CallToolRequestSchema` handler —
+`runWithEmissionGate(consent.enabled, ...)` around the whole dispatch — which
+flips **18** previously-never-emitting direct-dispatch tools to
+emit-when-consent-on: the 12-tool PRD §9.1 mediation-denominator set, plus 6
+non-profile tools (`skill_suggest`, `index_local`, `skill_publish`,
+`skill_rescan`, `inventory_push`, `skill_recover_source`) that also happen to
+route through the same `CallToolRequestSchema` handler. The gate itself is
+**surface-wide** — it has no profile awareness — so the query below, not the
+emitter, is what keeps the metric correct. This section is the committed
+query spec (not a from-memory dashboard convention) — update it in the same
+PR as any change to the predicate below.
+
+**`skill_id` alone is the WRONG predicate.** CLI and VS Code emit the SAME
+bare `skill_id` values as the MCP-tool surface (see the [`skill_id`
+contract](#skill_id-contract-surface-specific) above), distinguished only by
+`source`. Filtering the denominator on `skill_id` alone would let a
+consented partner's plain CLI `search` calls contaminate the agent-mediation
+metric — the `source` filter below is load-bearing.
+
+**Denominator** — `skill_invoke` events where ALL of:
+
+- `skill_id` ∈ `AGENT_TOOL_PROFILE_NAMES` (canonical list:
+  `packages/core/src/services/agent-tool-profile.ts` — re-verify this query
+  against that file on any profile-membership change). This is the 16-tool
+  agent profile, NOT the full 18-tool newly-emitting set — the 6 non-profile
+  tools listed above stay OUT of the denominator by this filter alone; no
+  separate emitter-side scoping is needed.
+- `source = 'mcp-tool'`
+- `framework ∉ { 'windsurf', 'hermes' }`
+
+**Numerator** — the denominator subset where `agent_session = true`.
+
+**Organic vs. nudge split** — partition the numerator further by
+`nudge_origin`: `nudge_origin = false` is an organic agent-mediated call;
+`nudge_origin = true` originated from a paywall/onboarding nudge
+(`trigger_id` carries the specific trigger id when present).
+
+**Why the emitter stays surface-wide instead of profile-scoped.** Emission
+volume and the mediation-gate metric are two different concerns. Consent
+gates both the profile tools and the 6 non-profile tools identically — there
+is no privacy reason to suppress emission for the 6. Scoping the EMITTER to
+the profile would add a name-set maintenance surface to the hot dispatch
+path (`call-tool-handler.ts`) for zero privacy gain; the profile filter
+belongs in this read-time query, not the write path.
+
+**Volume:** worst-case O(10⁵) `skill_invoke` events/month across 25-50
+consented partners — well inside the PostHog free tier; no quota action
+needed.
 
 ---
 
