@@ -27,6 +27,10 @@ supabase/functions/admin-grant-subscription/**
 supabase/functions/update-seat-count/**
 supabase/functions/webhook-dlq/**
 supabase/functions/quota-monitor/**
+# SMI-5510: webhook-heartbeat-monitor is the hourly webhook-delivery discrepancy
+# cron (pg_cron via 20260702000003) — service-role internal, no user-facing HTTP
+# surface; results land in audit_logs.
+supabase/functions/webhook-heartbeat-monitor/**
 # SMI-4995: coverage-report is the weekly cross-ecosystem coverage cron
 # (SMI-4963) — invoked only by .github/workflows/coverage-report.yml via
 # service-role auth. No user-facing HTTP surface; results land in

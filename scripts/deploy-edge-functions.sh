@@ -101,6 +101,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   skills-search
   stats
   stripe-webhook
+  webhook-heartbeat-monitor
 )
 
 # --- Functions that use default JWT verification ---
