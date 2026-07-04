@@ -1410,3 +1410,337 @@ export function findFunctionsWithoutSearchPath(sqlContent, filePath) {
 
   return violations
 }
+
+// -----------------------------------------------------------------------------
+// Check 52 helper — SMI-5526: SECURITY DEFINER anon-grant lockdown.
+//
+// Supabase's `ALTER DEFAULT PRIVILEGES ... GRANT EXECUTE ON FUNCTIONS TO anon,
+// authenticated` auto-grants `anon` EXECUTE on every new public function,
+// including SECURITY DEFINER ones — a privilege-escalation risk if that
+// function bypasses RLS with no internal auth guard. This is the recurrence
+// guard for the SMI-5520/5525/5526 incident class: fail the audit when a new
+// public SECURITY DEFINER function ships without a matching
+// `REVOKE ... FROM anon` (or an allowlist entry).
+// -----------------------------------------------------------------------------
+
+/**
+ * Strip every `$tag$ ... $tag$` (including plain `$$ ... $$`) dollar-quoted
+ * body from a SQL string, delimiters included. This must run BEFORE any
+ * `;`-based statement splitting: a `;` inside a function body would otherwise
+ * split one CREATE FUNCTION statement into several fragments, and
+ * `SECURITY DEFINER` placed AFTER the body (`AS $$...$$ LANGUAGE plpgsql
+ * SECURITY DEFINER;`) would end up in a different fragment than its CREATE.
+ *
+ * The `\1` backreference ties each closing tag to its own opening tag, so
+ * sibling dollar-quoted regions (including ones using different tags, e.g. a
+ * `$body$...$body$` nested for escaping inside a `$$...$$` block) are handled
+ * independently and won't cross-match.
+ */
+function stripDollarQuotedBodies(sql) {
+  return sql.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, '')
+}
+
+/** Find the index of the `)` matching the `(` at `openIdx`, or -1. */
+function findMatchingParen(str, openIdx) {
+  let depth = 0
+  for (let i = openIdx; i < str.length; i++) {
+    if (str[i] === '(') depth++
+    else if (str[i] === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+// Multi-word Postgres type spellings, normalized to their single-token alias
+// so a CREATE FUNCTION argument (which may use the verbose SQL-standard form)
+// compares equal to a REVOKE argument (which is typically the short catalog
+// form, e.g. from `pg_get_function_identity_arguments`).
+const SECDEF_MULTI_WORD_TYPE_ALIASES = [
+  [/^timestamp\s+with\s+time\s+zone$/i, 'timestamptz'],
+  [/^timestamp\s+without\s+time\s+zone$/i, 'timestamp'],
+  [/^time\s+with\s+time\s+zone$/i, 'timetz'],
+  [/^time\s+without\s+time\s+zone$/i, 'time'],
+  [/^character\s+varying$/i, 'varchar'],
+  [/^double\s+precision$/i, 'float8'],
+]
+
+// Single-word aliases, e.g. `integer` <-> `int4` <-> `int`, `boolean` <-> `bool`.
+const SECDEF_SINGLE_WORD_TYPE_ALIASES = {
+  integer: 'int4',
+  int: 'int4',
+  int4: 'int4',
+  boolean: 'bool',
+  bool: 'bool',
+  bigint: 'int8',
+  int8: 'int8',
+  smallint: 'int2',
+  int2: 'int2',
+  decimal: 'numeric',
+  numeric: 'numeric',
+  real: 'float4',
+  float4: 'float4',
+  float8: 'float8',
+  varchar: 'varchar',
+}
+
+// First-token vocabulary used to decide whether an argument segment is
+// "type only" (no parameter name prefix) — e.g. a bare overload signature
+// like `create_device_code(text, integer)`, or a REVOKE's type list, which
+// never carries parameter names.
+const SECDEF_TYPE_START_WORDS = new Set([
+  'timestamp',
+  'time',
+  'character',
+  'double',
+  'bit',
+  'varchar',
+  'numeric',
+  'decimal',
+  'int',
+  'integer',
+  'int2',
+  'int4',
+  'int8',
+  'bigint',
+  'smallint',
+  'boolean',
+  'bool',
+  'text',
+  'uuid',
+  'jsonb',
+  'json',
+  'date',
+  'interval',
+  'real',
+  'float4',
+  'float8',
+  'bytea',
+  'inet',
+  'cidr',
+  'macaddr',
+  'macaddr8',
+  'tsvector',
+  'tsquery',
+  'xml',
+  'money',
+  'point',
+  'line',
+  'box',
+  'path',
+  'polygon',
+  'circle',
+  'void',
+  'record',
+  'trigger',
+  'anyelement',
+  'oid',
+  'regclass',
+  'regtype',
+  'regproc',
+  'serial',
+  'bigserial',
+  'smallserial',
+])
+
+/** Split a raw argument-list string on top-level commas (parens-depth aware). */
+function splitTopLevelArgs(argsStr) {
+  const parts = []
+  let depth = 0
+  let current = ''
+  for (const ch of argsStr) {
+    if (ch === '(') depth++
+    if (ch === ')') depth--
+    if (ch === ',' && depth === 0) {
+      parts.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  if (current.trim().length > 0) parts.push(current)
+  return parts
+}
+
+/**
+ * Normalize one argument segment down to just its (aliased) type, stripping
+ * any arg mode (IN/OUT/INOUT/VARIADIC), DEFAULT clause, and parameter name.
+ * Returns null for an empty/whitespace-only segment.
+ */
+function normalizeSecdefArgSegment(seg) {
+  let s = seg.trim()
+  if (!s) return null
+  s = s.replace(/^(IN|OUT|INOUT|VARIADIC)\s+/i, '')
+  s = s.replace(/\s+(DEFAULT|=)\s+[\s\S]*$/i, '')
+  s = s.trim().replace(/\s+/g, ' ')
+  if (!s) return null
+
+  const tokens = s.split(' ')
+  let typeTokens
+  if (tokens.length === 1) {
+    typeTokens = tokens
+  } else {
+    typeTokens = SECDEF_TYPE_START_WORDS.has(tokens[0].toLowerCase()) ? tokens : tokens.slice(1)
+  }
+
+  let typeStr = typeTokens.join(' ').toLowerCase()
+  let arraySuffix = ''
+  const arrayMatch = typeStr.match(/^(.*?)(?:\[\])+$/)
+  if (arrayMatch) {
+    arraySuffix = '[]'
+    typeStr = arrayMatch[1].trim()
+  }
+
+  for (const [re, canon] of SECDEF_MULTI_WORD_TYPE_ALIASES) {
+    if (re.test(typeStr)) {
+      typeStr = canon
+      break
+    }
+  }
+  if (SECDEF_SINGLE_WORD_TYPE_ALIASES[typeStr]) {
+    typeStr = SECDEF_SINGLE_WORD_TYPE_ALIASES[typeStr]
+  }
+  return typeStr + arraySuffix
+}
+
+/** Normalize a raw `(args)` string into a comma-joined, type-only signature. */
+function normalizeSecdefSignature(argsStr) {
+  return splitTopLevelArgs(argsStr)
+    .map(normalizeSecdefArgSegment)
+    .filter((x) => x !== null)
+    .join(',')
+}
+
+/**
+ * Parse a single (already statement-isolated, dollar-body-stripped) SQL
+ * statement as a `CREATE [OR REPLACE] FUNCTION public.<name>(<args>) ...`.
+ * Returns null if `stmt` isn't a CREATE FUNCTION statement.
+ */
+function parseSecdefCreateStatement(stmt) {
+  const headerMatch = stmt.match(
+    /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(/i
+  )
+  if (!headerMatch) return null
+  const openParenIdx = headerMatch.index + headerMatch[0].length - 1
+  const closeParenIdx = findMatchingParen(stmt, openParenIdx)
+  if (closeParenIdx === -1) return null
+  const argsStr = stmt.slice(openParenIdx + 1, closeParenIdx)
+  const tail = stmt.slice(closeParenIdx + 1)
+  return {
+    name: headerMatch[1],
+    signature: normalizeSecdefSignature(argsStr),
+    isSecdef: /SECURITY\s+DEFINER/i.test(tail),
+  }
+}
+
+/**
+ * Parse a single (already statement-isolated) SQL statement as a
+ * `REVOKE ... ON FUNCTION public.<name>(<args>) ... FROM <role-list>`.
+ * Returns null if `stmt` isn't such a REVOKE statement.
+ *
+ * Critical (SMI-5510 lesson): `REVOKE ... FROM PUBLIC` alone does NOT strip
+ * the explicit `anon` grant Postgres's default privileges attach at CREATE
+ * time — so `revokesAnon` is only true when `anon` literally appears in the
+ * FROM role list (case-insensitive), never inferred from a bare PUBLIC.
+ */
+function parseSecdefRevokeStatement(stmt) {
+  const headerMatch = stmt.match(/ON\s+FUNCTION\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(/i)
+  if (!headerMatch) return null
+  const openParenIdx = headerMatch.index + headerMatch[0].length - 1
+  const closeParenIdx = findMatchingParen(stmt, openParenIdx)
+  if (closeParenIdx === -1) return null
+  const argsStr = stmt.slice(openParenIdx + 1, closeParenIdx)
+  const afterArgs = stmt.slice(closeParenIdx + 1)
+  const fromMatch = afterArgs.match(/FROM\s+([\s\S]*)$/i)
+  const fromList = fromMatch ? fromMatch[1] : ''
+  const roles = fromList
+    .split(',')
+    .map((r) => r.trim().replace(/^"|"$/g, '').toLowerCase())
+    .filter(Boolean)
+  return {
+    name: headerMatch[1],
+    signature: normalizeSecdefSignature(argsStr),
+    revokesAnon: roles.includes('anon'),
+  }
+}
+
+/**
+ * Audit a set of migrations for public SECURITY DEFINER functions created at
+ * or after `cutoff` that still leave `anon` with EXECUTE.
+ *
+ * @param {{ name: string, content: string }[]} migrations  Already-decrypted
+ *   migration files (caller is responsible for skipping git-crypt-encrypted
+ *   blobs — see the MIGRATIONS_DIR encrypted-skip in audit-standards.mjs).
+ * @param {{ cutoff: string|number, allowlist?: string[] }} opts  `cutoff` is
+ *   compared against each migration's leading numeric filename prefix
+ *   (version); `allowlist` entries may be a bare function name (exempts every
+ *   overload) or `name(signature)` (exempts one specific overload).
+ * @returns {{ file: string, fn: string, signature: string, reason: string }[]}
+ *   One entry per uncovered SECURITY DEFINER function/overload.
+ *
+ * Matching is by full signature, not by name alone — an overloaded function
+ * (e.g. two `create_device_code` arities) needs its own matching REVOKE per
+ * signature; a REVOKE for one overload does not satisfy the other. REVOKEs
+ * are looked up across the FULL migration set (not cutoff-filtered): a
+ * pre-cutoff CREATE is never flagged (out of scope), but its REVOKE — wherever
+ * it lands — still registers, in case a later migration re-declares the same
+ * signature.
+ */
+export function auditSecdefAnonGrants(migrations, { cutoff, allowlist = [] } = {}) {
+  const cutoffNum = typeof cutoff === 'string' ? parseInt(cutoff, 10) : Number(cutoff)
+  const allowSet = new Set((allowlist || []).map((a) => String(a).toLowerCase()))
+
+  const revokedAnonKeys = new Set()
+  const secdefCreates = []
+
+  for (const mig of migrations || []) {
+    const versionMatch = (mig.name || '').match(/^(\d+)/)
+    const version = versionMatch ? parseInt(versionMatch[1], 10) : NaN
+    const stripped = stripDollarQuotedBodies(mig.content || '')
+    const statements = stripped
+      .split(';')
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+    for (const stmt of statements) {
+      if (/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+/i.test(stmt)) {
+        const parsed = parseSecdefCreateStatement(stmt)
+        if (parsed && parsed.isSecdef && !Number.isNaN(version) && version >= cutoffNum) {
+          secdefCreates.push({
+            file: mig.name,
+            fn: parsed.name,
+            signature: parsed.signature,
+            key: `${parsed.name.toLowerCase()}(${parsed.signature})`,
+          })
+        }
+      } else if (/REVOKE\b/i.test(stmt) && /\bON\s+FUNCTION\b/i.test(stmt)) {
+        const parsed = parseSecdefRevokeStatement(stmt)
+        if (parsed && parsed.revokesAnon) {
+          revokedAnonKeys.add(`${parsed.name.toLowerCase()}(${parsed.signature})`)
+        }
+      }
+    }
+  }
+
+  const violations = []
+  const seen = new Set()
+  for (const c of secdefCreates) {
+    const dedupeKey = `${c.file}|${c.key}`
+    if (seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
+
+    const allowedByName = allowSet.has(c.fn.toLowerCase())
+    const allowedBySignature = allowSet.has(`${c.fn.toLowerCase()}(${c.signature})`)
+    if (allowedByName || allowedBySignature) continue
+    if (revokedAnonKeys.has(c.key)) continue
+
+    violations.push({
+      file: c.file,
+      fn: c.fn,
+      signature: c.signature,
+      reason: 'no REVOKE ... FROM anon matches this signature, and it is not allowlisted',
+    })
+  }
+  return violations
+}

@@ -36,6 +36,7 @@ import {
   auditPublishYmlRequiredGates,
   parseNpmLsJson,
   findFunctionsWithoutSearchPath,
+  auditSecdefAnonGrants,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -4467,6 +4468,74 @@ console.log(`\n${BOLD}51. Function search_path Gate — migration authoring guar
       pass(
         `Check 51: all CREATE FUNCTION blocks in ${changedSqlFiles.length} changed migration(s) include SET search_path`
       )
+    }
+  }
+}
+
+// Check 52: SECURITY DEFINER anon-grant lockdown (SMI-5526 recurrence guard for
+// the SMI-5520/5525/5526 class). Supabase's ALTER DEFAULT PRIVILEGES silently
+// grants `anon` EXECUTE on every newly created public function — including
+// SECURITY DEFINER functions, where that grant can be a privilege-escalation
+// hole (DEFINER bypasses RLS). This check FAILS (not warns) when a new public
+// SECURITY DEFINER function ships without an explicit, signature-matched
+// `REVOKE ... FROM anon`, and isn't one of the deliberately anon-callable
+// exceptions below.
+//
+// Note on numbering: Check 51 (immediately above) already claimed the "51"
+// slot for the SMI-5203 search_path gate, so this recurrence guard is Check 52.
+console.log(`\n${BOLD}52. SECURITY DEFINER anon-Grant Lockdown (SMI-5526)${RESET}`)
+{
+  // Deliberately anon-callable SECURITY DEFINER functions. Each entry carries
+  // its own one-line justification so this allowlist can't silently grow —
+  // see docs/internal/implementation/smi-5526-definer-grant-audit.md Bucket C.
+  const SECDEF_ANON_ALLOWLIST = [
+    'search_skills', // public catalog search, reached anon/JWT via skills-search/skills-recommend/health
+    'resolve_team_from_license', // MCP anon-key caller; the license key itself is the credential
+    'user_team_ids', // RLS-policy helper: evaluated with the invoking role's EXECUTE, zero-arg/auth.uid()-based
+    'user_admin_team_ids', // RLS-policy helper: evaluated with the invoking role's EXECUTE, zero-arg/auth.uid()-based
+    'user_member_team_ids', // RLS-policy helper: evaluated with the invoking role's EXECUTE, zero-arg/auth.uid()-based
+    'user_owned_team_ids', // RLS-policy helper: evaluated with the invoking role's EXECUTE, zero-arg/auth.uid()-based
+    'check_team_tier_access', // RLS-policy helper: revoking anon risks breaking anon-reachable policy evaluation
+  ]
+
+  // This PR's (SMI-5526) first migration. Exempts historical CREATE-here /
+  // REVOKE-later pairs from before the lockdown effort, and gates this PR plus
+  // all future migrations.
+  const SECDEF_LOCKDOWN_CUTOFF = '20260704000000'
+
+  if (!existsSync(MIGRATIONS_DIR)) {
+    warn(
+      'Check 52: supabase/migrations directory not found — skipping SECURITY DEFINER anon-grant lockdown'
+    )
+  } else {
+    const migrationsForSecdefAudit = []
+    for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'))) {
+      const filePath = join(MIGRATIONS_DIR, file)
+      const contentBuf = readFileSync(filePath)
+      // Skip git-crypt encrypted files (binary blobs starting with \x00GITCRYPT) —
+      // same idiom as the Check 11 migration-header scan above.
+      if (contentBuf[0] === 0x00 && contentBuf.toString('utf8', 1, 9) === 'GITCRYPT') {
+        continue
+      }
+      migrationsForSecdefAudit.push({ name: file, content: contentBuf.toString('utf8') })
+    }
+
+    const secdefViolations = auditSecdefAnonGrants(migrationsForSecdefAudit, {
+      cutoff: SECDEF_LOCKDOWN_CUTOFF,
+      allowlist: SECDEF_ANON_ALLOWLIST,
+    })
+
+    if (secdefViolations.length === 0) {
+      pass('All new public SECURITY DEFINER functions revoke anon EXECUTE or are allowlisted')
+    } else {
+      for (const v of secdefViolations) {
+        fail(
+          `Check 52: ${v.file}: ${v.fn}(${v.signature}) is SECURITY DEFINER and anon still has EXECUTE — ${v.reason}`,
+          `Add "REVOKE EXECUTE ON FUNCTION public.${v.fn}(${v.signature}) FROM anon;" in ${v.file} ` +
+            `(or a follow-up migration), or add '${v.fn}' to SECDEF_ANON_ALLOWLIST in ` +
+            `scripts/audit-standards.mjs with a one-line justification if it is intentionally anon-callable.`
+        )
+      }
     }
   }
 }
