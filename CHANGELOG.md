@@ -121,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Short high-cardinality `fuzzy_search_skills` cost (latent 57014)** (2026-07-04, SMI-5532):
+  the SMI-5522 max-length guard caps long needles, but a short common-trigram needle
+  (`ci`/`api`/`sql`) still matched ~174k rows via the `%` operator, and the per-row
+  `similarity()` recheck over that candidate set ran 1.8–3.2 s — `api` at the `skills-recommend`
+  short-query fallback's `0.2` threshold crossed the 3 s anon ceiling (a latent SQLSTATE 57014).
+  `fuzzy_search_skills` now matches with the pg_trgm `word_similarity` (`<%`) operator instead of
+  `%`/`similarity()`: `<%` normalizes by the best-matching word, narrowing the same needle to
+  ~1.8k candidates (6–16× faster — `api` 3241→402 ms, off the ceiling) with full recall preserved,
+  reusing the existing GIN `gin_trgm_ops` indexes via the `%>` commutator — no new index
+  (migration `20260704184030`). The caller threshold is floored at 0.5 on the word-similarity
+  scale (`GREATEST(similarity_threshold, 0.5)`).
 - **Anon `fuzzy_search_skills` statement-timeout vector** (2026-07-03, SMI-5522):
   post-apply verification of SMI-5514 found a residual anon-reachable statement-timeout
   (SQLSTATE 57014) on `fuzzy_search_skills` (the pg_trgm `%`-operator path, migration
