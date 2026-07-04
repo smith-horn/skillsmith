@@ -196,6 +196,45 @@ const supabaseConfig = getSupabaseConfig()
           </section>
 
           <section class="card">
+            <div class="toggle-row">
+              <div class="toggle-text">
+                <h2>Continuous-audit email</h2>
+                <p id="audit-email-state-summary" class="state-summary">Off</p>
+              </div>
+              <label class="switch" for="audit-email-toggle">
+                <input
+                  id="audit-email-toggle"
+                  type="checkbox"
+                  aria-describedby="audit-email-state-summary"
+                />
+                <span class="switch-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <p class="toggle-description">
+              Get a periodic email summarizing continuous-audit findings for your account. This is a
+              dedicated, opt-in email preference &mdash; separate from skill-invocation telemetry
+              and cross-machine inventory sync above. Audit email is
+              <strong>off by default</strong>.
+            </p>
+            <p id="audit-email-unverified-note" class="info-note" style="display: none;">
+              Your account email isn&rsquo;t verified yet, so we can&rsquo;t send audit emails until
+              you verify it.
+            </p>
+            <div class="actions-row">
+              <button
+                id="audit-email-save-btn"
+                class="btn btn-primary"
+                disabled
+                aria-disabled="true"
+              >
+                Save
+              </button>
+            </div>
+            <p id="audit-email-save-result" class="save-result" role="status" aria-live="polite">
+            </p>
+          </section>
+
+          <section class="card">
             <h2>Purge stored inventory</h2>
             <p class="toggle-description">
               Permanently delete all inventory Skillsmith has stored for your account across every
@@ -225,6 +264,7 @@ const supabaseConfig = getSupabaseConfig()
         anonymous_id_created_at: string | null
         updated_at: string
         inventory_sync_enabled: boolean
+        audit_email_enabled: boolean
       }
 
       function formatAnonId(id: string | null | undefined): string {
@@ -301,6 +341,21 @@ const supabaseConfig = getSupabaseConfig()
         const inventorySaveResultEl = document.getElementById(
           'inventory-save-result'
         ) as HTMLParagraphElement | null
+        const auditEmailToggleEl = document.getElementById(
+          'audit-email-toggle'
+        ) as HTMLInputElement | null
+        const auditEmailStateSummaryEl = document.getElementById(
+          'audit-email-state-summary'
+        ) as HTMLParagraphElement | null
+        const auditEmailSaveBtnEl = document.getElementById(
+          'audit-email-save-btn'
+        ) as HTMLButtonElement | null
+        const auditEmailSaveResultEl = document.getElementById(
+          'audit-email-save-result'
+        ) as HTMLParagraphElement | null
+        const auditEmailUnverifiedNoteEl = document.getElementById(
+          'audit-email-unverified-note'
+        ) as HTMLParagraphElement | null
 
         function showError(msg: string) {
           if (loadingEl) loadingEl.style.display = 'none'
@@ -323,6 +378,15 @@ const supabaseConfig = getSupabaseConfig()
         if (!session) {
           window.location.href = '/login?next=/account/telemetry'
           return
+        }
+
+        // Audit-email consent (SMI-5540) can't be honored for an unverified address
+        // (we'd have nowhere valid to send the email), so surface that as a disabled
+        // affordance rather than letting the user "save" a toggle we can't act on.
+        const emailVerified = Boolean(session.user.email_confirmed_at)
+        if (!emailVerified) {
+          if (auditEmailToggleEl) auditEmailToggleEl.disabled = true
+          if (auditEmailUnverifiedNoteEl) auditEmailUnverifiedNoteEl.style.display = 'block'
         }
 
         let pref: TelemetryPreference | null = null
@@ -349,6 +413,7 @@ const supabaseConfig = getSupabaseConfig()
           enabled: pref?.enabled ?? false,
           anonymousId: pref?.anonymous_id ?? null,
           inventorySyncEnabled: pref?.inventory_sync_enabled ?? false,
+          auditEmailEnabled: pref?.audit_email_enabled ?? false,
         }
         const draft = { ...initial }
 
@@ -364,6 +429,10 @@ const supabaseConfig = getSupabaseConfig()
           if (inventoryToggleEl) inventoryToggleEl.checked = inventoryEnabled
           if (inventoryStateSummaryEl)
             inventoryStateSummaryEl.textContent = inventoryEnabled ? 'On' : 'Off'
+          const auditEmailEnabled = draft.auditEmailEnabled
+          if (auditEmailToggleEl) auditEmailToggleEl.checked = auditEmailEnabled
+          if (auditEmailStateSummaryEl)
+            auditEmailStateSummaryEl.textContent = auditEmailEnabled ? 'On' : 'Off'
           updateSaveButton()
         }
 
@@ -380,6 +449,15 @@ const supabaseConfig = getSupabaseConfig()
           if (inventorySaveBtnEl) {
             inventorySaveBtnEl.disabled = !inventoryDirty
             inventorySaveBtnEl.setAttribute('aria-disabled', inventoryDirty ? 'false' : 'true')
+          }
+          // Unverified email: never allow a save, regardless of dirty state (SMI-5540) --
+          // there is nowhere to send the audit email, so persisting the toggle would be
+          // silently unactionable.
+          const auditEmailDirty =
+            emailVerified && draft.auditEmailEnabled !== initial.auditEmailEnabled
+          if (auditEmailSaveBtnEl) {
+            auditEmailSaveBtnEl.disabled = !auditEmailDirty
+            auditEmailSaveBtnEl.setAttribute('aria-disabled', auditEmailDirty ? 'false' : 'true')
           }
         }
 
@@ -404,6 +482,7 @@ const supabaseConfig = getSupabaseConfig()
                 enabled: draft.enabled,
                 anonymous_id: draft.anonymousId,
                 inventory_sync_enabled: draft.inventorySyncEnabled,
+                audit_email_enabled: draft.auditEmailEnabled,
               }),
             })
             if (!res.ok) {
@@ -420,6 +499,7 @@ const supabaseConfig = getSupabaseConfig()
             initial.enabled = pref.enabled
             initial.anonymousId = pref.anonymous_id ?? null
             initial.inventorySyncEnabled = pref.inventory_sync_enabled
+            initial.auditEmailEnabled = pref.audit_email_enabled
             draft.anonymousId = pref.anonymous_id ?? null
             render(pref)
             if (resultEl) {
@@ -470,6 +550,15 @@ const supabaseConfig = getSupabaseConfig()
           })
         }
 
+        if (auditEmailToggleEl) {
+          auditEmailToggleEl.addEventListener('change', () => {
+            draft.auditEmailEnabled = auditEmailToggleEl.checked
+            if (auditEmailStateSummaryEl)
+              auditEmailStateSummaryEl.textContent = draft.auditEmailEnabled ? 'On' : 'Off'
+            updateSaveButton()
+          })
+        }
+
         if (saveBtnEl) {
           saveBtnEl.addEventListener('click', () => doSave(saveBtnEl, saveResultEl))
         }
@@ -477,6 +566,12 @@ const supabaseConfig = getSupabaseConfig()
         if (inventorySaveBtnEl) {
           inventorySaveBtnEl.addEventListener('click', () =>
             doSave(inventorySaveBtnEl, inventorySaveResultEl)
+          )
+        }
+
+        if (auditEmailSaveBtnEl) {
+          auditEmailSaveBtnEl.addEventListener('click', () =>
+            doSave(auditEmailSaveBtnEl, auditEmailSaveResultEl)
           )
         }
 

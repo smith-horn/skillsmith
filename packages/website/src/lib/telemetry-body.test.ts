@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseInventorySyncEnabled,
+  parseAuditEmailEnabled,
   buildTelemetryUpsertRow,
   type ExistingTelemetryRow,
 } from './telemetry-body'
@@ -87,12 +88,56 @@ describe('parseInventorySyncEnabled — present non-boolean values (error cases)
   })
 })
 
+describe('parseAuditEmailEnabled — absent field (undefined), default-off (SMI-5540)', () => {
+  it('returns fallback=false when value is undefined (default-off consent)', () => {
+    expect(parseAuditEmailEnabled(undefined, false)).toEqual({ value: false, error: null })
+  })
+
+  it('returns fallback=true when value is undefined and fallback is true', () => {
+    expect(parseAuditEmailEnabled(undefined, true)).toEqual({ value: true, error: null })
+  })
+})
+
+describe('parseAuditEmailEnabled — present boolean values', () => {
+  it('returns true when value is true (explicit opt-in, ignores fallback)', () => {
+    expect(parseAuditEmailEnabled(true, false)).toEqual({ value: true, error: null })
+  })
+
+  it('returns false when value is false (ignores fallback)', () => {
+    expect(parseAuditEmailEnabled(false, true)).toEqual({ value: false, error: null })
+  })
+})
+
+describe('parseAuditEmailEnabled — present non-boolean values (error cases)', () => {
+  it('returns error when value is a string "true"', () => {
+    expect(parseAuditEmailEnabled('true', false)).toEqual({
+      value: null,
+      error: 'invalid_audit_email_enabled',
+    })
+  })
+
+  it('returns error when value is null (present but not boolean)', () => {
+    expect(parseAuditEmailEnabled(null, false)).toEqual({
+      value: null,
+      error: 'invalid_audit_email_enabled',
+    })
+  })
+
+  it('returns error when value is an object', () => {
+    expect(parseAuditEmailEnabled({}, false)).toEqual({
+      value: null,
+      error: 'invalid_audit_email_enabled',
+    })
+  })
+})
+
 describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governance)', () => {
   const NOW = '2026-06-26T12:00:00.000Z'
   const existing: ExistingTelemetryRow = {
     anonymous_id: 'anon-original',
     anonymous_id_created_at: '2026-01-01T00:00:00.000Z',
     inventory_sync_enabled: true,
+    audit_email_enabled: false,
   }
 
   it('preserves stored anonymous_id + created_at when the id is omitted', () => {
@@ -101,6 +146,7 @@ describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governan
       enabled: false,
       anonymousId: null,
       inventorySyncEnabled: true,
+      auditEmailEnabled: false,
       existing,
       now: NOW,
     })
@@ -117,6 +163,7 @@ describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governan
       enabled: true,
       anonymousId: 'anon-new',
       inventorySyncEnabled: false,
+      auditEmailEnabled: false,
       existing,
       now: NOW,
     })
@@ -130,6 +177,7 @@ describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governan
       enabled: true,
       anonymousId: 'anon-original',
       inventorySyncEnabled: true,
+      auditEmailEnabled: false,
       existing,
       now: NOW,
     })
@@ -145,10 +193,28 @@ describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governan
         enabled: true,
         anonymousId: null,
         inventorySyncEnabled: false,
+        auditEmailEnabled: false,
         existing,
         now: NOW,
       }).inventory_sync_enabled
     ).toBe(false)
+  })
+
+  it('does not clobber audit-email consent — passes the resolved value through (SMI-5540)', () => {
+    // Mirrors the inventory-consent case above: the route resolves omitted -> stored
+    // via parseAuditEmailEnabled BEFORE this call, so here we just confirm the boolean
+    // is carried verbatim and is independent of `enabled`/`inventorySyncEnabled`.
+    expect(
+      buildTelemetryUpsertRow({
+        userId: 'u1',
+        enabled: true,
+        anonymousId: null,
+        inventorySyncEnabled: false,
+        auditEmailEnabled: true,
+        existing,
+        now: NOW,
+      }).audit_email_enabled
+    ).toBe(true)
   })
 
   it('handles a first-time row (no existing): new id gets created_at, null id stays null', () => {
@@ -157,6 +223,7 @@ describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governan
       enabled: true,
       anonymousId: 'anon-first',
       inventorySyncEnabled: true,
+      auditEmailEnabled: false,
       existing: null,
       now: NOW,
     })
@@ -168,6 +235,7 @@ describe('buildTelemetryUpsertRow — preserve/clobber matrix (SMI-5394 governan
       enabled: false,
       anonymousId: null,
       inventorySyncEnabled: false,
+      auditEmailEnabled: false,
       existing: null,
       now: NOW,
     })
