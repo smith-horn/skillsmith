@@ -117,12 +117,12 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     <li>File contents, file paths, or skill source code</li>
   </ul>
 
-  <div class="callout warning">
-    <p class="callout-heading">No purge control yet</p>
+  <div class="callout">
+    <p class="callout-heading">Purging your stored inventory</p>
     <p>
       Turning inventory sync off stops future uploads immediately — this is enforced server-side,
-      not just by the CLI. A control to purge your already-stored inventory is planned but not
-      available yet.
+      not just by the CLI. To permanently delete everything already stored, run
+      <code>skillsmith inventory purge</code> (see <a href="#commands">Commands</a> below).
     </p>
   </div>
 
@@ -199,6 +199,17 @@ skillsmith inventory status --verbose`}</code></pre>
   </p>
 
   <pre><code>{`skillsmith inventory forget-device`}</code></pre>
+
+  <h3>skillsmith inventory purge</h3>
+
+  <p>
+    Permanently deletes this account's entire stored cross-machine inventory from Skillsmith's
+    servers — every device row and its skill rows. This is irreversible. Prompts for confirmation
+    unless <code>--yes</code> is passed (for scripts).
+  </p>
+
+  <pre><code>{`skillsmith inventory purge
+skillsmith inventory purge --yes`}</code></pre>
 
   <div class="callout">
     <p class="callout-heading">Using Claude Code?</p>
