@@ -121,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Anon `fuzzy_search_skills` statement-timeout vector** (2026-07-03, SMI-5522):
+  post-apply verification of SMI-5514 found a residual anon-reachable statement-timeout
+  (SQLSTATE 57014) on `fuzzy_search_skills` (the pg_trgm `%`-operator path, migration
+  `20260703210004`). Its per-row `similarity()` recomputes trigrams over the full query
+  for every candidate row, so cost scales with query length and crosses the 3 s anon
+  ceiling around 400 chars (~1.5 s at 100, ~3.9 s at 500, ~9.5 s at 1200) — reachable via
+  direct `/rest/v1/rpc/fuzzy_search_skills`, re-manufacturing the DB-time load SMI-5514
+  targeted. Migration `20260703240000` adds a top-level max-length guard (`> 100` chars
+  returns empty; no min-length guard since fuzzy is the `skills-recommend` short-query
+  fallback). `search_skills` / `search_skills_v2` are unchanged — already bounded
+  (~0.4–0.6 s worst case) by the SMI-5514 trgm index and are not part of the live vector.
 - **Prod IO-budget outage — skills refresh seq-scan** (2026-06-18, SMI-5310): the
   4-hourly Skill Metadata Refresh query (`skills-refresh-metadata`) had no index
   serving `WHERE repo_url IS NOT NULL AND quarantined <> true AND indexed_at < …
