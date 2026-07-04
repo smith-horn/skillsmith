@@ -151,3 +151,8 @@ export type { RunInventoryAuditOptions, RunInventoryAuditResult } from './run-in
 export { readAuditSuggestions, writeAuditSuggestions } from './audit-suggestions.js'
 
 export type { AuditSuggestionsFile, AuditSuggestionsOptions } from './audit-suggestions.js'
+
+// SMI-5535 Wave 2B — rot detector (dead-ref / version-drift scan).
+export { detectRot } from './rot-detector.js'
+
+export type { DetectRotOptions, RotFinding, RotSignal } from './rot-detector.types.js'

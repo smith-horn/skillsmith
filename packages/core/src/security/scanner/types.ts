@@ -89,6 +89,28 @@ export interface ScanReport {
 }
 
 /**
+ * Verdict returned by comparing two scans of the SAME skill to detect a
+ * benign→malicious "rug-pull" update (SMI-5535, R0 Wave 2A).
+ *
+ * - `hostile`    — a previously-passing skill introduced new high/critical
+ *   findings (or crossed the risk threshold): a genuine benign→malicious flip.
+ * - `suspicious` — the update added new medium findings or a material risk
+ *   increase, but did not meet the hostile bar (also covers an already-flagged
+ *   skill that got materially worse, which is a worsening — not a new rug-pull).
+ * - `benign`     — no new high/critical findings and no threshold crossing;
+ *   findings are unchanged, reduced, or only benign churn.
+ */
+export interface HostileUpdateVerdict {
+  verdict: 'benign' | 'suspicious' | 'hostile'
+  /** Findings present in the current scan but absent from the previous scan. */
+  newFindings: SecurityFinding[]
+  /** `current.riskScore - previous.riskScore` (positive = riskier). */
+  riskDelta: number
+  /** One concrete human-readable sentence citing the deciding signal. */
+  reason: string
+}
+
+/**
  * Configuration options for the security scanner
  */
 export interface ScannerOptions {

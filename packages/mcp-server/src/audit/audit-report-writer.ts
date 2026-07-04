@@ -13,7 +13,8 @@
  *   3. Exact collisions — each lists involved entries with absolute paths
  *   4. Generic flags — matched tokens, suggested rename if any
  *   5. Semantic collisions — cosine score, overlapping phrases
- *   6. Recommended edits — Wave 3 plumbing; Wave 1 emits a placeholder
+ *   6. Rot / dead references (SMI-5535 Wave 2B) — only when non-empty
+ *   7. Recommended edits — Wave 3 plumbing; Wave 1 emits a placeholder
  *
  * Wave 2/4 import this writer via `@skillsmith/mcp-server/audit` (Step 9
  * barrel).
@@ -32,6 +33,7 @@ import type {
 import type { InventoryEntry } from '../utils/local-inventory.types.js'
 import type { RenameSuggestion } from './rename-engine.types.js'
 import type { RecommendedEdit } from './edit-suggester.types.js'
+import type { RotFinding } from './rot-detector.types.js'
 
 export interface AuditReportRenderOptions {
   /**
@@ -67,6 +69,22 @@ export interface AuditReportRenderOptions {
    * `runEditSuggester`'s output entirely.
    */
   recommendedEdits?: ReadonlyArray<RecommendedEdit>
+  /**
+   * Rot findings (SMI-5535 Wave 2B — dead-ref / version-drift signals).
+   * When provided AND non-empty, the writer renders a "Rot / dead
+   * references" section listing each finding's entry + reason. Pass
+   * nothing (or an empty array) to omit the section entirely.
+   *
+   * Also feeds the summary header's "Total flags" / "Warnings" totals
+   * (MEDIUM-2 fix): `result.summary` is computed by the collision
+   * detector alone and has no knowledge of this pass, so without this
+   * the header would print stale collision-only totals (e.g. "Total
+   * flags: 0") directly above a populated "Rot / dead references"
+   * section. `renderSummaryHeader` derives the warning-count contribution
+   * from this same array (`severity === 'warning'`), so the header can
+   * never disagree with the rendered section.
+   */
+  rotFindings?: ReadonlyArray<RotFinding>
 }
 
 export interface AuditReportWriteOptions extends AuditReportRenderOptions {
@@ -93,7 +111,7 @@ export function renderAuditReport(
 ): string {
   const generatedAt = opts.generatedAt ?? new Date()
   const sections: string[] = []
-  sections.push(renderSummaryHeader(result, generatedAt))
+  sections.push(renderSummaryHeader(result, generatedAt, opts.rotFindings ?? []))
 
   if (containsClaudeMdRule(result)) {
     sections.push(renderClaudeMdCaveat())
@@ -109,6 +127,14 @@ export function renderAuditReport(
 
   if (result.semanticCollisions.length > 0) {
     sections.push(renderSemanticCollisions(result.semanticCollisions))
+  }
+
+  // SMI-5535 Wave 2B: rot findings render right after the three detector
+  // passes, before the rename/edit-suggestion sections. Omitted entirely
+  // when empty — no placeholder text, matching the recommended-edits
+  // section's empty-input behavior.
+  if (opts.rotFindings && opts.rotFindings.length > 0) {
+    sections.push(renderRotFindings(opts.rotFindings))
   }
 
   sections.push(renderRecommendedEdits(opts.renameSuggestions, result.auditId))
@@ -144,6 +170,7 @@ export async function writeAuditReport(
     generatedAt: opts.generatedAt,
     renameSuggestions: opts.renameSuggestions,
     recommendedEdits: opts.recommendedEdits,
+    rotFindings: opts.rotFindings,
   })
   await fs.writeFile(tmpPath, body, 'utf-8')
   await fs.rename(tmpPath, reportPath)
@@ -154,15 +181,32 @@ export async function writeAuditReport(
 // Section renderers
 // ---------------------------------------------------------------------------
 
-function renderSummaryHeader(result: InventoryAuditResult, generatedAt: Date): string {
+/**
+ * SMI-5535 Wave 2B (MEDIUM-2 fix): `result.summary` is the collision-only
+ * tally the three-pass detector computes — it predates the rot detector
+ * and has no knowledge of it. Fold each 'warning'-severity rot finding
+ * into the header's totals here (mirroring the identical fold
+ * `run-inventory-audit.ts` already applies to its own JSON `summary`) so
+ * the report's header never under-reports a populated "Rot / dead
+ * references" section below it.
+ */
+function renderSummaryHeader(
+  result: InventoryAuditResult,
+  generatedAt: Date,
+  rotFindings: ReadonlyArray<RotFinding> = []
+): string {
+  const rotWarningCount = rotFindings.filter((f) => f.severity === 'warning').length
+  const totalFlags = result.summary.totalFlags + rotWarningCount
+  const warningCount = result.summary.warningCount + rotWarningCount
+
   const lines: string[] = []
   lines.push(`# Skillsmith Namespace Audit — ${result.auditId}`)
   lines.push('')
   lines.push(`- Generated: ${generatedAt.toISOString()}`)
   lines.push(`- Total entries scanned: ${result.summary.totalEntries}`)
-  lines.push(`- Total flags: ${result.summary.totalFlags}`)
+  lines.push(`- Total flags: ${totalFlags}`)
   lines.push(`  - Errors (exact collisions): ${result.summary.errorCount}`)
-  lines.push(`  - Warnings (generic + semantic): ${result.summary.warningCount}`)
+  lines.push(`  - Warnings (generic + semantic + rot): ${warningCount}`)
   lines.push(`- Audit duration: ${result.summary.durationMs.toFixed(2)}ms`)
   lines.push('')
   return lines.join('\n')
@@ -236,6 +280,29 @@ function renderSemanticCollisions(flags: ReadonlyArray<SemanticCollisionFlag>): 
         lines.push(`  - "${pair.phrase1}" ↔ "${pair.phrase2}" (sim ${pair.similarity.toFixed(3)})`)
       }
     }
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+/**
+ * SMI-5535 Wave 2B: render the rot-detection findings section. Mirrors
+ * `renderSemanticCollisions`/`renderGenericFlags`'s shape. Heading and
+ * reason text are deliberately honest — "Rot / dead references", never
+ * "old"/"stale" (see `rot-detector.ts`'s header for the same convention).
+ */
+function renderRotFindings(findings: ReadonlyArray<RotFinding>): string {
+  const lines: string[] = []
+  lines.push('## Rot / dead references')
+  lines.push('')
+  for (const finding of findings) {
+    lines.push(`### ${describeEntry(finding.entry)}`)
+    lines.push('')
+    lines.push(`- Severity: **${finding.severity}**`)
+    lines.push(`- Rot id: \`${finding.rotId}\``)
+    lines.push(`- Signal: ${finding.signal}`)
+    lines.push(`- Source: ${finding.entry.source_path}`)
+    lines.push(`- Reason: ${finding.reason}`)
     lines.push('')
   }
   return lines.join('\n')

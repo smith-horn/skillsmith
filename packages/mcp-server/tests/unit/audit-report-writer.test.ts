@@ -19,6 +19,7 @@ import type {
   SemanticCollisionFlag,
 } from '../../src/audit/collision-detector.types.js'
 import type { RecommendedEdit } from '../../src/audit/edit-suggester.types.js'
+import type { RotFinding } from '../../src/audit/rot-detector.types.js'
 import type { InventoryEntry } from '../../src/utils/local-inventory.types.js'
 
 let TEST_DIR: string
@@ -204,7 +205,63 @@ describe('renderAuditReport — full result with all 3 collision kinds', () => {
 
     // Summary totals reflect 1 error + 2 warnings.
     expect(md).toContain('Errors (exact collisions): 1')
-    expect(md).toContain('Warnings (generic + semantic): 2')
+    expect(md).toContain('Warnings (generic + semantic + rot): 2')
+  })
+})
+
+describe('renderAuditReport — SMI-5535 Wave 2B rot findings (MEDIUM-2 header fix)', () => {
+  it('folds warning-severity rot findings into the summary header totals', () => {
+    const result = emptyResult({
+      inventory: [
+        entry({ kind: 'skill', source_path: '/Users/me/.claude/skills/rotten/SKILL.md' }),
+      ],
+      summary: {
+        totalEntries: 1,
+        totalFlags: 0,
+        errorCount: 0,
+        warningCount: 0,
+        durationMs: 1,
+        passDurations: { exact: 0, generic: 0, semantic: 0 },
+      },
+    })
+    const rotFindings: RotFinding[] = [
+      {
+        kind: 'rot',
+        rotId: 'abc123def4567890',
+        entry: entry({ source_path: '/Users/me/.claude/skills/rotten/SKILL.md' }),
+        severity: 'warning',
+        signal: 'dead-ref',
+        reason: 'Contains a dead source reference (placeholder or empty link target).',
+      },
+    ]
+
+    const md = renderAuditReport(result, { rotFindings })
+
+    // Header totals include the rot finding even though `result.summary`
+    // (collision-only) reports zero — this is the MEDIUM-2 regression
+    // guard: the header must never under-report a populated rot section.
+    expect(md).toContain('- Total flags: 1')
+    expect(md).toContain('Warnings (generic + semantic + rot): 1')
+    expect(md).toContain('## Rot / dead references')
+  })
+
+  it('leaves the header at collision-only totals when no rot findings are passed', () => {
+    const result = emptyResult({
+      summary: {
+        totalEntries: 0,
+        totalFlags: 2,
+        errorCount: 1,
+        warningCount: 1,
+        durationMs: 1,
+        passDurations: { exact: 0, generic: 0, semantic: 0 },
+      },
+    })
+
+    const md = renderAuditReport(result)
+
+    expect(md).toContain('- Total flags: 2')
+    expect(md).toContain('Warnings (generic + semantic + rot): 1')
+    expect(md).not.toContain('## Rot / dead references')
   })
 })
 

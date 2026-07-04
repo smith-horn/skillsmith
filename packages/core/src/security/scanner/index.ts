@@ -12,6 +12,7 @@ export type {
   RiskScoreBreakdown,
   ScanReport,
   ScannerOptions,
+  HostileUpdateVerdict,
 } from './types.js'
 
 // Patterns (for testing/extending)
@@ -38,3 +39,6 @@ export { MAX_LINE_LENGTH_FOR_REGEX, safeRegexTest, safeRegexCheck } from './rege
 
 // Main class
 export { SecurityScanner, default } from './SecurityScanner.js'
+
+// Hostile-update comparator (SMI-5535, R0 Wave 2A)
+export { compareScanReports, DEFAULT_RISK_THRESHOLD } from './SecurityScanner.hostile-update.js'
