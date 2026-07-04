@@ -147,7 +147,7 @@ skillsmith update author/skill-name
 
 Cross-machine skill inventory for viewing which agent skills are installed across your machines and harnesses. Requires `skillsmith login` and opt-in via the [Cross-machine skill inventory toggle](https://www.skillsmith.app/account/telemetry) at skillsmith.app/account/telemetry (off by default). Once enabled, view your inventory at [skillsmith.app/account/skills](https://www.skillsmith.app/account/skills).
 
-**Privacy:** Only skill IDs, versions, content hashes, declared SKILL.md front-matter fields (author, license, repository), and device platform metadata are uploaded. File contents, paths, and your raw hostname are never transmitted. Set `SKILLSMITH_INVENTORY_DISABLE=1` to hard-disable.
+**Privacy:** Only skill IDs, versions, content hashes, declared SKILL.md front-matter fields (author, license, repository), and device platform metadata are uploaded. File contents, paths, and your raw hostname are never transmitted. Set `SKILLSMITH_INVENTORY_DISABLE=1` to hard-disable, or run `skillsmith inventory purge` to delete everything already stored.
 
 #### inventory push
 
@@ -182,6 +182,18 @@ Clear the local device registration; the next push creates a fresh device ID and
 ```bash
 skillsmith inventory forget-device
 ```
+
+#### inventory purge
+
+Permanently delete this account's entire stored cross-machine inventory from Skillsmith's servers (all devices and their skill rows). Irreversible. Prompts for confirmation unless `--yes` is passed.
+
+```bash
+skillsmith inventory purge
+skillsmith inventory purge --yes
+```
+
+**Options:**
+- `-y, --yes` - Skip the confirmation prompt (for scripts)
 
 See [Cross-machine skill inventory](https://www.skillsmith.app/docs/inventory) for details.
 
