@@ -42,6 +42,28 @@ export type {
   AuditReportWriteResult,
 } from './audit-report-writer.js'
 
+// SMI-5541 Wave 2C — local security audit (client-side rug-pull / hostile-update
+// producer that feeds the shipped 2A comparator; content is client-only per ADR-124).
+export { runSecurityAudit } from './security-audit.js'
+export type {
+  RunSecurityAuditOptions,
+  RunSecurityAuditResult,
+  SecurityAuditFinding,
+  SecurityAuditSummary,
+  SecurityVerdict,
+} from './security-audit.types.js'
+export {
+  defaultBaselinePath,
+  loadSecurityBaseline,
+  saveSecurityBaseline,
+  SECURITY_BASELINE_VERSION,
+} from './security-baseline.js'
+export type {
+  SecurityBaseline,
+  SecurityBaselineEntry,
+  StoredScanReport,
+} from './security-baseline.js'
+
 export { emitAuditCompleteEvent } from '../tools/namespace-audit/telemetry.js'
 export type {
   AuditCompleteContext,

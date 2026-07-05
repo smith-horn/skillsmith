@@ -27,6 +27,7 @@ import { sanitizeError } from '../utils/sanitize.js'
 import { requireTier } from '../utils/require-tier.js'
 import { createAuditCollisionsSubcommand } from './audit-collisions.js'
 import { createAuditSourcesSubcommand } from './audit-sources.js'
+import { createAuditSecuritySubcommand } from './audit-security.js'
 
 // ============================================================================
 // Severity display helpers
@@ -219,6 +220,8 @@ export function createAuditCommand(): Command {
   audit.addCommand(createAuditCollisionsSubcommand())
   // SMI-5407 — register `sources` sibling subcommand.
   audit.addCommand(createAuditSourcesSubcommand())
+  // SMI-5541 — register `security` sibling subcommand (local rug-pull scan).
+  audit.addCommand(createAuditSecuritySubcommand())
 
   // Deprecation alias: `sklx audit <skill-id>` → forward to `advisories`.
   // Implemented as a default-action on the parent: when Commander is invoked
