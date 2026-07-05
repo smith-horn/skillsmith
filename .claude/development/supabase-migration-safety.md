@@ -238,7 +238,7 @@ Document the output of each query in the Linear ticket comment before running `s
 ```bash
 # Staging
 varlock run -- sh -c 'npx supabase db push \
-  --db-url "postgresql://postgres.ovhcifugwqnzoebwfuku:$SUPABASE_DB_PASSWORD_STAGING@aws-1-us-east-1.pooler.supabase.com:5432/postgres"'
+  --db-url "postgresql://postgres.ovhcifugwqnzoebwfuku:$STAGING_SUPABASE_DB_PASSWORD@aws-1-us-east-1.pooler.supabase.com:5432/postgres"'
 
 # Prod (only after 24h staging soak)
 varlock run -- sh -c 'npx supabase db push \
