@@ -18,6 +18,11 @@ export type {
   ScannerOptions,
   RiskScoreBreakdown,
 } from './scanner/index.js'
+// SMI-5535 R0 Wave 2A: the hostile-update (rug-pull) comparator is a public
+// feature; surface it (+ its default threshold + verdict type) through the
+// security barrel so it is reachable from `@skillsmith/core`.
+export { compareScanReports, DEFAULT_RISK_THRESHOLD } from './scanner/index.js'
+export type { HostileUpdateVerdict } from './scanner/index.js'
 
 // Sanitization
 export {

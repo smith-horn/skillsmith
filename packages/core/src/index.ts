@@ -57,6 +57,11 @@ export { L1Cache, L2Cache, TieredCache } from './cache/index.js'
 
 // Security
 export { SecurityScanner } from './security/index.js'
+// SMI-5535 R0 Wave 2A: hostile-update (rug-pull) comparator — public API, used
+// by the client-side security audit (SMI-5541). Mirrors the SecurityScanner
+// re-export style above (a direct named re-export from the security barrel).
+export { compareScanReports, DEFAULT_RISK_THRESHOLD } from './security/index.js'
+export type { HostileUpdateVerdict } from './security/index.js'
 
 // SMI-898: Path Traversal Protection
 export {
