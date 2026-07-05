@@ -147,6 +147,18 @@
       "checks": ["check_skills_recommend_usage_counter"]
     },
     {
+      "id": "edge-fn-fuzzy-search",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/skills-recommend/**"],
+      "script": "scripts/smoke-prod/search.sh",
+      "checks": [
+        "check_fuzzy_short_query_bounded",
+        "check_fuzzy_recall_short_token",
+        "check_recommend_fallback_2char",
+        "check_fuzzy_normal_query_no_regression"
+      ]
+    },
+    {
       "id": "edge-fn-events",
       "owner": "edge-functions",
       "trigger_globs": ["supabase/functions/events/**", "supabase/functions/_shared/posthog.ts"],
