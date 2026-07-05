@@ -157,4 +157,10 @@ describe('audit-notify-client', () => {
     fetchMock.mockResolvedValue(new Response('not json', { status: 200 }))
     await expect(sendAuditDigest(payload)).rejects.toBeInstanceOf(AuditNotifyError)
   })
+
+  it('UC-5c: parseable-but-null 200 body → AuditNotifyError (not a raw TypeError)', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(jsonResponse(null, 200))
+    await expect(sendAuditDigest(payload)).rejects.toBeInstanceOf(AuditNotifyError)
+  })
 })

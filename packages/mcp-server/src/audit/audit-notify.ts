@@ -85,21 +85,32 @@ function digestReason(f: SecurityAuditFinding): string {
 }
 
 /**
+ * Strip C0 control chars + DEL so a hostile skill name can't inject newlines /
+ * fake "sections" into the rendered digest email (defense-in-depth; the server
+ * `coerceFinding` is the authoritative sanitizer, but the payload leaving the
+ * device should be clean too).
+ */
+function stripControl(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\u0000-\u001f\u007f]/g, ' ')
+}
+
+/**
  * Map a full audit result into the compact push payload. Pure: no I/O.
  *
  * Counts come from the run summary (the true totals); the findings list is
  * sorted strongest-first and capped at {@link MAX_DIGEST_FINDINGS}. Only the
- * identifier / kind / verdict travel, plus a CONTENT-FREE synthesized reason
- * ({@link digestReason}) — never the audit's excerpt-bearing reason, never
- * `source_path`, never raw skill content.
+ * identifier / kind / verdict travel (control-sanitized), plus a CONTENT-FREE
+ * synthesized reason ({@link digestReason}) — never the audit's excerpt-bearing
+ * reason, never `source_path`, never raw skill content.
  */
 export function buildAuditDigestPayload(result: RunSecurityAuditResult): AuditDigestPushPayload {
   const findings: AuditDigestPushFinding[] = [...result.findings]
     .sort((a, b) => verdictRank(a.verdict) - verdictRank(b.verdict))
     .slice(0, MAX_DIGEST_FINDINGS)
     .map((f) => ({
-      identifier: f.entry.identifier,
-      kind: f.entry.kind,
+      identifier: stripControl(f.entry.identifier),
+      kind: stripControl(f.entry.kind),
       verdict: f.verdict as AuditDigestVerdict,
       reason: digestReason(f),
     }))
@@ -114,12 +125,22 @@ export function buildAuditDigestPayload(result: RunSecurityAuditResult): AuditDi
 }
 
 /**
- * Stable hash of the digest's actionable content — the client-side dedup key.
- * Exported so the CLI (`--email`) records the SAME hash the background auto-run
- * uses, keeping the two channels from re-emailing an identical digest.
+ * Stable dedup hash of a digest. Folds in the summary COUNTS as well as the
+ * (top-50) findings, so a change confined below the findings cap — e.g. a
+ * sub-50 skill escalating suspicious→malicious — still changes the hash and
+ * re-alerts. Exported so the CLI (`--email`) records the SAME hash the
+ * background auto-run uses, keeping the two channels from re-emailing an
+ * identical digest.
  */
-export function hashDigestFindings(findings: AuditDigestPushFinding[]): string {
-  const canonical = JSON.stringify(findings.map((f) => [f.verdict, f.identifier, f.reason]))
+export function hashDigest(
+  payload: Pick<AuditDigestPushPayload, 'hostile' | 'malicious' | 'suspicious' | 'findings'>
+): string {
+  const canonical = JSON.stringify([
+    payload.hostile,
+    payload.malicious,
+    payload.suspicious,
+    payload.findings.map((f) => [f.verdict, f.identifier, f.reason]),
+  ])
   return crypto.createHash('sha256').update(canonical).digest('hex')
 }
 
@@ -170,7 +191,15 @@ export async function maybeAutoNotifyAudit(
   if (process.env.SKILLSMITH_AUDIT_EMAIL_DISABLE === '1') return null
 
   const now = opts?.now ?? Date.now()
-  const nowIso = new Date(now).toISOString()
+  // Guard against a malformed injected `now` (NaN/Infinity/out-of-range, all of
+  // which make `toISOString()` throw RangeError) so the never-throws contract
+  // holds for all inputs, not just the production no-arg call.
+  let nowIso: string
+  try {
+    nowIso = new Date(now).toISOString()
+  } catch {
+    nowIso = new Date().toISOString()
+  }
 
   // Whole body wrapped so the never-throws contract holds even if a guard
   // helper (getAuditNotifyState / shouldAutoPush / loadCredentials) throws.
@@ -183,7 +212,7 @@ export async function maybeAutoNotifyAudit(
 
     const result = await runSecurityAudit({})
     const payload = buildAuditDigestPayload(result)
-    const hash = hashDigestFindings(payload.findings)
+    const hash = hashDigest(payload)
 
     if (payload.findings.length === 0) {
       // Clean run: remember it (no network) so a later single finding differs.

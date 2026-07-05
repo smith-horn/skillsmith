@@ -31,6 +31,7 @@ vi.mock('./security-audit.js', () => ({ runSecurityAudit: mocks.runSecurityAudit
 
 import {
   buildAuditDigestPayload,
+  hashDigest,
   maybeAutoNotifyAudit,
   MAX_DIGEST_FINDINGS,
 } from './audit-notify.js'
@@ -138,6 +139,47 @@ describe('buildAuditDigestPayload', () => {
     expect(reason).not.toContain('Blocked pattern detected')
     expect(reason).not.toContain(leaky.reason)
     expect(reason).toContain('raised this skill') // the synthesized suspicious copy
+  })
+
+  it('strips control chars from a hostile identifier (no injected newlines)', () => {
+    const hostile: SecurityAuditFinding = {
+      ...finding('hostile', 'x'),
+      entry: { kind: 'skill', identifier: 'a\n\nFAKE\n\nb', source_path: '/s', triggerSurface: [] },
+    }
+    const payload = buildAuditDigestPayload(result([hostile]))
+    expect(payload.findings[0]!.identifier).not.toContain('\n')
+    expect(payload.findings[0]!.identifier).toBe('a  FAKE  b')
+  })
+})
+
+describe('hashDigest', () => {
+  const base = { hostile: 1, malicious: 0, suspicious: 0, findings: [] as const }
+
+  it('is stable for identical input', () => {
+    expect(hashDigest({ ...base })).toBe(hashDigest({ ...base }))
+  })
+
+  it('changes when a summary COUNT changes even if the (capped) findings list does not', () => {
+    const findings = [{ identifier: 'a', kind: 'skill', verdict: 'hostile' as const, reason: 'r' }]
+    const a = hashDigest({ hostile: 1, malicious: 0, suspicious: 1, findings })
+    const b = hashDigest({ hostile: 1, malicious: 1, suspicious: 0, findings })
+    expect(a).not.toBe(b)
+  })
+
+  it('changes when a finding changes', () => {
+    const a = hashDigest({
+      hostile: 1,
+      malicious: 0,
+      suspicious: 0,
+      findings: [{ identifier: 'a', kind: 'skill', verdict: 'hostile', reason: 'r' }],
+    })
+    const b = hashDigest({
+      hostile: 1,
+      malicious: 0,
+      suspicious: 0,
+      findings: [{ identifier: 'b', kind: 'skill', verdict: 'hostile', reason: 'r' }],
+    })
+    expect(a).not.toBe(b)
   })
 })
 

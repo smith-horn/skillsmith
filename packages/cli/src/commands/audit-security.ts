@@ -23,7 +23,7 @@ import { sendAuditDigest, recordAuditNotify, AuditNotifyAuthError } from '@skill
 import {
   runSecurityAudit,
   buildAuditDigestPayload,
-  hashDigestFindings,
+  hashDigest,
   type RunSecurityAuditResult,
   type SecurityVerdict,
 } from '@skillsmith/mcp-server/audit'
@@ -142,7 +142,10 @@ async function pushDigest(result: RunSecurityAuditResult): Promise<EmailOutcome>
   if (result.findings.length === 0) {
     // Nothing to email: record a clean state so the background auto-run also
     // treats this as "nothing new" rather than re-scanning + re-deciding.
-    recordAuditNotify(new Date().toISOString(), hashDigestFindings([]))
+    recordAuditNotify(
+      new Date().toISOString(),
+      hashDigest({ hostile: 0, malicious: 0, suspicious: 0, findings: [] })
+    )
     return { ok: true, sent: false, reason: 'nothing_to_report' }
   }
   const payload = buildAuditDigestPayload(result)
@@ -151,7 +154,7 @@ async function pushDigest(result: RunSecurityAuditResult): Promise<EmailOutcome>
     if (res.sent) {
       // Record the SAME hash the background auto-run computes, so a subsequent
       // MCP-server start does not re-email this identical digest.
-      recordAuditNotify(new Date().toISOString(), hashDigestFindings(payload.findings))
+      recordAuditNotify(new Date().toISOString(), hashDigest(payload))
     }
     return { ok: res.ok, sent: res.sent, ...(res.reason ? { reason: res.reason } : {}) }
   } catch (error) {

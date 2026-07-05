@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => {
       suspicious: 0,
       findings: [{ identifier: 'x', kind: 'skill', verdict: 'hostile', reason: 'r' }],
     })),
-    hashDigestFindings: vi.fn(() => 'hash-xyz'),
+    hashDigest: vi.fn(() => 'hash-xyz'),
     sendAuditDigest: vi.fn(),
     recordAuditNotify: vi.fn(),
     AuditNotifyAuthError,
@@ -35,7 +35,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('@skillsmith/mcp-server/audit', () => ({
   runSecurityAudit: mocks.runSecurityAudit,
   buildAuditDigestPayload: mocks.buildAuditDigestPayload,
-  hashDigestFindings: mocks.hashDigestFindings,
+  hashDigest: mocks.hashDigest,
 }))
 vi.mock('@skillsmith/core', () => ({
   sendAuditDigest: mocks.sendAuditDigest,
@@ -103,7 +103,7 @@ beforeEach(() => {
   mocks.runSecurityAudit.mockReset()
   mocks.sendAuditDigest.mockReset()
   mocks.buildAuditDigestPayload.mockClear()
-  mocks.hashDigestFindings.mockClear()
+  mocks.hashDigest.mockClear()
   mocks.recordAuditNotify.mockReset()
 })
 afterEach(() => {

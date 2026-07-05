@@ -145,6 +145,11 @@ export async function sendAuditDigest(
       const detail = error instanceof Error ? error.message : String(error)
       throw new AuditNotifyError(`Audit digest returned an unreadable body: ${detail}`)
     }
+    // A parseable-but-non-object 200 body (e.g. JSON `null`) would NPE the field
+    // reads below — reject it as the documented AuditNotifyError, not a TypeError.
+    if (typeof body !== 'object' || body === null) {
+      throw new AuditNotifyError('Audit digest returned an unexpected 200 body shape.')
+    }
     // Most 200 outcomes carry `reason`; the Resend-failure body uses `error`
     // (`email_send_failed`) — surface either so the caller can render it.
     const reason =
