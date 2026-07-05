@@ -9,13 +9,15 @@ name: Post-Merge Verify
 # this CI observer runs natively because the runner environment is
 # reproducible, and adding Docker would roughly double runtime for a
 # non-gating job.
-# SMI-4239: npm ci runs install lifecycle scripts so better-sqlite3 and
-# onnxruntime-node prebuilt binaries are available. The co-located package
-# tests in vitest.config.root-tests.ts load these via new Database() and
-# service contexts — without scripts, module-load fails. This matches the
-# behavior of ci.yml, batch-transform.yml, and all publish workflows.
-# If a new native module enters the dep tree, it must ship prebuilt binaries
-# for linux-x64 on Node 22 — otherwise this workflow will fail at module-load.
+# SMI-4239 / SMI-5547: `npm ci --ignore-scripts` keeps supply-chain hygiene
+# (repo .npmrc sets ignore-scripts=true, SMI-4672/4673), so it does NOT build
+# native bindings. The colocated package tests in vitest.config.root-tests.ts
+# load better-sqlite3 via new Database() / createTestDatabase(), so the
+# dedicated "Rebuild native modules" step below runs `npm rebuild
+# better-sqlite3 --ignore-scripts=false` plus a probe to provide a working
+# host binding before the root vitest step. If a NEW native module enters
+# the root-runner's dep tree, add it to that rebuild step (it must ship a
+# linux-x64 / Node 22 prebuilt).
 #
 # See docs/internal/implementation/smi-4210-4212-ci-safety-net.md (SMI-4211).
 #
@@ -61,6 +63,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
+
+      - name: Rebuild native modules (better-sqlite3)
+        run: |
+          npm rebuild better-sqlite3 --ignore-scripts=false
+          node -e "const D=require('better-sqlite3'); const d=new D(':memory:'); d.close(); console.log('better-sqlite3 OK')"
 
       - name: Typecheck (full workspace)
         run: npm run typecheck
