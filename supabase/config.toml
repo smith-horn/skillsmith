@@ -433,6 +433,17 @@ verify_jwt = false
 [functions.webhook-dlq]
 verify_jwt = true
 
+# SMI-5541: continuous-audit email channel.
+# audit-notify: gateway-verified — the authenticated CLI/MCP pushes its
+# locally-computed audit digest; server re-checks consent + verified email.
+[functions.audit-notify]
+verify_jwt = true
+
+# audit-unsubscribe: anonymous — RFC 8058 one-click unsubscribe posts here with
+# no session; the request is authenticated by an HMAC signature over the user id.
+[functions.audit-unsubscribe]
+verify_jwt = false
+
 # SMI-4402: Device-code OAuth flow (RFC 8628)
 # auth-device-code: anonymous — CLI/MCP calls before any session exists.
 [functions.auth-device-code]

@@ -82,6 +82,7 @@ fi
 NO_VERIFY_JWT_FUNCTIONS=(
   admin-grant-subscription
   advance-notice-email
+  audit-unsubscribe
   auth-device-code
   auth-device-token
   checkout
@@ -107,6 +108,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
 # --- Functions that use default JWT verification ---
 VERIFY_JWT_FUNCTIONS=(
   alert-notify
+  audit-notify
   auth-device-approve
   auth-device-preview
   coverage-report

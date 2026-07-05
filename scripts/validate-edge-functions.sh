@@ -35,10 +35,12 @@ ANONYMOUS_FUNCTIONS=(
   "health"
   "auth-device-code"
   "auth-device-token"
+  "audit-unsubscribe"
 )
 
 # Edge Functions that require authentication
 AUTHENTICATED_FUNCTIONS=(
+  "audit-notify"
   "checkout"
   "create-portal-session"
   "list-invoices"
