@@ -153,7 +153,7 @@ describe('buildAuditDigestPayload', () => {
 })
 
 describe('hashDigest', () => {
-  const base = { hostile: 1, malicious: 0, suspicious: 0, findings: [] as const }
+  const base = { hostile: 1, malicious: 0, suspicious: 0, findings: [] }
 
   it('is stable for identical input', () => {
     expect(hashDigest({ ...base })).toBe(hashDigest({ ...base }))
