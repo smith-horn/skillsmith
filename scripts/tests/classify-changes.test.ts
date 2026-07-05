@@ -220,6 +220,14 @@ describe('SMI-2187: CI Change Classifier', () => {
         expect(result.skipDocker).toBe(false)
       })
 
+      it('should require full CI for post-merge-verify.yml changes (SMI-5547)', () => {
+        const result = classifyChanges(['.github/workflows/post-merge-verify.yml'])
+        expect(result.tier).toBe('code')
+        expect(result.skipDocker).toBe(false)
+        expect(result.skipTests).toBe(false)
+        expect(result.reason).toContain('Critical file changed')
+      })
+
       it('should override other classifications for critical files', () => {
         const result = classifyChanges(['README.md', '.github/workflows/ci.yml'])
         expect(result.tier).toBe('code')

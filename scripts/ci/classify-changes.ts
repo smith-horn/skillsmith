@@ -101,8 +101,16 @@ const TIER_PATTERNS: Record<Tier, string[]> = {
   ],
 }
 
-// Files that always require full CI regardless of tier
-const ALWAYS_FULL_CI: string[] = ['.github/workflows/ci.yml', 'Dockerfile', 'package-lock.json']
+// Files that always require full CI regardless of tier.
+// post-merge-verify.yml is included so edits to it force the `code` tier and
+// run the required `Test (root)` job, which exercises the workflow's own
+// native-module-rebuild guard test (SMI-5547).
+const ALWAYS_FULL_CI: string[] = [
+  '.github/workflows/ci.yml',
+  '.github/workflows/post-merge-verify.yml',
+  'Dockerfile',
+  'package-lock.json',
+]
 
 /**
  * Validate that a string is a safe git ref (SHA or branch/tag name).
