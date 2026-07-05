@@ -27,8 +27,19 @@ export const DIST_ENTRY = join(REPO_ROOT, 'packages', 'mcp-server', 'dist', 'src
  * Build `@skillsmith/mcp-server` if `dist/src/index.js` is missing.
  * Mirrors `startup-probe.test.ts`'s beforeAll guard (plan-review H9: a
  * spawn-based test must never silently run against a stale/absent dist).
+ *
+ * SMI-5548: in a local pre-push run (SKILLSMITH_PREPUSH=1) with dist absent —
+ * the normal state for a worktree, which never has a built dist/, and where
+ * the build itself fails because the worktree's node_modules symlink is
+ * EINVAL under Docker — this is a no-op. The caller (the suite-level
+ * `describe.skipIf`) is responsible for skipping the suite in that same
+ * condition; CI never sets SKILLSMITH_PREPUSH, so it always builds/throws
+ * here exactly as before.
  */
 export function ensureDistBuilt(): void {
+  if (process.env['SKILLSMITH_PREPUSH'] === '1' && !existsSync(DIST_ENTRY)) {
+    return
+  }
   if (!existsSync(DIST_ENTRY)) {
     const build = spawnSync('npm', ['run', 'build', '--workspace=@skillsmith/mcp-server'], {
       stdio: 'inherit',

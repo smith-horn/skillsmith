@@ -8,8 +8,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "turbo run build",
-    "build:legacy": "npm run build -w @skillsmith/core && npm run build -w @smith-horn/enterprise && npm run build -w @skillsmith/mcp-server -w @skillsmith/cli -w skillsmith-vscode --if-present",
+    "build": "turbo run build && bash scripts/lib/check-dist-fresh.sh --write-sentinel",
+    "build:legacy": "npm run build -w @skillsmith/core && npm run build -w @smith-horn/enterprise && npm run build -w @skillsmith/mcp-server -w @skillsmith/cli -w skillsmith-vscode --if-present && bash scripts/lib/check-dist-fresh.sh --write-sentinel",
     "dev": "npm run dev --workspace=packages/mcp-server",
     "pretest": "bash scripts/docker-health.sh 2>/dev/null || true",
     "test": "vitest run",

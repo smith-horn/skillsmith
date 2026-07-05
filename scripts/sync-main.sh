@@ -42,6 +42,17 @@ output=$(git reset --hard origin/main 2>&1) || {
   exit 1
 }
 
+# SMI-5548: cheap dist-staleness hint — NO build here, just a heads-up. If
+# source moved while syncing, dist/ (built before the sync) likely no longer
+# matches; the pre-commit/pre-push dist-freshness guards will catch it for
+# real, but a hint right after sync saves the "why did the guard fire" step.
+# Fail-soft: a git diff hiccup just skips the hint, never blocks the sync.
+if [ "$LOCAL" != "$REMOTE" ]; then
+  if git diff --name-only "$LOCAL..$REMOTE" 2>/dev/null | grep -q '^packages/[^/]*/src/'; then
+    echo "ℹ️  Source changed on sync — dist may be stale; run: docker exec skillsmith-dev-1 npm run build"
+  fi
+fi
+
 branch=$(git branch --show-current)
 if [ "$branch" != "main" ]; then
   echo "ERROR: Expected main but landed on '$branch' (smudge filter branch switch)"

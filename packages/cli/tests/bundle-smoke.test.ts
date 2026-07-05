@@ -41,28 +41,45 @@ if (explicitSkip) {
   )
 }
 
-describe.skipIf(explicitSkip)('CLI esbuild bundle smoke (dist/cli.js)', () => {
-  it('starts up and prints its version with exit code 0', () => {
-    if (!existsSync(bundlePath)) {
-      throw new Error(
-        `dist/cli.js not found at ${bundlePath} — build the bundle first: ` +
-          '`npm run build -w @skillsmith/cli` (or root `npm run build`). ' +
-          'In CI the Docker test job builds before vitest runs, so a missing ' +
-          'bundle there indicates a build-order regression, not a local quirk. ' +
-          'To intentionally skip (loudly), set SKILLSMITH_BUNDLE_SMOKE_SKIP=1.'
-      )
-    }
+// SMI-5548: a local pre-push run has no built dist/ (worktrees never build
+// one), so this bundle-dependent test would otherwise throw on every push.
+// Skip ONLY in that combination (SKILLSMITH_PREPUSH=1 AND bundle absent) —
+// CI (which builds dist before vitest runs) never sets SKILLSMITH_PREPUSH,
+// so the throw below still fires there on a real build-order regression.
+const prePushBundleMissing = process.env['SKILLSMITH_PREPUSH'] === '1' && !existsSync(bundlePath)
+if (prePushBundleMissing) {
+  console.warn(
+    '[bundle-smoke] SKIPPED (pre-push): dist/cli.js not found at ' +
+      `${bundlePath}. Worktrees have no built dist/ — this suite is covered ` +
+      'by CI, which builds before running tests.'
+  )
+}
 
-    // execFileSync with array args (house rule — never execSync string
-    // interpolation). Throws on non-zero exit, which fails the test with the
-    // child's stderr attached — exactly the import-time crash signature this
-    // test exists to catch.
-    const stdout = execFileSync(process.execPath, [bundlePath, '--version'], {
-      encoding: 'utf-8',
-      timeout: 30_000,
-      env: { ...process.env, SKILLSMITH_AUTO_UPDATE_CHECK: 'false' },
+describe.skipIf(explicitSkip || prePushBundleMissing)(
+  'CLI esbuild bundle smoke (dist/cli.js)',
+  () => {
+    it('starts up and prints its version with exit code 0', () => {
+      if (!existsSync(bundlePath)) {
+        throw new Error(
+          `dist/cli.js not found at ${bundlePath} — build the bundle first: ` +
+            '`npm run build -w @skillsmith/cli` (or root `npm run build`). ' +
+            'In CI the Docker test job builds before vitest runs, so a missing ' +
+            'bundle there indicates a build-order regression, not a local quirk. ' +
+            'To intentionally skip (loudly), set SKILLSMITH_BUNDLE_SMOKE_SKIP=1.'
+        )
+      }
+
+      // execFileSync with array args (house rule — never execSync string
+      // interpolation). Throws on non-zero exit, which fails the test with the
+      // child's stderr attached — exactly the import-time crash signature this
+      // test exists to catch.
+      const stdout = execFileSync(process.execPath, [bundlePath, '--version'], {
+        encoding: 'utf-8',
+        timeout: 30_000,
+        env: { ...process.env, SKILLSMITH_AUTO_UPDATE_CHECK: 'false' },
+      })
+
+      expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/)
     })
-
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/)
-  })
-})
+  }
+)

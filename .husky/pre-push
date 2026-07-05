@@ -71,6 +71,19 @@ if [ -r "$FRESHNESS_LIB" ]; then
   fi
 fi
 
+# dist-freshness guard (SMI-5548) — BLOCK (exit 1).
+# A stale dist/ (source changed but nobody rebuilt) makes the Docker test
+# route resolve @skillsmith/* against out-of-date compiled output — failures
+# that look like real regressions but are actually "you forgot to rebuild".
+# Same STDIN-SILENT / READ-ONLY (P-5) contract as the node_modules freshness
+# guard above: no stdin consumption, never mutates dist/ or the sentinel.
+DIST_LIB="$(dirname "$0")/../scripts/lib/check-dist-fresh.sh"
+if [ -r "$DIST_LIB" ]; then
+  if ! sh "$DIST_LIB" </dev/null; then
+    exit 1
+  fi
+fi
+
 # Container native-binding health guard (SMI-5513) — BLOCK (exit 1).
 # A bare `npm install` in the dev container (with .npmrc ignore-scripts=true)
 # leaves better-sqlite3 unbuilt ("invalid ELF header"); catch it HERE with a

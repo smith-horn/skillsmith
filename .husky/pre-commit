@@ -102,6 +102,20 @@ if [ -r "$FRESHNESS_LIB" ]; then
   fi
 fi
 
+# =============================================================================
+# dist-freshness guard (SMI-5548) — WARN, never block.
+# Same rationale as the node_modules freshness guard above: a stale dist/ is
+# an environmental "you forgot to rebuild" issue, not a problem with the
+# staged change, so the highest-frequency gate must NOT manufacture
+# `--no-verify` pressure. pre-push (BLOCK) is the enforcement point.
+# =============================================================================
+DIST_LIB="$(dirname "$0")/../scripts/lib/check-dist-fresh.sh"
+if [ -r "$DIST_LIB" ]; then
+  if ! sh "$DIST_LIB"; then
+    echo "${YELLOW}  ⚠️  Continuing (pre-commit warns on stale dist/; pre-push will block).${NC}"
+  fi
+fi
+
 # Phase 1: Clear TypeScript build cache (SMI-1348)
 # Only clear cache if FULL_TYPECHECK=1 (e.g., CI or explicit request)
 # Clearing cache causes ALL packages to rebuild, surfacing pre-existing errors

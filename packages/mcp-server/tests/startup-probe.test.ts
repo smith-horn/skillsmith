@@ -177,7 +177,17 @@ describe('SMI-5009 startup probe — unit', () => {
 // can quietly run against a stale dist; force a fresh build).
 // ---------------------------------------------------------------------------
 
-describe('SMI-5009 startup probe — integration (spawn)', () => {
+// SMI-5548: a local pre-push run has no built dist/ (worktrees never build
+// one, and the build itself fails there — EINVAL on the worktree's
+// node_modules symlink under Docker). Skip this whole spawn-based suite ONLY
+// in that combination; CI never sets SKILLSMITH_PREPUSH, so it always builds
+// dist and runs the suite for real, failing loudly on a build-order regression.
+const skipInPrePush = process.env['SKILLSMITH_PREPUSH'] === '1' && !existsSync(DIST_ENTRY)
+if (skipInPrePush) {
+  console.warn('[SMI-5548] skipping spawn integration in pre-push (dist absent; covered by CI)')
+}
+
+describe.skipIf(skipInPrePush)('SMI-5009 startup probe — integration (spawn)', () => {
   beforeAll(() => {
     // H9 review finding: spawn-based tests can quietly run against a stale
     // dist. Build mcp-server explicitly if dist is missing, and fail loudly
