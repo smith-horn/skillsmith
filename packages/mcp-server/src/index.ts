@@ -66,6 +66,8 @@ import { handleCallToolRequest } from './call-tool-handler.js'
 // builder gates `apply_recommended_edit` on APPLY_TEMPLATE_REGISTRY and
 // omits the already-registered `skill_audit` / `skill_pack_audit`.
 import { newAuditToolDefinitions } from './audit-tool-dispatch.js'
+// SMI-5541 Wave 2C Stage 2 — background continuous-audit email digest.
+import { maybeAutoNotifyAudit } from './audit/audit-notify.js'
 // SMI-5407: skill_recover_source — Community read-only provenance tool
 import { provenanceToolDefinitions } from './provenance-tool-dispatch.js'
 import {
@@ -454,6 +456,14 @@ async function main() {
         // Silent failure - don't block server startup
       })
   }
+
+  // SMI-5541: continuous personal audit — throttled (≤1×/day), deduped, and
+  // consent-gated SERVER-side. Fire-and-forget: maybeAutoNotifyAudit never
+  // throws (all errors swallowed internally), so it cannot block or crash
+  // startup. Opt out with SKILLSMITH_AUDIT_EMAIL_DISABLE=1.
+  maybeAutoNotifyAudit().catch(() => {
+    // Defensive: the helper already swallows everything; this is belt-and-braces.
+  })
 
   // SMI-5009: probe embedding capability BEFORE serving any requests so the
   // module-load cache is warm and the first user search request doesn't race

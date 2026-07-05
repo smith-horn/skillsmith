@@ -66,6 +66,16 @@ export interface SkillsmithConfig {
     /** ISO timestamp of the last successful inventory push (auto-push throttle). */
     lastPushAt?: string
   }
+  /** Continuous-audit email digest state (SMI-5541). */
+  audit?: {
+    /** ISO timestamp of the last background digest attempt (auto-notify throttle). */
+    lastNotifyAt?: string
+    /**
+     * sha256 of the findings in the last digest we successfully emailed —
+     * client-side dedup so an identical picture is not re-emailed every day.
+     */
+    lastDigestHash?: string
+  }
 }
 
 /** Default config directory name */

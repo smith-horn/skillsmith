@@ -367,6 +367,14 @@ export {
   type BuildInventoryDeviceOptions,
   type PushInventoryOptions,
   type MaybeAutoPushOptions,
+  // Continuous-audit email digest push client (SMI-5541 Wave 2C Stage 2)
+  sendAuditDigest,
+  AuditNotifyAuthError,
+  AuditNotifyError,
+  type AuditDigestVerdict,
+  type AuditDigestPushFinding,
+  type AuditDigestPushPayload,
+  type AuditDigestPushResult,
 } from '../sync/index.js'
 
 // ============================================================================

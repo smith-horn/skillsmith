@@ -280,6 +280,13 @@ export {
   shouldAutoPush,
 } from './config/device-identity.js'
 
+// SMI-5541: Continuous-audit email digest — background auto-notify throttle/dedup state
+export {
+  getAuditNotifyState,
+  recordAuditNotify,
+  type AuditNotifyState,
+} from './config/audit-notify-state.js'
+
 // Version Check (SMI-1952)
 export {
   checkForUpdates,
