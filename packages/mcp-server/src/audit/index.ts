@@ -64,6 +64,15 @@ export type {
   StoredScanReport,
 } from './security-baseline.js'
 
+// SMI-5541 Wave 2C Stage 2 — continuous-audit email digest push orchestrator.
+export {
+  buildAuditDigestPayload,
+  hashDigest,
+  maybeAutoNotifyAudit,
+  MAX_DIGEST_FINDINGS,
+} from './audit-notify.js'
+export type { MaybeAutoNotifyOptions, MaybeAutoNotifyResult } from './audit-notify.js'
+
 export { emitAuditCompleteEvent } from '../tools/namespace-audit/telemetry.js'
 export type {
   AuditCompleteContext,

@@ -9,11 +9,7 @@
  * @module @skillsmith/core/sync/inventory-client
  */
 
-import {
-  loadCredentials,
-  refreshAccessToken,
-  storeCredentials,
-} from '../config/token-credentials.js'
+import { resolveAccessToken as resolveSessionToken } from './access-token.js'
 import { DEFAULT_BASE_URL, PRODUCTION_ANON_KEY } from '../api/utils.js'
 import type { InventoryUploadPayload, InventoryUploadResult } from './inventory-types.js'
 
@@ -69,27 +65,15 @@ export class InventoryUploadError extends Error {
   }
 }
 
-/** Refresh the access token this many ms before it actually expires. */
-const TOKEN_REFRESH_SKEW_MS = 60_000
-
 /**
  * Resolve a fresh access token, refreshing (and persisting) if the stored one is
- * within {@link TOKEN_REFRESH_SKEW_MS} of expiry.
+ * near expiry. Delegates to the shared {@link resolveSessionToken}, supplying
+ * this module's {@link InventoryAuthError} so the thrown type is unchanged.
  *
  * @throws {InventoryAuthError} When no credentials exist or the refresh fails.
  */
-async function resolveAccessToken(): Promise<string> {
-  const creds = await loadCredentials()
-  if (!creds) throw new InventoryAuthError()
-
-  if (creds.expiresAt <= Date.now() + TOKEN_REFRESH_SKEW_MS) {
-    const refreshed = await refreshAccessToken(creds.refreshToken)
-    if (!refreshed) throw new InventoryAuthError()
-    await storeCredentials(refreshed)
-    return refreshed.accessToken
-  }
-
-  return creds.accessToken
+function resolveAccessToken(): Promise<string> {
+  return resolveSessionToken(() => new InventoryAuthError())
 }
 
 /**

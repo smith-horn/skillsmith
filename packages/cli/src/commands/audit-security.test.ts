@@ -10,8 +10,38 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ runSecurityAudit: vi.fn() }))
-vi.mock('@skillsmith/mcp-server/audit', () => ({ runSecurityAudit: mocks.runSecurityAudit }))
+const mocks = vi.hoisted(() => {
+  class AuditNotifyAuthError extends Error {
+    constructor(message?: string) {
+      super(message)
+      this.name = 'AuditNotifyAuthError'
+    }
+  }
+  return {
+    runSecurityAudit: vi.fn(),
+    buildAuditDigestPayload: vi.fn(() => ({
+      scanned: 1,
+      hostile: 1,
+      malicious: 0,
+      suspicious: 0,
+      findings: [{ identifier: 'x', kind: 'skill', verdict: 'hostile', reason: 'r' }],
+    })),
+    hashDigest: vi.fn(() => 'hash-xyz'),
+    sendAuditDigest: vi.fn(),
+    recordAuditNotify: vi.fn(),
+    AuditNotifyAuthError,
+  }
+})
+vi.mock('@skillsmith/mcp-server/audit', () => ({
+  runSecurityAudit: mocks.runSecurityAudit,
+  buildAuditDigestPayload: mocks.buildAuditDigestPayload,
+  hashDigest: mocks.hashDigest,
+}))
+vi.mock('@skillsmith/core', () => ({
+  sendAuditDigest: mocks.sendAuditDigest,
+  recordAuditNotify: mocks.recordAuditNotify,
+  AuditNotifyAuthError: mocks.AuditNotifyAuthError,
+}))
 
 import type {
   RunSecurityAuditResult,
@@ -19,7 +49,13 @@ import type {
   SecurityVerdict,
 } from '@skillsmith/mcp-server/audit'
 
-import { printFindings, runAuditSecurity } from './audit-security.js'
+import {
+  printFindings,
+  printEmailOutcome,
+  pushDigest,
+  runAuditSecurity,
+  type EmailOutcome,
+} from './audit-security.js'
 
 function finding(verdict: SecurityVerdict, identifier: string): SecurityAuditFinding {
   return {
@@ -65,6 +101,10 @@ let logSpy: ReturnType<typeof vi.spyOn>
 beforeEach(() => {
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
   mocks.runSecurityAudit.mockReset()
+  mocks.sendAuditDigest.mockReset()
+  mocks.buildAuditDigestPayload.mockClear()
+  mocks.hashDigest.mockClear()
+  mocks.recordAuditNotify.mockReset()
 })
 afterEach(() => {
   logSpy.mockRestore()
@@ -103,7 +143,7 @@ describe('printFindings', () => {
 describe('runAuditSecurity', () => {
   it('--json prints the raw result and skips the formatted view', async () => {
     mocks.runSecurityAudit.mockResolvedValue(result([]))
-    await runAuditSecurity({ json: true })
+    await runAuditSecurity({ json: true, email: false })
     const out = output()
     expect(out).toContain('"auditId"')
     expect(out).not.toContain('No security issues found')
@@ -111,8 +151,87 @@ describe('runAuditSecurity', () => {
 
   it('default mode runs the audit and prints the formatted findings', async () => {
     mocks.runSecurityAudit.mockResolvedValue(result([]))
-    await runAuditSecurity({ json: false })
+    await runAuditSecurity({ json: false, email: false })
     expect(mocks.runSecurityAudit).toHaveBeenCalledTimes(1)
     expect(output()).toContain('No security issues found')
+  })
+
+  it('without --email it never pushes a digest', async () => {
+    mocks.runSecurityAudit.mockResolvedValue(result([finding('hostile', 'a')]))
+    await runAuditSecurity({ json: false, email: false })
+    expect(mocks.sendAuditDigest).not.toHaveBeenCalled()
+  })
+
+  it('--email with findings pushes the digest and reports success', async () => {
+    mocks.runSecurityAudit.mockResolvedValue(result([finding('hostile', 'a')]))
+    mocks.sendAuditDigest.mockResolvedValue({ ok: true, sent: true })
+    await runAuditSecurity({ json: false, email: true })
+    expect(mocks.sendAuditDigest).toHaveBeenCalledOnce()
+    expect(output()).toContain('Emailed your security digest')
+  })
+
+  it('--email --json embeds the push outcome under `email`', async () => {
+    mocks.runSecurityAudit.mockResolvedValue(result([finding('hostile', 'a')]))
+    mocks.sendAuditDigest.mockResolvedValue({ ok: true, sent: true })
+    await runAuditSecurity({ json: true, email: true })
+    const out = output()
+    expect(out).toContain('"email"')
+    expect(out).toContain('"sent": true')
+  })
+})
+
+describe('pushDigest', () => {
+  it('short-circuits with nothing_to_report when there are no findings (no network)', async () => {
+    const outcome = await pushDigest(result([]))
+    expect(outcome).toEqual({ ok: true, sent: false, reason: 'nothing_to_report' })
+    expect(mocks.sendAuditDigest).not.toHaveBeenCalled()
+    expect(mocks.buildAuditDigestPayload).not.toHaveBeenCalled()
+    // Records a clean state so the background auto-run also treats it as "nothing new".
+    expect(mocks.recordAuditNotify).toHaveBeenCalledOnce()
+  })
+
+  it('maps a successful send AND records shared state (cross-channel dedup)', async () => {
+    mocks.sendAuditDigest.mockResolvedValue({ ok: true, sent: true })
+    const outcome = await pushDigest(result([finding('hostile', 'a')]))
+    expect(outcome).toEqual({ ok: true, sent: true })
+    expect(mocks.recordAuditNotify).toHaveBeenCalledWith(expect.any(String), 'hash-xyz')
+  })
+
+  it('passes a server reason (not_consented) through and does NOT record state', async () => {
+    mocks.sendAuditDigest.mockResolvedValue({ ok: false, sent: false, reason: 'not_consented' })
+    const outcome = await pushDigest(result([finding('hostile', 'a')]))
+    expect(outcome).toEqual({ ok: false, sent: false, reason: 'not_consented' })
+    expect(mocks.recordAuditNotify).not.toHaveBeenCalled()
+  })
+
+  it('captures an auth failure as not_authenticated (never throws, no state write)', async () => {
+    mocks.sendAuditDigest.mockRejectedValue(new mocks.AuditNotifyAuthError('nope'))
+    const outcome = await pushDigest(result([finding('hostile', 'a')]))
+    expect(outcome).toEqual({ ok: false, sent: false, error: 'not_authenticated' })
+    expect(mocks.recordAuditNotify).not.toHaveBeenCalled()
+  })
+
+  it('captures a transport failure message (never throws)', async () => {
+    mocks.sendAuditDigest.mockRejectedValue(new Error('ECONNRESET'))
+    const outcome = await pushDigest(result([finding('hostile', 'a')]))
+    expect(outcome).toEqual({ ok: false, sent: false, error: 'ECONNRESET' })
+    expect(mocks.recordAuditNotify).not.toHaveBeenCalled()
+  })
+})
+
+describe('printEmailOutcome', () => {
+  const cases: Array<[EmailOutcome, string]> = [
+    [{ ok: true, sent: true }, 'Emailed your security digest'],
+    [{ ok: false, sent: false, error: 'not_authenticated' }, 'skillsmith login'],
+    [{ ok: false, sent: false, error: 'ECONNRESET' }, 'Email failed'],
+    [{ ok: true, sent: false, reason: 'nothing_to_report' }, 'No issues to email'],
+    [{ ok: false, sent: false, reason: 'not_consented' }, 'Audit emails are off'],
+    [{ ok: false, sent: false, reason: 'email_not_verified' }, 'Verify your email'],
+    [{ ok: false, sent: false, reason: 'no_email' }, 'No email address'],
+    [{ ok: false, sent: false, reason: 'email_send_failed' }, 'could not send'],
+  ]
+  it.each(cases)('renders %o', (outcome, expected) => {
+    printEmailOutcome(outcome)
+    expect(output()).toContain(expected)
   })
 })

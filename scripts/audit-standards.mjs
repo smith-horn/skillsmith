@@ -452,6 +452,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // Anonymous functions (health & webhook)
   'health',
   'email-inbound',
+  // SMI-5541: audit-unsubscribe — RFC 8058 one-click unsubscribe. Anonymous
+  // (no session); the request is authenticated by an HMAC signature over the
+  // user id, verified server-side against the AUDIT_UNSUBSCRIBE_HMAC_KEY secret.
+  'audit-unsubscribe',
   // Authenticated functions with internal JWT validation
   // These validate tokens in function code, not at Supabase gateway
   'generate-license',

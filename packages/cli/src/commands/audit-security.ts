@@ -18,9 +18,12 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+import { sendAuditDigest, recordAuditNotify, AuditNotifyAuthError } from '@skillsmith/core'
 
 import {
   runSecurityAudit,
+  buildAuditDigestPayload,
+  hashDigest,
   type RunSecurityAuditResult,
   type SecurityVerdict,
 } from '@skillsmith/mcp-server/audit'
@@ -29,6 +32,18 @@ import { sanitizeError } from '../utils/sanitize.js'
 
 interface AuditSecurityOptions {
   json: boolean
+  /** Also email the digest via the consent-gated `audit-notify` edge function. */
+  email: boolean
+}
+
+/** Outcome of an `--email` push (also embedded in `--json` output). */
+interface EmailOutcome {
+  ok: boolean
+  sent: boolean
+  /** Server-reported reason when not sent (e.g. `not_consented`). */
+  reason?: string
+  /** Client-side failure marker (`not_authenticated`) or a transport message. */
+  error?: string
 }
 
 /** Sort key — strongest verdict first when listing findings. */
@@ -117,20 +132,95 @@ function printFindings(result: RunSecurityAuditResult): void {
   printUnreadableWarning(summary.unreadable)
 }
 
-async function runAuditSecurity(options: AuditSecurityOptions): Promise<void> {
-  const result = await runSecurityAudit({})
-  if (options.json) {
-    console.log(JSON.stringify(result, null, 2))
+/**
+ * Push the digest through the consent-gated `audit-notify` edge function.
+ * Never throws — auth / transport failures are captured into {@link EmailOutcome}
+ * so the command still prints the local findings. Skips the network entirely
+ * when there is nothing to report.
+ */
+async function pushDigest(result: RunSecurityAuditResult): Promise<EmailOutcome> {
+  if (result.findings.length === 0) {
+    // Nothing to email: record a clean state so the background auto-run also
+    // treats this as "nothing new" rather than re-scanning + re-deciding.
+    recordAuditNotify(
+      new Date().toISOString(),
+      hashDigest({ hostile: 0, malicious: 0, suspicious: 0, findings: [] })
+    )
+    return { ok: true, sent: false, reason: 'nothing_to_report' }
+  }
+  const payload = buildAuditDigestPayload(result)
+  try {
+    const res = await sendAuditDigest(payload)
+    if (res.sent) {
+      // Record the SAME hash the background auto-run computes, so a subsequent
+      // MCP-server start does not re-email this identical digest.
+      recordAuditNotify(new Date().toISOString(), hashDigest(payload))
+    }
+    return { ok: res.ok, sent: res.sent, ...(res.reason ? { reason: res.reason } : {}) }
+  } catch (error) {
+    if (error instanceof AuditNotifyAuthError) {
+      return { ok: false, sent: false, error: 'not_authenticated' }
+    }
+    return { ok: false, sent: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** Print a one-line, honest summary of the `--email` push outcome. */
+function printEmailOutcome(outcome: EmailOutcome): void {
+  if (outcome.sent) {
+    console.log(`${chalk.green('OK')} Emailed your security digest.`)
     return
   }
+  if (outcome.error === 'not_authenticated') {
+    console.log(`${chalk.yellow('WARN')} Run \`skillsmith login\` to email your digest.`)
+    return
+  }
+  if (outcome.error) {
+    console.log(`${chalk.red('Email failed:')} ${outcome.error}`)
+    return
+  }
+  switch (outcome.reason) {
+    case 'nothing_to_report':
+      console.log(chalk.dim('No issues to email.'))
+      break
+    case 'not_consented':
+      console.log(
+        `${chalk.yellow('WARN')} Audit emails are off. Enable them in your account settings to receive digests.`
+      )
+      break
+    case 'email_not_verified':
+      console.log(`${chalk.yellow('WARN')} Verify your email address to receive audit digests.`)
+      break
+    case 'no_email':
+      console.log(`${chalk.yellow('WARN')} No email address is set on your account.`)
+      break
+    case 'email_send_failed':
+      console.log(`${chalk.red('Email failed:')} the server could not send the email. Try again.`)
+      break
+    default:
+      console.log(chalk.dim(`Digest not sent${outcome.reason ? ` (${outcome.reason})` : ''}.`))
+  }
+}
+
+async function runAuditSecurity(options: AuditSecurityOptions): Promise<void> {
+  const result = await runSecurityAudit({})
+  const emailOutcome = options.email ? await pushDigest(result) : undefined
+
+  if (options.json) {
+    const payload = emailOutcome ? { ...result, email: emailOutcome } : result
+    console.log(JSON.stringify(payload, null, 2))
+    return
+  }
+
   printFindings(result)
+  if (emailOutcome) printEmailOutcome(emailOutcome)
 }
 
 // SMI-5128: extracted from the inline .action() closure so withTelemetry can
 // wrap it at the export boundary (SMI-5040 coverage gate).
 async function securityActionImpl(opts: Record<string, boolean | undefined>): Promise<void> {
   try {
-    await runAuditSecurity({ json: opts['json'] === true })
+    await runAuditSecurity({ json: opts['json'] === true, email: opts['email'] === true })
   } catch (error) {
     const message = error instanceof Error ? error.message : sanitizeError(error)
     console.error(chalk.red('Error:'), message)
@@ -156,11 +246,17 @@ export function createAuditSecuritySubcommand(): Command {
         'are not yet scanned)'
     )
     .option('--json', 'Emit the full result as JSON; no formatted output', false)
+    .option(
+      '--email',
+      'Also email this digest to your account (requires `skillsmith login` and ' +
+        'opt-in; consent is enforced server-side)',
+      false
+    )
     .action(securityAction)
 }
 
 // Internal exports for tests.
-export { runAuditSecurity, printFindings }
-export type { AuditSecurityOptions }
+export { runAuditSecurity, printFindings, pushDigest, printEmailOutcome }
+export type { AuditSecurityOptions, EmailOutcome }
 
 export default createAuditSecuritySubcommand
