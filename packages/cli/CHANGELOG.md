@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
+- **Feature**: continuous-audit email channel (SMI-5541 Stage 2) (#1724)
+- **Feature**: local security audit engine — rug-pull + malicious-content scan (SMI-5541) (#1718)
+
 ## v0.8.0
 
 - **Feature**: per-user inventory purge, hard-delete (SMI-5510, R0 Wave 1a) (#1684)

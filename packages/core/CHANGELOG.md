@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.10.1
+
+- **Feature**: continuous-audit email channel (SMI-5541 Stage 2) (#1724)
+- **Feature**: local security audit engine — rug-pull + malicious-content scan (SMI-5541) (#1718)
+- **Other**: R0 Wave 2: audit-product detectors — hostile-update + rot detection (SMI-5535, SMI-5536) (#1714)
+
 ## v0.10.0
 
 - **Feature**: per-user inventory purge, hard-delete (SMI-5510, R0 Wave 1a) (#1684)
