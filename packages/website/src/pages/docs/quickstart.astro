@@ -6,6 +6,7 @@
  * 2. Alternative: Direct CLI usage
  */
 import DocsLayout from '../../layouts/DocsLayout.astro';
+import { MCP_CLIENT_SNIPPETS } from '../../lib/mcp-client-snippets';
 ---
 
 <DocsLayout title="5-Minute Setup" description="Get started with Skillsmith in 5 minutes. Two ways to discover and install skills for your development environment.">
@@ -37,20 +38,20 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
           {
             "@type": "HowToStep",
             "position": 1,
-            "name": "Install an MCP Client",
-            "text": "Install an MCP-compatible client such as Claude Code: npm install -g @anthropic-ai/claude-code"
+            "name": "Open Your Project, Then Open Your AI Agent",
+            "text": "Navigate to your project directory, then open your AI coding agent (Claude Code, Cursor, GitHub Copilot, Windsurf, Codex CLI, or another MCP client) from inside it."
           },
           {
             "@type": "HowToStep",
             "position": 2,
-            "name": "Configure Skillsmith MCP Server",
-            "text": "Add the configuration snippet to your MCP client settings.json. Then restart your MCP client to load the server."
+            "name": "Add the Skillsmith MCP Server",
+            "text": "Add the Skillsmith MCP server using Claude Code's built-in 'claude mcp add' command, by asking your agent in chat, or by editing your MCP client's config file directly. Then restart your agent to load Skillsmith."
           },
           {
             "@type": "HowToStep",
             "position": 3,
-            "name": "Discover Skills",
-            "text": "Navigate to your project directory, start your MCP client, and ask: 'What skills would be helpful for this project?'"
+            "name": "Discover Skills for Your Project",
+            "text": "Ask your agent: 'What skills would be helpful for this project?'"
           }
         ]
       },
@@ -217,11 +218,34 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <div class="callout">
     <p class="callout-heading">What is MCP?</p>
     <p>
-      MCP (Model Context Protocol) lets AI assistants like Claude Code connect to external tool servers. Skillsmith provides an MCP server that gives your assistant the ability to search and install skills for you.
+      MCP (Model Context Protocol) lets AI coding agents — Claude Code, Cursor, GitHub Copilot, Windsurf, Codex CLI, and others — connect to external tool servers. An "MCP client" is just your agent's name for this capability. Skillsmith provides an MCP server that gives your agent the ability to search and install skills for you.
     </p>
   </div>
 
-  <h3 id="step-a1">Step 1: Install an MCP Client</h3>
+  <h3 id="step-a1">Step 1: Open Your Project, Then Open Your AI Agent</h3>
+
+  <p>
+    Skillsmith reads your project's <code>package.json</code> and file structure to
+    recommend relevant skills, so open your AI agent from inside the project you
+    want skills for.
+  </p>
+
+  <pre><code>{`cd /path/to/your/project`}</code></pre>
+
+  <p>
+    "MCP client" just means your AI coding agent — Claude Code, Cursor, GitHub
+    Copilot, Windsurf, and Codex CLI all work the same way here. Already have one
+    open in this project? <a href="#step-a2">Skip to Step 2</a>.
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>Don't have an agent yet?</strong> Claude Code is a fast-to-install
+      default — any agent above works the same way.
+    </p>
+  </div>
+
+  <p><strong>Installing Claude Code</strong> (skip this if you already have an agent open):</p>
 
   <div class="quickstart-tabs-container">
     <div class="quickstart-tabs">
@@ -255,109 +279,79 @@ curl -fsSL https://claude.ai/install.sh | sh`}</code></pre>
     </div>
   </div>
 
-  <h3 id="step-a2">Step 2: Add Skillsmith MCP Server</h3>
+  <h3 id="step-a2">Step 2: Add the Skillsmith MCP Server</h3>
 
   <p>
-    Pick the snippet for your MCP client. Every snippet uses the same shape —
-    only the config-file path (and, for Codex, the format) differs.
+    Using Claude Code? Start with Option A. Using any other agent? Skip to Option B.
   </p>
 
-  <details open>
-    <summary><strong>Claude Code</strong> — <code>~/.claude/settings.json</code></summary>
-    <pre><code>{`{
-  "mcpServers": {
-    "@skillsmith/mcp-server": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-  </details>
+  <h4>Option A — Claude Code's built-in command (fastest)</h4>
 
-  <details>
-    <summary><strong>Cursor</strong> — <code>~/.cursor/mcp.json</code></summary>
-    <pre><code>{`{
-  "mcpServers": {
-    "@skillsmith/mcp-server": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-    <p>Cursor 2.4+ required.</p>
-  </details>
-
-  <details>
-    <summary><strong>GitHub Copilot (VS Code)</strong> — <code>.vscode/mcp.json</code> (workspace)</summary>
-    <pre><code>{`{
-  "mcpServers": {
-    "@skillsmith/mcp-server": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-    <p>VS Code 1.108+ required.</p>
-  </details>
-
-  <details>
-    <summary><strong>Windsurf</strong> — <code>~/.codeium/windsurf/mcp_config.json</code></summary>
-    <pre><code>{`{
-  "mcpServers": {
-    "@skillsmith/mcp-server": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-  </details>
-
-  <details>
-    <summary><strong>Codex CLI</strong> — <code>~/.codex/config.toml</code> (TOML, not JSON)</summary>
-    <pre><code>{`[mcp_servers.@skillsmith/mcp-server]
-command = "npx"
-args = ["-y", "@skillsmith/mcp-server"]`}</code></pre>
-    <p>
-      Codex reads <code>~/.agents/skills</code>. When installing via Skillsmith CLI, pass
-      <code>--client agents</code>.
-    </p>
-  </details>
-
-  <details>
-    <summary><strong>Cross-agent (open standard)</strong> — <code>~/.agents/mcp.json</code></summary>
-    <pre><code>{`{
-  "mcpServers": {
-    "@skillsmith/mcp-server": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-  </details>
-
-  <div class="callout">
-    <p class="callout-heading">Tip</p>
-    <p>
-      You can also paste any snippet directly into your AI assistant's chat, and it can
-      update the relevant config file for you.
-    </p>
-  </div>
+  <pre><code>{`claude mcp add skillsmith -- npx -y @skillsmith/mcp-server`}</code></pre>
 
   <p>
-    After updating your settings, restart your MCP client to load Skillsmith.
+    The <code>--</code> separates Claude Code's own flags from the command it should
+    run. This adds the server at the default <code>--scope local</code> (this
+    project only); pass <code>--scope user</code> to make it available in every
+    project instead, or <code>--scope project</code> to share it via a checked-in
+    config. Verify with <code>claude mcp list</code>; remove it with
+    <code>claude mcp remove skillsmith</code>.
+  </p>
+
+  <p>
+    <em>Note: <code>skillsmith</code> here is just a local name you're choosing for
+    this install — it doesn't need to match the <code>@skillsmith/mcp-server</code>
+    package name used in Option B/C's config files.</em>
+  </p>
+
+  <h4>Option B — Ask your agent in chat (works with any agent)</h4>
+
+  <p>
+    This is a normal file-edit request, not a special "auto-config" feature — your
+    agent will edit a config file for you, and you should expect the usual
+    permission prompt the first time it writes to a new file. Paste this into your
+    agent's chat:
+  </p>
+
+  <pre><code>{`Please add the Skillsmith MCP server to my MCP client configuration.
+Create the config file if it doesn't exist yet, and show me the diff
+before you save. Use this entry:
+
+{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}
+
+Tell me which file you changed when you're done.`}</code></pre>
+
+  <h4>Option C — Edit the config file yourself</h4>
+
+  <p>
+    Pick the snippet for your MCP client and add it to the matching config file.
+    Every snippet uses the same shape — only the config-file path (and, for
+    Codex/Hermes, the format) differs.
+  </p>
+
+  {MCP_CLIENT_SNIPPETS.map((client) => (
+    <details open={client.openByDefault}>
+      <summary><strong>{client.label}</strong> — <code>{client.configPath}</code>{client.format !== 'json' ? ` (${client.format.toUpperCase()})` : ''}</summary>
+      <pre><code>{client.body}</code></pre>
+      {client.notes && <p set:html={client.notes} />}
+    </details>
+  ))}
+
+  <p>
+    After any of the three options above, restart your agent to load Skillsmith.
   </p>
 
   <h3 id="step-a3">Step 3: Discover Skills for Your Project</h3>
 
   <p>
-    Navigate to your project directory and start your MCP client:
-  </p>
-
-  <pre><code>{`cd /path/to/your/project
-claude`}</code></pre>
-
-  <p>
-    Now just ask your assistant to find skills for your project:
+    You're already in your project with your agent open from Step 1 — just ask:
   </p>
 
   <div class="quickstart-conversation">
