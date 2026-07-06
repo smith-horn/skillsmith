@@ -10,6 +10,18 @@ export const sharedTestConfig = {
   environment: 'node' as const,
   testTimeout: 15_000,
   hookTimeout: 15_000,
+  // SMI-5548: retry ONLY infra/timing errors (matched against the error
+  // message) — a timed-out worker, refused/EADDRINUSE port, or a dropped
+  // spawn is environmental noise, not a real bug, and the Docker-by-default
+  // pre-push route (SMI-5548) made these more visible under container I/O
+  // contention. Assertion failures ("expected X to be Y") never match this
+  // pattern, so a real bug still fails immediately on the first attempt —
+  // this is NOT a blanket retry-everything knob. Applies globally, including
+  // CI, since sharedTestConfig is spread by every vitest config.
+  retry: {
+    count: 1,
+    condition: /timed out|timeout|ETIMEDOUT|ECONNREFUSED|EADDRINUSE|EPIPE|spawn/i,
+  },
 } as const
 
 export const coverageDefaults = {

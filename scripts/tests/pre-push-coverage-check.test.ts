@@ -25,8 +25,14 @@ describe('pre-push-coverage-check.sh — SMI-4772', () => {
     expect(offending).toEqual([])
   })
 
-  it('invokes vitest via the worktree-root node_modules/.bin path', () => {
-    expect(script).toMatch(/\.\.\/\.\.\/node_modules\/\.bin\/vitest\s+run/)
+  it('invokes vitest via the relative worktree-root node_modules/.bin path on the host route (USE_DOCKER=0)', () => {
+    expect(script).toMatch(/VITEST_BIN="\.\.\/\.\.\/node_modules\/\.bin\/vitest"/)
+    expect(script).toMatch(/VITEST_BIN_ROOT="\.\/node_modules\/\.bin\/vitest"/)
+  })
+
+  it('invokes vitest via the absolute /app node_modules/.bin path on the Docker route (USE_DOCKER=1) — SMI-5548 virtiofs symlink workaround', () => {
+    expect(script).toMatch(/VITEST_BIN="\/app\/node_modules\/\.bin\/vitest"/)
+    expect(script).toMatch(/VITEST_BIN_ROOT="\/app\/node_modules\/\.bin\/vitest"/)
   })
 
   it('preserves the SMI-3502 per-package iteration over WORKSPACES', () => {

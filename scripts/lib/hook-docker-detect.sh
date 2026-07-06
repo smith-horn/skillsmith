@@ -14,7 +14,10 @@
 #   DOCKER_AVAILABLE 0|1     — whether Docker daemon + container are running
 #   USE_DOCKER       0|1     — whether to actually run commands in Docker;
 #                              starts as DOCKER_AVAILABLE, downgrades to 0 on
-#                              fallback paths (off-tree worktree, macOS+worktree)
+#                              fallback paths (off-tree worktree always; macOS
+#                              in-tree worktree only when Docker is down or
+#                              SKILLSMITH_PRE_PUSH_HOST=1 forces host — SMI-5548
+#                              made Docker the macOS+worktree DEFAULT)
 #   DOCKER_CONTAINER string  — always "skillsmith-dev-1"
 #   CONTAINER_WD     path|"" — in-container working dir (e.g., /app or
 #                              /app/.worktrees/<name>); "" for off-tree worktree
@@ -50,6 +53,15 @@
 #   Host fallback works on macOS thanks to:
 #     - relative symlinks (resolve correctly outside container)
 #     - rebuilt better-sqlite3 native binding (SMI-4549)
+#
+#   SMI-5548: the macOS+worktree fallback is no longer the DEFAULT — host
+#   execution proved unreliable in practice (native ABI drift, and the
+#   SMI-4769 GIT_* env leak into child vitest processes). Callers that invoke
+#   vitest against an absolute /app/node_modules/.bin/vitest path (SMI-4772/
+#   4820) sidestep the dangling-relative-symlink hazard above, so Docker is
+#   now safe to route through by default when it can serve the worktree. Host
+#   fallback remains available for Docker-down, off-tree worktrees, or an
+#   explicit SKILLSMITH_PRE_PUSH_HOST=1 opt-out.
 
 # Re-entrant guard.
 if [ -n "${_HOOK_DETECT_LOADED:-}" ]; then
@@ -141,14 +153,23 @@ if [ "$IS_WORKTREE" = "1" ] && [ -z "$CONTAINER_WD" ]; then
 fi
 
 # macOS + worktree: virtiofs cannot traverse relative symlinks (SMI-4381).
-# Always fall back here, regardless of Docker availability — running in
-# Docker would silently fail with wrong dep versions.
+# SMI-5548: Docker is now the DEFAULT route here (see Background above) —
+# callers invoke vitest via an absolute /app/node_modules/.bin/vitest path so
+# the dangling relative-symlink hazard no longer applies. Three branches:
+#   1. SKILLSMITH_PRE_PUSH_DOCKER=1 — strict opt-in, hard-fails if Docker is
+#      down (pre-existing SMI-4767 behavior, unchanged below).
+#   2. Default — route through Docker when it's up and can serve the
+#      worktree (CONTAINER_WD resolved). New SMI-5548 branch.
+#   3. Host fallback — Docker down, SKILLSMITH_PRE_PUSH_HOST=1 forces host,
+#      or the worktree is off-tree (CONTAINER_WD empty). Same host-fallback
+#      body as before (SMI-4381/4681), unchanged.
 #
-# SMI-4767 escape hatch: SKILLSMITH_PRE_PUSH_DOCKER=1 forces Docker even on
-# macOS worktrees, bypassing the SMI-4381 fallback. Required because SMI-4693
-# only fixed test-fixture env leak; the parent vitest process still inherits
-# parent-worktree GIT_* env. The proper fix is tracked in SMI-4769 (env scrub
-# of pre-push-coverage-check.sh).
+# SMI-4767 legacy note: SKILLSMITH_PRE_PUSH_DOCKER=1 was originally an opt-in
+# escape hatch because SMI-4693 only fixed the test-fixture env leak; the
+# parent vitest process still inherits parent-worktree GIT_* env (tracked in
+# SMI-4769). It remains available as the strict/hard-fail variant.
+#   Precedence: if both PRE_PUSH_DOCKER=1 and PRE_PUSH_HOST=1 are set, the
+#   strict Docker opt-in (first branch) wins over the HOST opt-out.
 if [ "$IS_WORKTREE" = "1" ] && [ "$(uname)" = "Darwin" ]; then
     if [ "${SKILLSMITH_PRE_PUSH_DOCKER:-0}" = "1" ]; then
         if [ "$DOCKER_AVAILABLE" = "0" ]; then
@@ -158,6 +179,12 @@ if [ "$IS_WORKTREE" = "1" ] && [ "$(uname)" = "Darwin" ]; then
             exit 1
         fi
         printf "${HOOK_DETECT_BLUE}🐳 SKILLSMITH_PRE_PUSH_DOCKER=1 — routing through Docker (SMI-4767 opt-in)${HOOK_DETECT_NC}\n"
+    elif [ "${SKILLSMITH_PRE_PUSH_HOST:-0}" != "1" ] && [ "$DOCKER_AVAILABLE" = "1" ] && [ -n "$CONTAINER_WD" ]; then
+        # SMI-5548: route in-tree worktrees through Docker by DEFAULT (host was
+        # unreliable — native ABI, GIT_* leak SMI-4769). Host fallback remains
+        # for Docker-down / SKILLSMITH_PRE_PUSH_HOST=1 / off-tree worktrees.
+        printf "${HOOK_DETECT_BLUE}🐳 Worktree on macOS — routing through Docker (SMI-5548 default)${HOOK_DETECT_NC}\n"
+        # NEEDS_FALLBACK stays 0 → USE_DOCKER=1 downstream.
     else
         NEEDS_FALLBACK=1
         printf "${HOOK_DETECT_YELLOW}📂 Worktree on macOS — falling back to host execution (SMI-4381 / SMI-4681)${HOOK_DETECT_NC}\n"

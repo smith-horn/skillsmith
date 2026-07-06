@@ -41,6 +41,21 @@ else
   }
 fi
 
+# SMI-5548: on the Docker route, the worktree's relative node_modules/.bin
+# path resolves through the SMI-4381 per-package symlink chain, which is
+# EINVAL under Docker Desktop's virtiofs from inside the container (the
+# worktree's own node_modules is itself a symlink into the main checkout).
+# Mirror the absolute-path pattern already used in pre-push-check.sh:125-137
+# (SMI-4772/4820): pin to /app/node_modules when USE_DOCKER=1; host execution
+# still resolves the relative path fine (real symlinks, not virtiofs-mediated).
+if [ "$USE_DOCKER" = "1" ]; then
+  VITEST_BIN="/app/node_modules/.bin/vitest"        # absolute: worktree node_modules symlink is EINVAL under virtiofs (SMI-5548)
+  VITEST_BIN_ROOT="/app/node_modules/.bin/vitest"   # same — root step's cwd is repo root, not packages/<pkg>
+else
+  VITEST_BIN="../../node_modules/.bin/vitest"
+  VITEST_BIN_ROOT="./node_modules/.bin/vitest"
+fi
+
 # SMI-4931: run one vitest suite inside its own process group, then sweep that
 # group so leaked worker / product-spawned child processes cannot accumulate and
 # pressure later suites. Under `set -m` the backgrounded job's PID ($_vp) IS its
@@ -82,7 +97,11 @@ for pkg in $WORKSPACES; do
   # SMI-4772: invoke root vitest binary directly. `npm --workspace=` would
   # resolve vitest via packages/<pkg>/node_modules/.bin/vitest, a SMI-4381
   # symlink chain that dangles under macOS Docker Desktop virtiofs and exits 234.
-  if ! SUITE_OUTPUT=$(run_suite "cd packages/$pkg && ../../node_modules/.bin/vitest run" 2>&1); then
+  # SMI-5548: marks a local pre-push run so dist-dependent spawn/integration
+  # tests can SKIP (loudly) when dist is absent — worktrees have no built
+  # dist/. CI does not set this env var, so it still builds/runs them and
+  # fails loudly on a real build-order regression.
+  if ! SUITE_OUTPUT=$(run_suite "cd packages/$pkg && SKILLSMITH_PREPUSH=1 $VITEST_BIN run" 2>&1); then
     FAILED_PACKAGES="$FAILED_PACKAGES $pkg"
     echo "$SUITE_OUTPUT"
   fi
@@ -94,7 +113,9 @@ done
 # already does, per SMI-4772; the root suite was the lone `npx` holdout — `npx`
 # adds a process generation the process-group sweep would otherwise have to cover).
 echo "  📦 root + colocated tests..."
-if ! SUITE_OUTPUT=$(run_suite "./node_modules/.bin/vitest run --config vitest.config.root-tests.ts" 2>&1); then
+# SMI-5548: see per-pkg loop comment above — SKILLSMITH_PREPUSH=1 gates the
+# local-only skip of dist-dependent spawn/integration tests.
+if ! SUITE_OUTPUT=$(run_suite "SKILLSMITH_PREPUSH=1 $VITEST_BIN_ROOT run --config vitest.config.root-tests.ts" 2>&1); then
   FAILED_PACKAGES="$FAILED_PACKAGES root"
   echo "$SUITE_OUTPUT"
 fi
@@ -118,10 +139,10 @@ fi
 for pkg in $FAILED_PACKAGES; do
   if [ "$pkg" = "root" ]; then
     echo "❌ Root/colocated tests failed!"
-    echo "   Run: ${HINT_PREFIX}./node_modules/.bin/vitest run --config vitest.config.root-tests.ts"
+    echo "   Run: ${HINT_PREFIX}${VITEST_BIN_ROOT} run --config vitest.config.root-tests.ts"
   else
     echo "❌ Tests failed in packages/$pkg!"
-    echo "   Run: ${HINT_PREFIX}bash -c \"cd packages/$pkg && ../../node_modules/.bin/vitest run\""
+    echo "   Run: ${HINT_PREFIX}bash -c \"cd packages/$pkg && ${VITEST_BIN} run\""
   fi
 done
 
