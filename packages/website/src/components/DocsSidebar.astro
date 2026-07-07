@@ -74,7 +74,7 @@ function isActive(href: string): boolean {
 
 <aside class="w-64 shrink-0 border-r border-dark-800 bg-dark-900/50">
   <nav
-    class="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto p-6"
+    class="docs-nav sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto p-6"
     aria-label="Documentation navigation"
   >
     {
@@ -276,5 +276,30 @@ function isActive(href: string): boolean {
     aside {
       display: none;
     }
+  }
+
+  /* Nav list content can exceed the viewport height, so it scrolls internally
+     (overflow-y-auto above) — style that scrollbar thin/subtle instead of the
+     default OS-native bar, which reads as a stray gray column next to the sidebar. */
+  .docs-nav {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+  }
+
+  .docs-nav::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .docs-nav::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .docs-nav::-webkit-scrollbar-thumb {
+    background-color: rgba(148, 163, 184, 0.3);
+    border-radius: 9999px;
+  }
+
+  .docs-nav::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(148, 163, 184, 0.5);
   }
 </style>
