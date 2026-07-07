@@ -38,21 +38,21 @@ describe('Quota System', () => {
     })
 
     it('should have correct community tier values', () => {
-      expect(TIER_QUOTAS.community.apiCallsPerMonth).toBe(1_000)
+      expect(TIER_QUOTAS.community.apiCallsPerMonth).toBe(100)
       expect(TIER_QUOTAS.community.price).toBe(0)
       expect(TIER_QUOTAS.community.perUser).toBeUndefined()
       expect(TIER_QUOTAS.community.description).toBe('Free tier for evaluation')
     })
 
     it('should have correct individual tier values', () => {
-      expect(TIER_QUOTAS.individual.apiCallsPerMonth).toBe(10_000)
+      expect(TIER_QUOTAS.individual.apiCallsPerMonth).toBe(1_000)
       expect(TIER_QUOTAS.individual.price).toBe(9.99)
       expect(TIER_QUOTAS.individual.perUser).toBeUndefined()
       expect(TIER_QUOTAS.individual.description).toBe('For solo developers')
     })
 
     it('should have correct team tier values', () => {
-      expect(TIER_QUOTAS.team.apiCallsPerMonth).toBe(100_000)
+      expect(TIER_QUOTAS.team.apiCallsPerMonth).toBe(10_000)
       expect(TIER_QUOTAS.team.price).toBe(25)
       expect(TIER_QUOTAS.team.perUser).toBe(true)
       expect(TIER_QUOTAS.team.description).toBe('For development teams')
@@ -122,16 +122,16 @@ describe('Quota System', () => {
   // ============================================================================
 
   describe('getQuotaLimit', () => {
-    it('should return 1000 for community tier', () => {
-      expect(getQuotaLimit('community')).toBe(1_000)
+    it('should return 100 for community tier', () => {
+      expect(getQuotaLimit('community')).toBe(100)
     })
 
-    it('should return 10000 for individual tier', () => {
-      expect(getQuotaLimit('individual')).toBe(10_000)
+    it('should return 1000 for individual tier', () => {
+      expect(getQuotaLimit('individual')).toBe(1_000)
     })
 
-    it('should return 100000 for team tier', () => {
-      expect(getQuotaLimit('team')).toBe(100_000)
+    it('should return 10000 for team tier', () => {
+      expect(getQuotaLimit('team')).toBe(10_000)
     })
 
     it('should return -1 for enterprise tier (unlimited)', () => {
@@ -233,15 +233,15 @@ describe('Quota System', () => {
 
   describe('getQuotaDisplay', () => {
     it('should return formatted calls for community tier', () => {
-      expect(getQuotaDisplay('community')).toBe('1,000 calls/mo')
+      expect(getQuotaDisplay('community')).toBe('100 calls/mo')
     })
 
     it('should return formatted calls for individual tier', () => {
-      expect(getQuotaDisplay('individual')).toBe('10,000 calls/mo')
+      expect(getQuotaDisplay('individual')).toBe('1,000 calls/mo')
     })
 
     it('should return formatted calls for team tier', () => {
-      expect(getQuotaDisplay('team')).toBe('100,000 calls/mo')
+      expect(getQuotaDisplay('team')).toBe('10,000 calls/mo')
     })
 
     it('should return "Unlimited" for enterprise tier', () => {
