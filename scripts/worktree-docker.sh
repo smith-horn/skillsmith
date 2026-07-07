@@ -43,6 +43,9 @@ Commands:
   exec      Run a command in the container matching this worktree/checkout
             (SMI-5559 — resolves the container name from cwd instead of a
             hardcoded name, so it never silently targets the wrong container)
+  resolve   Print "<container-name> <resolved-from>" for this worktree/checkout
+            and exit 0/1 by whether it's running (SMI-5570/SMI-5074 — for
+            other scripts to consume without reimplementing name resolution)
 
 Arguments:
   worktree-path   Path to the worktree (default: current directory)
@@ -55,6 +58,7 @@ Examples:
   $(basename "$0") ports
   $(basename "$0") exec -- npm run build        # like: docker exec <container> npm run build
   $(basename "$0") exec ../worktrees/jwt-rollout -- npm test  # like: docker exec <container> npm test
+  $(basename "$0") resolve ../worktrees/jwt-rollout             # prints name; exit 0/1 = running/not
 
 Note:
   This script ensures each worktree has unique container names and ports
@@ -227,6 +231,83 @@ cmd_status() {
 }
 
 #######################################
+# Resolve the container name + resolution source for a worktree/checkout
+# path, without any docker calls or side effects (SMI-5559, extracted for
+# SMI-5570/SMI-5074 so hook-docker-detect.sh can reuse this exact
+# derivation via subprocess instead of reimplementing it in POSIX sh).
+#
+# Prints two space-separated fields to stdout: "<container_name> <resolved_from...>"
+# where resolved_from may itself contain spaces ("main checkout" /
+# "worktree branch (override)" / "worktree branch (recomputed)") — caller
+# should read the first field with `read -r name rest` or `cut -d' ' -f1`
+# and treat the remainder as the label.
+#
+# SMI-5570/SMI-5074: for a worktree, prefers the container_name already
+# CONFIGURED in docker-compose.override.yml over recomputing one fresh
+# from get_worktree_name(). Both derive from the branch name, but
+# get_worktree_name() reads whatever branch is CURRENTLY checked out,
+# while the override file is a snapshot from whenever it was last
+# (re)generated — switching branches within an existing worktree without
+# re-running create-worktree.sh/repair-worktrees.sh drifts these apart,
+# and the override file (what actually provisioned the running container)
+# is ground truth for "is a container up for this worktree", not a fresh
+# recomputation of "what would we name one today." Falls back to fresh
+# computation only when no override file exists yet (e.g. before the
+# worktree's first `docker compose up`).
+#######################################
+resolve_container_name() {
+    local worktree_path="$1"
+
+    if ! git -C "$worktree_path" rev-parse --git-dir >/dev/null 2>&1; then
+        error "Not a git checkout: $worktree_path"
+    fi
+
+    local gcd gd container_name resolved_from
+    gcd=$(git -C "$worktree_path" rev-parse --git-common-dir 2>/dev/null)
+    gd=$(git -C "$worktree_path" rev-parse --git-dir 2>/dev/null)
+
+    if [[ -n "$gcd" && "$gcd" == "$gd" ]]; then
+        # Main checkout (git-common-dir == git-dir, i.e. not a linked
+        # worktree) — container name is the hardcoded base-compose name,
+        # never a derived slug.
+        container_name="skillsmith-dev-1"
+        resolved_from="main checkout"
+    elif [[ -f "$worktree_path/docker-compose.override.yml" ]] \
+        && container_name=$(grep -A1 '^  dev:' "$worktree_path/docker-compose.override.yml" \
+            | grep 'container_name:' | head -1 | sed 's/.*container_name: *//') \
+        && [[ -n "$container_name" ]]; then
+        resolved_from="worktree branch (override)"
+    else
+        local worktree_name
+        worktree_name=$(get_worktree_name "$worktree_path")
+        container_name="${worktree_name}-dev-1"
+        resolved_from="worktree branch (recomputed — no override.yml found; run create-worktree.sh or repair-worktrees.sh)"
+    fi
+
+    printf '%s %s\n' "$container_name" "$resolved_from"
+}
+
+#######################################
+# Print the resolved container name + whether it's currently running
+# (SMI-5570/SMI-5074). Used by hook-docker-detect.sh to decide pre-push
+# routing without reimplementing name resolution.
+#
+# stdout: "<container_name> <resolved_from>"
+# stderr: (nothing on success)
+# Exit code: 0 if the container is running; 1 if not (no error message
+# printed here — the caller decides whether/how to surface that; use
+# `exec` instead of `resolve` if you want the ready-made error text).
+#######################################
+cmd_resolve() {
+    local worktree_path="$1"
+    local name_and_source container_name
+    name_and_source=$(resolve_container_name "$worktree_path")
+    container_name=$(printf '%s' "$name_and_source" | cut -d' ' -f1)
+    printf '%s\n' "$name_and_source"
+    docker ps --filter "name=^${container_name}\$" --format '{{.Names}}' | grep -qx "$container_name"
+}
+
+#######################################
 # Exec a command in the container matching this worktree/checkout (SMI-5559).
 #
 # Resolves the expected container name from the caller's cwd instead of
@@ -244,26 +325,10 @@ cmd_exec() {
 Usage: $(basename "$0") exec [worktree-path] -- <cmd...>"
     fi
 
-    if ! git -C "$worktree_path" rev-parse --git-dir >/dev/null 2>&1; then
-        error "Not a git checkout: $worktree_path"
-    fi
-
-    local gcd gd container_name resolved_from
-    gcd=$(git -C "$worktree_path" rev-parse --git-common-dir 2>/dev/null)
-    gd=$(git -C "$worktree_path" rev-parse --git-dir 2>/dev/null)
-
-    if [[ -n "$gcd" && "$gcd" == "$gd" ]]; then
-        # Main checkout (git-common-dir == git-dir, i.e. not a linked
-        # worktree) — container name is the hardcoded base-compose name,
-        # never a derived slug.
-        container_name="skillsmith-dev-1"
-        resolved_from="main checkout"
-    else
-        local worktree_name
-        worktree_name=$(get_worktree_name "$worktree_path")
-        container_name="${worktree_name}-dev-1"
-        resolved_from="worktree branch"
-    fi
+    local name_and_source container_name resolved_from
+    name_and_source=$(resolve_container_name "$worktree_path")
+    container_name=$(printf '%s' "$name_and_source" | cut -d' ' -f1)
+    resolved_from=$(printf '%s' "$name_and_source" | cut -d' ' -f2-)
 
     if ! docker ps --filter "name=^${container_name}\$" --format '{{.Names}}' | grep -qx "$container_name"; then
         error "Container '$container_name' is not running for $worktree_path (resolved from $resolved_from).
@@ -346,6 +411,9 @@ main() {
             ;;
         ports)
             cmd_ports "$worktree_path"
+            ;;
+        resolve)
+            cmd_resolve "$worktree_path"
             ;;
         -h|--help|help)
             usage
