@@ -246,25 +246,46 @@ Set via Settings → Secrets and variables → Actions → Variables:
 
 ### Local Testing
 
+**Prerequisite (one-time, per human user)**: local impersonation needs your own Google account granted `roles/iam.serviceAccountTokenCreator` directly on the service account — this is separate from the WIF pool→SA binding CI uses, and isn't covered by that binding. Grant it (needs project IAM-admin rights):
+
+```bash
+gcloud auth login <you>@smithhorn.ca   # if your normal gcloud session has expired
+gcloud iam service-accounts add-iam-policy-binding "$GCP_SERVICE_ACCOUNT" \
+  --project="$GCP_PROJECT_ID" \
+  --member="user:<you>@smithhorn.ca" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
 ```bash
 # Install gcloud CLI (required for local API access)
 brew install google-cloud-sdk
 
-# Authenticate with service account impersonation
+# Authenticate with service account impersonation (ADC file — used by client libraries)
 varlock run -- sh -c 'gcloud auth application-default login \
   --impersonate-service-account="$GCP_SERVICE_ACCOUNT" \
   --scopes="https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/webmasters.readonly"'
 
+# Verify the ADC file is impersonation-based before trusting it (never cat the whole file — it holds a live refresh token):
+jq -r .type ~/.config/gcloud/application_default_credentials.json   # must print: impersonated_service_account
+```
+
+**Do not use `gcloud auth application-default print-access-token` for the curl calls below** — for impersonated
+credentials it silently ignores the ADC file's recorded scopes and returns a bare `cloud-platform`-scoped token,
+which `analyticsdata.googleapis.com` rejects with a 403 `ACCESS_TOKEN_SCOPE_INSUFFICIENT` ("insufficient
+authentication scopes"). Use the non-ADC `gcloud auth print-access-token --impersonate-service-account=... --scopes=...`
+instead, which mints a correctly-scoped token per call:
+
+```bash
 # Test GA4 API query
 varlock run -- sh -c 'curl -s -X POST \
-  -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token --impersonate-service-account="$GCP_SERVICE_ACCOUNT" --scopes="https://www.googleapis.com/auth/analytics.readonly")" \
   -H "Content-Type: application/json" \
   -d "{\"dateRanges\":[{\"startDate\":\"7daysAgo\",\"endDate\":\"today\"}],\"metrics\":[{\"name\":\"sessions\"}]}" \
   "https://analyticsdata.googleapis.com/v1beta/$GA4_PROPERTY_ID:runReport"'
 
 # Test GSC API — list sitemaps
 varlock run -- sh -c 'curl -s \
-  -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token --impersonate-service-account="$GCP_SERVICE_ACCOUNT" --scopes="https://www.googleapis.com/auth/webmasters.readonly")" \
   "https://searchconsole.googleapis.com/webmasters/v3/sites/https%3A%2F%2Fwww.skillsmith.app/sitemaps"'
 ```
 
