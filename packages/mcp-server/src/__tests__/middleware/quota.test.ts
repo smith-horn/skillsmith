@@ -177,9 +177,9 @@ describe('withQuotaEnforcement()', () => {
     expect(errorResult.content[0].type).toBe('text')
   })
 
-  it('SMI-5558: ENFORCE_MCP_QUOTA=false lets the call through even over quota', async () => {
-    const previous = process.env.ENFORCE_MCP_QUOTA
-    process.env.ENFORCE_MCP_QUOTA = 'false'
+  it('SMI-5558: SKILLSMITH_ENFORCE_MCP_QUOTA=false lets the call through even over quota', async () => {
+    const previous = process.env.SKILLSMITH_ENFORCE_MCP_QUOTA
+    process.env.SKILLSMITH_ENFORCE_MCP_QUOTA = 'false'
     try {
       const exhaustedStorage = makeStorage(100) // community limit = 100
       const quota = createQuotaMiddleware({ storage: exhaustedStorage })
@@ -193,8 +193,8 @@ describe('withQuotaEnforcement()', () => {
       expect(innerHandler).toHaveBeenCalledTimes(1)
       expect(result).toEqual({ result: 'success' })
     } finally {
-      if (previous === undefined) delete process.env.ENFORCE_MCP_QUOTA
-      else process.env.ENFORCE_MCP_QUOTA = previous
+      if (previous === undefined) delete process.env.SKILLSMITH_ENFORCE_MCP_QUOTA
+      else process.env.SKILLSMITH_ENFORCE_MCP_QUOTA = previous
     }
   })
 })

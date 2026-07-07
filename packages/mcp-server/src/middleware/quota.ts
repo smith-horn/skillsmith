@@ -16,7 +16,7 @@
  * Unlike the edge function's `quota-enforcer.ts` (which only hard-blocks
  * Community and only when `ENFORCE_COMMUNITY_QUOTA=true`), this middleware
  * has historically hard-blocked ALL non-unlimited tiers unconditionally.
- * `ENFORCE_MCP_QUOTA` (SMI-5558) adds a kill-switch so that behavior can be
+ * `SKILLSMITH_ENFORCE_MCP_QUOTA` (SMI-5558) adds a kill-switch so that behavior can be
  * disabled without a redeploy if the 10x-lower quotas cause unexpected
  * paid-tier disruption. Defaults to enforcing (preserves prior behavior).
  *
@@ -76,12 +76,12 @@ const UPGRADE_URL = 'https://skillsmith.app/upgrade'
 /**
  * SMI-5558 kill-switch: whether over-quota requests are actually hard-blocked.
  * Defaults to enforcing (`true`) — matches the pre-existing unconditional
- * hard-block behavior of this middleware. Set `ENFORCE_MCP_QUOTA=false` to
+ * hard-block behavior of this middleware. Set `SKILLSMITH_ENFORCE_MCP_QUOTA=false` to
  * disable blocking (usage is still tracked and reported) without a redeploy,
  * e.g. if the reduced quotas cause unexpected paid-tier disruption.
  */
 function isQuotaEnforcementEnabled(): boolean {
-  return process.env.ENFORCE_MCP_QUOTA !== 'false'
+  return process.env.SKILLSMITH_ENFORCE_MCP_QUOTA !== 'false'
 }
 
 // ============================================================================
