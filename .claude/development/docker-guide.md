@@ -116,6 +116,14 @@ See [ADR-012: Native Module Version Management](../adr/012-native-module-version
 
 ## Troubleshooting
 
+**Worktree note (SMI-5559)**: the `docker exec skillsmith-dev-1 <cmd>` recipes below
+assume the main checkout — its container is long-lived, so that exact command silently
+"succeeds" from any worktree even if the worktree's own container never started. From a
+worktree, replace `docker exec skillsmith-dev-1` with `./scripts/worktree-docker.sh exec --`
+(resolves the container from cwd, errors loudly if it isn't running) and drop the
+container-name volume/recipe substitutions below down to whatever `docker ps` shows for
+that worktree.
+
 ### Container Won't Start
 
 ```bash

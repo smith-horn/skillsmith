@@ -177,6 +177,8 @@ The script handles:
 
 **Existing worktrees**: Step 6 only runs during creation. If you have an existing worktree with a broken skillsmith MCP, apply the manual fix above. For the Step 4d / Step 7 `node_modules` symlink (SMI-4377), run `./scripts/repair-worktrees.sh` — idempotent, safe to re-run.
 
+**Running commands in the worktree's container (SMI-5559)**: after `docker compose --profile dev up -d`, use `./scripts/worktree-docker.sh exec -- <cmd>` rather than a hardcoded `docker exec skillsmith-dev-1 <cmd>` — the latter is main's container name and silently "succeeds" from any worktree even when this worktree's own container never started. `worktree-docker.sh exec` resolves the container from cwd and errors loudly if it isn't running.
+
 ### `.mcp.json` skip-worktree (SMI-4973)
 
 When `create-worktree.sh` finishes, the worktree's `.mcp.json` is
@@ -264,9 +266,12 @@ to the worktree's `packages/<pkg>/dist/src/index.js`.
 E2E from a worktree:
 
 ```bash
-docker exec skillsmith-dev-1 npm run build
+# SMI-5559: run via the WORKTREE's own container, not skillsmith-dev-1 (main's) —
+# `docker exec skillsmith-dev-1 npm run build` here would build MAIN's packages,
+# not this worktree's, defeating the point of this section.
+./scripts/worktree-docker.sh exec -- npm run build
 # OR for a single package:
-docker exec skillsmith-dev-1 npm run build --workspace=@skillsmith/core
+./scripts/worktree-docker.sh exec -- npm run build --workspace=@skillsmith/core
 ```
 
 **If you forget**, the test will fail with a clear `MODULE_NOT_FOUND`
