@@ -23,6 +23,31 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # ---------------------------------------------------------------------------
+# SMI-5560: hoist-resolution bridge for worktree containers.
+#
+# In a worktree container the per-package node_modules are SMI-4381 relative
+# symlinks (packages/<pkg>/node_modules -> ../../../../packages/<pkg>/node_modules)
+# whose target resolves to /packages/<pkg>/node_modules — OUTSIDE /app — inside
+# the container (that path is where the override bind-mounts the main checkout's
+# per-package node_modules, read-only, SMI-5560). Node/esbuild resolving a
+# per-package dep's HOISTED transitive deps walks UP from
+# /packages/<pkg>/node_modules and would otherwise miss the hoisted root at
+# /app/node_modules (breaks esbuild bundling, e.g. vscode's sanitize-html deps).
+# A /node_modules -> /app/node_modules symlink terminates that walk-up at the
+# hoisted deps. Must run BEFORE the dist build below (which builds vscode).
+#
+# Worktree-gated via /app/.git being a FILE (git's worktree marker): the
+# main-repo container has REAL per-package node_modules under /app, so its
+# walk-up already reaches /app/node_modules and this bridge is unnecessary there.
+# ---------------------------------------------------------------------------
+if [ -f "/app/.git" ] && [ "$(readlink /node_modules 2>/dev/null || true)" != "/app/node_modules" ]; then
+    rm -f /node_modules 2>/dev/null || true
+    ln -s /app/node_modules /node_modules \
+        && echo -e "${GREEN}[entrypoint] Worktree hoist bridge: /node_modules -> /app/node_modules${NC}" \
+        || echo -e "${YELLOW}[entrypoint] Could not create /node_modules hoist bridge (non-fatal; esbuild bundles may fail to resolve hoisted deps)${NC}"
+fi
+
+# ---------------------------------------------------------------------------
 # Dist check: rebuild if dist/ is missing (common on first container start
 # in a git worktree, where .:/app bind mount erases image-layer dist/).
 #
