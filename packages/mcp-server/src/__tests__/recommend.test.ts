@@ -62,6 +62,37 @@ describe('Recommend Tool', () => {
       )
       expect(hasInstalledSkill).toBe(false)
     })
+
+    // SMI-5556: empty-result guidance so a calling agent doesn't misread
+    // candidates_considered: 0 as a registry/backend fault.
+    it('should include a suggestion when zero recommendations are returned', async () => {
+      const result = await executeRecommend(
+        {
+          project_context: 'testing',
+          min_similarity: 1,
+          limit: 5,
+        },
+        context
+      )
+
+      expect(result.recommendations.length).toBe(0)
+      expect(result.suggestion).toBeDefined()
+      expect(result.suggestion).toContain('does not indicate a registry/backend problem')
+      expect(result.suggestion).toContain('search tool')
+    })
+
+    it('should NOT include a suggestion when recommendations are non-empty', async () => {
+      const result = await executeRecommend(
+        { project_context: 'React frontend with testing', limit: 5 },
+        context
+      )
+
+      // Seeded fixture reliably matches this query (community/jest-helper etc.) —
+      // hard assertion instead of a soft length-guard, so a future regression
+      // that empties the result set fails loudly here.
+      expect(result.recommendations.length).toBeGreaterThan(0)
+      expect(result.suggestion).toBeUndefined()
+    })
   })
 
   describe('formatRecommendations', () => {
@@ -96,6 +127,28 @@ describe('Recommend Tool', () => {
 
       expect(formatted).toContain('No recommendations found')
       expect(formatted).toContain('Suggestions:')
+    })
+
+    // SMI-5556: formatter prefers response.suggestion over re-deriving guidance.
+    it('should surface response.suggestion when present instead of the hardcoded list', async () => {
+      const emptyResult = {
+        recommendations: [],
+        candidates_considered: 3,
+        overlap_filtered: 0,
+        role_filtered: 0,
+        suggestion: 'Custom empty-result guidance from the tool.',
+        context: {
+          installed_count: 0,
+          has_project_context: false,
+          using_semantic_matching: true,
+          auto_detected: false,
+        },
+        timing: { totalMs: 10 },
+      }
+      const formatted = formatRecommendations(emptyResult)
+
+      expect(formatted).toContain('Custom empty-result guidance from the tool.')
+      expect(formatted).not.toContain('Suggestions:')
     })
   })
 })

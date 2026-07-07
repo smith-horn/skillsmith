@@ -117,3 +117,40 @@ export function mapLocalSkillToSearchResult(item: SearchResult): SkillSearchResu
     license: item.skill.license ?? null,
   }
 }
+
+// ============================================================================
+// Empty-Result Guidance (SMI-5556)
+// ============================================================================
+
+/**
+ * Build a `suggestion` string for a zero-result search response, explaining
+ * that matching is keyword-based (not semantic) and requires every query term
+ * to co-occur, so multi-concept queries often return nothing even when a
+ * relevant skill exists — plus any filter-specific hints.
+ */
+export function buildEmptySearchSuggestion(context: {
+  discoveryOnlyHidden?: number
+  compatibilityHidden?: number
+}): string {
+  const lines = [
+    'No matches. Search is keyword-based (not semantic) and requires every query ' +
+      "term to appear in a skill's indexed name/description/tags — multi-concept " +
+      'queries (e.g. "Next.js Supabase testing") often return nothing even when a ' +
+      'relevant skill exists.',
+    'Try a single-topic query per call instead (e.g. "testing", then "supabase") ' +
+      'and combine the results yourself.',
+  ]
+  if (context.discoveryOnlyHidden) {
+    lines.push(
+      `${context.discoveryOnlyHidden} discovery-only result(s) were hidden by the ` +
+        'default installable_only filter — pass installable_only: false to include them.'
+    )
+  }
+  if (context.compatibilityHidden) {
+    lines.push(
+      `${context.compatibilityHidden} result(s) were hidden by a compatibility filter ` +
+        '— remove compatible_with to broaden the search.'
+    )
+  }
+  return lines.join(' ')
+}

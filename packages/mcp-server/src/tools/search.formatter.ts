@@ -37,14 +37,20 @@ export function formatSearchResults(response: SearchResponse): string {
   if (response.results.length === 0) {
     lines.push('No skills found matching your query.')
     lines.push('')
-    lines.push('Suggestions:')
-    lines.push('  - Try different keywords')
-    lines.push('  - Remove filters to broaden the search')
-    lines.push('  - Check spelling')
-    // SMI-5178: hint that the default installable-only filter may be the cause.
-    lines.push(
-      '  - Discovery-only entries are hidden by default — pass installable_only: false to include them'
-    )
+    // SMI-5556: prefer the response's own suggestion (surfaced through the raw
+    // MCP JSON too) over re-deriving the same guidance here.
+    if (response.suggestion) {
+      lines.push(response.suggestion)
+    } else {
+      lines.push('Suggestions:')
+      lines.push('  - Try different keywords')
+      lines.push('  - Remove filters to broaden the search')
+      lines.push('  - Check spelling')
+      // SMI-5178: hint that the default installable-only filter may be the cause.
+      lines.push(
+        '  - Discovery-only entries are hidden by default — pass installable_only: false to include them'
+      )
+    }
   } else {
     lines.push('Found ' + response.total + ' skill(s):\n')
 

@@ -3,8 +3,8 @@
 exports[`SMI-4790: MCP tool descriptions > snapshot > all 7 descriptions match snapshot 1`] = `
 [
   {
-    "description": "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM).",
-    "length": 842,
+    "description": "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM). Matching is keyword-based, not semantic — use a short single-topic query; on empty results, check the response suggestion field for what to try next.",
+    "length": 992,
     "name": "search",
     "stage": "Discover",
   },
@@ -15,8 +15,8 @@ exports[`SMI-4790: MCP tool descriptions > snapshot > all 7 descriptions match s
     "stage": "Evaluate",
   },
   {
-    "description": "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations, suggestions, or 'what skills should I use' — e.g. 'recommend skills for my React project', 'what skills help with Node.js', 'suggest skills for testing'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering (SMI-1631). Returns ranked Skillsmith candidates, NOT general programming advice. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
-    "length": 647,
+    "description": "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations, suggestions, or 'what skills should I use' — e.g. 'recommend skills for my React project', 'what skills help with Node.js', 'suggest skills for testing'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering (SMI-1631). Returns ranked Skillsmith candidates, NOT general programming advice. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. A candidates_considered of 0 does NOT indicate a registry/backend problem — it just means none of the candidate sources matched this input; check the response's \`suggestion\` field (present when recommendations is empty) for next steps, e.g. falling back to the \`search\` tool with a specific single-topic query.",
+    "length": 958,
     "name": "skill_recommend",
     "stage": "Discover",
   },

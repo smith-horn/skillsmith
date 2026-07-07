@@ -9,6 +9,41 @@ import { mapTrustTierFromDb } from '../utils/validation.js'
 import type { SkillData } from './recommend.types.js'
 
 // ============================================================================
+// Empty-Result Guidance (SMI-5556)
+// ============================================================================
+
+/**
+ * Build a `suggestion` string for a zero-recommendation response, explaining
+ * that candidates_considered: 0 does not indicate a registry/backend fault
+ * and pointing at concrete next steps.
+ */
+export function buildEmptyRecommendationSuggestion(context: {
+  installedCount: number
+  hasProjectContext: boolean
+  roleFilter?: SkillRole
+}): string {
+  const lines = [
+    'No recommendations found. This does not indicate a registry/backend problem — ' +
+      'candidates_considered reflects no matches from any candidate source (registry API, ' +
+      'local skill cache, local ~/.claude/skills scan) for this input.',
+  ]
+  if (context.installedCount === 0) {
+    lines.push('Try passing installed_skills explicitly for better matching.')
+  }
+  if (!context.hasProjectContext) {
+    lines.push('Provide project_context for more relevant results.')
+  }
+  if (context.roleFilter) {
+    lines.push(`Try removing the role filter (currently: ${context.roleFilter}).`)
+  }
+  lines.push(
+    'As a fallback, try the search tool directly with a short single-topic query ' +
+      '(e.g. "testing") — it queries the registry independently of recommendation matching.'
+  )
+  return lines.join(' ')
+}
+
+// ============================================================================
 // Role Inference
 // ============================================================================
 
