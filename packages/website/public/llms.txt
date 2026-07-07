@@ -32,7 +32,7 @@ skillsmith list
 - [Home](https://www.skillsmith.app/): Product overview and features
 - [Quickstart](https://www.skillsmith.app/docs/quickstart): First-time setup guide with two paths (MCP client recommended, CLI alternative)
 - [Skills Browser](https://www.skillsmith.app/skills): Browse and search available skills
-- [Pricing](https://www.skillsmith.app/pricing): Four tiers - Community (free, 1k API calls), Individual ($9.99, 10k), Team ($25/user, 100k), Enterprise ($55/user, unlimited)
+- [Pricing](https://www.skillsmith.app/pricing): Four tiers - Community (free, 100 API calls), Individual ($9.99, 1k), Team ($25/user, 10k), Enterprise ($55/user, unlimited)
 - [CLI Reference](https://www.skillsmith.app/docs/cli): Complete CLI command documentation
 - [MCP Server](https://www.skillsmith.app/docs/mcp-server): MCP integration configuration
 - [API Reference](https://www.skillsmith.app/docs/api): REST API documentation
@@ -109,7 +109,7 @@ Q: What are agent skills?
 A: Skills are reusable prompts and workflows installed to ~/.claude/skills/ that give AI assistants specialized capabilities like testing, deployment, code review, and documentation generation.
 
 Q: Is Skillsmith free?
-A: Yes. The Community tier is free forever with 1,000 API calls per month. Paid plans start at $9.99/month.
+A: Yes. The Community tier is free forever with 100 API calls per month. Paid plans start at $9.99/month.
 
 Q: What AI tools does it work with?
 A: Any MCP-compatible client including Claude Code, Claude Desktop, Cursor, Windsurf, and other Model Context Protocol tools.

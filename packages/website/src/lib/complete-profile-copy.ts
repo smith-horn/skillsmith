@@ -21,7 +21,7 @@ export const COPY = {
   heading: 'Almost there — tell us who you are.',
   submitLabel: 'Activate free access',
   submittingLabel: 'Activating…',
-  fineprint: 'You’ll get 1,000 free API calls per month. No card required.',
+  fineprint: 'You’ll get 100 free API calls per month. No card required.',
   legalPrefix: 'We use this for your CLI identity only.',
   legalLinkText: 'Privacy policy →',
   legalLinkHref: '/privacy',
