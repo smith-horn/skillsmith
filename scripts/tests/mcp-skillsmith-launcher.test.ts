@@ -286,10 +286,18 @@ describe('mcp-skillsmith-launcher.sh', () => {
     roots.push(root)
     addNodeModules(root)
     addDist(root)
-    addMcpServerPackageJson(root, { ulid: '3.0.1' })
+    // SMI-5570/SMI-5074: a worktree container's root-level node_modules
+    // (misrouted there by a Docker mount-destination bug, see
+    // docs/internal/implementation/smi-5570-5074-worktree-native-module-resolution-plan.md)
+    // makes real, hoisted monorepo dependencies reachable from ANY directory
+    // via Node's walk-up-to-root module resolution — including this fixture's
+    // isolated tmpdir. `ulid` is a real dependency of this monorepo, so it's
+    // never actually absent "everywhere" when this test runs inside such a
+    // container. Use a name guaranteed absent from the real monorepo too.
+    addMcpServerPackageJson(root, { '__smi-5570-fixture-absent-dep__': '1.0.0' })
     const res = runLauncher(root)
     expect(res.status).toBe(1)
-    expect(res.stderr).toContain('ulid dependency missing')
+    expect(res.stderr).toContain('__smi-5570-fixture-absent-dep__ dependency missing')
     expect(res.stderr).toContain('npm install')
   })
 
@@ -317,10 +325,18 @@ describe('mcp-skillsmith-launcher.sh', () => {
     roots.push(root)
     addNodeModules(root)
     addDist(root)
-    addMcpServerPackageJson(root, { '@skillsmith/core': '^0.8.0' })
+    // SMI-5570/SMI-5074: use a fixture-only @skillsmith/* name rather than a
+    // real one (e.g. @skillsmith/core) — the classification logic under
+    // test only branches on the "@skillsmith/" prefix (see
+    // scripts/mcp-skillsmith-launcher.sh's DEP_PROBE_JS classify()), and a
+    // real package name would accidentally resolve via the root-level
+    // node_modules leak described in
+    // docs/internal/implementation/smi-5570-5074-worktree-native-module-resolution-plan.md,
+    // masking a real regression as a pass.
+    addMcpServerPackageJson(root, { '@skillsmith/__smi-5570-fixture-pkg__': '^0.8.0' })
     const res = runLauncher(root)
     expect(res.status).toBe(1)
-    expect(res.stderr).toContain('@skillsmith/core')
+    expect(res.stderr).toContain('@skillsmith/__smi-5570-fixture-pkg__')
     expect(res.stderr).toContain('npm run build')
     // Workspace symlinks point at real source — rm -rf must never be emitted.
     expect(res.stderr).not.toContain('rm -rf')
