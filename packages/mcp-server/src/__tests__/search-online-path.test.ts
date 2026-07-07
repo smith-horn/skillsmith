@@ -173,4 +173,69 @@ describe('Search Tool - Online API Path (SMI-2755)', () => {
     const commitResult = result.results.find((r: any) => r.name === 'commit')
     expect(commitResult?.installHint).toBe('anthropic/commit')
   })
+
+  // SMI-5563: search's own API path previously silently dropped `security`
+  // even though skills-search already hydrates security_score/last_scanned_at/
+  // security_findings/quarantined server-side (SMI-4251).
+  describe('security summary (SMI-5563)', () => {
+    it('derives a security summary from a scanned, clean API result', async () => {
+      vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+      vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/scanned-clean',
+            name: 'scanned-clean',
+            description: 'A scanned, clean skill',
+            author: 'anthropic',
+            tags: [],
+            trust_tier: 'verified',
+            quality_score: 0.9,
+            repo_url: 'https://github.com/anthropic/scanned-clean',
+            last_scanned_at: '2026-06-01T00:00:00.000Z',
+            security_score: 0,
+            security_findings: [],
+            quarantined: false,
+          },
+        ],
+        meta: { total: 1 },
+      })
+
+      const result = await executeSearch({ query: 'scanned' }, onlineContext)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const found = result.results.find((r: any) => r.name === 'scanned-clean')
+      expect(found?.security).toEqual({
+        passed: true,
+        riskScore: 0,
+        findingsCount: 0,
+        scannedAt: '2026-06-01T00:00:00.000Z',
+      })
+    })
+
+    it('leaves security undefined for a never-scanned API result', async () => {
+      vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+      vi.spyOn(onlineContext.apiClient, 'search').mockResolvedValue({
+        data: [
+          {
+            id: 'anthropic/never-scanned',
+            name: 'never-scanned',
+            description: 'Never scanned',
+            author: 'anthropic',
+            tags: [],
+            trust_tier: 'verified',
+            quality_score: 0.9,
+            repo_url: 'https://github.com/anthropic/never-scanned',
+            last_scanned_at: null,
+          },
+        ],
+        meta: { total: 1 },
+      })
+
+      const result = await executeSearch({ query: 'never' }, onlineContext)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const found = result.results.find((r: any) => r.name === 'never-scanned')
+      expect(found?.security).toBeUndefined()
+    })
+  })
 })

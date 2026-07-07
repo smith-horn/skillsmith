@@ -18,11 +18,7 @@ import {
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
-import {
-  extractCategoryFromTags,
-  mapTrustTierToDb,
-  mapTrustTierFromDb,
-} from '../utils/validation.js'
+import { mapTrustTierToDb } from '../utils/validation.js'
 import { searchLocalSkills } from './LocalSkillSearch.js'
 // SMI-5178: compatibility helpers extracted to keep search.ts under the 500-line
 // governance limit (search.helpers.ts imports only from @skillsmith/core — no
@@ -30,6 +26,7 @@ import { searchLocalSkills } from './LocalSkillSearch.js'
 import {
   filterByCompatibility,
   filterInstallable,
+  mapApiSkillToSearchResult,
   mapLocalSkillToSearchResult,
   resolveDefaultCompatibility,
   buildEmptySearchSuggestion,
@@ -277,31 +274,11 @@ async function executeSearchImpl(
 
       const searchEnd = performance.now()
 
-      // Convert API results to SkillSearchResult format
-      // SMI-1491: Added repository field for transparency
-      // SMI-2734: Added installHint for ergonomic registry ID (registry skills only)
-      const results: SkillSearchResult[] = apiResponse.data.map((item) => ({
-        id: item.id,
-        name: item.name,
-        description: item.description || '',
-        author: item.author || 'unknown',
-        category: extractCategoryFromTags(item.tags),
-        trustTier: mapTrustTierFromDb(item.trust_tier),
-        score: Math.round((item.quality_score ?? 0) * 100),
-        repository: item.repo_url || undefined,
-        // SMI-5178: trust the authoritative `installable` column; repo_url heuristic only as fallback.
-        installable: item.installable ?? Boolean(item.repo_url),
-        // SMI-2734: 'author/name' install ID — valid for all registry API results
-        installHint: item.author ? item.author + '/' + item.name : undefined,
-        // SMI-2760 / SMI-5178: compatibility tags. `compatibility` is on ApiSkill
-        // + the Zod schema (so it survives validation at runtime), but the built
-        // ApiSearchResult type does not surface it through the api-client's
-        // ApiResponse<T> at this call site (CI typecheck confirms), so it is read
-        // via a cast — the value is present at runtime.
-        compatibility: (item as unknown as { compatibility?: string[] }).compatibility,
-        // SMI-5327: SPDX license from the edge function response.
-        license: item.license ?? null,
-      }))
+      // Convert API results to SkillSearchResult format.
+      // SMI-5563: mapping extracted to mapApiSkillToSearchResult in
+      // search.helpers.ts (parity with mapLocalSkillToSearchResult and to add
+      // the `security` field, plus keep search.ts under the 500-line limit).
+      const results: SkillSearchResult[] = apiResponse.data.map(mapApiSkillToSearchResult)
 
       // SMI-1809: Search local skills and merge with API results
       // Skip local search if trust_tier filter excludes local skills
