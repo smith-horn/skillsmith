@@ -27,7 +27,6 @@ import {
   type MCPSkill as Skill,
   type GetSkillResponse,
   type AlsoInstalledSkill,
-  type SecuritySummary,
   SkillsmithError,
   ErrorCodes,
   trackSkillView,
@@ -41,6 +40,7 @@ import {
   extractCategoryFromTags,
   normalizeApiCategory,
 } from '../utils/validation.js'
+import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
 
 /**
  * Zod schema for get-skill input validation
@@ -136,27 +136,11 @@ async function executeGetSkillImpl(
 
       // SMI-4240: Derive security summary from the API response so the extension
       // can render real scan status instead of falling back to "Not scanned"
-      // for every skill. Schema-confirmed via Wave 0: no dedicated
-      // security_findings_count column exists — count is derived from the
-      // security_findings jsonb array. Skills that have never been scanned
-      // return `undefined` (the extension treats undefined and { passed: null }
-      // identically in getSecurityScanHtml).
-      const security: SecuritySummary | undefined =
-        apiSkill.last_scanned_at == null
-          ? undefined
-          : {
-              passed:
-                apiSkill.quarantined === true
-                  ? false
-                  : apiSkill.security_score == null
-                    ? null
-                    : true,
-              riskScore: apiSkill.security_score ?? null,
-              findingsCount: Array.isArray(apiSkill.security_findings)
-                ? apiSkill.security_findings.length
-                : 0,
-              scannedAt: apiSkill.last_scanned_at,
-            }
+      // for every skill. Skills that have never been scanned return `undefined`
+      // (the extension treats undefined and { passed: null } identically in
+      // getSecurityScanHtml). SMI-5562: derivation extracted to a shared helper
+      // (security-summary.ts) reused by recommend.ts and search.ts.
+      const security = deriveSecuritySummaryFromApiSkill(apiSkill)
 
       // Convert API skill to MCP skill format
       const skill: Skill = {

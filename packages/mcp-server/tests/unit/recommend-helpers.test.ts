@@ -11,7 +11,10 @@ import {
   isSkillCollection,
   COLLECTION_PATTERNS,
   buildEmptyRecommendationSuggestion,
+  buildDbFallbackRecommendation,
 } from '../../src/tools/recommend.helpers.js'
+import type { SkillData } from '../../src/tools/recommend.types.js'
+import type { SkillMatchResult } from '@skillsmith/core'
 
 describe('recommend.helpers', () => {
   describe('inferRolesFromTags', () => {
@@ -199,6 +202,72 @@ describe('recommend.helpers', () => {
         hasProjectContext: true,
       })
       expect(withoutRole).not.toContain('role filter')
+    })
+  })
+
+  describe('buildDbFallbackRecommendation (SMI-5562)', () => {
+    function makeSkillData(overrides: Partial<SkillData> = {}): SkillData {
+      return {
+        id: 'author/skill',
+        name: 'skill',
+        description: 'A test skill',
+        triggerPhrases: [],
+        keywords: [],
+        qualityScore: 0.8,
+        trustTier: 'community',
+        roles: [],
+        installable: true,
+        riskScore: null,
+        securityFindingsCount: 0,
+        securityScannedAt: null,
+        securityPassed: null,
+        ...overrides,
+      }
+    }
+
+    function makeMatchResult(skill: SkillData): SkillMatchResult {
+      return { skill, similarityScore: 0.75, matchReason: 'Matches your testing needs' }
+    }
+
+    it('omits `security` entirely for a never-scanned skill (securityScannedAt: null)', () => {
+      const rec = buildDbFallbackRecommendation(makeMatchResult(makeSkillData()), undefined)
+      expect(rec.security).toBeUndefined()
+    })
+
+    it('returns a defined security summary, passed straight through, once a skill has been scanned', () => {
+      const rec = buildDbFallbackRecommendation(
+        makeMatchResult(
+          makeSkillData({
+            riskScore: 15,
+            securityFindingsCount: 2,
+            securityScannedAt: '2026-07-01T00:00:00Z',
+            securityPassed: true,
+          })
+        ),
+        undefined
+      )
+      expect(rec.security).toEqual({
+        passed: true,
+        riskScore: 15,
+        findingsCount: 2,
+        scannedAt: '2026-07-01T00:00:00Z',
+      })
+    })
+
+    it('never coerces a real null riskScore to 0 once scannedAt is set (scanned-no-verdict case)', () => {
+      const rec = buildDbFallbackRecommendation(
+        makeMatchResult(
+          makeSkillData({
+            riskScore: null,
+            securityScannedAt: '2026-07-01T00:00:00Z',
+            securityPassed: null,
+          })
+        ),
+        undefined
+      )
+      expect(rec.security).toBeDefined()
+      expect(rec.security?.riskScore).toBeNull()
+      expect(rec.security?.passed).toBeNull()
     })
   })
 })

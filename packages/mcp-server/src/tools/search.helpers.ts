@@ -11,10 +11,12 @@
 import {
   type SkillSearchResult,
   type CompatibilityFilter,
+  type ApiSearchResult,
   CLIENT_TO_COMPATIBILITY_SLUG,
   type SearchResult,
 } from '@skillsmith/core'
 import { extractCategoryFromTags, mapTrustTierFromDb } from '../utils/validation.js'
+import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
 
 /**
  * SMI-2760: Filter search results by compatibility tags.
@@ -71,6 +73,50 @@ export function resolveDefaultCompatibility(
   const slug = CLIENT_TO_COMPATIBILITY_SLUG[client]
   if (!slug) return undefined
   return { ides: [slug] }
+}
+
+/**
+ * SMI-5563: Map an API search-result row (registry path) to the
+ * SkillSearchResult wire format used by the MCP search tool.
+ *
+ * Extracted from search.ts to keep that file under the 500-line governance
+ * limit. Mirrors mapLocalSkillToSearchResult below — added so the registry
+ * path stops silently dropping `security` even though skills-search already
+ * hydrates security_score/last_scanned_at/security_findings/quarantined
+ * server-side (SMI-4251).
+ *
+ * SMI-1491: repository field for installation source transparency.
+ * SMI-2734: installHint guarded on a real registry owner.
+ * SMI-2760: compatibility tags (read via cast — see inline comment below).
+ * SMI-5327: SPDX license.
+ * SMI-5563: security summary via the shared deriveSecuritySummaryFromApiSkill helper.
+ */
+export function mapApiSkillToSearchResult(item: ApiSearchResult): SkillSearchResult {
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description || '',
+    author: item.author || 'unknown',
+    category: extractCategoryFromTags(item.tags),
+    trustTier: mapTrustTierFromDb(item.trust_tier),
+    score: Math.round((item.quality_score ?? 0) * 100),
+    repository: item.repo_url || undefined,
+    // SMI-5178: trust the authoritative `installable` column; repo_url heuristic only as fallback.
+    installable: item.installable ?? Boolean(item.repo_url),
+    // SMI-2734: 'author/name' install ID — valid for all registry API results
+    installHint: item.author ? item.author + '/' + item.name : undefined,
+    // SMI-2760 / SMI-5178: compatibility tags. `compatibility` is on ApiSkill
+    // + the Zod schema (so it survives validation at runtime), but the built
+    // ApiSearchResult type does not surface it through the api-client's
+    // ApiResponse<T> at this call site (CI typecheck confirms), so it is read
+    // via a cast — the value is present at runtime.
+    compatibility: (item as unknown as { compatibility?: string[] }).compatibility,
+    // SMI-5327: SPDX license from the edge function response.
+    license: item.license ?? null,
+    // SMI-5563: security summary — parity with mapLocalSkillToSearchResult
+    // and get_skill (SMI-4240). undefined when the skill has never been scanned.
+    security: deriveSecuritySummaryFromApiSkill(item),
+  }
 }
 
 /**

@@ -322,6 +322,70 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
     expect(result.discovery_only_hidden ?? 0).toBe(0)
   })
 
+  // SMI-5562: API-path recommendations must carry description + a security
+  // summary derived from skills-recommend's hydrated security_score/
+  // last_scanned_at/security_findings/quarantined fields (Wave 2 hydration).
+  it('(SMI-5562) includes description and a derived security summary on the API path', async () => {
+    vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+    vi.spyOn(onlineContext.apiClient, 'getRecommendations').mockResolvedValue({
+      data: [
+        {
+          id: 'community/scanned-clean',
+          name: 'scanned-clean',
+          description: 'A scanned, clean helper skill',
+          author: 'community',
+          tags: ['testing'],
+          trust_tier: 'community',
+          quality_score: 0.8,
+          repo_url: 'https://github.com/community/scanned-clean',
+          last_scanned_at: '2026-06-01T00:00:00.000Z',
+          security_score: 0,
+          security_findings: [],
+          quarantined: false,
+        },
+      ],
+      meta: { total: 1 },
+    })
+
+    const result = await executeRecommend({ project_context: 'testing', limit: 5 }, onlineContext)
+
+    const rec = result.recommendations.find((r) => r.skill_id === 'community/scanned-clean')
+    expect(rec).toBeDefined()
+    expect(rec?.description).toBe('A scanned, clean helper skill')
+    expect(rec?.security).toEqual({
+      passed: true,
+      riskScore: 0,
+      findingsCount: 0,
+      scannedAt: '2026-06-01T00:00:00.000Z',
+    })
+  })
+
+  it('(SMI-5562) leaves security undefined for a never-scanned API result', async () => {
+    vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+    vi.spyOn(onlineContext.apiClient, 'getRecommendations').mockResolvedValue({
+      data: [
+        {
+          id: 'community/never-scanned',
+          name: 'never-scanned',
+          description: 'Not yet scanned',
+          author: 'community',
+          tags: ['testing'],
+          trust_tier: 'community',
+          quality_score: 0.7,
+          repo_url: 'https://github.com/community/never-scanned',
+          last_scanned_at: null,
+        },
+      ],
+      meta: { total: 1 },
+    })
+
+    const result = await executeRecommend({ project_context: 'testing', limit: 5 }, onlineContext)
+
+    const rec = result.recommendations.find((r) => r.skill_id === 'community/never-scanned')
+    expect(rec).toBeDefined()
+    expect(rec?.security).toBeUndefined()
+  })
+
   it('combines online + role filter + tracking simultaneously', async () => {
     const trackEventSpy = vi.spyOn(CoreModule, 'trackEvent').mockImplementation(() => {})
 

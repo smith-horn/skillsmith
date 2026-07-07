@@ -4,12 +4,12 @@
  * not just as a fallback.
  *
  * SMI-2755: Online API path tests split to recommend-online-path.test.ts.
+ * SMI-5562: formatRecommendations tests split to recommend.format.test.ts.
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest'
 import {
   executeRecommend,
-  formatRecommendations,
   mergeAndDeduplicateRecommendations,
   type SkillRecommendation,
 } from '../tools/recommend.js'
@@ -93,65 +93,31 @@ describe('Recommend Tool', () => {
       expect(result.recommendations.length).toBeGreaterThan(0)
       expect(result.suggestion).toBeUndefined()
     })
-  })
 
-  describe('formatRecommendations', () => {
-    it('should format results for terminal display', async () => {
+    // SMI-5562: local-DB fallback path (this context is offline-mode) must
+    // populate description, and `security` must be `undefined` for a
+    // never-scanned row (seedTestData never sets security fields, so
+    // SkillRepository.create() defaults securityScannedAt to null) — a
+    // defined-but-null object would narrate as "scanned, no verdict yet"
+    // under the tool description's 3-state contract, which is false for a
+    // skill that was never scanned at all.
+    it('(SMI-5562) includes description and omits security (never scanned) on the local-DB fallback path', async () => {
       const result = await executeRecommend(
-        {
-          project_context: 'testing',
-          limit: 3,
-        },
+        { project_context: 'React frontend with testing', limit: 5 },
         context
       )
-      const formatted = formatRecommendations(result)
 
-      expect(formatted).toContain('Skill Recommendations')
-    })
+      expect(result.recommendations.length).toBeGreaterThan(0)
+      const rec = result.recommendations[0]
 
-    it('should show helpful message when no results', async () => {
-      const emptyResult = {
-        recommendations: [],
-        candidates_considered: 0,
-        overlap_filtered: 0,
-        role_filtered: 0,
-        context: {
-          installed_count: 0,
-          has_project_context: false,
-          using_semantic_matching: true,
-          auto_detected: false,
-        },
-        timing: { totalMs: 10 },
-      }
-      const formatted = formatRecommendations(emptyResult)
-
-      expect(formatted).toContain('No recommendations found')
-      expect(formatted).toContain('Suggestions:')
-    })
-
-    // SMI-5556: formatter prefers response.suggestion over re-deriving guidance.
-    it('should surface response.suggestion when present instead of the hardcoded list', async () => {
-      const emptyResult = {
-        recommendations: [],
-        candidates_considered: 3,
-        overlap_filtered: 0,
-        role_filtered: 0,
-        suggestion: 'Custom empty-result guidance from the tool.',
-        context: {
-          installed_count: 0,
-          has_project_context: false,
-          using_semantic_matching: true,
-          auto_detected: false,
-        },
-        timing: { totalMs: 10 },
-      }
-      const formatted = formatRecommendations(emptyResult)
-
-      expect(formatted).toContain('Custom empty-result guidance from the tool.')
-      expect(formatted).not.toContain('Suggestions:')
+      expect(rec.description).toBeTruthy()
+      expect(rec.security).toBeUndefined()
     })
   })
 })
+
+// Note: `formatRecommendations` tests live in recommend.format.test.ts
+// (split out to stay under the 500-line file-length gate).
 
 /**
  * SMI-1837: Tests for parallel local skill search integration
@@ -269,6 +235,41 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
       const skillIds = result.recommendations.map((r: any) => r.skill_id)
       const uniqueIds = new Set(skillIds)
       expect(skillIds.length).toBe(uniqueIds.size)
+    })
+
+    // SMI-5562: local (disk-scanned) skills must carry description but leave
+    // `security` unset entirely — `undefined`, distinct from a `{ passed: null }`
+    // placeholder, since they are never registry-scanned. Overrides the shared
+    // mock's `search` to return all fixtures unconditionally (its default
+    // whole-string substring match rarely matches a multi-word query), so this
+    // test deterministically surfaces a local/ skill regardless of query wording.
+    it('(SMI-5562) local skill recommendations include description and leave security unset', async () => {
+      vi.spyOn(LocalSkillSearchModule, 'getLocalIndexer').mockReturnValue({
+        index: vi.fn().mockResolvedValue(mockLocalSkills),
+        indexSync: vi.fn().mockReturnValue(mockLocalSkills),
+        search: vi.fn().mockReturnValue(mockLocalSkills),
+        clearCache: vi.fn(),
+        getSkillsDir: vi.fn().mockReturnValue('/home/user/.claude/skills'),
+        calculateQualityScore: vi.fn().mockReturnValue(75),
+        indexSkillDir: vi.fn(),
+      } as unknown as ReturnType<typeof LocalSkillSearchModule.getLocalIndexer>)
+
+      // installed_skills passed explicitly (non-empty) so autoDetected=false and
+      // getInstalledSkills() — which reads the real host ~/.claude/skills/ — is
+      // never called (closing the host-coupling vector, matching the dedup test above).
+      const result = await executeRecommend(
+        {
+          project_context: 'react testing patterns',
+          installed_skills: ['placeholder/none'],
+          limit: 10,
+        },
+        branchContext
+      )
+
+      const localRec = result.recommendations.find((r) => r.skill_id.startsWith('local/'))
+      expect(localRec).toBeDefined()
+      expect(localRec?.description).toBeTruthy()
+      expect(localRec?.security).toBeUndefined()
     })
 
     it('should complete within performance target (<500ms)', async () => {

@@ -12,7 +12,6 @@ import { SkillMatcher, OverlapDetector, trackEvent } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import { getInstalledSkills } from '../utils/installed-skills.js'
-import { mapTrustTierFromDb } from '../utils/validation.js'
 
 // Import types
 import {
@@ -25,10 +24,12 @@ import {
 
 // Import helpers
 import {
-  inferRolesFromTags,
   loadSkillsFromDatabase,
   isSkillCollection,
   buildEmptyRecommendationSuggestion,
+  buildLocalSkillRecommendation,
+  buildApiRecommendation,
+  buildDbFallbackRecommendation,
 } from './recommend.helpers.js'
 
 // SMI-2741: Formatting and deduplication extracted to companion file
@@ -36,7 +37,6 @@ import { mergeAndDeduplicateRecommendations } from './recommend.format.js'
 
 // SMI-1837: Import local skill search for parallel querying
 import { getLocalIndexer } from './LocalSkillSearch.js'
-import type { LocalSkill } from '../indexer/LocalIndexer.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
 export {
@@ -49,27 +49,6 @@ export {
 
 // Re-export formatting utilities (SMI-2741)
 export { formatRecommendations, mergeAndDeduplicateRecommendations } from './recommend.format.js'
-
-/**
- * SMI-1837: Convert a LocalSkill to SkillRecommendation format
- * @param skill - The local skill to convert
- * @param matchReason - Reason for the recommendation
- * @returns SkillRecommendation object
- */
-function localSkillToRecommendation(skill: LocalSkill, matchReason: string): SkillRecommendation {
-  const roles = inferRolesFromTags(skill.tags)
-  return {
-    skill_id: skill.id,
-    name: skill.name,
-    reason: matchReason,
-    similarity_score: 0.7, // Local skills get a default similarity score
-    trust_tier: 'local',
-    quality_score: skill.qualityScore,
-    roles,
-    // SMI-5178 (C2): local skills are always installable (they live on disk).
-    installable: true,
-  }
-}
 
 /**
  * SMI-1837: Search local skills for recommendations
@@ -96,7 +75,7 @@ async function searchLocalSkillsForRecommend(
     return matchingSkills
       .slice(0, limit)
       .map((skill) =>
-        localSkillToRecommendation(
+        buildLocalSkillRecommendation(
           skill,
           `Local skill matching: ${query.split(' ').slice(0, 3).join(', ')}`
         )
@@ -163,20 +142,9 @@ async function executeRecommendImpl(
       // Extract API results (may have failed)
       let apiRecommendations: SkillRecommendation[] = []
       if (apiResultSettled.status === 'fulfilled') {
-        apiRecommendations = apiResultSettled.value.data.map((skill) => {
-          const skillRoles = inferRolesFromTags(skill.tags || [])
-          return {
-            skill_id: skill.id,
-            name: skill.name,
-            reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
-            similarity_score: 0.8, // API doesn't return similarity score, use default
-            trust_tier: mapTrustTierFromDb(skill.trust_tier),
-            quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
-            roles: skillRoles,
-            // SMI-5178 (C2): thread installable from the API result (repo_url present = installable).
-            installable: skill.installable ?? skill.repo_url != null,
-          }
-        })
+        apiRecommendations = apiResultSettled.value.data.map((skill) =>
+          buildApiRecommendation(skill, stack)
+        )
       } else {
         console.warn(
           '[skillsmith] API recommend failed:',
@@ -388,25 +356,9 @@ async function executeRecommendImpl(
 
   // Transform database results to response format
   // SMI-1631: Include roles and apply +30 score boost for role matches
-  const dbRecommendations: SkillRecommendation[] = matchResults.map((result) => {
-    const skill = result.skill as SkillData
-    const hasRoleMatch = role && skill.roles.includes(role)
-    const boostedScore = hasRoleMatch
-      ? Math.min(1, (skill.qualityScore ?? 0.5) + 0.3)
-      : (skill.qualityScore ?? 0.5)
-
-    return {
-      skill_id: skill.id,
-      name: skill.name,
-      reason: hasRoleMatch ? `${result.matchReason} (role: ${role})` : result.matchReason,
-      similarity_score: result.similarityScore,
-      trust_tier: skill.trustTier,
-      quality_score: Math.round(boostedScore * 100),
-      roles: skill.roles,
-      // SMI-5178 (C2): thread installable from SkillData (set by transformSkillToMatchData).
-      installable: skill.installable !== false ? true : false,
-    }
-  })
+  const dbRecommendations: SkillRecommendation[] = matchResults.map((result) =>
+    buildDbFallbackRecommendation(result, role)
+  )
 
   // SMI-1837: Merge database and local results
   let recommendations = mergeAndDeduplicateRecommendations(
