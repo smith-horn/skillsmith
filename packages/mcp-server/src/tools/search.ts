@@ -32,6 +32,7 @@ import {
   filterInstallable,
   mapLocalSkillToSearchResult,
   resolveDefaultCompatibility,
+  buildEmptySearchSuggestion,
 } from './search.helpers.js'
 export { formatSearchResults } from './search.formatter.js'
 
@@ -41,13 +42,14 @@ export { formatSearchResults } from './search.formatter.js'
 export const searchToolSchema = {
   name: 'search',
   description:
-    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM).",
+    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM). Matching is keyword-based, not semantic — use a short single-topic query; on empty results, check the response suggestion field for what to try next.",
   inputSchema: {
     type: 'object' as const,
     properties: {
       query: {
         type: 'string',
-        description: 'Search query for finding skills',
+        description:
+          "Search query — matched literally/lexically (not semantically); use a short single-topic term (e.g. 'testing') rather than a multi-concept phrase for best results",
       },
       category: {
         type: 'string',
@@ -341,6 +343,10 @@ async function executeSearchImpl(
         filters,
         compatibilityHidden,
         discoveryOnlyHidden,
+        // SMI-5556: guidance for the calling agent when results are empty.
+        suggestion: mergedResults.length
+          ? undefined
+          : buildEmptySearchSuggestion({ discoveryOnlyHidden, compatibilityHidden }),
         timing: {
           searchMs: Math.round(searchEnd - searchStart),
           totalMs: Math.round(endTime - startTime),
@@ -443,6 +449,10 @@ async function executeSearchImpl(
     filters,
     compatibilityHidden,
     discoveryOnlyHidden,
+    // SMI-5556: guidance for the calling agent when results are empty.
+    suggestion: mergedResults.length
+      ? undefined
+      : buildEmptySearchSuggestion({ discoveryOnlyHidden, compatibilityHidden }),
     timing: {
       searchMs: Math.round(searchEnd - searchStart),
       totalMs: Math.round(endTime - startTime),

@@ -10,6 +10,7 @@ import {
   inferRolesFromTags,
   isSkillCollection,
   COLLECTION_PATTERNS,
+  buildEmptyRecommendationSuggestion,
 } from '../../src/tools/recommend.helpers.js'
 
 describe('recommend.helpers', () => {
@@ -144,6 +145,60 @@ describe('recommend.helpers', () => {
       expect(COLLECTION_PATTERNS).toContain('-skills')
       expect(COLLECTION_PATTERNS).toContain('-collection')
       expect(COLLECTION_PATTERNS).toContain('-pack')
+    })
+  })
+
+  describe('buildEmptyRecommendationSuggestion (SMI-5556)', () => {
+    it('always clarifies candidates_considered is not a registry/backend fault', () => {
+      const out = buildEmptyRecommendationSuggestion({
+        installedCount: 3,
+        hasProjectContext: true,
+      })
+      expect(out).toContain('does not indicate a registry/backend problem')
+      expect(out).toContain('search tool')
+    })
+
+    it('suggests passing installed_skills only when installedCount is 0', () => {
+      const withZero = buildEmptyRecommendationSuggestion({
+        installedCount: 0,
+        hasProjectContext: true,
+      })
+      expect(withZero).toContain('Try passing installed_skills explicitly')
+
+      const withSome = buildEmptyRecommendationSuggestion({
+        installedCount: 2,
+        hasProjectContext: true,
+      })
+      expect(withSome).not.toContain('Try passing installed_skills explicitly')
+    })
+
+    it('suggests providing project_context only when hasProjectContext is false', () => {
+      const without = buildEmptyRecommendationSuggestion({
+        installedCount: 1,
+        hasProjectContext: false,
+      })
+      expect(without).toContain('Provide project_context for more relevant results')
+
+      const withContext = buildEmptyRecommendationSuggestion({
+        installedCount: 1,
+        hasProjectContext: true,
+      })
+      expect(withContext).not.toContain('Provide project_context for more relevant results')
+    })
+
+    it('suggests removing the role filter only when one is set', () => {
+      const withRole = buildEmptyRecommendationSuggestion({
+        installedCount: 1,
+        hasProjectContext: true,
+        roleFilter: 'testing',
+      })
+      expect(withRole).toContain('Try removing the role filter (currently: testing)')
+
+      const withoutRole = buildEmptyRecommendationSuggestion({
+        installedCount: 1,
+        hasProjectContext: true,
+      })
+      expect(withoutRole).not.toContain('role filter')
     })
   })
 })

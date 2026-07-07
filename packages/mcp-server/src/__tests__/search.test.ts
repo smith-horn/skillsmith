@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest'
 import { executeSearch, formatSearchResults } from '../tools/search.js'
-import { SkillsmithError, type SkillSearchResult } from '@skillsmith/core'
+import { SkillsmithError } from '@skillsmith/core'
 import * as CoreModule from '@skillsmith/core'
 import {
   createSeededTestContext,
@@ -109,6 +109,23 @@ describe('Search Tool', () => {
         SkillsmithError
       )
     })
+
+    // SMI-5556: empty-result guidance so a calling agent doesn't misread a
+    // multi-concept-query miss as a registry/backend fault.
+    it('should include a suggestion when zero results are returned', async () => {
+      const result = await executeSearch({ query: 'xyznonexistent123' }, context)
+
+      expect(result.results.length).toBe(0)
+      expect(result.suggestion).toBeDefined()
+      expect(result.suggestion).toContain('single-topic query')
+    })
+
+    it('should NOT include a suggestion when results are non-empty', async () => {
+      const result = await executeSearch({ query: 'commit' }, context)
+
+      expect(result.results.length).toBeGreaterThan(0)
+      expect(result.suggestion).toBeUndefined()
+    })
   })
 
   describe('formatSearchResults', () => {
@@ -125,7 +142,25 @@ describe('Search Tool', () => {
       const formatted = formatSearchResults(result)
 
       expect(formatted).toContain('No skills found')
-      expect(formatted).toContain('Suggestions:')
+      // SMI-5556: formatter now surfaces response.suggestion instead of the
+      // old static "Suggestions:" bullet list.
+      expect(formatted).toContain('single-topic query')
+    })
+
+    // SMI-5556: formatter prefers response.suggestion over re-deriving guidance.
+    it('should surface response.suggestion when present instead of the hardcoded list', () => {
+      const emptyResult = {
+        results: [],
+        total: 0,
+        query: 'test',
+        filters: {},
+        suggestion: 'Custom empty-result guidance from the tool.',
+        timing: { searchMs: 1, totalMs: 2 },
+      }
+      const formatted = formatSearchResults(emptyResult)
+
+      expect(formatted).toContain('Custom empty-result guidance from the tool.')
+      expect(formatted).not.toContain('Suggestions:')
     })
   })
 
@@ -385,113 +420,10 @@ describe('Search Tool branch coverage', () => {
   })
 })
 
-/**
- * SMI-2734: Tests for installHint field in formatSearchResults
- * Verifies registry skills surface the owner/name install ID and local skills do not.
- */
-describe('SMI-2734: formatSearchResults installHint', () => {
-  const baseSkill: SkillSearchResult = {
-    id: 'a129e127-a82c-47e5-8bc5-09d7ba2e8734',
-    name: 'performance',
-    description: 'Web performance auditing skill',
-    author: 'addyosmani',
-    category: 'development',
-    trustTier: 'verified',
-    score: 84,
-    source: 'registry',
-  }
-
-  const makeResponse = (results: SkillSearchResult[]) => ({
-    results,
-    total: results.length,
-    query: 'performance',
-    filters: {},
-    timing: { searchMs: 10, totalMs: 12 },
-  })
-
-  it('should display Install line for a registry skill with installHint set', () => {
-    const skill: SkillSearchResult = { ...baseSkill, installHint: 'addyosmani/performance' }
-    const formatted = formatSearchResults(makeResponse([skill]))
-
-    expect(formatted).toContain('Install: addyosmani/performance')
-  })
-
-  it('should not display Install line when installHint is absent', () => {
-    const skill: SkillSearchResult = { ...baseSkill }
-    // installHint intentionally not set (local skill or unknown author)
-    const formatted = formatSearchResults(makeResponse([skill]))
-
-    expect(formatted).not.toContain('Install:')
-  })
-
-  it('should display Install line only for skills that have installHint in a mixed result set', () => {
-    const registrySkill: SkillSearchResult = {
-      ...baseSkill,
-      id: 'b1',
-      name: 'commit',
-      author: 'anthropic',
-      installHint: 'anthropic/commit',
-      source: 'registry',
-    }
-    const localSkill: SkillSearchResult = {
-      ...baseSkill,
-      id: 'b2',
-      name: 'my-local-skill',
-      author: 'local-user',
-      source: 'local',
-      // installHint intentionally absent for local skill
-    }
-    const formatted = formatSearchResults(makeResponse([registrySkill, localSkill]))
-
-    expect(formatted).toContain('Install: anthropic/commit')
-    // The local skill section should not contain an Install line
-    // Split on blank lines between skill entries to isolate each block
-    const sections = formatted.split('\n\n')
-    const localSection = sections.find((s) => s.includes('my-local-skill'))
-    expect(localSection).toBeDefined()
-    expect(localSection).not.toContain('Install:')
-  })
-})
-
-/**
- * SMI-2759: Tests for repository field in formatSearchResults
- */
-describe('SMI-2759: formatSearchResults repository', () => {
-  const baseSkill: SkillSearchResult = {
-    id: 'c1-repo-test',
-    name: 'repo-skill',
-    description: 'A skill with a source repository',
-    author: 'testauthor',
-    category: 'development',
-    trustTier: 'community',
-    score: 75,
-    source: 'registry',
-  }
-
-  const makeResponse = (results: SkillSearchResult[]) => ({
-    results,
-    total: results.length,
-    query: 'repo',
-    filters: {},
-    timing: { searchMs: 5, totalMs: 7 },
-  })
-
-  it('should display Repository line when repository is set', () => {
-    const skill: SkillSearchResult = {
-      ...baseSkill,
-      repository: 'https://github.com/testauthor/repo-skill',
-    }
-    const formatted = formatSearchResults(makeResponse([skill]))
-    expect(formatted).toContain('Repository: https://github.com/testauthor/repo-skill')
-  })
-
-  it('should not display Repository line when repository is absent', () => {
-    const skill: SkillSearchResult = { ...baseSkill }
-    const formatted = formatSearchResults(makeResponse([skill]))
-    expect(formatted).not.toContain('Repository:')
-  })
-})
-
+// SMI-2734/SMI-2759: formatSearchResults installHint + repository field tests
+// moved to search.formatter.test.ts (SMI-5556) to keep this file under the
+// 500-line gate after adding empty-result suggestion coverage.
+//
 // SMI-2760: compatible_with filter tests extracted to
 // search-compatible-with.test.ts during SMI-4694 to keep this file under
 // the 500-line gate after disposeTestContext wiring.
