@@ -7,10 +7,10 @@
  */
 
 /**
- * Available license tiers
- * - community: Free tier (1,000 API calls/month)
- * - individual: Solo developers ($9.99/mo, 10,000 API calls/month)
- * - team: Teams ($25/user/mo, 100,000 API calls/month)
+ * Available license tiers (SMI-5558)
+ * - community: Free tier (100 API calls/month)
+ * - individual: Solo developers ($9.99/mo, 1,000 API calls/month)
+ * - team: Teams ($25/user/mo, 10,000 API calls/month)
  * - enterprise: Full enterprise ($55/user/mo, unlimited)
  */
 export type LicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
@@ -124,8 +124,8 @@ export const TIER_FEATURES: Record<LicenseTier, string[]> = {
  * Actual quota enforcement happens in the MCP server via QuotaEnforcementService.
  */
 export const TIER_QUOTAS: Record<LicenseTier, number> = {
-  community: 1_000,
-  individual: 10_000,
-  team: 100_000,
+  community: 100,
+  individual: 1_000,
+  team: 10_000,
   enterprise: -1, // Unlimited
 }
