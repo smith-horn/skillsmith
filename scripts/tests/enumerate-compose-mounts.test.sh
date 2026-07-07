@@ -109,10 +109,13 @@ make_workspace_symlink "$TMPROOT" "skillsmith-vscode" "vscode-extension"
 
 OUT=$(enumerate_compose_node_modules_mounts "$TMPROOT")
 
-assert_eq "test1: emits 3 per-pkg lines only (no workspace-sibling)" 3 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
+assert_eq "test1: emits 3 per-pkg lines * 3 (:ro + .vite + .vite-temp overlay) = 9" 9 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
 assert_contains "test1: per-pkg core is read-only" "      - $TMPROOT/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT"
 assert_contains "test1: per-pkg mcp-server is read-only" "      - $TMPROOT/packages/mcp-server/node_modules:/app/packages/mcp-server/node_modules:ro" "$OUT"
 assert_contains "test1: per-pkg vscode-extension is read-only" "      - $TMPROOT/packages/vscode-extension/node_modules:/app/packages/vscode-extension/node_modules:ro" "$OUT"
+assert_contains "test1: core .vite-temp overlay (writable, not :ro)" "      - $TMPROOT/packages/core/node_modules/.vite-temp:/app/packages/core/node_modules/.vite-temp" "$OUT"
+assert_not_contains "test1: core .vite-temp overlay is NOT read-only" "$TMPROOT/packages/core/node_modules/.vite-temp:/app/packages/core/node_modules/.vite-temp:ro" "$OUT"
+assert_contains "test1: core .vite overlay (writable, not :ro)" "      - $TMPROOT/packages/core/node_modules/.vite:/app/packages/core/node_modules/.vite" "$OUT"
 assert_not_contains "test1: NO workspace-sibling @skillsmith/core mount" ":/app/node_modules/@skillsmith/core" "$OUT"
 assert_not_contains "test1: NO workspace-sibling @skillsmith/mcp-server mount" ":/app/node_modules/@skillsmith/mcp-server" "$OUT"
 assert_not_contains "test1: NO workspace-sibling skillsmith-vscode mount" ":/app/node_modules/skillsmith-vscode" "$OUT"
@@ -123,7 +126,7 @@ assert_not_contains "test1: NO workspace-sibling skillsmith-vscode mount" ":/app
 mkdir -p "$TMPROOT/packages/skillsmith-cli"  # NO node_modules, NO package.json
 
 OUT2=$(enumerate_compose_node_modules_mounts "$TMPROOT")
-assert_eq "test2: still 3 lines (skillsmith-cli has no node_modules)" 3 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
+assert_eq "test2: still 9 lines (skillsmith-cli has no node_modules)" 9 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
 assert_not_contains "test2: skillsmith-cli per-pkg not emitted" "skillsmith-cli/node_modules:/app/packages/skillsmith-cli" "$OUT2"
 
 # -----------------------------------------------------------------------
@@ -153,7 +156,7 @@ make_repo "$NOSYMROOT" core
 make_pkg_json "$NOSYMROOT" core "@skillsmith/core"
 make_workspace_symlink "$NOSYMROOT" "@skillsmith/core" "core"
 OUT7=$(enumerate_compose_node_modules_mounts "$NOSYMROOT")
-assert_eq "test7: only per-pkg emitted (1 line), no workspace-sibling" 1 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
+assert_eq "test7: only per-pkg + vite-cache overlay emitted (3 lines), no workspace-sibling" 3 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
 assert_not_contains "test7: no workspace mount even when symlink present" "/app/node_modules/@skillsmith/core" "$OUT7"
 rm -rf "$NOSYMROOT"
 

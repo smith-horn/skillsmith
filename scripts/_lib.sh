@@ -477,6 +477,26 @@ enumerate_compose_node_modules_mounts() {
         main_target="$repo_root/packages/$pkg_name/node_modules"
         [[ -d "$main_target" ]] || continue
         printf '      - %s:/app/packages/%s/node_modules:ro\n' "$main_target" "$pkg_name"
+
+        # SMI-5560 follow-up: vite/vitest write their own dependency
+        # pre-bundle cache (.vite/) and config-bundling temp files
+        # (.vite-temp/) directly inside node_modules — confirmed via a live
+        # repro: `cd packages/<pkg> && vitest run` (the exact invocation
+        # scripts/pre-push-coverage-check.sh uses per-package) failed with
+        # EROFS writing node_modules/.vite-temp/vitest.config.ts.timestamp-*.mjs
+        # once node_modules went read-only above. Both dirs are gitignored
+        # (covered by the blanket `node_modules` rule) — layering a writable
+        # overlay here is the same nested-subdirectory pattern already proven
+        # safe against the virtiofs host_mark propagation regression (a
+        # SUBDIRECTORY mount under this package's own single node_modules
+        # mount, not a second mount of an overlapping-but-distinct host path
+        # — the double-mount shape that caused that regression no longer
+        # exists at all now that the workspace-sibling mount is gone).
+        local vite_cache_dir
+        for vite_cache_dir in .vite .vite-temp; do
+            printf '      - %s/%s:/app/packages/%s/node_modules/%s\n' \
+                "$main_target" "$vite_cache_dir" "$pkg_name" "$vite_cache_dir"
+        done
     done
 }
 
