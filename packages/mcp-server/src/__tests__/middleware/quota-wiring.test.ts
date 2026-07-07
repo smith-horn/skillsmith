@@ -46,7 +46,7 @@ describe('Quota middleware: checkAndTrack + buildExceededResponse', () => {
     // Use a storage that immediately reports quota exceeded
     const exhaustedStorage = {
       getUsage: vi.fn().mockResolvedValue({
-        used: 1000,
+        used: 100,
         periodStart: new Date(),
         periodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       }),

@@ -105,9 +105,9 @@ Note: Shell `export` does NOT work for MCP servers. They run as subprocesses and
 
 | Tier | Price | API Calls/Month | Rate Limit |
 |------|-------|-----------------|------------|
-| Community | Free | 1,000 | 30/min |
-| Individual | $9.99/month | 10,000 | 60/min |
-| Team | $25/user/month | 100,000 | 120/min |
+| Community | Free | 100 | 30/min |
+| Individual | $9.99/month | 1,000 | 60/min |
+| Team | $25/user/month | 10,000 | 120/min |
 | Enterprise | $55/user/month | Unlimited | 300/min |
 
 Annual billing saves 17% (pay for 10 months, get 12).
@@ -147,7 +147,7 @@ Q: What are agent skills?
 A: Skills are reusable prompts and workflows installed to ~/.claude/skills/ that give AI assistants specialized capabilities like testing, deployment, code review, and documentation generation.
 
 Q: Is Skillsmith free?
-A: Yes. The Community tier is free forever with 1,000 API calls per month. Paid plans start at $9.99/month for developers who need more.
+A: Yes. The Community tier is free forever with 100 API calls per month. Paid plans start at $9.99/month for developers who need more.
 
 Q: What AI tools does it work with?
 A: Skillsmith works with any MCP-compatible client including Claude Code, Claude Desktop, Cursor, Windsurf, and other tools that support the Model Context Protocol.

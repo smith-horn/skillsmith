@@ -124,7 +124,7 @@ const supabaseConfig = getSupabaseConfig()
 
             <div class="stat-card">
               <div class="stat-label">API Usage</div>
-              <div class="stat-value" id="api-usage">0 / 1,000</div>
+              <div class="stat-value" id="api-usage">0 / 100</div>
               <span class="stat-subtext">total API calls</span>
             </div>
 
@@ -149,7 +149,7 @@ const supabaseConfig = getSupabaseConfig()
                   <span class="tier-price" id="tier-price">Free</span>
                 </div>
                 <div class="subscription-details" id="subscription-details">
-                  <p>Free forever with 1,000 API calls per month</p>
+                  <p>Free forever with 100 API calls per month</p>
                 </div>
               </div>
               <div class="subscription-actions" id="subscription-actions">
@@ -873,12 +873,12 @@ const supabaseConfig = getSupabaseConfig()
       const totalUsage = Number(usageSummary?.[0]?.total_requests ?? 0)
       const periodEnd = usageSummary?.[0]?.period_end || ''
       const quotaLimits: Record<string, number> = {
-        community: 1000,
-        individual: 10000,
-        team: 100000,
+        community: 100,
+        individual: 1000,
+        team: 10000,
         enterprise: -1, // unlimited
       }
-      const quota = quotaLimits[tier] || 1000
+      const quota = quotaLimits[tier] || 100
       const apiUsageEl = document.getElementById('api-usage')
       if (apiUsageEl) {
         if (quota === -1) {
@@ -889,15 +889,32 @@ const supabaseConfig = getSupabaseConfig()
       }
 
       // SMI-4463: render quota banner above the page heading at >=80% usage.
+      // SMI-5558: quota-cut grandfathering (plan-review C2) — a user who was
+      // well within the OLD (pre-cut) quota should not see the alarming
+      // "calls will fail" error banner the instant this ships, purely
+      // because their already-accrued usage now reads as over the NEW,
+      // smaller quota. Grandfathering is naturally scoped to the CURRENT
+      // billing period only: once it rolls over, `totalUsage` resets to 0
+      // and is evaluated fresh against the new quota with no old-quota
+      // comparison involved.
+      const oldQuotaLimits: Record<string, number> = {
+        community: 1000,
+        individual: 10000,
+        team: 100000,
+        enterprise: -1,
+      }
+      const oldQuota = oldQuotaLimits[tier] || 1000
       const bannerEl = document.getElementById('quota-banner-container')
       if (bannerEl && quota > 0) {
         const percentUsed = totalUsage / quota
+        const percentUsedOld = oldQuota > 0 ? totalUsage / oldQuota : 0
+        const isGrandfathered = percentUsed >= 1.0 && percentUsedOld < 1.0
         const resetsHuman = periodEnd
           ? new Date(periodEnd).toUTCString().replace('GMT', 'UTC')
           : 'next period'
         const tierName = tier.charAt(0).toUpperCase() + tier.slice(1)
         const isCommunity = tier === 'community'
-        if (percentUsed >= 1.0) {
+        if (percentUsed >= 1.0 && !isGrandfathered) {
           const ctaHtml = isCommunity
             ? `<a href="/pricing" class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">Upgrade</a>`
             : `<a href="mailto:support@skillsmith.app" class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">Contact support</a>`
@@ -912,6 +929,21 @@ const supabaseConfig = getSupabaseConfig()
                   <p class="font-medium text-white">You've used 100% of your <strong>${tierName}</strong> tier monthly quota.</p>
                   <p class="mt-1 text-dark-300">${bodyHtml}</p>
                   <p class="mt-3">${ctaHtml}</p>
+                </div>
+              </div>
+            </div>`
+          bannerEl.style.display = 'block'
+        } else if (isGrandfathered) {
+          const upgradeLink = isCommunity
+            ? ` <a href="/pricing" class="text-yellow-300 underline hover:text-yellow-200">View plans</a>`
+            : ''
+          bannerEl.innerHTML = `
+            <div class="quota-banner quota-banner-warn mb-6 rounded-xl border border-yellow-500/50 bg-yellow-500/10 p-4 text-sm" role="status" data-resets-at="${periodEnd}">
+              <div class="flex items-start gap-3">
+                <svg class="h-6 w-6 flex-shrink-0 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                <div class="flex-1">
+                  <p class="font-medium text-white">Your <strong>${tierName}</strong> tier's monthly quota has changed.</p>
+                  <p class="mt-1 text-dark-300">This billing cycle's usage is grandfathered at your prior limit and won't be interrupted. The new, lower quota applies starting ${resetsHuman}.${upgradeLink}</p>
                 </div>
               </div>
             </div>`
@@ -975,7 +1007,7 @@ const supabaseConfig = getSupabaseConfig()
       } else {
         if (tierPriceEl) tierPriceEl.textContent = 'Free'
         if (subscriptionDetails) {
-          subscriptionDetails.innerHTML = '<p>Free forever with 1,000 API calls per month</p>'
+          subscriptionDetails.innerHTML = '<p>Free forever with 100 API calls per month</p>'
         }
       }
 

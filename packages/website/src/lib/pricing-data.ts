@@ -81,8 +81,8 @@ export const pricingTiers: PricingTier[] = [
     monthlyPrice: 0,
     // SMI-4839: free dev surface of the Agent Skills SDK
     description: 'The free dev surface for the Agent Skills SDK and registry.',
-    apiCalls: 1000,
-    apiCallsFormatted: '1,000 API calls/month',
+    apiCalls: 100,
+    apiCallsFormatted: '100 API calls/month',
     features: [
       { name: 'Skill search and discovery' },
       { name: 'Skill installation' },
@@ -100,8 +100,8 @@ export const pricingTiers: PricingTier[] = [
     period: '/month',
     // SMI-4839: solo builders working across multiple agents/projects
     description: 'For solo builders authoring and using skills across multiple projects.',
-    apiCalls: 10000,
-    apiCallsFormatted: '10,000 API calls/month',
+    apiCalls: 1000,
+    apiCallsFormatted: '1,000 API calls/month',
     features: [
       { name: 'Everything in Community' },
       { name: 'Basic analytics dashboard' },
@@ -119,11 +119,11 @@ export const pricingTiers: PricingTier[] = [
     period: '/user/month',
     // SMI-4839: SDK-for-teams positioning — author, version, govern, retire
     description: 'The Agent Skills SDK for teams — author, version, govern, and retire together.',
-    apiCalls: 100000,
-    apiCallsFormatted: '100,000 API calls/month',
+    apiCalls: 10000,
+    apiCallsFormatted: '10,000 API calls/month',
     features: [
       { name: 'Everything in Individual' },
-      { name: '100,000 API calls/month' },
+      { name: '10,000 API calls/month' },
       { name: 'Priority support' },
     ],
     cta: 'Start Trial',

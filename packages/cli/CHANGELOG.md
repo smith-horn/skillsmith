@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: reduced displayed tier quota constants 10x (SMI-5558) — Community was 1,000/mo now 100/mo, Individual was 10,000/mo now 1,000/mo, Team was 100,000/mo now 10,000/mo. Display-only; actual enforcement is in `@skillsmith/mcp-server`.
+
 ## v0.8.0
 
 - **Feature**: per-user inventory purge, hard-delete (SMI-5510, R0 Wave 1a) (#1684)

@@ -75,15 +75,15 @@ describe('createQuotaMiddleware - getStatus()', () => {
     const status = await quota.getStatus(licenseInfo)
 
     expect(status.allowed).toBe(true)
-    expect(status.limit).toBe(1_000)
-    expect(status.remaining).toBe(1_000)
+    expect(status.limit).toBe(100)
+    expect(status.remaining).toBe(100)
     expect(status.percentUsed).toBe(0)
     expect(status.warningLevel).toBe(0)
     expect(status.message).toBeUndefined()
   })
 
-  it('returns 80% warning for community tier at 800/1000 calls', async () => {
-    const storage = makeStorage(800)
+  it('returns 80% warning for community tier at 80/100 calls', async () => {
+    const storage = makeStorage(80)
     const quota = createQuotaMiddleware({ storage })
     const licenseInfo = makeLicenseInfo('community')
 
@@ -95,8 +95,8 @@ describe('createQuotaMiddleware - getStatus()', () => {
     expect(status.message).toContain('80%')
   })
 
-  it('returns 90% warning for community tier at 900/1000 calls', async () => {
-    const storage = makeStorage(900)
+  it('returns 90% warning for community tier at 90/100 calls', async () => {
+    const storage = makeStorage(90)
     const quota = createQuotaMiddleware({ storage })
     const licenseInfo = makeLicenseInfo('community')
 
@@ -109,8 +109,8 @@ describe('createQuotaMiddleware - getStatus()', () => {
     expect(status.upgradeUrl).toBeDefined()
   })
 
-  it('returns not-allowed for community tier at 1000/1000 calls (quota exhausted)', async () => {
-    const storage = makeStorage(1000)
+  it('returns not-allowed for community tier at 100/100 calls (quota exhausted)', async () => {
+    const storage = makeStorage(100)
     const quota = createQuotaMiddleware({ storage })
     const licenseInfo = makeLicenseInfo('community')
 
@@ -127,7 +127,7 @@ describe('createQuotaMiddleware - getStatus()', () => {
 
     const status = await quota.getStatus(null)
 
-    expect(status.limit).toBe(1_000)
+    expect(status.limit).toBe(100)
     expect(status.allowed).toBe(true)
   })
 })
@@ -157,7 +157,7 @@ describe('withQuotaEnforcement()', () => {
   })
 
   it('returns quota-exceeded error response when quota is exceeded', async () => {
-    const exhaustedStorage = makeStorage(1000) // community limit = 1000
+    const exhaustedStorage = makeStorage(100) // community limit = 100
     const quota = createQuotaMiddleware({ storage: exhaustedStorage })
     const license = createLicenseMiddleware()
 
@@ -175,6 +175,27 @@ describe('withQuotaEnforcement()', () => {
     expect(errorResult.isError).toBe(true)
     expect(Array.isArray(errorResult.content)).toBe(true)
     expect(errorResult.content[0].type).toBe('text')
+  })
+
+  it('SMI-5558: SKILLSMITH_ENFORCE_MCP_QUOTA=false lets the call through even over quota', async () => {
+    const previous = process.env.SKILLSMITH_ENFORCE_MCP_QUOTA
+    process.env.SKILLSMITH_ENFORCE_MCP_QUOTA = 'false'
+    try {
+      const exhaustedStorage = makeStorage(100) // community limit = 100
+      const quota = createQuotaMiddleware({ storage: exhaustedStorage })
+      const license = createLicenseMiddleware()
+
+      const innerHandler = vi.fn().mockResolvedValue({ result: 'success' })
+      const wrapped = withQuotaEnforcement(innerHandler, license, quota)
+
+      const result = await wrapped('skill_search', { query: 'commit' })
+
+      expect(innerHandler).toHaveBeenCalledTimes(1)
+      expect(result).toEqual({ result: 'success' })
+    } finally {
+      if (previous === undefined) delete process.env.SKILLSMITH_ENFORCE_MCP_QUOTA
+      else process.env.SKILLSMITH_ENFORCE_MCP_QUOTA = previous
+    }
   })
 })
 
@@ -205,16 +226,16 @@ describe('isUnlimitedTier()', () => {
 // ============================================================================
 
 describe('getQuotaLimit()', () => {
-  it('returns 1000 for community tier', () => {
-    expect(getQuotaLimit('community')).toBe(1_000)
+  it('returns 100 for community tier', () => {
+    expect(getQuotaLimit('community')).toBe(100)
   })
 
-  it('returns 10000 for individual tier', () => {
-    expect(getQuotaLimit('individual')).toBe(10_000)
+  it('returns 1000 for individual tier', () => {
+    expect(getQuotaLimit('individual')).toBe(1_000)
   })
 
-  it('returns 100000 for team tier', () => {
-    expect(getQuotaLimit('team')).toBe(100_000)
+  it('returns 10000 for team tier', () => {
+    expect(getQuotaLimit('team')).toBe(10_000)
   })
 
   it('returns -1 for enterprise tier (unlimited)', () => {
@@ -232,14 +253,14 @@ describe('formatQuotaRemaining()', () => {
   })
 
   it('formats remaining / limit for finite limits', () => {
-    const result = formatQuotaRemaining(750, 1000)
-    expect(result).toContain('750')
-    expect(result).toContain('1,000')
+    const result = formatQuotaRemaining(75, 100)
+    expect(result).toContain('75')
+    expect(result).toContain('100')
   })
 
   it('formats zero remaining correctly', () => {
-    const result = formatQuotaRemaining(0, 1000)
+    const result = formatQuotaRemaining(0, 100)
     expect(result).toContain('0')
-    expect(result).toContain('1,000')
+    expect(result).toContain('100')
   })
 })

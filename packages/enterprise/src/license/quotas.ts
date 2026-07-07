@@ -32,20 +32,25 @@ export interface TierQuotaConfig {
  *
  * These values are enforced by the QuotaEnforcementService and
  * displayed in CLI/MCP responses.
+ *
+ * SMI-5558: reduced 10x (community was 1_000, individual was 10_000, team was
+ * 100_000). Not currently wired into shipped CLI/MCP runtime — kept in
+ * lockstep with the other tier-quota constants on the assumption this is
+ * planned-future wiring for QuotaEnforcementService rather than dead code.
  */
 export const TIER_QUOTAS: Readonly<Record<LicenseTier, TierQuotaConfig>> = {
   community: {
-    apiCallsPerMonth: 1_000,
+    apiCallsPerMonth: 100,
     price: 0,
     description: 'Free tier for evaluation',
   },
   individual: {
-    apiCallsPerMonth: 10_000,
+    apiCallsPerMonth: 1_000,
     price: 9.99,
     description: 'For solo developers',
   },
   team: {
-    apiCallsPerMonth: 100_000,
+    apiCallsPerMonth: 10_000,
     price: 25,
     perUser: true,
     description: 'For development teams',

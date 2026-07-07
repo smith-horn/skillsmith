@@ -85,6 +85,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Reduced Community/Individual/Team monthly API-call quotas 10x** (2026-07-06,
+  SMI-5558): Community was 1,000 requests/month, now 100/month. Individual was
+  10,000 requests/month, now 1,000/month. Team was 100,000 requests/month, now
+  10,000/month. Trial and Enterprise are unchanged, and no prices changed.
+  Enforcement is unaffected in logic — only the limits moved — across the
+  edge function (`quota-enforcer.ts`), MCP-server middleware (which gained a
+  new `SKILLSMITH_ENFORCE_MCP_QUOTA` kill-switch), the enterprise package, and
+  CLI display constants, plus every website page/component that surfaces
+  these figures.
+- **Fixed Trial rate-limit documentation drift** (2026-07-06, SMI-5558): the
+  Trial tier's request-limiter code, comments, and root `README.md` incorrectly
+  documented the limit as 100 requests total; it was and remains 10 requests
+  total, matching the database's real enforced value
+  (`check_trial_usage()`). No behavior change — this corrects stale
+  documentation and a fail-open fallback value to match reality.
 - **Trust tier API wire format — canonical five-tier model** (2026-05-27, SMI-5205):
   The public API response now uses the five-tier model documented at
   `skillsmith.app/docs/trust-tiers`: `official`, `verified`, `curated`,

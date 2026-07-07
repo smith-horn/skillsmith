@@ -186,7 +186,7 @@ Every tool makes tradeoffs. Here are the ones that matter.
 
 **Simplicity vs. workflow.** `npx skills add author/skill` is a one-liner. Skillsmith's recommendation pipeline requires an MCP server connection. The one-liner is faster when you know exactly what you want. The pipeline is better when you're not sure what you need.
 
-**Free vs. supported.** Most registries are free with no stated business model. Skillsmith has transparent pricing tiers -- a free Community tier (1,000 API calls/month) and paid tiers for higher volume. The business model is the product, not your data.
+**Free vs. supported.** Most registries are free with no stated business model. Skillsmith has transparent pricing tiers -- a free Community tier (100 API calls/month) and paid tiers for higher volume. The business model is the product, not your data.
 
 ---
 

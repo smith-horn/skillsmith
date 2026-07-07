@@ -72,30 +72,30 @@ describe('InMemoryQuotaStorage', () => {
 
 describe('getWarningMessage()', () => {
   it('returns undefined for warning level 0 (no warning)', () => {
-    const msg = getWarningMessage(0, 100, 1000, 'community')
+    const msg = getWarningMessage(0, 10, 100, 'community')
 
     expect(msg).toBeUndefined()
   })
 
   it('returns 80% notice string for warning level 80', () => {
-    const msg = getWarningMessage(80, 800, 1000, 'community')
+    const msg = getWarningMessage(80, 80, 100, 'community')
 
     expect(msg).toBeDefined()
     expect(msg).toContain('80%')
-    expect(msg).toContain('200') // 200 remaining
+    expect(msg).toContain('20') // 20 remaining
   })
 
   it('returns 90% warning string for warning level 90', () => {
-    const msg = getWarningMessage(90, 900, 1000, 'community')
+    const msg = getWarningMessage(90, 90, 100, 'community')
 
     expect(msg).toBeDefined()
     expect(msg).toContain('90%')
-    expect(msg).toContain('100') // 100 remaining
+    expect(msg).toContain('10') // 10 remaining
     expect(msg).toContain('upgrading')
   })
 
   it('returns exceeded string for warning level 100', () => {
-    const msg = getWarningMessage(100, 1000, 1000, 'community')
+    const msg = getWarningMessage(100, 100, 100, 'community')
 
     expect(msg).toBeDefined()
     expect(msg).toContain('exceeded')
