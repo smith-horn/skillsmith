@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: reduced local quota-enforcement limits 10x (SMI-5558) — Community was 1,000/mo now 100/mo, Individual was 10,000/mo now 1,000/mo, Team was 100,000/mo now 10,000/mo. Added a `SKILLSMITH_ENFORCE_MCP_QUOTA` kill-switch (defaults to enforcing, matching prior unconditional-block behavior) so hard-blocking can be disabled without a redeploy.
+
 ## v0.7.0
 
 - **Fix**: launcher dep-integrity preflight + zod runtime dep (SMI-5451) (#1664)
