@@ -40,6 +40,9 @@ Commands:
   status    Show status of worktree containers
   generate  Generate docker-compose.override.yml for worktree
   ports     Show port mappings for worktree
+  exec      Run a command in the container matching this worktree/checkout
+            (SMI-5559 — resolves the container name from cwd instead of a
+            hardcoded name, so it never silently targets the wrong container)
 
 Arguments:
   worktree-path   Path to the worktree (default: current directory)
@@ -50,6 +53,8 @@ Examples:
   $(basename "$0") status ../worktrees/jwt-rollout
   $(basename "$0") generate ../worktrees/new-feature
   $(basename "$0") ports
+  $(basename "$0") exec -- npm run build        # like: docker exec <container> npm run build
+  $(basename "$0") exec ../worktrees/jwt-rollout -- npm test  # like: docker exec <container> npm test
 
 Note:
   This script ensures each worktree has unique container names and ports
@@ -92,6 +97,16 @@ get_worktree_name() {
         # Fallback to directory name
         branch_name=$(basename "$worktree_path")
     fi
+
+    # SMI-5559: basename strips any "/"-prefixed path segments (e.g.
+    # fix/smi-5560-infra-hardening -> smi-5560-infra-hardening) — matches
+    # _lib.sh's generate_docker_override_to_stdout exactly, which is what
+    # actually names the running container. Without this, any branch using
+    # this repo's conventional prefixes (fix/, feat/, chore/...) resolved a
+    # DIFFERENT, non-existent container name here than the one
+    # create-worktree.sh actually created — found via a live test of the
+    # new `exec` subcommand.
+    branch_name=$(basename "$branch_name")
 
     # Sanitize for container name
     echo "$branch_name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/--*/-/g' | sed 's/^-//;s/-$//'
@@ -212,6 +227,56 @@ cmd_status() {
 }
 
 #######################################
+# Exec a command in the container matching this worktree/checkout (SMI-5559).
+#
+# Resolves the expected container name from the caller's cwd instead of
+# trusting a hardcoded string — a long-lived main container makes
+# `docker exec skillsmith-dev-1 <cmd>` "succeed" from ANY worktree
+# regardless of whether that worktree's own container is even running.
+#######################################
+cmd_exec() {
+    local worktree_path="$1"
+    shift
+
+    if [[ $# -eq 0 ]]; then
+        error "No command given.
+
+Usage: $(basename "$0") exec [worktree-path] -- <cmd...>"
+    fi
+
+    if ! git -C "$worktree_path" rev-parse --git-dir >/dev/null 2>&1; then
+        error "Not a git checkout: $worktree_path"
+    fi
+
+    local gcd gd container_name resolved_from
+    gcd=$(git -C "$worktree_path" rev-parse --git-common-dir 2>/dev/null)
+    gd=$(git -C "$worktree_path" rev-parse --git-dir 2>/dev/null)
+
+    if [[ -n "$gcd" && "$gcd" == "$gd" ]]; then
+        # Main checkout (git-common-dir == git-dir, i.e. not a linked
+        # worktree) — container name is the hardcoded base-compose name,
+        # never a derived slug.
+        container_name="skillsmith-dev-1"
+        resolved_from="main checkout"
+    else
+        local worktree_name
+        worktree_name=$(get_worktree_name "$worktree_path")
+        container_name="${worktree_name}-dev-1"
+        resolved_from="worktree branch"
+    fi
+
+    if ! docker ps --filter "name=^${container_name}\$" --format '{{.Names}}' | grep -qx "$container_name"; then
+        error "Container '$container_name' is not running for $worktree_path (resolved from $resolved_from).
+
+Start it first:
+  cd $worktree_path && docker compose --profile dev up -d"
+    fi
+
+    success "Running in: $container_name"
+    docker exec "$container_name" "$@"
+}
+
+#######################################
 # Show port mappings
 #######################################
 cmd_ports() {
@@ -237,7 +302,29 @@ main() {
     fi
 
     local command="$1"
-    local worktree_path="${2:-.}"
+    shift
+
+    # `exec` takes a variable-length passthrough command, not a single
+    # optional worktree-path arg like the other subcommands — parse it
+    # separately before falling into the generic path below.
+    if [[ "$command" == "exec" ]]; then
+        local exec_worktree_path="."
+        if [[ "${1:-}" != "--" ]]; then
+            exec_worktree_path="${1:-.}"
+            shift
+        fi
+        if [[ "${1:-}" != "--" ]]; then
+            error "Usage: $(basename "$0") exec [worktree-path] -- <cmd...>"
+        fi
+        shift
+        if [[ ! "$exec_worktree_path" = /* ]]; then
+            exec_worktree_path="$(cd "$exec_worktree_path" 2>/dev/null && pwd)" || error "Invalid path: $exec_worktree_path"
+        fi
+        cmd_exec "$exec_worktree_path" "$@"
+        return
+    fi
+
+    local worktree_path="${1:-.}"
 
     # Convert to absolute path
     if [[ ! "$worktree_path" = /* ]]; then

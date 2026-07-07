@@ -60,11 +60,19 @@ PACKAGES="core mcp-server enterprise cli"
 # --git-dir and --git-common-dir differ; --git-common-dir's parent is the
 # MAIN checkout. Outside a worktree (main repo, or a standalone clone),
 # --show-toplevel already points at the right root.
+#
+# SMI-5564: IS_WORKTREE is captured here (not just DIST_ROOT) so the
+# drift-detected tail below can distinguish "my push is from a worktree, and
+# this drift is main's own unrelated build staleness" (non-blocking warning)
+# from "I'm pushing FROM main itself, so main's dist freshness IS the thing
+# being pushed" (still blocking).
 DIST_ROOT=""
+IS_WORKTREE=0
 if _gcd="$(git rev-parse --git-common-dir 2>/dev/null)" \
     && _gd="$(git rev-parse --git-dir 2>/dev/null)" \
     && [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
     DIST_ROOT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
+    IS_WORKTREE=1
 fi
 if [ -z "$DIST_ROOT" ]; then
     DIST_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
@@ -162,6 +170,35 @@ done
 RED="${RED:-${HOOK_DETECT_RED:-\033[0;31m}}"
 YELLOW="${YELLOW:-${HOOK_DETECT_YELLOW:-\033[1;33m}}"
 NC="${NC:-${HOOK_DETECT_NC:-\033[0m}}"
+
+# SMI-5564: this check always resolves DIST_ROOT to the MAIN checkout (see
+# the header comment — worktrees have no dist/ of their own by design). A
+# worktree pushing an UNRELATED branch has no way to have caused main's own
+# dist to go stale, so a hard block here is a false positive for that case —
+# it's a main-checkout maintenance concern, not a per-branch push-safety one.
+# Pushing directly from the main checkout is the one case where "is main's
+# dist fresh" and "is my push safe" are genuinely the same question, so that
+# case keeps the original blocking behavior unchanged.
+if [ "$IS_WORKTREE" = "1" ]; then
+    printf '\n'
+    printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    printf "${YELLOW}  ⚠ WARNING (non-blocking — push proceeded)${NC}\n"
+    printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    printf '\n'
+    printf '  The MAIN checkout'"'"'s built dist/ for the following package(s) no\n'
+    printf '  longer matches its source. This is unrelated to the branch you just\n'
+    printf '  pushed from this worktree — it is a main-checkout maintenance item,\n'
+    printf '  not something this push caused or something you need to fix now:\n'
+    printf '\n'
+    for pkg in $DRIFTED; do
+        printf '    - packages/%s/dist\n' "$pkg"
+    done
+    printf '\n'
+    printf "  To fix (from the MAIN checkout, not this worktree):\n"
+    printf '    ./scripts/worktree-docker.sh exec %s -- npm run build\n' "$DIST_ROOT"
+    printf '\n'
+    exit 0
+fi
 
 printf '\n'
 printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"

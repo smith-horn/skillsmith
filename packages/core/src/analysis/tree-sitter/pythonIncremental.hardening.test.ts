@@ -21,7 +21,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetRateLimiter } from '../../utils/rate-limit.js'
-import type { WebTreeSitterLoader } from './pythonIncremental.js'
+import type { WebTreeSitterDeps, WebTreeSitterLoader } from './pythonIncremental.js'
 
 // vi.hoisted runs before vi.mock factories; closure-sharing the spy
 // objects avoids the createLogger-spy trap (feedback_logger_spy_pattern).
@@ -267,5 +267,192 @@ describe('SMI-4316 · doInit catch emits one-shot warn', () => {
       String(c[0]).includes('init failed')
     )
     expect(initWarns).toHaveLength(0)
+  })
+})
+
+/**
+ * SMI-5567 · bounded, jittered retry around the WASM boot.
+ *
+ * Under full-suite parallel vitest load, many workers boot their own
+ * web-tree-sitter runtime concurrently and instantiation transiently fails.
+ * `doInit` now retries a bounded number of times with a jittered backoff. These
+ * tests drive that path via the injectable `WebTreeSitterLoader` stub — no real
+ * WASM — asserting (a) recovery within budget, (b) graceful, diagnosable failure
+ * on exhaustion, and (c) that a failed-then-retried attempt neither leaks nor
+ * double-instantiates the WASM parser/language (retry-safety, the crux finding).
+ */
+interface CountingLoaderState {
+  initCalls: number
+  parserConstructed: number
+  parserDeleted: number
+  langLoadCalls: number
+  languagesCreated: number
+}
+
+/**
+ * A loader stub that counts every WASM resource it hands out. `initFailUntil`
+ * makes `init()` throw while `initCalls < initFailUntil` (so it first succeeds
+ * on the Nth call); `langLoadFailUntil` does the same for `Language.load()`
+ * (which throws only after a `Parser` has been constructed, exercising the
+ * partial-parser-cleanup path).
+ */
+function makeCountingLoader(opts: { initFailUntil?: number; langLoadFailUntil?: number }): {
+  loader: WebTreeSitterLoader
+  state: CountingLoaderState
+} {
+  const state: CountingLoaderState = {
+    initCalls: 0,
+    parserConstructed: 0,
+    parserDeleted: 0,
+    langLoadCalls: 0,
+    languagesCreated: 0,
+  }
+  const loader: WebTreeSitterLoader = async () => {
+    const ParserStub = class {
+      constructor() {
+        state.parserConstructed += 1
+      }
+      setLanguage(): void {}
+      parse(): unknown {
+        return {}
+      }
+      delete(): void {
+        state.parserDeleted += 1
+      }
+    }
+    const deps = {
+      init: async () => {
+        state.initCalls += 1
+        if (opts.initFailUntil && state.initCalls < opts.initFailUntil) {
+          throw new Error(`init boom #${state.initCalls}`)
+        }
+      },
+      Parser: ParserStub,
+      Language: {
+        load: async () => {
+          state.langLoadCalls += 1
+          if (opts.langLoadFailUntil && state.langLoadCalls < opts.langLoadFailUntil) {
+            throw new Error(`language load boom #${state.langLoadCalls}`)
+          }
+          state.languagesCreated += 1
+          return {}
+        },
+      },
+      // Constructable, args ignored — PythonQuerySet just `new Query(lang, src)`s.
+      Query: class {
+        constructor(..._args: unknown[]) {
+          void _args
+        }
+      },
+    }
+    return deps as unknown as WebTreeSitterDeps
+  }
+  return { loader, state }
+}
+
+describe('SMI-5567 · doInit bounded retry', () => {
+  beforeEach(() => {
+    loggerSpies.warn.mockReset()
+    resetRateLimiter()
+    existsSyncMock.mockReturnValue(true)
+  })
+
+  it('recovers when init() fails N-1 times then succeeds within the budget', async () => {
+    const { PythonIncrementalParser } = await getSUT()
+    // init fails on calls 1 and 2, succeeds on call 3 (== budget of 3).
+    const { loader, state } = makeCountingLoader({ initFailUntil: 3 })
+    const parser = new PythonIncrementalParser(
+      { wasmPath: '/fake/python.wasm', maxInitAttempts: 3, initBackoffMs: () => 0 },
+      loader
+    )
+
+    await parser.ensureReady()
+
+    expect(state.initCalls).toBe(3)
+    expect(parser.isReady).toBe(true)
+    expect(parser.hasFailedInit).toBe(false)
+    // No warn on a successful (recovered) init.
+    expect(loggerSpies.warn).not.toHaveBeenCalled()
+  })
+
+  it('applies the injected backoff once per inter-attempt gap (jitter wiring)', async () => {
+    const { PythonIncrementalParser } = await getSUT()
+    const { loader } = makeCountingLoader({ initFailUntil: 3 })
+    const backoff = vi.fn((_attempt: number) => 0)
+    const parser = new PythonIncrementalParser(
+      { wasmPath: '/fake/python.wasm', maxInitAttempts: 3, initBackoffMs: backoff },
+      loader
+    )
+
+    await parser.ensureReady()
+
+    // Backoff fires between attempts only: after attempt 1 and attempt 2, never
+    // after the final (3rd) attempt. It is called with the just-failed 1-based
+    // attempt number, so a fixed delay is impossible by construction.
+    expect(backoff.mock.calls.map((c) => c[0])).toEqual([1, 2])
+    expect(parser.isReady).toBe(true)
+  })
+
+  it('does not leak or double-instantiate across a failed-then-retried init', async () => {
+    const { PythonIncrementalParser } = await getSUT()
+    // Language.load fails on calls 1 and 2 (AFTER a Parser was constructed each
+    // time), succeeds on call 3. This is the partial-parser-cleanup path.
+    const { loader, state } = makeCountingLoader({ langLoadFailUntil: 3 })
+    const parser = new PythonIncrementalParser(
+      { wasmPath: '/fake/python.wasm', maxInitAttempts: 3, initBackoffMs: () => 0 },
+      loader
+    )
+
+    await parser.ensureReady()
+
+    expect(parser.isReady).toBe(true)
+    expect(parser.hasFailedInit).toBe(false)
+    // One Parser constructed per attempt (3), but the two from the failed
+    // attempts were freed — exactly one survives.
+    expect(state.parserConstructed).toBe(3)
+    expect(state.parserDeleted).toBe(2)
+    expect(state.parserConstructed - state.parserDeleted).toBe(1)
+    // Exactly one Language survived — no double-instantiation of the grammar.
+    expect(state.languagesCreated).toBe(1)
+  })
+
+  it('fails gracefully and diagnosably when the retry budget is exhausted', async () => {
+    const { PythonIncrementalParser } = await getSUT()
+    // Never succeeds within 3 attempts.
+    const { loader, state } = makeCountingLoader({ initFailUntil: 99 })
+    const parser = new PythonIncrementalParser(
+      { wasmPath: '/fake/python.wasm', maxInitAttempts: 3, initBackoffMs: () => 0 },
+      loader
+    )
+
+    await parser.ensureReady()
+
+    expect(state.initCalls).toBe(3) // bounded — did not loop unbounded
+    expect(parser.isReady).toBe(false)
+    expect(parser.hasFailedInit).toBe(true)
+    // A single diagnostic warn carrying the actual last error + attempt count,
+    // so a recurrence doesn't require re-deriving the SMI-5567 analysis.
+    expect(loggerSpies.warn).toHaveBeenCalledTimes(1)
+    const [message, payload] = loggerSpies.warn.mock.calls[0]
+    expect(message).toContain('init failed')
+    const p = payload as { attempts: number; error: string; stack?: string }
+    expect(p.attempts).toBe(3)
+    expect(p.error).toBe('init boom #3') // the LAST error, not a generic flag
+    expect(typeof p.stack).toBe('string')
+  })
+
+  it('jitteredInitBackoffMs is bounded per attempt and NOT a fixed delay', async () => {
+    const { jitteredInitBackoffMs } = await getSUT()
+    const attempt1 = Array.from({ length: 200 }, () => jitteredInitBackoffMs(1))
+    const attempt2 = Array.from({ length: 200 }, () => jitteredInitBackoffMs(2))
+
+    // Full-jitter bounds: [0, base*2^(n-1)). base = 25 → attempt1 < 25, attempt2 < 50.
+    expect(Math.min(...attempt1)).toBeGreaterThanOrEqual(0)
+    expect(Math.max(...attempt1)).toBeLessThan(25)
+    expect(Math.max(...attempt2)).toBeLessThan(50)
+    // Later attempts back off further (wider ceiling).
+    expect(Math.max(...attempt2)).toBeGreaterThan(Math.max(...attempt1) - 1)
+    // Jitter: the samples must spread, not collapse to a single fixed value.
+    expect(new Set(attempt1.map((v) => Math.round(v))).size).toBeGreaterThan(1)
   })
 })

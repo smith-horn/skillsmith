@@ -406,27 +406,56 @@ repair_worktrees_package_node_modules() {
 }
 
 #######################################
-# Enumerate compose bind mounts for the worktree override (SMI-4689).
+# Enumerate compose bind mounts for the worktree override (SMI-4689 / SMI-5560).
 #
-# Emits two kinds of YAML list-item lines:
+# Emits PER-PACKAGE node_modules bind mounts, one line per packages/<pkg>/
+# whose node_modules dir exists in the main repo:
 #
-#   1. PER-PACKAGE node_modules bind mounts:
-#      <host>/packages/<pkg>/node_modules:/app/packages/<pkg>/node_modules
+#   <host>/packages/<pkg>/node_modules:/app/packages/<pkg>/node_modules:ro
 #
-#      One line per packages/<pkg>/ whose node_modules dir exists in the main
-#      repo. Replaces the dangling SMI-4381 relative symlinks that virtiofs
-#      cannot traverse on macOS Docker Desktop.
+# These give the worktree container access to the main checkout's
+# workspace-pinned (non-hoisted) per-package deps + prebuilt native modules,
+# which virtiofs cannot serve via the dangling SMI-4381 relative symlinks on
+# macOS Docker Desktop.
 #
-#   2. WORKSPACE-SIBLING bind mounts:
-#      <host>/packages/<pkg>:/app/node_modules/<scoped-name>
+# The `:ro` flag is load-bearing (SMI-5560). Without it, any worktree process
+# that writes inside a per-package node_modules — most commonly a `npm install`
+# reifying a native module (`rename better-sqlite3 -> .better-sqlite3-<rand>`) —
+# writes straight THROUGH the bind mount into the MAIN checkout's real files
+# (confirmed leak: a stale `.better-sqlite3-*` temp left in main's
+# packages/core/node_modules dated 2026-07-04). Read-only turns that silent
+# cross-checkout corruption into a loud EROFS. Each mount is a SINGLE mount of
+# a UNIQUE host directory, which on virtiofs marks only its own path read-only
+# and does NOT propagate the read-only "host_mark" to unrelated base-mount
+# paths — verified end-to-end in the SMI-5560 investigation (core/src,
+# website/public and /app all stay writable). The propagation regression seen
+# earlier came specifically from a same-host-dir DOUBLE mount (see below), not
+# from `:ro` per se.
 #
-#      One line per package whose package.json `name` matches a symlink
-#      under <host>/node_modules/(@<scope>/<n>|<n>). Replaces the
-#      relative `node_modules/@skillsmith/<sibling> -> ../../packages/<sibling>`
-#      symlinks in the Docker named volume — virtiofs cannot resolve them
-#      either (proven empirically: `readlink -f` returns `/packages/core`
-#      instead of `/app/packages/core`). The bind mount provides a real
-#      directory at the symlink's path so Node module resolution succeeds.
+# WORKSPACE-SIBLING whole-package mounts (previously
+# <host>/packages/<pkg>:/app/node_modules/<scoped-name>) were REMOVED in
+# SMI-5560. Two reasons:
+#   1. Corruption/shadowing. The image's `npm ci` seeds a workspace symlink
+#      (@scope/<pkg> -> ../../packages/<pkg>) into the per-worktree node_modules
+#      volume. Docker resolved the whole-package mount's DESTINATION through
+#      that symlink and landed the MAIN checkout's package dir at
+#      /app/packages/<pkg>, SHADOWING the worktree's own source: worktree edits
+#      became invisible to the container and worktree builds wrote dist/ into
+#      main. Dropping the mount un-shadows the worktree; the seeded symlink now
+#      resolves the alias to the worktree's OWN /app/packages/<pkg> (its own
+#      freshly-built dist, not main's stale copy — strictly more correct).
+#   2. virtiofs double-mount. The per-package node_modules mount above is a
+#      SUBDIRECTORY of the whole-package mount, so the same host dir
+#      (packages/<pkg>/node_modules) was bind-mounted at two container paths.
+#      That same-host-dir double-mount is exactly what made a `:ro` retrofit
+#      trip the virtiofs host_mark propagation regression. Removing the
+#      whole-package mount removes the double-mount, making the `:ro` above safe.
+#
+# Companion: the worktree's per-package node_modules symlink resolves to
+# /packages/<pkg>/node_modules (OUTSIDE /app) inside the container, so Node's
+# hoist walk-up needs a /node_modules -> /app/node_modules bridge to reach the
+# hoisted root deps (matters for esbuild bundling, e.g. vscode). That bridge is
+# created by docker-entrypoint.sh (worktree-gated) — see SMI-5560 there.
 #
 # Output is intended to be appended under a `volumes:` block; caller handles
 # indentation context. Each emitted line uses 6-space indent.
@@ -436,45 +465,38 @@ repair_worktrees_package_node_modules() {
 #######################################
 enumerate_compose_node_modules_mounts() {
     local repo_root="$1"
-    local pkg_dir pkg_name main_target ws_name
+    local pkg_dir pkg_name main_target
 
     [[ ! -d "$repo_root/packages" ]] && return 0
 
-    # Pass 1: per-package node_modules mounts (same gate as
-    # link_worktree_package_node_modules:358)
+    # Per-package node_modules mounts, READ-ONLY (SMI-5560). Same gate as
+    # link_worktree_package_node_modules:358.
     for pkg_dir in "$repo_root"/packages/*/; do
         [[ -d "$pkg_dir" ]] || continue
         pkg_name="$(basename "$pkg_dir")"
         main_target="$repo_root/packages/$pkg_name/node_modules"
         [[ -d "$main_target" ]] || continue
-        printf '      - %s:/app/packages/%s/node_modules\n' "$main_target" "$pkg_name"
-    done
+        printf '      - %s:/app/packages/%s/node_modules:ro\n' "$main_target" "$pkg_name"
 
-    # Pass 2: workspace-sibling mounts. The package.json `name` field is the
-    # canonical workspace identifier; npm hoists workspace siblings to
-    # <root>/node_modules/<name> as relative symlinks. We bind directly to
-    # the package source dir to make Node resolution work inside virtiofs.
-    for pkg_dir in "$repo_root"/packages/*/; do
-        [[ -d "$pkg_dir" ]] || continue
-        [[ -f "$pkg_dir/package.json" ]] || continue
-        # SMI-4738 (M2): shell-only parse — postinstall path runs on every
-        # `npm install`, so avoid the per-package `node -p` startup cost
-        # (~30ms × N packages). Matches the first `"name": "..."` line in
-        # package.json. Tolerates leading whitespace and any spacing around
-        # the colon. Names with embedded `"` would break this parse, but
-        # npm package names are restricted to a no-quote charset.
-        ws_name="$(grep '"name"' "$pkg_dir/package.json" | head -1 | sed -E 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-        [[ -n "$ws_name" ]] || continue
-        # Guard against grep matching an unrelated key whose value contains
-        # "name" (the parse must produce something that differs from the raw line).
-        case "$ws_name" in *\"*) continue ;; esac
-        # Verify the host has the workspace symlink at the expected path.
-        # If npm hasn't created it (rare — should always exist after `npm install`),
-        # skip rather than emit a bind mount whose source doesn't exist.
-        [[ -e "$repo_root/node_modules/$ws_name" ]] || continue
-        # Trim trailing slash from pkg_dir for cleaner YAML output.
-        local pkg_dir_trim="${pkg_dir%/}"
-        printf '      - %s:/app/node_modules/%s\n' "$pkg_dir_trim" "$ws_name"
+        # SMI-5560 follow-up: vite/vitest write their own dependency
+        # pre-bundle cache (.vite/) and config-bundling temp files
+        # (.vite-temp/) directly inside node_modules — confirmed via a live
+        # repro: `cd packages/<pkg> && vitest run` (the exact invocation
+        # scripts/pre-push-coverage-check.sh uses per-package) failed with
+        # EROFS writing node_modules/.vite-temp/vitest.config.ts.timestamp-*.mjs
+        # once node_modules went read-only above. Both dirs are gitignored
+        # (covered by the blanket `node_modules` rule) — layering a writable
+        # overlay here is the same nested-subdirectory pattern already proven
+        # safe against the virtiofs host_mark propagation regression (a
+        # SUBDIRECTORY mount under this package's own single node_modules
+        # mount, not a second mount of an overlapping-but-distinct host path
+        # — the double-mount shape that caused that regression no longer
+        # exists at all now that the workspace-sibling mount is gone).
+        local vite_cache_dir
+        for vite_cache_dir in .vite .vite-temp; do
+            printf '      - %s/%s:/app/packages/%s/node_modules/%s\n' \
+                "$main_target" "$vite_cache_dir" "$pkg_name" "$vite_cache_dir"
+        done
     done
 }
 
@@ -531,12 +553,18 @@ generate_docker_override_to_stdout() {
         mounts="$(enumerate_compose_node_modules_mounts "$repo_root")"
         if [[ -n "$mounts" ]]; then
             volumes_marker="    volumes:
-      # SMI-4689 bind mounts v2 (per-pkg + workspace-sibling): per-package
-      # node_modules AND workspace siblings (@skillsmith/*, @smith-horn/*,
-      # skillsmith-cli, skillsmith-vscode) bind-mounted from the main repo
-      # so workspace-pinned AND workspace-internal deps resolve inside the
-      # container. Replaces the SMI-4381 relative symlinks that virtiofs
-      # cannot traverse (proven empirically: readlink -f returns wrong path).
+      # SMI-4689/SMI-5560 bind mounts v3 (per-package node_modules, read-only):
+      # each package's node_modules is bind-mounted READ-ONLY from the main repo
+      # so workspace-pinned + prebuilt-native deps resolve inside the container
+      # (replaces the SMI-4381 relative symlinks virtiofs cannot traverse). The
+      # :ro flag stops a worktree npm install from writing through the mount into
+      # main's real checkout (SMI-5560). The former workspace-sibling
+      # whole-package mounts were removed: they shadowed the worktree's own
+      # source with main's and created the same-host-dir double-mount that made
+      # :ro trip the virtiofs host_mark regression. Alias resolution now flows
+      # through npm's own seeded workspace symlink to the worktree's OWN
+      # /app/packages/<pkg>. See enumerate_compose_node_modules_mounts + the
+      # /node_modules bridge in docker-entrypoint.sh.
 "
             volumes_block="${volumes_marker}${mounts}"
         fi

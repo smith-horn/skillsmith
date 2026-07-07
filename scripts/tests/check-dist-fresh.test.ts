@@ -37,6 +37,14 @@
  *   D-7 FAIL-SOFT:         `git hash-object` unusable → every package's hash
  *                          comes back empty → skip (never false-drift) →
  *                          exit 0 without writing a sentinel.
+ *   D-8 WORKTREE ADVISORY (SMI-5564): same drift as D-2, but the check runs
+ *                          from a LINKED WORKTREE of the fixture repo (not
+ *                          the fixture root) → exit 0 (non-blocking), output
+ *                          still names the stale package but is the
+ *                          "WARNING (non-blocking" banner, not the blocking
+ *                          "✗ Stale Build Output" one. Confirms the
+ *                          main-checkout case (D-2) is unaffected by this
+ *                          change — only pushes FROM a worktree stop blocking.
  *
  * SMI-4693: uses makeFixtureEnv (strips GIT_DISCOVERY_VARS) and
  * makeFixtureTempDir (realpath-canonical tmpdir) for git fixture isolation.
@@ -314,5 +322,44 @@ describe('check-dist-fresh.sh (SMI-5548)', () => {
     expect(check.output).toBe('')
     // Check mode must never create the sentinel (D-5 invariant).
     expect(existsSync(sentinel)).toBe(false)
+  })
+
+  // ── D-8 WORKTREE ADVISORY (SMI-5564) ────────────────────────────────────────
+
+  it('D-8 WORKTREE ADVISORY: drift from a linked worktree is a non-blocking warning, not a hard block', () => {
+    const { root, srcFile } = fixture!
+    const env = makeFixtureEnv()
+
+    const write = runScript(root, ['--write-sentinel'])
+    expect(write.status).toBe(0)
+
+    writeFileSync(srcFile, 'export const x = 5\n', 'utf8')
+    commitChange(root, 'drift for worktree-advisory check')
+
+    // Create a linked worktree of the fixture repo. dist/ is untracked (per
+    // the script's own design — worktrees never have their own dist/), so
+    // the worktree's checkout doesn't need one; the script always resolves
+    // DIST_ROOT back to `root` regardless of which of the two `cwd:` is used.
+    const worktreeDir = join(root, '..', 'dist-freshness-test-wt')
+    execFileSync('git', ['-C', root, 'worktree', 'add', worktreeDir, '-b', 'wt-branch'], { env })
+
+    try {
+      const checkFromWorktree = runScript(worktreeDir)
+      expect(checkFromWorktree.status).toBe(0)
+      expect(checkFromWorktree.output).toMatch(/WARNING \(non-blocking/)
+      expect(checkFromWorktree.output).toMatch(new RegExp(`packages/${PKG}/dist`))
+      expect(checkFromWorktree.output).not.toMatch(/✗ Stale Build Output/)
+
+      // Same drifted state, run from the fixture root itself (not a linked
+      // worktree) — must still hard-block. Confirms D-2's behavior is
+      // unaffected by this change; only the worktree case became advisory.
+      const checkFromRoot = runScript(root)
+      expect(checkFromRoot.status).toBe(1)
+      expect(checkFromRoot.output).toMatch(/✗ Stale Build Output/)
+    } finally {
+      execFileSync('git', ['-C', root, 'worktree', 'remove', '--force', worktreeDir], {
+        env,
+      })
+    }
   })
 })

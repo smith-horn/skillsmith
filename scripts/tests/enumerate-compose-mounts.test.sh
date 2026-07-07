@@ -90,8 +90,11 @@ make_workspace_symlink() {
 }
 
 # -----------------------------------------------------------------------
-# Test 1: 3 packages, each with node_modules + workspace symlink
-# Expected: 3 per-pkg lines + 3 workspace-sibling lines = 6 total
+# Test 1: 3 packages, each with node_modules + workspace symlink.
+# Expected (SMI-5560): 3 per-pkg READ-ONLY lines only. Workspace-sibling
+# whole-package mounts were removed (they shadowed the worktree's own source
+# with main's and created the same-host-dir double-mount that made :ro trip
+# the virtiofs host_mark regression).
 # -----------------------------------------------------------------------
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT" "$SPACEROOT" "$EMPTYROOT"' EXIT
@@ -106,24 +109,24 @@ make_workspace_symlink "$TMPROOT" "skillsmith-vscode" "vscode-extension"
 
 OUT=$(enumerate_compose_node_modules_mounts "$TMPROOT")
 
-assert_eq "test1: emits 3 per-pkg + 3 workspace-sibling = 6 lines" 6 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
-assert_contains "test1: per-pkg core" "      - $TMPROOT/packages/core/node_modules:/app/packages/core/node_modules" "$OUT"
-assert_contains "test1: per-pkg mcp-server" "      - $TMPROOT/packages/mcp-server/node_modules:/app/packages/mcp-server/node_modules" "$OUT"
-assert_contains "test1: per-pkg vscode-extension" "      - $TMPROOT/packages/vscode-extension/node_modules:/app/packages/vscode-extension/node_modules" "$OUT"
-assert_contains "test1: workspace @skillsmith/core" "      - $TMPROOT/packages/core:/app/node_modules/@skillsmith/core" "$OUT"
-assert_contains "test1: workspace @skillsmith/mcp-server" "      - $TMPROOT/packages/mcp-server:/app/node_modules/@skillsmith/mcp-server" "$OUT"
-assert_contains "test1: workspace skillsmith-vscode (top-level scope)" "      - $TMPROOT/packages/vscode-extension:/app/node_modules/skillsmith-vscode" "$OUT"
+assert_eq "test1: emits 3 per-pkg lines * 3 (:ro + .vite + .vite-temp overlay) = 9" 9 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
+assert_contains "test1: per-pkg core is read-only" "      - $TMPROOT/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT"
+assert_contains "test1: per-pkg mcp-server is read-only" "      - $TMPROOT/packages/mcp-server/node_modules:/app/packages/mcp-server/node_modules:ro" "$OUT"
+assert_contains "test1: per-pkg vscode-extension is read-only" "      - $TMPROOT/packages/vscode-extension/node_modules:/app/packages/vscode-extension/node_modules:ro" "$OUT"
+assert_contains "test1: core .vite-temp overlay (writable, not :ro)" "      - $TMPROOT/packages/core/node_modules/.vite-temp:/app/packages/core/node_modules/.vite-temp" "$OUT"
+assert_not_contains "test1: core .vite-temp overlay is NOT read-only" "$TMPROOT/packages/core/node_modules/.vite-temp:/app/packages/core/node_modules/.vite-temp:ro" "$OUT"
+assert_contains "test1: core .vite overlay (writable, not :ro)" "      - $TMPROOT/packages/core/node_modules/.vite:/app/packages/core/node_modules/.vite" "$OUT"
+assert_not_contains "test1: NO workspace-sibling @skillsmith/core mount" ":/app/node_modules/@skillsmith/core" "$OUT"
+assert_not_contains "test1: NO workspace-sibling @skillsmith/mcp-server mount" ":/app/node_modules/@skillsmith/mcp-server" "$OUT"
+assert_not_contains "test1: NO workspace-sibling skillsmith-vscode mount" ":/app/node_modules/skillsmith-vscode" "$OUT"
 
 # -----------------------------------------------------------------------
-# Test 2: package without node_modules is skipped (matches SMI-4381 gate),
-# but it MAY still emit a workspace-sibling mount IF its package.json + the
-# workspace symlink exist (workspace-sibling = name-based, not deps-based).
-# We test the per-pkg gate here; workspace-sibling behavior covered in Test 7.
+# Test 2: package without node_modules is skipped (matches SMI-4381 gate).
 # -----------------------------------------------------------------------
 mkdir -p "$TMPROOT/packages/skillsmith-cli"  # NO node_modules, NO package.json
 
 OUT2=$(enumerate_compose_node_modules_mounts "$TMPROOT")
-assert_eq "test2: still 6 lines (skillsmith-cli has no node_modules AND no pkg.json)" 6 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
+assert_eq "test2: still 9 lines (skillsmith-cli has no node_modules)" 9 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
 assert_not_contains "test2: skillsmith-cli per-pkg not emitted" "skillsmith-cli/node_modules:/app/packages/skillsmith-cli" "$OUT2"
 
 # -----------------------------------------------------------------------
@@ -134,26 +137,27 @@ OUT3=$(enumerate_compose_node_modules_mounts "$EMPTYROOT")
 assert_eq "test3: empty output for missing packages/" "" "$OUT3"
 
 # -----------------------------------------------------------------------
-# Test 4: path with spaces preserved verbatim (per-pkg + workspace-sibling)
+# Test 4: path with spaces preserved verbatim (per-pkg :ro)
 # -----------------------------------------------------------------------
 SPACEROOT=$(mktemp -d -t 'has space test')
 make_repo "$SPACEROOT" core
 make_pkg_json "$SPACEROOT" core "@skillsmith/core"
 make_workspace_symlink "$SPACEROOT" "@skillsmith/core" "core"
 OUT4=$(enumerate_compose_node_modules_mounts "$SPACEROOT")
-assert_contains "test4: per-pkg with spaces" "$SPACEROOT/packages/core/node_modules:/app/packages/core/node_modules" "$OUT4"
-assert_contains "test4: workspace-sibling with spaces" "$SPACEROOT/packages/core:/app/node_modules/@skillsmith/core" "$OUT4"
+assert_contains "test4: per-pkg with spaces is read-only" "$SPACEROOT/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT4"
+assert_not_contains "test4: no workspace-sibling mount with spaces" ":/app/node_modules/@skillsmith/core" "$OUT4"
 
 # -----------------------------------------------------------------------
-# Test 7: workspace-sibling skipped when host workspace symlink missing
+# Test 7: workspace-sibling mounts never emitted, even when the host
+# workspace symlink is present (SMI-5560 removed them entirely).
 # -----------------------------------------------------------------------
 NOSYMROOT=$(mktemp -d)
 make_repo "$NOSYMROOT" core
 make_pkg_json "$NOSYMROOT" core "@skillsmith/core"
-# Deliberately do NOT create the workspace symlink at <root>/node_modules/@skillsmith/core
+make_workspace_symlink "$NOSYMROOT" "@skillsmith/core" "core"
 OUT7=$(enumerate_compose_node_modules_mounts "$NOSYMROOT")
-assert_eq "test7: only per-pkg emitted (1 line) when symlink absent" 1 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
-assert_not_contains "test7: no workspace mount" "/app/node_modules/@skillsmith/core" "$OUT7"
+assert_eq "test7: only per-pkg + vite-cache overlay emitted (3 lines), no workspace-sibling" 3 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
+assert_not_contains "test7: no workspace mount even when symlink present" "/app/node_modules/@skillsmith/core" "$OUT7"
 rm -rf "$NOSYMROOT"
 
 # -----------------------------------------------------------------------
@@ -172,10 +176,11 @@ generate_docker_override "$WT_DIR" "test-branch" "$TMPROOT"
 OVERRIDE=$(cat "$WT_DIR/docker-compose.override.yml")
 
 if [ "$(uname)" = "Darwin" ]; then
-  assert_contains "test6 (Darwin): SMI-4689 marker present" "# SMI-4689 bind mounts" "$OVERRIDE"
-  assert_contains "test6 (Darwin): core mount injected" "/app/packages/core/node_modules" "$OVERRIDE"
+  assert_contains "test6 (Darwin): SMI-4689/SMI-5560 marker present" "# SMI-4689/SMI-5560 bind mounts" "$OVERRIDE"
+  assert_contains "test6 (Darwin): core mount injected read-only" "/app/packages/core/node_modules:ro" "$OVERRIDE"
+  assert_not_contains "test6 (Darwin): no workspace-sibling whole-package mount" ":/app/node_modules/@skillsmith/core" "$OVERRIDE"
 else
-  assert_not_contains "test6 (non-Darwin): no SMI-4689 marker" "# SMI-4689 bind mounts" "$OVERRIDE"
+  assert_not_contains "test6 (non-Darwin): no SMI-4689/SMI-5560 marker" "# SMI-4689/SMI-5560 bind mounts" "$OVERRIDE"
   assert_not_contains "test6 (non-Darwin): no bind mount" "/app/packages/core/node_modules" "$OVERRIDE"
 fi
 

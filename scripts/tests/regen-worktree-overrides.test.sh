@@ -155,10 +155,10 @@ ln -sfn "../../packages/skillsmith-fake-smoke" "$FAKE_SYMLINK"
 
 bash "$SHIM" >/dev/null 2>&1 || true
 
-assert_contains_file "test2: per-pkg fake mount emitted" \
-    "/packages/skillsmith-fake-smoke/node_modules:/app/packages/skillsmith-fake-smoke/node_modules" \
+assert_contains_file "test2: per-pkg fake mount emitted read-only (SMI-5560)" \
+    "/packages/skillsmith-fake-smoke/node_modules:/app/packages/skillsmith-fake-smoke/node_modules:ro" \
     "$OVERRIDE"
-assert_contains_file "test2: workspace-sibling fake mount emitted" \
+assert_not_contains_file "test2: NO workspace-sibling whole-package mount (removed in SMI-5560)" \
     ":/app/node_modules/@skillsmith/fake-smoke" \
     "$OVERRIDE"
 
@@ -173,9 +173,6 @@ bash "$SHIM" >/dev/null 2>&1 || true
 
 assert_not_contains_file "test3: per-pkg fake mount removed after cleanup" \
     "/packages/skillsmith-fake-smoke/node_modules" \
-    "$OVERRIDE"
-assert_not_contains_file "test3: workspace-sibling fake mount removed after cleanup" \
-    "/app/node_modules/@skillsmith/fake-smoke" \
     "$OVERRIDE"
 
 # -----------------------------------------------------------------------

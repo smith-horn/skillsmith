@@ -37,6 +37,35 @@ function firstLine(s: string): string {
 /** Maximum number of cached trees (per SMI-1309 / SMI-4293 spec). */
 const DEFAULT_MAX_TREES = 100
 
+/**
+ * SMI-5567: bounded attempts to boot the WASM runtime + grammar. Under
+ * full-suite parallel vitest load (or real concurrent usage), many workers
+ * boot their own web-tree-sitter runtime at once and instantiation can fail
+ * transiently; a small bounded retry recovers instead of permanently falling
+ * back to regex. Retrying `Parser.init()` is safe: web-tree-sitter guards the
+ * emscripten module behind a module-level singleton (`initializeBinding`:
+ * `if (!Module) Module = await createModule()`), and a failed instantiation
+ * leaves that singleton null — so a retry re-instantiates cleanly with no
+ * double-init or leaked partial module. Verified against web-tree-sitter@0.25.10
+ * source + an empirical failed-then-retried probe.
+ */
+const DEFAULT_MAX_INIT_ATTEMPTS = 3
+
+/** Base backoff (ms) for the jittered init retry. */
+const INIT_BACKOFF_BASE_MS = 25
+
+/**
+ * Full-jitter backoff: a random point in `[0, base * 2^(attempt-1))` ms for the
+ * 1-based `attempt` that just failed. Jitter (not a fixed delay) is deliberate —
+ * the failure mode is many workers colliding during WASM instantiation, so a
+ * fixed delay would make them retry in lockstep and collide again (SMI-5567,
+ * plan-review finding #11). Exported for unit testing of the jitter bounds.
+ */
+export function jitteredInitBackoffMs(attempt: number): number {
+  const ceiling = INIT_BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1)
+  return Math.random() * ceiling
+}
+
 /** Resolve the path to the Python WASM grammar distributed via tree-sitter-wasms. */
 export function resolvePythonWasmPath(): string {
   // Caller is inside packages/core/dist or packages/core/src; tree-sitter-wasms
@@ -93,6 +122,17 @@ export interface PythonIncrementalParserOptions {
   maxTrees?: number
   /** Override path to the Python WASM grammar (tests). */
   wasmPath?: string
+  /**
+   * Bounded attempts to boot the WASM runtime + grammar under transient
+   * contention (default 3). SMI-5567.
+   */
+  maxInitAttempts?: number
+  /**
+   * Backoff (ms) to wait before the next init attempt, given the 1-based
+   * attempt number that just failed. Defaults to {@link jitteredInitBackoffMs}.
+   * Tests inject `() => 0` for deterministic, delay-free runs. SMI-5567.
+   */
+  initBackoffMs?: (attempt: number) => number
 }
 
 /** Resolver that returns the WASM dependencies. Exposed for tests. */
@@ -135,6 +175,8 @@ export class PythonIncrementalParser {
   private readonly maxTrees: number
   private readonly wasmPath: string
   private readonly loader: WebTreeSitterLoader
+  private readonly maxInitAttempts: number
+  private readonly initBackoffMs: (attempt: number) => number
   private readonly cache = new Map<string, CachedEntry>()
   private parser: TreeSitterParser | null = null
   private language: TreeSitterLanguage | null = null
@@ -150,6 +192,8 @@ export class PythonIncrementalParser {
     this.maxTrees = options.maxTrees ?? DEFAULT_MAX_TREES
     this.wasmPath = options.wasmPath ?? resolvePythonWasmPath()
     this.loader = loader
+    this.maxInitAttempts = Math.max(1, options.maxInitAttempts ?? DEFAULT_MAX_INIT_ATTEMPTS)
+    this.initBackoffMs = options.initBackoffMs ?? jitteredInitBackoffMs
   }
 
   /** True when the WASM runtime and Python grammar loaded successfully. */
@@ -294,26 +338,57 @@ export class PythonIncrementalParser {
   }
 
   private async doInit(): Promise<void> {
+    // SMI-5567: bounded, jittered retry around the WASM boot + grammar load.
+    // Only the fallible boot sequence is retried; `this.loader()` (the module
+    // import) is deterministic — a failed import won't recover — so it stays
+    // outside the loop and fails fast without incurring backoff delays.
+    let lastError: unknown = null
+    let attemptsMade = 0
     try {
       const deps = await this.loader()
-      await deps.init()
-      const parser = new deps.Parser()
-      const language = await deps.Language.load(this.wasmPath)
-      ;(parser as { setLanguage(l: TreeSitterLanguage): void }).setLanguage(language)
-      this.parser = parser
-      this.language = language
-      this.queries = new PythonQuerySet(deps.Query, language)
+      for (let attempt = 1; attempt <= this.maxInitAttempts; attempt += 1) {
+        attemptsMade = attempt
+        let parser: TreeSitterParser | null = null
+        try {
+          await deps.init()
+          parser = new deps.Parser()
+          const language = await deps.Language.load(this.wasmPath)
+          parser.setLanguage(language)
+          // Commit only after every step succeeds, so a mid-sequence failure
+          // never leaves a half-initialised parser visible via `isReady`.
+          this.parser = parser
+          this.language = language
+          this.queries = new PythonQuerySet(deps.Query, language)
+          return
+        } catch (error) {
+          lastError = error
+          // Free the WASM parser allocated on this failed attempt so repeated
+          // retries can't accumulate orphaned parser handles in the WASM heap
+          // (a retry re-instantiates the runtime cleanly — see the module-level
+          // note on DEFAULT_MAX_INIT_ATTEMPTS).
+          if (parser) this.safeDeleteParser(parser)
+          if (attempt < this.maxInitAttempts) {
+            const delayMs = this.initBackoffMs(attempt)
+            if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
+          }
+        }
+      }
+      // Every attempt failed — surface the real last error to the catch below.
+      throw lastError instanceof Error ? lastError : new Error(String(lastError))
     } catch (error) {
       this.initFailed = true
       this.parser = null
       this.language = null
       this.queries = null
       // One-shot warn per parser instance: fires at most once in `doInit`.
-      // Log `{ wasmPath, error, stack }` for operator diagnostics; the WASM
-      // path is not secret, the stack points inside web-tree-sitter /
-      // resolvePythonWasmPath, not user source.
+      // Log `{ wasmPath, attempts, error, stack }` for operator diagnostics —
+      // surfacing the actual last error's message (not just flipping
+      // `initFailed`) so a recurrence is diagnosable without re-deriving the
+      // SMI-5567 analysis. The WASM path is not secret; the stack points inside
+      // web-tree-sitter / resolvePythonWasmPath, not user source.
       logger.warn('Python tree-sitter init failed; regex fallback in use', {
         wasmPath: this.wasmPath,
+        attempts: attemptsMade,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       })
@@ -354,6 +429,15 @@ export class PythonIncrementalParser {
       tree.delete()
     } catch {
       // Already-deleted trees throw; swallow for robustness.
+    }
+  }
+
+  /** Free a parser allocated on a failed init attempt (SMI-5567). */
+  private safeDeleteParser(parser: TreeSitterParser): void {
+    try {
+      parser.delete()
+    } catch {
+      // A parser that failed mid-boot may not be fully constructed; ignore.
     }
   }
 }

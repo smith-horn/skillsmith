@@ -183,7 +183,15 @@ describe('Python query extraction vs regex baseline (finding H3)', () => {
   })
 
   it('boots the WASM parser for the regression guard', () => {
-    expect(queryParser.isReady).toBe(true)
+    // SMI-5567: report *why* a boot failure happened (hasFailedInit), not just
+    // that isReady is false — a future flake under parallel WASM-init contention
+    // should be diagnosable from the assertion message alone.
+    expect(
+      queryParser.isReady,
+      `WASM parser did not boot for the regression guard: isReady=${queryParser.isReady}, ` +
+        `hasFailedInit=${queryParser.hasFailedInit} (true ⇒ retry budget exhausted; ` +
+        `see PythonIncrementalParser.doInit + the logger.warn payload for the last error)`
+    ).toBe(true)
   })
 
   for (const fixture of FIXTURES) {
