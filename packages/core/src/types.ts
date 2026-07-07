@@ -193,6 +193,12 @@ export interface SearchResponse {
    * `installable_only: false` to include them.
    */
   discoveryOnlyHidden?: number
+  /**
+   * SMI-5556: present only when `results` is empty. Explains that matching is
+   * keyword-based (not semantic/registry-fault) and suggests next steps, e.g.
+   * splitting a multi-concept query into single-topic calls.
+   */
+  suggestion?: string
   timing: {
     searchMs: number
     totalMs: number

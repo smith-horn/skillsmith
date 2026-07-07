@@ -96,6 +96,12 @@ export interface RecommendResponse {
    * Pass installable_only: false to include them.
    */
   discovery_only_hidden?: number
+  /**
+   * SMI-5556: present only when `recommendations` is empty. Clarifies that
+   * candidates_considered: 0 does not indicate a registry/backend fault, and
+   * suggests next steps (e.g. falling back to the `search` tool).
+   */
+  suggestion?: string
   /** Query context used for matching */
   context: {
     installed_count: number
@@ -122,7 +128,7 @@ export interface RecommendResponse {
 export const recommendToolSchema = {
   name: 'skill_recommend',
   description:
-    "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations, suggestions, or 'what skills should I use' — e.g. 'recommend skills for my React project', 'what skills help with Node.js', 'suggest skills for testing'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering (SMI-1631). Returns ranked Skillsmith candidates, NOT general programming advice. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
+    "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations, suggestions, or 'what skills should I use' — e.g. 'recommend skills for my React project', 'what skills help with Node.js', 'suggest skills for testing'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering (SMI-1631). Returns ranked Skillsmith candidates, NOT general programming advice. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. A candidates_considered of 0 does NOT indicate a registry/backend problem — it just means none of the candidate sources matched this input; check the response's `suggestion` field (present when recommendations is empty) for next steps, e.g. falling back to the `search` tool with a specific single-topic query.",
   inputSchema: {
     type: 'object' as const,
     properties: {

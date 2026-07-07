@@ -28,6 +28,7 @@ import {
   inferRolesFromTags,
   loadSkillsFromDatabase,
   isSkillCollection,
+  buildEmptyRecommendationSuggestion,
 } from './recommend.helpers.js'
 
 // SMI-2741: Formatting and deduplication extracted to companion file
@@ -238,6 +239,13 @@ async function executeRecommendImpl(
         overlap_filtered: 0,
         role_filtered: roleFiltered,
         discovery_only_hidden: discoveryOnlyHidden,
+        suggestion: recommendations.length
+          ? undefined
+          : buildEmptyRecommendationSuggestion({
+              installedCount: installed_skills.length,
+              hasProjectContext: !!project_context,
+              roleFilter: role,
+            }),
         context: {
           installed_count: installed_skills.length,
           has_project_context: !!project_context,
@@ -431,6 +439,13 @@ async function executeRecommendImpl(
     overlap_filtered: overlapFiltered,
     role_filtered: roleFiltered,
     discovery_only_hidden: discoveryOnlyHidden,
+    suggestion: recommendations.length
+      ? undefined
+      : buildEmptyRecommendationSuggestion({
+          installedCount: installed_skills.length,
+          hasProjectContext: !!project_context,
+          roleFilter: role,
+        }),
     context: {
       installed_count: installed_skills.length,
       has_project_context: !!project_context,

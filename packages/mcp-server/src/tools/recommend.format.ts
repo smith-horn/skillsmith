@@ -86,12 +86,18 @@ export function formatRecommendations(response: RecommendResponse): string {
   if (response.recommendations.length === 0) {
     lines.push('No recommendations found.')
     lines.push('')
-    lines.push('Suggestions:')
-    lines.push('  - Try adding more installed skills for better matching')
-    lines.push('  - Provide a project context for more relevant results')
-    // SMI-1631: Suggest removing role filter if one was applied
-    if (response.context.role_filter) {
-      lines.push(`  - Try removing the role filter (currently: ${response.context.role_filter})`)
+    // SMI-5556: prefer the response's own suggestion (surfaced through the raw
+    // MCP JSON too) over re-deriving the same guidance here.
+    if (response.suggestion) {
+      lines.push(response.suggestion)
+    } else {
+      lines.push('Suggestions:')
+      lines.push('  - Try adding more installed skills for better matching')
+      lines.push('  - Provide a project context for more relevant results')
+      // SMI-1631: Suggest removing role filter if one was applied
+      if (response.context.role_filter) {
+        lines.push(`  - Try removing the role filter (currently: ${response.context.role_filter})`)
+      }
     }
   } else {
     lines.push(`Found ${response.recommendations.length} recommendation(s):\n`)

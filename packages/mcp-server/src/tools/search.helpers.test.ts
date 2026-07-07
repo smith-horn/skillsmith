@@ -9,6 +9,7 @@ import {
   filterByCompatibility,
   filterInstallable,
   resolveDefaultCompatibility,
+  buildEmptySearchSuggestion,
 } from './search.helpers.js'
 
 function skill(id: string, compatibility?: string[], installable?: boolean): SkillSearchResult {
@@ -92,5 +93,38 @@ describe('resolveDefaultCompatibility (SMI-5178)', () => {
 
   it('returns undefined for an unknown client (no silent mis-restriction)', () => {
     expect(resolveDefaultCompatibility('emacs')).toBeUndefined()
+  })
+})
+
+describe('buildEmptySearchSuggestion (SMI-5556)', () => {
+  it('explains lexical-only matching and single-topic guidance with no hidden counts', () => {
+    const out = buildEmptySearchSuggestion({})
+    expect(out).toContain('keyword-based (not semantic)')
+    expect(out).toContain('single-topic query')
+    expect(out).not.toContain('discovery-only')
+    expect(out).not.toContain('compatibility filter')
+  })
+
+  it('mentions installable_only: false only when discoveryOnlyHidden > 0', () => {
+    const out = buildEmptySearchSuggestion({ discoveryOnlyHidden: 3 })
+    expect(out).toContain('3 discovery-only result(s)')
+    expect(out).toContain('installable_only: false')
+  })
+
+  it('omits the discovery-only hint when discoveryOnlyHidden is 0', () => {
+    const out = buildEmptySearchSuggestion({ discoveryOnlyHidden: 0 })
+    expect(out).not.toContain('discovery-only')
+  })
+
+  it('mentions compatible_with only when compatibilityHidden > 0', () => {
+    const out = buildEmptySearchSuggestion({ compatibilityHidden: 2 })
+    expect(out).toContain('2 result(s) were hidden by a compatibility filter')
+    expect(out).toContain('compatible_with')
+  })
+
+  it('includes both hints when both counts are set', () => {
+    const out = buildEmptySearchSuggestion({ discoveryOnlyHidden: 1, compatibilityHidden: 1 })
+    expect(out).toContain('discovery-only')
+    expect(out).toContain('compatibility filter')
   })
 })
