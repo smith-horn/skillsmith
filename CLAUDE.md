@@ -79,9 +79,9 @@ Skillsmith is a lifecycle manager for agent skills (discovery, installation, upd
 
 | Tier | Price | API Calls/Month |
 |------|-------|-----------------|
-| Community | Free | 1,000 |
-| Individual | $9.99/mo | 10,000 |
-| Team | $25/user/mo | 100,000 |
+| Community | Free | 100 |
+| Individual | $9.99/mo | 1,000 |
+| Team | $25/user/mo | 10,000 |
 | Enterprise | $55/user/mo | Unlimited |
 
 ---
