@@ -470,7 +470,7 @@ create_worktree() {
         echo "hardcoded name (the main checkout's container is long-lived, so"
         echo "'docker exec skillsmith-dev-1 <cmd>' silently \"succeeds\" from any"
         echo "worktree even if this one's own container never came up):"
-        echo "  $REPO_ROOT/scripts/worktree-docker.sh exec $worktree_path -- npm run preflight"
+        echo "  $REPO_ROOT/scripts/worktree-docker.sh exec $worktree_path -- npm run preflight  # like: docker exec <container> npm run preflight"
         echo "This errors loudly (not silently) if the container isn't running yet —"
         echo "see CLAUDE.md's Troubleshooting table, 'Container won't start', if it does."
     fi

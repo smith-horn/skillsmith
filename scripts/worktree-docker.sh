@@ -53,8 +53,8 @@ Examples:
   $(basename "$0") status ../worktrees/jwt-rollout
   $(basename "$0") generate ../worktrees/new-feature
   $(basename "$0") ports
-  $(basename "$0") exec -- npm run build
-  $(basename "$0") exec ../worktrees/jwt-rollout -- npm test
+  $(basename "$0") exec -- npm run build        # like: docker exec <container> npm run build
+  $(basename "$0") exec ../worktrees/jwt-rollout -- npm test  # like: docker exec <container> npm test
 
 Note:
   This script ensures each worktree has unique container names and ports
