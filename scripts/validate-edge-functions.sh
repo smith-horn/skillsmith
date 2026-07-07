@@ -57,6 +57,7 @@ AUTHENTICATED_FUNCTIONS=(
   "sync-stripe-email"
   "inventory-upload"
   "purge-inventory"
+  "team-compliance-check"
 )
 
 # Service role functions (scheduled jobs, internal)
