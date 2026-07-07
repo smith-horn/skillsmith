@@ -3,10 +3,13 @@
  * @module @skillsmith/mcp-server/tools/recommend.helpers
  */
 
-import type { SkillRole } from '@skillsmith/core'
+import type { SkillRole, ApiSearchResult } from '@skillsmith/core'
+import type { SkillMatchResult } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { mapTrustTierFromDb } from '../utils/validation.js'
-import type { SkillData } from './recommend.types.js'
+import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
+import type { SkillData, SkillRecommendation } from './recommend.types.js'
+import type { LocalSkill } from '../indexer/LocalIndexer.js'
 
 // ============================================================================
 // Empty-Result Guidance (SMI-5556)
@@ -135,12 +138,119 @@ export function inferRolesFromTags(tags: string[]): SkillRole[] {
 }
 
 // ============================================================================
+// SkillRecommendation Construction (SMI-5562)
+// ============================================================================
+// Extracted from recommend.ts's three construction sites to keep that file
+// under the 500-line governance limit. Each function owns the description +
+// security wiring for its data path.
+
+/**
+ * SMI-1837: Convert a disk-scanned LocalSkill to SkillRecommendation format.
+ * SMI-5562: `security` is intentionally left unset (undefined) — local skills
+ * are never registry-scanned, so absence is the honest signal, distinct from
+ * `security.passed === null` ("scanned, no verdict yet").
+ */
+export function buildLocalSkillRecommendation(
+  skill: LocalSkill,
+  matchReason: string
+): SkillRecommendation {
+  const roles = inferRolesFromTags(skill.tags)
+  return {
+    skill_id: skill.id,
+    name: skill.name,
+    reason: matchReason,
+    similarity_score: 0.7, // Local skills get a default similarity score
+    trust_tier: 'local',
+    quality_score: skill.qualityScore,
+    roles,
+    // SMI-5178 (C2): local skills are always installable (they live on disk).
+    installable: true,
+    description: skill.description || '',
+  }
+}
+
+/**
+ * Build a SkillRecommendation from a registry API recommendation row.
+ * SMI-5562: description + security summary — skills-recommend hydrates
+ * security_score/last_scanned_at/security_findings/quarantined server-side.
+ */
+export function buildApiRecommendation(
+  skill: ApiSearchResult,
+  stack: string[]
+): SkillRecommendation {
+  const skillRoles = inferRolesFromTags(skill.tags || [])
+  return {
+    skill_id: skill.id,
+    name: skill.name,
+    reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
+    similarity_score: 0.8, // API doesn't return similarity score, use default
+    trust_tier: mapTrustTierFromDb(skill.trust_tier),
+    quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+    roles: skillRoles,
+    // SMI-5178 (C2): thread installable from the API result (repo_url present = installable).
+    installable: skill.installable ?? skill.repo_url != null,
+    description: skill.description || '',
+    security: deriveSecuritySummaryFromApiSkill(skill),
+  }
+}
+
+/**
+ * Build a SkillRecommendation from a local-DB semantic match result
+ * (the offline/API-failure fallback path).
+ *
+ * SMI-5562 (safety-critical): `security` is `undefined` when the row was
+ * never scanned (`securityScannedAt == null`) — mirrors
+ * `deriveSecuritySummaryFromApiSkill`'s API-path semantics exactly. A
+ * defined-but-null object here would narrate as "scanned, no verdict yet"
+ * under the tool description's 3-state contract, which is false for a skill
+ * that was never scanned at all. When a summary IS returned, riskScore/
+ * scannedAt/passed pass through RAW from SkillData — never coerce/default to
+ * 0/a fabricated timestamp, which would read as "confirmed clean."
+ */
+export function buildDbFallbackRecommendation(
+  result: SkillMatchResult,
+  role: SkillRole | undefined
+): SkillRecommendation {
+  const skill = result.skill as SkillData
+  const hasRoleMatch = role != null && skill.roles.includes(role)
+  const boostedScore = hasRoleMatch
+    ? Math.min(1, (skill.qualityScore ?? 0.5) + 0.3)
+    : (skill.qualityScore ?? 0.5)
+
+  return {
+    skill_id: skill.id,
+    name: skill.name,
+    reason: hasRoleMatch ? `${result.matchReason} (role: ${role})` : result.matchReason,
+    similarity_score: result.similarityScore,
+    trust_tier: skill.trustTier,
+    quality_score: Math.round(boostedScore * 100),
+    roles: skill.roles,
+    // SMI-5178 (C2): thread installable from SkillData (set by transformSkillToMatchData).
+    installable: skill.installable !== false ? true : false,
+    // SkillData.description is typed `string` (not nullable), so `??` (not `||`).
+    description: skill.description ?? '',
+    security:
+      skill.securityScannedAt == null
+        ? undefined
+        : {
+            passed: skill.securityPassed,
+            riskScore: skill.riskScore,
+            findingsCount: skill.securityFindingsCount,
+            scannedAt: skill.securityScannedAt,
+          },
+  }
+}
+
+// ============================================================================
 // Skill Transformation
 // ============================================================================
 
 /**
  * Transform a database skill to SkillData format for matching
  * SMI-1632: Added installable field to filter out collections
+ * SMI-5562: Added flat security fields, copied straight through with no
+ * defaulting — `loadSkillsFromDatabase` passes full repository `Skill` rows
+ * (packages/core/src/types/skill.ts), so these are always present on input.
  */
 export function transformSkillToMatchData(skill: {
   id: string
@@ -151,6 +261,10 @@ export function transformSkillToMatchData(skill: {
   trustTier: string
   roles?: SkillRole[]
   installable: boolean
+  riskScore: number | null
+  securityFindingsCount: number
+  securityScannedAt: string | null
+  securityPassed: boolean | null
 }): SkillData {
   // Generate trigger phrases from name and first few tags
   const triggerPhrases = [
@@ -175,6 +289,13 @@ export function transformSkillToMatchData(skill: {
     roles,
     // SMI-1632: Default to true if not explicitly set
     installable: skill.installable !== false,
+    // SMI-5562: Copied straight through — no `??`/`||` defaulting. `null` on
+    // riskScore/securityScannedAt must stay `null` (never scanned), not be
+    // coerced to 0/a fabricated timestamp, which would read as "confirmed safe."
+    riskScore: skill.riskScore,
+    securityFindingsCount: skill.securityFindingsCount,
+    securityScannedAt: skill.securityScannedAt,
+    securityPassed: skill.securityPassed,
   }
 }
 

@@ -4,7 +4,12 @@
  */
 
 import { z } from 'zod'
-import { type MCPTrustTier as TrustTier, type SkillRole, SKILL_ROLES } from '@skillsmith/core'
+import {
+  type MCPTrustTier as TrustTier,
+  type SkillRole,
+  type SecuritySummary,
+  SKILL_ROLES,
+} from '@skillsmith/core'
 
 // ============================================================================
 // Input Schema
@@ -77,6 +82,22 @@ export interface SkillRecommendation {
    * False for discovery-only entries (no repo_url); absent means unknown/assumed installable.
    */
   installable?: boolean
+  /**
+   * SMI-5562: Skill description, giving the calling agent enough substance to
+   * explain the value of installing this skill (beyond the templated `reason`
+   * string). Populated on all three construction paths — `|| ''`/`?? ''`
+   * convention matches SkillSearchResult's `description: string` for parity.
+   */
+  description?: string
+  /**
+   * SMI-5562: Security scan summary — parity with SkillSearchResult.security.
+   * `undefined` means "never scanned" (disk-scanned local skills are never
+   * registry-scanned, so absence is the honest signal there too) — this is
+   * distinct from `security.passed === null` ("scanned, no verdict yet").
+   * Never coerce/default `riskScore`/`scannedAt` to a fabricated value for an
+   * unscanned skill; that would read as "confirmed safe."
+   */
+  security?: SecuritySummary
 }
 
 /**
@@ -128,7 +149,7 @@ export interface RecommendResponse {
 export const recommendToolSchema = {
   name: 'skill_recommend',
   description:
-    "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations, suggestions, or 'what skills should I use' — e.g. 'recommend skills for my React project', 'what skills help with Node.js', 'suggest skills for testing'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering (SMI-1631). Returns ranked Skillsmith candidates, NOT general programming advice. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. A candidates_considered of 0 does NOT indicate a registry/backend problem — it just means none of the candidate sources matched this input; check the response's `suggestion` field (present when recommendations is empty) for next steps, e.g. falling back to the `search` tool with a specific single-topic query.",
+    "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations or 'what skills should I use' — e.g. 'recommend skills for my React project'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering. Returns ranked Skillsmith candidates with description + security, NOT general programming advice. Narrate security per item: absent = never scanned (say so, imply neither safe nor unsafe); passed:null = scanned, no verdict yet; passed:true/false = real verdict — state it, and flag false or high riskScore explicitly rather than recommending install uncritically. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. candidates_considered:0 does NOT mean a backend problem — check the response's suggestion field for next steps.",
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -206,4 +227,16 @@ export interface SkillData {
   roles: SkillRole[]
   /** SMI-1632: Whether this is an installable skill (vs a collection) */
   installable: boolean
+  // SMI-5562: Flat security scan fields mirroring the repository-internal
+  // `Skill` type (packages/core/src/types/skill.ts) — NOT the nested-`security`
+  // public `Skill` in types.ts. transformSkillToMatchData copies these straight
+  // through from the DB row with no defaulting; null means "never scanned."
+  /** Risk score from 0-100 (lower is safer); null until first scan */
+  riskScore: number | null
+  /** Number of security findings (0 is a legitimate default either way) */
+  securityFindingsCount: number
+  /** ISO 8601 timestamp of last security scan; null until first scan */
+  securityScannedAt: string | null
+  /** Whether the skill passed security scan; null when never scanned */
+  securityPassed: boolean | null
 }
