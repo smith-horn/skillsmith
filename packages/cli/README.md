@@ -133,15 +133,28 @@ skillsmith remove author/skill-name --force
 
 ### update
 
-Update installed skills.
+Update installed skills. Requires an explicit selector — a skill name, several
+names, or `--all` — bare `skillsmith update` with none of those prints usage
+guidance instead of updating anything.
 
 ```bash
 # Update all skills
-skillsmith update
+skillsmith update --all
 
-# Update specific skill
-skillsmith update author/skill-name
+# Update one skill
+skillsmith update skill-name
+
+# Update a specific set of skills
+skillsmith update skill-name another-skill
+
+# Preview changes without applying them
+skillsmith update skill-name --dry-run
 ```
+
+**Options:**
+- `-a, --all` - Update all installed skills
+- `-n, --dry-run` - Show what would update without installing
+- `-d, --db <path>` - Database file path
 
 ### inventory
 
@@ -770,7 +783,7 @@ npm run dev
 
 ```bash
 # Update all installed skills
-skillsmith update
+skillsmith update --all
 
 # Remove a skill
 skillsmith remove community/old-skill

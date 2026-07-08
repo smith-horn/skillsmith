@@ -2,348 +2,30 @@
  * SMI-745: Skill Management Commands
  *
  * Provides CLI commands for listing, updating, and removing installed skills.
+ *
+ * SMI-5593: action implementations moved to manage.action.ts (500-line
+ * standard). This file retains only the commander factory functions and
+ * re-exports.
  */
 
 import { Command } from 'commander'
-import { confirm } from '@inquirer/prompts'
-import chalk from 'chalk'
-import Table from 'cli-table3'
-import ora from 'ora'
-import { mkdir } from 'fs/promises'
-import { dirname } from 'path'
-import {
-  SkillRepository,
-  SkillDependencyRepository,
-  SkillInstallationService,
-  type Skill,
-  type TrustTier,
-} from '@skillsmith/core'
-import { openCliDatabase } from '../utils/open-database.js'
-import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
-import { removeLinks } from '@skillsmith/core/install'
-import { sanitizeError } from '../utils/sanitize.js'
-import { withTelemetry } from '@skillsmith/core/telemetry'
-import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
+import { DEFAULT_DB_PATH } from '../config.js'
+import { listAction, updateAction, removeAction } from './manage.action.js'
 
-/**
- * SMI-1809: Added 'local' tier color for local skills
- * SMI-5205: Added 'official' and 'unverified' tier colors
- */
-const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
-  official: chalk.magenta, // SMI-5205: Platform/partner — magenta to stand out from verified
-  verified: chalk.green,
-  curated: chalk.blue,
-  community: chalk.yellow,
-  local: chalk.cyan, // SMI-1809: Cyan for local skills
-  experimental: chalk.red,
-  unknown: chalk.gray,
-  unverified: chalk.gray, // SMI-5205: Public alias for unknown — same color as unknown
-}
-
-/**
- * Extended Skill type with optional version field.
- * Used for type-safe version comparisons in getSkillDiff.
- */
-interface SkillWithVersion extends Skill {
-  version?: string
-}
-
-/**
- * Display skills in a table format
- */
-function displaySkillsTable(skills: InstalledSkill[]): void {
-  if (skills.length === 0) {
-    console.log(chalk.yellow('\nNo skills installed.\n'))
-    console.log(chalk.dim('Install skills with: skillsmith install <author/skill-name>\n'))
-    return
-  }
-
-  const table = new Table({
-    head: [
-      chalk.bold('Name'),
-      chalk.bold('Version'),
-      chalk.bold('Trust Tier'),
-      chalk.bold('Install Date'),
-      chalk.bold('Updates'),
-    ],
-    colWidths: [30, 15, 15, 15, 12],
-  })
-
-  for (const skill of skills) {
-    const colorFn = TRUST_TIER_COLORS[skill.trustTier]
-    table.push([
-      colorFn(skill.name),
-      skill.version || chalk.dim('N/A'),
-      colorFn(skill.trustTier),
-      skill.installDate,
-      skill.hasUpdates ? chalk.green('Available') : chalk.dim('Up to date'),
-    ])
-  }
-
-  console.log('\n' + chalk.bold.blue('Installed Skills') + '\n')
-  console.log(table.toString())
-  console.log(
-    chalk.dim(
-      `\n${skills.length} skill(s) found (global: ~/.claude/skills, local: ./.claude/skills)\n`
-    )
-  )
-}
-
-/**
- * Get skill diff from database
- */
-async function getSkillDiff(
-  skillName: string,
-  dbPath: string
-): Promise<{ oldVersion: string | null; newVersion: string | null; changes: string[] } | null> {
-  const db = await openCliDatabase(dbPath)
-  const skillRepo = new SkillRepository(db)
-
-  try {
-    // Find skill in database by name (case-insensitive search)
-    const allSkills = skillRepo.findAll(1000, 0)
-    const skill = allSkills.items.find(
-      (s: Skill) => s.name.toLowerCase() === skillName.toLowerCase()
-    )
-
-    if (!skill) {
-      return null
-    }
-
-    // Get installed version
-    const installed = (await getInstalledSkills()).find(
-      (s) => s.name.toLowerCase() === skillName.toLowerCase()
-    )
-
-    const changes: string[] = []
-
-    const skillWithVersion = skill as SkillWithVersion
-
-    if (installed?.version !== skillWithVersion.version) {
-      changes.push(
-        `Version: ${installed?.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
-      )
-    }
-
-    if (installed?.trustTier !== skill.trustTier) {
-      changes.push(`Trust Tier: ${installed?.trustTier || 'unknown'} -> ${skill.trustTier}`)
-    }
-
-    return {
-      oldVersion: installed?.version || null,
-      newVersion: skillWithVersion.version || null,
-      changes,
-    }
-  } finally {
-    db.close()
-  }
-}
-
-/**
- * Update a single skill
- */
-async function updateSkill(skillName: string, dbPath: string): Promise<boolean> {
-  const spinner = ora(`Checking updates for ${skillName}...`).start()
-
-  try {
-    const diff = await getSkillDiff(skillName, dbPath)
-
-    if (!diff) {
-      spinner.fail(`Skill "${skillName}" not found in registry`)
-      return false
-    }
-
-    if (diff.changes.length === 0) {
-      spinner.succeed(`${skillName} is already up to date`)
-      return true
-    }
-
-    spinner.stop()
-
-    console.log(chalk.bold(`\nChanges for ${skillName}:`))
-    for (const change of diff.changes) {
-      console.log(chalk.cyan(`  - ${change}`))
-    }
-    console.log()
-
-    const proceed = await confirm({
-      message: `Update ${skillName}?`,
-      default: true,
-    })
-
-    if (!proceed) {
-      console.log(chalk.yellow('Update cancelled'))
-      return false
-    }
-
-    const updateSpinner = ora(`Updating ${skillName}...`).start()
-    updateSpinner.stop()
-
-    // SMI-skill-version-tracking Wave 1: updateSkill not yet implemented
-    // Wave 2 will wire this to the install tool with conflict resolution.
-    throw new Error('updateSkill not yet implemented')
-  } catch (error) {
-    spinner.fail(`Failed to update ${skillName}: ${sanitizeError(error)}`)
-    return false
-  }
-}
-
-/**
- * Update all installed skills
- */
-async function updateAllSkills(dbPath: string): Promise<void> {
-  const skills = await getInstalledSkills()
-
-  if (skills.length === 0) {
-    console.log(chalk.yellow('No skills installed'))
-    return
-  }
-
-  console.log(chalk.bold(`\nChecking updates for ${skills.length} skill(s)...\n`))
-
-  let updated = 0
-  let failed = 0
-
-  for (const skill of skills) {
-    const success = await updateSkill(skill.name, dbPath)
-    if (success) {
-      updated++
-    } else {
-      failed++
-    }
-  }
-
-  console.log(chalk.bold('\nUpdate Summary:'))
-  console.log(chalk.green(`  Updated: ${updated}`))
-  if (failed > 0) {
-    console.log(chalk.red(`  Failed: ${failed}`))
-  }
-  console.log()
-}
-
-/**
- * Remove a skill using SkillInstallationService for manifest-aware removal.
- * Falls back to direct removal for orphan skills (on disk but not in manifest).
- */
-async function removeSkill(skillName: string, force: boolean, dbPath: string): Promise<boolean> {
-  // Show skill info and confirm before proceeding (unless --force)
-  if (!force) {
-    const installed = await getInstalledSkills()
-    const skill = installed.find((s) => s.name.toLowerCase() === skillName.toLowerCase())
-
-    if (!skill) {
-      console.log(chalk.red(`Skill "${skillName}" is not installed`))
-      return false
-    }
-
-    console.log(chalk.bold(`\nSkill to remove:`))
-    console.log(`  Name: ${skill.name}`)
-    console.log(`  Version: ${skill.version || 'N/A'}`)
-    console.log(`  Path: ${skill.path}`)
-    console.log()
-
-    const proceed = await confirm({
-      message: `Are you sure you want to remove ${skill.name}?`,
-      default: false,
-    })
-
-    if (!proceed) {
-      console.log(chalk.yellow('Removal cancelled'))
-      return false
-    }
-  }
-
-  const spinner = ora(`Removing ${skillName}...`).start()
-
-  // Ensure database directory exists before opening
-  await mkdir(dirname(dbPath), { recursive: true })
-  const db = await openCliDatabase(dbPath)
-
-  try {
-    const skillRepo = new SkillRepository(db)
-    const skillDependencyRepo = new SkillDependencyRepository(db)
-
-    const service = new SkillInstallationService({
-      db,
-      skillRepo,
-      skillDependencyRepo,
-      skillsDir: DEFAULT_SKILLS_DIR,
-      manifestPath: DEFAULT_MANIFEST_PATH,
-      onProgress: (_stage: string, detail: string) => {
-        spinner.text = detail
-      },
-    })
-
-    const result = await service.uninstall(skillName, { force })
-
-    if (result.success) {
-      // SMI-4578: tear down any --also-link fan-out destinations recorded
-      // for this skill. Best-effort — uninstall must succeed even if the
-      // manifest is missing or a destination was already cleaned up.
-      try {
-        const linkCount = await removeLinks(skillName)
-        if (linkCount > 0) {
-          spinner.text = `Removed ${linkCount} cross-client link${linkCount > 1 ? 's' : ''}`
-        }
-      } catch (linkErr) {
-        console.log(
-          chalk.yellow(
-            `  Warning: could not clean up cross-client links: ${sanitizeError(linkErr)}`
-          )
-        )
-      }
-
-      spinner.succeed(`Successfully removed ${skillName}`)
-      if (result.warning) {
-        console.log(chalk.yellow(`  Warning: ${result.warning}`))
-      }
-      return true
-    } else {
-      spinner.fail(result.message)
-      if (result.warning) {
-        console.log(chalk.yellow(`  ${result.warning}`))
-      }
-      return false
-    }
-  } catch (error) {
-    spinner.fail(`Failed to remove ${skillName}: ${sanitizeError(error)}`)
-    return false
-  } finally {
-    db.close()
-  }
-}
+export {
+  getInstalledSkills,
+  displaySkillsTable,
+  getSkillDiff,
+  updateSkill,
+  updateSkills,
+  listAction,
+  updateAction,
+  removeAction,
+} from './manage.action.js'
 
 /**
  * Create list command
  */
-// SMI-5128: handler impls extracted from inline .action() closures so
-// withTelemetry can wrap them at the export boundary (SMI-5040 coverage gate).
-async function listActionImpl(opts: Record<string, string | boolean | undefined>): Promise<void> {
-  try {
-    const dbPath = opts['db'] as string
-    const outdated = (opts['outdated'] as boolean) ?? false
-
-    const skills = await getInstalledSkills(dbPath)
-    const filtered = outdated ? skills.filter((s) => s.hasUpdates) : skills
-
-    if (outdated && filtered.length === 0) {
-      console.log(chalk.green('\nAll installed skills are up to date.\n'))
-      return
-    }
-
-    displaySkillsTable(filtered)
-  } catch (error) {
-    console.error(chalk.red('Error listing skills:'), sanitizeError(error))
-    process.exit(1)
-  }
-}
-
-export const listAction = withTelemetry(listActionImpl, {
-  source: 'cli',
-  extractSkillId: () => 'list',
-  extractFramework: () => 'cli',
-})
-
 export function createListCommand(): Command {
   return new Command('list')
     .alias('ls')
@@ -355,66 +37,24 @@ export function createListCommand(): Command {
 
 /**
  * Create update command
+ *
+ * SMI-5593: user control over one skill, a set of skills, or all skills —
+ * `skillsmith update <skill>`, `skillsmith update <skill1> <skill2> ...`,
+ * or `skillsmith update --all`.
  */
-async function updateActionImpl(
-  skillName: string | undefined,
-  opts: Record<string, string | boolean | undefined>
-): Promise<void> {
-  const dbPath = opts['db'] as string
-  const updateAll = opts['all'] as boolean | undefined
-
-  try {
-    if (updateAll || !skillName) {
-      await updateAllSkills(dbPath)
-    } else {
-      await updateSkill(skillName, dbPath)
-    }
-  } catch (error) {
-    console.error(chalk.red('Error updating skills:'), sanitizeError(error))
-    process.exit(1)
-  }
-}
-
-export const updateAction = withTelemetry(updateActionImpl, {
-  source: 'cli',
-  extractSkillId: () => 'update',
-  extractFramework: () => 'cli',
-})
-
 export function createUpdateCommand(): Command {
   return new Command('update')
     .description('Update installed skills')
-    .argument('[skill]', 'Skill name to update (omit for all)')
+    .argument('[skills...]', 'Skill name(s) to update (omit for all, or pass --all explicitly)')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-a, --all', 'Update all installed skills')
+    .option('-n, --dry-run', 'Show what would update without installing')
     .action(updateAction)
 }
 
 /**
  * Create remove command
  */
-async function removeActionImpl(
-  skillName: string,
-  opts: Record<string, string | boolean | undefined>
-): Promise<void> {
-  const force = (opts['force'] as boolean) ?? false
-  const dbPath = (opts['db'] as string) ?? DEFAULT_DB_PATH
-
-  try {
-    const success = await removeSkill(skillName, force, dbPath)
-    process.exit(success ? 0 : 1)
-  } catch (error) {
-    console.error(chalk.red('Error removing skill:'), sanitizeError(error))
-    process.exit(1)
-  }
-}
-
-export const removeAction = withTelemetry(removeActionImpl, {
-  source: 'cli',
-  extractSkillId: () => 'remove',
-  extractFramework: () => 'cli',
-})
-
 export function createRemoveCommand(): Command {
   return new Command('remove')
     .alias('rm')
@@ -425,5 +65,3 @@ export function createRemoveCommand(): Command {
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .action(removeAction)
 }
-
-export { getInstalledSkills, displaySkillsTable }
