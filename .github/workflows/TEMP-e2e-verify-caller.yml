@@ -8,8 +8,15 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   call-compliance-check:
+    permissions:
+      contents: read
+      pull-requests: write
     uses: ./.github/workflows/team-compliance-check-pr.yml
     secrets:
       SKILLSMITH_LICENSE_KEY: ${{ secrets.SMI5574_E2E_TEST_LICENSE_KEY }}
