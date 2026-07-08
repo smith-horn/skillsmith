@@ -14,6 +14,7 @@ import {
   isFirstRun,
   markFirstRunComplete,
   getWelcomeMessage,
+  formatWelcomeMessage,
   SKILLSMITH_DIR,
   FIRST_RUN_MARKER,
 } from '../../src/onboarding/first-run.js'
@@ -41,37 +42,34 @@ describe('First Run Detection (SMI-911)', () => {
     }
   })
 
+  // SMI-5582: the original anthropic/* IDs never existed in the live registry
+  // (100% first-run install failure). Replaced with real, published getsentry
+  // registry skills. varlock is now a bundled first-party asset, not a registry
+  // lookup, so it is intentionally absent here.
   describe('TIER1_SKILLS constant', () => {
-    it('should define exactly 4 Tier 1 skills', () => {
-      expect(TIER1_SKILLS).toHaveLength(4)
+    it('should define exactly 3 Tier 1 skills', () => {
+      expect(TIER1_SKILLS).toHaveLength(3)
     })
 
-    it('should include varlock with score 95', () => {
-      const varlock = TIER1_SKILLS.find((s) => s.name === 'varlock')
-      expect(varlock).toBeDefined()
-      expect(varlock?.id).toBe('anthropic/varlock')
-      expect(varlock?.score).toBe(95)
+    it('should include skill-writer with score 92', () => {
+      const skillWriter = TIER1_SKILLS.find((s) => s.name === 'skill-writer')
+      expect(skillWriter).toBeDefined()
+      expect(skillWriter?.id).toBe('getsentry/skill-writer')
+      expect(skillWriter?.score).toBe(92)
     })
 
-    it('should include commit with score 92', () => {
+    it('should include commit with score 86', () => {
       const commit = TIER1_SKILLS.find((s) => s.name === 'commit')
       expect(commit).toBeDefined()
-      expect(commit?.id).toBe('anthropic/commit')
-      expect(commit?.score).toBe(92)
+      expect(commit?.id).toBe('getsentry/commit')
+      expect(commit?.score).toBe(86)
     })
 
-    it('should include skill-builder with score 90', () => {
-      const skillBuilder = TIER1_SKILLS.find((s) => s.name === 'skill-builder')
-      expect(skillBuilder).toBeDefined()
-      expect(skillBuilder?.id).toBe('anthropic/skill-builder')
-      expect(skillBuilder?.score).toBe(90)
-    })
-
-    it('should include governance with score 88', () => {
-      const governance = TIER1_SKILLS.find((s) => s.name === 'governance')
-      expect(governance).toBeDefined()
-      expect(governance?.id).toBe('anthropic/governance')
-      expect(governance?.score).toBe(88)
+    it('should include code-review with score 86', () => {
+      const codeReview = TIER1_SKILLS.find((s) => s.name === 'code-review')
+      expect(codeReview).toBeDefined()
+      expect(codeReview?.id).toBe('getsentry/code-review')
+      expect(codeReview?.score).toBe(86)
     })
 
     it('should have skills ordered by score (descending)', () => {
@@ -289,6 +287,41 @@ describe('First Run Detection (SMI-911)', () => {
 
       expect(message).not.toMatch(/^\s/)
       expect(message).not.toMatch(/\s$/)
+    })
+  })
+
+  // SMI-5582/5573: structured formatter with third-party authorship disclosure.
+  describe('formatWelcomeMessage()', () => {
+    it('should render bundled skills without a "(by ...)" attribution suffix', () => {
+      const message = formatWelcomeMessage([{ name: 'skillsmith' }, { name: 'varlock' }])
+      expect(message).toContain('- skillsmith')
+      expect(message).toContain('- varlock')
+      expect(message).not.toContain('(by')
+    })
+
+    it('should disclose attribution for registry skills', () => {
+      const message = formatWelcomeMessage([
+        { name: 'commit', attribution: 'getsentry' },
+        { name: 'code-review', attribution: 'getsentry' },
+      ])
+      expect(message).toContain('- commit (by getsentry)')
+      expect(message).toContain('- code-review (by getsentry)')
+    })
+
+    it('should mix bundled (unattributed) and registry (attributed) skills', () => {
+      const message = formatWelcomeMessage([
+        { name: 'skillsmith' },
+        { name: 'skill-writer', attribution: 'getsentry' },
+      ])
+      expect(message).toContain('- skillsmith\n')
+      expect(message).toContain('- skill-writer (by getsentry)')
+      expect(message).toContain('Welcome to Skillsmith!')
+    })
+
+    it('should be the backing implementation for getWelcomeMessage', () => {
+      expect(getWelcomeMessage(['a', 'b'])).toBe(
+        formatWelcomeMessage([{ name: 'a' }, { name: 'b' }])
+      )
     })
   })
 

@@ -217,6 +217,14 @@
       ],
       "script": "scripts/smoke-prod/inventory.sh",
       "checks": ["check_purge_inventory_requires_jwt", "check_purge_user_inventory_rpc_denies_anon"]
+    },
+    {
+      "id": "tier1-skill-drift-canary",
+      "owner": "always-on-canary",
+      "trigger_globs": ["packages/mcp-server/src/onboarding/first-run.ts"],
+      "always_run": true,
+      "script": "scripts/smoke-prod/registry-health.sh",
+      "checks": ["check_tier1_skills_available"]
     }
   ]
 }
