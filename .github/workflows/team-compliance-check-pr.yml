@@ -210,7 +210,15 @@ jobs:
               -F "body=@${BODY_PATH}" >/dev/null
           else
             echo "Posting fresh sticky comment…"
-            gh pr comment "$PR_NUM" --body-file "$BODY_PATH"
+            # --repo is mandatory here: this workflow never runs actions/checkout
+            # (pure shell/curl/jq/gh, no repo file content needed), so there is no
+            # local .git for `gh pr comment` to infer the repo from -- confirmed
+            # live via SMI-5574 staging e2e verification (2026-07-08): omitting
+            # --repo failed with "fatal: not a git repository" on every PR's
+            # first run (the only run with no existing sticky comment to PATCH
+            # instead). `gh api` calls above are unaffected -- they always take
+            # an explicit /repos/${REPO}/... path.
+            gh pr comment "$PR_NUM" --repo "$REPO" --body-file "$BODY_PATH"
           fi
 
       - name: Final status
