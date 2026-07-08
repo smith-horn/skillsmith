@@ -1,0 +1,15 @@
+# TEMPORARY -- SMI-5574 staging end-to-end verification only.
+# Exists SOLELY on the smi-5574-staging-e2e-verify branch to trigger
+# team-compliance-check-pr.yml directly for a live-fire test against staging.
+# Deleted (along with the branch) once verification is complete -- never
+# merged, never present on smi-5574-team-compliance-check or main.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  call-compliance-check:
+    uses: ./.github/workflows/team-compliance-check-pr.yml
+    secrets:
+      SKILLSMITH_LICENSE_KEY: ${{ secrets.SMI5574_E2E_TEST_LICENSE_KEY }}

@@ -73,9 +73,10 @@ concurrency:
 env:
   STICKY_MARKER: '<!-- skillsmith-team-compliance-check -->'
   ACK_MARKER: '[compliance-check-ack]'
-  # Prod ref only -- never the staging ref (CLAUDE.md "Supabase Edge Functions"
-  # project-refs table; this hits prod skills-registry data from a customer's CI).
-  SKILLSMITH_API_BASE: 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
+  # TEMPORARY, THROWAWAY BRANCH ONLY (smi-5574-staging-e2e-verify) -- pointed at
+  # staging for a live SMI-5574 verification run. NEVER merge this override --
+  # the real workflow always targets prod (vrcnzpmndtroqxxoqkzy), never staging.
+  SKILLSMITH_API_BASE: 'https://ovhcifugwqnzoebwfuku.supabase.co'
   # PLACEHOLDER -- see the top-of-file DESIGN NOTE. Must be recomputed as
   # (actual merge date + 21 days) at merge time.
   SHADOW_MODE_END_DATE: '2026-07-29'
