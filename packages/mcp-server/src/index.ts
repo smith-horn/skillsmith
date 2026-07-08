@@ -20,7 +20,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { getToolContextAsync, type ToolContext } from './context.js'
 import { searchToolSchema } from './tools/search.js'
 import { getSkillToolSchema } from './tools/get-skill.js'
-import { installTool, installSkill } from './tools/install.js'
+import { installTool } from './tools/install.js'
 import { uninstallTool } from './tools/uninstall.js'
 import { recommendToolSchema } from './tools/recommend.js'
 import { validateToolSchema } from './tools/validate.js'
@@ -70,12 +70,12 @@ import { newAuditToolDefinitions } from './audit-tool-dispatch.js'
 import { maybeAutoNotifyAudit } from './audit/audit-notify.js'
 // SMI-5407: skill_recover_source — Community read-only provenance tool
 import { provenanceToolDefinitions } from './provenance-tool-dispatch.js'
-import {
-  isFirstRun,
-  markFirstRunComplete,
-  getWelcomeMessage,
-  TIER1_SKILLS,
-} from './onboarding/first-run.js'
+import { isFirstRun, markFirstRunComplete } from './onboarding/first-run.js'
+// SMI-5582: Tier-1 registry install + self-heal orchestration. Heavy logic
+// (state-file I/O, the timeout-guarded install loop, welcome-message
+// composition) lives in this sibling to keep index.ts under the 500-LOC gate.
+// Re-exported below for integration testability (plan G).
+import { maybeInstallMissingTier1Skills } from './onboarding/tier1-self-heal.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
 // SMI-5456: agent-mediation marker channel — resolution + AsyncLocalStorage
 // scoping now live in call-tool-handler.js (SMI-5479 extraction).
@@ -258,42 +258,31 @@ function ensureSkillsmithSkillInstalled(): void {
 }
 
 /**
- * Run first-time setup: install bundled skills and Tier 1 skills from registry
+ * SMI-5582: run only the SYNCHRONOUS, zero-network part of first-time setup —
+ * install bundled first-party assets + docs and flip the first-run marker. Kept
+ * on the blocking startup path (fast, no network) so `isFirstRun()` flips to
+ * false immediately. The Tier-1 REGISTRY install (real network) runs
+ * fire-and-forget via `maybeInstallMissingTier1Skills` in `main()`, never here.
+ * Exported for integration testability (plan G).
+ *
+ * @returns Names of the bundled skills freshly installed (credited, without
+ *   attribution, in the welcome message).
  */
-async function runFirstTimeSetup(): Promise<void> {
+export async function runFirstTimeSetup(): Promise<string[]> {
+  // stderr kept for `docker logs` / local debugging — the tool-response
+  // annotation queued by maybeInstallMissingTier1Skills is the primary UX
+  // channel now (SMI-5573).
   console.error('[skillsmith] First run detected, installing essentials...')
-
-  // Install bundled skills (skillsmith documentation skill)
   const bundledSkills = installBundledSkills()
-
-  // Install user documentation
   installUserDocs()
-
-  // Install Tier 1 skills from registry
-  const registrySkills: string[] = []
-  for (const skill of TIER1_SKILLS) {
-    try {
-      await installSkill(
-        { skillId: skill.id, force: false, skipScan: false, skipOptimize: false, confirmed: true },
-        toolContext
-      )
-      registrySkills.push(skill.name)
-      console.error(`[skillsmith] Installed: ${skill.name}`)
-    } catch (error) {
-      console.error(
-        `[skillsmith] Failed to install ${skill.name}:`,
-        error instanceof Error ? error.message : 'Unknown error'
-      )
-    }
-  }
-
-  // Mark first run as complete
+  // Mark complete BEFORE the async registry install kicks off, so isFirstRun()
+  // flips regardless of registry outcome.
   markFirstRunComplete()
-
-  // Show welcome message
-  const allSkills = [...bundledSkills, ...registrySkills]
-  console.error(getWelcomeMessage(allSkills))
+  return bundledSkills
 }
+
+// SMI-5582 (plan G): re-export so integration tests can drive it directly.
+export { maybeInstallMissingTier1Skills }
 
 /**
  * SMI-2163: Startup diagnostics for common installation issues
@@ -430,9 +419,13 @@ async function main() {
     process.exit(1)
   }
 
-  // Run first-time setup if needed
+  // Run the synchronous (zero-network) part of first-time setup if needed.
+  // `bundledSkills` are credited (without attribution) in the welcome message;
+  // on a non-first-run self-heal there are none freshly installed here, so the
+  // welcome message then lists only the registry skills.
+  let bundledSkills: string[] = []
   if (isFirstRun()) {
-    await runFirstTimeSetup()
+    bundledSkills = await runFirstTimeSetup()
   } else {
     // SMI-4790: ensure the bundled `skillsmith` slash-command skill is installed
     // even on non-first-run (covers MCP-only users who never ran `skillsmith setup`,
@@ -443,6 +436,15 @@ async function main() {
       ensureSkillsmithSkillInstalled()
     }
   }
+
+  // SMI-5582: Tier-1 registry install + self-heal. Runs on EVERY startup (not
+  // just first-run) so users already past markFirstRunComplete() with the old
+  // broken IDs get healed; it reconciles a persisted status file, retrying only
+  // still-missing skills (≤1×/24h). FIRE-AND-FORGET (never awaited) — mirrors
+  // checkForUpdates() below so a slow, now-timeout-guarded GitHub fetch cannot
+  // delay server.connect(). Opt out via SKILLSMITH_TIER1_AUTOINSTALL_DISABLE=1
+  // (registry path only; bundled assets above unaffected). Never throws.
+  void maybeInstallMissingTier1Skills(toolContext, { bundledSkills }).catch(() => {})
 
   // SMI-1952: Auto-update check (non-blocking)
   if (process.env.SKILLSMITH_AUTO_UPDATE_CHECK !== 'false') {
