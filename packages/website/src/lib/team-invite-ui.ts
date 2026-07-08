@@ -16,6 +16,7 @@ import {
   removeTeamMember,
   resendInvitation,
   revokeInvitation,
+  setTeamMemberGithubUsername,
   type PendingInvitation,
 } from './team-invitations'
 
@@ -33,6 +34,8 @@ export interface TeamMemberRow {
   invited_at: string | null
   full_name: string | null
   email: string | null
+  /** SMI-5589. `null` resolves to `identity_unlinked` (warn) in the compliance check. */
+  github_username: string | null
 }
 
 /**
@@ -241,6 +244,19 @@ function canRemove(viewer: Viewer, row: TeamMemberRow): boolean {
 }
 
 /**
+ * SMI-5589. Unlike `canRemove`, an owner's OWN row is editable by an admin
+ * (editing a username isn't destructive or power-transferring — an admin
+ * fixing the traveling owner's typo is legitimate). The viewer's-own-row
+ * exclusion is what actually draws the "another member only" scope line for
+ * this issue — self-service editing is SMI-5590, not this RPC.
+ */
+function canEditGithubUsername(viewer: Viewer, row: TeamMemberRow): boolean {
+  if (viewer.role !== 'owner' && viewer.role !== 'admin') return false
+  if (viewer.userId !== null && row.user_id === viewer.userId) return false
+  return true
+}
+
+/**
  * Render one `.member-card` row. Used by `refreshMembersList` and by the
  * initial page-load render in `members.astro` (which imports this directly
  * to avoid duplicating markup).
@@ -256,18 +272,31 @@ export function renderMemberRow(row: TeamMemberRow, viewer: Viewer): string {
     : '—'
   const roleLower = String(row.role).toLowerCase()
   const roleLabel = roleLower.charAt(0).toUpperCase() + roleLower.slice(1)
-  const removeBtn = canRemove(viewer, row)
-    ? `<div class="member-actions">
-        <button class="btn btn-secondary"
-                type="button"
-                data-action="remove-member"
-                data-member-id="${escapeHtml(row.member_id)}"
-                data-member-email="${escapeHtml(row.email ?? 'this member')}"
-                aria-label="Remove ${escapeHtml(name)}">
-          Remove
-        </button>
-      </div>`
+  const githubUsernameBtn = canEditGithubUsername(viewer, row)
+    ? `<button class="btn btn-secondary"
+              type="button"
+              data-action="set-github-username"
+              data-member-id="${escapeHtml(row.member_id)}"
+              data-member-email="${escapeHtml(row.email ?? 'this member')}"
+              data-member-github-username="${escapeHtml(row.github_username ?? '')}"
+              aria-label="Set GitHub username for ${escapeHtml(name)}">
+        ${row.github_username ? 'Edit GitHub Username' : 'Set GitHub Username'}
+      </button>`
     : ''
+  const removeBtn = canRemove(viewer, row)
+    ? `<button class="btn btn-secondary"
+              type="button"
+              data-action="remove-member"
+              data-member-id="${escapeHtml(row.member_id)}"
+              data-member-email="${escapeHtml(row.email ?? 'this member')}"
+              aria-label="Remove ${escapeHtml(name)}">
+        Remove
+      </button>`
+    : ''
+  const actions =
+    githubUsernameBtn || removeBtn
+      ? `<div class="member-actions">${githubUsernameBtn}${removeBtn}</div>`
+      : ''
   return `<div class="member-card" data-member-id="${escapeHtml(row.member_id)}">
     <div class="member-details">
       <div class="member-name">${escapeHtml(name)}</div>
@@ -276,8 +305,11 @@ export function renderMemberRow(row: TeamMemberRow, viewer: Viewer): string {
     <div class="member-meta">
       <span class="role-badge role-${escapeHtml(roleLower)}">${escapeHtml(roleLabel)}</span>
       <span class="member-joined">Joined ${escapeHtml(joined)}</span>
+      <span class="member-github ${row.github_username ? '' : 'member-github--unlinked'}">
+        ${row.github_username ? `GitHub: @${escapeHtml(row.github_username)}` : 'GitHub: not linked'}
+      </span>
     </div>
-    ${removeBtn}
+    ${actions}
   </div>`
 }
 
@@ -330,6 +362,25 @@ export function wireMemberManagement(
   container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement | null
     if (!target) return
+
+    if (target.dataset.action === 'set-github-username') {
+      const memberId = target.dataset.memberId
+      if (!memberId) return
+      const current = target.dataset.memberGithubUsername ?? ''
+      const label = target.dataset.memberEmail ?? 'this member'
+      const input = window.prompt(`GitHub username for ${label} (leave blank to clear):`, current)
+      if (input === null) return // cancelled
+      target.setAttribute('disabled', 'true')
+      const r = await setTeamMemberGithubUsername(supabase, memberId, input)
+      if (!r.ok) {
+        window.alert(r.error ?? 'Could not update GitHub username.')
+        target.removeAttribute('disabled')
+        return
+      }
+      await refreshMembersList(supabase, teamId, viewer)
+      return
+    }
+
     if (target.dataset.action !== 'remove-member') return
 
     const email = target.dataset.memberEmail ?? 'this member'
