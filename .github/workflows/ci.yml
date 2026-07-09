@@ -593,6 +593,19 @@ jobs:
       - name: Smoke - --surface=health canary against prod
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          # SMI-5620: --surface=health auto-includes every always_run canary
+          # (health, api-proxy-header-fidelity, tier1-skill-drift-canary,
+          # website-homepage-canary), not just the named surface. This step
+          # previously only passed SUPABASE_URL, so tier1-skill-drift-canary
+          # always genuinely failed here (SMOKE_SKILLS_API_KEY unset) and
+          # api-proxy-header-fidelity always soft-skipped (SUPABASE_ANON_KEY
+          # unset). That real failure was masked pre-SMI-5620 by a since-fixed
+          # bug in scripts/smoke-prod/lib.sh (re-sourcing wiped the
+          # accumulated fail count, so this job showed green regardless).
+          # Wiring in the same secrets smoke-prod.yml already uses for these
+          # exact checks fixes it at the source instead of re-masking it.
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SMOKE_SKILLS_API_KEY: ${{ secrets.SMOKE_SKILLS_API_KEY }}
         run: |
           # Skip if SUPABASE_URL secret is unavailable (forks). The harness
           # exits 1 with a clear message in that case; in-tree PRs always
