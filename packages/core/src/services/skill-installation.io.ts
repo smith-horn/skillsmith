@@ -28,6 +28,22 @@ export function assertNotEncrypted(content: string, filePath: string): void {
   }
 }
 
+/**
+ * SMI-5582: per-request timeout for raw.githubusercontent.com fetches.
+ *
+ * This is THE critical-path GitHub fetch for a registry install: it is reached
+ * from `SkillInstallationService.install()` (SKILL.md) and from
+ * `fetchAndScanOptionalFiles` (up to 7 optional files), each with a possible
+ * `main`→`master` fallback — i.e. up to ~16 sequential network calls per
+ * skill. Before SMI-5582 none of them were bounded, so a single hung GitHub
+ * socket could stall the caller indefinitely. Since Tier-1 auto-install now
+ * runs this chain at server startup, an unbounded fetch here is what would
+ * have hung MCP startup. 10s matches the "generous but finite" budget of the
+ * other startup network paths (`version-check.ts` uses 3s for a single npm
+ * ping; this is a heavier raw-content fetch, hence the larger bound).
+ */
+const GITHUB_FETCH_TIMEOUT_MS = 10_000
+
 export async function fetchFromGitHub(
   owner: string,
   repo: string,
@@ -36,13 +52,15 @@ export async function fetchFromGitHub(
 ): Promise<string> {
   const url =
     'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/' + filePath
-  const response = await fetch(url)
+  const response = await fetch(url, { signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) })
 
   if (!response.ok) {
     if (branch === 'main') {
       const masterUrl =
         'https://raw.githubusercontent.com/' + owner + '/' + repo + '/master/' + filePath
-      const masterResponse = await fetch(masterUrl)
+      const masterResponse = await fetch(masterUrl, {
+        signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+      })
       if (!masterResponse.ok) {
         throw new Error('Failed to fetch ' + filePath + ': ' + response.status)
       }

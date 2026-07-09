@@ -460,9 +460,16 @@ mkdir -p "$SCN11_MAIN/.worktrees/wt/node_modules" # native-binding preflight
 
 # Helper for matrix cells: shim `uname` via PATH, force docker-absent, then
 # source helper from the test fixture's cwd. Output the relevant vars.
+# Optional $3 is extra env var assignments (e.g. "SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1")
+# injected into the sourcing subshell — SMI-5570/SMI-5074's default is now to
+# hard-fail (exit 1, no vars printed) rather than silently fall back when an
+# in-tree worktree's own container can't be reached, so cells exercising the
+# fallback-and-report-state path need to opt out explicitly, same as a real
+# caller would via `SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 git push`.
 run_helper_with_uname() {
   uname_value="$1"
   cwd="$2"
+  extra_env="${3:-}"
   shim_dir=$(mktemp -d)
   cat > "$shim_dir/uname" <<UNAMEEOF
 #!/bin/sh
@@ -475,15 +482,26 @@ UNAMEEOF
 exit 1
 DOCKEREOF
   chmod +x "$shim_dir/docker"
-  ( cd "$cwd" && PATH="$shim_dir:$PATH" sh -c "
+  # Capture the subshell's own exit status explicitly and `return` it —
+  # `rm -rf` as the trailing statement would otherwise always exit 0,
+  # masking a hard-fail (exit 1) from hook-docker-detect.sh regardless of
+  # what actually happened (only surfaced once a caller started checking
+  # this function's exit status, not just its stdout — SMI-5570/SMI-5074).
+  # shellcheck disable=SC2086 # intentional word-splitting: $extra_env is
+  # either empty (no extra args to env) or a single "VAR=value" token; quoting
+  # it would pass an empty-string argument to env instead of omitting it.
+  ( cd "$cwd" && env $extra_env PATH="$shim_dir:$PATH" sh -c "
       . '$REPO_ROOT/scripts/lib/hook-docker-detect.sh' >/dev/null 2>&1
       printf 'IS_WORKTREE=%s NEEDS_FALLBACK=%s FELL_BACK=%s USE_DOCKER=%s CONTAINER_WD=%s\n' \
         \"\$IS_WORKTREE\" \"\$NEEDS_FALLBACK\" \"\$FELL_BACK\" \"\$USE_DOCKER\" \"\$CONTAINER_WD\"
     " 2>/dev/null )
+  helper_exit=$?
   rm -rf "$shim_dir"
+  return "$helper_exit"
 }
 
-# Cell 1: Darwin + main repo → no fallback.
+# Cell 1: Darwin + main repo → no fallback (main checkout is unaffected by
+# SMI-5570/SMI-5074's worktree-routing changes).
 out=$(run_helper_with_uname "Darwin" "$SCN11_MAIN")
 case "$out" in
   *"IS_WORKTREE=0"*"NEEDS_FALLBACK=0"*"USE_DOCKER=0"*"CONTAINER_WD=/app"*)
@@ -496,11 +514,15 @@ case "$out" in
     ;;
 esac
 
-# Cell 2: Darwin + worktree → fallback (host).
-out=$(run_helper_with_uname "Darwin" "$SCN11_MAIN/.worktrees/wt")
+# Cell 2: Darwin + worktree, own container unreachable, hard-fail disabled →
+# fallback (host). SMI-5570/SMI-5074: CONTAINER_WD is now always "/app" (the
+# worktree's own container mounts itself there directly — no more nested
+# ".worktrees/<name>" path, since that was main's-container-reaching-in,
+# which is exactly the routing this change removes).
+out=$(run_helper_with_uname "Darwin" "$SCN11_MAIN/.worktrees/wt" "SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1")
 case "$out" in
-  *"IS_WORKTREE=1"*"NEEDS_FALLBACK=1"*"FELL_BACK=1"*"USE_DOCKER=0"*"CONTAINER_WD=/app/.worktrees/wt"*)
-    echo "PASS Scenario 11 cell 2: Darwin + worktree → host fallback"
+  *"IS_WORKTREE=1"*"NEEDS_FALLBACK=1"*"FELL_BACK=1"*"USE_DOCKER=0"*"CONTAINER_WD=/app"*)
+    echo "PASS Scenario 11 cell 2: Darwin + worktree (hard-fail disabled) → host fallback"
     pass=$((pass + 1))
     ;;
   *)
@@ -508,6 +530,19 @@ case "$out" in
     fail=$((fail + 1))
     ;;
 esac
+
+# Cell 2b: Darwin + worktree, own container unreachable, NO opt-out → hard-fail
+# (exit 1, no state vars printed). This is the new SMI-5570/SMI-5074 default —
+# a worktree's pre-push no longer silently substitutes main's shared
+# container's state; it fails loudly with worktree-docker.sh's remediation
+# unless the push is docs-only or the guard is explicitly disabled.
+if out=$(run_helper_with_uname "Darwin" "$SCN11_MAIN/.worktrees/wt"); then
+  echo "FAIL Scenario 11 cell 2b: Darwin + worktree (no opt-out) should have hard-failed, got: $out"
+  fail=$((fail + 1))
+else
+  echo "PASS Scenario 11 cell 2b: Darwin + worktree (no opt-out) → hard-fails"
+  pass=$((pass + 1))
+fi
 
 # Cell 3: Linux + main repo → no fallback.
 out=$(run_helper_with_uname "Linux" "$SCN11_MAIN")
@@ -522,11 +557,14 @@ case "$out" in
     ;;
 esac
 
-# Cell 4: Linux + worktree → no fallback (Docker handles symlinks on Linux).
-out=$(run_helper_with_uname "Linux" "$SCN11_MAIN/.worktrees/wt")
+# Cell 4: Linux + worktree, own container unreachable, hard-fail disabled →
+# fallback (host). SMI-5570/SMI-5074: the worktree-routing fix is universal
+# (Docker's mount(2)-follows-symlinks root cause is not macOS-specific), so
+# Linux now behaves identically to Darwin here, not "no fallback" as before.
+out=$(run_helper_with_uname "Linux" "$SCN11_MAIN/.worktrees/wt" "SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1")
 case "$out" in
-  *"IS_WORKTREE=1"*"NEEDS_FALLBACK=0"*"FELL_BACK=0"*"CONTAINER_WD=/app/.worktrees/wt"*)
-    echo "PASS Scenario 11 cell 4: Linux + worktree → in-container with translated path"
+  *"IS_WORKTREE=1"*"NEEDS_FALLBACK=1"*"FELL_BACK=1"*"USE_DOCKER=0"*"CONTAINER_WD=/app"*)
+    echo "PASS Scenario 11 cell 4: Linux + worktree (hard-fail disabled) → host fallback"
     pass=$((pass + 1))
     ;;
   *)
@@ -534,6 +572,16 @@ case "$out" in
     fail=$((fail + 1))
     ;;
 esac
+
+# Cell 4b: Linux + worktree, own container unreachable, NO opt-out → hard-fail.
+# Same universal behavior as cell 2b — no more OS-specific carve-out.
+if out=$(run_helper_with_uname "Linux" "$SCN11_MAIN/.worktrees/wt"); then
+  echo "FAIL Scenario 11 cell 4b: Linux + worktree (no opt-out) should have hard-failed, got: $out"
+  fail=$((fail + 1))
+else
+  echo "PASS Scenario 11 cell 4b: Linux + worktree (no opt-out) → hard-fails"
+  pass=$((pass + 1))
+fi
 
 # -----------------------------------------------------------------------
 # Scenario 12 (SMI-4681): off-tree worktree returns empty CONTAINER_WD,
