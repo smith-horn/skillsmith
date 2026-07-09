@@ -369,6 +369,10 @@ describe('SKILL_STATE_META', () => {
   })
 })
 
+// suggestedAction coverage (SKILL_STATE_META) and computeDeviceBatchTip are in
+// inventory-view.suggested-action.test.ts (SMI-5595) — split out to stay under
+// the project's 500-line-per-file standard.
+
 // ─── STALE_AFTER_HOURS ────────────────────────────────────────────────────────
 
 describe('STALE_AFTER_HOURS', () => {
