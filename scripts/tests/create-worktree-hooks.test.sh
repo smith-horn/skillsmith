@@ -52,6 +52,24 @@ assert_true() {
   fi
 }
 
+# SMI-5596: portable inode lookup. BSD stat (macOS) uses `-f FORMAT` for a
+# format string (`stat -f '%i' file` -> bare inode number); GNU stat (Linux,
+# CI) uses `-f` for FILESYSTEM status instead — its own format-string flag is
+# `-c`. Naively trying `stat -f '%i' file 2>/dev/null || stat -c '%i' file`
+# does NOT fall through on Linux: GNU `stat -f` still exits 0, it just prints
+# the multi-line filesystem-status block instead of the inode, so the `||`
+# never fires. Validate the BSD-style output is a bare integer before
+# accepting it; anything else (including GNU's verbose fs-status dump) falls
+# through to the GNU-correct `-c '%i'` form.
+get_inode() {
+  local path="$1" out
+  if out=$(stat -f '%i' "$path" 2>/dev/null) && [[ "$out" =~ ^[0-9]+$ ]]; then
+    echo "$out"
+  else
+    stat -c '%i' "$path"
+  fi
+}
+
 # -----------------------------------------------------------------------
 # Fixture: throwaway repo with a fake node_modules/.bin/lint-staged.
 # -----------------------------------------------------------------------
@@ -128,9 +146,9 @@ assert_true "link_worktree_node_modules: idempotent repeat" \
 # delete+create event that would re-trigger the Docker Desktop macOS
 # file-sharing propagation delay the Step 8 readiness probe bounds.
 # -----------------------------------------------------------------------
-INODE_BEFORE=$(stat -f '%i' "$FAKE_WT1/node_modules" 2>/dev/null || stat -c '%i' "$FAKE_WT1/node_modules")
+INODE_BEFORE=$(get_inode "$FAKE_WT1/node_modules")
 link_worktree_node_modules "$FAKE_WT1" "$FAKE_MAIN" >/dev/null
-INODE_AFTER=$(stat -f '%i' "$FAKE_WT1/node_modules" 2>/dev/null || stat -c '%i' "$FAKE_WT1/node_modules")
+INODE_AFTER=$(get_inode "$FAKE_WT1/node_modules")
 assert_eq "link_worktree_node_modules: idempotent no-op preserves symlink inode" \
   "$INODE_BEFORE" "$INODE_AFTER"
 
@@ -211,11 +229,9 @@ assert_eq "repair_worktrees: wt-b symlink refreshed to relative form" \
 # P-5 cross-invocation fix: a sibling worktree's Step 7 sweep re-visiting
 # wt-a here must not gratuitously re-trigger propagation.
 # -----------------------------------------------------------------------
-WTA_INODE_BEFORE=$(stat -f '%i' "$FAKE_MAIN/.worktrees/wt-a/node_modules" 2>/dev/null \
-  || stat -c '%i' "$FAKE_MAIN/.worktrees/wt-a/node_modules")
+WTA_INODE_BEFORE=$(get_inode "$FAKE_MAIN/.worktrees/wt-a/node_modules")
 repair_worktrees_node_modules "$FAKE_MAIN" >/dev/null 2>&1
-WTA_INODE_AFTER=$(stat -f '%i' "$FAKE_MAIN/.worktrees/wt-a/node_modules" 2>/dev/null \
-  || stat -c '%i' "$FAKE_MAIN/.worktrees/wt-a/node_modules")
+WTA_INODE_AFTER=$(get_inode "$FAKE_MAIN/.worktrees/wt-a/node_modules")
 assert_eq "repair_worktrees: redundant sweep preserves already-correct symlink inode" \
   "$WTA_INODE_BEFORE" "$WTA_INODE_AFTER"
 
@@ -271,9 +287,9 @@ assert_true "link_worktree_package: nested per-pkg symlink resolves" \
 # per-package symlink.
 # -----------------------------------------------------------------------
 PKG_LINK="$FAKE_MAIN/wt-pkg-nested/packages/foo/node_modules"
-PKG_INODE_BEFORE=$(stat -f '%i' "$PKG_LINK" 2>/dev/null || stat -c '%i' "$PKG_LINK")
+PKG_INODE_BEFORE=$(get_inode "$PKG_LINK")
 link_worktree_package_node_modules "$FAKE_MAIN/wt-pkg-nested" "$FAKE_MAIN" >/dev/null
-PKG_INODE_AFTER=$(stat -f '%i' "$PKG_LINK" 2>/dev/null || stat -c '%i' "$PKG_LINK")
+PKG_INODE_AFTER=$(get_inode "$PKG_LINK")
 assert_eq "link_worktree_package: idempotent no-op preserves symlink inode" \
   "$PKG_INODE_BEFORE" "$PKG_INODE_AFTER"
 
