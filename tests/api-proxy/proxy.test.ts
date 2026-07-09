@@ -14,10 +14,14 @@ import handler from '../../apps/api-proxy/api/proxy'
 const SUPABASE_URL = 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
 const NULL_BYTE = String.fromCharCode(0)
 
-function makeReq(path: string | undefined, headers: Record<string, string> = {}): VercelRequest {
+function makeReq(
+  path: string | undefined,
+  headers: Record<string, string> = {},
+  extraQuery: Record<string, string | string[]> = {}
+): VercelRequest {
   return {
     method: 'GET',
-    query: path === undefined ? {} : { path },
+    query: path === undefined ? { ...extraQuery } : { path, ...extraQuery },
     headers,
     body: undefined,
   } as unknown as VercelRequest
@@ -347,5 +351,107 @@ describe('SMI-5598: api-proxy header forwarding', () => {
 
       expect(fetchHeaders(fetchSpy)['x-forwarded-for']).toBeUndefined()
     })
+  })
+})
+
+describe('SMI-5606: api-proxy query-string forwarding', () => {
+  beforeEach(() => {
+    process.env.SUPABASE_URL = SUPABASE_URL
+    vi.restoreAllMocks()
+  })
+
+  function mockUpstreamJson() {
+    return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+  }
+
+  it('re-attaches additional query-string params onto the upstream fetch URL', async () => {
+    const fetchSpy = mockUpstreamJson()
+
+    const req = makeReq('functions/v1/skills-search', {}, { query: 'test', limit: '1' })
+    const res = makeRes()
+    await handler(req, res)
+
+    const calledUrl = String(fetchSpy.mock.calls[0]?.[0] ?? '')
+    expect(calledUrl).toBe(`${SUPABASE_URL}/functions/v1/skills-search?query=test&limit=1`)
+  })
+
+  it('forwards an array-valued (repeated-key) query param as repeated keys', async () => {
+    const fetchSpy = mockUpstreamJson()
+
+    const req = makeReq('functions/v1/skills-search', {}, { category: ['dev', 'ops'] })
+    const res = makeRes()
+    await handler(req, res)
+
+    const calledUrl = String(fetchSpy.mock.calls[0]?.[0] ?? '')
+    expect(new URL(calledUrl).searchParams.getAll('category')).toEqual(['dev', 'ops'])
+  })
+
+  it('never forwards `path` itself as a query-string parameter (regression)', async () => {
+    const fetchSpy = mockUpstreamJson()
+
+    const req = makeReq('functions/v1/skills-search', {}, { query: 'test' })
+    const res = makeRes()
+    await handler(req, res)
+
+    const calledUrl = String(fetchSpy.mock.calls[0]?.[0] ?? '')
+    expect(new URL(calledUrl).searchParams.has('path')).toBe(false)
+    expect(calledUrl).toBe(`${SUPABASE_URL}/functions/v1/skills-search?query=test`)
+  })
+})
+
+describe('SMI-5607: duplicate ?path= query parameter', () => {
+  beforeEach(() => {
+    process.env.SUPABASE_URL = SUPABASE_URL
+    vi.restoreAllMocks()
+  })
+
+  function mockUpstreamJson() {
+    return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+  }
+
+  it('takes the first value and forwards successfully when path arrives duplicated (array-valued)', async () => {
+    const fetchSpy = mockUpstreamJson()
+
+    const req = {
+      method: 'GET',
+      query: { path: ['functions/v1/skills-search', 'x'] },
+      headers: {},
+      body: undefined,
+    } as unknown as VercelRequest
+    const res = makeRes()
+
+    await handler(req, res)
+
+    expect(fetchSpy).toHaveBeenCalledOnce()
+    const calledUrl = String(fetchSpy.mock.calls[0]?.[0] ?? '')
+    expect(calledUrl).toBe(`${SUPABASE_URL}/functions/v1/skills-search`)
+    expect(res._status).toBe(200)
+  })
+
+  it('returns 400 (not an unhandled crash) when the first duplicated path value is invalid', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+    const req = {
+      method: 'GET',
+      query: { path: ['x', 'functions/v1/skills-search'] },
+      headers: {},
+      body: undefined,
+    } as unknown as VercelRequest
+    const res = makeRes()
+
+    await handler(req, res)
+
+    expect(res._status).toBe(400)
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })

@@ -42,7 +42,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
-  const path = req.query.path as string
+  // SMI-5607: req.query.path can arrive as an array if the client's own
+  // request already had its own `?path=` (Vercel merges the rewrite-injected
+  // destination param with any client-supplied one of the same name). A raw
+  // `as string` cast let an array reach `path.startsWith(...)` below and
+  // throw an unhandled TypeError; firstHeader() already handles this shape.
+  const path = firstHeader(req.query.path)
   if (!path) {
     return res.status(400).json({ error: 'Missing path parameter' })
   }
@@ -100,6 +105,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // rejection above.
   if (resolved.origin !== baseOrigin || !pathOk) {
     return res.status(400).json({ error: 'Invalid path' })
+  }
+
+  // SMI-5606: re-attach every incoming query-string key except `path` (the
+  // destination-injected routing param from vercel.json's rewrite). Vercel's
+  // rewrite match excludes the query string, so `path` never contains one —
+  // without this, GET /skills-search and /skills-get silently lose their
+  // primary input (query, limit, category, trust_tier, min_score, id, etc.).
+  for (const [key, value] of Object.entries(req.query)) {
+    if (key === 'path') continue
+    if (Array.isArray(value)) {
+      for (const v of value) resolved.searchParams.append(key, v)
+    } else if (value !== undefined) {
+      resolved.searchParams.append(key, value)
+    }
   }
 
   const targetUrl = resolved.toString()
