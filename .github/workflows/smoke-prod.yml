@@ -76,7 +76,7 @@ jobs:
           echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
           echo "Target SHA: $TARGET_SHA"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ steps.sha.outputs.sha }}
           fetch-depth: 2
@@ -177,7 +177,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
