@@ -216,7 +216,7 @@ export function buildDeviceCardHtml(device: DeviceView): string {
       skillsHtml += `<ul class="skill-list" aria-label="Skills for ${hLabel}">`
       for (const sk of skills) {
         const ver = sk.version ? escapeHtml(sk.version) : '—'
-        const meta = SKILL_STATE_META[sk.state]
+        const meta = SKILL_STATE_META[sk.state] ?? SKILL_STATE_META.unknown
         const actionHtml = meta?.suggestedAction
           ? `<span class="skill-action">${renderSuggestedActionHtml(meta.suggestedAction, sk.skillId)}</span>`
           : ''
