@@ -23,6 +23,12 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
 # The main .git directory (may differ from REPO_ROOT/.git if in worktree)
 MAIN_GIT_DIR=""
 
+# SMI-5596: the shared, long-lived main-checkout container that pre-commit
+# routes typecheck through on macOS worktrees (hook-docker-detect.sh's
+# DOCKER_CONTAINER). Named constant replacing the inline literal previously
+# duplicated in patch_mcp_json.
+SHARED_CONTAINER="skillsmith-dev-1"
+
 #######################################
 # Print usage information
 #######################################
@@ -321,7 +327,7 @@ patch_mcp_json() {
         container_rel="${worktree_path#"$REPO_ROOT/"}"
         if [[ "$container_rel" == "$worktree_path" ]]; then
             warn "  Prettier skip: worktree not under REPO_ROOT — manual prettier-write may be needed"
-        elif docker exec skillsmith-dev-1 sh -c \
+        elif docker exec "$SHARED_CONTAINER" sh -c \
             "cd \"/app/$container_rel\" && npx --no-install prettier --write .mcp.json" \
             >/dev/null; then
             success "  Prettier-formatted .mcp.json (SMI-5002)"
@@ -487,6 +493,231 @@ create_worktree() {
 }
 
 #######################################
+# Gate for whether the Step 8 container-view readiness probe (SMI-5596)
+# should run at all. Mirrors hook-docker-detect.sh's own routing conditions
+# so the probe's applicability exactly tracks the pre-commit hook's
+# Docker-vs-host choice: if the hook would fall back to host for this
+# worktree, the container race the probe guards against cannot occur, so
+# running the probe would be pure waste.
+#
+# Six independent skip conditions (any one holding means skip):
+#   1. Non-macOS (architectural assumption — no Linux repro data; Docker's
+#      native Linux bind mounts have no comparable host<->guest FS-sharing
+#      indirection, consistent with — not proof of — the same conclusion)
+#   2. Docker CLI absent, or the shared container isn't running (same
+#      liveness check hook-docker-detect.sh uses)
+#   3. Off-tree worktree (the container's bind mount only covers REPO_ROOT)
+#   4. Explicit host opt-out: SKILLSMITH_PRE_PUSH_HOST=1
+#   5. Nested-worktree invocation (REPO_ROOT itself is a worktree) — a
+#      deliberate scope decision; this shape has no test coverage yet
+#   6. Explicit disable: SKILLSMITH_WORKTREE_READY_PROBE_DISABLE=1
+#
+# Prints a one-line info message explaining any skip. Never fails the
+# script — always returns cleanly either way.
+#
+# Arguments:
+#   $1 - worktree_path (absolute)
+#
+# Returns:
+#   0 - probe should run
+#   1 - probe should be skipped
+#######################################
+should_probe_container() {
+    local worktree_path="$1"
+
+    # 6. Explicit disable — cheapest check, first.
+    if [[ "${SKILLSMITH_WORKTREE_READY_PROBE_DISABLE:-0}" == "1" ]]; then
+        info "  Container-view readiness probe disabled (SKILLSMITH_WORKTREE_READY_PROBE_DISABLE=1) — skipping"
+        return 1
+    fi
+
+    # 1. Non-macOS.
+    if [[ "$(uname)" != "Darwin" ]]; then
+        info "  Non-macOS host — skipping container-view probe (the propagation delay is a Docker Desktop macOS file-sharing phenomenon)"
+        return 1
+    fi
+
+    # 2. Docker CLI absent or shared container not running. Same liveness
+    # check hook-docker-detect.sh uses, bounded via run_with_timeout so a
+    # wedged Docker daemon can't hang this gate (SMI-4700).
+    if ! command -v docker >/dev/null 2>&1; then
+        info "  Docker CLI not found — pre-commit will use host fallback; skipping container-view probe"
+        return 1
+    fi
+    if ! run_with_timeout 5 -- docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${SHARED_CONTAINER}$"; then
+        info "  Shared container '$SHARED_CONTAINER' not running — pre-commit will use host fallback; skipping container-view probe"
+        return 1
+    fi
+
+    # 3. Off-tree worktree — same strip-prefix idiom as patch_mcp_json (SMI-5002).
+    local container_rel="${worktree_path#"$REPO_ROOT/"}"
+    if [[ "$container_rel" == "$worktree_path" ]]; then
+        info "  Worktree is outside repo root — container cannot see it; skipping container-view probe"
+        return 1
+    fi
+
+    # 4. Explicit host opt-out.
+    if [[ "${SKILLSMITH_PRE_PUSH_HOST:-0}" == "1" ]]; then
+        info "  SKILLSMITH_PRE_PUSH_HOST=1 — pre-commit will use host execution; skipping container-view probe"
+        return 1
+    fi
+
+    # 5. Nested-worktree invocation — REPO_ROOT is itself a worktree, so the
+    # container's /app (the MAIN checkout) cannot be reliably mapped to it.
+    if [[ "$MAIN_GIT_DIR" != "$REPO_ROOT/.git" ]]; then
+        info "  create-worktree.sh invoked from a nested worktree — skipping container-view probe (unsupported shape)"
+        return 1
+    fi
+
+    return 0
+}
+
+#######################################
+# Print the actionable timeout warning as a boxed, hard-to-miss banner
+# (matching this repo's existing non-blocking-warning style — see
+# scripts/lib/check-dist-fresh.sh's drift banner). Names both plausible
+# causes since the probe cannot distinguish them from outside the
+# container (SMI-5596). The one-line summary is printed both before and
+# after the box so it's not lost in a scrollback-heavy terminal.
+#
+# Arguments:
+#   $1 - container_wd       in-container worktree path (e.g. /app/.worktrees/x)
+#   $2 - timeout_ceiling     seconds
+#   $3 - final_probe_output  captured stdout+stderr of the last, unsuppressed probe
+#######################################
+_print_probe_timeout_warning() {
+    local container_wd="$1"
+    local timeout_ceiling="$2"
+    local final_probe_output="$3"
+
+    echo ""
+    warn "Container-view probe timed out after ${timeout_ceiling}s (SMI-5596) — see boxed warning below"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}  ⚠ WARNING (non-blocking — worktree created successfully)${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  The shared container ($SHARED_CONTAINER) has not settled on a consistent"
+    echo "  view of this worktree's node_modules chain after ${timeout_ceiling}s."
+    echo "  Your FIRST 'git commit' here may hit pre-commit's full typecheck"
+    echo "  failing with NO diagnostic output (SMI-5596)."
+    echo ""
+    echo "  Two plausible causes (the probe cannot distinguish them from outside):"
+    echo "    (a) Docker Desktop's macOS file-sharing is still propagating the new"
+    echo "        worktree tree into the container. Usually clears within"
+    echo "        seconds — retry the commit, or wait a bit before your first one."
+    echo "    (b) The container's node_modules named volume is not built yet:"
+    echo "        docker exec $SHARED_CONTAINER npm install && npm run build"
+    echo ""
+    echo "  Last probe output ($container_wd):"
+    if [[ -n "$final_probe_output" ]]; then
+        echo "$final_probe_output" | sed 's/^/    /'
+    else
+        echo "    (no output)"
+    fi
+    echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    warn "Container-view probe timed out after ${timeout_ceiling}s (SMI-5596) — see boxed warning above"
+    echo ""
+}
+
+#######################################
+# Bounded readiness probe for the shared container's file-sharing view of a
+# just-created worktree's node_modules -> tsc chain (SMI-5596). Polls every
+# 1s, requiring 2 CONSECUTIVE passes (guards against a transient pass
+# landing inside a residual Step-7 re-link window), bounded by
+# SKILLSMITH_WORKTREE_READY_PROBE_TIMEOUT (default 60s — ~10x the worst
+# observed self-heal, ~6s). On timeout, prints an actionable boxed warning
+# and returns 0: the worktree's on-disk files are already correct
+# regardless of the container's propagation state, so failing the script
+# here would misreport a fully-usable worktree as broken.
+#
+# Every docker exec goes through run_with_timeout so a wedged Docker
+# daemon cannot hang this script past its bound (SMI-4700 hazard). Every
+# poll attempt is gated behind an `if`/`while` (never bare) since this
+# script runs under `set -euo pipefail` and early poll attempts are
+# expected to fail.
+#
+# Arguments:
+#   $1 - worktree_path (absolute, must be under REPO_ROOT — caller gates this
+#        via should_probe_container)
+#
+# Returns:
+#   0 always (ready, or timed out with a warning printed)
+#######################################
+probe_container_worktree_ready() {
+    local worktree_path="$1"
+    local container_rel="${worktree_path#"$REPO_ROOT/"}"
+    local container_wd="/app/$container_rel"
+
+    # expected_pkgs: same gate as link_worktree_package_node_modules — main
+    # has a real node_modules AND the worktree has the package dir.
+    local expected_pkgs="" pkg_dir pkg_name
+    if [[ -d "$REPO_ROOT/packages" ]]; then
+        for pkg_dir in "$REPO_ROOT"/packages/*/; do
+            [[ -d "$pkg_dir" ]] || continue
+            pkg_name="$(basename "$pkg_dir")"
+            [[ -d "$REPO_ROOT/packages/$pkg_name/node_modules" ]] || continue
+            [[ -d "$worktree_path/packages/$pkg_name" ]] || continue
+            expected_pkgs="$expected_pkgs $pkg_name"
+        done
+    fi
+
+    # Single-quoted: expanded INSIDE the container's own `sh`, not by this
+    # bash. $1/$@/$p below are that sh's OWN positional params, populated by
+    # the trailing `sh "$container_wd" $expected_pkgs` arguments below.
+    # shellcheck disable=SC2016
+    local probe_script='
+        wt="$1"; shift
+        cd "$wt" 2>/dev/null || exit 1
+        node_modules/.bin/tsc --version >/dev/null 2>&1 || exit 1
+        for p in "$@"; do
+            [ -d "packages/$p/node_modules" ] || exit 1
+        done
+    '
+
+    local timeout_ceiling="${SKILLSMITH_WORKTREE_READY_PROBE_TIMEOUT:-60}"
+    local interval=1
+    local consecutive_needed=2
+    local consecutive=0
+    local start_time now elapsed remaining
+
+    info "Step 8: Waiting for the shared container's file-sharing view of the worktree to settle (SMI-5596, up to ${timeout_ceiling}s)..."
+    start_time=$(date +%s)
+
+    while true; do
+        now=$(date +%s)
+        elapsed=$((now - start_time))
+        remaining=$((timeout_ceiling - elapsed))
+
+        if [[ $remaining -le 0 ]]; then
+            # Timeout: run ONE final probe WITHOUT suppression so its actual
+            # failure output can be surfaced in the warning below.
+            local final_output
+            # shellcheck disable=SC2086 # expected_pkgs is intentionally
+            # unquoted — safe basenames, word-split into positional args.
+            final_output="$(run_with_timeout 5 -- \
+                docker exec -w /app "$SHARED_CONTAINER" sh -c "$probe_script" sh "$container_wd" $expected_pkgs 2>&1)" || true
+            _print_probe_timeout_warning "$container_wd" "$timeout_ceiling" "$final_output"
+            return 0
+        fi
+
+        # shellcheck disable=SC2086 # expected_pkgs intentionally unquoted (see above).
+        if run_with_timeout "$remaining" -- \
+            docker exec -w /app "$SHARED_CONTAINER" sh -c "$probe_script" sh "$container_wd" $expected_pkgs >/dev/null 2>&1; then
+            consecutive=$((consecutive + 1))
+            if [[ $consecutive -ge $consecutive_needed ]]; then
+                success "  Container view settled after ${elapsed}s — worktree ready for its first commit"
+                return 0
+            fi
+        else
+            consecutive=0
+        fi
+
+        sleep "$interval"
+    done
+}
+
+#######################################
 # Main entry point
 #######################################
 main() {
@@ -541,13 +772,35 @@ Run '$(basename "$0") --help' for usage information."
     create_worktree "$WORKTREE_PATH" "$BRANCH_NAME" "$BASE_BRANCH"
 
     # Idempotent backfill: ensure all existing worktrees have node_modules
-    # symlinks (SMI-4377 root) + per-package symlinks (SMI-4381). The
-    # newly-created worktree is a no-op for these.
+    # symlinks (SMI-4377 root) + per-package symlinks (SMI-4381). Step 7
+    # DOES re-link the just-created worktree too (its ln -sfn is idempotent
+    # as of SMI-5596 — a no-op only when the symlink target is already
+    # correct, not a no-op because Step 7 skips new worktrees) — which is
+    # exactly why Step 8's readiness probe below must run AFTER this
+    # backfill completes, not before it.
     echo ""
     info "Step 7: Backfilling node_modules symlinks on existing worktrees (SMI-4377 + SMI-4381)..."
     repair_worktrees_node_modules "$REPO_ROOT"
     repair_worktrees_package_node_modules "$REPO_ROOT"
+
+    # Step 8 (SMI-5596): bounded readiness probe for the shared container's
+    # file-sharing view of the just-created worktree's node_modules chain.
+    # Must run AFTER Step 7 (which re-links symlinks for every worktree,
+    # including this new one) — a probe placed earlier could pass and then
+    # be invalidated by Step 7's re-link. See
+    # docs/internal/implementation/smi-5596-worktree-container-bindmount-race.md.
+    echo ""
+    if should_probe_container "$WORKTREE_PATH"; then
+        probe_container_worktree_ready "$WORKTREE_PATH"
+    fi
 }
 
-# Run main function
-main "$@"
+# Run main function.
+# SMI-5596: guarded so scripts/tests/create-worktree-ready-probe.test.ts can
+# `source` this file to unit-test should_probe_container /
+# probe_container_worktree_ready in isolation (with an injected fake docker)
+# without triggering a full worktree-creation run. Executing the script
+# directly is unaffected — $0 equals ${BASH_SOURCE[0]} in that case.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
