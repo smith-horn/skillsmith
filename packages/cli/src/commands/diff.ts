@@ -16,10 +16,13 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { classifyChange } from '@skillsmith/core'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { requireTier } from '../utils/require-tier.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { loadManifest } from '../utils/manifest.js'
+
+const logger = getCliLogger()
 
 // ============================================================================
 // Heading / section analysis helpers
@@ -211,7 +214,7 @@ async function diffActionImpl(
     }
 
     if (!oldContent) {
-      console.error(chalk.red(`Skill "${skillName}" is not installed or SKILL.md not found.`))
+      logger.error(chalk.red(`Skill "${skillName}" is not installed or SKILL.md not found.`))
       process.exit(1)
     }
 
@@ -226,7 +229,7 @@ async function diffActionImpl(
         const noSourceHint = !fetched.sourceTracked
           ? ` Source not tracked for "${skillName}". Run \`sklx audit sources\` (or MCP skill_recover_source) to recover.`
           : ''
-        console.error(
+        logger.error(
           chalk.red(
             `Could not fetch latest version for "${skillName}". ` +
               `Check your network connection or provide --new-content.` +
@@ -241,7 +244,7 @@ async function diffActionImpl(
     const changeType = classifyChange(oldContent, newContent)
     printDiff(skillName, diff, changeType)
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

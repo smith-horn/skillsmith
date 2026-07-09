@@ -50,7 +50,10 @@ import {
   createTelemetryCommand,
   createInventoryCommand,
   createAgentCommand,
+  createDiagnoseCommand,
+  createLogsCommand,
 } from './commands/index.js'
+import { getCliLogger } from './cli-logger.js'
 import { displayStartupHeader } from './utils/license.js'
 import { resolveCommandPath, shouldShowStartupHeader } from './utils/startup-header-gate.js'
 import { checkNodeVersion } from './utils/node-version.js'
@@ -58,10 +61,15 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { packageRoot } from './utils/package-root.js'
 
+// SMI-5615: shared structured logger for this CLI process — writes redacted
+// JSON-line records to disk and, for warn/error, still mirrors to
+// console.warn/console.error exactly as before (see logger.ts's persistRecord).
+const logger = getCliLogger()
+
 // SMI-1629: Check Node.js version before anything else
 const versionError = checkNodeVersion()
 if (versionError) {
-  console.error(versionError)
+  logger.error(versionError)
   process.exit(1)
 }
 
@@ -162,6 +170,10 @@ program.addCommand(createInfoCommand())
 
 // SMI-4590 Wave 4 PR 5/6: `sklx config get/set audit_mode`
 program.addCommand(createConfigCommand())
+
+// SMI-5615 Wave 3 Step 1: diagnostic snapshot + log inspection commands
+program.addCommand(createDiagnoseCommand())
+program.addCommand(createLogsCommand())
 
 // SMI-5021 Wave 3: telemetry opt-in + Claude Code hook management
 program.addCommand(createTelemetryCommand())

@@ -88,6 +88,32 @@ const tsConfig = tseslint.config(
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
     },
+  },
+  {
+    // SMI-5615 (F4): `packages/core/src/logging/**` and
+    // `packages/core/src/telemetry/**` intentionally form a one-directional
+    // dependency (telemetry -> logging, via `logging/context.ts`). A
+    // `logging/**` file importing from `telemetry/**` would reintroduce the
+    // circular import the module split exists to avoid — confirmed sound at
+    // plan-audit time (no `logging/*` module imported `telemetry/*`) and
+    // guarded here so a future change (e.g. wiring `trackApiError` from
+    // inside the logger) can't silently reintroduce the cycle. See
+    // docs/internal/implementation/production-error-logging.md §1 / F4.
+    files: ['packages/core/src/logging/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/telemetry/*', '**/telemetry/**', '../telemetry/*', '../../telemetry/*'],
+              message:
+                'packages/core/src/logging/** must not import packages/core/src/telemetry/** (SMI-5615 F4 boundary guard) — this would reintroduce a telemetry<->logging circular import. See docs/internal/implementation/production-error-logging.md.',
+            },
+          ],
+        },
+      ],
+    },
   }
 )
 

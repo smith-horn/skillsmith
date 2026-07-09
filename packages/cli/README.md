@@ -670,6 +670,49 @@ By default, the CLI uses `~/.skillsmith/skills.db`. Override with:
 SKILLSMITH_DB_PATH=/custom/path/skills.db skillsmith search "testing"
 ```
 
+### Error Logging
+
+Structured error logs are automatically persisted to disk for debugging and diagnostics.
+
+**Log Location:** `~/.skillsmith/logs/skillsmith-cli-<YYYY-MM-DD>.jsonl`
+
+**Log Format:** One JSON-line record per error, with fields:
+- `ts` — ISO 8601 timestamp
+- `level` — log level (`debug`, `info`, `warn`, `error`)
+- `surface` — invocation surface (`cli`, `mcp`, or `vscode`)
+- `event` — short machine-readable category tag
+- `msg` — human-readable message (redacted)
+- `err` — normalized error object with `name`, `message`, and first 20 stack frames (all redacted)
+- `correlationId` — trace ID linking related log entries and telemetry events
+- `toolOrCommand` — CLI command name or MCP tool name
+- `skillId` — skill ID when applicable
+- `version` — package version
+- `pid` — process ID
+- `details` — additional structured context beyond the fields above, when provided (redacted)
+
+**Redaction:** Secrets, tokens, API keys, passwords, connection strings, and PEM keys are automatically redacted before any record is written to disk — this applies to the message, error stack, and any structured context. Redaction happens synchronously at the call site, so disk logs are already safe to inspect or share.
+
+**Rotation & Retention:** Log files rotate daily (new file per UTC calendar date) and are capped at ~10MB with `.1`, `.2` continuation files. Files older than 14 days are automatically deleted on startup (CLI or MCP server, whichever runs first).
+
+**Control Logging:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SKILLSMITH_ERROR_LOG_DISABLE` | unset (logging ON) | Set to `'1'` or `'true'` to disable error logging entirely |
+| `SKILLSMITH_LOG_LEVEL` | `warn` | Filter log verbosity: `debug`, `info`, `warn`, or `error` |
+
+Examples:
+
+```bash
+# Turn off error logging
+SKILLSMITH_ERROR_LOG_DISABLE=1 skillsmith search "testing"
+
+# Enable debug-level verbosity (noisier, more detailed logs)
+SKILLSMITH_LOG_LEVEL=debug skillsmith search "testing"
+```
+
+**Inspect Logs:** Run `skillsmith diagnose` to view a redacted summary of recent error records, or `skillsmith logs --tail` to follow logs in real-time. Both commands redact secrets inline, so output is always safe to paste in chat or share.
+
 ## Privacy & Data Handling
 
 Skillsmith is designed with privacy as a core principle.

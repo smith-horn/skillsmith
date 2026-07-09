@@ -15,10 +15,13 @@
 
 import { Command } from 'commander'
 import { SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 
 interface GitHubSearchResult {
   total_count: number
@@ -244,7 +247,8 @@ async function searchSkillRepos(
       // Rate limit protection
       await sleep(1000)
     } catch (error) {
-      console.error('Search error:', error)
+      const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+      logger.error(`Search error: ${detail}`, { err: error })
       break
     }
   }
@@ -324,7 +328,8 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
         await sleep(IMPORT_DELAY_MS)
       } catch (error) {
         result.errors++
-        console.error(`Error processing ${repo.full_name}:`, error)
+        const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+        logger.error(`Error processing ${repo.full_name}: ${detail}`, { err: error })
       }
     }
 
@@ -370,7 +375,7 @@ async function importActionImpl(options: {
       ...(options.verbose !== undefined && { verbose: options.verbose }),
     })
   } catch (error) {
-    console.error('Import failed:', sanitizeError(error))
+    logger.error(`Import failed: ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

@@ -22,6 +22,7 @@ import {
 } from '@skillsmith/core'
 // SMI-5039: lazy embedding-capability probe.
 import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 // SMI-5427 hotfix: reuse the quarantine-aware registry lookup from install so the
@@ -31,6 +32,8 @@ import { isLocalIndexEmpty, formatEmptyIndexHint, searchRemoteOrLocal } from './
 import { sanitizeError } from '../utils/sanitize.js'
 import { type InteractiveSearchState, type SearchPhase, PAGE_SIZE } from './search-types.js'
 import { TRUST_TIER_COLORS, displayResults, displaySkillDetails } from './search-formatters.js'
+
+const logger = getCliLogger()
 
 // ---------------------------------------------------------------------------
 // Private helpers (not exported — used only by searchActionImpl)
@@ -117,12 +120,12 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
         const outcome = await searchRemoteOrLocal(searchOptions, db)
 
         if (outcome.kind === 'quota') {
-          console.error(chalk.red(`\n${outcome.message}`))
+          logger.error(chalk.red(`\n${outcome.message}`))
           phase = 'exit'
           continue
         }
         if (outcome.kind === 'auth') {
-          console.error(chalk.red('\nAuthentication required. Run `skillsmith login` to sign in.'))
+          logger.error(chalk.red('\nAuthentication required. Run `skillsmith login` to sign in.'))
           phase = 'exit'
           continue
         }
@@ -309,11 +312,11 @@ async function runSearch(
     if (spinner) spinner.stop()
 
     if (outcome.kind === 'quota') {
-      console.error(chalk.red(`\n${outcome.message}`))
+      logger.error(chalk.red(`\n${outcome.message}`))
       return
     }
     if (outcome.kind === 'auth') {
-      console.error(chalk.red('Authentication required. Run `skillsmith login` to sign in.'))
+      logger.error(chalk.red('Authentication required. Run `skillsmith login` to sign in.'))
       return
     }
     if (outcome.kind === 'empty') {
@@ -399,7 +402,7 @@ async function searchActionImpl(
       console.log(chalk.dim('  skillsmith search -i'))
     }
   } catch (error) {
-    console.error(chalk.red('Search error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Search error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

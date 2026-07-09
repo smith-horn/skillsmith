@@ -7,6 +7,7 @@
 import { Command } from 'commander'
 import { input, confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
+import { getCliLogger } from '../../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import ora from 'ora'
 import { mkdir, writeFile, stat } from 'fs/promises'
@@ -14,6 +15,8 @@ import { dirname, join, resolve } from 'path'
 
 import { renderMcpServerTemplates, type McpToolDefinition } from '../../templates/index.js'
 import { sanitizeError } from '../../utils/sanitize.js'
+
+const logger = getCliLogger()
 
 export interface McpInitOptions {
   output?: string | undefined
@@ -45,11 +48,11 @@ export async function initMcpServer(
   // Validate CLI-provided name (interactive path already validates via prompt)
   if (name) {
     if (!name.trim()) {
-      console.error(chalk.red('Invalid server name: Name is required'))
+      logger.error(chalk.red('Invalid server name: Name is required'))
       process.exit(1)
     }
     if (!/^[a-z][a-z0-9-]*$/.test(name)) {
-      console.error(
+      logger.error(
         chalk.red(
           'Invalid server name: must be lowercase, start with a letter, and contain only letters, numbers, and hyphens'
         )
@@ -219,7 +222,7 @@ async function mcpInitActionImpl(
       force: opts['force'] as boolean | undefined,
     })
   } catch (error) {
-    console.error(chalk.red('Error creating MCP server:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error creating MCP server:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

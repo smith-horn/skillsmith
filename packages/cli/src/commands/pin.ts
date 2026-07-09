@@ -15,10 +15,13 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { requireTier } from '../utils/require-tier.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { loadManifest, updateManifestEntry } from '../utils/manifest.js'
+
+const logger = getCliLogger()
 
 // ============================================================================
 // Helpers
@@ -48,7 +51,7 @@ async function pinActionImpl(skillName: string): Promise<void> {
     const entry = manifest.installedSkills[skillName]
 
     if (!entry) {
-      console.error(
+      logger.error(
         chalk.red(
           `Skill "${skillName}" not found in manifest. ` +
             `Install the skill first with: skillsmith setup`
@@ -60,7 +63,7 @@ async function pinActionImpl(skillName: string): Promise<void> {
     const hash = entry.contentHash ?? entry.originalContentHash ?? null
 
     if (!hash) {
-      console.warn(
+      logger.warn(
         chalk.yellow(
           `Warning: No content hash available for "${skillName}". ` +
             `Reinstall the skill to record a hash.`
@@ -88,7 +91,7 @@ async function pinActionImpl(skillName: string): Promise<void> {
 
     console.log(chalk.green(`Pinned ${skillName} to content hash ${pinHash}`))
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -107,7 +110,7 @@ async function unpinActionImpl(skillName: string): Promise<void> {
     const entry = manifest.installedSkills[skillName]
 
     if (!entry) {
-      console.error(chalk.red(`Skill "${skillName}" not found in manifest.`))
+      logger.error(chalk.red(`Skill "${skillName}" not found in manifest.`))
       process.exit(1)
     }
 
@@ -134,7 +137,7 @@ async function unpinActionImpl(skillName: string): Promise<void> {
 
     console.log(chalk.green(`Unpinned ${skillName} (was pinned to ${previousPin})`))
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

@@ -36,8 +36,11 @@ import { join } from 'node:path'
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { input, select } from '@inquirer/prompts'
+
+const logger = getCliLogger()
 
 import {
   applyRename,
@@ -355,9 +358,9 @@ async function collisionsActionImpl(opts: Record<string, boolean | undefined>): 
     // Confirmation rejection is not a stack-trace-worthy failure —
     // print the canonical message and exit non-zero.
     if (message === CONFIRMATION_REJECTED_MESSAGE) {
-      console.error(chalk.yellow(message))
+      logger.error(chalk.yellow(message))
     } else {
-      console.error(chalk.red('Error:'), message)
+      logger.error(`${chalk.red('Error:')} ${message}`)
     }
     process.exit(1)
   }

@@ -21,8 +21,11 @@ import {
   type MergeConflict,
   type DatabaseType,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { getDefaultDbPath } from '../config.js'
+
+const logger = getCliLogger()
 
 /**
  * Format merge result for display
@@ -74,8 +77,8 @@ async function mergeActionImpl(
     'merge_fields',
   ]
   if (!validStrategies.includes(strategy as MergeStrategy)) {
-    console.error(`Invalid strategy: ${strategy}`)
-    console.error(`Valid strategies: ${validStrategies.join(', ')}`)
+    logger.error(`Invalid strategy: ${strategy}`)
+    logger.error(`Valid strategies: ${validStrategies.join(', ')}`)
     process.exit(1)
   }
 
@@ -85,14 +88,14 @@ async function mergeActionImpl(
 
   // Check source exists
   if (!existsSync(resolvedSource)) {
-    console.error(`Source database not found: ${resolvedSource}`)
+    logger.error(`Source database not found: ${resolvedSource}`)
     process.exit(1)
   }
 
   // Check target exists (or will be created)
   if (!existsSync(resolvedTarget)) {
-    console.error(`Target database not found: ${resolvedTarget}`)
-    console.error('Create a new database first with: skillsmith init')
+    logger.error(`Target database not found: ${resolvedTarget}`)
+    logger.error('Create a new database first with: skillsmith init')
     process.exit(1)
   }
 
@@ -122,12 +125,12 @@ async function mergeActionImpl(
       const targetCompat = checkSchemaCompatibility(targetDb)
 
       if (!sourceCompat.isCompatible) {
-        console.error(`Source database: ${sourceCompat.message}`)
+        logger.error(`Source database: ${sourceCompat.message}`)
         process.exit(1)
       }
 
       if (!targetCompat.isCompatible) {
-        console.error(`Target database: ${targetCompat.message}`)
+        logger.error(`Target database: ${targetCompat.message}`)
         process.exit(1)
       }
 
@@ -178,7 +181,8 @@ async function mergeActionImpl(
       }
     }
   } catch (error) {
-    console.error('Merge failed:', error instanceof Error ? error.message : error)
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+    logger.error(`Merge failed: ${detail}`, { err: error })
     process.exit(1)
   } finally {
     sourceDb?.close()

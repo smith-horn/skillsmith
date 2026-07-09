@@ -7,6 +7,7 @@
  */
 import { Command } from 'commander'
 import { SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import {
@@ -20,6 +21,8 @@ import { promises as fs } from 'node:fs'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { walkSkillFiles, parseSkillFile, localSkillId } from './import-local.helpers.js'
+
+const logger = getCliLogger()
 import type {
   ImportLocalOptions,
   ImportLocalResult,
@@ -177,7 +180,7 @@ async function startWatchMode(opts: ImportLocalOptions, jsonOutput: boolean): Pr
         )
       }
     } catch (error) {
-      console.error('[import-local] watch pass failed:', sanitizeError(error))
+      logger.error(`[import-local] watch pass failed: ${sanitizeError(error)}`)
     } finally {
       inFlight = false
     }
@@ -246,7 +249,7 @@ async function importLocalActionImpl(
       process.exit(1)
     }
   } catch (error) {
-    console.error('import-local failed:', sanitizeError(error))
+    logger.error(`import-local failed: ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

@@ -33,10 +33,13 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 
 import { isAuditMode, resolveAuditMode, type AuditMode } from '@skillsmith/core/config/audit-mode'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { tierAllowsAuditMode } from '@skillsmith/core/audit'
 
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 import { getLicenseStatus } from '../utils/license.js'
 
 // ---------------------------------------------------------------------------
@@ -214,9 +217,9 @@ async function configGetActionImpl(key: string): Promise<void> {
     await runConfigGet(key)
   } catch (error) {
     if (error instanceof ConfigError) {
-      console.error(chalk.red(`Error [${error.code}]:`), error.message)
+      logger.error(`${chalk.red(`Error [${error.code}]:`)} ${error.message}`)
     } else {
-      console.error(chalk.red('Error:'), sanitizeError(error))
+      logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     }
     process.exit(1)
   }
@@ -233,9 +236,9 @@ async function configSetActionImpl(key: string, value: string): Promise<void> {
     await runConfigSet(key, value)
   } catch (error) {
     if (error instanceof ConfigError) {
-      console.error(chalk.red(`Error [${error.code}]:`), error.message)
+      logger.error(`${chalk.red(`Error [${error.code}]:`)} ${error.message}`)
     } else {
-      console.error(chalk.red('Error:'), sanitizeError(error))
+      logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     }
     process.exit(1)
   }

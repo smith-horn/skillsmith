@@ -21,7 +21,10 @@ import {
   backupCorruptDbFile,
   type DatabaseType,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { existsSync } from 'node:fs'
+
+const logger = getCliLogger()
 
 /**
  * Open a CLI database with the full schema initialized and all migrations
@@ -72,7 +75,7 @@ export async function openCliDatabase(
       }
     }
     const backupPath = backupCorruptDbFile(path)
-    console.warn(
+    logger.warn(
       `[Skillsmith] The local database at ${path} was corrupt and could not be opened. ` +
         `It has been backed up to ${backupPath} and will be rebuilt on the next sync.`
     )

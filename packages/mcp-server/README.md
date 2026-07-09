@@ -436,6 +436,8 @@ Index local skills from `~/.claude/skills/` directory.
 | `SKILLSMITH_DB_PATH` | Database file location | `~/.skillsmith/skills.db` |
 | `SKILLSMITH_TELEMETRY_ENABLED` | Enable anonymous telemetry | `false` |
 | `SKILLSMITH_USE_WASM` | Force WASM SQLite driver (sql.js) | `false` |
+| `SKILLSMITH_ERROR_LOG_DISABLE` | Disable structured error logging to disk (set to `'1'` or `'true'` to opt-out) | unset (logging ON) |
+| `SKILLSMITH_LOG_LEVEL` | Filter log verbosity: `debug`, `info`, `warn`, `error` | `warn` |
 | `POSTHOG_API_KEY` | PostHog API key (required if telemetry enabled) | - |
 | `SKILLSMITH_API_KEY_HMAC_SECRET` | HMAC secret for hashing Custom Integration API keys before DB storage. Required if you invoke `webhook_configure` or `api_key_manage`. See setup below. | - |
 
@@ -444,6 +446,48 @@ Index local skills from `~/.claude/skills/` directory.
 The `webhook_configure` and `api_key_manage` tools hash secrets server-side via HMAC-SHA-256 before persisting to the shared `api_keys` table. The HMAC key lives in `SKILLSMITH_API_KEY_HMAC_SECRET` rather than as a hardcoded constant — defense-in-depth so a leaked DB cannot be reverse-cracked offline.
 
 **Distribution model**: identical to `SUPABASE_SERVICE_ROLE_KEY`. The same secret value must be set on every MCP host that creates or verifies Custom Integration API keys, otherwise hashes computed on host A won't match hashes verified on host B.
+
+### Error Logging (SMI-5615)
+
+The MCP server automatically logs errors to disk in a structured, redacted format for debugging and post-incident analysis.
+
+**Log Location:** `~/.skillsmith/logs/skillsmith-mcp-<YYYY-MM-DD>.jsonl`
+
+**Log Format:** One JSON-line record per error event, with fields:
+- `ts` — ISO 8601 timestamp
+- `level` — log level (`debug`, `info`, `warn`, `error`)
+- `surface` — invocation surface (`mcp`, `cli`, or `vscode`)
+- `event` — short machine-readable category tag
+- `msg` — human-readable message (redacted)
+- `err` — normalized error object with `name`, `message`, and first 20 stack frames (all redacted)
+- `correlationId` — trace ID that links related log entries, telemetry events, and API calls within a single skill invocation
+- `toolOrCommand` — MCP tool name being executed
+- `skillId` — skill ID when applicable
+- `version` — MCP server package version
+- `pid` — process ID
+- `details` — additional structured context beyond the fields above, when provided (redacted)
+
+**Automatic Redaction:** Secrets, tokens, API keys, passwords, connection strings, and PEM keys are automatically redacted before any record is written to disk (SMI-883). This redaction applies to the message, error stack, and any structured context, so logs are always safe to inspect or share without manual review.
+
+**Rotation & Retention:** Log files rotate daily (one file per UTC calendar date) and are capped at ~10MB each, with `.1`/`.2` continuation files for larger days. Files older than 14 days are automatically deleted on server startup.
+
+**Console Mirror:** The `warn` and `error` levels always mirror to stderr in real-time (matching the level), so terminal output is never silent. Log files add redacted persistence on top, not instead of console output.
+
+**Control Logging:**
+
+Set either variable to disable or filter logging:
+
+```bash
+# Disable error logging entirely
+export SKILLSMITH_ERROR_LOG_DISABLE=1
+
+# Enable debug-level verbosity for more detail
+export SKILLSMITH_LOG_LEVEL=debug
+```
+
+**Valid log levels:** `debug`, `info`, `warn`, `error` (default: `warn`). Higher levels are included (e.g., `warn` also logs `error`).
+
+---
 
 If the variable is missing or shorter than 32 characters when these tools are invoked, the call fails fast with:
 

@@ -96,6 +96,11 @@
       "import": "./dist/src/telemetry/index.js",
       "default": "./dist/src/telemetry/index.js"
     },
+    "./logging": {
+      "types": "./dist/src/logging/index.d.ts",
+      "import": "./dist/src/logging/index.js",
+      "default": "./dist/src/logging/index.js"
+    },
     "./journal": {
       "types": "./dist/src/journal/index.d.ts",
       "import": "./dist/src/journal/index.js",

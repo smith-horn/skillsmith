@@ -12,8 +12,11 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 import { trackSkillInvoke } from './posthog.js'
 import type { AgentMarker } from './agent-marker.js'
+import { getCorrelationId, runWithCorrelationId } from '../logging/context.js'
+import { redactSensitiveData } from '../logging/redact.js'
 
 // ---------------------------------------------------------------------------
 // Module-scoped registry (NOT exported — access only via isTelemetered)
@@ -129,6 +132,35 @@ export function runWithMarkerContext<T>(marker: AgentMarker, fn: () => Promise<T
 }
 
 // ---------------------------------------------------------------------------
+// Error capture (SMI-5615)
+// ---------------------------------------------------------------------------
+//
+// `trackSkillInvoke` previously reported only `success: boolean` on failure —
+// the caught error was discarded entirely. No stack traces leave the machine:
+// only the error's class name and a redacted, truncated message ride the
+// already-consent-gated `skill_invoke` event.
+
+const MAX_ERROR_MESSAGE_LENGTH = 256
+
+/** Extract a best-effort string message from an unknown caught value. */
+function errorMessageOf(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'string') return e
+  try {
+    return JSON.stringify(e)
+  } catch {
+    return String(e)
+  }
+}
+
+/** Truncate a (already redacted) error message to `MAX_ERROR_MESSAGE_LENGTH`. */
+function truncateErrorMessage(message: string): string {
+  return message.length > MAX_ERROR_MESSAGE_LENGTH
+    ? message.slice(0, MAX_ERROR_MESSAGE_LENGTH)
+    : message
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -184,58 +216,90 @@ export function withTelemetry<TArgs extends readonly unknown[], TReturn>(
   opts: WithTelemetryOpts<TArgs>
 ): (...args: TArgs) => Promise<TReturn> {
   const wrappedFn = async (...args: TArgs): Promise<TReturn> => {
-    const start = Date.now()
-    const skillId = opts.extractSkillId(args)
-    // Per H4: evaluated per-call so a single server process can serve multiple
-    // clients with different frameworks on the same HTTP transport.
-    const framework = opts.extractFramework?.(args) ?? 'unknown'
-    let success = true
-    try {
-      return await handler(...args)
-    } catch (e) {
-      success = false
-      throw e
-    } finally {
-      // Emit BEFORE the catch re-throw lands; swallow telemetry errors so they
-      // never affect the wrapped function's observable behaviour.
+    // SMI-5615 (F1 fix, corrected from the naive design): the correlation-ID
+    // scope wraps the ENTIRE body below — try *and* finally — not just the
+    // `handler(...args)` call. Installing it around only the handler would
+    // leave the finally block's emit path outside the ALS scope, so the
+    // `getCorrelationId()` read there would always see `undefined`, silently
+    // defeating the feature. Mint-if-absent (`getCorrelationId() ?? randomUUID()`)
+    // means a wrapped call nested inside another wrapped call's continuation
+    // inherits the outer ID instead of fragmenting one logical request's trace.
+    return runWithCorrelationId(getCorrelationId() ?? randomUUID(), async () => {
+      const start = Date.now()
+      const skillId = opts.extractSkillId(args)
+      // Per H4: evaluated per-call so a single server process can serve multiple
+      // clients with different frameworks on the same HTTP transport.
+      const framework = opts.extractFramework?.(args) ?? 'unknown'
+      let success = true
+      let caughtError: unknown
       try {
-        // SMI-5019 wire-in / SMI-5479 refactor: consult the emission gate. The
-        // per-call ALS store (PRIMARY) wins over the module `let` thunk
-        // (FALLBACK). `??` — not `||` — so an ALS `false` suppresses even when a
-        // permissive module gate is installed: a consent-off scope must never
-        // leak emission. Default-suppress holds when neither is present (no
-        // store + no thunk → `undefined` → no emit).
-        const gateOn = emissionGateStorage.getStore() ?? (emissionGate ? emissionGate() : undefined)
-        if (gateOn) {
-          // SMI-5456: thread the marker from this call's ALS scope into the
-          // event. Read here (not memoised) so it reflects the marker installed
-          // for THIS call's async continuation — concurrent calls each see
-          // their own. Consent parity is automatic — these fields only ride an
-          // event that the emission gate already permitted.
-          const marker = markerStorage.getStore()
-          trackSkillInvoke({
-            skillId,
-            source: opts.source,
-            // Per-harness attribution: the marker channel's vocabulary-validated
-            // `harness` wins over the extractor result — every MCP-tool call
-            // site hardcodes `extractFramework: () => 'unknown'`, so without
-            // this the per-harness split never survives to the wire. H4
-            // (per-call, never memoised) is preserved: the ALS store IS
-            // per-request state, read here on every emit. CLI / VS Code
-            // callers never install marker context, so `getStore()` is
-            // undefined there and their real extractors keep winning.
-            framework: marker?.harness ?? framework,
-            durationMs: Date.now() - start,
-            success,
-            agentSession: marker?.agentSession ?? false,
-            nudgeOrigin: marker?.nudgeOrigin ?? false,
-            triggerId: marker?.triggerId ?? null,
-          })
+        return await handler(...args)
+      } catch (e) {
+        success = false
+        caughtError = e
+        throw e
+      } finally {
+        // Emit BEFORE the catch re-throw lands; swallow telemetry errors so they
+        // never affect the wrapped function's observable behaviour.
+        try {
+          // SMI-5019 wire-in / SMI-5479 refactor: consult the emission gate. The
+          // per-call ALS store (PRIMARY) wins over the module `let` thunk
+          // (FALLBACK). `??` — not `||` — so an ALS `false` suppresses even when a
+          // permissive module gate is installed: a consent-off scope must never
+          // leak emission. Default-suppress holds when neither is present (no
+          // store + no thunk → `undefined` → no emit).
+          const gateOn =
+            emissionGateStorage.getStore() ?? (emissionGate ? emissionGate() : undefined)
+          if (gateOn) {
+            // SMI-5456: thread the marker from this call's ALS scope into the
+            // event. Read here (not memoised) so it reflects the marker installed
+            // for THIS call's async continuation — concurrent calls each see
+            // their own. Consent parity is automatic — these fields only ride an
+            // event that the emission gate already permitted.
+            const marker = markerStorage.getStore()
+            trackSkillInvoke({
+              skillId,
+              source: opts.source,
+              // Per-harness attribution: the marker channel's vocabulary-validated
+              // `harness` wins over the extractor result — every MCP-tool call
+              // site hardcodes `extractFramework: () => 'unknown'`, so without
+              // this the per-harness split never survives to the wire. H4
+              // (per-call, never memoised) is preserved: the ALS store IS
+              // per-request state, read here on every emit. CLI / VS Code
+              // callers never install marker context, so `getStore()` is
+              // undefined there and their real extractors keep winning.
+              framework: marker?.harness ?? framework,
+              durationMs: Date.now() - start,
+              success,
+              agentSession: marker?.agentSession ?? false,
+              nudgeOrigin: marker?.nudgeOrigin ?? false,
+              triggerId: marker?.triggerId ?? null,
+              // SMI-5615: cross-signal join key — a disk log line, an OTel span,
+              // and this PostHog event for one failure share this ID. Read live
+              // from the still-open scope established above (F1 fix), always
+              // present regardless of success/failure.
+              correlationId: getCorrelationId(),
+              // SMI-5615: capture the previously-discarded error on failure only.
+              // No stack traces leave the machine — class name + redacted,
+              // truncated (<=256 char) message only.
+              ...(success
+                ? {}
+                : {
+                    errorName:
+                      caughtError instanceof Error
+                        ? caughtError.constructor.name
+                        : typeof caughtError,
+                    errorMessage: truncateErrorMessage(
+                      redactSensitiveData(errorMessageOf(caughtError))
+                    ),
+                  }),
+            })
+          }
+        } catch {
+          // Intentionally swallowed — telemetry must never break user code.
         }
-      } catch {
-        // Intentionally swallowed — telemetry must never break user code.
       }
-    }
+    })
   }
 
   wrapped.add(wrappedFn)

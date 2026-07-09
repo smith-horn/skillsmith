@@ -87,6 +87,9 @@ import { createShutdownTrigger } from './shutdown.js'
 // The call site (before server.connect) is unchanged; only the implementation
 // moved so doc-retrieval-mcp + cli can share the same audited probe contract.
 import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
+// SMI-5615: shared logger — error/warn mirror to console unconditionally
+// (safe console.error/warn swap); info/debug are disk-only by default.
+import { createLogger } from '@skillsmith/core/logging'
 import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 import { resolveStartupFlag } from './cli-flags.js'
@@ -110,6 +113,7 @@ export type {
 // Package version - keep in sync with package.json
 const PACKAGE_VERSION = '0.7.0'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
+const logger = createLogger('mcp', { version: PACKAGE_VERSION }) // SMI-5615
 import {
   installBundledSkills,
   installUserDocs,
@@ -250,10 +254,8 @@ function ensureSkillsmithSkillInstalled(): void {
     installBundledSkills()
   } catch (error) {
     // Fail-soft: never block MCP startup on bundled-skill install failure.
-    console.error(
-      '[skillsmith] Bundled skill install failed (non-fatal):',
-      error instanceof Error ? error.message : 'Unknown error'
-    )
+    const msg = error instanceof Error ? error.message : 'Unknown error'
+    logger.warn(`[skillsmith] Bundled skill install failed (non-fatal): ${msg}`, { err: error })
   }
 }
 
@@ -269,9 +271,7 @@ function ensureSkillsmithSkillInstalled(): void {
  *   attribution, in the welcome message).
  */
 export async function runFirstTimeSetup(): Promise<string[]> {
-  // stderr kept for `docker logs` / local debugging — the tool-response
-  // annotation queued by maybeInstallMissingTier1Skills is the primary UX
-  // channel now (SMI-5573).
+  // SMI-5615: plain console.error (not disk-only logger.info) — always-visible docker-logs status line.
   console.error('[skillsmith] First run detected, installing essentials...')
   const bundledSkills = installBundledSkills()
   installUserDocs()
@@ -298,7 +298,7 @@ function runStartupDiagnostics(): void {
     const msg = e instanceof Error ? e.message : String(e)
 
     if (msg.includes('NODE_MODULE_VERSION')) {
-      console.error(`
+      logger.error(`
 ╔══════════════════════════════════════════════════════════════╗
 ║  Skillsmith: Native Module Version Mismatch                  ║
 ╠══════════════════════════════════════════════════════════════╣
@@ -321,7 +321,7 @@ function runStartupDiagnostics(): void {
     }
 
     if (msg.includes('GLIBC') || msg.includes('libc') || msg.includes('GLIBCXX')) {
-      console.error(`
+      logger.error(`
 ╔══════════════════════════════════════════════════════════════╗
 ║  Skillsmith: Missing System Library (glibc)                  ║
 ╠══════════════════════════════════════════════════════════════╣
@@ -339,7 +339,7 @@ function runStartupDiagnostics(): void {
     }
 
     if (msg.includes('invalid ELF header')) {
-      console.error(`
+      logger.error(`
 ╔══════════════════════════════════════════════════════════════╗
 ║  Skillsmith: Architecture Mismatch                           ║
 ╠══════════════════════════════════════════════════════════════╣
@@ -362,7 +362,7 @@ function runStartupDiagnostics(): void {
 
     // Unknown module resolution error - log but don't exit
     // The actual error will surface when the module is used
-    console.error(`[Skillsmith] Warning: Could not resolve @skillsmith/core: ${msg}`)
+    logger.warn(`[Skillsmith] Warning: Could not resolve @skillsmith/core: ${msg}`)
   }
 }
 
@@ -403,19 +403,22 @@ async function main() {
   // CRITICAL: Must complete before any tool handlers access toolContext
   try {
     toolContext = await getToolContextAsync()
+    // SMI-5615: plain console.error — same rationale as runFirstTimeSetup above.
     console.error(
-      'Database initialized at:',
-      process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'
+      `Database initialized at: ${process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'}`
     )
   } catch (error) {
-    console.error('[skillsmith] Failed to initialize database:')
-    console.error(error instanceof Error ? error.message : error)
-    console.error('')
-    console.error('Troubleshooting:')
-    console.error('  - In Docker: Ensure container is running')
-    console.error('  - On macOS: sql.js WASM should load automatically')
-    console.error('  - Set SKILLSMITH_FORCE_WASM=true to use the WASM SQLite fallback')
-    console.error('')
+    const errorDetail = error instanceof Error ? error.message : String(error)
+    // SMI-5615: single '\n'-joined message reproduces the prior 8-line stderr output.
+    const troubleshooting = [
+      '  - In Docker: Ensure container is running',
+      '  - On macOS: sql.js WASM should load automatically',
+      '  - Set SKILLSMITH_FORCE_WASM=true to use the WASM SQLite fallback',
+    ].join('\n')
+    logger.error(
+      `[skillsmith] Failed to initialize database:\n${errorDetail}\n\nTroubleshooting:\n${troubleshooting}\n`,
+      { err: error }
+    )
     process.exit(1)
   }
 
@@ -451,7 +454,7 @@ async function main() {
     checkForUpdates(PACKAGE_NAME, PACKAGE_VERSION)
       .then((result) => {
         if (result?.updateAvailable) {
-          console.error(formatUpdateNotification(result))
+          console.error(formatUpdateNotification(result)) // SMI-5615: plain console.error, not disk-only logger.info
         }
       })
       .catch(() => {
@@ -481,7 +484,16 @@ async function main() {
   process.on('SIGTERM', shutdownAndExit)
   process.on('SIGINT', shutdownAndExit)
   await server.connect(transport)
+  // SMI-5615: plain console.error — startup-probe.test.ts waits on this exact stderr line.
   console.error('Skillsmith MCP server running')
 }
 
-main().catch(console.error)
+// SMI-5615: was `main().catch(console.error)` — handled, so it exited 0 with
+// no diagnostic beyond the console line. `logger.error` mirrors to
+// console.error unconditionally (same stderr visibility) plus a disk record;
+// `process.exit(1)` fixes the latent success-exit-code-on-failure gap.
+main().catch((error: unknown) => {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+  logger.error(`Fatal error during startup: ${detail}`, { err: error })
+  process.exit(1)
+})

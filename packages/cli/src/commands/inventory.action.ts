@@ -34,10 +34,13 @@ import {
   InventoryUploadError,
 } from '@skillsmith/core'
 import { enumerateHarnessPresence } from '@skillsmith/core/install'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
 import { getInstalledSkillsPerHarness } from '../utils/skills-directory.js'
 import { VERSION } from '../version.js'
+
+const logger = getCliLogger()
 
 // ---------------------------------------------------------------------------
 // push
@@ -91,20 +94,20 @@ export async function inventoryPushActionImpl(): Promise<void> {
     await runPush()
   } catch (err) {
     if (err instanceof InventoryAuthError) {
-      console.error(chalk.red('Not logged in. Run `skillsmith login` and try again.'))
+      logger.error(chalk.red('Not logged in. Run `skillsmith login` and try again.'))
     } else if (err instanceof InventoryConflictError) {
-      console.error(
+      logger.error(
         chalk.red(
           'This device is registered to another account. ' +
             'Run `skillsmith inventory forget-device` and push again.'
         )
       )
     } else if (err instanceof InventoryValidationError) {
-      console.error(chalk.red(err.message))
+      logger.error(chalk.red(err.message))
     } else if (err instanceof InventoryUploadError) {
-      console.error(chalk.red('Inventory upload failed. ' + err.message))
+      logger.error(chalk.red('Inventory upload failed. ' + err.message))
     } else {
-      console.error(chalk.red('Error:'), sanitizeError(err))
+      logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     }
     process.exit(1)
   }
@@ -189,7 +192,7 @@ export async function inventoryStatusActionImpl(options: { verbose?: boolean }):
   try {
     await runStatus(options)
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }
@@ -223,7 +226,7 @@ export async function inventoryForgetDeviceActionImpl(): Promise<void> {
   try {
     await runForgetDevice()
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }
@@ -272,11 +275,11 @@ export async function inventoryPurgeActionImpl(options: { yes?: boolean }): Prom
     await runPurge(options)
   } catch (err) {
     if (err instanceof InventoryAuthError) {
-      console.error(chalk.red('Not logged in. Run `skillsmith login` and try again.'))
+      logger.error(chalk.red('Not logged in. Run `skillsmith login` and try again.'))
     } else if (err instanceof InventoryUploadError) {
-      console.error(chalk.red('Inventory purge failed. ' + err.message))
+      logger.error(chalk.red('Inventory purge failed. ' + err.message))
     } else {
-      console.error(chalk.red('Error:'), sanitizeError(err))
+      logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     }
     process.exit(1)
   }

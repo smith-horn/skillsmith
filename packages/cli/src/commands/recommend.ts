@@ -15,8 +15,11 @@ import {
   type SkillRole,
   SKILL_ROLES,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 
 // Re-export types for public API
 export type { SkillRecommendation, RecommendResponse, InstalledSkill } from './recommend.types.js'
@@ -177,7 +180,7 @@ async function runRecommend(targetPath: string, options: RecommendOptions): Prom
     if (options.json) {
       console.error(JSON.stringify({ error: sanitizeError(error) }))
     } else {
-      console.error(chalk.red('Error:'), sanitizeError(error))
+      logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     }
     process.exit(1)
   }
@@ -205,7 +208,7 @@ async function recommendActionImpl(
     if (SKILL_ROLES.includes(roleInput as SkillRole)) {
       role = roleInput as SkillRole
     } else {
-      console.error(
+      logger.error(
         chalk.yellow(`Warning: Invalid role "${roleInput}". Valid roles: ${SKILL_ROLES.join(', ')}`)
       )
     }

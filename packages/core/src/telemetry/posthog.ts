@@ -330,6 +330,21 @@ export interface TrackSkillInvokeParams {
   nudgeOrigin?: boolean
   /** Paywall / nudge trigger id, or null. */
   triggerId?: string | null
+  /**
+   * SMI-5615: error capture fields, populated only when `success` is `false`.
+   * `errorMessage` is already redacted and truncated (<=256 chars) by the
+   * caller (`withTelemetry`) — no stack traces leave the machine.
+   */
+  /** The caught error's constructor name (e.g. `TypeError`), or `typeof` for non-Error throws. */
+  errorName?: string
+  /** Redacted, truncated (<=256 char) error message. */
+  errorMessage?: string
+  /**
+   * Cross-signal join key shared by a disk log line, an OTel span, and this
+   * PostHog event for one call — installed per-call by `withTelemetry` via
+   * `runWithCorrelationId`. Present regardless of success/failure.
+   */
+  correlationId?: string
 }
 
 /**
@@ -347,6 +362,9 @@ export function trackSkillInvoke(params: TrackSkillInvokeParams): void {
     agentSession = false,
     nudgeOrigin = false,
     triggerId = null,
+    errorName,
+    errorMessage,
+    correlationId,
   } = params
   trackEvent(distinctId, 'skill_invoke', {
     skill_id: skillId,
@@ -358,6 +376,11 @@ export function trackSkillInvoke(params: TrackSkillInvokeParams): void {
     agent_session: agentSession,
     nudge_origin: nudgeOrigin,
     trigger_id: triggerId,
+    // SMI-5615: error capture (redacted/truncated, no stack traces) +
+    // cross-signal correlation ID.
+    error_name: errorName,
+    error_message: errorMessage,
+    correlation_id: correlationId,
   })
 }
 

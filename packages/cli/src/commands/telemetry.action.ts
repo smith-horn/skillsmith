@@ -37,7 +37,10 @@ import {
   TelemetryHookError,
 } from './telemetry.helpers.js'
 import { sanitizeError } from '../utils/sanitize.js'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+
+const logger = getCliLogger()
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -327,7 +330,7 @@ async function telemetryEnableActionImpl(): Promise<void> {
   try {
     await runEnable()
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }
@@ -342,7 +345,7 @@ async function telemetryDisableActionImpl(): Promise<void> {
   try {
     await runDisable()
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }
@@ -357,7 +360,7 @@ async function telemetryStatusActionImpl(): Promise<void> {
   try {
     await runStatus()
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }
@@ -379,10 +382,10 @@ async function telemetryInstallHookActionImpl(options: {
     )
   } catch (err) {
     if (err instanceof TelemetryHookError) {
-      console.error(chalk.red(`Error [${err.code}]:`))
-      console.error(err.message)
+      logger.error(chalk.red(`Error [${err.code}]:`))
+      logger.error(err.message)
     } else {
-      console.error(chalk.red('Error:'), sanitizeError(err))
+      logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     }
     process.exit(1)
   }
@@ -399,7 +402,7 @@ async function telemetryUninstallHookActionImpl(options: { scope: string }): Pro
   try {
     await runUninstallHook({ scope })
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }
@@ -414,7 +417,7 @@ async function telemetryResetIdActionImpl(): Promise<void> {
   try {
     await runResetId()
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }

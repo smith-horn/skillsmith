@@ -23,11 +23,14 @@ import {
   type SyncProgress,
   type SyncFrequency,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { runRegistrySync } from './run-registry-sync.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { formatDuration, formatDate, formatTimeUntil } from '../utils/formatters.js'
+
+const logger = getCliLogger()
 import {
   scanLocalSkillsForWarnings,
   formatAdapterWarnings,
@@ -101,7 +104,7 @@ async function syncActionImpl(options: {
         spinner.fail(chalk.yellow('Sync requires authentication'))
         console.log()
         for (const line of formatAuthGuidance()) {
-          console.error(line)
+          logger.error(line)
         }
         // db.close() runs in the `finally` block below before process.exit.
         process.exitCode = 1
@@ -144,7 +147,7 @@ async function syncActionImpl(options: {
     }
   } catch (error) {
     spinner.fail('Sync failed')
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -240,14 +243,14 @@ async function syncStatusActionImpl(options: { dbPath: string; json: boolean }):
         console.log()
         console.log(chalk.bold.yellow('Local skill warnings:'))
         for (const line of formatAdapterWarnings(adapterWarnings)) {
-          console.error(line)
+          logger.error(line)
         }
       }
     } finally {
       db.close()
     }
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -324,7 +327,7 @@ async function syncHistoryActionImpl(options: {
       db.close()
     }
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -383,7 +386,7 @@ async function syncConfigActionImpl(options: {
       if (options.frequency) {
         const freq = options.frequency.toLowerCase()
         if (freq !== 'daily' && freq !== 'weekly') {
-          console.error(chalk.red('Error: Frequency must be "daily" or "weekly"'))
+          logger.error(chalk.red('Error: Frequency must be "daily" or "weekly"'))
           process.exit(1)
         }
         syncConfigRepo.setFrequency(freq as SyncFrequency)
@@ -401,7 +404,7 @@ async function syncConfigActionImpl(options: {
       db.close()
     }
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
