@@ -245,10 +245,10 @@ Skillsmith is licensed under Elastic License 2.0 (ELv2) — source-available, no
 
 ```go
 func IsValid(license *github.License) bool {
-	if license != nil && (strings.HasPrefix(license.GetKey(), "gpl") || strings.HasPrefix(license.GetKey(), "agpl") || strings.HasPrefix(license.GetKey(), "npl")) {
-		return false
-	}
-	return true
+    if license != nil && (strings.HasPrefix(license.GetKey(), "gpl") || strings.HasPrefix(license.GetKey(), "agpl") || strings.HasPrefix(license.GetKey(), "npl")) {
+        return false
+    }
+    return true
 }
 ```
 
