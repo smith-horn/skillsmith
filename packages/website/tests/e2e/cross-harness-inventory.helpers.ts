@@ -14,6 +14,9 @@
  *   - uploadInventory(accessToken, payload): POST /functions/v1/inventory-upload
  *     with both apikey + Bearer (L1); returns { status, body }
  *   - readDeviceSkills(deviceId): service-role direct read of device_skills rows
+ *   - insertDeviceSkillDirect({userId, deviceId, harness, skillId}): service-role direct
+ *     INSERT into device_skills, bypassing the edge function's payload strip (SMI-5604
+ *     dotfile-guard read-time-predicate test)
  *   - seedRegistrySkill({author, name, contentHash}): minimal skills INSERT for
  *     Test B drift validation (M1/L2 — no pinned_version, search_vector omitted)
  *   - deleteRegistrySkill({author, name}): Test B teardown
@@ -254,6 +257,37 @@ export async function cleanupDevice(deviceId: string): Promise<void> {
     'cleanupDevice'
   )
   if (error) throw new Error(`[SMI-5395] cleanupDevice: ${error.message}`)
+}
+
+// ─── Direct device_skills write (service-role, SMI-5604 dotfile-guard test) ──
+
+/**
+ * Insert a device_skills row directly via service-role, bypassing the
+ * inventory-upload edge function entirely (its payload.ts strip never runs).
+ * Simulates a future ingestion-time regression that lets a dot-prefixed
+ * skill_id (e.g. `.backups`) reach the table, so the test can assert the
+ * get_user_inventory() read-time predicate (`skill_id !~ '^\.'`) — the
+ * second, durable defense layer per the SMI-5594 migration's own comments —
+ * excludes it independently of the ingestion-time guard.
+ */
+export async function insertDeviceSkillDirect(opts: {
+  userId: string
+  deviceId: string
+  harness: string
+  skillId: string
+}): Promise<void> {
+  const { error } = await withTimeout(
+    admin().from('device_skills').insert({
+      user_id: opts.userId,
+      device_id: opts.deviceId,
+      harness: opts.harness,
+      skill_id: opts.skillId,
+      present: true,
+    }),
+    STAGING_CALL_TIMEOUT_MS,
+    'insertDeviceSkillDirect'
+  )
+  if (error) throw new Error(`[SMI-5604] insertDeviceSkillDirect: ${error.message}`)
 }
 
 // ─── Consent read (service-role, H7) ─────────────────────────────────────
