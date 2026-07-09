@@ -350,7 +350,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
   })
 
   describe('updateSkills (multi-skill / --all)', () => {
-    it('updates a specific set of named skills and reports a summary', async () => {
+    /** Two installed skills (astro, ci-doctor), both resolvable via the local cache. */
+    async function mockTwoInstalledSkills(): Promise<void> {
       const { readdir, stat } = await import('fs/promises')
       vi.mocked(readdir).mockImplementation(async (dirPath) => {
         if (dirPath === SKILLS_DIR) {
@@ -371,6 +372,10 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       ])
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
+    }
+
+    it('updates a specific set of named skills and reports a summary', async () => {
+      await mockTwoInstalledSkills()
 
       const { updateSkills } = await import('../src/commands/manage.js')
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -380,6 +385,27 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       expect(mocks.installFn).toHaveBeenCalledTimes(2)
       const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
       expect(output).toContain('Updated: 2')
+
+      logSpy.mockRestore()
+    })
+
+    it('continues past a per-skill failure and reports a partial-failure summary', async () => {
+      await mockTwoInstalledSkills()
+      mocks.installFn.mockImplementation(async (skillId: unknown) =>
+        skillId === 'a/astro'
+          ? { success: true, skillId: 'a/astro', installPath: join(homedir(), 'astro') }
+          : { success: false, error: 'ALREADY_INSTALLED: local modifications detected' }
+      )
+
+      const { updateSkills } = await import('../src/commands/manage.js')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await updateSkills(['astro', 'ci-doctor'], '/fake/db.sqlite', false)
+
+      expect(mocks.installFn).toHaveBeenCalledTimes(2)
+      const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n')
+      expect(output).toContain('Updated: 1')
+      expect(output).toContain('Failed: 1')
 
       logSpy.mockRestore()
     })
