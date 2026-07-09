@@ -28,7 +28,13 @@
 # (cross-harness-inventory.spec.ts Tests A/C/E), which blocks the merge. Prod
 # smoke is the post-deploy liveness + anon-denial canary only.
 #
-# See docs/internal/implementation/smi-5396-inventory-prod-rollout.md.
+# SMI-5576 (parent SMI-5574) adds two more anon-only, zero-write checks for the
+# team-compliance-check PR gate (check_team_compliance_check_requires_license,
+# check_get_team_member_compliance_rpc_denies_anon) -- see their function-level
+# doc comments below for detail.
+#
+# See docs/internal/implementation/smi-5396-inventory-prod-rollout.md and
+# docs/internal/implementation/team-compliance-check-pr-gate.md.
 
 # shellcheck shell=bash
 # shellcheck source=scripts/smoke-prod/lib.sh
@@ -167,6 +173,82 @@ check_purge_user_inventory_rpc_denies_anon() {
       ;;
     *)
       report_fail "edge-fn-purge-inventory" "check_purge_user_inventory_rpc_denies_anon" "$url" "401|403|404" "$status" "$ms"
+      return 1
+      ;;
+  esac
+}
+
+# ---- SMI-5576 (parent SMI-5574): team-compliance-check PR gate ------------
+#
+#   check_team_compliance_check_requires_license
+#       POST with a syntactically well-formed but unknown license_key to
+#       /functions/v1/team-compliance-check. The function is NOT gateway-
+#       verified (verify_jwt = false, it validates a license key internally
+#       via resolve_team_from_license) -- so an unknown/invalid license_key
+#       must be rejected with 401 by the handler itself. Deliberately NOT an
+#       empty license_key: that hits the payload validator's 400 "required
+#       field" path (checked before the license lookup), which would falsely
+#       pass this check without ever exercising the 401 auth path. Any
+#       non-401 means the internal license check regressed on an endpoint
+#       that reads team-scoped compliance data.
+#
+#   check_get_team_member_compliance_rpc_denies_anon
+#       POST (anon apikey) to /rest/v1/rpc/get_team_member_compliance. The RPC
+#       is granted only to service_role (20260707000002_team_compliance_check_
+#       rpc.sql:REVOKE ... FROM anon, authenticated), so an anon caller must be
+#       denied. Mirrors check_get_user_inventory_rpc_denies_anon above.
+
+# ---- check_team_compliance_check_requires_license --------------------------
+check_team_compliance_check_requires_license() {
+  _require_inventory_supabase_url || {
+    report_fail "edge-fn-team-compliance-check" "check_team_compliance_check_requires_license" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/team-compliance-check"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status POST "$url" \
+    -H "Content-Type: application/json" \
+    -d '{"license_key":"sk_live_smoke_test_0000000000000000000000000","github_username":"smoke-test"}')
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  if [ "$status" = "401" ]; then
+    report_pass "edge-fn-team-compliance-check" "check_team_compliance_check_requires_license" "$url" "$ms"
+    return 0
+  fi
+  report_fail "edge-fn-team-compliance-check" "check_team_compliance_check_requires_license" "$url" "401" "$status" "$ms"
+  return 1
+}
+
+# ---- check_get_team_member_compliance_rpc_denies_anon ----------------------
+check_get_team_member_compliance_rpc_denies_anon() {
+  _require_inventory_supabase_url || {
+    report_fail "edge-fn-team-compliance-check" "check_get_team_member_compliance_rpc_denies_anon" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local anon="${SUPABASE_ANON_KEY:-}"
+  if [ -z "$anon" ]; then
+    report_fail "edge-fn-team-compliance-check" "check_get_team_member_compliance_rpc_denies_anon" \
+      "" "SUPABASE_ANON_KEY" "unset"
+    return 1
+  fi
+  local url="${SMOKE_SUPABASE_URL}/rest/v1/rpc/get_team_member_compliance"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status POST "$url" \
+    -H "apikey: ${anon}" \
+    -H "Authorization: Bearer ${anon}" \
+    -H "Content-Type: application/json" \
+    -d '{"p_team_id":"smoke-test","p_github_username":"smoke-test"}')
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  case "$status" in
+    401 | 403 | 404)
+      report_pass "edge-fn-team-compliance-check" "check_get_team_member_compliance_rpc_denies_anon" "$url" "$ms"
+      return 0
+      ;;
+    *)
+      report_fail "edge-fn-team-compliance-check" "check_get_team_member_compliance_rpc_denies_anon" "$url" "401|403|404" "$status" "$ms"
       return 1
       ;;
   esac

@@ -21,6 +21,12 @@ regex = '''["\']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}["\
 tags = ["uuid", "linear"]
 # Only flag if it looks like it's being used as a project ID in code
 keywords = ["project", "projectId", "PROJECT"]
+[[rules.allowlists]]
+description = "SMI-5575: synthetic smoke-test fixture UUIDs in migration DO $$ blocks (e.g. 5575aaaa-0000-0000-0000-000000000001) are not Linear project IDs. They only trip this rule when the same migration file also mentions 'this Supabase project' in prose (an unrelated use of the word). Established fixture convention predates this PR (see 20260524000002_team_member_tier_sync.sql's 5188aaaa-... constants) — the pattern is deliberately non-random (repeated hex nibble + trailing zeros) to signal 'this is a synthetic test id' to a human reader."
+regexTarget = "match"
+regexes = [
+  '''["\']?[0-9]{4}(aaaa|bbbb|cccc|dddd)-0000-0000-0000-0000000000[0-9]{2}["\']?''',
+]
 
 [[rules]]
 id = "anthropic-api-key"

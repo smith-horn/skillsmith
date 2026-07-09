@@ -57,6 +57,12 @@ function mapRpcErrorToCopy(msg: string | undefined, maxMembers?: number): string
     return 'Admins can only remove members, not other admins.'
   if (m.includes('only team owners or admins can remove'))
     return 'Only team owners or admins can remove members.'
+  if (m.includes('only team owners or admins can edit'))
+    return "Only team owners or admins can edit a member's GitHub username."
+  if (m.includes('invalid github_username format'))
+    return "That doesn't look like a valid GitHub username (letters, numbers, and single hyphens, max 39 characters)."
+  if (m.includes('already linked to a different member'))
+    return 'That GitHub username is already linked to a different member of this team.'
   if (m.includes('member not found')) return 'That member no longer exists on the team.'
   if (m.includes('forbidden')) return 'Only team owners or admins can invite.'
   if (m.includes('team not found')) return 'Team not found.'
@@ -159,6 +165,29 @@ export async function removeTeamMember(
 ): Promise<SimpleResult> {
   const { error } = await supabase.rpc('remove_team_member', {
     p_member_id: memberId,
+  })
+  if (error) return { ok: false, error: mapRpcErrorToCopy(error.message) }
+  return { ok: true }
+}
+
+/**
+ * Set (or clear) another team member's github_username via the
+ * `set_team_member_github_username` SECURITY DEFINER RPC. Permission rules
+ * enforced server-side: only owner/admin may call; caller must share a team
+ * with the target (cross-team calls are rejected). SMI-5589.
+ *
+ * `githubUsername` is trimmed; an empty/whitespace-only value clears the
+ * field (sent as `null`) rather than being rejected as invalid.
+ */
+export async function setTeamMemberGithubUsername(
+  supabase: SupabaseClient,
+  memberId: string,
+  githubUsername: string
+): Promise<SimpleResult> {
+  const trimmed = githubUsername.trim()
+  const { error } = await supabase.rpc('set_team_member_github_username', {
+    p_member_id: memberId,
+    p_github_username: trimmed.length > 0 ? trimmed : null,
   })
   if (error) return { ok: false, error: mapRpcErrorToCopy(error.message) }
   return { ok: true }

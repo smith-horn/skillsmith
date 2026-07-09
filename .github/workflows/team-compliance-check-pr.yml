@@ -1,0 +1,244 @@
+name: Skillsmith Team Compliance Check
+
+# SMI-5577 (parent SMI-5574): Team/Enterprise skill-version compliance PR gate.
+#
+# DESIGN NOTE -- reusable workflow, not a direct `pull_request` trigger:
+# unlike .github/workflows/concurrency-audit-pr.yml (an INTERNAL dev-tooling
+# gate that checks THIS repo's own PRs), team-compliance-check is a
+# CUSTOMER-FACING product feature ("Team/Enterprise customers pay for a
+# compliance gate" -- plan §1). It must run against a CUSTOMER's repo/PRs, not
+# Skillsmith's own. Declaring `on: workflow_call` (rather than `on:
+# pull_request`) means this file never auto-fires here -- a Team/Enterprise
+# customer repo enables it by adding a small caller workflow that `uses:` this
+# file by ref. See docs/internal/runbooks/team-compliance-check-setup.md for
+# the exact caller-workflow snippet a customer copies into their own repo.
+#
+# Modeled directly on concurrency-audit-pr.yml (read in full; every pattern
+# below -- sticky comment via REST API not GraphQL, opt-out marker parsing,
+# shadow-mode continue-on-error -- is reused, not reinvented), with one
+# deliberate divergence: NO `paths:` filter. concurrency-audit-pr.yml scopes to
+# changed files because it audits the diff; this workflow audits the PR
+# AUTHOR's local tooling state, which is unrelated to what changed in the PR,
+# so it must fire on every qualifying PR event regardless of which paths
+# changed.
+#
+# SHADOW MODE: the final step uses `continue-on-error: true` so the check
+# warns but does not block merge. SHADOW_MODE_END_DATE below is computed as
+# (2026-07-08 push date + 21 days) -- recompute again if actual merge slips
+# materially past that. The flip-to-mandatory follow-up is tracked in
+# SMI-5587, with a real Linear due date (2026-08-02) specifically so it
+# doesn't repeat SMI-4904's failure mode: that issue was cited as
+# concurrency-audit-pr.yml's flip tracker but was actually a same-day-closed
+# build issue, so that workflow's flip never happened and it silently stayed
+# non-blocking for ~7 weeks past its own shadow-end date (see SMI-5591).
+#
+# Admin-facing shadow-mode/flip notification (a deduped GitHub issue opened
+# in the calling repo, mirroring the telemetry-liveness dedup pattern) is
+# tracked as a fast-follow in SMI-5588 -- not yet implemented, decided
+# against blocking this PR on it since the workflow is fully functional
+# without it (decision recorded 2026-07-08).
+#
+# Opt-out: include `[compliance-check-ack]` (boolean marker, matches the
+# `[skip-impl-check]` / `[concurrency-audit-ack]` shape) anywhere in the PR
+# body of the CUSTOMER repo's PR. The acknowledgement reason is required as a
+# prose paragraph immediately following the marker; logged to the run output
+# for audit trail. Registered in docs/internal/process/guards-and-opt-outs.md.
+#
+# # audit:carveout-pure-js -- pure-shell workflow (bash, gh, curl, jq); no
+# Node/npm install needed. SMI-4647 carveout applies.
+
+on:
+  workflow_call:
+    secrets:
+      # SMI-5576: dedicated team/org-scoped license key -- NEVER an individual
+      # developer's personal API key (precedent: smoke-prod.yml's dedicated
+      # service-account credential, same rationale). Env var name matches the
+      # existing SKILLSMITH_LICENSE_KEY convention
+      # (packages/mcp-server/src/tools/team-resolver.ts).
+      SKILLSMITH_LICENSE_KEY:
+        required: true
+        description: >
+          Team/Enterprise license key (sk_live_...) scoped to the org, not an
+          individual member. Set as a repository or organization secret in the
+          CALLER repo.
+
+permissions:
+  contents: read
+  pull-requests: write # sticky comment
+
+concurrency:
+  group: skillsmith-team-compliance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  STICKY_MARKER: '<!-- skillsmith-team-compliance-check -->'
+  ACK_MARKER: '[compliance-check-ack]'
+  # Prod ref only -- never the staging ref (CLAUDE.md "Supabase Edge Functions"
+  # project-refs table; this hits prod skills-registry data from a customer's CI).
+  SKILLSMITH_API_BASE: 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
+  # PLACEHOLDER -- see the top-of-file DESIGN NOTE. Must be recomputed as
+  # (actual merge date + 21 days) at merge time.
+  SHADOW_MODE_END_DATE: '2026-07-29'
+
+jobs:
+  compliance-check:
+    name: Skillsmith Team Compliance Check
+    # audit:carveout-pure-js -- shell-only; bash + curl + jq + gh
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Detect [compliance-check-ack] opt-out
+        id: ack
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          if printf '%s' "$PR_BODY" | grep -qF "${ACK_MARKER}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::[compliance-check-ack] marker found in PR body -- workflow will report but not fail."
+            paragraph=$(printf '%s' "$PR_BODY" | awk -v marker="$ACK_MARKER" '
+              index($0, marker) { found = 1; print; next }
+              found && /^$/ { exit }
+              found { print }
+            ')
+            printf '%s\n' "::group::Acknowledgement reason"
+            printf '%s\n' "$paragraph"
+            printf '%s\n' "::endgroup::"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Call team-compliance-check
+        id: check
+        env:
+          LICENSE_KEY: ${{ secrets.SKILLSMITH_LICENSE_KEY }}
+          GITHUB_USERNAME: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          FALLBACK_DASHBOARD_URL="${SKILLSMITH_API_BASE/vrcnzpmndtroqxxoqkzy.supabase.co/skillsmith.app}/account/team/members"
+
+          if [[ -z "${LICENSE_KEY:-}" ]]; then
+            echo "::error::SKILLSMITH_LICENSE_KEY secret is not set. See docs/internal/runbooks/team-compliance-check-setup.md."
+            HTTP_STATUS=000
+            VERDICT="warn"
+            DEVICE_COUNT="0"
+            DASHBOARD_URL="$FALLBACK_DASHBOARD_URL"
+          else
+            BODY=$(jq -nc --arg license_key "$LICENSE_KEY" --arg github_username "$GITHUB_USERNAME" \
+              '{license_key: $license_key, github_username: $github_username}')
+
+            RESPONSE_FILE="$(mktemp)"
+            HTTP_STATUS=$(curl -sS -o "$RESPONSE_FILE" -w '%{http_code}' \
+              -X POST "${SKILLSMITH_API_BASE}/functions/v1/team-compliance-check" \
+              -H 'Content-Type: application/json' \
+              -d "$BODY") || HTTP_STATUS=000
+
+            if [[ "$HTTP_STATUS" == "200" ]]; then
+              # jq extracts ONLY these three scalar fields -- `.devices` (full
+              # per-skill detail) is never read here, structurally preventing
+              # any skill_id/version from reaching the sticky-comment step
+              # below (plan §5.4 "never expose per-skill detail to PR reviewers").
+              VERDICT=$(jq -r '.verdict' "$RESPONSE_FILE")
+              DEVICE_COUNT=$(jq -r '.device_count' "$RESPONSE_FILE")
+              DASHBOARD_URL=$(jq -r '.dashboard_url' "$RESPONSE_FILE")
+            else
+              echo "::warning::team-compliance-check returned HTTP $HTTP_STATUS -- treating as warn (fail-safe, see plan §3.1 identity_unlinked semantics)."
+              VERDICT="warn"
+              DEVICE_COUNT="0"
+              DASHBOARD_URL="$FALLBACK_DASHBOARD_URL"
+            fi
+          fi
+
+          {
+            echo "http_status=$HTTP_STATUS"
+            echo "verdict=$VERDICT"
+            echo "device_count=$DEVICE_COUNT"
+            echo "dashboard_url=$DASHBOARD_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build sticky comment body
+        id: body
+        env:
+          VERDICT: ${{ steps.check.outputs.verdict }}
+          DEVICE_COUNT: ${{ steps.check.outputs.device_count }}
+          DASHBOARD_URL: ${{ steps.check.outputs.dashboard_url }}
+          ACK: ${{ steps.ack.outputs.skip }}
+        run: |
+          set -euo pipefail
+          case "$VERDICT" in
+            pass) ICON="✅"; SUMMARY="All tracked devices (${DEVICE_COUNT}) are running current, registry-approved skill versions." ;;
+            fail) ICON="❌"; SUMMARY="Compliance check failed -- sync your local Skillsmith inventory to restore a passing status." ;;
+            *)    ICON="⚠️"; SUMMARY="One or more of your ${DEVICE_COUNT} tracked device(s) need attention (drift, staleness, or an unlinked/never-synced identity)." ;;
+          esac
+          {
+            echo "$STICKY_MARKER"
+            echo "## Skillsmith Compliance Check ${ICON}"
+            echo ""
+            echo "$SUMMARY"
+            if [[ "$ACK" == "true" ]]; then
+              echo ""
+              echo "_\`${ACK_MARKER}\` marker found in PR body -- workflow will not block merge regardless of findings._"
+            fi
+            echo ""
+            echo "[View full details on your team dashboard](${DASHBOARD_URL})"
+            echo ""
+            echo "_Workflow runs in **shadow mode** through ${SHADOW_MODE_END_DATE}. Findings are advisory; the check does not block merge. After the shadow window, the check becomes mandatory._"
+          } > /tmp/comment-body.md
+          cat /tmp/comment-body.md
+          echo "path=/tmp/comment-body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Post or update sticky PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          BODY_PATH: ${{ steps.body.outputs.path }}
+        run: |
+          set -euo pipefail
+          # REST API (numeric IDs), NOT `gh pr view --json comments` (GraphQL
+          # node-IDs 404 against the REST PATCH endpoint) -- same lesson as
+          # concurrency-audit-pr.yml (SMI-4902 W2 governance retro).
+          REPO="${GITHUB_REPOSITORY}"
+          EXISTING=$(gh api --paginate \
+            "/repos/${REPO}/issues/${PR_NUM}/comments" \
+            --jq ".[] | select(.body | contains(\"$STICKY_MARKER\")) | .id" \
+            | head -1 || true)
+          if [[ -n "$EXISTING" ]]; then
+            echo "Editing existing sticky comment ($EXISTING)…"
+            gh api -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${REPO}/issues/comments/${EXISTING}" \
+              -F "body=@${BODY_PATH}" >/dev/null
+          else
+            echo "Posting fresh sticky comment…"
+            # --repo is mandatory here: this workflow never runs actions/checkout
+            # (pure shell/curl/jq/gh, no repo file content needed), so there is no
+            # local .git for `gh pr comment` to infer the repo from -- confirmed
+            # live via SMI-5574 staging e2e verification (2026-07-08): omitting
+            # --repo failed with "fatal: not a git repository" on every PR's
+            # first run (the only run with no existing sticky comment to PATCH
+            # instead). `gh api` calls above are unaffected -- they always take
+            # an explicit /repos/${REPO}/... path.
+            gh pr comment "$PR_NUM" --repo "$REPO" --body-file "$BODY_PATH"
+          fi
+
+      - name: Final status
+        id: final_status
+        # SHADOW MODE -- see top-of-file DESIGN NOTE. Remove
+        # `continue-on-error` on SHADOW_MODE_END_DATE (once finalized).
+        # audit:allow-continue-on-error -- intentional shadow window, mirrors
+        # concurrency-audit-pr.yml's own SMI-4904 pattern.
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.check.outputs.verdict }}
+          ACK: ${{ steps.ack.outputs.skip }}
+        run: |
+          set -euo pipefail
+          if [[ "$ACK" == "true" ]]; then
+            echo "::notice::[compliance-check-ack] opt-out -- exit 0 regardless of verdict."
+            exit 0
+          fi
+          if [[ "$VERDICT" == "fail" ]]; then
+            echo "::error::Skillsmith team compliance check returned FAIL."
+            exit 1
+          fi
+          echo "Compliance check verdict: $VERDICT"

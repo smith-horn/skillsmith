@@ -102,6 +102,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   skills-search
   stats
   stripe-webhook
+  team-compliance-check
   webhook-heartbeat-monitor
 )
 
