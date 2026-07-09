@@ -54,7 +54,7 @@ test.describe('Cross-Harness Skill Inventory — dotfile read-time guard (stagin
     )
   })
 
-  test('E: a dot-prefixed skill_id inserted directly (bypassing ingestion) never renders on /account/skills', async ({
+  test("E': a dot-prefixed skill_id inserted directly (bypassing ingestion) never renders on /account/skills", async ({
     page,
   }) => {
     test.setTimeout(120_000)
@@ -74,7 +74,7 @@ test.describe('Cross-Harness Skill Inventory — dotfile read-time guard (stagin
           password: cfg.invUserPassword,
         }),
         STAGING_CALL_TIMEOUT_MS,
-        'Test E / signInTestUser'
+        "Test E' / signInTestUser"
       )
 
       const { status: uploadStatus, body: uploadBody } = await withTimeout(
@@ -83,7 +83,7 @@ test.describe('Cross-Harness Skill Inventory — dotfile read-time guard (stagin
           skills: [{ harness: 'claude-code', skill_id: realSkillId }],
         }),
         STAGING_CALL_TIMEOUT_MS,
-        'Test E / uploadInventory (real skill)'
+        "Test E' / uploadInventory (real skill)"
       )
       expect(uploadStatus, `upload status unexpected; body: ${JSON.stringify(uploadBody)}`).toBe(
         200
@@ -98,7 +98,7 @@ test.describe('Cross-Harness Skill Inventory — dotfile read-time guard (stagin
           skillId: ghostSkillId,
         }),
         STAGING_CALL_TIMEOUT_MS,
-        'Test E / insertDeviceSkillDirect (ghost row)'
+        "Test E' / insertDeviceSkillDirect (ghost row)"
       )
 
       // ─── 3. Reload /account/skills — the read-time predicate must exclude the ghost row ───
