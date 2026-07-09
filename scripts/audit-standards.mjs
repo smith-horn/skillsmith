@@ -161,12 +161,17 @@ try {
   fail(`Error checking tsconfig: ${e.message}`)
 }
 
+// SMI-5603: Check 2 (no 'any') and Check 3 (file length) scan both the
+// package workspace and standalone apps (e.g. apps/api-proxy) — previously
+// only 'packages' was scanned, so apps/ received zero standards coverage.
+const TYPE_SAFETY_AND_LENGTH_ROOTS = ['packages', 'apps']
+
 // 2. No 'any' types in source
 console.log(`\n${BOLD}2. Type Safety (no 'any' types)${RESET}`)
 try {
-  const sourceFiles = getFilesRecursive('packages', ['.ts', '.tsx']).filter(
-    (f) => !f.includes('.test.') && !f.includes('.d.ts')
-  )
+  const sourceFiles = TYPE_SAFETY_AND_LENGTH_ROOTS.flatMap((root) =>
+    getFilesRecursive(root, ['.ts', '.tsx'])
+  ).filter((f) => !f.includes('.test.') && !f.includes('.d.ts'))
 
   let anyCount = 0
   const filesWithAny = []
@@ -205,9 +210,9 @@ try {
 // 3. File Length
 console.log(`\n${BOLD}3. File Length (max 500 lines)${RESET}`)
 try {
-  const sourceFiles = getFilesRecursive('packages', ['.ts', '.tsx']).filter(
-    (f) => !f.includes('.test.')
-  )
+  const sourceFiles = TYPE_SAFETY_AND_LENGTH_ROOTS.flatMap((root) =>
+    getFilesRecursive(root, ['.ts', '.tsx'])
+  ).filter((f) => !f.includes('.test.'))
 
   const longFiles = []
   for (const file of sourceFiles) {
