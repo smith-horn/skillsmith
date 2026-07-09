@@ -121,42 +121,65 @@ export type EmptyState = 'consent-off' | 'opted-in-no-devices' | 'single-machine
 export const STALE_AFTER_HOURS = 24
 
 /**
- * Human-readable label and one-line tooltip for each {@link SkillState}.
- * The `.astro` component maps each state to an icon/shape; this module owns
- * only the text.
+ * Human-readable label, one-line tooltip, and suggested next action for each
+ * {@link SkillState}. The `.astro` component maps each state to an
+ * icon/shape; this module owns only the text.
+ *
+ * `suggestedAction` may contain inline-code spans delimited by backtick
+ * pairs (`` ` ``...`` ` ``), which the renderer converts to `<code>` tags.
+ * The literal placeholder token `<skill>` (inside a backtick span) appears
+ * only in the `drifted` and `pinned` entries and is substituted by the
+ * renderer with the real skill ID. `suggestedAction` is `null` when a state
+ * has no actionable next step.
  */
-export const SKILL_STATE_META: Record<SkillState, { label: string; description: string }> = {
+export const SKILL_STATE_META: Record<
+  SkillState,
+  { label: string; description: string; suggestedAction: string | null }
+> = {
   current: {
     label: 'Up to date',
     description: 'Up to date with the registry',
+    suggestedAction: 'No action needed.',
   },
   drifted: {
     label: 'Update available',
     description: 'A newer version is available in the registry',
+    suggestedAction: 'Run `skillsmith update <skill>` on that machine.',
   },
   missing: {
     label: 'Missing',
     description: 'Installed before but not seen in the latest sync',
+    suggestedAction:
+      'Confirm the skill is still installed, then re-run `skillsmith inventory push` from that machine — or reinstall it if it was removed intentionally.',
   },
   pinned: {
     label: 'Pinned',
     description: 'Pinned to a version; drift checks suppressed',
+    suggestedAction:
+      'No action needed. Run `skillsmith unpin <skill>` if you want drift checks again.',
   },
   unknown: {
     label: 'Unknown',
     description: 'Not matched to a registry skill (local or custom)',
+    suggestedAction:
+      'No action needed — expected for skills you wrote yourself or installed outside the registry.',
   },
   local: {
     label: 'Local',
     description: 'Installed locally; no registry or declared source',
+    suggestedAction:
+      "No action needed. Add `author`, `repository`, and `license` front-matter to the skill's `SKILL.md` if you'd like it to show as Claimed source instead.",
   },
   'source-identified': {
     label: 'Claimed source',
     description: "Source declared in the skill's own metadata (not registry-verified)",
+    suggestedAction:
+      "No action needed — the author/repository shown is self-reported and hasn't been verified by the registry. It would show as a verified source if the skill is published to the registry (`skillsmith publish`).",
   },
   pending: {
     label: 'Checking…',
     description: 'Resolving source — check back shortly',
+    suggestedAction: 'None — this is a transient state. Refresh the page in a few seconds.',
   },
 }
 
@@ -222,6 +245,38 @@ export function buildInventoryView(rows: InventoryRow[]): DeviceView[] {
   }
 
   return Array.from(byDevice.values())
+}
+
+// ─── Device-wide batch tips ───────────────────────────────────────────────────
+
+/**
+ * Copy shown when a device has multiple drifted skills, suggesting a single
+ * batch-update command instead of updating each skill individually.
+ */
+export const DEVICE_BATCH_UPDATE_TIP =
+  'Multiple skills on this machine have updates — run `skillsmith update --all` to update everything at once.'
+
+/**
+ * Decide whether to show the {@link DEVICE_BATCH_UPDATE_TIP} for a device.
+ *
+ * Threshold is evaluated **device-wide, across all harnesses** — not
+ * per-harness. A device with one `drifted` skill under `claude-code` and one
+ * `drifted` skill under `cursor` still crosses the threshold, because
+ * `skillsmith update --all` operates on the whole machine, not a single
+ * harness. Callers must pass the full flat list of a device's skills
+ * (i.e. call this *before* any per-harness grouping) — grouping first and
+ * calling this per-harness-group would undercount and suppress the tip.
+ *
+ * @param skills - All skills for a single device, across every harness.
+ * @returns {@link DEVICE_BATCH_UPDATE_TIP} when 2 or more skills are
+ *   `drifted`; otherwise `null`.
+ *
+ * @example
+ * computeDeviceBatchTip(device.skills) // => tip string or null
+ */
+export function computeDeviceBatchTip(skills: SkillView[]): string | null {
+  const driftedCount = skills.filter((s) => s.state === 'drifted').length
+  return driftedCount >= 2 ? DEVICE_BATCH_UPDATE_TIP : null
 }
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────

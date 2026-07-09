@@ -25,7 +25,9 @@
       "owner": "website",
       "trigger_globs": [
         "packages/website/src/pages/docs/inventory.astro",
-        "packages/website/src/pages/account/skills.astro"
+        "packages/website/src/pages/account/skills.astro",
+        "packages/website/src/lib/inventory-view.ts",
+        "packages/website/src/lib/skills-page-render.ts"
       ],
       "script": "scripts/smoke-prod/website.sh",
       "checks": ["check_website_docs_inventory_renders"]
