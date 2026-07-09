@@ -7,16 +7,18 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import handler from '../../apps/api-proxy/api/proxy'
 
 const SUPABASE_URL = 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
 const NULL_BYTE = String.fromCharCode(0)
 
-function makeReq(path: string | undefined): VercelRequest {
+function makeReq(path: string | undefined, headers: Record<string, string> = {}): VercelRequest {
   return {
     method: 'GET',
     query: path === undefined ? {} : { path },
-    headers: {},
+    headers,
     body: undefined,
   } as unknown as VercelRequest
 }
@@ -183,6 +185,167 @@ describe('SMI-4862: api-proxy SSRF hardening', () => {
       await handler(req, res)
 
       expect(res._status).toBe(204)
+    })
+  })
+})
+
+describe('SMI-5598: api-proxy header forwarding', () => {
+  beforeEach(() => {
+    process.env.SUPABASE_URL = SUPABASE_URL
+    vi.restoreAllMocks()
+  })
+
+  function mockUpstreamJson(headers: Record<string, string> = {}) {
+    return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', ...headers },
+      })
+    )
+  }
+
+  function fetchHeaders(fetchSpy: { mock: { calls: unknown[][] } }): Record<string, string> {
+    const init = fetchSpy.mock.calls[0]?.[1] as { headers?: Record<string, string> } | undefined
+    return init?.headers ?? {}
+  }
+
+  describe('request header forwarding', () => {
+    it('forwards x-api-key to the upstream fetch call', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', { 'x-api-key': 'sk_live_test123' })
+      const res = makeRes()
+      await handler(req, res)
+
+      expect(fetchHeaders(fetchSpy)['x-api-key']).toBe('sk_live_test123')
+    })
+
+    it('still forwards the existing allow-listed headers (regression)', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', {
+        authorization: 'Bearer abc123',
+        apikey: 'anon-key',
+        'content-type': 'application/json',
+        'x-request-id': 'req-123',
+      })
+      const res = makeRes()
+      await handler(req, res)
+
+      const calledHeaders = fetchHeaders(fetchSpy)
+      expect(calledHeaders.authorization).toBe('Bearer abc123')
+      expect(calledHeaders.apikey).toBe('anon-key')
+      expect(calledHeaders['content-type']).toBe('application/json')
+      expect(calledHeaders['x-request-id']).toBe('req-123')
+    })
+
+    it('does not forward non-allow-listed headers', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', {
+        cookie: 'session=abc123',
+        'x-forwarded-host': 'evil.example.com',
+      })
+      const res = makeRes()
+      await handler(req, res)
+
+      const calledHeaders = fetchHeaders(fetchSpy)
+      expect(calledHeaders.cookie).toBeUndefined()
+      expect(calledHeaders['x-forwarded-host']).toBeUndefined()
+    })
+  })
+
+  describe('response header forwarding', () => {
+    it('forwards x-ratelimit-reset and x-request-id from the upstream response back to the client', async () => {
+      mockUpstreamJson({ 'x-ratelimit-reset': '1700000000', 'x-request-id': 'resp-req-1' })
+
+      const req = makeReq('functions/v1/stats')
+      const res = makeRes()
+      await handler(req, res)
+
+      expect(res.setHeader).toHaveBeenCalledWith('x-ratelimit-reset', '1700000000')
+      expect(res.setHeader).toHaveBeenCalledWith('x-request-id', 'resp-req-1')
+    })
+  })
+
+  describe('CORS allow-list parity (vercel.json)', () => {
+    it('Access-Control-Allow-Headers includes X-API-Key', () => {
+      const vercelJsonPath = resolve(__dirname, '../../apps/api-proxy/vercel.json')
+      const vercelConfig = JSON.parse(readFileSync(vercelJsonPath, 'utf-8')) as {
+        headers: Array<{ headers: Array<{ key: string; value: string }> }>
+      }
+      const allowHeadersEntry = vercelConfig.headers[0]?.headers.find(
+        (h) => h.key === 'Access-Control-Allow-Headers'
+      )
+
+      expect(allowHeadersEntry?.value).toContain('X-API-Key')
+    })
+  })
+
+  describe('resolveClientIp', () => {
+    it('prefers cf-connecting-ip over x-real-ip and forwards it as the sole x-forwarded-for value', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', {
+        'cf-connecting-ip': '203.0.113.7',
+        // Deliberately different/bogus value to prove cf-connecting-ip wins.
+        'x-real-ip': '198.51.100.99',
+      })
+      const res = makeRes()
+      await handler(req, res)
+
+      const forwarded = fetchHeaders(fetchSpy)['x-forwarded-for']
+      expect(forwarded).toBe('203.0.113.7')
+      expect(forwarded).not.toContain(',')
+    })
+
+    it('falls back to x-real-ip when cf-connecting-ip is absent', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', { 'x-real-ip': '198.51.100.42' })
+      const res = makeRes()
+      await handler(req, res)
+
+      expect(fetchHeaders(fetchSpy)['x-forwarded-for']).toBe('198.51.100.42')
+    })
+
+    it('does not relay a raw multi-entry client-supplied x-forwarded-for verbatim', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', { 'x-forwarded-for': '1.2.3.4, 5.6.7.8' })
+      const res = makeRes()
+      await handler(req, res)
+
+      const forwarded = fetchHeaders(fetchSpy)['x-forwarded-for']
+      // resolveClientIp() takes only the first, validated entry — never the
+      // literal client-supplied chain.
+      expect(forwarded).toBe('1.2.3.4')
+      expect(forwarded).not.toBe('1.2.3.4, 5.6.7.8')
+    })
+
+    it('drops a malformed cf-connecting-ip and falls back to the next candidate', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', {
+        'cf-connecting-ip': 'not-an-ip',
+        'x-real-ip': '198.51.100.5',
+      })
+      const res = makeRes()
+      await handler(req, res)
+
+      expect(fetchHeaders(fetchSpy)['x-forwarded-for']).toBe('198.51.100.5')
+    })
+
+    it('omits x-forwarded-for entirely when a CRLF-injection payload is the only candidate', async () => {
+      const fetchSpy = mockUpstreamJson()
+
+      const req = makeReq('functions/v1/stats', {
+        'cf-connecting-ip': '1.2.3.4\r\nX-Injected: evil',
+      })
+      const res = makeRes()
+      await handler(req, res)
+
+      expect(fetchHeaders(fetchSpy)['x-forwarded-for']).toBeUndefined()
     })
   })
 })

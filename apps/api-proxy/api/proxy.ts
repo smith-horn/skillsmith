@@ -1,5 +1,29 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
+const IP_RE = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]+)$/
+
+function firstHeader(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v
+}
+
+// SMI-5598: resolve ONE trusted client IP. Prefers Cloudflare's un-spoofable
+// cf-connecting-ip (both api.skillsmith.app and the Supabase origin are
+// Cloudflare-fronted — verified via dig); falls back to Vercel's own
+// overwritten x-real-ip/x-forwarded-for (also un-spoofable, Vercel scrubs
+// external values). Never trusts a raw client-asserted value beyond these.
+function resolveClientIp(req: VercelRequest): string | undefined {
+  const candidates = [
+    firstHeader(req.headers['cf-connecting-ip']),
+    firstHeader(req.headers['x-real-ip']),
+    firstHeader(req.headers['x-forwarded-for']),
+  ]
+  for (const c of candidates) {
+    const ip = c?.split(',')[0]?.trim()
+    if (ip && IP_RE.test(ip)) return ip
+  }
+  return undefined
+}
+
 /**
  * Dynamic proxy to Supabase
  * Reads SUPABASE_URL from environment to avoid hardcoding project URLs
@@ -85,12 +109,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const headers: Record<string, string> = {}
 
     // Forward relevant headers
-    const forwardHeaders = ['authorization', 'apikey', 'content-type', 'x-request-id']
+    const forwardHeaders = ['authorization', 'apikey', 'content-type', 'x-request-id', 'x-api-key']
     for (const header of forwardHeaders) {
       const value = req.headers[header]
       if (value && typeof value === 'string') {
         headers[header] = value
       }
+    }
+
+    // SMI-5598: forward ONE trusted client IP as the sole X-Forwarded-For value
+    // (see resolveClientIp() above for the full trust-model rationale — do NOT
+    // relay raw client-supplied IP headers verbatim).
+    const clientIp = resolveClientIp(req)
+    if (clientIp) {
+      headers['x-forwarded-for'] = clientIp
     }
 
     const response = await fetch(targetUrl, {
@@ -100,7 +132,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     // Forward response headers
-    const responseHeaders = ['content-type', 'x-ratelimit-limit', 'x-ratelimit-remaining']
+    const responseHeaders = [
+      'content-type',
+      'x-ratelimit-limit',
+      'x-ratelimit-remaining',
+      'x-ratelimit-reset',
+      'x-request-id',
+    ]
     for (const header of responseHeaders) {
       const value = response.headers.get(header)
       if (value) {
