@@ -137,7 +137,7 @@ Git-crypt smudge filters can silently switch branches during stash/pop (includin
 **After EVERY PR merges**:
 
 1. Move the issue to `Done` with the squash-merge SHA in a closing comment.
-2. Post a **project update** on the Linear project when a wave/PR-cluster lands or a blocker changes state — keep stakeholders current without them having to read the issue feed.
+2. Post a **project update** on the Linear project — with every PR, not just when a wave/PR-cluster lands or a blocker changes state. Content: reuse the `pr-description` skill's Business Summary verbatim — keep stakeholders current without them having to read the issue feed.
 
 **Tooling**: MCP Linear tools when connected; fallback `varlock run -- node scripts/linear-api.mjs` (never `npm run linear:done` — broken). Team: **Smith Horn Group**. Always set `project` + a detailed description + labels on issue creation. Full conventions: [linear-hygiene-guide.md](docs/internal/process/linear-hygiene-guide.md).
 
@@ -356,5 +356,6 @@ NEVER say "worth a note for next time" or "consider X in future". If something i
 After context compaction or session continuation, ALWAYS verify claimed-complete work by reading the actual files before proceeding. Never trust the summary alone — compaction can conflate "planned" with "implemented".
 After EVERY commit, run `/governance` to review the changed code. Resolve ALL issues it surfaces before pushing. No exceptions — do not skip, defer, or downgrade findings.
 After EVERY commit, update the relevant Linear issue(s) in the Skillsmith initiative (SMI-xxx) to reflect progress. Add a comment with the commit SHA and a brief summary of what changed. Move the issue status forward if the commit completes the work (e.g., "In Progress" → "Done"). If no Linear issue exists for the work, create one under the appropriate project before pushing.
+Before every `gh pr create`, use the `pr-description` skill — PR bodies lead with a plain-language Business Summary, not technical detail first.
 After EVERY PR is merged, run `/governance` as a retrospective on the full PR diff. Resolve ALL issues it surfaces immediately — create follow-up commits or Linear issues as needed. Do not close the session until the retro is clean.
 After the governance retro, update any `index.md` files in directories where files were added or removed during the PR. Check `docs/internal/`, `.claude/development/`, and `.claude/templates/`. If the root `docs/internal/index.md` folder counts have drifted, update those too.
