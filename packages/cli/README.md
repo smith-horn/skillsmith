@@ -6,7 +6,7 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 
 ## Contents
 
-- [What's New](#whats-new-in-v050)
+- [What's New](#whats-new-in-v080)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -14,12 +14,12 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.5.0
+## What's New in v0.8.0
 
-- **`skillsmith create` command**: Scaffold a new agent skill directly into `~/.claude/skills/<name>/` — interactive prompts or non-interactive flags (`--description`, `--author`, `--type`, `--dry-run`, `--yes`)
-- **Stricter name validation**: `author init` and `create` share registry-safe validation (lowercase + hyphens only)
-
-> v0.5.1 is a version-bump-only release fixing an npm registry regression. No source changes.
+- **`sklx agent install` / `uninstall`**: New command group installs a portable agent pack (SKILL.md + shims + hooks) to detected harnesses with per-harness MCP registration.
+- **Per-user inventory purge**: New hard-delete path for clearing a user's full skill inventory.
+- **`sklx audit collisions` / `audit advisories`**: Namespace-collision and legacy security-advisory audit subcommands, plus `sklx config set audit_mode <preventative|power_user|governance|off>`.
+- **Remote-default search + provenance**: `search` now defaults to the remote registry with safety filters, and install provenance is reported as Local / source-identified / Pending.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
