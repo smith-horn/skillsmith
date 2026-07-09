@@ -3,6 +3,8 @@
 **Linear Issue**: [SMI-2158](https://linear.app/smith-horn-group/issue/SMI-2158/register-skillsmith-on-mcp-registry-and-claude-connector-directory)
 **Last Updated**: February 1, 2026
 
+> This page covers the **official MCP registry** only. Skillsmith is also listed on a second, independently-mechanized channel — see [Docker MCP Registry](#docker-mcp-registry) below.
+
 ## Overview
 
 Skillsmith is published to the official MCP Registry, enabling discovery by:
@@ -212,3 +214,79 @@ curl -s "https://registry.modelcontextprotocol.io/v0.1/servers?search=skillsmith
 - [MCP Registry Quickstart](https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/quickstart.mdx)
 - [server.json Schema](https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json)
 - [Claude Connector Directory](https://claude.com/connectors)
+
+---
+
+## Docker MCP Registry
+
+**Linear Issue**: SMI-5609 · **Plan**: `docs/internal/implementation/docker-mcp-registry-publish.md`
+
+Docker maintains a second, separately-curated MCP registry — `github.com/docker/mcp-registry` — that feeds Docker Hub's `mcp/` namespace and Docker Desktop's MCP Toolkit UI. This is an independent distribution channel from the official `registry.modelcontextprotocol.io` registry documented above: different repo, different maintainers, different submission and build mechanism.
+
+### Registry Details
+
+| Field | Value |
+|-------|-------|
+| Registry repo | <https://github.com/docker/mcp-registry> |
+| Docker Hub image | `mcp/skillsmith` |
+| Entry files | `servers/skillsmith/server.yaml` + `servers/skillsmith/tools.json`, in a **fork of `docker/mcp-registry`** — not this repository |
+| Build context (`source.directory`) | `packages/mcp-server` |
+| Dockerfile | `packages/mcp-server/Dockerfile` |
+
+### The `source.directory` monorepo mechanism
+
+For a monorepo submission, Docker's registry builds the image using `server.yaml`'s `source.directory` field as **both** the Dockerfile location and the entire build context — the build has no access to anything outside that directory: no repo root, no sibling packages, no root `package-lock.json` or `.npmrc`. Skillsmith's entry sets `directory: packages/mcp-server`, so `packages/mcp-server/Dockerfile` is written to be fully self-sufficient from that directory alone. It resolves `@skillsmith/core` as a real published npm dependency (not a workspace link), so a plain `npm install` works with zero workspace context.
+
+### License compatibility (resolved)
+
+Skillsmith is licensed under Elastic License 2.0 (ELv2) — source-available, not OSI-approved (ADR-119). Docker's `CONTRIBUTING.md` states in prose: *"Make sure the license of your MCP Server allows people to consume it (MIT or Apache 2 are great, GPL is not)."* Taken literally, this could read as excluding ELv2. It's more restrictive than Docker's actual automated gate.
+
+`internal/licenses/check.go` in `docker/mcp-registry` only rejects a GitHub-detected SPDX license key prefixed `gpl`, `agpl`, or `npl`:
+
+```go
+func IsValid(license *github.License) bool {
+	if license != nil && (strings.HasPrefix(license.GetKey(), "gpl") || strings.HasPrefix(license.GetKey(), "agpl") || strings.HasPrefix(license.GetKey(), "npl")) {
+		return false
+	}
+	return true
+}
+```
+
+`gh api repos/smith-horn/skillsmith --jq '.license'` returns `{"key":"other","name":"Other","spdx_id":"NOASSERTION"}`. This isn't a defect in our `LICENSE` file — it's the canonical, unmodified Elastic License 2.0 text — GitHub's `licensee`/`choosealicense.com` catalog simply has no entry for Elastic-2.0 at all, even for the canonical text, so *any* ELv2 repo resolves to `"other"`. `"other"` never matches the `gpl`/`agpl`/`npl` prefixes, so **the automated gate passes cleanly and reliably, not just as a one-time result**. A discretionary human "Docker team review" step still sits on top of the automated gate (residual risk: small). See the plan doc for the reputational-risk contingency and registry precedent (`elasticsearch`, `grafana`, `cockroachdb` are all listed despite non-permissive core licenses, via a separately-licensed MCP wrapper repo in most of those cases).
+
+### Nightly automated bump-PRs
+
+Once a submission is merged, Docker runs an automated nightly GitHub Action that opens commit-bump PRs against `docker/mcp-registry` to keep the pinned `source.commit` current (per Docker's `docs/configuration.md`: *"Once an initial revision is accepted into the registry, an automated nightly GitHub Action will drive PRs to perform updates"*). There is no fixed-cadence maintenance obligation — review opportunistically when GitHub notifies of a new bump PR. Ownership: the SMI-5609 assignee, or its Wave 2 follow-up issue's assignee once Wave 1 (in-repo, closed on merge) and Wave 2 (external submission, unbounded timeline) are split into separate Linear issues per this repo's convention of not letting external/unbounded-timeline follow-up work block an in-repo issue from closing.
+
+### Accepted risk — no lockfile in the Docker build context
+
+`packages/mcp-server/Dockerfile`'s build context has no `package-lock.json` — neither `packages/core/` nor `packages/mcp-server/` has its own lockfile; only the repo root does, which is out of scope for this build context. Both manual rebuilds and Docker's nightly bump-PR automation therefore resolve dependencies fresh (`npm install`, not `npm ci`) on every build. This is a deliberate accepted risk, not a gap to fix — revisit only if it causes a real break.
+
+### Accepted risk — semver drift between npm-published and Docker-published server
+
+**Verified live, not just theoretical (Wave 1 Step 5 local validation)**: building the image from current `main` HEAD's `dist/` while installing `@skillsmith/core` from the public npm registry (`0.10.0`) crashes the server at startup — `packages/mcp-server/src/index.ts`'s static import graph reaches `DEFAULT_RISK_THRESHOLD` from `@skillsmith/core`, which the published `0.10.0` tarball doesn't export (confirmed by downloading and grepping it directly; the export exists in local `packages/core/src/index.ts` but postdates the last publish, and `packages/core/CHANGELOG.md`'s `[Unreleased]` section is empty despite that — a version-bump gap upstream of this doc). **Not currently affecting real users**: the published `@skillsmith/mcp-server@0.7.0` tarball predates this export and doesn't reference it. It only bites the specific combination this Dockerfile uses (fresh HEAD `dist/` + npm-installed `core`) — confirmed by patch-testing with a correct local `core/dist` overlaid into the built image, after which `initialize`, the no-auth trial path, and the volume-mount write-through all worked correctly.
+
+**Concrete rule for pinning `source.commit`** (Wave 2 Step 1): never pin to "current `main` tip" by default. Pin only to a commit at or before the last `@skillsmith/mcp-server` npm publish (so the built `dist/` only references already-published `@skillsmith/core` exports), or wait for `@skillsmith/core` to publish a version containing whatever HEAD-ahead exports exist before pinning past that point. This is a scheduling constraint on which commit to submit, not a code fix — follow the normal publish cadence (`publishing-guide.md`), don't force an out-of-cycle release for this.
+
+### Three parallel self-descriptions
+
+The Docker listing's `about.description` (in `server.yaml`), the npm `package.json` description, and the official-registry `server.json` description (documented above) are three separate, surface-appropriate pitches maintained independently — not one shared string kept in sync across all three. This is intentional; a future editor should not assume divergence between them is drift to fix.
+
+### Naming across registries
+
+The same server has three different identifiers across the three channels — expected, not a bug:
+
+| Channel | Identifier |
+|---------|-----------|
+| npm | `@skillsmith/mcp-server` |
+| Official MCP registry | `io.github.smith-horn/skillsmith` |
+| Docker MCP registry | `mcp/skillsmith` |
+
+No action needed — noted here only so a future support conversation isn't confused by the divergence.
+
+### References
+
+- [docker/mcp-registry](https://github.com/docker/mcp-registry)
+- [Configuration docs (`docs/configuration.md`)](https://github.com/docker/mcp-registry/blob/main/docs/configuration.md)
+- [Contributing guide](https://github.com/docker/mcp-registry/blob/main/CONTRIBUTING.md)
+- `docs/internal/implementation/docker-mcp-registry-publish.md` — full investigation, including the reputational-risk contingency owner and the license-check verification trail

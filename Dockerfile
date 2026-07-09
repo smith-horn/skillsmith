@@ -192,10 +192,10 @@ USER nodejs
 # Health check for production container
 # Verifies the MCP server can start and respond
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD node -e "require('./packages/mcp-server/dist/index.js')" || exit 1
+    CMD node -e "require('./packages/mcp-server/dist/src/index.js')" || exit 1
 
 # Expose MCP server port (if applicable)
 EXPOSE 3001
 
 # Start the MCP server
-CMD ["node", "packages/mcp-server/dist/index.js"]
+CMD ["node", "packages/mcp-server/dist/src/index.js"]
