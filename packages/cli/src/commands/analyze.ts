@@ -8,8 +8,11 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { CodebaseAnalyzer, type CodebaseContext, type FrameworkInfo } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 
 /**
  * Format analysis results for terminal display
@@ -200,7 +203,7 @@ async function analyzeActionImpl(
     if (opts['json']) {
       console.error(JSON.stringify({ error: sanitizeError(error) }))
     } else {
-      console.error(chalk.red('Analysis error:'), sanitizeError(error))
+      logger.error(`${chalk.red('Analysis error:')} ${sanitizeError(error)}`)
     }
     process.exit(1)
   }

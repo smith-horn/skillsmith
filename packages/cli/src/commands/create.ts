@@ -21,9 +21,12 @@ import ora from 'ora'
 import { mkdir, writeFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 import { validateSkillName } from '../utils/skill-name.js'
 import { SKILL_MD_TEMPLATE, README_MD_TEMPLATE, CHANGELOG_MD_TEMPLATE } from '../templates/index.js'
 
@@ -141,7 +144,7 @@ export async function createSkill(
 
   const nameValidation = validateSkillName(skillName)
   if (nameValidation !== true) {
-    console.error(chalk.red(`Invalid skill name: ${nameValidation}`))
+    logger.error(chalk.red(`Invalid skill name: ${nameValidation}`))
     process.exit(1)
   }
 
@@ -155,7 +158,7 @@ export async function createSkill(
     }))
 
   if (!description.trim()) {
-    console.error(chalk.red('Description is required'))
+    logger.error(chalk.red('Description is required'))
     process.exit(1)
   }
 
@@ -174,7 +177,7 @@ export async function createSkill(
     }))
 
   if (!rawAuthor.trim() || !GITHUB_USERNAME_RE.test(rawAuthor.trim())) {
-    console.error(
+    logger.error(
       chalk.red('Invalid author: must be a valid GitHub username (alphanumeric and hyphens only)')
     )
     process.exit(1)
@@ -183,7 +186,7 @@ export async function createSkill(
 
   // 4. Category — validate CLI flag; select prompt constrains to valid values
   if (options.category && !VALID_CATEGORIES.includes(options.category as SkillCategory)) {
-    console.error(
+    logger.error(
       chalk.red(`Invalid category: ${options.category}. Valid: ${VALID_CATEGORIES.join(', ')}`)
     )
     process.exit(1)
@@ -204,7 +207,7 @@ export async function createSkill(
 
   // 5. Skill type — validate CLI flag
   if (options.type && !VALID_TYPES.includes(options.type as SkillType)) {
-    console.error(chalk.red(`Invalid type: ${options.type}. Valid: ${VALID_TYPES.join(', ')}`))
+    logger.error(chalk.red(`Invalid type: ${options.type}. Valid: ${VALID_TYPES.join(', ')}`))
     process.exit(1)
   }
   const skillType =
@@ -220,7 +223,7 @@ export async function createSkill(
 
   // 6. Behavioral classification — validate CLI flag
   if (options.behavior && !VALID_BEHAVIORS.includes(options.behavior as SkillBehavior)) {
-    console.error(
+    logger.error(
       chalk.red(`Invalid behavior: ${options.behavior}. Valid: ${VALID_BEHAVIORS.join(', ')}`)
     )
     process.exit(1)
@@ -397,7 +400,7 @@ async function createActionImpl(
       dryRun: opts['dryRun'] as boolean | undefined,
     })
   } catch (error) {
-    console.error(chalk.red('Error creating skill:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error creating skill:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

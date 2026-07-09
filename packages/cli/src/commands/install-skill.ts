@@ -11,9 +11,12 @@ import ora from 'ora'
 import { mkdir, copyFile, stat, readdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
 import { packageRoot } from '../utils/package-root.js'
+
+const logger = getCliLogger()
 
 /**
  * Get the path to bundled skill assets
@@ -154,7 +157,7 @@ async function setupActionImpl(opts: { force?: boolean }): Promise<void> {
     }
     await installSkillsmithSkill(opts.force ?? false)
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

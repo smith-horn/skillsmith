@@ -6,6 +6,9 @@
  */
 
 import { homedir } from 'os'
+import { getCliLogger } from '../cli-logger.js'
+
+const logger = getCliLogger()
 
 /**
  * Sanitize error messages to remove user-specific paths
@@ -47,5 +50,5 @@ export function sanitizeError(error: unknown): string {
  * @param error - The error to log
  */
 export function logSanitizedError(prefix: string, error: unknown): void {
-  console.error(prefix, sanitizeError(error))
+  logger.error(`${prefix} ${sanitizeError(error)}`)
 }

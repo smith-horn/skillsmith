@@ -22,6 +22,17 @@ vi.mock('./posthog.js', () => ({
   trackSkillInvoke: vi.fn(),
 }))
 
+// SMI-5615: `wrap.ts` imports `redactSensitiveData` from the Wave-2
+// `logging/redact.ts` module (landed alongside this file — see
+// docs/internal/implementation/production-error-logging.md). Mocked here
+// (identity passthrough) as a deliberate isolation seam so this file's tests
+// exercise only `wrap.ts`'s own logic, not `redact.ts`'s regex behavior
+// (covered separately by `logging/redact.test.ts`); production code always
+// resolves the real module.
+vi.mock('../logging/redact.js', () => ({
+  redactSensitiveData: (s: string) => s,
+}))
+
 import { trackSkillInvoke } from './posthog.js'
 const mockTrack = vi.mocked(trackSkillInvoke)
 

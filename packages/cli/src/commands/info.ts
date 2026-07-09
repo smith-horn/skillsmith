@@ -14,10 +14,13 @@ import {
   createApiClient,
   loadStoredAccessToken,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 import { displaySkillDetails } from './search-formatters.js'
 
 /** Strip ANSI escape sequences to prevent terminal injection from untrusted content */
@@ -125,7 +128,7 @@ async function infoActionImpl(skillId: string, options: InfoOptions): Promise<vo
     }
   } catch (error) {
     spinner.fail('Failed to retrieve skill info')
-    console.error(sanitizeError(error))
+    logger.error(sanitizeError(error))
     process.exit(1)
   }
 }

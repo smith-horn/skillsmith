@@ -17,8 +17,11 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sendAuditDigest, recordAuditNotify, AuditNotifyAuthError } from '@skillsmith/core'
+
+const logger = getCliLogger()
 
 import {
   runSecurityAudit,
@@ -223,7 +226,7 @@ async function securityActionImpl(opts: Record<string, boolean | undefined>): Pr
     await runAuditSecurity({ json: opts['json'] === true, email: opts['email'] === true })
   } catch (error) {
     const message = error instanceof Error ? error.message : sanitizeError(error)
-    console.error(chalk.red('Error:'), message)
+    logger.error(`${chalk.red('Error:')} ${message}`)
     process.exit(1)
   }
 }

@@ -24,10 +24,13 @@ import {
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { removeLinks } from '@skillsmith/core/install'
+import { getCliLogger } from '../cli-logger.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
 import { getSkillDiff, updateSkill, updateSkills } from './manage.update.js'
+
+const logger = getCliLogger()
 
 /**
  * SMI-1809: Added 'local' tier color for local skills
@@ -197,7 +200,7 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
 
     displaySkillsTable(filtered)
   } catch (error) {
-    console.error(chalk.red('Error listing skills:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error listing skills:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -227,7 +230,7 @@ async function updateActionImpl(
   try {
     if (updateAll) {
       if (skillNames.length > 0) {
-        console.error(chalk.red('Cannot combine --all with specific skill names.'))
+        logger.error(chalk.red('Cannot combine --all with specific skill names.'))
         process.exit(1)
         return
       }
@@ -245,7 +248,7 @@ async function updateActionImpl(
       process.exit(1)
     }
   } catch (error) {
-    console.error(chalk.red('Error updating skills:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error updating skills:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -270,7 +273,7 @@ async function removeActionImpl(
     const success = await removeSkill(skillName, force, dbPath)
     process.exit(success ? 0 : 1)
   } catch (error) {
-    console.error(chalk.red('Error removing skill:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error removing skill:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

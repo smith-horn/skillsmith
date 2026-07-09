@@ -23,11 +23,14 @@ import {
   type RegistrySkillInfo,
   type DatabaseType,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { addLink, assertClientId, getInstallPath, type ClientId } from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 
 const VALID_CLIENT_HINT =
   'Valid IDs: claude-code | cursor | copilot | windsurf | agents | opencode | hermes ' +
@@ -214,13 +217,13 @@ function displayResult(result: CoreInstallResult, quiet: boolean): void {
       }
     }
   } else {
-    console.error(chalk.red(`\nInstallation failed: ${result.error}`))
+    logger.error(chalk.red(`\nInstallation failed: ${result.error}`))
 
     if (result.securityReport && !result.securityReport.passed) {
-      console.error(chalk.red('  Security scan failed.'))
+      logger.error(chalk.red('  Security scan failed.'))
       for (const finding of result.securityReport.findings) {
         if (finding.severity === 'critical' || finding.severity === 'high') {
-          console.error(chalk.red(`  [${finding.severity}] ${finding.message}`))
+          logger.error(chalk.red(`  [${finding.severity}] ${finding.message}`))
         }
       }
     }
@@ -278,7 +281,7 @@ async function installActionImpl(
       if (jsonOutput) {
         console.log(JSON.stringify({ success: false, skillId, error: errorMsg }, null, 2))
       } else {
-        console.error(chalk.red(errorMsg))
+        logger.error(chalk.red(errorMsg))
       }
       process.exit(1)
       return
@@ -359,7 +362,7 @@ async function installActionImpl(
             }
           } catch (linkErr) {
             if (!jsonOutput) {
-              console.warn(
+              logger.warn(
                 chalk.yellow(`  Warning: could not link to ${target}: ${sanitizeError(linkErr)}`)
               )
             }
@@ -391,7 +394,7 @@ async function installActionImpl(
     if (jsonOutput) {
       console.log(JSON.stringify({ success: false, skillId, error: sanitizeError(error) }, null, 2))
     } else {
-      console.error(chalk.red('Install error:'), sanitizeError(error))
+      logger.error(`${chalk.red('Install error:')} ${sanitizeError(error)}`)
     }
     process.exit(1)
   }

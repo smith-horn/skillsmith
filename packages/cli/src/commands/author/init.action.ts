@@ -12,11 +12,14 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { getCliLogger } from '../../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 
 import { sanitizeError } from '../../utils/sanitize.js'
 import { InitSkillError } from '../../utils/errors.js'
 import { initSkill, validateSkill, publishSkill } from './init.js'
+
+const logger = getCliLogger()
 
 // ---------------------------------------------------------------------------
 // init
@@ -41,10 +44,10 @@ async function initActionImpl(
     // requested code. Anything else is an unexpected bug — route
     // through sanitizeError with the generic prefix.
     if (error instanceof InitSkillError) {
-      console.error(error.message)
+      logger.error(error.message)
       process.exit(error.exitCode)
     }
-    console.error(chalk.red('Error initializing skill:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error initializing skill:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -83,7 +86,7 @@ async function validateActionImpl(skillPath: string): Promise<void> {
     const valid = await validateSkill(skillPath)
     process.exit(valid ? 0 : 1)
   } catch (error) {
-    console.error(chalk.red('Error validating skill:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error validating skill:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -127,7 +130,7 @@ async function publishActionImpl(
     })
     process.exit(success ? 0 : 1)
   } catch (error) {
-    console.error(chalk.red('Error publishing skill:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error publishing skill:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

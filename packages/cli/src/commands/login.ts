@@ -15,8 +15,11 @@ import {
   isValidApiKeyFormat,
   type TokenCredentials,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { VERSION as CLI_VERSION } from '../version.js'
+
+const logger = getCliLogger()
 
 const DEVICE_PAGE_URL = 'https://skillsmith.app/device'
 const DEVICE_CODE_TIMEOUT_MS = 15 * 60 * 1000
@@ -153,8 +156,8 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
     dc = await requestDeviceCode()
   } catch (err) {
     if (process.stdout.isTTY) {
-      console.error(chalk.red('Network error requesting device code.'))
-      if (err instanceof Error) console.error(chalk.dim(err.message))
+      logger.error(chalk.red('Network error requesting device code.'))
+      if (err instanceof Error) logger.error(chalk.dim(err.message))
     } else {
       process.stderr.write(
         JSON.stringify({
@@ -203,8 +206,8 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
       result = await pollDeviceToken(dc.device_code)
     } catch (err) {
       if (process.stdout.isTTY) {
-        console.error(chalk.red('\nNetwork error while polling.'))
-        if (err instanceof Error) console.error(chalk.dim(err.message))
+        logger.error(chalk.red('\nNetwork error while polling.'))
+        if (err instanceof Error) logger.error(chalk.dim(err.message))
       } else {
         process.stderr.write(
           JSON.stringify({
@@ -223,11 +226,11 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
         continue
       }
       if (result.status === 'expired') {
-        console.error(chalk.red('\nCode expired. Run `skillsmith login` again.'))
+        logger.error(chalk.red('\nCode expired. Run `skillsmith login` again.'))
         process.exit(EXIT.timeout)
       }
       // declined
-      console.error(
+      logger.error(
         chalk.red('\nRequest denied. Run `skillsmith login` again if this was a mistake.')
       )
       process.exit(EXIT.authError)
@@ -244,7 +247,7 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
     process.exit(EXIT.success)
   }
 
-  console.error(chalk.red('\nApproval timed out. Run `skillsmith login` again.'))
+  logger.error(chalk.red('\nApproval timed out. Run `skillsmith login` again.'))
   process.exit(EXIT.timeout)
 }
 
@@ -268,16 +271,14 @@ async function runPasteLegacyFlow(): Promise<void> {
       if (!isValidApiKeyFormat(raw)) {
         attempts++
         if (attempts < 3) {
-          console.error(
-            chalk.red(`Invalid format (expected sk_live_…). Try again (${attempts}/3).`)
-          )
+          logger.error(chalk.red(`Invalid format (expected sk_live_…). Try again (${attempts}/3).`))
         }
         continue
       }
       try {
         await storeApiKey(raw)
       } catch (err) {
-        console.error(
+        logger.error(
           chalk.red(
             'Failed to store credentials: ' + (err instanceof Error ? err.message : String(err))
           )
@@ -298,8 +299,8 @@ async function runPasteLegacyFlow(): Promise<void> {
     throw err
   }
 
-  console.error(chalk.red('\nToo many invalid attempts.'))
-  console.error(chalk.cyan('https://skillsmith.app/account/cli-token'))
+  logger.error(chalk.red('\nToo many invalid attempts.'))
+  logger.error(chalk.cyan('https://skillsmith.app/account/cli-token'))
   process.exit(EXIT.generic)
 }
 

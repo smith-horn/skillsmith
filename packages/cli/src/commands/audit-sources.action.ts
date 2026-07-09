@@ -34,11 +34,14 @@ import {
   type RecoveryReport,
   type SkillRecoveryResult,
 } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { loadManifest } from '../utils/manifest.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { DEFAULT_DB_PATH } from '../config.js'
+
+const logger = getCliLogger()
 
 // ============================================================================
 // Constants
@@ -66,7 +69,7 @@ function parseSetPairs(pairs: string[] | undefined): Record<string, string> {
   for (const pair of pairs) {
     const eq = pair.indexOf('=')
     if (eq < 1) {
-      console.error(chalk.yellow(`[audit sources] ignoring malformed --set pair: ${pair}`))
+      logger.error(chalk.yellow(`[audit sources] ignoring malformed --set pair: ${pair}`))
       continue
     }
     out[pair.slice(0, eq)] = pair.slice(eq + 1)
@@ -243,7 +246,7 @@ export async function runAuditSources(options: AuditSourcesOptions): Promise<voi
 
   // --write-frontmatter requires --force-write-frontmatter.
   if (options.writeFrontmatter && !options.forceWriteFrontmatter) {
-    console.error(
+    logger.error(
       chalk.red(
         '--write-frontmatter requires --force-write-frontmatter. ' +
           'Re-run with both flags to modify SKILL.md files inside installed skill directories.'
@@ -399,9 +402,9 @@ async function auditSourcesActionImpl(
   } catch (error) {
     const msg = error instanceof Error ? error.message : sanitizeError(error)
     if (msg.startsWith('Confirmation phrase mismatch')) {
-      console.error(chalk.yellow(msg))
+      logger.error(chalk.yellow(msg))
     } else {
-      console.error(chalk.red('Error:'), msg)
+      logger.error(`${chalk.red('Error:')} ${msg}`)
     }
     process.exit(1)
   }

@@ -6,11 +6,14 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { getCliLogger } from '../../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import ora from 'ora'
 import { readFile, writeFile, stat } from 'fs/promises'
 import { basename, dirname, join, resolve } from 'path'
 import { SkillParser } from '@skillsmith/core'
+
+const logger = getCliLogger()
 
 import { renderSubagentTemplate, renderClaudeMdSnippet } from '../../templates/index.js'
 import { sanitizeError } from '../../utils/sanitize.js'
@@ -189,7 +192,7 @@ async function subagentActionImpl(
       force: opts['force'] as boolean | undefined,
     })
   } catch (error) {
-    console.error(chalk.red('Error generating subagent:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error generating subagent:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

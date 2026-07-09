@@ -17,6 +17,12 @@ vi.mock('./posthog.js', () => ({
   trackSkillInvoke: vi.fn(),
 }))
 
+// SMI-5615: test seam for the Wave-2 `logging/redact.ts` module — see
+// wrap.test.ts for rationale.
+vi.mock('../logging/redact.js', () => ({
+  redactSensitiveData: (s: string) => s,
+}))
+
 const noopHandler = async (): Promise<number> => 42
 
 const wrappedNoop = withTelemetry(noopHandler, {

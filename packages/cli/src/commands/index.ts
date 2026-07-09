@@ -76,3 +76,7 @@ export { createInventoryCommand } from './inventory.js'
 
 // SMI-5456 Wave 1 Step 5: `sklx agent install` / `sklx agent uninstall`
 export { createAgentCommand } from './agent.js'
+
+// SMI-5615 Wave 3 Step 1: diagnostic snapshot + log inspection commands
+export { createDiagnoseCommand } from './diagnose.js'
+export { createLogsCommand } from './logs.js'

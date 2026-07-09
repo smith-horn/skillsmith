@@ -6,12 +6,15 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { getCliLogger } from '../../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import ora from 'ora'
 import { readFile, readdir } from 'fs/promises'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { SkillParser } from '@skillsmith/core'
+
+const logger = getCliLogger()
 
 import { sanitizeError } from '../../utils/sanitize.js'
 import { analyzeToolRequirements, formatToolList } from '../../utils/tool-analyzer.js'
@@ -154,7 +157,7 @@ async function transformActionImpl(
       model: opts['model'] as string | undefined,
     })
   } catch (error) {
-    console.error(chalk.red('Error transforming skill:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error transforming skill:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }

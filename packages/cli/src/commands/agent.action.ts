@@ -16,8 +16,11 @@ import chalk from 'chalk'
 
 import { installAgentPack, uninstallAgentPack } from '@skillsmith/core/install'
 import type { MergeStatus } from '@skillsmith/core/install'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
+
+const logger = getCliLogger()
 
 // ---------------------------------------------------------------------------
 // install
@@ -74,7 +77,7 @@ export async function agentInstallActionImpl(options: AgentInstallCliOptions): P
   try {
     await runInstall(options)
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }
@@ -129,7 +132,7 @@ export async function agentUninstallActionImpl(): Promise<void> {
   try {
     await runUninstall()
   } catch (err) {
-    console.error(chalk.red('Error:'), sanitizeError(err))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(err)}`)
     process.exit(1)
   }
 }

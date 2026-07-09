@@ -20,9 +20,12 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { AdvisoryRepository, type SkillAdvisory } from '@skillsmith/core'
+import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
+
+const logger = getCliLogger()
 import { sanitizeError } from '../utils/sanitize.js'
 import { requireTier } from '../utils/require-tier.js'
 import { createAuditCollisionsSubcommand } from './audit-collisions.js'
@@ -174,7 +177,7 @@ async function advisoriesActionImpl(
       fix: (opts['fix'] as boolean) ?? false,
     })
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
@@ -261,7 +264,7 @@ async function auditActionImpl(
       fix: (opts['fix'] as boolean) ?? false,
     })
   } catch (error) {
-    console.error(chalk.red('Error:'), sanitizeError(error))
+    logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
   }
 }
