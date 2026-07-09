@@ -42,9 +42,29 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
   # --- Host path (SMI-5343) --------------------------------------------------
   # The host node_modules tree feeds host tooling (tsc, eslint) and is symlinked
   # into every worktree — it must stay in sync with package-lock.json too.
-  # Always attempt the install; advisory-only if npm is unavailable (unlikely on
-  # a dev machine but graceful).
-  if command -v npm > /dev/null 2>&1; then
+  # BUT: in a linked worktree, node_modules (root + every packages/*/node_modules)
+  # is itself a SYMLINK into the main checkout's tree (create-worktree.sh SMI-4377
+  # + SMI-4381). Running `npm install` here would have npm's reify process UNLINK
+  # those symlinks and rebuild real directories in their place, corrupting this
+  # worktree's local state (SMI-5623) — this fires on ANY pull/merge in ANY
+  # worktree with a lockfile change, not just a --delete-branch merge. Detect a
+  # linked worktree via git-dir vs git-common-dir (same idiom as
+  # scripts/lib/check-node-modules-fresh.sh) and skip-and-advise instead of
+  # installing here; the human runs npm install in the MAIN checkout, where
+  # node_modules is the real tree.
+  _gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
+  _gd="$(git rev-parse --git-dir 2>/dev/null)"
+  if [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
+    _MAIN_CHECKOUT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
+    echo "${YELLOW}Skipping host npm install — this is a linked worktree.${NC}"
+    echo "  node_modules here is a symlink into the main checkout; installing in"
+    echo "  place would unlink it and corrupt this worktree's local state."
+    if [ -n "$_MAIN_CHECKOUT" ]; then
+      echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && npm install )"
+    else
+      echo "  Run npm install in the main checkout instead."
+    fi
+  elif command -v npm > /dev/null 2>&1; then
     echo "${YELLOW}Installing updated dependencies on the host...${NC}"
     if npm install; then
       echo "${GREEN}  Host dependencies updated successfully.${NC}"
