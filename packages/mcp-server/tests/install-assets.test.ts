@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
@@ -79,5 +80,22 @@ describe('SMI-4790: installBundledSkills idempotency', () => {
     installBundledSkills()
     const second = installBundledSkills()
     expect(second).toEqual([])
+  })
+})
+
+describe('SMI-5582: installBundledSkills installs both bundled skills', () => {
+  it('installs both the varlock and skillsmith skills onto the real filesystem', () => {
+    // This suite hits the real filesystem with no mocking, and
+    // `installBundledSkills()` is idempotent: only the very first call in a
+    // given test run actually copies anything — every later call (including
+    // ones from other tests in this file) observes the already-installed
+    // state and returns []. So we don't assert on THIS call's return value;
+    // we assert on the real directory contents, which prove both bundled
+    // skills landed on disk regardless of which call installed them.
+    installBundledSkills()
+
+    const clientSkillsDir = resolveClientPath()
+    expect(existsSync(join(clientSkillsDir, 'varlock', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(clientSkillsDir, 'skillsmith', 'SKILL.md'))).toBe(true)
   })
 })

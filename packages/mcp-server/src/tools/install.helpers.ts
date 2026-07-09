@@ -276,6 +276,15 @@ export function assertNotEncrypted(content: string, filePath: string): void {
 }
 
 /**
+ * SMI-5582: per-request timeout, kept in lock-step with the canonical core
+ * copy at `@skillsmith/core` `skill-installation.io.ts`. This mcp-server copy
+ * currently has no importers (the install critical path runs through the core
+ * service), but it is an exported public helper, so it carries the same 10s
+ * bound to prevent a future consumer from re-introducing an unbounded fetch.
+ */
+const GITHUB_FETCH_TIMEOUT_MS = 10_000
+
+/**
  * Fetch file from GitHub
  * SMI-1491: Added optional branch parameter to use branch from repo_url
  */
@@ -287,14 +296,16 @@ export async function fetchFromGitHub(
 ): Promise<string> {
   const url =
     'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/' + filePath
-  const response = await fetch(url)
+  const response = await fetch(url, { signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) })
 
   if (!response.ok) {
     // If specified branch fails and it was 'main', try 'master' as fallback
     if (branch === 'main') {
       const masterUrl =
         'https://raw.githubusercontent.com/' + owner + '/' + repo + '/master/' + filePath
-      const masterResponse = await fetch(masterUrl)
+      const masterResponse = await fetch(masterUrl, {
+        signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+      })
 
       if (!masterResponse.ok) {
         throw new Error('Failed to fetch ' + filePath + ': ' + response.status)

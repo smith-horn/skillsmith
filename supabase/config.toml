@@ -517,6 +517,13 @@ verify_jwt = true
 [functions.purge-inventory]
 verify_jwt = true
 
+# SMI-5576: team-compliance-check validates a caller-supplied team license key
+# internally (resolve_team_from_license RPC) rather than a Supabase JWT --
+# same non-gateway-auth pattern as generate-license/checkout above. Deploy
+# WITH --no-verify-jwt.
+[functions.team-compliance-check]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
