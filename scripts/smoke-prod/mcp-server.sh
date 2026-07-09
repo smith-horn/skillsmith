@@ -2,13 +2,17 @@
 # SMI-4459 — published MCP server boot smoke.
 # SMI-4590 Wave 4 PR 5/6 — extended with audit-tool registration checks.
 #
-# The boot/version check is intentionally lightweight per plan Q8.
-# The three audit-tool checks install the published tarball into a temp
-# prefix once, then grep the compiled tool-dispatch artifact for the
-# registered tool names. This catches packaging regressions where a
-# tool source file lands in src/ but is excluded from `files` in
-# package.json (the exact failure mode that the post-deploy harness is
-# meant to surface). A deeper JSON-RPC round-trip is SMI-4460 territory.
+# SMI-5620 — the version check now shares the same cached install as the
+# three audit-tool checks instead of its own `npx -y -p ...@latest` fetch
+# (npx re-resolves the registry on every call, so a per-check npx was
+# paying the install cost 4x on top of the flakiness of an npx-managed
+# temp cache). All four checks now install the published tarball into a
+# temp prefix once, then either invoke the installed bin directly or grep
+# the compiled tool-dispatch artifact for the registered tool names. The
+# grep-based checks catch packaging regressions where a tool source file
+# lands in src/ but is excluded from `files` in package.json (the exact
+# failure mode that the post-deploy harness is meant to surface). A deeper
+# JSON-RPC round-trip is SMI-4460 territory.
 
 # shellcheck shell=bash
 # shellcheck source=scripts/smoke-prod/lib.sh
@@ -35,17 +39,29 @@ _smoke_mcp_cleanup() {
 # Append (don't overwrite) so other smoke modules' EXIT traps still fire.
 trap '_smoke_mcp_cleanup' EXIT
 
-# Lazily install the published mcp-server tarball into a shared temp prefix
-# and echo the directory containing its compiled JS. Subsequent calls reuse
-# the cached install. Echoes the install root on stdout, returns 1 on
+# Lazily install the published mcp-server tarball into a shared temp prefix.
+# Subsequent calls reuse the cached install. Sets the global
+# $SMOKE_MCP_INSTALL_DIR to the install root; does NOT echo it. Returns 1 on
 # install failure (after recording a per-check failure via report_fail).
+#
+# SMI-5620: callers MUST invoke this directly (`_smoke_mcp_install_once ...
+# || return 1` then read `$SMOKE_MCP_INSTALL_DIR`) and must NEVER wrap the
+# call in a command substitution (`install=$(_smoke_mcp_install_once ...)`).
+# Command substitution forks a subshell, which silently discards BOTH the
+# `SMOKE_MCP_INSTALL_DIR="$prefix"` assignment below (so the cache never
+# actually got reused — every check paid a full npm install) AND, more
+# seriously, the `report_fail` call on the install-failure path below (so a
+# real install failure never reached SMOKE_FAIL_COUNT / the JSON report —
+# confirmed live: a run with `timeout: command not found` failing every
+# install still reported fail=0 for this surface). No echo/printf of the
+# install path on stdout, deliberately — this function's stdout must stay
+# clean since `smoke-prod.sh --json` writes the report to stdout.
 #
 # Args: $1=surface-id $2=check-name (used for failure attribution).
 _smoke_mcp_install_once() {
   local surface="$1"
   local check="$2"
   if [ -n "$SMOKE_MCP_INSTALL_DIR" ] && [ -d "$SMOKE_MCP_INSTALL_DIR/node_modules" ]; then
-    printf '%s' "$SMOKE_MCP_INSTALL_DIR"
     return 0
   fi
   local prefix
@@ -67,32 +83,32 @@ _smoke_mcp_install_once() {
   fi
   rm -f "$install_log"
   SMOKE_MCP_INSTALL_DIR="$prefix"
-  printf '%s' "$prefix"
   return 0
 }
 
 check_mcp_server_version_exits_zero() {
-  local t0 t1 ms tmp out rc
+  local t0 t1 ms install bin out rc
   t0=$(now_ms)
-  tmp=$(mktemp -d)
+  _smoke_mcp_install_once "mcp-server-published" "check_mcp_server_version_exits_zero" || return 1
+  install="$SMOKE_MCP_INSTALL_DIR"
+  bin="$install/node_modules/.bin/skillsmith-mcp"
   set +e
-  out=$(cd "$tmp" && timeout "$SMOKE_MCP_TIMEOUT" npx -y -p "${SMOKE_MCP_PKG}@latest" skillsmith-mcp --version 2>&1)
+  out=$(timeout "$SMOKE_MCP_TIMEOUT" "$bin" --version 2>&1)
   rc=$?
   set -e
-  rm -rf "$tmp"
   t1=$(now_ms)
   ms=$((t1 - t0))
 
   if [ "$rc" -ne 0 ]; then
     local snippet="${out:0:200}"
-    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "npx -p ${SMOKE_MCP_PKG}@latest skillsmith-mcp --version" "exit 0" "exit $rc: $snippet" "$ms"
+    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "skillsmith-mcp --version (cached install)" "exit 0" "exit $rc: $snippet" "$ms"
     return 1
   fi
   if ! printf '%s' "$out" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
-    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "npx -p ${SMOKE_MCP_PKG}@latest skillsmith-mcp --version" "semver" "${out:0:80}" "$ms"
+    report_fail "mcp-server-published" "check_mcp_server_version_exits_zero" "skillsmith-mcp --version (cached install)" "semver" "${out:0:80}" "$ms"
     return 1
   fi
-  report_pass "mcp-server-published" "check_mcp_server_version_exits_zero" "npx -p ${SMOKE_MCP_PKG}@latest skillsmith-mcp --version" "$ms"
+  report_pass "mcp-server-published" "check_mcp_server_version_exits_zero" "skillsmith-mcp --version (cached install)" "$ms"
   return 0
 }
 
@@ -102,7 +118,8 @@ check_mcp_server_version_exits_zero() {
 check_skill_inventory_audit_tool_listed() {
   local t0 t1 ms install dispatch
   t0=$(now_ms)
-  install=$(_smoke_mcp_install_once "mcp-server-published" "check_skill_inventory_audit_tool_listed") || return 1
+  _smoke_mcp_install_once "mcp-server-published" "check_skill_inventory_audit_tool_listed" || return 1
+  install="$SMOKE_MCP_INSTALL_DIR"
   dispatch="$install/node_modules/${SMOKE_MCP_PKG}/dist/src/audit-tool-dispatch.js"
   t1=$(now_ms)
   ms=$((t1 - t0))
@@ -122,7 +139,8 @@ check_skill_inventory_audit_tool_listed() {
 check_apply_namespace_rename_tool_listed() {
   local t0 t1 ms install dispatch
   t0=$(now_ms)
-  install=$(_smoke_mcp_install_once "mcp-server-published" "check_apply_namespace_rename_tool_listed") || return 1
+  _smoke_mcp_install_once "mcp-server-published" "check_apply_namespace_rename_tool_listed" || return 1
+  install="$SMOKE_MCP_INSTALL_DIR"
   dispatch="$install/node_modules/${SMOKE_MCP_PKG}/dist/src/audit-tool-dispatch.js"
   t1=$(now_ms)
   ms=$((t1 - t0))
@@ -146,7 +164,8 @@ check_apply_namespace_rename_tool_listed() {
 check_apply_recommended_edit_conditional() {
   local t0 t1 ms install dispatch
   t0=$(now_ms)
-  install=$(_smoke_mcp_install_once "mcp-server-published" "check_apply_recommended_edit_conditional") || return 1
+  _smoke_mcp_install_once "mcp-server-published" "check_apply_recommended_edit_conditional" || return 1
+  install="$SMOKE_MCP_INSTALL_DIR"
   dispatch="$install/node_modules/${SMOKE_MCP_PKG}/dist/src/audit-tool-dispatch.js"
   t1=$(now_ms)
   ms=$((t1 - t0))

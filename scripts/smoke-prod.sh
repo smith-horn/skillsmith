@@ -21,6 +21,12 @@
 #
 # Conventions: ASCII-only output, no `set -x`, 60s total budget enforced
 # via foreground SECONDS check. Per-call HTTP timeouts in lib.sh.
+#
+# SMI-5620: exceeding the budget skips remaining non-canary surfaces/checks
+# and sets `budget_exceeded: true` in the JSON report, but is NOT itself a
+# failure — the exit code stays keyed on SMOKE_FAIL_COUNT alone. always_run
+# canary surfaces (health, website-homepage-canary, tier1-skill-drift-
+# canary) are exempt from the budget skip and always execute their checks.
 
 set -euo pipefail
 
@@ -34,6 +40,7 @@ SINCE_REF=""
 REPORT_PATH=""
 EMIT_JSON=0
 SMOKE_BUDGET_SEC="${SMOKE_BUDGET_SEC:-60}"
+SMOKE_BUDGET_EXCEEDED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -211,10 +218,18 @@ SECONDS=0
 
 while IFS= read -r surface_id; do
   [ -z "$surface_id" ] && continue
-  if [ "$SECONDS" -ge "$SMOKE_BUDGET_SEC" ]; then
-    smoke_warn "60s budget exceeded — aborting remaining surfaces"
-    SMOKE_FAIL_COUNT=$((SMOKE_FAIL_COUNT + 1))
-    break
+  # always_run surfaces (health, website-homepage-canary, tier1-skill-drift-
+  # canary) are the always-on prod canaries — they must never be silently
+  # skipped by the budget, so we look this up before the budget check below
+  # and reuse it in the inner per-check loop too.
+  always=$(jq -r --arg id "$surface_id" '.surfaces[] | select(.id == $id) | .always_run // false' "$SURFACES_JSON")
+  if [ "$SMOKE_BUDGET_EXCEEDED" = "1" ] || [ "$SECONDS" -ge "$SMOKE_BUDGET_SEC" ]; then
+    SMOKE_BUDGET_EXCEEDED=1
+    if [ "$always" != "true" ]; then
+      smoke_warn "budget exceeded (${SECONDS}s >= ${SMOKE_BUDGET_SEC}s) — skipping surface $surface_id"
+      continue
+    fi
+    smoke_warn "budget exceeded — running always-run surface $surface_id anyway"
   fi
   script_rel=$(jq -r --arg id "$surface_id" '.surfaces[] | select(.id == $id) | .script' "$SURFACES_JSON")
   if [ -z "$script_rel" ] || [ "$script_rel" = "null" ]; then
@@ -238,6 +253,17 @@ while IFS= read -r surface_id; do
   # parent-shell side effects in lib.sh).
   while IFS= read -r fn; do
     if [ -z "$fn" ]; then continue; fi
+    # Mid-surface budget check. A slow earlier check can blow the budget
+    # partway through a multi-check surface; skip the rest — but NEVER for
+    # an always_run surface (its canary check must always execute, per the
+    # outer-loop exemption above).
+    if [ "$SECONDS" -ge "$SMOKE_BUDGET_SEC" ]; then
+      SMOKE_BUDGET_EXCEEDED=1
+      if [ "$always" != "true" ]; then
+        smoke_warn "budget exceeded (${SECONDS}s >= ${SMOKE_BUDGET_SEC}s) — skipping remaining checks for $surface_id"
+        break
+      fi
+    fi
     if ! command -v "$fn" >/dev/null 2>&1 && ! declare -f "$fn" >/dev/null 2>&1; then
       smoke_warn "check function not defined: $fn (surface $surface_id)"
       continue
@@ -255,8 +281,9 @@ REPORT_JSON=$(jq -nc \
   --argjson duration "$DURATION_MS" \
   --argjson pass "$SMOKE_PASS_COUNT" \
   --argjson fail "$SMOKE_FAIL_COUNT" \
+  --argjson budget_exceeded "$SMOKE_BUDGET_EXCEEDED" \
   --argjson results "[${SMOKE_RESULTS_JSON}]" \
-  '{smoke_run_id: $sha, started_at: $started, duration_ms: $duration, pass: $pass, fail: $fail, results: $results}')
+  '{smoke_run_id: $sha, started_at: $started, duration_ms: $duration, pass: $pass, fail: $fail, budget_exceeded: ($budget_exceeded == 1), results: $results}')
 
 if [ "$EMIT_JSON" = "1" ]; then
   printf '%s\n' "$REPORT_JSON"
@@ -266,8 +293,8 @@ if [ -n "$REPORT_PATH" ]; then
 fi
 
 if [ "$SMOKE_FAIL_COUNT" -gt 0 ]; then
-  smoke_log "smoke complete: pass=$SMOKE_PASS_COUNT fail=$SMOKE_FAIL_COUNT duration=${DURATION_MS}ms"
+  smoke_log "smoke complete: pass=$SMOKE_PASS_COUNT fail=$SMOKE_FAIL_COUNT budget_exceeded=$SMOKE_BUDGET_EXCEEDED duration=${DURATION_MS}ms"
   exit 1
 fi
-smoke_log "smoke complete: pass=$SMOKE_PASS_COUNT fail=0 duration=${DURATION_MS}ms"
+smoke_log "smoke complete: pass=$SMOKE_PASS_COUNT fail=0 budget_exceeded=$SMOKE_BUDGET_EXCEEDED duration=${DURATION_MS}ms"
 exit 0

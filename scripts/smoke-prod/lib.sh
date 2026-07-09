@@ -12,9 +12,20 @@ SMOKE_HTTP_TIMEOUT="${SMOKE_HTTP_TIMEOUT:-10}"
 
 # Result accumulators populated by report_pass/report_fail. The orchestrator
 # reads these at the end to format the summary table / JSON.
-SMOKE_RESULTS_JSON=""
-SMOKE_FAIL_COUNT=0
-SMOKE_PASS_COUNT=0
+#
+# SMI-5620: this file is sourced once by the orchestrator up front, then
+# AGAIN by every per-surface module it loads in the per-surface loop (each
+# module sources lib.sh at its own top). Without a guard, each re-source
+# reset these to empty/zero, silently discarding every earlier surface's
+# accumulated pass/fail counts so only the last-processed surface's results
+# ever reached the final report/exit code — confirmed live: a run with 5
+# real check failures across 2 surfaces reported pass=1 fail=0 exit=0.
+if [ -z "${SMOKE_LIB_SOURCED:-}" ]; then
+  SMOKE_LIB_SOURCED=1
+  SMOKE_RESULTS_JSON=""
+  SMOKE_FAIL_COUNT=0
+  SMOKE_PASS_COUNT=0
+fi
 
 # ---- logging -------------------------------------------------------------
 
