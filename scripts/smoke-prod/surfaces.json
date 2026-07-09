@@ -225,6 +225,21 @@
       "always_run": true,
       "script": "scripts/smoke-prod/registry-health.sh",
       "checks": ["check_tier1_skills_available"]
+    },
+    {
+      "id": "edge-fn-team-compliance-check",
+      "owner": "edge-functions",
+      "trigger_globs": [
+        "supabase/functions/team-compliance-check/**",
+        "supabase/migrations/20260707000001_team_members_github_username.sql",
+        "supabase/migrations/20260707000002_team_compliance_check_rpc.sql",
+        "supabase/migrations/20260707000003_reconcile_device_inventory_team_carveout.sql"
+      ],
+      "script": "scripts/smoke-prod/inventory.sh",
+      "checks": [
+        "check_team_compliance_check_requires_license",
+        "check_get_team_member_compliance_rpc_denies_anon"
+      ]
     }
   ]
 }
