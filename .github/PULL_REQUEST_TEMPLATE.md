@@ -1,6 +1,14 @@
-## Summary
+## Business Summary
 
-[Brief description of what this PR does]
+**What shipped:** [one line per user/system-visible change, in outcome terms — "X now works", not "added a field to a Record type"]
+
+**Quality bar:** [what was reviewed, at what depth — one or two sentences]
+
+**Found along the way:** [anything spotted but filed separately rather than bundled in, with issue numbers — omit this line if there's nothing to report]
+
+**Net result:** [fully shipped, or what's still open]
+
+See the `pr-description` skill for the full template and writing guidance. This section is reused verbatim as the Linear project-update body on merge.
 
 ## Ticket
 
