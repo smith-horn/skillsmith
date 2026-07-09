@@ -14,8 +14,10 @@
 export const SOURCE_PATTERNS = [
   // SMI-4446: .astro / .mdx are first-class implementation surfaces (Astro pages, content collections)
   /^packages\/.*\.(ts|tsx|js|jsx|astro|mdx)$/,
+  // SMI-5603: apps/ (e.g. apps/api-proxy) is a first-class implementation surface
+  /^apps\/.*\.(ts|tsx|js|jsx)$/,
   /^supabase\/functions\/.*\.(ts|js)$/,
-  /^scripts\/.*\.(ts|js|mjs)$/,
+  /^scripts\/.*\.(ts|js|mjs|sh)$/,
   // SMI-4243: root-level *.config.{ts,mjs,cjs,js} (vitest.config.ts, lint-staged.config.js, etc.)
   /^[^/]+\.config(\.[^./]+)?\.(ts|mjs|cjs|js)$/,
   // SMI-4243: GitHub Actions workflow YAML

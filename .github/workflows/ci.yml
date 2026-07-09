@@ -1031,6 +1031,20 @@ jobs:
       - name: Run TypeScript type check
         run: npm run typecheck
 
+      # SMI-5603: apps/api-proxy is NOT an npm workspace member (root
+      # `workspaces` is `["packages/*"]` only), so it has no tsconfig.json and
+      # was never typechecked anywhere in CI — a regression here (e.g. the
+      # SMI-5607/SMI-5598 query-array or SSRF-hardening logic in
+      # apps/api-proxy/api/proxy.ts) could merge green. Unconditional (not
+      # gated on `affected_dirs` like the vscode-extension steps below): the
+      # `affected_dirs` output comes from scripts/ci/detect-affected.ts, which
+      # only scans `packages/*` and has no knowledge of `apps/*`, so a
+      # `contains(..., 'api-proxy')` gate would never be true and this check
+      # would silently never run. The app has no workspace deps needing a
+      # prior Turborepo build, so this is cheap to run on every code-tier PR.
+      - name: Type check apps/api-proxy
+        run: npx tsc --noEmit -p apps/api-proxy/tsconfig.json
+
       # SMI-5348: the root `npm run typecheck` (tsc --build) covers only the
       # packages in root tsconfig references (core/mcp-server/cli/enterprise);
       # vscode-extension is NOT in that graph, so its `tsc --noEmit` runs

@@ -70,6 +70,30 @@ describe('SMI-4446: SOURCE_PATTERNS classification', () => {
     })
   })
 
+  describe('apps/ surface (new in SMI-5603)', () => {
+    it.each([
+      ['apps/api-proxy/src/index.ts', true],
+      ['apps/api-proxy/src/handlers/proxy.tsx', true],
+      ['apps/api-proxy/lib/config.js', true],
+      ['apps/api-proxy/lib/routes.jsx', true],
+      // NOT source: only ts/tsx/js/jsx match — no astro/mdx support for apps/
+      ['apps/api-proxy/README.md', false],
+      ['apps/api-proxy/docs/notes.mdx', false],
+      ['apps/api-proxy/pages/index.astro', false],
+    ])('%s → isSource=%s', (path, expected) => {
+      expect(isSource(path)).toBe(expected)
+    })
+  })
+
+  describe('scripts/ .sh files (new in SMI-5603, PR #1773 false-positive)', () => {
+    it.each([
+      ['scripts/smoke-prod/api-proxy.sh', true],
+      ['scripts/pooler-psql.sh', true],
+    ])('%s → isSource=%s', (path, expected) => {
+      expect(isSource(path)).toBe(expected)
+    })
+  })
+
   describe('Non-source paths (regression guard)', () => {
     it.each([
       ['package.json', false],

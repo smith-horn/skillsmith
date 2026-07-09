@@ -82,6 +82,7 @@
     "@types/node": "^25.9.3",
     "@typescript-eslint/eslint-plugin": "8.63.0",
     "@typescript-eslint/parser": "8.63.0",
+    "@vercel/node": "^5.7.13",
     "@vitest/coverage-v8": "4.1.10",
     "astro": "6.4.7",
     "chalk": "5.6.2",

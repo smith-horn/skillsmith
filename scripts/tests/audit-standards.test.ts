@@ -16,6 +16,8 @@
  *     (SMI-5060/5066) + auditPublishYmlRequiredGates (SMI-5123).
  *   - audit-standards-gitcommondir.test.ts — SMI-3986 worktree
  *     `git rev-parse --git-common-dir` integration.
+ *   - audit-standards-apps-root.test.ts — SMI-5603 Check 2/Check 3 apps/
+ *     root coverage (fixture-based, mirrors the non-exported walker/checks).
  */
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
