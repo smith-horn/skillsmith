@@ -1,5 +1,32 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { defineConfig } from 'vitest/config'
 import { sharedTestConfig, coverageDefaults, coverageThresholds } from './vitest.preset'
+
+// SMI-5617: Detect git-crypt lock state at config load, mirroring the
+// gitCryptLocked() sentinel check in vitest.config.root-tests.ts (SMI-4221)
+// and the independent reimplementation in scripts/audit-standards.mjs Check
+// 47 predicate 5 ("Sentinel pattern mirrors vitest.config.root-tests.ts:
+// gitCryptLocked"). dependabot/fork PRs never receive secrets.GIT_CRYPT_KEY
+// (SMI-2159), so the `Test (root)` ci.yml job's "Unlock git-crypt" step is
+// skipped and supabase/functions/** remains \x00GITCRYPT ciphertext at test
+// time. THIS is the config that job (and publish.yml's identical
+// `npx vitest run scripts/tests supabase/functions` invocation) loads
+// implicitly with no --config flag — vitest.config.root-tests.ts's existing
+// guard does not protect either of them. Skip encrypted test paths when
+// locked; pre-push and the ci.yml PR matrix's own git-crypt unlock steps run
+// first in trusted contexts, so those paths still run there.
+function gitCryptLocked(): boolean {
+  const sentinel = 'supabase/functions/_shared/cors.ts'
+  if (!existsSync(sentinel)) return false
+  try {
+    const head = readFileSync(sentinel).subarray(0, 9).toString('binary')
+    return head.startsWith('\x00GITCRYPT')
+  } catch {
+    return false
+  }
+}
+
+const encryptedPathsExcluded = gitCryptLocked() ? ['supabase/functions/**'] : []
 
 export default defineConfig({
   test: {
@@ -44,6 +71,7 @@ export default defineConfig({
       // SMI-4958: the `supabase/functions/indexer/**` exclude was removed —
       // the indexer edge-function tests are vitest-native and now run in the
       // `Test (root)` CI job (git-crypt unlocked, Docker). See ci-reference.md.
+      ...encryptedPathsExcluded,
     ],
     coverage: {
       ...coverageDefaults,
