@@ -278,6 +278,40 @@ describe('E2E: skillsmith update', () => {
 
       assertNoHardcoded(result, 'skillsmith update -a', 'update: all', __filename)
     })
+
+    // SMI-5593: bare `skillsmith update` no longer implicitly means "update
+    // all" — it requires an explicit selector (a name, several names, or
+    // --all) and exits non-zero with usage guidance otherwise.
+    it('should require an explicit selector instead of defaulting to --all', async () => {
+      installMockSkill('selector-required-test')
+
+      const result = await runCommand(['update'])
+
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stdout.toLowerCase()).toContain('--all')
+
+      assertNoHardcoded(result, 'skillsmith update', 'update: no selector', __filename)
+    })
+
+    it('should accept multiple skill names in one invocation', async () => {
+      installMockSkill('multi-a')
+      installMockSkill('multi-b')
+
+      const result = await runCommand(['update', 'multi-a', 'multi-b'])
+
+      recordTiming('update:multi', 'skillsmith update multi-a multi-b', result.durationMs)
+
+      // May fail if skills aren't in the registry, but should not crash or expose paths.
+      assertNoHardcoded(result, 'skillsmith update multi-a multi-b', 'update: multiple', __filename)
+    })
+
+    it('should support --dry-run without prompting or crashing', async () => {
+      installMockSkill('dry-run-test')
+
+      const result = await runCommand(['update', 'dry-run-test', '--dry-run'])
+
+      assertNoHardcoded(result, 'skillsmith update --dry-run', 'update: dry run', __filename)
+    })
   })
 })
 

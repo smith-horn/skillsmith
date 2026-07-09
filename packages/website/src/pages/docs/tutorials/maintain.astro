@@ -77,7 +77,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
       <tr>
         <td>CLI</td>
         <td><code>skillsmith update</code></td>
-        <td>Update one or all installed skills</td>
+        <td>Update one skill, a set of skills, or all of them (<code>--all</code>)</td>
         <td>All</td>
       </tr>
       <tr>
@@ -131,9 +131,15 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
 
   <p>Run this in your terminal:</p>
 
-  <pre><code>{`skillsmith update                       # Update all installed skills
-skillsmith update community/jest-helper # Update one skill
-skillsmith update --dry-run             # See what would change without applying`}</code></pre>
+  <pre><code>{`skillsmith update --all                   # Update all installed skills
+skillsmith update jest-helper             # Update one skill
+skillsmith update jest-helper commit-lint # Update a specific set of skills
+skillsmith update jest-helper --dry-run   # See what would change without applying`}</code></pre>
+
+  <p>
+    <code>skillsmith update</code> with no skill names and no <code>--all</code> prints usage
+    guidance instead of updating anything — pick one of the forms above.
+  </p>
 
   <p>
     Before a major-version update, run a
