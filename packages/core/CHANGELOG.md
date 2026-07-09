@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.11.0
+
+- **Feature**: production-grade error logging and diagnostics (SMI-5615) (#1774)
+
 ## v0.10.0
 
 - **Feature**: per-user inventory purge, hard-delete (SMI-5510, R0 Wave 1a) (#1684)
