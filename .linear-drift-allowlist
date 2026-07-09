@@ -467,3 +467,67 @@ SMI-4851  # pre-push vitest 234 worktree — documented workaround SKILLSMITH_PR
 SMI-4819  # vercel 50→53 (GHSA-pgf8-2hgj-grqg) — alert cleared; 0 open security alerts (SMI-5268)
 SMI-3921  # vite high-sev vuln — resolved; vite override ^7.3.2; 0 open security alerts (SMI-5268)
 SMI-2398  # .in() silent prod failure — fixed by batch-utils.ts batchedIn() (SMI-2380); residual quota-monitor gap tracked as SMI-5276
+
+
+# === 2026-07-09 batch (SMI-5611 — #1635 drift clearance, 43 entries) ===
+# Triaged via 4 parallel research agents cross-checking git log (main repo +
+# docs/internal submodule), Linear comments, and — for the Asana-AWP cluster —
+# a separate GitHub repo. SMI-595 and SMI-856 were NOT allowlisted (reopened
+# instead — see #1635 closing comment for detail).
+
+# docs-only: R0 launch readiness + GTM investor strategy Wave-0 session docs,
+# landed in the docs/internal submodule (separate git history from this repo).
+SMI-5506  # pilot kit + concierge playbook, scan-not-validate note
+SMI-5499  # Stripe CLI key rotation — external manual action
+SMI-5498  # MCP registry live publish-verify finding; fix filed separately at Wave 3
+SMI-5497  # decision register D1/D7/D10 — resolutions recorded in r0-launch-readiness-orchestration.md
+SMI-5496  # pilot commercial kit + concierge playbook
+SMI-5495  # pilot commercial kit (paired with SMI-5496, same commit)
+SMI-5493  # R0 master orchestration plan
+SMI-5492  # D0 reality corrections + partner-readiness doc
+SMI-5490  # 20 named target accounts, meta-harness aperture
+SMI-5489  # meta-harness category thesis (apex, $10B math)
+SMI-5487  # distribution strategy July 2026, companion #5
+SMI-5467  # spike report is a Linear comment by design (acceptance criteria)
+SMI-5387  # device-identity spike — docs/internal/research/smi-5387-device-identity-spike.md
+SMI-5386  # OpenCode/Antigravity feasibility — docs/internal/research/smi-5386-opencode-antigravity-skill-dirs.md
+SMI-5385  # ADR-125 read-only inventory control plane — Accepted
+SMI-5384  # ADR-124 per-user inventory upload consent — Accepted
+
+# wave-subtask: real code shipped, commit tagged to a sibling/parent SMI instead of this one.
+SMI-5519  # PR #1692 (c9f8c631) — native-module preflight tooling; tagged SMI-5513
+SMI-5409  # PR #1586 (028af526) — writeInstallFiles rollback hardening; tagged parent SMI-5359
+
+# commit-without-token: squashed multi-ID PR title compresses IDs after the
+# first (e.g. "SMI-5298/5299/5300/5301/5302") — literal grep only matches SMI-5298.
+SMI-5302  # PR #1486 (d1e94c5) — verified-free search keybinding, vscode-extension/package.json
+SMI-5301  # PR #1486 — onboarding copy Phase 1, extension.ts:285-292
+SMI-5300  # PR #1486 — "Found N skills" toast removed, searchSkills.ts
+
+# external-repo: wrsmith108/Asana-AWP (AWP A2A Plan-Decomposition Surface) — separate personal repo, will never produce a skillsmith commit by design.
+SMI-5274  # Asana-AWP PR #16 — "Closes SMI-5274"
+SMI-5269  # Asana-AWP PR #14 — "Closes SMI-5269"
+SMI-5259  # Asana-AWP PRs #10/#11
+SMI-5258  # Asana-AWP PR #10
+SMI-5257  # Asana-AWP PR #9 — packages/a2a-adapter confirmed absent from skillsmith
+SMI-5256  # Asana-AWP PR #9 — decompose_plan confirmed absent from skillsmith
+SMI-5255  # Asana-AWP PR #9 — invokeSkill confirmed absent from skillsmith
+SMI-5254  # Asana-AWP PR #9 — ADR 0007 lives in Asana-AWP, not this repo
+
+# manual-op: database / Linear-admin actions with no source diff possible; each backed by a runbook, plan doc, or Linear comment with hard numbers.
+SMI-5297  # undici bump 7.25.0->7.28.0 confirmed at 7.28.0 repo-wide; PR #1485 cited only the GHSA ID
+SMI-5228  # audit_logs VACUUM FULL — 2,678MB -> 8.75MB, docs/internal/implementation/SMI-5228-audit-logs-heap-bloat.md
+SMI-5449  # auto-close audit period extended to platform max (12mo), 275 issues triaged — skillsmith-docs PR #289
+SMI-5421  # staging migration drift reconciled — docs/internal/runbooks/staging-migration-drift-repair.md
+SMI-5355  # quarantine FP/FN baseline — findings recorded in the issue description itself
+SMI-5285  # admittable cross-ecosystem ceiling — GO verdict recorded in the issue description itself
+SMI-5265  # docs artifacts (impl-doc, code-review report, retro) — all three present in docs/internal
+
+# docs-only / predates-tagging: early-product features that shipped before commit messages consistently tagged SMI numbers (M1 milestone era) or before this repo's code-review-doc convention existed.
+SMI-599   # website/src/pages/skills/[id].astro — skill detail page
+SMI-598   # website/src/pages/skills/index.astro — skill search page
+SMI-597   # website/astro.config.mjs — Astro static site, live at skillsmith.app
+SMI-596   # core/src/scoring/QualityScorer.ts:251 — calculateTrustTier()
+SMI-594   # core/src/security/scanner/patterns.ts:91-95 — jailbreak pattern regexes
+SMI-858   # docs/internal/archive/phase4/IMPLEMENTATION_SUMMARY.md
+SMI-857   # core/tests/learning/ — PatternStore + ReasoningBankIntegration test suites
