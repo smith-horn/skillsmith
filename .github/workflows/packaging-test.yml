@@ -205,3 +205,59 @@ jobs:
           else
             gh issue create --repo "${{ github.repository }}" --title "CI: Packaging Test failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "Workflow: Packaging Test Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} Branch: ${{ github.ref_name }} This issue was auto-created by SMI-3335. Close when resolved."
           fi
+
+  # SMI-5609: lightweight backstop for packages/mcp-server/Dockerfile (Docker MCP
+  # registry submission, docker/mcp-registry `source.directory: packages/mcp-server`).
+  # A successful `docker build` alone is the target here — catches dependency
+  # resolution / native-module build breaks cheaply. Full functional smoke
+  # (MCP initialize, no-auth trial, volume-mount write) is deliberately out of
+  # scope for this CI job; see docs/internal/implementation/docker-mcp-registry-publish.md.
+  docker-build-test:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build mcp-server (with inlined workspace deps)
+        # turbo builds core -> mcp-server in dependency order, producing
+        # packages/mcp-server/dist/ which the Dockerfile's `COPY dist/` step needs.
+        run: npx turbo build --filter=@skillsmith/mcp-server
+
+      - name: Build mcp-server Docker image
+        run: docker build -t skillsmith-mcp-ci-check packages/mcp-server
+
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## Docker Build Test Results (SMI-5609)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| mcp-server dist/ built | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "| packages/mcp-server/Dockerfile builds standalone | checked |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Run triggered: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+      # SMI-3335: Alert on scheduled workflow failure
+      - name: Alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "Docker Build Test failed" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "CI: Docker Build Test failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "Workflow: Packaging Test (Docker Build Test job) Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} Branch: ${{ github.ref_name }} This issue was auto-created by SMI-5609. Close when resolved."
+          fi
