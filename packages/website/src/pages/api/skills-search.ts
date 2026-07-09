@@ -23,8 +23,8 @@ export const GET: APIRoute = async ({ url }) => {
   try {
     const res = await fetch(apiUrl, { headers: { Accept: 'application/json' } })
     if (!res.ok) {
-      return new Response(JSON.stringify({ skills: [] }), {
-        status: 200,
+      return new Response(JSON.stringify({ error: 'search_upstream_error', skills: [] }), {
+        status: 502,
         headers: { 'Content-Type': 'application/json' },
       })
     }
@@ -33,8 +33,8 @@ export const GET: APIRoute = async ({ url }) => {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     })
   } catch {
-    return new Response(JSON.stringify({ skills: [] }), {
-      status: 200,
+    return new Response(JSON.stringify({ error: 'search_unavailable', skills: [] }), {
+      status: 502,
       headers: { 'Content-Type': 'application/json' },
     })
   }
