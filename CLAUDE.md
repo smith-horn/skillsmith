@@ -282,6 +282,17 @@ Published as `skillsmith-vscode` on [Marketplace](https://marketplace.visualstud
 
 ---
 
+## Skill Location Policy
+
+"Skill" means two different things in this repo, sharing only the `SKILL.md` format — which category a new one belongs to decides where it goes:
+
+- **Operational skills** (extend Claude Code itself, for developing Skillsmith) — split by *audience*: `~/.claude/skills/` (global, user-level) for cross-project conventions that apply beyond this repo (e.g. `commit`, `plan-review-skill`); `.claude/skills/` (the `skillsmith-strategy` submodule — see [Git-Crypt](#git-crypt-narrowed-scope)) for Skillsmith-specific dev workflow (`pr-reviewer`, `governance`, `pr-description`), gated because `skillsmith-strategy` is the private competitive-IP repo.
+- **Product skill data** (Skillsmith's own domain — it's a skill *lifecycle manager*, so skills are also data it operates on, not just tooling) — lives wherever the consuming package already owns its data, same as any other source/fixture file: registry corpus (`data/external-skills/`), bundled installable assets (`packages/{mcp-server,cli}/**/assets/skills/`), test fixtures (`packages/*/tests/fixtures/**`).
+
+When adding a new skill, ask: does this extend Claude Code, or is it content Skillsmith operates on as a product? That answers which half of this list it belongs to — no separate framework needed beyond this distinction.
+
+---
+
 ## Skills & Embedding
 
 Project skills load from the `.claude/skills/` mount-point of the `skillsmith-strategy` submodule. `LocalIndexer.index()` returns `[]` (not throws) when the directory is absent OR present-but-empty (gate #2, SMI-4829). Embedding: real ONNX (~50ms) or mock (`SKILLSMITH_USE_MOCK_EMBEDDINGS=true`); see [ADR-009](docs/internal/adr/009-embedding-service-fallback.md). Disable auto-update: `SKILLSMITH_AUTO_UPDATE_CHECK=false`.
