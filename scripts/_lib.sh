@@ -53,6 +53,57 @@ success() {
 }
 
 #######################################
+# Run a command with a bounded timeout, preferring GNU `timeout` semantics
+# (SMI-4700 / SMI-5596).
+#
+# macOS does not ship GNU `timeout`; Homebrew coreutils provides it as
+# `gtimeout`. Probes `gtimeout` first, falls back to `timeout` (present
+# natively on Linux, and installable on macOS), and — if neither is usable —
+# runs the command UNBOUNDED. The unbounded fallback matches today's reality
+# on a machine without either binary: a wedged daemon would already hang the
+# caller in that case (the guard never executes), so this is no worse than
+# before, not a new hazard.
+#
+# Extracted from repair-worktrees.sh's inline check_docker_safety_for_rebuild
+# probe (SMI-4700) so create-worktree.sh's Step 8 readiness probe (SMI-5596)
+# can reuse the identical capability-detection logic instead of duplicating
+# it a second time.
+#
+# Arguments:
+#   $1        - timeout in seconds
+#   $2        - literal "--" separator (recommended for call-site
+#               readability; skipped automatically if present)
+#   $2.. / $3.. - command and its arguments to run
+#
+# Returns:
+#   The wrapped command's own exit code. When gtimeout/timeout is available
+#   and the command exceeds the bound, returns 124 (GNU timeout convention).
+#   When neither binary is usable, runs the command unbounded and returns
+#   its real exit code.
+#######################################
+run_with_timeout() {
+    local seconds="$1"
+    shift
+    if [[ "${1:-}" == "--" ]]; then
+        shift
+    fi
+
+    local timeout_bin=""
+    if command -v gtimeout >/dev/null 2>&1 && gtimeout --kill-after=0 0 true >/dev/null 2>&1; then
+        timeout_bin="gtimeout"
+    elif command -v timeout >/dev/null 2>&1 && timeout --kill-after=0 0 true >/dev/null 2>&1; then
+        timeout_bin="timeout"
+    fi
+
+    if [[ -n "$timeout_bin" ]]; then
+        "$timeout_bin" "$seconds" "$@"
+    else
+        # Neither gtimeout nor a working timeout on PATH — run unbounded.
+        "$@"
+    fi
+}
+
+#######################################
 # Get the actual .git directory (handles worktrees where .git is a file)
 #
 # Arguments:
@@ -253,6 +304,15 @@ link_worktree_node_modules() {
     fi
 
     if [[ -L "$worktree_path/node_modules" ]]; then
+        # SMI-5596: idempotent — skip the unlink+recreate when the existing
+        # symlink already resolves to the correct target. A concurrent
+        # sibling create-worktree.sh invocation's Step 7 sweep re-visiting an
+        # already-settled worktree must be a true no-op, or it gratuitously
+        # re-triggers the Docker Desktop macOS file-sharing propagation delay
+        # the Step 8 readiness probe is meant to bound.
+        if [[ "$(readlink "$worktree_path/node_modules")" == "$rel_target" ]]; then
+            return 0
+        fi
         ln -sfn "$rel_target" "$worktree_path/node_modules"
         return 0
     fi
@@ -299,8 +359,14 @@ repair_worktrees_node_modules() {
 
         if [[ -L "$wt_path/node_modules" ]]; then
             # Refresh in case existing symlink is the absolute host-path form
-            # (pre-SMI-4381) or the wrong-depth form (pre-SMI-4654). Idempotent.
-            ln -sfn "$rel_target" "$wt_path/node_modules"
+            # (pre-SMI-4381) or the wrong-depth form (pre-SMI-4654).
+            # SMI-5596: idempotent — skip the unlink+recreate entirely when
+            # the target already matches, so a redundant sweep across
+            # concurrent sibling worktree creations is a true no-op and
+            # cannot reopen an already-settled worktree's propagation window.
+            if [[ "$(readlink "$wt_path/node_modules")" != "$rel_target" ]]; then
+                ln -sfn "$rel_target" "$wt_path/node_modules"
+            fi
             continue
         fi
         if [[ -d "$wt_path/node_modules" ]]; then
@@ -367,7 +433,11 @@ link_worktree_package_node_modules() {
         fi
 
         if [[ -L "$link" ]]; then
-            ln -sfn "$rel_target" "$link"
+            # SMI-5596: idempotent — see link_worktree_node_modules above for
+            # the rationale (skip unlink+recreate when already correct).
+            if [[ "$(readlink "$link")" != "$rel_target" ]]; then
+                ln -sfn "$rel_target" "$link"
+            fi
             continue
         fi
         if [[ -e "$link" ]]; then

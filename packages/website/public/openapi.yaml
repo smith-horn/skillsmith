@@ -5,12 +5,17 @@ info:
     API for discovering, searching, and managing Claude Code skills.
 
     ## Authentication
-    Most endpoints are publicly accessible. Rate limiting is applied per IP.
+    Most endpoints are reachable without a key, but unauthenticated callers get only 10 requests
+    total, ever, per source IP (a one-time allowance, not a recurring quota) before requiring
+    authentication. An API key raises this to a per-minute, tier-based limit. Rate limiting is
+    applied per IP (unauthenticated) or per API key (authenticated).
 
     ## Rate Limits
-    - Search endpoints: 100 requests/minute
-    - Recommend endpoint: 50 requests/minute
-    - Telemetry endpoint: 200 requests/minute
+    - Unauthenticated: 10 requests total (one-time allowance per source IP), then 401
+    - Authenticated, per minute (by tier): Community 30, Individual 200, Team 300, Enterprise 600
+    - Telemetry endpoint (`/events`, no auth required): 200 requests/minute
+    - A separate monthly request quota also applies once authenticated — see
+      https://skillsmith.app/docs/api#rate-limiting
 
     Rate limit headers are included in all responses:
     - `X-RateLimit-Limit`: Maximum requests allowed
@@ -25,7 +30,6 @@ info:
     url: https://www.elastic.co/licensing/elastic-license
 
 servers:
-  # Direct origin (bypassing the Vercel proxy): https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1
   - url: https://api.skillsmith.app
     description: Production (Vercel proxy)
   - url: http://localhost:54321/functions/v1

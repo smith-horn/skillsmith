@@ -7,7 +7,12 @@
  * `injectSkillsPageStyles()`.
  */
 
-import { SKILL_STATE_META, formatRelativeTime, formatAbsoluteTime } from './inventory-view'
+import {
+  SKILL_STATE_META,
+  formatRelativeTime,
+  formatAbsoluteTime,
+  computeDeviceBatchTip,
+} from './inventory-view'
 import type { SkillState, DeviceView, SkillView } from './inventory-view'
 
 // ─── Badge config (mirrors InventoryStateBadge.astro) ─────────────────────────
@@ -150,6 +155,27 @@ function buildSkillSourceHtml(sk: SkillView): string {
   return ''
 }
 
+/**
+ * Converts a suggestedAction template (backtick-delimited code spans, an
+ * optional `<skill>` placeholder inside those spans) into safe HTML.
+ * Splits on backticks FIRST (the template is our own trusted static string,
+ * so backtick count is always balanced) — only THEN substitutes `<skill>`
+ * inside the already-identified code segments. Substituting before splitting
+ * would let a skill_id containing a literal backtick shift segment parity.
+ */
+function renderSuggestedActionHtml(template: string, skillId: string): string {
+  const parts = template.split('`')
+  return parts
+    .map((part, i) => {
+      if (i % 2 === 1) {
+        const withSkill = part.split('<skill>').join(skillId)
+        return `<code>${escapeHtml(withSkill)}</code>`
+      }
+      return escapeHtml(part)
+    })
+    .join('')
+}
+
 /** Resolved human-readable label for a device, falling back to a truncated ID. */
 export function deviceDisplayName(d: DeviceView): string {
   return d.label ?? d.hostnameDisplay ?? `Device ${d.deviceId.slice(0, 8)}`
@@ -168,9 +194,15 @@ export function buildDeviceCardHtml(device: DeviceView): string {
   const staleTag = isStale ? ` <span class="stale-marker" aria-label="stale">(stale)</span>` : ''
 
   let skillsHtml = ''
+  let batchTipHtml = ''
   if (device.neverSynced) {
     skillsHtml = '<p class="never-synced-msg">No skills synced from this device yet.</p>'
   } else {
+    const batchTip = computeDeviceBatchTip(device.skills)
+    if (batchTip) {
+      batchTipHtml = `<p class="device-batch-tip">${renderSuggestedActionHtml(batchTip, '')}</p>`
+    }
+
     const byHarness = new Map<string, typeof device.skills>()
     for (const sk of device.skills) {
       const key = sk.harness || ''
@@ -184,12 +216,17 @@ export function buildDeviceCardHtml(device: DeviceView): string {
       skillsHtml += `<ul class="skill-list" aria-label="Skills for ${hLabel}">`
       for (const sk of skills) {
         const ver = sk.version ? escapeHtml(sk.version) : '—'
+        const meta = SKILL_STATE_META[sk.state] ?? SKILL_STATE_META.unknown
+        const actionHtml = meta?.suggestedAction
+          ? `<span class="skill-action">${renderSuggestedActionHtml(meta.suggestedAction, sk.skillId)}</span>`
+          : ''
         skillsHtml +=
           `<li class="skill-item">` +
           `<span class="skill-id">${escapeHtml(sk.skillId)}</span>` +
           `<span class="skill-version">${ver}</span>` +
           buildStateBadgeHtml(sk.state) +
           buildSkillSourceHtml(sk) +
+          actionHtml +
           `</li>`
       }
       skillsHtml += '</ul>'
@@ -204,7 +241,7 @@ export function buildDeviceCardHtml(device: DeviceView): string {
     `</div>` +
     `<p class="device-freshness${isStale ? ' device-freshness--stale' : ''}" title="${absTime}">` +
     `Last synced ${relTime}${staleTag}</p>` +
-    `</div>${skillsHtml}</section>`
+    `</div>${batchTipHtml}${skillsHtml}</section>`
   )
 }
 
@@ -245,6 +282,11 @@ export function injectSkillsPageStyles(): void {
 .skill-source-tag{font-size:.6875rem;color:#52525b}
 .skill-source-link{color:#71717a;text-decoration:none}
 .skill-source-link:hover{color:#a1a1aa;text-decoration:underline}
+/* #a1a1aa (not .skill-source's #71717a, which is ~3.67:1 here — fails WCAG AA) computes to ~6.91:1 on the #18181b skill-item background */
+.skill-action{font-size:.75rem;color:#a1a1aa;flex-basis:100%;margin-top:.25rem;word-break:break-word}
+.skill-action code{font-family:'SF Mono','Fira Code',monospace;word-break:break-all}
+.device-batch-tip{font-size:.8125rem;color:#a1a1aa;margin:0 0 1rem;padding:.5rem .75rem;background:#18181b;border-radius:6px;word-break:break-word}
+.device-batch-tip code{font-family:'SF Mono','Fira Code',monospace;word-break:break-all}
 `
   document.head.appendChild(style)
 }

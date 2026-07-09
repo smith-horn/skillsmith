@@ -21,10 +21,10 @@
   },
   "dependencies": {
     "@astrojs/check": "0.9.9",
-    "@astrojs/rss": "4.0.18",
-    "@astrojs/sitemap": "3.7.2",
+    "@astrojs/rss": "4.0.19",
+    "@astrojs/sitemap": "3.7.3",
     "@astrojs/vercel": "10.0.7",
-    "@supabase/supabase-js": "2.108.1",
+    "@supabase/supabase-js": "2.110.1",
     "@tailwindcss/vite": "4.1.18",
     "astro": "6.4.7",
     "sharp": "0.34.5",
@@ -48,8 +48,8 @@
     "strip-ansi": "6.0.1",
     "strip-literal": "3.1.0",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.59.1",
-    "vitest": "4.1.6",
+    "typescript-eslint": "8.63.0",
+    "vitest": "4.1.10",
     "web-vitals": "5.1.0"
   },
   "engines": {

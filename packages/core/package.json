@@ -150,7 +150,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
-    "vitest": "4.1.6"
+    "vitest": "4.1.10"
   },
   "files": [
     "dist",

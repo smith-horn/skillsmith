@@ -52,6 +52,24 @@ assert_true() {
   fi
 }
 
+# SMI-5596: portable inode lookup. BSD stat (macOS) uses `-f FORMAT` for a
+# format string (`stat -f '%i' file` -> bare inode number); GNU stat (Linux,
+# CI) uses `-f` for FILESYSTEM status instead — its own format-string flag is
+# `-c`. Naively trying `stat -f '%i' file 2>/dev/null || stat -c '%i' file`
+# does NOT fall through on Linux: GNU `stat -f` still exits 0, it just prints
+# the multi-line filesystem-status block instead of the inode, so the `||`
+# never fires. Validate the BSD-style output is a bare integer before
+# accepting it; anything else (including GNU's verbose fs-status dump) falls
+# through to the GNU-correct `-c '%i'` form.
+get_inode() {
+  local path="$1" out
+  if out=$(stat -f '%i' "$path" 2>/dev/null) && [[ "$out" =~ ^[0-9]+$ ]]; then
+    echo "$out"
+  else
+    stat -c '%i' "$path"
+  fi
+}
+
 # -----------------------------------------------------------------------
 # Fixture: throwaway repo with a fake node_modules/.bin/lint-staged.
 # -----------------------------------------------------------------------
@@ -120,6 +138,31 @@ assert_true "link_worktree_node_modules: idempotent repeat" \
   "[ -L '$FAKE_WT1/node_modules' ] && [ '$(readlink "$FAKE_WT1/node_modules")' = '../../node_modules' ]"
 
 # -----------------------------------------------------------------------
+# Scenario 4b (SMI-5596): link_worktree_node_modules idempotent no-op — a
+# second call with an already-correct symlink does NOT unlink+recreate it
+# (inode preserved). This is the fix for the P-5 cross-invocation residual
+# risk: a concurrent sibling create-worktree.sh's Step 7 sweep re-visiting
+# an already-settled worktree must be a true no-op, not a fresh
+# delete+create event that would re-trigger the Docker Desktop macOS
+# file-sharing propagation delay the Step 8 readiness probe bounds.
+# -----------------------------------------------------------------------
+INODE_BEFORE=$(get_inode "$FAKE_WT1/node_modules")
+link_worktree_node_modules "$FAKE_WT1" "$FAKE_MAIN" >/dev/null
+INODE_AFTER=$(get_inode "$FAKE_WT1/node_modules")
+assert_eq "link_worktree_node_modules: idempotent no-op preserves symlink inode" \
+  "$INODE_BEFORE" "$INODE_AFTER"
+
+# -----------------------------------------------------------------------
+# Scenario 4c (SMI-5596): link_worktree_node_modules still corrects a STALE
+# symlink (wrong target) — the idempotent no-op above must not become a
+# blanket skip.
+# -----------------------------------------------------------------------
+ln -sfn "/tmp/some-wrong-target" "$FAKE_WT1/node_modules"
+link_worktree_node_modules "$FAKE_WT1" "$FAKE_MAIN" >/dev/null
+assert_eq "link_worktree_node_modules: stale symlink still corrected" \
+  "../../node_modules" "$(readlink "$FAKE_WT1/node_modules")"
+
+# -----------------------------------------------------------------------
 # Scenario 5: _lib.sh — link_worktree_node_modules skips real directory
 # -----------------------------------------------------------------------
 FAKE_WT2="$FAKE_MAIN/.worktrees/wt2"
@@ -181,6 +224,18 @@ assert_eq "repair_worktrees: wt-b symlink refreshed to relative form" \
   "../../node_modules" "$(readlink "$FAKE_MAIN/.worktrees/wt-b/node_modules")"
 
 # -----------------------------------------------------------------------
+# Scenario 6b-idem (SMI-5596): a second repair_worktrees_node_modules sweep
+# is a true no-op on an already-correct symlink (inode preserved) — the
+# P-5 cross-invocation fix: a sibling worktree's Step 7 sweep re-visiting
+# wt-a here must not gratuitously re-trigger propagation.
+# -----------------------------------------------------------------------
+WTA_INODE_BEFORE=$(get_inode "$FAKE_MAIN/.worktrees/wt-a/node_modules")
+repair_worktrees_node_modules "$FAKE_MAIN" >/dev/null 2>&1
+WTA_INODE_AFTER=$(get_inode "$FAKE_MAIN/.worktrees/wt-a/node_modules")
+assert_eq "repair_worktrees: redundant sweep preserves already-correct symlink inode" \
+  "$WTA_INODE_BEFORE" "$WTA_INODE_AFTER"
+
+# -----------------------------------------------------------------------
 # Scenario 6b (SMI-4654): repair_worktrees on a nested worktree produces depth=1.
 # -----------------------------------------------------------------------
 (
@@ -225,6 +280,23 @@ assert_eq "link_worktree_package: per-pkg target (nested layout, depth=3)" \
 # Verify resolution — regression guard for the original bug.
 assert_true "link_worktree_package: nested per-pkg symlink resolves" \
   "[ -d '$FAKE_MAIN/wt-pkg-nested/packages/foo/node_modules' ]"
+
+# -----------------------------------------------------------------------
+# Scenario 6d-idem (SMI-5596): link_worktree_package_node_modules idempotent
+# no-op (inode preserved on a redundant call) + still corrects a stale
+# per-package symlink.
+# -----------------------------------------------------------------------
+PKG_LINK="$FAKE_MAIN/wt-pkg-nested/packages/foo/node_modules"
+PKG_INODE_BEFORE=$(get_inode "$PKG_LINK")
+link_worktree_package_node_modules "$FAKE_MAIN/wt-pkg-nested" "$FAKE_MAIN" >/dev/null
+PKG_INODE_AFTER=$(get_inode "$PKG_LINK")
+assert_eq "link_worktree_package: idempotent no-op preserves symlink inode" \
+  "$PKG_INODE_BEFORE" "$PKG_INODE_AFTER"
+
+ln -sfn "/tmp/some-wrong-target" "$PKG_LINK"
+link_worktree_package_node_modules "$FAKE_MAIN/wt-pkg-nested" "$FAKE_MAIN" >/dev/null
+assert_eq "link_worktree_package: stale per-pkg symlink still corrected" \
+  "../../../packages/foo/node_modules" "$(readlink "$PKG_LINK")"
 
 # -----------------------------------------------------------------------
 # Scenario 6e (SMI-4654): direct unit tests for compute_relative_target.

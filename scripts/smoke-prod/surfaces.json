@@ -25,7 +25,9 @@
       "owner": "website",
       "trigger_globs": [
         "packages/website/src/pages/docs/inventory.astro",
-        "packages/website/src/pages/account/skills.astro"
+        "packages/website/src/pages/account/skills.astro",
+        "packages/website/src/lib/inventory-view.ts",
+        "packages/website/src/lib/skills-page-render.ts"
       ],
       "script": "scripts/smoke-prod/website.sh",
       "checks": ["check_website_docs_inventory_renders"]
@@ -240,6 +242,18 @@
         "check_team_compliance_check_requires_license",
         "check_get_team_member_compliance_rpc_denies_anon"
       ]
+    },
+    {
+      "id": "api-proxy-header-fidelity",
+      "owner": "always-on-canary",
+      "trigger_globs": [
+        "apps/api-proxy/**",
+        "apps/api-proxy/api/proxy.ts",
+        "apps/api-proxy/vercel.json"
+      ],
+      "always_run": true,
+      "script": "scripts/smoke-prod/api-proxy.sh",
+      "checks": ["check_api_proxy_header_fidelity"]
     }
   ]
 }
