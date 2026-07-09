@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-import { GET } from './skills-search'
+import { GET } from '../../src/pages/api/skills-search'
 
 import type { APIContext } from 'astro'
 
