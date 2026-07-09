@@ -8,23 +8,24 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <p class="lead">
     Build integrations with Skillsmith using our <strong>HTTP API</strong>. Search skills, fetch
     skill details, and request recommendations programmatically over plain HTTP — no SDK required.
+    This is an <strong>RPC-style HTTP API, not a REST resource API</strong>: endpoints are named as
+    actions (<code>/skills-search</code>, <code>/skills-recommend</code>), not as nouns addressed
+    with HTTP verbs — there is no <code>GET /skills/:id</code>.
   </p>
 
   <h2>Base URL</h2>
 
   <p>
-    All endpoints are served from the Skillsmith API gateway:
+    All endpoints are served from a single base URL:
   </p>
 
   <pre><code>{`https://api.skillsmith.app`}</code></pre>
 
   <p>
-    The gateway proxies to the underlying Supabase Edge Functions. The direct Supabase origin path
-    is <code>https://&lt;project-ref&gt;.supabase.co/functions/v1</code> — paths are identical, only
-    the host differs. Prefer the proxy base (<code>api.skillsmith.app</code>) for production traffic;
-    it terminates TLS, applies rate limiting, and shields the origin. Endpoint paths are RPC-style
-    function names (<code>/skills-search</code>, not <code>/skills</code>), so this is an HTTP API,
-    not a REST resource API.
+    Always call <code>https://api.skillsmith.app</code> — it is the only supported entry point and
+    the only one covered by uptime and compatibility guarantees. Authentication and rate limiting
+    are enforced per request, regardless of which client you use — see Authentication and Rate
+    Limiting below.
   </p>
 
   <div class="callout">
@@ -46,8 +47,11 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <pre><code>{`X-API-Key: $SKILLSMITH_API_KEY`}</code></pre>
 
   <p>
-    Search and skill-detail endpoints are also reachable unauthenticated at a low anonymous rate
-    limit, but authenticated requests are strongly recommended for any integration.
+    Search and skill-detail endpoints are also reachable without an API key, but unauthenticated
+    callers get only <strong>10 requests total, ever, per source IP</strong> — a one-time
+    allowance, not a daily or per-minute quota. Once it's used, that IP must authenticate to keep
+    calling the API. Authenticated requests are strongly recommended for any real integration —
+    see Rate Limiting below for the limits that apply once authenticated.
   </p>
 
   <h2>Quick Start</h2>
@@ -58,6 +62,12 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   -H "X-API-Key: $SKILLSMITH_API_KEY"`}</code></pre>
 
   <h2>Endpoints</h2>
+
+  <p>
+    Each endpoint below is a single action, not a resource collection: parameters are passed as
+    URL query-string parameters (<code>GET</code>) or a JSON body (<code>POST</code>), never as
+    path segments.
+  </p>
 
   <h3>GET /skills-search</h3>
 
@@ -320,6 +330,14 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
   <h2>Rate Limiting</h2>
 
+  <p>
+    Three independent limits can apply, in the order you'd hit them: a <strong>10-request lifetime
+    allowance</strong> for unauthenticated callers (see Authentication above), a <strong>per-minute
+    rate limit</strong> keyed to your plan once authenticated, and a <strong>monthly request
+    quota</strong> billed against your plan (below). Exceeding any one returns <code>429</code>;
+    they are independent counters.
+  </p>
+
   <p>API requests are rate-limited based on your plan:</p>
 
   <table>
@@ -345,6 +363,35 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       <tr>
         <td>Enterprise</td>
         <td>Unlimited</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>Per-minute limits, once authenticated:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Plan</th>
+        <th>Requests/Minute</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Community</td>
+        <td>30</td>
+      </tr>
+      <tr>
+        <td>Individual</td>
+        <td>200</td>
+      </tr>
+      <tr>
+        <td>Team</td>
+        <td>300</td>
+      </tr>
+      <tr>
+        <td>Enterprise</td>
+        <td>600</td>
       </tr>
     </tbody>
   </table>
