@@ -116,4 +116,19 @@ describe('smoke-prod.sh — inner budget break respects always_run (L-3)', () =>
     expect(innerLoop).toMatch(/SECONDS.*SMOKE_BUDGET_SEC/)
     expect(innerLoop).toMatch(/\$always/)
   })
+
+  it('reports budget_exceeded in the JSON report and keys exit purely on SMOKE_FAIL_COUNT', () => {
+    const src = readFileSync(SMOKE_PROD_SH, 'utf-8')
+    // The JSON report object must carry the observability field...
+    expect(src).toMatch(/budget_exceeded:\s*\(\s*\$budget_exceeded\s*==\s*1\s*\)/)
+    // ...and the exit-code decision must reference SMOKE_FAIL_COUNT alone,
+    // never SMOKE_BUDGET_EXCEEDED — a budget-exceeded run with zero real
+    // failures must exit 0 (this is the entire point of SMI-5620).
+    const exitBlockMatch = src.match(/if \[ "\$SMOKE_FAIL_COUNT" -gt 0 \];[\s\S]*?\nexit 0\n?$/)
+    expect(
+      exitBlockMatch,
+      'could not locate the final exit-code block in smoke-prod.sh'
+    ).toBeTruthy()
+    expect(exitBlockMatch![0]).not.toMatch(/if.*SMOKE_BUDGET_EXCEEDED.*exit 1/)
+  })
 })
