@@ -524,8 +524,16 @@ repair_worktrees_package_node_modules() {
 # Companion: the worktree's per-package node_modules symlink resolves to
 # /packages/<pkg>/node_modules (OUTSIDE /app) inside the container, so Node's
 # hoist walk-up needs a /node_modules -> /app/node_modules bridge to reach the
-# hoisted root deps (matters for esbuild bundling, e.g. vscode). That bridge is
-# created by docker-entrypoint.sh (worktree-gated) — see SMI-5560 there.
+# hoisted root deps (matters for esbuild bundling, e.g. vscode). That bridge
+# is NOT actively created by any script — it is an emergent effect of the
+# same mount(2) symlink-clamping mechanism documented above: the bind
+# destination /app/node_modules is itself a symlink on the worktree host
+# side, so the kernel redirects the real mount to land at /node_modules
+# (container root) instead. docker-entrypoint.sh's worktree-gated call into
+# repair-worktree-container-symlinks.sh is a CONSUMER of this location
+# (SMI-5570/SMI-5074), not its creator (SMI-5626 plan-review correction,
+# 2026-07-09 — the prior comment wrongly attributed the bridge to
+# entrypoint-created code that does not exist).
 #
 # Output is intended to be appended under a `volumes:` block; caller handles
 # indentation context. Each emitted line uses 6-space indent.
@@ -538,6 +546,38 @@ enumerate_compose_node_modules_mounts() {
     local pkg_dir pkg_name main_target
 
     [[ ! -d "$repo_root/packages" ]] && return 0
+
+    # SMI-5626: ROOT node_modules bind mount, READ-ONLY. The base compose file
+    # mounts a named volume at /app/node_modules; in a worktree project that
+    # volume is useless — the worktree's host-side relative symlink
+    # (node_modules -> ../../node_modules, sized for HOST nesting depth, SMI-4377) sits
+    # under the .:/app bind, and mount(2) follows symlinks when resolving a
+    # bind destination (SMI-5570/SMI-5074), so root-hoisted deps (e.g. marked,
+    # sanitize-html) are unreachable in the container even though the host tree
+    # is correct. Mount the MAIN checkout's real root tree instead, same
+    # pattern as the per-package mounts below. Compose merges service `volumes`
+    # entries by container target path, so this entry REPLACES the base file's
+    # named-volume entry for worktree projects (verify via `docker compose
+    # config`). `:ro` is load-bearing twice over: (1) same SMI-5560 rationale —
+    # a worktree npm install must not write through into main's real tree; and
+    # (2) docker-entrypoint.sh's repair-worktree-container-symlinks.sh mutates
+    # hoisted @skillsmith/* alias symlinks under the resolved root — against a
+    # writable bind of main's REAL host tree that would corrupt main's own
+    # workspace aliases; :ro turns it into that script's existing non-fatal
+    # warning path (it always exits 0).
+    if [[ -d "$repo_root/node_modules" ]]; then
+        printf '      - %s:/app/node_modules:ro\n' "$repo_root/node_modules"
+        # Writable cache overlays, mirroring the per-package .vite/.vite-temp
+        # pattern below (root-level vitest/vite runs write these under the
+        # ROOT node_modules; both exist in main's tree today). Same
+        # nested-subdirectory shape already proven safe against the virtiofs
+        # host_mark propagation regression.
+        local root_cache_dir
+        for root_cache_dir in .vite .vite-temp; do
+            printf '      - %s/%s:/app/node_modules/%s\n' \
+                "$repo_root/node_modules" "$root_cache_dir" "$root_cache_dir"
+        done
+    fi
 
     # Per-package node_modules mounts, READ-ONLY (SMI-5560). Same gate as
     # link_worktree_package_node_modules:358.
@@ -623,18 +663,20 @@ generate_docker_override_to_stdout() {
         mounts="$(enumerate_compose_node_modules_mounts "$repo_root")"
         if [[ -n "$mounts" ]]; then
             volumes_marker="    volumes:
-      # SMI-4689/SMI-5560 bind mounts v3 (per-package node_modules, read-only):
-      # each package's node_modules is bind-mounted READ-ONLY from the main repo
-      # so workspace-pinned + prebuilt-native deps resolve inside the container
-      # (replaces the SMI-4381 relative symlinks virtiofs cannot traverse). The
-      # :ro flag stops a worktree npm install from writing through the mount into
-      # main's real checkout (SMI-5560). The former workspace-sibling
-      # whole-package mounts were removed: they shadowed the worktree's own
-      # source with main's and created the same-host-dir double-mount that made
-      # :ro trip the virtiofs host_mark regression. Alias resolution now flows
-      # through npm's own seeded workspace symlink to the worktree's OWN
-      # /app/packages/<pkg>. See enumerate_compose_node_modules_mounts + the
-      # /node_modules bridge in docker-entrypoint.sh.
+      # SMI-4689/SMI-5560/SMI-5626 bind mounts v4 (root + per-package node_modules, read-only):
+      # the ROOT node_modules and each package's node_modules are bind-mounted
+      # READ-ONLY from the main repo so workspace-pinned + prebuilt-native +
+      # root-hoisted deps resolve inside the container (replaces the SMI-4381
+      # relative symlinks virtiofs cannot traverse; the root mount replaces the
+      # base compose named volume, SMI-5626). The :ro flag stops a worktree npm
+      # install from writing through the mount into main's real checkout
+      # (SMI-5560). The former workspace-sibling whole-package mounts were
+      # removed: they shadowed the worktree's own source with main's and created
+      # the same-host-dir double-mount that made :ro trip the virtiofs host_mark
+      # regression. Alias resolution now flows through npm's own seeded workspace
+      # symlink to the worktree's OWN /app/packages/<pkg>. See
+      # enumerate_compose_node_modules_mounts for the root/per-package mounts and
+      # the mount(2) symlink-clamping notes there.
 "
             volumes_block="${volumes_marker}${mounts}"
         fi

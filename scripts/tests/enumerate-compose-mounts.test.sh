@@ -109,7 +109,11 @@ make_workspace_symlink "$TMPROOT" "skillsmith-vscode" "vscode-extension"
 
 OUT=$(enumerate_compose_node_modules_mounts "$TMPROOT")
 
-assert_eq "test1: emits 3 per-pkg lines * 3 (:ro + .vite + .vite-temp overlay) = 9" 9 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
+# make_workspace_symlink's `mkdir -p` creates $TMPROOT/node_modules, so the
+# SMI-5626 root block also fires: 3 per-pkg pkgs * 3 lines (9) + root (:ro +
+# .vite + .vite-temp = 3) = 12.
+assert_eq "test1: 9 per-pkg lines + 3 root lines = 12" 12 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
+assert_contains "test1: root node_modules mounted read-only (SMI-5626)" "      - $TMPROOT/node_modules:/app/node_modules:ro" "$OUT"
 assert_contains "test1: per-pkg core is read-only" "      - $TMPROOT/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT"
 assert_contains "test1: per-pkg mcp-server is read-only" "      - $TMPROOT/packages/mcp-server/node_modules:/app/packages/mcp-server/node_modules:ro" "$OUT"
 assert_contains "test1: per-pkg vscode-extension is read-only" "      - $TMPROOT/packages/vscode-extension/node_modules:/app/packages/vscode-extension/node_modules:ro" "$OUT"
@@ -126,7 +130,7 @@ assert_not_contains "test1: NO workspace-sibling skillsmith-vscode mount" ":/app
 mkdir -p "$TMPROOT/packages/skillsmith-cli"  # NO node_modules, NO package.json
 
 OUT2=$(enumerate_compose_node_modules_mounts "$TMPROOT")
-assert_eq "test2: still 9 lines (skillsmith-cli has no node_modules)" 9 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
+assert_eq "test2: still 12 lines (skillsmith-cli has no node_modules; root block unchanged)" 12 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
 assert_not_contains "test2: skillsmith-cli per-pkg not emitted" "skillsmith-cli/node_modules:/app/packages/skillsmith-cli" "$OUT2"
 
 # -----------------------------------------------------------------------
@@ -156,9 +160,54 @@ make_repo "$NOSYMROOT" core
 make_pkg_json "$NOSYMROOT" core "@skillsmith/core"
 make_workspace_symlink "$NOSYMROOT" "@skillsmith/core" "core"
 OUT7=$(enumerate_compose_node_modules_mounts "$NOSYMROOT")
-assert_eq "test7: only per-pkg + vite-cache overlay emitted (3 lines), no workspace-sibling" 3 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
+# make_workspace_symlink creates $NOSYMROOT/node_modules, so root block fires:
+# 3 per-pkg core lines + 3 root lines = 6. No workspace-sibling mount.
+assert_eq "test7: 3 per-pkg + 3 root lines = 6, no workspace-sibling" 6 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
 assert_not_contains "test7: no workspace mount even when symlink present" "/app/node_modules/@skillsmith/core" "$OUT7"
 rm -rf "$NOSYMROOT"
+
+# -----------------------------------------------------------------------
+# Test 8 (SMI-5626): ROOT node_modules bind mount emitted READ-ONLY, plus
+# writable .vite/.vite-temp overlays, when <root>/node_modules exists.
+# Per-package mounts must still be present (regression).
+# 1 root :ro + 2 root overlays + 1 per-pkg :ro + 2 per-pkg overlays = 6 lines.
+# -----------------------------------------------------------------------
+ROOTNM=$(mktemp -d)
+make_repo "$ROOTNM" core
+make_pkg_json "$ROOTNM" core "@skillsmith/core"
+mkdir -p "$ROOTNM/node_modules/.vite"
+OUT8=$(enumerate_compose_node_modules_mounts "$ROOTNM")
+assert_contains "test8: root node_modules mounted read-only" "      - $ROOTNM/node_modules:/app/node_modules:ro" "$OUT8"
+assert_contains "test8: root .vite overlay (writable, not :ro)" "      - $ROOTNM/node_modules/.vite:/app/node_modules/.vite" "$OUT8"
+assert_contains "test8: root .vite-temp overlay (writable, not :ro)" "      - $ROOTNM/node_modules/.vite-temp:/app/node_modules/.vite-temp" "$OUT8"
+assert_not_contains "test8: root .vite overlay is NOT read-only" "$ROOTNM/node_modules/.vite:/app/node_modules/.vite:ro" "$OUT8"
+assert_contains "test8: per-package core still present (regression)" "      - $ROOTNM/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT8"
+assert_eq "test8: 6 mount lines total (3 root + 3 per-pkg)" 6 "$(printf '%s\n' "$OUT8" | grep -c '^      - ' || true)"
+rm -rf "$ROOTNM"
+
+# -----------------------------------------------------------------------
+# Test 9 (SMI-5626): no <root>/node_modules dir → no root mount line;
+# per-package mounts unaffected (mirrors the [[ -d ]] gating convention).
+# -----------------------------------------------------------------------
+NOROOTNM=$(mktemp -d)
+make_repo "$NOROOTNM" core
+make_pkg_json "$NOROOTNM" core "@skillsmith/core"
+OUT9=$(enumerate_compose_node_modules_mounts "$NOROOTNM")
+assert_not_contains "test9: no root mount when <root>/node_modules absent" ":/app/node_modules:ro" "$OUT9"
+assert_contains "test9: per-package core still present" "      - $NOROOTNM/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT9"
+assert_eq "test9: only 3 per-pkg lines (no root block)" 3 "$(printf '%s\n' "$OUT9" | grep -c '^      - ' || true)"
+rm -rf "$NOROOTNM"
+
+# -----------------------------------------------------------------------
+# Test 10 (SMI-5626): root mount survives a path with spaces verbatim.
+# -----------------------------------------------------------------------
+SPACEROOTNM=$(mktemp -d -t 'has space root nm')
+make_repo "$SPACEROOTNM" core
+make_pkg_json "$SPACEROOTNM" core "@skillsmith/core"
+mkdir -p "$SPACEROOTNM/node_modules"
+OUT10=$(enumerate_compose_node_modules_mounts "$SPACEROOTNM")
+assert_contains "test10: root mount with spaces preserved" "$SPACEROOTNM/node_modules:/app/node_modules:ro" "$OUT10"
+rm -rf "$SPACEROOTNM"
 
 # -----------------------------------------------------------------------
 # Test 5: indentation is exactly 6 spaces (compose YAML services.<*>.volumes:)
@@ -176,11 +225,12 @@ generate_docker_override "$WT_DIR" "test-branch" "$TMPROOT"
 OVERRIDE=$(cat "$WT_DIR/docker-compose.override.yml")
 
 if [ "$(uname)" = "Darwin" ]; then
-  assert_contains "test6 (Darwin): SMI-4689/SMI-5560 marker present" "# SMI-4689/SMI-5560 bind mounts" "$OVERRIDE"
+  assert_contains "test6 (Darwin): SMI-4689/SMI-5560/SMI-5626 v4 marker present" "# SMI-4689/SMI-5560/SMI-5626 bind mounts v4" "$OVERRIDE"
+  assert_contains "test6 (Darwin): root node_modules mount injected read-only (SMI-5626)" "$TMPROOT/node_modules:/app/node_modules:ro" "$OVERRIDE"
   assert_contains "test6 (Darwin): core mount injected read-only" "/app/packages/core/node_modules:ro" "$OVERRIDE"
   assert_not_contains "test6 (Darwin): no workspace-sibling whole-package mount" ":/app/node_modules/@skillsmith/core" "$OVERRIDE"
 else
-  assert_not_contains "test6 (non-Darwin): no SMI-4689/SMI-5560 marker" "# SMI-4689/SMI-5560 bind mounts" "$OVERRIDE"
+  assert_not_contains "test6 (non-Darwin): no SMI-4689/SMI-5560/SMI-5626 marker" "# SMI-4689/SMI-5560/SMI-5626 bind mounts v4" "$OVERRIDE"
   assert_not_contains "test6 (non-Darwin): no bind mount" "/app/packages/core/node_modules" "$OVERRIDE"
 fi
 

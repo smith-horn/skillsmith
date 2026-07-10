@@ -20,8 +20,38 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
   echo "${BLUE}=== Post-Merge: package-lock.json changed ===${NC}"
   echo ""
 
-  # --- Docker path (SMI-2552, unchanged) -------------------------------------
-  if command -v docker > /dev/null 2>&1 && \
+  # SMI-5624: linked-worktree detection, hoisted so BOTH the Docker block and
+  # the SMI-5623 host-path guard below share one computation (same idiom as
+  # scripts/lib/check-node-modules-fresh.sh).
+  _gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
+  _gd="$(git rev-parse --git-dir 2>/dev/null)"
+  _IS_LINKED_WT=0
+  _MAIN_CHECKOUT=""
+  if [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
+    _IS_LINKED_WT=1
+    _MAIN_CHECKOUT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
+  fi
+  # Note: .husky/post-checkout has the identical hardcoded-container bug and
+  # is NOT guarded here — tracked separately as SMI-5628 (found during this
+  # same investigation; deliberately out of scope for this fix).
+
+  # --- Docker path (SMI-2552; SMI-5624 linked-worktree guard) -----------------
+  # In a linked worktree, "$DOCKER_CONTAINER" is the MAIN checkout's container
+  # — installing there from here mistargets, and installing into this
+  # worktree's OWN container is wrong-by-design (its node_modules mounts are
+  # read-only views of main's tree, SMI-5560/SMI-5626). Skip and advise the
+  # main-checkout refresh instead, mirroring the host-path guard below.
+  if [ "$_IS_LINKED_WT" = "1" ]; then
+    echo "${YELLOW}Skipping Docker npm install — this is a linked worktree.${NC}"
+    echo "  Installing here would target MAIN's container by mistake, and installing"
+    echo "  into this worktree's OWN container would fail (EROFS) — its node_modules"
+    echo "  mounts are read-only views of main's tree (SMI-5560/SMI-5626)."
+    if [ -n "$_MAIN_CHECKOUT" ]; then
+      echo "  Run instead: ( cd \"$_MAIN_CHECKOUT\" && docker exec $DOCKER_CONTAINER npm install )"
+    else
+      echo "    docker exec $DOCKER_CONTAINER npm install"
+    fi
+  elif command -v docker > /dev/null 2>&1 && \
      docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
     echo "${YELLOW}Installing updated dependencies in Docker...${NC}"
     if docker exec -w /app "$DOCKER_CONTAINER" npm install; then
@@ -52,10 +82,7 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
   # scripts/lib/check-node-modules-fresh.sh) and skip-and-advise instead of
   # installing here; the human runs npm install in the MAIN checkout, where
   # node_modules is the real tree.
-  _gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
-  _gd="$(git rev-parse --git-dir 2>/dev/null)"
-  if [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
-    _MAIN_CHECKOUT="$(cd "$_gcd/.." 2>/dev/null && pwd || echo '')"
+  if [ "$_IS_LINKED_WT" = "1" ]; then
     echo "${YELLOW}Skipping host npm install — this is a linked worktree.${NC}"
     echo "  node_modules here is a symlink into the main checkout; installing in"
     echo "  place would unlink it and corrupt this worktree's local state."

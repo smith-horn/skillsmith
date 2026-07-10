@@ -28,12 +28,15 @@
  *
  * Cases covered:
  *   (a) LINKED WORKTREE: cwd = the linked worktree's root. Host npm install
- *       is skipped (no "install" logged); stdout names "linked worktree" and
- *       the resolved main-checkout path; the Docker path is untouched (still
- *       invoked) — proves the guard is scoped to the host block only.
+ *       is skipped (no "install" logged); the Docker install is ALSO skipped
+ *       (no "exec" logged — SMI-5624 widened the SMI-5623 guard, which
+ *       originally left the Docker block untouched, to cover both install
+ *       paths via one shared `_IS_LINKED_WT` detection); stdout names
+ *       "linked worktree", both "Skipping Docker npm install" and "Skipping
+ *       host npm install" advisories, and the resolved main-checkout path.
  *   (b) MAIN CHECKOUT (regression): cwd = the fixture's main repo root (NOT a
- *       linked worktree). Host npm install still runs normally — proves the
- *       guard doesn't break the common case.
+ *       linked worktree). Host npm install AND the Docker `exec` install
+ *       still run normally — proves both guards are worktree-scoped only.
  *
  * SMI-4693: uses makeFixtureEnv (strips GIT_DISCOVERY_VARS) and
  * makeFixtureTempDir (realpath-canonical tmpdir) for git fixture isolation.
@@ -198,7 +201,7 @@ function runHook(cwd: string, binDir: string): { status: number; stdout: string;
   }
 }
 
-describe('.husky/post-merge — linked-worktree host-install guard (SMI-5623)', () => {
+describe('.husky/post-merge — linked-worktree host+Docker install guard (SMI-5623/SMI-5624)', () => {
   let fixture: Fixture | null = null
 
   beforeEach(() => {
@@ -221,7 +224,7 @@ describe('.husky/post-merge — linked-worktree host-install guard (SMI-5623)', 
     fixture = null
   })
 
-  it('(a) linked worktree: skips host npm install, advises the main-checkout path, leaves the Docker path untouched', () => {
+  it('(a) linked worktree: skips both host and Docker npm install, advises the main-checkout path', () => {
     const { root, worktreeDir, binDir, npmLog, dockerLog } = fixture!
 
     const result = runHook(worktreeDir, binDir)
@@ -232,15 +235,19 @@ describe('.husky/post-merge — linked-worktree host-install guard (SMI-5623)', 
     expect(npmLogContent).not.toMatch(/install/)
 
     // The advisory names the linked-worktree condition and the resolved
-    // main-checkout path (git-common-dir's parent).
+    // main-checkout path (git-common-dir's parent), for BOTH the Docker and
+    // host blocks (SMI-5624 widened the SMI-5623 guard to cover both).
     expect(result.stdout).toMatch(/linked worktree/i)
+    expect(result.stdout).toContain('Skipping Docker npm install')
+    expect(result.stdout).toContain('Skipping host npm install')
     expect(result.stdout).toContain(root)
 
-    // The Docker path targets the fixed /app path regardless of cwd and is
-    // untouched by this guard — it must still have been invoked, proving the
-    // guard is scoped to the host install block only.
+    // The Docker path (previously untouched by the SMI-5623 guard) is
+    // now ALSO guarded (SMI-5624, the anticipated follow-up to SMI-5623's
+    // narrower host-only scope documented above) — docker exec must NOT
+    // have been invoked.
     const dockerLogContent = readLogSafe(dockerLog)
-    expect(dockerLogContent).toMatch(/exec/)
+    expect(dockerLogContent).not.toMatch(/exec/)
   })
 
   it('(b) main checkout (regression): host npm install still runs when cwd is not a linked worktree', () => {
