@@ -55,6 +55,14 @@ on:
   workflow_run:
     workflows: ['Publish Packages']
     types: [completed]
+    # Defense-in-depth (post-merge governance retro, SMI-5629): narrows which
+    # workflow_run events are even considered, on top of (not instead of) the
+    # primary mitigation above -- this job never checks out or executes code
+    # at head_sha, only uses it as `git archive` data. publish.yml triggers
+    # on `release: types: [published]` + workflow_dispatch, both of which are
+    # only ever exercised against main in this repo's actual release flow
+    # (ADR-114 weekly/15-entry cadence, always cut from main).
+    branches: [main]
   workflow_dispatch:
     inputs:
       dry_run:
