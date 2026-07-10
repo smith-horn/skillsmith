@@ -21,17 +21,20 @@ TIER1_SKILLS=(
   "getsentry/code-review"
 )
 
-# SMOKE_SKILLS_URL: same fallback convention as website.sh's skills-endpoint
-# checks — supports a separate skills Supabase project override.
-SMOKE_SKILLS_URL="${SMOKE_SKILLS_SUPABASE_URL:-${SUPABASE_URL:-}}"
+# REGISTRY_HEALTH_URL: the tier1 drift canary must read the REAL PROD registry
+# that end users query — always prod SUPABASE_URL, independent of the SMI-4755
+# staging override (SMOKE_SKILLS_SUPABASE_URL) used by the usage-counter checks.
+# Renamed from SMOKE_SKILLS_URL (SMI-5631) so this prod-pinned global can't
+# collide with website.sh's staging-routed SMOKE_SKILLS_URL in the shared shell.
+REGISTRY_HEALTH_URL="${SUPABASE_URL:-}"
 
 _require_registry_health_creds() {
-  if [ -z "$SMOKE_SKILLS_URL" ]; then
+  if [ -z "$REGISTRY_HEALTH_URL" ]; then
     smoke_warn "SUPABASE_URL not set — failing tier1 drift check"
     return 1
   fi
-  if [ -z "${SMOKE_SKILLS_API_KEY:-}" ]; then
-    smoke_warn "SMOKE_SKILLS_API_KEY not set — failing tier1 drift check"
+  if [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+    smoke_warn "SUPABASE_ANON_KEY not set — failing tier1 drift check"
     return 1
   fi
   return 0
@@ -41,14 +44,19 @@ _require_registry_health_creds() {
 _check_tier1_skill() {
   local skill_id="$1"
   local encoded_id="${skill_id/\//%2F}"
-  local url="${SMOKE_SKILLS_URL}/functions/v1/skills-get?id=${encoded_id}"
+  local url="${REGISTRY_HEALTH_URL}/functions/v1/skills-get?id=${encoded_id}"
   local t0 t1 ms resp status body tier repo_url
 
   t0=$(now_ms)
-  # Authenticated (SMI-5582 S1): an anonymous call goes through the trial
-  # rate limiter (see supabase/functions/_shared/auth-middleware.ts) and can
-  # 429 under normal cadence. Mirrors website.sh's skills-get check.
-  resp=$(with_retry http_body GET "$url" -H "X-API-Key: ${SMOKE_SKILLS_API_KEY}" -H "Accept: application/json") || true
+  # Authenticate to PROD with the anon key (SMI-5631): the `anon_key` auth
+  # method (supabase/functions/_shared/auth-middleware.ts) is `authenticated`,
+  # so it BYPASSES the per-IP trial limiter that 401s shared GitHub-runner
+  # traffic. BOTH headers are required — `apikey:` alone returns 401
+  # (live-verified). Do NOT drop either header.
+  resp=$(with_retry http_body GET "$url" \
+    -H "apikey: ${SUPABASE_ANON_KEY}" \
+    -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+    -H "Accept: application/json") || true
   t1=$(now_ms)
   ms=$((t1 - t0))
 
@@ -89,7 +97,7 @@ _check_tier1_skill() {
 }
 
 check_tier1_skills_available() {
-  _require_registry_health_creds || { report_fail "tier1-skill-drift-canary" "check_tier1_skills_available" "" "SUPABASE_URL+SMOKE_SKILLS_API_KEY" "unset"; return 1; }
+  _require_registry_health_creds || { report_fail "tier1-skill-drift-canary" "check_tier1_skills_available" "" "SUPABASE_URL+SUPABASE_ANON_KEY" "unset"; return 1; }
 
   local failed=0
   for skill_id in "${TIER1_SKILLS[@]}"; do
