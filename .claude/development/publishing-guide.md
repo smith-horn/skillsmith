@@ -92,6 +92,25 @@ Dependencies before consumers:
 2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
 3. `@smith-horn/enterprise` (private, GitHub Packages)
 
+## MCP Server Mirror Repo (SMI-5629)
+
+The `smith-horn/skillsmith-mcp-server` mirror repo is a submodule-free public copy of `packages/mcp-server`, kept in sync by a CI job after each npm publish of `@skillsmith/mcp-server`. This unblocks Docker's MCP Registry submission — Docker's build tooling clones the full monorepo and fails on our private submodules (`.claude/skills`, `.claude/plans`, `.claude/hive-mind` → `smith-horn/skillsmith-strategy`; `docs/internal` → `smith-horn/skillsmith-docs`). The mirror avoids that blocker entirely.
+
+**Trigger**: A GitHub Actions workflow (`mirror-mcp-server.yml`) runs automatically after each successful `@skillsmith/mcp-server` npm publish (via `workflow_run` on `publish.yml` completion), plus `workflow_dispatch` for manual syncs and backfills. Idempotent: compares `npm view @skillsmith/mcp-server version` against the mirror's current `package.json` version and exits cleanly if already in sync. Daily staleness check compares `npm view @skillsmith/mcp-server version` against the mirror's last-synced `Source-Version` trailer and opens a GitHub issue on divergence, catching both workflow failures and missed `workflow_run` events.
+
+**Commit format**: Each mirror sync appends one append-only snapshot commit (never force-pushed) with message `sync: @skillsmith/mcp-server@<version>` and three git trailers:
+- `Source-Repo: https://github.com/smith-horn/skillsmith`
+- `Source-Commit: <monorepo SHA of the publish run's head>`
+- `Source-Version: <npm version>`
+
+Any mirror commit maps back to the exact originating monorepo commit via `git log --format='%(trailers:key=Source-Commit)'`.
+
+**Critical invariant**: the mirror repo must **never** gain a `.gitmodules` file. This is the entire reason the mirror works where the monorepo's own Docker Registry submission failed — BuildKit's full clone has no `.gitmodules` to recurse into and no private submodules to fail on. If `.gitmodules` ever appears in the mirror, both synchronization and Docker's build process will break silently.
+
+**Token rotation**: `MIRROR_PUSH_TOKEN` (fine-grained PAT, scoped to the mirror repo only) is owned by the **Skillsmith: CI Health** Linear project, not an individual assignee — SMI-5629 closes shortly after Wave 1 merges, well before the first annual rotation. A scheduled expiry-reminder check (mirroring the retrieval-liveness pattern) opens a deduped GitHub issue before token expiry to flag renewal. Annual cadence — vs. the 90-day quarterly cycle used for `VERCEL_DEPLOY_HOOK_TOKEN` — is justified by materially lower blast radius (scoped to a single public, non-critical mirror repo).
+
+**Fallback if `@skillsmith/mcp-server` or the monorepo is renamed or deprecated**: update the sync script's hardcoded package name and repo URL in `scripts/mirror-mcp-server.sh`, or archive the mirror repo with a final banner update. Otherwise, the sync script and trailers go stale silently, breaking Docker's registry automation. This is an operational procedure, not a code fix — file a Linear issue if namechange is anticipated.
+
 ## New-package onboarding
 
 Adding a brand-new package to the publish pipeline is a multi-step setup, and **the npmjs.com registration MUST come first**. SMI-4540 made all npm publishes OIDC-only (the granular token was revoked 2026-05-19), and **OIDC trusted-publishing cannot bootstrap a package that does not already exist on npm** — the very first publish of a never-seen package dies with an opaque `E404`. SMI-5122 added a `pre-publish-check` fail-fast (`scripts/check-npm-bootstrap.mjs`) that catches this with an actionable message before the expensive Docker build, but the only real fix is to register the package by hand first.
