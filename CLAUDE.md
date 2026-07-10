@@ -328,6 +328,7 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 | Session-start audit unexpected stderr (SMI-4590) | `export SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs: `~/.skillsmith/logs/session-audit-<date>.log` |
 | Strategy submodule uninitialized | Empty `.claude/{skills,plans,hive-mind}/` mount-points are expected for external contributors. Skillsmith team members: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` (each pinned to its own branch in `smith-horn/skillsmith-strategy` per shape b′; no extra setup script). |
 | Local typecheck/vitest fails with missing \`marked\`/\`sanitize-html\`/\`@types/sanitize-html\` (TS2688 / "Cannot find package") | Stale \`node_modules\` vs \`package-lock.json\`. Run \`docker exec skillsmith-dev-1 npm install\` + host \`npm install\`. The pre-commit hook now warns on this; pre-push blocks. Bypass a false positive with \`SKILLSMITH_SKIP_DEPS_FRESHNESS=1\` (SMI-5343/5344). |
+| MCP server logs `Failed to close database on shutdown` | Non-fatal — the process still exits cleanly, but recently-installed skills' dependency metadata may not be persisted. If this recurs, check disk space and file permissions on `~/.skillsmith/skills.db`. The error is logged (not silent) specifically so this is diagnosable. See SMI-5639. |
 
 **Detailed diagnostics**: [docker-guide.md](.claude/development/docker-guide.md#troubleshooting).
 
@@ -338,7 +339,7 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 - **Architecture**: [API Architecture (as-built)](docs/internal/architecture/system-design/api-architecture.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md). Historical (Dec-2025 design, superseded): [System Overview](docs/internal/architecture/system-design/system-overview.md)
 - **Standards**: [Engineering](docs/internal/architecture/standards.md), [DB](docs/internal/architecture/standards-database.md), [Astro](docs/internal/architecture/standards-astro.md), [Security](docs/internal/architecture/standards-security.md)
 - **Process**: [Context Compaction](docs/internal/process/context-compaction.md), [Linear Hygiene](docs/internal/process/linear-hygiene-guide.md), [Wave Checklist](docs/internal/process/wave-completion-checklist.md)
-- **Testing**: [Stripe](.claude/development/stripe-testing.md), [Neural](.claude/development/neural-testing.md), [Benchmarks](.claude/development/benchmarks.md)
+- **Testing**: [Stripe](.claude/development/stripe-testing.md), [Neural](.claude/development/neural-testing.md)
 - **Billing**: [Admin Grants](docs/internal/runbooks/admin-complimentary-subscriptions.md), [Stripe Ops](docs/internal/runbooks/stripe-operations.md)
 - **Website**: [skillsmith.app/docs](https://skillsmith.app/docs); deploy `cd packages/website && vercel --prod`
 
