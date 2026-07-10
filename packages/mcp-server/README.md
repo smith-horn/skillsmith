@@ -4,12 +4,12 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
-## What's New in v0.4.5
+## What's New in v0.7.0
 
-- **Dependency intelligence**: `skill_validate` warns on deprecated dependencies and undeclared MCP server references. `install_skill`, `get_skill`, and `uninstall_skill` now surface dependency data.
-- **`skill_outdated` tool**: Check installed skills for staleness and dependency satisfaction status.
-- **Encrypted skill detection**: `install_skill` detects git-crypt encrypted skills and returns a clear error instead of misleading validation messages.
-- **v0.4.5 fix**: Resolved missing dependency export that broke v0.4.4 installations.
+- **`undo_apply` tool**: Session-scoped undo for `apply_namespace_rename` / `apply_recommended_edit`, restoring from the apply tool's own backup.
+- **Curated agent tool profile**: Set `SKILLSMITH_TOOL_PROFILE=agent` to expose a focused ~15-tool listing sized for harness/agent integration instead of the full tool surface.
+- **Installable-only search by default**: `search` and `skill_recommend` now hide discovery-only entries (no resolvable install source) by default; pass `installable_only: false` to restore the previous inclusive behavior.
+- **Cross-harness skill inventory**: New local CLI/MCP push agent keeps skill inventories in sync across multiple agent harnesses.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
@@ -18,7 +18,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 The MCP server checks for updates on startup and notifies you when a newer version is available:
 
 ```
-[skillsmith] Update available: 0.4.4 → 0.4.5
+[skillsmith] Update available: 0.6.x → 0.7.0
 Restart your MCP client to use the latest version.
 ```
 
