@@ -140,14 +140,28 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install gitleaks
-        # Same pinned version/install pattern as ci.yml's secret-scan job.
         # Required: without gitleaks on PATH, the sync script's leak-audit
         # gate falls back to a coarse manual grep with no allowlist, which
         # aborts on the same synthetic test fixtures .gitleaks.toml already
         # allowlists for the primary (gitleaks) path.
+        #
+        # SECURITY/CORRECTNESS (found during SMI-5629 Wave 1 Step 4's first
+        # real sync): the gitleaks release tarball itself contains its own
+        # top-level LICENSE and README.md. ci.yml's equivalent step extracts
+        # with a bare `tar -xz` (no -C), which lands those files in the
+        # checkout's CWD (repo root) -- harmless there since ci.yml never
+        # reads root LICENSE/README.md afterward, but this workflow's sync
+        # script DOES read $REPO_ROOT/LICENSE directly (add_overlays) to
+        # populate the mirror's LICENSE file. The unscoped extraction
+        # silently overwrote it with gitleaks' own MIT LICENSE before the
+        # first sync ran, which is why that sync's mirror commit shipped the
+        # wrong license. Extract into an isolated temp dir instead so
+        # nothing in the checkout is ever touched.
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz
-          sudo mv gitleaks /usr/local/bin/
+          GITLEAKS_TMP="$(mktemp -d)"
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz -C "$GITLEAKS_TMP"
+          sudo mv "$GITLEAKS_TMP/gitleaks" /usr/local/bin/
+          rm -rf "$GITLEAKS_TMP"
 
       - name: Run mirror sync
         env:
