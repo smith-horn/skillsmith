@@ -2,10 +2,14 @@
 # SMI-5023 Wave 4 Step 1 — skill-invocation telemetry smoke checks.
 #
 # Checks:
-#   check_events_skill_invoke_accepted  — POST a synthetic skill_invoke event;
-#                                         assert HTTP 200 and body contains
-#                                         "accepted" (proves INSERT into
-#                                         search_metrics completed).
+#   check_events_skill_invoke_accepted  — POST a synthetic skill_invoke event as
+#                                         a 1-item batch; assert HTTP 200 and body
+#                                         contains "accepted":1. The batch path
+#                                         increments `accepted` ONLY after the
+#                                         search_metrics INSERT lands, so this
+#                                         proves the write path end-to-end (the
+#                                         single-event path returns {"ok":true}
+#                                         even on insert failure).
 #   check_events_skill_invoke_row_visible — Optional: verify the synthetic row
 #                                           is queryable via PostgREST REST API
 #                                           using SMOKE_SKILLS_* creds against
@@ -13,8 +17,10 @@
 #                                           Skips gracefully when creds absent.
 #
 # Synthetic events are tagged source='smoke-prod' so production dashboards
-# can filter them. The anonymous_id uses smoke-test-<epoch-s> to ensure
-# dedup-safety across concurrent smoke runs.
+# can filter them (that field, not the anonymous_id, carries smoke
+# identifiability). The anonymous_id is a random 32-char hex string
+# (events' isValidAnonymousId requires /^[a-f0-9-]+$/i, length 16-128), which
+# is also dedup-safe across concurrent smoke runs.
 #
 # See docs/internal/implementation/skill-invoke-telemetry.md Wave 4 Step 1.
 
@@ -37,14 +43,16 @@ _require_events_supabase_url() {
 }
 
 # ---- check_events_skill_invoke_accepted ----------------------------------
-# POSTs a synthetic skill_invoke event to prod /functions/v1/events.
-# The events function is anonymous (no-verify-jwt) and returns {"accepted":N}
-# after a successful INSERT into search_metrics. Asserting the response body
-# contains "accepted" proves the write path is live end-to-end.
+# POSTs a synthetic skill_invoke event as a 1-item batch to prod
+# /functions/v1/events. The events function is anonymous (no-verify-jwt); the
+# batch path returns {"ok":true,"accepted":N} and increments `accepted` ONLY
+# after the search_metrics INSERT lands (a single-event POST returns
+# {"ok":true} even when the insert fails). Asserting "accepted":1 therefore
+# proves the write path is live end-to-end.
 #
 # Failure modes:
 #   non-2xx HTTP     — function not reachable or threw an error
-#   body missing "accepted" — INSERT path broken or response schema changed
+#   body missing "accepted":1 — INSERT path broken or response schema changed
 check_events_skill_invoke_accepted() {
   _require_events_supabase_url || {
     report_fail "edge-fn-events" "check_events_skill_invoke_accepted" "" "SUPABASE_URL" "unset"
@@ -52,10 +60,11 @@ check_events_skill_invoke_accepted() {
   }
 
   local url="${SMOKE_SUPABASE_URL}/functions/v1/events"
-  local anon_id="smoke-test-$(date +%s)"
-  local run_id="smoke-$(date +%s)"
-  local payload
-  payload=$(printf '{"event":"skill_invoke","anonymous_id":"%s","metadata":{"skill_name":"smoke","session_id":"%s","duration_ms":1,"source":"smoke-prod","framework":"smoke","platform":"linux","is_subagent":false,"success":true}}' \
+  # SC2155: declare then assign so a subshell failure isn't masked by `local`.
+  local anon_id run_id payload
+  anon_id="$(openssl rand -hex 16)"
+  run_id="smoke-$(date +%s)"
+  payload=$(printf '{"events":[{"event":"skill_invoke","anonymous_id":"%s","metadata":{"skill_name":"smoke","session_id":"%s","duration_ms":1,"source":"smoke-prod","framework":"smoke","platform":"linux","is_subagent":false,"success":true}}]}' \
     "$anon_id" "$run_id")
 
   local t0 t1 ms status body resp
@@ -77,9 +86,9 @@ check_events_skill_invoke_accepted() {
       ;;
   esac
 
-  if ! assert_contains "$body" "accepted" "events-response-accepted-field"; then
+  if ! assert_contains "$body" '"accepted":1' "events-batch-accepted-one"; then
     report_fail "edge-fn-events" "check_events_skill_invoke_accepted" \
-      "$url" 'body contains "accepted"' "${body:0:120}" "$ms"
+      "$url" 'body contains "accepted":1' "${body:0:120}" "$ms"
     return 1
   fi
 
