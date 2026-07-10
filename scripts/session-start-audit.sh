@@ -24,7 +24,16 @@ set -euo pipefail
 INPUT=$(cat)
 
 emit_empty_and_exit() {
-  python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":""}}))'
+  # Fixed, static JSON — no python3 dependency needed (SMI-5642 companion
+  # fix: a missing/failing python3 here, under `set -euo pipefail`, would
+  # previously abort this function before emitting the required envelope
+  # at EVERY call site, including the Gate 0 disable-var short-circuit —
+  # violating the "always exits 0, never blocks" guarantee this comment
+  # block claims). printf has no such dependency.
+  # Byte-identical to Python's `json.dumps(...)` default separators
+  # (', ' / ': ') so existing test assertions (session-start-audit.test.sh)
+  # that match this exact spacing keep passing unchanged.
+  printf '%s\n' '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ""}}'
   exit 0
 }
 
