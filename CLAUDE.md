@@ -328,6 +328,7 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 | Session-start audit unexpected stderr (SMI-4590) | `export SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs: `~/.skillsmith/logs/session-audit-<date>.log` |
 | Strategy submodule uninitialized | Empty `.claude/{skills,plans,hive-mind}/` mount-points are expected for external contributors. Skillsmith team members: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` (each pinned to its own branch in `smith-horn/skillsmith-strategy` per shape b′; no extra setup script). |
 | Local typecheck/vitest fails with missing \`marked\`/\`sanitize-html\`/\`@types/sanitize-html\` (TS2688 / "Cannot find package") | Stale \`node_modules\` vs \`package-lock.json\`. Run \`docker exec skillsmith-dev-1 npm install\` + host \`npm install\`. The pre-commit hook now warns on this; pre-push blocks. Bypass a false positive with \`SKILLSMITH_SKIP_DEPS_FRESHNESS=1\` (SMI-5343/5344). |
+| MCP server logs `Failed to close database on shutdown` | Non-fatal — the process still exits cleanly, but recently-installed skills' dependency metadata may not be persisted. If this recurs, check disk space and file permissions on `~/.skillsmith/skills.db`. The error is logged (not silent) specifically so this is diagnosable. See SMI-5639. |
 
 **Detailed diagnostics**: [docker-guide.md](.claude/development/docker-guide.md#troubleshooting).
 
