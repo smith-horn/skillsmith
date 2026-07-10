@@ -46,6 +46,11 @@ describe('SMI-3541: verify-implementation', () => {
       expect(categorizeFile('.github/workflows/ci.yaml')).toBe('source')
     })
 
+    it('should identify extensionless .husky/ hook files as source, but not their generated wrappers (SMI-5627)', () => {
+      expect(categorizeFile('.husky/post-merge')).toBe('source')
+      expect(categorizeFile('.husky/_/husky.sh')).toBe('config')
+    })
+
     it('should still classify JSON configs and non-workflow .github files as config (SMI-4243)', () => {
       expect(categorizeFile('package.json')).toBe('config')
       expect(categorizeFile('tsconfig.json')).toBe('config')
@@ -146,6 +151,15 @@ describe('SMI-3541: verify-implementation', () => {
       }
       const result = determineVerdict(['SMI-1234', 'SMI-5678'], files)
       expect(result.issues).toEqual(['SMI-1234', 'SMI-5678'])
+    })
+
+    it('should pass for a hook + its own test file, PR #1786 real-world shape (SMI-5627 regression — previously incorrectly failed)', () => {
+      const files = categorizeFiles([
+        '.husky/post-merge',
+        'scripts/tests/post-merge-worktree-guard.test.ts',
+      ])
+      const result = determineVerdict(['SMI-1786'], files)
+      expect(result.verdict).toBe('pass')
     })
   })
 

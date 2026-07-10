@@ -18,6 +18,11 @@ export const SOURCE_PATTERNS = [
   /^apps\/.*\.(ts|tsx|js|jsx)$/,
   /^supabase\/functions\/.*\.(ts|js)$/,
   /^scripts\/.*\.(ts|js|mjs|sh)$/,
+  // SMI-5627: extensionless git-hook files under .husky/ (post-merge,
+  // pre-commit, pre-push, …) are first-class implementation surfaces.
+  // `[^/.]+` deliberately rejects subdirectories (.husky/_/** generated
+  // wrappers) and any file WITH an extension.
+  /^\.husky\/[^/.]+$/,
   // SMI-4243: root-level *.config.{ts,mjs,cjs,js} (vitest.config.ts, lint-staged.config.js, etc.)
   /^[^/]+\.config(\.[^./]+)?\.(ts|mjs|cjs|js)$/,
   // SMI-4243: GitHub Actions workflow YAML

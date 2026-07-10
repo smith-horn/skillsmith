@@ -94,6 +94,27 @@ describe('SMI-4446: SOURCE_PATTERNS classification', () => {
     })
   })
 
+  describe('SMI-5627: extensionless .husky hooks', () => {
+    it.each([
+      // Bare hook names — should match
+      ['.husky/post-merge', true],
+      ['.husky/pre-commit', true],
+      ['.husky/pre-push', true],
+      // Generated wrapper subdirectory — should NOT match (/ after first segment)
+      ['.husky/_/husky.sh', false],
+      ['.husky/_/.gitignore', false],
+      // Has an extension — should NOT match
+      ['.husky/install.mjs', false],
+      ['.husky/post-merge.bak', false],
+      // Prefix/shape mismatch — should NOT match
+      ['husky/post-merge', false],
+      ['.husky/', false],
+      ['.husky/sub/dir', false],
+    ])('%s → isSource=%s', (path, expected) => {
+      expect(isSource(path)).toBe(expected)
+    })
+  })
+
   describe('Non-source paths (regression guard)', () => {
     it.each([
       ['package.json', false],
