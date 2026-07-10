@@ -1,0 +1,259 @@
+# SMI-5629: sync packages/mcp-server to the public, submodule-free mirror repo
+# (smith-horn/skillsmith-mcp-server) after every npm publish of
+# @skillsmith/mcp-server. Docker's MCP registry build (BuildKit's git-source
+# loader) does a full clone of source.project and chokes on this monorepo's
+# private .gitmodules submodules before the build context is even assembled;
+# the mirror repo has no .gitmodules, ever, so the same build succeeds there.
+#
+# Full plan: docs/internal/implementation/mcp-server-mirror-repo.md
+# (decisions 1-5, changes 1-6). ADR-109: infra workflow, SPARC + plan-review
+# gated (see that plan's Review Summary -- 18 findings applied).
+#
+# Two independent jobs, gated by trigger (github.event_name):
+#   - sync (workflow_run on "Publish Packages" completion, or
+#     workflow_dispatch for manual/backfill sync): checks out the monorepo at
+#     its TRUSTED default-branch ref (never the workflow_run's head_sha --
+#     see the security comment on the checkout step) and invokes
+#     scripts/mirror-mcp-server.sh with SOURCE_COMMIT set to the publish
+#     run's head_sha (or current ref for workflow_dispatch), which the script
+#     uses only as `git archive` data, never as executed code. The script is
+#     itself idempotent (no-ops if the mirror already has the published
+#     version) -- safe to re-run on retries/backfills.
+#   - staleness-check (daily schedule): compares the published npm version
+#     against the mirror's last-synced Source-Version trailer and opens/
+#     dedupes a GitHub issue on divergence beyond a grace window. This is
+#     deliberately NOT just the default workflow-failure notification -- it
+#     also catches a missed/dropped workflow_run event, which a
+#     failure-notification on THIS workflow would never see (there would be
+#     no run to fail).
+#
+# MIRROR_PUSH_TOKEN: fine-grained PAT scoped to smith-horn/skillsmith-mcp-server
+# only (contents read/write), stored as an Actions secret on this repo (the
+# default GITHUB_TOKEN cannot push to a different repo). Rotation: ANNUAL
+# (vs. VERCEL_DEPLOY_HOOK_TOKEN's 90-day cadence elsewhere in this repo) --
+# justified by materially lower blast radius: scoped to a single public,
+# non-critical mirror repo. Ownership: Skillsmith: CI Health Linear project
+# (not the SMI-5629 assignee individually -- that issue closes to Done
+# shortly after Wave 1 merges). A separate PAT-expiry reminder (same shape as
+# the retrieval-liveness pattern) is owned by that project and depends on the
+# PAT's actual creation/expiry date from Wave 1 Step 1 (which precedes this
+# file in the plan's own step ordering) -- it is intentionally not
+# implemented here.
+#
+# audit:carveout-pure-js -- pure git/npm-tarball work (git archive, npm pack,
+# tar, git clone/push); no native Node module compilation. Qualifies for the
+# SMI-4647 pure-JS host-runner carve-out.
+#
+# NOTE: validate-workflows.yml's paths: trigger does NOT cover this file
+# (scoped only to deploy-edge-functions.yml and its own scripts) -- only
+# audit:standards Check 21 applies here (continue-on-error id/marker rule).
+# This file uses no continue-on-error steps, so Check 21 is a no-op here.
+
+name: Mirror MCP Server
+
+on:
+  workflow_run:
+    workflows: ['Publish Packages']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run -- assemble + gate, do not push (default: false)'
+        required: false
+        default: 'false'
+        type: boolean
+  schedule:
+    # Daily staleness check (see the staleness-check job). Its grace window
+    # (24h) is sized to this cadence -- one missed sync cycle is tolerated
+    # before alerting.
+    - cron: '0 12 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-mcp-server
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  MIRROR_REPO: smith-horn/skillsmith-mcp-server
+
+jobs:
+  sync:
+    name: Sync mirror repo
+    # workflow_dispatch always runs; workflow_run only runs when the
+    # triggering "Publish Packages" run actually succeeded (no point
+    # mirroring a failed/aborted publish). Never runs for schedule -- that's
+    # staleness-check below.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Determine target SHA
+        id: sha
+        env:
+          WF_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${WF_SHA:-${{ github.sha }}}"
+          echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          echo "Target SHA: $TARGET_SHA"
+
+      - name: Checkout monorepo (trusted default-branch ref)
+        # SECURITY (CodeQL: "Checkout of untrusted code in a privileged
+        # context"): this is a workflow_run-triggered job with MIRROR_PUSH_TOKEN
+        # in scope below -- it must NEVER check out and then execute code at
+        # an attacker-influenceable ref (workflow_run's head_sha is keyed on
+        # the *workflow name* "Publish Packages", not path/file identity, so
+        # a malicious branch could in principle get a same-named workflow to
+        # complete and trigger this job with an attacker-chosen head_sha).
+        # Deliberately omit `ref:` so this always checks out the trusted
+        # default branch -- scripts/mirror-mcp-server.sh that actually RUNS is
+        # always the reviewed, already-merged version. steps.sha.outputs.sha
+        # is used ONLY as data (git archive of a specific commit, passed to
+        # the script below as SOURCE_COMMIT) -- git archive reads tree
+        # content, it never executes anything from the archived commit.
+        # fetch-depth: 0 (full history) so an older SOURCE_COMMIT still
+        # resolves locally for that archive step.
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          # Never fetch the private strategy/docs submodules here -- the sync
+          # script only needs packages/mcp-server, and submodule fetch would
+          # require STRATEGY_SUBMODULE_PAT for no benefit.
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install gitleaks
+        # Same pinned version/install pattern as ci.yml's secret-scan job.
+        # Required: without gitleaks on PATH, the sync script's leak-audit
+        # gate falls back to a coarse manual grep with no allowlist, which
+        # aborts on the same synthetic test fixtures .gitleaks.toml already
+        # allowlists for the primary (gitleaks) path.
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Run mirror sync
+        env:
+          MIRROR_PUSH_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run || 'false' }}
+          SOURCE_COMMIT: ${{ steps.sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
+            echo "Dry run requested via workflow_dispatch input -- no push."
+            ./scripts/mirror-mcp-server.sh --dry-run
+          else
+            ./scripts/mirror-mcp-server.sh
+          fi
+
+  staleness-check:
+    name: Staleness check
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Compare npm version to mirror's last-synced version
+        id: compare
+        run: |
+          set -euo pipefail
+
+          NPM_VERSION=$(npm view @skillsmith/mcp-server version)
+          echo "npm_version=$NPM_VERSION" >> "$GITHUB_OUTPUT"
+          echo "npm @skillsmith/mcp-server version: $NPM_VERSION"
+
+          rm -rf /tmp/mirror-check
+          set +e
+          git clone --depth 1 "https://github.com/${MIRROR_REPO}.git" /tmp/mirror-check 2>/tmp/mirror-clone.err
+          CLONE_STATUS=$?
+          set -e
+          MIRROR_HEAD="$(git -C /tmp/mirror-check log -1 --format=%H 2>/dev/null || true)"
+
+          if [ "$CLONE_STATUS" -ne 0 ] || [ -z "$MIRROR_HEAD" ]; then
+            # Expected before Wave 1 Step 4's first sync -- the mirror repo
+            # may not exist yet, or may exist with zero commits. Not an
+            # alertable condition.
+            echo "::notice::Mirror repo not yet populated (clone failed or zero commits) -- skipping staleness check."
+            cat /tmp/mirror-clone.err 2>/dev/null || true
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          MIRROR_VERSION="$(git -C /tmp/mirror-check log -1 --format='%(trailers:key=Source-Version,valueonly)' | tr -d '[:space:]')"
+          MIRROR_COMMIT_DATE="$(git -C /tmp/mirror-check log -1 --format=%cI)"
+          echo "mirror_version=$MIRROR_VERSION" >> "$GITHUB_OUTPUT"
+          echo "mirror sync commit: $MIRROR_HEAD ($MIRROR_COMMIT_DATE), Source-Version=$MIRROR_VERSION"
+
+          MIRROR_EPOCH=$(date -d "$MIRROR_COMMIT_DATE" +%s)
+          NOW_EPOCH=$(date -u +%s)
+          AGE_HOURS=$(( (NOW_EPOCH - MIRROR_EPOCH) / 3600 ))
+          echo "age_hours=$AGE_HOURS" >> "$GITHUB_OUTPUT"
+          echo "Mirror last-sync commit age: ${AGE_HOURS}h"
+
+          # Grace window: 24h (one daily cron cycle) -- absorbs normal
+          # workflow_run -> sync latency (typically minutes) without
+          # alerting on a sync that's merely in flight.
+          if [ "$MIRROR_VERSION" != "$NPM_VERSION" ] && [ "$AGE_HOURS" -gt 24 ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open/dedupe staleness issue
+        if: steps.compare.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_VERSION: ${{ steps.compare.outputs.npm_version }}
+          MIRROR_VERSION: ${{ steps.compare.outputs.mirror_version }}
+          AGE_HOURS: ${{ steps.compare.outputs.age_hours }}
+        run: |
+          set -euo pipefail
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "Mirror repo stale" --state open --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still stale. npm version: \`$NPM_VERSION\`, mirror Source-Version: \`$MIRROR_VERSION\`, mirror sync commit age: ${AGE_HOURS}h. Run: $RUN_URL"
+            exit 0
+          fi
+
+          BODY="**Workflow**: Mirror MCP Server (staleness check)
+
+          npm \`@skillsmith/mcp-server\` version: \`$NPM_VERSION\`
+          Mirror's last-synced \`Source-Version\` trailer: \`$MIRROR_VERSION\`
+          Mirror's last sync commit age: ${AGE_HOURS}h (grace window: 24h)
+
+          The mirror repo (smith-horn/skillsmith-mcp-server) has not picked up
+          the latest published version within the grace window. This defeats
+          Docker's automatic-rebuild guarantee for the MCP registry entry --
+          the reason this mirror exists in the first place. See
+          docs/internal/implementation/mcp-server-mirror-repo.md.
+
+          Investigate the sync job in this workflow (mirror-mcp-server.yml,
+          triggered by workflow_run on Publish Packages): it may have failed,
+          or the workflow_run event may have been dropped/missed. A manual
+          workflow_dispatch of this workflow re-runs the sync.
+
+          Run: $RUN_URL
+
+          This issue was auto-created by SMI-5629. Close when resolved."
+
+          gh issue create --repo "${{ github.repository }}" \
+            --title "CI: Mirror repo stale ($(date -u +%Y-%m-%d))" \
+            --label "ci-alert" \
+            --body "$BODY"

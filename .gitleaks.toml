@@ -141,6 +141,17 @@ regexes = [
   # generic-api-key regex by coincidence.
   '''pr-123-validation''',
 
+  # False positive (SMI-5629): identifiers in packages/mcp-server/src/tools/
+  # get-skill.ts that match the same 24-char vercel-token regex as the
+  # SMI-4577 entries above. `deriveSecuritySummaryFro` is the truncated
+  # 24-char body of `deriveSecuritySummaryFromAdvisories`; `skillDependencyRepositor`
+  # is the truncated body of `skillDependencyRepositoryLookup`. Only surfaced
+  # when the SMI-5629 mirror sync script scans in filesystem (--no-git) mode —
+  # gitleaks's git-mode scan of this same file returns clean, since the
+  # broad keyword-gated regex behaves differently across the two scan modes.
+  '''deriveSecuritySummaryFro''',
+  '''skillDependencyRepositor''',
+
 ]
 
 # Allow specific files that contain examples or tests
