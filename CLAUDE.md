@@ -240,7 +240,7 @@ npx supabase functions deploy team-compliance-check --no-verify-jwt
 
 ## Monitoring & Alerts
 
-High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, Supabase pg_cron — SMI-4798; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Liveness-alert: weekly retrieval-eval cron also runs a telemetry-feed stale-detection backstop that opens a deduped GitHub issue (`telemetry-liveness` label) when the local `retrieval_events` feed hasn't produced a row in >N days (shadow-default). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
+High-cadence: Skill Indexer (maintenance 00:00 UTC + recheck 03:00 UTC + discovery in 3 hourly phase-slots per 6h cycle at 06/07/08, 12/13/14, 18/19/20 UTC per SMI-4870, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, Supabase pg_cron — SMI-4798; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Liveness-alert: weekly retrieval-eval cron also runs a telemetry-feed stale-detection backstop that opens a deduped GitHub issue (`telemetry-liveness` label) when the local `retrieval_events` feed hasn't produced a row in >N days (shadow-default). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
 
 ---
 
