@@ -8,7 +8,6 @@
  */
 
 import { createRequire } from 'node:module'
-import { exec } from 'child_process'
 
 // ESM-compatible require for dynamic module resolution
 const require = createRequire(import.meta.url)
@@ -114,11 +113,8 @@ export type {
 const PACKAGE_VERSION = '0.7.0'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 const logger = createLogger('mcp', { version: PACKAGE_VERSION }) // SMI-5615
-import {
-  installBundledSkills,
-  installUserDocs,
-  getUserGuidePath,
-} from './onboarding/install-assets.js'
+import { installBundledSkills, installUserDocs } from './onboarding/install-assets.js'
+import { handleDocsFlag, ensureSkillsmithSkillInstalled } from './index.startup-helpers.js'
 
 // SMI-2679: Quota enforcement middleware — module-level singletons, initialized once
 // licenseMiddleware uses a cache (TTL) so the first-call @skillsmith/enterprise lazy-load
@@ -217,47 +213,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, (request) =>
   handleCallToolRequest(request, { toolContext, licenseMiddleware, quotaMiddleware })
 )
-
-/**
- * Handle --docs flag to open user documentation
- */
-function handleDocsFlag(): void {
-  const userGuidePath = getUserGuidePath()
-  const onlineDocsUrl = 'https://skillsmith.app/docs'
-
-  if (userGuidePath) {
-    const cmd =
-      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
-    exec(`${cmd} "${userGuidePath}"`)
-    console.log(`Opening documentation: ${userGuidePath}`)
-  } else {
-    const cmd =
-      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
-    exec(`${cmd} "${onlineDocsUrl}"`)
-    console.log(`Opening online documentation: ${onlineDocsUrl}`)
-  }
-  process.exit(0)
-}
-
-/**
- * SMI-4790: Idempotent install of the bundled `skillsmith` slash-command skill
- * for MCP-only users (who never ran `skillsmith setup`) and recovery if the
- * skill was uninstalled. Delegates routing to the existing
- * `installBundledSkills()` which honours the SKILLSMITH_CLIENT env var via
- * `resolveClientPath()` (Claude Code default; cursor/copilot/windsurf via env).
- *
- * Quiet by design: `installBundledSkills()` only logs when it actually copies
- * a skill or hits an error, so happy-path startup adds zero stderr.
- */
-function ensureSkillsmithSkillInstalled(): void {
-  try {
-    installBundledSkills()
-  } catch (error) {
-    // Fail-soft: never block MCP startup on bundled-skill install failure.
-    const msg = error instanceof Error ? error.message : 'Unknown error'
-    logger.warn(`[skillsmith] Bundled skill install failed (non-fatal): ${msg}`, { err: error })
-  }
-}
 
 /**
  * SMI-5582: run only the SYNCHRONOUS, zero-network part of first-time setup —
@@ -377,7 +332,10 @@ function runStartupDiagnostics(): void {
 // so this explicitly exits once the bounded flush settles, preserving
 // today's default (process exits promptly on those signals) instead of
 // leaving the process hanging.
-const shutdownAndExit = createShutdownTrigger(() => process.exit(0))
+const shutdownAndExit = createShutdownTrigger(
+  () => process.exit(0),
+  () => toolContext?.db
+)
 
 // Start server
 async function main() {
