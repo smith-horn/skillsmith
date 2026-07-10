@@ -12,10 +12,13 @@
 # Two independent jobs, gated by trigger (github.event_name):
 #   - sync (workflow_run on "Publish Packages" completion, or
 #     workflow_dispatch for manual/backfill sync): checks out the monorepo at
-#     the publish run's head_sha (or current ref for workflow_dispatch) and
-#     invokes scripts/mirror-mcp-server.sh, which is itself idempotent
-#     (no-ops if the mirror already has the published version) -- safe to
-#     re-run on retries/backfills.
+#     its TRUSTED default-branch ref (never the workflow_run's head_sha --
+#     see the security comment on the checkout step) and invokes
+#     scripts/mirror-mcp-server.sh with SOURCE_COMMIT set to the publish
+#     run's head_sha (or current ref for workflow_dispatch), which the script
+#     uses only as `git archive` data, never as executed code. The script is
+#     itself idempotent (no-ops if the mirror already has the published
+#     version) -- safe to re-run on retries/backfills.
 #   - staleness-check (daily schedule): compares the published npm version
 #     against the mirror's last-synced Source-Version trailer and opens/
 #     dedupes a GitHub issue on divergence beyond a grace window. This is
@@ -99,10 +102,25 @@ jobs:
           echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
           echo "Target SHA: $TARGET_SHA"
 
-      - name: Checkout monorepo at target SHA
+      - name: Checkout monorepo (trusted default-branch ref)
+        # SECURITY (CodeQL: "Checkout of untrusted code in a privileged
+        # context"): this is a workflow_run-triggered job with MIRROR_PUSH_TOKEN
+        # in scope below -- it must NEVER check out and then execute code at
+        # an attacker-influenceable ref (workflow_run's head_sha is keyed on
+        # the *workflow name* "Publish Packages", not path/file identity, so
+        # a malicious branch could in principle get a same-named workflow to
+        # complete and trigger this job with an attacker-chosen head_sha).
+        # Deliberately omit `ref:` so this always checks out the trusted
+        # default branch -- scripts/mirror-mcp-server.sh that actually RUNS is
+        # always the reviewed, already-merged version. steps.sha.outputs.sha
+        # is used ONLY as data (git archive of a specific commit, passed to
+        # the script below as SOURCE_COMMIT) -- git archive reads tree
+        # content, it never executes anything from the archived commit.
+        # fetch-depth: 0 (full history) so an older SOURCE_COMMIT still
+        # resolves locally for that archive step.
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ steps.sha.outputs.sha }}
+          fetch-depth: 0
           # Never fetch the private strategy/docs submodules here -- the sync
           # script only needs packages/mcp-server, and submodule fetch would
           # require STRATEGY_SUBMODULE_PAT for no benefit.
@@ -127,6 +145,7 @@ jobs:
         env:
           MIRROR_PUSH_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
           DRY_RUN_INPUT: ${{ github.event.inputs.dry_run || 'false' }}
+          SOURCE_COMMIT: ${{ steps.sha.outputs.sha }}
         run: |
           set -euo pipefail
           if [ "$DRY_RUN_INPUT" = "true" ]; then

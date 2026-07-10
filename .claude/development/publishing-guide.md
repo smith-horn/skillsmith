@@ -99,6 +99,7 @@ The `smith-horn/skillsmith-mcp-server` mirror repo is a submodule-free public co
 **Trigger**: A GitHub Actions workflow (`mirror-mcp-server.yml`) runs automatically after each successful `@skillsmith/mcp-server` npm publish (via `workflow_run` on `publish.yml` completion), plus `workflow_dispatch` for manual syncs and backfills. Idempotent: compares `npm view @skillsmith/mcp-server version` against the mirror's current `package.json` version and exits cleanly if already in sync. Daily staleness check compares `npm view @skillsmith/mcp-server version` against the mirror's last-synced `Source-Version` trailer and opens a GitHub issue on divergence, catching both workflow failures and missed `workflow_run` events.
 
 **Commit format**: Each mirror sync appends one append-only snapshot commit (never force-pushed) with message `sync: @skillsmith/mcp-server@<version>` and three git trailers:
+
 - `Source-Repo: https://github.com/smith-horn/skillsmith`
 - `Source-Commit: <monorepo SHA of the publish run's head>`
 - `Source-Version: <npm version>`
