@@ -298,6 +298,15 @@ add_overlays() {
   log "Adding overlay files (LICENSE, README banner, PR auto-close workflow)..."
 
   [[ -f "$REPO_ROOT/LICENSE" ]] || err "root LICENSE not found at ${REPO_ROOT}/LICENSE"
+  # Defensive content check (found during Wave 1 Step 4's first real sync):
+  # a prior CI workflow step (gitleaks install, since fixed to extract into
+  # an isolated temp dir) once silently overwrote the checkout's root
+  # LICENSE with a third-party tool's own LICENSE via an unscoped `tar -xz`
+  # into cwd. Nothing failed loudly -- the wrong license just got copied
+  # and pushed. Guard against ANY future regression of this class, not just
+  # that one root cause.
+  grep -q "Elastic License" "$REPO_ROOT/LICENSE" \
+    || err "root LICENSE at ${REPO_ROOT}/LICENSE does not contain 'Elastic License' -- refusing to copy a wrong/corrupted license into the mirror (a prior CI step may have overwritten it; see SMI-5629)"
   cp "$REPO_ROOT/LICENSE" "$TREE_DIR/LICENSE"
 
   [[ -f "$TREE_DIR/README.md" ]] || err "README.md missing from assembled tree — git archive step may have failed"
