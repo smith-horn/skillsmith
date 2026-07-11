@@ -39,6 +39,53 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# SMI-5650: seed writable native-module named volumes (worktree only).
+# The worktree container's /app/node_modules is a read-only view of the
+# (possibly macOS) host tree, so the SMI-5351 rebuild loop below cannot write
+# a rebuilt .node binary. scripts/_lib.sh emits a writable Docker-managed
+# named volume (NOT tmpfs — see _lib.sh's enumerate_compose_node_modules_mounts
+# comment for why: Compose's tmpfs volume type hardcodes noexec, which broke
+# native module loading) at /app/node_modules/<module> for each of these; seed it from the image's
+# /opt/native-seed stash (built during the image's own Linux npm rebuild) so a
+# `docker compose restart dev` self-heal is deterministic and offline.
+# This module list is referenced inline (rather than from NATIVE_MODULES,
+# which is declared later, below the dist check) — keep it in sync with that
+# array, scripts/_lib.sh's NATIVE_MODULES_FOR_OVERLAY, and the Dockerfile stash
+# (a cross-file sync-check test enforces this).
+#
+# @esbuild is a SCOPE, not a flat module — confirmed live it is REQUIRED
+# alongside the flat `esbuild` entry: esbuild's own JS API does not contain
+# the native binary it spawns at runtime; that lives in the separate
+# platform-arch package (@esbuild/<platform>-<arch>) inside this scope. It
+# has no package.json of its own (only its children do), so "already seeded"
+# is checked via "non-empty directory" instead of the flat entries'
+# "package.json present" check.
+#
+# Disable: SKILLSMITH_WORKTREE_NATIVE_SEED_DISABLE=1 (registered in
+# docs/internal/process/guards-and-opt-outs.md).
+# ---------------------------------------------------------------------------
+if [ -f "/app/.git" ] && [ "${SKILLSMITH_WORKTREE_NATIVE_SEED_DISABLE:-}" != "1" ]; then
+    for module in better-sqlite3 onnxruntime-node esbuild hnswlib-node @esbuild; do
+        seed="/opt/native-seed/${module}"
+        target="/app/node_modules/${module}"
+        already_seeded=1
+        case "$module" in
+        @*) [ -n "$(ls -A "$target" 2>/dev/null)" ] && already_seeded=0 ;;
+        *) [ -f "$target/package.json" ] && already_seeded=0 ;;
+        esac
+        if [ ! -d "$seed" ]; then
+            echo -e "${YELLOW}[entrypoint] No native seed for ${module} — image predates SMI-5650; falling back to npm rebuild if validation fails. Rebuild the image (docker compose build) to pick up the seed.${NC}"
+        elif [ "$already_seeded" -eq 1 ]; then
+            if cp -a "$seed/." "$target/" 2>/dev/null; then
+                echo -e "${GREEN}  ✓ Seeded ${module} into writable overlay (SMI-5650)${NC}"
+            else
+                echo -e "${YELLOW}[entrypoint] Could not seed ${module} — the named volume mount is likely missing (stale override, pre-SMI-5650). Run scripts/repair-worktrees.sh on host, recreate container.${NC}"
+            fi
+        fi
+    done
+fi
+
+# ---------------------------------------------------------------------------
 # Dist check: rebuild if dist/ is missing (common on first container start
 # in a git worktree, where .:/app bind mount erases image-layer dist/).
 #
@@ -124,6 +171,38 @@ fi
 
 echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 
+# SMI-5650: a bare `require('<module>')` is not a sufficient validation check
+# for every module — confirmed live while verifying this exact self-heal
+# path: better-sqlite3 only dlopen()s its .node binary lazily, on `new
+# Database(...)`, not at require() time, and esbuild's JS wrapper only spawns
+# its binary on an actual transform/build call, not at require() time either.
+# A corrupted binary for either module passed the old bare-require check as a
+# false green, which meant the VALIDATION_FAILED rebuild/re-seed path never
+# triggered — silently leaving a broken binary in place across restarts.
+# onnxruntime-node and hnswlib-node dlopen() immediately at require() time
+# (confirmed live: both throw synchronously on a corrupted binary), so a bare
+# require() is already sufficient for those two.
+validate_native_module() {
+    case "$1" in
+    better-sqlite3)
+        node -e "new (require('better-sqlite3'))(':memory:').close()" 2>/dev/null
+        ;;
+    esbuild | @esbuild)
+        # Same check for both entries: esbuild's JS API spawns the actual
+        # native binary that lives in the separate @esbuild/<platform>-<arch>
+        # scope package, so transformSync() exercises both. @esbuild is
+        # listed as its own NATIVE_MODULES entry purely so the rebuild/re-seed
+        # loop re-seeds its content too — see the boot-time seed step's
+        # comment above for why the scope, not just the flat `esbuild`
+        # package, needs its own writable target.
+        node -e "require('esbuild').transformSync('1')" 2>/dev/null
+        ;;
+    *)
+        node -e "require('$1')" 2>/dev/null
+        ;;
+    esac
+}
+
 # List of native modules to validate.
 # Must match the `RUN npm rebuild …` line in the Dockerfile (the NATIVE_MODULES
 # array is the canonical source; keep both in sync). With .npmrc ignore-scripts=true
@@ -138,13 +217,13 @@ echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 # so node-gyp runs (SMI-5200); this change extends that to all four modules.
 # The override is scoped to the rebuild loop only (inside the
 # VALIDATION_FAILED guard) so healthy restarts pay nothing.
-NATIVE_MODULES=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node")
+NATIVE_MODULES=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node" "@esbuild")
 
 # Track validation status
 VALIDATION_FAILED=0
 
 for module in "${NATIVE_MODULES[@]}"; do
-    if node -e "require('${module}')" 2>/dev/null; then
+    if validate_native_module "$module"; then
         echo -e "${GREEN}  ✓ ${module}${NC}"
     else
         echo -e "${RED}  ✗ ${module} - validation failed${NC}"
@@ -167,6 +246,21 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
         # the intended self-heal. The --ignore-scripts=false override is scoped here,
         # inside the VALIDATION_FAILED guard, so healthy restarts pay nothing.
         echo -e "${YELLOW}  Rebuilding ${module} (first run may fetch a prebuilt)...${NC}"
+        # SMI-5650 (worktree): re-seed from the image stash first —
+        # deterministic and offline, vs npm rebuild's registry dependency.
+        # Falls through to npm rebuild if the seed is missing/stale/absent OR if
+        # SKILLSMITH_WORKTREE_NATIVE_SEED_DISABLE=1 (the SAME guard as the
+        # boot-time seed step above — both call-sites must honor it identically,
+        # else the disable var would silently no-op half of this behavior and the
+        # offline-path verification would not actually exercise the offline path).
+        if [ -f "/app/.git" ] && [ "${SKILLSMITH_WORKTREE_NATIVE_SEED_DISABLE:-}" != "1" ] && [ -d "/opt/native-seed/${module}" ]; then
+            rm -rf "/app/node_modules/${module:?}"/* 2>/dev/null || true
+            cp -a "/opt/native-seed/${module}/." "/app/node_modules/${module}/" 2>/dev/null || true
+            if validate_native_module "$module"; then
+                echo -e "${GREEN}  ✓ ${module} restored from image seed (SMI-5650)${NC}"
+                continue
+            fi
+        fi
         npm rebuild "${module}" --ignore-scripts=false || echo -e "${YELLOW}  ↳ npm rebuild exited non-zero for ${module} (see output above)${NC}"
     done
 
@@ -174,7 +268,7 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
     REBUILD_FAILED=0
     FAILED_MODULES=""
     for module in "${NATIVE_MODULES[@]}"; do
-        if ! node -e "require('${module}')" 2>/dev/null; then
+        if ! validate_native_module "$module"; then
             echo -e "${RED}  ✗ ${module} - still failing after rebuild${NC}"
             REBUILD_FAILED=1
             FAILED_MODULES="${FAILED_MODULES:+$FAILED_MODULES }${module}"

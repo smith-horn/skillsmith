@@ -23,6 +23,45 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# SMI-5650: native modules that get a writable named volume in worktree
+# containers (seeded from the image's /opt/native-seed at boot). Must match
+# docker-entrypoint.sh's NATIVE_MODULES array and the Dockerfile's stash list —
+# keep all three in sync (a cross-file sync-check test enforces this).
+#
+# @esbuild IS a scope directory, not a flat module — confirmed live it is
+# REQUIRED, not optional: esbuild's own top-level package (bin/esbuild, its
+# JS API wrapper) does NOT contain the actual native binary esbuild spawns at
+# runtime; that lives in the separate scoped platform package
+# (@esbuild/<platform>-<arch>, e.g. @esbuild/linux-arm64). A bare `esbuild`
+# entry alone left that scope resolving through the read-only root mount to
+# main's real (possibly wrong-platform) host copy, passing tsc/type-checking
+# fine but failing at actual esbuild invocation ("Syntax error: ( unexpected"
+# — the shell's fallback interpretation of a non-Linux binary it can't
+# execve()). Handled at the SCOPE level (mount destination
+# /app/node_modules/@esbuild, not a specific platform-arch subpackage) for
+# the same reason @skillsmith/@smith-horn are scope-mounted in the alias
+# fix above: the image build resolves whichever platform-arch package is
+# actually correct for that image, so there's nothing to hardcode.
+NATIVE_MODULES_FOR_OVERLAY=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node" "@esbuild")
+
+#######################################
+# Docker volume names cannot contain `@` — sanitize a NATIVE_MODULES_FOR_OVERLAY
+# entry into a valid `local` volume name. Flat module names pass through
+# unchanged; the sole scope entry (@esbuild) maps to a distinct, readable name
+# that can't collide with the flat `esbuild` package's own volume.
+#
+# Arguments:
+#   $1 - Entry from NATIVE_MODULES_FOR_OVERLAY (e.g. "better-sqlite3", "@esbuild")
+# Outputs:
+#   Sanitized volume-name-safe string to stdout
+#######################################
+native_module_volume_name() {
+    case "$1" in
+    @*) printf '%s-scope' "${1#@}" ;;
+    *) printf '%s' "$1" ;;
+    esac
+}
+
 #######################################
 # Print error message and exit
 #######################################
@@ -579,10 +618,10 @@ enumerate_compose_node_modules_mounts() {
         done
     fi
 
-    # SMI-5650 (Wave 1): writable tmpfs overlays over the read-only root mount,
-    # for the workspace-alias SCOPE directories only.
+    # SMI-5650: writable tmpfs overlays over the read-only root mount, for the
+    # workspace-alias SCOPE directories AND the four native-module dirs.
     #
-    # Main's node_modules/@skillsmith + @smith-horn contain ONLY npm-workspaces
+    # (1) ALIAS SCOPES. Main's node_modules/@skillsmith + @smith-horn contain ONLY npm-workspaces
     # alias symlinks whose relative targets (../../packages/<pkg>) clamp to
     # /packages/<pkg> (empty scaffolding) inside the container's shallower
     # nesting — the SMI-5570/SMI-5074 mount(2) mechanism, this time observed at
@@ -596,37 +635,110 @@ enumerate_compose_node_modules_mounts() {
     # symlinks", plan §1.4). Same child-inside-read-only-parent shape as the
     # .vite/.vite-temp overlays above.
     #
-    # tmpfs (not another host-backed bind mount) is deliberate: it adds ZERO
-    # virtiofs mounts, so the SMI-5560 host_mark propagation hazard (plan §1.5)
-    # cannot apply even in principle, and there is no host-side directory to
-    # create, gitignore, or keep in sync with worktree regen.
+    # (2) NATIVE MODULE DIRS. better-sqlite3/onnxruntime-node/esbuild/hnswlib-node,
+    # plus the @esbuild SCOPE (esbuild's JS API spawns its actual native binary
+    # from the separate @esbuild/<platform>-<arch> package, not from anything
+    # inside the flat `esbuild` package itself — confirmed live, see
+    # native_module_volume_name's comment), need a writable target for the
+    # SMI-5351 self-heal rebuild loop in docker-entrypoint.sh, which the :ro
+    # root mount broke (SMI-5650). A NAMED VOLUME (not tmpfs — see below) +
+    # boot-time seed from the image's /opt/native-seed (built during the
+    # image's own Linux npm rebuild) fixes this deterministically and offline.
+    # Applied to all five entries uniformly — which flat modules are single-
+    # vs multi-platform in a given host checkout is incidental npm-rebuild
+    # history, not a stable invariant to special-case on.
     #
-    # MOUNT ORDER IS LOAD-BEARING (SMI-5650 plan-review M1): this loop MUST stay
-    # textually AFTER the root `:ro` mount block above. Compose applies a
-    # service's `volumes:` entries in list order, and these scope-directory tmpfs
+    # NAMED VOLUME, NOT tmpfs (this is the key difference from the alias
+    # scopes above): Compose's `type: tmpfs` volume hardcodes `noexec` with no
+    # override field on the `tmpfs:` sub-object — confirmed live this breaks
+    # native module loading (blocks execve() for esbuild's spawned CLI binary,
+    # AND blocks dlopen()'s mmap(PROT_EXEC) for some — not all — shared
+    # objects, e.g. onnxruntime-node/hnswlib-node but not better-sqlite3). A
+    # bare `driver: local` NAMED volume (no driver_opts, no tmpfs annotation
+    # at all) sidesteps this entirely — it's the SAME ordinary volume
+    # mechanism the base docker-compose.yml already uses for the main
+    # checkout's own node_modules (never noexec, native modules load fine
+    # there today), not a hardening-default override. Declarations are
+    # emitted once by enumerate_native_module_volumes(), referenced here by
+    # name via native_module_volume_name() (Docker volume names can't contain
+    # `@`, so the @esbuild entry is sanitized to a distinct "esbuild-scope"
+    # name). Tradeoff vs tmpfs: disk-backed and persistent across container
+    # restarts rather than RAM-backed and self-clearing — see
+    # native_module_volume_name's neighboring comment block for why this is
+    # safe (docker-entrypoint.sh's VALIDATION_FAILED path already detects and
+    # re-seeds a corrupted persisted binary via a real invocation check, not
+    # a bare require()).
+    #
+    # MOUNT ORDER IS LOAD-BEARING (SMI-5650 plan-review M1): the alias-scope
+    # loop below MUST stay textually AFTER the root `:ro` mount block above
+    # (native-module volume references have no such ordering dependency —
+    # they're independent named volumes, not destinations resolved through
+    # the root mount's own symlink-clamping). Compose applies a service's
+    # `volumes:` entries in list order, and the alias scope-directory tmpfs
     # destinations only resolve correctly (plan §1.4) once the root mount has
-    # already landed and exposed @skillsmith/@smith-horn as real directories to
-    # mount over. Reordering the two blocks silently reintroduces the crash risk;
-    # a generated-YAML line-order test asserts the root mount precedes each tmpfs
-    # target so a future reorder fails CI instead.
+    # already landed and exposed @skillsmith/@smith-horn as real directories
+    # to mount over. Reordering those two blocks silently reintroduces the
+    # crash risk; a generated-YAML line-order test asserts the root mount
+    # precedes each alias tmpfs target so a future reorder fails CI instead.
     #
-    # NOTE: Wave 2 (SMI-5650) will append the four native-module entries
-    # (better-sqlite3/onnxruntime-node/esbuild/hnswlib-node, seeded from the
-    # image's /opt/native-seed at boot, larger tmpfs size) to THIS SAME loop —
-    # that is why this is a loop over a small list rather than two flat emissions.
-    # Only the 2 alias scopes exist in Wave 1.
+    # The 2 alias scopes and the 5 native-module entries are emitted by TWO
+    # SEPARATE loops below (not a single mixed list) because their mount
+    # shapes now differ: alias scopes are inline `type: tmpfs` (1MiB, no
+    # size distinction needed — see above for why), native-module entries are
+    # named-volume references (no size field at the reference site; sizing
+    # doesn't apply to a plain `driver: local` volume the way it did to tmpfs).
+    # NATIVE MODULES use a plain Docker-managed named volume (NOT the type:
+    # tmpfs shorthand used for the alias scopes below): Docker Compose's
+    # tmpfs volume type hardcodes noexec (confirmed live: `mount | grep`
+    # shows `noexec` with no override field exposed on the `tmpfs:`
+    # sub-object). noexec blocks execve() outright (broke esbuild's spawned
+    # CLI binary, "Permission denied") AND — contrary to the initial
+    # assumption that dlopen()'s mmap(PROT_EXEC) path is unaffected —
+    # confirmed live to also block dlopen() for some shared objects
+    # (onnxruntime-node and hnswlib-node both failed ERR_DLOPEN_FAILED
+    # "failed to map segment from shared object"; only better-sqlite3
+    # happened to tolerate it, an artifact of its own binary's internal
+    # structure, not something to special-case on).
+    #
+    # A bare `driver: local` named volume with NO tmpfs annotation sidesteps
+    # this cleanly: it is a completely standard Docker-managed volume, the
+    # SAME mechanism the base docker-compose.yml already uses for the main
+    # checkout's own `node_modules` (which has never had noexec and loads
+    # native modules fine today) — this isn't disabling a hardening default,
+    # it's using the ordinary volume type that was never restricted, rather
+    # than the tmpfs type's own hardcoded default. Tradeoff vs. tmpfs:
+    # disk-backed (Docker's storage driver) and persistent across container
+    # restarts rather than RAM-backed and self-clearing — a corrupted binary
+    # is no longer wiped by a plain restart, but docker-entrypoint.sh's
+    # existing native-module VALIDATION_FAILED path already detects a broken
+    # binary via require() and unconditionally re-seeds on that path, so
+    # correctness is unaffected, only which of the two already-implemented
+    # code paths performs the fix. Volume declarations are emitted once by
+    # enumerate_native_module_volumes(), referenced here by name.
+    #
+    # SMI-5650 follow-up filed to reconsider tmpfs+explicit-exec (discarded
+    # here in favor of shipping the lower-risk fix first) if the persistence
+    # tradeoff ever proves to matter in practice.
     local overlay_dir
     for overlay_dir in @skillsmith @smith-horn; do
         # Real-directory guard: the leaf must exist AND must NOT be a symlink (a
         # symlink leaf would escape via mount(2) — see the notes above and plan
         # §1.4). Missing (fresh clone, pre-install) or unexpectedly-a-symlink →
         # skip: fail toward today's known breakage, never toward a
-        # container-create failure.
+        # container-create failure. noexec (Compose's tmpfs default) is fine
+        # here — these scopes hold only symlinks, never executable content.
         if [[ -d "$repo_root/node_modules/$overlay_dir" && ! -L "$repo_root/node_modules/$overlay_dir" ]]; then
             printf '      - type: tmpfs\n'
             printf '        target: /app/node_modules/%s\n' "$overlay_dir"
             printf '        tmpfs:\n'
             printf '          size: 1048576\n'
+        fi
+    done
+    local native_module
+    for native_module in "${NATIVE_MODULES_FOR_OVERLAY[@]}"; do
+        if [[ -d "$repo_root/node_modules/$native_module" && ! -L "$repo_root/node_modules/$native_module" ]]; then
+            printf '      - native-seed-%s:/app/node_modules/%s\n' \
+                "$(native_module_volume_name "$native_module")" "$native_module"
         fi
     done
 
@@ -658,6 +770,39 @@ enumerate_compose_node_modules_mounts() {
             printf '      - %s/%s:/app/packages/%s/node_modules/%s\n' \
                 "$main_target" "$vite_cache_dir" "$pkg_name" "$vite_cache_dir"
         done
+    done
+}
+
+#######################################
+# Emit the top-level `volumes:` section declaring the exec-capable named
+# volumes native modules mount into (SMI-5650). Called ONCE per generated
+# override (not per-service, unlike enumerate_compose_node_modules_mounts's
+# per-service volume-list lines) — Compose merges top-level `volumes:` keys
+# by name, so this is additive alongside the base compose file's own
+# `node_modules:` named volume, not a replacement.
+#
+# Bare `driver: local`, no driver_opts: an ordinary Docker-managed volume,
+# same mechanism as the base compose file's own `node_modules:` volume — see
+# the emission-loop comment above in enumerate_compose_node_modules_mounts
+# for why this (not tmpfs) is the fix for the noexec dlopen()/execve()
+# failures discovered live.
+#
+# Emission is gated identically to the per-service native-module mount lines
+# above (same real-directory guard) so a volume is never declared with no
+# service referencing it.
+#
+# Arguments:
+#   $1 - Repository root path (main repo, NOT worktree path)
+#######################################
+enumerate_native_module_volumes() {
+    local repo_root="$1"
+    local native_module
+
+    for native_module in "${NATIVE_MODULES_FOR_OVERLAY[@]}"; do
+        if [[ -d "$repo_root/node_modules/$native_module" && ! -L "$repo_root/node_modules/$native_module" ]]; then
+            printf '  native-seed-%s:\n' "$(native_module_volume_name "$native_module")"
+            printf '    driver: local\n'
+        fi
     done
 }
 
@@ -736,6 +881,22 @@ generate_docker_override_to_stdout() {
         fi
     fi
 
+    # SMI-5650: top-level named-volume declarations for the exec-capable
+    # native-module tmpfs volumes referenced by name in ${volumes_block}
+    # above. Emitted ONCE (not per-service) — see
+    # enumerate_native_module_volumes for why this can't be the same
+    # `type: tmpfs` inline shape the alias scopes use.
+    local top_level_volumes=""
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local native_volumes
+        native_volumes="$(enumerate_native_module_volumes "$repo_root")"
+        if [[ -n "$native_volumes" ]]; then
+            top_level_volumes="
+volumes:
+${native_volumes}"
+        fi
+    fi
+
     cat << EOF
 # Worktree-specific overrides (auto-generated by create-worktree.sh / repair-worktrees.sh)
 # Container names and ports must be unique per worktree
@@ -760,6 +921,7 @@ ${volumes_block}
     ports:
       - "${orchestrator_port}:3000"  # Orchestrator
 ${volumes_block}
+${top_level_volumes}
 EOF
 }
 

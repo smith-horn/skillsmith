@@ -26,7 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
 
 CONTAINER="skillsmith-dev-1"
-NATIVE_MODULES="better-sqlite3 onnxruntime-node hnswlib-node"
+NATIVE_MODULES="better-sqlite3 onnxruntime-node esbuild hnswlib-node"
 LOCKFILE_ONLY=false
 
 usage() {
