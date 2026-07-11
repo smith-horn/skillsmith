@@ -35,6 +35,22 @@
  *      identical (modulo the `Generated:` line) to
  *      generate_docker_override_to_stdout — proving the divergent heredoc was
  *      deleted, not partially delegated.
+ *
+ * SMI-5650 (Wave 1) additions:
+ *   6  Darwin: the 2 alias-scope tmpfs overlays (@skillsmith, @smith-horn)
+ *      are present once per service (dev/test/orchestrator, 6 total), and
+ *      the generated document parses as valid YAML with the exact shape
+ *      docker compose expects (`type: tmpfs`, `target:`, nested
+ *      `tmpfs: { size: 1048576 }`) — not just a string-match, an actual
+ *      YAML-parse structural check via the `yaml` package (already a
+ *      transitive devDependency, used elsewhere in scripts/tests).
+ *   3  (extended) Linux: confirmed that even when the alias-scope
+ *      directories exist on disk, no tmpfs lines appear — the existing
+ *      Darwin-only gate suppresses the whole volumes block, new mounts
+ *      included, not just the pre-existing ones.
+ *   D  (extended) Delegation fixture also carries the alias-scope
+ *      directories, so the byte-identical comparison covers the new
+ *      tmpfs lines too, not only the pre-existing root/per-package ones.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { spawnSync, execFileSync } from 'node:child_process'
@@ -49,6 +65,7 @@ import {
 } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
@@ -136,13 +153,27 @@ function stripGenerated(text: string): string {
     .join('\n')
 }
 
-/** repo_root fixture: node_modules(+.vite) and one package with node_modules. */
-function makeGeneratorFixture(opts: { withRootNodeModules: boolean; prefix?: string }): string {
+/**
+ * repo_root fixture: node_modules(+.vite) and one package with node_modules.
+ * `withAliasScopes` (SMI-5650) additionally creates real (non-symlink)
+ * node_modules/@skillsmith and node_modules/@smith-horn directories — the
+ * gate `enumerate_compose_node_modules_mounts` checks before emitting the
+ * alias-scope tmpfs overlays.
+ */
+function makeGeneratorFixture(opts: {
+  withRootNodeModules: boolean
+  withAliasScopes?: boolean
+  prefix?: string
+}): string {
   const repoRoot = tempDir(opts.prefix ?? 'wt-root-mount')
   mkdirSync(join(repoRoot, 'packages', 'foo', 'node_modules'), { recursive: true })
   writeFileSync(join(repoRoot, 'packages', 'foo', 'package.json'), '{}\n', 'utf8')
   if (opts.withRootNodeModules) {
     mkdirSync(join(repoRoot, 'node_modules', '.vite'), { recursive: true })
+  }
+  if (opts.withAliasScopes) {
+    mkdirSync(join(repoRoot, 'node_modules', '@skillsmith'), { recursive: true })
+    mkdirSync(join(repoRoot, 'node_modules', '@smith-horn'), { recursive: true })
   }
   return repoRoot
 }
@@ -185,8 +216,12 @@ describe('SMI-5626: root node_modules bind mount in the worktree override', () =
     const perPkg = `      - ${repoRoot}/packages/foo/node_modules:/app/packages/foo/node_modules:ro`
     expect(count(stdout, perPkg)).toBe(3)
 
-    // v4 marker label bumped.
-    expect(stdout).toContain('# SMI-4689/SMI-5560/SMI-5626 bind mounts v4')
+    // v5 marker label bumped (SMI-5650).
+    expect(stdout).toContain('# SMI-4689/SMI-5560/SMI-5626/SMI-5650 bind mounts v5')
+
+    // No alias-scope tmpfs entries in THIS fixture (no @skillsmith/@smith-horn
+    // dirs created) — regression guard that the tmpfs gate stays [[ -d ]]-only.
+    expect(stdout).not.toContain('type: tmpfs')
   })
 
   it('Case 2 (Darwin, no root node_modules): no root-mount line; per-package lines unaffected', () => {
@@ -210,7 +245,10 @@ describe('SMI-5626: root node_modules bind mount in the worktree override', () =
   })
 
   it('Case 3 (Linux): no volumes block at all (Darwin gate unchanged)', () => {
-    const repoRoot = makeGeneratorFixture({ withRootNodeModules: true })
+    // SMI-5650: withAliasScopes true — the alias-scope directories DO exist
+    // on disk here, proving the Darwin-only gate suppresses the new tmpfs
+    // entries too, not only the pre-existing root/per-package mounts.
+    const repoRoot = makeGeneratorFixture({ withRootNodeModules: true, withAliasScopes: true })
     const worktreePath = join(repoRoot, '.worktrees', 'wt1')
     const { status, stdout } = generate({
       worktreePath,
@@ -222,6 +260,9 @@ describe('SMI-5626: root node_modules bind mount in the worktree override', () =
     expect(stdout).not.toContain('volumes:')
     expect(stdout).not.toContain('/app/node_modules')
     expect(stdout).not.toContain(':ro')
+    expect(stdout).not.toContain('type: tmpfs')
+    expect(stdout).not.toContain('@skillsmith')
+    expect(stdout).not.toContain('@smith-horn')
     // Sanity: it is still a valid override (container names present).
     expect(stdout).toContain('container_name: smi-5626-dev-1')
   })
@@ -260,6 +301,78 @@ describe('SMI-5626: root node_modules bind mount in the worktree override', () =
         `so a linux-* @esbuild build must persist in main's host tree. Present: [${entries.join(', ')}].`
     ).toBeGreaterThan(0)
   })
+
+  it('Case 6 (Darwin, SMI-5650): alias-scope tmpfs overlays present per service with valid YAML shape', () => {
+    const repoRoot = makeGeneratorFixture({ withRootNodeModules: true, withAliasScopes: true })
+    const worktreePath = join(repoRoot, '.worktrees', 'wt1')
+    const { status, stdout } = generate({
+      worktreePath,
+      branch: 'fix/smi-5650',
+      repoRoot,
+      uname: 'Darwin',
+    })
+    expect(status).toBe(0)
+
+    // Text-level: both alias-scope tmpfs targets present, once per service.
+    const skillsmithTarget = '        target: /app/node_modules/@skillsmith'
+    const smithHornTarget = '        target: /app/node_modules/@smith-horn'
+    expect(count(stdout, skillsmithTarget)).toBe(3)
+    expect(count(stdout, smithHornTarget)).toBe(3)
+    expect(count(stdout, '      - type: tmpfs')).toBe(6) // 2 scopes * 3 services
+    expect(count(stdout, '          size: 1048576')).toBe(6)
+
+    // Regression: pre-existing root/per-package mounts are untouched by
+    // the new tmpfs entries.
+    const rootMount = `      - ${repoRoot}/node_modules:/app/node_modules:ro`
+    expect(count(stdout, rootMount)).toBe(3)
+    const perPkg = `      - ${repoRoot}/packages/foo/node_modules:/app/packages/foo/node_modules:ro`
+    expect(count(stdout, perPkg)).toBe(3)
+
+    // Structural: the WHOLE generated document parses as valid YAML (not
+    // just a string match), and each service's tmpfs entries have the
+    // exact nested shape docker compose expects: `type: tmpfs`,
+    // `target: <path>`, `tmpfs: { size: 1048576 }`.
+    const doc = parseYaml(stdout) as {
+      services: Record<string, { volumes?: Array<string | Record<string, unknown>> }>
+    }
+    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+      const volumes = doc.services[serviceName]?.volumes ?? []
+      const tmpfsEntries = volumes.filter(
+        (v): v is Record<string, unknown> =>
+          typeof v === 'object' && v !== null && (v as Record<string, unknown>).type === 'tmpfs'
+      )
+      expect(tmpfsEntries, `service ${serviceName} tmpfs entries`).toHaveLength(2)
+      const targets = tmpfsEntries.map((e) => e.target).sort()
+      expect(targets).toEqual(['/app/node_modules/@skillsmith', '/app/node_modules/@smith-horn'])
+      for (const entry of tmpfsEntries) {
+        expect(entry.tmpfs).toEqual({ size: 1048576 })
+      }
+    }
+
+    // Mount order (plan-review M1): within each service's volumes array,
+    // the root :ro mount (a plain string entry) must precede both
+    // alias-scope tmpfs entries (structured entries).
+    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+      const volumes = doc.services[serviceName]!.volumes!
+      const rootIdx = volumes.findIndex(
+        (v) => typeof v === 'string' && v.endsWith(':/app/node_modules:ro')
+      )
+      const tmpfsIdxs = volumes
+        .map((v, i) => ({ v, i }))
+        .filter(
+          ({ v }) =>
+            typeof v === 'object' && v !== null && (v as Record<string, unknown>).type === 'tmpfs'
+        )
+        .map(({ i }) => i)
+      expect(rootIdx, `service ${serviceName} root mount index`).toBeGreaterThanOrEqual(0)
+      for (const tmpfsIdx of tmpfsIdxs) {
+        expect(
+          rootIdx,
+          `service ${serviceName}: root mount must precede tmpfs index ${tmpfsIdx}`
+        ).toBeLessThan(tmpfsIdx)
+      }
+    }
+  })
 })
 
 describe('SMI-5626: worktree-docker.sh cmd_generate delegation', () => {
@@ -270,6 +383,11 @@ describe('SMI-5626: worktree-docker.sh cmd_generate delegation', () => {
     execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', repoRoot], { env })
     // Filesystem state the volumes block reads (main checkout, host tree).
     mkdirSync(join(repoRoot, 'node_modules', '.vite'), { recursive: true })
+    // SMI-5650: alias-scope dirs too, so the byte-identical delegation
+    // comparison below covers the new tmpfs lines, not only the
+    // pre-existing root/per-package ones.
+    mkdirSync(join(repoRoot, 'node_modules', '@skillsmith'), { recursive: true })
+    mkdirSync(join(repoRoot, 'node_modules', '@smith-horn'), { recursive: true })
     mkdirSync(join(repoRoot, 'packages', 'foo', 'node_modules'), { recursive: true })
     writeFileSync(join(repoRoot, 'packages', 'foo', 'package.json'), '{}\n', 'utf8')
     // cmd_generate guards on a docker-compose.yml in the worktree.
@@ -302,8 +420,12 @@ describe('SMI-5626: worktree-docker.sh cmd_generate delegation', () => {
 
     expect(stripGenerated(actual)).toBe(stripGenerated(expected))
     // And the delegated output really does carry the volumes block (not the
-    // old volumes-less heredoc).
-    expect(actual).toContain('# SMI-4689/SMI-5560/SMI-5626 bind mounts v4')
+    // old volumes-less heredoc), including the SMI-5650 alias-scope tmpfs
+    // overlays — the delegation isn't just equal on the pre-existing lines,
+    // it carries the new ones through too.
+    expect(actual).toContain('# SMI-4689/SMI-5560/SMI-5626/SMI-5650 bind mounts v5')
     expect(actual).toContain(`${repoRoot}/node_modules:/app/node_modules:ro`)
+    expect(actual).toContain('        target: /app/node_modules/@skillsmith')
+    expect(actual).toContain('        target: /app/node_modules/@smith-horn')
   })
 })
