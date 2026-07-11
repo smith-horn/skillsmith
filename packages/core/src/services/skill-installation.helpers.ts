@@ -83,15 +83,27 @@ export function extractDepIntel(skillMdContent: string): DepIntelResult {
   }
 }
 
+/**
+ * Extract + persist dependency intelligence for a skill.
+ *
+ * @returns The number of dependency rows written (inserted or upserted) this
+ *   call — i.e. `merged.length`. Because `SkillDependencyRepository.setDependencies`
+ *   upserts on (skill_id, dep_type, dep_target, dep_source), calling this
+ *   repeatedly with the same skillId/content is idempotent: the count
+ *   reflects the size of the currently-extracted dependency set on every
+ *   call, not a cumulative "newly inserted since last call" delta. Callers
+ *   that need a per-run backfill count (SMI-5645) can rely on this return
+ *   value directly.
+ */
 export function persistDependencies(
   repo: SkillDependencyRepository,
   skillId: string,
   content: string,
   declared: DepIntelResult['dep_declared']
-): void {
+): number {
   const mcpResult = extractMcpReferences(content)
   const merged = mergeDependencies(declared, mcpResult)
-  if (merged.length === 0) return
+  if (merged.length === 0) return 0
 
   const rows: SkillDependencyRow[] = merged.map((dep) => ({
     skill_id: skillId,
@@ -113,6 +125,8 @@ export function persistDependencies(
   for (const [source, sourceRows] of bySource) {
     repo.setDependencies(skillId, sourceRows, source as SkillDependencyRow['dep_source'])
   }
+
+  return rows.length
 }
 
 /** Perform skill uninstall with manifest awareness and orphan fallback. */
