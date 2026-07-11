@@ -72,6 +72,51 @@ RUN npm ci --include=dev --ignore-scripts
 # esbuild needs platform-specific binaries (@esbuild/linux-x64) which --ignore-scripts skips
 RUN npm rebuild better-sqlite3 onnxruntime-node esbuild hnswlib-node || true
 
+# SMI-5650: stash Linux-built native modules for worktree containers. Their
+# /app/node_modules is a read-only view of the (possibly macOS) host tree;
+# the entrypoint seeds these into writable tmpfs overlays at boot —
+# deterministic, offline. Keep this list in sync with NATIVE_MODULES in
+# docker-entrypoint.sh and NATIVE_MODULES_FOR_OVERLAY in scripts/_lib.sh.
+#
+# Per-module existence guard + content validation (plan-review H1): this
+# stage builds the image every consumer uses (main checkout, CI, fresh
+# clones — not just worktrees, see §7), so a missing or broken module here
+# must never fail the BUILD. Each module is independently guarded; a
+# missing source dir or a binary that fails to require() is skipped with a
+# warning baked into the image (surfaced again at container boot by
+# docker-entrypoint.sh's own existence check), not a hard build failure.
+RUN mkdir -p /opt/native-seed \
+    && for module in better-sqlite3 onnxruntime-node esbuild hnswlib-node; do \
+         if [ -d "node_modules/${module}" ]; then \
+           cp -a "node_modules/${module}" /opt/native-seed/ \
+             && node -e "require('${module}')" \
+             && echo "[deps] Seeded ${module} into /opt/native-seed (validated)" \
+             || echo "WARNING: ${module} seed missing or failed require() validation — worktree containers will fall back to npm rebuild for this module"; \
+         else \
+           echo "WARNING: node_modules/${module} not found in this image — skipping seed (worktree containers will fall back to npm rebuild)"; \
+         fi; \
+       done
+
+# SMI-5650: @esbuild is a SCOPE, not a flat module — confirmed live it is
+# REQUIRED alongside the flat `esbuild` package above: esbuild's own JS API
+# does not contain the native binary it spawns at runtime; that lives in the
+# separate platform-arch package (@esbuild/<platform>-<arch>) inside this
+# scope. A bare `node -e "require('esbuild')"` does not exercise it (esbuild
+# spawns its binary lazily, on an actual transform/build call, not at
+# require() time) — validated here via transformSync(), matching
+# docker-entrypoint.sh's validate_native_module(). Stashed/validated as its
+# own step since the loop above's per-module require() check doesn't apply
+# to a scope directory (you can't require('@esbuild')).
+RUN if [ -d "node_modules/@esbuild" ]; then \
+      mkdir -p /opt/native-seed/@esbuild \
+        && cp -a node_modules/@esbuild/. /opt/native-seed/@esbuild/ \
+        && node -e "require('esbuild').transformSync('1')" \
+        && echo "[deps] Seeded @esbuild scope into /opt/native-seed (validated)" \
+        || echo "WARNING: @esbuild scope seed missing or failed transformSync() validation — worktree containers will fall back to npm rebuild for esbuild"; \
+    else \
+      echo "WARNING: node_modules/@esbuild not found in this image — skipping seed (worktree containers will fall back to npm rebuild for esbuild)"; \
+    fi
+
 # -----------------------------------------------------------------------------
 # Stage 3: Builder - Compile TypeScript and build all packages
 # -----------------------------------------------------------------------------

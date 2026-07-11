@@ -9,122 +9,38 @@
  *        (a) every NATIVE_MODULES entry is rebuilt with --ignore-scripts=false
  *        (b) no `npm rebuild` appears without --ignore-scripts=false
  *        (c) no `if [ "${module}" = ` carve-out remains
- *   C2 — NATIVE_MODULES (bash array) equals the Dockerfile `RUN npm rebuild …` list
+ *   C2 — NATIVE_MODULES (bash array) equals the Dockerfile `RUN npm rebuild …` list.
+ *        SMI-5650 Wave 2 extends this to cross-check against scripts/_lib.sh,
+ *        the Dockerfile's stash loop, regen-lockfile.sh, and the
+ *        validate_native_module() dispatch — see the sibling
+ *        docker-entrypoint-native-rebuild-smi5650.test.ts (split out per
+ *        CLAUDE.md's 500-line guidance).
  *   #5 — The verbose-hint line carries --ignore-scripts=false
  *   L15 — The rebuild loop is nested inside the VALIDATION_FAILED -eq 1 guard
  *
- * SMI-5351: all four native modules must use --ignore-scripts=false in the
- * rebuild loop; plain `npm rebuild` is a no-op under .npmrc ignore-scripts=true.
+ * SMI-5351: all native modules must use --ignore-scripts=false in the rebuild
+ * loop; plain `npm rebuild` is a no-op under .npmrc ignore-scripts=true.
+ *
+ * SMI-5650 fix note: extractValidationFailedRegion's if/fi depth counter skips
+ * pure-comment lines (`^\s*#`) before testing for the bare words "if"/"fi".
+ * Wave 2 added an explanatory comment inside the VALIDATION_FAILED region that
+ * legitimately uses "if" twice as English prose ("Falls through to npm rebuild
+ * if the seed is missing/stale/absent OR if SKILLSMITH_...") — without the
+ * comment skip, that prose line silently desyncs the depth counter and the
+ * region never closes (extractValidationFailedRegion returns null), which took
+ * every L15/C1 test in this file down with it. Comments are still INCLUDED in
+ * the returned region text (only excluded from the depth count itself).
  */
 import { readFileSync } from 'fs'
-import { resolve, dirname } from 'path'
-import { fileURLToPath } from 'url'
 import { describe, expect, it, beforeAll } from 'vitest'
-
-// ---------------------------------------------------------------------------
-// File resolution — locate from the test file's directory, then walk up to
-// the repo root (same pattern as sibling audit-standards-*.test.ts files
-// which use readFileSync with relative paths from process.cwd()).
-// ---------------------------------------------------------------------------
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-
-// Repo root is two levels up from scripts/tests/
-const REPO_ROOT = resolve(__dirname, '..', '..')
-
-const ENTRYPOINT_PATH = resolve(REPO_ROOT, 'docker-entrypoint.sh')
-const DOCKERFILE_PATH = resolve(REPO_ROOT, 'Dockerfile')
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Reuse the parseBashArray convention from audit-standards-helpers.mjs:
- * parse a Bash array declaration `NAME=(\n  entry1\n  entry2\n)\n` and
- * return the set of string entries (stripping quotes and inline comments).
- *
- * Returns null if the named array is not present in `src` or has no multiline
- * body (e.g. inline empty `NAME=()`).
- */
-function parseBashArray(src: string, arrayName: string): Set<string> | null {
-  // Match `NAME=( ... )` capturing the body between the parens. Handles BOTH
-  // single-line `NAME=("a" "b" "c")` (the form NATIVE_MODULES uses) and
-  // multi-line array declarations.
-  const re = new RegExp(`(?:^|\\n)[\\t ]*${arrayName}=\\(([\\s\\S]*?)\\)`)
-  const m = src.match(re)
-  if (!m) return null
-  // Strip full-line comments, then extract quoted strings and barewords.
-  const body = m[1].replace(/#.*$/gm, '')
-  const entries = new Set<string>()
-  for (const raw of body.match(/"[^"]*"|'[^']*'|[^\s()]+/g) ?? []) {
-    const tok = raw.replace(/^["']|["']$/g, '').trim()
-    if (/^[a-z0-9@][a-z0-9_./-]*$/i.test(tok)) entries.add(tok)
-  }
-  return entries.size > 0 ? entries : null
-}
-
-/**
- * Parse the space-separated module list from the Dockerfile `RUN npm rebuild …`
- * line. This is a DIFFERENT shape from a bash array — tokens are space-separated
- * on a single line, terminated by `||` or end-of-line — so parseBashArray
- * cannot be reused here (C2/L18).
- *
- * Matches: `RUN npm rebuild better-sqlite3 onnxruntime-node esbuild hnswlib-node || true`
- * Returns a Set of the module token strings, or null if no such line is found.
- */
-function parseDockerfileRebuildLine(src: string): Set<string> | null {
-  // Capture everything between `npm rebuild` and `||` or end-of-line
-  const m = src.match(/^RUN\s+npm\s+rebuild\s+([\w@/.-]+(?:\s+[\w@/.-]+)*)\s*(?:\|\|.*)?$/m)
-  if (!m) return null
-  const tokens = m[1]
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-  return new Set(tokens)
-}
-
-/**
- * Extract the VALIDATION_FAILED -eq 1 guard region from docker-entrypoint.sh.
- *
- * The region is the text from the opening `if [ $VALIDATION_FAILED -eq 1 ]`
- * line through its matching `fi` line (inclusive). We use a stateful bracket
- * counter so nested if/fi pairs are handled correctly without ambiguity.
- *
- * Returns null if the guard is not found.
- */
-function extractValidationFailedRegion(src: string): string | null {
-  const lines = src.split('\n')
-
-  let startIdx = -1
-  for (let i = 0; i < lines.length; i++) {
-    if (/if\s+\[\s+\$VALIDATION_FAILED\s+-eq\s+1\s+\]/.test(lines[i])) {
-      startIdx = i
-      break
-    }
-  }
-  if (startIdx === -1) return null
-
-  // Walk forward, tracking if/fi nesting depth
-  let depth = 0
-  let endIdx = -1
-  for (let i = startIdx; i < lines.length; i++) {
-    const line = lines[i]
-    // Count `if` keywords (word-boundary match to avoid false positives)
-    if (/\bif\b/.test(line)) depth++
-    if (/\bfi\b/.test(line)) {
-      depth--
-      if (depth === 0) {
-        endIdx = i
-        break
-      }
-    }
-  }
-  if (endIdx === -1) return null
-
-  return lines.slice(startIdx, endIdx + 1).join('\n')
-}
+import {
+  ENTRYPOINT_PATH,
+  DOCKERFILE_PATH,
+  parseBashArray,
+  parseDockerfileRebuildLine,
+  flatOnly,
+  extractValidationFailedRegion,
+} from './docker-entrypoint-native-rebuild.helpers.js'
 
 // ---------------------------------------------------------------------------
 // Load files once
@@ -162,11 +78,20 @@ describe('L15: rebuild loop nesting', () => {
     // remains. Pure-comment lines legitimately discuss `npm rebuild` (the header
     // + the explanatory block above NATIVE_MODULES), so strip them first — only
     // actual command lines count (same comment-skip rule as C1(b) below).
+    //
+    // SMI-5650: also strip `echo`/`printf` lines. The Wave 2 boot-time seed
+    // step's own warning message ("… falling back to npm rebuild if
+    // validation fails …", docker-entrypoint.sh line ~61) legitimately
+    // MENTIONS npm rebuild as advisory prose in a log message — it is not a
+    // command invocation, and it lives outside the VALIDATION_FAILED region
+    // by design (the boot-time seed step runs before the region even
+    // starts). Excluding echo/printf lines keeps this test targeted at
+    // actual stray COMMAND invocations, the thing it exists to catch.
     const regionText = region as string
     const outsideCommands = entrypointSrc
       .replace(regionText, '')
       .split('\n')
-      .filter((l) => !/^\s*#/.test(l))
+      .filter((l) => !/^\s*#/.test(l) && !/^\s*(echo|printf)\b/.test(l))
       .join('\n')
     expect(outsideCommands).not.toMatch(/\bnpm\s+rebuild\b/)
   })
@@ -241,19 +166,19 @@ describe('C2: NATIVE_MODULES sync with Dockerfile', () => {
     expect(dockerModules!.size).toBeGreaterThan(0)
   })
 
-  it('NATIVE_MODULES entries equal the Dockerfile `RUN npm rebuild` modules (set equality)', () => {
+  it("NATIVE_MODULES flat (non-scope) entries equal the Dockerfile `RUN npm rebuild` modules (set equality) — @esbuild is intentionally excluded: `npm rebuild` operates on installed packages with their own build step, and a scope directory has none of its own (see docker-entrypoint-native-rebuild-smi5650.test.ts's asymmetry describe block)", () => {
     const nativeModules = parseBashArray(entrypointSrc, 'NATIVE_MODULES')
     const dockerModules = parseDockerfileRebuildLine(dockerfileSrc)
 
     expect(nativeModules).not.toBeNull()
     expect(dockerModules).not.toBeNull()
 
-    const nativeArr = [...nativeModules!].sort()
+    const nativeArr = flatOnly(nativeModules!)
     const dockerArr = [...dockerModules!].sort()
 
     expect(
       nativeArr,
-      `NATIVE_MODULES in entrypoint [${nativeArr.join(', ')}] must equal Dockerfile rebuild list [${dockerArr.join(', ')}]`
+      `NATIVE_MODULES flat entries in entrypoint [${nativeArr.join(', ')}] must equal Dockerfile rebuild list [${dockerArr.join(', ')}]`
     ).toEqual(dockerArr)
   })
 
