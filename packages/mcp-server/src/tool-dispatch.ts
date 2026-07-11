@@ -228,7 +228,16 @@ export async function dispatchToolCall(
       if (!parsed.ok) return parsed.response
       // SMI-5358: pass QuarantineRepository so over-threshold findings are persisted
       const quarantineRepo = new QuarantineRepository(toolContext.db)
-      return ok(await executeSkillRescan(parsed.data, undefined, quarantineRepo))
+      // SMI-5645: pass SkillDependencyRepository so skill_dependencies rows
+      // are backfilled for skills installed before the SMI-5639 fix shipped
+      return ok(
+        await executeSkillRescan(
+          parsed.data,
+          undefined,
+          quarantineRepo,
+          toolContext.skillDependencyRepository
+        )
+      )
     }
 
     // SMI-5392: inventory_push returns a CallToolResult directly (success or
