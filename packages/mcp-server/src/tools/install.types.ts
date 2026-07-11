@@ -225,8 +225,6 @@ export interface InstallResult {
   requiresAction?: ConflictAction[]
   /** SMI-1895: Path to backup file created during conflict resolution */
   backupPath?: string
-  /** SMI-3137: Dependency intelligence extracted during install */
-  depIntel?: import('./install.dep-helpers.js').DepIntelResult
   /**
    * SMI-4588 Wave 2 (PR #3, decision #2): Whether the install actually
    * completed. Defaults to mirroring `success` for backwards-compat. Set
