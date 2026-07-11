@@ -27,6 +27,17 @@
 # regardless of which worktree layout produced the original symlink) and
 # repointing it at that real location with an absolute path.
 #
+# SMI-5650 extension: the hoisted-alias branch below now CREATES (not just
+# repairs) workspace-alias symlinks. Post-SMI-5626 a worktree container's
+# root /node_modules is bind-mounted read-only, so the old repair-only
+# path (gated on a link already existing) hit EROFS and couldn't help;
+# SMI-5650 layers a writable tmpfs over each npm scope dir
+# (/node_modules/@skillsmith, @smith-horn) that starts EMPTY at every boot,
+# so this script must seed it. The alias name is derived from each
+# package's own package.json "name" field, covering any scope (e.g.
+# @smith-horn/enterprise — a pre-existing gap), building on the same
+# SMI-5570/SMI-5074 mount(2) symlink-clamping mechanism described above.
+#
 # Usage: bash scripts/lib/repair-worktree-container-symlinks.sh [packages-dir] [node-modules-dir]
 #   packages-dir      default: /app/packages
 #   node-modules-dir   default: /node_modules (the hoisted workspace root)
@@ -78,18 +89,38 @@ if [ -d "$PACKAGES_DIR" ]; then
             fi
         fi
 
-        hoisted_link="$HOISTED_NODE_MODULES_DIR/@skillsmith/$pkg"
-        if [ -L "$hoisted_link" ]; then
-            hoisted_resolved="$(readlink -f "$hoisted_link" 2>/dev/null || true)"
-            correct_target="$PACKAGES_DIR/$pkg"
-            if [ "$hoisted_resolved" != "$(cd "$correct_target" 2>/dev/null && pwd || echo "$correct_target")" ]; then
-                rm -f "$hoisted_link" 2>/dev/null || true
-                if ln -sfn "$correct_target" "$hoisted_link" 2>/dev/null; then
-                    repaired_count=$((repaired_count + 1))
+        # SMI-5650: hoisted workspace-alias CREATION (not just repair). The
+        # scope dirs (/node_modules/@skillsmith, @smith-horn) are per-boot
+        # empty writable tmpfs overlays now (see scripts/_lib.sh); derive
+        # each package's real npm name from its own package.json instead of
+        # assuming @skillsmith/<dir-basename> — fixes the pre-existing gap
+        # where @smith-horn/enterprise was never covered. Unscoped aliases
+        # (skillsmith-cli, skillsmith-vscode) are individual leaf symlinks
+        # directly under the READ-ONLY root mount: unrepairable here and
+        # deliberately out of scope (no bare-specifier importers exist,
+        # verified SMI-5650 plan §2.2) — skipped with a log line so a future
+        # bare import fails loudly with a breadcrumb, not silently.
+        pkg_json="$pkg_dir/package.json"
+        if [ -f "$pkg_json" ]; then
+            pkg_real_name="$(sed -n 's/^[[:space:]]*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg_json" 2>/dev/null | head -1)"
+            case "$pkg_real_name" in
+            @*/*)
+                scope_dir="$HOISTED_NODE_MODULES_DIR/${pkg_real_name%%/*}"
+                alias_link="$scope_dir/${pkg_real_name#*/}"
+                correct_target="$PACKAGES_DIR/$pkg"
+                if [ -d "$scope_dir" ] && [ -w "$scope_dir" ]; then
+                    if [ "$(readlink "$alias_link" 2>/dev/null || true)" != "$correct_target" ]; then
+                        if ln -sfn "$correct_target" "$alias_link" 2>/dev/null; then
+                            repaired_count=$((repaired_count + 1))
+                        else
+                            echo -e "${YELLOW}[repair] Could not link ${alias_link} -> ${correct_target} (non-fatal). If this persists across restarts, run scripts/repair-worktrees.sh on the host, then recreate this container.${NC}"
+                        fi
+                    fi
                 else
-                    echo -e "${YELLOW}[repair] Could not repair ${hoisted_link} (non-fatal)${NC}"
+                    echo -e "${YELLOW}[repair] ${scope_dir} missing/read-only — alias ${pkg_real_name} not linked. Likely a stale docker-compose.override.yml (pre-SMI-5650): run scripts/repair-worktrees.sh on the host, then recreate this container.${NC}"
                 fi
-            fi
+                ;;
+            esac
         fi
     done
 fi

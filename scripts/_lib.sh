@@ -579,6 +579,57 @@ enumerate_compose_node_modules_mounts() {
         done
     fi
 
+    # SMI-5650 (Wave 1): writable tmpfs overlays over the read-only root mount,
+    # for the workspace-alias SCOPE directories only.
+    #
+    # Main's node_modules/@skillsmith + @smith-horn contain ONLY npm-workspaces
+    # alias symlinks whose relative targets (../../packages/<pkg>) clamp to
+    # /packages/<pkg> (empty scaffolding) inside the container's shallower
+    # nesting — the SMI-5570/SMI-5074 mount(2) mechanism, this time observed at
+    # require()-resolution time rather than mount time (SMI-5650). A tmpfs at the
+    # SCOPE level shadows those broken links with an empty writable dir that
+    # docker-entrypoint.sh's repair-worktree-container-symlinks.sh repopulates at
+    # every boot with links to the worktree's OWN /app/packages/<pkg>. The
+    # destination's final path component is a REAL DIRECTORY on the host (guarded
+    # below), never a symlink — this is what prevents reproducing the leaf-symlink
+    # escape that crashed a prior per-alias mount attempt ("too many levels of
+    # symlinks", plan §1.4). Same child-inside-read-only-parent shape as the
+    # .vite/.vite-temp overlays above.
+    #
+    # tmpfs (not another host-backed bind mount) is deliberate: it adds ZERO
+    # virtiofs mounts, so the SMI-5560 host_mark propagation hazard (plan §1.5)
+    # cannot apply even in principle, and there is no host-side directory to
+    # create, gitignore, or keep in sync with worktree regen.
+    #
+    # MOUNT ORDER IS LOAD-BEARING (SMI-5650 plan-review M1): this loop MUST stay
+    # textually AFTER the root `:ro` mount block above. Compose applies a
+    # service's `volumes:` entries in list order, and these scope-directory tmpfs
+    # destinations only resolve correctly (plan §1.4) once the root mount has
+    # already landed and exposed @skillsmith/@smith-horn as real directories to
+    # mount over. Reordering the two blocks silently reintroduces the crash risk;
+    # a generated-YAML line-order test asserts the root mount precedes each tmpfs
+    # target so a future reorder fails CI instead.
+    #
+    # NOTE: Wave 2 (SMI-5650) will append the four native-module entries
+    # (better-sqlite3/onnxruntime-node/esbuild/hnswlib-node, seeded from the
+    # image's /opt/native-seed at boot, larger tmpfs size) to THIS SAME loop —
+    # that is why this is a loop over a small list rather than two flat emissions.
+    # Only the 2 alias scopes exist in Wave 1.
+    local overlay_dir
+    for overlay_dir in @skillsmith @smith-horn; do
+        # Real-directory guard: the leaf must exist AND must NOT be a symlink (a
+        # symlink leaf would escape via mount(2) — see the notes above and plan
+        # §1.4). Missing (fresh clone, pre-install) or unexpectedly-a-symlink →
+        # skip: fail toward today's known breakage, never toward a
+        # container-create failure.
+        if [[ -d "$repo_root/node_modules/$overlay_dir" && ! -L "$repo_root/node_modules/$overlay_dir" ]]; then
+            printf '      - type: tmpfs\n'
+            printf '        target: /app/node_modules/%s\n' "$overlay_dir"
+            printf '        tmpfs:\n'
+            printf '          size: 1048576\n'
+        fi
+    done
+
     # Per-package node_modules mounts, READ-ONLY (SMI-5560). Same gate as
     # link_worktree_package_node_modules:358.
     for pkg_dir in "$repo_root"/packages/*/; do
@@ -663,7 +714,7 @@ generate_docker_override_to_stdout() {
         mounts="$(enumerate_compose_node_modules_mounts "$repo_root")"
         if [[ -n "$mounts" ]]; then
             volumes_marker="    volumes:
-      # SMI-4689/SMI-5560/SMI-5626 bind mounts v4 (root + per-package node_modules, read-only):
+      # SMI-4689/SMI-5560/SMI-5626/SMI-5650 bind mounts v5 (root + per-package node_modules read-only + alias-scope tmpfs overlays):
       # the ROOT node_modules and each package's node_modules are bind-mounted
       # READ-ONLY from the main repo so workspace-pinned + prebuilt-native +
       # root-hoisted deps resolve inside the container (replaces the SMI-4381
@@ -674,7 +725,10 @@ generate_docker_override_to_stdout() {
       # removed: they shadowed the worktree's own source with main's and created
       # the same-host-dir double-mount that made :ro trip the virtiofs host_mark
       # regression. Alias resolution now flows through npm's own seeded workspace
-      # symlink to the worktree's OWN /app/packages/<pkg>. See
+      # symlink to the worktree's OWN /app/packages/<pkg>. SMI-5650 additionally
+      # layers small writable tmpfs overlays at the @skillsmith/@smith-horn scope
+      # dirs on top of the :ro root mount so the entrypoint can (re)create those
+      # workspace aliases pointing at the worktree's own packages. See
       # enumerate_compose_node_modules_mounts for the root/per-package mounts and
       # the mount(2) symlink-clamping notes there.
 "
