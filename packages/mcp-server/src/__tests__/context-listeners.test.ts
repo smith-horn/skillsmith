@@ -1,10 +1,24 @@
 /**
- * SMI-4694: Listener-count audit for context.ts (Module 2).
+ * SMI-4694 (updated SMI-5649): Listener-count audit for the tool-context
+ * factories (Module 2).
  *
- * Verifies that createToolContext + closeToolContext is symmetric for
- * SIGTERM/SIGINT signal handlers, including when backgroundSync and
- * llmFailover paths are forced on (the only conditions that register
- * handlers — see context.ts:244-260).
+ * Prior to SMI-5649, the tool-context factories registered their OWN
+ * SIGTERM/SIGINT handlers whenever backgroundSync or llmFailover was
+ * enabled — this test verified that registration was symmetric with
+ * `closeToolContext`/`disposeTestContext`. SMI-5649 deleted that
+ * registration entirely (both the async factory AND its sync sibling,
+ * `createToolContext` in context.ts — the sync sibling's identical latent
+ * bug found during the Wave A design pass): it was the root cause of the
+ * shutdown race (two independent, unordered handler sets could both fire on
+ * the same signal, racing a fire-and-forget `backgroundSync?.stop()`
+ * against `index.ts`'s db close). Signal ownership now belongs SOLELY to
+ * `index.ts`'s single shutdown coordinator (`shutdown.ts`) — see
+ * docs/internal/implementation/mcp-shutdown-followup-hardening-wave-a-design.md
+ * §Deliverable 4.
+ *
+ * These tests now assert the NEW invariant: creating/closing/disposing a
+ * tool context NEVER touches process-level SIGTERM/SIGINT listeners at all,
+ * even with backgroundSync and llmFailover both enabled.
  *
  * Reference pattern: packages/core/tests/api/client.events.test.ts:39-72
  */
@@ -14,8 +28,8 @@ import { SyncConfigRepository } from '@skillsmith/core'
 import { closeToolContext, createToolContextAsync } from '../context.js'
 import { createTestContext, disposeTestContext } from './test-utils.js'
 
-describe('SMI-4694: context.ts listener-count audit', () => {
-  it('does NOT leak SIGTERM/SIGINT listeners when sync + failover are enabled', async () => {
+describe('SMI-4694/SMI-5649: context.ts listener-count audit', () => {
+  it('never registers SIGTERM/SIGINT listeners, even when sync + failover are enabled', async () => {
     const before = {
       sigterm: process.listenerCount('SIGTERM'),
       sigint: process.listenerCount('SIGINT'),
@@ -39,11 +53,12 @@ describe('SMI-4694: context.ts listener-count audit', () => {
 
       // Note: createToolContextAsync re-creates the DB; the seed above is mostly
       // a sanity probe that SyncConfigRepository.enable() does not throw.
-      // The actual handler registration is gated on syncConfig.enabled
-      // returning true, which is the default for fresh DBs created with
-      // ensureTable() — see SyncConfigRepository.ts:174 ('enabled BOOLEAN
-      // DEFAULT 1'). With backgroundSyncConfig.enabled !== false AND
-      // llmFailoverConfig.enabled === true, both branches register handlers.
+      // Service construction is gated on syncConfig.enabled returning true,
+      // which is the default for fresh DBs created with ensureTable() — see
+      // SyncConfigRepository.ts:174 ('enabled BOOLEAN DEFAULT 1'). With
+      // backgroundSyncConfig.enabled !== false AND llmFailoverConfig.enabled
+      // === true, both services ARE created — but post-SMI-5649, neither
+      // registers a process-level signal listener.
       const ctx = await createToolContextAsync({
         dbPath: ':memory:',
         apiClientConfig: { offlineMode: true },
@@ -51,15 +66,18 @@ describe('SMI-4694: context.ts listener-count audit', () => {
         llmFailoverConfig: { enabled: true },
       })
 
-      // Sanity: at least one handler must be registered for the audit to
-      // be meaningful — otherwise the test passes trivially even if dispose
-      // is broken.
+      // Sanity: the services themselves must actually be constructed for
+      // this audit to be meaningful (otherwise "no listeners" would be
+      // trivially true because nothing was created).
+      expect(ctx.backgroundSync).toBeDefined()
+      expect(ctx.llmFailover).toBeDefined()
+
       const mid = {
         sigterm: process.listenerCount('SIGTERM'),
         sigint: process.listenerCount('SIGINT'),
       }
-      expect(mid.sigterm).toBeGreaterThan(before.sigterm)
-      expect(mid.sigint).toBeGreaterThan(before.sigint)
+      expect(mid.sigterm).toBe(before.sigterm)
+      expect(mid.sigint).toBe(before.sigint)
 
       await closeToolContext(ctx)
     }
@@ -73,7 +91,7 @@ describe('SMI-4694: context.ts listener-count audit', () => {
     expect(after.sigint).toBe(before.sigint)
   })
 
-  it('disposeTestContext is symmetric with createTestContext', async () => {
+  it('disposeTestContext is symmetric with createTestContext (no listeners registered or leaked)', async () => {
     const before = {
       sigterm: process.listenerCount('SIGTERM'),
       sigint: process.listenerCount('SIGINT'),
@@ -89,9 +107,11 @@ describe('SMI-4694: context.ts listener-count audit', () => {
       sigint: process.listenerCount('SIGINT'),
     }
 
-    // createTestContext uses offline mode; backgroundSync default is on but
-    // syncConfig.enabled defaults to TRUE (DB schema default), so handlers
-    // ARE registered. disposeTestContext must remove them symmetrically.
+    // createTestContext uses offline mode; backgroundSync default is on and
+    // syncConfig.enabled defaults to TRUE (DB schema default), so the
+    // service IS constructed — but post-SMI-5649 it no longer registers a
+    // process-level signal listener. disposeTestContext still must not leak
+    // (trivially true now, but kept as a regression guard).
     expect(after.sigterm).toBe(before.sigterm)
     expect(after.sigint).toBe(before.sigint)
   })

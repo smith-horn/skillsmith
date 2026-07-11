@@ -303,31 +303,16 @@ describe('Context Module', () => {
       })
     })
 
-    describe('signal handler registration', () => {
-      it('should register signal handlers when services are created', async () => {
-        process.env.SKILLSMITH_LLM_FAILOVER_ENABLED = 'true'
-
-        const context = await createToolContextAsync({ dbPath: ':memory:' })
-
-        expect(context._signalHandlers).toBeDefined()
-        expect(context._signalHandlers!.length).toBeGreaterThan(0)
-
-        await closeToolContext(context)
-      })
-
-      it('should not register signal handlers without services', async () => {
-        process.env.SKILLSMITH_BACKGROUND_SYNC = 'false'
-
-        const context = await createToolContextAsync({
-          dbPath: ':memory:',
-          backgroundSyncConfig: { enabled: false },
-        })
-
-        expect(context._signalHandlers).toBeUndefined()
-
-        await closeToolContext(context)
-      })
-    })
+    // SMI-5649: `_signalHandlers` was deleted from `ToolContext` — the factory
+    // no longer registers its own process-level SIGTERM/SIGINT handlers at
+    // all (that was the root cause of the shutdown race fixed in this wave).
+    // Signal ownership now belongs solely to index.ts's single shutdown
+    // coordinator (shutdown.ts). The invariant this "signal handler
+    // registration" describe block used to cover — exactly one
+    // SIGTERM/SIGINT registration site — is now covered by
+    // shutdown.test.ts's dedicated in-process listenerCount unit test and by
+    // tests/context-async-listeners.test.ts / __tests__/context-listeners.test.ts
+    // (updated to assert this factory registers ZERO listeners).
   })
 
   describe('closeToolContext', () => {
@@ -340,17 +325,17 @@ describe('Context Module', () => {
       expect(() => context.db.exec('SELECT 1')).toThrow()
     })
 
-    it('should remove signal handlers', async () => {
+    it('should not touch process-level signal listeners (SMI-5649 — see context-listeners.test.ts for the full audit)', async () => {
       process.env.SKILLSMITH_LLM_FAILOVER_ENABLED = 'true'
 
+      const before = process.listenerCount('SIGTERM')
       const context = await createToolContextAsync({ dbPath: ':memory:' })
-      const initialHandlerCount = context._signalHandlers?.length ?? 0
 
-      expect(initialHandlerCount).toBeGreaterThan(0)
+      expect(process.listenerCount('SIGTERM')).toBe(before)
 
       await closeToolContext(context)
 
-      // Signal handlers should be removed (verified by not causing memory leak)
+      expect(process.listenerCount('SIGTERM')).toBe(before)
     })
 
     it('should stop background sync if running', async () => {

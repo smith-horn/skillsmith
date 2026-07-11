@@ -37,6 +37,15 @@ export interface SyncOptions {
   pageSize?: number
   /** Progress callback */
   onProgress?: (progress: SyncProgress) => void
+  /**
+   * Abort signal (SMI-5649). Checked at loop and pre-write boundaries so a
+   * shutdown quiesce can stop an in-flight sync before it writes against a
+   * db that is about to be closed. Every driver write is synchronous, so
+   * once the signal is aborted, no new write ever begins — this is what
+   * makes it safe for the coordinator to proceed to `db.close()` once its
+   * bounded quiesce timeout elapses, even if this method hasn't returned yet.
+   */
+  signal?: AbortSignal
 }
 
 /**
@@ -120,7 +129,7 @@ export class SyncEngine {
    * Run sync operation
    */
   async sync(options: SyncOptions = {}): Promise<SyncResult> {
-    const { force = false, dryRun = false, pageSize = 100, onProgress } = options
+    const { force = false, dryRun = false, pageSize = 100, onProgress, signal } = options
 
     const startTime = Date.now()
     const errors: string[] = []
@@ -177,10 +186,17 @@ export class SyncEngine {
       const seenIds = new Set<string>()
 
       for (const searchQuery of searchQueries) {
+        // SMI-5649: stop fetching new query batches once aborted.
+        if (signal?.aborted) break
         offset = 0
         hasMore = true
 
         while (hasMore) {
+          // SMI-5649: stop paginating the current query once aborted.
+          if (signal?.aborted) {
+            hasMore = false
+            break
+          }
           try {
             const response = await this.apiClient.search({
               query: searchQuery,
@@ -257,17 +273,26 @@ export class SyncEngine {
       })
 
       // Upsert changed skills
-      if (!dryRun && skillsToProcess.length > 0) {
-        const stats = await this.upsertSkills(skillsToProcess, (current) => {
-          onProgress?.({
-            phase: 'upserting',
-            current,
-            total: skillsToProcess.length,
-            skillsProcessed: totalProcessed,
-            skillsChanged: skillsToProcess.length,
-            message: `Upserting skill ${current}/${skillsToProcess.length}...`,
-          })
-        })
+      // SMI-5649: if aborted before any writes began, skip the upsert
+      // entirely and report as if nothing changed — never start a partial
+      // write once the shutdown quiesce has signaled abort.
+      if (signal?.aborted) {
+        skillsUnchanged = allSkills.length
+      } else if (!dryRun && skillsToProcess.length > 0) {
+        const stats = await this.upsertSkills(
+          skillsToProcess,
+          (current) => {
+            onProgress?.({
+              phase: 'upserting',
+              current,
+              total: skillsToProcess.length,
+              skillsProcessed: totalProcessed,
+              skillsChanged: skillsToProcess.length,
+              message: `Upserting skill ${current}/${skillsToProcess.length}...`,
+            })
+          },
+          signal
+        )
 
         skillsAdded = stats.added
         skillsUpdated = stats.updated
@@ -372,13 +397,18 @@ export class SyncEngine {
    */
   private async upsertSkills(
     skills: ApiSearchResult[],
-    onProgress?: (current: number) => void
+    onProgress?: (current: number) => void,
+    signal?: AbortSignal
   ): Promise<UpsertStats> {
     let added = 0
     let updated = 0
     let unchanged = 0
 
     for (let i = 0; i < skills.length; i++) {
+      // SMI-5649: stop before the next skill once aborted. Each
+      // already-issued skillRepo.create/update + recordVersion call above
+      // this point is already committed — we simply don't start another.
+      if (signal?.aborted) break
       const skill = skills[i]
       const existing = this.skillRepo.findById(skill.id)
 

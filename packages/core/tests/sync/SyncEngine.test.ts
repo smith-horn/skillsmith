@@ -19,7 +19,7 @@ import type { SkillsmithApiClient, ApiSearchResult } from '../../src/api/client.
  * All methods return resolved promises so SyncEngine can call recordVersion
  * after each upsert without errors.
  */
-function createMockSkillVersionRepo(): SkillVersionRepository {
+export function createMockSkillVersionRepo(): SkillVersionRepository {
   return {
     recordVersion: vi.fn().mockResolvedValue(undefined),
     pruneVersions: vi.fn().mockResolvedValue(undefined),
@@ -33,7 +33,7 @@ function createMockSkillVersionRepo(): SkillVersionRepository {
  * Create a mock skill for testing
  * Note: quality_score must be between 0 and 1 (database constraint)
  */
-function createMockSkill(
+export function createMockSkill(
   id: string,
   updatedAt: string = new Date().toISOString()
 ): ApiSearchResult {
@@ -56,7 +56,7 @@ function createMockSkill(
 /**
  * Create a mock API client with customizable behavior
  */
-function createMockApiClient(
+export function createMockApiClient(
   config: {
     offline?: boolean
     healthStatus?: 'healthy' | 'degraded' | 'unhealthy'
@@ -374,135 +374,6 @@ describe('SyncEngine', () => {
       // Each query paginates through results: 8 queries × 2 pages (100 + 50) = 16 calls
       // Skills are deduplicated across queries
       expect(apiClient.search as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(16)
-    })
-  })
-
-  describe('sync - history tracking', () => {
-    it('should record sync history on success', async () => {
-      const skills = [createMockSkill('test/skill-1')]
-      const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        createMockSkillVersionRepo()
-      )
-
-      await engine.sync()
-
-      const history = syncHistoryRepo.getHistory()
-      expect(history).toHaveLength(1)
-      expect(history[0].status).toBe('success')
-      expect(history[0].skillsAdded).toBe(1)
-    })
-
-    it('should record sync history on failure', async () => {
-      const apiClient = createMockApiClient({
-        throwOnSearch: new Error('Network failure'),
-      })
-      const engine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        createMockSkillVersionRepo()
-      )
-
-      await engine.sync()
-
-      const history = syncHistoryRepo.getHistory()
-      expect(history).toHaveLength(1)
-      expect(history[0].status).toBe('failed')
-      expect(history[0].errorMessage).toContain('Network failure')
-    })
-
-    it('should update sync config on success', async () => {
-      const skills = [createMockSkill('test/skill-1')]
-      const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        createMockSkillVersionRepo()
-      )
-
-      await engine.sync()
-
-      const config = syncConfigRepo.getConfig()
-      expect(config.lastSyncAt).not.toBeNull()
-      expect(config.lastSyncCount).toBe(1)
-      expect(config.lastSyncError).toBeNull()
-    })
-
-    it('should set error in config on failure', async () => {
-      const apiClient = createMockApiClient({ offline: true })
-      const engine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        createMockSkillVersionRepo()
-      )
-
-      await engine.sync()
-
-      const config = syncConfigRepo.getConfig()
-      expect(config.lastSyncError).toBe('API client is in offline mode. Cannot sync.')
-    })
-  })
-
-  describe('getStatus', () => {
-    it('should return sync status summary', () => {
-      const apiClient = createMockApiClient()
-      const engine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        createMockSkillVersionRepo()
-      )
-
-      const status = engine.getStatus()
-
-      expect(status).toHaveProperty('config')
-      expect(status).toHaveProperty('lastRun')
-      expect(status).toHaveProperty('isRunning')
-      expect(status).toHaveProperty('isDue')
-    })
-
-    it('should show sync is due when never synced', () => {
-      const apiClient = createMockApiClient()
-      const engine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        createMockSkillVersionRepo()
-      )
-
-      const status = engine.getStatus()
-
-      expect(status.isDue).toBe(true)
-      expect(status.lastRun).toBeNull()
-    })
-
-    it('should reflect running state', async () => {
-      const apiClient = createMockApiClient()
-      const engine = new SyncEngine(
-        apiClient,
-        skillRepo,
-        syncConfigRepo,
-        syncHistoryRepo,
-        createMockSkillVersionRepo()
-      )
-
-      // Start a run manually
-      syncHistoryRepo.startRun()
-
-      const status = engine.getStatus()
-      expect(status.isRunning).toBe(true)
     })
   })
 })

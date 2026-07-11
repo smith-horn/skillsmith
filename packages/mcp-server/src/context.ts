@@ -238,26 +238,18 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     }
   }
 
-  // Create signal handlers for cleanup (stored for removal to prevent memory leaks)
-  const signalHandlers: Array<{ signal: NodeJS.Signals; handler: () => void }> = []
-
-  if (backgroundSync || llmFailover) {
-    const cleanup = () => {
-      backgroundSync?.stop()
-      llmFailover?.close()
-    }
-
-    const sigTermHandler = () => cleanup()
-    const sigIntHandler = () => cleanup()
-
-    process.on('SIGTERM', sigTermHandler)
-    process.on('SIGINT', sigIntHandler)
-
-    signalHandlers.push(
-      { signal: 'SIGTERM', handler: sigTermHandler },
-      { signal: 'SIGINT', handler: sigIntHandler }
-    )
-  }
+  // SMI-5649 (Finding 1): this factory no longer registers its own
+  // SIGTERM/SIGINT handlers — structurally identical to the bug fixed in
+  // context.async.ts (Deliverable 4). This sync `createToolContext` is only
+  // called by the unused `getToolContext` singleton (the running MCP server
+  // uses `getToolContextAsync` -> context.async.ts exclusively), so it never
+  // corrupted the runtime `listenerCount`, but it DID make the "exactly one
+  // registration site" invariant false: the Surface Grounding convention
+  // check (`grep -rn "process.on('SIG" packages/mcp-server/src`) would still
+  // return this file as a second hit. Signal ownership now belongs solely to
+  // `index.ts`'s single shutdown coordinator (`shutdown.ts`). See
+  // docs/internal/implementation/mcp-shutdown-followup-hardening-wave-a-design.md
+  // §0 (Finding 1) and §Deliverable 4.
 
   return {
     db,
@@ -270,7 +262,6 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     distinctId,
     backgroundSync,
     llmFailover,
-    _signalHandlers: signalHandlers.length > 0 ? signalHandlers : undefined,
   }
 }
 
@@ -282,16 +273,11 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
  * @param context - Tool context to close
  */
 export async function closeToolContext(context: ToolContext): Promise<void> {
-  // Remove signal handlers to prevent memory leaks
-  if (context._signalHandlers) {
-    for (const { signal, handler } of context._signalHandlers) {
-      process.removeListener(signal, handler)
-    }
-  }
-
   // Stop background sync service if running
   if (context.backgroundSync) {
-    context.backgroundSync.stop()
+    // SMI-5649: stop() is now awaitable (aborts + awaits any in-flight
+    // sync) — was fire-and-forget.
+    await context.backgroundSync.stop()
   }
 
   // SMI-1524: Close LLM failover chain if initialized

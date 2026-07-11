@@ -81,7 +81,8 @@ import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
 // SMI-5479: flush-on-shutdown wiring lives in shutdown.js (own module — no
 // top-level side effects, so it stays independently unit-testable; this file
 // has `main().catch(...)` at module scope, which importing would trigger).
-import { createShutdownTrigger } from './shutdown.js'
+import { createShutdownTrigger, startPeriodicFlush } from './shutdown.js'
+import { quiesceBackgroundSync } from './index.shutdown-helpers.js'
 // SMI-5039: probe extracted from this file to @skillsmith/core/embeddings/probe.
 // The call site (before server.connect) is unchanged; only the implementation
 // moved so doc-retrieval-mcp + cli can share the same audited probe contract.
@@ -326,16 +327,24 @@ function runStartupDiagnostics(): void {
 // contract (hard 2 s timeout, try/catch wrapper, stderr-only, never throws).
 // Call site below preserved verbatim — invoke before server.connect(transport).
 
-// SMI-5479 (pass 2): flush-on-shutdown trigger — see shutdown.ts for the
-// rationale and the bounded-flush implementation. Registering ANY listener
-// for SIGTERM/SIGINT overrides Node's default terminate-on-signal behavior,
-// so this explicitly exits once the bounded flush settles, preserving
-// today's default (process exits promptly on those signals) instead of
-// leaving the process hanging.
-const shutdownAndExit = createShutdownTrigger(
-  () => process.exit(0),
-  () => toolContext?.db
-)
+// SMI-5479 (pass 2) / SMI-5649 (extended): the ONE shutdown-trigger
+// registration site — see shutdown.ts for the coordinator's ordered
+// sequence (quiesce -> close LLM failover -> close/persist db -> flush
+// telemetry). `context.async.ts` and `context.ts` previously each registered
+// their own independent SIGTERM/SIGINT handlers whose fire-and-forget
+// `backgroundSync?.stop()` raced this trigger's db close with no ordering
+// guarantee (SMI-5649) — both are now deleted; this is the only site.
+// Registering ANY listener for SIGTERM/SIGINT overrides Node's default
+// terminate-on-signal behavior, so this explicitly exits once the sequence
+// settles, preserving today's default (process exits promptly on those
+// signals) instead of leaving the process hanging. Hooks are late-bound
+// (mirroring `getDb`) since `toolContext` isn't assigned until inside
+// `main()`, after this module-scope call.
+const shutdownAndExit = createShutdownTrigger(() => process.exit(0), {
+  getDb: () => toolContext?.db,
+  quiesce: () => quiesceBackgroundSync(toolContext?.backgroundSync),
+  closeLlmFailover: () => toolContext?.llmFailover?.close(),
+})
 
 // Start server
 async function main() {
@@ -365,6 +374,9 @@ async function main() {
     console.error(
       `Database initialized at: ${process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'}`
     )
+    // SMI-5640: arm the periodic autosave timer now that toolContext exists.
+    // No-op unless the db is WASM + file-backed (see shutdown.ts).
+    startPeriodicFlush(() => toolContext?.db)
   } catch (error) {
     const errorDetail = error instanceof Error ? error.message : String(error)
     // SMI-5615: single '\n'-joined message reproduces the prior 8-line stderr output.

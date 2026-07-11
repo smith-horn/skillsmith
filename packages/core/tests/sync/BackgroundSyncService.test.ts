@@ -11,12 +11,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { SyncEngine, SyncResult } from '../../src/sync/SyncEngine.js'
+import type { SyncConfigRepository } from '../../src/repositories/SyncConfigRepository.js'
 import {
   BackgroundSyncService,
   createBackgroundSyncService,
 } from '../../src/sync/BackgroundSyncService.js'
-import type { SyncEngine, SyncResult } from '../../src/sync/SyncEngine.js'
-import type { SyncConfigRepository } from '../../src/repositories/SyncConfigRepository.js'
+
+// SMI-5649: BackgroundSyncService.abort.test.ts covers the new
+// abort/awaitable-stop() behavior and the default onSyncError logging
+// (which requires mocking `createLogger` before module load — split there
+// to avoid an unused mock in this file, and to stay under the 500-LOC
+// file-size gate).
 
 /** Flush microtask queue so fire-and-forget promises resolve */
 function flushPromises(): Promise<void> {
@@ -27,7 +33,7 @@ function flushPromises(): Promise<void> {
 // Mock Factories
 // ============================================================================
 
-function createMockSyncResult(overrides?: Partial<SyncResult>): SyncResult {
+export function createMockSyncResult(overrides?: Partial<SyncResult>): SyncResult {
   return {
     success: true,
     skillsAdded: 2,
@@ -41,13 +47,13 @@ function createMockSyncResult(overrides?: Partial<SyncResult>): SyncResult {
   }
 }
 
-function createMockSyncEngine(result?: SyncResult): SyncEngine {
+export function createMockSyncEngine(result?: SyncResult): SyncEngine {
   return {
     sync: vi.fn().mockResolvedValue(result ?? createMockSyncResult()),
   } as unknown as SyncEngine
 }
 
-function createMockConfigRepo(overrides?: {
+export function createMockConfigRepo(overrides?: {
   enabled?: boolean
   lastSyncAt?: string | null
   isSyncDue?: boolean
