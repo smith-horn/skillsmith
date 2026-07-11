@@ -46,8 +46,6 @@ export interface ToolContext {
   backgroundSync?: BackgroundSyncService
   /** LLM failover chain for multi-provider support (SMI-1524) */
   llmFailover?: LLMFailoverChain
-  /** Internal: Signal handlers for cleanup (prevents memory leaks) */
-  _signalHandlers?: Array<{ signal: NodeJS.Signals; handler: () => void }>
 }
 
 /**

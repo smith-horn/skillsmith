@@ -19,9 +19,12 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, statSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import * as http from 'node:http'
+import type { AddressInfo } from 'node:net'
 import * as os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { createToolContextAsync, closeToolContext } from '../src/context.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -177,6 +180,224 @@ describe.skipIf(skipInPrePush)('SMI-5639 shutdown persistence — subprocess SIG
       expect(existsSync(tmpDbPath)).toBe(true)
       const stats = statSync(tmpDbPath)
       expect(stats.size).toBeGreaterThan(0)
+    } finally {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        proc.kill('SIGKILL')
+      }
+    }
+  }, 75_000)
+
+  /**
+   * SMI-5649 Wave A Step 4: the race-fix proof. Before this wave,
+   * `context.async.ts` registered its OWN independent SIGTERM/SIGINT
+   * handlers whose `backgroundSync?.stop()` was fire-and-forget — it did not
+   * await the in-flight sync, so a write from `SyncEngine.upsertSkills()`
+   * could still be issued after `index.ts`'s independently-registered
+   * handlers had already closed the db. This test forces a REAL background
+   * sync to be genuinely in flight (deliberately does NOT set
+   * `SKILLSMITH_BACKGROUND_SYNC=false`, unlike the test above) by pointing
+   * the API client at a local HTTP stub (`SKILLSMITH_API_URL`) that stalls
+   * its `/skills-search` response, then sends SIGTERM while that request is
+   * still pending. The coordinator must quiesce (abort + await) that sync
+   * before closing the db — a clean exit 0 and a valid persisted file prove
+   * no write raced the close.
+   */
+  it('an in-flight background sync at SIGTERM time settles cleanly before db close (no write races the close)', async () => {
+    tmpDbPath = path.join(
+      os.tmpdir(),
+      `skillsmith-shutdown-subprocess-race-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
+    )
+
+    let searchRequestReceived: () => void
+    const searchRequestReceivedPromise = new Promise<void>((resolve) => {
+      searchRequestReceived = resolve
+    })
+
+    // Minimal local stub: /health responds fast (checkApiHealth's own 5s
+    // timeout must not trip); /skills-search stalls for well longer than the
+    // test needs to observe + send SIGTERM, simulating a genuinely in-flight
+    // sync request at signal time.
+    const stubServer = http.createServer((req, res) => {
+      if (req.url?.startsWith('/health')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ status: 'healthy', version: '1.0.0' }))
+        return
+      }
+      if (req.url?.startsWith('/skills-search')) {
+        searchRequestReceived()
+        // Never respond within this test's lifetime — the abort signal (not
+        // a resolved/rejected fetch) is what ends this request from the
+        // client's perspective once quiesce runs.
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+
+    await new Promise<void>((resolve) => stubServer.listen(0, '127.0.0.1', resolve))
+    const stubPort = (stubServer.address() as AddressInfo).port
+
+    const proc = spawn('node', [DIST_ENTRY], {
+      env: {
+        ...process.env,
+        SKILLSMITH_FORCE_WASM: 'true',
+        SKILLSMITH_DB_PATH: tmpDbPath,
+        SKILLSMITH_SKIP_SKILL_INSTALL: '1',
+        SKILLSMITH_AUTO_UPDATE_CHECK: 'false',
+        SKILLSMITH_TIER1_AUTOINSTALL_DISABLE: '1',
+        SKILLSMITH_AUDIT_EMAIL_DISABLE: '1',
+        SKILLSMITH_AUTOSAVE_DISABLE: '1',
+        // Deliberately NOT setting SKILLSMITH_BACKGROUND_SYNC=false — the
+        // whole point of this test is a REAL in-flight background sync.
+        SKILLSMITH_API_URL: `http://127.0.0.1:${stubPort}`,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    const stderrChunks: string[] = []
+    proc.stderr.on('data', (d: Buffer) => stderrChunks.push(d.toString()))
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`server boot timeout — stderr so far:\n${stderrChunks.join('')}`))
+        }, 60_000)
+        proc.stderr.on('data', (d: Buffer) => {
+          if (d.toString().includes('Skillsmith MCP server running')) {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+        proc.on('error', (err) => {
+          clearTimeout(timeout)
+          reject(err)
+        })
+      })
+
+      // Wait for the stub to actually receive the search request — proves a
+      // real sync is genuinely mid-fetch, not a race against an assumption
+      // about startup timing.
+      await Promise.race([
+        searchRequestReceivedPromise,
+        new Promise<void>((_resolve, reject) =>
+          setTimeout(
+            () => reject(new Error('background sync never reached /skills-search in time')),
+            20_000
+          )
+        ),
+      ])
+
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(
+            new Error(
+              `process did not exit within 10s of SIGTERM — stderr:\n${stderrChunks.join('')}`
+            )
+          )
+        }, 10_000)
+        proc.on('exit', (code) => {
+          clearTimeout(timeout)
+          resolve(code)
+        })
+        proc.kill('SIGTERM')
+      })
+
+      // The whole point: a clean exit 0 proves the coordinator's quiesce
+      // (abort + await the in-flight sync) settled before db close/process
+      // exit — not a hang, not a crash from a write hitting a closed db.
+      expect(exitCode).toBe(0)
+      expect(existsSync(tmpDbPath)).toBe(true)
+      expect(statSync(tmpDbPath).size).toBeGreaterThan(0)
+    } finally {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        proc.kill('SIGKILL')
+      }
+      await new Promise<void>((resolve) => stubServer.close(() => resolve()))
+    }
+  }, 75_000)
+
+  /**
+   * SMI-5640: autosave survives an ungraceful kill. Unlike the SIGTERM test
+   * above (which asserts the db file does NOT exist until the graceful
+   * shutdown persists it), this is the novel proof for the periodic
+   * autosave: the file must exist BEFORE any signal is ever sent, and its
+   * content must survive a SIGKILL (which bypasses every shutdown hook
+   * entirely — no coordinator, no `onclose`, nothing).
+   */
+  it('the periodic autosave persists to disk before any signal, and survives SIGKILL', async () => {
+    tmpDbPath = path.join(
+      os.tmpdir(),
+      `skillsmith-shutdown-subprocess-autosave-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
+    )
+
+    const proc = spawn('node', [DIST_ENTRY], {
+      env: {
+        ...process.env,
+        SKILLSMITH_FORCE_WASM: 'true',
+        SKILLSMITH_DB_PATH: tmpDbPath,
+        SKILLSMITH_SKIP_SKILL_INSTALL: '1',
+        SKILLSMITH_AUTO_UPDATE_CHECK: 'false',
+        SKILLSMITH_TIER1_AUTOINSTALL_DISABLE: '1',
+        SKILLSMITH_AUDIT_EMAIL_DISABLE: '1',
+        SKILLSMITH_BACKGROUND_SYNC: 'false',
+        // Short interval so the test doesn't wait the real 5-minute default.
+        SKILLSMITH_AUTOSAVE_INTERVAL_MS: '200',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    const stderrChunks: string[] = []
+    proc.stderr.on('data', (d: Buffer) => stderrChunks.push(d.toString()))
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`server boot timeout — stderr so far:\n${stderrChunks.join('')}`))
+        }, 60_000)
+        proc.stderr.on('data', (d: Buffer) => {
+          if (d.toString().includes('Skillsmith MCP server running')) {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+        proc.on('error', (err) => {
+          clearTimeout(timeout)
+          reject(err)
+        })
+      })
+
+      // Wait comfortably past several flush intervals — no signal sent yet.
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+
+      // The novel assertion (contrast the SIGTERM test above, which asserts
+      // non-existence until the signal): the autosave timer, not any
+      // shutdown hook, has already written the file to disk.
+      expect(existsSync(tmpDbPath)).toBe(true)
+      expect(statSync(tmpDbPath).size).toBeGreaterThan(0)
+
+      // An ungraceful kill — bypasses transport.onclose, SIGTERM, SIGINT,
+      // the whole shutdown coordinator entirely.
+      const exitPromise = new Promise<void>((resolve) => proc.on('exit', () => resolve()))
+      proc.kill('SIGKILL')
+      await exitPromise
+
+      // Reopen a FRESH connection against the same on-disk file — proves the
+      // autosave's last flush produced a valid, non-corrupt export that
+      // survives a kill no shutdown hook could ever catch.
+      const freshContext = await createToolContextAsync({
+        dbPath: tmpDbPath,
+        backgroundSyncConfig: { enabled: false },
+        apiClientConfig: { offlineMode: true },
+      })
+      try {
+        expect(freshContext.db.open).toBe(true)
+        const tables = freshContext.db
+          .prepare<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'")
+          .all()
+        expect(tables.some((t) => t.name === 'skills')).toBe(true)
+      } finally {
+        await closeToolContext(freshContext)
+      }
     } finally {
       if (proc.exitCode === null && proc.signalCode === null) {
         proc.kill('SIGKILL')
