@@ -15,7 +15,17 @@
 #   - Blank lines and lines starting with `#` are ignored.
 #   - Trailing whitespace and CRLF line endings are tolerated.
 #   - Each grandfathered path is preceded by a `# SMI-XXXX split follow-up`
-#     comment naming the Linear issue that will split the file.
+#     comment naming the Linear issue that will split the file. The
+#     preceding-comment's SMI reference is what the hook cites in its
+#     "skipped (grandfathered — SMI-XXXX split pending)" console message
+#     (SMI-5658) — so an active entry's comment must NOT start with `(`
+#     (see below), or the message will attribute the wrong issue.
+#   - A CLEARED entry (the file has since been split) is converted to a
+#     parenthesized historical note instead of being deleted outright —
+#     `# (SMI-XXXX split follow-up cleared YYYY-MM-DD: ...)` — so the
+#     leading `(` is load-bearing: it's what stops the parser from
+#     treating a cleared block as an active `# SMI-XXXX split follow-up`
+#     comment and attributing its ref to an unrelated path below it.
 #
 # Do not add new files here without a corresponding split follow-up issue.
 

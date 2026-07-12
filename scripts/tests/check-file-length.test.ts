@@ -87,13 +87,30 @@ describe('parseIgnoreList', () => {
     expect(entries.get('supabase/functions/_shared/ops-report-templates.ts')).toBe(null)
   })
 
-  it('returns an empty set for empty input', () => {
+  it('does not leak a ref from a parenthesized "cleared" block onto a later comment-less path', () => {
+    // SMI-5658 Step 6: SMI_FOLLOW_UP_RE only matches `# SMI-XXXX split
+    // follow-up` immediately after '#\s*' — a cleared block's leading
+    // '(' (the real ignore file's convention for historical entries,
+    // e.g. "# (SMI-5036 split follow-up cleared ...)") must NOT match,
+    // or its ref would attach to an unrelated path below it.
+    const raw = [
+      '# (SMI-9999 split follow-up cleared 2026-08-01: foo was split)',
+      '',
+      'packages/core/tests/no-preceding-comment.test.ts',
+    ].join('\n')
+
+    const entries = parseIgnoreList(raw)
+
+    expect(entries.get('packages/core/tests/no-preceding-comment.test.ts')).toBe(null)
+  })
+
+  it('returns an empty map for empty input', () => {
     expect(parseIgnoreList('').size).toBe(0)
   })
 })
 
 describe('loadIgnoreList', () => {
-  it('returns an empty set when the ignore file is absent', () => {
+  it('returns an empty map when the ignore file is absent', () => {
     const dir = makeTempDir()
     try {
       const entries = loadIgnoreList(join(dir, 'does-not-exist.ignore'))
@@ -287,22 +304,29 @@ describe('check-file-length.mjs (end-to-end)', () => {
  * plan-review resolution): a future revert of the glob key from
  * '*.{ts,sh}' back to '*.ts' would leave the script-level tests above
  * green while silently reintroducing the SMI-5658 bug. Uses picomatch
- * with matchBase, mirroring lint-staged's own matcher
- * (node_modules/lint-staged/lib/matchFiles.js).
+ * with the same option set lint-staged itself passes
+ * (node_modules/lint-staged/lib/matchFiles.js: dot, matchBase,
+ * posixSlashes, strictBrackets) so this test's notion of a "match"
+ * doesn't diverge from lint-staged's real behavior (e.g. dotfiles).
  */
 describe('lint-staged.config.js glob', () => {
   const config = lintStagedConfig as Record<string, unknown>
 
   /**
    * Every lint-staged.config.js key whose glob matches `filename`, using
-   * the same picomatch options lint-staged itself uses (matchBase for
-   * slash-free patterns). A single filename can legitimately match more
-   * than one key (e.g. a .ts file matches both the eslint/prettier key
-   * and the length-check key) — do not assume a unique match.
+   * the same picomatch options lint-staged itself uses. A single filename
+   * can legitimately match more than one key (e.g. a .ts file matches
+   * both the eslint/prettier key and the length-check key) — do not
+   * assume a unique match.
    */
   function matchingKeys(filename: string): string[] {
     return Object.keys(config).filter((pattern) => {
-      const isMatch = picomatch(pattern, { matchBase: !pattern.includes('/') })
+      const isMatch = picomatch(pattern, {
+        dot: true,
+        matchBase: !pattern.includes('/'),
+        posixSlashes: true,
+        strictBrackets: true,
+      })
       return isMatch(filename)
     })
   }
