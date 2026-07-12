@@ -4,6 +4,9 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.1
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.3.0).
 - **Fix**: reduced tier quota constants 10x (SMI-5558) — Community was 1,000/mo now 100/mo, Individual was 10,000/mo now 1,000/mo, Team was 100,000/mo now 10,000/mo. Not currently wired into shipped CLI/MCP runtime; kept in lockstep with the other tier-quota constants.
 
 ## v0.3.0
