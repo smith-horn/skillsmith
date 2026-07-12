@@ -38,22 +38,42 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
-if [[ -z "$REPO_ROOT" ]]; then
-  error "Not in a git repository."
-fi
+# --- Test seams (inert unless SKILLSMITH_NATIVE_DEPS_TEST=1) -----------------
+# Let scripts/tests/repair-host-native-deps.test.ts (SMI-5654) drive the
+# esbuild platform-package hardening below deterministically against a
+# fixture tree — without mutating real host state, requiring network access,
+# or running the (separate, already-covered) better-sqlite3 rebuild phase.
+# Gated behind a single master switch so production behavior can never be
+# hijacked by a stray env var, mirroring the SKILLSMITH_AUTOHEAL_TEST
+# convention in scripts/retrieval-autoheal.sh.
+NATIVE_DEPS_TEST="${SKILLSMITH_NATIVE_DEPS_TEST:-}"
 
-# Resolve to main repo if invoked from a worktree (writer's binding lives in
-# the main-repo node_modules; per-package symlinks resolve to it via SMI-4381).
-MAIN_GIT_DIR="$(get_main_git_dir "$REPO_ROOT")"
-if [[ "$MAIN_GIT_DIR" != "$REPO_ROOT/.git" ]] && [[ -n "$MAIN_GIT_DIR" ]]; then
-  REPO_ROOT="$(dirname "$MAIN_GIT_DIR")"
+if [[ "$NATIVE_DEPS_TEST" == "1" ]] && [[ -n "${SKILLSMITH_NATIVE_DEPS_REPO_ROOT:-}" ]]; then
+  # Test seam: operate on a fixture tree instead of the real repo root.
+  REPO_ROOT="$SKILLSMITH_NATIVE_DEPS_REPO_ROOT"
+else
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+  if [[ -z "$REPO_ROOT" ]]; then
+    error "Not in a git repository."
+  fi
+
+  # Resolve to main repo if invoked from a worktree (writer's binding lives in
+  # the main-repo node_modules; per-package symlinks resolve to it via SMI-4381).
+  MAIN_GIT_DIR="$(get_main_git_dir "$REPO_ROOT")"
+  if [[ "$MAIN_GIT_DIR" != "$REPO_ROOT/.git" ]] && [[ -n "$MAIN_GIT_DIR" ]]; then
+    REPO_ROOT="$(dirname "$MAIN_GIT_DIR")"
+  fi
 fi
 
 # Guard 1: don't run inside Docker — the container has its own postinstall path.
+# SMI-5654 test seam: FORCE_NON_DOCKER lets scripts/tests exercise this
+# script's logic inside the CI container (itself Docker), mirroring
+# scripts/retrieval-autoheal.sh's identical seam.
 if [[ "${IS_DOCKER:-}" == "true" ]] || [[ -f /.dockerenv ]]; then
-  printf '[skip] inside Docker — host-only script; container handles its own postinstall\n'
-  exit 0
+  if ! { [[ "$NATIVE_DEPS_TEST" == "1" ]] && [[ "${SKILLSMITH_NATIVE_DEPS_FORCE_NON_DOCKER:-}" == "1" ]]; }; then
+    printf '[skip] inside Docker — host-only script; container handles its own postinstall\n'
+    exit 0
+  fi
 fi
 
 cd "$REPO_ROOT"
@@ -74,6 +94,13 @@ repair_platform_native_packages() {
   local platform arch timeout_cmd
   platform="$(node -p 'process.platform' 2>/dev/null || echo '')"
   arch="$(node -p 'process.arch' 2>/dev/null || echo '')"
+
+  # SMI-5654 test seam: force platform/arch so scripts/tests can exercise
+  # this darwin-only phase from the CI container (which reports linux).
+  if [[ "$NATIVE_DEPS_TEST" == "1" ]]; then
+    [[ -n "${SKILLSMITH_NATIVE_DEPS_TEST_PLATFORM:-}" ]] && platform="$SKILLSMITH_NATIVE_DEPS_TEST_PLATFORM"
+    [[ -n "${SKILLSMITH_NATIVE_DEPS_TEST_ARCH:-}" ]] && arch="$SKILLSMITH_NATIVE_DEPS_TEST_ARCH"
+  fi
 
   # macOS-only: the SMI-4681 host-fallback that needs this is macOS-only, and
   # Linux rollup naming carries a gnu/musl split that is out of scope here.
@@ -103,6 +130,18 @@ repair_platform_native_packages() {
   _install_platform_pkg() {
     local pkg="$1" version="$2" dest="$3" tmp tgz
     local tgz_glob
+    if [[ "$NATIVE_DEPS_TEST" == "1" ]] && [[ -n "${SKILLSMITH_NATIVE_DEPS_FETCH_CMD:-}" ]]; then
+      # SMI-5654 test seam: let scripts/tests simulate a fresh `npm pack` +
+      # extract without hitting the network. The seam command receives the
+      # target package/version/dest via env vars and owns populating $dest
+      # (it must itself follow rm-then-mv/rm-then-cp semantics — never write
+      # into an existing directory entry in place).
+      SKILLSMITH_NATIVE_DEPS_FETCH_PKG="$pkg" \
+      SKILLSMITH_NATIVE_DEPS_FETCH_VERSION="$version" \
+      SKILLSMITH_NATIVE_DEPS_FETCH_DEST="$dest" \
+        sh -c "$SKILLSMITH_NATIVE_DEPS_FETCH_CMD"
+      return $?
+    fi
     tmp="$(mktemp -d)" || return 1
     if ! $timeout_cmd npm pack "$pkg@$version" --pack-destination "$tmp" --silent >/dev/null 2>&1; then
       rm -rf "$tmp"; return 1
@@ -153,12 +192,125 @@ repair_platform_native_packages() {
     "require('rollup')" \
     "rollup" "@rollup/rollup-${platform}-${arch}"
 
+  # SMI-5654 test seam: let the esbuild JS-API probe itself be overridden so
+  # scripts/tests/repair-host-native-deps.test.ts can drive the CLI-dispatch
+  # and foreign-platform checks below without a real, working esbuild install.
+  local esbuild_js_probe="require('esbuild').transformSync('')"
+  if [[ "$NATIVE_DEPS_TEST" == "1" ]] && [[ -n "${SKILLSMITH_NATIVE_DEPS_ESBUILD_API_PROBE:-}" ]]; then
+    esbuild_js_probe="$SKILLSMITH_NATIVE_DEPS_ESBUILD_API_PROBE"
+  fi
+
   _repair_one_platform_pkg "esbuild" \
-    "require('esbuild').transformSync('')" \
+    "$esbuild_js_probe" \
     "esbuild" "@esbuild/${platform}-${arch}"
+
+  # SMI-5654: the JS-API probe above only exercises the require() path that
+  # resolves @esbuild/<platform>-<arch>/bin/esbuild directly — it never
+  # executes node_modules/esbuild/bin/esbuild, the CLI dispatch entry point
+  # used by `npx esbuild`, node_modules/.bin/esbuild, and any npm script that
+  # shells out to esbuild rather than requiring it. A corruption hitting only
+  # the dispatch file passes the probe above silently. Sibling gap on the
+  # container side (docker-entrypoint.sh's own validation loop, NOT touched
+  # by this script): SMI-5352.
+  _check_esbuild_cli_dispatch() {
+    # Only meaningful when the JS-API path itself already works — when it
+    # fails too, the repair above already handled (or reported) it.
+    if ! node -e "$esbuild_js_probe" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    local dispatch_bin="$REPO_ROOT/node_modules/esbuild/bin/esbuild"
+    local cli_bin="$REPO_ROOT/node_modules/.bin/esbuild"
+    local platform_bin="$REPO_ROOT/node_modules/@esbuild/${platform}-${arch}/bin/esbuild"
+    local out
+
+    [[ -x "$cli_bin" ]] || return 0
+
+    if out="$("$cli_bin" --version 2>/dev/null)" && [[ -n "$out" ]]; then
+      printf '[skip] esbuild CLI dispatch already works (%s)\n' "$out"
+      return 0
+    fi
+
+    if [[ ! -f "$platform_bin" ]]; then
+      warn "esbuild CLI dispatch probe failed but verified-good platform binary $platform_bin is missing — skipping dispatch repair"
+      return 0
+    fi
+
+    info "esbuild CLI dispatch (node_modules/esbuild/bin/esbuild) broken while the JS API still works; re-deriving from the verified-good platform package..."
+    # SMI-5654: rm-then-cp is mandatory here — a plain cp onto the existing
+    # (possibly hard-linked) dispatch binary writes into the shared inode in
+    # place and corrupts the platform package's binary too.
+    rm -f "$dispatch_bin"
+    mkdir -p "$(dirname "$dispatch_bin")"
+    if cp "$platform_bin" "$dispatch_bin"; then
+      chmod +x "$dispatch_bin" 2>/dev/null || true
+      if out="$("$cli_bin" --version 2>/dev/null)" && [[ -n "$out" ]]; then
+        printf '[ok] esbuild CLI dispatch repaired (%s)\n' "$out"
+      else
+        warn "esbuild CLI dispatch repair ran but the probe still fails — manual recovery: rm node_modules/esbuild/bin/esbuild && cp node_modules/@esbuild/${platform}-${arch}/bin/esbuild node_modules/esbuild/bin/esbuild"
+      fi
+    else
+      warn "esbuild CLI dispatch repair failed (copy from $platform_bin) — manual recovery: rm node_modules/esbuild/bin/esbuild && cp node_modules/@esbuild/${platform}-${arch}/bin/esbuild node_modules/esbuild/bin/esbuild"
+    fi
+  }
+  _check_esbuild_cli_dispatch
+
+  # SMI-5654 (plan-review addition — this is what would have caught this
+  # incident's actual end-state): the CLI-dispatch probe above cannot detect
+  # a corruption where the dispatch binary itself still works (it was
+  # overwritten, in place, with a working same-shared-inode binary from a
+  # DIFFERENT platform) while a platform package's OWN file is wrong — that
+  # file is never executed on the host, only inside a Linux container. For
+  # each @esbuild/linux-*/bin/esbuild present in the host tree, verify it
+  # begins with ELF magic bytes; on mismatch, refetch a clean copy. Sibling
+  # gap on the container side (NOT touched by this script): SMI-5352.
+  _check_esbuild_foreign_platform_binaries() {
+    local esbuild_dir="$REPO_ROOT/node_modules/esbuild"
+    [[ -d "$esbuild_dir" ]] || return 0
+
+    local version
+    version="$(node -p "require('$esbuild_dir/package.json').version" 2>/dev/null || echo '')"
+    [[ -z "$version" ]] && return 0
+
+    local linux_dir bin_file magic pkg_name
+    for linux_dir in "$REPO_ROOT"/node_modules/@esbuild/linux-*/; do
+      [[ -d "$linux_dir" ]] || continue
+      bin_file="${linux_dir}bin/esbuild"
+      [[ -f "$bin_file" ]] || continue
+
+      magic="$(head -c 4 "$bin_file" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')"
+      if [[ "$magic" == "7f454c46" ]]; then
+        continue
+      fi
+
+      pkg_name="@esbuild/$(basename "${linux_dir%/}")"
+      warn "$pkg_name/bin/esbuild is not an ELF binary (host-tree corruption, SMI-5654) — refetching..."
+      # SMI-5654: rm-then-cp is mandatory here too — _install_platform_pkg's
+      # rm-then-mv never writes into the corrupted directory entry in place,
+      # so a shared-inode twin elsewhere in the tree is never touched.
+      if _install_platform_pkg "$pkg_name" "$version" "${linux_dir%/}"; then
+        magic="$(head -c 4 "$bin_file" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')"
+        if [[ "$magic" == "7f454c46" ]]; then
+          printf '[ok] %s repaired (ELF magic verified)\n' "$pkg_name"
+        else
+          warn "$pkg_name: refetched but bin/esbuild still fails the ELF check — manual recovery: rm -rf node_modules/@esbuild/$(basename "${linux_dir%/}") && npm pack $pkg_name@$version"
+        fi
+      else
+        warn "$pkg_name: refetch failed or timed out (offline?) — manual recovery: npm pack $pkg_name@$version"
+      fi
+    done
+  }
+  _check_esbuild_foreign_platform_binaries
 }
 
 repair_platform_native_packages
+
+if [[ "$NATIVE_DEPS_TEST" == "1" ]]; then
+  # SMI-5654: test mode stops here — the better-sqlite3 rebuild phase below
+  # is unrelated to this hardening and would otherwise attempt real rebuilds
+  # against the fixture tree.
+  exit 0
+fi
 
 probe_binding() {
   # Returns 0 if better-sqlite3 loads AND can open a database, non-zero otherwise.
