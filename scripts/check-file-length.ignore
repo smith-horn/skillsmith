@@ -1,12 +1,13 @@
 # check-file-length.ignore — grandfather list for the pre-commit length hook (SMI-4397)
 #
 # Purpose:
-#   scripts/check-file-length.mjs hard-fails any staged .ts file over 500
-#   lines. The paths below are pre-existing over-limit files exempted from
-#   that hard-fail so they can still be committed without `git commit
-#   --no-verify`. The exemption is conditional: it applies ONLY while the
-#   file remains over 500 lines. Once a listed file is split below the
-#   limit it re-enters normal enforcement and the hook prints an
+#   scripts/check-file-length.mjs hard-fails any staged file routed to the
+#   hook (currently .ts and .sh) over 500 lines. The paths below are
+#   pre-existing over-limit files exempted from that hard-fail so they can
+#   still be committed without `git commit --no-verify`. The exemption is
+#   conditional: it applies ONLY while the file remains over 500 lines.
+#   Once a listed file is split below the limit it re-enters normal
+#   enforcement and the hook prints an
 #   "eligible to de-list" notice — remove its entry here at that point.
 #
 # Format:
@@ -36,3 +37,18 @@ scripts/tests/indexer/parity.test.ts
 # (SMI-5263 split follow-up cleared 2026-06-12: install.integration.test.ts was
 #  split into 3 concern-scoped siblings under 500 lines each —
 #  install.{parsing,execution}.integration.test.ts; suite still 174 passed / 6 skipped.)
+
+# SMI-5660 split follow-up
+scripts/_lib.sh
+
+# SMI-5660 split follow-up
+scripts/smoke-prod/website.sh
+
+# SMI-5660 split follow-up
+scripts/create-worktree.sh
+
+# SMI-5660 split follow-up
+scripts/tests/create-worktree-hooks.test.sh
+
+# SMI-5660 split follow-up
+scripts/phases/phase-7-enterprise.sh

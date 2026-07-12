@@ -1,7 +1,10 @@
 /**
  * Pre-commit file-length check (SMI-3493)
  *
- * Ensures staged .ts files do not exceed the 500-line CI limit.
+ * Checks whatever staged file paths lint-staged passes it — currently
+ * .ts and .sh per lint-staged.config.js (SMI-5658 widened this from
+ * .ts-only) — against the 500-line CI limit. The script itself has no
+ * extension filter; the routing is entirely lint-staged.config.js's glob.
  * Called by lint-staged with file paths as arguments.
  *
  * Usage: node scripts/check-file-length.mjs <file1> [file2] ...
@@ -47,39 +50,53 @@ export function getRepoRoot() {
   return canonicalize(resolve(dirname(fileURLToPath(import.meta.url)), '..'))
 }
 
+/** Matches the `# SMI-XXXX split follow-up` comment convention (SMI-4397). */
+const SMI_FOLLOW_UP_RE = /^#\s*(SMI-\d+)\s+split follow-up/
+
 /**
- * Parse the ignore-list file contents into a Set of trimmed,
- * repo-relative paths. Comment (`#`) and blank lines are skipped;
- * trailing whitespace and CRLF line endings are tolerated.
+ * Parse the ignore-list file contents into a Map of trimmed,
+ * repo-relative paths to the SMI issue reference named by the
+ * `# SMI-XXXX split follow-up` comment immediately preceding that path
+ * (or `null` if no such comment directly precedes it — e.g. a stale entry
+ * added without following the convention). Comment (`#`) and blank lines
+ * are otherwise skipped; trailing whitespace and CRLF line endings are
+ * tolerated.
  *
  * @param {string} contents - raw ignore-file text
- * @returns {Set<string>} repo-relative paths to grandfather
+ * @returns {Map<string, string|null>} repo-relative path -> SMI reference (or null)
  */
 export function parseIgnoreList(contents) {
-  const entries = new Set()
+  const entries = new Map()
+  let pendingSmiRef = null
   for (const rawLine of contents.split('\n')) {
     const line = rawLine.replace(/\r$/, '').trim()
-    if (line.length === 0 || line.startsWith('#')) {
+    if (line.length === 0) {
       continue
     }
-    entries.add(line)
+    if (line.startsWith('#')) {
+      const match = line.match(SMI_FOLLOW_UP_RE)
+      pendingSmiRef = match ? match[1] : null
+      continue
+    }
+    entries.set(line, pendingSmiRef)
+    pendingSmiRef = null
   }
   return entries
 }
 
 /**
  * Load and parse the sibling check-file-length.ignore file.
- * Returns an empty Set if the file is absent (graceful default).
+ * Returns an empty Map if the file is absent (graceful default).
  *
  * @param {string} ignorePath - absolute path to the ignore file
- * @returns {Set<string>} grandfathered repo-relative paths
+ * @returns {Map<string, string|null>} grandfathered repo-relative paths -> SMI reference
  */
 export function loadIgnoreList(ignorePath) {
   try {
     return parseIgnoreList(readFileSync(ignorePath, 'utf8'))
   } catch (err) {
     if (err && err.code === 'ENOENT') {
-      return new Set()
+      return new Map()
     }
     throw err
   }
@@ -94,10 +111,10 @@ export function loadIgnoreList(ignorePath) {
  * exempt WHILE still over-limit (SMI-4397 H1).
  *
  * @param {string[]} files - staged file paths (absolute or relative)
- * @param {Set<string>} ignoreList - grandfathered repo-relative paths
+ * @param {Map<string, string|null>} ignoreList - grandfathered repo-relative paths -> SMI reference
  * @param {string} repoRoot - absolute repo root
  * @returns {{violations: {relPath: string, lineCount: number}[],
- *            skipped: {relPath: string, lineCount: number}[],
+ *            skipped: {relPath: string, lineCount: number, smiRef: string|null}[],
  *            delistable: {relPath: string, lineCount: number}[]}}
  */
 export function checkFiles(files, ignoreList, repoRoot) {
@@ -119,7 +136,7 @@ export function checkFiles(files, ignoreList, repoRoot) {
 
     if (lineCount > MAX_LINES) {
       if (grandfathered) {
-        skipped.push({ relPath, lineCount })
+        skipped.push({ relPath, lineCount, smiRef: ignoreList.get(relPath) ?? null })
       } else {
         violations.push({ relPath, lineCount })
       }
@@ -143,8 +160,11 @@ function main() {
   const ignoreList = loadIgnoreList(join(repoRoot, 'scripts', 'check-file-length.ignore'))
   const { violations, skipped, delistable } = checkFiles(files, ignoreList, repoRoot)
 
-  for (const { relPath } of skipped) {
-    console.log(`  ${relPath}: skipped (grandfathered — SMI-4948 split pending)`)
+  for (const { relPath, smiRef } of skipped) {
+    const reason = smiRef
+      ? `grandfathered — ${smiRef} split pending`
+      : 'grandfathered — see scripts/check-file-length.ignore for the tracking issue'
+    console.log(`  ${relPath}: skipped (${reason})`)
   }
 
   for (const { relPath, lineCount } of delistable) {

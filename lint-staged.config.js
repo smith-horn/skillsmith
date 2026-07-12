@@ -22,9 +22,9 @@ export default {
     'prettier --write',
   ],
 
-  // TypeScript files: file-length check (SMI-3493)
+  // TypeScript + shell files: file-length check (SMI-3493, extended to .sh in SMI-5658)
   // CI rejects files over 500 lines; catch early in pre-commit.
-  '*.ts': ['node scripts/check-file-length.mjs'],
+  '*.{ts,sh}': ['node scripts/check-file-length.mjs'],
 
   // Astro files: format only (ESLint handled by website's own config)
   '*.astro': ['prettier --write'],
