@@ -1,12 +1,13 @@
 # check-file-length.ignore — grandfather list for the pre-commit length hook (SMI-4397)
 #
 # Purpose:
-#   scripts/check-file-length.mjs hard-fails any staged .ts file over 500
-#   lines. The paths below are pre-existing over-limit files exempted from
-#   that hard-fail so they can still be committed without `git commit
-#   --no-verify`. The exemption is conditional: it applies ONLY while the
-#   file remains over 500 lines. Once a listed file is split below the
-#   limit it re-enters normal enforcement and the hook prints an
+#   scripts/check-file-length.mjs hard-fails any staged file routed to the
+#   hook (currently .ts and .sh) over 500 lines. The paths below are
+#   pre-existing over-limit files exempted from that hard-fail so they can
+#   still be committed without `git commit --no-verify`. The exemption is
+#   conditional: it applies ONLY while the file remains over 500 lines.
+#   Once a listed file is split below the limit it re-enters normal
+#   enforcement and the hook prints an
 #   "eligible to de-list" notice — remove its entry here at that point.
 #
 # Format:
@@ -14,7 +15,17 @@
 #   - Blank lines and lines starting with `#` are ignored.
 #   - Trailing whitespace and CRLF line endings are tolerated.
 #   - Each grandfathered path is preceded by a `# SMI-XXXX split follow-up`
-#     comment naming the Linear issue that will split the file.
+#     comment naming the Linear issue that will split the file. The
+#     preceding-comment's SMI reference is what the hook cites in its
+#     "skipped (grandfathered — SMI-XXXX split pending)" console message
+#     (SMI-5658) — so an active entry's comment must NOT start with `(`
+#     (see below), or the message will attribute the wrong issue.
+#   - A CLEARED entry (the file has since been split) is converted to a
+#     parenthesized historical note instead of being deleted outright —
+#     `# (SMI-XXXX split follow-up cleared YYYY-MM-DD: ...)` — so the
+#     leading `(` is load-bearing: it's what stops the parser from
+#     treating a cleared block as an active `# SMI-XXXX split follow-up`
+#     comment and attributing its ref to an unrelated path below it.
 #
 # Do not add new files here without a corresponding split follow-up issue.
 
@@ -36,3 +47,18 @@ scripts/tests/indexer/parity.test.ts
 # (SMI-5263 split follow-up cleared 2026-06-12: install.integration.test.ts was
 #  split into 3 concern-scoped siblings under 500 lines each —
 #  install.{parsing,execution}.integration.test.ts; suite still 174 passed / 6 skipped.)
+
+# SMI-5660 split follow-up
+scripts/_lib.sh
+
+# SMI-5660 split follow-up
+scripts/smoke-prod/website.sh
+
+# SMI-5660 split follow-up
+scripts/create-worktree.sh
+
+# SMI-5660 split follow-up
+scripts/tests/create-worktree-hooks.test.sh
+
+# SMI-5660 split follow-up
+scripts/phases/phase-7-enterprise.sh
