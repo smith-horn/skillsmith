@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.3
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.2).
+
 ## v0.7.2
 
 - **Fix**: shorten server.json description, fix recovery text, add field-length check (SMI-5651) (#1835)
