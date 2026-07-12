@@ -6,38 +6,38 @@
       "skillId": "github/kcmadden/claude-code-1password-skill",
       "findingType": "sensitive_path",
       "messagePattern": "password|credentials",
-      "reason": "1Password integration skill. The product literally contains the word 'password' and its SKILL.md is security guidance telling Claude Code NEVER to ask users to paste passwords/credentials in chat. Bare-keyword sensitive_path regex cannot distinguish 'documents handling of passwords' from 'hardcoded password'. Wave 2 tightens patterns to require assignment/path context.",
+      "reason": "1Password integration skill. The product literally contains the word 'password' and its SKILL.md is security guidance telling Claude Code NEVER to ask users to paste passwords/credentials in chat. Bare-keyword sensitive_path regex cannot distinguish 'documents handling of passwords' from 'hardcoded password'. Wave 2 tightens patterns to require assignment/path context. Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
       "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-04-21",
-      "expiresAt": "2026-07-21"
+      "reviewedAt": "2026-07-12",
+      "expiresAt": "2026-10-10"
     },
     {
       "skillId": "github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill",
       "findingType": "privilege_escalation",
       "messagePattern": "escalation",
-      "reason": "Prompt-injection scanner skill whose description enumerates adversarial techniques it detects ('role manipulation, privilege escalation, ...'). Bare /escalat(e|ion)/i pattern triggered CRITICAL on a defensive-security tool describing its own subject matter. Wave 2 replaces with contextual patterns (privilege_escalation, escalate to root, exploit-to-escalate).",
+      "reason": "Prompt-injection scanner skill whose description enumerates adversarial techniques it detects ('role manipulation, privilege escalation, ...'). Bare /escalat(e|ion)/i pattern triggered CRITICAL on a defensive-security tool describing its own subject matter. Wave 2 replaces with contextual patterns (privilege_escalation, escalate to root, exploit-to-escalate). Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
       "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-04-21",
-      "expiresAt": "2026-07-21"
+      "reviewedAt": "2026-07-12",
+      "expiresAt": "2026-10-10"
     },
     {
       "skillId": "github/rhysha/claude-security-research-skill",
       "findingType": "sensitive_path",
       "messagePattern": "secrets?",
-      "reason": "Security-research skill. 'Secrets' is domain vocabulary (talks about finding/handling secrets as a research topic), not an instruction to access a sensitive path. Bare-keyword match. Wave 2 tightens sensitive_path patterns to require assignment/path/file-extension context.",
+      "reason": "Security-research skill. 'Secrets' is domain vocabulary (talks about finding/handling secrets as a research topic), not an instruction to access a sensitive path. Bare-keyword match. Wave 2 tightens sensitive_path patterns to require assignment/path/file-extension context. Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
       "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-04-21",
-      "expiresAt": "2026-07-21"
+      "reviewedAt": "2026-07-12",
+      "expiresAt": "2026-10-10"
     },
     {
       "skillId": "github/straygizmo/mdium",
       "findingType": "ai_defence",
       "matchField": "location",
       "messagePattern": "[\\u200B-\\u200F\\u2028-\\u202F\\uFEFF\\u3000]",
-      "reason": "Japanese-authored markdown-to-Medium skill. Repo description renders as 'designed for the AI  era' where the gap between AI and era is a U+3000 CJK full-width space from Japanese keyboard input — not an invisible-char prompt-injection payload. matchField=location required because finding.message embeds the literal bytes, which do not round-trip through JSON escape sequences.",
+      "reason": "Japanese-authored markdown-to-Medium skill. Repo description renders as 'designed for the AI  era' where the gap between AI and era is a U+3000 CJK full-width space from Japanese keyboard input — not an invisible-char prompt-injection payload. matchField=location required because finding.message embeds the literal bytes, which do not round-trip through JSON escape sequences. Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
       "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-04-21",
-      "expiresAt": "2026-07-21"
+      "reviewedAt": "2026-07-12",
+      "expiresAt": "2026-10-10"
     },
     {
       "skillId": "github/RobinGase/skill-protocol-rs",
@@ -74,6 +74,15 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-05-31",
       "expiresAt": "2026-08-29"
+    },
+    {
+      "skillId": "github/leksman/ai-security-guard",
+      "findingType": "privilege_escalation",
+      "messagePattern": "escalation",
+      "reason": "Defensive LLM-hardening skill (prompt injection / jailbreak / privilege escalation / marker forgery guard) whose GitHub repo description enumerates 'privilege escalation' as one of the threats it defends against — same self-describing-security-tool FP class as github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill (SMI-4396 Wave 2). Verified via SKILL.md: no other finding category present, no sudo/chmod/exec/exfil content. Triaged 2026-07-12 under SMI-5666 — closes GH #1839.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-07-12",
+      "expiresAt": "2026-10-10"
     }
   ]
 }
