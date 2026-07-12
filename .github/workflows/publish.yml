@@ -762,7 +762,7 @@ jobs:
         if: steps.version-check.outputs.exists != 'true' && steps.install-mcp-publisher.outcome == 'success'
         # audit:allow-continue-on-error — SMI-4534: registry publish is non-load-bearing;
         # npm publish is the binding artifact. Manual recovery: `mcp-publisher login
-        # github-oidc` + `mcp-publisher publish` from a maintainer machine. Loud-fail
+        # github` + `mcp-publisher publish` from a maintainer machine. Loud-fail
         # step below files a GitHub issue automatically.
         continue-on-error: true
         run: ./mcp-publisher login github-oidc
@@ -802,7 +802,7 @@ jobs:
             echo "**Login outcome:** ${LOGIN_OUTCOME}"
             echo "**Publish outcome:** ${PUBLISH_OUTCOME}"
             echo ""
-            echo "Triage: re-run \`mcp-publisher login github-oidc\` + \`mcp-publisher publish\` from a maintainer machine, or see <https://registry.modelcontextprotocol.io/>."
+            echo "Triage: re-run \`mcp-publisher login github\` + \`mcp-publisher publish\` from a maintainer machine, or see <https://registry.modelcontextprotocol.io/>."
           } >> "$GITHUB_STEP_SUMMARY"
           BODY_FILE=$(mktemp)
           {
@@ -813,7 +813,7 @@ jobs:
             echo ""
             echo "See SMI-4534 for context. Manual recovery:"
             echo '```bash'
-            echo "mcp-publisher login github-oidc"
+            echo "mcp-publisher login github"
             echo "cd packages/mcp-server && mcp-publisher publish"
             echo '```'
           } > "${BODY_FILE}"
