@@ -1744,3 +1744,70 @@ export function auditSecdefAnonGrants(migrations, { cutoff, allowlist = [] } = {
   }
   return violations
 }
+
+/**
+ * MCP Registry field-length limits, per the schema referenced by
+ * `packages/mcp-server/server.json`'s own `$schema` URL
+ * (https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json).
+ * Exported so Check 53 (audit-standards.mjs) and its test fixtures share one
+ * source of truth instead of duplicating the magic numbers (SMI-5651).
+ */
+export const MCP_REGISTRY_FIELD_LIMITS = Object.freeze({
+  description: 100,
+  title: 100,
+  name: 200,
+  version: 255,
+  iconSrc: 255,
+})
+
+/**
+ * Validate a parsed server.json object's string fields against the MCP
+ * Registry schema's max-length constraints (SMI-5651). A 153-char
+ * `description` silently blocked every registry publish because nothing
+ * checked this before publish (confirmed via a live 422 response — "expected
+ * length <= 100"); this closes that gap.
+ *
+ * Checks the top-level `description`/`title`/`name`/`version` fields, every
+ * `packages[].version` entry (same `version` limit), and every `icons[].src`
+ * entry (`iconSrc` limit) when present. Fields absent from `serverJson` or of
+ * the wrong type are silently skipped — this is a length gate, not a schema
+ * validator.
+ *
+ * @param {object} serverJson  Parsed server.json content.
+ * @param {Record<string, number>} [limits]  Field-name -> max-length map;
+ *   defaults to MCP_REGISTRY_FIELD_LIMITS.
+ * @returns {{ field: string, length: number, limit: number }[]}  One entry per
+ *   field exceeding its limit.
+ */
+export function findServerJsonFieldLengthViolations(
+  serverJson,
+  limits = MCP_REGISTRY_FIELD_LIMITS
+) {
+  const violations = []
+  if (!serverJson || typeof serverJson !== 'object') return violations
+
+  const checkField = (label, value, limit) => {
+    if (typeof limit === 'number' && typeof value === 'string' && value.length > limit) {
+      violations.push({ field: label, length: value.length, limit })
+    }
+  }
+
+  checkField('description', serverJson.description, limits.description)
+  checkField('title', serverJson.title, limits.title)
+  checkField('name', serverJson.name, limits.name)
+  checkField('version', serverJson.version, limits.version)
+
+  if (Array.isArray(serverJson.packages)) {
+    serverJson.packages.forEach((pkg, i) => {
+      checkField(`packages[${i}].version`, pkg?.version, limits.version)
+    })
+  }
+
+  if (Array.isArray(serverJson.icons)) {
+    serverJson.icons.forEach((icon, i) => {
+      checkField(`icons[${i}].src`, icon?.src, limits.iconSrc)
+    })
+  }
+
+  return violations
+}

@@ -37,6 +37,7 @@ import {
   parseNpmLsJson,
   findFunctionsWithoutSearchPath,
   auditSecdefAnonGrants,
+  findServerJsonFieldLengthViolations,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
@@ -4545,6 +4546,39 @@ console.log(`\n${BOLD}52. SECURITY DEFINER anon-Grant Lockdown (SMI-5526)${RESET
             `scripts/audit-standards.mjs with a one-line justification if it is intentionally anon-callable.`
         )
       }
+    }
+  }
+}
+
+// Check 53: MCP registry server.json field-length limits (SMI-5651)
+// packages/mcp-server/server.json's `description` field grew to 153 chars
+// across several rebrand passes and silently blocked every registry publish
+// (the registry rejects it with a 422 — "expected length <= 100") — nothing
+// caught this before it shipped. This check fails loudly if description,
+// title, name, version (top-level or packages[].version), or icons[].src
+// ever exceed the registry schema's limits again.
+console.log(`\n${BOLD}Check 53: MCP registry server.json field-length limits (SMI-5651)${RESET}`)
+{
+  const SERVER_JSON_PATH = 'packages/mcp-server/server.json'
+  if (!existsSync(SERVER_JSON_PATH)) {
+    warn(`Check 53: ${SERVER_JSON_PATH} not found — skipping registry field-length check`)
+  } else {
+    try {
+      const serverJson = JSON.parse(readFileSync(SERVER_JSON_PATH, 'utf8'))
+      const violations = findServerJsonFieldLengthViolations(serverJson)
+      if (violations.length === 0) {
+        pass(`${SERVER_JSON_PATH} fields are within MCP registry schema length limits`)
+      } else {
+        for (const v of violations) {
+          fail(
+            `Check 53: ${SERVER_JSON_PATH}: ${v.field} is ${v.length} chars (limit ${v.limit})`,
+            `Shorten ${SERVER_JSON_PATH}'s ${v.field} to <= ${v.limit} chars — see the registry ` +
+              'schema at https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json'
+          )
+        }
+      }
+    } catch (e) {
+      warn(`Check 53: could not parse ${SERVER_JSON_PATH}: ${e.message}`)
     }
   }
 }
