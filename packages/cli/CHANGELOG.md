@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.0).
 - **Fix**: reduced displayed tier quota constants 10x (SMI-5558) — Community was 1,000/mo now 100/mo, Individual was 10,000/mo now 1,000/mo, Team was 100,000/mo now 10,000/mo. Display-only; actual enforcement is in `@skillsmith/mcp-server`.
 
 ## v0.8.0
