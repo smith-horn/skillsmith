@@ -807,6 +807,283 @@ enumerate_native_module_volumes() {
 }
 
 #######################################
+# Worktree port-bucket collision resolution (SMI-5661).
+#
+# Problem: generate_docker_override_to_stdout previously derived a worktree's
+# port bucket (1-99, mapped to host ports 3000+offset*10 .. +3) purely from a
+# `cksum` hash of the worktree name. Two independent worktree names can hash
+# to the SAME bucket (verified live: "smi-5641-remove-dead-dep-helpers" and
+# "smi-5651-registry-catchup" both hash to bucket 79), and a bucket can also
+# collide with a port some OTHER process already has bound on the host (e.g.
+# a lingering container, or an unrelated dev server). Either collision made
+# `docker compose up` fail with a host-level EADDRINUSE for one of the two
+# worktrees, with no retry or reassignment.
+#
+# Fix: probe candidate buckets in order (deterministic hash first, so the
+# common case is unchanged), skipping any bucket whose 4 ports collide with
+# a SIBLING worktree's override file or with a port already LISTENing on the
+# host, wrapping around the full 1-99 space before giving up.
+#######################################
+
+#######################################
+# Parse the HOST-side ports out of a generated docker-compose.override.yml.
+#
+# Override port lines have the fixed shape (quoted "HOST:CONTAINER"):
+#   - "37910:3000"   # Main app
+#
+# Arguments:
+#   $1 - Path to a docker-compose.override.yml (may not exist)
+# Outputs:
+#   stdout - one host port per line; empty if the file is absent or has none
+#######################################
+_parse_override_host_ports() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    grep -oE '"[0-9]+:[0-9]+"' "$file" 2>/dev/null | tr -d '"' | cut -d: -f1
+}
+
+#######################################
+# Enumerate host ports already claimed by SIBLING worktrees' override files,
+# excluding the main repo and the worktree being resolved itself (half of the
+# self-collision-avoidance fix — see _resolve_worktree_port_offset for the
+# other half).
+#
+# Arguments:
+#   $1 - repo_root    Main repository root (for `git worktree list`)
+#   $2 - self_path    Worktree path currently being resolved (excluded)
+# Outputs:
+#   stdout - one host port per line, across all other worktrees
+#######################################
+_worktree_sibling_taken_ports() {
+    local repo_root="$1" self_path="$2" wt
+    while IFS= read -r wt; do
+        [ -z "$wt" ] && continue
+        [ "$wt" = "$repo_root" ] && continue
+        [ "$wt" = "$self_path" ] && continue
+        _parse_override_host_ports "$wt/docker-compose.override.yml"
+    done < <(git -C "$repo_root" worktree list --porcelain 2>/dev/null \
+                 | sed -n 's/^worktree //p')
+}
+
+#######################################
+# Check whether a port is already bound (LISTENing) on the host.
+#
+# `lsof -nP -iTCP:<port> -sTCP:LISTEN` reads the kernel socket table for
+# LISTEN-state sockets, ships on both macOS and Linux, and generates no
+# network traffic. `nc -z` opens a real connection (flaky, and flag syntax
+# diverges between BSD and GNU `nc`); `ss` is Linux-only; `netstat` is
+# deprecated on macOS. Known limitation: this only sees sockets owned by
+# processes the current user can enumerate — Docker's own EADDRINUSE at
+# `up` time remains the final backstop.
+#
+# Arguments:
+#   $1 - port number to check
+# Returns:
+#   0 if bound (or check skipped/unavailable — fails toward "assume bound"
+#     only when a real check ran and found a LISTENer); 1 if free or lsof
+#     is unavailable / the check is disabled.
+#######################################
+_worktree_host_port_bound() {
+    local port="$1"
+    [ "${SKILLSMITH_WORKTREE_PORT_SKIP_HOST_CHECK:-}" = "1" ] && return 1
+    command -v lsof >/dev/null 2>&1 || return 1
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+#######################################
+# Resolve a collision-free port bucket (1-99) for a worktree.
+#
+# Two mechanisms cooperate to avoid a worktree reprobing itself away from its
+# OWN currently-assigned bucket (self-collision avoidance):
+#   1. _worktree_sibling_taken_ports (above) excludes self_path from the
+#      sibling scan.
+#   2. This function's "sticky" start-offset: if the worktree already has an
+#      override file, the probe STARTS from the bucket already recorded
+#      there (recovered from its own host ports) rather than from the
+#      deterministic hash, and treats the worktree's OWN 4 ports as never a
+#      collision. Without this, repair_worktrees_compose_override
+#      regenerating a worktree whose container is live on a probed
+#      (non-deterministic) bucket would reprobe it back toward the
+#      deterministic hash and desync the override from the running
+#      container.
+#
+# Loop invariant: `offset=$(( (offset % 99) + 1 ))` cycles through the full
+# 1..99 space exactly once before repeating — no infinite loop, no silent
+# reuse; after 99 failed attempts this returns failure instead.
+#
+# Arguments:
+#   $1 - worktree_path   Absolute path to the worktree being resolved
+#   $2 - worktree_name   Sanitized worktree name (input to the cksum hash)
+#   $3 - repo_root       Main repository root
+# Outputs:
+#   stdout - the resolved offset (1-99) on success
+#   stderr - a NOTE when reassigned away from the deterministic hash, or an
+#            ERROR when no free bucket was found
+# Returns:
+#   0 on success, 1 if no free bucket was found after a full cycle
+#######################################
+_resolve_worktree_port_offset() {
+    local worktree_path="$1" worktree_name="$2" repo_root="$3"
+
+    local deterministic_offset
+    deterministic_offset=$(printf '%s' "$worktree_name" | cksum | awk '{print ($1 % 99) + 1}')
+
+    local own_ports start_offset own_base cand
+    own_ports="$(_parse_override_host_ports "$worktree_path/docker-compose.override.yml" | tr '\n' ' ')"
+    start_offset="$deterministic_offset"
+    if [ -n "${own_ports// /}" ]; then
+        own_base=$(printf '%s\n' $own_ports | sort -n | head -1)
+        if [ -n "$own_base" ] && [ $(( (own_base - 3000) % 10 )) -eq 0 ]; then
+            cand=$(( (own_base - 3000) / 10 ))
+            [ "$cand" -ge 1 ] && [ "$cand" -le 99 ] && start_offset="$cand"
+        fi
+    fi
+
+    local sibling_ports
+    sibling_ports="$(_worktree_sibling_taken_ports "$repo_root" "$worktree_path" | tr '\n' ' ')"
+
+    [ -n "${SKILLSMITH_WORKTREE_PORT_TEST_DELAY:-}" ] && sleep "$SKILLSMITH_WORKTREE_PORT_TEST_DELAY"
+
+    local offset="$start_offset" attempt=0 p base free
+    while [ "$attempt" -lt 99 ]; do
+        base=$(( 3000 + offset * 10 ))
+        free=1
+        for p in "$base" $((base+1)) $((base+2)) $((base+3)); do
+            case " $own_ports " in *" $p "*) continue ;; esac
+            case " $sibling_ports " in *" $p "*) free=0; break ;; esac
+            if _worktree_host_port_bound "$p"; then free=0; break; fi
+        done
+        if [ "$free" -eq 1 ]; then
+            if [ "$offset" != "$deterministic_offset" ]; then
+                printf 'NOTE: worktree port bucket %s (deterministic) unavailable — reassigned to bucket %s (SMI-5661)\n' \
+                    "$deterministic_offset" "$offset" >&2
+            fi
+            printf '%s\n' "$offset"
+            return 0
+        fi
+        offset=$(( (offset % 99) + 1 ))
+        attempt=$(( attempt + 1 ))
+    done
+
+    printf 'ERROR: no free worktree port bucket found after 99 attempts — free up host ports or remove stale worktrees (SMI-5661)\n' >&2
+    return 1
+}
+
+#######################################
+# Concurrency lock guarding worktree port-bucket resolution + override write
+# (SMI-5661). Adapted from retrieval-autoheal.sh's acquire_lock/release_lock
+# (scripts/retrieval-autoheal.sh:108-198): flock when available (fd 8, held
+# for the caller's life — the kernel releases it on any exit including a
+# crash), else a non-evicting atomic `mkdir` lock for stock macOS bash 3.2
+# (no `flock`, no `exec {var}>` fd auto-allocation, so the fd is hardcoded).
+#
+# One lock per MAIN-REPO checkout (key = `cksum` of repo_root, so all
+# worktrees of the same repo — which all read/write each other's override
+# files — serialize against each other; different repos never contend).
+# Test-isolated via SKILLSMITH_WORKTREE_PORT_LOCK_HOME (mirrors
+# SKILLSMITH_AUTOHEAL_HOME in retrieval-autoheal.sh).
+#
+# Best-effort: on timeout (busy flock, or a live mkdir-lock holder), WARN and
+# return non-zero; the caller proceeds UNLOCKED rather than refusing to
+# create/repair a worktree over lock contention — Docker's own EADDRINUSE at
+# `up` time is the final backstop, same as the host-port-bound check above.
+#######################################
+WORKTREE_PORT_LOCK_MODE=""
+WORKTREE_PORT_LOCK_DIR=""
+WORKTREE_PORT_LOCK_PID_FILE=""
+_WORKTREE_PORT_LOCK_FD=8
+WORKTREE_PORT_LOCK_WAIT="${SKILLSMITH_WORKTREE_PORT_LOCK_WAIT:-10}"
+WORKTREE_PORT_LOCK_TMAX="${SKILLSMITH_WORKTREE_PORT_LOCK_TMAX:-60}"
+
+#######################################
+# Acquire the worktree port-bucket lock. See the block comment above.
+#
+# Arguments:
+#   $1 - repo_root   Main repository root (used to derive the lock key)
+# Returns:
+#   0 if the lock was acquired (or locking is disabled); 1 if acquisition
+#   timed out (caller proceeds unlocked; a warning has already been printed)
+#######################################
+acquire_worktree_port_lock() {
+    local repo_root="$1"
+    [ "${SKILLSMITH_WORKTREE_PORT_LOCK_DISABLE:-}" = "1" ] && { WORKTREE_PORT_LOCK_MODE="disabled"; return 0; }
+
+    local home key state_dir flock_file
+    home="${SKILLSMITH_WORKTREE_PORT_LOCK_HOME:-$HOME}"
+    key="$(printf '%s' "$repo_root" | cksum | awk '{print $1}')"
+    state_dir="$home/.skillsmith"
+    mkdir -p "$state_dir" 2>/dev/null || true
+    WORKTREE_PORT_LOCK_DIR="$state_dir/worktree-ports-$key.lock"
+    WORKTREE_PORT_LOCK_PID_FILE="$WORKTREE_PORT_LOCK_DIR/pid"
+    flock_file="$state_dir/worktree-ports-$key.flock"
+
+    local force_mkdir=""
+    [ "${SKILLSMITH_WORKTREE_PORT_FORCE_MKDIR_LOCK:-}" = "1" ] && force_mkdir="1"
+
+    if [ -z "$force_mkdir" ] && command -v flock >/dev/null 2>&1; then
+        if eval "exec ${_WORKTREE_PORT_LOCK_FD}>\"$flock_file\""; then
+            if flock -w "$WORKTREE_PORT_LOCK_WAIT" "$_WORKTREE_PORT_LOCK_FD"; then
+                WORKTREE_PORT_LOCK_MODE="flock"
+                return 0
+            fi
+            eval "exec ${_WORKTREE_PORT_LOCK_FD}>&-" 2>/dev/null || true
+            warn "  Worktree port lock busy after ${WORKTREE_PORT_LOCK_WAIT}s — proceeding best-effort (SMI-5661)"
+            return 1
+        fi
+    fi
+
+    local deadline hpid hstart age
+    deadline=$(( $(date +%s) + WORKTREE_PORT_LOCK_WAIT ))
+    while :; do
+        if mkdir "$WORKTREE_PORT_LOCK_DIR" 2>/dev/null; then
+            printf '%s %s\n' "$$" "$(date +%s)" > "$WORKTREE_PORT_LOCK_PID_FILE" 2>/dev/null || true
+            if [ "$(awk '{print $1}' "$WORKTREE_PORT_LOCK_PID_FILE" 2>/dev/null)" != "$$" ]; then
+                continue
+            fi
+            trap 'release_worktree_port_lock' EXIT
+            trap 'release_worktree_port_lock; exit 130' INT
+            trap 'release_worktree_port_lock; exit 143' TERM
+            WORKTREE_PORT_LOCK_MODE="mkdir"
+            return 0
+        fi
+        hpid="$(awk '{print $1}' "$WORKTREE_PORT_LOCK_PID_FILE" 2>/dev/null)"
+        hstart="$(awk '{print $2}' "$WORKTREE_PORT_LOCK_PID_FILE" 2>/dev/null)"
+        if [ -n "$hpid" ] && ! kill -0 "$hpid" 2>/dev/null; then
+            rm -rf "$WORKTREE_PORT_LOCK_DIR" 2>/dev/null || true; continue
+        fi
+        age=0; [ -n "$hstart" ] && age=$(( $(date +%s) - hstart ))
+        if [ "$age" -gt "$WORKTREE_PORT_LOCK_TMAX" ]; then
+            rm -rf "$WORKTREE_PORT_LOCK_DIR" 2>/dev/null || true; continue
+        fi
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            warn "  Worktree port lock held by live pid ${hpid:-?} after ${WORKTREE_PORT_LOCK_WAIT}s — proceeding best-effort (SMI-5661)"
+            return 1
+        fi
+        sleep 0.2
+    done
+}
+
+#######################################
+# Release the worktree port-bucket lock acquired by acquire_worktree_port_lock.
+# Ownership-checked in mkdir mode: only removes the lock dir if THIS process
+# still owns it (a stale/reclaimed lock's original holder must not delete a
+# reclaimer's live lock).
+#######################################
+release_worktree_port_lock() {
+    case "$WORKTREE_PORT_LOCK_MODE" in
+        flock)
+            eval "exec ${_WORKTREE_PORT_LOCK_FD}>&-" 2>/dev/null || true
+            ;;
+        mkdir)
+            local owner
+            owner="$(awk '{print $1}' "$WORKTREE_PORT_LOCK_PID_FILE" 2>/dev/null)"
+            [ "$owner" = "$$" ] && rm -rf "$WORKTREE_PORT_LOCK_DIR" 2>/dev/null || true
+            ;;
+    esac
+    WORKTREE_PORT_LOCK_MODE=""
+}
+
+#######################################
 # Emit worktree docker-compose.override.yml content to stdout (SMI-4738 split).
 #
 # Pure-output form of generate_docker_override: produces the same YAML body
@@ -833,17 +1110,20 @@ generate_docker_override_to_stdout() {
     local worktree_path="$1"
     local branch_name="$2"
     local repo_root="$3"
-    # worktree_path is part of the function contract (caller may switch back to a
-    # path-aware variant later); reference it once to silence shellcheck.
-    : "$worktree_path"
 
     # Extract a short name from branch (e.g., feature/jwt-rollout -> jwt-rollout)
     local worktree_name
     worktree_name=$(basename "$branch_name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
 
-    # Calculate port offset based on hash of worktree name (1-99)
+    # Resolve a collision-free port bucket (SMI-5661). Deterministic cksum hash is
+    # the first candidate (common case unchanged); probes the next bucket on a
+    # sibling-override or host-bound collision; sticky to this worktree's own
+    # existing override so a live container is not reprobed away from its ports.
+    # CALLER holds acquire_worktree_port_lock across this + the override write.
     local port_offset
-    port_offset=$(echo -n "$worktree_name" | cksum | awk '{print ($1 % 99) + 1}')
+    if ! port_offset="$(_resolve_worktree_port_offset "$worktree_path" "$worktree_name" "$repo_root")"; then
+        return 1
+    fi
 
     # Base ports: dev=3001, test=3002, orchestrator=3003
     local dev_app_port=$((3000 + port_offset * 10))
@@ -932,18 +1212,32 @@ EOF
 # to <worktree_path>/docker-compose.override.yml. Preserves the existing API
 # used by create-worktree.sh and repair-worktrees.sh callers.
 #
+# SMI-5661: the port-bucket resolution + write are guarded by the worktree
+# port-bucket lock so two concurrent create-worktree.sh invocations can't both
+# read the same "free" bucket before either has written its override (a
+# TOCTOU race the resolver's own probe cannot close by itself). Best-effort —
+# see acquire_worktree_port_lock's own doc comment for the unlocked fallback.
+#
 # Arguments:
 #   $1 - Worktree path
 #   $2 - Branch name (used for unique container names + port hash)
 #   $3 - Repository root path (for resolving per-package node_modules; main repo)
+# Returns:
+#   0 on success; 1 if generate_docker_override_to_stdout failed (e.g. no
+#   free port bucket found)
 #######################################
 generate_docker_override() {
     local worktree_path="$1"
     local branch_name="$2"
     local repo_root="$3"
+    local rc=0
 
+    acquire_worktree_port_lock "$repo_root" || true
     generate_docker_override_to_stdout "$worktree_path" "$branch_name" "$repo_root" \
-        > "$worktree_path/docker-compose.override.yml"
+        > "$worktree_path/docker-compose.override.yml" || rc=$?
+    release_worktree_port_lock
+
+    return $rc
 }
 
 #######################################
@@ -981,6 +1275,16 @@ repair_worktrees_compose_override() {
         info "  macOS-only — skipping per-package bind-mount regen on $(uname)"
         return 0
     fi
+
+    # SMI-5661: acquire the port-bucket lock ONCE for the whole regen pass
+    # (not per-iteration) since the loop below calls
+    # generate_docker_override_to_stdout directly — not through the
+    # generate_docker_override wrapper — so there is no nested acquire and
+    # thus no self-deadlock risk. Released once after the loop, before the
+    # summary. Best-effort: acquire_worktree_port_lock warns and returns
+    # non-zero on contention; the regen proceeds unlocked rather than
+    # skipping worktrees outright.
+    acquire_worktree_port_lock "$repo_root" || true
 
     while IFS= read -r wt_path; do
         [[ -z "$wt_path" ]] && continue
@@ -1027,6 +1331,8 @@ repair_worktrees_compose_override() {
         mv "$tmp" "$override"
         modified=$((modified + 1))
     done < <(git -C "$repo_root" worktree list --porcelain | awk '/^worktree / { print $2 }')
+
+    release_worktree_port_lock
 
     if [[ $modified -gt 0 ]]; then
         success "  Regenerated docker-compose.override.yml for $modified worktree(s) (SMI-4689)"
