@@ -14,6 +14,7 @@ import type { ScanReport, SecurityFinding } from '../../security/index.js'
 import { determineSeverityCategory, type SeverityCategory } from '../skill-scanner/categorizer.js'
 import { shouldQuarantine } from '../skill-scanner/trust-scorer.js'
 import { extractScannableContent } from '../skill-scanner/file-scanner.js'
+import { loadAllowlist } from '../skill-scanner/allowlist.js'
 import type { ImportedSkill } from '../skill-scanner/types.js'
 
 // ============================================================================
@@ -438,6 +439,46 @@ A helpful skill for formatting code.
       const jailbreak = results.find((r) => r.skillId === 'malicious/jailbreak')
       expect(jailbreak?.isQuarantined).toBe(true)
       expect(jailbreak?.severity).toBe('CRITICAL')
+    })
+  })
+
+  // SMI-5666: github/leksman/ai-security-guard false-positive regression.
+  //
+  // Unlike the SMI-4396 Wave 2 frontmatter fixtures (scanner-wave2-fixtures.test.ts),
+  // which exercise hand-authored SKILL.md content with real `---` YAML fences, this
+  // reproduces the ACTUAL content shape the GitHub-import pipeline produces via
+  // extractScannableContent() — `# name\n\ndescription\n\n...`, no frontmatter fences
+  // at all. That matters: the inFrontmatter doc-context downgrade never applies here,
+  // so this false-positive class can only be caught by the per-skill allowlist, not by
+  // the frontmatter heuristic.
+  describe('SMI-5666: GitHub-import content-shape allowlist regression', () => {
+    it('ai-security-guard privilege_escalation FP is critical pre-allowlist, cleared post-allowlist', () => {
+      const skill: ImportedSkill = {
+        id: 'github/leksman/ai-security-guard',
+        name: 'github/leksman/ai-security-guard',
+        description:
+          'Claude skill + drop-in code for hardening & auditing LLM features against prompt injection, privilege escalation, marker forgery, and data leaks',
+      }
+
+      const content = extractScannableContent(skill)
+      // Confirms the real pipeline shape: no YAML frontmatter fence present.
+      expect(content.startsWith('---')).toBe(false)
+
+      const scanner = new SecurityScanner()
+      const report = scanner.scan(skill.id, content)
+
+      const privFindings = report.findings.filter((f) => f.type === 'privilege_escalation')
+      expect(privFindings.length).toBeGreaterThan(0)
+      expect(privFindings.some((f) => f.severity === 'critical')).toBe(true)
+      expect(shouldQuarantine(report)).toBe(true)
+
+      const allowlistPath = path.resolve(
+        __dirname,
+        '../../../../../data/skills-security-allowlist.json'
+      )
+      const allowlist = loadAllowlist(allowlistPath)
+
+      expect(shouldQuarantine(report, undefined, allowlist)).toBe(false)
     })
   })
 })

@@ -393,11 +393,16 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // utility whose repo description mentions '.env file' as one of eight routing
   // destinations; bare-keyword sensitive_path regex false-positives until
   // Wave 2 tightens.
+  // SMI-5666 (2026-07-12): leksman/ai-security-guard added — defensive LLM-
+  // hardening skill whose repo description enumerates 'privilege escalation'
+  // as a threat it detects; same self-describing-security-tool FP class as
+  // MalPromptSentinel-CC-Skill. Also renewed the 4 entries that were about to
+  // expire 2026-07-21 (kcmadden, MalPromptSentinel, rhysha, mdium).
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(8)
+    expect(parsed.allowlist.length).toBe(9)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
@@ -407,6 +412,7 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
         'github/dokind/qpay-skills',
         'github/kcmadden/claude-code-1password-skill',
+        'github/leksman/ai-security-guard',
         'github/rhysha/claude-security-research-skill',
         'github/straygizmo/mdium',
       ].sort()
