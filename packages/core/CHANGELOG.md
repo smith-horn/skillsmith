@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.11.1
+
+- **Fix**: unified shutdown coordinator + awaitable sync stop (SMI-5649/SMI-5640) (#1826)
+- **Fix**: backfill skill_dependencies for pre-0.7.1 installs (SMI-5645) (#1825)
+
 ## v0.11.0
 
 - **Feature**: production-grade error logging and diagnostics (SMI-5615) (#1774)

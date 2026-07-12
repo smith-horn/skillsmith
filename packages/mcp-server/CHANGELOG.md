@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.2
+
+- **Fix**: shorten server.json description, fix recovery text, add field-length check (SMI-5651) (#1835)
+- **Fix**: unified shutdown coordinator + awaitable sync stop (SMI-5649/SMI-5640) (#1826)
+- **Fix**: backfill skill_dependencies for pre-0.7.1 installs (SMI-5645) (#1825)
+
 ## v0.7.1
 
 - **Fix**: MCP server now persists recently-installed skills and dependency data on shutdown when running without native SQLite support (common on macOS/npx installs) — previously all writes were silently discarded on exit. The server was missing a database close() call in its shutdown handler (SMI-5639).
