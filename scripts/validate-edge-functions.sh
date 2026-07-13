@@ -33,6 +33,7 @@ ANONYMOUS_FUNCTIONS=(
   "stripe-webhook"
   "events"
   "health"
+  "license-status"
   "auth-device-code"
   "auth-device-token"
   "audit-unsubscribe"

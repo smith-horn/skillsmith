@@ -467,6 +467,7 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   'generate-license',
   'regenerate-license',
   'create-portal-session',
+  'license-status',
   'list-invoices',
   'skills-outreach-preferences',
   'admin-grant-subscription',

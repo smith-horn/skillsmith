@@ -220,6 +220,7 @@ npx supabase functions deploy events --no-verify-jwt
 npx supabase functions deploy health --no-verify-jwt
 npx supabase functions deploy email-inbound --no-verify-jwt
 npx supabase functions deploy generate-license --no-verify-jwt
+npx supabase functions deploy license-status --no-verify-jwt
 npx supabase functions deploy regenerate-license --no-verify-jwt
 npx supabase functions deploy create-portal-session --no-verify-jwt
 npx supabase functions deploy list-invoices --no-verify-jwt

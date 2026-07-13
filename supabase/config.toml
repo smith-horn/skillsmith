@@ -410,6 +410,9 @@ verify_jwt = false
 [functions.create-portal-session]
 verify_jwt = false
 
+[functions.license-status]
+verify_jwt = false
+
 [functions.list-invoices]
 verify_jwt = false
 
