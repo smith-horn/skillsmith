@@ -48,6 +48,7 @@ import {
   validatePostWrite,
   getCurrentBranch,
   createCommit,
+  buildFilesToAdd,
   regenerateLockfile,
 } from './lib/release-git.js'
 
@@ -398,19 +399,24 @@ async function main(): Promise<void> {
   if (noCommit) {
     console.log('\n  ⚠ WARNING: Files modified but NOT committed.')
     console.log('  Modified files:')
-    for (const plan of plans) {
-      console.log(`    - ${plan.spec.packageJsonPath}`)
-      if (plan.spec.versionConstFile) console.log(`    - ${plan.spec.versionConstFile}`)
-      if (plan.spec.serverJsonPath) console.log(`    - ${plan.spec.serverJsonPath}`)
-      console.log(`    - ${plan.spec.dir}/CHANGELOG.md`)
-    }
+    // SMI-5672: use the shared buildFilesToAdd so the previewed list matches what
+    // a real commit (Step 11) would stage — including workspace dep-range files
+    // (extraFiles) and package-lock.json, and omitting CHANGELOG.md when
+    // --no-changelog was passed.
+    const modified = buildFilesToAdd(plans, {
+      includeLockfile: !noLockfileRegen,
+      extraFiles: updatedDepFiles,
+      noChangelog,
+    })
+    for (const f of modified) console.log(`    - ${f}`)
     console.log('\n  Run `git add` and `git commit` when ready.')
     process.exit(0)
   }
 
-  // Step 11: Commit (include package-lock.json when regen ran)
+  // Step 11: Commit (include package-lock.json when regen ran, plus the
+  // workspace dep-range files updateWorkspaceDependencies wrote — SMI-5672).
   const preBranch = getCurrentBranch()
-  createCommit(plans, !noLockfileRegen)
+  createCommit(plans, !noLockfileRegen, updatedDepFiles)
 
   // Step 12: Post-commit branch verification
   const postBranch = getCurrentBranch()
@@ -422,6 +428,15 @@ async function main(): Promise<void> {
 
   const parts = plans.map((p) => `${p.spec.shortName}@${p.newVersion}`)
   console.log(`\n  ✓ Committed: ${parts.join(', ')}`)
+  // SMI-5672: print the exact staged file list — same buildFilesToAdd call the
+  // commit used — so every real release visibly confirms what was committed,
+  // closing the trust gap that let the original dep-range-drop bug ship silently.
+  const staged = buildFilesToAdd(plans, {
+    includeLockfile: !noLockfileRegen,
+    extraFiles: updatedDepFiles,
+  })
+  console.log('  Staged files:')
+  for (const f of staged) console.log(`    - ${f}`)
   console.log('\n  Next steps:')
   console.log('    git push')
   console.log('    gh workflow run publish.yml -f dry_run=false')

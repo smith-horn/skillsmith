@@ -117,6 +117,14 @@ export const PACKAGE_SPECS: PackageSpec[] = [
  * Retained as exported const because `scripts/tests/prepare-release.test.ts`
  * asserts its contents (Wave 4 SMI-4191 fixture). The single source of
  * truth for the deps-traversal is now PACKAGE_SPECS.
+ *
+ * SMI-5672: this const is now purely a test-fixture constant — no runtime code
+ * consumes it. Its last consumer, the unconditional CORE_DEPENDENTS-staging
+ * block in `createCommit` (scripts/lib/release-git.ts), was removed: it masked
+ * the SMI-5672 dep-range-drop bug for core bumps and staged sibling package.json
+ * files that weren't actually changed. `updateWorkspaceDependencies`'s returned
+ * `updated` list (threaded through `createCommit`'s `extraFiles` arg) now covers
+ * exactly the sibling files really written.
  */
 export const CORE_DEPENDENTS = [
   'packages/mcp-server/package.json',
@@ -146,6 +154,10 @@ export function updateWorkspaceDependencies(
   }
 
   const updated: string[] = []
+  // SMI-5672: only these three dep kinds are scanned — NOT `overrides`. A future
+  // workspace dep expressed via `overrides` would silently bypass both the
+  // console report and (post-SMI-5672) the release commit, with no test guarding
+  // it today.
   const DEP_KINDS = ['dependencies', 'devDependencies', 'peerDependencies'] as const
 
   for (const target of PACKAGE_SPECS) {

@@ -5,6 +5,23 @@ import { getReleasingVersions, runAudit } from '../verify-publish-deps.mjs'
 /**
  * Build a `readJson` stub that returns package.json shapes keyed by path
  * suffix. `core` is the dependency; `mcp-server` declares the caret range.
+ *
+ * SMI-5672: `@smith-horn/enterprise`/`packages/enterprise/package.json` was
+ * added to `PACKAGES` (it publishes to GitHub Packages, not npmjs — see
+ * `registry` on its PACKAGES entry), and `runAudit`'s loop calls `readJson`
+ * for every package whose file exists on disk with no skip — so every
+ * existing test's `runAudit` call now also runs the sibling-dep Checks
+ * against this enterprise fixture. Giving it an empty `dependencies` (zero
+ * workspace deps to walk) is the safest fixture here: a fabricated
+ * `@skillsmith/core` range on enterprise would re-run the exact same
+ * Check 2/Check 3 evaluation the mcp-server fixture already runs for that
+ * scenario, and in the "not yet on npm, not accepted" scenarios (e.g. the
+ * `errors === 1` cases below) that duplicate evaluation would silently add a
+ * SECOND error and break the exact-count assertions. Empty deps still
+ * exercises the new PACKAGES entry (readJson is called, existsSync branch is
+ * taken, the loop doesn't throw) without perturbing any existing scenario;
+ * the enterprise-specific registry behavior gets its own dedicated test below
+ * instead of being folded into this shared fixture.
  */
 function makeReadJson(coreVersion: string, mcpDepRange: string) {
   return (p: string) => {
@@ -20,6 +37,9 @@ function makeReadJson(coreVersion: string, mcpDepRange: string) {
     }
     if (p.endsWith('packages/cli/package.json')) {
       return { name: '@skillsmith/cli', version: '0.6.2', dependencies: {} }
+    }
+    if (p.endsWith('packages/enterprise/package.json')) {
+      return { name: '@smith-horn/enterprise', version: '0.3.1', dependencies: {} }
     }
     throw new Error(`unexpected path: ${p}`)
   }
@@ -192,5 +212,119 @@ describe('getReleasingVersions — SMI-5077 unpublished-on-main acceptance', () 
 
     expect(result.resolved).toBe(true)
     expect(result.versions).toEqual({})
+  })
+})
+
+describe('getReleasingVersions — SMI-5672 registry-aware enterprise lookups', () => {
+  /**
+   * @smith-horn/enterprise publishes to GitHub Packages, not npmjs. The
+   * SMI-5077 "unpublished on npm" fallback check (`npmView(pkg.name,
+   * localVersion, pkg.registry)`) must probe enterprise's OWN published
+   * version on its OWN registry — passing no registry (npmjs default) would
+   * 404 unconditionally and misclassify every enterprise release as
+   * "unpublished". Every other package's registry stays undefined (npmjs).
+   */
+  it('calls npmView with the GitHub Packages registry for @smith-horn/enterprise, and no registry for the npmjs packages', () => {
+    const local = {
+      '@skillsmith/core': '0.7.2',
+      '@skillsmith/mcp-server': '0.5.2',
+      '@skillsmith/cli': '0.6.2',
+      '@smith-horn/enterprise': '0.3.1',
+    }
+    // Every package is unchanged from base — forces every package through the
+    // SMI-5077 "still unpublished?" npmView branch, so each npmView call is
+    // observable regardless of the HEAD-vs-base diff.
+    const calls: Array<{ name: string; version: string; registry?: string }> = []
+
+    const result = getReleasingVersions({
+      git: (args: string[]) => {
+        if (args[0] === 'rev-parse') return 'abc123\n'
+        if (args[0] === 'show') {
+          const ref = args[1] as string
+          const dir = ref.split(':')[1].replace('packages/', '').replace('/package.json', '')
+          const entry = Object.entries(local).find(([name]) => name.split('/')[1] === dir)
+          if (!entry) throw new Error('not found')
+          return JSON.stringify({ name: entry[0], version: entry[1] })
+        }
+        return ''
+      },
+      readJson: (p: string) => {
+        for (const [name, v] of Object.entries(local)) {
+          const dir = name.split('/')[1]
+          if (p.endsWith(`packages/${dir}/package.json`)) {
+            return { name, version: v }
+          }
+        }
+        return {}
+      },
+      npmView: (name: string, version: string, registry?: string) => {
+        calls.push({ name, version, registry })
+        // Treat everything as already published — isolates this test to the
+        // registry-routing assertion rather than the "mark as releasing" logic.
+        return version
+      },
+    })
+
+    expect(result.resolved).toBe(true)
+    expect(result.versions).toEqual({})
+
+    const enterpriseCall = calls.find((c) => c.name === '@smith-horn/enterprise')
+    expect(enterpriseCall).toBeDefined()
+    expect(enterpriseCall?.registry).toBe('https://npm.pkg.github.com')
+
+    for (const npmjsName of ['@skillsmith/core', '@skillsmith/mcp-server', '@skillsmith/cli']) {
+      const call = calls.find((c) => c.name === npmjsName)
+      expect(call).toBeDefined()
+      expect(call?.registry).toBeUndefined()
+    }
+  })
+})
+
+describe('runAudit — SMI-5672 registry-aware Check 3 for enterprise dependencies', () => {
+  /**
+   * Even though @smith-horn/enterprise itself is published on GitHub
+   * Packages, its dependency on @skillsmith/core must still be verified on
+   * npmjs (core's own registry) — Check 3 resolves the registry from the
+   * DEPENDENCY's PACKAGES entry (`sibling.registry`), not the consuming
+   * package's registry.
+   */
+  it("checks enterprise's @skillsmith/core dependency on npmjs, not on enterprise's GitHub Packages registry", () => {
+    const calls: Array<{ name: string; version: string; registry?: string }> = []
+    const readJson = (p: string) => {
+      if (p.endsWith('packages/core/package.json')) {
+        return { name: '@skillsmith/core', version: '0.6.2', dependencies: {} }
+      }
+      if (p.endsWith('packages/mcp-server/package.json')) {
+        return { name: '@skillsmith/mcp-server', version: '0.6.2', dependencies: {} }
+      }
+      if (p.endsWith('packages/cli/package.json')) {
+        return { name: '@skillsmith/cli', version: '0.6.2', dependencies: {} }
+      }
+      if (p.endsWith('packages/enterprise/package.json')) {
+        return {
+          name: '@smith-horn/enterprise',
+          version: '0.3.1',
+          dependencies: { '@skillsmith/core': '^0.6.2' },
+        }
+      }
+      throw new Error(`unexpected path: ${p}`)
+    }
+    const logger = makeLogger()
+
+    const { errors } = runAudit({
+      readJson,
+      npmView: (name: string, version: string, registry?: string) => {
+        calls.push({ name, version, registry })
+        return version // treat as published everywhere — isolates the registry-routing assertion
+      },
+      releasing: { versions: {}, resolved: true },
+      logger,
+    })
+
+    expect(errors).toBe(0)
+
+    const coreDepLookup = calls.find((c) => c.name === '@skillsmith/core' && c.version === '0.6.2')
+    expect(coreDepLookup).toBeDefined()
+    expect(coreDepLookup?.registry).toBeUndefined()
   })
 })
