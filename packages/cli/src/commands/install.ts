@@ -8,6 +8,7 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
+import * as path from 'node:path'
 import {
   SkillRepository,
   SkillDependencyRepository,
@@ -346,11 +347,16 @@ async function installActionImpl(
       // primary install succeeds. Any fan-out failure is reported as
       // a warning but does NOT mark the overall install as failed —
       // the canonical install at `client` is already complete.
+      // addLink's `skillId` is a directory-basename contract, not the
+      // `owner/repo` argument the user typed — derive it from the real
+      // on-disk install path so it matches what SkillInstallationService
+      // actually wrote (registry resolution can rename owner/repo -> name).
       if (result.success && alsoLinkClients.length > 0) {
+        const linkSkillName = path.basename(result.installPath)
         for (const target of alsoLinkClients) {
           try {
             const linked = await addLink({
-              skillId,
+              skillId: linkSkillName,
               fromClient: client,
               toClient: target,
               preferSymlink: opts.symlink ?? false,
