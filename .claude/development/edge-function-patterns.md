@@ -344,6 +344,7 @@ Authoritative auth/JWT-verification table for every edge function. CLAUDE.md kee
 |----------|------|--------------------|
 | `early-access-signup`, `contact-submit`, `stats`, `checkout`, `stripe-webhook`, `events` | Anonymous | Yes |
 | `skills-search`, `skills-get`, `skills-recommend` | API Key | Yes |
+| `license-status` | API Key (self-lookup only — deliberately returns 200, not 401, on auth failure; see plan doc) | Yes |
 | `health` | Anonymous (health check) | Yes |
 | `email-inbound` | Anonymous (Resend webhook) | Yes |
 | `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |

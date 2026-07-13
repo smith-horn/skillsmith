@@ -883,3 +883,36 @@ check_skills_search_edge_fn() {
   report_pass "website-skills-page" "check_skills_search_edge_fn" "$url" "$ms"
   return 0
 }
+
+# ---- check_license_status_edge_fn -------------------------------------
+# SMI-1953: GET license-status with no X-API-Key and confirm the function
+# is deployed + returns its deliberate 200 (not 401)
+# {"data":{"authenticated":false}} contract for a missing/invalid key. This
+# is fully deterministic (unlike skills-search's trial/quota states) — no
+# soft-pass branches needed, since an unauthenticated call always resolves
+# to the same shape.
+check_license_status_edge_fn() {
+  _require_supabase_url || {
+    report_fail "edge-fn-license-status" "check_license_status_edge_fn" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/license-status"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "edge-fn-license-status" "check_license_status_edge_fn" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" '"authenticated":false' "license-status-json"; then
+    report_fail "edge-fn-license-status" "check_license_status_edge_fn" "$url" '"authenticated":false in JSON' "missing" "$ms"
+    return 1
+  fi
+  report_pass "edge-fn-license-status" "check_license_status_edge_fn" "$url" "$ms"
+  return 0
+}
