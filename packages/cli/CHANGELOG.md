@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.2
+
+- **Fix**: Derive --also-link fan-out path from resolved install path (#1855)
+
 ## v0.8.1
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.8.0).

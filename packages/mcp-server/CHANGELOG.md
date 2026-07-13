@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.3
+
+- **Fix**: Resolve real subscription tier via personal API key (#1870)
+- **Fix**: Resolve skill directory correctly in apply_namespace_rename (#1869)
+
 ## v0.7.2
 
 - **Fix**: shorten server.json description, fix recovery text, add field-length check (SMI-5651) (#1835)

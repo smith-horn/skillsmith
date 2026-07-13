@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.11.2
+
+- **Fix**: SMI-5666 allowlist ai-security-guard privilege_escalation FP; renew 4 expiring entries (#1850)
+
 ## v0.11.1
 
 - **Fix**: unified shutdown coordinator + awaitable sync stop (SMI-5649/SMI-5640) (#1826)
