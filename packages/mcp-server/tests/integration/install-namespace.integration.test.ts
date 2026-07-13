@@ -215,7 +215,7 @@ describe('install namespace integration', () => {
     // B: rename the EXISTING shadowing sibling (frees the namespace).
     const applyResult = await applyRename({
       suggestion: skillSuggestion({
-        source_path: path.join(SKILLS_DIR, 'sibling-pack'),
+        source_path: path.join(SKILLS_DIR, 'sibling-pack', 'SKILL.md'),
         identifier: 'code-helper',
         suggested: 'sibling-vendor-code-helper',
         author: 'sibling-vendor',
@@ -306,7 +306,7 @@ describe('install namespace integration', () => {
 
     const result = await applyRename({
       suggestion: skillSuggestion({
-        source_path: skillDir,
+        source_path: path.join(skillDir, 'SKILL.md'),
         identifier: 'code-helper',
         suggested: 'sibling-code-helper',
         author: 'sibling',
@@ -461,7 +461,7 @@ describe('install namespace integration', () => {
     // B: apply rename to the existing shadowing sibling.
     const applyResult = await applyRename({
       suggestion: skillSuggestion({
-        source_path: path.join(SKILLS_DIR, 'sibling-pack'),
+        source_path: path.join(SKILLS_DIR, 'sibling-pack', 'SKILL.md'),
         identifier: 'code-helper',
         suggested: 'sibling-vendor-code-helper',
         author: 'sibling-vendor',
