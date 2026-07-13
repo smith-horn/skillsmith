@@ -16,14 +16,17 @@
  * single "content hash", and the directory-path-reversal half of that
  * mutation already has a dedicated, ledger-backed mechanism
  * (`rename-engine.ts`'s `action: 'revert'`, surfaced today via
- * `sklx audit revert`). Duplicating path-reversal here — driven only by
+ * `apply_namespace_rename`'s `action: 'revert'` — SMI-5671; the CLI's
+ * `sklx audit revert` this comment previously cited was never
+ * implemented). Duplicating path-reversal here — driven only by
  * this record's fixed `target_path` field, with no companion "restore to"
  * field in the schema — would create two independent undo mechanisms for
  * the same mutation with no shared source of truth, which is precisely the
  * kind of coordination hazard the P-5 single-writer invariant exists to
  * avoid. `undo_apply` therefore restores SKILL.md's CONTENT (reverting the
  * frontmatter rewrite) but does not rename the directory back; full-path
- * reversal for a skill-dir rename remains `sklx audit revert`'s job.
+ * reversal for a skill-dir rename remains `apply_namespace_rename`'s
+ * `action: 'revert'`'s job.
  *
  * Fail-soft by design: the file mutation the user asked for has already
  * succeeded (or definitively failed) by the time these helpers run. A
@@ -57,11 +60,25 @@ export interface JournalApplySuccessInput {
   /** The content-hashable file the mutation changed (see module header). */
   targetPath: string
   /** The apply tool's pre-mutation backup dir, or `''` for an idempotent
-   * re-apply that made no fresh backup (nothing changed on disk). */
+   * re-apply OR a revert — reverts never take a fresh backup (SMI-5671:
+   * the original apply's backup already covers this), so `backupRef`
+   * alone can't distinguish "nothing changed" from "reverted, no fresh
+   * backup needed". Use `isNoOp` for that. */
   backupRef: string
   /** Caller-supplied approval mode, e.g. `'apply'` / `'custom'` /
    * `'apply_with_confirmation'`. */
   approval: string
+  /** SMI-5671: which direction this mutation ran — `apply_namespace_rename`'s
+   * `action: 'revert'` calls this same success-journaling path as
+   * `apply`/`custom`, so the journal record's `action` field can no longer
+   * be hardcoded to `'apply'`. */
+  action: 'apply' | 'revert'
+  /** SMI-5671: the engine's own idempotency signal (`fromPath === toPath`).
+   * NOT the same thing as `backupRef === ''` — a genuine (non-no-op)
+   * revert also has `backupRef === ''` by design, so branching on
+   * `backupRef` alone would mislabel every real revert as
+   * `idempotent_no_op` in the audit trail. */
+  isNoOp: boolean
 }
 
 /**
@@ -73,23 +90,48 @@ export async function journalApplySuccess(input: JournalApplySuccessInput): Prom
     const afterHash = await hashFileSafe(input.targetPath)
 
     if (input.backupRef === '') {
-      // Idempotent no-op re-apply: nothing changed, so there is no fresh
-      // backup to undo TO. Journal the event for the evidence trail but
-      // don't add a session-apply entry — there is nothing for undo_apply
-      // to restore.
+      if (input.isNoOp) {
+        // Idempotent no-op (apply re-apply, or revert with no matching
+        // ledger entry): nothing changed, so there is no fresh backup to
+        // undo TO. Journal the event for the evidence trail but don't add
+        // a session-apply entry — there is nothing for undo_apply to
+        // restore.
+        await appendJournalRecord({
+          schema: JOURNAL_SCHEMA_VERSION,
+          ts: Date.now(),
+          session_id: getJournalSessionId(),
+          tool: input.tool,
+          action: input.action,
+          suggestion_id: input.suggestionId,
+          target_path: input.targetPath,
+          before_hash: afterHash,
+          after_hash: afterHash,
+          approval: input.approval,
+          backup_ref: null,
+          detail: 'idempotent_no_op',
+        })
+        return
+      }
+
+      // A genuine revert (SMI-5671): the mutation already happened (per
+      // the module's fail-soft contract, by the time this runs) and
+      // reverts never take a fresh backup, so there's no `backupRef` to
+      // resolve a `before_hash` from. Record what's actually verifiable —
+      // the post-revert content — rather than fabricate a `before_hash`
+      // this call site has no way to obtain.
       await appendJournalRecord({
         schema: JOURNAL_SCHEMA_VERSION,
         ts: Date.now(),
         session_id: getJournalSessionId(),
         tool: input.tool,
-        action: 'apply',
+        action: input.action,
         suggestion_id: input.suggestionId,
         target_path: input.targetPath,
-        before_hash: afterHash,
+        before_hash: null,
         after_hash: afterHash,
         approval: input.approval,
         backup_ref: null,
-        detail: 'idempotent_no_op',
+        detail: null,
       })
       return
     }
@@ -103,7 +145,7 @@ export async function journalApplySuccess(input: JournalApplySuccessInput): Prom
       ts: Date.now(),
       session_id: getJournalSessionId(),
       tool: input.tool,
-      action: 'apply',
+      action: input.action,
       suggestion_id: input.suggestionId,
       target_path: input.targetPath,
       before_hash: beforeHash,

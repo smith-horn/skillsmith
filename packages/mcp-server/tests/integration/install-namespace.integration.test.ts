@@ -471,7 +471,7 @@ describe('install namespace integration', () => {
     })
     expect(applyResult.success).toBe(true)
     expect(applyResult.summary).toMatch(
-      /Renamed \/code-helper → \/sibling-vendor-code-helper\. To undo: sklx/
+      /Renamed \/code-helper → \/sibling-vendor-code-helper\. To undo: call apply_namespace_rename with auditId: '.+', collisionId: 'e2e-01', action: 'revert'\./
     )
 
     // C: gate now proceeds.

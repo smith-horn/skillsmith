@@ -17,16 +17,26 @@
  * which language eventually parses it.
  */
 
-/** Bump on a breaking shape change to `JournalRecord`. */
-export const JOURNAL_SCHEMA_VERSION = 1
+/**
+ * Bump on a breaking shape change to `JournalRecord` — including adding a
+ * new `JournalAction` literal, since `reader.ts`'s `isJournalRecordShape`
+ * validates `action` against a closed set: an older reader encountering an
+ * unrecognized value would misclassify a legitimate record as corrupt.
+ * (SMI-5671 bumped 1 → 2 for exactly this reason, adding `'revert'`.)
+ */
+export const JOURNAL_SCHEMA_VERSION = 2
 
 /**
  * `'apply'`   — an apply-family tool successfully mutated a file.
  * `'error'`   — an apply-family tool attempted a mutation and it failed
  *               (the `detail` field carries the typed error kind).
  * `'undo'`    — `undo_apply` successfully reversed a prior `'apply'` record.
+ * `'revert'`  — `apply_namespace_rename`'s `action: 'revert'` successfully
+ *               reversed a prior rename via the ledger (SMI-5671) — distinct
+ *               from `'undo'`, which is `undo_apply`'s same-process,
+ *               backup-restore mechanism.
  */
-export type JournalAction = 'apply' | 'error' | 'undo'
+export type JournalAction = 'apply' | 'error' | 'undo' | 'revert'
 
 /**
  * Every field the caller supplies. The writer (`writer.ts`) fills in

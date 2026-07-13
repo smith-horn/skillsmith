@@ -72,7 +72,7 @@ export const undoApplyInputSchema = z
 export const undoApplyToolSchema = {
   name: 'undo_apply',
   description:
-    "[Skillsmith — Maintain stage] Undo the most recent apply_namespace_rename / apply_recommended_edit changeset(s) made in THIS server session. Session-scoped: restarting the MCP server clears the undo history. Restores from the apply tool's own pre-mutation backup and refuses (never throws) if the target was modified since the apply, the backup is missing, or the restore target falls outside the confined skill roots. Pass `count` to undo the N most-recent changesets (default 1), or `suggestion_id` to undo one specific changeset — mutually exclusive.",
+    "[Skillsmith — Maintain stage] Undo the most recent apply_namespace_rename / apply_recommended_edit changeset(s) made in THIS server session. Session-scoped: restarting the MCP server clears the undo history — for a namespace rename applied in a PRIOR session, use the durable, cross-session revert instead: apply_namespace_rename({ auditId, collisionId, action: 'revert' }) (SMI-5671). Restores from the apply tool's own pre-mutation backup and refuses (never throws) if the target was modified since the apply, the backup is missing, or the restore target falls outside the confined skill roots. Pass `count` to undo the N most-recent changesets (default 1), or `suggestion_id` to undo one specific changeset — mutually exclusive.",
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -242,14 +242,23 @@ async function undoApplyImpl(input: unknown): Promise<UndoApplyResponse> {
     suggestionId: validInput.suggestion_id,
   })
   if (targets.length === 0) {
+    // SMI-5671: this tool only tracks same-process session state (see the
+    // module header) — a fresh MCP server process (the normal case: a new
+    // Codex/Claude Code session) has no record of an apply from a prior
+    // process. For a namespace rename specifically, a durable, ledger-backed
+    // revert survives across sessions: `apply_namespace_rename({ auditId,
+    // collisionId, action: 'revert' })`. Point callers there so whichever
+    // tool they reach for first by name surfaces the working path.
+    const crossSessionHint =
+      "For a namespace rename applied in a prior session, use the durable, cross-session revert instead: apply_namespace_rename({ auditId, collisionId, action: 'revert' })."
     return {
       success: false,
       undone: [],
       errorCode: 'undo.no_session_applies',
       error:
         validInput.suggestion_id !== undefined
-          ? `No session-tracked apply found for suggestion_id ${validInput.suggestion_id}.`
-          : 'No applies were made in this server session; nothing to undo.',
+          ? `No session-tracked apply found for suggestion_id ${validInput.suggestion_id}. ${crossSessionHint}`
+          : `No applies were made in this server session; nothing to undo. ${crossSessionHint}`,
     }
   }
 

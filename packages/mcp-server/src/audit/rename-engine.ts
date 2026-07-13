@@ -34,7 +34,6 @@
  */
 
 import * as fs from 'node:fs/promises'
-import * as path from 'node:path'
 
 import { getBackupsDir } from '../tools/install.conflict-helpers.js'
 import { appendOverride, findOverride, readLedger, writeLedger } from './namespace-overrides.js'
@@ -49,11 +48,8 @@ import {
   runBackup,
 } from './rename-engine.apply-paths.js'
 import { rewriteFrontmatterName } from './rename-engine.helpers.js'
-import type {
-  ApplyRenameRequest,
-  ApplyRenameResult,
-  RenameSuggestion,
-} from './rename-engine.types.js'
+import { revertRename } from './rename-engine.revert.js'
+import type { ApplyRenameRequest, ApplyRenameResult } from './rename-engine.types.js'
 
 export { generateSuggestionChain } from './suggestion-chain.js'
 
@@ -82,7 +78,7 @@ export async function applyRename(input: ApplyRenameRequest): Promise<ApplyRenam
   const auditId = request.auditId
 
   if (request.action === 'revert') {
-    return revertRename(suggestion, auditId)
+    return revertRename(suggestion, auditId, request.collisionId)
   }
 
   const newName = request.customName ?? suggestion.suggested
@@ -111,7 +107,13 @@ export async function applyRename(input: ApplyRenameRequest): Promise<ApplyRenam
         toPath: existing.renamedPath,
         backupPath: '',
         ledgerEntryId: existing.id,
-        summary: buildSummary(suggestion.currentName, existing.renamedTo, auditId, 'apply'),
+        summary: buildSummary(
+          suggestion.currentName,
+          existing.renamedTo,
+          auditId,
+          suggestion.collisionId,
+          'apply'
+        ),
       }
     }
     // Divergence — ledger says renamedTo, but it's not on disk. Refuse.
@@ -255,6 +257,7 @@ export async function applyRename(input: ApplyRenameRequest): Promise<ApplyRenam
     originalPath: renameTarget,
     renamedPath: destPath,
     auditId,
+    collisionId: suggestion.collisionId,
     reason: suggestion.reason,
   })
   // `appendOverride` returns reference-equal ledger when a duplicate
@@ -281,148 +284,13 @@ export async function applyRename(input: ApplyRenameRequest): Promise<ApplyRenam
     toPath: destPath,
     backupPath,
     ledgerEntryId: newEntry?.id ?? '',
-    summary: buildSummary(suggestion.currentName, newName, auditId, 'apply'),
-  }
-}
-
-/**
- * Inverse of `applyRename`. Looks up the ledger entry by `auditId`,
- * renames the file back to `originalIdentifier`, and removes the ledger
- * entry. Backup is kept for forensics until the 30-day GC sweep.
- *
- * Idempotency: calling revert twice on the same `auditId` returns success
- * with `fromPath === toPath` on the second call (the entry is gone, so
- * we treat it as a no-op success).
- */
-async function revertRename(
-  suggestion: RenameSuggestion,
-  auditId: string
-): Promise<ApplyRenameResult> {
-  const ledger = await readLedger()
-  const entry = ledger.overrides.find((o) => o.auditId === auditId)
-  if (!entry) {
-    // Idempotent no-op — already reverted.
-    return {
-      success: true,
-      collisionId: suggestion.collisionId,
-      appliedAction: suggestion.applyAction,
-      appliedRequest: 'revert',
-      fromPath: resolveRenameTarget(suggestion),
-      toPath: resolveRenameTarget(suggestion),
-      backupPath: '',
-      ledgerEntryId: '',
-      summary: buildSummary(suggestion.currentName, suggestion.currentName, auditId, 'revert'),
-    }
-  }
-
-  const action = suggestion.applyAction
-  const onDisk = entry.renamedPath
-  const target = entry.originalPath
-
-  if (!(await pathExists(onDisk))) {
-    return {
-      success: false,
-      collisionId: suggestion.collisionId,
-      appliedAction: action,
-      appliedRequest: 'revert',
-      fromPath: onDisk,
-      toPath: target,
-      backupPath: '',
-      ledgerEntryId: entry.id,
-      summary: '',
-      error: {
-        kind: 'namespace.ledger.disk_divergence',
-        ledgerRenamedTo: entry.renamedTo,
-        onDisk,
-        message: `revert source missing on disk: ${onDisk}`,
-        remediationHint:
-          'restore from ~/.claude/skills/.backups or remove the ledger entry manually',
-      },
-    }
-  }
-
-  if (target !== onDisk && (await pathExists(target))) {
-    return {
-      success: false,
-      collisionId: suggestion.collisionId,
-      appliedAction: action,
-      appliedRequest: 'revert',
-      fromPath: onDisk,
-      toPath: target,
-      backupPath: '',
-      ledgerEntryId: entry.id,
-      summary: '',
-      error: {
-        kind: 'namespace.rename.target_exists',
-        target,
-        message: `revert target already exists: ${target}`,
-      },
-    }
-  }
-
-  // Inverse rename. For skills, also restore the SKILL.md frontmatter
-  // `name:` field to the original identifier. Backup is kept (forensics);
-  // no fresh backup is taken on revert — the apply backup covers this case.
-  try {
-    if (action === 'rename_skill_dir_and_frontmatter') {
-      const skillMdPath = path.join(onDisk, 'SKILL.md')
-      const current = await fs.readFile(skillMdPath, 'utf-8')
-      const restored = rewriteFrontmatterName(current, entry.originalIdentifier)
-      if (!restored.ok) {
-        return {
-          success: false,
-          collisionId: suggestion.collisionId,
-          appliedAction: action,
-          appliedRequest: 'revert',
-          fromPath: onDisk,
-          toPath: target,
-          backupPath: '',
-          ledgerEntryId: entry.id,
-          summary: '',
-          error: {
-            kind: 'namespace.rename.frontmatter_rewrite_failed',
-            reason: restored.error.message,
-            message: `revert frontmatter rewrite failed: ${restored.error.message}`,
-          },
-        }
-      }
-      await fs.writeFile(skillMdPath, restored.content, 'utf-8')
-      await fs.rename(onDisk, target)
-    } else {
-      await fs.rename(onDisk, target)
-    }
-  } catch (err) {
-    return {
-      success: false,
-      collisionId: suggestion.collisionId,
-      appliedAction: action,
-      appliedRequest: 'revert',
-      fromPath: onDisk,
-      toPath: target,
-      backupPath: '',
-      ledgerEntryId: entry.id,
-      summary: '',
-      error: fsErr((err as Error).message),
-    }
-  }
-
-  // Remove the ledger entry.
-  const filtered = {
-    version: ledger.version,
-    overrides: ledger.overrides.filter((o) => o.id !== entry.id),
-  }
-  await writeLedger(filtered)
-
-  return {
-    success: true,
-    collisionId: suggestion.collisionId,
-    appliedAction: action,
-    appliedRequest: 'revert',
-    fromPath: onDisk,
-    toPath: target,
-    backupPath: '',
-    ledgerEntryId: entry.id,
-    summary: buildSummary(entry.renamedTo, entry.originalIdentifier, auditId, 'revert'),
+    summary: buildSummary(
+      suggestion.currentName,
+      newName,
+      auditId,
+      suggestion.collisionId,
+      'apply'
+    ),
   }
 }
 

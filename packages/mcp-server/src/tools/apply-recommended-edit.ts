@@ -186,6 +186,11 @@ async function applyRecommendedEditToolImpl(input: unknown): Promise<ApplyRecomm
     targetPath: result.filePath,
     backupRef: result.backupPath,
     approval: 'apply_with_confirmation',
+    // Prose edits have no revert action and no idempotent-no-op path — a
+    // successful apply always takes a fresh backup (SMI-5671 added these
+    // fields for apply_namespace_rename's revert; they're inert here).
+    action: 'apply',
+    isNoOp: false,
   })
 
   return {

@@ -16,6 +16,15 @@
  *     enforces non-empty `customName` on this branch).
  *   - `action: 'skip'`   — no-op; returns `{ success: true }` with no
  *     `result`. The agent records the decision; nothing on disk changes.
+ *   - `action: 'revert'` — undo a previously applied `apply`/`custom`
+ *     rename (SMI-5671). `suggestions.json` is a static snapshot from
+ *     audit time, so the same `(auditId, collisionId)` lookup still
+ *     resolves after the forward rename already happened. Ledger-backed
+ *     via `applyRename({ request: { action: 'revert', collisionId } })` —
+ *     this is the only durable, cross-session undo path (the CLI's
+ *     `sklx audit revert` was never implemented, and the `undo_apply` tool
+ *     only tracks same-process session state). `collisionId` disambiguates
+ *     when a single audit run resolved 2+ collisions under one `auditId`.
  *
  * Failure modes (typed via `errorCode`):
  *   - `namespace.audit.invalid_input` — Zod rejection.
@@ -62,12 +71,16 @@ function journalTargetPath(toPath: string, appliedAction: string): string {
  * `confirmed !== true` (and `action !== 'skip'`), the tool returns a
  * non-mutating preview envelope describing the rename; the caller must
  * re-invoke with `confirmed: true` to actually rename the file.
+ *
+ * SMI-5671: `action: 'revert'` takes no `customName` — same as `apply`/
+ * `skip` — so the existing refinement (`action !== 'custom' &&
+ * customName !== undefined` → reject) already covers it with no change.
  */
 export const applyNamespaceRenameInputSchema = z
   .object({
     auditId: z.string().min(1),
     collisionId: z.string().min(1),
-    action: z.enum(['apply', 'custom', 'skip']),
+    action: z.enum(['apply', 'custom', 'skip', 'revert']),
     customName: z.string().min(1).optional(),
     confirmed: z.boolean().optional(),
   })
@@ -98,7 +111,7 @@ export const applyNamespaceRenameInputSchema = z
 export const applyNamespaceRenameToolSchema = {
   name: 'apply_namespace_rename',
   description:
-    "[Skillsmith — Maintain stage] Apply a rename suggestion from a prior `skill_inventory_audit`. MUTATES `~/.claude` (renames a skill/command/agent file) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false }) so the agent can show the change before committing. `action: 'apply'` uses the suggested name; `'custom'` uses `customName`; `'skip'` records a no-op.",
+    "[Skillsmith — Maintain stage] Apply a rename suggestion from a prior `skill_inventory_audit`, or revert one already applied. MUTATES `~/.claude` (renames a skill/command/agent file) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false, direction }) so the agent can show the change before committing. `action: 'apply'` uses the suggested name; `'custom'` uses `customName`; `'skip'` records a no-op; `'revert'` undoes a previously applied rename for the same auditId + collisionId — this is the durable, cross-session undo path (a fresh MCP server process, e.g. a new session, can still revert a rename applied by an earlier process, since the ledger persists to disk).",
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -108,22 +121,22 @@ export const applyNamespaceRenameToolSchema = {
       },
       collisionId: {
         type: 'string',
-        description: 'collisionId of the RenameSuggestion to apply.',
+        description: 'collisionId of the RenameSuggestion to apply or revert.',
       },
       action: {
         type: 'string',
         description:
-          "'apply' uses the suggested name; 'custom' uses customName; 'skip' is a no-op.",
-        enum: ['apply', 'custom', 'skip'],
+          "'apply' uses the suggested name; 'custom' uses customName; 'skip' is a no-op; 'revert' undoes a previously applied apply/custom rename for the same auditId + collisionId.",
+        enum: ['apply', 'custom', 'skip', 'revert'],
       },
       customName: {
         type: 'string',
-        description: "Required when action === 'custom'; forbidden otherwise.",
+        description: "Required when action === 'custom'; forbidden otherwise (including revert).",
       },
       confirmed: {
         type: 'boolean',
         description:
-          'When true, performs the file rename. When omitted/false, returns a non-mutating preview. Defaults to false.',
+          'When true, performs the file rename (or revert). When omitted/false, returns a non-mutating preview. Defaults to false.',
       },
     },
     required: ['auditId', 'collisionId', 'action'],
@@ -187,9 +200,16 @@ async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceR
     }
   }
 
+  // SMI-5671: `revert` is the inverse of apply/custom — same confirmation
+  // gate, same suggestion lookup, but no `customName` and no dependency
+  // on `suggestion.suggested` for the mutation itself (only for the
+  // preview's swapped-direction text below).
+  const isRevert = validInput.action === 'revert'
+
   // SMI-5213: confirmation gate. Without `confirmed: true`, return a
-  // non-mutating preview describing the rename. The agent surfaces this
-  // to the user and re-invokes with `confirmed: true` to apply.
+  // non-mutating preview describing the rename (or revert). The agent
+  // surfaces this to the user and re-invokes with `confirmed: true` to
+  // apply.
   const targetName = validInput.action === 'custom' ? validInput.customName! : suggestion.suggested
   if (validInput.confirmed !== true) {
     return {
@@ -198,18 +218,26 @@ async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceR
       collisionId: suggestion.collisionId,
       action: suggestion.applyAction,
       target: suggestion.entry.source_path,
-      before: suggestion.currentName,
-      after: targetName,
+      // Revert reverses the direction shown for apply/custom: "before" is
+      // the currently-renamed name, "after" is the original identifier
+      // being restored.
+      before: isRevert ? targetName : suggestion.currentName,
+      after: isRevert ? suggestion.currentName : targetName,
       applied: false,
+      direction: isRevert ? 'revert' : 'apply',
     }
   }
 
   // Translate to Wave 2's apply request shape. `'custom'` carries
-  // `customName` through; `'apply'` uses the suggested name verbatim.
+  // `customName` through; `'apply'` uses the suggested name verbatim;
+  // `'revert'` looks up the ledger entry by `(auditId, collisionId)` and
+  // undoes it (Change 0 — `collisionId` is required to disambiguate when
+  // 2+ renames share one `auditId`).
   const renameRequest: ApplyRenameRequest = {
     suggestion,
-    request:
-      validInput.action === 'custom'
+    request: isRevert
+      ? { action: 'revert', auditId: validInput.auditId, collisionId: validInput.collisionId }
+      : validInput.action === 'custom'
         ? { action: 'apply', auditId: validInput.auditId, customName: validInput.customName! }
         : { action: 'apply', auditId: validInput.auditId },
   }
@@ -235,18 +263,30 @@ async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceR
     }
   }
 
+  // SMI-5671: surface the engine's existing idempotency signal explicitly
+  // rather than requiring callers to infer it from `result` themselves.
+  // For `revert` this is the "no matching ledger entry" no-op case; for
+  // `apply`/`custom` it mirrors the pre-existing idempotent-re-apply case.
+  // Computed before the journal call: `isNoOp` (not `backupRef === ''`
+  // alone) is what tells `journalApplySuccess` whether a genuine revert
+  // mutation happened, since reverts always have `backupRef === ''`.
+  const noOp = result.fromPath === result.toPath && result.backupPath === ''
+
   await journalApplySuccess({
     tool: 'apply_namespace_rename',
     suggestionId: result.collisionId,
     targetPath: journalTargetPath(result.toPath, result.appliedAction),
     backupRef: result.backupPath,
     approval: validInput.action,
+    action: isRevert ? 'revert' : 'apply',
+    isNoOp: noOp,
   })
 
   return {
     success: true,
     collisionId: result.collisionId,
     result,
+    noOp,
   }
 }
 
