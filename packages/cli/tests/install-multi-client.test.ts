@@ -17,6 +17,38 @@ import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Regression-test-only mocks for the `install` command's --also-link path.
+// SkillInstallationService.install is a network+DB call we don't want to
+// exercise for real here; @skillsmith/core/install (addLink, getInstallPath)
+// stays real so the fan-out itself runs against the temp $HOME below.
+const alsoLinkMocks = vi.hoisted(() => ({
+  installFn: vi.fn(),
+}))
+
+vi.mock('@skillsmith/core', () => ({
+  createDatabaseAsync: vi.fn().mockResolvedValue({ close: vi.fn() }),
+  initializeSchema: vi.fn(),
+  SkillRepository: vi.fn().mockImplementation(function () {
+    return { findById: vi.fn(() => null) }
+  }),
+  SkillDependencyRepository: vi.fn().mockImplementation(function () {
+    return { clearAll: vi.fn() }
+  }),
+  SkillInstallationService: vi.fn().mockImplementation(function () {
+    return { install: alsoLinkMocks.installFn }
+  }),
+  QuarantineRepository: vi.fn().mockImplementation(function () {
+    return { isQuarantined: vi.fn(() => false) }
+  }),
+  SkillsmithApiClient: Object.assign(vi.fn(), {
+    toSkill: (r: { trust_tier?: string }) => ({ trustTier: r.trust_tier ?? 'community' }),
+  }),
+  loadStoredAccessToken: vi.fn().mockResolvedValue(null),
+  createApiClient: vi.fn(() => ({ isOffline: () => true, getSkill: vi.fn() })),
+  isGitHubUrl: vi.fn((url: string) => url.startsWith('https://github.com/')),
+  emitInstallEvent: vi.fn(async () => undefined),
+}))
+
 const ORIGINAL_HOME = process.env['HOME']
 const ORIGINAL_USERPROFILE = process.env['USERPROFILE']
 const ORIGINAL_CLIENT = process.env['SKILLSMITH_CLIENT']
@@ -232,6 +264,47 @@ describe('install --client / --also-link', () => {
       const { removeLinks } = await import('@skillsmith/core/install')
       const removed = await removeLinks('nothing-installed')
       expect(removed).toBe(0)
+    })
+  })
+
+  describe('install command --also-link with an owner/repo skillId', () => {
+    beforeEach(() => {
+      alsoLinkMocks.installFn.mockReset()
+    })
+
+    it('fans out using the resolved directory name, not the raw owner/repo skillId', async () => {
+      // Real installs key the manifest/directory by the resolved skill name
+      // (e.g. "commit"), which can differ from the owner/repo argument the
+      // user typed (e.g. "getsentry/commit"). Seed the source dir the way
+      // SkillInstallationService really lays it out.
+      const installPath = await seedSkill('commit', '# commit skill\n')
+      alsoLinkMocks.installFn.mockResolvedValue({
+        success: true,
+        skillId: 'getsentry/commit',
+        installPath,
+        trustTier: 'verified',
+      })
+
+      const { createInstallCommand } = await import('../src/commands/install.js')
+      const cmd = createInstallCommand()
+      await cmd.parseAsync([
+        'node',
+        'test',
+        'getsentry/commit',
+        '--client',
+        'claude-code',
+        '--also-link',
+        'agents',
+      ])
+
+      const dest = path.join(homeDir, '.agents', 'skills', 'commit')
+      const skillMd = await readFile(path.join(dest, 'SKILL.md'), 'utf-8')
+      expect(skillMd).toContain('# commit skill')
+
+      // The buggy path constructed .../.agents/skills/getsentry/commit instead.
+      await expect(stat(path.join(homeDir, '.agents', 'skills', 'getsentry'))).rejects.toThrow(
+        /ENOENT/
+      )
     })
   })
 })
