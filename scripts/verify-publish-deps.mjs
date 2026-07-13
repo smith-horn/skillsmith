@@ -19,7 +19,7 @@
 import { readFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { execSync, execFileSync } from 'child_process'
+import { execFileSync } from 'child_process'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -28,21 +28,77 @@ const PACKAGES = [
   { name: '@skillsmith/core', dir: 'packages/core' },
   { name: '@skillsmith/mcp-server', dir: 'packages/mcp-server' },
   { name: '@skillsmith/cli', dir: 'packages/cli' },
+  // SMI-5672: @smith-horn/enterprise consumes @skillsmith/core + mcp-server dep
+  // ranges but was never audited here — a non-core bump that only staled
+  // enterprise's ranges would ship with zero CI coverage (this job is the
+  // backstop that caught the live SMI-5672 incident). It publishes to GitHub
+  // Packages (not npmjs), so lookups of its OWN published version must target
+  // that registry; see npmViewCached's `registry` param. Its deps on
+  // core/mcp-server stay on npmjs (those publish there) — handled per-dep in
+  // runAudit's Check 3 via the sibling's own (unset) registry.
+  {
+    name: '@smith-horn/enterprise',
+    dir: 'packages/enterprise',
+    registry: 'https://npm.pkg.github.com',
+  },
 ]
 
 const npmCache = new Map()
 
-function npmViewCached(name, version) {
-  const key = `${name}@${version}`
+/**
+ * Look up a package's published `version` on npm (cached).
+ *
+ * @param {string} name    package name
+ * @param {string} version version to probe
+ * @param {string} [registry] non-default registry (GitHub Packages for
+ *   @smith-horn/enterprise). Omit for npmjs (default).
+ * @returns {string} the version string when published, '' otherwise.
+ *
+ * SMI-5672: mirrors the established scripts/lib/release-collision.ts pattern
+ * (npmViewArgs / fetchAllPublishedVersions): builds an execFileSync argv (no
+ * shell interpolation) and appends `--registry=<url>` only for a non-default
+ * registry. Fail-soft in both directions — the default npmjs path keeps today's
+ * "any failure ⇒ '' (not published)" semantics; a registry-targeted lookup that
+ * fails on auth (E401/E403) additionally warns, since CI/local prepare-release
+ * runs may lack a GitHub Packages token, then degrades to '' rather than a hard
+ * error.
+ */
+function npmViewCached(name, version, registry) {
+  // Include the registry in the cache key so a GitHub-Packages lookup never
+  // collides with a default-npmjs lookup for the same name@version.
+  const key = registry ? `${registry}|${name}@${version}` : `${name}@${version}`
   if (npmCache.has(key)) return npmCache.get(key)
+
+  const args = ['view', `${name}@${version}`, 'version']
+  if (registry) args.push(`--registry=${registry}`)
+
   try {
-    const result = execSync(`npm view ${name}@${version} version 2>/dev/null`, {
+    // stdio pipe (not inherit) keeps npm's stderr out of the terminal — the
+    // execFileSync equivalent of the old `2>/dev/null`.
+    const result = execFileSync('npm', args, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
     npmCache.set(key, result)
     return result
-  } catch {
+  } catch (err) {
+    if (registry) {
+      const stderrText =
+        typeof err?.stderr === 'string'
+          ? err.stderr
+          : Buffer.isBuffer(err?.stderr)
+            ? err.stderr.toString('utf-8')
+            : ''
+      const isAuthError =
+        /E401|E403|Unauthorized|ENEEDAUTH|need(?:s)? auth|authentication/i.test(stderrText) ||
+        /E401|E403|Unauthorized|ENEEDAUTH/i.test(err?.message ?? '')
+      if (isAuthError) {
+        console.warn(
+          `  ⚠️  Could not verify ${name}@${version} on ${registry} (not authenticated) — ` +
+            `treating as not confirmable. Provide a registry token to enable this check.`
+        )
+      }
+    }
     npmCache.set(key, '')
     return ''
   }
@@ -71,7 +127,7 @@ function npmViewCached(name, version) {
  * @param {{
  *   git?: (args: string[]) => string,
  *   readJson?: (p: string) => any,
- *   npmView?: (name: string, version: string) => string,
+ *   npmView?: (name: string, version: string, registry?: string) => string,
  * }} [io]
  * @returns {{ versions: Record<string, string>, resolved: boolean }}
  */
@@ -128,7 +184,9 @@ export function getReleasingVersions(io = {}) {
       // SMI-5077: same version on base — but if it's still unpublished on npm,
       // this is also a release-in-progress (prior merge bumped source without
       // publishing). The npm 404 is the ground truth.
-      const published = npmView(pkg.name, localVersion)
+      // SMI-5672: probe the package's OWN registry (GitHub Packages for
+      // @smith-horn/enterprise; default npmjs when pkg.registry is unset).
+      const published = npmView(pkg.name, localVersion, pkg.registry)
       if (!published) {
         versions[pkg.name] = localVersion
       }
@@ -144,7 +202,7 @@ export function getReleasingVersions(io = {}) {
  *
  * @param {{
  *   readJson?: (p: string) => any,
- *   npmView?: (name: string, version: string) => string,
+ *   npmView?: (name: string, version: string, registry?: string) => string,
  *   releasing?: { versions: Record<string, string>, resolved: boolean },
  *   ci?: boolean,
  *   logger?: { log: (m: string) => void, error: (m: string) => void },
@@ -219,7 +277,12 @@ export function runAudit(opts = {}) {
       // requiring <newVersion> to already be on npm would be unsatisfiable.
       if (depRange.startsWith('^') || depRange.startsWith('~')) {
         const baseVersion = depRange.replace(/^[\^~]/, '')
-        const published = npmView(depName, baseVersion)
+        // SMI-5672: check the DEPENDENCY's published version on the dependency's
+        // OWN registry. `sibling` is the PACKAGES entry for `depName`, so
+        // `sibling.registry` is npmjs (unset) for @skillsmith/core+mcp-server —
+        // enterprise's deps on them stay on npmjs — and GitHub Packages only if
+        // a package ever declares a `^`/`~` range on a GitHub-Packages sibling.
+        const published = npmView(depName, baseVersion, sibling.registry)
         if (!published) {
           if (inPR[depName] === baseVersion) {
             log(`${depName}@${baseVersion} — not yet on npm, accepted (released in this PR)`)
