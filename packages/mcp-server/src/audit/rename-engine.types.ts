@@ -63,7 +63,7 @@ export interface RenameSuggestion {
  */
 export type RenameActionRequest =
   | { action: 'apply'; auditId: string; customName?: string }
-  | { action: 'revert'; auditId: string }
+  | { action: 'revert'; auditId: string; collisionId: string }
 
 /**
  * Top-level apply request. `auditId` is the FK into the audit-history
@@ -152,6 +152,13 @@ export type RenameError =
   | {
       kind: 'namespace.rename.revert_not_found'
       auditId: string
+      message: string
+    }
+  | {
+      kind: 'namespace.rename.revert_ambiguous'
+      auditId: string
+      collisionId: string
+      candidateCount: number
       message: string
     }
 

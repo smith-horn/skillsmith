@@ -145,6 +145,11 @@ export function buildSummary(
   oldIdentifier: string,
   newIdentifier: string,
   auditId: string,
+  // Threaded through for SMI-5671 Change 0 so the later undo-hint fix
+  // (Change 2) can interpolate the collisionId into the message. Not yet
+  // referenced — the returned text is intentionally unchanged by Change 0,
+  // so the parameter is `_`-prefixed (accepted, deliberately unused for now).
+  _collisionId: string,
   action: 'apply' | 'revert'
 ): string {
   if (action === 'revert') {

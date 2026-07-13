@@ -75,6 +75,19 @@ export interface OverrideRecord {
    */
   auditId: string
   /**
+   * The collision this rename resolved — from the audit's
+   * `renameSuggestions[].collisionId`. Together with `auditId`, this is the
+   * key a revert uses to pick the correct entry when a single audit run
+   * resolved 2+ collisions (each accepted rename appends its own entry, all
+   * sharing one `auditId`). Optional for back-compat: pre-SMI-5671 ledger
+   * entries have no `collisionId`, and the original collision context isn't
+   * reconstructable for them — the revert lookup falls back to a single
+   * unambiguous `auditId`-only match and refuses when 2+ are ambiguous.
+   * Its optionality is additive (no incompatible shape change), so
+   * `CURRENT_VERSION` stays at 1.
+   */
+  collisionId?: string
+  /**
    * Human-readable reason — e.g.
    * `"collision with skillsmith/release-tools /ship"`. Surfaced verbatim
    * in the audit-report writer (Wave 2 PR #4 extension).

@@ -63,6 +63,7 @@ function makeSuggestion(args: {
   applyAction: RenameSuggestion['applyAction']
   suggested: string
   author?: string
+  collisionId?: string
 }): RenameSuggestion {
   const entry: InventoryEntry = {
     kind: args.applyAction === 'rename_skill_dir_and_frontmatter' ? 'skill' : 'command',
@@ -72,7 +73,7 @@ function makeSuggestion(args: {
     meta: args.author ? { author: args.author } : undefined,
   }
   return {
-    collisionId: cid('test-collision-01'),
+    collisionId: cid(args.collisionId ?? 'test-collision-01'),
     entry,
     currentName: args.identifier,
     suggested: args.suggested,
@@ -340,7 +341,7 @@ describe('applyRename — revert', () => {
 
     const reverted = await applyRename({
       suggestion,
-      request: { action: 'revert', auditId: 'audit_06' },
+      request: { action: 'revert', auditId: 'audit_06', collisionId: 'test-collision-01' },
     })
     expect(reverted.success).toBe(true)
     expect(fs.existsSync(src)).toBe(true)
@@ -367,11 +368,11 @@ describe('applyRename — revert', () => {
     })
     await applyRename({
       suggestion,
-      request: { action: 'revert', auditId: 'audit_07' },
+      request: { action: 'revert', auditId: 'audit_07', collisionId: 'test-collision-01' },
     })
     const second = await applyRename({
       suggestion,
-      request: { action: 'revert', auditId: 'audit_07' },
+      request: { action: 'revert', auditId: 'audit_07', collisionId: 'test-collision-01' },
     })
     expect(second.success).toBe(true)
     expect(second.fromPath).toBe(second.toPath)
@@ -396,7 +397,7 @@ describe('applyRename — revert', () => {
     })
     const reverted = await applyRename({
       suggestion,
-      request: { action: 'revert', auditId: 'audit_08' },
+      request: { action: 'revert', auditId: 'audit_08', collisionId: 'test-collision-01' },
     })
     expect(reverted.success).toBe(true)
     const restored = await fsp.readFile(path.join(skillDir, 'SKILL.md'), 'utf-8')
