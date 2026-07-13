@@ -39,7 +39,10 @@ function isJournalRecordShape(value: unknown): value is JournalRecord {
     typeof r.ts === 'number' &&
     typeof r.session_id === 'string' &&
     typeof r.tool === 'string' &&
-    (r.action === 'apply' || r.action === 'error' || r.action === 'undo') &&
+    (r.action === 'apply' ||
+      r.action === 'error' ||
+      r.action === 'undo' ||
+      r.action === 'revert') &&
     (r.suggestion_id === null || typeof r.suggestion_id === 'string') &&
     (r.target_path === null || typeof r.target_path === 'string') &&
     (r.before_hash === null || typeof r.before_hash === 'string') &&

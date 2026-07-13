@@ -161,7 +161,7 @@ describe('applyRename — rename_command_file', () => {
     expect(fs.existsSync(result.toPath)).toBe(true)
     expect(fs.existsSync(src)).toBe(false)
     expect(result.summary).toBe(
-      'Renamed /ship → /anthropic-ship. To undo: sklx audit revert audit_01'
+      "Renamed /ship → /anthropic-ship. To undo: call apply_namespace_rename with auditId: 'audit_01', collisionId: 'test-collision-01', action: 'revert'."
     )
 
     const ledger = await readLedger()

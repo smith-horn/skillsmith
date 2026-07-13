@@ -105,10 +105,11 @@ export interface ApplyRenameResult {
   /** ULID of the appended ledger entry — `''` for revert (ledger entry removed). */
   ledgerEntryId: string
   /**
-   * Inline revert summary (decision #10). Populated on success; empty
-   * string on failure. Literal text:
+   * Inline revert summary (decision #10, corrected by SMI-5671 Change 2).
+   * Populated on success; empty string on failure. Literal text:
    *
-   *   `"Renamed /<OLD> → /<NEW>. To undo: sklx audit revert <auditId>"`
+   *   `"Renamed /<OLD> → /<NEW>. To undo: call apply_namespace_rename with
+   *   auditId: '<auditId>', collisionId: '<collisionId>', action: 'revert'."`
    *
    * The agent surfaces this directly to the user in tool-response output.
    */

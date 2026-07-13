@@ -27,7 +27,13 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 
 import { skillInventoryAudit } from '../../src/tools/skill-inventory-audit.js'
-import { applyNamespaceRename } from '../../src/tools/apply-namespace-rename.js'
+import {
+  applyNamespaceRename,
+  applyNamespaceRenameInputSchema,
+  applyNamespaceRenameToolSchema,
+} from '../../src/tools/apply-namespace-rename.js'
+import { readLedger } from '../../src/audit/namespace-overrides.js'
+import { readJournalRecords } from '@skillsmith/core/journal'
 import type { SkillInventoryAuditResponse } from '../../src/tools/skill-inventory-audit.types.js'
 
 beforeEach(() => {
@@ -154,6 +160,7 @@ describe('apply_namespace_rename — confirmation gate (SMI-5213)', () => {
     expect(response.action).toBe(suggestion.applyAction)
     expect(response.before).toBe(suggestion.currentName)
     expect(response.after).toBe(suggestion.suggested)
+    expect(response.direction).toBe('apply')
     // File untouched.
     expect(fs.existsSync(cmdPath)).toBe(true)
     expect(fs.readFileSync(cmdPath, 'utf-8')).toBe(before)
@@ -261,6 +268,18 @@ describe('apply_namespace_rename — failure modes', () => {
     expect(response.success).toBe(false)
     expect(response.errorCode).toBe('namespace.audit.collision_not_found')
   })
+
+  it('returns collision_not_found for action: revert same as for apply (SMI-5671)', async () => {
+    const audit = await seedAuditWithCollision()
+    const response = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: 'collisionDoesNotExist',
+      action: 'revert',
+      confirmed: true,
+    })
+    expect(response.success).toBe(false)
+    expect(response.errorCode).toBe('namespace.audit.collision_not_found')
+  })
 })
 
 describe('apply_namespace_rename — idempotent re-apply', () => {
@@ -287,5 +306,162 @@ describe('apply_namespace_rename — idempotent re-apply', () => {
     expect(second.result?.success).toBe(true)
     expect(second.result?.fromPath).toBe(second.result?.toPath)
     expect(second.result?.backupPath).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5671: action: 'revert'
+// ---------------------------------------------------------------------------
+
+describe('apply_namespace_rename — action: revert', () => {
+  it('reverts a previously applied rename through the tool (apply → revert round-trip)', async () => {
+    const audit = await seedAuditWithCollision()
+    const suggestion = audit.renameSuggestions[0]!
+    const cmdPath = path.join(TEST_HOME, '.claude', 'commands', 'ship.md')
+
+    const applied = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'apply',
+      confirmed: true,
+    })
+    expect(applied.success).toBe(true)
+    expect(applied.result?.success).toBe(true)
+    const renamedPath = applied.result!.toPath
+    expect(fs.existsSync(cmdPath)).toBe(false)
+    expect(fs.existsSync(renamedPath)).toBe(true)
+
+    const reverted = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'revert',
+      confirmed: true,
+    })
+    expect(reverted.success).toBe(true)
+    expect(reverted.result?.success).toBe(true)
+    expect(reverted.noOp).toBe(false)
+    // Original file restored; renamed file gone — a genuine round-trip,
+    // not just a ledger-entry removal.
+    expect(fs.existsSync(cmdPath)).toBe(true)
+    expect(fs.existsSync(renamedPath)).toBe(false)
+
+    const ledger = await readLedger()
+    expect(ledger.overrides).toHaveLength(0)
+
+    // The journal must record this as a genuine 'revert' — NOT mislabeled
+    // as 'apply' (the journal helper's action field used to be hardcoded)
+    // or as 'idempotent_no_op' (revert has no fresh backupRef by design,
+    // which used to be conflated with "nothing changed").
+    const records = await readJournalRecords()
+    const revertRecord = records.at(-1)
+    expect(revertRecord?.action).toBe('revert')
+    expect(revertRecord?.detail).not.toBe('idempotent_no_op')
+  })
+
+  it('returns a non-mutating preview with swapped before/after and direction: revert', async () => {
+    const audit = await seedAuditWithCollision()
+    const suggestion = audit.renameSuggestions[0]!
+
+    const applied = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'apply',
+      confirmed: true,
+    })
+    expect(applied.success).toBe(true)
+    const renamedPath = applied.result!.toPath
+
+    const preview = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'revert',
+    })
+    expect(preview.success).toBe(true)
+    expect(preview.preview).toBe(true)
+    expect(preview.applied).toBe(false)
+    expect(preview.direction).toBe('revert')
+    // Swapped vs. the apply/custom preview: "before" is the currently
+    // renamed name, "after" is the original identifier being restored.
+    expect(preview.before).toBe(suggestion.suggested)
+    expect(preview.after).toBe(suggestion.currentName)
+    expect(preview.result).toBeUndefined()
+
+    // Preview must not mutate anything.
+    expect(fs.existsSync(renamedPath)).toBe(true)
+  })
+
+  it('returns noOp: true when reverting an auditId/collisionId with no matching ledger entry', async () => {
+    const audit = await seedAuditWithCollision()
+    const suggestion = audit.renameSuggestions[0]!
+    const cmdPath = path.join(TEST_HOME, '.claude', 'commands', 'ship.md')
+
+    // No apply call was made — the ledger has no entry for this audit at all.
+    const reverted = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'revert',
+      confirmed: true,
+    })
+    expect(reverted.success).toBe(true)
+    expect(reverted.noOp).toBe(true)
+    expect(reverted.result?.fromPath).toBe(reverted.result?.toPath)
+    expect(reverted.result?.backupPath).toBe('')
+    // Idempotent no-op — nothing on disk changed.
+    expect(fs.existsSync(cmdPath)).toBe(true)
+
+    // A genuine no-op (no matching ledger entry) is still journaled as
+    // 'idempotent_no_op' — this is the one case where that detail is
+    // actually correct, unlike a real revert.
+    const records = await readJournalRecords()
+    const revertRecord = records.at(-1)
+    expect(revertRecord?.action).toBe('revert')
+    expect(revertRecord?.detail).toBe('idempotent_no_op')
+  })
+
+  it('returns an explicit error (not a silent no-op) when the renamed path is missing on disk', async () => {
+    const audit = await seedAuditWithCollision()
+    const suggestion = audit.renameSuggestions[0]!
+
+    const applied = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'apply',
+      confirmed: true,
+    })
+    expect(applied.success).toBe(true)
+    const renamedPath = applied.result!.toPath
+
+    // Simulate the renamed file having been manually deleted since the
+    // apply — the ledger still says it lives at renamedPath.
+    fs.rmSync(renamedPath, { force: true })
+
+    const reverted = await applyNamespaceRename({
+      auditId: audit.auditId,
+      collisionId: suggestion.collisionId,
+      action: 'revert',
+      confirmed: true,
+    })
+    expect(reverted.success).toBe(false)
+    expect(reverted.errorCode).toBe('namespace.rename.subcall_failed')
+    expect(reverted.result?.error?.kind).toBe('namespace.ledger.disk_divergence')
+    // Not surfaced as a no-op — `noOp` is only computed on the success path.
+    expect(reverted.noOp).toBeUndefined()
+
+    // The ledger entry must NOT be silently removed on a divergence refusal.
+    const ledger = await readLedger()
+    expect(ledger.overrides).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5671: schema-drift guardrail
+// ---------------------------------------------------------------------------
+
+describe('apply_namespace_rename — schema drift guardrail', () => {
+  it('keeps the hand-written JSON Schema action enum in sync with the Zod schema', () => {
+    const zodValues = applyNamespaceRenameInputSchema.innerType().shape.action.options
+    const jsonSchemaValues = applyNamespaceRenameToolSchema.inputSchema.properties.action.enum
+    expect(new Set(jsonSchemaValues)).toEqual(new Set(zodValues))
+    expect(jsonSchemaValues).toHaveLength(zodValues.length)
   })
 })

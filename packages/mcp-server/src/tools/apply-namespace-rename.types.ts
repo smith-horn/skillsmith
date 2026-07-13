@@ -15,6 +15,12 @@ import type { ApplyRenameResult } from '../audit/rename-engine.types.js'
  * `action: 'apply'`  — apply the suggested rename (Wave 2 `applyRename`).
  * `action: 'custom'` — apply with `customName` (must be non-empty).
  * `action: 'skip'`   — record a no-op decision; no file mutation.
+ * `action: 'revert'` — undo a previously applied rename for the same
+ *   `(auditId, collisionId)` pair (SMI-5671). Reuses the same
+ *   `(auditId, collisionId)` lookup as apply/custom — `suggestions.json` is
+ *   a static snapshot from audit time, so it still resolves after the
+ *   forward rename has already happened. `collisionId` disambiguates when
+ *   a single audit run resolved 2+ collisions under one `auditId` (Change 0).
  *
  * `auditId` + `collisionId` are FKs into
  * `~/.skillsmith/audits/<auditId>/suggestions.json` (this PR — see
@@ -25,7 +31,7 @@ export interface ApplyNamespaceRenameInput {
   auditId: string
   /** `collisionId` from a `RenameSuggestion` in that response. */
   collisionId: string
-  action: 'apply' | 'custom' | 'skip'
+  action: 'apply' | 'custom' | 'skip' | 'revert'
   /** Required when `action === 'custom'`. */
   customName?: string
 }
@@ -64,4 +70,23 @@ export interface ApplyNamespaceRenameResponse {
   after?: string
   /** Always `false` on a preview; absent on a real apply. */
   applied?: boolean
+  /**
+   * SMI-5671: which way this preview describes — `'apply'` for `apply`/
+   * `custom`, `'revert'` for `revert`. Part of the confirmation-gate
+   * preview-field group (present when `preview: true`) so a generic
+   * renderer doesn't have to infer direction from `before`/`after`
+   * field-name convention alone.
+   */
+  direction?: 'apply' | 'revert'
+  /**
+   * SMI-5671: present on the non-preview (post-`confirmed: true`) success
+   * response; `true` when the engine's apply/revert call was a no-op —
+   * computed from `result.fromPath === result.toPath && result.backupPath
+   * === ''`. For `revert` this means no matching ledger entry was found
+   * for `(auditId, collisionId)` (already reverted, or never applied);
+   * for `apply`/`custom` it mirrors the pre-existing idempotent-re-apply
+   * case. Surfaces the engine's existing idempotency signal explicitly so
+   * callers don't have to infer it from `result` themselves.
+   */
+  noOp?: boolean
 }
