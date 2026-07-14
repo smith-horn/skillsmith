@@ -14,10 +14,16 @@ Architecture decision: [ADR-128](../../docs/internal/adr/128-harness-of-harnesse
 1. **Rust toolchain**, if not already present: install via [rustup](https://rustup.rs).
 2. **Install NEEDLE**, pinned to the diligenced, macOS-compatible fork commit
    (upstream `jedarden/NEEDLE` has never published a macOS binary and has a
-   real Darwin compile bug — see the implementation doc § 2):
+   real Darwin compile bug — see the implementation doc § 2). This also
+   carries the transform-kill grace-period fix
+   ([SMI-5678](https://linear.app/smith-horn-group/issue/SMI-5678/needle-transform-codex-fails-to-parse-jsonl-output-model-attribution))
+   that fixed a spurious `TransformFailed` event and `model: "unknown"` cost
+   attribution on every Codex dispatch — see the Linear issue for the
+   root-cause and validation record (the paired implementation doc for the
+   broader SMI-5691 fork-followups work has not been written yet):
 
    ```sh
-   cargo install --git https://github.com/wrsmith108/NEEDLE --rev c2eed7e3 --no-default-features
+   cargo install --git https://github.com/wrsmith108/NEEDLE --rev 96e669e8 --no-default-features
    ```
 
    `--no-default-features` skips the `otlp` telemetry feature (needs
@@ -140,9 +146,10 @@ guaranteed for every model/prompt.
   `.agents/skills/` content: don't dispatch anything to Codex that a
   Sonnet/Haiku worker would finish in under ~2 minutes. See CLAUDE.md's
   Default Execution Model, Codex row.
-- **`transform.failed error="exit code -1"` in `needle logs`.** Known,
-  tracked gap: `needle-transform-codex` fails to parse some dispatch output
-  even though the underlying `codex exec` call succeeded. Effect: NEEDLE's
-  own cost/token attribution for that dispatch shows `model: "unknown"`.
-  Task execution itself is unaffected. Tracked at SMI-5678, not a
-  `dispatch.sh` bug.
+- **`transform.failed error="exit code -1"` in `needle logs`, or Codex-dispatch
+  cost/token attribution showing `model: "unknown"`.** Fixed as of the pinned
+  fork rev bump to `96e669e8` (SMI-5678) — `needle-transform-codex` now
+  parses the dispatch output correctly and attributes the real model. If you
+  still see this, confirm the install actually picked up `96e669e8` (re-run
+  setup step 2; `cargo install` is a no-op if an older pinned rev is already
+  installed under the same binary name).
