@@ -119,6 +119,13 @@ test-results/
 playwright-report/
 blob-report/
 
+# SMI-5668: NEEDLE-based Codex dispatch (maintainer-machine-only tooling).
+# results/*.log is already covered by the blanket *.log rule above; these two
+# are a defensive backstop against an accidental commit of NEEDLE's own
+# bead-store SQLite/JSONL state or its per-bead traces from inside a worktree.
+scripts/needle/results/
+.beads/
+
 # Ignore test databases and output in packages (generated during tests)
 packages/*/data/
 packages/*/output/

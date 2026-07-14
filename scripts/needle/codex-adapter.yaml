@@ -1,0 +1,31 @@
+# Corrected `codex` adapter, overriding NEEDLE's built-in one (which targets
+# a stale Codex CLI flag surface: `codex --model {model} --approval-mode
+# full-auto ...` — missing the `exec` subcommand, and `--approval-mode` is
+# not a real flag on the installed codex-cli 0.144.3).
+#
+# Flags verified directly via `codex exec --help` (ADR-128 / SMI-5668
+# diligence pass, 2026-07-13/14):
+#   -m/--model <MODEL>    per-invocation model selection
+#   -s/--sandbox <MODE>   read-only | workspace-write | danger-full-access
+#   --json                stream events as JSONL (required for
+#                          needle-transform-codex, which parses this exact
+#                          format: thread.started / turn.completed / etc.)
+#
+# Sandbox is pinned to read-only here on purpose, per ADR-128 rule 2
+# (unattended dispatch is read-only by default; a workspace-write mode is a
+# real, separate follow-up once a concrete need and an actual enforcement
+# mechanism exist — see the implementation doc § 4, "No --sandbox flag this
+# iteration").
+#
+# Setup: copy this file to ~/.config/needle/adapters/codex.yaml
+# (scripts/needle/README.md step 5). Validate with `needle test-agent codex`
+# → should report `Status: READY`.
+name: codex
+description: "OpenAI Codex CLI, corrected for codex-cli 0.144.x's real exec subcommand + flag surface"
+agent_cli: codex
+version_command: 'codex --version'
+invoke_template: 'cd {workspace} && codex exec -m {model} -s read-only --json "$(cat {prompt_file})"'
+timeout_secs: 3600
+provider: openai
+model: gpt-5.6-sol
+output_transform: needle-transform-codex
