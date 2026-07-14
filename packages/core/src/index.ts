@@ -20,6 +20,10 @@ export * from './exports/repositories.js'
 // don't always follow the re-export chain correctly
 // SMI-2721 (L1): Export createDatabaseAsync for CLI + enterprise async migration
 export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
+// SMI-3140 Wave 1: driver-type detection, needed to hard-gate the CycloneDX
+// export's opt-in inline dependency backfill to better-sqlite3 only (sql.js/
+// WASM has no cross-process write coordination — see compliance-tools.cyclonedx.ts).
+export { getBestDriver, type DriverType } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
 // SMI-4484: corruption detection + self-heal helpers, reused by the CLI opener.
 export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'

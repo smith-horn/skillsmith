@@ -25,6 +25,8 @@ export type AuditEventType =
   | 'quarantine_multi_approval_timeout'
   // SMI-2279: Security feature flag override
   | 'security_feature_flag_override'
+  // SMI-3140: Enterprise compliance BOM export (CycloneDX)
+  | 'compliance_export'
 
 /**
  * Actor performing the action

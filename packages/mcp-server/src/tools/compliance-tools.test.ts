@@ -69,6 +69,7 @@ describe('compliance-tools', () => {
         format: 'soc2',
         period: '90d',
         includeUserActivity: true,
+        backfillDependencies: false,
       }
       const result = await executeComplianceReport(input, mockContext)
       expect(result.format).toBe('soc2')
@@ -88,7 +89,7 @@ describe('compliance-tools', () => {
 
     it('should omit user activity when disabled', async () => {
       const result = await executeComplianceReport(
-        { format: 'soc2', period: '90d', includeUserActivity: false },
+        { format: 'soc2', period: '90d', includeUserActivity: false, backfillDependencies: false },
         mockContext
       )
       const report = result.report as string
@@ -106,6 +107,7 @@ describe('compliance-tools', () => {
         format: 'cyclonedx',
         period: '90d',
         includeUserActivity: true,
+        backfillDependencies: false,
       }
       const result = await executeComplianceReport(input, mockContext)
       expect(result.format).toBe('cyclonedx')
@@ -118,8 +120,16 @@ describe('compliance-tools', () => {
 
       const components = report.components as Array<Record<string, unknown>>
       expect(components.length).toBeGreaterThanOrEqual(2)
-      expect(components[0].name).toBe('skillsmith/commit')
-      expect(components[0].type).toBe('library')
+      const names = components.map((c) => c.name)
+      expect(names).toContain('skillsmith/commit')
+      expect(components.every((c) => c.type === 'library')).toBe(true)
+
+      // SMI-3140: sparse-data signal survives inside the BOM document itself
+      // (mockContext has no db, so this always resolves to the placeholder).
+      const metadata = report.metadata as Record<string, unknown>
+      const properties = metadata.properties as Array<{ name: string; value: string }>
+      const dataSourceProp = properties.find((p) => p.name === 'skillsmith:dependencyDataSource')
+      expect(dataSourceProp?.value).toBe('pending-rescan')
     })
   })
 
@@ -133,6 +143,7 @@ describe('compliance-tools', () => {
         format: 'json',
         period: '30d',
         includeUserActivity: true,
+        backfillDependencies: false,
       }
       const result = await executeComplianceReport(input, mockContext)
       expect(result.format).toBe('json')
@@ -150,7 +161,7 @@ describe('compliance-tools', () => {
 
     it('should include null userActivity when disabled', async () => {
       const result = await executeComplianceReport(
-        { format: 'json', period: '90d', includeUserActivity: false },
+        { format: 'json', period: '90d', includeUserActivity: false, backfillDependencies: false },
         mockContext
       )
       const report = result.report as Record<string, unknown>

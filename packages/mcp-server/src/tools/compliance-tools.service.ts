@@ -2,13 +2,18 @@
  * @fileoverview Real compliance service — queries audit_logs + skills SQLite tables
  * @module @skillsmith/mcp-server/tools/compliance-tools.service
  * @see SMI-3916: Wave 2 — Compliance real queries
+ * @see SMI-5675: skill inventory now sourced from the installed-skill manifest,
+ *   not the entire locally-indexed `skills` table (see gatherData below).
  *
  * Replaces stub compliance data with actual SQL queries against local
  * audit_logs and skills tables. Returns data conforming to ComplianceData.
  */
 
+import * as os from 'os'
+import * as path from 'path'
+import { ManifestManager } from '@skillsmith/core'
 import type { Database } from '@skillsmith/core'
-import type { ComplianceService, ComplianceData } from './compliance-tools.js'
+import type { ComplianceService, ComplianceData, SkillInventoryItem } from './compliance-tools.js'
 
 // ============================================================================
 // Internal row types for type-safe query results
@@ -19,14 +24,11 @@ interface EventTypeRow {
   count: number
 }
 
-interface SkillRow {
+/** Supplementary metadata joined from the `skills` table by installed skill ID (SMI-5675). */
+interface SkillMetaRow {
   id: string
-  name: string
-  author: string | null
   trust_tier: string | null
   quality_score: number | null
-  created_at: string
-  updated_at: string
 }
 
 interface ActorRow {
@@ -41,17 +43,75 @@ interface TopToolRow {
 }
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+const DEFAULT_MANIFEST_PATH = path.join(os.homedir(), '.skillsmith', 'manifest.json')
+
+/** Chunk size for `skills WHERE id IN (...)` lookups — stays well under SQLite's
+ * default bound-parameter ceiling even for an unusually large installed set. */
+const SKILL_META_CHUNK_SIZE = 500
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Fetch supplementary `skills` table metadata (trust_tier, quality_score) for
+ * a set of installed skill IDs, batched to stay under SQLite's bound-parameter
+ * limit. Returns an empty map (not a throw) for IDs with no matching row —
+ * callers fall back to 'unknown'/null, since a skill can be installed without
+ * (yet) being present in the locally-indexed `skills` table.
+ */
+function fetchSkillMetadata(db: Database, ids: string[]): Map<string, SkillMetaRow> {
+  const result = new Map<string, SkillMetaRow>()
+  for (let i = 0; i < ids.length; i += SKILL_META_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + SKILL_META_CHUNK_SIZE)
+    if (chunk.length === 0) continue
+    const placeholders = chunk.map(() => '?').join(', ')
+    const rows = db
+      .prepare<SkillMetaRow>(
+        `SELECT id, trust_tier, quality_score FROM skills WHERE id IN (${placeholders})`
+      )
+      .all(...chunk)
+    for (const row of rows) result.set(row.id, row)
+  }
+  return result
+}
+
+// ============================================================================
 // Service factory
 // ============================================================================
 
 /**
  * Create a compliance service backed by real SQLite queries.
  *
- * Tables queried:
+ * SMI-5675 fix: the installed-skill SET now comes from
+ * `~/.skillsmith/manifest.json` (via `ManifestManager`), not the entire
+ * `skills` table — that table holds the full locally-indexed registry corpus
+ * (thousands of registry-synced + filesystem-scanned rows), the overwhelming
+ * majority of which the user never installed. The `skills` table is still
+ * queried, but only for supplementary metadata (trust_tier, quality_score)
+ * joined by skill ID against the installed set. `version` now comes from the
+ * manifest entry's real `version` field (previously hardcoded `'0.0.0'` —
+ * the "version lives in skill_versions table, not skills" comment that
+ * justified that hardcode was already obsolete: the manifest has always
+ * carried the real installed version).
+ *
+ * Affects all 3 report formats (soc2, cyclonedx, json) — they all consume
+ * `ComplianceData.skills` from this same `gatherData()` call.
+ *
+ * Tables/files queried:
  * - audit_logs: event_type, timestamp, actor, resource, result
- * - skills: id, name, author, version, trust_tier, quality_score, created_at, updated_at
+ * - ~/.skillsmith/manifest.json: installedSkills (id, version, installPath, installedAt, lastUpdated)
+ * - skills: id, trust_tier, quality_score (supplementary metadata only)
  */
-export function createRealComplianceService(db: Database): ComplianceService {
+export function createRealComplianceService(
+  db: Database,
+  options: { manifestManager?: ManifestManager } = {}
+): ComplianceService {
+  const manifestManager = options.manifestManager ?? new ManifestManager(DEFAULT_MANIFEST_PATH)
+
   return {
     async gatherData(periodDays: number, includeUserActivity: boolean): Promise<ComplianceData> {
       const now = new Date()
@@ -80,25 +140,44 @@ export function createRealComplianceService(db: Database): ComplianceService {
       const searchCount = eventCounts.get('skill.search') ?? 0
 
       // ----------------------------------------------------------------
-      // Skill inventory from skills table
+      // Skill inventory: installed-skill manifest is the source of truth
+      // (SMI-5675) — `skills` table joined only for supplementary metadata.
       // ----------------------------------------------------------------
-      const skills = db
-        .prepare<SkillRow>(
-          'SELECT id, name, author, trust_tier, quality_score, ' +
-            'created_at, updated_at FROM skills ORDER BY author, name'
+      const manifest = await manifestManager.load()
+      // Defensive fallback: ManifestManager.load() only guards against
+      // invalid JSON syntax (falls back to {installedSkills:{}} on a parse
+      // failure) — a manifest file that parses as valid JSON but has an
+      // unexpected shape (an old-format file, or installedSkills
+      // missing/null) is NOT caught there and would otherwise throw on
+      // Object.values() below. Degrade to "zero installed skills" rather
+      // than failing the whole compliance report.
+      const installedSkillsRecord =
+        manifest.installedSkills && typeof manifest.installedSkills === 'object'
+          ? manifest.installedSkills
+          : {}
+      const installedEntries = Object.values(installedSkillsRecord)
+
+      const skills: SkillInventoryItem[] = []
+      if (installedEntries.length > 0) {
+        const metaById = fetchSkillMetadata(
+          db,
+          installedEntries.map((e) => e.id)
         )
-        .all()
-        .map((s) => ({
-          skillId: s.author ? `${s.author}/${s.name}` : s.id,
-          version: '0.0.0', // version lives in skill_versions table, not skills
-          trustTier: (s.trust_tier ?? 'unknown') as
-            | 'verified'
-            | 'community'
-            | 'experimental'
-            | 'unknown',
-          installedAt: s.created_at,
-          lastUpdated: s.updated_at,
-        }))
+
+        for (const entry of installedEntries) {
+          const meta = metaById.get(entry.id)
+          skills.push({
+            skillId: entry.id,
+            version: entry.version || '0.0.0',
+            trustTier: (meta?.trust_tier ?? 'unknown') as SkillInventoryItem['trustTier'],
+            installedAt: entry.installedAt,
+            lastUpdated: entry.lastUpdated,
+            installPath: entry.installPath,
+          })
+        }
+
+        skills.sort((a, b) => a.skillId.localeCompare(b.skillId))
+      }
 
       // ----------------------------------------------------------------
       // User activity (optional)
