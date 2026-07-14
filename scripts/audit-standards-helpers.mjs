@@ -158,6 +158,83 @@ export const extractCompletionIssues = (subject, body) => {
 }
 
 // ============================================================================
+// SMI-5681: Check 23 infra/config-only fix recognition
+// ============================================================================
+//
+// SRC_PATTERNS below is the pre-SMI-5681 definition: it only recognizes
+// application source under packages/**, supabase/functions/**, and
+// scripts/**. A commit whose subject/body claims to fix/close/resolve an
+// SMI-NNNN issue (per extractCompletionIssues above) but which legitimately
+// only touches an ADR-109 infra/config trigger path — .claude/settings.json,
+// .github/workflows/**, docker-compose.yml, Dockerfile,
+// docker-entrypoint.sh, a .husky/* hook, turbo.json, or a root
+// `*.config.{ts,js,mjs,cjs}` file (vitest.config.ts, lint-staged.config.js,
+// eslint.config.js, ...) — was invisible to Check 23 and got misflagged as
+// "done without source changes".
+//
+// Confirmed repro: commit 3395b24b ("fix(statusline): Point tier-1 at local
+// ruflo bin, not npx (#1887)", body "Fixes SMI-5679") changed only
+// `.claude/settings.json` (1 line) — a real, verified fix.
+//
+// INFRA_PATTERNS is intentionally a SEPARATE list from
+// scripts/ci/source-patterns.mjs's SOURCE_PATTERNS, not an import of it.
+// That module already recognizes .husky/[^/.]+ (SMI-5627), root
+// *.config.{ts,mjs,cjs,js} (SMI-4243), and .github/workflows/*.yml
+// (SMI-4243) as source — those three overlap with what Check 23 needs, but
+// are re-declared here rather than imported so Check 23's recognized-source
+// surface doesn't silently widen if that module's scope grows later (it
+// also carries apps/**, .mdx, package README.md, and SKILL.md entries
+// scoped to a different consumer — Linear auto-promotion — that Check 23
+// has no reason to recognize). The other five patterns below
+// (.claude/settings(.local)?.json, docker-entrypoint.sh, Dockerfile,
+// docker-compose*.yml, turbo.json) are a genuine gap in that module too:
+// its own tests (scripts/tests/source-patterns.test.ts) assert Dockerfile,
+// docker-compose.yml, and turbo.json all classify as NOT source, and
+// .claude/** as DOCS_PATTERNS, never SOURCE_PATTERNS. Do not merge these
+// two lists.
+export const SRC_PATTERNS = [
+  /^packages\/.*\.(ts|tsx|js|jsx|astro)$/,
+  /^supabase\/functions\/.*\.(ts|js)$/,
+  /^scripts\/.*\.(ts|js|mjs)$/,
+]
+
+export const INFRA_PATTERNS = [
+  // ADR-109 infra trigger paths (docs/internal/adr/109-sparc-plan-review-for-infra-changes.md)
+  // plus the .claude/settings.json repro case from SMI-5681.
+  /^\.claude\/settings(\.local)?\.json$/,
+  /^\.github\/workflows\/.*\.ya?ml$/,
+  /^docker-compose(\..+)?\.ya?ml$/,
+  /^Dockerfile(\..+)?$/,
+  /^docker-entrypoint\.sh$/,
+  // Extensionless git-hook files under .husky/ (pre-commit, pre-push, ...).
+  // `[^/.]+` rejects subdirectories (.husky/_/** generated wrappers) and any
+  // file WITH an extension. Deliberately kept as its own literal here rather
+  // than importing scripts/ci/source-patterns.mjs — see file-level comment
+  // above for why the two lists are not merged.
+  /^\.husky\/[^/.]+$/,
+  /^turbo\.json$/,
+  // Root-level dev-tooling config: vitest.config.ts (and colocated/vscode/
+  // root-tests variants), lint-staged.config.js, eslint.config.js, etc.
+  /^[^/]+\.config(\.[^./]+)?\.(ts|mjs|cjs|js)$/,
+]
+
+export const SRC_EXCLUDED = [/\.test\.(ts|tsx|js)$/, /\.spec\.(ts|tsx|js)$/, /\.md$/]
+
+/**
+ * Return true if `files` (repo-relative paths changed by one commit)
+ * contains at least one file that counts as "real implementation" for Check
+ * 23's completeness spot check — either application source (SRC_PATTERNS)
+ * or a legitimate ADR-109 infra/config path (INFRA_PATTERNS) — and is not a
+ * test/spec/doc file (SRC_EXCLUDED).
+ */
+export const hasCompletionSource = (files) =>
+  files.some((f) => {
+    const isSource = SRC_PATTERNS.some((p) => p.test(f)) || INFRA_PATTERNS.some((p) => p.test(f))
+    const isExcluded = SRC_EXCLUDED.some((p) => p.test(f))
+    return isSource && !isExcluded
+  })
+
+// ============================================================================
 // SMI-4193: Smoke-test export drift helpers
 // ============================================================================
 //

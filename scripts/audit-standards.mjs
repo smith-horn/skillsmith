@@ -18,6 +18,7 @@ import { dirname, extname, join, relative, resolve as resolvePath } from 'path'
 import {
   satisfies,
   extractCompletionIssues,
+  hasCompletionSource,
   collectTsEntryExports,
   extractSmokeTestRequiredArrays,
   extractCliCommandNames,
@@ -1666,12 +1667,11 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
     /\bfinish(es|ed)?\b/i,
     /\bresolv(e|es|ed)\b/i,
   ]
-  const SRC_PATTERNS = [
-    /^packages\/.*\.(ts|tsx|js|jsx|astro)$/,
-    /^supabase\/functions\/.*\.(ts|js)$/,
-    /^scripts\/.*\.(ts|js|mjs)$/,
-  ]
-  const SRC_EXCLUDED = [/\.test\.(ts|tsx|js)$/, /\.spec\.(ts|tsx|js)$/, /\.md$/]
+  // SMI-5681: SRC_PATTERNS / INFRA_PATTERNS / SRC_EXCLUDED and the combined
+  // hasCompletionSource() decision now live in audit-standards-helpers.mjs
+  // (imported above) so infra/config-path recognition is unit-testable
+  // without a real git repo. See that file for the ADR-109 path list and the
+  // rationale for keeping it separate from scripts/ci/source-patterns.mjs.
 
   // Non-source conventional commit prefixes (docs, chore, ci, test, refactor, style),
   // OR any conventional commit type with `(deps)` scope (e.g. `fix(deps):`,
@@ -1742,11 +1742,7 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
               .split('\n')
               .filter((f) => f)
 
-            const hasSource = files.some((f) => {
-              const isSource = SRC_PATTERNS.some((p) => p.test(f))
-              const isExcluded = SRC_EXCLUDED.some((p) => p.test(f))
-              return isSource && !isExcluded
-            })
+            const hasSource = hasCompletionSource(files)
 
             if (!hasSource) {
               suspicious++
