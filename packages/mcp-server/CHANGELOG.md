@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: Expose `apply_namespace_rename`'s `action: 'revert'` — the CLI's `sklx audit revert` was never implemented and `undo_apply` only tracks same-process session state, so a rename applied in a prior session had no reachable undo path. Also fixes a shared journal-helper bug that mislabeled every genuine revert as an idempotent no-op apply (SMI-5671) (#1878)
+
 ## v0.7.3
 
 - **Fix**: Resolve real subscription tier via personal API key (#1870)
