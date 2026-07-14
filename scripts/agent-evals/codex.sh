@@ -33,6 +33,6 @@ run_job "$LOG" "audit-fix" -- codex exec \
   "Audit my installed skills for namespace collisions or issues, and tell me what you would fix. Do not apply anything yet."
 
 run_job "$LOG" "vet-before-install" -- codex exec \
-  "I am thinking about installing the skill anthropic/commit. Look it up and tell me whether it is safe to install."
+  "I am thinking about installing the skill getsentry/commit. Look it up and tell me whether it is safe to install."
 
 echo "[agent-eval] done -- see $LOG"
