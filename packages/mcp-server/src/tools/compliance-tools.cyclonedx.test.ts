@@ -374,4 +374,71 @@ describe('formatCycloneDx', () => {
 
     expect(components(report).some((c) => c.name === 'local/my-private-skill')).toBe(true)
   })
+
+  // ------------------------------------------------------------------
+  // Performance ceiling (SMI-3140 Wave 2 acceptance criterion)
+  // ------------------------------------------------------------------
+
+  it('exports 500+ installed skills, with a mixed dependency graph, well within a reasonable time bound', async () => {
+    const SKILL_COUNT = 500
+    const skills: SkillInventoryItem[] = Array.from({ length: SKILL_COUNT }, (_, i) =>
+      baseSkill({ skillId: `author${i}/skill${i}` })
+    )
+    const data = baseData(skills)
+
+    // Give roughly a third of the skills a declared skill-to-skill edge, a
+    // third an mcp_server dependency, and leave a third dependency-free — a
+    // more realistic mixed shape than N identical rows, and it exercises the
+    // getOrCreateComponent dedup path (many skills sharing the same MCP
+    // server) at scale, not just the per-skill component construction.
+    for (let i = 0; i < SKILL_COUNT; i++) {
+      const skillId = `author${i}/skill${i}`
+      if (i % 3 === 0 && i + 1 < SKILL_COUNT) {
+        repo.setDependencies(
+          skillId,
+          [
+            {
+              skill_id: skillId,
+              dep_type: 'skill_soft',
+              dep_target: `author${i + 1}/skill${i + 1}`,
+              dep_version: null,
+              dep_source: 'declared',
+              confidence: 1.0,
+              metadata: null,
+            },
+          ],
+          'declared'
+        )
+      } else if (i % 3 === 1) {
+        repo.setDependencies(
+          skillId,
+          [
+            {
+              skill_id: skillId,
+              dep_type: 'mcp_server',
+              dep_target: 'linear',
+              dep_version: null,
+              dep_source: 'declared',
+              confidence: 1.0,
+              metadata: null,
+            },
+          ],
+          'declared'
+        )
+      }
+    }
+
+    const start = Date.now()
+    const report = await formatCycloneDx(data, { db, skillDependencyRepository: repo })
+    const elapsedMs = Date.now() - start
+
+    // One component per installed skill, plus exactly one deduped 'linear'
+    // MCP-server component shared across every i % 3 === 1 skill.
+    expect(components(report)).toHaveLength(SKILL_COUNT + 1)
+    expect(dependencyDataSource(report)).toBe('partial') // 1/3 of skills have no rows at all
+    expect(elapsedMs).toBeLessThan(5000)
+
+    const validator = new Validation.JsonStrictValidator(Spec.Version.v1dot5)
+    expect(await validator.validate(JSON.stringify(report))).toBeNull()
+  })
 })
