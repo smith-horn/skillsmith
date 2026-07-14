@@ -1076,6 +1076,13 @@ jobs:
         run: npm run -w packages/vscode-extension typecheck:e2e
 
       - name: Run standards audit
+        env:
+          # SMI-5680 H1: feeds Check 54's [skip-changelog-check] opt-out
+          # marker detection. Zero-cost — github.event.pull_request.body is
+          # already part of the pull_request event payload (this job's
+          # trigger, see the on: block above); no new permission grant or API
+          # call needed. Mirrors concurrency-audit-pr.yml's PR_BODY wiring.
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: npm run audit:standards
 
   # SMI-2192: Matrix-based test execution for affected packages

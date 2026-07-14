@@ -39,11 +39,15 @@ import {
   findFunctionsWithoutSearchPath,
   auditSecdefAnonGrants,
   findServerJsonFieldLengthViolations,
+  countUnreleasedEntries,
+  isReleasePrepDiff,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
+import { TEST_PATTERNS } from './ci/source-patterns.mjs'
+import { PACKAGE_SPECS } from './lib/version-utils.ts'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -4577,6 +4581,182 @@ console.log(`\n${BOLD}Check 53: MCP registry server.json field-length limits (SM
     } catch (e) {
       warn(`Check 53: could not parse ${SERVER_JSON_PATH}: ${e.message}`)
     }
+  }
+}
+
+// Check 54: CHANGELOG entry gate (SMI-5680)
+//
+// PR #1878 (SMI-5671) merged real source changes to packages/mcp-server/src/**
+// and packages/core/src/** with zero CHANGELOG.md entries in either package —
+// nothing caught it (backfilled manually in PR #1881). This check fails a PR
+// that touches a released package's non-test src/** with no matching growth
+// in that package's CHANGELOG.md `## [Unreleased]` section, in the same diff.
+// Ships as fail() from day one — no warn-only burn-in (see plan §3 / C2).
+// See docs/internal/implementation/smi-5680-changelog-entry-gate.md for the
+// full VP-reviewed design.
+console.log(`\n${BOLD}54. CHANGELOG Entry Gate (SMI-5680)${RESET}`)
+console.log('(content, not placement — see Check 43 for heading order)')
+{
+  const SKIP_MARKER = '[skip-changelog-check]'
+  const PR_BODY = process.env.PR_BODY || ''
+  const skipAcknowledged = PR_BODY.includes(SKIP_MARKER)
+  if (skipAcknowledged) {
+    console.log(
+      `::notice::${SKIP_MARKER} opt-out found in PR body — Check 54 will report findings but not fail.`
+    )
+    // L3: log the paragraph following the marker for audit trail, matching
+    // concurrency-audit-pr.yml's ::group::Acknowledgement reason pattern.
+    const idx = PR_BODY.indexOf(SKIP_MARKER)
+    const after = PR_BODY.slice(idx + SKIP_MARKER.length)
+    const reasonParagraph = after.split(/\n\s*\n/)[0].trim()
+    console.log('::group::Acknowledgement reason')
+    console.log(reasonParagraph || '(no reason paragraph found immediately after the marker)')
+    console.log('::endgroup::')
+  }
+
+  let mergeBase = null
+  let skipReason = null
+  try {
+    const baseRef = process.env.GITHUB_BASE_REF
+    if (baseRef && baseRef.length > 0) {
+      // PR context: resolve the merge-base SHA, matching Checks 50/51.
+      mergeBase = execSync(`git merge-base origin/${baseRef} HEAD`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+    } else {
+      // Local run (no PR base ref). Fall back to origin/main if present; else skip.
+      const originMain = execSync('git rev-parse --verify --quiet origin/main || true', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+      if (!originMain) {
+        skipReason = 'no origin/main ref (shallow/local)'
+      } else {
+        mergeBase = execSync('git merge-base origin/main HEAD', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim()
+      }
+    }
+  } catch (e) {
+    // Shallow clone, detached HEAD, no base — must NOT false-fail. Mirrors
+    // Checks 45/50/51's catch-and-skip behaviour.
+    skipReason = e.message
+  }
+
+  if (skipReason) {
+    pass(`Check 54: CHANGELOG entry gate skipped (${skipReason})`)
+  } else {
+    const gitShow = (ref, path) => {
+      try {
+        return execSync(`git show ${ref}:${path}`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+      } catch {
+        return null // file absent at this ref (or unreadable) — caller degrades gracefully
+      }
+    }
+
+    let touchedTotal = 0
+    let touchedMissing = 0
+
+    for (const spec of PACKAGE_SPECS) {
+      // H2: path construction always uses spec.dir ('packages/vscode-extension'),
+      // never spec.shortName ('vscode') — the shortName has no corresponding
+      // directory and would silently exempt vscode-extension from this gate.
+      const pkgDir = spec.dir
+      const pkg = pkgDir.replace(/^packages\//, '')
+
+      let changedFiles = []
+      try {
+        changedFiles = execSync(`git diff --name-only ${mergeBase}...HEAD -- ${pkgDir}/src/`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+          .split('\n')
+          .filter(Boolean)
+      } catch {
+        changedFiles = []
+      }
+
+      // M1: exclude test files via the shared TEST_PATTERNS export
+      // (scripts/ci/source-patterns.mjs) rather than reinventing a third ad
+      // hoc test-file regex.
+      const nonTestChanged = changedFiles.filter((f) => !TEST_PATTERNS.some((p) => p.test(f)))
+      if (nonTestChanged.length === 0) continue // nothing to check for this package
+
+      touchedTotal++
+
+      const changelogPath = `${pkgDir}/CHANGELOG.md`
+      const pkgJsonAtBase = gitShow(mergeBase, spec.packageJsonPath)
+      const pkgJsonAtHead = gitShow('HEAD', spec.packageJsonPath)
+      const changelogAtBase = gitShow(mergeBase, changelogPath)
+      const changelogAtHead = gitShow('HEAD', changelogPath)
+
+      // Step 0 (C1): release-prep commits drain, not grow, [Unreleased] —
+      // exempt them structurally rather than false-failing every
+      // core/mcp-server release PR forever.
+      if (
+        pkgJsonAtBase &&
+        pkgJsonAtHead &&
+        changelogAtBase &&
+        changelogAtHead &&
+        isReleasePrepDiff(pkgJsonAtBase, pkgJsonAtHead, changelogAtBase, changelogAtHead)
+      ) {
+        pass(
+          `Check 54: packages/${pkg} — release-prep commit detected (version bump + CHANGELOG version-section insertion); [Unreleased] growth not required`
+        )
+        continue
+      }
+
+      if (changelogAtHead === null) {
+        warn(`Check 54: ${changelogPath} not found at HEAD — cannot verify [Unreleased] growth`)
+        continue
+      }
+
+      const headCount = countUnreleasedEntries(changelogAtHead)
+      const baseCount = changelogAtBase === null ? 0 : countUnreleasedEntries(changelogAtBase)
+
+      // Sentinel (null): '## [Unreleased]' heading missing/malformed — cannot
+      // safely reason about growth. Warn, don't fail (mirrors Check 47's
+      // "could not parse — warn" convention for a file the check can't
+      // safely reason about).
+      if (headCount === null || baseCount === null) {
+        warn(
+          `Check 54: ${changelogPath}'s '## [Unreleased]' heading could not be found/parsed — skipping content-growth check`
+        )
+        continue
+      }
+
+      if (headCount > baseCount) {
+        pass(`Check 54: ${changelogPath}'s [Unreleased] section grew (${baseCount} → ${headCount})`)
+      } else if (skipAcknowledged) {
+        pass(
+          `Check 54: packages/${pkg} — [skip-changelog-check] acknowledged; [Unreleased] growth not required`
+        )
+      } else {
+        touchedMissing++
+        fail(
+          `Check 54: packages/${pkg}/src/** changed (${nonTestChanged.join(', ')}) with no new content in packages/${pkg}/CHANGELOG.md's '## [Unreleased]' section`,
+          `Add a bullet under '## [Unreleased]' in packages/${pkg}/CHANGELOG.md describing this change. ` +
+            `If this is a revert of work that was never released, or another package's entry already covers this change, add '[skip-changelog-check]' plus a reason paragraph to the PR body — see docs/internal/process/guards-and-opt-outs.md.`
+        )
+      }
+    }
+
+    if (touchedTotal === 0) {
+      pass('Check 54: no packages had src/** changes requiring a CHANGELOG entry in this diff')
+    }
+
+    // M7: rollup tally as a plain console.log — NOT a second pass()/fail()
+    // call (would double-increment the global counters) — so a multi-package
+    // PR's earlier per-package pass() can't be misread as an overall pass
+    // while a later fail() for a different package goes unnoticed.
+    console.log(
+      `Check 54: ${touchedMissing}/${touchedTotal} touched package(s) missing a CHANGELOG entry — see above`
+    )
   }
 }
 

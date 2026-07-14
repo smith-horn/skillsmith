@@ -1888,3 +1888,140 @@ export function findServerJsonFieldLengthViolations(
 
   return violations
 }
+
+// -----------------------------------------------------------------------------
+// Check 54 helpers — SMI-5680: CHANGELOG entry gate.
+//
+// Powers audit-standards.mjs Check 54: a PR touching a released package's
+// non-test src/** must also grow that package's CHANGELOG.md `## [Unreleased]`
+// section in the same diff. PR #1878 (SMI-5671) merged real source changes to
+// packages/mcp-server/src/** and packages/core/src/** with zero CHANGELOG
+// entries in either package — nothing caught it (backfilled manually in PR
+// #1881). See docs/internal/implementation/smi-5680-changelog-entry-gate.md
+// for the full VP-reviewed design.
+//
+// Both helpers are pure: no git, no fs. Check 54 in audit-standards.mjs does
+// all I/O (git show <ref>:<path>, package.json/CHANGELOG.md reads) and passes
+// plain strings in.
+// -----------------------------------------------------------------------------
+
+/**
+ * Count qualifying entries in a CHANGELOG's `## [Unreleased]` section.
+ *
+ * The section runs from the `## [Unreleased]` heading (case-insensitive,
+ * optional surrounding brackets, e.g. `## Unreleased` or `## [Unreleased]`) to
+ * the next `## ` heading, or EOF if there is none. A "qualifying" entry is a
+ * non-blank line with >= 4 whitespace-separated tokens (SMI-5680 L1) — a lone
+ * `-` or a two-word `- fix` bullet doesn't count, closing the cheapest
+ * bad-faith case (a single throwaway character/word satisfying the gate).
+ * This is deliberately not a content-quality judgment — PR #1878's incident
+ * was "zero entries," a presence problem, not a quality one.
+ *
+ * @param {string} changelogContent - Full CHANGELOG.md contents.
+ * @returns {number | null} Qualifying entry count, or `null` — the SENTINEL
+ *   value — when the `## [Unreleased]` heading itself cannot be found (missing
+ *   or malformed file). Check 54 turns a `null` return into a `warn()`, not a
+ *   `fail()` (mirrors Check 47's "could not parse — warn" convention for a
+ *   file the check cannot safely reason about) rather than treating an
+ *   unparseable file as "0 entries" and risking a false fail().
+ */
+export function countUnreleasedEntries(changelogContent) {
+  if (typeof changelogContent !== 'string') return null
+  const lines = changelogContent.split('\n')
+  const unreleasedIdx = lines.findIndex((l) => /^## \[?Unreleased\]?\s*$/i.test(l.trim()))
+  if (unreleasedIdx === -1) return null // sentinel: heading missing/malformed
+
+  let count = 0
+  for (let i = unreleasedIdx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    if (/^## /.test(trimmed)) break // next heading — [Unreleased] section ends here
+    if (trimmed === '') continue
+    const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
+    if (tokenCount >= 4) count++
+  }
+  return count
+}
+
+/**
+ * Detect a release-prep diff for one package (SMI-5680 C1 / Step 0).
+ *
+ * `prepare-release.ts --all=patch` bumps a package's `package.json` version
+ * AND drains (not grows) its CHANGELOG's `## [Unreleased]` section by moving
+ * any content there into a newly-inserted `## vX.Y.Z` heading directly below
+ * `## [Unreleased]` — exactly the shape `insertVersionSection`
+ * (scripts/lib/release-changelog.ts) produces. A naive line-count comparison
+ * therefore sees the Unreleased section SHRINK on every release commit, which
+ * would fail Check 54 on every core/mcp-server release forever without this
+ * exemption. Verified against this repo's actual release commit `2e31a616`
+ * ("chore(release): bump core 0.11.2..."): packages/core/CHANGELOG.md's
+ * Unreleased body went from 1 non-blank line to 0, with the new `## v0.11.2`
+ * heading inserted directly below `## [Unreleased]`, and
+ * packages/core/src/index.ts's VERSION const changed in the same commit.
+ *
+ * Returns true iff BOTH:
+ *   1. `pkgJsonAtBase`'s and `pkgJsonAtHead`'s `"version"` fields are valid
+ *      strings and differ (a real version bump happened in this diff), AND
+ *   2. The `## ` heading found DIRECTLY below `## [Unreleased]` (skipping
+ *      only blank lines) in `changelogAtHead` is exactly `v<newVersion>`, AND
+ *      that same heading is NOT found directly below `## [Unreleased]` in
+ *      `changelogAtBase` (it's new in this diff, not pre-existing).
+ *
+ * Malformed/unparseable package.json JSON, or a missing/non-string
+ * `"version"` field, fails safe by returning `false` — Check 54 then falls
+ * through to the normal count-comparison path rather than silently exempting
+ * a package it can't actually verify is mid-release.
+ *
+ * Known limitation (accepted, per plan): a bad-faith PR could fake this exact
+ * signature (a version-looking bump + a matching heading insertion) to
+ * smuggle an undocumented change past the gate. `prepare-release.ts`'s
+ * commits are mechanical and run separately from feature work in practice
+ * (every release commit in this repo's history only touches
+ * package.json/CHANGELOG.md/package-lock.json/the version-const
+ * file/server.json) — defending against a deliberately-forged release
+ * signature is a different problem than the accidental-omission gap this
+ * check closes (matches Check 51's own "acceptable scope for a file-level
+ * static check" precedent for a comparable limitation).
+ *
+ * @param {string} pkgJsonAtBase - packages/<dir>/package.json contents at mergeBase.
+ * @param {string} pkgJsonAtHead - packages/<dir>/package.json contents at HEAD.
+ * @param {string} changelogAtBase - packages/<dir>/CHANGELOG.md contents at mergeBase.
+ * @param {string} changelogAtHead - packages/<dir>/CHANGELOG.md contents at HEAD.
+ * @returns {boolean}
+ */
+export function isReleasePrepDiff(pkgJsonAtBase, pkgJsonAtHead, changelogAtBase, changelogAtHead) {
+  const parseVersion = (raw) => {
+    if (typeof raw !== 'string') return null
+    try {
+      const parsed = JSON.parse(raw)
+      return typeof parsed?.version === 'string' ? parsed.version : null
+    } catch {
+      return null
+    }
+  }
+
+  const baseVersion = parseVersion(pkgJsonAtBase)
+  const headVersion = parseVersion(pkgJsonAtHead)
+  if (!baseVersion || !headVersion || baseVersion === headVersion) return false
+
+  // Return the (trimmed, without '## ') text of the first `## ` heading
+  // appearing directly below `## [Unreleased]` — skipping only blank lines —
+  // or null if `[Unreleased]` is absent, has no following heading, or the
+  // very next non-blank line is itself an entry (not a heading).
+  const headingDirectlyBelowUnreleased = (changelogContent) => {
+    if (typeof changelogContent !== 'string') return null
+    const lines = changelogContent.split('\n')
+    const unreleasedIdx = lines.findIndex((l) => /^## \[?Unreleased\]?\s*$/i.test(l.trim()))
+    if (unreleasedIdx === -1) return null
+    for (let i = unreleasedIdx + 1; i < lines.length; i++) {
+      const trimmed = lines[i].trim()
+      if (trimmed === '') continue
+      const m = trimmed.match(/^## (.+)$/)
+      return m ? m[1].trim() : null
+    }
+    return null
+  }
+
+  const expectedHeading = `v${headVersion}`
+  if (headingDirectlyBelowUnreleased(changelogAtHead) !== expectedHeading) return false
+  return headingDirectlyBelowUnreleased(changelogAtBase) !== expectedHeading
+}
