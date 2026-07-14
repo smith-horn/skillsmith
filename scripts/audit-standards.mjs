@@ -4147,25 +4147,26 @@ console.log(`\n${BOLD}48. publish.yml dependent-gate soundness (SMI-5060/SMI-506
 // pattern surveys would require knowing the plan's `<pattern-prefix>` to
 // grep for, which can't be statically discovered. We therefore encode the
 // four telemetry-specific assertions explicitly here. Adding a future
-// Check-48-style invariant for a different SMI = extending the helper's
+// Check-49-style invariant for a different SMI = extending the helper's
 // `findConventionDrift` input shape, not rewriting the audit loop.
 //
 // Sub-checks:
-//   48a (fail): SkillsmithEventType union ⊇ {skill_invoke, skill_context_load,
+//   49a (fail): SkillsmithEventType union ⊇ {skill_invoke, skill_context_load,
 //               skill_invoke_unparsed}
-//   48b (fail): ALLOWED_EVENTS in supabase/functions/events/index.ts ⊇ same set
-//   48c (warn): withTelemetry has exactly ONE definition site, at
+//   49b (fail): ALLOWED_EVENTS in supabase/functions/events/index.ts ⊇ same set
+//   49c (warn): withTelemetry has exactly ONE definition site, at
 //               packages/core/src/telemetry/wrap.ts
-//   48d (warn): /tmp/skillsmith-* not used in production source (M8 — runtime
+//   49d (warn): /tmp/skillsmith-* not used in production source (M8 — runtime
 //               state lives in ~/.skillsmith/run/, /tmp doesn't survive reboot)
 //
-// Exemption: a comment containing `audit:check-48-ack` opts out of the
-// grep-heuristic warns — 48d per-line (same line as the reference) and 48c on
+// Exemption: a comment containing canonical `audit:check-49-ack` or its
+// deprecated-but-supported `audit:check-48-ack` alias opts out of the
+// grep-heuristic warns — 49d per-line (same line as the reference) and 49c on
 // the def line or the comment block immediately above the parallel definition.
-// 48a/48b are exact-string set membership against declared sources of truth —
+// 49a/49b are exact-string set membership against declared sources of truth —
 // there is no legitimate exemption.
 //
-// Severity: 48c/48d are `warn()` for v1 to avoid false-positive fatigue
+// Severity: 49c/49d are `warn()` for v1 to avoid false-positive fatigue
 // blocking unrelated PRs (CLAUDE.md governance retro guidance). Promote to
 // `fail()` after a soak period if the warn rate is zero.
 console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
@@ -4176,13 +4177,13 @@ console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
   const EXPECTED_EVENTS = ['skill_invoke', 'skill_context_load', 'skill_invoke_unparsed']
 
   if (!existsSync(POSTHOG_PATH) || !existsSync(EVENTS_PATH)) {
-    warn('Check 48: required telemetry source file(s) missing — skipping convention-drift backstop')
+    warn('Check 49: required telemetry source file(s) missing — skipping convention-drift backstop')
   } else {
     try {
       const posthogSrc = readFileSync(POSTHOG_PATH, 'utf8')
       const eventsSrc = readFileSync(EVENTS_PATH, 'utf8')
 
-      // 48c/48d scope: all .ts files under packages/ and scripts/, excluding
+      // 49c/49d scope: all .ts files under packages/ and scripts/, excluding
       // node_modules, dist, build, and the audit script itself (which discusses
       // /tmp/skillsmith- in comments and references withTelemetry as an
       // identifier — the audit must not flag itself).
@@ -4216,7 +4217,7 @@ console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
           } else if (
             (p.endsWith('.ts') || p.endsWith('.tsx') || p.endsWith('.mjs') || p.endsWith('.js')) &&
             // Exclude the audit script itself — it references withTelemetry
-            // as a string identifier in comments + check-48 prose.
+            // as a string identifier in comments + check-49 prose.
             p !== 'scripts/audit-standards.mjs' &&
             p !== 'scripts/audit-standards-helpers.mjs'
           ) {
@@ -4240,73 +4241,73 @@ console.log(`\n${BOLD}49. Convention drift backstop (SMI-5026 M5)${RESET}`)
         canonicalWithTelemetryPath: CANONICAL_WRAP_PATH,
       })
 
-      // 48a — SkillsmithEventType union coherence (FAIL)
+      // 49a — SkillsmithEventType union coherence (FAIL)
       if (result.eventTypeUnionParseFailed) {
         warn(
-          `Check 48a: Could not locate \`export type SkillsmithEventType\` in ` +
+          `Check 49a: Could not locate \`export type SkillsmithEventType\` in ` +
             `${POSTHOG_PATH} — file may have been restructured; check that the ` +
             `discriminated-union shape still uses the canonical \`= | 'foo' | 'bar'\` form.`
         )
       } else if (result.eventTypeUnionMissing.length > 0) {
         fail(
-          `Check 48a: SkillsmithEventType union missing event(s): ` +
+          `Check 49a: SkillsmithEventType union missing event(s): ` +
             `${result.eventTypeUnionMissing.join(', ')}`,
           `Add the missing literal(s) to the union in ${POSTHOG_PATH}. ` +
             `The events are the canonical SMI-5026 telemetry surface — see ` +
             `docs/internal/implementation/skill-invoke-telemetry.md § Wire format.`
         )
       } else {
-        pass(`Check 48a: SkillsmithEventType union includes all SMI-5026 telemetry events`)
+        pass(`Check 49a: SkillsmithEventType union includes all SMI-5026 telemetry events`)
       }
 
-      // 48b — ALLOWED_EVENTS validation list coherence (FAIL)
+      // 49b — ALLOWED_EVENTS validation list coherence (FAIL)
       if (result.allowedEventsParseFailed) {
         warn(
-          `Check 48b: Could not locate \`const ALLOWED_EVENTS = [...]\` in ` +
+          `Check 49b: Could not locate \`const ALLOWED_EVENTS = [...]\` in ` +
             `${EVENTS_PATH} — file may have been restructured.`
         )
       } else if (result.allowedEventsMissing.length > 0) {
         fail(
-          `Check 48b: ALLOWED_EVENTS in ${EVENTS_PATH} missing event(s): ` +
+          `Check 49b: ALLOWED_EVENTS in ${EVENTS_PATH} missing event(s): ` +
             `${result.allowedEventsMissing.join(', ')}`,
           `Add the missing literal(s) to ALLOWED_EVENTS. The edge function ` +
             `rejects any event not in this list — drift here causes silent ` +
             `400s for clients on the new event names.`
         )
       } else {
-        pass(`Check 48b: ALLOWED_EVENTS includes all SMI-5026 telemetry events`)
+        pass(`Check 49b: ALLOWED_EVENTS includes all SMI-5026 telemetry events`)
       }
 
-      // 48c — withTelemetry single-source-of-truth (WARN)
+      // 49c — withTelemetry single-source-of-truth (WARN)
       if (result.parallelWithTelemetryDefs.length === 0) {
-        pass(`Check 48c: withTelemetry has a single definition site ` + `(${CANONICAL_WRAP_PATH})`)
+        pass(`Check 49c: withTelemetry has a single definition site ` + `(${CANONICAL_WRAP_PATH})`)
       } else {
         const sites = result.parallelWithTelemetryDefs
           .map((d) => `  ${d.file}:${d.line} — ${d.snippet}`)
           .join('\n')
         warn(
-          `Check 48c: parallel withTelemetry definition(s) detected — ` +
+          `Check 49c: parallel withTelemetry definition(s) detected — ` +
             `single-source-of-truth violation per SMI-5016 H1:\n${sites}`,
           `The canonical definition is in ${CANONICAL_WRAP_PATH}. Re-export ` +
             `from there instead of redefining. Suppress a genuinely-justified ` +
-            `parallel definition with \`// audit:check-48-ack <reason>\` on the ` +
+            `parallel definition with \`// audit:check-49-ack <reason>\` on the ` +
             `definition line or in the comment block immediately above it.`
         )
       }
 
-      // 48d — /tmp/skillsmith- absent from prod source (WARN)
+      // 49d — /tmp/skillsmith- absent from prod source (WARN)
       if (result.tmpSkillsmithRefs.length === 0) {
-        pass(`Check 48d: /tmp/skillsmith- not referenced in production source (M8)`)
+        pass(`Check 49d: /tmp/skillsmith- not referenced in production source (M8)`)
       } else {
         const refs = result.tmpSkillsmithRefs
           .map((r) => `  ${r.file}:${r.line} — ${r.snippet}`)
           .join('\n')
         warn(
-          `Check 48d: /tmp/skillsmith- referenced in production source — ` +
+          `Check 49d: /tmp/skillsmith- referenced in production source — ` +
             `should live under ~/.skillsmith/run/ per M8 (/tmp doesn't survive reboot):\n${refs}`,
           `Move runtime state to ~/.skillsmith/run/ (mkdir -p, atomic temp ` +
             `rename). For inline doc/example references, append ` +
-            `\`// audit:check-48-ack <reason>\` to the line.`
+            `\`// audit:check-49-ack <reason>\` to the line.`
         )
       }
     } catch (e) {

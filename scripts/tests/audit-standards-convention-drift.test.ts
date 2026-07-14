@@ -5,10 +5,10 @@
  * `skill-invoke-telemetry.md` plan as static invariants that re-run on every
  * PR. This test file covers the four pure helpers it composes:
  *
- *   - parseStringUnionType    (48a)
- *   - parseTsLiteralArray     (48b)
- *   - findFunctionDefinitions (48c)
- *   - findTmpSkillsmithRefs   (48d)
+ *   - parseStringUnionType    (49a)
+ *   - parseTsLiteralArray     (49b)
+ *   - findFunctionDefinitions (49c)
+ *   - findTmpSkillsmithRefs   (49d)
  *
  * Plus the composer `findConventionDrift` end-to-end.
  *
@@ -33,7 +33,7 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
     srcByPath: Record<string, string>,
     symbol: string
   ) => { file: string; line: number; snippet: string }[]
-  defHasCheck48Ack: (src: string, line: number) => boolean
+  defHasCheck49Ack: (src: string, line: number) => boolean
   findTmpSkillsmithRefs: (
     srcByPath: Record<string, string>
   ) => { file: string; line: number; snippet: string }[]
@@ -50,7 +50,7 @@ const {
   parseStringUnionType,
   parseTsLiteralArray,
   findFunctionDefinitions,
-  defHasCheck48Ack,
+  defHasCheck49Ack,
   findTmpSkillsmithRefs,
   findConventionDrift,
 } = helpers
@@ -199,67 +199,67 @@ describe('findFunctionDefinitions', () => {
 })
 
 // ---------------------------------------------------------------------------
-// defHasCheck48Ack (48c opt-out)
+// defHasCheck49Ack (49c opt-out)
 // ---------------------------------------------------------------------------
 
-describe('defHasCheck48Ack', () => {
+describe('defHasCheck49Ack', () => {
   it('honors a marker on the definition line itself', () => {
-    const src = 'export function withTelemetry(fn) { return fn } // audit:check-48-ack inline'
-    expect(defHasCheck48Ack(src, 1)).toBe(true)
+    const src = 'export function withTelemetry(fn) { return fn } // audit:check-49-ack inline'
+    expect(defHasCheck49Ack(src, 1)).toBe(true)
   })
 
   it('honors a marker in the contiguous // comment block above the def', () => {
     // Mirrors the real packages/vscode-extension/.../telemetry-wrap.ts shape:
     // a multi-line // block carrying the token, immediately above the def.
     const src = [
-      '// audit:check-48-ack — intentional parallel definition: the extension',
+      '// audit:check-49-ack — intentional parallel definition: the extension',
       '// bundles standalone and cannot import the canonical core HOF.',
       'export function withTelemetry<F>(fn: F): F {',
     ].join('\n')
-    expect(defHasCheck48Ack(src, 3)).toBe(true)
+    expect(defHasCheck49Ack(src, 3)).toBe(true)
   })
 
-  it('honors a marker on a * block-comment continuation line above the def', () => {
+  it('honors the deprecated audit:check-48-ack alias above the def', () => {
     const src = [
       '/**',
       ' * audit:check-48-ack rationale here',
       ' */',
       'const withTelemetry = (fn) => fn',
     ].join('\n')
-    expect(defHasCheck48Ack(src, 4)).toBe(true)
+    expect(defHasCheck49Ack(src, 4)).toBe(true)
   })
 
   it('does NOT honor a marker separated from the def by a blank line', () => {
     const src = [
-      '// audit:check-48-ack stale',
+      '// audit:check-49-ack stale',
       '',
       'export function withTelemetry(fn) { return fn }',
     ].join('\n')
-    expect(defHasCheck48Ack(src, 3)).toBe(false)
+    expect(defHasCheck49Ack(src, 3)).toBe(false)
   })
 
   it('does NOT honor a marker separated from the def by a code line (walk stops at non-comment)', () => {
     const src = [
-      '// audit:check-48-ack from an unrelated symbol',
+      '// audit:check-49-ack from an unrelated symbol',
       'const unrelated = 1',
       'export function withTelemetry(fn) { return fn }',
     ].join('\n')
-    expect(defHasCheck48Ack(src, 3)).toBe(false)
+    expect(defHasCheck49Ack(src, 3)).toBe(false)
   })
 
   it('does NOT honor a marker on an unrelated distant line', () => {
     const src = [
-      '// audit:check-48-ack',
+      '// audit:check-49-ack',
       'const a = 1',
       'const b = 2',
       'function withTelemetry() {}',
     ].join('\n')
-    expect(defHasCheck48Ack(src, 4)).toBe(false)
+    expect(defHasCheck49Ack(src, 4)).toBe(false)
   })
 
   it('returns false for an out-of-range line', () => {
-    expect(defHasCheck48Ack('const x = 1', 99)).toBe(false)
-    expect(defHasCheck48Ack('const x = 1', 0)).toBe(false)
+    expect(defHasCheck49Ack('const x = 1', 99)).toBe(false)
+    expect(defHasCheck49Ack('const x = 1', 0)).toBe(false)
   })
 })
 
@@ -289,14 +289,14 @@ describe('findTmpSkillsmithRefs', () => {
     expect(result).toHaveLength(0)
   })
 
-  it('honours the audit:check-48-ack opt-out marker', () => {
+  it('honours the canonical audit:check-49-ack opt-out marker', () => {
     const result = findTmpSkillsmithRefs({
-      'packages/cli/src/x.ts': "const r = '/tmp/skillsmith-doc'  // audit:check-48-ack example",
+      'packages/cli/src/x.ts': "const r = '/tmp/skillsmith-doc'  // audit:check-49-ack example",
     })
     expect(result).toHaveLength(0)
   })
 
-  it('flags only the un-acked line when both present', () => {
+  it('honours the deprecated audit:check-48-ack alias and flags only the un-acked line', () => {
     const src = `const a = '/tmp/skillsmith-1'  // audit:check-48-ack docs\nconst b = '/tmp/skillsmith-2'`
     const result = findTmpSkillsmithRefs({ 'p/x.ts': src })
     expect(result).toHaveLength(1)
@@ -343,7 +343,7 @@ export interface Foo {}`
     expect(r.tmpSkillsmithRefs).toEqual([])
   })
 
-  it('flags a missing union member (48a fail surface)', () => {
+  it('flags a missing union member (49a fail surface)', () => {
     const r = findConventionDrift({
       posthogSrc: `export type SkillsmithEventType = | 'skill_search'\n\nexport const x = 1`,
       eventsSrc: CANONICAL_EVENTS,
@@ -354,7 +354,7 @@ export interface Foo {}`
     expect(r.eventTypeUnionMissing).toEqual(EXPECTED)
   })
 
-  it('flags a missing ALLOWED_EVENTS entry (48b fail surface)', () => {
+  it('flags a missing ALLOWED_EVENTS entry (49b fail surface)', () => {
     const r = findConventionDrift({
       posthogSrc: CANONICAL_POSTHOG,
       eventsSrc: `const ALLOWED_EVENTS = ['skill_view'] as const`,
@@ -365,7 +365,7 @@ export interface Foo {}`
     expect(r.allowedEventsMissing).toEqual(EXPECTED)
   })
 
-  it('flags a parallel withTelemetry definition (48c warn surface)', () => {
+  it('flags a parallel withTelemetry definition (49c warn surface)', () => {
     const r = findConventionDrift({
       posthogSrc: CANONICAL_POSTHOG,
       eventsSrc: CANONICAL_EVENTS,
@@ -380,7 +380,7 @@ export interface Foo {}`
     expect(r.parallelWithTelemetryDefs[0].file).toBe('packages/website/src/shim.ts')
   })
 
-  it('does NOT flag a parallel def acked on the same line (48c opt-out)', () => {
+  it('does NOT flag a parallel def acked with the deprecated alias (49c opt-out)', () => {
     const r = findConventionDrift({
       posthogSrc: CANONICAL_POSTHOG,
       eventsSrc: CANONICAL_EVENTS,
@@ -402,7 +402,7 @@ export interface Foo {}`
       surveySrcByPath: {
         [CANONICAL_WRAP]: 'export function withTelemetry<F>(fn: F): F { return fn }',
         'packages/vscode-extension/src/services/telemetry-wrap.ts': [
-          '// audit:check-48-ack — intentional parallel definition: the extension',
+          '// audit:check-49-ack — intentional parallel definition: the extension',
           '// bundles standalone (esbuild) and cannot import the canonical core HOF.',
           'export function withTelemetry<A, R>(fn: (...a: A[]) => R): (...a: A[]) => R {',
           '  return fn',
@@ -430,7 +430,7 @@ export interface Foo {}`
     expect(r.parallelWithTelemetryDefs[0].file).toBe('packages/website/src/shim.ts')
   })
 
-  it('does not flag call sites (48c true-negative)', () => {
+  it('does not flag call sites (49c true-negative)', () => {
     const r = findConventionDrift({
       posthogSrc: CANONICAL_POSTHOG,
       eventsSrc: CANONICAL_EVENTS,
@@ -445,7 +445,7 @@ export interface Foo {}`
     expect(r.parallelWithTelemetryDefs).toEqual([])
   })
 
-  it('flags /tmp/skillsmith- in prod but ignores tests (48d)', () => {
+  it('flags /tmp/skillsmith- in prod but ignores tests (49d)', () => {
     const r = findConventionDrift({
       posthogSrc: CANONICAL_POSTHOG,
       eventsSrc: CANONICAL_EVENTS,

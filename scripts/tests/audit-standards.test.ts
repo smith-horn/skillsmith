@@ -343,12 +343,20 @@ describe('audit-standards Check 23: INFRA_PATTERNS + hasCompletionSource', () =>
     })
   })
 
-  describe('hasCompletionSource: the two SMI-5681 regression scenarios', () => {
+  describe('hasCompletionSource: SMI-5681 and SMI-5690 regression scenarios', () => {
     it('REGRESSION (SMI-5681 ground truth, commit 3395b24b/SMI-5679): a .claude/settings.json-only change now counts as completion source', () => {
       // Confirmed repro: commit 3395b24b ("fix(statusline): Point tier-1 at
       // local ruflo bin, not npx (#1887)", body "Fixes SMI-5679") changed
       // only .claude/settings.json and was misflagged by Check 23 pre-fix.
       expect(hasCompletionSource(['.claude/settings.json'])).toBe(true)
+    })
+
+    it('REGRESSION (SMI-5690 ground truth, commit 9c695d5d/SMI-5668): a scripts/ .sh-only change now counts as completion source', () => {
+      // Confirmed repro: commit 9c695d5d ("feat(scripts): SMI-5668
+      // NEEDLE-based Codex dispatch (ADR-128 pilot) (#1896)") changed shell
+      // scripts but no previously recognized source path.
+      expect(hasCompletionSource(['scripts/needle/dispatch.sh'])).toBe(true)
+      expect(hasCompletionSource(['scripts/live-services/launch-ci-testing.sh'])).toBe(true)
     })
 
     it('a genuinely source-less docs-only change still trips the check (original purpose preserved)', () => {
@@ -381,8 +389,20 @@ describe('audit-standards Check 23: INFRA_PATTERNS + hasCompletionSource', () =>
       expect(hasCompletionSource(['scripts/audit-standards.mjs'])).toBe(true)
     })
 
-    it('a .test.ts-only change is still excluded (SRC_EXCLUDED unchanged)', () => {
+    it('test-only changes remain excluded from implementation source', () => {
       expect(hasCompletionSource(['packages/core/src/index.test.ts'])).toBe(false)
+      expect(hasCompletionSource(['scripts/tests/needle-dispatch.test.sh'])).toBe(false)
+      expect(hasCompletionSource(['scripts/tests/verify-claude-md-extraction.sh'])).toBe(false)
+    })
+
+    it('a .sh-adjacent docs/config-only change still trips the check', () => {
+      expect(
+        hasCompletionSource([
+          'scripts/needle/README.md',
+          'scripts/needle/dispatch.yaml',
+          'docs/internal/implementation/needle.md',
+        ])
+      ).toBe(false)
     })
   })
 })

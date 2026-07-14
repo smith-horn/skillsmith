@@ -161,10 +161,13 @@ export const extractCompletionIssues = (subject, body) => {
 // SMI-5681: Check 23 infra/config-only fix recognition
 // ============================================================================
 //
-// SRC_PATTERNS below is the pre-SMI-5681 definition: it only recognizes
-// application source under packages/**, supabase/functions/**, and
-// scripts/**. A commit whose subject/body claims to fix/close/resolve an
-// SMI-NNNN issue (per extractCompletionIssues above) but which legitimately
+// SRC_PATTERNS recognizes application source under packages/**,
+// supabase/functions/**, and scripts/**. SMI-5690 adds `.sh` under scripts/**
+// so genuine shell-script-only commits count as implementation source; shell
+// tests under scripts/tests/** remain excluded by SRC_EXCLUDED. Extensionless,
+// `.bash`, and other script extensions remain unmatched by design.
+// A commit whose subject/body claims to fix/close/resolve an SMI-NNNN issue
+// (per extractCompletionIssues above) but which legitimately
 // only touches an ADR-109 infra/config trigger path — .claude/settings.json,
 // .github/workflows/**, docker-compose.yml, Dockerfile,
 // docker-entrypoint.sh, a .husky/* hook, turbo.json, or a root
@@ -195,7 +198,7 @@ export const extractCompletionIssues = (subject, body) => {
 export const SRC_PATTERNS = [
   /^packages\/.*\.(ts|tsx|js|jsx|astro)$/,
   /^supabase\/functions\/.*\.(ts|js)$/,
-  /^scripts\/.*\.(ts|js|mjs)$/,
+  /^scripts\/.*\.(ts|js|mjs|sh)$/,
 ]
 
 export const INFRA_PATTERNS = [
@@ -218,7 +221,12 @@ export const INFRA_PATTERNS = [
   /^[^/]+\.config(\.[^./]+)?\.(ts|mjs|cjs|js)$/,
 ]
 
-export const SRC_EXCLUDED = [/\.test\.(ts|tsx|js)$/, /\.spec\.(ts|tsx|js)$/, /\.md$/]
+export const SRC_EXCLUDED = [
+  /\.test\.(ts|tsx|js)$/,
+  /\.spec\.(ts|tsx|js)$/,
+  /^scripts\/tests\/.*\.sh$/,
+  /\.md$/,
+]
 
 /**
  * Return true if `files` (repo-relative paths changed by one commit)
@@ -1087,21 +1095,26 @@ export function findFunctionDefinitions(srcByPath, symbol) {
   return out
 }
 
+const hasCheck49AckMarker = (line) =>
+  line.includes('audit:check-49-ack') || line.includes('audit:check-48-ack')
+
 /**
  * Returns `true` if the definition at `line` (1-indexed) in `src` is opted out
- * of Check 48c via an `audit:check-48-ack` marker — either on the definition
- * line itself or anywhere in the contiguous comment block immediately preceding
- * it. The upward walk stops at the first blank OR non-comment line, so a distant
- * comment carrying the token cannot reach an unrelated definition.
+ * of Check 49c via the canonical `audit:check-49-ack` marker or its
+ * deprecated-but-supported `audit:check-48-ack` alias — either on the
+ * definition line itself or anywhere in the contiguous comment block
+ * immediately preceding it. The upward walk stops at the first blank OR
+ * non-comment line, so a distant comment carrying either token cannot reach
+ * an unrelated definition.
  *
- * Why preceding-comment-aware (not same-line only, like 48d): a `withTelemetry`
+ * Why preceding-comment-aware (not same-line only, like 49d): a `withTelemetry`
  * signature is frequently multi-line (generics + params), so a trailing same-line
  * marker would fight the formatter. The one legitimate parallel definition
  * (the esbuild-bundled VS Code extension's local wrapper, which cannot import the
  * canonical core HOF) carries its ack on the comment block above the def.
  *
  * A comment line is one whose trimmed form starts with `//`, `*`, or `/*`.
- * Detection is substring (`String.prototype.includes`), matching 48d's existing
+ * Detection is substring (`String.prototype.includes`), matching 49d's existing
  * tradeoff: a def line containing the literal token inside an unrelated string
  * would be falsely suppressed — narrow, and the audit script excludes itself
  * from the survey.
@@ -1110,18 +1123,18 @@ export function findFunctionDefinitions(srcByPath, symbol) {
  * @param {number} line - 1-indexed definition line
  * @returns {boolean}
  */
-export function defHasCheck48Ack(src, line) {
+export function defHasCheck49Ack(src, line) {
   const lines = src.split('\n')
   const defIdx = line - 1
   if (defIdx < 0 || defIdx >= lines.length) return false
-  if (lines[defIdx].includes('audit:check-48-ack')) return true
+  if (hasCheck49AckMarker(lines[defIdx])) return true
   for (let i = defIdx - 1; i >= 0; i--) {
     const trimmed = lines[i].trim()
     if (trimmed === '') break
     const isComment =
       trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')
     if (!isComment) break
-    if (lines[i].includes('audit:check-48-ack')) return true
+    if (hasCheck49AckMarker(lines[i])) return true
   }
   return false
 }
@@ -1132,10 +1145,11 @@ export function defHasCheck48Ack(src, line) {
  * `_tests_/`, `/e2e/`, `fixtures/`) — those legitimately use the prefix as
  * a sandbox path per the test-isolation convention.
  *
- * Per-line opt-out marker `audit:check-48-ack` is honoured: any line
- * containing this token is excluded. The marker is the documented escape
- * hatch for legitimate edge cases (example code in comments, etc) and MUST
- * sit on the same physical line as the violation alongside a rationale.
+ * The canonical per-line opt-out marker `audit:check-49-ack` and its
+ * deprecated-but-supported `audit:check-48-ack` alias are honoured: any line
+ * containing either token is excluded. The marker is the documented escape
+ * hatch for legitimate edge cases (example code in comments, etc) and MUST sit
+ * on the same physical line as the violation alongside a rationale.
  *
  * @param {Record<string, string>} srcByPath
  * @returns {{ file: string, line: number, snippet: string }[]}
@@ -1150,7 +1164,7 @@ export function findTmpSkillsmithRefs(srcByPath) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
       if (!line.includes('/tmp/skillsmith-')) continue
-      if (line.includes('audit:check-48-ack')) continue
+      if (hasCheck49AckMarker(line)) continue
       out.push({ file, line: i + 1, snippet: line.trim() })
     }
   }
@@ -1163,24 +1177,25 @@ export function findTmpSkillsmithRefs(srcByPath) {
  * per-sub-check messages with `fail()` / `warn()`.
  *
  * Sub-checks:
- *   48a: SkillsmithEventType union ⊇ {expected event names}    (FAIL)
- *   48b: ALLOWED_EVENTS array     ⊇ {expected event names}    (FAIL)
- *   48c: withTelemetry has exactly ONE definition site         (WARN)
- *   48d: /tmp/skillsmith- absent from prod source              (WARN)
+ *   49a: SkillsmithEventType union ⊇ {expected event names}    (FAIL)
+ *   49b: ALLOWED_EVENTS array     ⊇ {expected event names}    (FAIL)
+ *   49c: withTelemetry has exactly ONE definition site         (WARN)
+ *   49d: /tmp/skillsmith- absent from prod source              (WARN)
  *
- * Severity rationale: 48a/48b are exact-string set-membership tests against
+ * Severity rationale: 49a/49b are exact-string set-membership tests against
  * declared sources of truth (no false-positive surface — drift IS the bug).
- * 48c/48d are grep-based heuristics that might over-flag in legitimate
+ * 49c/49d are grep-based heuristics that might over-flag in legitimate
  * edge cases — `warn()` keeps them visible without blocking PRs, matching
  * the false-positive-fatigue guidance in CLAUDE.md governance retros. Both
- * honor an `audit:check-48-ack` opt-out marker: 48d per-line (same line as the
- * reference), 48c on the def line or the comment block immediately above the
- * parallel definition (see defHasCheck48Ack).
+ * honor canonical `audit:check-49-ack` and its deprecated-but-supported
+ * `audit:check-48-ack` alias: 49d per-line (same line as the reference), 49c
+ * on the def line or the comment block immediately above the parallel
+ * definition (see defHasCheck49Ack).
  *
  * @param {object} input
  * @param {string} input.posthogSrc - contents of packages/core/src/telemetry/posthog.ts
  * @param {string} input.eventsSrc - contents of supabase/functions/events/index.ts
- * @param {Record<string,string>} input.surveySrcByPath - all .ts files in scope for 48c/48d
+ * @param {Record<string,string>} input.surveySrcByPath - all .ts files in scope for 49c/49d
  * @param {string[]} input.expectedNewEvents - canonical list (e.g. ['skill_invoke', ...])
  * @param {string} input.canonicalWithTelemetryPath - the ONE allowed definition site
  * @returns {{
@@ -1196,29 +1211,30 @@ export function findConventionDrift(input) {
   const { posthogSrc, eventsSrc, surveySrcByPath, expectedNewEvents, canonicalWithTelemetryPath } =
     input
 
-  // 48a: SkillsmithEventType union must list every expectedNewEvents member.
+  // 49a: SkillsmithEventType union must list every expectedNewEvents member.
   const union = parseStringUnionType(posthogSrc, 'SkillsmithEventType')
   const eventTypeUnionParseFailed = union === null
   const eventTypeUnionMissing = union ? expectedNewEvents.filter((e) => !union.has(e)) : []
 
-  // 48b: ALLOWED_EVENTS const must include every expectedNewEvents member.
+  // 49b: ALLOWED_EVENTS const must include every expectedNewEvents member.
   const allowed = parseTsLiteralArray(eventsSrc, 'ALLOWED_EVENTS')
   const allowedEventsParseFailed = allowed === null
   const allowedEventsMissing = allowed ? expectedNewEvents.filter((e) => !allowed.has(e)) : []
 
-  // 48c: exactly one withTelemetry definition (in canonicalWithTelemetryPath).
-  // A parallel definition can opt out via an `audit:check-48-ack` marker on the
-  // def line or in the comment block immediately above it (genuinely-justified
-  // surfaces, e.g. the esbuild-bundled VS Code extension that cannot import the
-  // core HOF). See defHasCheck48Ack.
+  // 49c: exactly one withTelemetry definition (in canonicalWithTelemetryPath).
+  // A parallel definition can opt out via canonical `audit:check-49-ack` or its
+  // deprecated-but-supported `audit:check-48-ack` alias on the def line or in
+  // the comment block immediately above it (genuinely-justified surfaces, e.g.
+  // the esbuild-bundled VS Code extension that cannot import the core HOF). See
+  // defHasCheck49Ack.
   const allDefs = findFunctionDefinitions(surveySrcByPath, 'withTelemetry')
   const parallelWithTelemetryDefs = allDefs.filter(
     (d) =>
       d.file !== canonicalWithTelemetryPath &&
-      !defHasCheck48Ack(surveySrcByPath[d.file] ?? '', d.line)
+      !defHasCheck49Ack(surveySrcByPath[d.file] ?? '', d.line)
   )
 
-  // 48d: /tmp/skillsmith- must not appear in production source.
+  // 49d: /tmp/skillsmith- must not appear in production source.
   const tmpSkillsmithRefs = findTmpSkillsmithRefs(surveySrcByPath)
 
   return {
