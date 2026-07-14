@@ -210,27 +210,32 @@ export async function applyRecommendedEdit(
     filePath: edit.filePath,
     backupPath,
     ledgerEntryId,
-    summary: buildSummary(edit.filePath, edit.lineRange, opts.auditId),
+    summary: buildSummary(edit.filePath, edit.lineRange, edit.collisionId),
   }
 }
 
 /**
- * Inline revert-summary literal (decision #10). Mirrors Wave 2's UX —
- * `sklx audit revert <auditId>` is a Wave 4 (SMI-4590) command surface;
- * if Wave 4 hasn't shipped at the time this fires, the summary remains
- * user-facing copy and the command is a no-op until SMI-4590 lands.
+ * Inline revert-summary literal (decision #10, corrected by SMI-5674).
+ * Originally cited `sklx audit revert <auditId>` — a Wave 4 (SMI-4590)
+ * CLI surface that was never implemented (confirmed during SMI-5671).
+ * Prose edits have no durable, cross-session revert of their own (unlike
+ * namespace renames — SMI-5671 — a prose edit's ledger entry stores only
+ * a file+lineRange marker, not the before/after content, so there's
+ * nothing for a `revertRename`-style engine to reconstruct from). The
+ * one undo path that actually works today is `undo_apply`'s session-scoped
+ * restore-from-backup, which `apply_recommended_edit` already registers
+ * with on every successful apply (a fresh backup is always taken, so
+ * `undo_apply`'s content-hash-keyed session stack always has an entry).
+ * Naming that mechanism honestly, with its real scope, beats promising a
+ * durable revert that doesn't exist.
  */
 function buildSummary(
   filePath: string,
   lineRange: { start: number; end: number },
-  auditId: string
+  collisionId: string
 ): string {
-  // Always emit `start-end` form even on single-line ranges. The Wave 4
-  // CLI surface (`sklx audit revert`) parses the range; a stable two-
-  // number form simplifies the parser and matches the literal copy in
-  // the plan §5: `"Edited <file> lines <range>. To undo: ..."`.
   const range = `${lineRange.start}-${lineRange.end}`
-  return `Edited ${filePath} lines ${range}. To undo: sklx audit revert ${auditId}`
+  return `Edited ${filePath} lines ${range}. To undo (this session only): call undo_apply with suggestion_id: '${collisionId}'.`
 }
 
 function staleBeforeError(edit: RecommendedEdit, reason: string): EditApplyResult {
