@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/mcp-server",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "mcpName": "io.github.smith-horn/skillsmith",
   "description": "MCP server for Skillsmith skill discovery",
   "type": "module",
@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@skillsmith/core": "^0.11.1",
+    "@skillsmith/core": "^0.11.2",
     "ulid": "3.0.1",
     "zod": "3.25.76"
   },
