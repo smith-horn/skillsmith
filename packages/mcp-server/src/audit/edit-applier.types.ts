@@ -66,9 +66,11 @@ export interface EditApplyResult {
   /** ULID of the appended ledger entry (`ovr_…`). Empty string on failure. */
   ledgerEntryId: string
   /**
-   * Inline revert summary (decision #10). Literal text on success:
+   * Inline revert summary (decision #10, corrected by SMI-5674). Literal
+   * text on success:
    *
-   *   `"Edited <file> lines <range>. To undo: sklx audit revert <auditId>"`
+   *   `"Edited <file> lines <range>. To undo (this session only): call
+   *   undo_apply with suggestion_id: '<collisionId>'."`
    *
    * Empty string on failure.
    */
