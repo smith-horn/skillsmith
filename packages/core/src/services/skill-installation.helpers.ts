@@ -8,6 +8,7 @@
  */
 
 import * as fs from 'fs/promises'
+import { existsSync, readFileSync } from 'fs'
 import * as path from 'path'
 import { createHash } from 'crypto'
 
@@ -70,10 +71,53 @@ export function generateTips(skillName: string, optimizationInfo: OptimizationIn
   return tips
 }
 
+/**
+ * Read the MCP server names registered in the consuming project's
+ * `.mcp.json` (SMI-5676). Used to cross-check `extractMcpReferences`
+ * candidates against what's *actually* configured, so a stale/renamed
+ * reference (e.g. `claude-flow` after this project's own rename to `ruflo`)
+ * gets tagged `unregistered` in `serverResolutions` instead of silently
+ * asserted as a real dependency — without ever dropping a candidate that
+ * simply isn't installed *yet*.
+ *
+ * Fails open: returns `undefined` (not `[]`) when `.mcp.json` is missing,
+ * unreadable, or unparseable — `extractMcpReferences` treats `undefined` as
+ * "no information available" (`serverResolutions` = `'unknown'`), whereas
+ * `[]` would mean "zero servers registered", incorrectly tagging every real
+ * candidate `unregistered`.
+ *
+ * @param projectRoot - Directory to look for `.mcp.json` in (defaults to
+ *   `process.cwd()`, matching the convention used elsewhere in the codebase
+ *   for locating a consuming project's config, e.g.
+ *   `packages/mcp-server/src/context/project-detector.ts`).
+ */
+export function getRegisteredMcpServers(projectRoot: string = process.cwd()): string[] | undefined {
+  const mcpJsonPath = path.join(projectRoot, '.mcp.json')
+  if (!existsSync(mcpJsonPath)) return undefined
+
+  try {
+    const raw = readFileSync(mcpJsonPath, 'utf-8')
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return undefined
+
+    const mcpServers = (parsed as { mcpServers?: unknown }).mcpServers
+    if (!mcpServers || typeof mcpServers !== 'object' || Array.isArray(mcpServers)) {
+      return undefined
+    }
+
+    return Object.keys(mcpServers as Record<string, unknown>)
+  } catch {
+    return undefined
+  }
+}
+
 export function extractDepIntel(skillMdContent: string): DepIntelResult {
-  const mcpResult = extractMcpReferences(skillMdContent)
+  const mcpResult = extractMcpReferences(skillMdContent, getRegisteredMcpServers())
   const warnings: string[] = []
   for (const server of mcpResult.highConfidenceServers) {
+    // Don't warn about a server we positively confirmed IS configured —
+    // only flag servers we couldn't confirm (unregistered/unknown).
+    if (mcpResult.serverResolutions?.[server] === 'registered') continue
     warnings.push("MCP server '" + server + "' is referenced but may not be configured")
   }
   return {
@@ -101,7 +145,7 @@ export function persistDependencies(
   content: string,
   declared: DepIntelResult['dep_declared']
 ): number {
-  const mcpResult = extractMcpReferences(content)
+  const mcpResult = extractMcpReferences(content, getRegisteredMcpServers())
   const merged = mergeDependencies(declared, mcpResult)
   if (merged.length === 0) return 0
 
