@@ -14,10 +14,14 @@ Architecture decision: [ADR-128](../../docs/internal/adr/128-harness-of-harnesse
 1. **Rust toolchain**, if not already present: install via [rustup](https://rustup.rs).
 2. **Install NEEDLE**, pinned to the diligenced, macOS-compatible fork commit
    (upstream `jedarden/NEEDLE` has never published a macOS binary and has a
-   real Darwin compile bug — see the implementation doc § 2):
+   real Darwin compile bug — see the implementation doc § 2). This also
+   carries the transform-kill grace-period fix (SMI-5678) that fixed a
+   spurious `TransformFailed` event and `model: "unknown"` cost attribution
+   on every Codex dispatch — see
+   [`docs/internal/implementation/smi-5678-needle-fork-followups.md`](../../docs/internal/implementation/smi-5678-needle-fork-followups.md):
 
    ```sh
-   cargo install --git https://github.com/wrsmith108/NEEDLE --rev c2eed7e3 --no-default-features
+   cargo install --git https://github.com/wrsmith108/NEEDLE --rev 96e669e8 --no-default-features
    ```
 
    `--no-default-features` skips the `otlp` telemetry feature (needs
