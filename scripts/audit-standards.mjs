@@ -1659,8 +1659,9 @@ console.log(`\n${BOLD}22. Workflow Inline require() Paths (SMI-3336)${RESET}`)
 // shallow-clone guard works inside git worktrees (where `.git` is a file
 // containing `gitdir: <main>/.git/worktrees/<name>`, not a directory).
 // Also: downgrade git-failure from `warn(... fatal: ...)` to a clean
-// `pass('Skipped — ...')`. Matches Check 21's skip-as-pass pattern. Noise
-// suppression by design — see commit message for rationale.
+// `pass('Skipped — ...')`. Matches main check 22's (Workflow Inline require()
+// Paths) skip-as-pass pattern. Noise suppression by design — see commit
+// message for rationale.
 console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RESET}`)
 {
   const DONE_PATTERNS = [
@@ -1773,9 +1774,10 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
         }
       } catch {
         // SMI-3986: downgrade from warn-with-fatal-string to clean skip-as-pass.
-        // Matches Check 21's pattern for missing infrastructure. Noise
-        // suppression by design — a genuinely corrupt git state will fail
-        // many other checks (pre-push hooks, git log in calling tools, etc.).
+        // Matches main check 22's (Workflow Inline require() Paths) pattern
+        // for missing infrastructure. Noise suppression by design — a
+        // genuinely corrupt git state will fail many other checks (pre-push
+        // hooks, git log in calling tools, etc.).
         pass('Skipped — could not inspect git history (hook context or detached state)')
       }
     }
@@ -3175,7 +3177,7 @@ try {
   warn('Could not check @modelcontextprotocol/sdk override drift: ' + e.message)
 }
 
-// Check 21: Strategy submodule pointer-on-tip-of-declared-branch
+// Check 55: Strategy submodule pointer-on-tip-of-declared-branch
 // Pre-cutover: .gitmodules has no strategy submodule entries → no-op (pass).
 // Post-cutover (shape b′): three strategy submodule entries, each pinned to
 // its own branch (`skills`, `plans`, `hive-mind`) within smith-horn/skillsmith-strategy.
@@ -3184,13 +3186,13 @@ try {
 // (Open Q#3 decision, SMI-4829 implementation plan).
 // "strategy" submodule = any submodule URL containing "skillsmith-strategy".
 // Each [submodule] block must include `branch = <name>` (per shape b′ topology).
-console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
+console.log(`\n${BOLD}Check 55: Strategy submodule pointer-on-tip${RESET}`)
 {
   let gitmodules = ''
   try {
     gitmodules = readFileSync('.gitmodules', 'utf8')
   } catch {
-    pass('Check 21: .gitmodules not found — skipped (pre-cutover)')
+    pass('Check 55: .gitmodules not found — skipped (pre-cutover)')
     gitmodules = null
   }
   if (gitmodules !== null) {
@@ -3222,7 +3224,7 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
     flush()
 
     if (strategyEntries.length === 0) {
-      pass('Check 21: No strategy submodules in .gitmodules — no-op (pre-cutover)')
+      pass('Check 55: No strategy submodules in .gitmodules — no-op (pre-cutover)')
     } else {
       // Validate path/branch chars before shell interpolation (SMI-4829 governance retro P1).
       // .gitmodules is version-controlled but a contributor with write access could otherwise
@@ -3231,14 +3233,14 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
       for (const { path: subPath, branch } of strategyEntries) {
         if (!branch) {
           warn(
-            `Check 21: Strategy submodule '${subPath}' missing 'branch = ' declaration in .gitmodules (shape b′ requires per-branch pinning)`,
+            `Check 55: Strategy submodule '${subPath}' missing 'branch = ' declaration in .gitmodules (shape b′ requires per-branch pinning)`,
             'Add `branch = <skills|plans|hive-mind>` to the [submodule "' + subPath + '"] block'
           )
           continue
         }
         if (!SAFE_TOKEN.test(subPath) || !SAFE_TOKEN.test(branch)) {
           warn(
-            `Check 21: Strategy submodule '${subPath}' has unsafe characters in path or branch '${branch}' — refusing to shell out`,
+            `Check 55: Strategy submodule '${subPath}' has unsafe characters in path or branch '${branch}' — refusing to shell out`,
             'Verify .gitmodules manually; only [A-Za-z0-9._-/] permitted in path/branch tokens'
           )
           continue
@@ -3262,16 +3264,16 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
             .split(/\s+/)[0]
           if (!localSha || !remoteSha) {
             warn(
-              `Check 21: Could not resolve SHAs for strategy submodule '${subPath}' (branch=${branch}) — skipping`,
+              `Check 55: Could not resolve SHAs for strategy submodule '${subPath}' (branch=${branch}) — skipping`,
               'Ensure the submodule is initialized and the remote branch exists'
             )
           } else if (localSha !== remoteSha) {
             warn(
-              `Check 21: Strategy submodule '${subPath}' pointer (${localSha.slice(0, 8)}) is behind remote ${branch} tip (${remoteSha.slice(0, 8)})`,
+              `Check 55: Strategy submodule '${subPath}' pointer (${localSha.slice(0, 8)}) is behind remote ${branch} tip (${remoteSha.slice(0, 8)})`,
               `Run: git submodule update --remote ${subPath} && git add ${subPath} && git commit -m 'chore: bump strategy submodule ${subPath} to ${branch} tip'`
             )
           } else {
-            pass(`Check 21: Strategy submodule '${subPath}' pointer is at remote ${branch} tip`)
+            pass(`Check 55: Strategy submodule '${subPath}' pointer is at remote ${branch} tip`)
           }
         } catch (e) {
           // SMI-5080: in Docker containers without ca-certificates installed (e.g.
@@ -3279,8 +3281,9 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
           // URLs with a certificate-verification error. The daily-cron / host
           // audit run still catches real submodule drift; the Docker run is
           // structurally unable to make this check, so degrade SSL/network
-          // failures to a clean `pass('Skipped ...')` (matches Check 23's
-          // skip-as-pass idiom) instead of emitting a misleading WARN.
+          // failures to a clean `pass('Skipped ...')` (matches main check 23's
+          // (Implementation Completeness) skip-as-pass idiom) instead of
+          // emitting a misleading WARN.
           const msg = String(e?.message || '')
           const isNetworkUnavailable =
             /certificate verification failed|unable to access|Could not resolve host|Connection refused|Operation timed out|ssl/i.test(
@@ -3288,11 +3291,11 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
             )
           if (isNetworkUnavailable) {
             pass(
-              `Check 21 skipped for '${subPath}' (branch=${branch}) — SSL/network unavailable in this environment`
+              `Check 55 skipped for '${subPath}' (branch=${branch}) — SSL/network unavailable in this environment`
             )
           } else {
             warn(
-              `Check 21: Could not check strategy submodule '${subPath}' (branch=${branch}) tip: ${e.message}`,
+              `Check 55: Could not check strategy submodule '${subPath}' (branch=${branch}) tip: ${e.message}`,
               'Ensure remote is reachable and submodule is initialized'
             )
           }
@@ -3305,9 +3308,9 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
 // (Check 22 removed in SMI-4829 cutover — sparse-checkout cone mode cannot
 // strip upstream path prefixes, so the prior shape (b) approach was abandoned
 // in favor of shape (b′): one branch per mount-point with content at root.
-// Replaced with per-branch pointer verification in Check 21.)
+// Replaced with per-branch pointer verification in Check 55.)
 
-// Check 23: `git config --file <path>` subshell-out-of-cwd discipline
+// Check 56: `git config --file <path>` subshell-out-of-cwd discipline
 // From a worktree path inside a Linux Docker container, `git config --file <abs-path>`
 // STILL walks cwd to evaluate `[includeIf "gitdir:..."]` directives. A stale .git
 // file (e.g. worktree imported from another host with an invalid gitdir pointer)
@@ -3315,10 +3318,10 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
 // error output. The fix is to subshell into / before calling git config --file.
 // Same RCA class as SMI-4699 + SMI-4693. Surfaced in Wave 2A commit c61d06e6.
 //
-// Exempt marker: add `# audit-standards-check-23-exempt: <reason>` in the same line
+// Exempt marker: add `# audit-standards-check-56-exempt: <reason>` in the same line
 // or the 3 lines above the `git config --file` call.
 // Severity: fail (this is a real bug in any affected call-site today, not a future concern).
-console.log(`\n${BOLD}Check 23: git config --file subshell discipline${RESET}`)
+console.log(`\n${BOLD}Check 56: git config --file subshell discipline${RESET}`)
 {
   const dirsToScan = ['scripts', '.husky']
   // Shell comment prefixes: lines starting with # (after trimming) are documentation,
@@ -3349,7 +3352,7 @@ console.log(`\n${BOLD}Check 23: git config --file subshell discipline${RESET}`)
         const hasSubshell = lines[i].includes('(cd /')
         // Check for exempt marker in the current line or up to 3 lines above
         const windowLines = lines.slice(Math.max(0, i - 3), i + 1).join('\n')
-        const hasExempt = windowLines.includes('# audit-standards-check-23-exempt:')
+        const hasExempt = windowLines.includes('# audit-standards-check-56-exempt:')
         if (!hasSubshell && !hasExempt) {
           violations.push(`${file}:${lineNum}: ${trimmed}`)
         }
@@ -3358,19 +3361,19 @@ console.log(`\n${BOLD}Check 23: git config --file subshell discipline${RESET}`)
   }
   if (violations.length === 0) {
     pass(
-      'Check 23: All `git config --file` calls in scripts/ and .husky/ use subshell-out-of-cwd or have exempt marker'
+      'Check 56: All `git config --file` calls in scripts/ and .husky/ use subshell-out-of-cwd or have exempt marker'
     )
   } else {
     for (const v of violations) {
       fail(
-        `Check 23: Bare \`git config --file\` without subshell: ${v}`,
-        'Wrap as: (cd / && git config --file ...) — see scripts/_lib.sh enumerate_submodules() for the canonical pattern. Or add `# audit-standards-check-23-exempt: <reason>` if subshelling is genuinely impossible.'
+        `Check 56: Bare \`git config --file\` without subshell: ${v}`,
+        'Wrap as: (cd / && git config --file ...) — see scripts/_lib.sh enumerate_submodules() for the canonical pattern. Or add `# audit-standards-check-56-exempt: <reason>` if subshelling is genuinely impossible.'
       )
     }
   }
 }
 
-// Check 24: No internal references in rendered published website content (SMI-4916)
+// Check 57: No internal references in rendered published website content (SMI-4916)
 //
 // Internal Linear issue IDs (SMI-NNN), ADR numbers (ADR-NNN), and private doc
 // paths (docs/internal/) are engineering jargon and must never reach end users.
@@ -3389,7 +3392,7 @@ console.log(`\n${BOLD}Check 23: git config --file subshell discipline${RESET}`)
 // before stripping) is skipped, for the rare case a page must legitimately name
 // a reference.
 console.log(
-  `\n${BOLD}Check 24: No internal references in rendered website content (SMI-4916)${RESET}`
+  `\n${BOLD}Check 57: No internal references in rendered website content (SMI-4916)${RESET}`
 )
 
 // Apply a stripping regex repeatedly until the text stabilizes. A single
@@ -3581,7 +3584,7 @@ const internalRefPagesDir = 'packages/website/src/pages'
 const internalRefBlogDir = 'packages/website/src/content/blog'
 
 if (!existsSync(internalRefPagesDir) && !existsSync(internalRefBlogDir)) {
-  warn('Check 24: Website pages/blog directories not found - skipping internal-ref check')
+  warn('Check 57: Website pages/blog directories not found - skipping internal-ref check')
 } else {
   const internalRefHits = []
   const astroFilesForRefCheck = existsSync(internalRefPagesDir)
@@ -3617,10 +3620,10 @@ if (!existsSync(internalRefPagesDir) && !existsSync(internalRefBlogDir)) {
   }
 
   if (internalRefHits.length === 0) {
-    pass('Check 24: No internal references (SMI-/ADR-/docs/internal/) in rendered website content')
+    pass('Check 57: No internal references (SMI-/ADR-/docs/internal/) in rendered website content')
   } else {
     fail(
-      `Check 24: ${internalRefHits.length} internal reference(s) found in rendered website content`,
+      `Check 57: ${internalRefHits.length} internal reference(s) found in rendered website content`,
       'Reword to drop the internal ref (Linear ID, ADR number, or docs/internal/ path). For a legitimate exception, add an `audit:internal-ref-ok` marker on that line.'
     )
     internalRefHits.forEach(({ file, line, match }) =>
