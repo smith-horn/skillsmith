@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `compliance_report`'s `cyclonedx` format now emits a real CycloneDX 1.5 AI/ML-BOM (`@cyclonedx/cyclonedx-library`) instead of a hand-rolled flat JSON document — component/dependency-graph construction from `skill_dependencies`, per-skill sparse-data signaling with an opt-in `backfillDependencies` option (hard-gated to the `better-sqlite3` driver), and audit logging of export events (SMI-3140)
+- **Fix**: `compliance_report`'s skill inventory (`soc2`/`cyclonedx`/`json`, all three formats) now sources the installed-skill set from `~/.skillsmith/manifest.json`, not an unfiltered scan of the entire locally-indexed `skills` table, and reports each skill's real installed version instead of a hardcoded placeholder (SMI-5675)
+- **Fix**: `skill_validate`'s dependency-intelligence check (`validateDependencies`) now sees frontmatter (previously received only the post-frontmatter body) and cross-checks inferred servers against `.mcp.json`, matching the SMI-5676 hardening already applied to install-time extraction
+
 ## v0.7.4
 
 - **Fix**: Expose apply_namespace_rename action:'revert'

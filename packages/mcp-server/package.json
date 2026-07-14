@@ -34,8 +34,10 @@
     "test:integration": "vitest run --config vitest.config.integration.ts"
   },
   "dependencies": {
+    "@cyclonedx/cyclonedx-library": "10.1.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@skillsmith/core": "^0.11.2",
+    "ajv-formats-draft2019": "1.6.1",
     "ulid": "3.0.1",
     "zod": "3.25.76"
   },

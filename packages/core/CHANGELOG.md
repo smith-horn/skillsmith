@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `extractMcpReferences` now parses frontmatter `allowed-tools`/`tools` YAML (bare-server, wildcard, and full forms), detects embedded `mcpServers` JSON-registration blocks, and cross-checks every candidate server name against the project's `.mcp.json` via a new `serverResolutions` map (`registered`/`unregistered`/`unknown`) — candidates are tagged, never excluded (SMI-5676)
+- **Fix**: `extractDepIntel`/`persistDependencies` pass the project's registered MCP server list via the new `getRegisteredMcpServers()` export, which fails open (not to an empty list) when `.mcp.json` is missing or unparseable
+- Exported `getBestDriver`/`DriverType` from the package root, and added a `compliance_export` `AuditEventType` (SMI-3140)
+
 ## v0.11.2
 
 - **Fix**: Expose apply_namespace_rename action:'revert'

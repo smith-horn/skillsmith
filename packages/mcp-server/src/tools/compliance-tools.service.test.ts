@@ -1,11 +1,16 @@
 /**
  * @fileoverview Tests for real compliance service (SQLite-backed)
  * @see SMI-3916: Wave 2 — Compliance real queries
+ * @see SMI-5675: skill inventory now sourced from the installed-skill
+ *   manifest, not the entire locally-indexed `skills` table.
  */
 
+import * as fs from 'fs/promises'
+import * as os from 'os'
+import * as path from 'path'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createDatabaseAsync, initializeSchema } from '@skillsmith/core'
-import type { Database } from '@skillsmith/core'
+import { createDatabaseAsync, initializeSchema, ManifestManager } from '@skillsmith/core'
+import type { Database, SkillManifestEntry } from '@skillsmith/core'
 import { createRealComplianceService } from './compliance-tools.service.js'
 import type { ComplianceService } from './compliance-tools.js'
 
@@ -59,6 +64,21 @@ function daysAgo(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toISOString()
 }
 
+/** Build a well-formed manifest entry, overriding only what a test cares about. */
+function manifestEntry(overrides: Partial<SkillManifestEntry> = {}): SkillManifestEntry {
+  const now = new Date().toISOString()
+  return {
+    id: overrides.id ?? 'author/skill',
+    name: overrides.name ?? 'skill',
+    version: overrides.version ?? '1.2.3',
+    source: overrides.source ?? 'github:author/skill',
+    installPath: overrides.installPath ?? '/home/tester/.claude/skills/skill',
+    installedAt: overrides.installedAt ?? now,
+    lastUpdated: overrides.lastUpdated ?? now,
+    ...overrides,
+  }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -66,19 +86,34 @@ function daysAgo(n: number): string {
 describe('createRealComplianceService', () => {
   let db: Database
   let svc: ComplianceService
+  let manifestManager: ManifestManager
+  let manifestPath: string
 
   beforeEach(async () => {
     db = await createDatabaseAsync(':memory:')
     initializeSchema(db)
-    svc = createRealComplianceService(db)
+
+    // SMI-5675: gatherData() reads the installed-skill manifest — use a
+    // per-test temp file so tests never touch the real
+    // ~/.skillsmith/manifest.json on the machine running the suite, and
+    // never leak installed-skill state between tests.
+    manifestPath = path.join(
+      os.tmpdir(),
+      `skillsmith-compliance-test-manifest-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
+    )
+    manifestManager = new ManifestManager(manifestPath)
+    await manifestManager.save({ version: '1.0.0', installedSkills: {} })
+
+    svc = createRealComplianceService(db, { manifestManager })
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     if (db) db.close()
+    await fs.rm(manifestPath, { force: true })
   })
 
   describe('gatherData', () => {
-    it('returns empty data for an empty database', async () => {
+    it('returns empty data for an empty database and empty manifest', async () => {
       const data = await svc.gatherData(90, false)
 
       expect(data.skills).toEqual([])
@@ -108,18 +143,101 @@ describe('createRealComplianceService', () => {
       expect(data.auditSummary.searchCount).toBe(3)
     })
 
-    it('returns skill inventory from skills table', async () => {
+    // ------------------------------------------------------------------
+    // SMI-5675: installed-scope acceptance tests
+    // ------------------------------------------------------------------
+
+    it('SMI-5675 acceptance: reports exactly the installed subset, not the whole skills table', async () => {
+      // N discovered-but-uninstalled rows in the skills table (registry-synced
+      // or filesystem-scanned — never installed by this user).
       seedSkills(db, [
-        { id: 'skillsmith/commit', name: 'commit', author: 'skillsmith', trust_tier: 'verified' },
-        { id: 'community/test', name: 'test', author: 'community', trust_tier: 'community' },
+        { id: 'other/never-installed-1', name: 'never-installed-1', trust_tier: 'community' },
+        { id: 'other/never-installed-2', name: 'never-installed-2', trust_tier: 'community' },
+        { id: 'other/never-installed-3', name: 'never-installed-3', trust_tier: 'unverified' },
+        // Plus the 2 that ARE installed, so the join path is also exercised.
+        { id: 'skillsmith/commit', name: 'commit', trust_tier: 'verified' },
+        { id: 'community/test', name: 'test', trust_tier: 'community' },
       ])
 
+      await manifestManager.save({
+        version: '1.0.0',
+        installedSkills: {
+          commit: manifestEntry({ id: 'skillsmith/commit', name: 'commit', version: '1.2.0' }),
+          test: manifestEntry({ id: 'community/test', name: 'test', version: '0.8.3' }),
+        },
+      })
+
       const data = await svc.gatherData(90, false)
+
+      // Exactly M (2) reported, not N+M (5).
       expect(data.skills).toHaveLength(2)
-      expect(data.skills[0].skillId).toBe('community/test')
-      expect(data.skills[0].trustTier).toBe('community')
-      expect(data.skills[1].skillId).toBe('skillsmith/commit')
-      expect(data.skills[1].trustTier).toBe('verified')
+      const byId = new Map(data.skills.map((s) => [s.skillId, s]))
+      expect(byId.has('other/never-installed-1')).toBe(false)
+      expect(byId.has('other/never-installed-2')).toBe(false)
+      expect(byId.has('other/never-installed-3')).toBe(false)
+
+      // Real versions from the manifest, not the hardcoded '0.0.0'.
+      expect(byId.get('skillsmith/commit')?.version).toBe('1.2.0')
+      expect(byId.get('community/test')?.version).toBe('0.8.3')
+
+      // trust_tier still joined in from the skills table.
+      expect(byId.get('skillsmith/commit')?.trustTier).toBe('verified')
+      expect(byId.get('community/test')?.trustTier).toBe('community')
+    })
+
+    it('uses the manifest entry version directly, even with zero skills-table rows', async () => {
+      // No rows in `skills` at all — a skill can be installed without (yet)
+      // being present in the locally-indexed table.
+      await manifestManager.save({
+        version: '1.0.0',
+        installedSkills: {
+          orphan: manifestEntry({ id: 'local/orphan', name: 'orphan', version: '2.0.0' }),
+        },
+      })
+
+      const data = await svc.gatherData(90, false)
+      expect(data.skills).toHaveLength(1)
+      expect(data.skills[0].skillId).toBe('local/orphan')
+      expect(data.skills[0].version).toBe('2.0.0')
+      expect(data.skills[0].trustTier).toBe('unknown') // no skills-table row to join
+    })
+
+    it('carries the manifest installPath through for downstream consumers', async () => {
+      await manifestManager.save({
+        version: '1.0.0',
+        installedSkills: {
+          commit: manifestEntry({
+            id: 'skillsmith/commit',
+            installPath: '/home/tester/.claude/skills/commit',
+          }),
+        },
+      })
+
+      const data = await svc.gatherData(90, false)
+      expect(data.skills[0].installPath).toBe('/home/tester/.claude/skills/commit')
+    })
+
+    it('degrades to zero installed skills for a malformed-but-valid-JSON manifest, instead of throwing', async () => {
+      // ManifestManager.load() only guards against invalid JSON syntax (a
+      // parse failure falls back to {installedSkills:{}}) — a file that
+      // parses fine but has an unexpected shape (old-format manifest, or
+      // installedSkills missing/null) is NOT caught there. Write raw JSON
+      // directly (bypassing manifestManager.save(), which only ever writes
+      // well-formed objects) to simulate that case.
+      await fs.writeFile(manifestPath, JSON.stringify({ version: '1.0.0' }), 'utf-8')
+
+      await expect(svc.gatherData(90, false)).resolves.toMatchObject({ skills: [] })
+    })
+
+    it('degrades to zero installed skills when installedSkills is explicitly null', async () => {
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({ version: '1.0.0', installedSkills: null }),
+        'utf-8'
+      )
+
+      const data = await svc.gatherData(90, false)
+      expect(data.skills).toEqual([])
     })
 
     it('returns null userActivity when includeUserActivity=false', async () => {
@@ -178,20 +296,6 @@ describe('createRealComplianceService', () => {
         auditLoggingEnabled: true,
         webhooksConfigured: 0,
       })
-    })
-
-    it('builds skillId from author/name when author is present', async () => {
-      seedSkills(db, [{ id: 'some-uuid', name: 'my-skill', author: 'acme' }])
-
-      const data = await svc.gatherData(90, false)
-      expect(data.skills[0].skillId).toBe('acme/my-skill')
-    })
-
-    it('falls back to id when author is null', async () => {
-      seedSkills(db, [{ id: 'orphan-skill-id', name: 'orphan', author: undefined }])
-
-      const data = await svc.gatherData(90, false)
-      expect(data.skills[0].skillId).toBe('orphan-skill-id')
     })
   })
 })

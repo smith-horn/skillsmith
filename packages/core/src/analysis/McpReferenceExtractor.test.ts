@@ -314,3 +314,8 @@ describe('McpReferenceExtractor', () => {
     })
   })
 })
+
+// SMI-5676 extraction-hardening tests (frontmatter parsing, mcpServers
+// JSON-block detection, .mcp.json cross-check tagging) live in the sibling
+// McpReferenceExtractor.hardening.test.ts, split out to stay under the
+// 500-line file gate.

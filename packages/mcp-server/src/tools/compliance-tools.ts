@@ -16,6 +16,7 @@ import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createRealComplianceService } from './compliance-tools.service.js'
+import { formatCycloneDx as buildCycloneDxBom } from './compliance-tools.cyclonedx.js'
 
 // ============================================================================
 // Input schemas
@@ -33,6 +34,17 @@ export const complianceReportInputSchema = z.object({
     .optional()
     .default(true)
     .describe('Include user activity summary (default: true)'),
+  backfillDependencies: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      'cyclonedx format only. Opt-in: when installed skills have no skill_dependencies ' +
+        'rows yet, run inline dependency extraction before export instead of emitting a ' +
+        'pending-rescan placeholder. Requires the better-sqlite3 driver — refused (not a ' +
+        'silent no-op) on sql.js/WASM, which has no cross-process write coordination. ' +
+        'Default: false.'
+    ),
 })
 
 export type ComplianceReportInput = z.infer<typeof complianceReportInputSchema>
@@ -64,6 +76,13 @@ export const complianceReportToolSchema = {
         type: 'boolean',
         description: 'Include user activity summary (default: true)',
       },
+      backfillDependencies: {
+        type: 'boolean',
+        description:
+          'cyclonedx format only. Opt-in inline dependency extraction when skill_dependencies ' +
+          'is empty (default: false, emits a pending-rescan placeholder instead). ' +
+          'better-sqlite3 only.',
+      },
     },
     required: ['format'],
   },
@@ -87,6 +106,14 @@ export interface SkillInventoryItem {
     | 'local'
   installedAt: string
   lastUpdated: string
+  /**
+   * SMI-3140: absolute install path from the manifest entry, when known.
+   * Used only by the cyclonedx formatter's opt-in inline dependency backfill
+   * (needs to re-read the installed SKILL.md). Undefined for the stub
+   * service and for any manifest entry missing this field (SMI-3177-style
+   * corrupt entry) — backfill is simply skipped for that skill in that case.
+   */
+  installPath?: string
 }
 
 export interface AuditSummary {
@@ -256,30 +283,21 @@ function formatSoc2(data: ComplianceData, period: string): string {
   return lines.join('\n')
 }
 
-function formatCycloneDx(data: ComplianceData): Record<string, unknown> {
-  return {
-    bomFormat: 'CycloneDX',
-    specVersion: '1.5',
-    version: 1,
-    metadata: {
-      timestamp: new Date().toISOString(),
-      tools: [{ vendor: 'Skillsmith', name: 'compliance-report', version: '1.0.0' }],
-      component: {
-        type: 'application',
-        name: 'skillsmith-local-inventory',
-        version: '1.0.0',
-      },
-    },
-    components: data.skills.map((s) => ({
-      type: 'library',
-      name: s.skillId,
-      version: s.version,
-      properties: [
-        { name: 'skillsmith:trustTier', value: s.trustTier },
-        { name: 'skillsmith:installedAt', value: s.installedAt },
-      ],
-    })),
-  }
+// SMI-3140 Wave 1: the CycloneDX AI/ML-BOM formatter is implemented in
+// compliance-tools.cyclonedx.ts (library-backed component + dependency-graph
+// construction, sparse-data handling, audit logging) — kept out of this file
+// to stay under the 500-line audit:standards gate. `formatCycloneDx` below is
+// a thin adapter that pulls the DB-backed context this format alone needs.
+async function formatCycloneDx(
+  data: ComplianceData,
+  context: ToolContext,
+  options: { backfillDependencies: boolean }
+): Promise<Record<string, unknown>> {
+  return buildCycloneDxBom(data, {
+    db: context.db,
+    skillDependencyRepository: context.skillDependencyRepository,
+    backfillDependencies: options.backfillDependencies,
+  })
 }
 
 function formatJson(data: ComplianceData, period: string): Record<string, unknown> {
@@ -337,7 +355,9 @@ async function executeComplianceReportImpl(
         generatedAt,
         scope: 'local',
         period,
-        report: formatCycloneDx(data),
+        report: await formatCycloneDx(data, context, {
+          backfillDependencies: input.backfillDependencies ?? false,
+        }),
       }
     case 'json':
       return {

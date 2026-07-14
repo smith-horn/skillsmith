@@ -3,7 +3,10 @@
  * @see SMI-3137: Wave 4 — Surface dependency intelligence
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import { validateDependencies } from './validate.helpers.js'
 
 describe('validateDependencies', () => {
@@ -87,5 +90,66 @@ Use mcp__slack__send_message for notifications.
   it('handles empty metadata gracefully', () => {
     const errors = validateDependencies({}, 'No MCP refs here.')
     expect(errors).toEqual([])
+  })
+
+  describe('frontmatter + .mcp.json cross-check (SMI-5676)', () => {
+    let tmpDir: string
+    let originalCwd: string
+
+    beforeEach(() => {
+      originalCwd = process.cwd()
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-validate-dep-'))
+    })
+
+    afterEach(() => {
+      process.chdir(originalCwd)
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    })
+
+    it('detects a frontmatter-declared MCP server when passed the full content (not just the body)', () => {
+      // Regression guard: validateDependencies used to receive only the
+      // frontmatter-stripped body, so extractMcpReferences's frontmatter
+      // allowed-tools/tools parsing (Step 3b) could never fire here even
+      // though it works standalone. Passing full content fixes that.
+      const content = [
+        '---',
+        'name: linear-skill',
+        'allowed-tools:',
+        '  - mcp__linear',
+        '---',
+        '',
+        'No MCP mentions in the body itself.',
+      ].join('\n')
+
+      const errors = validateDependencies({}, content)
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0].message).toContain("'linear'")
+    })
+
+    it('does not warn about a server confirmed registered in .mcp.json', () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '.mcp.json'),
+        JSON.stringify({ mcpServers: { linear: {} } })
+      )
+      process.chdir(tmpDir)
+
+      const errors = validateDependencies({}, 'Use mcp__linear__save_issue to create issues.')
+
+      expect(errors).toEqual([])
+    })
+
+    it('still warns when the server is absent from .mcp.json', () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '.mcp.json'),
+        JSON.stringify({ mcpServers: { ruflo: {} } })
+      )
+      process.chdir(tmpDir)
+
+      const errors = validateDependencies({}, 'Use mcp__linear__save_issue to create issues.')
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0].message).toContain("'linear'")
+    })
   })
 })
