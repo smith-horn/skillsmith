@@ -385,9 +385,12 @@ export {
   extractMcpReferences,
   type McpReference,
   type McpExtractionResult,
+  type McpServerResolution,
 } from '../analysis/McpReferenceExtractor.js'
 
 export { mergeDependencies, type MergedDependency } from '../analysis/DependencyMerger.js'
+
+export { getRegisteredMcpServers } from '../services/skill-installation.helpers.js'
 
 // ============================================================================
 // Billing (SMI-1062 to SMI-1070) — RELOCATED in SMI-5006 (core 0.7.0)

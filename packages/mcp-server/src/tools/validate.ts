@@ -141,8 +141,10 @@ async function executeValidateImpl(
     })
   }
 
-  // SMI-3137: Dependency intelligence warnings
-  errors.push(...validateDependencies(metadata ?? {}, body))
+  // SMI-3137: Dependency intelligence warnings. Pass the full raw content
+  // (not the frontmatter-stripped body) so extractMcpReferences's frontmatter
+  // allowed-tools/tools parsing (SMI-5676) can actually see the frontmatter.
+  errors.push(...validateDependencies(metadata ?? {}, content))
 
   // SMI-5422 Phase 1: when validating a skill directory, also scan sibling
   // bundled files that install_skill would scan. This closes the gap where
