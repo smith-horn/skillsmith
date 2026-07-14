@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: Widen `JournalAction` to include `'revert'` and bump `JOURNAL_SCHEMA_VERSION` 1→2 — an older reader's closed-set validation would otherwise flag a legitimate revert journal record as corrupt (SMI-5671) (#1878)
+
 ## v0.11.1
 
 - **Fix**: unified shutdown coordinator + awaitable sync stop (SMI-5649/SMI-5640) (#1826)
