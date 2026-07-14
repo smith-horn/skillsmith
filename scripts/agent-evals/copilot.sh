@@ -43,6 +43,6 @@ run_job "$LOG" "audit-fix" -- copilot -p \
   "Audit my installed skills for namespace collisions or issues, and tell me what you would fix. Do not apply anything yet." --allow-all-tools
 
 run_job "$LOG" "vet-before-install" -- copilot -p \
-  "I am thinking about installing the skill anthropic/commit. Look it up and tell me whether it is safe to install." --allow-all-tools
+  "I am thinking about installing the skill getsentry/commit. Look it up and tell me whether it is safe to install." --allow-all-tools
 
 echo "[agent-eval] done -- see $LOG"

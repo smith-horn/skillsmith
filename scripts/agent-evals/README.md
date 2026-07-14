@@ -29,7 +29,7 @@ in [`packages/core/src/services/agent-pack/prompt-source.ts`](../../packages/cor
 
 1. **keep-current** — "What skills do I have installed that are outdated, and what changed?"
 2. **audit-fix** — "Audit my installed skills for namespace collisions or issues, and tell me what you would fix. Do not apply anything yet."
-3. **vet-before-install** — "I am thinking about installing the skill anthropic/commit. Look it up and tell me whether it is safe to install."
+3. **vet-before-install** — "I am thinking about installing the skill getsentry/commit. Look it up and tell me whether it is safe to install."
 
 (`find-recommend`, the fourth pack job, is routing-only per the plan and is
 not part of the MVP eval matrix.)
