@@ -29,9 +29,12 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
   parseSemver: (v: string) => [number, number, number] | null
   satisfies: (version: string, spec: string) => boolean
   extractCompletionIssues: (subject: string, body: string) => Set<string>
+  hasCompletionSource: (files: string[]) => boolean
+  INFRA_PATTERNS: RegExp[]
 }
 
-const { parseSemver, satisfies, extractCompletionIssues } = helpers
+const { parseSemver, satisfies, extractCompletionIssues, hasCompletionSource, INFRA_PATTERNS } =
+  helpers
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -305,6 +308,82 @@ describe('audit-standards Check 23: NON_SOURCE_PREFIXES (conventional commit typ
     expect(NON_SOURCE_PREFIXES.test('perf: optimize')).toBe(false)
     expect(NON_SOURCE_PREFIXES.test('feat(api): new endpoint')).toBe(false)
     expect(NON_SOURCE_PREFIXES.test('fix(server): handle null')).toBe(false)
+  })
+})
+
+describe('audit-standards Check 23: INFRA_PATTERNS + hasCompletionSource', () => {
+  describe('INFRA_PATTERNS: ADR-109 infra/config paths recognized as completion source', () => {
+    it.each([
+      // positives — ADR-109 infra/config trigger paths
+      ['.claude/settings.json', true],
+      ['.claude/settings.local.json', true],
+      ['.github/workflows/ci.yml', true],
+      ['.github/workflows/publish.yaml', true],
+      ['docker-compose.yml', true],
+      ['docker-compose.dev.yml', true],
+      ['docker-compose.prod.yaml', true],
+      ['Dockerfile', true],
+      ['Dockerfile.dev', true],
+      ['docker-entrypoint.sh', true],
+      ['.husky/pre-commit', true],
+      ['.husky/pre-push', true],
+      ['turbo.json', true],
+      ['vitest.config.ts', true],
+      ['lint-staged.config.js', true],
+      ['eslint.config.js', true],
+      // negatives — must NOT be swept in as infra
+      ['docker-compose.yml.bak', false],
+      ['.husky/_/husky.sh', false],
+      ['.husky/install.mjs', false],
+      ['package.json', false],
+      ['.claude/skills/governance/SKILL.md', false],
+      ['docs/internal/implementation/foo.md', false],
+    ])('%s -> isInfra=%s', (path, expected) => {
+      expect(INFRA_PATTERNS.some((p) => p.test(path))).toBe(expected)
+    })
+  })
+
+  describe('hasCompletionSource: the two SMI-5681 regression scenarios', () => {
+    it('REGRESSION (SMI-5681 ground truth, commit 3395b24b/SMI-5679): a .claude/settings.json-only change now counts as completion source', () => {
+      // Confirmed repro: commit 3395b24b ("fix(statusline): Point tier-1 at
+      // local ruflo bin, not npx (#1887)", body "Fixes SMI-5679") changed
+      // only .claude/settings.json and was misflagged by Check 23 pre-fix.
+      expect(hasCompletionSource(['.claude/settings.json'])).toBe(true)
+    })
+
+    it('a genuinely source-less docs-only change still trips the check (original purpose preserved)', () => {
+      expect(hasCompletionSource(['docs/internal/implementation/foo.md'])).toBe(false)
+    })
+
+    it('an empty file list (no changes at all) still trips the check', () => {
+      expect(hasCompletionSource([])).toBe(false)
+    })
+
+    it('infra path + real packages/ source both count (mixed change)', () => {
+      expect(hasCompletionSource(['.claude/settings.json', 'packages/core/src/index.ts'])).toBe(
+        true
+      )
+    })
+
+    it('infra path alongside an unrelated doc file still counts (infra change is what matters)', () => {
+      expect(hasCompletionSource(['.claude/settings.json', 'docs/internal/foo.md'])).toBe(true)
+    })
+
+    it('existing packages/ source recognition is unchanged', () => {
+      expect(hasCompletionSource(['packages/core/src/index.ts'])).toBe(true)
+    })
+
+    it('existing supabase/functions/ source recognition is unchanged', () => {
+      expect(hasCompletionSource(['supabase/functions/checkout/index.ts'])).toBe(true)
+    })
+
+    it('existing scripts/ source recognition is unchanged', () => {
+      expect(hasCompletionSource(['scripts/audit-standards.mjs'])).toBe(true)
+    })
+
+    it('a .test.ts-only change is still excluded (SRC_EXCLUDED unchanged)', () => {
+      expect(hasCompletionSource(['packages/core/src/index.test.ts'])).toBe(false)
+    })
   })
 })
 
