@@ -73,6 +73,12 @@ regexes = [
   '''NJbrm61yTXjo4IJPXDHqAg7X''',
 ]
 
+[[rules.allowlists]]
+description = "SMI-595: typosquat.ts legitimately mentions 'vercel' (a BRAND_ALIASES entry — one of the brand names the typosquat detector protects against impersonation of), which trips this rule's 'vercel' keyword gate. The generic 24-char alnum regex then matches ordinary camelCase TypeScript identifiers in the same file (e.g. TyposquatEnforcementMode, applyTyposquatEnforcementMode). Path-scoped rather than content-scoped, since new same-length identifiers will keep appearing here as the module evolves; this file is a security-scanner detector module and contains no deployment tokens by design."
+paths = [
+  '''packages/core/src/security/scanner/typosquat\.ts''',
+]
+
 [[rules]]
 id = "clerk-secret"
 description = "Clerk Secret Key"

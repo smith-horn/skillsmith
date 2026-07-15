@@ -90,6 +90,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pii: 0, // SMI-3864
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
+          typosquat: 0, // SMI-595
         },
       }
 
@@ -143,6 +144,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pii: 0, // SMI-3864
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
+          typosquat: 0, // SMI-595
         },
       }
 
@@ -171,6 +173,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pii: 0, // SMI-3864
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
+          typosquat: 0, // SMI-595
         },
       }
 
@@ -199,6 +202,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pii: 0, // SMI-3864
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
+          typosquat: 0, // SMI-595
         },
       }
 
@@ -227,6 +231,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pii: 0, // SMI-3864
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
+          typosquat: 0, // SMI-595
         },
       }
 

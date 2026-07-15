@@ -36,6 +36,16 @@ import { CODE_EXECUTION_PATTERNS } from './patterns.js'
 import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
 import type { LineContext } from './SecurityScanner.helpers.js'
 import { analyzeMarkdownContext, isDocumentationContext } from './SecurityScanner.helpers.js'
+// SMI-595: confusable/homoglyph primitives extracted to a standalone module
+// (confusables.ts) so the typosquat detector can reuse them without coupling
+// to this file's code-execution/obfuscated-directive detectors. Pure
+// extraction — no behavior change.
+import {
+  CONFUSABLES,
+  isFullwidthLatin,
+  isMathAlphanumeric,
+  confusableSkeleton,
+} from './confusables.js'
 
 // ============================================================================
 // Obfuscation primitives
@@ -53,62 +63,6 @@ const INVISIBLE_TEST = new RegExp('[' + INVISIBLE_RANGE + ']|[\\u{E0000}-\\u{E00
 const INVISIBLE_STRIP = new RegExp('[' + INVISIBLE_RANGE + ']|[\\u{E0000}-\\u{E007F}]', 'gu')
 
 /**
- * Conservative homoglyph map (a curated subset of UTS-#39 confusables): only the
- * unambiguous Cyrillic / Greek look-alikes that real homoglyph attacks use to
- * disguise Latin letters. Fullwidth Latin (offset 0xFEE0) and the Mathematical
- * Alphanumeric Symbols block (U+1D400-1D7FF, e.g. bold/italic/script 𝐢𝐠𝐧𝐨𝐫𝐞)
- * are handled programmatically below — never via a blanket NFKC pass, which would
- * also fold fullwidth CJK to ASCII and false-positive. (NFKC is applied per-char
- * ONLY to the math-alphanumeric range, which contains no CJK.)
- *
- * Exported (SMI-4703): reused as-is by
- * `packages/doc-retrieval-mcp/src/security/memory-injection-scanner.ts`'s
- * confusable-fold normalization step — not reimplemented there.
- */
-export const CONFUSABLES: Record<string, string> = {
-  // Cyrillic -> Latin
-  а: 'a',
-  е: 'e',
-  о: 'o',
-  р: 'p',
-  с: 'c',
-  у: 'y',
-  х: 'x',
-  і: 'i',
-  ј: 'j',
-  ѕ: 's',
-  ԁ: 'd',
-  һ: 'h',
-  к: 'k',
-  м: 'm',
-  т: 't',
-  в: 'b',
-  н: 'h',
-  // Greek -> Latin
-  ο: 'o',
-  α: 'a',
-  ρ: 'p',
-  ε: 'e',
-  τ: 't',
-  ι: 'i',
-  κ: 'k',
-  υ: 'u',
-  χ: 'x',
-  ν: 'v',
-  ϲ: 'c',
-  β: 'b',
-}
-
-function isFullwidthLatin(cp: number): boolean {
-  return (cp >= 0xff21 && cp <= 0xff3a) || (cp >= 0xff41 && cp <= 0xff5a)
-}
-
-/** Mathematical Alphanumeric Symbols (bold/italic/script/fraktur/double-struck/sans/mono). */
-function isMathAlphanumeric(cp: number): boolean {
-  return cp >= 0x1d400 && cp <= 0x1d7ff
-}
-
-/**
  * Remove invisible/format/bidi/tag/combining characters.
  *
  * Exported (SMI-4703): reused as-is by the memory-injection-scanner's
@@ -116,34 +70,6 @@ function isMathAlphanumeric(cp: number): boolean {
  */
 export function stripInvisible(s: string): string {
   return s.replace(INVISIBLE_STRIP, '')
-}
-
-/**
- * Map homoglyphs + fullwidth Latin + math-alphanumeric to their ASCII skeleton.
- *
- * Exported (SMI-4703): reused as-is by the memory-injection-scanner's
- * normalization pipeline (confusable-fold step) — not reimplemented there.
- */
-export function confusableSkeleton(s: string): string {
-  let out = ''
-  for (const ch of s) {
-    const cp = ch.codePointAt(0) ?? 0
-    if (isFullwidthLatin(cp)) {
-      out += String.fromCodePoint(cp - 0xfee0)
-    } else if (isMathAlphanumeric(cp)) {
-      // NFKC folds a math-styled glyph to its base; chain through CONFUSABLES so a
-      // math-styled Greek/Cyrillic homoglyph (folds to Greek/Cyrillic) still maps
-      // to Latin (SMI-5359 retro NIT). Safe: the range contains no CJK; a reserved
-      // hole stays unchanged (won't match).
-      const folded = ch.normalize('NFKC')
-      out += CONFUSABLES[folded] ?? folded
-    } else if (CONFUSABLES[ch]) {
-      out += CONFUSABLES[ch]
-    } else {
-      out += ch
-    }
-  }
-  return out
 }
 
 /** True if the line contains a homoglyph / fullwidth-Latin / math-alphanumeric character. */

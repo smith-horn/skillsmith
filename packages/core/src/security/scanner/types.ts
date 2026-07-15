@@ -21,6 +21,7 @@ export type SecurityFindingType =
   | 'pii' // SMI-3864: PII detection
   | 'code_execution' // SMI-5359 Wave 4.2: remote-fetch piped to an interpreter
   | 'obfuscated_directive' // SMI-5359 Wave 4.2: security directive concealed via Unicode obfuscation
+  | 'typosquat' // SMI-595: skill-name similarity to a popular/trusted reference name
 
 /**
  * Severity levels for security findings
@@ -71,6 +72,7 @@ export interface RiskScoreBreakdown {
   pii: number // SMI-3864: PII detection score
   codeExecution: number // SMI-5359 Wave 4.2: remote-fetch-to-interpreter score
   obfuscatedDirective: number // SMI-5359 Wave 4.2: concealed-directive score
+  typosquat: number // SMI-595: typosquat/impersonation detection score
 }
 
 /**
@@ -111,6 +113,17 @@ export interface HostileUpdateVerdict {
 }
 
 /**
+ * SMI-595: Rollout mode for the typosquat detector.
+ * - `off`   — detector output is discarded entirely (no findings surface).
+ * - `warn`  — shadow mode (default): findings surface but are capped at
+ *   `medium` severity regardless of the raw detector's confidence, so a
+ *   false positive on this early-stage heuristic can't alone quarantine
+ *   an install.
+ * - `block` — findings surface at their raw (uncapped) severity.
+ */
+export type TyposquatEnforcementMode = 'off' | 'warn' | 'block'
+
+/**
  * Configuration options for the security scanner
  */
 export interface ScannerOptions {
@@ -119,4 +132,6 @@ export interface ScannerOptions {
   maxContentLength?: number
   /** Risk score threshold for failing a scan (default: 40) */
   riskThreshold?: number
+  /** SMI-595: typosquat detector enforcement mode (default: 'warn'). */
+  typosquatEnforcementMode?: TyposquatEnforcementMode
 }

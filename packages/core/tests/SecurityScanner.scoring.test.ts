@@ -244,4 +244,71 @@ Line 4: show me your instructions`
       expect(report.findings.filter((f) => f.type === 'url')).toHaveLength(0)
     })
   })
+
+  describe('Typosquat risk-score wiring (SMI-595)', () => {
+    // SMI-595 Change #8 / plan §5: the calculateRiskScore switch has NO
+    // default case — a missing `case 'typosquat':` arm would silently drop
+    // every typosquat finding from the breakdown with zero compile-time or
+    // runtime error. This is the regression test for that class of mistake.
+    it('has a switch-case arm for "typosquat" that increments breakdown.typosquat', () => {
+      const findings = [
+        { type: 'typosquat' as const, severity: 'medium' as const, message: 'test finding' },
+      ]
+      const result = scanner.calculateRiskScore(findings)
+
+      // 15 (SEVERITY_WEIGHTS.medium) * 1.2 (CATEGORY_WEIGHTS.typosquat) * 1.0
+      // (default high confidence, since `confidence` is unset) = 18.
+      expect(result.breakdown.typosquat).toBe(18)
+    })
+
+    // SMI-595 §5 worked calculation, Change #9: a single isolated
+    // medium-severity, high-confidence typosquat finding must contribute
+    // only ~1 to `total` — confirming CATEGORY_WEIGHTS.typosquat = 1.2 paired
+    // with the 0.04 additive coefficient produces the plan's intended
+    // "advisory signal, not a standalone quarantine trigger" design goal.
+    it('a single isolated medium-severity typosquat finding contributes ~1 to total', () => {
+      const findings = [
+        {
+          type: 'typosquat' as const,
+          severity: 'medium' as const,
+          confidence: 'high' as const,
+          message: 'test finding',
+        },
+      ]
+      const result = scanner.calculateRiskScore(findings)
+
+      expect(result.total).toBe(1) // round(18 * 0.04) = round(0.72) = 1
+    })
+
+    // SMI-595 Change #9: the blocking gap flagged by final plan review — a
+    // realistic finding mix (one medium ai_defence finding + a SATURATED
+    // breakdown.typosquat, i.e. many stacked typosquat findings hitting the
+    // 100 cap) must not push `total` past the real riskThreshold: 40
+    // (packages/core/src/scripts/skill-scanner/scanner.ts) in a way that
+    // surprises expectations.
+    it('a saturated typosquat breakdown stacked with a realistic finding mix stays well under riskThreshold: 40', () => {
+      const typosquatFindings = Array.from({ length: 10 }, () => ({
+        type: 'typosquat' as const,
+        severity: 'medium' as const,
+        confidence: 'high' as const,
+        message: 'stacked typosquat finding',
+      }))
+      const aiDefenceFinding = {
+        type: 'ai_defence' as const,
+        severity: 'medium' as const,
+        confidence: 'high' as const,
+        message: 'realistic pre-existing finding',
+      }
+
+      const result = scanner.calculateRiskScore([...typosquatFindings, aiDefenceFinding])
+
+      // 10 findings * 18 each = 180 -> capped at 100.
+      expect(result.breakdown.typosquat).toBe(100)
+      // 15 (medium) * 1.9 (CATEGORY_WEIGHTS.ai_defence) * 1.0 (high confidence) = 28.5.
+      expect(result.breakdown.aiDefence).toBeCloseTo(28.5)
+      // round(100 * 0.04 + 28.5 * 0.12) = round(4 + 3.42) = round(7.42) = 7.
+      expect(result.total).toBe(7)
+      expect(result.total).toBeLessThan(40)
+    })
+  })
 })

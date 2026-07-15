@@ -37,4 +37,14 @@ export const CATEGORY_WEIGHTS: Record<string, number> = {
   // on its own (50 * 2.0 * 1.0 = 100 -> capped 100 -> * 0.40 = 40).
   code_execution: 2.0,
   obfuscated_directive: 2.0,
+  // SMI-595: a naming-similarity heuristic is advisory, not damning on its own —
+  // deliberately the same tier as sensitive_path/url, NOT the 1.7-2.0 tier used
+  // for jailbreak/exfiltration-class findings. Paired with the 0.04 coefficient
+  // in calculateRiskScore (the same coefficient already used for
+  // sensitivePaths/externalUrls/ssrf): a single medium-severity, high-confidence
+  // finding scores 15 * 1.2 * 1.0 = 18 -> contributes 18 * 0.04 = 0.72 (rounds to
+  // ~1) to the total; a saturated breakdown (capped at 100) contributes 4 —
+  // comfortably under the riskThreshold: 40 quarantine cutoff on its own. See the
+  // stacked-risk test in SecurityScanner.scoring.test.ts.
+  typosquat: 1.2,
 }
