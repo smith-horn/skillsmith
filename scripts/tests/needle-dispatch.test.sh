@@ -51,7 +51,18 @@ fi
 FAKE_BIN_DIR="$(mktemp -d)"
 FAKE_OUTCOME_FILE="$(mktemp)"
 export FAKE_OUTCOME_FILE
-trap 'rm -rf "$FAKE_BIN_DIR" "$FAKE_OUTCOME_FILE" "$GIT_SCRATCH_DIR" "$NONGIT_SCRATCH_DIR" 2>/dev/null || true' EXIT
+# GIT_WORKTREE_DIR/GIT_SCRATCH_DIR/NONGIT_SCRATCH_DIR are defined later, but
+# this trap body is single-quoted (deferred expansion at fire-time, not
+# registration-time), so referencing them here before they're set is safe as
+# long as they exist by the time the trap actually fires. Covers early exit
+# under set -euo pipefail (e.g. a FAIL branch), not just normal completion —
+# without this, an early exit leaks the worktree directory on disk (a plain
+# rm -rf of GIT_SCRATCH_DIR only removes the scratch repo's own .git, not
+# the separate linked-worktree directory next to it).
+trap '
+    git -C "$GIT_SCRATCH_DIR" worktree remove --force "$GIT_WORKTREE_DIR" 2>/dev/null || true
+    rm -rf "$FAKE_BIN_DIR" "$FAKE_OUTCOME_FILE" "$GIT_SCRATCH_DIR" "$GIT_WORKTREE_DIR" "$NONGIT_SCRATCH_DIR" 2>/dev/null || true
+' EXIT
 
 # Fake 'codex' — only --version is ever invoked directly by dispatch.sh
 # (the real dispatch happens inside the faked 'needle run' below).
@@ -238,8 +249,6 @@ if [[ "$EXIT_CODE" -ne 0 ]] || ! grep -q "outcome=success" /tmp/needle-dispatch-
 else
     echo "PASS (case 5): non-git --workspace skips the diff check without crashing"
 fi
-
-git -C "$GIT_SCRATCH_DIR" worktree remove --force "$GIT_WORKTREE_DIR" 2>/dev/null || true
 
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
     echo "FAILED: $FAIL_COUNT case(s) failed" >&2

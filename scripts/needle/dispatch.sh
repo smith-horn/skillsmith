@@ -302,8 +302,11 @@ fi
 # never overridden back to success. ----
 
 # Step 1: sandbox-rejection stderr signature, independent of --expect-write
-# (a rejected write is suspicious even on an analysis-only dispatch).
-if [[ "$OUTCOME" == "success" ]] && [[ -f "$TRACE_PATH" ]]; then
+# (a rejected write is suspicious even on an analysis-only dispatch). Gated
+# on stderr.txt's own existence, not trace.jsonl's (dirname needs no file to
+# exist — gating on the wrong file would silently skip this check on a bead
+# that wrote stderr.txt but not trace.jsonl for any reason).
+if [[ "$OUTCOME" == "success" ]]; then
     TRACE_DIR="$(dirname "$TRACE_PATH")"
     if [[ -f "$TRACE_DIR/stderr.txt" ]] && grep -qF "patch rejected:" "$TRACE_DIR/stderr.txt" 2>/dev/null; then
         OUTCOME="blocked-by-sandbox"
