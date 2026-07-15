@@ -310,14 +310,15 @@ function getSystemMetrics() {
     if (isWindows) {
       // Windows: use tasklist and findstr for agent counting
       const agents = execSync(
-        'tasklist 2>NUL | findstr /I "claude-flow" 2>NUL | find /C /V "" 2>NUL || echo 0',
+        'tasklist 2>NUL | findstr /I "claude-flow ruflo" 2>NUL | find /C /V "" 2>NUL || echo 0',
         { encoding: 'utf-8' }
       )
       subAgents = Math.max(0, parseInt(agents.trim()) || 0)
     } else {
-      const agents = execSync('ps aux 2>/dev/null | grep -c "claude-flow.*agent" || echo "0"', {
-        encoding: 'utf-8',
-      })
+      const agents = execSync(
+        'ps aux 2>/dev/null | grep -cE "(claude-flow|ruflo).*agent" || echo "0"',
+        { encoding: 'utf-8' }
+      )
       subAgents = Math.max(0, parseInt(agents.trim()) - 1)
     }
   } catch (e) {
