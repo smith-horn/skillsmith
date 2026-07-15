@@ -153,3 +153,28 @@ guaranteed for every model/prompt.
   still see this, confirm the install actually picked up `96e669e8` (re-run
   setup step 2; `cargo install` is a no-op if an older pinned rev is already
   installed under the same binary name).
+- **A dispatch reports `outcome=success` but no diff exists.** (SMI-5700)
+  NEEDLE's `outcome.classified` telemetry event is based purely on the
+  dispatched Codex process's exit code — it does not verify that any actual
+  file changes exist. Confirmed root cause via a real incident (bead
+  `bf-1aj`): Codex tried to write a real code change, the read-only sandbox
+  (correctly, per ADR-128 rule 2) rejected the write, Codex handled the
+  rejection gracefully and exited 0, and NEEDLE classified that as
+  `success` because that's exactly what it's designed to do from an exit
+  code alone. This is not a NEEDLE bug and not misconfiguration — the
+  read-only sandbox is a deliberate, permanent design choice (see
+  `codex-adapter.yaml`'s `-s read-only`), not something to work around.
+  `dispatch.sh` now catches this two ways: (1) it always greps the bead's
+  `stderr.txt` trace for a `patch rejected:` signature and downgrades the
+  outcome to `blocked-by-sandbox` if found, regardless of whether
+  `--expect-write` was passed; (2) if the caller passes `--expect-write`
+  (meaning the dispatch was supposed to produce a real workspace change,
+  not just analysis/review output) and the workspace shows no diff since
+  the dispatch started, the outcome is downgraded to
+  `no-diff-despite-expected-write`. Either downgrade makes `dispatch.sh`
+  exit non-zero, same as any other failure — **a task that requires actual
+  file writes cannot succeed under the current read-only-only adapter,
+  full stop; route it through normal Claude-tier routing instead of
+  retrying the same dispatch.** Pass `--expect-write` whenever the prompt
+  asks Codex to make a real change; omit it for pure analysis/review
+  prompts, where "no diff" is the expected, successful outcome.
