@@ -473,6 +473,11 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   'regenerate-license',
   'create-portal-session',
   'license-status',
+  // SMI-5531: authenticates the caller's presented API key or device-session
+  // JWT in-handler (mirrors license-status's authenticateRequest-only
+  // precedent, extended with authenticateWithJWT) — verify_jwt=true would
+  // 401 every real MCP client before the handler could even run.
+  'telemetry-consent',
   'list-invoices',
   'skills-outreach-preferences',
   'admin-grant-subscription',

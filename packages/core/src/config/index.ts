@@ -33,7 +33,8 @@
 
 import { homedir } from 'os'
 import { join } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, chmodSync } from 'fs'
+import { acquireConfigLock, atomicWriteFile } from './config-atomic-write.js'
 
 /**
  * Skillsmith configuration schema
@@ -49,6 +50,12 @@ export interface SkillsmithConfig {
   telemetry?: {
     /** Enable telemetry (default: false, opt-in) */
     enabled?: boolean
+    /**
+     * Stable per-install identifier (SMI-5531): `sha256(randomUUID())`,
+     * generated unconditionally, decoupled from `SKILLSMITH_TELEMETRY_ENABLED`
+     * / `POSTHOG_API_KEY`. See `getOrCreateInstallId()` in `./device-identity.ts`.
+     */
+    installId?: string
   }
   /** Sync settings */
   sync?: {
@@ -213,6 +220,14 @@ export function loadConfig(): SkillsmithConfig {
  * Save configuration to ~/.skillsmith/config.json
  * Creates the file with 0600 permissions (owner read/write only)
  *
+ * SMI-5531: serialized under a cross-process lock ({@link acquireConfigLock})
+ * and written atomically (temp-file + rename, {@link atomicWriteFile}) —
+ * closes a lost-update race (two concurrent writers each dropping the
+ * other's key) and a torn-write race under a bare `writeFileSync`.
+ * `existingConfig` is (re-)read AFTER the lock is acquired, not before, or a
+ * writer that read stale state while waiting would reintroduce the same
+ * lost-update bug.
+ *
  * @param config - Configuration to save (merged with existing)
  * @param options - Save options
  */
@@ -223,32 +238,38 @@ export function saveConfig(
   ensureConfigDir()
 
   const configPath = getConfigPath()
-  let existingConfig: SkillsmithConfig = {}
+  const release = acquireConfigLock(configPath)
+  try {
+    let existingConfig: SkillsmithConfig = {}
 
-  if (options.merge && existsSync(configPath)) {
-    existingConfig = loadConfig()
+    if (options.merge && existsSync(configPath)) {
+      existingConfig = loadConfig()
+    }
+
+    // Remove undefined values so they are omitted from JSON output
+    const updates = Object.fromEntries(
+      Object.entries(config).filter(([, v]) => v !== undefined)
+    ) as Partial<SkillsmithConfig>
+
+    // Explicit undefined fields are deletions — remove them from existing config
+    const deletions = Object.keys(config).filter(
+      (k) => config[k as keyof SkillsmithConfig] === undefined
+    )
+    const cleaned = { ...existingConfig }
+    for (const key of deletions) {
+      delete cleaned[key as keyof SkillsmithConfig]
+    }
+
+    const mergedConfig = { ...cleaned, ...updates }
+    const configJson = JSON.stringify(mergedConfig, null, 2)
+
+    atomicWriteFile(configPath, configJson, 0o600)
+  } finally {
+    release()
   }
 
-  // Remove undefined values so they are omitted from JSON output
-  const updates = Object.fromEntries(
-    Object.entries(config).filter(([, v]) => v !== undefined)
-  ) as Partial<SkillsmithConfig>
-
-  // Explicit undefined fields are deletions — remove them from existing config
-  const deletions = Object.keys(config).filter(
-    (k) => config[k as keyof SkillsmithConfig] === undefined
-  )
-  const cleaned = { ...existingConfig }
-  for (const key of deletions) {
-    delete cleaned[key as keyof SkillsmithConfig]
-  }
-
-  const mergedConfig = { ...cleaned, ...updates }
-  const configJson = JSON.stringify(mergedConfig, null, 2)
-
-  writeFileSync(configPath, configJson, { encoding: 'utf-8', mode: 0o600 })
-
-  // Ensure permissions are set correctly (in case file existed)
+  // Ensure permissions are set correctly (belt-and-braces — atomicWriteFile
+  // already chmods the file itself; in case the file existed pre-migration).
   try {
     chmodSync(configPath, 0o600)
   } catch {

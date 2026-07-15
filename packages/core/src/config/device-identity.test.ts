@@ -10,10 +10,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as path from 'path'
 import * as os from 'os'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 import {
   getDeviceId,
   getOrCreateDeviceId,
+  getOrCreateInstallId,
   setDeviceLabel,
   forgetDevice,
   isInventorySyncDisabledLocally,
@@ -21,12 +26,16 @@ import {
   recordInventoryPush,
   shouldAutoPush,
 } from './device-identity.js'
+import { loadConfig } from './index.js'
+
+const execFileAsync = promisify(execFile)
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i
 
 function makeTempConfigDir(): string {
   return path.join(
@@ -35,16 +44,53 @@ function makeTempConfigDir(): string {
   )
 }
 
+/**
+ * Absolute path to this module's source, so a spawned subprocess can import
+ * the SAME implementation under test (not a copy/reimplementation) via `tsx`
+ * (already a repo devDependency — see CLAUDE.md's `npx tsx` usage).
+ */
+const DEVICE_IDENTITY_SRC = fileURLToPath(new URL('./device-identity.ts', import.meta.url))
+
+/**
+ * Run `exportName()` (a zero-arg, string-returning export of
+ * device-identity.ts) in a real, separate OS process with `HOME` pointed at
+ * `homeDir`. Used to exercise genuine CROSS-PROCESS races that a single
+ * Node process's single-threaded event loop cannot produce on its own —
+ * `getOrCreateDeviceId`/`getOrCreateInstallId` are fully synchronous, so two
+ * "concurrent" calls within one process never actually interleave.
+ */
+async function runInSubprocess(exportName: string, homeDir: string): Promise<string> {
+  const scriptDir = mkdtempSync(path.join(os.tmpdir(), 'skillsmith-concurrency-'))
+  const scriptPath = path.join(scriptDir, 'run.mts')
+  writeFileSync(
+    scriptPath,
+    `import { ${exportName} } from ${JSON.stringify(DEVICE_IDENTITY_SRC)}\n` +
+      `process.stdout.write(${exportName}())\n`
+  )
+  const { stdout } = await execFileAsync('npx', ['tsx', scriptPath], {
+    env: { ...process.env, HOME: homeDir },
+    timeout: 15_000,
+  })
+  return stdout.trim()
+}
+
 // ---------------------------------------------------------------------------
 // Setup / teardown
 // ---------------------------------------------------------------------------
 
 let savedHome: string | undefined
 let savedInventoryDisable: string | undefined
+// SMI-5531: saved/restored so getOrCreateInstallId tests can assert
+// unconditional generation under the EXACT conditions of a real end user's
+// environment (both unset) without leaking into other tests/files.
+let savedTelemetryEnabled: string | undefined
+let savedPostHogApiKey: string | undefined
 
 beforeEach(() => {
   savedHome = process.env.HOME
   savedInventoryDisable = process.env.SKILLSMITH_INVENTORY_DISABLE
+  savedTelemetryEnabled = process.env.SKILLSMITH_TELEMETRY_ENABLED
+  savedPostHogApiKey = process.env.POSTHOG_API_KEY
   // Point HOME at a fresh tmpdir so each test begins with a blank config
   process.env.HOME = makeTempConfigDir()
   delete process.env.SKILLSMITH_INVENTORY_DISABLE
@@ -60,6 +106,16 @@ afterEach(() => {
     process.env.SKILLSMITH_INVENTORY_DISABLE = savedInventoryDisable
   } else {
     delete process.env.SKILLSMITH_INVENTORY_DISABLE
+  }
+  if (savedTelemetryEnabled !== undefined) {
+    process.env.SKILLSMITH_TELEMETRY_ENABLED = savedTelemetryEnabled
+  } else {
+    delete process.env.SKILLSMITH_TELEMETRY_ENABLED
+  }
+  if (savedPostHogApiKey !== undefined) {
+    process.env.POSTHOG_API_KEY = savedPostHogApiKey
+  } else {
+    delete process.env.POSTHOG_API_KEY
   }
 })
 
@@ -83,6 +139,142 @@ describe('getOrCreateDeviceId', () => {
     const id = getOrCreateDeviceId()
     expect(getDeviceId()).toBe(id)
   })
+})
+
+// ---------------------------------------------------------------------------
+// getOrCreateInstallId (SMI-5531)
+//
+// THE MOST IMPORTANT TEST SUITE IN THIS FILE: SMI-5531's root cause was that
+// `context.distinctId` was only ever populated when BOTH
+// SKILLSMITH_TELEMETRY_ENABLED=true AND a POSTHOG_API_KEY were present —
+// conditions never true for a real end-user install. `getOrCreateInstallId`
+// exists specifically to be immune to that. If these tests pass while a
+// future refactor re-couples generation to that legacy gate, the fix is
+// silently inert again under a new field name — the source-text guard test
+// below is a second, independent line of defense against exactly that.
+// ---------------------------------------------------------------------------
+
+describe('getOrCreateInstallId — unconditional generation (the critical regression test)', () => {
+  it('generates and persists an id with SKILLSMITH_TELEMETRY_ENABLED unset and no POSTHOG_API_KEY present', () => {
+    delete process.env.SKILLSMITH_TELEMETRY_ENABLED
+    delete process.env.POSTHOG_API_KEY
+    // Sanity-check the test itself actually reflects a real end user's
+    // environment before asserting anything about the function under test.
+    expect(process.env.SKILLSMITH_TELEMETRY_ENABLED).toBeUndefined()
+    expect(process.env.POSTHOG_API_KEY).toBeUndefined()
+
+    const id = getOrCreateInstallId()
+
+    expect(SHA256_HEX_RE.test(id)).toBe(true)
+    // Persisted, not just returned in memory — a fresh read must see it too.
+    expect(loadConfig().telemetry?.installId).toBe(id)
+  })
+
+  it('still generates unconditionally when SKILLSMITH_TELEMETRY_ENABLED is explicitly "false"', () => {
+    process.env.SKILLSMITH_TELEMETRY_ENABLED = 'false'
+    delete process.env.POSTHOG_API_KEY
+
+    const id = getOrCreateInstallId()
+
+    expect(SHA256_HEX_RE.test(id)).toBe(true)
+  })
+
+  it('is idempotent — second call returns the same id (no regeneration) with no env vars set', () => {
+    delete process.env.SKILLSMITH_TELEMETRY_ENABLED
+    delete process.env.POSTHOG_API_KEY
+
+    const first = getOrCreateInstallId()
+    const second = getOrCreateInstallId()
+
+    expect(second).toBe(first)
+  })
+
+  it('generates a DIFFERENT id than getOrCreateDeviceId — distinct namespaces, not aliases', () => {
+    delete process.env.SKILLSMITH_TELEMETRY_ENABLED
+    delete process.env.POSTHOG_API_KEY
+
+    const installId = getOrCreateInstallId()
+    const deviceId = getOrCreateDeviceId()
+
+    expect(installId).not.toBe(deviceId)
+  })
+
+  it('does not clobber an existing deviceId when creating an installId, and vice versa', () => {
+    delete process.env.SKILLSMITH_TELEMETRY_ENABLED
+    delete process.env.POSTHOG_API_KEY
+
+    const deviceId = getOrCreateDeviceId()
+    const installId = getOrCreateInstallId()
+
+    expect(getDeviceId()).toBe(deviceId)
+    expect(loadConfig().telemetry?.installId).toBe(installId)
+  })
+
+  it('the implementation never READS SKILLSMITH_TELEMETRY_ENABLED or POSTHOG_API_KEY (must stay decoupled from the legacy env-gated distinctId path)', () => {
+    // Checks for the actual `process.env.X` access pattern, not any textual
+    // mention — this module's own doc comments legitimately name these env
+    // vars in prose to explain why they're deliberately never read here.
+    const source = readFileSync(DEVICE_IDENTITY_SRC, 'utf-8')
+    expect(source).not.toMatch(/process\.env(\.|\[['"])SKILLSMITH_TELEMETRY_ENABLED/)
+    expect(source).not.toMatch(/process\.env(\.|\[['"])POSTHOG_API_KEY/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getOrCreateInstallId — cross-process concurrency (SMI-5531)
+//
+// getOrCreateDeviceId/getOrCreateInstallId are fully synchronous, so two
+// "concurrent" calls WITHIN one Node process never truly interleave — real
+// concurrency requires a real second OS process. These tests spawn genuine
+// subprocesses (via tsx) pointed at the SAME HOME, so the underlying
+// cross-process lock (config-atomic-write.ts) is actually exercised.
+// ---------------------------------------------------------------------------
+
+describe('getOrCreateInstallId — cross-process concurrency', () => {
+  it('two simultaneous calls from separate processes converge on the same id, with a valid (non-corrupted) config.json', async () => {
+    const sharedHome = makeTempConfigDir()
+    // No config.json exists yet — both processes race the "create" path.
+
+    const [idA, idB] = await Promise.all([
+      runInSubprocess('getOrCreateInstallId', sharedHome),
+      runInSubprocess('getOrCreateInstallId', sharedHome),
+    ])
+
+    expect(idA).toBe(idB)
+    expect(SHA256_HEX_RE.test(idA)).toBe(true)
+
+    const skillsmithDir = path.join(sharedHome, '.skillsmith')
+    const configPath = path.join(skillsmithDir, 'config.json')
+    const raw = readFileSync(configPath, 'utf-8')
+    const parsed = JSON.parse(raw) as { telemetry?: { installId?: string } } // throws if corrupted
+    expect(parsed.telemetry?.installId).toBe(idA)
+
+    // No stray lock/temp files left behind after both processes finished.
+    const entries = readdirSync(skillsmithDir)
+    expect(entries.some((f) => f.endsWith('.lock'))).toBe(false)
+    expect(entries.some((f) => f.endsWith('.tmp'))).toBe(false)
+  }, 20_000)
+
+  it('a concurrent saveConfig write for a sibling key is never dropped (no lost update)', async () => {
+    const sharedHome = makeTempConfigDir()
+
+    const [installId] = await Promise.all([
+      runInSubprocess('getOrCreateInstallId', sharedHome),
+      runInSubprocess('getOrCreateDeviceId', sharedHome),
+    ])
+
+    const configPath = path.join(sharedHome, '.skillsmith', 'config.json')
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      telemetry?: { installId?: string }
+      inventory?: { deviceId?: string }
+    }
+
+    // BOTH concurrently-written keys must be present — neither write may
+    // have silently clobbered the other's.
+    expect(parsed.telemetry?.installId).toBe(installId)
+    expect(SHA256_HEX_RE.test(parsed.telemetry?.installId ?? '')).toBe(true)
+    expect(UUID_RE.test(parsed.inventory?.deviceId ?? '')).toBe(true)
+  }, 20_000)
 })
 
 // ---------------------------------------------------------------------------

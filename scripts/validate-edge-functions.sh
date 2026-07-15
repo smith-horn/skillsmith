@@ -34,6 +34,7 @@ ANONYMOUS_FUNCTIONS=(
   "events"
   "health"
   "license-status"
+  "telemetry-consent"
   "auth-device-code"
   "auth-device-token"
   "audit-unsubscribe"
