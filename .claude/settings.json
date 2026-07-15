@@ -188,7 +188,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node node_modules/ruflo/bin/ruflo.js hooks session-end --generate-summary true --persist-state true --export-metrics true"
+            "command": "$CLAUDE_PROJECT_DIR/scripts/session-stop-hook-safe.sh"
           }
         ]
       }
