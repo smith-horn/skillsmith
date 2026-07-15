@@ -14,9 +14,17 @@
  *
  * Test 5 is the regression guard for Bug 1: it verifies that `updateBaseline`
  * always reflects the live index state, never the previous baseline.json.
+ *
+ * `emitBaselineSignature` is mocked below (SMI-5708 Wave 1 fix): the real
+ * `updateBaseline()` unconditionally calls it, and it writes to a hardcoded,
+ * tracked `eval/.signatures.log` (SIGNATURES_LOG_PATH is not parameterized —
+ * it ignores this suite's temp `baselinePath`) plus shells out to
+ * `git rev-parse`. Before this mock, every run of this file appended real
+ * lines to that committed file as a side effect of Test 5/5b's three
+ * `updateBaseline()` calls.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -27,6 +35,10 @@ import {
   type BaselineFile,
 } from '../../eval/eval-runner.js'
 import type { MetricsReport } from '../../eval/metrics.js'
+
+vi.mock('../../eval/eval-runner-signatures.js', () => ({
+  emitBaselineSignature: vi.fn(),
+}))
 
 // ---------------------------------------------------------------------------
 // Fixtures and helpers

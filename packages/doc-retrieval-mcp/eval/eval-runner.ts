@@ -291,6 +291,44 @@ export function updateBaseline(
   emitBaselineSignature(serialized)
 }
 
+// SMI-5708 Task #1 — real-mode category filtering must never overwrite the
+// canonical baseline. `updateBaseline()` writes the GLOBAL, all-category
+// baseline.json that check-baseline-drift.ts's CI gate depends on; a
+// `--category X`-filtered real-mode run only computed metrics over that one
+// category, so calling updateBaseline() with its report would silently
+// replace the canonical multi-category baseline with single-category numbers.
+// Extracted as its own function (rather than inlining the branch in main())
+// so the skip-vs-write decision is unit-testable without exercising the real
+// search/rerank pipeline: tests inject a stub in place of the real
+// `updateBaseline` via `updateBaselineFn`, or exercise the real function
+// against a temp baselinePath/stateFile (see eval-runner.test.ts).
+export function maybeUpdateBaseline(
+  report: MetricsReport,
+  opts: { category: string | null },
+  updateBaselineOpts: { baselinePath?: string; stateFile?: string } = {},
+  updateBaselineFn: (
+    report: MetricsReport,
+    opts?: { baselinePath?: string; stateFile?: string }
+  ) => void = updateBaseline
+): boolean {
+  if (opts.category !== null) {
+    process.stderr.write(
+      [
+        `Filtered real-mode run (--category ${opts.category}): eval-only.`,
+        'baseline.json was NOT updated — a category-filtered run only computes',
+        'metrics for that one category and must never overwrite the canonical,',
+        'all-category baseline. To refresh baseline.json, run an unfiltered',
+        'real-mode pass (RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval, no --category),',
+        'which recomputes all categories.',
+        '',
+      ].join('\n')
+    )
+    return false
+  }
+  updateBaselineFn(report, updateBaselineOpts)
+  return true
+}
+
 // ---------------------------------------------------------------------------
 // Output formatting
 // ---------------------------------------------------------------------------
@@ -403,7 +441,7 @@ async function main(): Promise<void> {
   if (realMode) {
     results = await buildRealResults(entries)
     const report = computeMetrics(results)
-    updateBaseline(report)
+    maybeUpdateBaseline(report, opts)
     if (opts.json) {
       process.stdout.write(JSON.stringify(report, null, 2) + '\n')
     } else {
