@@ -121,9 +121,10 @@ function getUserInfo() {
             }
           }
           // Parse model ID to human-readable name
-          if (modelId.includes('opus')) modelName = 'Opus 4.5'
-          else if (modelId.includes('sonnet')) modelName = 'Sonnet 4'
+          if (modelId.includes('opus')) modelName = 'Opus 4.8'
+          else if (modelId.includes('sonnet')) modelName = 'Sonnet 5'
           else if (modelId.includes('haiku')) modelName = 'Haiku 4.5'
+          else if (modelId.includes('fable')) modelName = 'Fable 5'
           else modelName = modelId.split('-').slice(1, 3).join(' ')
         }
       }
