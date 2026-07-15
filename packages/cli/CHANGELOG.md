@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Change**: `compliance_reports`' displayed tier requirement expanded from Enterprise-only to Team + Enterprise (SMI-3140)
+
 ## v0.8.2
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.8.1).

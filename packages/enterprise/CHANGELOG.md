@@ -4,6 +4,8 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+- **Change**: `compliance_reports` moved from `EnterpriseFeatureFlag`/`ENTERPRISE_ONLY_FEATURES` to `TeamFeatureFlag`/`TEAM_FEATURES` (`FeatureFlags.ts`, `TierMapping.ts`, `types.ts`) — expanded from Enterprise-only to Team + Enterprise (SMI-3140)
+
 ## v0.3.2
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.3.1).

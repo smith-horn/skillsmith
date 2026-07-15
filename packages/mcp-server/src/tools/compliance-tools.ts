@@ -8,7 +8,8 @@
  *
  * Scope: local inventory only. For server-side audit data, use audit_export.
  *
- * Tier gate: Enterprise (compliance_reports feature flag).
+ * Tier gate: Team and Enterprise (compliance_reports feature flag, SMI-3140
+ * expanded from Enterprise-only 2026-07-14).
  */
 
 import { z } from 'zod'
@@ -58,7 +59,7 @@ export const complianceReportToolSchema = {
   description:
     'Generate compliance reports: SOC2 (markdown), CycloneDX (JSON SBOM), or raw JSON. ' +
     'Scoped to local skill inventory. ' +
-    'Requires Enterprise tier (compliance_reports feature).',
+    'Requires Team tier or higher (compliance_reports feature).',
   inputSchema: {
     type: 'object' as const,
     properties: {
