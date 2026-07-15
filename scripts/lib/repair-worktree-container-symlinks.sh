@@ -40,7 +40,16 @@
 #
 # Usage: bash scripts/lib/repair-worktree-container-symlinks.sh [packages-dir] [node-modules-dir]
 #   packages-dir      default: /app/packages
-#   node-modules-dir   default: /node_modules (the hoisted workspace root)
+#   node-modules-dir   default: /app/node_modules (the hoisted workspace root)
+#
+# SMI-5685: the default used to be /node_modules, relying on a healthy
+# worktree's symlinked host node_modules clamping the bind mount destination
+# there (mount(2) follows a symlinked bind destination before mounting — see
+# scripts/_lib.sh's enumerate_compose_node_modules_mounts header). That
+# clamp never fires on a State-B worktree (host node_modules a real
+# directory, SMI-5689), so this default is now /app/node_modules — the only
+# target Compose itself ever declares, and functionally identical on an
+# already-healthy worktree.
 #
 # Exit code: always 0 (non-fatal by design — a repair failure logs a
 # warning and continues; native/WASM module errors surface later with
@@ -53,7 +62,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 PACKAGES_DIR="${1:-/app/packages}"
-HOISTED_NODE_MODULES_DIR="${2:-/node_modules}"
+HOISTED_NODE_MODULES_DIR="${2:-/app/node_modules}"
 
 repaired_count=0
 
