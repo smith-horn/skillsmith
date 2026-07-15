@@ -404,6 +404,17 @@ export async function formatCycloneDx(
   bom.metadata.properties.add(
     new Models.Property('skillsmith:dependencyDataSource', dependencyDataSource)
   )
+  // SMI-3140 Wave 3: this AI/ML-BOM export is newly launched and not yet
+  // validated at scale (real Enterprise customers get it live before either
+  // UAT track runs — see the plan doc's Wave 3 intro). Remove this notice
+  // once both UAT tracks have reported back.
+  bom.metadata.properties.add(
+    new Models.Property(
+      'skillsmith:notice',
+      'This CycloneDX AI/ML-BOM export is newly launched and not yet validated at scale. ' +
+        'Please report any issues encountered.'
+    )
+  )
   warnings.forEach((warning, i) => {
     bom.metadata.properties.add(new Models.Property(`skillsmith:warning:${i}`, warning))
   })

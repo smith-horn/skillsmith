@@ -8,6 +8,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 - **Fix**: `compliance_report`'s skill inventory (`soc2`/`cyclonedx`/`json`, all three formats) now sources the installed-skill set from `~/.skillsmith/manifest.json`, not an unfiltered scan of the entire locally-indexed `skills` table, and reports each skill's real installed version instead of a hardcoded placeholder (SMI-5675)
 - **Fix**: `skill_validate`'s dependency-intelligence check (`validateDependencies`) now sees frontmatter (previously received only the post-frontmatter body) and cross-checks inferred servers against `.mcp.json`, matching the SMI-5676 hardening already applied to install-time extraction
 - **Change**: `compliance_report`'s tier gate (`compliance_reports` feature) expanded from Enterprise-only to Team + Enterprise (SMI-3140)
+- **Change**: the `cyclonedx` format's generated BOM now carries a `skillsmith:notice` metadata property stating the export is newly launched and not yet validated at scale, matching the same caveat in release notes, until Wave 3 UAT (design-partner validation) reports back (SMI-3140)
 
 ## v0.7.4
 
