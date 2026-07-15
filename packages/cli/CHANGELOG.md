@@ -5,6 +5,7 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## [Unreleased]
 
 - **Change**: `compliance_reports`' displayed tier requirement expanded from Enterprise-only to Team + Enterprise (SMI-3140)
+- **Feature**: per-client MCP config snippet for Grok Build (`~/.grok/config.toml`) added to `CLIENT_SNIPPETS`/`SNIPPET_DISPLAY_ORDER` in `templates/mcp-server.template.snippets.ts`, matching the new `grok` harness added to `@skillsmith/core`'s inventory scanner (SMI-5697)
 
 ## v0.8.2
 

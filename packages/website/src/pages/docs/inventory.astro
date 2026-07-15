@@ -256,13 +256,19 @@ skillsmith inventory purge --yes`}</code></pre>
         <td>Shared / Codex</td>
         <td><code>~/.agents/skills</code></td>
       </tr>
+      <tr>
+        <td>Grok Build</td>
+        <td><code>~/.grok/skills</code></td>
+      </tr>
     </tbody>
   </table>
 
   <p>
     Codex doesn't have its own directory — it reads skills from the shared, open-standard
     <code>~/.agents/skills</code> path, so Codex-managed skills appear under the shared harness
-    above.
+    above. Grok Build also reads that same shared <code>~/.agents/skills</code> path for
+    AGENTS.md-style compatibility, in addition to its own native
+    <code>~/.grok/skills</code> directory shown in the table above.
   </p>
 
   <p>

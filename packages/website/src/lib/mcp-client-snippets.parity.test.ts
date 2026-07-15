@@ -68,10 +68,16 @@ const EXPECTED: ReadonlyArray<{
     configPath: '~/.hermes/config.yaml',
     format: 'yaml',
   },
+  {
+    id: 'grok',
+    label: 'Grok Build (xAI)',
+    configPath: '~/.grok/config.toml',
+    format: 'toml',
+  },
 ]
 
 describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', () => {
-  it('has exactly the 8-entry canonical id/label/configPath/format contract, in SNIPPET_DISPLAY_ORDER', () => {
+  it('has exactly the 9-entry canonical id/label/configPath/format contract, in SNIPPET_DISPLAY_ORDER', () => {
     const actual = MCP_CLIENT_SNIPPETS.map(({ id, label, configPath, format }) => ({
       id,
       label,
