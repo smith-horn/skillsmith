@@ -315,10 +315,49 @@ node_modules/.bin."
 }
 
 #######################################
+# Reclaims a pre-existing, non-symlink node_modules directory if it is
+# genuinely empty, so callers can safely replace it with the SMI-4377/4381
+# symlink. Never removes non-empty content.
+#
+# SMI-5689: closes a gap where a stale empty directory (e.g. left behind by
+# an incomplete container teardown) permanently blocked the symlink from
+# ever being (re)created, breaking the host-side dependency-freshness
+# sentinel, tsc --build alias resolution, and the ruflo CLI statusline.
+#
+# Uses rmdir (never rm -rf) so a directory that is empty right now but held
+# by an active mount reference fails safely instead of silently removing
+# state it shouldn't.
+#
+# Arguments:
+#   $1 - Path to check (a node_modules directory, not a symlink)
+#
+# Returns:
+#   0 - Reclaimed: directory was empty and rmdir succeeded. Path is now
+#       absent; caller may safely ln -sfn over it.
+#   1 - Preserved: directory contains real content. Left untouched.
+#   2 - Empty but unremovable: rmdir failed (e.g. an active container mount
+#       still references the directory). Left untouched.
+#######################################
+reclaim_empty_node_modules_dir() {
+    local path="$1"
+
+    if [[ -n "$(ls -A "$path" 2>/dev/null)" ]]; then
+        return 1
+    fi
+
+    if rmdir "$path" 2>/dev/null; then
+        return 0
+    fi
+
+    return 2
+}
+
+#######################################
 # Symlink node_modules from main repo into a worktree (SMI-4377)
 #
-# Idempotent: refreshes an existing symlink, skips a real directory,
-# creates the symlink if missing.
+# Idempotent: refreshes an existing symlink, reclaims a pre-existing empty
+# directory (SMI-5689, via reclaim_empty_node_modules_dir), skips a real
+# non-empty directory, creates the symlink if missing.
 #
 # Arguments:
 #   $1 - Worktree path
@@ -357,7 +396,24 @@ link_worktree_node_modules() {
     fi
 
     if [[ -e "$worktree_path/node_modules" ]]; then
-        warn "  node_modules exists at $worktree_path and is not a symlink — skipping"
+        local reclaim_rc=0
+        reclaim_empty_node_modules_dir "$worktree_path/node_modules" || reclaim_rc=$?
+        if [[ $reclaim_rc -eq 1 ]]; then
+            warn "  node_modules exists at $worktree_path and contains files — left untouched (remove manually if you believe it is stale)"
+            return 1
+        elif [[ $reclaim_rc -eq 2 ]]; then
+            warn "  node_modules at $worktree_path/node_modules is empty but could not be removed (likely an active container mount) — run 'docker compose --profile dev down' in this worktree, then re-run"
+            return 1
+        fi
+    fi
+
+    # SMI-5689: belt-and-suspenders — never ln -sfn over an existing path.
+    # BSD ln -sfn (macOS host) against a real, even empty, directory exits 0
+    # and creates a nested <dest>/<dest-basename> symlink instead of
+    # replacing it — verified live — rather than erroring, so this check
+    # must run regardless of which branch above was taken.
+    if [[ -e "$worktree_path/node_modules" ]]; then
+        warn "  node_modules at $worktree_path/node_modules could not be reclaimed — refusing to overwrite"
         return 1
     fi
 
@@ -369,8 +425,9 @@ link_worktree_node_modules() {
 # Idempotent backfill of node_modules symlinks across all worktrees (SMI-4377)
 #
 # Iterates `git worktree list`, skips the main repo (real node_modules),
-# creates the symlink on any worktree missing it. Leaves existing real
-# dirs untouched. Safe to run repeatedly.
+# creates the symlink on any worktree missing it. Reclaims a pre-existing
+# empty directory (SMI-5689, via reclaim_empty_node_modules_dir); leaves a
+# real non-empty directory untouched. Safe to run repeatedly.
 #
 # Arguments:
 #   $1 - Repository root path
@@ -409,6 +466,21 @@ repair_worktrees_node_modules() {
             continue
         fi
         if [[ -d "$wt_path/node_modules" ]]; then
+            local reclaim_rc=0
+            reclaim_empty_node_modules_dir "$wt_path/node_modules" || reclaim_rc=$?
+            if [[ $reclaim_rc -eq 1 ]]; then
+                continue
+            elif [[ $reclaim_rc -eq 2 ]]; then
+                warn "  node_modules at $wt_path/node_modules is empty but could not be removed (likely an active container mount) — run 'docker compose --profile dev down' in this worktree, then re-run"
+                continue
+            fi
+        fi
+
+        # SMI-5689: belt-and-suspenders — never ln -sfn over an existing
+        # path (see link_worktree_node_modules for the BSD ln -sfn nesting
+        # hazard this guards against).
+        if [[ -e "$wt_path/node_modules" ]]; then
+            warn "  node_modules at $wt_path/node_modules could not be reclaimed — refusing to overwrite"
             continue
         fi
 

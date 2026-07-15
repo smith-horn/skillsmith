@@ -31,9 +31,22 @@ NC='\033[0m' # No Color
 # actual checkout, before any mount lands there), so none of this applies —
 # confirmed via direct inspection (no symlink, no escape) on skillsmith-dev-1.
 # See scripts/lib/repair-worktree-container-symlinks.sh for the mechanism.
+#
+# SMI-5685: the second arg names the Compose-declared mount target
+# (/app/node_modules — see docker-compose.yml and the worktree override's
+# tmpfs targets) directly, rather than relying on the bare /node_modules
+# path a healthy worktree's symlinked host node_modules happens to clamp a
+# bind mount onto (a real but underdocumented mount(2) side effect,
+# scripts/_lib.sh's enumerate_compose_node_modules_mounts header). On a
+# State-B worktree (host node_modules is a real, non-symlink directory —
+# SMI-5689 fixes that) the clamp never fires, so the old /node_modules arg
+# looked in the wrong, unpopulated place and the @skillsmith/@smith-horn
+# alias repair silently no-op'd on every boot. /app/node_modules resolves
+# identically on a healthy worktree and is the only target Compose itself
+# ever declares.
 # ---------------------------------------------------------------------------
 if [ -f "/app/.git" ]; then
-    bash /app/scripts/lib/repair-worktree-container-symlinks.sh /app/packages /node_modules
+    bash /app/scripts/lib/repair-worktree-container-symlinks.sh /app/packages /app/node_modules
 else
     echo -e "${GREEN}[entrypoint] Main checkout — no worktree symlink repair needed (SMI-5570/SMI-5074 no-op)${NC}"
 fi

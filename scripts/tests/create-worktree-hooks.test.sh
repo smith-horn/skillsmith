@@ -163,10 +163,14 @@ assert_eq "link_worktree_node_modules: stale symlink still corrected" \
   "../../node_modules" "$(readlink "$FAKE_WT1/node_modules")"
 
 # -----------------------------------------------------------------------
-# Scenario 5: _lib.sh — link_worktree_node_modules skips real directory
+# Scenario 5: _lib.sh — link_worktree_node_modules skips a real, NON-EMPTY
+# directory (SMI-5689: an EMPTY pre-existing dir is now reclaimed instead —
+# see scripts/tests/reclaim-node-modules.test.sh for that coverage; this
+# fixture must contain real content so it still exercises the skip path).
 # -----------------------------------------------------------------------
 FAKE_WT2="$FAKE_MAIN/.worktrees/wt2"
 mkdir -p "$FAKE_WT2/node_modules"
+touch "$FAKE_WT2/node_modules/some-real-file"
 set +e
 link_worktree_node_modules "$FAKE_WT2" "$FAKE_MAIN" >/dev/null 2>&1; rc=$?
 set -e
