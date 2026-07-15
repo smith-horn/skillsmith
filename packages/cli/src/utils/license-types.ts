@@ -96,6 +96,8 @@ export const TIER_FEATURES: Record<LicenseTier, string[]> = {
     'private_skills',
     'usage_analytics',
     'priority_support',
+    // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+    'compliance_reports',
   ],
   enterprise: [
     // Individual features (inherited)
@@ -106,12 +108,12 @@ export const TIER_FEATURES: Record<LicenseTier, string[]> = {
     'private_skills',
     'usage_analytics',
     'priority_support',
+    'compliance_reports',
     // Enterprise-only features (canonical names from enterprise package)
     'sso_saml',
     'rbac',
     'audit_logging',
     'siem_export',
-    'compliance_reports',
     'private_registry',
     'custom_integrations',
     'advanced_analytics',

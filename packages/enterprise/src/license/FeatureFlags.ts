@@ -18,6 +18,8 @@ export type TeamFeatureFlag =
   | 'usage_analytics'
   | 'priority_support'
   | 'skill_security_audit'
+  // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+  | 'compliance_reports'
 
 /**
  * Enterprise tier feature flags
@@ -27,7 +29,6 @@ export type EnterpriseFeatureFlag =
   | 'rbac'
   | 'audit_logging'
   | 'siem_export'
-  | 'compliance_reports'
   | 'private_registry'
   | 'custom_integrations'
   | 'advanced_analytics'
@@ -65,6 +66,8 @@ export const TEAM_FEATURES: readonly TeamFeatureFlag[] = [
   'usage_analytics',
   'priority_support',
   'skill_security_audit',
+  // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+  'compliance_reports',
 ] as const
 
 /**
@@ -75,7 +78,6 @@ export const ENTERPRISE_ONLY_FEATURES: readonly EnterpriseFeatureFlag[] = [
   'rbac',
   'audit_logging',
   'siem_export',
-  'compliance_reports',
   'private_registry',
   'custom_integrations',
   'advanced_analytics',

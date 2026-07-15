@@ -50,13 +50,14 @@ export const FEATURE_TIERS: Readonly<Record<FeatureFlag, readonly LicenseTier[]>
   usage_analytics: ['team', 'enterprise'],
   priority_support: ['team', 'enterprise'],
   skill_security_audit: ['team', 'enterprise'],
+  // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+  compliance_reports: ['team', 'enterprise'],
 
   // Enterprise-only features
   sso_saml: ['enterprise'],
   rbac: ['enterprise'],
   audit_logging: ['enterprise'],
   siem_export: ['enterprise'],
-  compliance_reports: ['enterprise'],
   private_registry: ['enterprise'],
   custom_integrations: ['enterprise'],
   advanced_analytics: ['enterprise'],

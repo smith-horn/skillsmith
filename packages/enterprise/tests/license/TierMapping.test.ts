@@ -11,7 +11,7 @@ describe('TierMapping', () => {
   describe('FEATURE_TIERS', () => {
     it('should map all feature flags', () => {
       const mappedFeatures = Object.keys(FEATURE_TIERS)
-      // 3 individual + 5 team + 8 enterprise = 16 features
+      // 3 individual + 6 team + 7 enterprise = 16 features
       expect(mappedFeatures).toHaveLength(16)
 
       for (const flag of ALL_FEATURE_FLAGS) {
@@ -25,6 +25,8 @@ describe('TierMapping', () => {
         'private_skills',
         'usage_analytics',
         'priority_support',
+        // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+        'compliance_reports',
       ]
 
       for (const feature of teamFeatures) {
@@ -40,7 +42,6 @@ describe('TierMapping', () => {
         'rbac',
         'audit_logging',
         'siem_export',
-        'compliance_reports',
         'private_registry',
         'custom_integrations',
         'advanced_analytics',
@@ -71,6 +72,8 @@ describe('TierMapping', () => {
       expect(getRequiredTier('private_skills')).toBe('team')
       expect(getRequiredTier('usage_analytics')).toBe('team')
       expect(getRequiredTier('priority_support')).toBe('team')
+      // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+      expect(getRequiredTier('compliance_reports')).toBe('team')
     })
 
     it('should return enterprise for enterprise-only features', () => {
@@ -78,7 +81,6 @@ describe('TierMapping', () => {
       expect(getRequiredTier('rbac')).toBe('enterprise')
       expect(getRequiredTier('audit_logging')).toBe('enterprise')
       expect(getRequiredTier('siem_export')).toBe('enterprise')
-      expect(getRequiredTier('compliance_reports')).toBe('enterprise')
       expect(getRequiredTier('private_registry')).toBe('enterprise')
       expect(getRequiredTier('custom_integrations')).toBe('enterprise')
       expect(getRequiredTier('advanced_analytics')).toBe('enterprise')
@@ -91,6 +93,7 @@ describe('TierMapping', () => {
         'private_skills',
         'usage_analytics',
         'priority_support',
+        'compliance_reports',
       ] as FeatureFlag[]) {
         expect(getRequiredTier(feature)).toBe('team')
       }
@@ -101,7 +104,6 @@ describe('TierMapping', () => {
         'rbac',
         'audit_logging',
         'siem_export',
-        'compliance_reports',
         'private_registry',
         'custom_integrations',
         'advanced_analytics',
@@ -118,10 +120,10 @@ describe('TierMapping', () => {
       expect(features).toHaveLength(0)
     })
 
-    it('should return 8 features for team tier (individual + team features)', () => {
+    it('should return 9 features for team tier (individual + team features)', () => {
       const features = getFeaturesForTier('team')
-      // 3 individual + 5 team = 8 features
-      expect(features).toHaveLength(8)
+      // 3 individual + 6 team = 9 features
+      expect(features).toHaveLength(9)
       // Individual features (inherited)
       expect(features).toContain('basic_analytics')
       expect(features).toContain('email_support')
@@ -130,6 +132,8 @@ describe('TierMapping', () => {
       expect(features).toContain('private_skills')
       expect(features).toContain('usage_analytics')
       expect(features).toContain('priority_support')
+      // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+      expect(features).toContain('compliance_reports')
     })
 
     it('should not include enterprise-only features in team tier', () => {
@@ -138,7 +142,6 @@ describe('TierMapping', () => {
       expect(features).not.toContain('rbac')
       expect(features).not.toContain('audit_logging')
       expect(features).not.toContain('siem_export')
-      expect(features).not.toContain('compliance_reports')
       expect(features).not.toContain('private_registry')
       expect(features).not.toContain('custom_integrations')
       expect(features).not.toContain('advanced_analytics')
@@ -146,7 +149,7 @@ describe('TierMapping', () => {
 
     it('should return all 16 features for enterprise tier', () => {
       const features = getFeaturesForTier('enterprise')
-      // 3 individual + 5 team + 8 enterprise = 16 features
+      // 3 individual + 6 team + 7 enterprise = 16 features
       expect(features).toHaveLength(16)
 
       // Should include all individual features
@@ -210,6 +213,8 @@ describe('TierMapping', () => {
         expect(tierIncludes('team', 'private_skills')).toBe(true)
         expect(tierIncludes('team', 'usage_analytics')).toBe(true)
         expect(tierIncludes('team', 'priority_support')).toBe(true)
+        // SMI-3140: expanded to Team + Enterprise (2026-07-14)
+        expect(tierIncludes('team', 'compliance_reports')).toBe(true)
       })
 
       it('should not include enterprise-only features', () => {
@@ -217,7 +222,6 @@ describe('TierMapping', () => {
         expect(tierIncludes('team', 'rbac')).toBe(false)
         expect(tierIncludes('team', 'audit_logging')).toBe(false)
         expect(tierIncludes('team', 'siem_export')).toBe(false)
-        expect(tierIncludes('team', 'compliance_reports')).toBe(false)
         expect(tierIncludes('team', 'private_registry')).toBe(false)
         expect(tierIncludes('team', 'custom_integrations')).toBe(false)
         expect(tierIncludes('team', 'advanced_analytics')).toBe(false)
@@ -266,9 +270,9 @@ describe('TierMapping', () => {
       const individualFeatures = getFeaturesForTier('individual')
       expect(individualFeatures).toHaveLength(3)
 
-      // Team has individual + 5 team features = 8
+      // Team has individual + 6 team features = 9
       const teamFeatures = getFeaturesForTier('team')
-      expect(teamFeatures).toHaveLength(8)
+      expect(teamFeatures).toHaveLength(9)
 
       // Enterprise has all features = 16
       const enterpriseFeatures = getFeaturesForTier('enterprise')
