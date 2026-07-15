@@ -20,7 +20,7 @@
 # is the primary/only dispatch mechanism here — tmux is never invoked and is
 # not a dependency of this script.
 #
-# Usage: scripts/needle/dispatch.sh --workspace <dir> --title <title> --body-file <file> [--model gpt-5.6-sol] [--timeout 3600]
+# Usage: scripts/needle/dispatch.sh --workspace <dir> --title <title> --body-file <file> [--model gpt-5.6-sol] [--timeout 3600] [--expect-write]
 
 set -euo pipefail
 
@@ -36,10 +36,11 @@ TITLE=""
 BODY_FILE=""
 MODEL="$DEFAULT_MODEL"
 TIMEOUT="$DEFAULT_TIMEOUT"
+EXPECT_WRITE=false
 
 usage() {
     cat << EOF
-Usage: $(basename "$0") --workspace <dir> --title <title> --body-file <file> [--model $DEFAULT_MODEL] [--timeout $DEFAULT_TIMEOUT]
+Usage: $(basename "$0") --workspace <dir> --title <title> --body-file <file> [--model $DEFAULT_MODEL] [--timeout $DEFAULT_TIMEOUT] [--expect-write]
        $(basename "$0") -h | --help
 
 Dispatch a single task to Codex through NEEDLE + bead-forge, read-only
@@ -58,6 +59,15 @@ Options:
   --model <model>       Codex model to dispatch to (default: $DEFAULT_MODEL).
                          Allowed: $NEEDLE_ALLOWED_MODELS
   --timeout <secs>      Dispatch timeout in seconds (default: $DEFAULT_TIMEOUT).
+  --expect-write         Signal that this dispatch is expected to produce a
+                         real workspace change (not a pure analysis/review
+                         prompt). When set, a dispatch that NEEDLE classifies
+                         as "success" but that produced no workspace diff
+                         (e.g. Codex's write was silently rejected by the
+                         read-only sandbox) is downgraded to a non-success
+                         outcome instead of being reported as a false win.
+                         Omit for analysis-only prompts — see
+                         scripts/needle/README.md's Troubleshooting section.
   -h, --help             Show this help message and exit
 
 Examples:
@@ -84,6 +94,7 @@ while [[ $# -gt 0 ]]; do
         --body-file) BODY_FILE="${2:-}"; shift 2 ;;
         --model) MODEL="${2:-}"; shift 2 ;;
         --timeout) TIMEOUT="${2:-}"; shift 2 ;;
+        --expect-write) EXPECT_WRITE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *)
             needle_error "Unknown argument: $1
@@ -180,6 +191,30 @@ echo "[needle-dispatch] bead=$BEAD_ID"
 
 WORKER_ID="dispatch-$(date +%s 2>/dev/null || echo unknown)-$$"
 
+# ---- Capture a pre-dispatch git-state baseline when --expect-write is set,
+# so the post-dispatch diff check below (SMI-5700) is baseline-relative, not
+# an absolute post-dispatch snapshot. A --workspace with pre-existing
+# uncommitted changes is a legal target (dispatch.sh doesn't require a clean
+# tree) — comparing only the post-dispatch state would reproduce the exact
+# false-success bug this is fixing if a real dispatch failure lands on top
+# of an already-dirty tree. --workspace may also legitimately be a non-git
+# scratch directory (exercised by scripts/tests/needle-dispatch.test.sh,
+# which uses /tmp) — the diff check is skipped entirely for those, not
+# forced, so an unguarded git call here can't abort the script under
+# set -euo pipefail. .beads/ is explicitly pathspec-excluded (':!.beads')
+# rather than relied on being gitignored — this repo's own .gitignore has
+# it, but an arbitrary --workspace target isn't guaranteed to, and without
+# the explicit exclusion bead-forge's own trace-file bookkeeping would
+# always register as "a change", defeating this check's whole purpose. ----
+IS_GIT_WORKSPACE=false
+if git -C "$WORKSPACE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    IS_GIT_WORKSPACE=true
+fi
+BASELINE_GIT_STATE=""
+if [[ "$EXPECT_WRITE" == true ]] && [[ "$IS_GIT_WORKSPACE" == true ]]; then
+    BASELINE_GIT_STATE="$(git -C "$WORKSPACE" status --porcelain -- . ':!.beads'; git -C "$WORKSPACE" diff -- . ':!.beads')"
+fi
+
 # ---- Dispatch, backgrounded, as a real subprocess with an argument array
 # (never a concatenated/eval'd string). An earlier draft ran this in the
 # foreground and relied on a workspace-local .needle.yaml
@@ -257,14 +292,52 @@ if [[ -n "$OUTCOME_EVENT" ]]; then
     fi
 fi
 
+# ---- SMI-5700: NEEDLE's outcome.classified is based purely on the
+# dispatched agent process's exit code — it does not verify a work product
+# actually exists. Two independent downgrade checks below catch the false-
+# success case confirmed via bead bf-1aj's trace evidence (Codex's write
+# rejected by the read-only sandbox; Codex exited 0 anyway; NEEDLE correctly
+# but insufficiently classified that as "success"). Both checks only ever
+# downgrade an already-"success" outcome — a real "failure" from NEEDLE is
+# never overridden back to success. ----
+
+# Step 1: sandbox-rejection stderr signature, independent of --expect-write
+# (a rejected write is suspicious even on an analysis-only dispatch). Gated
+# on stderr.txt's own existence, not trace.jsonl's (dirname needs no file to
+# exist — gating on the wrong file would silently skip this check on a bead
+# that wrote stderr.txt but not trace.jsonl for any reason).
+if [[ "$OUTCOME" == "success" ]]; then
+    TRACE_DIR="$(dirname "$TRACE_PATH")"
+    if [[ -f "$TRACE_DIR/stderr.txt" ]] && grep -qF "patch rejected:" "$TRACE_DIR/stderr.txt" 2>/dev/null; then
+        OUTCOME="blocked-by-sandbox"
+    fi
+fi
+
+# Step 2: workspace-diff check, only when the caller signaled a write was
+# expected via --expect-write (an analysis-only dispatch producing no diff
+# is expected, not suspicious). Non-git workspaces fall through untouched —
+# whatever step 1 already determined stands.
+if [[ "$OUTCOME" == "success" ]] && [[ "$EXPECT_WRITE" == true ]] && [[ "$IS_GIT_WORKSPACE" == true ]]; then
+    CURRENT_GIT_STATE="$(git -C "$WORKSPACE" status --porcelain -- . ':!.beads'; git -C "$WORKSPACE" diff -- . ':!.beads')"
+    if [[ "$CURRENT_GIT_STATE" == "$BASELINE_GIT_STATE" ]]; then
+        OUTCOME="no-diff-despite-expected-write"
+    fi
+fi
+
 {
     echo "=== DISPATCH: $BEAD_ID ($(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown) UTC) ==="
     echo "workspace=$WORKSPACE model=$MODEL codex_version=$CODEX_VERSION"
     echo "needle_run_exit=$NEEDLE_EXIT bead_state=$BEAD_STATE outcome=$OUTCOME"
     echo "trace=$TRACE_PATH"
-    if [[ "$OUTCOME" != "success" ]]; then
-        echo "FAILED OR UNCLASSIFIABLE — re-dispatch through normal Claude-tier routing (Sonnet by default); do not treat this as the task's final outcome."
-    fi
+    case "$OUTCOME" in
+        success) ;;
+        blocked-by-sandbox)
+            echo "CODEX WRITE BLOCKED BY READ-ONLY SANDBOX — NEEDLE reported outcome=success but the trace shows a rejected write (see scripts/needle/README.md's Troubleshooting section). Re-dispatch through normal Claude-tier routing; do not treat this as the task's final outcome." ;;
+        no-diff-despite-expected-write)
+            echo "NO WORKSPACE CHANGE DESPITE --expect-write — NEEDLE reported outcome=success but the workspace shows no diff since dispatch started (see scripts/needle/README.md's Troubleshooting section). Re-dispatch through normal Claude-tier routing; do not treat this as the task's final outcome." ;;
+        *)
+            echo "FAILED OR UNCLASSIFIABLE — re-dispatch through normal Claude-tier routing (Sonnet by default); do not treat this as the task's final outcome." ;;
+    esac
     echo ""
 } >> "$LOG"
 
