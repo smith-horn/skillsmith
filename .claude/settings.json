@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@3 hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -92,7 +92,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} npx claude-flow@3 hooks pre-edit --file '{}' --auto-assign-agents true --load-context true"
+            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} node node_modules/ruflo/bin/ruflo.js hooks pre-edit --file '{}' --auto-assign-agents true --load-context true"
           }
         ]
       },
@@ -112,7 +112,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@3 hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -121,7 +121,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'FILE=\"{}\"; if [ -n \"$FILE\" ]; then npx claude-flow@3 hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'FILE=\"{}\"; if [ -n \"$FILE\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -188,7 +188,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx claude-flow@3 hooks session-end --generate-summary true --persist-state true --export-metrics true"
+            "command": "node node_modules/ruflo/bin/ruflo.js hooks session-end --generate-summary true --persist-state true --export-metrics true"
           }
         ]
       }
@@ -198,6 +198,6 @@
   "enabledMcpjsonServers": ["skillsmith", "skillsmith-doc-retrieval", "ruflo"],
   "statusLine": {
     "type": "command",
-    "command": "node node_modules/ruflo/bin/ruflo.js hooks statusline || node .claude/helpers/statusline.cjs || echo RuFlo V3"
+    "command": "node .claude/helpers/statusline.cjs || echo RuFlo V3"
   }
 }
