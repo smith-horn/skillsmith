@@ -9,9 +9,9 @@
  * Design parity with the CLI scanner at
  * `packages/cli/src/utils/skills-directory.ts`:
  * - Uses the SAME {@link SkillParser} to resolve `skill_id` / `version`.
- * - Realpath-deduplicates ACROSS harnesses (collapses symlink aliases), but does
- *   NOT name-deduplicate — the same skill independently installed under two
- *   harnesses is two distinct rows (the `device_skills` PK is `(harness, skill_id)`).
+ * - Realpath-deduplicates WITHIN each harness, but preserves cross-harness
+ *   membership — the same physical skill visible to two harnesses is two rows
+ *   (the `device_skills` PK is `(harness, skill_id)`).
  *
  * @module @skillsmith/core/sync/inventory-collector
  */
@@ -120,7 +120,7 @@ async function readSkillFields(
 
 /**
  * Scan a single harness directory and append its skills to `entries`,
- * deduplicating by realpath via the shared `seenRealpaths` set.
+ * deduplicating aliases within that harness via `seenRealpaths`.
  */
 async function collectHarness(
   harness: ClientId,
@@ -150,8 +150,8 @@ async function collectHarness(
       continue
     }
 
-    // Realpath dedup ACROSS harnesses: the first harness in CLIENT_IDS order
-    // wins, so a symlinked alias under a later harness is collapsed away.
+    // Deduplicate aliases within one harness without erasing the fact that the
+    // same physical skill is discoverable by another harness.
     const realDir = await safeRealpath(entryPath)
     if (seenRealpaths.has(realDir)) continue
     seenRealpaths.add(realDir)
@@ -187,14 +187,13 @@ async function collectHarness(
  * a `too_many_skills` 400) — silently dropping skills here would corrupt the
  * server-side reconcile by making present skills look absent.
  *
- * @returns One entry per (harness, skill), realpath-deduplicated across harnesses.
+ * @returns One entry per (harness, skill), realpath-deduplicated within a harness.
  * @see SMI-5392
  */
 export async function collectDeviceSkills(): Promise<InventorySkillEntry[]> {
   const entries: InventorySkillEntry[] = []
-  const seenRealpaths = new Set<string>()
   for (const harness of CLIENT_IDS) {
-    await collectHarness(harness, entries, seenRealpaths)
+    await collectHarness(harness, entries, new Set<string>())
   }
   return entries
 }

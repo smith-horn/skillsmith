@@ -7,7 +7,7 @@
  * without re-importing the module.
  *
  * IC-1: same skill under two harnesses (distinct realpaths) -> two entries.
- * IC-2: a symlinked alias across harnesses -> one entry (first ClientId wins).
+ * IC-2: a symlinked alias across harnesses -> one entry per harness membership.
  * IC-3: readable SKILL.md -> content_hash + version; missing SKILL.md -> nulls.
  */
 
@@ -98,7 +98,7 @@ describe('inventory-collector', () => {
     expect(foo.every((e) => e.update_policy === null)).toBe(true)
   })
 
-  it('IC-2: collapses a symlinked alias across harnesses to one entry (first ClientId wins)', async () => {
+  it('IC-2: preserves each harness membership for a symlinked skill', async () => {
     const real = await createSkill('claude-code', 'bar', { version: '1.0.0' })
     await mkdir(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, { recursive: true })
     await symlink(real, join(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, 'bar'), 'dir')
@@ -106,9 +106,10 @@ describe('inventory-collector', () => {
     const entries = await collectDeviceSkills()
     const bar = entries.filter((e) => e.skill_id === 'bar')
 
-    expect(bar).toHaveLength(1)
-    // claude-code precedes agents in CLIENT_IDS, so it wins the dedup.
-    expect(bar[0]?.harness).toBe('claude-code')
+    expect(bar).toHaveLength(2)
+    expect(bar.map((entry) => entry.harness).sort()).toEqual(['agents', 'claude-code'])
+    // The physical content is shared, while visibility remains per harness.
+    expect(new Set(bar.map((entry) => entry.content_hash)).size).toBe(1)
   })
 
   // IC-4: No truncation at MAX_SKILLS boundary.
