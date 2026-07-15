@@ -48,6 +48,7 @@ describe('enumerateHarnessPresence (SMI-5390)', () => {
     expect(result.find((r) => r.harness === 'agents')?.present).toBe(false)
     expect(result.find((r) => r.harness === 'opencode')?.present).toBe(false)
     expect(result.find((r) => r.harness === 'hermes')?.present).toBe(false)
+    expect(result.find((r) => r.harness === 'grok')?.present).toBe(false)
   })
 
   it('reports all harnesses absent when existsSync returns false for every path', () => {
@@ -79,7 +80,6 @@ describe('opencode + hermes ClientIds (SMI-5456 Wave 1 Step 5)', () => {
   it('CLIENT_IDS includes opencode and hermes', () => {
     expect(CLIENT_IDS).toContain('opencode')
     expect(CLIENT_IDS).toContain('hermes')
-    expect(CLIENT_IDS).toHaveLength(7)
   })
 
   it('opencode resolves to ~/.config/opencode/skills', () => {
@@ -88,5 +88,16 @@ describe('opencode + hermes ClientIds (SMI-5456 Wave 1 Step 5)', () => {
 
   it('hermes resolves to ~/.hermes/skills', () => {
     expect(CLIENT_NATIVE_PATHS.hermes.endsWith('/.hermes/skills')).toBe(true)
+  })
+})
+
+describe('grok ClientId (SMI-5697)', () => {
+  it('CLIENT_IDS includes grok', () => {
+    expect(CLIENT_IDS).toContain('grok')
+    expect(CLIENT_IDS).toHaveLength(8)
+  })
+
+  it('grok resolves to ~/.grok/skills', () => {
+    expect(CLIENT_NATIVE_PATHS.grok.endsWith('/.grok/skills')).toBe(true)
   })
 })

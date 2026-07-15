@@ -32,6 +32,14 @@ import { join } from 'node:path'
 //     $HERMES_HOME override. Hermes has no session-start hook equivalent
 //     (spike-verified absent) — the installer must not claim hook/nudge
 //     support for this harness.
+//
+// Grok Build addition, verified 2026-07-14:
+//   - Grok Build: ~/.grok/skills — xAI's official developer docs (the
+//     "Skills, Plugins & Marketplaces" page under docs.x.ai's build/features
+//     section), corroborated by independent third-party sources. Grok Build
+//     also reads the shared ~/.agents/skills path for AGENTS.md-style
+//     cross-agent compatibility, but that's already covered by the existing
+//     `agents` ClientId, so no separate handling is needed for it here.
 export type ClientId =
   | 'claude-code'
   | 'cursor'
@@ -40,6 +48,7 @@ export type ClientId =
   | 'agents'
   | 'opencode'
   | 'hermes'
+  | 'grok'
 
 export const CLIENT_NATIVE_PATHS: Record<ClientId, string> = {
   'claude-code': join(homedir(), '.claude', 'skills'),
@@ -49,6 +58,7 @@ export const CLIENT_NATIVE_PATHS: Record<ClientId, string> = {
   agents: join(homedir(), '.agents', 'skills'),
   opencode: join(homedir(), '.config', 'opencode', 'skills'),
   hermes: join(homedir(), '.hermes', 'skills'),
+  grok: join(homedir(), '.grok', 'skills'),
 }
 
 export const CANONICAL_CLIENT: ClientId = 'claude-code'
@@ -61,6 +71,7 @@ export const CLIENT_IDS: ReadonlyArray<ClientId> = Object.freeze([
   'agents',
   'opencode',
   'hermes',
+  'grok',
 ])
 
 export function getCanonicalInstallPath(): string {
