@@ -28,6 +28,7 @@ export type McpClientId =
   | 'agents'
   | 'opencode'
   | 'hermes'
+  | 'grok'
 
 export interface McpClientSnippet {
   /** Canonical client id — matches SnippetClientId in the CLI package */
@@ -147,6 +148,17 @@ args = ["-y", "@skillsmith/mcp-server"]`,
     args: ["-y", "@skillsmith/mcp-server"]`,
     notes:
       'Hermes config is YAML. Hermes has no <code>SessionStart</code> hook equivalent — nudge/attribution is unsupported on this harness.',
+  },
+  {
+    id: 'grok',
+    label: 'Grok Build (xAI)',
+    configPath: '~/.grok/config.toml',
+    format: 'toml',
+    body: `[mcp_servers.@skillsmith/mcp-server]
+command = "npx"
+args = ["-y", "@skillsmith/mcp-server"]`,
+    notes:
+      'Grok Build uses TOML under a <code>[mcp_servers.NAME]</code> table, the same convention as Codex CLI above.',
   },
 ]
 

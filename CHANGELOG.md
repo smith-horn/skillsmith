@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Grok Build Harness Support** (2026-07-14, SMI-5697): Skillsmith's cross-machine
+  skill inventory (`skillsmith inventory push`/`status`) now also scans
+  `~/.grok/skills`, xAI's Grok Build coding CLI's native skill directory, in
+  addition to the previously supported harnesses (Claude Code, Cursor, Copilot,
+  Windsurf, shared Codex path, OpenCode, and Hermes).
 - **Indexer Backfill Facet Driver** (2026-06-18, SMI-5286 sub-wave 1c): the
   out-of-band backfill (`indexer-backfill.yml`) now crawls the full
   `filename:SKILL.md` universe past GitHub code-search's 1000-result-per-query

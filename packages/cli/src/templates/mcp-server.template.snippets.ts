@@ -175,6 +175,22 @@ SKILLSMITH_API_KEY = "sk_live_..."`,
     notes:
       'Hermes config is YAML. Hermes has no SessionStart hook equivalent — nudge/attribution is unsupported on this harness.',
   },
+  // SMI-5697: grok added to ClientId (paths.ts); this Record<SnippetClientId,
+  // ClientSnippet> is exhaustive over ClientId, so this entry is required for
+  // the type to compile.
+  grok: {
+    label: 'Grok Build (xAI)',
+    configPath: '~/.grok/config.toml',
+    format: 'toml',
+    body: `[mcp_servers.{{name}}]
+command = "npx"
+args = ["-y", "{{name}}"]
+
+[mcp_servers.{{name}}.env]
+SKILLSMITH_API_KEY = "sk_live_..."`,
+    notes:
+      'Grok Build uses TOML under the [mcp_servers.<name>] table, mirroring the Codex CLI convention above — confirmed against docs.x.ai for the command/args shape; the env sub-table follows the same pattern as the Codex entry.',
+  },
 }
 
 /**
@@ -223,4 +239,5 @@ export const SNIPPET_DISPLAY_ORDER: ReadonlyArray<SnippetClientId> = Object.free
   'agents',
   'opencode',
   'hermes',
+  'grok',
 ])
