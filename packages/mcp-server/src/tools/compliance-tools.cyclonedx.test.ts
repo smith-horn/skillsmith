@@ -96,6 +96,10 @@ function dependencyDataSource(report: Record<string, unknown>): string | undefin
   return properties(report).find((p) => p.name === 'skillsmith:dependencyDataSource')?.value
 }
 
+function notice(report: Record<string, unknown>): string | undefined {
+  return properties(report).find((p) => p.name === 'skillsmith:notice')?.value
+}
+
 function components(report: Record<string, unknown>): NormalizedComponent[] {
   return (report.components as NormalizedComponent[]) ?? []
 }
@@ -129,6 +133,13 @@ describe('formatCycloneDx', () => {
     const validator = new Validation.JsonStrictValidator(Spec.Version.v1dot5)
     const result = await validator.validate(JSON.stringify(report))
     expect(result).toBeNull()
+  })
+
+  it('always includes the Wave 3 "newly launched, not yet validated at scale" notice (SMI-3140)', async () => {
+    const data = baseData([baseSkill()])
+    const report = await formatCycloneDx(data, { db, skillDependencyRepository: repo })
+
+    expect(notice(report)).toContain('newly launched and not yet validated at scale')
   })
 
   it('gracefully degrades when no db/repository is available (stub mode) — never crashes', async () => {
