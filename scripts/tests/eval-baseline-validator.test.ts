@@ -319,4 +319,45 @@ describe('eval-baseline-validator', () => {
     const r = run(f, { canonical: true, stdinRefs: stdin })
     expect(r.status).toBe(0)
   })
+
+  // -------------------------------------------------------------------------
+  // SMI-5708 Item #2 -- diff-resolution failure (distinct from range === null's
+  // genuine no-op) must fail closed in canonical mode and warn-with-a-clear-
+  // message-but-continue in advisory mode. A bogus (non-zero, non-existent)
+  // remote sha reaches `listChangedFiles()` with a valid-looking range object,
+  // so `git diff <bogus>..<head>` throws inside the try/catch -- exercising
+  // the exact failure path this fix targets, not resolveDiffRange's null case.
+  // -------------------------------------------------------------------------
+
+  function bogusDiffStdin(fixture: Fixture): string {
+    const head = git(fixture.dir, 'rev-parse', 'HEAD')
+    const bogusBase = 'deadbeef'.repeat(5) // 40 hex chars, valid shape, not a real object here
+    return `refs/heads/main ${head} refs/heads/main ${bogusBase}\n`
+  }
+
+  it('fails closed (canonical) when git diff resolution itself fails, not treated as a no-op', () => {
+    const f = track(
+      setupRepo({
+        baselineContent: '{"prior":null,"current":null}\n',
+        modifyFiles: ['packages/doc-retrieval-mcp/src/rerank.ts'],
+      })
+    )
+    const r = run(f, { canonical: true, stdinRefs: bogusDiffStdin(f) })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('BLOCK (canonical mode)')
+    expect(r.stderr).toContain('diff-resolution failure')
+  })
+
+  it('warns with a diff-resolution-failure message (advisory) and still allows push', () => {
+    const f = track(
+      setupRepo({
+        baselineContent: '{"prior":null,"current":null}\n',
+        modifyFiles: ['packages/doc-retrieval-mcp/src/rerank.ts'],
+      })
+    )
+    const r = run(f, { canonical: false, stdinRefs: bogusDiffStdin(f) })
+    expect(r.status).toBe(0)
+    expect(r.stderr).toContain('WARN (advisory mode')
+    expect(r.stderr).toContain('diff-resolution failure')
+  })
 })

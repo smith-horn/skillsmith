@@ -120,16 +120,31 @@ function resolveDiffRange() {
   }
 }
 
+/**
+ * Resolve the changed-file list for `range`, distinguishing "diff resolved
+ * with zero files" from "diff resolution itself failed" (SMI-5708 Item #2).
+ *
+ * `range === null` is a deliberate, pre-existing no-op case (delete-only
+ * push, or no stdin/no upstream to fall back to -- see resolveDiffRange's
+ * doc comment) and is NOT a failure: it returns `{ ok: true, files: [] }`
+ * unchanged from before this fix.
+ *
+ * A thrown `git diff` (e.g. the resolved base/head sha is unreachable in a
+ * shallow clone) previously returned `[]` here too, indistinguishable from
+ * "nothing changed" -- silently defeating the whole validator. That case now
+ * returns `{ ok: false, error }` so the caller can fail closed in canonical
+ * mode instead of treating it as a no-op.
+ */
 function listChangedFiles(range) {
-  if (range === null) return []
+  if (range === null) return { ok: true, files: [] }
   try {
     const out = execFileSync('git', ['diff', '--name-only', `${range.base}..${range.head}`], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
     })
-    return out.split('\n').filter((l) => l.length > 0)
-  } catch {
-    return []
+    return { ok: true, files: out.split('\n').filter((l) => l.length > 0) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -179,7 +194,29 @@ function emit(failure) {
 
 function main() {
   const range = resolveDiffRange()
-  const changed = listChangedFiles(range)
+  const diffResult = listChangedFiles(range)
+
+  // Diff resolution failure -- distinct from range === null's genuine no-op.
+  // Route through the existing emit() dual-mode helper: canonical mode
+  // blocks (exit 1), advisory mode warns with a message that says plainly
+  // "diff resolution failed" rather than looking like "no changes detected"
+  // (plan-review finding L1 -- reuse the existing canonical/advisory
+  // machinery here rather than inventing a second mode-detection path).
+  if (!diffResult.ok) {
+    emit(
+      [
+        'Failed to resolve the git diff needed to check ranking/baseline freshness',
+        '(this is a diff-resolution failure, not "no changes detected").',
+        `Cause: ${diffResult.error}`,
+        '',
+        'The validator cannot verify whether ranking-relevant files changed, so it',
+        'cannot confirm baseline.json is fresh.',
+      ].join('\n')
+    )
+    return
+  }
+
+  const changed = diffResult.files
   const { rankingOnly, corpus, baselineChanged } = classifyDiff(changed)
 
   // If no ranking files changed at all, this validator is a no-op.

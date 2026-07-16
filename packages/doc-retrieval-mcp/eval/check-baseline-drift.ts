@@ -245,20 +245,68 @@ export function evaluateDrift(changedFiles: string[], baseline: BaselineFile): D
 
 // Git diff helper
 
-function getChangedFiles(): string[] {
+/**
+ * Result of resolving the CI drift-gate's git diff. Distinguishes "diff
+ * resolved successfully, possibly with zero changed files" from "diff
+ * resolution itself failed" -- these were previously conflated (both
+ * silently returned `[]`, indistinguishable from "nothing changed") which is
+ * exactly the gate-integrity bug this type closes (SMI-5708 Item #2).
+ */
+export interface ChangedFilesOk {
+  ok: true
+  files: string[]
+}
+
+export interface ChangedFilesError {
+  ok: false
+  error: string
+}
+
+export type ChangedFilesResult = ChangedFilesOk | ChangedFilesError
+
+export function getChangedFiles(): ChangedFilesResult {
   const baseRef = process.env['GITHUB_BASE_REF']
   const headRef = process.env['GITHUB_HEAD_REF']
   const range = baseRef && headRef ? `${baseRef}...HEAD` : 'main...HEAD'
   try {
     const output = execFileSync('git', ['diff', '--name-only', range], { encoding: 'utf8' })
-    return output
+    const files = output
       .split('\n')
       .map((f) => f.trim())
       .filter((f) => f.length > 0)
-  } catch {
-    process.stderr.write(`::warning::git diff failed for range ${range}; treating as no changes.\n`)
-    return []
+    return { ok: true, files }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: `git diff failed for range ${range}: ${detail}` }
   }
+}
+
+/**
+ * Wraps evaluateDrift with fail-closed handling for diff-resolution failure.
+ *
+ * This script runs only in the CI "Retrieval Eval Gate" job -- never locally
+ * (unlike scripts/eval-baseline-validator.mjs's pre-push invocation) -- so
+ * there is deliberately no canonical/advisory mode branching here: any
+ * failure to resolve the git diff (shallow clone missing the base ref, a
+ * misconfigured runner, etc.) must fail the gate unconditionally rather than
+ * being treated as "no files changed", which is indistinguishable from a
+ * real no-op and was the original bug (SMI-5708 Item #2, plan-review finding
+ * L1).
+ */
+export function evaluateDriftWithDiffResult(
+  changedFilesResult: ChangedFilesResult,
+  baseline: BaselineFile
+): DriftResult {
+  if (!changedFilesResult.ok) {
+    return {
+      pass: false,
+      message:
+        '::error::Failed to resolve the git diff needed to check baseline drift -- cannot ' +
+        'verify whether ranking/baseline files are in sync, so failing closed instead of ' +
+        `silently passing. Cause: ${changedFilesResult.error}`,
+    }
+  }
+  return evaluateDrift(changedFilesResult.files, baseline)
 }
 
 // Baseline loader
@@ -282,10 +330,10 @@ function loadBaseline(): BaselineFile {
 
 // CLI entry point
 
-function main(): void {
-  const changedFiles = getChangedFiles()
+export function main(): void {
+  const changedFilesResult = getChangedFiles()
   const baseline = loadBaseline()
-  const result = evaluateDrift(changedFiles, baseline)
+  const result = evaluateDriftWithDiffResult(changedFilesResult, baseline)
   if (result.pass) {
     process.stdout.write(result.message + '\n')
     process.exit(0)
