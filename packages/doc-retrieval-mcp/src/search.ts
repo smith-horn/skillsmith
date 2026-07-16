@@ -82,6 +82,20 @@ export async function search(opts: SearchOpts): Promise<SearchHit[]> {
 
     if (!meta.file_path) continue
 
+    // SMI-4703 §1: hard-exclude any chunk that isn't provenance-tagged
+    // 'tier-a' — a retrieval-set EXCLUSION, not a ranking penalty. This is
+    // the SAME predicate rerank.ts applies, but rerank() is not on the live
+    // call path (server.ts's skill_docs_search tool and
+    // scripts/session-priming-query.ts — the actual session-priming
+    // injection path this whole feature defends — both call search()
+    // directly). Without this check here, a quarantined chunk would still
+    // reach a real session even though rerank() would correctly exclude it
+    // if anything called it. Fail-closed on omission: a missing/undefined
+    // provenance_tier (a chunk that predates the field, or a corrupt/
+    // truncated metadata blob) is excluded exactly like an explicit
+    // 'quarantine' value, never defaulted to 'tier-a' by omission.
+    if (meta.provenance_tier !== 'tier-a') continue
+
     if (opts.scopeGlobs && opts.scopeGlobs.length > 0) {
       const matches = opts.scopeGlobs.some((g) => minimatch(meta.file_path, g, { dot: true }))
       if (!matches) continue

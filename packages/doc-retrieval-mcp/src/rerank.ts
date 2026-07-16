@@ -81,7 +81,16 @@ const MMR_TOP_K = 5
 export function rerank(hits: SearchHit[], query: string): SearchHit[] {
   if (hits.length === 0) return []
 
-  const adjusted = hits.map(applyPenalties)
+  // SMI-4703 §1: hard-exclude any chunk that isn't provenance-tagged
+  // 'tier-a' — a retrieval-set EXCLUSION, not a ranking penalty. Fail-closed
+  // on omission: `hit.meta?.provenance_tier` missing/undefined (a chunk that
+  // predates the field, or a corrupt/truncated metadata blob) is excluded
+  // exactly like an explicit `'quarantine'` value, never defaulted to
+  // 'tier-a' by omission.
+  const tierAOnly = hits.filter((h) => h.meta?.provenance_tier === 'tier-a')
+  if (tierAOnly.length === 0) return []
+
+  const adjusted = tierAOnly.map(applyPenalties)
 
   if (process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK === 'bm25') {
     return phase2BM25MMR(adjusted, query)

@@ -60,8 +60,12 @@ const INVISIBLE_STRIP = new RegExp('[' + INVISIBLE_RANGE + ']|[\\u{E0000}-\\u{E0
  * are handled programmatically below — never via a blanket NFKC pass, which would
  * also fold fullwidth CJK to ASCII and false-positive. (NFKC is applied per-char
  * ONLY to the math-alphanumeric range, which contains no CJK.)
+ *
+ * Exported (SMI-4703): reused as-is by
+ * `packages/doc-retrieval-mcp/src/security/memory-injection-scanner.ts`'s
+ * confusable-fold normalization step — not reimplemented there.
  */
-const CONFUSABLES: Record<string, string> = {
+export const CONFUSABLES: Record<string, string> = {
   // Cyrillic -> Latin
   а: 'a',
   е: 'e',
@@ -104,13 +108,23 @@ function isMathAlphanumeric(cp: number): boolean {
   return cp >= 0x1d400 && cp <= 0x1d7ff
 }
 
-/** Remove invisible/format/bidi/tag/combining characters. */
-function stripInvisible(s: string): string {
+/**
+ * Remove invisible/format/bidi/tag/combining characters.
+ *
+ * Exported (SMI-4703): reused as-is by the memory-injection-scanner's
+ * normalization pipeline (invisible-strip step) — not reimplemented there.
+ */
+export function stripInvisible(s: string): string {
   return s.replace(INVISIBLE_STRIP, '')
 }
 
-/** Map homoglyphs + fullwidth Latin + math-alphanumeric to their ASCII skeleton. */
-function confusableSkeleton(s: string): string {
+/**
+ * Map homoglyphs + fullwidth Latin + math-alphanumeric to their ASCII skeleton.
+ *
+ * Exported (SMI-4703): reused as-is by the memory-injection-scanner's
+ * normalization pipeline (confusable-fold step) — not reimplemented there.
+ */
+export function confusableSkeleton(s: string): string {
   let out = ''
   for (const ch of s) {
     const cp = ch.codePointAt(0) ?? 0

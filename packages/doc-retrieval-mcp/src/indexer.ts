@@ -32,7 +32,12 @@ export interface IndexResult {
   durationMs: number
 }
 
-const CORPUS_VERSION = 1
+// SMI-4703 §3: bumped 1 -> 2 for the memory-injection-scanner rollout. A bump
+// alone used to be a no-op (see the version-mismatch check in `doIndex`
+// below, which this bump now actually engages) — every existing chunk must
+// pass through the current adapter/scanner logic at least once before an
+// incremental run is trusted again.
+const CORPUS_VERSION = 2
 
 export async function runIndexer(
   mode: 'full' | 'incremental',
@@ -67,15 +72,29 @@ interface IndexContext {
   t0: number
 }
 
-async function doIndex(mode: 'full' | 'incremental', ctx: IndexContext): Promise<IndexResult> {
+async function doIndex(
+  requestedMode: 'full' | 'incremental',
+  ctx: IndexContext
+): Promise<IndexResult> {
   const { metaAbs, stateAbs, vectorsFile, cfg, t0 } = ctx
   const root = repoRoot()
   const store = await MetadataStore.load(metaAbs)
 
-  const prior: IndexState | null =
-    mode === 'incremental' && existsSync(stateAbs)
-      ? (JSON.parse(await readFile(stateAbs, 'utf8')) as IndexState)
-      : null
+  const persistedState: IndexState | null = existsSync(stateAbs)
+    ? (JSON.parse(await readFile(stateAbs, 'utf8')) as IndexState)
+    : null
+
+  // SMI-4703 §3: `CORPUS_VERSION` used to be persisted into state but never
+  // compared against on a later run — bumping the constant alone was a
+  // silent no-op. A version mismatch forces one full (non-incremental)
+  // reindex regardless of the mode the caller requested, so every existing
+  // chunk passes through the current adapter/scanner logic before an
+  // incremental run is allowed to resume. No prior state (fresh install) is
+  // NOT a mismatch — the caller's requested mode stands.
+  const versionMismatch = persistedState !== null && persistedState.corpusVersion !== CORPUS_VERSION
+  const mode: 'full' | 'incremental' = versionMismatch ? 'full' : requestedMode
+
+  const prior: IndexState | null = mode === 'incremental' ? persistedState : null
 
   let chunksUpserted = 0
   let chunksDeleted = 0
@@ -177,6 +196,14 @@ function buildStoredMetadata(
     line_end: chunk.lineEnd,
     heading_chain: chunk.headingChain,
     text: chunk.text,
+    // SMI-4703 §1: persist the provenance tier so search()/rerank()'s
+    // hard-exclusion filter has something to read. Explicitly written (not
+    // left to fall through as `undefined`, which JSON.stringify would drop
+    // silently) so a chunk that somehow reaches this function without a
+    // tier is auditable in the stored metadata as 'quarantine' — fail-closed,
+    // mirroring every other omission-handling site for this field, never
+    // defaulted to 'tier-a'.
+    provenance_tier: chunk.provenanceTier ?? 'quarantine',
   }
   const kind = chunk.kind ?? adapter.kind
   if (kind) blob.kind = kind

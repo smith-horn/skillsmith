@@ -209,6 +209,8 @@ describe('git-commits adapter — chunk', () => {
     expect(chunks[0].filePath).toMatch(/^git:\/\/.+\/commit\/[0-9a-f]{8}$/)
     expect(chunks[0].id).toMatch(/@[0-9a-f]{16}$/)
     expect(chunks[0].tags?.smi).toBe('SMI-4401')
+    // SMI-4703 §1: reaches the corpus via a human-reviewed PR merge — always tier-a.
+    expect(chunks[0].provenanceTier).toBe('tier-a')
   })
 })
 

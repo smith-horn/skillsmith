@@ -126,7 +126,8 @@ describe.skipIf(!nativeAvailable)('indexer integration (requires @ruvector/core 
     expect(existsSync(stateFile)).toBe(true)
     const state = JSON.parse(await (await import('node:fs/promises')).readFile(stateFile, 'utf8'))
     expect(state.lastRunAt).toBeTruthy()
-    expect(state.corpusVersion).toBe(1)
+    // SMI-4703 §3: CORPUS_VERSION bumped 1 -> 2 for the memory-injection-scanner rollout.
+    expect(state.corpusVersion).toBe(2)
     expect(Object.keys(state.chunkCountByFile).length).toBe(3)
   })
 
@@ -154,5 +155,46 @@ describe.skipIf(!nativeAvailable)('indexer integration (requires @ruvector/core 
   it('refuses to run when CI=true', async () => {
     process.env.CI = 'true'
     await expect(runIndexer('full', { configPath })).rejects.toThrow(/refusing to run in CI/)
+  })
+
+  // SMI-4703 §3: a version bump alone used to be a no-op — nothing compared
+  // the persisted state.corpusVersion against the running CORPUS_VERSION
+  // constant. This proves the fix: a stale on-disk corpusVersion forces a
+  // full reindex even when the caller explicitly requests 'incremental'.
+  it('forces a full reindex when persisted corpusVersion differs from CORPUS_VERSION', async () => {
+    await runIndexer('full', { configPath })
+    resetConfigCache()
+
+    const stateFile = join(tmpRoot, '.ruvector', '.index-state.json')
+    const { readFile: readFileFn, writeFile: writeFileFn } = await import('node:fs/promises')
+    const state = JSON.parse(await readFileFn(stateFile, 'utf8')) as Record<string, unknown>
+    // Simulate a pre-bump on-disk state (as if indexed under CORPUS_VERSION 1).
+    state.corpusVersion = 1
+    await writeFileFn(stateFile, JSON.stringify(state), 'utf8')
+
+    const result = await runIndexer('incremental', { configPath })
+
+    expect(result.mode).toBe('full')
+    // A forced full reindex wipes the prior chunks before rebuilding, so
+    // chunksDeleted reflects the wipe of the prior full run's output.
+    expect(result.chunksDeleted).toBeGreaterThan(0)
+    expect(result.filesScanned).toBe(3)
+
+    const updated = JSON.parse(await readFileFn(stateFile, 'utf8')) as Record<string, unknown>
+    expect(updated.corpusVersion).toBe(2)
+  })
+
+  it('does NOT force a full reindex when there is no prior state (fresh install)', async () => {
+    // No prior runIndexer call in this test — stateAbs does not exist yet.
+    const result = await runIndexer('incremental', { configPath })
+    expect(result.mode).toBe('incremental')
+  })
+
+  it('does NOT force a full reindex when persisted corpusVersion already matches', async () => {
+    await runIndexer('full', { configPath })
+    resetConfigCache()
+
+    const result = await runIndexer('incremental', { configPath })
+    expect(result.mode).toBe('incremental')
   })
 })

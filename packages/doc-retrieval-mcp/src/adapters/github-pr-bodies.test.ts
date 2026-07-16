@@ -311,6 +311,8 @@ describe('github-pr-bodies adapter — chunk', () => {
     expect(chunks[0].lifetime).toBe('long-term')
     expect(chunks[0].filePath).toBe('github://smith-horn/skillsmith/pr/748')
     expect(chunks[0].headingChain[0]).toBe('fix(SMI-4443): callback guard')
+    // SMI-4703 §1: reaches the corpus via a human-reviewed PR merge — always tier-a.
+    expect(chunks[0].provenanceTier).toBe('tier-a')
   })
 })
 

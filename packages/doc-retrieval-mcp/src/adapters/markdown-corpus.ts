@@ -60,7 +60,14 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
     return []
   }
   const chunks = chunkDocument(raw, file.logicalPath, ctx.cfg)
-  return chunks.map((c) => ({ ...c, kind: 'markdown-doc', lifetime: 'long-term' as const }))
+  // SMI-4703 §1: reaches the corpus via a human-reviewed PR merge — tier-a
+  // unconditionally, no injection scan (exempt per plan Change #5).
+  return chunks.map((c) => ({
+    ...c,
+    kind: 'markdown-doc',
+    lifetime: 'long-term' as const,
+    provenanceTier: 'tier-a' as const,
+  }))
 }
 
 function toAdapterFile(rel: string, root: string): AdapterFile {

@@ -205,6 +205,8 @@ describe('script-headers adapter — chunk', () => {
     expect(chunks[0].filePath).toBe('scripts/foo.sh')
     expect(chunks[0].id).toMatch(/^scripts\/foo\.sh#L\d+-L\d+@[0-9a-f]{16}$/)
     expect(chunks[0].tags?.script_type).toBe('utility')
+    // SMI-4703 §1: reaches the corpus via a human-reviewed PR merge — always tier-a.
+    expect(chunks[0].provenanceTier).toBe('tier-a')
   })
 
   it('returns [] when header is under minimum tokens', async () => {
