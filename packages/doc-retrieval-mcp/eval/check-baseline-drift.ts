@@ -21,6 +21,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { validateBaselineFile } from './check-baseline-drift-validation.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -70,6 +71,13 @@ export interface BaselineFile {
   knobs?: { boost: number; dampen: number; floor: number; bm25: boolean }
   metrics?: BaselineMetrics
   byCategory?: BaselineByCategory
+  // SMI-5708 Item #3 — written ONLY by eval-runner.ts's `updateBaseline()`
+  // bootstrap branch (no prior baseline.json to promote from). Required
+  // (validated by `validateBaselineFile`) to accept `prior: null` as a
+  // legitimate first-run state; does NOT legitimize any other validation
+  // failure, and a non-null `prior` is validated on its own merits
+  // regardless of this flag's value.
+  bootstrapped?: boolean
 }
 
 export interface DriftResult {
@@ -183,11 +191,47 @@ export function checkHybridDrift(
   }
 }
 
+// Baseline schema validation (SMI-5708 Item #3) -- extracted to
+// check-baseline-drift-validation.ts to keep this file under the 500-line
+// standard. Re-exported here so existing imports of this module (e.g. the
+// test file, `../../eval/check-baseline-drift.js`) are unaffected.
+export {
+  validateBaselineFile,
+  type BaselineValidationOk,
+  type BaselineValidationError,
+  type BaselineValidationResult,
+} from './check-baseline-drift-validation.js'
+
 /**
  * Evaluate drift rules against a set of changed files and a parsed baseline.
- * M1 fix: when prior === null (first real-mode run), regression check is skipped.
+ * M1 fix: when prior === null AND bootstrapped === true (a genuine first
+ * real-mode run), the regression check is skipped. Any other validation
+ * failure -- a malformed, corrupted, or zeroed baseline.json -- is now a
+ * hard error (SMI-5708 Item #3), not a silent skip.
  */
 export function evaluateDrift(changedFiles: string[], baseline: BaselineFile): DriftResult {
+  // SMI-5708 Item #3 (Codex review finding, Medium): validate UNCONDITIONALLY,
+  // before branching on which files changed -- not only when baseline.json
+  // itself is in this diff. A baseline.json that's already malformed,
+  // corrupted, or zeroed in the tree (from before this fix landed, or via
+  // any other path) must be caught on every CI run, not only on the PR that
+  // happens to also touch baseline.json/ranking files. A validation failure
+  // (malformed types, NaN, out-of-range, a null prior without the
+  // bootstrapped marker, or an exact-0 prior) is a HARD ERROR -- not the
+  // silent "regression check skipped" the old code gave corrupted/zeroed
+  // baselines.
+  const validation = validateBaselineFile(baseline)
+  if (!validation.ok) {
+    return {
+      pass: false,
+      message:
+        `::error::baseline.json failed schema validation: ${validation.error}. ` +
+        'This baseline.json is malformed, corrupted, hand-edited, or zeroed -- restore it ' +
+        'from git history or re-run RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval to ' +
+        'regenerate a valid one.',
+    }
+  }
+
   const rankingFilesChanged = RANKING_FILES.some((f) => changedFiles.includes(f))
   const goldSetChanged = changedFiles.includes(GOLD_SET_FILE)
   const baselineChanged = changedFiles.includes(BASELINE_FILE)
@@ -214,27 +258,31 @@ export function evaluateDrift(changedFiles: string[], baseline: BaselineFile): D
 
   // Rule 3/4: baseline.json changed -- check regression when prior is not null
   if (baselineChanged) {
-    const prior = baseline.prior
-    const current = baseline.current
-
-    // M1: first commit -- prior is null, skip regression check
-    if (prior === null) {
+    // M1: genuine first real-mode run -- prior is null AND bootstrapped is
+    // true (validated above), so this is confirmed to be the one legitimate
+    // bootstrap write from updateBaseline(), not an ambiguous/corrupted null.
+    if (baseline.prior === null) {
       return {
         pass: true,
         message:
-          '✓ Retrieval Eval Gate: baseline.json changed, prior is null (first real-mode run) -- regression check skipped.',
+          '✓ Retrieval Eval Gate: baseline.json changed, prior is null and bootstrapped -- ' +
+          'first real-mode run, regression check skipped.',
       }
     }
 
-    if (typeof prior !== 'number' || typeof current !== 'number' || prior === 0) {
-      return {
-        pass: true,
-        message:
-          '✓ Retrieval Eval Gate: baseline.json changed, prior/current not numeric or prior=0 -- regression check skipped.',
-      }
+    // validateBaselineFile guarantees prior/current are finite numbers at
+    // this point; re-narrow with typeof rather than a cast so this stays
+    // total (and safe) even if that guarantee is ever weakened.
+    if (typeof baseline.prior === 'number' && typeof baseline.current === 'number') {
+      return checkHybridDrift(baseline, baseline.prior, baseline.current)
     }
 
-    return checkHybridDrift(baseline, prior, current)
+    return {
+      pass: false,
+      message:
+        '::error::Internal error: baseline.json passed schema validation but prior/current are ' +
+        'not both numeric -- this should be unreachable; please file a bug.',
+    }
   }
 
   return {

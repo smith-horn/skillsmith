@@ -18,74 +18,29 @@
  * Output uses process.stdout.write (not console.log) for determinism.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { GoldEntry, RunResult, MetricsReport } from './metrics.js'
 import { computeMetrics } from './metrics.js'
-import { resolveRepoPath } from '../src/config.js'
-// SMI-4764 Wave 0 signature emission lives in a sibling file to keep this
-// file under the 500-line gate. Validator (scripts/eval-baseline-validator.mjs)
-// uses the same FIFO log + per-developer marker that emitBaselineSignature writes.
-import { emitBaselineSignature } from './eval-runner-signatures.js'
+// SMI-4764 Wave 0 / SMI-5708 Item #3 — baseline.json read/write helpers live
+// in a sibling file to keep this file under the 500-line gate. Re-exported
+// below (a plain `export { ... } from`, not a separate import — only
+// resolveIndexStateFile and maybeUpdateBaseline are used locally in this
+// file) so existing imports of `../../eval/eval-runner.js`
+// (corpus-stats.test.ts, eval-runner.test.ts) are unaffected.
+import { resolveIndexStateFile, maybeUpdateBaseline } from './eval-runner-baseline.js'
+
+export {
+  resolveIndexStateFile,
+  readCorpusStatsFromIndex,
+  updateBaseline,
+  maybeUpdateBaseline,
+  type BaselineFile,
+} from './eval-runner-baseline.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const GOLD_SET_PATH = join(__dirname, 'gold-set.json')
-const BASELINE_PATH = join(__dirname, 'baseline.json')
-
-// ---------------------------------------------------------------------------
-// Index-state helpers (SMI-4763)
-//
-// `resolveIndexStateFile` mirrors src/config.ts repoRoot()/resolveRepoPath()
-// so the GAP 1 startup check and the corpus-stats refresh both consult the
-// SAME path the indexer writes to: `$SKILLSMITH_REPO_ROOT/.ruvector/.index-state.json`
-// (or `$CWD/.ruvector/.index-state.json` when the env var is unset).
-//
-// The previous `join(__dirname, '..', '.ruvector', '.index-state.json')` resolved
-// inside the package (`packages/doc-retrieval-mcp/.ruvector/...`), which never
-// exists in practice — the GAP 1 check silently passed and `updateBaseline()`
-// carried forward stale corpus stats forever. See SMI-4763 issue body.
-// ---------------------------------------------------------------------------
-
-export function resolveIndexStateFile(): string {
-  return resolveRepoPath('.ruvector/.index-state.json')
-}
-
-/**
- * Read corpus stats (filesScanned, chunksUpserted) from the indexer's
- * `.index-state.json`. Fails soft: missing or malformed files return zeros
- * and emit a warning to stderr — a degraded baseline is preferable to a
- * failed baseline write, since baseline.json is the only durable record of
- * the metric run that just completed.
- */
-export function readCorpusStatsFromIndex(stateFile: string): {
-  filesScanned: number
-  chunksUpserted: number
-} {
-  if (!existsSync(stateFile)) {
-    process.stderr.write(
-      `Warning: index-state file not found at ${stateFile}; baseline corpus stats will be 0/0.\n`
-    )
-    return { filesScanned: 0, chunksUpserted: 0 }
-  }
-  let chunkCountByFile: Record<string, number>
-  try {
-    const raw = readFileSync(stateFile, 'utf8')
-    const parsed = JSON.parse(raw) as { chunkCountByFile?: Record<string, number> }
-    chunkCountByFile = parsed.chunkCountByFile ?? {}
-  } catch (err: unknown) {
-    process.stderr.write(
-      `Warning: failed to parse index-state file at ${stateFile} (${String(err)}); baseline corpus stats will be 0/0.\n`
-    )
-    return { filesScanned: 0, chunksUpserted: 0 }
-  }
-  const filesScanned = Object.keys(chunkCountByFile).length
-  const chunksUpserted = Object.values(chunkCountByFile).reduce(
-    (sum, n) => sum + (typeof n === 'number' ? n : 0),
-    0
-  )
-  return { filesScanned, chunksUpserted }
-}
 
 // ---------------------------------------------------------------------------
 // CLI flag parsing
@@ -191,142 +146,6 @@ async function buildRealResults(entries: GoldEntry[]): Promise<RunResult[]> {
   }
 
   return results
-}
-
-// ---------------------------------------------------------------------------
-// Baseline update
-// ---------------------------------------------------------------------------
-
-// Plan §7 / §6 baseline.json schema — flat, machine-readable, parsed by
-// check-baseline-drift.ts. `prior` and `current` are recall@5 scalars; the
-// full metric set lives under `metrics`. Promotion: each real-mode run
-// promotes existing.current → prior and writes the new recall@5 as current.
-export interface BaselineFile {
-  prior: number | null
-  current: number | null
-  generated: string
-  corpus: { filesScanned: number; chunksUpserted: number }
-  knobs: { boost: number; dampen: number; floor: number; bm25: boolean }
-  metrics: {
-    recallAt5: number | null
-    recallAt10: number | null
-    mrr: number | null
-    ndcgAt10: number | null
-  }
-  // SMI-4764 Wave 1 — per-category recall@5 + counts. Optional for
-  // backward compatibility with pre-Wave-1 baselines (drift checker
-  // falls back to the global gate when absent). `recallAt5Prior` is
-  // promoted from the previous run's `recallAt5` (null on first run
-  // with byCategory present).
-  byCategory?: {
-    recallAt5: Record<string, number>
-    recallAt5Prior: Record<string, number> | null
-    count: Record<string, number>
-  }
-}
-
-function readKnobsFromEnv(): BaselineFile['knobs'] {
-  const num = (envVar: string, fallback: number): number => {
-    const v = Number(process.env[envVar])
-    return Number.isFinite(v) && v > 0 ? v : fallback
-  }
-  return {
-    boost: num('SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY', 1.5),
-    dampen: num('SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS', 0.85),
-    floor: 0.35,
-    bm25: process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK === 'bm25',
-  }
-}
-
-export function updateBaseline(
-  report: MetricsReport,
-  opts: { baselinePath?: string; stateFile?: string } = {}
-): void {
-  const baselinePath = opts.baselinePath ?? BASELINE_PATH
-  const stateFile = opts.stateFile ?? resolveIndexStateFile()
-  let existingCurrent: number | null = null
-  let existingByCategoryCurrent: Record<string, number> | null = null
-  if (existsSync(baselinePath)) {
-    try {
-      const existing = JSON.parse(readFileSync(baselinePath, 'utf8')) as Partial<BaselineFile>
-      if (typeof existing.current === 'number') existingCurrent = existing.current
-      if (existing.byCategory && existing.byCategory.recallAt5) {
-        existingByCategoryCurrent = existing.byCategory.recallAt5
-      }
-    } catch {
-      // malformed baseline — start fresh
-    }
-  }
-  const currentByCategoryRecall: Record<string, number> = {}
-  const currentByCategoryCount: Record<string, number> = {}
-  for (const [cat, ms] of Object.entries(report.byCategory)) {
-    currentByCategoryRecall[cat] = ms.recallAt5
-    currentByCategoryCount[cat] = ms.count
-  }
-  // SMI-4763: recompute corpus stats from the live index-state file on every
-  // run. The previous implementation carried `existingCorpus` forward from the
-  // prior baseline.json, so once the value was wrong it stayed wrong even as
-  // the index grew (e.g., 1325 files → 1500 files would still report 1325).
-  const freshCorpus = readCorpusStatsFromIndex(stateFile)
-  const updated: BaselineFile = {
-    prior: existingCurrent,
-    current: report.overall.recallAt5,
-    generated: new Date().toISOString().split('T')[0],
-    corpus: freshCorpus,
-    knobs: readKnobsFromEnv(),
-    metrics: {
-      recallAt5: report.overall.recallAt5,
-      recallAt10: report.overall.recallAt10,
-      mrr: report.overall.mrr,
-      ndcgAt10: report.overall.ndcgAt10,
-    },
-    byCategory: {
-      recallAt5: currentByCategoryRecall,
-      recallAt5Prior: existingByCategoryCurrent,
-      count: currentByCategoryCount,
-    },
-  }
-  const serialized = JSON.stringify(updated, null, 2) + '\n'
-  writeFileSync(baselinePath, serialized, 'utf8')
-  emitBaselineSignature(serialized)
-}
-
-// SMI-5708 Task #1 — real-mode category filtering must never overwrite the
-// canonical baseline. `updateBaseline()` writes the GLOBAL, all-category
-// baseline.json that check-baseline-drift.ts's CI gate depends on; a
-// `--category X`-filtered real-mode run only computed metrics over that one
-// category, so calling updateBaseline() with its report would silently
-// replace the canonical multi-category baseline with single-category numbers.
-// Extracted as its own function (rather than inlining the branch in main())
-// so the skip-vs-write decision is unit-testable without exercising the real
-// search/rerank pipeline: tests inject a stub in place of the real
-// `updateBaseline` via `updateBaselineFn`, or exercise the real function
-// against a temp baselinePath/stateFile (see eval-runner.test.ts).
-export function maybeUpdateBaseline(
-  report: MetricsReport,
-  opts: { category: string | null },
-  updateBaselineOpts: { baselinePath?: string; stateFile?: string } = {},
-  updateBaselineFn: (
-    report: MetricsReport,
-    opts?: { baselinePath?: string; stateFile?: string }
-  ) => void = updateBaseline
-): boolean {
-  if (opts.category !== null) {
-    process.stderr.write(
-      [
-        `Filtered real-mode run (--category ${opts.category}): eval-only.`,
-        'baseline.json was NOT updated — a category-filtered run only computes',
-        'metrics for that one category and must never overwrite the canonical,',
-        'all-category baseline. To refresh baseline.json, run an unfiltered',
-        'real-mode pass (RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval, no --category),',
-        'which recomputes all categories.',
-        '',
-      ].join('\n')
-    )
-    return false
-  }
-  updateBaselineFn(report, updateBaselineOpts)
-  return true
 }
 
 // ---------------------------------------------------------------------------

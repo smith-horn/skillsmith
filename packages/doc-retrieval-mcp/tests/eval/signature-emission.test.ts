@@ -24,7 +24,19 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // resolve: tests/eval -> tests -> doc-retrieval-mcp -> packages -> repo
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..')
-const EVAL_RUNNER = join(REPO_ROOT, 'packages', 'doc-retrieval-mcp', 'eval', 'eval-runner.ts')
+// SMI-5708 Item #3: updateBaseline() (the actual emitBaselineSignature call
+// site) moved from eval-runner.ts into eval-runner-baseline.ts to keep the
+// parent file under the 500-line gate -- mirrors this same file's own
+// SMI-4764 Wave 1 history (signature helpers out of eval-runner.ts into
+// eval-runner-signatures.ts). eval-runner.ts still re-exports updateBaseline
+// so `../../eval/eval-runner.js` imports are unaffected.
+const EVAL_RUNNER_BASELINE = join(
+  REPO_ROOT,
+  'packages',
+  'doc-retrieval-mcp',
+  'eval',
+  'eval-runner-baseline.ts'
+)
 const EVAL_SIGNATURES = join(
   REPO_ROOT,
   'packages',
@@ -86,10 +98,11 @@ describe('SMI-4764 Wave 0: signature emission invariants', () => {
     expect(sigSrc).toContain('eval-signatures')
     expect(sigSrc).toContain('SIGNATURE_LOG_MAX_LINES')
     expect(sigSrc).toContain('createHash')
-    // eval-runner.ts must still import + invoke the helper.
-    const runnerSrc = readFileSync(EVAL_RUNNER, 'utf8')
-    expect(runnerSrc).toContain("from './eval-runner-signatures.js'")
-    expect(runnerSrc).toContain('emitBaselineSignature(serialized)')
+    // updateBaseline() (eval-runner-baseline.ts as of SMI-5708 Item #3) must
+    // still import + invoke the helper.
+    const runnerBaselineSrc = readFileSync(EVAL_RUNNER_BASELINE, 'utf8')
+    expect(runnerBaselineSrc).toContain("from './eval-runner-signatures.js'")
+    expect(runnerBaselineSrc).toContain('emitBaselineSignature(serialized)')
   })
 
   it('FIFO trim retains exactly the last 15 entries (cap matches SIGNATURE_LOG_MAX_LINES)', () => {

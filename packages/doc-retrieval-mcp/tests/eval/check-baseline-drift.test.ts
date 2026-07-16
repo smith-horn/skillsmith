@@ -25,9 +25,18 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 // Convenience factories
+// SMI-5708 Item #3 (Codex review finding, Medium): validateBaselineFile now
+// runs unconditionally in evaluateDrift, so every fixture passed to it must
+// itself be schema-valid -- current can never be null in a real baseline.json
+// (updateBaseline() always writes a real computed number), and a null prior
+// requires the bootstrapped marker. This factory represents a genuine
+// first-ever run (no prior data), which is exactly what bootstrapped: true
+// exists to mark -- current: 0 is a valid placeholder (in-range), not a
+// magic sentinel.
 const nullBaseline = (): BaselineFile => ({
   prior: null,
-  current: null,
+  current: 0,
+  bootstrapped: true,
   generated: '2026-05-05',
   corpus: { filesScanned: 0, chunksUpserted: 0 },
   knobs: { boost: 1.5, dampen: 0.85, floor: 0.35, bm25: false },
@@ -136,13 +145,16 @@ describe('evaluateDrift', () => {
   })
 
   // -------------------------------------------------------------------------
-  // (f) baseline.json changed, prior is null -> skip regression (M1)
+  // (f) baseline.json changed, prior is null + bootstrapped -> skip regression (M1)
   // -------------------------------------------------------------------------
 
-  it('(f) skips regression check when prior is null (first real-mode run)', () => {
+  it('(f) skips regression check when prior is null AND bootstrapped: true (genuine first real-mode run)', () => {
     const changedFiles = ['packages/doc-retrieval-mcp/eval/baseline.json']
     // current is very low but prior is null -- should pass
-    const result = evaluateDrift(changedFiles, populatedBaseline(null, 0.1))
+    const result = evaluateDrift(changedFiles, {
+      ...populatedBaseline(null, 0.1),
+      bootstrapped: true,
+    })
     expect(result.pass).toBe(true)
     expect(result.message).toContain('prior is null')
     expect(result.message).not.toContain('::error::')
@@ -343,11 +355,17 @@ describe('evaluateDrift', () => {
       const changedFiles = ['packages/doc-retrieval-mcp/eval/baseline.json']
       const baseline = hybridBaseline(0.4, 0.4, TODAY_PRIOR)
       baseline.prior = null // first real-mode run
+      baseline.bootstrapped = true // written only by updateBaseline()'s bootstrap branch
       const result = evaluateDrift(changedFiles, baseline)
       expect(result.pass).toBe(true)
       expect(result.message).toContain('prior is null')
     })
   })
+
+  // SMI-5708 Item #3's schema-validation unit + integration tests moved to
+  // check-baseline-drift-validation.test.ts to keep this file under the
+  // 500-line standard (audit:standards Check 3), mirroring the same-reason
+  // split of check-baseline-drift-validation.ts itself.
 })
 
 // ---------------------------------------------------------------------------
