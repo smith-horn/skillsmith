@@ -32,6 +32,12 @@ const SIGNATURES_REL = 'packages/doc-retrieval-mcp/eval/.signatures.log'
 interface Fixture {
   dir: string
   baselineSha: string
+  // SMI-5708 Item #5 -- the fixture's two real commit shas, exposed so tests
+  // can construct signature lines with a real, git-resolvable headSha
+  // (either the "change" commit itself, an ancestor of it, or an unrelated
+  // commit) instead of the pre-Item-#5 placeholder all-zero sha.
+  baseSha: string
+  headSha: string
 }
 
 function shaOf(content: string): string {
@@ -91,12 +97,11 @@ function setupRepo(opts: {
   execFileSync('git', ['commit', '-q', '-m', 'change'], { cwd: dir, env })
   const headSha = git(dir, 'rev-parse', 'HEAD')
 
-  // Stdin synthesis happens in run() below using HEAD~1..HEAD; the explicit
-  // shas just exist here to assert the layout is wired correctly.
-  void headSha
-  void baseSha
+  // Stdin synthesis happens in run() below using HEAD~1..HEAD by default;
+  // baseSha/headSha are also exposed on the returned Fixture (SMI-5708 Item
+  // #5) so tests can build real, git-resolvable signature headSha values.
 
-  return { dir, baselineSha: shaOf(opts.baselineContent) }
+  return { dir, baselineSha: shaOf(opts.baselineContent), baseSha, headSha }
 }
 
 function run(
@@ -129,9 +134,28 @@ function run(
   }
 }
 
-function freshSignatureLine(sha: string, ageMs = 0): string {
+// SMI-5708 Item #5 -- `headSha` must be a real, git-resolvable sha (the
+// current HEAD, one of its ancestors, or a deliberately-unrelated commit for
+// the rejection tests below) now that the validator checks headSha ancestry.
+// The pre-Item-#5 version of this helper hardcoded an all-zero placeholder,
+// which the new check now rejects as an unresolvable/unverifiable sha -- any
+// test still relying on that placeholder must instead pass a real sha.
+function freshSignatureLine(sha: string, headSha: string, ageMs = 0): string {
   const ts = new Date(Date.now() - ageMs).toISOString()
-  return `${sha}\t${ts}\t0000000000000000000000000000000000000000`
+  return `${sha}\t${ts}\t${headSha}`
+}
+
+// Overwrite .signatures.log directly on disk (uncommitted). The validator
+// reads baseline.json/.signatures.log straight off the filesystem -- never
+// via `git show` -- so this does not require (and, for a headSha equal to
+// the fixture's own final commit, CANNOT require, since a commit cannot
+// embed its own resulting sha in its own committed content) a new commit.
+function writeSignatureLog(fixture: Fixture, lines: string[]): void {
+  writeFileSync(
+    join(fixture.dir, SIGNATURES_REL),
+    lines.length === 0 ? '' : lines.join('\n') + '\n',
+    'utf8'
+  )
 }
 
 describe('eval-baseline-validator', () => {
@@ -211,10 +235,13 @@ describe('eval-baseline-validator', () => {
     const f = track(
       setupRepo({
         baselineContent: newBaseline,
-        signatureLines: [freshSignatureLine(sha)],
         modifyFiles: ['packages/doc-retrieval-mcp/src/rerank.ts'],
       })
     )
+    // Signature's headSha === the fixture's own final commit (the current
+    // HEAD the validator will see) -- the exact-match branch of Item #5's
+    // ancestor check.
+    writeSignatureLog(f, [freshSignatureLine(sha, f.headSha)])
     const r = run(f, { canonical: true })
     expect(r.status).toBe(0)
     expect(r.stderr).toBe('')
@@ -227,10 +254,10 @@ describe('eval-baseline-validator', () => {
     const f = track(
       setupRepo({
         baselineContent: newBaseline,
-        signatureLines: [freshSignatureLine(sha, eightDaysMs)],
         modifyFiles: ['packages/doc-retrieval-mcp/src/rerank.ts'],
       })
     )
+    writeSignatureLog(f, [freshSignatureLine(sha, f.headSha, eightDaysMs)])
     const r = run(f, { canonical: true })
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('stale')
@@ -244,10 +271,10 @@ describe('eval-baseline-validator', () => {
     const f = track(
       setupRepo({
         baselineContent: newBaseline,
-        signatureLines: [freshSignatureLine(sha, thirtyHoursMs)],
         modifyFiles: ['packages/doc-retrieval-mcp/src/corpus.config.json'],
       })
     )
+    writeSignatureLog(f, [freshSignatureLine(sha, f.headSha, thirtyHoursMs)])
     const r = run(f, { canonical: true })
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('stale')
@@ -261,10 +288,10 @@ describe('eval-baseline-validator', () => {
     const f = track(
       setupRepo({
         baselineContent: newBaseline,
-        signatureLines: [freshSignatureLine(sha, thirtyHoursMs)],
         modifyFiles: ['packages/doc-retrieval-mcp/eval/gold-set.json'],
       })
     )
+    writeSignatureLog(f, [freshSignatureLine(sha, f.headSha, thirtyHoursMs)])
     const r = run(f, { canonical: true })
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('24h')
@@ -279,13 +306,13 @@ describe('eval-baseline-validator', () => {
     const f = track(
       setupRepo({
         baselineContent: newBaseline,
-        signatureLines: [freshSignatureLine(sha, fiveDaysMs)],
         modifyFiles: [
           'packages/doc-retrieval-mcp/src/rerank.ts',
           'packages/doc-retrieval-mcp/eval/gold-set.json',
         ],
       })
     )
+    writeSignatureLog(f, [freshSignatureLine(sha, f.headSha, fiveDaysMs)])
     const r = run(f, { canonical: true })
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('24h')
@@ -298,10 +325,10 @@ describe('eval-baseline-validator', () => {
     const f = track(
       setupRepo({
         baselineContent: newBaseline,
-        signatureLines: [freshSignatureLine(sha, eightDaysMs)],
         modifyFiles: ['packages/doc-retrieval-mcp/src/rerank.ts'],
       })
     )
+    writeSignatureLog(f, [freshSignatureLine(sha, f.headSha, eightDaysMs)])
     const r = run(f, { canonical: false })
     expect(r.status).toBe(0)
     expect(r.stderr).toContain('advisory mode')
@@ -360,4 +387,10 @@ describe('eval-baseline-validator', () => {
     expect(r.stderr).toContain('WARN (advisory mode')
     expect(r.stderr).toContain('diff-resolution failure')
   })
+
+  // -------------------------------------------------------------------------
+  // SMI-5708 Item #5's headSha ancestor-check tests (exact-ancestor,
+  // non-ancestor rejection, and the multi-entry selection fix) moved to
+  // eval-baseline-validator-headsha.test.ts to keep this file under the
+  // 500-line standard.
 })

@@ -20,7 +20,7 @@
  * succeeded. That file -- not the per-developer marker below, which has no
  * other reader anywhere in this repo (`grep -rn "eval-signatures"
  * packages/ scripts/` confirms it) -- is exclusively what
- * `scripts/eval-baseline-validator.mjs`'s `lookupSignature()` consults, so
+ * `scripts/eval-baseline-validator.mjs`'s `lookupSignatures()` consults, so
  * its failure (and only its failure) is what later produces a confusing
  * pre-push rejection with no visible link back to this run. The caller
  * (`updateBaseline()` in eval-runner-baseline.ts) plumbs this boolean up to

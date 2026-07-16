@@ -12,7 +12,7 @@
 
 import { parseArgs } from 'node:util'
 import { createHash } from 'node:crypto'
-import { execSync } from 'child_process'
+import { execSync, execFileSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { dirname, extname, join, relative, resolve as resolvePath } from 'path'
 import {
@@ -3085,6 +3085,67 @@ console.log(`\n${BOLD}44. Eval Cron Heartbeat Freshness (SMI-4764 Wave 2)${RESET
 // RETRIEVAL_EVAL_REAL=1 locally. Never fails CI; never bumps the global
 // failure or warning counters. This is observability, not security; ed25519
 // cryptographic signing is Wave 5.
+//
+// SMI-5708 Item #5(d) / plan-review finding H3: this is the SECOND, independent
+// consumer of .signatures.log (the first is scripts/eval-baseline-validator.mjs's
+// lookupSignatures()) — it does its own inline lookup rather than calling that
+// function. When eval-baseline-validator.mjs gained a headSha-ancestor check
+// (SMI-5708 Item #5(a)), this check would otherwise silently imply a STRONGER
+// guarantee than it actually verifies (content-hash match only). To keep the
+// two consumers' guarantees honest and in sync, this now performs the same
+// ancestor-tolerant headSha check (see isEvalSignatureHeadShaAcceptable below)
+// and annotates the weaker case distinctly, rather than reporting a plain
+// "present" pass for a signature recorded against an unrelated commit.
+//
+// Mirrors scripts/eval-baseline-validator.mjs's isHeadShaAcceptable(): a
+// signature's headSha is accepted if it IS the current git HEAD, or an
+// ANCESTOR of it (not required to match exactly — SMI-2597 wave-branch-
+// stacking routinely lands new commits on top of the one a signature was
+// recorded against, and an exact-match requirement would false-flag a
+// still-legitimately-fresh signature purely because later commits landed on
+// the branch. This does NOT tolerate an actual rebase/amend, which produces
+// a sibling commit rather than a descendant — correctly requiring a fresh
+// signature there, per Codex review finding).
+//
+// Uses execFileSync (not this file's more common execSync string-
+// interpolation pattern) because headSha comes from `.signatures.log`, a
+// file a PR diff can influence — passing it through a shell string would be
+// an avoidable command-injection surface. Fails closed: any git error
+// (unresolvable sha, missing history, etc.) returns false, same as "not an
+// ancestor" — never treated as a pass.
+//
+// Test coverage note (Opus review, Low): this function is a verbatim mirror
+// of scripts/eval-baseline-validator.mjs's isHeadShaAcceptable() -- same git
+// commands, same fail-closed semantics, same exact-match-then-ancestor
+// logic. That function is already thoroughly proven correct via real git
+// fixtures in scripts/tests/eval-baseline-validator.test.ts (exact match,
+// true ancestor, non-ancestor, unresolvable-sha cases). Not duplicating a
+// second fixture-repo test suite here for byte-for-byte identical logic --
+// Check 45 is advisory-only (never fails CI, never bumps warn/fail
+// counters), and this file has no existing git-fixture test harness of its
+// own (its sibling scripts/tests/audit-standards*.test.ts files test pure
+// string/parsing helpers only). If this function's logic ever diverges from
+// its eval-baseline-validator.mjs counterpart, both should gain their own
+// fixture coverage at that point.
+function isEvalSignatureHeadShaAcceptable(candidateSha) {
+  if (!candidateSha || candidateSha.trim().length === 0) return false
+  let currentHead
+  try {
+    currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  } catch {
+    return false
+  }
+  if (candidateSha === currentHead) return true
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', candidateSha, currentHead], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 console.log(`\n${BOLD}45. Eval Baseline Signature Provenance (SMI-4764 Wave 3)${RESET}`)
 {
   const baselinePath = 'packages/doc-retrieval-mcp/eval/baseline.json'
@@ -3128,15 +3189,47 @@ console.log(`\n${BOLD}45. Eval Baseline Signature Provenance (SMI-4764 Wave 3)${
       const sigLines = readFileSync(sigsPath, 'utf8')
         .split('\n')
         .filter((l) => l.length > 0)
-      // Each line: <ISO-timestamp>\t<sha256>\t<commit-sha-or-none>
-      // We accept a match in any column that equals the baseline sha; the
-      // canonical column is index 1 but ed25519 evolution may shift layout.
-      const matched = sigLines.some((line) => {
-        const cols = line.split('\t')
-        return cols.includes(sha)
-      })
-      if (matched) {
-        pass(`baseline.json sha256 ${sha.slice(0, 12)}… present in .signatures.log`)
+      // Actual layout (matches the writer, packages/doc-retrieval-mcp/eval/
+      // eval-runner-signatures.ts): <sha256>\t<ISO-timestamp>\t<headSha>, sha
+      // at index 0. (Opus review finding: an older version of this comment
+      // claimed <ISO-timestamp>\t<sha256>\t<commit-sha-or-none> with sha at
+      // index 1 -- that was already wrong before this change and contradicted
+      // the correct layout note just below; corrected here rather than left
+      // to drift further out of sync.)
+      //
+      // Collect ALL matching lines, not just the first (Codex review finding,
+      // High): the same baseline.json content can legitimately be re-signed
+      // more than once within the log's 15-line FIFO window (e.g. re-running
+      // the eval after a commit that didn't change ranking/corpus/gold-set),
+      // and an older entry's headSha could be stale/non-ancestor while a
+      // later entry for the SAME content has a valid one. Checking only the
+      // first match would let the older entry's staleness shadow the later,
+      // valid signature.
+      const matchingLines = sigLines.filter((line) => line.split('\t')[0] === sha)
+      if (matchingLines.length > 0) {
+        // Content-hash matched at least one entry. Also check headSha
+        // ancestry (SMI-5708 Item #5(d) / H3) so this check doesn't imply a
+        // stronger guarantee than eval-baseline-validator.mjs now provides
+        // for the same log -- pass if ANY matching entry has an acceptable
+        // headSha, not only the first.
+        const recordedHeadShas = matchingLines.map((line) => line.split('\t')[2])
+        const anyAcceptable = recordedHeadShas.some((headSha) =>
+          isEvalSignatureHeadShaAcceptable(headSha)
+        )
+        if (anyAcceptable) {
+          pass(
+            `baseline.json sha256 ${sha.slice(0, 12)}… present in .signatures.log (headSha verified)`
+          )
+        } else {
+          // Advisory: never fails CI, never bumps warn/fail counters.
+          advisoryCount++
+          console.log(
+            `ℹ INFO: baseline.json sha256 ${sha.slice(0, 12)}… matches .signatures.log, but none of its recorded headSha(s) are the current HEAD or an ancestor of it; this can mean the signature(s) were recorded against an unrelated branch or a commit never merged into this history. Reviewer please verify the developer ran RETRIEVAL_EVAL_REAL=1 against this history before merging.`
+          )
+          console.log(
+            `  recorded headSha(s): ${recordedHeadShas.map((h) => h || '(none)').join(', ')}`
+          )
+        }
       } else {
         // Advisory: never fails CI, never bumps warn/fail counters.
         advisoryCount++
