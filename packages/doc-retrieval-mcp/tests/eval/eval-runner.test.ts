@@ -30,18 +30,37 @@
  * out to `git rev-parse`. Exercising the real `updateBaseline()` in the
  * "end-to-end" tests below (to prove actual baseline.json file behavior,
  * not just a mock call count) must not have that side effect on repo state.
+ *
+ * SMI-5708 Item #4 — the mock factory now uses `importOriginal` to keep
+ * `writeFileAtomicSync` real (only `emitBaselineSignature` is replaced):
+ * `updateBaseline()` now imports BOTH from `eval-runner-signatures.js`, and a
+ * bare `{ emitBaselineSignature: vi.fn() }` replacement would leave
+ * `writeFileAtomicSync` `undefined`, breaking every real `updateBaseline()`
+ * call below. `writeFileAtomicSync` only ever touches this suite's own temp
+ * `baselinePath`, never the committed `.signatures.log`.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { maybeUpdateBaseline, updateBaseline, type BaselineFile } from '../../eval/eval-runner.js'
+import {
+  maybeUpdateBaseline,
+  updateBaseline,
+  buildBaselineSignatureWarning,
+  type BaselineFile,
+  type UpdateBaselineResult,
+} from '../../eval/eval-runner.js'
+import { emitBaselineSignature } from '../../eval/eval-runner-signatures.js'
 import type { MetricsReport } from '../../eval/metrics.js'
 
-vi.mock('../../eval/eval-runner-signatures.js', () => ({
-  emitBaselineSignature: vi.fn(),
-}))
+vi.mock('../../eval/eval-runner-signatures.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../eval/eval-runner-signatures.js')>()
+  return {
+    ...actual,
+    emitBaselineSignature: vi.fn(),
+  }
+})
 
 let tmpDir: string
 
@@ -158,5 +177,110 @@ describe('maybeUpdateBaseline (SMI-5708 Task #1 regression guard)', () => {
     expect(wrote).toBe(true)
     expect(after.current).toBe(0.65)
     expect(after.prior).toBe(0.5) // promoted from the previous run, confirming the write happened
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5708 Item #4 — outcome out-param plumbing + summary-warning helper
+// ---------------------------------------------------------------------------
+
+describe('maybeUpdateBaseline outcome out-param (SMI-5708 Item #4)', () => {
+  it('omitting the outcome param is byte-for-byte identical to before this change (existing boolean contract untouched)', () => {
+    // All pre-existing call sites (this file's earlier tests, corpus-stats
+    // tests) call with 3 or 4 args and never pass a 5th `outcome` arg. This
+    // proves that shape still works and still returns a plain boolean.
+    const updateBaselineFn = vi.fn().mockReturnValue({ signatureEmitted: true })
+    const wrote = maybeUpdateBaseline(makeReport(0.6), { category: null }, {}, updateBaselineFn)
+    expect(wrote).toBe(true)
+  })
+
+  it('populates outcome.signatureEmitted from the injected updateBaselineFn result when a write is attempted', () => {
+    const updateBaselineFn = vi.fn().mockReturnValue({ signatureEmitted: false })
+    const outcome: UpdateBaselineResult = { signatureEmitted: true } // starts true, must flip to false
+
+    const wrote = maybeUpdateBaseline(
+      makeReport(0.6),
+      { category: null },
+      {},
+      updateBaselineFn,
+      outcome
+    )
+
+    expect(wrote).toBe(true)
+    expect(outcome.signatureEmitted).toBe(false)
+  })
+
+  it('leaves outcome untouched when the write is skipped (category-filtered run)', () => {
+    const updateBaselineFn = vi.fn().mockReturnValue({ signatureEmitted: false })
+    const outcome: UpdateBaselineResult = { signatureEmitted: true }
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+
+    const wrote = maybeUpdateBaseline(
+      makeReport(0.6),
+      { category: 'general-docs' },
+      {},
+      updateBaselineFn,
+      outcome
+    )
+    stderrSpy.mockRestore()
+
+    expect(wrote).toBe(false)
+    expect(updateBaselineFn).not.toHaveBeenCalled()
+    // Never touched: still whatever the caller initialized it to.
+    expect(outcome.signatureEmitted).toBe(true)
+  })
+
+  it('a truthy-but-not-exactly-false signatureEmitted value is not mistaken for a failure (typeof check, not truthiness)', () => {
+    // Regression guard: an earlier draft of this plumbing used a truthy
+    // check (`if (result?.signatureEmitted)`) which would have silently
+    // treated `signatureEmitted: false` as "nothing to report" -- exactly
+    // backwards. This test pins the correct behavior from the other
+    // direction: a genuinely-`true` result must set outcome to `true`.
+    const updateBaselineFn = vi.fn().mockReturnValue({ signatureEmitted: true })
+    const outcome: UpdateBaselineResult = { signatureEmitted: false }
+
+    maybeUpdateBaseline(makeReport(0.6), { category: null }, {}, updateBaselineFn, outcome)
+
+    expect(outcome.signatureEmitted).toBe(true)
+  })
+
+  it('end-to-end (real updateBaseline, mocked emitBaselineSignature): outcome reflects a real signature-emission failure', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    vi.mocked(emitBaselineSignature).mockReturnValueOnce(false)
+
+    const outcome: UpdateBaselineResult = { signatureEmitted: true }
+    const wrote = maybeUpdateBaseline(
+      makeReport(0.5),
+      { category: null },
+      { baselinePath, stateFile },
+      updateBaseline,
+      outcome
+    )
+
+    expect(wrote).toBe(true)
+    expect(outcome.signatureEmitted).toBe(false)
+    // The baseline write itself must have succeeded regardless.
+    const written = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
+    expect(written.current).toBe(0.5)
+  })
+})
+
+describe('buildBaselineSignatureWarning (SMI-5708 Item #4)', () => {
+  it('returns null when no write was attempted, regardless of the stale outcome value', () => {
+    expect(buildBaselineSignatureWarning(false, { signatureEmitted: false })).toBeNull()
+    expect(buildBaselineSignatureWarning(false, { signatureEmitted: true })).toBeNull()
+  })
+
+  it('returns null when a write was attempted and signature emission succeeded', () => {
+    expect(buildBaselineSignatureWarning(true, { signatureEmitted: true })).toBeNull()
+  })
+
+  it('returns a non-null warning mentioning the signature log and the pre-push validator when a write was attempted and signature emission failed', () => {
+    const warning = buildBaselineSignatureWarning(true, { signatureEmitted: false })
+    expect(warning).not.toBeNull()
+    expect(warning).toContain('.signatures.log')
+    expect(warning).toContain('eval-baseline-validator.mjs')
+    expect(warning).toContain('WARNING')
   })
 })

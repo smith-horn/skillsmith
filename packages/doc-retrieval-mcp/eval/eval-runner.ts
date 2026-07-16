@@ -26,10 +26,17 @@ import { computeMetrics } from './metrics.js'
 // SMI-4764 Wave 0 / SMI-5708 Item #3 — baseline.json read/write helpers live
 // in a sibling file to keep this file under the 500-line gate. Re-exported
 // below (a plain `export { ... } from`, not a separate import — only
-// resolveIndexStateFile and maybeUpdateBaseline are used locally in this
-// file) so existing imports of `../../eval/eval-runner.js`
-// (corpus-stats.test.ts, eval-runner.test.ts) are unaffected.
-import { resolveIndexStateFile, maybeUpdateBaseline } from './eval-runner-baseline.js'
+// resolveIndexStateFile, maybeUpdateBaseline, and updateBaseline (SMI-5708
+// Item #4 — passed explicitly to maybeUpdateBaseline below so main() can
+// wire up the outcome out-param) are used locally in this file) so existing
+// imports of `../../eval/eval-runner.js` (corpus-stats.test.ts,
+// eval-runner.test.ts) are unaffected.
+import {
+  resolveIndexStateFile,
+  maybeUpdateBaseline,
+  updateBaseline,
+  type UpdateBaselineResult,
+} from './eval-runner-baseline.js'
 
 export {
   resolveIndexStateFile,
@@ -37,6 +44,7 @@ export {
   updateBaseline,
   maybeUpdateBaseline,
   type BaselineFile,
+  type UpdateBaselineResult,
 } from './eval-runner-baseline.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -195,6 +203,38 @@ function renderMarkdownTable(report: MetricsReport, showDifficulty: boolean): st
   return lines.join('\n')
 }
 
+// SMI-5708 Item #4 — pure, directly-testable helper for the visibility half
+// of this fix: given whether a baseline write was attempted and its
+// signature-emission outcome, decide the warning text (if any) to surface in
+// this run's own output. Kept as a small pure function (rather than inlined
+// in main()) so it's unit-testable without invoking the real search/rerank
+// pipeline main() otherwise requires.
+//
+// Returns null when there's nothing to warn about: either no write was
+// attempted (a `--category`-filtered run, per Task #1) or the write's
+// signature emission succeeded. The `!== false` check (not a truthy check)
+// matters here too: `outcome.signatureEmitted` is only ever `true` or
+// `false` in practice, but treating it as "anything not exactly `false`
+// means no warning" keeps the same non-truthy-check discipline as the rest
+// of this fix.
+export function buildBaselineSignatureWarning(
+  wrote: boolean,
+  outcome: UpdateBaselineResult
+): string | null {
+  if (!wrote || outcome.signatureEmitted !== false) {
+    return null
+  }
+  return [
+    'WARNING: baseline.json was updated but signature emission to',
+    'eval/.signatures.log FAILED. The pre-push validator',
+    '(scripts/eval-baseline-validator.mjs) will not find a matching signature',
+    'for this baseline and will reject it as stale/unsigned. See the',
+    '"warning: failed to update .signatures.log" line above (stderr) for the',
+    'underlying I/O error, fix it, then re-run',
+    'RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval to re-emit a matching signature.',
+  ].join(' ')
+}
+
 // ---------------------------------------------------------------------------
 // runRealMode — exported for ablation-runner (Worker 2 refactor, SMI-4702)
 //
@@ -260,11 +300,29 @@ async function main(): Promise<void> {
   if (realMode) {
     results = await buildRealResults(entries)
     const report = computeMetrics(results)
-    maybeUpdateBaseline(report, opts)
+    // SMI-5708 Item #4 — signature-emission failure stays non-fatal to this
+    // run (the pre-push validator is the intended backstop, per this file's
+    // own long-standing design), but must be visible in the run's own
+    // output, not just a stderr warning that can scroll past unnoticed.
+    // `signatureEmitted` starts `true`: maybeUpdateBaseline() only
+    // overwrites it when a write was actually attempted, so a skipped write
+    // (a filtered --category run, Task #1) correctly implies "nothing to
+    // warn about" rather than a false alarm.
+    const baselineOutcome: UpdateBaselineResult = { signatureEmitted: true }
+    const wrote = maybeUpdateBaseline(report, opts, {}, updateBaseline, baselineOutcome)
+    const signatureWarning = buildBaselineSignatureWarning(wrote, baselineOutcome)
     if (opts.json) {
-      process.stdout.write(JSON.stringify(report, null, 2) + '\n')
+      const jsonOutput: MetricsReport & { baselineSignatureWarning?: string } =
+        signatureWarning !== null
+          ? { ...report, baselineSignatureWarning: signatureWarning }
+          : report
+      process.stdout.write(JSON.stringify(jsonOutput, null, 2) + '\n')
     } else {
-      process.stdout.write(renderMarkdownTable(report, opts.difficulty))
+      let markdown = renderMarkdownTable(report, opts.difficulty)
+      if (signatureWarning !== null) {
+        markdown += `\n### WARNING\n\n${signatureWarning}\n`
+      }
+      process.stdout.write(markdown)
     }
   } else {
     results = buildMockResults(entries)

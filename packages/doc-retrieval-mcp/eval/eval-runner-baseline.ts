@@ -8,12 +8,16 @@
  * eval-runner.test.ts) are unaffected.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { MetricsReport } from './metrics.js'
 import { resolveRepoPath } from '../src/config.js'
-import { emitBaselineSignature } from './eval-runner-signatures.js'
+// SMI-5708 Item #4 — writeFileAtomicSync is the same write-to-temp-then-
+// rename helper eval-runner-signatures.ts uses for `.signatures.log`; reused
+// here (rather than duplicated) so both shared-state writes this plan's
+// P-5 table covers go through one, single-source-of-truth implementation.
+import { emitBaselineSignature, writeFileAtomicSync } from './eval-runner-signatures.js'
 // SMI-5708 Item #3 (Codex round-2 review, High) — reuse the SAME schema
 // validator the reader (check-baseline-drift.ts) uses, rather than a bare
 // `typeof === 'number'` check. A bare type check let an existing baseline.json
@@ -120,6 +124,20 @@ export interface BaselineFile {
   bootstrapped?: boolean
 }
 
+// SMI-5708 Item #4 — result of a single `updateBaseline()` call, surfaced up
+// through `maybeUpdateBaseline()`'s optional `outcome` out-param to
+// `main()`'s run summary (eval-runner.ts's `buildBaselineSignatureWarning`).
+// `signatureEmitted` mirrors `emitBaselineSignature()`'s own return value:
+// `false` means the write to the shared `eval/.signatures.log` failed. That
+// failure is still non-fatal to this function/the overall run (baseline.json
+// itself was written successfully either way -- the whole point of Item #4's
+// atomic-write fix is that a partial write is no longer possible), but a
+// developer needs to see this before they push and hit a confusing,
+// seemingly-unrelated pre-push validator rejection.
+export interface UpdateBaselineResult {
+  signatureEmitted: boolean
+}
+
 function readKnobsFromEnv(): BaselineFile['knobs'] {
   const num = (envVar: string, fallback: number): number => {
     const v = Number(process.env[envVar])
@@ -136,7 +154,7 @@ function readKnobsFromEnv(): BaselineFile['knobs'] {
 export function updateBaseline(
   report: MetricsReport,
   opts: { baselinePath?: string; stateFile?: string } = {}
-): void {
+): UpdateBaselineResult {
   const baselinePath = opts.baselinePath ?? BASELINE_PATH
   const stateFile = opts.stateFile ?? resolveIndexStateFile()
   let existingCurrent: number | null = null
@@ -223,8 +241,15 @@ export function updateBaseline(
     },
   }
   const serialized = JSON.stringify(updated, null, 2) + '\n'
-  writeFileSync(baselinePath, serialized, 'utf8')
-  emitBaselineSignature(serialized)
+  // SMI-5708 Item #4 — write-to-temp-then-rename instead of a direct
+  // writeFileSync: an interrupted run (Ctrl-C, OOM, crash) between opening
+  // the file and finishing the write used to be able to leave a truncated
+  // baseline.json on disk. A failure here (temp write or rename) throws and
+  // is NOT caught -- unlike signature emission below, a baseline.json write
+  // failure must fail the run loudly, not silently.
+  writeFileAtomicSync(baselinePath, serialized)
+  const signatureEmitted = emitBaselineSignature(serialized)
+  return { signatureEmitted }
 }
 
 // SMI-5708 Task #1 — real-mode category filtering must never overwrite the
@@ -245,7 +270,15 @@ export function maybeUpdateBaseline(
   updateBaselineFn: (
     report: MetricsReport,
     opts?: { baselinePath?: string; stateFile?: string }
-  ) => void = updateBaseline
+  ) => UpdateBaselineResult = updateBaseline,
+  // SMI-5708 Item #4 — optional out-param: when provided, populated with the
+  // write's signature-emission outcome so a caller (main()) can surface a
+  // visible warning without changing this function's own return type. All
+  // pre-existing call sites omit this argument and get byte-for-byte
+  // identical behavior to before this change -- this function's own
+  // documented contract (a plain `boolean`, asserted via `toBe(false)` /
+  // `toBe(true)` in eval-runner.test.ts) is untouched.
+  outcome?: UpdateBaselineResult
 ): boolean {
   if (opts.category !== null) {
     process.stderr.write(
@@ -261,6 +294,18 @@ export function maybeUpdateBaseline(
     )
     return false
   }
-  updateBaselineFn(report, updateBaselineOpts)
+  const result = updateBaselineFn(report, updateBaselineOpts)
+  // Presence check on `result.signatureEmitted` is by exact type (`typeof
+  // ... === 'boolean'`), not truthiness: `signatureEmitted: false` is the
+  // one value this whole mechanism exists to detect and propagate, so a
+  // truthy check (`if (result?.signatureEmitted)`) would silently treat the
+  // failure case as "nothing to report" -- exactly backwards.
+  if (
+    outcome !== undefined &&
+    result !== undefined &&
+    typeof result.signatureEmitted === 'boolean'
+  ) {
+    outcome.signatureEmitted = result.signatureEmitted
+  }
   return true
 }

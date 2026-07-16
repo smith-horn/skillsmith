@@ -22,6 +22,17 @@
  * `git rev-parse`. Before this mock, every run of this file appended real
  * lines to that committed file as a side effect of Test 5/5b's three
  * `updateBaseline()` calls.
+ *
+ * SMI-5708 Item #4 — the mock factory now uses `importOriginal` to keep
+ * `writeFileAtomicSync` real (only `emitBaselineSignature` itself is
+ * replaced). `updateBaseline()` now imports BOTH from
+ * `eval-runner-signatures.js`; a bare `{ emitBaselineSignature: vi.fn() }`
+ * replacement (the pre-Item-#4 shape) would leave `writeFileAtomicSync`
+ * `undefined` and break every `updateBaseline()` call below with a
+ * `TypeError`. `writeFileAtomicSync` only ever touches this suite's own
+ * temp `baselinePath`, never the committed `.signatures.log`, so keeping it
+ * real here carries none of the side-effect risk `emitBaselineSignature`
+ * has.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -36,9 +47,13 @@ import {
 } from '../../eval/eval-runner.js'
 import type { MetricsReport } from '../../eval/metrics.js'
 
-vi.mock('../../eval/eval-runner-signatures.js', () => ({
-  emitBaselineSignature: vi.fn(),
-}))
+vi.mock('../../eval/eval-runner-signatures.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../eval/eval-runner-signatures.js')>()
+  return {
+    ...actual,
+    emitBaselineSignature: vi.fn(),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Fixtures and helpers
@@ -328,6 +343,11 @@ describe('updateBaseline (SMI-4763 regression guard)', () => {
     )
   })
 })
+
+// SMI-5708 Item #4 — atomic write + signature-emission-outcome plumbing
+// tests live in the sibling eval-runner-baseline-atomic.test.ts, split out to
+// keep this file under the 500-line standard (same rationale as this plan's
+// two source-file splits).
 
 // ---------------------------------------------------------------------------
 // resolveIndexStateFile — Tests 6-8 (Bug 2 guard)
