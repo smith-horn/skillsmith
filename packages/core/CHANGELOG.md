@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: new `@skillsmith/core/security/scanner` export subpath, exposing `stripInvisible`/`confusableSkeleton`/`CONFUSABLES` for reuse outside the package (SMI-4703) — enables `@skillsmith/doc-retrieval-mcp`'s memory-write injection scanner to reuse the same confusable/homoglyph normalization primitives `SecurityScanner.exec.ts` uses, instead of reimplementing them
 - **Feature**: `grok` (Grok Build, xAI's coding CLI) added as a scanned harness for cross-machine skill inventory — `CLIENT_NATIVE_PATHS`/`CLIENT_IDS` in `install/paths.ts` now include `~/.grok/skills` (SMI-5697)
 - **Fix**: `extractMcpReferences` now parses frontmatter `allowed-tools`/`tools` YAML (bare-server, wildcard, and full forms), detects embedded `mcpServers` JSON-registration blocks, and cross-checks every candidate server name against the project's `.mcp.json` via a new `serverResolutions` map (`registered`/`unregistered`/`unknown`) — candidates are tagged, never excluded (SMI-5676)
 - **Fix**: `extractDepIntel`/`persistDependencies` pass the project's registered MCP server list via the new `getRegisteredMcpServers()` export, which fails open (not to an empty list) when `.mcp.json` is missing or unparseable

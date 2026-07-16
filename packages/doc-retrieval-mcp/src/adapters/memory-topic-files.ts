@@ -5,6 +5,7 @@ import { basename, isAbsolute, join } from 'node:path'
 
 import { chunkBlocks, chunkId, estimateTokens, parseMarkdown } from '../indexer.helpers.js'
 import { resolveSharedProjectDir } from '../retrieval-log/project-dir.js'
+import { scanMemoryChunk } from '../security/memory-injection-scanner.js'
 import type { AdapterContext, AdapterFile, ChunkMetadata, SourceAdapter } from '../types.js'
 
 /**
@@ -130,12 +131,18 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
   // SMI-4450 M3: `kind` and `lifetime` are now set at the chunk
   // construction sites above — both `wholeFileChunk` and the
   // chunkBlocks map — so the mapper here only merges tags.
+  //
+  // SMI-4703 §1/§2: this is the one adapter reading unattended,
+  // agent-authored content — every chunk's `provenanceTier` is the
+  // injection scanner's verdict (per-chunk, not per-file: a large file
+  // could split into one poisoned chunk among several clean ones).
   const baseTags = file.tags ?? {}
   const cls = classifyByFilename(fileBasename)
   return chunks.map((c) => ({
     ...c,
     tags: { ...baseTags, ...(c.tags ?? {}) },
     ...(cls ? { class: cls } : {}),
+    provenanceTier: scanMemoryChunk(c.text).tier,
   }))
 }
 

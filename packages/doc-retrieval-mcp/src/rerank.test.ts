@@ -38,6 +38,10 @@ function makeHit(
       line_end: 10,
       heading_chain: [],
       text,
+      // SMI-4703: default every synthetic hit to tier-a so the pre-existing
+      // ranking-behavior tests below are unaffected by the new hard
+      // exclusion filter. Tests targeting that filter override this.
+      provenance_tier: 'tier-a',
       ...metaOverrides,
     },
   }
@@ -384,5 +388,82 @@ describe('rerank — SMI-4468 per-class boost', () => {
     const impl = makeHit('impl', 0.5, 'impl doc body')
     const out = rerank([impl, feedback], 'q')
     expect(out[0].id).toBe('fb') // boosted to 0.75 vs unboosted 0.5
+  })
+})
+
+describe('rerank — SMI-4703 provenance-tier hard exclusion', () => {
+  it('excludes a quarantine-tier chunk entirely, regardless of similarity', () => {
+    const quarantined = makeHit('q', 0.99, 'high similarity but quarantined', {
+      provenance_tier: 'quarantine',
+    })
+    expect(rerank([quarantined], 'q')).toEqual([])
+  })
+
+  it('excludes a hit with provenance_tier omitted (fail-closed, not defaulted-included)', () => {
+    // Deliberately NOT using makeHit's default so `provenance_tier` is
+    // genuinely absent from `meta` — proves the shared-state audit
+    // invariant (rerank.ts hard-exclusion must not default an omitted
+    // field to 'tier-a').
+    const hit: SearchHit = {
+      id: 'no-tier',
+      filePath: 'no-tier.md',
+      lineStart: 1,
+      lineEnd: 10,
+      headingChain: [],
+      text: 'x',
+      similarity: 0.99,
+      score: 0.99,
+      meta: {
+        file_path: 'no-tier.md',
+        line_start: 1,
+        line_end: 10,
+        heading_chain: [],
+        text: 'x',
+      },
+    }
+    expect(rerank([hit], 'q')).toEqual([])
+  })
+
+  it('excludes a hit with meta entirely undefined', () => {
+    const hit: SearchHit = {
+      id: 'no-meta',
+      filePath: 'no-meta.md',
+      lineStart: 1,
+      lineEnd: 10,
+      headingChain: [],
+      text: 'x',
+      similarity: 0.99,
+      score: 0.99,
+    }
+    expect(rerank([hit], 'q')).toEqual([])
+  })
+
+  it('retains tier-a chunks while excluding quarantine ones in a mixed pool', () => {
+    const good = makeHit('good', 0.5, 'legit content')
+    const bad = makeHit('bad', 0.99, 'poisoned content', { provenance_tier: 'quarantine' })
+    const out = rerank([good, bad], 'q')
+    expect(out.map((h) => h.id)).toEqual(['good'])
+  })
+
+  it('returns [] when every hit in the pool is non-tier-a (Phase 1 path)', () => {
+    const hits = [
+      makeHit('a', 0.9, 'x', { provenance_tier: 'quarantine' }),
+      makeHit('b', 0.8, 'y', { provenance_tier: 'quarantine' }),
+    ]
+    expect(rerank(hits, 'q')).toEqual([])
+  })
+
+  it('excludes quarantine chunks under the BM25/MMR path too', () => {
+    process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK = 'bm25'
+    try {
+      const hits = [
+        makeHit('a', 0.9, 'rare keyword', { provenance_tier: 'quarantine' }),
+        makeHit('b', 0.5, 'rare keyword'),
+      ]
+      const out = rerank(hits, 'rare keyword')
+      expect(out.map((h) => h.id)).toEqual(['b'])
+    } finally {
+      delete process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK
+    }
   })
 })

@@ -160,6 +160,8 @@ describe('supabase-migrations adapter — chunk', () => {
       /^supabase\/migrations\/081_device_code_auth\.sql#L\d+-L\d+@[0-9a-f]{16}$/
     )
     expect(chunks[0].text).toContain('audit_logs')
+    // SMI-4703 §1: reaches the corpus via a human-reviewed PR merge — always tier-a.
+    expect(chunks[0].provenanceTier).toBe('tier-a')
   })
 
   it('truncates oversize files to targetTokens worth of chars', async () => {

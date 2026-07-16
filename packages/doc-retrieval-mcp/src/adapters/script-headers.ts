@@ -133,6 +133,9 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
       kind: 'script',
       lifetime: 'long-term',
       tags: file.tags,
+      // SMI-4703 §1: reaches the corpus via a human-reviewed PR merge —
+      // tier-a unconditionally, no injection scan (exempt per plan Change #5).
+      provenanceTier: 'tier-a',
     },
   ]
 }

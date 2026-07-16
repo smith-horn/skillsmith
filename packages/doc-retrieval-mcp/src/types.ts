@@ -1,3 +1,20 @@
+/**
+ * SMI-4703 — memory-write trust boundary. `'tier-a'` means the chunk reached
+ * the corpus via a human-reviewed PR merge (or, for `memory-topic-files`,
+ * passed the injection scanner clean); `'quarantine'` means it must be
+ * hard-excluded from the retrieval set until a human promotes it.
+ *
+ * Optional (not required) on `ChunkMetadata` — matching the sibling
+ * `kind`/`lifetime`/`class` fields' convention — because the runtime
+ * fail-closed contract (a chunk with the field absent must be treated as
+ * `quarantine`, never `tier-a` by omission; enforced in `rerank.ts`) is the
+ * actual safety mechanism. A `required` compiler-level field would be
+ * redundant with, not a replacement for, that runtime check: the field still
+ * arrives from `JSON.parse` of a persisted blob at the `rerank.ts` boundary,
+ * where TypeScript can't verify it was actually set upstream.
+ */
+export type ProvenanceTier = 'tier-a' | 'quarantine'
+
 export interface ChunkMetadata {
   id: string
   filePath: string
@@ -11,6 +28,14 @@ export interface ChunkMetadata {
    * chunks omit this field; registry callers default to `'markdown-doc'`.
    */
   kind?: string
+  /**
+   * SMI-4703 — provenance tier. Every adapter's `chunk()` output MUST set
+   * this: `'tier-a'` unconditionally for the 5 PR-merge-gated adapters, or
+   * the injection-scanner result for `memory-topic-files` (the one
+   * unattended-write adapter). See `ProvenanceTier` doc comment for why this
+   * is optional at the type level despite being mandatory in practice.
+   */
+  provenanceTier?: ProvenanceTier
   /**
    * Adapter-assigned lifetime hint used by future ranking passes to weight
    * short-term memory against long-term canonical sources.
@@ -55,6 +80,14 @@ export interface ChunkStoredMetadata {
   kind?: string
   lifetime?: 'short-term' | 'long-term'
   tags?: Record<string, string | number | null>
+  /**
+   * SMI-4703 — persisted form of `ChunkMetadata.provenanceTier` (snake_case
+   * to match this blob's other persisted fields). `rerank.ts` hard-excludes
+   * any hit where this is not exactly `'tier-a'` — including when it is
+   * `undefined` (fail-closed default on omission, e.g. a pre-Wave-1 chunk
+   * that predates the field or a corrupt/truncated metadata blob).
+   */
+  provenance_tier?: ProvenanceTier
   /**
    * Frontmatter-derived ranking signals (SMI-4450 Wave 1 Step 6 — plan-review C3).
    * Read by `rerank.ts` to apply absorption / supersession penalties. Optional
