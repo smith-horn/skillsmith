@@ -46,10 +46,10 @@
     "vitest": "4.1.10"
   },
   "peerDependencies": {
-    "@skillsmith/enterprise": "*"
+    "@smith-horn/enterprise": "*"
   },
   "peerDependenciesMeta": {
-    "@skillsmith/enterprise": {
+    "@smith-horn/enterprise": {
       "optional": true
     }
   },
