@@ -42,6 +42,9 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <p>
     For the engineering story behind this design, read
     <a href="/blog/dependency-intelligence">Dependency Intelligence: How Skillsmith Infers What Your Skills Need</a>.
+    To export this dependency graph as a standard SBOM, see the Govern tutorial's
+    <a href="/docs/tutorials/govern#cyclonedx-export">CycloneDX AI-BOM export step</a>
+    (Team+).
   </p>
 
   <h2>Declaring Dependencies</h2>
@@ -434,7 +437,6 @@ dependencies:
     <li><strong>Co-install inference</strong>: The <code>inferred_coinstall</code> source exists in the schema but is not yet populated</li>
     <li><strong>Semver range validation</strong>: Version constraints are stored but not enforced at install time</li>
     <li><strong>No automatic resolution</strong>: Skillsmith never installs dependencies on your behalf</li>
-    <li><strong>No CycloneDX AI-BOM export</strong>: Dependency data is not yet exportable in standard SBOM formats</li>
     <li><strong>No dependency_policy configuration</strong>: You cannot configure per-project dependency rules</li>
   </ul>
 
@@ -445,6 +447,7 @@ dependencies:
     <li><a href="/docs/mcp-server">MCP Server</a> — full MCP tool reference</li>
     <li><a href="/docs/security">Security</a> — security scanning and advisories</li>
     <li><a href="/docs/trust-tiers">Trust Tiers</a> — trust tier definitions</li>
+    <li><a href="/docs/tutorials/govern">Govern Tutorial</a> — CycloneDX AI-BOM export, audit logs, SIEM</li>
     <li><a href="/blog/dependency-intelligence">Dependency Intelligence</a> — engineering deep-dive blog post</li>
   </ul>
 </DocsLayout>
