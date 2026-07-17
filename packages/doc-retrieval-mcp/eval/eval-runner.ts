@@ -156,7 +156,10 @@ async function runRealEval(entries: GoldEntry[], minScore?: number): Promise<Run
 
   for (const e of entries) {
     const pool = await search({ query: e.query, k: 20, preRerank: true })
-    const reranked = rerank(pool, e.query)
+    // SMI-5708 Item #6: topK=10, matching this harness's own Recall@10/
+    // nDCG@10 metrics -- rerank()'s BM25/MMR branch previously hardcoded a
+    // 5-item selection cap, so BM25's Recall@10 could never exceed Recall@5.
+    const reranked = rerank(pool, e.query, 10)
     const filtered = reranked.filter((h) => h.score >= threshold).slice(0, 10)
     results.push({
       id: e.id,

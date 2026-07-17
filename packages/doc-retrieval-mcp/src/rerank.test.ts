@@ -165,12 +165,41 @@ describe('rerank — Phase 2 BM25 + MMR path (env-gated)', () => {
     expect(positions['a']).toBeLessThan(positions['c'])
   })
 
-  it('returns at most top-5', () => {
+  it('returns at most top-5 when topK is omitted (production display default)', () => {
     const hits = Array.from({ length: 20 }, (_, i) =>
       makeHit(`h${i}`, 0.5 + i * 0.01, `text ${i} content`)
     )
     const out = rerank(hits, 'text content')
     expect(out.length).toBeLessThanOrEqual(5)
+  })
+
+  // SMI-5708 Item #6: topK is now caller-supplied. The eval harness passes
+  // 10 to match its own Recall@10/nDCG@10 metrics -- before this fix, the
+  // BM25/MMR branch's hardcoded 5-item cap meant those metrics could never
+  // exceed Recall@5/nDCG@5 for the BM25 path.
+  it('topK=10 returns up to 10 results, not capped at 5', () => {
+    const hits = Array.from({ length: 20 }, (_, i) =>
+      makeHit(`h${i}`, 0.5 + i * 0.01, `text ${i} content`)
+    )
+    const out = rerank(hits, 'text content', 10)
+    expect(out.length).toBe(10)
+  })
+
+  it('topK is bounded by pool size when the pool has fewer candidates than topK', () => {
+    const hits = [makeHit('a', 0.6, 'text content'), makeHit('b', 0.5, 'text content')]
+    const out = rerank(hits, 'text content', 10)
+    expect(out.length).toBe(2)
+  })
+
+  // Codex review finding (SMI-5708 Item #6): NaN/negative/zero previously
+  // propagated into mmrSelect's `picked.length < k` loop bound, where they
+  // silently select 0 results instead of falling back to the default.
+  it('malformed topK falls back to the default instead of silently selecting 0 results', () => {
+    const hits = Array.from({ length: 8 }, (_, i) => makeHit(`h${i}`, 0.5 + i * 0.01, `text ${i}`))
+    expect(rerank(hits, 'text', NaN).length).toBe(5)
+    expect(rerank(hits, 'text', -1).length).toBe(5)
+    expect(rerank(hits, 'text', 0).length).toBe(5)
+    expect(rerank(hits, 'text', 2.9).length).toBe(2) // fractional floors, not ceils
   })
 
   it('is deterministic — same input produces same output', () => {

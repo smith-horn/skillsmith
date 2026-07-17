@@ -7,15 +7,25 @@
  *      frontmatter (SMI-4451 Step 5) and demotes superseded lessons.
  *   2. **Phase 2 fallback (env-gated).** When
  *      `SKILLSMITH_DOC_RETRIEVAL_RERANK=bm25`, layers BM25 keyword rescore +
- *      min-max normalize + 0.6/0.4 combine + MMR (λ=0.5) iterative top-5 over
- *      the input pool. Wave 1 production stays on Phase 1 (pure embedding +
- *      penalties) unless Step 8 6-pair regression fails ≥5/6.
+ *      min-max normalize + 0.6/0.4 combine + MMR (λ=0.5) iterative top-K
+ *      (default 5) over the input pool. Wave 1 production stays on Phase 1
+ *      (pure embedding + penalties) unless Step 8 6-pair regression fails
+ *      ≥5/6.
  *
  * Caller contract: invoke `search({ query, k: 20, preRerank: true })` to get
- * the raw top-20 pool, hand to `rerank(hits, query)`, then apply minScore=0.35
- * and truncate to k=5. Per SPARC §S6 plan-review H3, the minScore filter runs
- * AFTER rerank (not before) so absorbed-but-still-relevant hits clear the
- * 0.35 floor via the demotion-cap path rather than being evicted pre-score.
+ * the raw top-20 pool, hand to `rerank(hits, query, topK)`, then apply
+ * minScore=0.35 and truncate to k. Per SPARC §S6 plan-review H3, the
+ * minScore filter runs AFTER rerank (not before) so absorbed-but-still-
+ * relevant hits clear the 0.35 floor via the demotion-cap path rather than
+ * being evicted pre-score.
+ *
+ * `topK` (SMI-5708 Item #6) only affects the Phase 2 BM25/MMR branch — Phase
+ * 1 always returns the full input pool sorted, letting the caller truncate.
+ * Defaults to 5 (production display callers); the eval harness computes
+ * Recall@10/nDCG@10 for every path including BM25, so it passes 10 — before
+ * this fix, Phase 2's hardcoded 5-item cap meant BM25's Recall@10 could
+ * never exceed its Recall@5, an apples-to-oranges comparison against the
+ * other ablation dimensions.
  *
  * Deliberate design tradeoffs:
  *   - BM25 IDF is computed from the input pool (not the global corpus). With
@@ -67,8 +77,10 @@ const BM25_WEIGHT = 0.4
 // Phase 2 MMR diversity coefficient per SPARC §S6 (λ=0.5).
 const MMR_LAMBDA = 0.5
 
-// Phase 2 selection cap (rerank pool → top-5 before caller applies minScore).
-const MMR_TOP_K = 5
+// Phase 2 selection cap default (rerank pool → top-K before caller applies
+// minScore). SMI-5708 Item #6: now a rerank() parameter, not a hardcoded
+// constant — this is only the fallback when the caller omits topK.
+const MMR_TOP_K_DEFAULT = 5
 
 /**
  * Apply Wave 1 ranking adjustments to a pool of hits.
@@ -77,8 +89,16 @@ const MMR_TOP_K = 5
  * when `SKILLSMITH_DOC_RETRIEVAL_RERANK === 'bm25'`. Returns hits sorted by
  * adjusted score descending; caller is responsible for the post-rerank
  * minScore filter and final truncate.
+ *
+ * `topK` (default 5) bounds the Phase 2 BM25/MMR selection depth; see the
+ * file header for why the eval harness passes a deeper value. A malformed
+ * value (non-finite, ≤0, or fractional) falls back to the documented
+ * default rather than propagating into `mmrSelect`'s `Math.min(k, n)` /
+ * `picked.length < k` loop bound, where NaN and negative values silently
+ * select zero results and fractional values implicitly round up (SMI-5708
+ * Item #6, Codex review finding).
  */
-export function rerank(hits: SearchHit[], query: string): SearchHit[] {
+export function rerank(hits: SearchHit[], query: string, topK = MMR_TOP_K_DEFAULT): SearchHit[] {
   if (hits.length === 0) return []
 
   // SMI-4703 §1: hard-exclude any chunk that isn't provenance-tagged
@@ -93,7 +113,8 @@ export function rerank(hits: SearchHit[], query: string): SearchHit[] {
   const adjusted = tierAOnly.map(applyPenalties)
 
   if (process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK === 'bm25') {
-    return phase2BM25MMR(adjusted, query)
+    const safeTopK = Number.isFinite(topK) && topK >= 1 ? Math.floor(topK) : MMR_TOP_K_DEFAULT
+    return phase2BM25MMR(adjusted, query, safeTopK)
   }
 
   return [...adjusted].sort((a, b) => b.score - a.score)
@@ -167,7 +188,7 @@ function readBoostFactor(envVar: string, fallback: number): number {
 /**
  * Phase 2 BM25 + MMR fallback. Operates over the already-penalty-adjusted pool.
  */
-function phase2BM25MMR(hits: SearchHit[], query: string): SearchHit[] {
+function phase2BM25MMR(hits: SearchHit[], query: string, topK: number): SearchHit[] {
   const queryTokens = tokenize(query)
   const docs = hits.map((h) => tokenize(h.text))
   const idf = buildIdf(docs)
@@ -181,7 +202,7 @@ function phase2BM25MMR(hits: SearchHit[], query: string): SearchHit[] {
 
   const combined = hits.map((_, i) => EMB_WEIGHT * normEmb[i] + BM25_WEIGHT * normBM25[i])
 
-  return mmrSelect(hits, docs, combined, MMR_LAMBDA, MMR_TOP_K)
+  return mmrSelect(hits, docs, combined, MMR_LAMBDA, topK)
 }
 
 /** Lowercase + whitespace + strip non-alphanumerics (apostrophes drop). */
