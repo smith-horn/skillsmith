@@ -116,6 +116,8 @@ Git-crypt smudge filters can silently switch branches during stash/pop (includin
 
 **Syncing main**: `./scripts/sync-main.sh` (quiet, ~75 tokens vs ~5k git-crypt noise). Then `git checkout -b <branch-name>`.
 
+**Branch naming**: `<type>/<slug>` — `feature/`, `fix/`, `chore/`, `docs/` (matches the commit-type prefixes). Do not prefix branches with a personal username (e.g. `ryansmith108/...`); a growing number of `ryansmith108/`-prefixed branches has drifted from this convention and should be renamed/avoided going forward.
+
 **Risk-first wave ordering (SMI-2596)**: Waves with database migrations or production behavior changes execute first, regardless of implementation readiness. If deviating from risk order, document the rationale explicitly in the wave plan.
 
 **Wave branch stacking (SMI-2597)**: When multiple waves modify overlapping files, branch sequentially (Wave N+1 from Wave N's branch) instead of all from main. This prevents merge conflicts from squash-merges. Tradeoff: earlier waves must merge before later waves can start CI.
