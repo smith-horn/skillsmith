@@ -52,6 +52,35 @@ function getLocalSkillsDir(): string {
 }
 
 /**
+ * Return `true` when a directory entry resolves to a directory, following
+ * symlinks. `withFileTypes` reports a symlinked directory as a symlink (not
+ * a directory), so `entry.isDirectory()` alone silently skips a symlinked
+ * INDIVIDUAL skill directory — exactly GH #1912's own repro
+ * (`ln -s ~/.claude/skills/foo ~/.cursor/skills/foo`). Independent twin of
+ * `resolvesToDirectory()` in `packages/core/src/sync/inventory-collector.ts`
+ * (SMI-5717).
+ *
+ * `isSymbolicLink` is optional-invoked (`?.`) because several pre-existing
+ * tests (`manage.skills-directory.test.ts` et al.) mock `fs/promises.readdir`
+ * with plain `{ name, isDirectory: () => true }` objects that don't implement
+ * the full `Dirent` interface — those mocks never claim to be a symlink, so
+ * treating a missing method as `false` preserves their existing behavior.
+ */
+async function resolvesToDirectory(
+  entryPath: string,
+  isDirectory: boolean,
+  isSymbolicLink: boolean
+): Promise<boolean> {
+  if (isDirectory) return true
+  if (!isSymbolicLink) return false
+  try {
+    return (await stat(entryPath)).isDirectory()
+  } catch {
+    return false // broken symlink
+  }
+}
+
+/**
  * Get skills from a specific directory.
  *
  * When dbPath is provided, opens the skill_versions table to determine
@@ -93,13 +122,24 @@ export async function getSkillsFromDirectory(
     const entries = await readdir(skillsDir, { withFileTypes: true })
 
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        // Skip dot-prefixed directories: they are harness internals, not skills.
-        // Covers .backups (created by apply_recommended_edit — SMI-5440) and any
-        // other dot-dir that must not appear in inventory status. (SMI-5442)
-        if (entry.name.startsWith('.')) continue
+      // Skip dot-prefixed directories: they are harness internals, not skills.
+      // Covers .backups (created by apply_recommended_edit — SMI-5440) and any
+      // other dot-dir that must not appear in inventory status. (SMI-5442)
+      // Checked BEFORE resolvesToDirectory() so a dot-prefixed symlinked entry
+      // never pays for a stat() call it's about to discard — matches the
+      // core collector's ordering in `inventory-collector.ts`'s
+      // `collectHarness()` (SMI-5717).
+      if (entry.name.startsWith('.')) continue
 
-        const skillPath = join(skillsDir, entry.name)
+      const skillPath = join(skillsDir, entry.name)
+      // GH #1912 / SMI-5717: stat-resolve symlinked entries so an individually
+      // symlinked skill directory is discovered too, not just real directories.
+      const isSkillDir = await resolvesToDirectory(
+        skillPath,
+        entry.isDirectory(),
+        entry.isSymbolicLink?.() ?? false
+      )
+      if (isSkillDir) {
         const skillMdPath = join(skillPath, 'SKILL.md')
 
         try {
@@ -257,19 +297,32 @@ async function readSkillMd(skillPath: string): Promise<{
 
 /**
  * Returns one {@link HarnessSkillEntry} per (harness × skill) observed on
- * disk, deduplicated by realpath only.
+ * disk.
  *
  * Unlike {@link getInstalledSkills}, this function:
  * - Does **not** deduplicate by skill name — the same skill present under two
  *   distinct harness directories appears as two rows (different `path`).
- * - Does deduplicate by realpath — a symlinked alias such as
- *   `~/.agents/skills/foo` → `~/.claude/skills/foo` collapses to one row.
- * - Enriches each surviving entry with a sha256 `contentHash` computed from
- *   the SKILL.md content, for registry drift detection.
+ * - Does **not** deduplicate by realpath ACROSS harnesses — a symlinked alias
+ *   such as `~/.agents/skills/foo` → `~/.claude/skills/foo` still appears as
+ *   two rows, one per harness, because cross-harness membership must be
+ *   preserved. Realpath is used only to MEMOIZE the expensive
+ *   `readSkillMd()` read/parse/hash: the underlying file is read once and
+ *   the result reused for every harness that shares the realpath. A
+ *   previous version used a bare realpath `Set` to drop the second row
+ *   entirely, which silently collapsed legitimate cross-harness installs and
+ *   contradicted this very docstring (GH #1912 / SMI-5717).
+ * - DOES still deduplicate multiple aliases to the same realpath WITHIN a
+ *   single harness's own directory (e.g. two symlinks in one harness's
+ *   skills dir pointing at the same target) — that collapsing is correct and
+ *   distinct from the cross-harness case above; it is preserved via a
+ *   `(harness, realpath)` composite key rather than realpath alone.
+ * - Enriches each entry with a sha256 `contentHash` computed from the
+ *   SKILL.md content, for registry drift detection.
  *
- * Precedence order (first realpath wins when a symlink is detected): local
- * (repo) > claude-code > cursor > copilot > windsurf > agents. Inherits the
- * SMI-4578 ordering so local overrides are still respected.
+ * Scan order (which harness's cached fields "win" on a memoization hit is
+ * irrelevant since fields are realpath-identical either way): local (repo) >
+ * claude-code > cursor > copilot > windsurf > agents. Inherits the SMI-4578
+ * ordering.
  *
  * @see SMI-5390
  */
@@ -294,23 +347,35 @@ export async function getInstalledSkillsPerHarness(): Promise<HarnessSkillEntry[
     if (list) ordered.push(...list)
   }
 
-  // Realpath-only dedup: collapses symlinked aliases (same inode) but keeps
-  // the same skill independently installed under two different harnesses as
-  // two distinct rows.
-  const seenPaths = new Set<string>()
+  // Two independent, differently-scoped tracking structures (GH #1912 /
+  // SMI-5717) — mirrors the core collector's design in
+  // `packages/core/src/sync/inventory-collector.ts`:
+  //
+  // - `fieldsCache` (keyed by realpath ALONE) memoizes the expensive
+  //   readSkillMd() read/parse/hash so a symlinked alias reuses cached
+  //   fields instead of re-parsing.
+  // - `emitted` (keyed by `${harness}:${realpath}`) tracks which
+  //   (harness, realpath) pairs already produced a row, so a row is pushed
+  //   exactly once per harness per underlying file: the same realpath under
+  //   a DIFFERENT harness still gets its own row, while multiple aliases to
+  //   the same realpath WITHIN one harness still collapse to one row for
+  //   that harness. A single shared Set here used to conflate both cases.
+  const fieldsCache = new Map<string, Awaited<ReturnType<typeof readSkillMd>>>()
+  const emitted = new Set<string>()
   const out: HarnessSkillEntry[] = []
   for (const skill of ordered) {
     const rp = await safeRealpath(skill.path)
-    if (seenPaths.has(rp)) continue
-    seenPaths.add(rp)
 
-    const {
-      contentHash,
-      skillId: parsedId,
-      author,
-      license,
-      repository,
-    } = await readSkillMd(skill.path)
+    const emittedKey = `${skill.installedVia}:${rp}`
+    if (emitted.has(emittedKey)) continue
+    emitted.add(emittedKey)
+
+    let fields = fieldsCache.get(rp)
+    if (!fields) {
+      fields = await readSkillMd(skill.path)
+      fieldsCache.set(rp, fields)
+    }
+    const { contentHash, skillId: parsedId, author, license, repository } = fields
     out.push({
       harness: skill.installedVia,
       skillId: parsedId ?? skill.name,

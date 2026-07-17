@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `getSkillsFromDirectory()` now discovers an individually symlinked skill directory (`ln -s ~/.claude/skills/foo ~/.cursor/skills/foo`) — previously `entry.isDirectory()` alone silently skipped it, since `readdir(..., { withFileTypes: true })` reports a symlinked directory as a symlink, not a directory. `getInstalledSkillsPerHarness()` also no longer collapses a symlinked skill alias across harnesses into a single row — realpath is now used only to memoize the expensive `readSkillMd()` parse and to collapse multiple aliases WITHIN one harness's own directory, while a row is still returned for every harness that observes the skill, matching the function's own "two distinct rows" docstring contract (SMI-5717) (GH #1912)
 - **Change**: `compliance_reports`' displayed tier requirement expanded from Enterprise-only to Team + Enterprise (SMI-3140)
 - **Feature**: per-client MCP config snippet for Grok Build (`~/.grok/config.toml`) added to `CLIENT_SNIPPETS`/`SNIPPET_DISPLAY_ORDER` in `templates/mcp-server.template.snippets.ts`, matching the new `grok` harness added to `@skillsmith/core`'s inventory scanner (SMI-5697)
 

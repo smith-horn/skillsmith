@@ -7,14 +7,29 @@
  * without re-importing the module.
  *
  * IC-1: same skill under two harnesses (distinct realpaths) -> two entries.
- * IC-2: a symlinked alias across harnesses -> one entry (first ClientId wins).
+ * IC-2: a symlinked alias across harnesses -> two entries, one per harness
+ *       (GH #1912 / SMI-5717 — cross-harness membership is preserved; only
+ *       the expensive SKILL.md parse is memoized by realpath).
  * IC-3: readable SKILL.md -> content_hash + version; missing SKILL.md -> nulls.
+ * IC-8: guards the memoization itself — SkillParser.parse is called exactly
+ *       once across two harnesses sharing a realpath (GH #1912 / SMI-5717).
+ * IC-9: two aliases to the same realpath WITHIN one harness still collapse
+ *       to a single row for that harness — the fix for IC-2 must not
+ *       regress this pre-existing, correct within-harness dedup (SMI-5717).
+ * IC-10: a symlinked pair with DIFFERENT dirent names on each end and NO
+ *        SKILL.md (so skill_id falls back to the directory name) — guards
+ *        that the fallback is computed per-harness, not cached inside
+ *        readSkillFields() (the actual Correction 1 bug: IC-1/IC-2/IC-8 all
+ *        happen to use a `name:` front-matter field and matching dirent
+ *        names on both ends, so they'd still pass even if the fallback were
+ *        wrongly cached) (SMI-5717).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { SkillParser } from '../indexer/SkillParser.js'
 
 const mockPaths = vi.hoisted(() => ({
   CLIENT_IDS: ['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'] as const,
@@ -98,7 +113,7 @@ describe('inventory-collector', () => {
     expect(foo.every((e) => e.update_policy === null)).toBe(true)
   })
 
-  it('IC-2: collapses a symlinked alias across harnesses to one entry (first ClientId wins)', async () => {
+  it('IC-2: emits one entry per harness for a symlinked alias — preserves cross-harness membership (GH #1912)', async () => {
     const real = await createSkill('claude-code', 'bar', { version: '1.0.0' })
     await mkdir(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, { recursive: true })
     await symlink(real, join(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, 'bar'), 'dir')
@@ -106,9 +121,14 @@ describe('inventory-collector', () => {
     const entries = await collectDeviceSkills()
     const bar = entries.filter((e) => e.skill_id === 'bar')
 
-    expect(bar).toHaveLength(1)
-    // claude-code precedes agents in CLIENT_IDS, so it wins the dedup.
-    expect(bar[0]?.harness).toBe('claude-code')
+    // A symlinked alias across harnesses must NOT collapse to one row — the
+    // skill is genuinely installed under both harnesses.
+    expect(bar).toHaveLength(2)
+    expect(bar.map((e) => e.harness).sort()).toEqual(['agents', 'claude-code'])
+    // Same underlying file: the memoized parse yields the same content_hash
+    // for both rows.
+    expect(bar[0]?.content_hash).toBeTruthy()
+    expect(bar[0]?.content_hash).toBe(bar[1]?.content_hash)
   })
 
   // IC-4: No truncation at MAX_SKILLS boundary.
@@ -202,5 +222,76 @@ describe('inventory-collector', () => {
     expect(entries.find((e) => e.skill_id === 'real-skill')).toBeDefined()
     expect(entries.find((e) => e.skill_id === '.backups')).toBeUndefined()
     expect(entries.some((e) => e.skill_id.startsWith('.'))).toBe(false)
+  })
+
+  // IC-8: guards the memoization optimization itself (GH #1912 / SMI-5717) —
+  // not just the entry count from IC-2. The expensive parse must happen once
+  // per underlying realpath, even though two harnesses now both get a row.
+  it('IC-8: memoizes SkillParser.parse by realpath — called exactly once across two harnesses sharing a symlinked alias', async () => {
+    const parseSpy = vi.spyOn(SkillParser.prototype, 'parse')
+
+    const real = await createSkill('claude-code', 'bar', { version: '1.0.0' })
+    await mkdir(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, { recursive: true })
+    await symlink(real, join(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, 'bar'), 'dir')
+
+    const entries = await collectDeviceSkills()
+    const bar = entries.filter((e) => e.skill_id === 'bar')
+
+    expect(bar).toHaveLength(2)
+    expect(parseSpy).toHaveBeenCalledTimes(1)
+
+    parseSpy.mockRestore()
+  })
+
+  // IC-9: regression guard for the (harness, realpath) emitted-tracking fix.
+  // Two DIFFERENT dirents in the SAME harness's directory that resolve to the
+  // SAME realpath (e.g. a self-referential alias) must still collapse to one
+  // row for that harness — only the CROSS-harness case (IC-2) should stop
+  // collapsing.
+  it('IC-9: two aliases to the same realpath within one harness still collapse to one row', async () => {
+    const real = await createSkill('claude-code', 'baz', { version: '1.0.0' })
+    await symlink(
+      real,
+      join(mockPaths.CLIENT_NATIVE_PATHS['claude-code'] as string, 'baz-alias'),
+      'dir'
+    )
+
+    const entries = await collectDeviceSkills()
+    const claudeCodeBaz = entries.filter((e) => e.harness === 'claude-code' && e.skill_id === 'baz')
+
+    // Only ONE row for claude-code, even though the directory listing has
+    // two dirents ('baz' and 'baz-alias') pointing at the same realpath.
+    expect(claudeCodeBaz).toHaveLength(1)
+    // No stray row was emitted keyed by the alias's own directory name either.
+    expect(entries.some((e) => e.skill_id === 'baz-alias')).toBe(false)
+  })
+
+  // IC-10: the actual Correction 1 regression guard. No SKILL.md at all, so
+  // readSkillFields()'s cached skillId is null and skill_id must fall back to
+  // EACH harness's own dirent name — never a name cached from the FIRST
+  // harness to populate fieldsCache. IC-1/IC-2/IC-8 all use a `name:`
+  // front-matter field with matching dirent names on both ends, so a
+  // regression that re-introduced caching the dirName fallback inside
+  // readSkillFields() would still pass all of them.
+  it("IC-10: skill_id fallback uses EACH harness's own directory name, not one cached from another harness", async () => {
+    const real = await createSkill('claude-code', 'shared-skill', { withSkillMd: false })
+    await mkdir(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, { recursive: true })
+    await symlink(
+      real,
+      join(mockPaths.CLIENT_NATIVE_PATHS['agents'] as string, 'renamed-alias'),
+      'dir'
+    )
+
+    const entries = await collectDeviceSkills()
+    const claudeCode = entries.find((e) => e.harness === 'claude-code')
+    const agents = entries.find((e) => e.harness === 'agents')
+
+    expect(claudeCode?.skill_id).toBe('shared-skill')
+    expect(agents?.skill_id).toBe('renamed-alias')
+    // Neither row leaked the other harness's directory name.
+    expect(entries.some((e) => e.harness === 'claude-code' && e.skill_id === 'renamed-alias')).toBe(
+      false
+    )
+    expect(entries.some((e) => e.harness === 'agents' && e.skill_id === 'shared-skill')).toBe(false)
   })
 })
