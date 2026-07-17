@@ -197,4 +197,100 @@ describe.skipIf(!nativeAvailable)('search integration (requires @ruvector/core n
     const hits = await search({ query: distinctiveQuery, k: 5, minScore: 0, configPath })
     expect(hits.some((h) => h.id === 'smi-4703-quarantine-canary')).toBe(false)
   })
+
+  // SMI-5708 Item #7: scopeGlobs filtering happens AFTER the vector DB's
+  // raw top-k fetch. Before this fix, a scoped consumer could get fewer
+  // than k results even when more in-scope matches existed beyond the
+  // unscoped top-K boundary -- the DB's raw top-k could be entirely
+  // dominated by out-of-scope hits, silently starving the scoped result set.
+  it('over-fetches so scoped search still returns k in-scope hits when the unscoped top-K is dominated by out-of-scope hits', async () => {
+    const cfg = await loadConfig(configPath)
+    const storageAbs = resolveRepoPath(cfg.storagePath)
+    const vectorsFile = join(storageAbs, 'vectors')
+
+    const { createRequire } = await import('node:module')
+    const req = createRequire(import.meta.url)
+    const { VectorDb } = req('@ruvector/core') as typeof import('@ruvector/core')
+    const db = new VectorDb({
+      dimensions: cfg.embeddingDim,
+      storagePath: vectorsFile,
+      distanceMetric: 'Cosine',
+    })
+
+    const query = 'zzz-smi-5708-overfetch-canary-zzz'
+    const [queryVec] = await embedBatch([query])
+
+    // 15 near-identical-to-query decoys, OUTSIDE the target scope -- these
+    // dominate the unscoped top-K so a naive single-fetch(k=3) would return
+    // zero in-scope hits.
+    for (let i = 0; i < 15; i++) {
+      await db.insert({
+        id: `overfetch-decoy-${i}`,
+        vector: queryVec,
+        metadata: JSON.stringify({
+          file_path: 'fixtures/decoy-not-in-scope.md',
+          line_start: 1,
+          line_end: 1,
+          heading_chain: [],
+          text: 'decoy chunk unrelated to the target scope',
+          provenance_tier: 'tier-a',
+        }),
+      })
+    }
+
+    // 3 targets, distinctly different (lower-similarity) text, INSIDE the
+    // target scope -- ranked well beyond the unscoped top-3 boundary.
+    const [targetVec] = await embedBatch(['completely unrelated low-similarity target text'])
+    for (let i = 0; i < 3; i++) {
+      await db.insert({
+        id: `overfetch-target-${i}`,
+        vector: targetVec,
+        metadata: JSON.stringify({
+          file_path: 'fixtures/target-scope.md',
+          line_start: i + 1,
+          line_end: i + 1,
+          heading_chain: [],
+          text: `target chunk ${i} in scope`,
+          provenance_tier: 'tier-a',
+        }),
+      })
+    }
+
+    const scoped = await search({
+      query,
+      k: 3,
+      minScore: 0,
+      scopeGlobs: ['fixtures/target-scope.md'],
+      configPath,
+    })
+
+    expect(scoped.length).toBe(3)
+    for (const hit of scoped) {
+      expect(hit.filePath).toBe('fixtures/target-scope.md')
+    }
+  })
+
+  it('does not over-fetch beyond k when scopeGlobs is unset (no behavior change to the unscoped path)', async () => {
+    const hits = await search({ query: 'section details coverage', k: 2, configPath })
+    expect(hits.length).toBeLessThanOrEqual(2)
+  })
+
+  // SMI-5708 Item #7 (Opus review finding): a NaN k on the scoped over-fetch
+  // path previously made every loop-termination check a NaN comparison
+  // (always false), spinning forever. The test completing at all -- within
+  // vitest's default per-test timeout -- IS the regression proof; a
+  // reintroduced hang would time out this test, not fail an assertion.
+  it('malformed k (NaN) on the scoped path falls back to the default instead of looping forever', async () => {
+    const hits = await search({
+      query: 'guide section',
+      k: NaN,
+      minScore: 0,
+      scopeGlobs: ['fixtures/guide-a.md'],
+      configPath,
+    })
+    expect(hits.length).toBeLessThanOrEqual(5) // falls back to the k=5 default
+    for (const hit of hits) {
+      expect(hit.filePath).toBe('fixtures/guide-a.md')
+    }
+  })
 })

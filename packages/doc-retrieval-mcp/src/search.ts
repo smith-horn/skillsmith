@@ -47,27 +47,28 @@ export function distanceToSimilarity(distance: number): number {
 
 type StoredMetadata = ChunkStoredMetadata
 
-export async function search(opts: SearchOpts): Promise<SearchHit[]> {
-  const cfg = await loadConfig(opts.configPath)
-  const storageAbs = resolveRepoPath(cfg.storagePath)
-  const vectorsFile = join(storageAbs, 'vectors')
+// SMI-5708 Item #7 -- when scopeGlobs narrows results, the vector DB's raw
+// top-k can be dominated by out-of-scope hits, silently returning fewer than
+// k in-scope results even when more exist beyond the unscoped top-K
+// boundary. @ruvector/core's SearchQuery has an undocumented `filter` field
+// (see ruvector-types.ts's module augmentation) that MIGHT support pushing
+// the scope predicate into the DB query itself, but it ships with no
+// documentation and an `unknown` type in the installed version -- verifying
+// its real behavior would mean probing an unversioned native surface
+// against a live index, which this pass doesn't do (same YAGNI stance
+// ruvector-types.ts already takes on other unaugmented native surfaces).
+// Adaptive over-fetch is the documented fallback and needs no assumptions
+// about undocumented native-binding behavior: request progressively larger
+// k until enough in-scope hits are found, the DB is exhausted (returns
+// fewer than requested), or the ceiling is hit.
+const SCOPE_OVERFETCH_MULTIPLIER = 4
+const SCOPE_OVERFETCH_CEILING = 500
 
-  if (!existsSync(vectorsFile)) return []
-
-  const db = new VectorDb({
-    dimensions: cfg.embeddingDim,
-    storagePath: vectorsFile,
-    distanceMetric: 'Cosine',
-  })
-
-  const queryVecs = await embedBatch([opts.query])
-  const queryVec = new Float32Array(queryVecs[0])
-
-  const k = opts.k ?? 5
-  const minScore = opts.minScore ?? DEFAULT_MIN_SIMILARITY
-
-  const raw = await db.search({ vector: queryVec, k })
-
+function buildHits(
+  raw: Array<{ id: string; score: number; metadata?: string }>,
+  opts: SearchOpts,
+  minScore: number
+): SearchHit[] {
   const hits: SearchHit[] = []
   for (const result of raw) {
     const similarity = distanceToSimilarity(result.score)
@@ -114,6 +115,50 @@ export async function search(opts: SearchOpts): Promise<SearchHit[]> {
       meta,
     })
   }
-
   return hits
+}
+
+export async function search(opts: SearchOpts): Promise<SearchHit[]> {
+  const cfg = await loadConfig(opts.configPath)
+  const storageAbs = resolveRepoPath(cfg.storagePath)
+  const vectorsFile = join(storageAbs, 'vectors')
+
+  if (!existsSync(vectorsFile)) return []
+
+  const db = new VectorDb({
+    dimensions: cfg.embeddingDim,
+    storagePath: vectorsFile,
+    distanceMetric: 'Cosine',
+  })
+
+  const queryVecs = await embedBatch([opts.query])
+  const queryVec = new Float32Array(queryVecs[0])
+
+  const rawK = opts.k ?? 5
+  // SMI-5708 Item #7 (Opus review finding): a malformed k (NaN, negative,
+  // fractional) previously passed straight to a single db.search() call and
+  // whatever came back, came back -- degraded output, but no hang. Once the
+  // scoped path can loop, an unvalidated NaN k makes every break condition a
+  // NaN comparison (all false) and `fetchK * MULTIPLIER` stays NaN forever,
+  // turning malformed input into an infinite loop of real DB queries.
+  // Mirrors rerank()'s topK guard from this same wave's Task #6.
+  const k = Number.isFinite(rawK) && rawK >= 1 ? Math.floor(rawK) : 5
+  const minScore = opts.minScore ?? DEFAULT_MIN_SIMILARITY
+  const scoped = (opts.scopeGlobs?.length ?? 0) > 0
+
+  let fetchK = k
+  let hits: SearchHit[] = []
+  for (;;) {
+    const raw = await db.search({ vector: queryVec, k: fetchK })
+    hits = buildHits(raw, opts, minScore)
+
+    if (!scoped) break
+    if (hits.length >= k) break
+    if (raw.length < fetchK) break // DB exhausted -- more k won't yield more candidates
+    if (fetchK >= SCOPE_OVERFETCH_CEILING) break
+
+    fetchK = Math.min(fetchK * SCOPE_OVERFETCH_MULTIPLIER, SCOPE_OVERFETCH_CEILING)
+  }
+
+  return scoped ? hits.slice(0, k) : hits
 }
