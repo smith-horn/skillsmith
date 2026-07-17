@@ -2,7 +2,12 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+// SMI-5718: use the SDK's own v3/v4-aware compat layer instead of hand-reaching
+// into zod internals — see jsonSchemaOf() below for the incident this replaces.
+import { normalizeObjectSchema } from '@modelcontextprotocol/sdk/server/zod-compat.js'
+import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js'
 import { z } from 'zod'
+import { pathToFileURL } from 'node:url'
 import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { search } from './search.js'
 import { runIndexer } from './indexer.js'
@@ -36,7 +41,7 @@ const ReindexArgs = z.object({
 
 const StatusArgs = z.object({}).strict()
 
-async function handleListTools(): Promise<{ tools: unknown[] }> {
+export async function handleListTools(): Promise<{ tools: unknown[] }> {
   return {
     tools: [
       {
@@ -109,52 +114,63 @@ function toolError(message: string): CallToolResult {
   }
 }
 
-function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
-  // Minimal hand-rolled shape — @modelcontextprotocol/sdk tools consume a subset
-  // of JSON Schema, so we mirror the zod shape without pulling zod-to-json-schema.
-  const shape = (
-    schema as unknown as { _def: { shape?: () => Record<string, z.ZodType> } }
-  )._def.shape?.()
-  if (!shape) return { type: 'object', properties: {}, additionalProperties: true }
-  const properties: Record<string, unknown> = {}
-  const required: string[] = []
-  for (const [key, val] of Object.entries(shape)) {
-    properties[key] = zodToJson(val)
-    if (!(val as z.ZodType).isOptional()) required.push(key)
+// SMI-5718: this used to be a hand-rolled converter that reached directly
+// into zod v3-only internals (`_def.shape` as a callable thunk). When the
+// pinned `zod@3.25.76` dependency went missing (SMI-5452 bind-mount npm
+// race) and resolution fell through to a hoisted zod v4, that internal
+// shape no longer existed and the call threw an opaque
+// `TypeError: schema._def.shape is not a function` on `tools/list`.
+// `@modelcontextprotocol/sdk` (already a dependency here) ships its own
+// actively-maintained v3/v4 compat layer, used internally by its own
+// `McpServer.registerTool()` — this now uses the exact same call
+// convention (`normalizeObjectSchema` + `toJsonSchemaCompat`, same options)
+// so this file's hand-registered tools produce schema output consistent
+// with what the SDK's own high-level API would produce.
+export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
+  // `as never`: normalizeObjectSchema's generic signature triggers TS2589
+  // ("Type instantiation is excessively deep and possibly infinite") against
+  // zod's own recursive types when called with this file's concrete
+  // SearchArgs/ReindexArgs/StatusArgs shapes (verified via `tsc --noEmit`).
+  // normalizeObjectSchema duck-types its argument at runtime regardless of
+  // the static type, so the cast does not weaken the runtime check below.
+  const obj = normalizeObjectSchema(schema as never)
+  if (!obj) {
+    // normalizeObjectSchema returns undefined for anything it can't
+    // recognize as a v3/v4 object schema or a raw shape — including the
+    // exact zod-version-drift shape this issue is about (a schema whose
+    // `_def`/`_zod` internals don't match either major). Fail loud here,
+    // not just in the try/catch below, so no unrecognized-schema case
+    // silently degrades to an unbounded free-form object — that silent
+    // degradation is exactly the kind of masked failure this issue exists
+    // to eliminate.
+    throw new Error(
+      '[doc-retrieval] jsonSchemaOf: schema not recognized as a zod v3/v4 object schema ' +
+        '— possible zod version drift. Run:\n\n' +
+        '    rm -rf packages/doc-retrieval-mcp/node_modules/zod\n' +
+        '    docker compose --profile dev up -d\n' +
+        '    docker exec skillsmith-dev-1 npm install\n\n' +
+        '(packages/doc-retrieval-mcp pins zod@3.25.76 — this fires when a hoisted ' +
+        'different-major zod resolves instead. See CLAUDE.md > Troubleshooting.)'
+    )
   }
-  const out: Record<string, unknown> = { type: 'object', properties }
-  if (required.length > 0) out.required = required
-  return out
-}
-
-function zodToJson(z: z.ZodType): Record<string, unknown> {
-  const def = (z as unknown as { _def: { typeName: string; description?: string } })._def
-  const base: Record<string, unknown> = {}
-  if (def.description) base.description = def.description
-  switch (def.typeName) {
-    case 'ZodString':
-      return { type: 'string', ...base }
-    case 'ZodNumber':
-      return { type: 'number', ...base }
-    case 'ZodBoolean':
-      return { type: 'boolean', ...base }
-    case 'ZodArray':
-      return {
-        type: 'array',
-        items: zodToJson((z as unknown as { _def: { type: z.ZodType } })._def.type),
-        ...base,
-      }
-    case 'ZodEnum':
-      return {
-        type: 'string',
-        enum: (z as unknown as { _def: { values: readonly string[] } })._def.values,
-        ...base,
-      }
-    case 'ZodOptional':
-    case 'ZodDefault':
-      return zodToJson((z as unknown as { _def: { innerType: z.ZodType } })._def.innerType)
-    default:
-      return base
+  try {
+    return toJsonSchemaCompat(obj, { strictUnions: true, pipeStrategy: 'input' }) as Record<
+      string,
+      unknown
+    >
+  } catch (err) {
+    // A recognized schema that still fails conversion — e.g. a
+    // zod-to-json-schema internal error. Fail loud with a diagnosable
+    // message instead of letting a native error propagate unlabeled.
+    throw new Error(
+      '[doc-retrieval] jsonSchemaOf: failed to convert a recognized zod schema to ' +
+        'JSON Schema. Run:\n\n' +
+        '    rm -rf packages/doc-retrieval-mcp/node_modules/zod\n' +
+        '    docker compose --profile dev up -d\n' +
+        '    docker exec skillsmith-dev-1 npm install\n\n' +
+        '(possible zod version drift, or a zod-to-json-schema conversion bug — ' +
+        `original error: ${err instanceof Error ? err.message : String(err)})`
+    )
   }
 }
 
@@ -175,7 +191,16 @@ async function main(): Promise<void> {
   await server.connect(transport)
 }
 
-main().catch((err) => {
-  console.error('[doc-retrieval] fatal:', err instanceof Error ? err.message : err)
-  process.exit(1)
-})
+// SMI-5718: entry-point guard — only run main() when this file is the
+// process's actual entry point (`node dist/src/server.js`), not when it's
+// imported (e.g. by server.test.ts to exercise handleListTools/jsonSchemaOf
+// without opening a real stdio transport). @skillsmith/mcp-server's
+// index.ts predates this guard and calls main() unconditionally too, but
+// nothing there imports it as a module either — this file needs the guard
+// specifically because its regression tests (below) import it directly.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main().catch((err) => {
+    console.error('[doc-retrieval] fatal:', err instanceof Error ? err.message : err)
+    process.exit(1)
+  })
+}
