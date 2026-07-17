@@ -2,6 +2,12 @@
 #
 # Launcher for the skillsmith MCP server.
 #
+# Sibling to scripts/mcp-doc-retrieval-launcher.sh (SMI-5718) — same probe
+# contract (dependency-integrity check + emit_error shape), duplicated
+# rather than extracted into a shared lib (see that plan's Open Questions).
+# If you change the probe contract here, check whether the sibling needs
+# the same change.
+#
 # Wraps `node packages/mcp-server/dist/src/index.js` with pre-flight checks.
 # Node's failure modes for a broken install are opaque MODULE_NOT_FOUND
 # crashes that the MCP host swallows and surfaces as "Failed to reconnect
