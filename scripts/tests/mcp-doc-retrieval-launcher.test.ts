@@ -161,13 +161,23 @@ exit 1
   return { binDir, execMarker, invocationsLog }
 }
 
-/** A fully healthy fixture: sentinel, dist, package.json + resolvable dep. */
+/**
+ * A fully healthy fixture: sentinel, dist, package.json + resolvable dep +
+ * a resolvable root-hoisted `zod-to-json-schema` (the launcher's explicit
+ * extra check — see DEP_PROBE_JS's standalone call — is not one of
+ * doc-retrieval-mcp's own declared `dependencies`, so it is never covered
+ * by `addDocRetrievalPackageJson`/`addHoistedDep` for an arbitrary dep name;
+ * every "healthy" fixture must provision it explicitly or the probe
+ * legitimately reports it FAIL missing, exactly as it should for a real
+ * environment that doesn't have it hoisted).
+ */
 function makeHealthyRoot(): string {
   const root = makeRoot()
   addNodeModules(root)
   addDist(root)
   addDocRetrievalPackageJson(root, { glob: '11.1.0' })
   addHoistedDep(root, 'glob')
+  addHoistedDep(root, 'zod-to-json-schema')
   return root
 }
 
@@ -298,6 +308,7 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
     addDist(root)
     addDocRetrievalPackageJson(root, { zod: '3.25.76' })
     addHoistedDep(root, 'zod')
+    addHoistedDep(root, 'zod-to-json-schema') // see makeHealthyRoot's docblock
     const { binDir, execMarker } = makeDockerStub({ running: true })
     stubs.push(binDir)
     const res = runLauncher(root, binDir)
@@ -312,6 +323,7 @@ describe('mcp-doc-retrieval-launcher.sh', () => {
     addDist(root)
     addDocRetrievalPackageJson(root, { zod: '3.25.76' })
     addNestedDep(root, 'zod')
+    addHoistedDep(root, 'zod-to-json-schema') // see makeHealthyRoot's docblock
     const { binDir, execMarker } = makeDockerStub({ running: true })
     stubs.push(binDir)
     const res = runLauncher(root, binDir)
