@@ -4,25 +4,15 @@
  * Tests import `evaluateDrift` directly to avoid spawning subprocesses or
  * touching the filesystem. Git diff and baseline.json loading are exercised
  * via the exported function, not via the CLI entry point.
+ *
+ * getChangedFiles/evaluateDriftWithDiffResult/main CLI-wiring tests live in
+ * the sibling check-baseline-drift-diffresult.test.ts (split out to stay
+ * under the 500-line gate, SMI-5708 Item #2/#15).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { execFileSync } from 'node:child_process'
-import {
-  evaluateDrift,
-  checkHybridDrift,
-  evaluateDriftWithDiffResult,
-  getChangedFiles,
-  main,
-} from '../../eval/check-baseline-drift.js'
+import { describe, it, expect } from 'vitest'
+import { evaluateDrift, checkHybridDrift } from '../../eval/check-baseline-drift.js'
 import type { BaselineFile, BaselineByCategory } from '../../eval/check-baseline-drift.js'
-
-// SMI-5708 Item #2 -- mock the git subprocess so getChangedFiles() can be
-// forced into its failure path without a real repo/git invocation.
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>()
-  return { ...actual, execFileSync: vi.fn(actual.execFileSync) }
-})
 
 // Convenience factories
 // SMI-5708 Item #3 (Codex review finding, Medium): validateBaselineFile now
@@ -366,112 +356,4 @@ describe('evaluateDrift', () => {
   // check-baseline-drift-validation.test.ts to keep this file under the
   // 500-line standard (audit:standards Check 3), mirroring the same-reason
   // split of check-baseline-drift-validation.ts itself.
-})
-
-// ---------------------------------------------------------------------------
-// SMI-5708 Item #2 -- drift gate must fail closed when git-diff resolution
-// fails, instead of silently treating it as "nothing changed" (pass: true).
-// ---------------------------------------------------------------------------
-
-describe('getChangedFiles', () => {
-  beforeEach(() => {
-    vi.mocked(execFileSync).mockReset()
-  })
-  afterEach(() => {
-    vi.mocked(execFileSync).mockReset()
-  })
-
-  it('returns { ok: true, files } on a successful git diff', () => {
-    vi.mocked(execFileSync).mockReturnValueOnce(
-      'packages/doc-retrieval-mcp/src/rerank.ts\npackages/doc-retrieval-mcp/eval/baseline.json\n'
-    )
-    const result = getChangedFiles()
-    expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.files).toEqual([
-        'packages/doc-retrieval-mcp/src/rerank.ts',
-        'packages/doc-retrieval-mcp/eval/baseline.json',
-      ])
-    }
-  })
-
-  it('returns { ok: false, error } -- NOT an empty file list -- when git diff throws', () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
-      throw new Error("fatal: bad revision 'main...HEAD'")
-    })
-    const result = getChangedFiles()
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error).toContain("bad revision 'main...HEAD'")
-    }
-  })
-})
-
-describe('evaluateDriftWithDiffResult', () => {
-  it('fails closed (pass: false) when diff resolution failed, regardless of baseline content', () => {
-    const result = evaluateDriftWithDiffResult(
-      { ok: false, error: "fatal: bad revision 'main...HEAD'" },
-      nullBaseline()
-    )
-    expect(result.pass).toBe(false)
-    expect(result.message).toContain('::error::')
-    expect(result.message).toContain("fatal: bad revision 'main...HEAD'")
-  })
-
-  it('a forced git-diff failure does NOT fall through to the old silent pass:true default', () => {
-    // Before this fix, a git-diff failure was indistinguishable from "no
-    // files changed", and evaluateDrift([], baseline) hits the final
-    // fallback branch: pass: true, "nothing to check". This proves the
-    // fail-closed path is reached instead, even against a baseline/changed-
-    // files combination that would otherwise cleanly pass.
-    const result = evaluateDriftWithDiffResult(
-      { ok: false, error: 'shallow clone: base ref unreachable' },
-      populatedBaseline(0.8, 0.81) // would pass cleanly if [] were used
-    )
-    expect(result.pass).toBe(false)
-    expect(result.message).not.toContain('nothing to check')
-  })
-
-  it('delegates to evaluateDrift unchanged when diff resolution succeeded', () => {
-    const result = evaluateDriftWithDiffResult(
-      { ok: true, files: ['packages/doc-retrieval-mcp/src/rerank.ts'] },
-      nullBaseline()
-    )
-    expect(result.pass).toBe(false)
-    expect(result.message).toContain('baseline.json was not updated')
-  })
-
-  it('passes through evaluateDrift-normal pass:true cases when diff resolution succeeded with no changes', () => {
-    const result = evaluateDriftWithDiffResult({ ok: true, files: [] }, nullBaseline())
-    expect(result.pass).toBe(true)
-    expect(result.message).toContain('nothing to check')
-  })
-})
-
-// SMI-5708 Item #2 -- end-to-end CLI wiring test (independent Opus + Codex
-// review, both requested this): proves the REAL, unexported-in-spirit
-// `main()` wired to a REAL forced `git diff` failure actually reaches
-// `process.exit(1)`, not just its parts in isolation. Deliberately still
-// avoids spawning a subprocess (per this file's header comment) by mocking
-// `process.exit`/`process.stderr.write` instead -- `main()`'s own
-// `loadBaseline()` call reads the real, committed baseline.json (harmless,
-// read-only), so nothing besides the git subprocess needs mocking.
-describe('main (CLI wiring, end-to-end)', () => {
-  it('a real forced git-diff failure propagates through the real main() to exit(1)', () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
-      throw new Error("fatal: bad revision 'main...HEAD'")
-    })
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
-    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-
-    main()
-
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('\n')
-    expect(written).toContain('::error::')
-    expect(written).toContain("fatal: bad revision 'main...HEAD'")
-
-    exitSpy.mockRestore()
-    stderrSpy.mockRestore()
-  })
 })

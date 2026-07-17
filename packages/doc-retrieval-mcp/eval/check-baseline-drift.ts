@@ -315,7 +315,12 @@ export type ChangedFilesResult = ChangedFilesOk | ChangedFilesError
 export function getChangedFiles(): ChangedFilesResult {
   const baseRef = process.env['GITHUB_BASE_REF']
   const headRef = process.env['GITHUB_HEAD_REF']
-  const range = baseRef && headRef ? `${baseRef}...HEAD` : 'main...HEAD'
+  // GITHUB_BASE_REF is a bare branch name (e.g. "main"), but actions/checkout
+  // never creates a local branch of that name -- only the origin/ remote-
+  // tracking ref exists, even with fetch-depth: 0. An unprefixed range
+  // fails with "unknown revision", which Item #2's fail-closed handling now
+  // correctly surfaces instead of silently swallowing (SMI-5708 CI repro).
+  const range = baseRef && headRef ? `origin/${baseRef}...HEAD` : 'origin/main...HEAD'
   try {
     const output = execFileSync('git', ['diff', '--name-only', range], { encoding: 'utf8' })
     const files = output
