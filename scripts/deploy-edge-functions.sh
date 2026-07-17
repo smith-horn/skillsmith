@@ -104,6 +104,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   stats
   stripe-webhook
   team-compliance-check
+  telemetry-consent
   webhook-heartbeat-monitor
 )
 

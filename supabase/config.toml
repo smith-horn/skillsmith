@@ -413,6 +413,12 @@ verify_jwt = false
 [functions.license-status]
 verify_jwt = false
 
+# SMI-5531: publicly invokable (verify_jwt=true would 401 every real MCP
+# client before the handler even runs) — authenticates the caller's
+# presented credential (API key or device-session JWT) in-handler instead.
+[functions.telemetry-consent]
+verify_jwt = false
+
 [functions.list-invoices]
 verify_jwt = false
 
