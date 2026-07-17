@@ -389,8 +389,8 @@ describe('eval-baseline-validator', () => {
   })
 
   // -------------------------------------------------------------------------
-  // SMI-5708 Item #5's headSha ancestor-check tests (exact-ancestor,
-  // non-ancestor rejection, and the multi-entry selection fix) moved to
-  // eval-baseline-validator-headsha.test.ts to keep this file under the
-  // 500-line standard.
+  // SMI-5708 Item #14's resolveDiffRange() no-op-vs-failure tests moved to
+  // eval-baseline-validator-rangeresolution.test.ts, and Item #5's headSha
+  // ancestor-check tests to eval-baseline-validator-headsha.test.ts, both to
+  // keep this file under the 500-line standard.
 })
