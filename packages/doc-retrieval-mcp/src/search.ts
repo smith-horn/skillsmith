@@ -25,6 +25,43 @@ export interface SearchOpts {
    * the demotion-cap path could keep it in the result set.
    */
   preRerank?: boolean
+  /**
+   * SMI-5708 Item #12 -- reuse an already-constructed VectorDb handle (see
+   * `createVectorDb()`) instead of constructing a fresh one on every call.
+   * The eval harness calls `search()` once per gold-set query (55 queries);
+   * without this, each call re-opens the same on-disk index. Optional and
+   * additive -- omitting it preserves the original single-call behavior for
+   * every existing caller (the live MCP tool, session-priming).
+   */
+  db?: InstanceType<typeof VectorDb>
+  /**
+   * SMI-5708 Item #12 -- reuse a pre-computed query embedding instead of
+   * embedding `query` on every call. The eval harness batch-embeds all 55
+   * gold-set queries once up front via `embedBatch()`. Optional and
+   * additive, same rationale as `db` above.
+   */
+  queryVec?: Float32Array
+}
+
+/**
+ * SMI-5708 Item #12 -- construct a VectorDb handle once, for callers (the
+ * eval harness) that issue many search() calls against the same index and
+ * would otherwise reopen it on every call. Returns `null` under the exact
+ * same condition `search()` itself returns `[]` for (no index built yet),
+ * so callers can check once instead of duplicating the existsSync check.
+ */
+export async function createVectorDb(
+  configPath?: string
+): Promise<InstanceType<typeof VectorDb> | null> {
+  const cfg = await loadConfig(configPath)
+  const storageAbs = resolveRepoPath(cfg.storagePath)
+  const vectorsFile = join(storageAbs, 'vectors')
+  if (!existsSync(vectorsFile)) return null
+  return new VectorDb({
+    dimensions: cfg.embeddingDim,
+    storagePath: vectorsFile,
+    distanceMetric: 'Cosine',
+  })
 }
 
 /**
@@ -119,20 +156,14 @@ function buildHits(
 }
 
 export async function search(opts: SearchOpts): Promise<SearchHit[]> {
-  const cfg = await loadConfig(opts.configPath)
-  const storageAbs = resolveRepoPath(cfg.storagePath)
-  const vectorsFile = join(storageAbs, 'vectors')
+  let db = opts.db
+  if (!db) {
+    const created = await createVectorDb(opts.configPath)
+    if (!created) return []
+    db = created
+  }
 
-  if (!existsSync(vectorsFile)) return []
-
-  const db = new VectorDb({
-    dimensions: cfg.embeddingDim,
-    storagePath: vectorsFile,
-    distanceMetric: 'Cosine',
-  })
-
-  const queryVecs = await embedBatch([opts.query])
-  const queryVec = new Float32Array(queryVecs[0])
+  const queryVec = opts.queryVec ?? new Float32Array((await embedBatch([opts.query]))[0])
 
   const rawK = opts.k ?? 5
   // SMI-5708 Item #7 (Opus review finding): a malformed k (NaN, negative,

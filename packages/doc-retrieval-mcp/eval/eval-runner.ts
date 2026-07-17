@@ -147,15 +147,33 @@ export function assertMemoryCorpusIndexed(): void {
 async function runRealEval(entries: GoldEntry[], minScore?: number): Promise<RunResult[]> {
   assertMemoryCorpusIndexed()
 
-  const { search } = await import('../src/search.js')
+  const { search, createVectorDb } = await import('../src/search.js')
   const { rerank } = await import('../src/rerank.js')
   const { DEFAULT_MIN_SIMILARITY } = await import('../src/config.js')
+  const { embedBatch } = await import('../src/embedding.js')
   const threshold = minScore ?? DEFAULT_MIN_SIMILARITY
+
+  // SMI-5708 Item #12: reuse one VectorDb handle and batch-embed all of this
+  // pass's queries once, instead of search() constructing a fresh VectorDb
+  // (each of which reopens the on-disk index) and re-embedding one query at
+  // a time for every entry. Purely a performance fix -- results are
+  // byte-identical either way (Wave 0 finding: confirmed-but-overstated,
+  // the ONNX model itself was already a cached singleton).
+  const db = await createVectorDb()
+  const queryVecs = db ? await embedBatch(entries.map((e) => e.query)) : []
 
   const results: RunResult[] = []
 
-  for (const e of entries) {
-    const pool = await search({ query: e.query, k: 20, preRerank: true })
+  for (const [i, e] of entries.entries()) {
+    const pool = db
+      ? await search({
+          query: e.query,
+          k: 20,
+          preRerank: true,
+          db,
+          queryVec: new Float32Array(queryVecs[i]),
+        })
+      : []
     // SMI-5708 Item #6: topK=10, matching this harness's own Recall@10/
     // nDCG@10 metrics -- rerank()'s BM25/MMR branch previously hardcoded a
     // 5-item selection cap, so BM25's Recall@10 could never exceed Recall@5.

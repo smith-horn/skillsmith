@@ -15,7 +15,7 @@ try {
 }
 
 import { runIndexer } from '../../src/indexer.js'
-import { search } from '../../src/search.js'
+import { search, createVectorDb } from '../../src/search.js'
 import { resetConfigCache, loadConfig, resolveRepoPath } from '../../src/config.js'
 import { resetEmbedderCache, embedBatch } from '../../src/embedding.js'
 
@@ -292,5 +292,91 @@ describe.skipIf(!nativeAvailable)('search integration (requires @ruvector/core n
     for (const hit of hits) {
       expect(hit.filePath).toBe('fixtures/guide-a.md')
     }
+  })
+
+  // SMI-5708 Item #12: a caller-supplied VectorDb handle + query embedding
+  // must produce byte-identical results to the original per-call path
+  // (fresh db + fresh embed on every search()), and the SAME reused handle
+  // must work correctly across multiple queries -- proving the harness's
+  // reuse-one-handle optimization doesn't change behavior.
+  it('a reused VectorDb handle + pre-computed query embedding produce identical results to the per-call path', async () => {
+    const query = 'system topics'
+    const baseline = await search({ query, k: 5, configPath })
+
+    const db = await createVectorDb(configPath)
+    expect(db).not.toBeNull()
+    const [queryVec] = await embedBatch([query])
+
+    const reused = await search({
+      query,
+      k: 5,
+      configPath,
+      db: db!,
+      queryVec: new Float32Array(queryVec),
+    })
+
+    expect(reused.length).toBe(baseline.length)
+    expect(reused.map((h) => h.id)).toEqual(baseline.map((h) => h.id))
+    expect(reused.map((h) => h.similarity)).toEqual(baseline.map((h) => h.similarity))
+  })
+
+  it('the same reused VectorDb handle works correctly across multiple different queries', async () => {
+    const db = await createVectorDb(configPath)
+    expect(db).not.toBeNull()
+
+    const queries = ['system topics', 'section details coverage']
+    const [vecA, vecB] = await embedBatch(queries)
+
+    const hitsA = await search({
+      query: queries[0],
+      k: 5,
+      configPath,
+      db: db!,
+      queryVec: new Float32Array(vecA),
+    })
+    const hitsB = await search({
+      query: queries[1],
+      k: 5,
+      configPath,
+      db: db!,
+      queryVec: new Float32Array(vecB),
+    })
+
+    const expectedA = await search({ query: queries[0], k: 5, configPath })
+    const expectedB = await search({ query: queries[1], k: 5, configPath })
+
+    expect(hitsA.map((h) => h.id)).toEqual(expectedA.map((h) => h.id))
+    expect(hitsB.map((h) => h.id)).toEqual(expectedB.map((h) => h.id))
+  })
+
+  // Codex review finding: the two tests above prove OUTPUT correctness, but
+  // would pass identically even if search() silently ignored a supplied
+  // queryVec and re-embedded `query` itself instead -- correct either way,
+  // since query and queryVec always corresponded to the same string in both
+  // tests. This test deliberately mismatches them: `query` is set to text
+  // that would normally match guide-a.md, but `queryVec` is the embedding of
+  // DIFFERENT text that matches guide-b.md instead. If search() genuinely
+  // uses the supplied queryVec, results follow the vector (guide-b); if it
+  // silently fell back to re-embedding `query`, results would follow guide-a.
+  it('search() genuinely uses the supplied queryVec rather than silently re-embedding query', async () => {
+    const queryA = 'system topics' // matches guide-a.md
+    const queryB = 'completely different subject matter' // matches guide-b.md
+
+    const db = await createVectorDb(configPath)
+    expect(db).not.toBeNull()
+    const [vecB] = await embedBatch([queryB])
+
+    const mismatched = await search({
+      query: queryA,
+      k: 5,
+      minScore: 0,
+      configPath,
+      db: db!,
+      queryVec: new Float32Array(vecB),
+    })
+    const expectedForB = await search({ query: queryB, k: 5, minScore: 0, configPath })
+
+    expect(mismatched.length).toBeGreaterThan(0)
+    expect(mismatched.map((h) => h.id)).toEqual(expectedForB.map((h) => h.id))
   })
 })
