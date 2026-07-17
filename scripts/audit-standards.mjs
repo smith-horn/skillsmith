@@ -46,6 +46,7 @@ import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-verce
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
+import { evaluateInternalVersionCoherence } from './audit-internal-version-coherence-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
 import { PACKAGE_SPECS } from './lib/version-utils.ts'
 
@@ -4858,6 +4859,108 @@ console.log('(content, not placement — see Check 43 for heading order)')
     // while a later fail() for a different package goes unnoticed.
     console.log(
       `Check 54: ${touchedMissing}/${touchedTotal} touched package(s) missing a CHANGELOG entry — see above`
+    )
+  }
+}
+
+// Check 58: Internal @skillsmith/*/@smith-horn/* version-coherence gate
+// (SMI-5715)
+//
+// Numbering note: Checks 55/56/57 (strategy submodule pointer-on-tip,
+// `git config --file` subshell discipline, website internal-reference scan)
+// were already registered earlier in this file by the time this check was
+// added — the file's physical layout is not number-ordered (Check 54 itself
+// sits at the very end despite being numbered lower). This check is Check 58,
+// the true next-available number, not "55" as an earlier draft of the plan
+// assumed before Checks 55–57 existed.
+//
+// packages/doc-retrieval-mcp/package.json pinned `@skillsmith/core` to
+// `^0.8.0` while the workspace's actual `@skillsmith/core` version had moved
+// to `0.11.2` — three minor versions of drift, invisible because nothing
+// checked that internal `@skillsmith/*`/`@smith-horn/*` dependency ranges
+// track the workspace's actual current versions. That single stale range
+// broke both Turborepo's `dependsOn: ["^build"]` task-graph edge (Turbo only
+// creates the edge when the declared range IS satisfied by the workspace
+// version) and npm's workspace-symlink resolution (a fresh worktree's first
+// build resolved the nested registry tarball instead of the hoisted
+// workspace symlink). See
+// docs/internal/implementation/smi-5715-doc-retrieval-core-version-drift.md
+// for the full root-cause writeup.
+//
+// Ships as fail() from day one — no warn-only burn-in, matching Check 54's
+// precedent (SMI-5680 C2). Scoped to the dynamic `packages/*` glob (like
+// Checks 24/43), not the 5-package PACKAGE_SPECS list Check 54 uses — this
+// check's whole purpose is catching packages PACKAGE_SPECS doesn't cover
+// (doc-retrieval-mcp is `private: true`; skillsmith-cli is the published
+// convenience-wrapper package — neither is in PACKAGE_SPECS).
+console.log(
+  `\n${BOLD}Check 58: Internal @skillsmith/*/@smith-horn/* version-coherence gate (SMI-5715)${RESET}`
+)
+{
+  // [skip-version-coherence-check] — for a genuinely deliberate stale pin
+  // (e.g. a compatibility shim intentionally lagging the workspace version).
+  // Mirrors Check 54's [skip-changelog-check] marker exactly: PR-body-only,
+  // boolean marker + required prose reason paragraph, downgrades a would-be
+  // fail() to pass(). Registered in docs/internal/process/guards-and-opt-outs.md.
+  const SKIP_MARKER = '[skip-version-coherence-check]'
+  const PR_BODY = process.env.PR_BODY || ''
+  const skipAcknowledged = PR_BODY.includes(SKIP_MARKER)
+  if (skipAcknowledged) {
+    console.log(
+      `::notice::${SKIP_MARKER} opt-out found in PR body — Check 58 will report findings but not fail.`
+    )
+    const idx = PR_BODY.indexOf(SKIP_MARKER)
+    const after = PR_BODY.slice(idx + SKIP_MARKER.length)
+    const reasonParagraph = after.split(/\n\s*\n/)[0].trim()
+    console.log('::group::Acknowledgement reason')
+    console.log(reasonParagraph || '(no reason paragraph found immediately after the marker)')
+    console.log('::endgroup::')
+  }
+
+  const pkgDirs = existsSync('packages')
+    ? readdirSync('packages').filter((d) => existsSync(join('packages', d, 'package.json')))
+    : []
+
+  const packagesByDir = {}
+  for (const d of pkgDirs) {
+    try {
+      packagesByDir[d] = JSON.parse(readFileSync(join('packages', d, 'package.json'), 'utf8'))
+    } catch (e) {
+      warn(`Check 58: could not parse packages/${d}/package.json: ${e.message}`)
+    }
+  }
+
+  const results = evaluateInternalVersionCoherence(packagesByDir)
+  let okCount = 0
+  let violationCount = 0
+  let danglingCount = 0
+
+  for (const r of results) {
+    if (r.status === 'ok') {
+      okCount++
+    } else if (r.status === 'dangling') {
+      danglingCount++
+      warn(
+        `Check 58: packages/${r.dir}'s ${r.section} references ${r.depName} (range ${r.range}), which has no corresponding workspace package`,
+        `Confirm the correct workspace package name for ${r.depName} and update packages/${r.dir}/package.json's ${r.section} entry accordingly`
+      )
+    } else if (skipAcknowledged) {
+      pass(
+        `Check 58: packages/${r.dir}: ${r.depName} range ${r.range} vs workspace version ${r.actualVersion} — [skip-version-coherence-check] acknowledged`
+      )
+    } else {
+      violationCount++
+      fail(
+        `Check 58: packages/${r.dir}: ${r.depName} range ${r.range} does not satisfy workspace version ${r.actualVersion}`,
+        `Bump the range to ^${r.actualVersion} in packages/${r.dir}/package.json. If this is a deliberate, intentionally-lagging pin, add '[skip-version-coherence-check]' plus a reason paragraph to the PR body — see docs/internal/process/guards-and-opt-outs.md.`
+      )
+    }
+  }
+
+  if (violationCount === 0) {
+    pass(
+      `Check 58: all ${okCount} internal @skillsmith/*/@smith-horn/* dependency range(s) satisfy their workspace versions` +
+        (danglingCount > 0 ? ` (${danglingCount} dangling-name warning(s) above)` : '')
     )
   }
 }
