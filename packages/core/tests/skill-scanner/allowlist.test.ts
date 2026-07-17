@@ -69,6 +69,7 @@ function makeReport(
       pii: 0,
       codeExecution: 0,
       obfuscatedDirective: 0,
+      typosquat: 0,
     },
     ...overrides,
   }

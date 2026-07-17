@@ -3,7 +3,7 @@
  * @module @skillsmith/core/security/scanner/SecurityScanner.formatters
  */
 
-import type { ScanReport } from './types.js'
+import type { ScanReport, SecurityFinding } from './types.js'
 
 // ============================================================================
 // Output Formatters
@@ -155,4 +155,44 @@ export function toSummary(report: ScanReport): {
     byType,
     scanDurationMs: report.scanDurationMs,
   }
+}
+
+/**
+ * SMI-595: fixed, curated user-facing copy for each typosquat detection
+ * rule, keyed by the finding's `category` (set by `scanTyposquat()` in
+ * `typosquat.ts`). Deliberately NOT derived from the finding's raw
+ * `message` — that field is free to use internal/technical language for
+ * developer-facing surfaces (logs, SARIF, CI annotations); this table is the
+ * one place user-facing copy is generated, so it can enforce the
+ * banned-vocabulary rule below independent of what the raw message says.
+ */
+const TYPOSQUAT_SIGNAL_COPY: Record<string, string> = {
+  'typosquat:impersonation-exact-skeleton':
+    "This skill's name closely resembles a well-known skill and may be attempting impersonation.",
+  'typosquat:levenshtein':
+    "This skill's name is very similar to a well-known skill — double-check that you have the right one before installing.",
+  'typosquat:authority-affix':
+    "This skill's name claims an official or verified status it has not been granted.",
+}
+
+/** Fallback copy for a typosquat finding whose category isn't in the lookup table above. */
+const TYPOSQUAT_FALLBACK_MESSAGE =
+  'This skill has a naming pattern that may be attempting to impersonate another skill.'
+
+/**
+ * SMI-595: translate typosquat findings into user-facing copy.
+ *
+ * Banned-vocabulary rule (enforced by a dedicated test, not just this
+ * function's implementation): the strings this function returns must never
+ * contain "homoglyph", "confusable", "skeleton", or internal ladder-step/rule
+ * numbers — those describe the *detection method*, which means nothing to a
+ * skill installer and could help an attacker tune around the detector.
+ *
+ * @param findings - Any findings array; non-typosquat findings are ignored.
+ * @returns One user-facing string per typosquat finding, in input order.
+ */
+export function describeSignals(findings: SecurityFinding[]): string[] {
+  return findings
+    .filter((finding) => finding.type === 'typosquat')
+    .map((finding) => TYPOSQUAT_SIGNAL_COPY[finding.category ?? ''] ?? TYPOSQUAT_FALLBACK_MESSAGE)
 }

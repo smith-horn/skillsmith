@@ -291,6 +291,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
     pii: 0,
     codeExecution: 0,
     obfuscatedDirective: 0,
+    typosquat: 0,
   }
 
   const confidenceWeights: Record<FindingConfidence, number> = {
@@ -345,6 +346,13 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
       case 'obfuscated_directive':
         breakdown.obfuscatedDirective += score
         break
+      case 'typosquat':
+        // SMI-595: this switch has NO default case — a missing arm here would
+        // silently drop every typosquat finding from the breakdown with zero
+        // compile-time or runtime error. See the switch-case coverage test in
+        // SecurityScanner.scoring.test.ts, added specifically to guard this.
+        breakdown.typosquat += score
+        break
     }
   }
 
@@ -362,11 +370,16 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   breakdown.pii = Math.min(100, breakdown.pii)
   breakdown.codeExecution = Math.min(100, breakdown.codeExecution)
   breakdown.obfuscatedDirective = Math.min(100, breakdown.obfuscatedDirective)
+  breakdown.typosquat = Math.min(100, breakdown.typosquat)
 
   // SMI-5359 Wave 4.2: the two new categories use a 0.40 coefficient and are ADDITIVE
   // (the original eleven coefficients sum to 1.0; these add on top). No code assumes the
   // coefficients sum to 1.0, and the final Math.min(100, ...) cap is preserved — so a skill
   // that triggers neither new category scores exactly as before (both breakdown entries 0).
+  // SMI-595: typosquat is likewise ADDITIVE, at the 0.04 coefficient already used for
+  // sensitivePaths/externalUrls/ssrf (the "advisory tier" of this second-stage formula) —
+  // NOT folded into the eleven-category budget that sums to 1.0. See weights.ts's
+  // CATEGORY_WEIGHTS.typosquat comment for the worked calculation this pairs with.
   const total = Math.min(
     100,
     Math.round(
@@ -382,7 +395,8 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
         breakdown.ssrf * 0.04 +
         breakdown.pii * 0.08 +
         breakdown.codeExecution * 0.4 +
-        breakdown.obfuscatedDirective * 0.4
+        breakdown.obfuscatedDirective * 0.4 +
+        breakdown.typosquat * 0.04
     )
   )
 

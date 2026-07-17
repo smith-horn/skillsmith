@@ -324,6 +324,7 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
       pii: 0,
       codeExecution: 0,
       obfuscatedDirective: 0,
+      typosquat: 0,
     }
 
     function makeScanReport(
