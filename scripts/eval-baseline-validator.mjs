@@ -6,9 +6,41 @@
 //   1. baseline.json is also in the diff (else: reject with repro command)
 //   2. baseline.json's sha256 has a matching signature in .signatures.log
 //      (signatures are written by eval-runner.ts on each real-mode run)
-//   3. The signature timestamp is fresh:
+//   3. That signature's recorded git HEAD (SMI-5708 Item #5) is the commit
+//      currently being validated, or an ANCESTOR of it — not required to
+//      match exactly. This tolerates the routine case of new commits
+//      landing on the same branch after the signature was recorded (this
+//      repo's wave-branch-stacking convention, SMI-2597, stacks Wave N+1's
+//      commits on top of Wave N's), where an exact-match requirement would
+//      false-reject a still-legitimately-fresh signature. It does NOT cover
+//      an actual `git rebase`/`commit --amend`: those produce a NEW commit
+//      sha that is a SIBLING of the original (same parent), not a
+//      descendant of it — ancestor-checking correctly requires a fresh
+//      signature after an actual rebase/amend, since the content
+//      relationship to what was signed is no longer guaranteed (Codex
+//      review finding — an earlier version of this comment incorrectly
+//      implied rebase/amend was itself tolerated).
+//   4. The signature timestamp is fresh:
 //        - Ranking-only changes  (rerank.ts, search.ts): 7-day window
 //        - Corpus or gold-set changes: 24-hour window
+//
+// HONEST SCOPE (SMI-5708 Item #5(b)): this whole validator is a
+// per-developer ACCIDENTAL-STALENESS check, not a security control. It
+// exists to catch "you forgot to re-run the eval before pushing" or "you
+// pushed from a branch whose baseline.json was never actually validated
+// against this history." It does NOT, and structurally CANNOT, stop a
+// determined bad actor: baseline.json and .signatures.log are both ordinary
+// tracked files, so anyone with write access can hand-edit baseline.json,
+// compute its sha256, and append a matching line — with any headSha they
+// like, including a real current HEAD — to .signatures.log in the very
+// same commit. A pass from this script proves only "a signature exists
+// whose content-hash and headSha-ancestry are consistent with this push,"
+// never "a real eval run actually produced this baseline.json." Real
+// provenance would require CI-side signing (an artifact signature tied to
+// the evaluated commit + corpus hash + runner config hash, generated only
+// by trusted CI) — tracked as a follow-up (SMI-5708 Item #5(c)), not built
+// in this pass. Nothing downstream should read a pass here as more than
+// "looks fresh," and certainly not as a provenance/security guarantee.
 //
 // Mode branching:
 //   SKILLSMITH_EVAL_CANONICAL=true  → validation failure exits 1 (block push)
@@ -120,16 +152,31 @@ function resolveDiffRange() {
   }
 }
 
+/**
+ * Resolve the changed-file list for `range`, distinguishing "diff resolved
+ * with zero files" from "diff resolution itself failed" (SMI-5708 Item #2).
+ *
+ * `range === null` is a deliberate, pre-existing no-op case (delete-only
+ * push, or no stdin/no upstream to fall back to -- see resolveDiffRange's
+ * doc comment) and is NOT a failure: it returns `{ ok: true, files: [] }`
+ * unchanged from before this fix.
+ *
+ * A thrown `git diff` (e.g. the resolved base/head sha is unreachable in a
+ * shallow clone) previously returned `[]` here too, indistinguishable from
+ * "nothing changed" -- silently defeating the whole validator. That case now
+ * returns `{ ok: false, error }` so the caller can fail closed in canonical
+ * mode instead of treating it as a no-op.
+ */
 function listChangedFiles(range) {
-  if (range === null) return []
+  if (range === null) return { ok: true, files: [] }
   try {
     const out = execFileSync('git', ['diff', '--name-only', `${range.base}..${range.head}`], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
     })
-    return out.split('\n').filter((l) => l.length > 0)
-  } catch {
-    return []
+    return { ok: true, files: out.split('\n').filter((l) => l.length > 0) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -148,19 +195,82 @@ function readBaselineSha() {
   return createHash('sha256').update(content, 'utf8').digest('hex')
 }
 
-function lookupSignature(sha) {
+/**
+ * Returns EVERY line in `.signatures.log` whose content-hash matches `sha`,
+ * not just the first (Codex review finding, High). The same baseline.json
+ * content can legitimately be re-signed more than once within the log's
+ * 15-line FIFO window -- e.g. a developer re-runs the eval to refresh a
+ * signature after the corpus/gold-set/ranking files didn't actually change
+ * the output. Returning only the first (oldest) match meant a stale entry
+ * for that content -- e.g. one whose headSha is no longer an ancestor of
+ * HEAD -- could reject a push even though a LATER entry for the exact same
+ * content has a perfectly valid headSha. The caller must consider every
+ * returned entry, not just the first.
+ */
+function lookupSignatures(sha) {
   const logPath = join(REPO_ROOT, SIGNATURES_REL)
-  if (!existsSync(logPath)) return null
+  if (!existsSync(logPath)) return []
   const lines = readFileSync(logPath, 'utf8')
     .split('\n')
     .filter((l) => l.trim().length > 0)
+  const matches = []
   for (const line of lines) {
     const [logSha, timestamp, headSha] = line.split('\t')
     if (logSha === sha) {
-      return { sha: logSha, timestamp, headSha }
+      matches.push({ sha: logSha, timestamp, headSha })
     }
   }
-  return null
+  return matches
+}
+
+/**
+ * SMI-5708 Item #5(a) — is `candidateSha` the current git HEAD, or an
+ * ancestor of it?
+ *
+ * A signature's headSha is captured at the moment a real-mode run wrote
+ * baseline.json (emitBaselineSignature() in eval-runner-signatures.ts). By
+ * the time a push is validated, HEAD has often moved forward — later
+ * commits landed on the SAME branch after the signature was recorded
+ * (SMI-2597's wave-branch-stacking convention makes this routine: Wave N+1
+ * stacks its commits on top of Wave N's). Requiring an EXACT match would
+ * false-reject a signature that is still legitimately fresh in that case.
+ * Accepting "ancestor of HEAD" (or equal) closes the obvious replay gap (a
+ * signature recorded against some unrelated commit — a different branch, or
+ * one never merged into this history) without false-rejecting the routine
+ * case. This does NOT tolerate an actual `git rebase`/`commit --amend`: those
+ * produce a new sha that is a SIBLING of the original commit (same parent),
+ * not a descendant — correctly requiring a fresh signature, since ancestry
+ * to what was signed is no longer guaranteed (Codex review finding).
+ *
+ * Fails closed: any git error (unresolvable/unknown sha, shallow clone
+ * missing the needed history, etc.) returns false, the same as "not an
+ * ancestor" — an unverifiable headSha must not be treated as a pass.
+ */
+function isHeadShaAcceptable(candidateSha) {
+  if (!candidateSha || candidateSha.trim().length === 0) return false
+  let currentHead
+  try {
+    currentHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    }).trim()
+  } catch {
+    return false
+  }
+  if (candidateSha === currentHead) return true
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', candidateSha, currentHead], {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    })
+    // execFileSync throws on a non-zero exit; reaching here means git
+    // reported exit 0 (candidateSha IS an ancestor of currentHead).
+    return true
+  } catch {
+    // Non-zero exit (not an ancestor) and thrown errors (unknown revision,
+    // detached/missing history) are both treated as "not acceptable."
+    return false
+  }
 }
 
 function emit(failure) {
@@ -179,7 +289,29 @@ function emit(failure) {
 
 function main() {
   const range = resolveDiffRange()
-  const changed = listChangedFiles(range)
+  const diffResult = listChangedFiles(range)
+
+  // Diff resolution failure -- distinct from range === null's genuine no-op.
+  // Route through the existing emit() dual-mode helper: canonical mode
+  // blocks (exit 1), advisory mode warns with a message that says plainly
+  // "diff resolution failed" rather than looking like "no changes detected"
+  // (plan-review finding L1 -- reuse the existing canonical/advisory
+  // machinery here rather than inventing a second mode-detection path).
+  if (!diffResult.ok) {
+    emit(
+      [
+        'Failed to resolve the git diff needed to check ranking/baseline freshness',
+        '(this is a diff-resolution failure, not "no changes detected").',
+        `Cause: ${diffResult.error}`,
+        '',
+        'The validator cannot verify whether ranking-relevant files changed, so it',
+        'cannot confirm baseline.json is fresh.',
+      ].join('\n')
+    )
+    return
+  }
+
+  const changed = diffResult.files
   const { rankingOnly, corpus, baselineChanged } = classifyDiff(changed)
 
   // If no ranking files changed at all, this validator is a no-op.
@@ -210,8 +342,8 @@ function main() {
     emit('baseline.json not found at expected path; cannot validate signature.')
     return
   }
-  const sig = lookupSignature(sha)
-  if (sig === null) {
+  const candidates = lookupSignatures(sha)
+  if (candidates.length === 0) {
     emit(
       [
         'baseline.json was hand-edited or stale: its sha256 is not in .signatures.log.',
@@ -223,22 +355,51 @@ function main() {
     return
   }
 
-  // Rule 3: signature freshness.
-  const sigTime = Date.parse(sig.timestamp)
-  if (Number.isNaN(sigTime)) {
-    emit(`signature has unparseable timestamp: ${sig.timestamp}`)
+  // Rule 3 (SMI-5708 Item #5): at least one candidate's recorded headSha must
+  // be the current HEAD, or an ancestor of it. There can be MULTIPLE log
+  // entries with this exact content-hash (Codex review finding, High) --
+  // e.g. the same baseline.json content was re-signed after a commit that
+  // didn't change it -- so an older entry's stale headSha must not shadow a
+  // later entry's valid one. Filter to headSha-acceptable candidates first;
+  // only reject outright if NONE qualify.
+  const headShaOk = candidates.filter((c) => isHeadShaAcceptable(c.headSha))
+  if (headShaOk.length === 0) {
+    const recorded = candidates.map((c) => c.headSha || '(none)').join(', ')
+    emit(
+      [
+        'baseline.json signature was recorded against a commit that is not the',
+        'current HEAD and not one of its ancestors.',
+        `  recorded headSha(s): ${recorded}`,
+        '',
+        'This usually means the signature came from an unrelated branch, or a',
+        'commit that was never merged into this history — not from a real-mode',
+        'run validated against this push. Re-run real-mode locally to produce a',
+        'fresh signature tied to this branch:',
+        '',
+        `  ${REAL_MODE_REPRO}`,
+      ].join('\n')
+    )
     return
   }
-  const ageMs = Date.now() - sigTime
+
+  // Rule 4: at least one headSha-acceptable candidate must also be fresh.
   // Corpus changes get the tighter window even if ranking-only files are also
   // present in the same push (corpus drift dominates the staleness risk).
   const windowMs = corpus ? CORPUS_FRESHNESS_MS : RANKING_FRESHNESS_MS
-  if (ageMs > windowMs) {
-    const hours = (ageMs / MS_PER_HOUR).toFixed(1)
+  let newestAgeMs = null
+  const anyFresh = headShaOk.some((c) => {
+    const sigTime = Date.parse(c.timestamp)
+    if (Number.isNaN(sigTime)) return false
+    const ageMs = Date.now() - sigTime
+    if (newestAgeMs === null || ageMs < newestAgeMs) newestAgeMs = ageMs
+    return ageMs <= windowMs
+  })
+  if (!anyFresh) {
+    const hours = newestAgeMs === null ? 'unknown' : (newestAgeMs / MS_PER_HOUR).toFixed(1)
     const limit = corpus ? '24h (corpus/gold-set)' : '7d (ranking-only)'
     emit(
       [
-        `baseline.json signature is stale: ${hours}h old, limit ${limit}.`,
+        `baseline.json signature is stale: ${hours}h old (newest headSha-acceptable entry), limit ${limit}.`,
         'Re-run real-mode to refresh:',
         `  ${REAL_MODE_REPRO}`,
       ].join('\n')

@@ -18,74 +18,37 @@
  * Output uses process.stdout.write (not console.log) for determinism.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { GoldEntry, RunResult, MetricsReport } from './metrics.js'
 import { computeMetrics } from './metrics.js'
-import { resolveRepoPath } from '../src/config.js'
-// SMI-4764 Wave 0 signature emission lives in a sibling file to keep this
-// file under the 500-line gate. Validator (scripts/eval-baseline-validator.mjs)
-// uses the same FIFO log + per-developer marker that emitBaselineSignature writes.
-import { emitBaselineSignature } from './eval-runner-signatures.js'
+// SMI-4764 Wave 0 / SMI-5708 Item #3 — baseline.json read/write helpers live
+// in a sibling file to keep this file under the 500-line gate. Re-exported
+// below (a plain `export { ... } from`, not a separate import — only
+// resolveIndexStateFile, maybeUpdateBaseline, and updateBaseline (SMI-5708
+// Item #4 — passed explicitly to maybeUpdateBaseline below so main() can
+// wire up the outcome out-param) are used locally in this file) so existing
+// imports of `../../eval/eval-runner.js` (corpus-stats.test.ts,
+// eval-runner.test.ts) are unaffected.
+import {
+  resolveIndexStateFile,
+  maybeUpdateBaseline,
+  updateBaseline,
+  type UpdateBaselineResult,
+} from './eval-runner-baseline.js'
+
+export {
+  resolveIndexStateFile,
+  readCorpusStatsFromIndex,
+  updateBaseline,
+  maybeUpdateBaseline,
+  type BaselineFile,
+  type UpdateBaselineResult,
+} from './eval-runner-baseline.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const GOLD_SET_PATH = join(__dirname, 'gold-set.json')
-const BASELINE_PATH = join(__dirname, 'baseline.json')
-
-// ---------------------------------------------------------------------------
-// Index-state helpers (SMI-4763)
-//
-// `resolveIndexStateFile` mirrors src/config.ts repoRoot()/resolveRepoPath()
-// so the GAP 1 startup check and the corpus-stats refresh both consult the
-// SAME path the indexer writes to: `$SKILLSMITH_REPO_ROOT/.ruvector/.index-state.json`
-// (or `$CWD/.ruvector/.index-state.json` when the env var is unset).
-//
-// The previous `join(__dirname, '..', '.ruvector', '.index-state.json')` resolved
-// inside the package (`packages/doc-retrieval-mcp/.ruvector/...`), which never
-// exists in practice — the GAP 1 check silently passed and `updateBaseline()`
-// carried forward stale corpus stats forever. See SMI-4763 issue body.
-// ---------------------------------------------------------------------------
-
-export function resolveIndexStateFile(): string {
-  return resolveRepoPath('.ruvector/.index-state.json')
-}
-
-/**
- * Read corpus stats (filesScanned, chunksUpserted) from the indexer's
- * `.index-state.json`. Fails soft: missing or malformed files return zeros
- * and emit a warning to stderr — a degraded baseline is preferable to a
- * failed baseline write, since baseline.json is the only durable record of
- * the metric run that just completed.
- */
-export function readCorpusStatsFromIndex(stateFile: string): {
-  filesScanned: number
-  chunksUpserted: number
-} {
-  if (!existsSync(stateFile)) {
-    process.stderr.write(
-      `Warning: index-state file not found at ${stateFile}; baseline corpus stats will be 0/0.\n`
-    )
-    return { filesScanned: 0, chunksUpserted: 0 }
-  }
-  let chunkCountByFile: Record<string, number>
-  try {
-    const raw = readFileSync(stateFile, 'utf8')
-    const parsed = JSON.parse(raw) as { chunkCountByFile?: Record<string, number> }
-    chunkCountByFile = parsed.chunkCountByFile ?? {}
-  } catch (err: unknown) {
-    process.stderr.write(
-      `Warning: failed to parse index-state file at ${stateFile} (${String(err)}); baseline corpus stats will be 0/0.\n`
-    )
-    return { filesScanned: 0, chunksUpserted: 0 }
-  }
-  const filesScanned = Object.keys(chunkCountByFile).length
-  const chunksUpserted = Object.values(chunkCountByFile).reduce(
-    (sum, n) => sum + (typeof n === 'number' ? n : 0),
-    0
-  )
-  return { filesScanned, chunksUpserted }
-}
 
 // ---------------------------------------------------------------------------
 // CLI flag parsing
@@ -194,104 +157,6 @@ async function buildRealResults(entries: GoldEntry[]): Promise<RunResult[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Baseline update
-// ---------------------------------------------------------------------------
-
-// Plan §7 / §6 baseline.json schema — flat, machine-readable, parsed by
-// check-baseline-drift.ts. `prior` and `current` are recall@5 scalars; the
-// full metric set lives under `metrics`. Promotion: each real-mode run
-// promotes existing.current → prior and writes the new recall@5 as current.
-export interface BaselineFile {
-  prior: number | null
-  current: number | null
-  generated: string
-  corpus: { filesScanned: number; chunksUpserted: number }
-  knobs: { boost: number; dampen: number; floor: number; bm25: boolean }
-  metrics: {
-    recallAt5: number | null
-    recallAt10: number | null
-    mrr: number | null
-    ndcgAt10: number | null
-  }
-  // SMI-4764 Wave 1 — per-category recall@5 + counts. Optional for
-  // backward compatibility with pre-Wave-1 baselines (drift checker
-  // falls back to the global gate when absent). `recallAt5Prior` is
-  // promoted from the previous run's `recallAt5` (null on first run
-  // with byCategory present).
-  byCategory?: {
-    recallAt5: Record<string, number>
-    recallAt5Prior: Record<string, number> | null
-    count: Record<string, number>
-  }
-}
-
-function readKnobsFromEnv(): BaselineFile['knobs'] {
-  const num = (envVar: string, fallback: number): number => {
-    const v = Number(process.env[envVar])
-    return Number.isFinite(v) && v > 0 ? v : fallback
-  }
-  return {
-    boost: num('SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY', 1.5),
-    dampen: num('SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS', 0.85),
-    floor: 0.35,
-    bm25: process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK === 'bm25',
-  }
-}
-
-export function updateBaseline(
-  report: MetricsReport,
-  opts: { baselinePath?: string; stateFile?: string } = {}
-): void {
-  const baselinePath = opts.baselinePath ?? BASELINE_PATH
-  const stateFile = opts.stateFile ?? resolveIndexStateFile()
-  let existingCurrent: number | null = null
-  let existingByCategoryCurrent: Record<string, number> | null = null
-  if (existsSync(baselinePath)) {
-    try {
-      const existing = JSON.parse(readFileSync(baselinePath, 'utf8')) as Partial<BaselineFile>
-      if (typeof existing.current === 'number') existingCurrent = existing.current
-      if (existing.byCategory && existing.byCategory.recallAt5) {
-        existingByCategoryCurrent = existing.byCategory.recallAt5
-      }
-    } catch {
-      // malformed baseline — start fresh
-    }
-  }
-  const currentByCategoryRecall: Record<string, number> = {}
-  const currentByCategoryCount: Record<string, number> = {}
-  for (const [cat, ms] of Object.entries(report.byCategory)) {
-    currentByCategoryRecall[cat] = ms.recallAt5
-    currentByCategoryCount[cat] = ms.count
-  }
-  // SMI-4763: recompute corpus stats from the live index-state file on every
-  // run. The previous implementation carried `existingCorpus` forward from the
-  // prior baseline.json, so once the value was wrong it stayed wrong even as
-  // the index grew (e.g., 1325 files → 1500 files would still report 1325).
-  const freshCorpus = readCorpusStatsFromIndex(stateFile)
-  const updated: BaselineFile = {
-    prior: existingCurrent,
-    current: report.overall.recallAt5,
-    generated: new Date().toISOString().split('T')[0],
-    corpus: freshCorpus,
-    knobs: readKnobsFromEnv(),
-    metrics: {
-      recallAt5: report.overall.recallAt5,
-      recallAt10: report.overall.recallAt10,
-      mrr: report.overall.mrr,
-      ndcgAt10: report.overall.ndcgAt10,
-    },
-    byCategory: {
-      recallAt5: currentByCategoryRecall,
-      recallAt5Prior: existingByCategoryCurrent,
-      count: currentByCategoryCount,
-    },
-  }
-  const serialized = JSON.stringify(updated, null, 2) + '\n'
-  writeFileSync(baselinePath, serialized, 'utf8')
-  emitBaselineSignature(serialized)
-}
-
-// ---------------------------------------------------------------------------
 // Output formatting
 // ---------------------------------------------------------------------------
 
@@ -336,6 +201,38 @@ function renderMarkdownTable(report: MetricsReport, showDifficulty: boolean): st
   }
 
   return lines.join('\n')
+}
+
+// SMI-5708 Item #4 — pure, directly-testable helper for the visibility half
+// of this fix: given whether a baseline write was attempted and its
+// signature-emission outcome, decide the warning text (if any) to surface in
+// this run's own output. Kept as a small pure function (rather than inlined
+// in main()) so it's unit-testable without invoking the real search/rerank
+// pipeline main() otherwise requires.
+//
+// Returns null when there's nothing to warn about: either no write was
+// attempted (a `--category`-filtered run, per Task #1) or the write's
+// signature emission succeeded. The `!== false` check (not a truthy check)
+// matters here too: `outcome.signatureEmitted` is only ever `true` or
+// `false` in practice, but treating it as "anything not exactly `false`
+// means no warning" keeps the same non-truthy-check discipline as the rest
+// of this fix.
+export function buildBaselineSignatureWarning(
+  wrote: boolean,
+  outcome: UpdateBaselineResult
+): string | null {
+  if (!wrote || outcome.signatureEmitted !== false) {
+    return null
+  }
+  return [
+    'WARNING: baseline.json was updated but signature emission to',
+    'eval/.signatures.log FAILED. The pre-push validator',
+    '(scripts/eval-baseline-validator.mjs) will not find a matching signature',
+    'for this baseline and will reject it as stale/unsigned. See the',
+    '"warning: failed to update .signatures.log" line above (stderr) for the',
+    'underlying I/O error, fix it, then re-run',
+    'RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval to re-emit a matching signature.',
+  ].join(' ')
 }
 
 // ---------------------------------------------------------------------------
@@ -403,11 +300,29 @@ async function main(): Promise<void> {
   if (realMode) {
     results = await buildRealResults(entries)
     const report = computeMetrics(results)
-    updateBaseline(report)
+    // SMI-5708 Item #4 — signature-emission failure stays non-fatal to this
+    // run (the pre-push validator is the intended backstop, per this file's
+    // own long-standing design), but must be visible in the run's own
+    // output, not just a stderr warning that can scroll past unnoticed.
+    // `signatureEmitted` starts `true`: maybeUpdateBaseline() only
+    // overwrites it when a write was actually attempted, so a skipped write
+    // (a filtered --category run, Task #1) correctly implies "nothing to
+    // warn about" rather than a false alarm.
+    const baselineOutcome: UpdateBaselineResult = { signatureEmitted: true }
+    const wrote = maybeUpdateBaseline(report, opts, {}, updateBaseline, baselineOutcome)
+    const signatureWarning = buildBaselineSignatureWarning(wrote, baselineOutcome)
     if (opts.json) {
-      process.stdout.write(JSON.stringify(report, null, 2) + '\n')
+      const jsonOutput: MetricsReport & { baselineSignatureWarning?: string } =
+        signatureWarning !== null
+          ? { ...report, baselineSignatureWarning: signatureWarning }
+          : report
+      process.stdout.write(JSON.stringify(jsonOutput, null, 2) + '\n')
     } else {
-      process.stdout.write(renderMarkdownTable(report, opts.difficulty))
+      let markdown = renderMarkdownTable(report, opts.difficulty)
+      if (signatureWarning !== null) {
+        markdown += `\n### WARNING\n\n${signatureWarning}\n`
+      }
+      process.stdout.write(markdown)
     }
   } else {
     results = buildMockResults(entries)

@@ -14,9 +14,28 @@
  *
  * Test 5 is the regression guard for Bug 1: it verifies that `updateBaseline`
  * always reflects the live index state, never the previous baseline.json.
+ *
+ * `emitBaselineSignature` is mocked below (SMI-5708 Wave 1 fix): the real
+ * `updateBaseline()` unconditionally calls it, and it writes to a hardcoded,
+ * tracked `eval/.signatures.log` (SIGNATURES_LOG_PATH is not parameterized —
+ * it ignores this suite's temp `baselinePath`) plus shells out to
+ * `git rev-parse`. Before this mock, every run of this file appended real
+ * lines to that committed file as a side effect of Test 5/5b's three
+ * `updateBaseline()` calls.
+ *
+ * SMI-5708 Item #4 — the mock factory now uses `importOriginal` to keep
+ * `writeFileAtomicSync` real (only `emitBaselineSignature` itself is
+ * replaced). `updateBaseline()` now imports BOTH from
+ * `eval-runner-signatures.js`; a bare `{ emitBaselineSignature: vi.fn() }`
+ * replacement (the pre-Item-#4 shape) would leave `writeFileAtomicSync`
+ * `undefined` and break every `updateBaseline()` call below with a
+ * `TypeError`. `writeFileAtomicSync` only ever touches this suite's own
+ * temp `baselinePath`, never the committed `.signatures.log`, so keeping it
+ * real here carries none of the side-effect risk `emitBaselineSignature`
+ * has.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -27,6 +46,14 @@ import {
   type BaselineFile,
 } from '../../eval/eval-runner.js'
 import type { MetricsReport } from '../../eval/metrics.js'
+
+vi.mock('../../eval/eval-runner-signatures.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../eval/eval-runner-signatures.js')>()
+  return {
+    ...actual,
+    emitBaselineSignature: vi.fn(),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Fixtures and helpers
@@ -147,7 +174,180 @@ describe('updateBaseline (SMI-4763 regression guard)', () => {
     const written = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
     expect(written.corpus).toEqual({ filesScanned: 0, chunksUpserted: 0 })
   })
+
+  // SMI-5708 Item #3 (Codex review finding, High): a genuinely MISSING
+  // baseline.json (first-ever run) must be distinguished from an EXISTING
+  // one that's malformed/corrupted -- the latter must hard-fail rather than
+  // silently being treated as "start fresh, this is a legitimate bootstrap".
+  // Before this fix, both cases mapped to `existingCurrent === null`, which
+  // would have let real corruption launder itself into `bootstrapped: true`
+  // -- exactly the bypass SMI-5708 Item #3's schema validator is meant to
+  // close, undermined one layer up at the writer.
+
+  it('Test 6: genuinely missing baseline.json -- writes bootstrapped: true', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    expect(existsSync(baselinePath)).toBe(false)
+
+    updateBaseline(makeReport(0.5), { baselinePath, stateFile })
+
+    const written = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
+    expect(written.bootstrapped).toBe(true)
+    expect(written.prior).toBeNull()
+  })
+
+  it('Test 7: an existing, valid baseline.json -- writes bootstrapped: false, promotes prior', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+
+    updateBaseline(makeReport(0.5), { baselinePath, stateFile }) // Run 1: genuine bootstrap
+    updateBaseline(makeReport(0.6), { baselinePath, stateFile }) // Run 2: promotes Run 1's current
+
+    const written = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
+    expect(written.bootstrapped).toBe(false)
+    expect(written.prior).toBe(0.5)
+    expect(written.current).toBe(0.6)
+  })
+
+  it('Test 8: an EXISTING baseline.json with malformed JSON throws, does NOT silently bootstrap', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    writeFileSync(baselinePath, '{not valid json', 'utf8')
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /malformed JSON/
+    )
+  })
+
+  it('Test 9: an EXISTING baseline.json with a non-numeric current throws, does NOT silently bootstrap', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    // bootstrapped: true isolates this to purely a current-type failure --
+    // otherwise prior: null (missing bootstrapped) would ALSO fail
+    // validation, muddying which specific defect the test is proving.
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({ prior: null, bootstrapped: true, current: 'not-a-number' }),
+      'utf8'
+    )
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /current must be a number/
+    )
+  })
+
+  // Codex round-2 review finding (High): a bare `typeof current === 'number'`
+  // check let current: 0, -1, 1.5, or NaN -- all still `typeof 'number'` --
+  // pass through and get silently promoted as the new prior. updateBaseline()
+  // now reuses the full schema validator (validateBaselineFile) instead,
+  // closing this gap the same way the reader is closed.
+  it('Test 10: an EXISTING baseline.json with current: 0 is valid (a real run can score zero recall)', () => {
+    // Unlike `prior` (where exactly 0 was the original silent-skip loophole
+    // and is deliberately rejected), `current`'s range is inclusive [0, 1] --
+    // a genuinely terrible eval run that found zero relevant results is real
+    // data, not corruption, and must not be rejected.
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({ prior: 0.5, current: 0, bootstrapped: false }),
+      'utf8'
+    )
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).not.toThrow()
+    const after = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
+    expect(after.prior).toBe(0) // promoted correctly from the existing current: 0
+  })
+
+  it('Test 10b: an EXISTING baseline.json with current: -1 (genuinely out of range) throws', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({ prior: 0.5, current: -1, bootstrapped: false }),
+      'utf8'
+    )
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /current must be in range/
+    )
+  })
+
+  it('Test 11: an EXISTING baseline.json with current out of [0,1] range (1.5) throws', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({ prior: 0.5, current: 1.5, bootstrapped: false }),
+      'utf8'
+    )
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /current must be in range/
+    )
+  })
+
+  it('Test 12: an EXISTING baseline.json with current: NaN (via JSON round-trip as null) throws', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    // JSON has no NaN literal -- a hand-edited/corrupted file expressing "no
+    // real value" would write current: null, which fails the same way (never
+    // legitimate for `current`, unlike `prior`).
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({ prior: 0.5, current: null, bootstrapped: false }),
+      'utf8'
+    )
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /current must be a number/
+    )
+  })
+
+  it('Test 13: an EXISTING baseline.json with malformed nested byCategory (missing count) throws', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({
+        prior: 0.5,
+        current: 0.6,
+        bootstrapped: false,
+        byCategory: { recallAt5: { 'skill-discovery': 0.5 } }, // count missing entirely
+      }),
+      'utf8'
+    )
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /byCategory\.count must be an object/
+    )
+  })
+
+  // Codex round-3 review finding: a top-level `null` is syntactically valid
+  // JSON (JSON.parse succeeds, so the malformed-JSON catch never fires), but
+  // would otherwise crash with an uncaught TypeError reading `.prior` off
+  // `null` instead of throwing a clean, actionable Error like every other
+  // case here.
+  it('Test 14: an EXISTING baseline.json containing only the JSON literal null throws a clean error', () => {
+    // Guarded once, centrally, in validateBaselineFile() itself (Opus
+    // round-3 review finding) -- not duplicated ad hoc at every call site --
+    // so both this writer AND the CI reader (check-baseline-drift.ts) get a
+    // clean, actionable error instead of an uncaught TypeError reading
+    // `.prior` off `null`.
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    writeFileSync(baselinePath, 'null', 'utf8')
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /baseline\.json must be a JSON object, got null/
+    )
+  })
 })
+
+// SMI-5708 Item #4 — atomic write + signature-emission-outcome plumbing
+// tests live in the sibling eval-runner-baseline-atomic.test.ts, split out to
+// keep this file under the 500-line standard (same rationale as this plan's
+// two source-file splits).
 
 // ---------------------------------------------------------------------------
 // resolveIndexStateFile — Tests 6-8 (Bug 2 guard)
