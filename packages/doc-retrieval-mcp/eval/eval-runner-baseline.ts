@@ -200,6 +200,40 @@ export function updateBaseline(
     // at this point (never null -- unlike `prior`, which may legitimately be
     // null only alongside `bootstrapped: true`).
     existingCurrent = validated.current
+    // Governance retro finding (SMI-5708 post-merge) -- `current`'s valid
+    // range is [0, 1] INCLUSIVE of 0 (a genuinely terrible eval run that
+    // found zero relevant results is real data, not corruption -- see Test
+    // 10 in corpus-stats.test.ts), but the top-level `prior` field's valid
+    // range deliberately EXCLUDES exactly 0 (validateBaselineFile rejects
+    // `prior === 0` -- it was the original silent-skip loophole Item #3
+    // closes). Promoting an existing `current: 0` forward unchecked as the
+    // new `prior` (the line below, before this guard existed) writes a
+    // baseline.json that fails ITS OWN schema validation on the very next
+    // read: both check-baseline-drift.ts's unconditional per-CI-run
+    // validation (hard-failing every subsequent PR that touches
+    // ranking/eval files, not just the one that produced it, with a
+    // misleading "corrupted/hand-edited" message) and this very function's
+    // own existing-file check on the NEXT updateBaseline() call -- which
+    // means the "just re-run RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval"
+    // self-service recovery every error message in this file recommends
+    // throws instead of fixing anything. Empirically reproduced: seed an
+    // existing baseline with current: 0, call updateBaseline() once (writes
+    // prior: 0 successfully), then call it again -- the second call throws
+    // reading its own prior output. Fail loudly HERE instead, before ever
+    // writing the unpromotable value, mirroring this function's existing
+    // "hard error, not silent" handling of malformed/corrupted existing
+    // files just above.
+    if (existingCurrent === 0) {
+      throw new Error(
+        `updateBaseline: existing baseline.json at ${baselinePath} has current: 0, which cannot ` +
+          'be safely promoted to prior (prior must be > 0 -- a value of exactly 0 fails schema ' +
+          'validation on the next read, per validateBaselineFile). This usually means a prior ' +
+          'real-mode run scored zero recall -- a severe regression that should have been caught ' +
+          'by the drift gate before merging -- or baseline.json was hand-edited. Investigate the ' +
+          'zero-recall run, then either fix the underlying regression and re-run, or restore ' +
+          'baseline.json from git history before running eval:retrieval again.'
+      )
+    }
     if (validated.byCategory && validated.byCategory.recallAt5) {
       existingByCategoryCurrent = validated.byCategory.recallAt5
     }

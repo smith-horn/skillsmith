@@ -241,11 +241,22 @@ describe('updateBaseline (SMI-4763 regression guard)', () => {
   // pass through and get silently promoted as the new prior. updateBaseline()
   // now reuses the full schema validator (validateBaselineFile) instead,
   // closing this gap the same way the reader is closed.
-  it('Test 10: an EXISTING baseline.json with current: 0 is valid (a real run can score zero recall)', () => {
-    // Unlike `prior` (where exactly 0 was the original silent-skip loophole
-    // and is deliberately rejected), `current`'s range is inclusive [0, 1] --
-    // a genuinely terrible eval run that found zero relevant results is real
-    // data, not corruption, and must not be rejected.
+  //
+  // Governance retro finding (SMI-5708 post-merge): this test originally
+  // asserted that promoting an existing `current: 0` forward to a new
+  // `prior: 0` SUCCEEDS -- but `prior === 0` fails validateBaselineFile's
+  // OWN schema check (it's the original silent-skip loophole this whole
+  // item closes), so that "successful" write immediately failed schema
+  // validation on the very next read: both check-baseline-drift.ts's
+  // unconditional per-CI-run validation (blocking every subsequent PR that
+  // touches ranking/eval files, not just this one) and updateBaseline()'s
+  // own existing-file check on the NEXT call (breaking the "just re-run the
+  // eval" self-service recovery path every error message in this file
+  // recommends). `current: 0` itself remains valid, readable data (a
+  // genuinely terrible eval run that found zero relevant results is real,
+  // not corruption) -- what's now rejected is silently PROMOTING it forward
+  // as an unpromotable `prior`.
+  it('Test 10: an EXISTING baseline.json with current: 0 cannot be silently promoted to prior: 0 (would fail schema validation on the next read)', () => {
     const baselinePath = join(tmpDir, 'baseline.json')
     const stateFile = writeStateFile({ 'memory://a.md': 5 })
     writeFileSync(
@@ -254,9 +265,14 @@ describe('updateBaseline (SMI-4763 regression guard)', () => {
       'utf8'
     )
 
-    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).not.toThrow()
-    const after = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
-    expect(after.prior).toBe(0) // promoted correctly from the existing current: 0
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /current: 0, which cannot be safely promoted to prior/
+    )
+    // The existing (pre-corruption) file must be left byte-for-byte
+    // unchanged -- the throw happens before writeFileAtomicSync is ever
+    // called, so nothing on disk was touched.
+    const after = readFileSync(baselinePath, 'utf8')
+    expect(JSON.parse(after)).toEqual({ prior: 0.5, current: 0, bootstrapped: false })
   })
 
   it('Test 10b: an EXISTING baseline.json with current: -1 (genuinely out of range) throws', () => {
