@@ -35,9 +35,11 @@ const BASELINE_PATH = join(__dirname, 'baseline.json')
 // Index-state helpers (SMI-4763)
 //
 // `resolveIndexStateFile` mirrors src/config.ts repoRoot()/resolveRepoPath()
-// so the GAP 1 startup check (eval-runner.ts's buildRealResults) and the
-// corpus-stats refresh below both consult the SAME path the indexer writes
-// to: `$SKILLSMITH_REPO_ROOT/.ruvector/.index-state.json` (or
+// so the GAP 1 startup check (eval-runner.ts's assertMemoryCorpusIndexed,
+// SMI-5708 Item #11 -- shared by both the main real-mode path and the
+// ablation path via runRealMode) and the corpus-stats refresh below both
+// consult the SAME path the indexer writes to:
+// `$SKILLSMITH_REPO_ROOT/.ruvector/.index-state.json` (or
 // `$CWD/.ruvector/.index-state.json` when the env var is unset).
 //
 // The previous `join(__dirname, '..', '.ruvector', '.index-state.json')` resolved
