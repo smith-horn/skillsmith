@@ -152,8 +152,16 @@ interface AuditLoggerLike {
  */
 async function getAuditLogger(toolContext: ToolContext): Promise<AuditLoggerLike> {
   try {
-    const enterprise = await import('@smith-horn/enterprise')
-    return new enterprise.EnterpriseAuditLogger(toolContext.db) as AuditLoggerLike
+    // Dynamic import with variable to prevent TypeScript from resolving at
+    // compile time -- matches middleware/license.ts's tryLoadEnterpriseValidator().
+    // This is an optional peer dependency that may not be present in every
+    // install/CI-job scope, even though it always resolves in this monorepo's
+    // own full dev install.
+    const packageName = '@smith-horn/enterprise'
+    const enterprise = (await import(/* webpackIgnore: true */ packageName)) as {
+      EnterpriseAuditLogger: new (db: unknown) => AuditLoggerLike
+    }
+    return new enterprise.EnterpriseAuditLogger(toolContext.db)
   } catch {
     throw new Error(
       'Enterprise audit logging requires the @smith-horn/enterprise package. ' +
