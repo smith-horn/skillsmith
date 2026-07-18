@@ -59,6 +59,28 @@ assert_not_contains() {
   fi
 }
 
+assert_dir_exists() {
+  local name="$1" path="$2"
+  if [ -d "$path" ]; then
+    echo "PASS $name"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $name: directory not found: $path"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_dir_absent() {
+  local name="$1" path="$2"
+  if [ -d "$path" ]; then
+    echo "FAIL $name: directory should NOT exist: $path"
+    fail=$((fail + 1))
+  else
+    echo "PASS $name"
+    pass=$((pass + 1))
+  fi
+}
+
 # -----------------------------------------------------------------------
 # Fixture builders
 # -----------------------------------------------------------------------
@@ -118,9 +140,9 @@ OUT=$(enumerate_compose_node_modules_mounts "$TMPROOT")
 # the leaf `core`/`mcp-server` under it are symlinks), so the SMI-5626 root
 # block fires (3 lines) AND the SMI-5650 @skillsmith alias-scope tmpfs entry
 # fires (1 "- type: tmpfs" line; @smith-horn is absent, so it does not):
-# 3 per-pkg pkgs * 3 lines (9) + root (:ro + .vite + .vite-temp = 3) +
-# @skillsmith tmpfs (1) = 13.
-assert_eq "test1: 9 per-pkg lines + 3 root lines + 1 alias tmpfs line = 13" 13 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
+# 3 per-pkg pkgs * 4 lines (12) + root (:ro + .vite + .vite-temp = 3) +
+# @skillsmith tmpfs (1) = 16.
+assert_eq "test1: 12 per-pkg lines + 3 root lines + 1 alias tmpfs line = 16" 16 "$(printf '%s\n' "$OUT" | grep -c '^      - ' || true)"
 assert_contains "test1: @skillsmith alias-scope tmpfs emitted (real scope dir, SMI-5650)" "        target: /app/node_modules/@skillsmith" "$OUT"
 assert_not_contains "test1: @smith-horn alias-scope tmpfs NOT emitted (scope dir absent)" "/app/node_modules/@smith-horn" "$OUT"
 assert_contains "test1: root node_modules mounted read-only (SMI-5626)" "      - $TMPROOT/node_modules:/app/node_modules:ro" "$OUT"
@@ -130,6 +152,8 @@ assert_contains "test1: per-pkg vscode-extension is read-only" "      - $TMPROOT
 assert_contains "test1: core .vite-temp overlay (writable, not :ro)" "      - $TMPROOT/packages/core/node_modules/.vite-temp:/app/packages/core/node_modules/.vite-temp" "$OUT"
 assert_not_contains "test1: core .vite-temp overlay is NOT read-only" "$TMPROOT/packages/core/node_modules/.vite-temp:/app/packages/core/node_modules/.vite-temp:ro" "$OUT"
 assert_contains "test1: core .vite overlay (writable, not :ro)" "      - $TMPROOT/packages/core/node_modules/.vite:/app/packages/core/node_modules/.vite" "$OUT"
+assert_contains "test1: core .astro overlay (writable, not :ro)" "      - $TMPROOT/packages/core/node_modules/.astro:/app/packages/core/node_modules/.astro" "$OUT"
+assert_not_contains "test1: core .astro overlay is NOT read-only" "$TMPROOT/packages/core/node_modules/.astro:/app/packages/core/node_modules/.astro:ro" "$OUT"
 assert_not_contains "test1: NO workspace-sibling @skillsmith/core mount" ":/app/node_modules/@skillsmith/core" "$OUT"
 assert_not_contains "test1: NO workspace-sibling @skillsmith/mcp-server mount" ":/app/node_modules/@skillsmith/mcp-server" "$OUT"
 assert_not_contains "test1: NO workspace-sibling skillsmith-vscode mount" ":/app/node_modules/skillsmith-vscode" "$OUT"
@@ -140,7 +164,7 @@ assert_not_contains "test1: NO workspace-sibling skillsmith-vscode mount" ":/app
 mkdir -p "$TMPROOT/packages/skillsmith-cli"  # NO node_modules, NO package.json
 
 OUT2=$(enumerate_compose_node_modules_mounts "$TMPROOT")
-assert_eq "test2: still 13 lines (skillsmith-cli has no node_modules; root+alias-tmpfs block unchanged)" 13 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
+assert_eq "test2: still 16 lines (skillsmith-cli has no node_modules; root+alias-tmpfs block unchanged)" 16 "$(printf '%s\n' "$OUT2" | grep -c '^      - ' || true)"
 assert_not_contains "test2: skillsmith-cli per-pkg not emitted" "skillsmith-cli/node_modules:/app/packages/skillsmith-cli" "$OUT2"
 
 # -----------------------------------------------------------------------
@@ -176,9 +200,9 @@ make_workspace_symlink "$NOSYMROOT" "@skillsmith/core" "core"
 OUT7=$(enumerate_compose_node_modules_mounts "$NOSYMROOT")
 # make_workspace_symlink creates $NOSYMROOT/node_modules and its real
 # @skillsmith scope dir, so root block fires (3) AND the @skillsmith
-# alias-scope tmpfs fires (1): 3 per-pkg core lines + 3 root lines +
-# 1 alias tmpfs line = 7. No workspace-sibling mount.
-assert_eq "test7: 3 per-pkg + 3 root + 1 alias tmpfs = 7, no workspace-sibling" 7 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
+# alias-scope tmpfs fires (1): 4 per-pkg core lines + 3 root lines +
+# 1 alias tmpfs line = 8. No workspace-sibling mount.
+assert_eq "test7: 4 per-pkg + 3 root + 1 alias tmpfs = 8, no workspace-sibling" 8 "$(printf '%s\n' "$OUT7" | grep -c '^      - ' || true)"
 assert_not_contains "test7: no workspace mount even when symlink present" "/app/node_modules/@skillsmith/core" "$OUT7"
 rm -rf "$NOSYMROOT"
 
@@ -186,7 +210,7 @@ rm -rf "$NOSYMROOT"
 # Test 8 (SMI-5626): ROOT node_modules bind mount emitted READ-ONLY, plus
 # writable .vite/.vite-temp overlays, when <root>/node_modules exists.
 # Per-package mounts must still be present (regression).
-# 1 root :ro + 2 root overlays + 1 per-pkg :ro + 2 per-pkg overlays = 6 lines.
+# 1 root :ro + 2 root overlays + 1 per-pkg :ro + 3 per-pkg overlays = 7 lines.
 # -----------------------------------------------------------------------
 ROOTNM=$(mktemp -d)
 make_repo "$ROOTNM" core
@@ -198,7 +222,7 @@ assert_contains "test8: root .vite overlay (writable, not :ro)" "      - $ROOTNM
 assert_contains "test8: root .vite-temp overlay (writable, not :ro)" "      - $ROOTNM/node_modules/.vite-temp:/app/node_modules/.vite-temp" "$OUT8"
 assert_not_contains "test8: root .vite overlay is NOT read-only" "$ROOTNM/node_modules/.vite:/app/node_modules/.vite:ro" "$OUT8"
 assert_contains "test8: per-package core still present (regression)" "      - $ROOTNM/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT8"
-assert_eq "test8: 6 mount lines total (3 root + 3 per-pkg)" 6 "$(printf '%s\n' "$OUT8" | grep -c '^      - ' || true)"
+assert_eq "test8: 7 mount lines total (3 root + 4 per-pkg)" 7 "$(printf '%s\n' "$OUT8" | grep -c '^      - ' || true)"
 rm -rf "$ROOTNM"
 
 # -----------------------------------------------------------------------
@@ -211,7 +235,7 @@ make_pkg_json "$NOROOTNM" core "@skillsmith/core"
 OUT9=$(enumerate_compose_node_modules_mounts "$NOROOTNM")
 assert_not_contains "test9: no root mount when <root>/node_modules absent" ":/app/node_modules:ro" "$OUT9"
 assert_contains "test9: per-package core still present" "      - $NOROOTNM/packages/core/node_modules:/app/packages/core/node_modules:ro" "$OUT9"
-assert_eq "test9: only 3 per-pkg lines (no root block)" 3 "$(printf '%s\n' "$OUT9" | grep -c '^      - ' || true)"
+assert_eq "test9: only 4 per-pkg lines (no root block)" 4 "$(printf '%s\n' "$OUT9" | grep -c '^      - ' || true)"
 rm -rf "$NOROOTNM"
 
 # -----------------------------------------------------------------------
@@ -256,6 +280,28 @@ fi
 # Always present: container_name and ports
 assert_contains "test6: container_name emitted" "container_name: test-branch-dev-1" "$OVERRIDE"
 assert_contains "test6: dev port emitted" '3000"   # Main app' "$OVERRIDE"
+
+# -----------------------------------------------------------------------
+# Test 11 (SMI-5705/SMI-5722): ensure_build_cache_mount_sources creates the
+# writable overlay SOURCE directories before a container that mounts them
+# is ever created. Per-package gets .vite/.vite-temp/.astro; root gets
+# .vite/.vite-temp only (no .astro — matches the root loop's own scope in
+# enumerate_compose_node_modules_mounts). make_repo() never creates these
+# subdirectories itself, so there's nothing to delete first for the base
+# case — a stock fixture plus a root node_modules dir (to exercise the
+# root-level gate) is sufficient.
+# -----------------------------------------------------------------------
+CACHEROOT=$(mktemp -d)
+make_repo "$CACHEROOT" core
+mkdir -p "$CACHEROOT/node_modules"
+ensure_build_cache_mount_sources "$CACHEROOT"
+assert_dir_exists "test11: per-pkg .vite created" "$CACHEROOT/packages/core/node_modules/.vite"
+assert_dir_exists "test11: per-pkg .vite-temp created" "$CACHEROOT/packages/core/node_modules/.vite-temp"
+assert_dir_exists "test11: per-pkg .astro created" "$CACHEROOT/packages/core/node_modules/.astro"
+assert_dir_exists "test11: root .vite created" "$CACHEROOT/node_modules/.vite"
+assert_dir_exists "test11: root .vite-temp created" "$CACHEROOT/node_modules/.vite-temp"
+assert_dir_absent "test11: root .astro NOT created (out of scope)" "$CACHEROOT/node_modules/.astro"
+rm -rf "$CACHEROOT"
 
 # -----------------------------------------------------------------------
 # Summary
