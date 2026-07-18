@@ -68,13 +68,13 @@ describe('license utilities', () => {
   describe('getLicenseStatus (without enterprise package)', () => {
     beforeEach(() => {
       // Mock the enterprise package to simulate it not being available
-      vi.doMock('@skillsmith/enterprise', () => {
+      vi.doMock('@smith-horn/enterprise', () => {
         throw new Error('Module not found')
       })
     })
 
     afterEach(() => {
-      vi.doUnmock('@skillsmith/enterprise')
+      vi.doUnmock('@smith-horn/enterprise')
     })
 
     it('returns community tier when no license key is set', async () => {

@@ -192,7 +192,7 @@ describe('updateWorkspaceDependencies (SMI-5057)', () => {
   })
 
   it('treats peerDependencies with non-bumped key as a no-op (SMI-5057 M-5)', () => {
-    // @skillsmith/enterprise: "*" in cli's peerDependencies is NOT in
+    // @smith-horn/enterprise: "*" in cli's peerDependencies is NOT in
     // PACKAGE_SPECS, so it never lands in the bump map and is naturally
     // skipped. No `*`-string heuristic needed.
     const corePlan = {
@@ -209,8 +209,8 @@ describe('updateWorkspaceDependencies (SMI-5057)', () => {
     )
     if (cliWrite) {
       const cliPkg = JSON.parse(String(cliWrite![1]))
-      if (cliPkg.peerDependencies?.['@skillsmith/enterprise']) {
-        expect(cliPkg.peerDependencies['@skillsmith/enterprise']).toBe('*')
+      if (cliPkg.peerDependencies?.['@smith-horn/enterprise']) {
+        expect(cliPkg.peerDependencies['@smith-horn/enterprise']).toBe('*')
       }
     }
   })

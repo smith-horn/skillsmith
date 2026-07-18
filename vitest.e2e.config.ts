@@ -56,7 +56,7 @@ export default defineConfig({
     alias: {
       '@skillsmith/core': path.resolve(here, 'packages/core/dist/src/index.js'),
       '@skillsmith/mcp-server': path.resolve(here, 'packages/mcp-server/dist/src/index.js'),
-      '@skillsmith/enterprise': path.resolve(here, 'packages/enterprise/dist/src/index.js'),
+      '@smith-horn/enterprise': path.resolve(here, 'packages/enterprise/dist/src/index.js'),
     },
   },
 })

@@ -2,7 +2,7 @@
  * License validation middleware for MCP server
  *
  * Validates that the user has the required license features for enterprise tools.
- * Gracefully degrades if @skillsmith/enterprise is not installed.
+ * Gracefully degrades if @smith-horn/enterprise is not installed.
  *
  * @see SMI-1055: Add license middleware to MCP server
  */
@@ -48,7 +48,7 @@ export interface LicenseValidationResult {
 export type LicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
 
 /**
- * License information interface (mirrors @skillsmith/enterprise LicenseInfo)
+ * License information interface (mirrors @smith-horn/enterprise LicenseInfo)
  */
 export interface LicenseInfo {
   valid: boolean
@@ -111,7 +111,7 @@ async function tryLoadEnterpriseValidator(): Promise<EnterpriseValidator | null>
   try {
     // Dynamic import with variable to prevent TypeScript from resolving at compile time
     // This is an optional peer dependency that may not be installed
-    const packageName = '@skillsmith/enterprise'
+    const packageName = '@smith-horn/enterprise'
     const enterprise = await import(/* webpackIgnore: true */ packageName)
     if (isEnterpriseModule(enterprise)) {
       return new enterprise.LicenseValidator()

@@ -4,7 +4,7 @@
  * Handles license validation, status display, and tier formatting.
  * Supports community (free), team, and enterprise license tiers.
  *
- * When @skillsmith/enterprise is available, uses proper RS256 JWT validation.
+ * When @smith-horn/enterprise is available, uses proper RS256 JWT validation.
  * Otherwise, falls back to community tier (no error).
  *
  * Environment variable: SKILLSMITH_LICENSE_KEY

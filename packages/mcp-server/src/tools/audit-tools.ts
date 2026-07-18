@@ -4,7 +4,7 @@
  * @see SMI-3894: Tier feature gap remediation (Wave 3)
  *
  * Bridges the existing EnterpriseAuditLogger backend to MCP tool handlers.
- * Uses dynamic import() for @skillsmith/enterprise (optional peer dependency)
+ * Uses dynamic import() for @smith-horn/enterprise (optional peer dependency)
  * to avoid crashing the MCP server for community users.
  *
  * Tier gate: Enterprise (audit_logging / siem_export feature flags).
@@ -140,18 +140,18 @@ interface AuditLoggerLike {
 }
 
 /**
- * Dynamically load EnterpriseAuditLogger from the optional @skillsmith/enterprise package.
+ * Dynamically load EnterpriseAuditLogger from the optional @smith-horn/enterprise package.
  * Returns a logger with queryEnterprise() and dispose() methods.
  */
 async function getAuditLogger(toolContext: ToolContext): Promise<AuditLoggerLike> {
   try {
-    // @skillsmith/enterprise is an optional peer dep — suppress TS2307.
+    // @smith-horn/enterprise is an optional peer dep — suppress TS2307.
     // @ts-expect-error -- optional peer dependency, may not be installed
-    const enterprise = await import('@skillsmith/enterprise')
+    const enterprise = await import('@smith-horn/enterprise')
     return new enterprise.EnterpriseAuditLogger(toolContext.db) as AuditLoggerLike
   } catch {
     throw new Error(
-      'Enterprise audit logging requires the @skillsmith/enterprise package. ' +
+      'Enterprise audit logging requires the @smith-horn/enterprise package. ' +
         'This feature is available on the Enterprise tier.'
     )
   }

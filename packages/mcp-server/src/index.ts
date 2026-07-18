@@ -118,7 +118,7 @@ import { installBundledSkills, installUserDocs } from './onboarding/install-asse
 import { handleDocsFlag, ensureSkillsmithSkillInstalled } from './index.startup-helpers.js'
 
 // SMI-2679: Quota enforcement middleware — module-level singletons, initialized once
-// licenseMiddleware uses a cache (TTL) so the first-call @skillsmith/enterprise lazy-load
+// licenseMiddleware uses a cache (TTL) so the first-call @smith-horn/enterprise lazy-load
 // latency (~10-50ms) is not incurred on every tool invocation.
 const licenseMiddleware = createLicenseMiddleware()
 const quotaMiddleware = createQuotaMiddleware()

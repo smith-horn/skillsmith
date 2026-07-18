@@ -157,7 +157,7 @@ Split validation schemas and webhook handlers.
     labels: ['tech-debt', 'refactor'],
   },
   {
-    title: 'Split large files in @skillsmith/enterprise (4 files > 500 lines)',
+    title: 'Split large files in @smith-horn/enterprise (4 files > 500 lines)',
     description: `## Problem
 Large files in \`packages/enterprise/src\`:
 

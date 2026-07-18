@@ -27,7 +27,7 @@ export async function tryLoadEnterpriseValidator(): Promise<EnterpriseLicenseVal
   try {
     // Dynamic import with variable to prevent TypeScript from resolving at compile time
     // This is an optional peer dependency that may not be installed
-    const packageName = '@skillsmith/enterprise'
+    const packageName = '@smith-horn/enterprise'
     const enterprise = (await import(/* webpackIgnore: true */ packageName)) as Record<
       string,
       unknown
@@ -59,7 +59,7 @@ export function _resetEnterpriseValidatorCache(): void {
 /**
  * Decode and validate a license key using simple base64 JSON decoding
  *
- * @deprecated This function is used only when @skillsmith/enterprise is not available.
+ * @deprecated This function is used only when @smith-horn/enterprise is not available.
  * For paid tiers, enterprise package with proper RS256 JWT validation should be used.
  * Community users without a license key don't need validation.
  *
@@ -159,7 +159,7 @@ export async function getLicenseStatusLegacy(): Promise<LicenseStatus> {
  * If no key is set, returns community tier (not an error).
  * If key is invalid or expired, returns status with error but continues.
  *
- * When @skillsmith/enterprise is available, uses proper RS256 JWT validation.
+ * When @smith-horn/enterprise is available, uses proper RS256 JWT validation.
  * Otherwise, falls back to simple base64 JSON decoding (for development/testing only).
  *
  * @returns Promise resolving to license status

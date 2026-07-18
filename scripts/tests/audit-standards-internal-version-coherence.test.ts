@@ -63,15 +63,15 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
 
   it('warns — does not fail, does not crash — on a dangling/unknown package name', () => {
     // Mirrors the real, currently-known packages/cli/package.json shape:
-    // its peer dep is named `@skillsmith/enterprise`, but the actual
+    // its peer dep is named `@smith-horn/enterprise`, but the actual
     // workspace package is `@smith-horn/enterprise` (SMI-5720, tracked
     // separately — not fixed by this check).
     const packagesByDir = {
       cli: {
         name: '@skillsmith/cli',
         version: '0.8.2',
-        peerDependencies: { '@skillsmith/enterprise': '*' },
-        peerDependenciesMeta: { '@skillsmith/enterprise': { optional: true } },
+        peerDependencies: { '@smith-horn/enterprise': '*' },
+        peerDependenciesMeta: { '@smith-horn/enterprise': { optional: true } },
       },
       enterprise: { name: '@smith-horn/enterprise', version: '0.3.2' },
     }
@@ -84,7 +84,7 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
       {
         dir: 'cli',
         section: 'peerDependencies',
-        depName: '@skillsmith/enterprise',
+        depName: '@smith-horn/enterprise',
         range: '*',
         status: 'dangling',
       },
@@ -119,7 +119,7 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
   it('passes clean on a healthy tree — all sections, all satisfied, one known dangling warn', () => {
     // Matches this repo's actual current packages/* shape (post SMI-5715
     // Change #1): doc-retrieval-mcp and skillsmith-cli's stale pins fixed,
-    // packages/cli's dangling @skillsmith/enterprise peer dep left as-is
+    // packages/cli's dangling @smith-horn/enterprise peer dep left as-is
     // (SMI-5720, out of scope here).
     const packagesByDir = {
       core: { name: '@skillsmith/core', version: '0.11.2' },
@@ -135,8 +135,8 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
           '@skillsmith/core': '^0.11.2',
           '@skillsmith/mcp-server': '^0.7.4',
         },
-        peerDependencies: { '@skillsmith/enterprise': '*' },
-        peerDependenciesMeta: { '@skillsmith/enterprise': { optional: true } },
+        peerDependencies: { '@smith-horn/enterprise': '*' },
+        peerDependenciesMeta: { '@smith-horn/enterprise': { optional: true } },
       },
       enterprise: {
         name: '@smith-horn/enterprise',

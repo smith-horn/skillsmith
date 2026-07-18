@@ -148,7 +148,7 @@ export class SkillsmithTracer {
         // the @opentelemetry/auto-instrumentations-node bundle (which transitively
         // pinned @opentelemetry/core@2.5.0 across ~40 packages and blocked otel
         // upgrades). Each entry is optional at runtime: aws-sdk only loads when
-        // @skillsmith/enterprise is in the consuming install. Registry lives in
+        // @smith-horn/enterprise is in the consuming install. Registry lives in
         // tracer-imports.ts so tests can mock the import surface.
         const instrumentations: unknown[] = []
         for (const [pkgName, exportName] of INSTRUMENTATION_PACKAGES) {

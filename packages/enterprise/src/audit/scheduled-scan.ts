@@ -3,7 +3,7 @@
 
 /**
  * @fileoverview Enterprise scheduled-scan governance runner.
- * @module @skillsmith/enterprise/audit/scheduled-scan
+ * @module @smith-horn/enterprise/audit/scheduled-scan
  *
  * Plan: docs/internal/implementation/smi-4590-cli-mcp-framework-adapter.md §7
  * (Wave 4 PR 6/6, SMI-4590).
@@ -38,7 +38,7 @@ import type {
 /**
  * Resolve `runInventoryAudit` via dynamic import. Avoids a hard package
  * cycle: `@skillsmith/mcp-server` already declares
- * `@skillsmith/enterprise` as an optional peer dep, so a static
+ * `@smith-horn/enterprise` as an optional peer dep, so a static
  * `import { runInventoryAudit } from '@skillsmith/mcp-server/audit'`
  * here would close the cycle. Dynamic import keeps the cycle lazy and
  * lets the type system see the function shape via the `import type` of

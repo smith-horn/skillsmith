@@ -186,7 +186,7 @@ describe('License Middleware', () => {
           // See SMI-1130 for rationale.
           //
           // SMI-1588: Extended timeout (15s) required because in monorepo CI the
-          // @skillsmith/enterprise package IS available. The dynamic import at line 107
+          // @smith-horn/enterprise package IS available. The dynamic import at line 107
           // of license.ts loads the package, and LicenseValidator initialization may
           // involve async operations (key decryption, signature verification).
           // This is NOT a test smell - it reflects real-world enterprise validation latency.

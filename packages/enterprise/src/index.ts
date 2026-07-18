@@ -2,7 +2,7 @@
 // Copyright 2024-2025 Smith Horn Group Ltd
 
 /**
- * @skillsmith/enterprise
+ * @smith-horn/enterprise
  *
  * Enterprise features for Skillsmith including:
  * - Audit logging
