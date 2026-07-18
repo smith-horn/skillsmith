@@ -9,10 +9,19 @@
  *
  * Plus: process.env is restored after runAblation returns.
  *
- * The live eval-runner is never invoked — all tests use the runEvalFn hook.
+ * Every test above uses the runEvalFn hook, so the live eval-runner is never
+ * invoked there. SMI-5708 Item #11 adds one further describe block below
+ * that deliberately omits the hook, to prove the PRODUCTION wiring
+ * (runAblation -> defaultRunEvalFn -> eval-runner's real runRealMode) itself
+ * reaches the GAP-1 corpus guard -- the hook-based tests above only prove
+ * runAblation's own sweep/env/delta logic, not that its default wiring is
+ * actually connected to the guard.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { runAblation, type AblationDimension } from '../../eval/ablation-runner.js'
 import { DEFAULT_BOOST_MEMORY, DEFAULT_DAMPEN_PROCESS } from '../../src/rerank.js'
 import { DEFAULT_MIN_SIMILARITY } from '../../src/config.js'
@@ -335,5 +344,56 @@ describe('AblationResult structural shape', () => {
       expect(typeof row.deltaRecallAt5).toBe('number')
       expect(typeof row.isBaseline).toBe('boolean')
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5708 Item #11: production wiring (no runEvalFn hook) reaches the
+// GAP-1 corpus guard. Every test above injects opts.runEvalFn, so
+// defaultRunEvalFn (ablation-runner.ts's real, un-hooked default -- which
+// dynamically imports eval-runner.js and calls its real runRealMode) is
+// never exercised. Before Item #11, that real path never reached the corpus
+// guard at all; this proves it now does.
+// ---------------------------------------------------------------------------
+
+describe('runAblation production wiring reaches the GAP-1 guard (SMI-5708 Item #11 regression)', () => {
+  let tmpDir: string
+  let originalRepoRoot: string | undefined
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'smi-5708-ablation-runner-'))
+    originalRepoRoot = process.env['SKILLSMITH_REPO_ROOT']
+    process.env['SKILLSMITH_REPO_ROOT'] = tmpDir
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+    if (originalRepoRoot === undefined) delete process.env['SKILLSMITH_REPO_ROOT']
+    else process.env['SKILLSMITH_REPO_ROOT'] = originalRepoRoot
+  })
+
+  it('an --ablate run with NO runEvalFn hook (the real CLI wiring) exits(1) on an unindexed corpus, instead of silently computing recall against missing data', async () => {
+    const stateDir = join(tmpDir, '.ruvector')
+    mkdirSync(stateDir, { recursive: true })
+    writeFileSync(
+      join(stateDir, '.index-state.json'),
+      JSON.stringify({ chunkCountByFile: { 'src/foo.ts': 3 } }),
+      'utf8'
+    )
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exit(1) called')
+    }) as never)
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+
+    // No opts.runEvalFn -- exercises the real defaultRunEvalFn ->
+    // eval-runner.js's real runRealMode -> assertMemoryCorpusIndexed chain.
+    await expect(runAblation('boost')).rejects.toThrow('exit(1) called')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(written).toContain('memory-topic-files adapter has 0 indexed chunks')
+
+    exitSpy.mockRestore()
+    stderrSpy.mockRestore()
   })
 })

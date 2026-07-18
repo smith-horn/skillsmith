@@ -41,13 +41,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   maybeUpdateBaseline,
   updateBaseline,
   buildBaselineSignatureWarning,
+  assertMemoryCorpusIndexed,
+  runRealMode,
   type BaselineFile,
   type UpdateBaselineResult,
 } from '../../eval/eval-runner.js'
@@ -263,6 +265,108 @@ describe('maybeUpdateBaseline outcome out-param (SMI-5708 Item #4)', () => {
     // The baseline write itself must have succeeded regardless.
     const written = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
     expect(written.current).toBe(0.5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5708 Item #11: the GAP-1 corpus guard, extracted from the former
+// buildRealResults into assertMemoryCorpusIndexed(), and reused by
+// runRealMode() -- the exact function ablation-runner.ts's defaultRunEvalFn
+// calls. Before this fix, only main()'s real-mode path (via the old
+// buildRealResults) reached this check; an --ablate run against an
+// unindexed memory corpus silently computed recall against missing data.
+//
+// resolveIndexStateFile() resolves to $SKILLSMITH_REPO_ROOT/.ruvector/
+// .index-state.json (SMI-4763), not $SKILLSMITH_REPO_ROOT/.index-state.json
+// -- writeRepoStateFile mirrors that exact resolution.
+// ---------------------------------------------------------------------------
+
+function writeRepoStateFile(repoRoot: string, chunkCountByFile: Record<string, number>): void {
+  const dir = join(repoRoot, '.ruvector')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, '.index-state.json'), JSON.stringify({ chunkCountByFile }), 'utf8')
+}
+
+describe('assertMemoryCorpusIndexed (SMI-5708 Item #11 -- shared GAP-1 guard)', () => {
+  let originalRepoRoot: string | undefined
+
+  beforeEach(() => {
+    originalRepoRoot = process.env['SKILLSMITH_REPO_ROOT']
+    process.env['SKILLSMITH_REPO_ROOT'] = tmpDir
+  })
+
+  afterEach(() => {
+    if (originalRepoRoot === undefined) delete process.env['SKILLSMITH_REPO_ROOT']
+    else process.env['SKILLSMITH_REPO_ROOT'] = originalRepoRoot
+  })
+
+  it('exits(1) with the SMI-4677 message when .index-state.json has 0 memory:// chunks', () => {
+    writeRepoStateFile(tmpDir, { 'src/foo.ts': 3 })
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+
+    assertMemoryCorpusIndexed()
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(written).toContain('memory-topic-files adapter has 0 indexed chunks')
+    expect(written).toContain('SMI-4677')
+
+    exitSpy.mockRestore()
+    stderrSpy.mockRestore()
+  })
+
+  it('does not exit when memory:// chunks are indexed', () => {
+    writeRepoStateFile(tmpDir, { 'memory://a.md': 5 })
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+
+    assertMemoryCorpusIndexed()
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    exitSpy.mockRestore()
+  })
+
+  it('does not exit when no .index-state.json exists (pre-existing skip-if-absent behavior preserved)', () => {
+    // tmpDir is freshly created by the outer beforeEach -- no state file written.
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+
+    assertMemoryCorpusIndexed()
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    exitSpy.mockRestore()
+  })
+})
+
+describe('runRealMode reaches the GAP-1 guard (SMI-5708 Item #11 regression)', () => {
+  let originalRepoRoot: string | undefined
+
+  beforeEach(() => {
+    originalRepoRoot = process.env['SKILLSMITH_REPO_ROOT']
+    process.env['SKILLSMITH_REPO_ROOT'] = tmpDir
+  })
+
+  afterEach(() => {
+    if (originalRepoRoot === undefined) delete process.env['SKILLSMITH_REPO_ROOT']
+    else process.env['SKILLSMITH_REPO_ROOT'] = originalRepoRoot
+  })
+
+  it('exits(1) instead of silently computing recall against an unindexed corpus -- this is the exact ablation-path bug Item #11 fixes: runRealMode() is the function ablation-runner.ts calls, and previously never reached this guard', async () => {
+    writeRepoStateFile(tmpDir, { 'src/foo.ts': 3 })
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exit(1) called')
+    }) as never)
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+
+    // The guard runs before any real search()/rerank() dynamic import, so a
+    // thrown exit(1) proves it fired without needing to mock those modules.
+    await expect(runRealMode()).rejects.toThrow('exit(1) called')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(written).toContain('memory-topic-files adapter has 0 indexed chunks')
+
+    exitSpy.mockRestore()
+    stderrSpy.mockRestore()
   })
 })
 

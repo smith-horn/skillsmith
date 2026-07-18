@@ -35,9 +35,11 @@ const BASELINE_PATH = join(__dirname, 'baseline.json')
 // Index-state helpers (SMI-4763)
 //
 // `resolveIndexStateFile` mirrors src/config.ts repoRoot()/resolveRepoPath()
-// so the GAP 1 startup check (eval-runner.ts's buildRealResults) and the
-// corpus-stats refresh below both consult the SAME path the indexer writes
-// to: `$SKILLSMITH_REPO_ROOT/.ruvector/.index-state.json` (or
+// so the GAP 1 startup check (eval-runner.ts's assertMemoryCorpusIndexed,
+// SMI-5708 Item #11 -- shared by both the main real-mode path and the
+// ablation path via runRealMode) and the corpus-stats refresh below both
+// consult the SAME path the indexer writes to:
+// `$SKILLSMITH_REPO_ROOT/.ruvector/.index-state.json` (or
 // `$CWD/.ruvector/.index-state.json` when the env var is unset).
 //
 // The previous `join(__dirname, '..', '.ruvector', '.index-state.json')` resolved
@@ -149,6 +151,101 @@ function readKnobsFromEnv(): BaselineFile['knobs'] {
     floor: 0.35,
     bm25: process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK === 'bm25',
   }
+}
+
+function fmtMetric(n: number | null | undefined): string {
+  return n === null || n === undefined ? '--' : n.toFixed(4)
+}
+
+// SMI-5708 Item #10 — baseline.md was 100% hand-maintained despite its own
+// opening line claiming otherwise: no generation code existed anywhere, so
+// every field silently drifted from baseline.json (wrong generated date,
+// wrong corpus size, wrong metrics) the moment a developer forgot the
+// undocumented manual step. Generated deterministically from the SAME
+// BaselineFile updateBaseline() just wrote, at the same atomic-update point
+// below — there is no separate "regenerate baseline.md" step to forget.
+//
+// Deliberately scoped to what baseline.json's own schema persists: the
+// by-category table below has only Recall@5 (current + prior) and Count,
+// not the fuller Recall@10/MRR/nDCG@10-per-category breakdown the old
+// hand-written file showed — that richer data exists in the run's
+// in-memory MetricsReport.byCategory, but is not part of what
+// updateBaseline() persists to baseline.json (a deliberate simplification
+// from Item #3's schema), and this generator's whole point is to be
+// reproducible strictly from baseline.json's own persisted content, not
+// from transient in-memory data no other consumer of baseline.json has
+// access to.
+export function renderBaselineMarkdown(baseline: BaselineFile): string {
+  const corpus = baseline.corpus
+  const knobs = baseline.knobs
+  const metrics = baseline.metrics
+  const lines: string[] = [
+    '# Baseline -- Retrieval Eval (SMI-4702)',
+    '',
+    'This file is generated deterministically from `baseline.json` by `updateBaseline()`',
+    '(eval/eval-runner-baseline.ts) on each `RETRIEVAL_EVAL_REAL=1` run. Do not hand-edit --',
+    'edits are silently overwritten on the next real-mode run. The machine-readable source',
+    'of truth is `baseline.json`.',
+    '',
+    '## Current Baseline',
+    '',
+    `Generated: ${baseline.generated}`,
+    '',
+    `Corpus: ${corpus.filesScanned} files, ${corpus.chunksUpserted} chunks`,
+    '',
+    `Knobs: boost=${knobs.boost}, dampen=${knobs.dampen}, floor=${knobs.floor}, BM25=${knobs.bm25 ? 'on' : 'off'}`,
+    '',
+    '| Metric     | Value  | Prior  |',
+    '|------------|--------|--------|',
+    `| recall@5   | ${fmtMetric(metrics.recallAt5)} | ${fmtMetric(baseline.prior)} |`,
+    `| recall@10  | ${fmtMetric(metrics.recallAt10)} | -- |`,
+    `| MRR        | ${fmtMetric(metrics.mrr)} | -- |`,
+    `| nDCG@10    | ${fmtMetric(metrics.ndcgAt10)} | -- |`,
+    '',
+  ]
+
+  if (baseline.byCategory) {
+    const { recallAt5, recallAt5Prior, count } = baseline.byCategory
+    lines.push(
+      '### By Category',
+      '',
+      '| Category | Count | Recall@5 | Recall@5 Prior |',
+      '|----------|-------|----------|-----------------|'
+    )
+    // Codex review finding: validateBaselineFile() doesn't require recallAt5
+    // and count to share the exact same key set, so iterating only one map's
+    // keys could silently drop a category present in the other. Union both
+    // so a schema-valid-but-mismatched category still renders (with `--` for
+    // whichever field it's missing) instead of vanishing from the table.
+    const categories = new Set([...Object.keys(recallAt5), ...Object.keys(count)])
+    for (const cat of [...categories].sort()) {
+      lines.push(
+        `| ${cat} | ${count[cat] ?? '--'} | ${fmtMetric(recallAt5[cat])} | ${fmtMetric(recallAt5Prior?.[cat])} |`
+      )
+    }
+    lines.push('')
+  }
+
+  lines.push(
+    '## How This Is Updated',
+    '',
+    '`updateBaseline()` writes `baseline.json`, then regenerates this file from it, after each',
+    '`RETRIEVAL_EVAL_REAL=1` run. Each write is individually atomic (temp-file-then-rename); the',
+    'two writes are not a single transaction, but a failure on either one throws and fails the run',
+    'loudly rather than silently leaving this file stale. There is no separate manual step -- hand',
+    'edits to this file are silently overwritten on the next run.',
+    '',
+    'To run: `npm run eval:retrieval` (mock mode, CI structural validation)',
+    '',
+    'To run with real index: `RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval`',
+    '',
+    'To run ablations: `npm run eval:retrieval -- --ablate boost`',
+    '',
+    'See `eval/README.md` for labeling guidelines and the full workflow.',
+    ''
+  )
+
+  return lines.join('\n')
 }
 
 export function updateBaseline(
@@ -282,6 +379,13 @@ export function updateBaseline(
   // is NOT caught -- unlike signature emission below, a baseline.json write
   // failure must fail the run loudly, not silently.
   writeFileAtomicSync(baselinePath, serialized)
+  // SMI-5708 Item #10 — regenerate baseline.md right alongside baseline.json,
+  // at the same atomic-update point, rather than as a separate hand-edited
+  // step a developer can forget. Not caught, matching the JSON write just
+  // above: a failed baseline.md write should fail the run loudly too, since
+  // a stale baseline.md is exactly the bug this item exists to close.
+  const markdownPath = join(dirname(baselinePath), 'baseline.md')
+  writeFileAtomicSync(markdownPath, renderBaselineMarkdown(updated))
   const signatureEmitted = emitBaselineSignature(serialized)
   return { signatureEmitted }
 }

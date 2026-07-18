@@ -42,6 +42,7 @@ import {
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { updateBaseline, type BaselineFile } from '../../eval/eval-runner.js'
+import { renderBaselineMarkdown } from '../../eval/eval-runner-baseline.js'
 import { emitBaselineSignature } from '../../eval/eval-runner-signatures.js'
 import type { MetricsReport } from '../../eval/metrics.js'
 
@@ -192,5 +193,141 @@ describe('updateBaseline atomic write + signature-emission outcome (SMI-5708 Ite
 
     const filesInDir = readdirSync(tmpDir)
     expect(filesInDir.filter((f) => f.endsWith('.tmp'))).toEqual([])
+  })
+
+  // Opus + Codex review finding (SMI-5708 Item #10): the two tests above only
+  // arm ONE forced writeFileSync failure, which -- since updateBaseline()
+  // writes baseline.json THEN baseline.md, each via its own writeFileSync
+  // call -- is consumed by the FIRST call (the JSON write). Neither test
+  // ever exercises the SECOND call (the markdown write) failing, so a future
+  // refactor that silently swallowed a baseline.md write failure (e.g.
+  // wrapping it in a try/catch "to be safe") would reintroduce the exact
+  // stale-baseline.md bug Item #10 exists to close, and this suite would
+  // stay green. This test targets that second call specifically.
+  it('a failed baseline.md write throws (does not silently swallow), even though baseline.json was already written successfully', async () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+    const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+
+    // Call #1 (baseline.json's temp file) succeeds via the real
+    // implementation; call #2 (baseline.md's temp file) throws.
+    vi.mocked(writeFileSync)
+      .mockImplementationOnce(actualFs.writeFileSync)
+      .mockImplementationOnce(() => {
+        throw new Error('simulated disk full (markdown)')
+      })
+
+    expect(() => updateBaseline(makeReport(0.5), { baselinePath, stateFile })).toThrow(
+      /simulated disk full \(markdown\)/
+    )
+
+    // baseline.json itself was written successfully before the failure --
+    // Opus's review confirmed this is benign (a deterministic re-run is
+    // monotonic, not corrupting), so this test pins the actual behavior
+    // rather than asserting a rollback that doesn't exist.
+    expect(existsSync(baselinePath)).toBe(true)
+    const written = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
+    expect(written.current).toBe(0.5)
+
+    // No stray temp file from the failed markdown write.
+    const strayTempFiles = readdirSync(tmpDir).filter(
+      (f) => f.startsWith('baseline.md.') && f.endsWith('.tmp')
+    )
+    expect(strayTempFiles).toEqual([])
+  })
+})
+
+describe('renderBaselineMarkdown (SMI-5708 Item #10)', () => {
+  function makeBaseline(overrides: Partial<BaselineFile> = {}): BaselineFile {
+    return {
+      prior: 0.4364,
+      current: 0.6364,
+      generated: '2026-06-24',
+      corpus: { filesScanned: 1995, chunksUpserted: 37829 },
+      knobs: { boost: 1.5, dampen: 0.85, floor: 0.35, bm25: false },
+      metrics: { recallAt5: 0.6364, recallAt10: 0.7273, mrr: 0.4566, ndcgAt10: 0.5219 },
+      byCategory: {
+        recallAt5: { 'adr-lookup': 0.8333, 'zzz-cat': 0.1 },
+        recallAt5Prior: { 'adr-lookup': 0.6667 },
+        count: { 'adr-lookup': 6, 'zzz-cat': 2 },
+      },
+      ...overrides,
+    }
+  }
+
+  it('renders generated date, corpus, and knobs exactly from the baseline', () => {
+    const md = renderBaselineMarkdown(makeBaseline())
+    expect(md).toContain('Generated: 2026-06-24')
+    expect(md).toContain('Corpus: 1995 files, 37829 chunks')
+    expect(md).toContain('Knobs: boost=1.5, dampen=0.85, floor=0.35, BM25=off')
+  })
+
+  it('formats BM25=on when knobs.bm25 is true', () => {
+    const md = renderBaselineMarkdown(
+      makeBaseline({ knobs: { boost: 1.5, dampen: 0.85, floor: 0.35, bm25: true } })
+    )
+    expect(md).toContain('BM25=on')
+  })
+
+  it('renders the overall metrics table with recall@5 prior, "--" for metrics with no persisted prior', () => {
+    const md = renderBaselineMarkdown(makeBaseline())
+    expect(md).toContain('| recall@5   | 0.6364 | 0.4364 |')
+    expect(md).toContain('| recall@10  | 0.7273 | -- |')
+    expect(md).toContain('| MRR        | 0.4566 | -- |')
+    expect(md).toContain('| nDCG@10    | 0.5219 | -- |')
+  })
+
+  it('renders "--" for a null prior (bootstrap run)', () => {
+    const md = renderBaselineMarkdown(makeBaseline({ prior: null }))
+    expect(md).toContain('| recall@5   | 0.6364 | -- |')
+  })
+
+  it('sorts by-category rows alphabetically, independent of object key insertion order', () => {
+    const md = renderBaselineMarkdown(makeBaseline())
+    expect(md.indexOf('zzz-cat')).toBeGreaterThan(md.indexOf('adr-lookup'))
+  })
+
+  it('renders "--" for a category with no prior entry (first run to populate byCategory)', () => {
+    const md = renderBaselineMarkdown(makeBaseline())
+    expect(md).toContain('| zzz-cat | 2 | 0.1000 | -- |')
+  })
+
+  it('omits the By Category section entirely when byCategory is absent (pre-Wave-1 baseline)', () => {
+    const baseline = makeBaseline()
+    delete baseline.byCategory
+    const md = renderBaselineMarkdown(baseline)
+    expect(md).not.toContain('### By Category')
+  })
+
+  it('documents itself as generated, not a manual regeneration step for the developer', () => {
+    const md = renderBaselineMarkdown(makeBaseline())
+    expect(md).toContain('Do not hand-edit')
+    expect(md).not.toContain('developer who ran the eval')
+  })
+})
+
+describe('updateBaseline also regenerates baseline.md atomically (SMI-5708 Item #10)', () => {
+  it('writes baseline.md alongside baseline.json, with content matching renderBaselineMarkdown', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const markdownPath = join(tmpDir, 'baseline.md')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+
+    updateBaseline(makeReport(0.5), { baselinePath, stateFile })
+
+    expect(existsSync(markdownPath)).toBe(true)
+    const writtenJson = JSON.parse(readFileSync(baselinePath, 'utf8')) as BaselineFile
+    expect(readFileSync(markdownPath, 'utf8')).toBe(renderBaselineMarkdown(writtenJson))
+  })
+
+  it('leaves no stray baseline.md.*.tmp file behind on a successful write', () => {
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const stateFile = writeStateFile({ 'memory://a.md': 5 })
+
+    updateBaseline(makeReport(0.5), { baselinePath, stateFile })
+
+    const strayTempFiles = readdirSync(tmpDir).filter(
+      (f) => f.startsWith('baseline.md.') && f.endsWith('.tmp')
+    )
+    expect(strayTempFiles).toEqual([])
   })
 })

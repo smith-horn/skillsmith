@@ -1,45 +1,43 @@
 # Baseline -- Retrieval Eval (SMI-4702)
 
-This file is regenerated alongside `baseline.json` on each `RETRIEVAL_EVAL_REAL=1` run.
-It is prose-only; the machine-readable source of truth is `baseline.json`.
+This file is generated deterministically from `baseline.json` by `updateBaseline()`
+(eval/eval-runner-baseline.ts) on each `RETRIEVAL_EVAL_REAL=1` run. Do not hand-edit --
+edits are silently overwritten on the next real-mode run. The machine-readable source
+of truth is `baseline.json`.
 
 ## Current Baseline
 
-Generated: 2026-05-07 (SMI-4764 Wave 1 -- first run with `byCategory` populated)
+Generated: 2026-07-18
 
-Corpus: 1329 files, 28451 chunks
+Corpus: 2426 files, 46749 chunks
 
 Knobs: boost=1.5, dampen=0.85, floor=0.35, BM25=off
 
 | Metric     | Value  | Prior  |
 |------------|--------|--------|
-| recall@5   | 0.4182 | 0.4182 |
-| recall@10  | 0.4909 | --     |
-| MRR        | 0.2824 | --     |
-| nDCG@10    | 0.3327 | --     |
-
-Overall scalars are unchanged from the SMI-4762 bootstrap (deterministic against the same
-gold set + corpus). The schema additions are `byCategory.recallAt5` (per-category current),
-`byCategory.recallAt5Prior` (null on this first run, will promote next time), and
-`byCategory.count` (gold-set entries per category, used by the hybrid threshold's N-hit floor).
-Drift gate now uses the SMI-4764 hybrid path: per-category `max(5% rel, 1-hit/2-hit floor)` +
-global 10% tripwire on overall.
+| recall@5   | 0.6545 | 0.6364 |
+| recall@10  | 0.7455 | -- |
+| MRR        | 0.4616 | -- |
+| nDCG@10    | 0.5298 | -- |
 
 ### By Category
 
-| Category               | Count | Recall@5 | Recall@10 | MRR    | nDCG@10 |
-|------------------------|-------|----------|-----------|--------|---------|
-| adr-lookup             | 6     | 0.5000   | 0.8333    | 0.2946 | 0.4236  |
-| implementation-lookup  | 12    | 0.2500   | 0.2500    | 0.2083 | 0.2192  |
-| memory-recall          | 14    | 0.2857   | 0.2857    | 0.2286 | 0.2419  |
-| retro-lookup           | 10    | 0.5000   | 0.7000    | 0.3283 | 0.4161  |
-| script-header          | 8     | 0.6250   | 0.6250    | 0.3854 | 0.4452  |
-| skill-discovery        | 5     | 0.6000   | 0.6000    | 0.3400 | 0.4036  |
+| Category | Count | Recall@5 | Recall@5 Prior |
+|----------|-------|----------|-----------------|
+| adr-lookup | 6 | 0.8333 | 0.8333 |
+| implementation-lookup | 12 | 0.5833 | 0.5833 |
+| memory-recall | 14 | 0.9286 | 0.9286 |
+| retro-lookup | 10 | 0.4000 | 0.4000 |
+| script-header | 8 | 0.6250 | 0.5000 |
+| skill-discovery | 5 | 0.4000 | 0.4000 |
 
 ## How This Is Updated
 
-The eval runner (`eval/eval-runner.ts`) writes `baseline.json` after each `RETRIEVAL_EVAL_REAL=1` run.
-The `baseline.md` companion should be regenerated at the same time by the developer who ran the eval.
+`updateBaseline()` writes `baseline.json`, then regenerates this file from it, after each
+`RETRIEVAL_EVAL_REAL=1` run. Each write is individually atomic (temp-file-then-rename); the
+two writes are not a single transaction, but a failure on either one throws and fails the run
+loudly rather than silently leaving this file stale. There is no separate manual step -- hand
+edits to this file are silently overwritten on the next run.
 
 To run: `npm run eval:retrieval` (mock mode, CI structural validation)
 
@@ -48,12 +46,3 @@ To run with real index: `RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval`
 To run ablations: `npm run eval:retrieval -- --ablate boost`
 
 See `eval/README.md` for labeling guidelines and the full workflow.
-
-### Notes from the bootstrap run (2026-05-06)
-
-- The eval-runner currently does NOT recompute `corpus.filesScanned` / `corpus.chunksUpserted` on each run --
-  these were filled in manually from `.ruvector/.index-state.json`. Tracked as a follow-up.
-- The eval-runner's GAP 1 startup check at `eval-runner.ts:90` resolves the index path relative to
-  `eval/..` rather than `repoRoot()`, so it silently skips when the index is at the repo root.
-  The actual `search()` call works because it uses `resolveRepoPath()` from `config.ts`.
-  Tracked as a follow-up.

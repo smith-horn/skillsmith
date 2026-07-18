@@ -107,42 +107,78 @@ function buildMockResults(entries: GoldEntry[]): RunResult[] {
 // Real mode
 // ---------------------------------------------------------------------------
 
-async function buildRealResults(entries: GoldEntry[]): Promise<RunResult[]> {
-  // GAP 1 startup check: verify memory-topic-files adapter is indexed.
-  // SMI-4763: resolve via repoRoot() so we consult the real .index-state.json
-  // the indexer writes to (`$REPO_ROOT/.ruvector/...`), not the
-  // package-local stub path that never exists in practice.
+// SMI-5708 Item #11: GAP 1 startup check, extracted so both real-mode callers
+// (main()'s real-mode path and the ablation path, via runRealMode below)
+// share it — previously only the main path reached this check, so an
+// ablation run (--ablate <dim>) against an unindexed memory corpus silently
+// computed recall against missing data.
+//
+// SMI-4763: resolve via repoRoot() so we consult the real .index-state.json
+// the indexer writes to (`$REPO_ROOT/.ruvector/...`), not the package-local
+// stub path that never exists in practice.
+export function assertMemoryCorpusIndexed(): void {
   const stateFile = resolveIndexStateFile()
-  if (existsSync(stateFile)) {
-    const stateRaw = readFileSync(stateFile, 'utf8')
-    const state = JSON.parse(stateRaw) as { chunkCountByFile?: Record<string, number> }
-    const chunkCountByFile = state.chunkCountByFile ?? {}
-    const memoryPaths = Object.keys(chunkCountByFile).filter((p) => p.startsWith('memory://'))
-    if (memoryPaths.length === 0) {
-      process.stderr.write(
-        [
-          'Error: memory-topic-files adapter has 0 indexed chunks.',
-          'Verify SMI-4677 wiring: SKILLSMITH_MEMORY_DIR_OVERRIDE must be set and the',
-          'bind-mount must point to the correct memory directory.',
-          'See docs/internal/implementation/memory-routing-multi-layer.md §SMI-4677.',
-          'RETRIEVAL_EVAL_REAL=1 will produce meaningless recall values without memory chunks.',
-          '',
-        ].join('\n')
-      )
-      process.exit(1)
-    }
+  if (!existsSync(stateFile)) return
+  const stateRaw = readFileSync(stateFile, 'utf8')
+  const state = JSON.parse(stateRaw) as { chunkCountByFile?: Record<string, number> }
+  const chunkCountByFile = state.chunkCountByFile ?? {}
+  const memoryPaths = Object.keys(chunkCountByFile).filter((p) => p.startsWith('memory://'))
+  if (memoryPaths.length === 0) {
+    process.stderr.write(
+      [
+        'Error: memory-topic-files adapter has 0 indexed chunks.',
+        'Verify SMI-4677 wiring: SKILLSMITH_MEMORY_DIR_OVERRIDE must be set and the',
+        'bind-mount must point to the correct memory directory.',
+        'See docs/internal/implementation/memory-routing-multi-layer.md §SMI-4677.',
+        'RETRIEVAL_EVAL_REAL=1 will produce meaningless recall values without memory chunks.',
+        '',
+      ].join('\n')
+    )
+    process.exit(1)
   }
+}
 
-  const { search } = await import('../src/search.js')
+// SMI-5708 Item #11: consolidated search/rerank/filter loop, shared by
+// main()'s real-mode path (directly, below, minScore omitted) and
+// ablation-runner.ts's defaultRunEvalFn (via runRealMode below, minScore
+// supplied for the 'floor' dimension sweep). Previously duplicated
+// near-identically as buildRealResults/runRealMode, with only
+// buildRealResults running the corpus guard above.
+async function runRealEval(entries: GoldEntry[], minScore?: number): Promise<RunResult[]> {
+  assertMemoryCorpusIndexed()
+
+  const { search, createVectorDb } = await import('../src/search.js')
   const { rerank } = await import('../src/rerank.js')
   const { DEFAULT_MIN_SIMILARITY } = await import('../src/config.js')
+  const { embedBatch } = await import('../src/embedding.js')
+  const threshold = minScore ?? DEFAULT_MIN_SIMILARITY
+
+  // SMI-5708 Item #12: reuse one VectorDb handle and batch-embed all of this
+  // pass's queries once, instead of search() constructing a fresh VectorDb
+  // (each of which reopens the on-disk index) and re-embedding one query at
+  // a time for every entry. Purely a performance fix -- results are
+  // byte-identical either way (Wave 0 finding: confirmed-but-overstated,
+  // the ONNX model itself was already a cached singleton).
+  const db = await createVectorDb()
+  const queryVecs = db ? await embedBatch(entries.map((e) => e.query)) : []
 
   const results: RunResult[] = []
 
-  for (const e of entries) {
-    const pool = await search({ query: e.query, k: 20, preRerank: true })
-    const reranked = rerank(pool, e.query)
-    const filtered = reranked.filter((h) => h.score >= DEFAULT_MIN_SIMILARITY).slice(0, 10)
+  for (const [i, e] of entries.entries()) {
+    const pool = db
+      ? await search({
+          query: e.query,
+          k: 20,
+          preRerank: true,
+          db,
+          queryVec: new Float32Array(queryVecs[i]),
+        })
+      : []
+    // SMI-5708 Item #6: topK=10, matching this harness's own Recall@10/
+    // nDCG@10 metrics -- rerank()'s BM25/MMR branch previously hardcoded a
+    // 5-item selection cap, so BM25's Recall@10 could never exceed Recall@5.
+    const reranked = rerank(pool, e.query, 10)
+    const filtered = reranked.filter((h) => h.score >= threshold).slice(0, 10)
     results.push({
       id: e.id,
       query: e.query,
@@ -249,24 +285,7 @@ export function buildBaselineSignatureWarning(
 export async function runRealMode(minScore?: number): Promise<import('./metrics.js').MetricSet> {
   const entries = loadGoldSet()
   // Rebuild real results under the current process.env (env overrides applied by caller).
-  const { search } = await import('../src/search.js')
-  const { rerank } = await import('../src/rerank.js')
-  const { DEFAULT_MIN_SIMILARITY } = await import('../src/config.js')
-  const threshold = minScore ?? DEFAULT_MIN_SIMILARITY
-  const results: RunResult[] = []
-  for (const e of entries) {
-    const pool = await search({ query: e.query, k: 20, preRerank: true })
-    const reranked = rerank(pool, e.query)
-    const filtered = reranked.filter((h) => h.score >= threshold).slice(0, 10)
-    results.push({
-      id: e.id,
-      query: e.query,
-      category: e.category,
-      difficulty: e.difficulty,
-      hits: filtered.map((h) => ({ filePath: h.filePath })),
-      expectedChunks: e.expectedChunks,
-    })
-  }
+  const results = await runRealEval(entries, minScore)
   const report = computeMetrics(results)
   return report.overall
 }
@@ -298,7 +317,7 @@ async function main(): Promise<void> {
 
   let results: RunResult[]
   if (realMode) {
-    results = await buildRealResults(entries)
+    results = await runRealEval(entries)
     const report = computeMetrics(results)
     // SMI-5708 Item #4 — signature-emission failure stays non-fatal to this
     // run (the pre-push validator is the intended backstop, per this file's
