@@ -196,6 +196,20 @@ echo "${YELLOW}[3/3] Running lint and format on staged files...${NC}"
 # on the full working tree. After lint-staged, we re-add only originally-staged files.
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=d)
 
+# SMI-5713: source the gitlink-preservation library (scripts/lib/preserve-gitlinks.sh
+# has the full rationale). Missing-lib case degrades LOUDLY, not silently — a stale
+# checkout must not reintroduce this bug without at least a visible warning.
+PRESERVE_GITLINKS_LIB="$(dirname "$0")/../scripts/lib/preserve-gitlinks.sh"
+if [ -r "$PRESERVE_GITLINKS_LIB" ]; then
+  # shellcheck source=../scripts/lib/preserve-gitlinks.sh
+  . "$PRESERVE_GITLINKS_LIB"
+else
+  echo "${YELLOW}⚠️  scripts/lib/preserve-gitlinks.sh missing — gitlink clobber protection disabled (rebase onto main to pick up SMI-5713)${NC}"
+  capture_staged_gitlinks() { :; }
+  restore_staged_gitlinks() { :; }
+fi
+STAGED_GITLINKS=$(capture_staged_gitlinks)
+
 # SMI-4451 Step 5 — frontmatter lint mode flag, consumed by the
 # `docs/internal/retros/*.md` rule in lint-staged.config.js. Default is
 # `warn` for the Wave 1 soak window. Flip to `error` ONLY after the 3-AND
@@ -209,6 +223,9 @@ if npx lint-staged --no-stash; then
     if [ -n "$STAGED_FILES" ]; then
       echo "$STAGED_FILES" | xargs git add --
     fi
+    # SMI-5713: Re-apply staged gitlink SHAs the blind `git add` above
+    # replaced with the locally-checked-out submodule commit.
+    restore_staged_gitlinks "$STAGED_GITLINKS"
     echo "${GREEN}  ✓ Lint and format passed${NC}"
 else
     echo ""
