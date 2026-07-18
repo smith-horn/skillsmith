@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: doc-comments in `telemetry/tracer.ts`/`tracer-imports.ts` referencing the optional enterprise instrumentation dependency now name the real package, `@smith-horn/enterprise` (SMI-5738; no behavior change here, see `@skillsmith/mcp-server`/`@skillsmith/cli` for the actual runtime import fix)
 - **Feature**: new `@skillsmith/core/security/scanner` export subpath, exposing `stripInvisible`/`confusableSkeleton`/`CONFUSABLES` for reuse outside the package (SMI-4703) — enables `@skillsmith/doc-retrieval-mcp`'s memory-write injection scanner to reuse the same confusable/homoglyph normalization primitives `SecurityScanner.exec.ts` uses, instead of reimplementing them
 - **Feature**: new `getOrCreateInstallId()` in `config/device-identity.ts` — a stable per-install telemetry identifier (`sha256(randomUUID())`), generated and persisted unconditionally regardless of legacy telemetry env-gating (SMI-5531)
 - **Fix**: `saveConfig` (`config/index.ts`) is now atomic — its read-modify-write runs under a new cross-process exclusive lock (`config/config-atomic-write.ts`) and writes via temp-file-then-rename, closing a lost-update race where two concurrent writers could silently drop each other's change. This also fixes a pre-existing, independent TOCTOU race in `getOrCreateDeviceId` that shared the same unguarded writer (SMI-5531)

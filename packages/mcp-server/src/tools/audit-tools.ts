@@ -4,7 +4,7 @@
  * @see SMI-3894: Tier feature gap remediation (Wave 3)
  *
  * Bridges the existing EnterpriseAuditLogger backend to MCP tool handlers.
- * Uses dynamic import() for @skillsmith/enterprise (optional peer dependency)
+ * Uses dynamic import() for @smith-horn/enterprise (optional peer dependency)
  * to avoid crashing the MCP server for community users.
  *
  * Tier gate: Enterprise (audit_logging / siem_export feature flags).
@@ -133,25 +133,38 @@ export const siemExportToolSchema = {
 // Handlers (dynamic import for optional enterprise dependency)
 // ============================================================================
 
-/** Shape of the audit logger returned by dynamic enterprise import */
+/**
+ * Shape of the audit logger returned by dynamic enterprise import. The
+ * return/param types are deliberately loose (unknown[], not
+ * EnterpriseAuditLogEntry[]) since this module only ever slices/counts
+ * entries — it never reads individual fields — and importing the
+ * enterprise package's concrete types here would recouple this file to
+ * its full audit-log schema for no actual benefit.
+ */
 interface AuditLoggerLike {
-  queryEnterprise(filter?: Record<string, unknown>): Array<Record<string, unknown>>
+  queryEnterprise(filter?: Record<string, unknown>): unknown[]
   dispose(): void
 }
 
 /**
- * Dynamically load EnterpriseAuditLogger from the optional @skillsmith/enterprise package.
+ * Dynamically load EnterpriseAuditLogger from the optional @smith-horn/enterprise package.
  * Returns a logger with queryEnterprise() and dispose() methods.
  */
 async function getAuditLogger(toolContext: ToolContext): Promise<AuditLoggerLike> {
   try {
-    // @skillsmith/enterprise is an optional peer dep — suppress TS2307.
-    // @ts-expect-error -- optional peer dependency, may not be installed
-    const enterprise = await import('@skillsmith/enterprise')
-    return new enterprise.EnterpriseAuditLogger(toolContext.db) as AuditLoggerLike
+    // Dynamic import with variable to prevent TypeScript from resolving at
+    // compile time -- matches middleware/license.ts's tryLoadEnterpriseValidator().
+    // This is an optional peer dependency that may not be present in every
+    // install/CI-job scope, even though it always resolves in this monorepo's
+    // own full dev install.
+    const packageName = '@smith-horn/enterprise'
+    const enterprise = (await import(/* webpackIgnore: true */ packageName)) as {
+      EnterpriseAuditLogger: new (db: unknown) => AuditLoggerLike
+    }
+    return new enterprise.EnterpriseAuditLogger(toolContext.db)
   } catch {
     throw new Error(
-      'Enterprise audit logging requires the @skillsmith/enterprise package. ' +
+      'Enterprise audit logging requires the @smith-horn/enterprise package. ' +
         'This feature is available on the Enterprise tier.'
     )
   }

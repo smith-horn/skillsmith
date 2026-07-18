@@ -12,8 +12,8 @@
 /**
  * Feature flags for enterprise licensing
  *
- * This type mirrors the canonical FeatureFlag from @skillsmith/enterprise.
- * We define it locally because @skillsmith/enterprise is an optional peer
+ * This type mirrors the canonical FeatureFlag from @smith-horn/enterprise.
+ * We define it locally because @smith-horn/enterprise is an optional peer
  * dependency that may not be installed for community users.
  *
  * @see packages/enterprise/src/license/FeatureFlags.ts for canonical definition

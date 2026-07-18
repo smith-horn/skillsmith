@@ -62,16 +62,17 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
   })
 
   it('warns — does not fail, does not crash — on a dangling/unknown package name', () => {
-    // Mirrors the real, currently-known packages/cli/package.json shape:
-    // its peer dep is named `@skillsmith/enterprise`, but the actual
-    // workspace package is `@smith-horn/enterprise` (SMI-5720, tracked
-    // separately — not fixed by this check).
+    // Synthetic example: SMI-5720 (peer-dep name) and SMI-5738 (runtime
+    // import sites) both fixed the real dangling `@skillsmith/enterprise`
+    // reference this repo used to have, so this case no longer mirrors live
+    // repo state — it exercises the checker's dangling-name warn path with
+    // a fictional name that has no matching entry in packagesByDir.
     const packagesByDir = {
       cli: {
         name: '@skillsmith/cli',
         version: '0.8.2',
-        peerDependencies: { '@skillsmith/enterprise': '*' },
-        peerDependenciesMeta: { '@skillsmith/enterprise': { optional: true } },
+        peerDependencies: { '@skillsmith/nonexistent-package': '*' },
+        peerDependenciesMeta: { '@skillsmith/nonexistent-package': { optional: true } },
       },
       enterprise: { name: '@smith-horn/enterprise', version: '0.3.2' },
     }
@@ -84,7 +85,7 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
       {
         dir: 'cli',
         section: 'peerDependencies',
-        depName: '@skillsmith/enterprise',
+        depName: '@skillsmith/nonexistent-package',
         range: '*',
         status: 'dangling',
       },
@@ -116,11 +117,11 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
     ])
   })
 
-  it('passes clean on a healthy tree — all sections, all satisfied, one known dangling warn', () => {
+  it('passes clean on a healthy tree — all sections, all satisfied, no dangling names', () => {
     // Matches this repo's actual current packages/* shape (post SMI-5715
-    // Change #1): doc-retrieval-mcp and skillsmith-cli's stale pins fixed,
-    // packages/cli's dangling @skillsmith/enterprise peer dep left as-is
-    // (SMI-5720, out of scope here).
+    // Change #1, SMI-5720, SMI-5738): doc-retrieval-mcp and skillsmith-cli's
+    // stale pins fixed, packages/cli's peer dep on @smith-horn/enterprise
+    // correctly names the real workspace package — no dangling names remain.
     const packagesByDir = {
       core: { name: '@skillsmith/core', version: '0.11.2' },
       'mcp-server': {
@@ -135,8 +136,8 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
           '@skillsmith/core': '^0.11.2',
           '@skillsmith/mcp-server': '^0.7.4',
         },
-        peerDependencies: { '@skillsmith/enterprise': '*' },
-        peerDependenciesMeta: { '@skillsmith/enterprise': { optional: true } },
+        peerDependencies: { '@smith-horn/enterprise': '*' },
+        peerDependenciesMeta: { '@smith-horn/enterprise': { optional: true } },
       },
       enterprise: {
         name: '@smith-horn/enterprise',
@@ -161,7 +162,7 @@ describe('evaluateInternalVersionCoherence (SMI-5715 Check 58)', () => {
     const results = evaluateInternalVersionCoherence(packagesByDir)
 
     expect(results.filter((r: { status: string }) => r.status === 'violation')).toEqual([])
-    expect(results.filter((r: { status: string }) => r.status === 'dangling')).toHaveLength(1)
+    expect(results.filter((r: { status: string }) => r.status === 'dangling')).toEqual([])
     expect(
       results.filter((r: { status: string }) => r.status === 'ok').length
     ).toBeGreaterThanOrEqual(8)

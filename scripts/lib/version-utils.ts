@@ -139,8 +139,8 @@ export const CORE_DEPENDENTS = [
  *
  * Replaces the older core-only `updateCoreDependency`. The natural
  * predicate "skip if dep key is not in the bump map" correctly handles
- * peerDependencies with `"*"` (e.g. cli → @skillsmith/enterprise: "*").
- * The `"*"` range maps to a key (@skillsmith/enterprise) that does not
+ * peerDependencies with `"*"` (e.g. cli → @smith-horn/enterprise: "*").
+ * The `"*"` range maps to a key (@smith-horn/enterprise) that does not
  * exist in any PACKAGE_SPECS entry — the enterprise package's npm name is
  * @smith-horn/enterprise (SMI-5120) — so it's never in the bump map and is
  * naturally skipped.
