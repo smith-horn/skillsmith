@@ -50,17 +50,43 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const LIB = resolve(__dirname, '..', 'lib', 'preserve-gitlinks.sh')
 
 /**
+ * SMI-5741: fixed author/committer timestamp shared by both `sub init`
+ * commits below (the one in `subSource` and the independent one replayed
+ * in `root/sub` after the clone + `.git` wipe + re-init). Both commits
+ * have identical tree content, message, and identity — Git hashes a
+ * commit object over that content PLUS the author/committer date, so
+ * without pinning the date, the commit SHAs are only equal when both
+ * `git commit` calls land in the same one-second wall-clock window
+ * (Git's default date granularity). Several `git` subprocess calls run
+ * between them (clone, rm -rf .git, init, add -A), which can straddle a
+ * 1-second boundary on a loaded CI runner — producing two different but
+ * individually valid SHAs and a spurious assertion failure in G-1/G-2
+ * (which assert the two commits hash identically). Pinning the date
+ * makes both commits byte-identical (and thus SHA-identical) regardless
+ * of real wall-clock time or runner speed.
+ */
+const FIXTURE_COMMIT_DATE = '2020-01-01T00:00:00Z'
+
+/**
  * Build a minimal parent repo with a real submodule checked out at `sub/`.
  * Returns the parent repo root and the submodule's initial commit SHA (A).
  */
 function makeFixture(): { root: string; shaA: string } {
   const subSource = makeFixtureTempDir('preserve-gitlinks-sub')
   const env = makeFixtureEnv()
+  // SMI-5741: pin both `sub init` commits (below) to the same author/
+  // committer date so their SHAs are guaranteed identical.
+  const pinnedCommitEnv = makeFixtureEnv({
+    GIT_AUTHOR_DATE: FIXTURE_COMMIT_DATE,
+    GIT_COMMITTER_DATE: FIXTURE_COMMIT_DATE,
+  })
 
   execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', subSource], { env })
   writeFileSync(join(subSource, 'README.md'), 'sub\n', 'utf8')
   execFileSync('git', ['-C', subSource, 'add', '-A'], { env })
-  execFileSync('git', ['-C', subSource, 'commit', '--quiet', '-m', 'sub init'], { env })
+  execFileSync('git', ['-C', subSource, 'commit', '--quiet', '-m', 'sub init'], {
+    env: pinnedCommitEnv,
+  })
   const shaA = execFileSync('git', ['-C', subSource, 'rev-parse', 'HEAD'], { env })
     .toString()
     .trim()
@@ -82,7 +108,9 @@ function makeFixture(): { root: string; shaA: string } {
     { env }
   )
   execFileSync('git', ['-C', join(root, 'sub'), 'add', '-A'], { env })
-  execFileSync('git', ['-C', join(root, 'sub'), 'commit', '--quiet', '-m', 'sub init'], { env })
+  execFileSync('git', ['-C', join(root, 'sub'), 'commit', '--quiet', '-m', 'sub init'], {
+    env: pinnedCommitEnv,
+  })
   execFileSync('git', ['-C', root, 'update-index', '--add', '--cacheinfo', '160000', shaA, 'sub'], {
     env,
   })
