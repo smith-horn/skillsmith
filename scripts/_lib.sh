@@ -1236,11 +1236,15 @@ generate_docker_override_to_stdout() {
         return 1
     fi
 
-    # Base ports: dev=3001, test=3002, orchestrator=3003
+    # Base ports: dev=3001, test=3002. Port +3 in this bucket is intentionally
+    # left unused (not reassigned) since removing the now-deleted orchestrator
+    # service (SMI-5719) — the collision-check loop in
+    # _resolve_worktree_port_offset still reserves 4 consecutive ports per
+    # bucket, which stays harmless (merely slightly conservative) rather than
+    # renumbering every existing worktree's deterministic port assignment.
     local dev_app_port=$((3000 + port_offset * 10))
     local dev_mcp_port=$((3000 + port_offset * 10 + 1))
     local test_port=$((3000 + port_offset * 10 + 2))
-    local orchestrator_port=$((3000 + port_offset * 10 + 3))
 
     # SMI-4689: per-package bind mounts only on macOS Docker Desktop.
     local volumes_block=""
@@ -1306,11 +1310,6 @@ ${volumes_block}
     container_name: ${worktree_name}-test-1
     ports:
       - "${test_port}:3000"      # Test app
-${volumes_block}
-  orchestrator:
-    container_name: ${worktree_name}-orchestrator-1
-    ports:
-      - "${orchestrator_port}:3000"  # Orchestrator
 ${volumes_block}
 ${top_level_volumes}
 EOF

@@ -127,7 +127,7 @@ cleanup_worktree_docker_resources() {
     # `image:` field, --rmi local becomes a silent no-op and Path B alone
     # carries the cleanup. The audit-standards check enforces no `image:`
     # field at lint time.
-    # No `--profile` filter so dev/test/orchestrator all tear down.
+    # No `--profile` filter so dev/test all tear down (orchestrator service removed, SMI-5719).
     if [[ -f "$worktree_path/docker-compose.override.yml" ]]; then
         info "Removing per-worktree Docker image and volumes (compose)..."
         if (cd "$worktree_path" && docker compose down --volumes --rmi local 2>/dev/null); then

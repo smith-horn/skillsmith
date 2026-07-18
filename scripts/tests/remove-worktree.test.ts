@@ -157,7 +157,7 @@ describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
 
     expect(result.status).toBe(0)
     // Path A: cleanup-side compose down has --volumes --rmi local AND no --profile filter
-    // (so dev/test/orchestrator services all tear down). The pre-existing stop_worktree_containers
+    // (so dev/test services all tear down; orchestrator service removed, SMI-5719). The pre-existing stop_worktree_containers
     // does emit `compose --profile dev down` separately — we assert on the exact cleanup string.
     expect(result.dockerCalls).toContain('compose down --volumes --rmi local')
     // Path B: fallback rmi + volume rm

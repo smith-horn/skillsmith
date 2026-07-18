@@ -217,18 +217,16 @@ Extract webview HTML generation and message handlers.
   {
     title: 'Update scripts to use Docker for npm commands',
     description: `## Problem
-4 scripts use local npm commands instead of Docker:
+This script uses local npm commands instead of Docker:
 
 - \`scripts/run-benchmarks.sh\`
-- \`scripts/run-phase2e-swarm.sh\`
-- \`scripts/run-security-swarm.sh\`
 
 ## Solution
 Update to use \`docker exec skillsmith-dev-1 npm ...\`
 
 ## Acceptance Criteria
-- [ ] All scripts use Docker commands
-- [ ] Scripts work correctly in Docker
+- [ ] Script uses Docker commands
+- [ ] Script works correctly in Docker
 - [ ] Documentation updated`,
     priority: 3,
     labels: ['tech-debt', 'docker'],

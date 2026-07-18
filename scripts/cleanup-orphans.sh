@@ -15,7 +15,11 @@ NC='\033[0m' # No Color
 DRY_RUN=false
 FORCE=false
 MAX_AGE_SECONDS=3600  # 1 hour
-PROCESS_PATTERNS=("claude-flow" "agent-spawn" "Task")
+# "claude-flow" kept alongside "ruflo" (SMI-5719) — sunset condition: once
+# `./scripts/cleanup-orphans.sh --dry-run` has reported zero matches for it
+# across 10 consecutive real runs, remove it and file a follow-up Linear
+# issue (no separate tracking file needed).
+PROCESS_PATTERNS=("claude-flow" "ruflo" "agent-spawn" "Task")
 
 # Counters
 FOUND_COUNT=0
@@ -41,7 +45,7 @@ usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Find and kill orphaned agent processes (claude-flow, agent-spawn, Task).
+Find and kill orphaned agent processes (claude-flow, ruflo, agent-spawn, Task).
 
 OPTIONS:
     --dry-run    Preview orphaned processes without killing them
