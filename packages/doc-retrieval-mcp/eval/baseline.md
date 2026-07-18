@@ -7,29 +7,29 @@ of truth is `baseline.json`.
 
 ## Current Baseline
 
-Generated: 2026-06-24
+Generated: 2026-07-18
 
-Corpus: 1995 files, 37829 chunks
+Corpus: 2426 files, 46749 chunks
 
 Knobs: boost=1.5, dampen=0.85, floor=0.35, BM25=off
 
 | Metric     | Value  | Prior  |
 |------------|--------|--------|
-| recall@5   | 0.6364 | 0.4364 |
-| recall@10  | 0.7273 | -- |
-| MRR        | 0.4566 | -- |
-| nDCG@10    | 0.5219 | -- |
+| recall@5   | 0.6545 | 0.6364 |
+| recall@10  | 0.7455 | -- |
+| MRR        | 0.4616 | -- |
+| nDCG@10    | 0.5298 | -- |
 
 ### By Category
 
 | Category | Count | Recall@5 | Recall@5 Prior |
 |----------|-------|----------|-----------------|
-| adr-lookup | 6 | 0.8333 | 0.6667 |
-| implementation-lookup | 12 | 0.5833 | 0.2500 |
-| memory-recall | 14 | 0.9286 | 0.2857 |
-| retro-lookup | 10 | 0.4000 | 0.5000 |
-| script-header | 8 | 0.5000 | 0.6250 |
-| skill-discovery | 5 | 0.4000 | 0.6000 |
+| adr-lookup | 6 | 0.8333 | 0.8333 |
+| implementation-lookup | 12 | 0.5833 | 0.5833 |
+| memory-recall | 14 | 0.9286 | 0.9286 |
+| retro-lookup | 10 | 0.4000 | 0.4000 |
+| script-header | 8 | 0.6250 | 0.5000 |
+| skill-discovery | 5 | 0.4000 | 0.4000 |
 
 ## How This Is Updated
 
