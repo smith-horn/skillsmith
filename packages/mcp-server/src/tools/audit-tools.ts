@@ -133,9 +133,16 @@ export const siemExportToolSchema = {
 // Handlers (dynamic import for optional enterprise dependency)
 // ============================================================================
 
-/** Shape of the audit logger returned by dynamic enterprise import */
+/**
+ * Shape of the audit logger returned by dynamic enterprise import. The
+ * return/param types are deliberately loose (unknown[], not
+ * EnterpriseAuditLogEntry[]) since this module only ever slices/counts
+ * entries — it never reads individual fields — and importing the
+ * enterprise package's concrete types here would recouple this file to
+ * its full audit-log schema for no actual benefit.
+ */
 interface AuditLoggerLike {
-  queryEnterprise(filter?: Record<string, unknown>): Array<Record<string, unknown>>
+  queryEnterprise(filter?: Record<string, unknown>): unknown[]
   dispose(): void
 }
 
@@ -145,8 +152,6 @@ interface AuditLoggerLike {
  */
 async function getAuditLogger(toolContext: ToolContext): Promise<AuditLoggerLike> {
   try {
-    // @smith-horn/enterprise is an optional peer dep — suppress TS2307.
-    // @ts-expect-error -- optional peer dependency, may not be installed
     const enterprise = await import('@smith-horn/enterprise')
     return new enterprise.EnterpriseAuditLogger(toolContext.db) as AuditLoggerLike
   } catch {

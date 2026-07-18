@@ -4,6 +4,7 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `@module` JSDoc tags across `src/audit/*.ts` and `src/index.ts` now name the package's real, published name, `@smith-horn/enterprise` — previously self-referenced `@skillsmith/enterprise`, a name that has never existed (SMI-5738; doc-comments only, see `@skillsmith/mcp-server`/`@skillsmith/cli` for the actual runtime import fix)
 - **Change**: `compliance_reports` moved from `EnterpriseFeatureFlag`/`ENTERPRISE_ONLY_FEATURES` to `TeamFeatureFlag`/`TEAM_FEATURES` (`FeatureFlags.ts`, `TierMapping.ts`, `types.ts`) — expanded from Enterprise-only to Team + Enterprise (SMI-3140)
 
 ## v0.3.2
