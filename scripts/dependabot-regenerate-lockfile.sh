@@ -5,7 +5,19 @@
 # Sources scripts/_lib.sh for consistent logging (colors, error/warn/info/success).
 # Uses Docker-first npm execution per CLAUDE.md policy.
 #
-# Prerequisites: gh CLI authenticated, Docker container running, clean working tree.
+# Prerequisites: gh CLI authenticated, Docker container running, clean working tree,
+# run from the MAIN checkout (see SMI-5733 below).
+#
+# SMI-5733: main-checkout only. This script checks out an arbitrary Dependabot
+#   branch directly into the CURRENT working tree, then regenerates the lockfile
+#   via `docker exec skillsmith-dev-1`. From a worktree, that container's /app
+#   bind-mount reflects the MAIN checkout's files, not the worktree's — the
+#   lockfile write and the `git diff --quiet package-lock.json` check would
+#   operate on two different trees, so every PR would silently report "already
+#   up to date" (the SMI-5724 failure mode, in a sibling script). Unlike
+#   regen-lockfile.sh, there's no clean host/container routing split here (this
+#   script's whole-branch-checkout model would also hijack whatever the
+#   worktree currently has checked out) — refuse outright instead.
 
 set -euo pipefail
 
@@ -73,6 +85,24 @@ done
 if [[ ${#PR_NUMBERS[@]} -eq 0 ]]; then
   usage >&2
   exit 1
+fi
+
+# SMI-5733: hard-error (not silent fallback) if git itself can't answer —
+# see scripts/regen-lockfile.sh's identical guard for why a silent default
+# here would reproduce the exact bug this check exists to prevent.
+GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || error "Not inside a git checkout — cannot determine worktree vs main checkout."
+GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)" || error "Not inside a git checkout — cannot determine worktree vs main checkout."
+if [[ "$GIT_DIR" != "$GIT_COMMON_DIR" ]]; then
+  error "This script must run from the MAIN checkout, not a worktree (SMI-5733).
+
+It checks out each Dependabot branch directly into the current working tree,
+then regenerates the lockfile via the main checkout's own container
+(docker exec skillsmith-dev-1) — from a worktree, that container's files are
+unrelated to the worktree's own checked-out tree, so the lockfile diff check
+would always report a false 'already up to date'.
+
+Run from the main checkout:
+  cd $(dirname "$GIT_COMMON_DIR") && ./scripts/$(basename "$0") $*"
 fi
 
 # Ensure clean working tree (staged, unstaged, and untracked)
