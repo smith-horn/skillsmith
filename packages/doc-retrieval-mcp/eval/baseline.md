@@ -7,15 +7,15 @@ of truth is `baseline.json`.
 
 ## Current Baseline
 
-Generated: 2026-07-18
+Generated: 2026-07-19
 
-Corpus: 2426 files, 46749 chunks
+Corpus: 2441 files, 47139 chunks
 
 Knobs: boost=1.5, dampen=0.85, floor=0.35, BM25=off
 
 | Metric     | Value  | Prior  |
 |------------|--------|--------|
-| recall@5   | 0.6545 | 0.6364 |
+| recall@5   | 0.6545 | 0.6545 |
 | recall@10  | 0.7455 | -- |
 | MRR        | 0.4616 | -- |
 | nDCG@10    | 0.5298 | -- |
@@ -28,7 +28,7 @@ Knobs: boost=1.5, dampen=0.85, floor=0.35, BM25=off
 | implementation-lookup | 12 | 0.5833 | 0.5833 |
 | memory-recall | 14 | 0.9286 | 0.9286 |
 | retro-lookup | 10 | 0.4000 | 0.4000 |
-| script-header | 8 | 0.6250 | 0.5000 |
+| script-header | 8 | 0.6250 | 0.6250 |
 | skill-discovery | 5 | 0.4000 | 0.4000 |
 
 ## How This Is Updated

@@ -1,10 +1,10 @@
 {
-  "prior": 0.6363636363636364,
+  "prior": 0.6545454545454545,
   "current": 0.6545454545454545,
-  "generated": "2026-07-18",
+  "generated": "2026-07-19",
   "corpus": {
-    "filesScanned": 2426,
-    "chunksUpserted": 46749
+    "filesScanned": 2441,
+    "chunksUpserted": 47139
   },
   "knobs": {
     "boost": 1.5,
@@ -32,7 +32,7 @@
       "memory-recall": 0.9285714285714286,
       "implementation-lookup": 0.5833333333333334,
       "retro-lookup": 0.4,
-      "script-header": 0.5,
+      "script-header": 0.625,
       "adr-lookup": 0.8333333333333334,
       "skill-discovery": 0.4
     },
