@@ -250,6 +250,57 @@ else
     echo "PASS (case 5): non-git --workspace skips the diff check without crashing"
 fi
 
+# ---- Cases 6-7 (SMI-5709): secret-scanner compatibility guard ----
+# A 50-char hex run (matches [A-Za-z0-9/_-], mirrors a realistic long
+# token/path) — distinct characters, not a repeated single char, so "the
+# full run never appears in output" is a meaningful assertion rather than
+# trivially true/false from repetition.
+LONG_RUN="$(openssl rand -hex 25)"
+LONG_RUN_BODY_FILE="$(mktemp)"
+printf 'some prompt text\n%s\nmore prompt text\n' "$LONG_RUN" > "$LONG_RUN_BODY_FILE"
+
+# Case 6: title contains a 44+ char run -> guard fires before any bf/codex
+# invocation, exit 1, output shows a redacted preview (contains the ellipsis
+# marker) but never the full matched run.
+set +e
+PATH="$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "$LONG_RUN" \
+    --body-file "$BODY_FILE" \
+    --timeout 5 \
+    >/tmp/needle-dispatch-test-case6.out 2>&1
+EXIT_CODE=$?
+set -e
+if [[ "$EXIT_CODE" -ne 1 ]] \
+    || ! grep -q "…" /tmp/needle-dispatch-test-case6.out \
+    || grep -qF "$LONG_RUN" /tmp/needle-dispatch-test-case6.out; then
+    echo "FAIL (case 6): expected exit 1, a redacted (…) preview, and the full run absent from output, got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case6.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 6): a 44+ char run in the title fails fast with a redacted preview, never the full match"
+fi
+
+# Case 7: same long run, but in the body, with the guard disabled via its
+# registered opt-out var -> guard is skipped (no redaction message), and
+# the dispatch proceeds through the faked bf/needle stack to success.
+EXIT_CODE="$(SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 FAKE_SCENARIO=clean FAKE_TOUCH_FILE=0 PATH="$TEST_PATH" "$DISPATCH" \
+    --workspace "$GIT_WORKTREE_DIR" \
+    --title "fixture case 7" \
+    --body-file "$LONG_RUN_BODY_FILE" \
+    --timeout 5 \
+    >/tmp/needle-dispatch-test-case7.out 2>&1; echo $?)"
+if [[ "$EXIT_CODE" -ne 0 ]] \
+    || ! grep -q "outcome=success" /tmp/needle-dispatch-test-case7.out \
+    || ! grep -q "SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1" /tmp/needle-dispatch-test-case7.out; then
+    echo "FAIL (case 7): expected exit 0, outcome=success, and the opt-out warning, got exit $EXIT_CODE" >&2
+    cat /tmp/needle-dispatch-test-case7.out >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+    echo "PASS (case 7): SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 skips the guard and the dispatch proceeds"
+fi
+rm -f "$LONG_RUN_BODY_FILE"
+
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
     echo "FAILED: $FAIL_COUNT case(s) failed" >&2
     exit 1
