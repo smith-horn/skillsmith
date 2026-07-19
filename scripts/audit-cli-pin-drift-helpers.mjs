@@ -139,7 +139,12 @@ export function findUnpinnedRufloMcpEntry(mcpJsonPath) {
  */
 export function findClaudeFlowReintroductions(repoRoot) {
   const findings = []
-  const pattern = /npx claude-flow/
+  // Matches both shell-invocation form ("npx claude-flow") and YAML/JSON
+  // array-element form ('npx', 'claude-flow', as in a docker-compose.yml
+  // CMD healthcheck array) — a plain "npx claude-flow" substring match
+  // would silently miss the exact array-syntax regression this check exists
+  // to catch (found while writing this check's own test coverage).
+  const pattern = /npx['",\s]+claude-flow/
 
   const scanFile = (relPath) => {
     const fullPath = join(repoRoot, relPath)
