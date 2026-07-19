@@ -80,7 +80,7 @@ cat << INFO
 ║                                                                  ║
 ║  After EACH file:                                                ║
 ║    docker exec $DOCKER_CONTAINER npm run typecheck               ║
-║    npx claude-flow@alpha hooks post-edit --file "X" \\
+║    node node_modules/ruflo/bin/ruflo.js hooks post-edit --file "X" \\
 ║        --memory-key "${ISSUE_ID}/files"
 ║                                                                  ║
 ║  Progress: /tmp/${ISSUE_ID}-progress.log

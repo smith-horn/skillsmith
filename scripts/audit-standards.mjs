@@ -50,6 +50,12 @@ import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
 import { evaluateInternalVersionCoherence } from './audit-internal-version-coherence-helpers.mjs'
+import {
+  findFloatingSupabaseCliInstalls,
+  findUnpinnedBareNpxCliInPackageJson,
+  findUnpinnedRufloMcpEntry,
+  findClaudeFlowReintroductions,
+} from './audit-cli-pin-drift-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
 import { PACKAGE_SPECS } from './lib/version-utils.ts'
 
@@ -4939,6 +4945,71 @@ console.log(
       `Check 58: all ${okCount} internal @skillsmith/*/@smith-horn/* dependency range(s) satisfy their workspace versions` +
         (danglingCount > 0 ? ` (${danglingCount} dangling-name warning(s) above)` : '')
     )
+  }
+}
+
+// Check 59: CLI-tool pin invariants (SMI-5746)
+//
+// Dependabot only scans package.json/package-lock.json, GitHub Actions
+// versions, and the root Dockerfile base image — it has no visibility into
+// standalone CLI-tool binaries pinned outside those manifests. This check is
+// the static-invariant half of the remediation (the other half is a weekly
+// drift-flagger cron, scripts/cli-pin-drift-check.sh). See
+// docs/internal/implementation/cli-tool-version-drift-remediation.md for the
+// full incident history (two real production incidents already traced to
+// this blind spot) and design rationale.
+//
+// Ships warn-level for a two-week shadow burn-in (matching the Check 49
+// convention), then promotes to fail-level — CHECK_59_SHADOW_END_DATE below,
+// same pattern as team-compliance-check-pr.yml's SHADOW_MODE_END_DATE.
+console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
+{
+  const CHECK_59_SHADOW_END_DATE = '2026-08-01'
+  const inShadow = new Date() < new Date(CHECK_59_SHADOW_END_DATE)
+  const report = inShadow ? warn : fail
+  const shadowSuffix = inShadow
+    ? ` [shadow mode through ${CHECK_59_SHADOW_END_DATE} — advisory only]`
+    : ''
+
+  let check59Violations = 0
+
+  const floatingSupabase = findFloatingSupabaseCliInstalls(join('.github', 'workflows'))
+  for (const f of floatingSupabase) {
+    check59Violations++
+    report(
+      `Check 59: ${f.file}:${f.line} — supabase/setup-cli step has ${
+        f.versionLine === null ? 'no version: input' : `version: ${f.versionLine}`
+      } (must pin an exact devDependency-derived version)${shadowSuffix}`,
+      `Read the pin from package.json's devDependencies.supabase into a step output and reference it — see the deploy-edge-functions.yml pattern.`
+    )
+  }
+
+  const unpinnedBareNpx = findUnpinnedBareNpxCliInPackageJson('.')
+  for (const f of unpinnedBareNpx) {
+    check59Violations++
+    report(
+      `Check 59: ${f.file} script "${f.script}" runs bare "npx ${f.tool}" with no matching devDependency pin${shadowSuffix}`,
+      `Add "${f.tool}" as an exact-pinned devDependency so npx resolves the local copy instead of registry-latest.`
+    )
+  }
+
+  const rufloFinding = findUnpinnedRufloMcpEntry('.mcp.json')
+  if (rufloFinding) {
+    check59Violations++
+    report(`Check 59: .mcp.json — ${rufloFinding.reason} (${rufloFinding.pkgArg})${shadowSuffix}`)
+  }
+
+  const claudeFlowHits = findClaudeFlowReintroductions(resolvePath('.'))
+  for (const f of claudeFlowHits) {
+    check59Violations++
+    report(
+      `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)${shadowSuffix}`,
+      `Replace with the local-bin form: node node_modules/ruflo/bin/ruflo.js ...`
+    )
+  }
+
+  if (check59Violations === 0) {
+    pass('Check 59: no CLI-tool pin invariant violations found')
   }
 }
 

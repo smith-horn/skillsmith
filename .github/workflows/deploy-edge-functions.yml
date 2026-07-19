@@ -125,10 +125,30 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Resolve pinned Supabase CLI version
+        id: supabase-pin
+        run: |
+          PIN=$(node -p "require('./package.json').devDependencies.supabase")
+          if ! [[ "$PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::supabase devDependency pin '$PIN' is not an exact semver — refusing to install an unvalidated version"
+            exit 1
+          fi
+          printf 'version=%s\n' "$PIN" >> "$GITHUB_OUTPUT"
+
       - name: Install Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
-          version: latest
+          version: ${{ steps.supabase-pin.outputs.version }}
+
+      - name: Verify installed Supabase CLI matches the pin
+        run: |
+          ACTUAL=$(supabase --version | tr -d '[:space:]')
+          EXPECTED="${{ steps.supabase-pin.outputs.version }}"
+          echo "Installed: $ACTUAL / Expected: $EXPECTED"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Supabase CLI resolved to '$ACTUAL', expected pinned '$EXPECTED' — setup-cli action may have ignored the version input"
+            exit 1
+          fi
 
       - name: Deploy
         run: |
@@ -223,10 +243,30 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Resolve pinned Supabase CLI version
+        id: supabase-pin
+        run: |
+          PIN=$(node -p "require('./package.json').devDependencies.supabase")
+          if ! [[ "$PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::supabase devDependency pin '$PIN' is not an exact semver — refusing to install an unvalidated version"
+            exit 1
+          fi
+          printf 'version=%s\n' "$PIN" >> "$GITHUB_OUTPUT"
+
       - name: Install Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
-          version: latest
+          version: ${{ steps.supabase-pin.outputs.version }}
+
+      - name: Verify installed Supabase CLI matches the pin
+        run: |
+          ACTUAL=$(supabase --version | tr -d '[:space:]')
+          EXPECTED="${{ steps.supabase-pin.outputs.version }}"
+          echo "Installed: $ACTUAL / Expected: $EXPECTED"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Supabase CLI resolved to '$ACTUAL', expected pinned '$EXPECTED' — setup-cli action may have ignored the version input"
+            exit 1
+          fi
 
       - name: Deploy
         run: |

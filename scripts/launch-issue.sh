@@ -88,14 +88,14 @@ cat << REFERENCE
 ╠══════════════════════════════════════════════════════════════════╣
 ║  After EACH file:                                                ║
 ║    docker exec $DOCKER_CONTAINER npm run typecheck               ║
-║    npx claude-flow@alpha hooks post-edit --file "X" \\
+║    node node_modules/ruflo/bin/ruflo.js hooks post-edit --file "X" \\
 ║        --memory-key "${ISSUE_ID}/files"
 ║                                                                  ║
 ║  Check progress:                                                 ║
 ║    cat /tmp/${ISSUE_ID}-progress.log
 ║                                                                  ║
 ║  Recovery:                                                       ║
-║    npx claude-flow@alpha memory get ${ISSUE_ID}/files
+║    node node_modules/ruflo/bin/ruflo.js memory get ${ISSUE_ID}/files
 ║                                                                  ║
 ║  Time limit: 45 minutes                                          ║
 ╚══════════════════════════════════════════════════════════════════╝
