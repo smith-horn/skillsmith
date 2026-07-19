@@ -170,6 +170,12 @@ const jsonLd = {
     <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
 
+    <!-- SMI-5752: stable marker for the public status page's synthetic
+         website check (supabase/functions/_shared/health-checks.helpers.ts's
+         checkWebsiteStatus) to confirm the homepage response body is really
+         Skillsmith's, not just a 2xx from some other host. Do not remove. -->
+    <meta name="x-status-marker" content="skillsmith-ok" />
+
     <!-- Fonts: Satoshi + JetBrains Mono -->
     <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
     <link rel="preconnect" href="https://api.fontshare.com" />

@@ -505,6 +505,9 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // SMI-4463: quota-monitor — service-role cron, mirrors advance-notice-email
   // pattern (service-role header bypasses gateway JWT, server-side re-checks).
   'quota-monitor',
+  // SMI-5752: status-check — pg_cron-invoked synthetic status-page check,
+  // service-role internal. Mirrors webhook-heartbeat-monitor / quota-monitor.
+  'status-check',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
