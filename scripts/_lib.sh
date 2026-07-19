@@ -837,11 +837,50 @@ enumerate_compose_node_modules_mounts() {
         # mount, not a second mount of an overlapping-but-distinct host path
         # — the double-mount shape that caused that regression no longer
         # exists at all now that the workspace-sibling mount is gone).
-        local vite_cache_dir
-        for vite_cache_dir in .vite .vite-temp; do
+        local build_cache_dir
+        for build_cache_dir in .vite .vite-temp .astro; do
             printf '      - %s/%s:/app/packages/%s/node_modules/%s\n' \
-                "$main_target" "$vite_cache_dir" "$pkg_name" "$vite_cache_dir"
+                "$main_target" "$build_cache_dir" "$pkg_name" "$build_cache_dir"
         done
+    done
+}
+
+#######################################
+# Ensure the host-side source directories for the writable cache overlays
+# (`.vite`/`.vite-temp`/`.astro`) exist BEFORE a container that mounts them
+# is created (SMI-5705). A Docker bind mount's source is resolved at
+# container-CREATE time; if the source directory doesn't exist yet, the
+# resulting mount can end up non-writable in a way only a full recreate
+# (`--force-recreate`), not a plain `restart`, fixes. `enumerate_compose_node_modules_mounts`
+# emits the mount lines unconditionally on the subdirectories existing —
+# this function is what actually creates them.
+#
+# Root level stays `.vite`/`.vite-temp` only (matches the root loop's own
+# scope in enumerate_compose_node_modules_mounts — no `.astro` there, since
+# Astro never runs at the repo root). Per-package level gets all three,
+# matching the per-package loop above (SMI-5722 extended this to `.astro`).
+#
+# Kept as a separate function from enumerate_compose_node_modules_mounts —
+# that function is a pure-output helper (generate_docker_override_to_stdout's
+# docstring), and repair_worktrees_compose_override's diff-based idempotency
+# check relies on it being side-effect-free when comparing generated YAML.
+#
+# `mkdir -p` on an already-existing (or concurrently-being-created)
+# directory is EEXIST-tolerant in both GNU coreutils and BSD/macOS — safe to
+# call from concurrent sibling-worktree sessions with no lock needed.
+#
+# Arguments:
+#   $1 - Repository root path (main repo, NOT worktree path)
+#######################################
+ensure_build_cache_mount_sources() {
+    local repo_root="$1"
+    local pkg_dir pkg_name main_target
+
+    [[ -d "$repo_root/node_modules" ]] && mkdir -p "$repo_root/node_modules/.vite" "$repo_root/node_modules/.vite-temp"
+    for pkg_dir in "$repo_root"/packages/*/; do
+        pkg_name="$(basename "$pkg_dir")"
+        main_target="$repo_root/packages/$pkg_name/node_modules"
+        [[ -d "$main_target" ]] && mkdir -p "$main_target/.vite" "$main_target/.vite-temp" "$main_target/.astro"
     done
 }
 
@@ -1347,6 +1386,13 @@ repair_worktrees_compose_override() {
         info "  macOS-only — skipping per-package bind-mount regen on $(uname)"
         return 0
     fi
+
+    # SMI-5705: re-ensure the writable cache-overlay source directories exist
+    # on every regen pass, not just at initial worktree creation — vite/Astro
+    # can delete/recreate .vite-temp/.astro during normal operation, and every
+    # npm install (which triggers this via postinstall) is exactly the kind
+    # of event that can coincide with that.
+    ensure_build_cache_mount_sources "$repo_root"
 
     # SMI-5661: acquire the port-bucket lock ONCE for the whole regen pass
     # (not per-iteration) since the loop below calls
