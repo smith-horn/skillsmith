@@ -13,7 +13,7 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
   "mcpServers": {
     "ruflo": {
       "command": "npx",
-      "args": ["ruflo@latest", "mcp", "start"],
+      "args": ["ruflo@3.14.2", "mcp", "start"],
       "env": {
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
@@ -23,7 +23,7 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
 }
 ```
 
-Manual setup: `claude mcp add ruflo -s project -- npx ruflo@latest mcp start`
+Manual setup: `claude mcp add ruflo -s project -- npx ruflo@3.14.2 mcp start`
 
 Verify: `claude mcp list | grep ruflo`
 
@@ -76,8 +76,8 @@ mcp__claude-flow__task_orchestrate({
 Configs in `.claude/hive-mind/`:
 
 ```bash
-./start-hive-mind.sh                                              # Run config
-npx ruflo swarm --config .claude/hive-mind/your-config.yaml        # Direct
+./start-hive-mind.sh                                                          # Run config
+node node_modules/ruflo/bin/ruflo.js swarm --config .claude/hive-mind/your-config.yaml   # Direct
 ```
 
 ### Resource Profiles
@@ -112,7 +112,7 @@ SPARC-mode CLI invocation (`npx ruflo sparc modes/tdd/run`) does **not** exist i
 ### MCP Server Setup
 
 ```bash
-claude mcp add ruflo -s project -- npx ruflo@latest mcp start
+claude mcp add ruflo -s project -- npx ruflo@3.14.2 mcp start
 ```
 
 See `.claude/agents/` for available agent definitions.
