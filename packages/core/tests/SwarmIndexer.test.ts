@@ -239,14 +239,13 @@ describe('SwarmIndexer', () => {
   })
 
   describe('generateSwarmCommand', () => {
-    it('should generate valid claude-flow swarm command', () => {
+    it('should generate valid ruflo swarm command', () => {
       const indexer = createSwarmIndexer()
       const command = indexer.generateSwarmCommand()
 
-      expect(command).toContain('./claude-flow swarm')
-      expect(command).toContain('--strategy development')
-      expect(command).toContain('--mode distributed')
-      expect(command).toContain('--parallel')
+      expect(command).toContain('./ruflo swarm start')
+      expect(command).toContain('-o "Index repositories')
+      expect(command).toContain('-s development')
       expect(command).toContain('A-F')
       expect(command).toContain('G-L')
       expect(command).toContain('M-R')

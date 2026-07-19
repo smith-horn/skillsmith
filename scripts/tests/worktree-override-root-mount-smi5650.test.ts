@@ -5,8 +5,8 @@
  * shared fixture/generator infrastructure).
  *
  * SMI-5650 (Wave 1): the 2 alias-scope tmpfs overlays (@skillsmith,
- * @smith-horn) are present once per service (dev/test/orchestrator, 6
- * total), and the generated document parses as valid YAML with the exact
+ * @smith-horn) are present once per service (dev/test, 4 total), and
+ * the generated document parses as valid YAML with the exact
  * shape docker compose expects (`type: tmpfs`, `target:`, nested
  * `tmpfs: { size: 1048576 }`) — not just a string-match, an actual
  * YAML-parse structural check via the `yaml` package (already a transitive
@@ -28,7 +28,7 @@
  *   6  Darwin: the 2 alias-scope tmpfs overlays present per service with
  *      valid YAML shape (Wave 1).
  *   7  Darwin: the 5 native-module volume-reference lines are present once
- *      per service (dev/test/orchestrator, 15 total, including the @esbuild
+ *      per service (dev/test, 10 total, including the @esbuild
  *      -> native-seed-esbuild-scope sanitization), the generated override's
  *      top-level `volumes:` YAML key exists with exactly the 5 expected
  *      `driver: local` entries (no driver_opts, no tmpfs annotation), and
@@ -67,17 +67,17 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     // Text-level: both alias-scope tmpfs targets present, once per service.
     const skillsmithTarget = '        target: /app/node_modules/@skillsmith'
     const smithHornTarget = '        target: /app/node_modules/@smith-horn'
-    expect(count(stdout, skillsmithTarget)).toBe(3)
-    expect(count(stdout, smithHornTarget)).toBe(3)
-    expect(count(stdout, '      - type: tmpfs')).toBe(6) // 2 scopes * 3 services
-    expect(count(stdout, '          size: 1048576')).toBe(6)
+    expect(count(stdout, skillsmithTarget)).toBe(2)
+    expect(count(stdout, smithHornTarget)).toBe(2)
+    expect(count(stdout, '      - type: tmpfs')).toBe(4) // 2 scopes * 2 services
+    expect(count(stdout, '          size: 1048576')).toBe(4)
 
     // Regression: pre-existing root/per-package mounts are untouched by
     // the new tmpfs entries.
     const rootMount = `      - ${repoRoot}/node_modules:/app/node_modules:ro`
-    expect(count(stdout, rootMount)).toBe(3)
+    expect(count(stdout, rootMount)).toBe(2)
     const perPkg = `      - ${repoRoot}/packages/foo/node_modules:/app/packages/foo/node_modules:ro`
-    expect(count(stdout, perPkg)).toBe(3)
+    expect(count(stdout, perPkg)).toBe(2)
 
     // Structural: the WHOLE generated document parses as valid YAML (not
     // just a string match), and each service's tmpfs entries have the
@@ -86,7 +86,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     const doc = parseYaml(stdout) as {
       services: Record<string, { volumes?: Array<string | Record<string, unknown>> }>
     }
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]?.volumes ?? []
       const tmpfsEntries = volumes.filter(
         (v): v is Record<string, unknown> =>
@@ -103,7 +103,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     // Mount order (plan-review M1): within each service's volumes array,
     // the root :ro mount (a plain string entry) must precede both
     // alias-scope tmpfs entries (structured entries).
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]!.volumes!
       const rootIdx = volumes.findIndex(
         (v) => typeof v === 'string' && v.endsWith(':/app/node_modules:ro')
@@ -141,7 +141,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     expect(status).toBe(0)
 
     // Text-level: each native module's volume-reference line, once per
-    // service (dev/test/orchestrator). @esbuild sanitizes to
+    // service (dev/test). @esbuild sanitizes to
     // native-seed-esbuild-scope (volume names can't contain `@`).
     const nativeRefs: Array<[moduleName: string, volumeName: string]> = [
       ['better-sqlite3', 'native-seed-better-sqlite3'],
@@ -152,17 +152,14 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     ]
     for (const [moduleName, volumeName] of nativeRefs) {
       const line = `      - ${volumeName}:/app/node_modules/${moduleName}`
-      expect(
-        count(stdout, line),
-        `expected "${line}" exactly 3 times (dev/test/orchestrator)`
-      ).toBe(3)
+      expect(count(stdout, line), `expected "${line}" exactly 2 times (dev/test)`).toBe(2)
     }
 
     // Regression: the alias-scope tmpfs entries (Case 6) are unaffected by
-    // native modules sharing the fixture — still exactly 6 (2 scopes * 3
+    // native modules sharing the fixture — still exactly 4 (2 scopes * 2
     // services), and native modules do NOT add to that count (they use a
     // different shape entirely).
-    expect(count(stdout, '      - type: tmpfs')).toBe(6)
+    expect(count(stdout, '      - type: tmpfs')).toBe(4)
 
     // Structural: parse the WHOLE document. Each service's volumes array
     // must contain the 5 native-seed volume-reference strings as plain
@@ -172,7 +169,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
       services: Record<string, { volumes?: Array<string | Record<string, unknown>> }>
       volumes?: Record<string, unknown>
     }
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]?.volumes ?? []
       const stringVolumes = volumes.filter((v): v is string => typeof v === 'string')
       for (const [moduleName, volumeName] of nativeRefs) {
@@ -205,7 +202,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     // native-module volume-reference line (also a plain string) within
     // each service's volumes array — same invariant Case 6 already proves
     // for the alias-scope tmpfs entries.
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]!.volumes!
       const rootIdx = volumes.findIndex(
         (v) => typeof v === 'string' && v.endsWith(':/app/node_modules:ro')

@@ -14,7 +14,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [edge-function-patterns.md](.claude/development/edge-function-patterns.md) | Function-auth matrix, project refs, auto-deploy mechanics |
 | [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md) | Team-tool resolution chain (SMI-4312/ADR-116), CLI surface (SMI-4590) |
 | [publishing-guide.md](.claude/development/publishing-guide.md) | Local-fallback deprecation (SMI-4533), publish-order rationale, version-pin rules |
-| [claude-flow-guide.md](.claude/development/claude-flow-guide.md) | Ruflo (formerly claude-flow) — agent types, swarm examples, hive mind, SPARC modes |
+| [claude-flow-guide.md](.claude/development/claude-flow-guide.md) | Ruflo (formerly claude-flow) — agent types, swarm examples, hive mind (SPARC CLI unavailable in v3; see `sparc-methodology` skill) |
 | [cloudinary-guide.md](.claude/development/cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
 | [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md) | VS Code Marketplace publishing, local/CI workflow, PAT rotation |
 | [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
@@ -250,7 +250,7 @@ High-cadence: Skill Indexer (maintenance 00:00 UTC + recheck 03:00 UTC + discove
 
 ## Ruflo MCP Server + MCP Registry
 
-**Ruflo** (hive mind, agent spawning): auto-configured via `.mcp.json`. Tools `mcp__claude-flow__{swarm_init, agent_spawn, task_orchestrate, memory_usage, swarm_destroy}`. Agent types: architect, coder, tester, reviewer, researcher. Full guide: [claude-flow-guide.md](.claude/development/claude-flow-guide.md). **MCP Registry**: `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/), auto-published via CI; sync `packages/mcp-server/{package,server}.json`. Auth: GitHub Actions OIDC (SMI-4534). Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
+**Ruflo** (hive mind, agent spawning): auto-configured via `.mcp.json`. Tools `mcp__ruflo__{swarm_init, agent_spawn, task_orchestrate, memory_usage, swarm_destroy}`. Agent types: architect, coder, tester, reviewer, researcher. Full guide: [claude-flow-guide.md](.claude/development/claude-flow-guide.md). **MCP Registry**: `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/), auto-published via CI; sync `packages/mcp-server/{package,server}.json`. Auth: GitHub Actions OIDC (SMI-4534). Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
 
 ---
 
@@ -273,7 +273,7 @@ High-cadence: Skill Indexer (maintenance 00:00 UTC + recheck 03:00 UTC + discove
 
 **Codex dispatch (SMI-5668, ADR-128).** Codex-tier tasks are never routed through Ruflo or the Agent/Task tool — dispatch via `scripts/needle/dispatch.sh --workspace <worktree> --title ... --body-file ... [--expect-write]`, which shells out to a separately-authenticated `codex exec` process through NEEDLE. Sandbox is read-only, no override; Codex output is text the queen reads and applies, same as any subagent. **A task requiring actual file writes cannot succeed under the current read-only-only adapter** — pass `--expect-write` for write-intent prompts so `dispatch.sh` can detect and flag the sandbox-rejected-write false-success case (SMI-5700) instead of silently reporting success; omit it for analysis/review-only prompts, where "no diff" is the expected outcome. See `scripts/needle/README.md`'s Troubleshooting section for the full mechanism. Not for tasks depending on this session's accumulated context (no shared memory between harnesses), and not for anything a Sonnet/Haiku worker would finish in under ~2 minutes — a defensive default against Codex's own workspace-file auto-discovery surfacing unexpected priming content in an unusual workspace, not an expected per-dispatch tax (see `scripts/needle/README.md`). On a failed or unclassifiable dispatch, the queen re-dispatches the task through normal Claude-tier routing rather than treating the failure as final. One-time personal setup: `scripts/needle/README.md`.
 
-Full agent catalog, swarm topologies, hive-mind examples, and SPARC modes: [claude-flow-guide.md](.claude/development/claude-flow-guide.md).
+Full agent catalog, swarm topologies, and hive-mind examples: [claude-flow-guide.md](.claude/development/claude-flow-guide.md); for SPARC methodology (not a v3 CLI subcommand), see the `sparc-methodology` skill.
 
 ---
 
