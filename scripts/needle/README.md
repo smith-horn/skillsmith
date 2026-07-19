@@ -178,3 +178,53 @@ guaranteed for every model/prompt.
   retrying the same dispatch.** Pass `--expect-write` whenever the prompt
   asks Codex to make a real change; omit it for pure analysis/review
   prompts, where "no diff" is the expected, successful outcome.
+- **`bf create` fails with `secret detected: ... [Azure Key]` on an
+  ordinary long file path in the title/body — or, a separate and unrelated
+  finding from the same investigation, an analysis-only dispatch's trace
+  file never contains the model's final answer.** (SMI-5709) Two
+  unconnected things, bundled into one entry because they surfaced
+  together.
+  **Part 1 — secret-scanner guard + allowlist.** `bf`'s own secret scanner
+  has a generic heuristic — confirmed via `strings $(which bf)` to be
+  labeled "Azure Key" — that flags any unbroken run of 44+ characters from
+  `[A-Za-z0-9/_-]` in `--title`/`--description` content regardless of
+  whether it's a real secret; an ordinary long file/worktree path trips it
+  just as reliably as a credential would. `dispatch.sh` now pre-scans the
+  exact raw title/body bytes for this same pattern — in grep's default
+  per-line mode, so a match can never span a newline — before calling `bf
+  create`, and fails fast with a redacted preview (the first ~10 and last
+  ~4 characters of up to 5 matches, never the full matched substring, since
+  a real credential could theoretically match this class too — remaining
+  matches beyond 5 are counted but not shown) plus which field, and for the
+  body which line, each shown match was found in. If a title or prompt body
+  genuinely needs a long path, state the directory prefix once in prose and
+  refer to bare filenames afterward. This guard is a pure compatibility
+  pre-check with no knowledge of `bf`'s own `secret_protection.allowlist`
+  (`.beads/config.yaml`) — allowlisting a pattern there does NOT get you
+  past this guard, only past `bf`'s own scanner. To bypass this guard for a
+  single dispatch, set `SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1` (registered
+  in `docs/internal/process/guards-and-opt-outs.md`); `bf`'s own scanner
+  still runs afterward, so a genuinely-allowlisted pattern needs both. On
+  the allowlist itself: as observed behavior against the `bf` version in
+  use at the time of this investigation (not a guarantee for every future
+  `bf` release), matching there is a substring match against the *entire*
+  scanned field's content — a pattern anchored at both ends (`^...$`) only
+  matches a field whose full content equals it, a pattern anchored at one
+  end only matches at that corresponding boundary, and an unanchored
+  pattern matches text embedded anywhere in a longer field. Also note: this
+  guard's character class (`[A-Za-z0-9/_-]`) is verified against ordinary
+  long paths, not against `bf`'s real rule for base64-shaped secrets (which
+  may include `+`/`=`) — a real base64 credential could in principle slip
+  past this guard and still hit `bf`'s own rejection.
+  **Part 2 — trace gap, unrelated to Part 1.** For a dispatch made without
+  `--expect-write`, the trace file `dispatch.sh` prints (built by
+  `needle_bead_trace_path()` in `scripts/needle/lib.sh`) only ever contains
+  `tool_call`/`tool_result`/`tokens` events — never the dispatched model's
+  final text response. That response lives only in the Codex CLI's own
+  session log, `~/.codex/sessions/<year>/<month>/<day>/rollout-<timestamp>-<uuid>.jsonl`,
+  as JSON lines where `type == "event_msg"` and
+  `payload.type == "agent_message"` — the *last* such line is the final
+  answer, extractable with a small `jq`/Python snippet reading
+  `payload.message`. Don't expect an analysis-only Codex review's actual
+  answer to show up in the bead trace; go to the Codex session log
+  instead.
