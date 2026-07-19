@@ -6,7 +6,7 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 
 ## Contents
 
-- [What's New](#whats-new-in-v080)
+- [What's New](#whats-new-in-v082)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -14,12 +14,11 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.0
+## What's New in v0.8.2
 
-- **`sklx agent install` / `uninstall`**: New command group installs a portable agent pack (SKILL.md + shims + hooks) to detected harnesses with per-harness MCP registration.
-- **Per-user inventory purge**: New hard-delete path for clearing a user's full skill inventory.
-- **`sklx audit collisions` / `audit advisories`**: Namespace-collision and legacy security-advisory audit subcommands, plus `sklx config set audit_mode <preventative|power_user|governance|off>`.
-- **Remote-default search + provenance**: `search` now defaults to the remote registry with safety filters, and install provenance is reported as Local / source-identified / Pending.
+- **Corrected tier quota display**: Community/Individual/Team quota labels shown by the CLI are reduced 10x (100/mo, 1,000/mo, 10,000/mo respectively) to match actual enforcement — display-only; enforcement lives in `@skillsmith/mcp-server`.
+
+> v0.8.2 is a scheduled cadence release with no functional changes beyond v0.8.1.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 

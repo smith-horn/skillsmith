@@ -4,19 +4,18 @@ Core library for Skillsmith - provides database operations, search services, cac
 
 ## Contents
 
-- [What's New](#whats-new-in-v0100)
+- [What's New](#whats-new-in-v0112)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.10.0
+## What's New in v0.11.2
 
-- **Cross-harness agent-pack generation**: Multi-target agent-pack generator, installer, and uninstaller emitting `SKILL.md` plus Claude Code, Codex, OpenCode, and Copilot shims and hooks, with manifest tracking and path-guarded uninstall.
-- **Change journal**: Hash-chained, fsync'd change-journal module — the foundation for the session-scoped undo now surfaced by `@skillsmith/mcp-server`'s `undo_apply` tool.
-- **Cross-harness skill inventory**: Data-plane and write-path support for auditing and syncing skill inventories across multiple agent harnesses, plus a local CLI/MCP push agent.
-- **Quarantine hardening**: Split scanner architecture with chmod-evasion detection and sibling re-scan on quarantine recheck.
-- **Per-user inventory purge**: New hard-delete path for removing a user's full skill inventory.
+- **Cross-session rename revert**: `apply_namespace_rename`'s `action: 'revert'` is now exposed, and `JournalAction`/`JOURNAL_SCHEMA_VERSION` are widened so an older reader no longer flags a legitimate revert journal record as corrupt.
+- **Unified shutdown coordinator**: Awaitable sync stop consolidates shutdown handling across the database and background writers.
+- **Production-grade error logging and diagnostics**: Structured error logging and diagnostics for easier triage in production.
+- **Dependency backfill**: `skill_dependencies` now backfills correctly for installs that predate v0.7.1.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
