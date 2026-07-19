@@ -301,6 +301,26 @@ compose --profile dev run --rm --no-deps --entrypoint sh dev -c \
 "$SCRIPT_DIR/retrieval-liveness-check.sh" >> "$LOG_FILE" 2>&1 || true
 
 # ---------------------------------------------------------------------------
+# CLI-tool pin drift flagger (SMI-5746) — appended AFTER the liveness check
+# above, preserving existing ordering. Best-effort (|| true), whole-script
+# `timeout`-wrapped as defense-in-depth beyond the script's own internal
+# per-network-call timeouts (SMI-4700: macOS ships neither GNU `timeout` nor
+# `gtimeout` by default, so this degrades to unbounded if neither is present
+# — matching cli-pin-drift-check.sh's own internal fallback). Shadow mode
+# ships as default; set SKILLSMITH_CLI_PIN_DRIFT_SHADOW=0 to go live.
+CLI_DRIFT_TIMEOUT_BIN=""
+if command -v gtimeout >/dev/null 2>&1 && gtimeout --kill-after=0 0 true >/dev/null 2>&1; then
+  CLI_DRIFT_TIMEOUT_BIN="gtimeout"
+elif command -v timeout >/dev/null 2>&1 && timeout --kill-after=0 0 true >/dev/null 2>&1; then
+  CLI_DRIFT_TIMEOUT_BIN="timeout"
+fi
+if [ -n "$CLI_DRIFT_TIMEOUT_BIN" ]; then
+  "$CLI_DRIFT_TIMEOUT_BIN" 120 "$SCRIPT_DIR/cli-pin-drift-check.sh" >> "$LOG_FILE" 2>&1 || true
+else
+  "$SCRIPT_DIR/cli-pin-drift-check.sh" >> "$LOG_FILE" 2>&1 || true
+fi
+
+# ---------------------------------------------------------------------------
 # Heartbeat: write in the clone, copy back to the dev tree (H4)
 # ---------------------------------------------------------------------------
 #
