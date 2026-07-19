@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util'
 import { createHash } from 'node:crypto'
 import { execSync, execFileSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
-import { dirname, extname, join, relative, resolve as resolvePath } from 'path'
+import { dirname, join, relative, resolve as resolvePath } from 'path'
 import {
   satisfies,
   extractCompletionIssues,
@@ -41,7 +41,10 @@ import {
   findServerJsonFieldLengthViolations,
   countUnreleasedEntries,
   isReleasePrepDiff,
+  parseGitCryptEncryptedFiles,
+  classifyGitCryptScanResult,
 } from './audit-standards-helpers.mjs'
+import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
@@ -575,12 +578,11 @@ if (existsSync(MIGRATIONS_DIR)) {
 
     for (const file of migrationFiles) {
       const filePath = join(MIGRATIONS_DIR, file)
-      const contentBuf = readFileSync(filePath)
       // Skip git-crypt encrypted files (binary blobs starting with \x00GITCRYPT)
-      if (contentBuf[0] === 0x00 && contentBuf.toString('utf8', 1, 9) === 'GITCRYPT') {
+      if (isGitCryptEncrypted(filePath)) {
         continue
       }
-      const content = contentBuf.toString('utf8')
+      const content = readFileSync(filePath, 'utf8')
       const lines = content.split('\n')
       const headerLines = lines.slice(0, 10).join('\n')
 
@@ -1231,51 +1233,36 @@ console.log(`\n${BOLD}17. Email Consistency (SMI-2562)${RESET}`)
 // 18. No Double-Encrypted Files (SMI-2607)
 console.log(`\n${BOLD}18. No Double-Encrypted Files (SMI-2607)${RESET}`)
 try {
+  // SMI-5740: `git-crypt status`'s own output never contains the substring
+  // "locked" (confirmed against git-crypt's own source — status() reports
+  // purely from .gitattributes + blob-content inspection, neither of which
+  // needs the key). A genuinely-locked-but-installed checkout still runs this
+  // scan successfully and, since the smudge filter never ran, every real
+  // encrypted-scope file's on-disk bytes are ciphertext — indistinguishable
+  // from double-encryption on a per-file basis. classifyGitCryptScanResult
+  // detects "locked" instead by whether ALL encrypted-scope files are
+  // ciphertext (locked) vs. only SOME of them (a genuine per-file anomaly).
   const status = execSync('git-crypt status 2>/dev/null', { encoding: 'utf8' })
-  if (status.includes('locked')) {
-    pass('Skipped (git-crypt locked)')
+  const encryptedFiles = parseGitCryptEncryptedFiles(status)
+  const doubleEncrypted = encryptedFiles.filter((file) => isGitCryptEncrypted(file))
+  const result = classifyGitCryptScanResult(encryptedFiles.length, doubleEncrypted.length)
+
+  if (result === 'locked') {
+    warn(
+      `All ${encryptedFiles.length} git-crypt-scoped file(s) still show ciphertext on disk — ` +
+        'this repository appears locked (key not unlocked), not double-encrypted',
+      'Unlock git-crypt on this runner to exercise this check for real'
+    )
+  } else if (result === 'double-encrypted') {
+    fail(`${doubleEncrypted.length} double-encrypted files found:\n${doubleEncrypted.join('\n')}`)
   } else {
-    const encryptedFiles = status
-      .split('\n')
-      .filter((line) => line.includes('encrypted:') && !line.includes('NOT ENCRYPTED'))
-      .map((line) => line.trim().split(/\s+/).pop())
-      .filter(Boolean)
-
-    const binaryExtensions = [
-      '.svg',
-      '.png',
-      '.jpg',
-      '.jpeg',
-      '.gif',
-      '.ico',
-      '.woff',
-      '.woff2',
-      '.db',
-      '.wasm',
-    ]
-    const doubleEncrypted = []
-
-    for (const file of encryptedFiles) {
-      const ext = extname(file).toLowerCase()
-      if (binaryExtensions.includes(ext)) continue
-      try {
-        const fileType = execSync(`file -b "${file}"`, { encoding: 'utf8' }).trim()
-        if (fileType === 'data') {
-          doubleEncrypted.push(file)
-        }
-      } catch {
-        /* File might not exist on disk */
-      }
-    }
-
-    if (doubleEncrypted.length > 0) {
-      fail(`${doubleEncrypted.length} double-encrypted files found:\n${doubleEncrypted.join('\n')}`)
-    } else {
-      pass('No double-encrypted files')
-    }
+    pass('No double-encrypted files')
   }
 } catch {
-  pass('Skipped (git-crypt not installed)')
+  warn(
+    'Skipped (git-crypt not installed) — Check 18 did not run',
+    'Install git-crypt on this runner to exercise this check'
+  )
 }
 
 // 19. docs/ Directory Structure Guard (SMI-2607)
@@ -3934,16 +3921,7 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
         // would then fail-to-match and falsely fire "missing tag". Skip the
         // predicate in that case — quality-checks already enforces it.
         // Sentinel pattern mirrors vitest.config.root-tests.ts:gitCryptLocked.
-        const gitCryptLocked =
-          existsSync(AUTH_PATH) &&
-          (() => {
-            try {
-              const head = readFileSync(AUTH_PATH).subarray(0, 9).toString('binary')
-              return head.startsWith('\x00GITCRYPT')
-            } catch {
-              return false
-            }
-          })()
+        const gitCryptLocked = existsSync(AUTH_PATH) && isGitCryptEncrypted(AUTH_PATH)
         if (!existsSync(AUTH_PATH)) {
           warn(
             'Check 47 predicate 5: supabase/functions/_shared/auth.ts ' +
@@ -4625,13 +4603,12 @@ console.log(`\n${BOLD}52. SECURITY DEFINER anon-Grant Lockdown (SMI-5526)${RESET
     const migrationsForSecdefAudit = []
     for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'))) {
       const filePath = join(MIGRATIONS_DIR, file)
-      const contentBuf = readFileSync(filePath)
       // Skip git-crypt encrypted files (binary blobs starting with \x00GITCRYPT) —
       // same idiom as the Check 11 migration-header scan above.
-      if (contentBuf[0] === 0x00 && contentBuf.toString('utf8', 1, 9) === 'GITCRYPT') {
+      if (isGitCryptEncrypted(filePath)) {
         continue
       }
-      migrationsForSecdefAudit.push({ name: file, content: contentBuf.toString('utf8') })
+      migrationsForSecdefAudit.push({ name: file, content: readFileSync(filePath, 'utf8') })
     }
 
     const secdefViolations = auditSecdefAnonGrants(migrationsForSecdefAudit, {
