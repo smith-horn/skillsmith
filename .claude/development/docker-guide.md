@@ -241,6 +241,44 @@ docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not
 docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'
 ```
 
+### Docker Desktop Hung on "Turning off the Docker Engine..." (SMI-5616/SMI-5750)
+
+**Symptoms**: Docker Desktop's UI shows "Turning off the Docker Engine..." indefinitely (with the "pause instead" tip) and never completes. Every `docker` CLI command (`docker info`, `docker ps`, `docker compose up`) hangs forever instead of erroring, across all concurrent sessions/worktrees.
+
+**Root Cause**: Host disk full. Docker Desktop's macOS VM disk (`~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw`) can't be written to when the host has no free space, which hangs engine shutdown/startup. Check:
+
+```bash
+df -h / /System/Volumes/Data   # if Avail is near 0, this is the cause
+du -sh ~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw
+```
+
+Continuous multi-session concurrent worktree usage accumulates orphaned Docker volumes/images unboundedly — `docker system df` after the fact showed 215 of 241 local volumes orphaned (35GB+ reclaimable). See SMI-5616 (incident) and SMI-5750 (proposed durable fix — a targeted prune that doesn't require an idle window).
+
+**Fix**:
+
+```bash
+# 1. Force-quit the hung Docker Desktop process and backend (graceful quit will not work — it's already hung mid-quit)
+pkill -9 -f "Docker Desktop.app/Contents/MacOS/Docker Desktop"
+pkill -9 -f "com.docker.backend"
+pkill -9 -f "com.docker.build"
+
+# 2. Relaunch
+open -a "Docker Desktop"
+
+# 3. Wait ~5-30s, then confirm the daemon responds
+docker info
+
+# 4. Containers with `restart: unless-stopped` (all skillsmith dev containers) auto-restart —
+#    no need to manually `docker compose up -d` per worktree.
+
+# 5. Reclaim disk space — this is the actual fix, not just the restart
+docker system df                        # see what's reclaimable
+docker system prune -a -f --volumes     # removes unused images/volumes/build cache/networks
+df -h / /System/Volumes/Data            # confirm space recovered
+```
+
+**Caveat**: `docker system prune -a -f --volumes` removes ANY volume/image not attached to a currently-running container — including cached `node_modules` volumes for worktrees that exist but whose containers are temporarily stopped, forcing a slower next start (native-module rebuild) for those. Safe to run without hesitation only when Docker Desktop itself is already down for everyone (no live containers to disrupt, as in this failure mode). If Docker is otherwise healthy and you just want routine cleanup, prefer `./scripts/remove-worktree.sh --prune` (safe subset: networks + dangling images + build cache) and only reach for the aggressive `--volumes` prune when you've confirmed via `docker ps` that no other worktree session needs to resume.
+
 ### Orphaned Agent Processes
 
 If background agents don't terminate properly:
