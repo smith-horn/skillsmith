@@ -88,6 +88,15 @@ export default defineConfig({
 
   // Vite configuration for API proxy in development
   vite: {
+    // SMI-5747: worktree node_modules is a symlink back to the main checkout,
+    // so Docker's bind mount at /app/node_modules resolves through it and
+    // Node canonicalizes module paths to /node_modules/*, splitting Astro's
+    // compile-cache key from its lookup key ("No cached compile metadata
+    // found"). Keep resolution under the symlinked path Astro actually built
+    // the cache under, instead of the realpath.
+    resolve: {
+      preserveSymlinks: true,
+    },
     plugins: [
       tailwindcss(),
       // SMI-5205: publish OpenAPI spec from docs/internal submodule to public/ at build time.
