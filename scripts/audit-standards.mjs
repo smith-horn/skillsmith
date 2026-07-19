@@ -49,6 +49,7 @@ import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-verce
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
+import { extractWhatsNewVersion } from './audit-readme-whats-new-helpers.mjs'
 import { evaluateInternalVersionCoherence } from './audit-internal-version-coherence-helpers.mjs'
 import {
   findFloatingSupabaseCliInstalls,
@@ -5013,6 +5014,86 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
 
   if (check59Violations === 0) {
     pass('Check 59: no CLI-tool pin invariant violations found')
+  }
+}
+
+// Check 60: README "What's New" Currency (SMI-5613)
+//
+// packages/{core,cli,mcp-server}/README.md each carry a manually-maintained
+// "## What's New in vX.Y.Z" section that ships verbatim to npmjs.com.
+// scripts/prepare-release.ts bumps package.json/CHANGELOG.md/version constants
+// on every release but never touches README.md — this drift has silently
+// recurred three times (April 2026, SMI-5612, SMI-5759) with no automated
+// detection. See docs/internal/implementation/readme-whats-new-drift-check.md.
+//
+// Scoped to the dynamic packages/* glob (like Checks 24/58), not a hardcoded
+// package list — a package with no "What's New" heading at all is silently
+// skipped (matching Check 24's asymmetry), since most packages legitimately
+// have no such section.
+//
+// Ships warn-level through a shadow burn-in (CHECK_60_SHADOW_END_DATE below,
+// matching Check 59's convention) — this is new detection logic without a
+// battle-tested regex/heading-format assumption across a real release cycle
+// yet, unlike Check 58's immediate fail(). Promotes to fail-level after.
+console.log(`\n${BOLD}Check 60: README "What's New" Currency (SMI-5613)${RESET}`)
+{
+  const CHECK_60_SHADOW_END_DATE = '2026-08-02'
+  const inShadow = new Date() < new Date(CHECK_60_SHADOW_END_DATE)
+  const report = inShadow ? warn : fail
+  const shadowSuffix = inShadow
+    ? ` [shadow mode through ${CHECK_60_SHADOW_END_DATE} — advisory only]`
+    : ''
+
+  // [skip-whats-new-check] — PR-body marker for a genuinely deliberate
+  // exception once at fail-tier. Boolean marker + required prose reason
+  // paragraph, mirrors [skip-changelog-check] / [skip-version-coherence-check]
+  // exactly. Registered in docs/internal/process/guards-and-opt-outs.md.
+  // Gated on !inShadow: during shadow mode `report` is already `warn`
+  // regardless, so checking the marker then would just add a confusing
+  // "acknowledged" suffix implying something was blocked when nothing was.
+  const SKIP_MARKER = '[skip-whats-new-check]'
+  const PR_BODY = process.env.PR_BODY || ''
+  const skipAcknowledged = !inShadow && PR_BODY.includes(SKIP_MARKER)
+  if (skipAcknowledged) {
+    console.log(
+      `::notice::${SKIP_MARKER} opt-out found in PR body — Check 60 will report findings but not fail.`
+    )
+  }
+
+  const pkgDirs = existsSync('packages')
+    ? readdirSync('packages').filter((d) => existsSync(join('packages', d, 'package.json')))
+    : []
+
+  let whatsNewIssues = 0
+  for (const d of pkgDirs) {
+    const pkgPath = join('packages', d, 'package.json')
+    const readmePath = join('packages', d, 'README.md')
+    if (!existsSync(readmePath)) continue
+
+    try {
+      const pkgVersion = JSON.parse(readFileSync(pkgPath, 'utf8')).version
+      if (!pkgVersion) continue
+
+      const readmeVersion = extractWhatsNewVersion(readFileSync(readmePath, 'utf8'))
+      if (readmeVersion === null) continue // No "What's New" section — not this check's concern
+
+      if (readmeVersion !== pkgVersion) {
+        whatsNewIssues++
+        const msg = `packages/${d}: README "What's New" section is stale — heading says v${readmeVersion} but package.json is at v${pkgVersion}${shadowSuffix}`
+        const fix = `Update ${readmePath}'s "What's New" section for v${pkgVersion}`
+        if (skipAcknowledged) {
+          warn(msg + ' — [skip-whats-new-check] acknowledged', fix)
+        } else {
+          report(msg, fix)
+        }
+      }
+    } catch (e) {
+      warn(`Could not check README "What's New" currency for packages/${d}: ` + e.message)
+    }
+  }
+
+  if (whatsNewIssues === 0) {
+    pass(`Check 60: all README "What's New" sections are current with their package.json versions`)
   }
 }
 
