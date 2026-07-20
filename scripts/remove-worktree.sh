@@ -25,7 +25,7 @@ NETWORK_WARN_THRESHOLD=5
 #######################################
 usage() {
     cat << EOF
-Usage: $(basename "$0") <worktree-path> [--force] [--prune] [--keep-docker]
+Usage: $(basename "$0") <worktree-path> [--force] [--prune] [--keep-docker] [--no-orphan-prune]
 
 Remove a git worktree and clean up associated Docker resources.
 
@@ -39,6 +39,10 @@ Options:
                   the post-removal reclaimable report)
   --keep-docker   Preserve the per-worktree Docker image and node_modules volume
                   (default: both are removed alongside the worktree)
+  --no-orphan-prune
+                  Skip the automatic targeted orphan prune (SMI-5750) that
+                  otherwise runs on every removal (see also
+                  SKILLSMITH_ORPHAN_PRUNE_DISABLE=1)
   -h, --help      Show this help message and exit
 
 Examples:
@@ -56,7 +60,12 @@ What this script does:
   5. Checks Docker network count and reports global reclaimable Docker
      resources (images / volumes / build cache) with manual reclaim commands
   6. Optionally prunes stale networks + dangling images + build cache (--prune);
-     aggressive image -a / volume prune are left to the operator
+     this refers only to the BLANKET docker volume prune / image prune -a
+     shown in the reclaimable report, which stay manual-only — see item 7
+  7. Automatically runs a targeted orphan prune (SMI-5750): deletes only
+     volumes/images belonging to worktrees git no longer knows about, safe at
+     any concurrency level; skip with --no-orphan-prune or
+     SKILLSMITH_ORPHAN_PRUNE_DISABLE=1
 
 EOF
 }
@@ -116,9 +125,11 @@ cleanup_worktree_docker_resources() {
     # Compose-equivalent project name: lowercase + drop chars outside
     # [a-z0-9_-]. Matches docker compose v2 ProjectName sanitization.
     # Plain `basename` would diverge for dirs containing uppercase or
-    # special chars.
+    # special chars. sanitize_project_name() (_lib.sh) is the single
+    # canonical implementation -- shared with
+    # prune-orphaned-docker-volumes.sh so the two can't drift (SMI-5750).
     local project_name
-    project_name="$(basename "$worktree_path" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g')"
+    project_name="$(sanitize_project_name "$(basename "$worktree_path")")"
 
     # Path A: prefer compose-managed teardown when the override file exists.
     # `down --volumes --rmi local` removes named volumes declared in compose
@@ -127,7 +138,7 @@ cleanup_worktree_docker_resources() {
     # `image:` field, --rmi local becomes a silent no-op and Path B alone
     # carries the cleanup. The audit-standards check enforces no `image:`
     # field at lint time.
-    # No `--profile` filter so dev/test/orchestrator all tear down.
+    # No `--profile` filter so dev/test all tear down (orchestrator service removed, SMI-5719).
     if [[ -f "$worktree_path/docker-compose.override.yml" ]]; then
         info "Removing per-worktree Docker image and volumes (compose)..."
         if (cd "$worktree_path" && docker compose down --volumes --rmi local 2>/dev/null); then
@@ -203,6 +214,14 @@ prune_docker_networks() {
 # native-module rebuilds (better-sqlite3 / onnxruntime, SMI-4698) in other
 # still-active worktrees.
 #
+# SMI-5750: a separate, TARGETED orphan prune (only volumes/images belonging
+# to worktrees git no longer knows about) now runs automatically at the end
+# of every removal, unconditionally — see the call site in main() below,
+# after the --prune block. It is safe at any concurrency level because its
+# deletion predicate is worktree-existence, not container-running state. The
+# two BLANKET commands printed below remain manual-only; the SMI-4698
+# concurrent-session rebuild-cost warning is unchanged by this.
+#
 # No GB-threshold gate (cf. NETWORK_WARN_THRESHOLD): parsing docker's
 # human-readable sizes would reintroduce a numeric-parse/errexit landmine;
 # this report is informational, so `docker system df` output is echoed raw.
@@ -222,6 +241,9 @@ check_docker_reclaimable() {
     echo -e "${YELLOW}  docker image prune -a   # unused tagged images${NC}"
     echo -e "${YELLOW}  docker volume prune     # orphaned volumes (WARNING: forces native-module rebuilds in other worktrees)${NC}"
     echo ""
+    info "Note: a targeted orphan prune (SMI-5750) already runs automatically,"
+    info "below, on every removal — the two blanket commands above stay manual"
+    info "only, for the same SMI-4698 concurrent-session rebuild-cost reason."
 }
 
 #######################################
@@ -255,6 +277,7 @@ main() {
     local force_flag=""
     local prune_flag=false
     local keep_docker=false
+    local no_orphan_prune=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -273,6 +296,10 @@ main() {
                 ;;
             --keep-docker)
                 keep_docker=true
+                shift
+                ;;
+            --no-orphan-prune)
+                no_orphan_prune=true
                 shift
                 ;;
             -*)
@@ -406,6 +433,23 @@ Commit or discard them first, or re-run with --force to discard:
     if [[ "$prune_flag" == true ]]; then
         prune_docker_networks
         prune_docker_safe
+    fi
+
+    # Step 3.5: Targeted orphaned-volume/image prune (SMI-5750) — runs
+    # unconditionally on every removal, not gated behind --prune. Deliberately
+    # placed here, LAST, after `git worktree remove` (Step 2, so the
+    # just-removed worktree is already deregistered from `git worktree list`)
+    # and after every other docker-call-producing step above (Step 3's
+    # reclaimable report, Step 4's optional --prune block) — appending it here
+    # means it can never shift the position of an earlier docker call within
+    # the docker-shim tests' recorded `dockerCalls`, which the existing
+    # aggressive-reclaim fixtures assert on positionally. Skipped entirely
+    # (the call is never attempted) when --no-orphan-prune was passed or
+    # SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 is set.
+    if [[ "$no_orphan_prune" == true || "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
+        info "Skipping targeted orphan prune (--no-orphan-prune or SKILLSMITH_ORPHAN_PRUNE_DISABLE=1)"
+    else
+        "$SCRIPT_DIR/prune-orphaned-docker-volumes.sh" || warn "targeted orphan prune returned non-zero (continuing)"
     fi
 
     echo ""

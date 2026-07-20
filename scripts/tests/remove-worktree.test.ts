@@ -157,7 +157,7 @@ describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
 
     expect(result.status).toBe(0)
     // Path A: cleanup-side compose down has --volumes --rmi local AND no --profile filter
-    // (so dev/test/orchestrator services all tear down). The pre-existing stop_worktree_containers
+    // (so dev/test services all tear down; orchestrator service removed, SMI-5719). The pre-existing stop_worktree_containers
     // does emit `compose --profile dev down` separately — we assert on the exact cleanup string.
     expect(result.dockerCalls).toContain('compose down --volumes --rmi local')
     // Path B: fallback rmi + volume rm
@@ -353,5 +353,46 @@ describe('SMI-5145: reclaimable Docker report + safe --prune', () => {
     expect(result.status).toBe(0)
     expect(result.dockerCalls.some((c) => c.includes('volume prune'))).toBe(false)
     expect(result.dockerCalls.some((c) => c.includes('image prune -a'))).toBe(false)
+  })
+})
+
+describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)', () => {
+  it('a default --force run invokes the targeted orphan prune (docker volume ls)', () => {
+    const tempRoot = makeTempDir('rmwt-orphan-prune')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-orphanprune')
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    writeDockerShim(binDir, logPath)
+
+    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+
+    expect(result.status).toBe(0)
+    // Step 3.5 shells out to prune-orphaned-docker-volumes.sh, which sources
+    // the same docker shim on PATH -- its `docker volume ls --format
+    // '{{.Name}}'` call (scripts/prune-orphaned-docker-volumes.sh:174) shows
+    // up positionally-appended in the same recorded dockerCalls array.
+    expect(result.dockerCalls).toContain('volume ls --format {{.Name}}')
+  })
+
+  it('--no-orphan-prune suppresses the targeted orphan prune (no volume ls call)', () => {
+    const tempRoot = makeTempDir('rmwt-no-orphan-prune')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-noorphanprune')
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    writeDockerShim(binDir, logPath)
+
+    const result = runScriptWithDockerShim(
+      `"${worktreeDir}" --force --no-orphan-prune`,
+      binDir,
+      logPath,
+      repoDir
+    )
+
+    expect(result.status).toBe(0)
+    expect(result.dockerCalls.some((c) => c.includes('volume ls'))).toBe(false)
   })
 })

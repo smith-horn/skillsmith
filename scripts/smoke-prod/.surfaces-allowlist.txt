@@ -36,6 +36,13 @@ supabase/functions/webhook-heartbeat-monitor/**
 # service-role auth. No user-facing HTTP surface; results land in
 # audit_logs and the GitHub Actions artifact.
 supabase/functions/coverage-report/**
+# SMI-5752: status-check is the every-5-minutes synthetic health-check cron
+# (pg_cron via 20260719020000_status_check_pg_cron.sql) — service-role
+# internal, no user-facing HTTP surface; results land in status_checks.
+# The public-facing surface (status-public, Wave 4/SMI-5754, and the
+# /status page, Wave 5/SMI-5755) gets its own surfaces.json entry when
+# those waves ship.
+supabase/functions/status-check/**
 
 # SMI-4852: indexer-dispatch is invoked by repository_dispatch via the
 # indexer.yml workflow + manual ops; service-role-only, fires GitHub

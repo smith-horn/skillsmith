@@ -5,7 +5,7 @@
  * having to mock all of tracer.ts. The class registry encodes which OTel
  * instrumentation packages tracer.ts attempts to load on init; each entry
  * is optional at runtime and silently skipped if the package isn't installed
- * (e.g. `instrumentation-aws-sdk` only loads when `@skillsmith/enterprise`
+ * (e.g. `instrumentation-aws-sdk` only loads when `@smith-horn/enterprise`
  * is present in the consuming install).
  */
 

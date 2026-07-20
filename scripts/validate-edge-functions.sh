@@ -77,6 +77,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "advance-notice-email"
   "quota-monitor"
   "webhook-heartbeat-monitor"
+  "status-check"
 )
 
 echo ""

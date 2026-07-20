@@ -63,6 +63,30 @@ native_module_volume_name() {
 }
 
 #######################################
+# Sanitize an arbitrary name (worktree directory basename, branch name) into
+# a Docker Compose v2 project name: lowercase, then strip any character
+# outside [a-z0-9_-]. This is the single canonical implementation --
+# remove-worktree.sh's project_name derivation and
+# prune-orphaned-docker-volumes.sh's protected-set derivation both call this
+# rather than each inlining their own copy of the tr/sed pipeline, so the two
+# can never independently drift out of sync (SMI-5750 governance finding:
+# they previously duplicated this logic verbatim).
+#
+# A trailing newline is always emitted (needed by callers that invoke this
+# in a loop and capture the combined output via one outer `$(...)` --
+# without it, BSD sed's no-trailing-newline-preserving behavior would
+# silently glue consecutive outputs together with no separator).
+#
+# Arguments:
+#   $1 - Name to sanitize (e.g. a worktree directory basename)
+# Outputs:
+#   Sanitized project-name-safe string, followed by a newline, to stdout
+#######################################
+sanitize_project_name() {
+    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g'
+}
+
+#######################################
 # Print error message and exit
 #######################################
 error() {
@@ -837,11 +861,50 @@ enumerate_compose_node_modules_mounts() {
         # mount, not a second mount of an overlapping-but-distinct host path
         # — the double-mount shape that caused that regression no longer
         # exists at all now that the workspace-sibling mount is gone).
-        local vite_cache_dir
-        for vite_cache_dir in .vite .vite-temp; do
+        local build_cache_dir
+        for build_cache_dir in .vite .vite-temp .astro; do
             printf '      - %s/%s:/app/packages/%s/node_modules/%s\n' \
-                "$main_target" "$vite_cache_dir" "$pkg_name" "$vite_cache_dir"
+                "$main_target" "$build_cache_dir" "$pkg_name" "$build_cache_dir"
         done
+    done
+}
+
+#######################################
+# Ensure the host-side source directories for the writable cache overlays
+# (`.vite`/`.vite-temp`/`.astro`) exist BEFORE a container that mounts them
+# is created (SMI-5705). A Docker bind mount's source is resolved at
+# container-CREATE time; if the source directory doesn't exist yet, the
+# resulting mount can end up non-writable in a way only a full recreate
+# (`--force-recreate`), not a plain `restart`, fixes. `enumerate_compose_node_modules_mounts`
+# emits the mount lines unconditionally on the subdirectories existing —
+# this function is what actually creates them.
+#
+# Root level stays `.vite`/`.vite-temp` only (matches the root loop's own
+# scope in enumerate_compose_node_modules_mounts — no `.astro` there, since
+# Astro never runs at the repo root). Per-package level gets all three,
+# matching the per-package loop above (SMI-5722 extended this to `.astro`).
+#
+# Kept as a separate function from enumerate_compose_node_modules_mounts —
+# that function is a pure-output helper (generate_docker_override_to_stdout's
+# docstring), and repair_worktrees_compose_override's diff-based idempotency
+# check relies on it being side-effect-free when comparing generated YAML.
+#
+# `mkdir -p` on an already-existing (or concurrently-being-created)
+# directory is EEXIST-tolerant in both GNU coreutils and BSD/macOS — safe to
+# call from concurrent sibling-worktree sessions with no lock needed.
+#
+# Arguments:
+#   $1 - Repository root path (main repo, NOT worktree path)
+#######################################
+ensure_build_cache_mount_sources() {
+    local repo_root="$1"
+    local pkg_dir pkg_name main_target
+
+    [[ -d "$repo_root/node_modules" ]] && mkdir -p "$repo_root/node_modules/.vite" "$repo_root/node_modules/.vite-temp"
+    for pkg_dir in "$repo_root"/packages/*/; do
+        pkg_name="$(basename "$pkg_dir")"
+        main_target="$repo_root/packages/$pkg_name/node_modules"
+        [[ -d "$main_target" ]] && mkdir -p "$main_target/.vite" "$main_target/.vite-temp" "$main_target/.astro"
     done
 }
 
@@ -874,6 +937,14 @@ enumerate_native_module_volumes() {
         if [[ -d "$repo_root/node_modules/$native_module" && ! -L "$repo_root/node_modules/$native_module" ]]; then
             printf '  native-seed-%s:\n' "$(native_module_volume_name "$native_module")"
             printf '    driver: local\n'
+            # SMI-5750: positive ownership marker so
+            # prune-orphaned-docker-volumes.sh can identify these as
+            # Skillsmith-owned and auto-reclaim orphaned ones (worktree
+            # removed without going through remove-worktree.sh) instead of
+            # leaving them perpetually UNCONFIRMED. Same label/rationale as
+            # docker-compose.yml's node_modules volume.
+            printf '    labels:\n'
+            printf '      app.skillsmith.owned: "true"\n'
         fi
     done
 }
@@ -1197,11 +1268,15 @@ generate_docker_override_to_stdout() {
         return 1
     fi
 
-    # Base ports: dev=3001, test=3002, orchestrator=3003
+    # Base ports: dev=3001, test=3002. Port +3 in this bucket is intentionally
+    # left unused (not reassigned) since removing the now-deleted orchestrator
+    # service (SMI-5719) — the collision-check loop in
+    # _resolve_worktree_port_offset still reserves 4 consecutive ports per
+    # bucket, which stays harmless (merely slightly conservative) rather than
+    # renumbering every existing worktree's deterministic port assignment.
     local dev_app_port=$((3000 + port_offset * 10))
     local dev_mcp_port=$((3000 + port_offset * 10 + 1))
     local test_port=$((3000 + port_offset * 10 + 2))
-    local orchestrator_port=$((3000 + port_offset * 10 + 3))
 
     # SMI-4689: per-package bind mounts only on macOS Docker Desktop.
     local volumes_block=""
@@ -1267,11 +1342,6 @@ ${volumes_block}
     container_name: ${worktree_name}-test-1
     ports:
       - "${test_port}:3000"      # Test app
-${volumes_block}
-  orchestrator:
-    container_name: ${worktree_name}-orchestrator-1
-    ports:
-      - "${orchestrator_port}:3000"  # Orchestrator
 ${volumes_block}
 ${top_level_volumes}
 EOF
@@ -1347,6 +1417,13 @@ repair_worktrees_compose_override() {
         info "  macOS-only — skipping per-package bind-mount regen on $(uname)"
         return 0
     fi
+
+    # SMI-5705: re-ensure the writable cache-overlay source directories exist
+    # on every regen pass, not just at initial worktree creation — vite/Astro
+    # can delete/recreate .vite-temp/.astro during normal operation, and every
+    # npm install (which triggers this via postinstall) is exactly the kind
+    # of event that can coincide with that.
+    ensure_build_cache_mount_sources "$repo_root"
 
     # SMI-5661: acquire the port-bucket lock ONCE for the whole regen pass
     # (not per-iteration) since the loop below calls

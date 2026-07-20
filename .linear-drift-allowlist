@@ -531,3 +531,14 @@ SMI-596   # core/src/scoring/QualityScorer.ts:251 — calculateTrustTier()
 SMI-594   # core/src/security/scanner/patterns.ts:91-95 — jailbreak pattern regexes
 SMI-858   # docs/internal/archive/phase4/IMPLEMENTATION_SUMMARY.md
 SMI-857   # core/tests/learning/ — PatternStore + ReasoningBankIntegration test suites
+
+
+# === 2026-07-18 batch (GH#1868 — Linear Drift Audit clearance, 3 entries) ===
+# Triaged during a GH issue/PR triage pass; cross-checked by Codex (gpt-5.6-sol via NEEDLE).
+
+# wave-subtask: real code shipped, commit tagged to a sibling issue instead of this one.
+SMI-5669  # PR #1855 (3c8df5e8) — CLI --also-link fan-out path fix; commit trailer says "Refs SMI-5459" (the unrelated UAT-gate issue this bug was discovered under), not SMI-5669. See SMI-5669 comment for the corrected record.
+
+# manual-op / investigation: no source commit expected by design.
+SMI-5565  # GitHub mergeability-calculator gitlink quirk — root-cause writeup + documented workaround, no code fix
+SMI-5529  # SMI-5491 +1wk post-merge measurement checkpoint — Supabase Disk-IO monitoring, numbers recorded in the issue itself

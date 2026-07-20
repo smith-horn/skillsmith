@@ -2,7 +2,7 @@
   "name": "skillsmith-vscode",
   "displayName": "Skillsmith",
   "description": "Discover and install agent skills directly in VS Code",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "publisher": "skillsmith",
   "engines": {
     "vscode": "^1.110.0"
@@ -396,7 +396,7 @@
     "@vscode/vsce": "3.9.2",
     "@wdio/cli": "9.29.0",
     "@wdio/local-runner": "9.29.0",
-    "@wdio/mocha-framework": "9.29.0",
+    "@wdio/mocha-framework": "9.29.1",
     "@wdio/spec-reporter": "9.29.0",
     "esbuild": "0.28.1",
     "typescript": "5.9.3",

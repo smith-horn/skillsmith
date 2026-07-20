@@ -28,6 +28,8 @@ on:
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/session-start-audit.test.sh'
       - 'scripts/tests/reclaim-node-modules.test.sh'
+      - 'scripts/tests/enumerate-compose-mounts.test.sh'
+      - 'scripts/tests/enumerate-compose-mounts-smi5650.test.sh'
       - 'scripts/check-file-length.mjs'
       - 'lint-staged.config.js'
       - '.github/workflows/validate-hooks.yml'
@@ -59,7 +61,9 @@ jobs:
             scripts/lib/repair-worktree-container-symlinks.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/session-start-audit.test.sh \
-            scripts/tests/reclaim-node-modules.test.sh
+            scripts/tests/reclaim-node-modules.test.sh \
+            scripts/tests/enumerate-compose-mounts.test.sh \
+            scripts/tests/enumerate-compose-mounts-smi5650.test.sh
 
       - name: Syntax check (bash -n)
         run: |
@@ -75,6 +79,8 @@ jobs:
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
           bash -n scripts/tests/reclaim-node-modules.test.sh
+          bash -n scripts/tests/enumerate-compose-mounts.test.sh
+          bash -n scripts/tests/enumerate-compose-mounts-smi5650.test.sh
           sh -n .husky/pre-commit
           sh -n .husky/post-merge
 
@@ -95,3 +101,5 @@ jobs:
           bash scripts/tests/create-worktree-hooks.test.sh
           bash scripts/tests/session-start-audit.test.sh
           bash scripts/tests/reclaim-node-modules.test.sh
+          bash scripts/tests/enumerate-compose-mounts.test.sh
+          bash scripts/tests/enumerate-compose-mounts-smi5650.test.sh

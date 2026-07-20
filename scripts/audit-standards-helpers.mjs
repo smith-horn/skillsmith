@@ -2041,3 +2041,51 @@ export function isReleasePrepDiff(pkgJsonAtBase, pkgJsonAtHead, changelogAtBase,
   if (headingDirectlyBelowUnreleased(changelogAtHead) !== expectedHeading) return false
   return headingDirectlyBelowUnreleased(changelogAtBase) !== expectedHeading
 }
+
+/**
+ * Parse `git-crypt status`'s per-file output and return only the paths git-crypt
+ * reports as genuinely encrypted.
+ *
+ * `git-crypt status` emits a `not encrypted: <path>` line for every tracked file
+ * outside the encrypted scope, and that line contains the substring `encrypted:`
+ * — a naive `.includes('encrypted:')` filter (SMI-5740) matches both lines, not
+ * just the genuinely-encrypted `    encrypted: <path>` ones. Matching on the
+ * trimmed line's leading token instead of a bare substring structurally excludes
+ * `not encrypted:` lines, since their leading token differs entirely.
+ * @param {string} status - raw stdout of `git-crypt status`.
+ * @returns {string[]}
+ */
+export function parseGitCryptEncryptedFiles(status) {
+  return status
+    .split('\n')
+    .filter((line) => line.trim().startsWith('encrypted:'))
+    .map((line) => line.trim().slice('encrypted:'.length).trim())
+    .filter(Boolean)
+}
+
+/**
+ * Classify a git-crypt double-encryption scan result (SMI-5740).
+ *
+ * `git-crypt status` succeeds (no throw) regardless of whether the repo's key
+ * is actually unlocked — its own output never distinguishes "locked" from
+ * "unlocked" (confirmed against git-crypt's own source: status() reports
+ * purely from .gitattributes + blob-content inspection, neither of which
+ * needs the key). On a genuinely-locked-but-installed checkout, the smudge
+ * filter never ran, so EVERY real encrypted-scope file's on-disk bytes are
+ * ciphertext — indistinguishable per-file from double-encryption. Treat "all
+ * encrypted-scope files are ciphertext" as locked, not double-encrypted; a
+ * genuine double-encryption anomaly affects only SOME of them. (Known
+ * limitation: ANY anomaly affecting every single encrypted-scope file — not
+ * just the exactly-one-file case — is observationally identical to a locked
+ * repo and reads as 'locked' rather than 'double-encrypted'. Not a concern
+ * for this repo's actual scope of hundreds of files, where an anomaly
+ * affecting literally all of them simultaneously is implausible.)
+ * @param {number} encryptedCount - total encrypted-scope files found.
+ * @param {number} doubleEncryptedCount - of those, how many are ciphertext on disk.
+ * @returns {'locked' | 'double-encrypted' | 'clean'}
+ */
+export function classifyGitCryptScanResult(encryptedCount, doubleEncryptedCount) {
+  if (encryptedCount > 0 && doubleEncryptedCount === encryptedCount) return 'locked'
+  if (doubleEncryptedCount > 0) return 'double-encrypted'
+  return 'clean'
+}

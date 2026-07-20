@@ -1,6 +1,6 @@
 /**
  * SMI-964: SSO/RBAC/License Audit Event Zod Schemas
- * @module @skillsmith/enterprise/audit/AuditEventTypes.schemas
+ * @module @smith-horn/enterprise/audit/AuditEventTypes.schemas
  */
 
 import { z } from 'zod'

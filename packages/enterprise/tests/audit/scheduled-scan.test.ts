@@ -1,6 +1,6 @@
 /**
  * @fileoverview Unit tests for the Enterprise scheduled-scan runner.
- * @module @skillsmith/enterprise/audit/scheduled-scan.test
+ * @module @smith-horn/enterprise/audit/scheduled-scan.test
  *
  * Plan: docs/internal/implementation/smi-4590-cli-mcp-framework-adapter.md §7
  * (Wave 4 PR 6/6, SMI-4590).

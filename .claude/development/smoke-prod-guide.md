@@ -22,7 +22,7 @@ with 2s backoff per call. Exit codes: `0` ok, `1` fail, `2` skipped.
 
 | ID | What it checks | Trigger |
 |----|----------------|---------|
-| `health` | `GET $SUPABASE_URL/functions/v1/health` returns 200 | always-on canary |
+| `health` | `GET $SUPABASE_URL/functions/v1/health` returns 200; `verbose=true` body's `redis` check must be `healthy` | always-on canary |
 | `website-device-page` | `GET https://www.skillsmith.app/device` returns 200 + contains `data-smoke="device-input"` | `packages/website/src/pages/device.astro` change |
 | `edge-fn-auth-device` | `auth-device-code` POST → 200/400 (NOT 404); `auth-device-preview` GET (no JWT) → 401 | `supabase/functions/auth-device-{code,preview,approve,token}/**` change |
 | `edge-fn-skills-search` | Authenticated GET with `X-API-Key: $SMOKE_SKILLS_API_KEY` → 200; asserts `user_api_usage.search_count` incremented by 1 | `supabase/functions/skills-search/**` or `_shared/usage-counter.ts` / `_shared/auth-middleware.ts` change |
@@ -107,6 +107,11 @@ Triage steps:
      or hotfix.
    - Assertion is wrong (smoke-harness bug) → fix the check function;
      deploy is fine.
+   - `redis` check present but not `healthy` → real Upstash issue (bad/rotated
+     token, network, quota); see docs/internal/runbooks/upstash-redis-operations.md.
+     Not a full outage by itself — rate-limiter/quota-enforcer/tier-cache/
+     circuit-breaker all degrade gracefully, but treat as urgent (rotation
+     may be needed).
 
 ## Skipping smoke for a PR
 

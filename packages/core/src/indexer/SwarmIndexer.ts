@@ -299,13 +299,13 @@ export class SwarmIndexer {
   }
 
   /**
-   * Generate claude-flow swarm command (for external execution)
+   * Generate ruflo swarm command (for external execution)
    */
   generateSwarmCommand(): string {
     const partitions = this.strategy.createEmptyPartitions()
     const tasks = partitions.map((p) => `index ${p.range}`).join(', ')
 
-    return `./claude-flow swarm "Index repositories: ${tasks}" --strategy development --mode distributed --max-agents ${partitions.length} --parallel`
+    return `./ruflo swarm start -o "Index repositories: ${tasks}" -s development`
   }
 
   /**

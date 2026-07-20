@@ -111,14 +111,14 @@ export type {
 } from './webhooks/stripe-webhook-endpoint.js'
 
 // Package version - keep in sync with package.json
-const PACKAGE_VERSION = '0.7.4'
+const PACKAGE_VERSION = '0.7.5'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 const logger = createLogger('mcp', { version: PACKAGE_VERSION }) // SMI-5615
 import { installBundledSkills, installUserDocs } from './onboarding/install-assets.js'
 import { handleDocsFlag, ensureSkillsmithSkillInstalled } from './index.startup-helpers.js'
 
 // SMI-2679: Quota enforcement middleware — module-level singletons, initialized once
-// licenseMiddleware uses a cache (TTL) so the first-call @skillsmith/enterprise lazy-load
+// licenseMiddleware uses a cache (TTL) so the first-call @smith-horn/enterprise lazy-load
 // latency (~10-50ms) is not incurred on every tool invocation.
 const licenseMiddleware = createLicenseMiddleware()
 const quotaMiddleware = createQuotaMiddleware()

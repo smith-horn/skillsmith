@@ -9,7 +9,7 @@
   },
   "permissions": {
     "allow": [
-      "Bash(npx claude-flow:*)",
+      "Bash(npx ruflo:*)",
       "Bash(npm run lint)",
       "Bash(npm run test:*)",
       "Bash(npm test:*)",
@@ -73,7 +73,8 @@
       "mcp__ruflo__claims_handoff",
       "mcp__ruflo__claims_accept-handoff",
       "mcp__ruflo__hooks_post-task",
-      "mcp__ruflo__hooks_model-outcome"
+      "mcp__ruflo__hooks_model-outcome",
+      "mcp__ruflo__hooks_model-route"
     ]
   },
   "hooks": {

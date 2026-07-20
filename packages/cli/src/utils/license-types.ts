@@ -80,7 +80,7 @@ export interface EnterpriseLicenseValidator {
  * Default features by tier
  *
  * Note: Community tier uses CLI-specific display names for UI purposes.
- * Individual, Team and Enterprise tiers use canonical feature names from @skillsmith/enterprise.
+ * Individual, Team and Enterprise tiers use canonical feature names from @smith-horn/enterprise.
  *
  * @see packages/enterprise/src/license/types.ts for canonical feature definitions
  */

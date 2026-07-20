@@ -4,12 +4,12 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
-## What's New in v0.7.0
+## What's New in v0.7.4
 
-- **`undo_apply` tool**: Session-scoped undo for `apply_namespace_rename` / `apply_recommended_edit`, restoring from the apply tool's own backup.
-- **Curated agent tool profile**: Set `SKILLSMITH_TOOL_PROFILE=agent` to expose a focused ~15-tool listing sized for harness/agent integration instead of the full tool surface.
-- **Installable-only search by default**: `search` and `skill_recommend` now hide discovery-only entries (no resolvable install source) by default; pass `installable_only: false` to restore the previous inclusive behavior.
-- **Cross-harness skill inventory**: New local CLI/MCP push agent keeps skill inventories in sync across multiple agent harnesses.
+- **Cross-session rename revert**: `apply_namespace_rename`'s `action: 'revert'` is now exposed, closing the gap where a rename applied in a prior session had no reachable undo path.
+- **Shutdown persistence fix**: Recently-installed skills and dependency data are now correctly persisted on shutdown — previously silently discarded when running without native SQLite support (common on macOS/npx installs).
+- **Corrected quota enforcement**: Local quota limits reduced 10x to match actual tier limits, with a `SKILLSMITH_ENFORCE_MCP_QUOTA` kill-switch to disable hard-blocking without a redeploy.
+- **Subscription tier resolution fix**: Personal API keys now resolve the real subscription tier correctly.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
@@ -18,7 +18,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 The MCP server checks for updates on startup and notifies you when a newer version is available:
 
 ```
-[skillsmith] Update available: 0.6.x → 0.7.0
+[skillsmith] Update available: 0.7.3 → 0.7.4
 Restart your MCP client to use the latest version.
 ```
 

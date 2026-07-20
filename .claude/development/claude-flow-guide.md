@@ -13,7 +13,7 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
   "mcpServers": {
     "ruflo": {
       "command": "npx",
-      "args": ["ruflo@latest", "mcp", "start"],
+      "args": ["ruflo@3.14.2", "mcp", "start"],
       "env": {
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
@@ -23,7 +23,7 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
 }
 ```
 
-Manual setup: `claude mcp add ruflo -s project -- npx ruflo@latest mcp start`
+Manual setup: `claude mcp add ruflo -s project -- npx ruflo@3.14.2 mcp start`
 
 Verify: `claude mcp list | grep ruflo`
 
@@ -76,8 +76,8 @@ mcp__claude-flow__task_orchestrate({
 Configs in `.claude/hive-mind/`:
 
 ```bash
-./start-hive-mind.sh                                              # Run config
-npx ruflo swarm --config .claude/hive-mind/your-config.yaml        # Direct
+./start-hive-mind.sh                                                          # Run config
+node node_modules/ruflo/bin/ruflo.js swarm --config .claude/hive-mind/your-config.yaml   # Direct
 ```
 
 ### Resource Profiles
@@ -97,15 +97,10 @@ See [.claude/hive-mind/README.md](../../.claude/hive-mind/README.md) for full do
 
 ## SPARC Development
 
-### Core Commands
+SPARC-mode CLI invocation (`npx ruflo sparc modes/tdd/run`) does **not** exist in the installed v3 CLI — `sparc` is not a recognized subcommand (`npx ruflo sparc --help` → `[ERROR] Unknown command: sparc / Did you mean: start, swarm, status`). For SPARC-style workflows use:
 
-```bash
-npx ruflo sparc modes              # List available modes
-npx ruflo sparc tdd "<feature>"    # Run TDD workflow
-npx ruflo sparc run <mode> "<task>" # Execute specific mode
-```
-
-Available modes: orchestrator, coder, researcher, tdd, architect, reviewer, debugger, tester, analyzer, optimizer, documenter, designer, innovator, swarm-coordinator, memory-manager, batch-executor, workflow-manager.
+- This guide's [Hive Mind Orchestration](#hive-mind-orchestration) section above for `ruflo swarm` invocations
+- The repo's own `sparc-methodology` skill (`.claude/skills/sparc-methodology/SKILL.md`) for the SPARC development methodology itself
 
 ### Concurrent Execution Rules
 
@@ -117,7 +112,7 @@ Available modes: orchestrator, coder, researcher, tdd, architect, reviewer, debu
 ### MCP Server Setup
 
 ```bash
-claude mcp add ruflo -s project -- npx ruflo@latest mcp start
+claude mcp add ruflo -s project -- npx ruflo@3.14.2 mcp start
 ```
 
 See `.claude/agents/` for available agent definitions.

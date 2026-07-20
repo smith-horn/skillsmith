@@ -174,6 +174,121 @@ CODEX_VERSION="$(codex --version 2>/dev/null || echo 'unknown')"
 
 echo "[needle-dispatch] workspace=$WORKSPACE model=$MODEL timeout=${TIMEOUT}s codex_version=$CODEX_VERSION"
 
+# ---- SMI-5709: secret-scanner compatibility guard ----
+#
+# `bf create` (invoked below) runs its own secret scanner over --title and
+# --description before this dispatch ever reaches Codex. That scanner has a
+# generic heuristic — labeled "Azure Key" in its own output, confirmed via
+# `strings $(which bf)` in a prior investigation — that flags any unbroken
+# run of 44+ characters from [A-Za-z0-9/_-]. Ordinary long file/worktree
+# paths in a title or prompt body trip this constantly; it has nothing to
+# do with real secrets. Left unguarded, that surfaces as an opaque
+# "secret detected: ... [Azure Key]" failure deep inside `bf create`,
+# after this script has already committed to the dispatch. This block
+# scans the exact raw bytes that will be passed to `bf create` below and
+# fails fast, before any `bf`/`codex` process is touched, with actionable
+# guidance instead of bf's own opaque error.
+#
+# The character class ([A-Za-z0-9/_-]) intentionally reproduces bf's own
+# broad heuristic exactly, as confirmed against the actual compiled rule in
+# a prior investigation — this is deliberately NOT a smarter/narrower
+# filter. Do not "improve" this into a tighter pattern later; that would
+# desync this guard from what bf actually rejects and defeat the entire
+# point of a compatibility pre-check.
+#
+# Matching runs in grep's default per-line mode only, never a
+# multiline/slurp mode — a match must never be allowed to span a newline
+# (44 path-safe characters split across two lines are two separate short
+# runs in the real content, not one long one that should trip anything).
+#
+# Separate, related fact (also from a prior investigation, not re-verified
+# here): bf additionally supports a `secret_protection.allowlist` key in a
+# workspace's `.beads/config.yaml`, and — as observed behavior against the
+# bf version in use at the time of that investigation, not an unconditional
+# guarantee for every future bf release — the scanner consults it with
+# substring-match semantics against the *entire* scanned field's content:
+# a pattern anchored at both ends (^...$) can only match a field whose
+# entire content equals the pattern; a pattern anchored at only one end can
+# only match at that corresponding boundary; an unanchored pattern must
+# match text embedded anywhere within a longer field.
+#
+# IMPORTANT: this guard has no knowledge of that allowlist — it is a pure
+# compatibility pre-check and cannot tell whether bf would actually accept
+# a given match. Allowlisting a pattern in bf's own config does NOT get you
+# past THIS guard; use SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 for that (see
+# below and docs/internal/process/guards-and-opt-outs.md). Note bf's own
+# scanner still runs after this guard is skipped, so the allowlist entry is
+# still required for the dispatch to actually succeed end-to-end.
+#
+# Scope note: this pattern is verified against ordinary long file/worktree
+# paths (its actual purpose) — it has not been verified against bf's real
+# rule for base64-shaped secrets (which may include `+`/`=`, outside this
+# class), so a real base64 credential could in principle still slip past
+# this guard and hit bf's own rejection instead. That's an acceptable gap:
+# this guard exists to fail fast on the common path-false-positive case,
+# not to be a complete re-implementation of bf's scanner.
+needle_secret_scan_guard() {
+    local pattern='[A-Za-z0-9/_-]{44,}'
+    local findings=() entry field lineinfo m rest head tail redacted
+    local report="" shown=0 total
+
+    while IFS= read -r m; do
+        [[ -z "$m" ]] && continue
+        findings+=("title||$m")
+    done < <(printf '%s\n' "$TITLE" | grep -oE "$pattern" || true)
+
+    local line_match lineno
+    while IFS= read -r line_match; do
+        [[ -z "$line_match" ]] && continue
+        lineno="${line_match%%:*}"
+        m="${line_match#*:}"
+        findings+=("body|$lineno|$m")
+    done < <(grep -n -oE "$pattern" "$BODY_FILE" || true)
+
+    total=${#findings[@]}
+    if [[ "$total" -eq 0 ]]; then
+        return 0
+    fi
+
+    for entry in "${findings[@]}"; do
+        shown=$((shown + 1))
+        if [[ $shown -gt 5 ]]; then
+            continue
+        fi
+        field="${entry%%|*}"
+        rest="${entry#*|}"
+        lineinfo="${rest%%|*}"
+        m="${rest#*|}"
+        head="${m:0:10}"
+        tail="${m: -4}"
+        redacted="${head}…${tail}"
+        if [[ "$field" == "body" ]]; then
+            report+="  - body (line $lineinfo): $redacted (${#m} chars)"$'\n'
+        else
+            report+="  - title: $redacted (${#m} chars)"$'\n'
+        fi
+    done
+    if [[ "$total" -gt 5 ]]; then
+        report+="  ... and $((total - 5)) more match(es) not shown"$'\n'
+    fi
+
+    needle_error "Title/body contains $total unbroken run(s) of 44+ characters from [A-Za-z0-9/_-] — bf create's own secret scanner will very likely reject this dispatch with a 'secret detected: ... [Azure Key]' error before Codex is ever invoked.
+
+$report
+Most matches like this are ordinary long file/worktree paths, not real
+secrets — but this guard (matching bf's own heuristic on purpose) can't
+tell the difference, and neither can bf. Fix: state any long directory
+prefix ONCE in prose (e.g. 'files under scripts/needle/') and refer to
+bare filenames afterward instead of repeating a full path in every
+reference."
+}
+
+if [[ "${SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE:-0}" == "1" ]]; then
+    echo "[needle-dispatch] WARNING: SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 — skipping the SMI-5709 secret-scanner compatibility guard. bf's own scanner still runs on 'bf create' below and may still reject this dispatch." >&2
+else
+    needle_secret_scan_guard
+fi
+
 # ---- Ensure a bead-forge workspace exists ----
 if [[ ! -d "$WORKSPACE/.beads" ]]; then
     bf init --workspace "$WORKSPACE" >/dev/null

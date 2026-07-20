@@ -1,6 +1,6 @@
 {
   "name": "@smith-horn/enterprise",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Enterprise features for Skillsmith including audit logging, SSO, and RBAC",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -42,27 +42,27 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudwatch-logs": "3.1083.0",
-    "@opentelemetry/instrumentation-aws-sdk": "0.73.0",
-    "@skillsmith/core": "^0.11.2",
+    "@aws-sdk/client-cloudwatch-logs": "3.1090.0",
+    "@opentelemetry/instrumentation-aws-sdk": "0.75.0",
+    "@skillsmith/core": "^0.11.3",
     "jose": "^6.2.2",
     "stripe": "20.3.0",
     "zod": "4.2.1"
   },
   "devDependencies": {
-    "@skillsmith/mcp-server": "^0.7.4",
-    "@smithy/config-resolver": "4.6.7",
-    "@smithy/core": "3.29.2",
-    "@smithy/middleware-endpoint": "4.6.7",
-    "@smithy/middleware-retry": "4.7.7",
-    "@smithy/protocol-http": "5.5.7",
-    "@smithy/smithy-client": "4.14.7",
-    "@smithy/types": "4.16.0",
-    "@smithy/util-retry": "4.5.7",
+    "@skillsmith/mcp-server": "^0.7.5",
+    "@smithy/config-resolver": "4.6.10",
+    "@smithy/core": "3.29.5",
+    "@smithy/middleware-endpoint": "4.6.10",
+    "@smithy/middleware-retry": "4.7.10",
+    "@smithy/protocol-http": "5.5.10",
+    "@smithy/smithy-client": "4.14.10",
+    "@smithy/types": "4.16.1",
+    "@smithy/util-retry": "4.5.10",
     "vitest": "4.1.10"
   },
   "peerDependencies": {
-    "@skillsmith/mcp-server": "^0.7.4"
+    "@skillsmith/mcp-server": "^0.7.5"
   },
   "peerDependenciesMeta": {
     "@skillsmith/mcp-server": {

@@ -3,7 +3,7 @@
 
 /**
  * @fileoverview Lock-file mutex for the Enterprise scheduled-scan runner.
- * @module @skillsmith/enterprise/audit/scheduled-scan.lock
+ * @module @smith-horn/enterprise/audit/scheduled-scan.lock
  *
  * Plan: docs/internal/implementation/smi-4590-cli-mcp-framework-adapter.md §7
  * (SMI-4752 follow-up).

@@ -1,5 +1,5 @@
 /**
- * Test setup for @skillsmith/enterprise
+ * Test setup for @smith-horn/enterprise
  *
  * Provides test utilities and configuration for enterprise package tests.
  */

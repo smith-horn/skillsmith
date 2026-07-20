@@ -4,13 +4,20 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev
+      # SMI-5750: positive ownership marker so prune-orphaned-docker-volumes.sh
+      # can distinguish a Skillsmith-built `<project>-dev` image from another
+      # repo's generically-shaped `dev` service image sharing the same Compose
+      # conventions. Applies at build time only -- pre-existing images stay
+      # unlabeled (report-only "UNCONFIRMED ownership" until --include-unlabeled).
+      labels:
+        app.skillsmith.owned: 'true'
     container_name: skillsmith-dev-1
     # SMI-5245: auto-recover the long-lived dev container after a Docker daemon /
     # machine restart so the doc-retrieval + skillsmith MCP servers (launched via
     # `docker exec` in .mcp.json) don't silently drop with a -32000 reconnect error.
     # `unless-stopped` (not `always`): honors an explicit `docker stop` / `compose
     # down` so the CLAUDE.md recovery flows that rely on `down` staying down still
-    # work. dev-only — `test`/`orchestrator` run one-shot commands and must not loop.
+    # work. dev-only — `test` runs one-shot commands and must not loop.
     restart: unless-stopped
     ports:
       - '${DEV_PORT:-3001}:3001'
@@ -25,8 +32,7 @@ services:
       # a .env get a silent (warning-free) blank rather than a Compose WARN.
       # Bind always succeeds; if the source dir doesn't exist, Docker creates
       # an empty mount and the adapter's existsSync guard skips it gracefully.
-      # Test profile and orchestrator omit this bind by design (CI runners
-      # have no host memory dir; orchestrator does not index).
+      # Test profile omits this bind by design (CI runners have no host memory dir).
       - ${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED:-}/memory:/skillsmith-memory:ro
     environment:
       - NODE_ENV=development
@@ -68,31 +74,13 @@ services:
     profiles:
       - test
 
-  # Hive Mind Orchestrator - run with: docker compose --profile orchestrator up
-  orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: dev
-    container_name: skillsmith-orchestrator-1
-    volumes:
-      - .:/app
-      - node_modules:/app/node_modules
-    environment:
-      - NODE_ENV=development
-      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
-      - SKILLSMITH_PATH=/app
-    working_dir: /app
-    entrypoint: ['/app/docker-entrypoint.sh']
-    command: npx tsx scripts/phase4-orchestrator/orchestrator.ts
-    healthcheck:
-      test: ['CMD', 'npx', 'claude-flow', '--version']
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    profiles:
-      - orchestrator
-
 volumes:
   node_modules:
+    # SMI-5750: positive ownership marker so prune-orphaned-docker-volumes.sh
+    # can distinguish a Skillsmith-owned `<project>_node_modules` volume from
+    # another repo's generically-shaped `node_modules` volume sharing the same
+    # Compose conventions. Applies at creation time only -- Compose does not
+    # recreate an existing named volume when its label config changes, so this
+    # does not disturb any currently-live worktree's volume.
+    labels:
+      app.skillsmith.owned: 'true'

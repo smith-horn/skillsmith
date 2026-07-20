@@ -5,8 +5,8 @@
  * shared fixture/generator infrastructure).
  *
  * SMI-5650 (Wave 1): the 2 alias-scope tmpfs overlays (@skillsmith,
- * @smith-horn) are present once per service (dev/test/orchestrator, 6
- * total), and the generated document parses as valid YAML with the exact
+ * @smith-horn) are present once per service (dev/test, 4 total), and
+ * the generated document parses as valid YAML with the exact
  * shape docker compose expects (`type: tmpfs`, `target:`, nested
  * `tmpfs: { size: 1048576 }`) — not just a string-match, an actual
  * YAML-parse structural check via the `yaml` package (already a transitive
@@ -24,17 +24,23 @@
  * entry, sanitized to `native-seed-esbuild-scope` (volume names can't
  * contain `@`).
  *
+ * SMI-5750: each top-level native-seed volume declaration also carries an
+ * `app.skillsmith.owned: "true"` label (added in enumerate_native_module_
+ * volumes alongside `driver: local`) so prune-orphaned-docker-volumes.sh can
+ * identify and auto-reclaim orphaned native-seed volumes -- these are the
+ * numerically dominant orphan class (5 per worktree).
+ *
  * Cases:
  *   6  Darwin: the 2 alias-scope tmpfs overlays present per service with
  *      valid YAML shape (Wave 1).
  *   7  Darwin: the 5 native-module volume-reference lines are present once
- *      per service (dev/test/orchestrator, 15 total, including the @esbuild
+ *      per service (dev/test, 10 total, including the @esbuild
  *      -> native-seed-esbuild-scope sanitization), the generated override's
  *      top-level `volumes:` YAML key exists with exactly the 5 expected
- *      `driver: local` entries (no driver_opts, no tmpfs annotation), and
- *      the root `:ro` mount precedes every native-module volume-reference
- *      line within each service (same order invariant as the alias-scope
- *      tmpfs entries) (Wave 2).
+ *      `driver: local` + `app.skillsmith.owned` entries (no driver_opts, no
+ *      tmpfs annotation), and the root `:ro` mount precedes every
+ *      native-module volume-reference line within each service (same order
+ *      invariant as the alias-scope tmpfs entries) (Wave 2).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { join } from 'node:path'
@@ -67,17 +73,17 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     // Text-level: both alias-scope tmpfs targets present, once per service.
     const skillsmithTarget = '        target: /app/node_modules/@skillsmith'
     const smithHornTarget = '        target: /app/node_modules/@smith-horn'
-    expect(count(stdout, skillsmithTarget)).toBe(3)
-    expect(count(stdout, smithHornTarget)).toBe(3)
-    expect(count(stdout, '      - type: tmpfs')).toBe(6) // 2 scopes * 3 services
-    expect(count(stdout, '          size: 1048576')).toBe(6)
+    expect(count(stdout, skillsmithTarget)).toBe(2)
+    expect(count(stdout, smithHornTarget)).toBe(2)
+    expect(count(stdout, '      - type: tmpfs')).toBe(4) // 2 scopes * 2 services
+    expect(count(stdout, '          size: 1048576')).toBe(4)
 
     // Regression: pre-existing root/per-package mounts are untouched by
     // the new tmpfs entries.
     const rootMount = `      - ${repoRoot}/node_modules:/app/node_modules:ro`
-    expect(count(stdout, rootMount)).toBe(3)
+    expect(count(stdout, rootMount)).toBe(2)
     const perPkg = `      - ${repoRoot}/packages/foo/node_modules:/app/packages/foo/node_modules:ro`
-    expect(count(stdout, perPkg)).toBe(3)
+    expect(count(stdout, perPkg)).toBe(2)
 
     // Structural: the WHOLE generated document parses as valid YAML (not
     // just a string match), and each service's tmpfs entries have the
@@ -86,7 +92,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     const doc = parseYaml(stdout) as {
       services: Record<string, { volumes?: Array<string | Record<string, unknown>> }>
     }
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]?.volumes ?? []
       const tmpfsEntries = volumes.filter(
         (v): v is Record<string, unknown> =>
@@ -103,7 +109,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     // Mount order (plan-review M1): within each service's volumes array,
     // the root :ro mount (a plain string entry) must precede both
     // alias-scope tmpfs entries (structured entries).
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]!.volumes!
       const rootIdx = volumes.findIndex(
         (v) => typeof v === 'string' && v.endsWith(':/app/node_modules:ro')
@@ -141,7 +147,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     expect(status).toBe(0)
 
     // Text-level: each native module's volume-reference line, once per
-    // service (dev/test/orchestrator). @esbuild sanitizes to
+    // service (dev/test). @esbuild sanitizes to
     // native-seed-esbuild-scope (volume names can't contain `@`).
     const nativeRefs: Array<[moduleName: string, volumeName: string]> = [
       ['better-sqlite3', 'native-seed-better-sqlite3'],
@@ -152,17 +158,14 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     ]
     for (const [moduleName, volumeName] of nativeRefs) {
       const line = `      - ${volumeName}:/app/node_modules/${moduleName}`
-      expect(
-        count(stdout, line),
-        `expected "${line}" exactly 3 times (dev/test/orchestrator)`
-      ).toBe(3)
+      expect(count(stdout, line), `expected "${line}" exactly 2 times (dev/test)`).toBe(2)
     }
 
     // Regression: the alias-scope tmpfs entries (Case 6) are unaffected by
-    // native modules sharing the fixture — still exactly 6 (2 scopes * 3
+    // native modules sharing the fixture — still exactly 4 (2 scopes * 2
     // services), and native modules do NOT add to that count (they use a
     // different shape entirely).
-    expect(count(stdout, '      - type: tmpfs')).toBe(6)
+    expect(count(stdout, '      - type: tmpfs')).toBe(4)
 
     // Structural: parse the WHOLE document. Each service's volumes array
     // must contain the 5 native-seed volume-reference strings as plain
@@ -172,7 +175,7 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
       services: Record<string, { volumes?: Array<string | Record<string, unknown>> }>
       volumes?: Record<string, unknown>
     }
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]?.volumes ?? []
       const stringVolumes = volumes.filter((v): v is string => typeof v === 'string')
       for (const [moduleName, volumeName] of nativeRefs) {
@@ -183,9 +186,12 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     }
 
     // Top-level `volumes:` YAML key: exactly the 5 expected named volumes,
-    // each declared as a bare `{ driver: 'local' }` — no driver_opts, no
-    // tmpfs annotation at all (the fix for Compose's tmpfs-hardcodes-noexec
-    // discovery is an ordinary named volume, not a tmpfs variant of it).
+    // each declared as `{ driver: 'local' }` — no driver_opts, no tmpfs
+    // annotation at all (the fix for Compose's tmpfs-hardcodes-noexec
+    // discovery is an ordinary named volume, not a tmpfs variant of it) —
+    // plus the SMI-5750 `app.skillsmith.owned` ownership label so
+    // prune-orphaned-docker-volumes.sh can identify and auto-reclaim
+    // orphaned native-seed volumes.
     expect(doc.volumes, 'top-level volumes: key').toBeDefined()
     const topLevelVolumeNames = Object.keys(doc.volumes!).sort()
     expect(topLevelVolumeNames).toEqual(
@@ -198,14 +204,17 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
       ].sort()
     )
     for (const [name, decl] of Object.entries(doc.volumes!)) {
-      expect(decl, `top-level volume declaration for ${name}`).toEqual({ driver: 'local' })
+      expect(decl, `top-level volume declaration for ${name}`).toEqual({
+        driver: 'local',
+        labels: { 'app.skillsmith.owned': 'true' },
+      })
     }
 
     // Mount order: the root :ro mount (a plain string) must precede every
     // native-module volume-reference line (also a plain string) within
     // each service's volumes array — same invariant Case 6 already proves
     // for the alias-scope tmpfs entries.
-    for (const serviceName of ['dev', 'test', 'orchestrator']) {
+    for (const serviceName of ['dev', 'test']) {
       const volumes = doc.services[serviceName]!.volumes!
       const rootIdx = volumes.findIndex(
         (v) => typeof v === 'string' && v.endsWith(':/app/node_modules:ro')

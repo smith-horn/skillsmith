@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.3
+
+- **Chore**: bump @wdio/mocha-framework from 9.29.0 to 9.29.1 (#1866)
 - **Internal**: Renamed the `audit:check-48-ack` opt-out marker comment in `telemetry-wrap.ts` to `audit:check-49-ack`, matching a governance-tooling relabel in the main repo (SMI-5684); no functional or user-visible change.
 
 ## v0.7.2

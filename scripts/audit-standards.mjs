@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util'
 import { createHash } from 'node:crypto'
 import { execSync, execFileSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
-import { dirname, extname, join, relative, resolve as resolvePath } from 'path'
+import { dirname, join, relative, resolve as resolvePath } from 'path'
 import {
   satisfies,
   extractCompletionIssues,
@@ -41,12 +41,22 @@ import {
   findServerJsonFieldLengthViolations,
   countUnreleasedEntries,
   isReleasePrepDiff,
+  parseGitCryptEncryptedFiles,
+  classifyGitCryptScanResult,
 } from './audit-standards-helpers.mjs'
+import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
 import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
+import { extractWhatsNewVersion } from './audit-readme-whats-new-helpers.mjs'
 import { evaluateInternalVersionCoherence } from './audit-internal-version-coherence-helpers.mjs'
+import {
+  findFloatingSupabaseCliInstalls,
+  findUnpinnedBareNpxCliInPackageJson,
+  findUnpinnedRufloMcpEntry,
+  findClaudeFlowReintroductions,
+} from './audit-cli-pin-drift-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
 import { PACKAGE_SPECS } from './lib/version-utils.ts'
 
@@ -496,6 +506,9 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // SMI-4463: quota-monitor — service-role cron, mirrors advance-notice-email
   // pattern (service-role header bypasses gateway JWT, server-side re-checks).
   'quota-monitor',
+  // SMI-5752: status-check — pg_cron-invoked synthetic status-page check,
+  // service-role internal. Mirrors webhook-heartbeat-monitor / quota-monitor.
+  'status-check',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
@@ -575,12 +588,11 @@ if (existsSync(MIGRATIONS_DIR)) {
 
     for (const file of migrationFiles) {
       const filePath = join(MIGRATIONS_DIR, file)
-      const contentBuf = readFileSync(filePath)
       // Skip git-crypt encrypted files (binary blobs starting with \x00GITCRYPT)
-      if (contentBuf[0] === 0x00 && contentBuf.toString('utf8', 1, 9) === 'GITCRYPT') {
+      if (isGitCryptEncrypted(filePath)) {
         continue
       }
-      const content = contentBuf.toString('utf8')
+      const content = readFileSync(filePath, 'utf8')
       const lines = content.split('\n')
       const headerLines = lines.slice(0, 10).join('\n')
 
@@ -1231,51 +1243,36 @@ console.log(`\n${BOLD}17. Email Consistency (SMI-2562)${RESET}`)
 // 18. No Double-Encrypted Files (SMI-2607)
 console.log(`\n${BOLD}18. No Double-Encrypted Files (SMI-2607)${RESET}`)
 try {
+  // SMI-5740: `git-crypt status`'s own output never contains the substring
+  // "locked" (confirmed against git-crypt's own source — status() reports
+  // purely from .gitattributes + blob-content inspection, neither of which
+  // needs the key). A genuinely-locked-but-installed checkout still runs this
+  // scan successfully and, since the smudge filter never ran, every real
+  // encrypted-scope file's on-disk bytes are ciphertext — indistinguishable
+  // from double-encryption on a per-file basis. classifyGitCryptScanResult
+  // detects "locked" instead by whether ALL encrypted-scope files are
+  // ciphertext (locked) vs. only SOME of them (a genuine per-file anomaly).
   const status = execSync('git-crypt status 2>/dev/null', { encoding: 'utf8' })
-  if (status.includes('locked')) {
-    pass('Skipped (git-crypt locked)')
+  const encryptedFiles = parseGitCryptEncryptedFiles(status)
+  const doubleEncrypted = encryptedFiles.filter((file) => isGitCryptEncrypted(file))
+  const result = classifyGitCryptScanResult(encryptedFiles.length, doubleEncrypted.length)
+
+  if (result === 'locked') {
+    warn(
+      `All ${encryptedFiles.length} git-crypt-scoped file(s) still show ciphertext on disk — ` +
+        'this repository appears locked (key not unlocked), not double-encrypted',
+      'Unlock git-crypt on this runner to exercise this check for real'
+    )
+  } else if (result === 'double-encrypted') {
+    fail(`${doubleEncrypted.length} double-encrypted files found:\n${doubleEncrypted.join('\n')}`)
   } else {
-    const encryptedFiles = status
-      .split('\n')
-      .filter((line) => line.includes('encrypted:') && !line.includes('NOT ENCRYPTED'))
-      .map((line) => line.trim().split(/\s+/).pop())
-      .filter(Boolean)
-
-    const binaryExtensions = [
-      '.svg',
-      '.png',
-      '.jpg',
-      '.jpeg',
-      '.gif',
-      '.ico',
-      '.woff',
-      '.woff2',
-      '.db',
-      '.wasm',
-    ]
-    const doubleEncrypted = []
-
-    for (const file of encryptedFiles) {
-      const ext = extname(file).toLowerCase()
-      if (binaryExtensions.includes(ext)) continue
-      try {
-        const fileType = execSync(`file -b "${file}"`, { encoding: 'utf8' }).trim()
-        if (fileType === 'data') {
-          doubleEncrypted.push(file)
-        }
-      } catch {
-        /* File might not exist on disk */
-      }
-    }
-
-    if (doubleEncrypted.length > 0) {
-      fail(`${doubleEncrypted.length} double-encrypted files found:\n${doubleEncrypted.join('\n')}`)
-    } else {
-      pass('No double-encrypted files')
-    }
+    pass('No double-encrypted files')
   }
 } catch {
-  pass('Skipped (git-crypt not installed)')
+  warn(
+    'Skipped (git-crypt not installed) — Check 18 did not run',
+    'Install git-crypt on this runner to exercise this check'
+  )
 }
 
 // 19. docs/ Directory Structure Guard (SMI-2607)
@@ -3934,16 +3931,7 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
         // would then fail-to-match and falsely fire "missing tag". Skip the
         // predicate in that case — quality-checks already enforces it.
         // Sentinel pattern mirrors vitest.config.root-tests.ts:gitCryptLocked.
-        const gitCryptLocked =
-          existsSync(AUTH_PATH) &&
-          (() => {
-            try {
-              const head = readFileSync(AUTH_PATH).subarray(0, 9).toString('binary')
-              return head.startsWith('\x00GITCRYPT')
-            } catch {
-              return false
-            }
-          })()
+        const gitCryptLocked = existsSync(AUTH_PATH) && isGitCryptEncrypted(AUTH_PATH)
         if (!existsSync(AUTH_PATH)) {
           warn(
             'Check 47 predicate 5: supabase/functions/_shared/auth.ts ' +
@@ -4625,13 +4613,12 @@ console.log(`\n${BOLD}52. SECURITY DEFINER anon-Grant Lockdown (SMI-5526)${RESET
     const migrationsForSecdefAudit = []
     for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'))) {
       const filePath = join(MIGRATIONS_DIR, file)
-      const contentBuf = readFileSync(filePath)
       // Skip git-crypt encrypted files (binary blobs starting with \x00GITCRYPT) —
       // same idiom as the Check 11 migration-header scan above.
-      if (contentBuf[0] === 0x00 && contentBuf.toString('utf8', 1, 9) === 'GITCRYPT') {
+      if (isGitCryptEncrypted(filePath)) {
         continue
       }
-      migrationsForSecdefAudit.push({ name: file, content: contentBuf.toString('utf8') })
+      migrationsForSecdefAudit.push({ name: file, content: readFileSync(filePath, 'utf8') })
     }
 
     const secdefViolations = auditSecdefAnonGrants(migrationsForSecdefAudit, {
@@ -4962,6 +4949,151 @@ console.log(
       `Check 58: all ${okCount} internal @skillsmith/*/@smith-horn/* dependency range(s) satisfy their workspace versions` +
         (danglingCount > 0 ? ` (${danglingCount} dangling-name warning(s) above)` : '')
     )
+  }
+}
+
+// Check 59: CLI-tool pin invariants (SMI-5746)
+//
+// Dependabot only scans package.json/package-lock.json, GitHub Actions
+// versions, and the root Dockerfile base image — it has no visibility into
+// standalone CLI-tool binaries pinned outside those manifests. This check is
+// the static-invariant half of the remediation (the other half is a weekly
+// drift-flagger cron, scripts/cli-pin-drift-check.sh). See
+// docs/internal/implementation/cli-tool-version-drift-remediation.md for the
+// full incident history (two real production incidents already traced to
+// this blind spot) and design rationale.
+//
+// Ships warn-level for a two-week shadow burn-in (matching the Check 49
+// convention), then promotes to fail-level — CHECK_59_SHADOW_END_DATE below,
+// same pattern as team-compliance-check-pr.yml's SHADOW_MODE_END_DATE.
+console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
+{
+  const CHECK_59_SHADOW_END_DATE = '2026-08-01'
+  const inShadow = new Date() < new Date(CHECK_59_SHADOW_END_DATE)
+  const report = inShadow ? warn : fail
+  const shadowSuffix = inShadow
+    ? ` [shadow mode through ${CHECK_59_SHADOW_END_DATE} — advisory only]`
+    : ''
+
+  let check59Violations = 0
+
+  const floatingSupabase = findFloatingSupabaseCliInstalls(join('.github', 'workflows'))
+  for (const f of floatingSupabase) {
+    check59Violations++
+    report(
+      `Check 59: ${f.file}:${f.line} — supabase/setup-cli step has ${
+        f.versionLine === null ? 'no version: input' : `version: ${f.versionLine}`
+      } (must pin an exact devDependency-derived version)${shadowSuffix}`,
+      `Read the pin from package.json's devDependencies.supabase into a step output and reference it — see the deploy-edge-functions.yml pattern.`
+    )
+  }
+
+  const unpinnedBareNpx = findUnpinnedBareNpxCliInPackageJson('.')
+  for (const f of unpinnedBareNpx) {
+    check59Violations++
+    report(
+      `Check 59: ${f.file} script "${f.script}" runs bare "npx ${f.tool}" with no matching devDependency pin${shadowSuffix}`,
+      `Add "${f.tool}" as an exact-pinned devDependency so npx resolves the local copy instead of registry-latest.`
+    )
+  }
+
+  const rufloFinding = findUnpinnedRufloMcpEntry('.mcp.json')
+  if (rufloFinding) {
+    check59Violations++
+    report(`Check 59: .mcp.json — ${rufloFinding.reason} (${rufloFinding.pkgArg})${shadowSuffix}`)
+  }
+
+  const claudeFlowHits = findClaudeFlowReintroductions(resolvePath('.'))
+  for (const f of claudeFlowHits) {
+    check59Violations++
+    report(
+      `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)${shadowSuffix}`,
+      `Replace with the local-bin form: node node_modules/ruflo/bin/ruflo.js ...`
+    )
+  }
+
+  if (check59Violations === 0) {
+    pass('Check 59: no CLI-tool pin invariant violations found')
+  }
+}
+
+// Check 60: README "What's New" Currency (SMI-5613)
+//
+// packages/{core,cli,mcp-server}/README.md each carry a manually-maintained
+// "## What's New in vX.Y.Z" section that ships verbatim to npmjs.com.
+// scripts/prepare-release.ts bumps package.json/CHANGELOG.md/version constants
+// on every release but never touches README.md — this drift has silently
+// recurred three times (April 2026, SMI-5612, SMI-5759) with no automated
+// detection. See docs/internal/implementation/readme-whats-new-drift-check.md.
+//
+// Scoped to the dynamic packages/* glob (like Checks 24/58), not a hardcoded
+// package list — a package with no "What's New" heading at all is silently
+// skipped (matching Check 24's asymmetry), since most packages legitimately
+// have no such section.
+//
+// Ships warn-level through a shadow burn-in (CHECK_60_SHADOW_END_DATE below,
+// matching Check 59's convention) — this is new detection logic without a
+// battle-tested regex/heading-format assumption across a real release cycle
+// yet, unlike Check 58's immediate fail(). Promotes to fail-level after.
+console.log(`\n${BOLD}Check 60: README "What's New" Currency (SMI-5613)${RESET}`)
+{
+  const CHECK_60_SHADOW_END_DATE = '2026-08-02'
+  const inShadow = new Date() < new Date(CHECK_60_SHADOW_END_DATE)
+  const report = inShadow ? warn : fail
+  const shadowSuffix = inShadow
+    ? ` [shadow mode through ${CHECK_60_SHADOW_END_DATE} — advisory only]`
+    : ''
+
+  // [skip-whats-new-check] — PR-body marker for a genuinely deliberate
+  // exception once at fail-tier. Boolean marker + required prose reason
+  // paragraph, mirrors [skip-changelog-check] / [skip-version-coherence-check]
+  // exactly. Registered in docs/internal/process/guards-and-opt-outs.md.
+  // Gated on !inShadow: during shadow mode `report` is already `warn`
+  // regardless, so checking the marker then would just add a confusing
+  // "acknowledged" suffix implying something was blocked when nothing was.
+  const SKIP_MARKER = '[skip-whats-new-check]'
+  const PR_BODY = process.env.PR_BODY || ''
+  const skipAcknowledged = !inShadow && PR_BODY.includes(SKIP_MARKER)
+  if (skipAcknowledged) {
+    console.log(
+      `::notice::${SKIP_MARKER} opt-out found in PR body — Check 60 will report findings but not fail.`
+    )
+  }
+
+  const pkgDirs = existsSync('packages')
+    ? readdirSync('packages').filter((d) => existsSync(join('packages', d, 'package.json')))
+    : []
+
+  let whatsNewIssues = 0
+  for (const d of pkgDirs) {
+    const pkgPath = join('packages', d, 'package.json')
+    const readmePath = join('packages', d, 'README.md')
+    if (!existsSync(readmePath)) continue
+
+    try {
+      const pkgVersion = JSON.parse(readFileSync(pkgPath, 'utf8')).version
+      if (!pkgVersion) continue
+
+      const readmeVersion = extractWhatsNewVersion(readFileSync(readmePath, 'utf8'))
+      if (readmeVersion === null) continue // No "What's New" section — not this check's concern
+
+      if (readmeVersion !== pkgVersion) {
+        whatsNewIssues++
+        const msg = `packages/${d}: README "What's New" section is stale — heading says v${readmeVersion} but package.json is at v${pkgVersion}${shadowSuffix}`
+        const fix = `Update ${readmePath}'s "What's New" section for v${pkgVersion}`
+        if (skipAcknowledged) {
+          warn(msg + ' — [skip-whats-new-check] acknowledged', fix)
+        } else {
+          report(msg, fix)
+        }
+      }
+    } catch (e) {
+      warn(`Could not check README "What's New" currency for packages/${d}: ` + e.message)
+    }
+  }
+
+  if (whatsNewIssues === 0) {
+    pass(`Check 60: all README "What's New" sections are current with their package.json versions`)
   }
 }
 

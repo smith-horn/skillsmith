@@ -1,6 +1,6 @@
 /**
  * SMI-964: SSO/RBAC/License Audit Event Validators
- * @module @skillsmith/enterprise/audit/AuditEventTypes.validators
+ * @module @smith-horn/enterprise/audit/AuditEventTypes.validators
  */
 
 import {

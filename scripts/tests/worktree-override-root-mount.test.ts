@@ -19,7 +19,7 @@
  * worktree-override-root-mount.helpers.ts.
  *
  * Cases:
- *   1  Darwin: root :ro mount emitted 3× (dev/test/orchestrator) + the two
+ *   1  Darwin: root :ro mount emitted 2× (dev/test) + the two
  *      root .vite/.vite-temp overlays; pre-existing per-package line still
  *      present (regression — root mount must not displace per-package mounts).
  *   2  Darwin, no root node_modules dir: no root-mount line; per-package
@@ -65,7 +65,7 @@ afterEach(() => {
 })
 
 describe('SMI-5626: root node_modules bind mount in the worktree override', () => {
-  it('Case 1 (Darwin): emits the root :ro mount 3× + both root overlays, per-package line intact', () => {
+  it('Case 1 (Darwin): emits the root :ro mount 2× + both root overlays, per-package line intact', () => {
     const repoRoot = h.makeGeneratorFixture({ withRootNodeModules: true })
     const worktreePath = join(repoRoot, '.worktrees', 'wt1')
     const { status, stdout } = h.generate({
@@ -77,19 +77,19 @@ describe('SMI-5626: root node_modules bind mount in the worktree override', () =
     expect(status).toBe(0)
 
     const rootMount = `      - ${repoRoot}/node_modules:/app/node_modules:ro`
-    // Once per service (dev/test/orchestrator).
-    expect(count(stdout, rootMount)).toBe(3)
+    // Once per service (dev/test).
+    expect(count(stdout, rootMount)).toBe(2)
 
     // Writable root cache overlays (NOT :ro), one per service.
     const viteOverlay = `      - ${repoRoot}/node_modules/.vite:/app/node_modules/.vite`
     const viteTempOverlay = `      - ${repoRoot}/node_modules/.vite-temp:/app/node_modules/.vite-temp`
-    expect(count(stdout, viteOverlay)).toBe(3)
-    expect(count(stdout, viteTempOverlay)).toBe(3)
+    expect(count(stdout, viteOverlay)).toBe(2)
+    expect(count(stdout, viteTempOverlay)).toBe(2)
     expect(stdout).not.toContain(`${viteOverlay}:ro`)
 
     // Regression: the pre-existing per-package :ro mount must still be present.
     const perPkg = `      - ${repoRoot}/packages/foo/node_modules:/app/packages/foo/node_modules:ro`
-    expect(count(stdout, perPkg)).toBe(3)
+    expect(count(stdout, perPkg)).toBe(2)
 
     // v5 marker label bumped (SMI-5650).
     expect(stdout).toContain('# SMI-4689/SMI-5560/SMI-5626/SMI-5650 bind mounts v5')
@@ -116,7 +116,7 @@ describe('SMI-5626: root node_modules bind mount in the worktree override', () =
 
     // Per-package mounts still emitted.
     const perPkg = `      - ${repoRoot}/packages/foo/node_modules:/app/packages/foo/node_modules:ro`
-    expect(count(stdout, perPkg)).toBe(3)
+    expect(count(stdout, perPkg)).toBe(2)
   })
 
   it('Case 3 (Linux): no volumes block at all (Darwin gate unchanged)', () => {

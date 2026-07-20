@@ -90,6 +90,28 @@ function isCanonicalMode() {
   return process.env.SKILLSMITH_EVAL_CANONICAL === 'true'
 }
 
+// SMI-5708 Item #14: distinguishes "no upstream to diff against" (genuine
+// no-op) from "upstream IS configured but resolution failed" (a real
+// failure), via git's own branch config rather than parsing `@{upstream}`'s
+// fragile/locale-dependent error text.
+function hasUpstreamConfigured() {
+  try {
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    execFileSync('git', ['config', '--get', `branch.${branch}.merge`], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Resolve the diff range to inspect.
  *
@@ -97,6 +119,14 @@ function isCanonicalMode() {
  *   <local_ref> <local_sha> <remote_ref> <remote_sha>
  * For new branches remote_sha is all zeros — fall back to the merge-base with
  * origin/main for those, since we still want to validate the ranking diff.
+ *
+ * SMI-5708 Item #14: used to fall through to a bare `return null` on ANY
+ * resolution failure (origin/main not fetched, `@{upstream}` unresolvable) —
+ * indistinguishable from a genuine no-op (delete-only push, no upstream
+ * configured), the same "silent pass when it can't verify" bug Item #2
+ * closed one layer down in `listChangedFiles()`. Now returns
+ * `{ ok: true, range }` (`range` may be `null` for a genuine no-op) or
+ * `{ ok: false, error }`, routed through the same `emit()` mechanism.
  */
 function resolveDiffRange() {
   // Try stdin first (husky / pre-push replay).
@@ -107,16 +137,29 @@ function resolveDiffRange() {
     // No stdin available (interactive run, tests, etc.) — fall through.
   }
 
+  // SMI-5708 Item #14 (Codex round-2 finding): a resolution failure on ANY
+  // ref must take absolute priority over a range resolved on a DIFFERENT
+  // ref in the same multi-ref push, regardless of which line comes first —
+  // "we couldn't fully verify part of what's being pushed" must not be
+  // silently overridden by an unrelated ref's clean resolution. So a
+  // successful range is stored (first one wins if there are several), not
+  // returned immediately, and `lastError` is checked ahead of it once the
+  // loop finishes.
+  let lastError = null
+  let resolvedRange = null
+  let sawParseableLine = false
   const lines = stdinData.split('\n').filter((l) => l.trim().length > 0)
   for (const line of lines) {
     const parts = line.split(/\s+/)
     if (parts.length >= 4) {
+      sawParseableLine = true
       const localSha = parts[1]
       const remoteSha = parts[3]
       const zeros = '0000000000000000000000000000000000000000'
       if (localSha === zeros) {
-        // Delete-only push, nothing to validate.
-        return null
+        // Delete-only for THIS ref — a multi-ref push has one line per ref,
+        // so this doesn't mean the whole push has nothing to diff.
+        continue
       }
       if (remoteSha === zeros) {
         // New branch: diff against origin/main merge-base.
@@ -125,17 +168,32 @@ function resolveDiffRange() {
             cwd: REPO_ROOT,
             encoding: 'utf8',
           }).trim()
-          return { base, head: localSha }
-        } catch {
-          // origin/main not fetched? Fall through.
+          if (resolvedRange === null) resolvedRange = { base, head: localSha }
+        } catch (err) {
+          // origin/main not fetched (or any other merge-base failure) —
+          // genuine resolution failure, not a no-op.
+          lastError = `merge-base origin/main failed: ${err instanceof Error ? err.message : String(err)}`
         }
-      } else {
-        return { base: remoteSha, head: localSha }
+      } else if (resolvedRange === null) {
+        resolvedRange = { base: remoteSha, head: localSha }
       }
     }
   }
 
-  // Fallback: compare HEAD to upstream tracking branch if set.
+  // A recorded failure from ANY line always wins, even over a range
+  // successfully resolved on a different line in the same push.
+  if (lastError) return { ok: false, error: lastError }
+  if (resolvedRange) return { ok: true, range: resolvedRange }
+  // At least one usable line existed and all of them were delete-only —
+  // a genuine no-op, not a fallback scenario (don't go compare against the
+  // upstream tracking branch when the push itself already said "delete-only").
+  if (sawParseableLine) return { ok: true, range: null }
+
+  // Fallback: no usable stdin data at all (interactive run, tests, etc.).
+  if (!hasUpstreamConfigured()) {
+    return { ok: true, range: null }
+  }
+
   try {
     const upstream = execFileSync('git', ['rev-parse', '--abbrev-ref', '@{upstream}'], {
       cwd: REPO_ROOT,
@@ -146,9 +204,12 @@ function resolveDiffRange() {
       cwd: REPO_ROOT,
       encoding: 'utf8',
     }).trim()
-    return { base: upstream, head }
-  } catch {
-    return null
+    return { ok: true, range: { base: upstream, head } }
+  } catch (err) {
+    return {
+      ok: false,
+      error: `upstream resolution failed despite an upstream being configured: ${err instanceof Error ? err.message : String(err)}`,
+    }
   }
 }
 
@@ -288,8 +349,30 @@ function emit(failure) {
 }
 
 function main() {
-  const range = resolveDiffRange()
-  const diffResult = listChangedFiles(range)
+  const rangeResult = resolveDiffRange()
+
+  // SMI-5708 Item #14: resolveDiffRange() itself failing (origin/main not
+  // fetched, upstream configured but unresolvable) is distinct from its
+  // genuine no-op cases (delete-only push, no upstream at all) -- route it
+  // through the same emit() mechanism as listChangedFiles()'s own failure
+  // case just below, rather than silently passing a bare `null` range
+  // through to listChangedFiles(), which would treat it identically to an
+  // intentional no-op.
+  if (!rangeResult.ok) {
+    emit(
+      [
+        'Failed to resolve the git diff range needed to check ranking/baseline freshness',
+        '(this is a range-resolution failure, not "nothing to check").',
+        `Cause: ${rangeResult.error}`,
+        '',
+        'The validator cannot verify whether ranking-relevant files changed, so it',
+        'cannot confirm baseline.json is fresh.',
+      ].join('\n')
+    )
+    return
+  }
+
+  const diffResult = listChangedFiles(rangeResult.range)
 
   // Diff resolution failure -- distinct from range === null's genuine no-op.
   // Route through the existing emit() dual-mode helper: canonical mode

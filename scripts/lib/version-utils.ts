@@ -139,11 +139,13 @@ export const CORE_DEPENDENTS = [
  *
  * Replaces the older core-only `updateCoreDependency`. The natural
  * predicate "skip if dep key is not in the bump map" correctly handles
- * peerDependencies with `"*"` (e.g. cli → @skillsmith/enterprise: "*").
- * The `"*"` range maps to a key (@skillsmith/enterprise) that does not
- * exist in any PACKAGE_SPECS entry — the enterprise package's npm name is
- * @smith-horn/enterprise (SMI-5120) — so it's never in the bump map and is
- * naturally skipped.
+ * peerDependencies with `"*"` (e.g. cli → @smith-horn/enterprise: "*") —
+ * but only when that call's `plans` doesn't include enterprise. Since
+ * SMI-5120 added `@smith-horn/enterprise` to PACKAGE_SPECS (it publishes
+ * and gets bumped like any other target), a `plans` array that DOES
+ * include an enterprise bump will correctly rewrite this range to
+ * `^<newVersion>` rather than leaving it a no-op — the bump map is keyed
+ * off the current call's `plans`, not off PACKAGE_SPECS membership.
  */
 export function updateWorkspaceDependencies(
   plans: Array<{ spec: PackageSpec; newVersion: string }>

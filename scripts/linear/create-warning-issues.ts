@@ -157,7 +157,7 @@ Split validation schemas and webhook handlers.
     labels: ['tech-debt', 'refactor'],
   },
   {
-    title: 'Split large files in @skillsmith/enterprise (4 files > 500 lines)',
+    title: 'Split large files in @smith-horn/enterprise (4 files > 500 lines)',
     description: `## Problem
 Large files in \`packages/enterprise/src\`:
 
@@ -217,18 +217,16 @@ Extract webview HTML generation and message handlers.
   {
     title: 'Update scripts to use Docker for npm commands',
     description: `## Problem
-4 scripts use local npm commands instead of Docker:
+This script uses local npm commands instead of Docker:
 
 - \`scripts/run-benchmarks.sh\`
-- \`scripts/run-phase2e-swarm.sh\`
-- \`scripts/run-security-swarm.sh\`
 
 ## Solution
 Update to use \`docker exec skillsmith-dev-1 npm ...\`
 
 ## Acceptance Criteria
-- [ ] All scripts use Docker commands
-- [ ] Scripts work correctly in Docker
+- [ ] Script uses Docker commands
+- [ ] Script works correctly in Docker
 - [ ] Documentation updated`,
     priority: 3,
     labels: ['tech-debt', 'docker'],
