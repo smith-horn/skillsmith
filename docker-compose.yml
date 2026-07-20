@@ -4,6 +4,13 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev
+      # SMI-5750: positive ownership marker so prune-orphaned-docker-volumes.sh
+      # can distinguish a Skillsmith-built `<project>-dev` image from another
+      # repo's generically-shaped `dev` service image sharing the same Compose
+      # conventions. Applies at build time only -- pre-existing images stay
+      # unlabeled (report-only "UNCONFIRMED ownership" until --include-unlabeled).
+      labels:
+        app.skillsmith.owned: 'true'
     container_name: skillsmith-dev-1
     # SMI-5245: auto-recover the long-lived dev container after a Docker daemon /
     # machine restart so the doc-retrieval + skillsmith MCP servers (launched via
@@ -69,3 +76,11 @@ services:
 
 volumes:
   node_modules:
+    # SMI-5750: positive ownership marker so prune-orphaned-docker-volumes.sh
+    # can distinguish a Skillsmith-owned `<project>_node_modules` volume from
+    # another repo's generically-shaped `node_modules` volume sharing the same
+    # Compose conventions. Applies at creation time only -- Compose does not
+    # recreate an existing named volume when its label config changes, so this
+    # does not disturb any currently-live worktree's volume.
+    labels:
+      app.skillsmith.owned: 'true'

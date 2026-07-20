@@ -275,6 +275,8 @@ docker info
 docker system df                        # see what's reclaimable
 docker system prune -a -f --volumes     # removes unused images/volumes/build cache/networks
 df -h / /System/Volumes/Data            # confirm space recovered
+
+# Routine cleanup (when Docker is healthy): `./scripts/prune-orphaned-docker-volumes.sh` is the safe, concurrency-safe targeted path; reserve the aggressive `docker system prune -a -f --volumes` for the incident-recovery scenario above.
 ```
 
 **Caveat**: `docker system prune -a -f --volumes` removes ANY volume/image not attached to a currently-running container — including cached `node_modules` volumes for worktrees that exist but whose containers are temporarily stopped, forcing a slower next start (native-module rebuild) for those. Safe to run without hesitation only when Docker Desktop itself is already down for everyone (no live containers to disrupt, as in this failure mode). If Docker is otherwise healthy and you just want routine cleanup, prefer `./scripts/remove-worktree.sh --prune` (safe subset: networks + dangling images + build cache) and only reach for the aggressive `--volumes` prune when you've confirmed via `docker ps` that no other worktree session needs to resume.
