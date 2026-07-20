@@ -102,6 +102,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   skills-recommend
   skills-search
   stats
+  status-check
   stripe-webhook
   team-compliance-check
   telemetry-consent

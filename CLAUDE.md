@@ -233,6 +233,7 @@ npx supabase functions deploy auth-device-code --no-verify-jwt
 npx supabase functions deploy auth-device-token --no-verify-jwt
 npx supabase functions deploy quota-monitor --no-verify-jwt
 npx supabase functions deploy webhook-heartbeat-monitor --no-verify-jwt
+npx supabase functions deploy status-check --no-verify-jwt
 npx supabase functions deploy audit-unsubscribe --no-verify-jwt
 npx supabase functions deploy team-compliance-check --no-verify-jwt
 npx supabase functions deploy telemetry-consent --no-verify-jwt
@@ -244,7 +245,7 @@ npx supabase functions deploy telemetry-consent --no-verify-jwt
 
 ## Monitoring & Alerts
 
-High-cadence: Skill Indexer (maintenance 00:00 UTC + recheck 03:00 UTC + discovery in 3 hourly phase-slots per 6h cycle at 06/07/08, 12/13/14, 18/19/20 UTC per SMI-4870, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, Supabase pg_cron — SMI-4798; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Liveness-alert: weekly retrieval-eval cron also runs a telemetry-feed stale-detection backstop that opens a deduped GitHub issue (`telemetry-liveness` label) when the local `retrieval_events` feed hasn't produced a row in >N days (shadow-default). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
+High-cadence: Skill Indexer (maintenance 00:00 UTC + recheck 03:00 UTC + discovery in 3 hourly phase-slots per 6h cycle at 06/07/08, 12/13/14, 18/19/20 UTC per SMI-4870, `indexer`), Metadata Refresh (every 4h :30, `skills-refresh-metadata`), Quota Monitor (hourly, Supabase pg_cron — SMI-4798; max quota-warning delay is 60 min), Edge Function Deploy (on merge to main, GHA). Public Status Page (SMI-5752): `status-check` every 5 min (`*/5 * * * *`, writes `status_checks`), `status-daily-rollup` daily 00:15 UTC (aggregates the previous UTC day into `status_daily_rollups`), `status-checks-purge` daily 00:20 UTC (drops `status_checks` rows older than 100 days — `status_daily_rollups` is the durable record). Liveness-alert: weekly retrieval-eval cron also runs a telemetry-feed stale-detection backstop that opens a deduped GitHub issue (`telemetry-liveness` label) when the local `retrieval_events` feed hasn't produced a row in >N days (shadow-default). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
 
 ---
 
