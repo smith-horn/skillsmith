@@ -125,9 +125,11 @@ cleanup_worktree_docker_resources() {
     # Compose-equivalent project name: lowercase + drop chars outside
     # [a-z0-9_-]. Matches docker compose v2 ProjectName sanitization.
     # Plain `basename` would diverge for dirs containing uppercase or
-    # special chars.
+    # special chars. sanitize_project_name() (_lib.sh) is the single
+    # canonical implementation -- shared with
+    # prune-orphaned-docker-volumes.sh so the two can't drift (SMI-5750).
     local project_name
-    project_name="$(basename "$worktree_path" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g')"
+    project_name="$(sanitize_project_name "$(basename "$worktree_path")")"
 
     # Path A: prefer compose-managed teardown when the override file exists.
     # `down --volumes --rmi local` removes named volumes declared in compose

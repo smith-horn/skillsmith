@@ -112,20 +112,16 @@ else
     main_repo="$repo_root"
 fi
 
-# sanitize(name): IDENTICAL sanitization result to remove-worktree.sh:121's
-# project_name derivation (docker compose v2 ProjectName sanitization) --
-# lowercase, then strip any char outside [a-z0-9_-]. The trailing '\n' in the
-# printf (absent from remove-worktree.sh:121, which only ever captures one
-# value per invocation) is required here: derive_protected() calls this in a
-# loop and concatenates every call's stdout into one command substitution. On
-# BSD sed (macOS), a sed input with no trailing newline produces output with
-# no trailing newline either, so without the '\n' every sanitized name would
-# be glued onto the next one -- e.g. "foo-bar" + "baz-qux" -> "foo-barbaz-qux"
-# on one line -- silently breaking is_protected()'s exact-line grep -qxF match
-# for every case with more than one worktree registered (i.e. almost always).
-sanitize() {
-    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g'
-}
+# sanitize_project_name() (_lib.sh) is the single canonical sanitization
+# implementation -- shared with remove-worktree.sh's project_name derivation
+# so the two can never drift apart (SMI-5750 governance fix; a prior version
+# of this script had its own verbatim copy). Its trailing '\n' matters here
+# specifically: derive_protected() below calls it in a loop and concatenates
+# every call's stdout into one command substitution -- without a guaranteed
+# trailing newline per call, BSD sed (macOS) would silently glue consecutive
+# sanitized names together on one line (e.g. "foo-bar" + "baz-qux" ->
+# "foo-barbaz-qux"), breaking is_protected()'s exact-line grep -qxF match for
+# every case with more than one worktree registered (i.e. almost always).
 
 # derive_protected(): canonical enumeration via `git worktree list
 # --porcelain` (covers out-of-tree worktrees -- create-worktree.sh:49-52),
@@ -137,14 +133,14 @@ derive_protected() {
     while IFS= read -r wt_path; do
         [[ -z "$wt_path" ]] && continue
         base="$(basename "$wt_path")"
-        sanitize "$base"
+        sanitize_project_name "$base"
     done < <(git -C "$main_repo" worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2 }')
 
     if [[ -d "$main_repo/.worktrees" ]]; then
         local d
         for d in "$main_repo"/.worktrees/*/; do
             [[ -d "$d" ]] || continue
-            sanitize "$(basename "${d%/}")"
+            sanitize_project_name "$(basename "${d%/}")"
         done
     fi
 }
