@@ -13,9 +13,13 @@
 
 export const SOURCE_PATTERNS = [
   // SMI-4446: .astro / .mdx are first-class implementation surfaces (Astro pages, content collections)
-  /^packages\/.*\.(ts|tsx|js|jsx|astro|mdx)$/,
+  // SMI-5767: mjs|cjs added — packages/**/*.config.mjs (e.g. astro.config.mjs) and other
+  // ESM/CJS-extension source files were previously misclassified as "no source changes"
+  /^packages\/.*\.(ts|tsx|js|jsx|mjs|cjs|astro|mdx)$/,
   // SMI-5603: apps/ (e.g. apps/api-proxy) is a first-class implementation surface
-  /^apps\/.*\.(ts|tsx|js|jsx)$/,
+  // SMI-5767: mjs|cjs added for parity with packages/ above (no live apps/ files affected
+  // today, but the same misclassification risk applies the moment one is added)
+  /^apps\/.*\.(ts|tsx|js|jsx|mjs|cjs)$/,
   /^supabase\/functions\/.*\.(ts|js)$/,
   /^scripts\/.*\.(ts|js|mjs|sh)$/,
   // SMI-5627: extensionless git-hook files under .husky/ (post-merge,
@@ -35,6 +39,10 @@ export const SOURCE_PATTERNS = [
   /^README\.md$/,
 ]
 
-export const TEST_PATTERNS = [/\.test\.(ts|tsx|js)$/, /\.spec\.(ts|tsx|js)$/]
+// SMI-5767: mjs|cjs added alongside SOURCE_PATTERNS' mjs|cjs support above — without this,
+// a *.test.mjs/*.spec.cjs file would match SOURCE_PATTERNS as "source" and NOT match here as
+// "test", so EXCLUDED_FROM_SOURCE (verify-implementation.ts) wouldn't exclude it: a test-only
+// change would misclassify as a real source change.
+export const TEST_PATTERNS = [/\.test\.(ts|tsx|js|mjs|cjs)$/, /\.spec\.(ts|tsx|js|mjs|cjs)$/]
 
 export const DOCS_PATTERNS = [/\.md$/, /^\.claude\//, /^docs\//]
