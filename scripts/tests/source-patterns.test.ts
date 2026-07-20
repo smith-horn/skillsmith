@@ -70,13 +70,30 @@ describe('SMI-4446: SOURCE_PATTERNS classification', () => {
     })
   })
 
+  describe('SMI-5767: packages/** .mjs and .cjs (PR #1965 false-positive)', () => {
+    it.each([
+      // The literal file that false-fired verify-implementation on PR #1965
+      ['packages/website/astro.config.mjs', true],
+      ['packages/website/lighthouserc.cjs', true],
+      ['packages/website/src/lib/sitemap-lastmod.mjs', true],
+      ['packages/vscode-extension/.vscode-test.mjs', true],
+      ['packages/vscode-extension/scripts/validate-vsix.mjs', true],
+    ])('%s → isSource=%s', (path, expected) => {
+      expect(isSource(path)).toBe(expected)
+    })
+  })
+
   describe('apps/ surface (new in SMI-5603)', () => {
     it.each([
       ['apps/api-proxy/src/index.ts', true],
       ['apps/api-proxy/src/handlers/proxy.tsx', true],
       ['apps/api-proxy/lib/config.js', true],
       ['apps/api-proxy/lib/routes.jsx', true],
-      // NOT source: only ts/tsx/js/jsx match — no astro/mdx support for apps/
+      // SMI-5767: mjs|cjs added for parity with packages/ — no live file today, but the
+      // same misclassification risk applies the moment one is added
+      ['apps/api-proxy/vite.config.mjs', true],
+      ['apps/api-proxy/lib/legacy.cjs', true],
+      // NOT source: only ts/tsx/js/jsx/mjs/cjs match — no astro/mdx support for apps/
       ['apps/api-proxy/README.md', false],
       ['apps/api-proxy/docs/notes.mdx', false],
       ['apps/api-proxy/pages/index.astro', false],
@@ -136,6 +153,15 @@ describe('TEST_PATTERNS (regression guard — unchanged by SMI-4446)', () => {
     ['scripts/tests/source-patterns.test.ts', true],
     ['packages/cli/src/index.ts', false],
     ['packages/cli/README.md', false],
+  ])('%s → isTest=%s', (path, expected) => {
+    expect(isTest(path)).toBe(expected)
+  })
+})
+
+describe('SMI-5767: TEST_PATTERNS mjs|cjs parity with SOURCE_PATTERNS', () => {
+  it.each([
+    ['packages/website/e2e.spec.mjs', true],
+    ['packages/website/foo.test.cjs', true],
   ])('%s → isTest=%s', (path, expected) => {
     expect(isTest(path)).toBe(expected)
   })

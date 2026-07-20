@@ -26,6 +26,19 @@ describe('SMI-3541: verify-implementation', () => {
       expect(categorizeFile('scripts/tests/classify-changes.test.ts')).toBe('test')
     })
 
+    it('should identify packages/**/*.mjs and *.cjs as source, not test-only (SMI-5767)', () => {
+      // The literal PR #1965 false-positive: a real bug fix to a .mjs config file was
+      // flagged "contains no source code changes."
+      expect(categorizeFile('packages/website/astro.config.mjs')).toBe('source')
+      expect(categorizeFile('packages/website/lighthouserc.cjs')).toBe('source')
+      // Regression guard for the gap plan-review caught: adding mjs|cjs to SOURCE_PATTERNS
+      // without adding it to TEST_PATTERNS would misclassify a test-only .spec.mjs/.test.cjs
+      // change as 'source' (EXCLUDED_FROM_SOURCE wouldn't catch it) — letting a test-only
+      // commit trip hasSourceCodeChanges()/verify-implementation's source-change verdict.
+      expect(categorizeFile('packages/website/e2e.spec.mjs')).toBe('test')
+      expect(categorizeFile('packages/website/foo.test.cjs')).toBe('test')
+    })
+
     it('should identify docs files', () => {
       expect(categorizeFile('README.md')).toBe('docs')
       expect(categorizeFile('docs/internal/architecture/standards.md')).toBe('docs')
