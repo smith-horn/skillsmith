@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.11.3
+
+- **Chore**: Migrate remaining stale references to ruflo v3 (#1952)
+- **Chore**: bump the opentelemetry group across 1 directory with 8 updates (#1862)
 - **Fix**: doc-comments in `telemetry/tracer.ts`/`tracer-imports.ts` referencing the optional enterprise instrumentation dependency now name the real package, `@smith-horn/enterprise` (SMI-5738; no behavior change here, see `@skillsmith/mcp-server`/`@skillsmith/cli` for the actual runtime import fix)
 - **Feature**: new `@skillsmith/core/security/scanner` export subpath, exposing `stripInvisible`/`confusableSkeleton`/`CONFUSABLES` for reuse outside the package (SMI-4703) — enables `@skillsmith/doc-retrieval-mcp`'s memory-write injection scanner to reuse the same confusable/homoglyph normalization primitives `SecurityScanner.exec.ts` uses, instead of reimplementing them
 - **Feature**: new `getOrCreateInstallId()` in `config/device-identity.ts` — a stable per-install telemetry identifier (`sha256(randomUUID())`), generated and persisted unconditionally regardless of legacy telemetry env-gating (SMI-5531)
