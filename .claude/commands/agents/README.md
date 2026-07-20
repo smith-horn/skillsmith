@@ -1,6 +1,6 @@
 # Agents Commands
 
-Commands for agents operations in Claude Flow.
+Commands for agents operations in Ruflo.
 
 ## Available Commands
 

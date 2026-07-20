@@ -1,6 +1,6 @@
 # Monitoring Commands
 
-Commands for monitoring operations in Claude Flow.
+Commands for monitoring operations in Ruflo.
 
 ## Available Commands
 

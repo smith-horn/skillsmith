@@ -58,7 +58,7 @@ mcp__claude-flow__task_orchestrate {
 }
 
 // Coordinate with swarm for parallel planning
-mcp__claude-flow__swarm_init {
+mcp__ruflo__swarm_init {
   topology: "hierarchical",
   maxAgents: 5
 }

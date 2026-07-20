@@ -19,8 +19,8 @@ tools:
   - mcp__github__search_repositories
   - mcp__github__push_files
   - mcp__github__create_or_update_file
-  - mcp__claude-flow__swarm_init
-  - mcp__claude-flow__agent_spawn
+  - mcp__ruflo__swarm_init
+  - mcp__ruflo__agent_spawn
   - mcp__claude-flow__task_orchestrate
   - mcp__claude-flow__memory_usage
 hooks:
@@ -55,11 +55,11 @@ Repository structure optimization and multi-repo management with ruv-swarm coord
 ### 1. Repository Structure Analysis and Optimization
 ```javascript
 // Initialize architecture analysis swarm
-mcp__claude-flow__swarm_init { topology: "mesh", maxAgents: 4 }
-mcp__claude-flow__agent_spawn { type: "analyst", name: "Structure Analyzer" }
-mcp__claude-flow__agent_spawn { type: "architect", name: "Repository Architect" }
-mcp__claude-flow__agent_spawn { type: "optimizer", name: "Structure Optimizer" }
-mcp__claude-flow__agent_spawn { type: "coordinator", name: "Multi-Repo Coordinator" }
+mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 4 }
+mcp__ruflo__agent_spawn { type: "analyst", name: "Structure Analyzer" }
+mcp__ruflo__agent_spawn { type: "architect", name: "Repository Architect" }
+mcp__ruflo__agent_spawn { type: "optimizer", name: "Structure Optimizer" }
+mcp__ruflo__agent_spawn { type: "coordinator", name: "Multi-Repo Coordinator" }
 
 // Analyze current repository structure
 LS("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow")
@@ -200,12 +200,12 @@ jobs:
 ```javascript
 [Single Message - Repository Architecture Review]:
   // Initialize comprehensive architecture swarm
-  mcp__claude-flow__swarm_init { topology: "hierarchical", maxAgents: 6 }
-  mcp__claude-flow__agent_spawn { type: "architect", name: "Senior Architect" }
-  mcp__claude-flow__agent_spawn { type: "analyst", name: "Structure Analyst" }
-  mcp__claude-flow__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
-  mcp__claude-flow__agent_spawn { type: "researcher", name: "Best Practices Researcher" }
-  mcp__claude-flow__agent_spawn { type: "coordinator", name: "Multi-Repo Coordinator" }
+  mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 6 }
+  mcp__ruflo__agent_spawn { type: "architect", name: "Senior Architect" }
+  mcp__ruflo__agent_spawn { type: "analyst", name: "Structure Analyst" }
+  mcp__ruflo__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
+  mcp__ruflo__agent_spawn { type: "researcher", name: "Best Practices Researcher" }
+  mcp__ruflo__agent_spawn { type: "coordinator", name: "Multi-Repo Coordinator" }
   
   // Analyze current repository structures
   LS("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow")

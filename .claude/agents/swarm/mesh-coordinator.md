@@ -15,7 +15,7 @@ hooks:
   pre: |
     echo "🌐 Mesh Coordinator establishing peer network: $TASK"
     # Initialize mesh topology
-    mcp__claude-flow__swarm_init mesh --maxAgents=12 --strategy=distributed
+    mcp__ruflo__swarm_init mesh --maxAgents=12 --strategy=distributed
     # Set up peer discovery and communication
     mcp__claude-flow__daa_communication --from="mesh-coordinator" --to="all" --message="{\"type\":\"network_init\",\"topology\":\"mesh\"}"
     # Initialize consensus mechanisms
@@ -25,9 +25,9 @@ hooks:
   post: |
     echo "✨ Mesh coordination complete - network resilient"
     # Generate network analysis
-    mcp__claude-flow__performance_report --format=json --timeframe=24h
+    mcp__ruflo__performance_report --format=json --timeframe=24h
     # Store final network metrics
-    mcp__claude-flow__memory_usage store "mesh:metrics:${TASK_ID}" "$(mcp__claude-flow__swarm_status)" --namespace=mesh
+    mcp__claude-flow__memory_usage store "mesh:metrics:${TASK_ID}" "$(mcp__ruflo__swarm_status)" --namespace=mesh
     # Graceful network shutdown
     mcp__claude-flow__daa_communication --from="mesh-coordinator" --to="all" --message="{\"type\":\"network_shutdown\",\"reason\":\"task_complete\"}"
 ---
@@ -190,7 +190,7 @@ class TaskAuction:
 ### Network Management
 ```bash
 # Initialize mesh network
-mcp__claude-flow__swarm_init mesh --maxAgents=12 --strategy=distributed
+mcp__ruflo__swarm_init mesh --maxAgents=12 --strategy=distributed
 
 # Establish peer connections
 mcp__claude-flow__daa_communication --from="node-1" --to="node-2" --message="{\"type\":\"peer_connect\"}"
@@ -208,7 +208,7 @@ mcp__claude-flow__daa_consensus --agents="all" --proposal="{\"task_assignment\":
 mcp__claude-flow__daa_consensus --agents="current" --vote="approve" --proposal_id="prop-123"
 
 # Monitor consensus status
-mcp__claude-flow__neural_patterns analyze --operation="consensus_tracking" --outcome="decision_approved"
+mcp__ruflo__neural_patterns analyze --operation="consensus_tracking" --outcome="decision_approved"
 ```
 
 ### Fault Tolerance

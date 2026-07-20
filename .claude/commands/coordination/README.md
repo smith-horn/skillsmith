@@ -1,6 +1,6 @@
 # Coordination Commands
 
-Commands for coordination operations in Claude Flow.
+Commands for coordination operations in Ruflo.
 
 ## Available Commands
 

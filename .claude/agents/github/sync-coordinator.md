@@ -10,11 +10,11 @@ tools:
   - mcp__github__create_pull_request
   - mcp__github__search_repositories
   - mcp__github__list_repositories
-  - mcp__claude-flow__swarm_init
-  - mcp__claude-flow__agent_spawn
+  - mcp__ruflo__swarm_init
+  - mcp__ruflo__agent_spawn
   - mcp__claude-flow__task_orchestrate
   - mcp__claude-flow__memory_usage
-  - mcp__claude-flow__coordination_sync
+  - mcp__ruflo__coordination_sync
   - mcp__claude-flow__load_balance
   - TodoWrite
   - TodoRead
@@ -60,11 +60,11 @@ Multi-package synchronization and version alignment with ruv-swarm coordination 
 ### 1. Synchronize Package Dependencies
 ```javascript
 // Initialize sync coordination swarm
-mcp__claude-flow__swarm_init { topology: "hierarchical", maxAgents: 5 }
-mcp__claude-flow__agent_spawn { type: "coordinator", name: "Sync Coordinator" }
-mcp__claude-flow__agent_spawn { type: "analyst", name: "Dependency Analyzer" }
-mcp__claude-flow__agent_spawn { type: "coder", name: "Integration Developer" }
-mcp__claude-flow__agent_spawn { type: "tester", name: "Validation Engineer" }
+mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 5 }
+mcp__ruflo__agent_spawn { type: "coordinator", name: "Sync Coordinator" }
+mcp__ruflo__agent_spawn { type: "analyst", name: "Dependency Analyzer" }
+mcp__ruflo__agent_spawn { type: "coder", name: "Integration Developer" }
+mcp__ruflo__agent_spawn { type: "tester", name: "Validation Engineer" }
 
 // Analyze current package states
 Read("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow/package.json")
@@ -183,12 +183,12 @@ This integration uses ruv-swarm agents for:
 ```javascript
 [Single Message - Complete Synchronization]:
   // Initialize comprehensive sync swarm
-  mcp__claude-flow__swarm_init { topology: "mesh", maxAgents: 6 }
-  mcp__claude-flow__agent_spawn { type: "coordinator", name: "Master Sync Coordinator" }
-  mcp__claude-flow__agent_spawn { type: "analyst", name: "Package Analyzer" }
-  mcp__claude-flow__agent_spawn { type: "coder", name: "Integration Coder" }
-  mcp__claude-flow__agent_spawn { type: "tester", name: "Validation Tester" }
-  mcp__claude-flow__agent_spawn { type: "reviewer", name: "Quality Reviewer" }
+  mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 6 }
+  mcp__ruflo__agent_spawn { type: "coordinator", name: "Master Sync Coordinator" }
+  mcp__ruflo__agent_spawn { type: "analyst", name: "Package Analyzer" }
+  mcp__ruflo__agent_spawn { type: "coder", name: "Integration Coder" }
+  mcp__ruflo__agent_spawn { type: "tester", name: "Validation Tester" }
+  mcp__ruflo__agent_spawn { type: "reviewer", name: "Quality Reviewer" }
   
   // Read current state of both packages
   Read("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow/package.json")
@@ -327,13 +327,13 @@ const testMatrix = {
 ### Multi-Agent Coordination Architecture
 ```bash
 # Initialize comprehensive synchronization swarm
-mcp__claude-flow__swarm_init { topology: "hierarchical", maxAgents: 10 }
-mcp__claude-flow__agent_spawn { type: "coordinator", name: "Master Sync Coordinator" }
-mcp__claude-flow__agent_spawn { type: "analyst", name: "Dependency Analyzer" }
-mcp__claude-flow__agent_spawn { type: "coder", name: "Integration Developer" }
-mcp__claude-flow__agent_spawn { type: "tester", name: "Validation Engineer" }
-mcp__claude-flow__agent_spawn { type: "reviewer", name: "Quality Assurance" }
-mcp__claude-flow__agent_spawn { type: "monitor", name: "Sync Monitor" }
+mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 10 }
+mcp__ruflo__agent_spawn { type: "coordinator", name: "Master Sync Coordinator" }
+mcp__ruflo__agent_spawn { type: "analyst", name: "Dependency Analyzer" }
+mcp__ruflo__agent_spawn { type: "coder", name: "Integration Developer" }
+mcp__ruflo__agent_spawn { type: "tester", name: "Validation Engineer" }
+mcp__ruflo__agent_spawn { type: "reviewer", name: "Quality Assurance" }
+mcp__ruflo__agent_spawn { type: "monitor", name: "Sync Monitor" }
 
 # Orchestrate complex synchronization workflow
 mcp__claude-flow__task_orchestrate {
@@ -415,13 +415,13 @@ mcp__claude-flow__memory_usage {
 ### Swarm-Coordinated Error Recovery
 ```bash
 # Initialize error recovery swarm
-mcp__claude-flow__swarm_init { topology: "star", maxAgents: 5 }
-mcp__claude-flow__agent_spawn { type: "monitor", name: "Error Monitor" }
-mcp__claude-flow__agent_spawn { type: "analyst", name: "Failure Analyzer" }
-mcp__claude-flow__agent_spawn { type: "coder", name: "Recovery Developer" }
+mcp__ruflo__swarm_init { topology: "star", maxAgents: 5 }
+mcp__ruflo__agent_spawn { type: "monitor", name: "Error Monitor" }
+mcp__ruflo__agent_spawn { type: "analyst", name: "Failure Analyzer" }
+mcp__ruflo__agent_spawn { type: "coder", name: "Recovery Developer" }
 
 # Coordinate recovery procedures
-mcp__claude-flow__coordination_sync { swarmId: "error-recovery-swarm" }
+mcp__ruflo__coordination_sync { swarmId: "error-recovery-swarm" }
 
 # Store recovery state
 mcp__claude-flow__memory_usage {

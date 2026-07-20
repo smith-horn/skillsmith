@@ -15,7 +15,7 @@ hooks:
   pre: |
     echo "👑 Hierarchical Coordinator initializing swarm: $TASK"
     # Initialize swarm topology
-    mcp__claude-flow__swarm_init hierarchical --maxAgents=10 --strategy=adaptive
+    mcp__ruflo__swarm_init hierarchical --maxAgents=10 --strategy=adaptive
     # MANDATORY: Write initial status to coordination namespace
     mcp__claude-flow__memory_usage store "swarm/hierarchical/status" "{\"agent\":\"hierarchical-coordinator\",\"status\":\"initializing\",\"timestamp\":$(date +%s),\"topology\":\"hierarchical\"}" --namespace=coordination
     # Set up monitoring
@@ -23,11 +23,11 @@ hooks:
   post: |
     echo "✨ Hierarchical coordination complete"
     # Generate performance report
-    mcp__claude-flow__performance_report --format=detailed --timeframe=24h
+    mcp__ruflo__performance_report --format=detailed --timeframe=24h
     # MANDATORY: Write completion status
-    mcp__claude-flow__memory_usage store "swarm/hierarchical/complete" "{\"status\":\"complete\",\"agents_used\":$(mcp__claude-flow__swarm_status | jq '.agents.total'),\"timestamp\":$(date +%s)}" --namespace=coordination
+    mcp__claude-flow__memory_usage store "swarm/hierarchical/complete" "{\"status\":\"complete\",\"agents_used\":$(mcp__ruflo__swarm_status | jq '.agents.total'),\"timestamp\":$(date +%s)}" --namespace=coordination
     # Cleanup resources
-    mcp__claude-flow__coordination_sync --swarmId="${SWARM_ID}"
+    mcp__ruflo__coordination_sync --swarmId="${SWARM_ID}"
 ---
 
 # Hierarchical Swarm Coordinator
@@ -69,22 +69,22 @@ WORKERS WORKERS WORKERS WORKERS
 ### Research Workers 🔬
 - **Capabilities**: Information gathering, market research, competitive analysis
 - **Use Cases**: Requirements analysis, technology research, feasibility studies
-- **Spawn Command**: `mcp__claude-flow__agent_spawn researcher --capabilities="research,analysis,information_gathering"`
+- **Spawn Command**: `mcp__ruflo__agent_spawn researcher --capabilities="research,analysis,information_gathering"`
 
 ### Code Workers 💻  
 - **Capabilities**: Implementation, code review, testing, documentation
 - **Use Cases**: Feature development, bug fixes, code optimization
-- **Spawn Command**: `mcp__claude-flow__agent_spawn coder --capabilities="code_generation,testing,optimization"`
+- **Spawn Command**: `mcp__ruflo__agent_spawn coder --capabilities="code_generation,testing,optimization"`
 
 ### Analyst Workers 📊
 - **Capabilities**: Data analysis, performance monitoring, reporting
 - **Use Cases**: Metrics analysis, performance optimization, reporting
-- **Spawn Command**: `mcp__claude-flow__agent_spawn analyst --capabilities="data_analysis,performance_monitoring,reporting"`
+- **Spawn Command**: `mcp__ruflo__agent_spawn analyst --capabilities="data_analysis,performance_monitoring,reporting"`
 
 ### Test Workers 🧪
 - **Capabilities**: Quality assurance, validation, compliance checking
 - **Use Cases**: Testing, validation, quality gates
-- **Spawn Command**: `mcp__claude-flow__agent_spawn tester --capabilities="testing,validation,quality_assurance"`
+- **Spawn Command**: `mcp__ruflo__agent_spawn tester --capabilities="testing,validation,quality_assurance"`
 
 ## Coordination Workflow
 
@@ -218,12 +218,12 @@ mcp__claude-flow__memory_usage {
 ### Swarm Management
 ```bash
 # Initialize hierarchical swarm
-mcp__claude-flow__swarm_init hierarchical --maxAgents=10 --strategy=centralized
+mcp__ruflo__swarm_init hierarchical --maxAgents=10 --strategy=centralized
 
 # Spawn specialized workers
-mcp__claude-flow__agent_spawn researcher --capabilities="research,analysis"
-mcp__claude-flow__agent_spawn coder --capabilities="implementation,testing"  
-mcp__claude-flow__agent_spawn analyst --capabilities="data_analysis,reporting"
+mcp__ruflo__agent_spawn researcher --capabilities="research,analysis"
+mcp__ruflo__agent_spawn coder --capabilities="implementation,testing"  
+mcp__ruflo__agent_spawn analyst --capabilities="data_analysis,reporting"
 
 # Monitor swarm health
 mcp__claude-flow__swarm_monitor --interval=5000
@@ -238,13 +238,13 @@ mcp__claude-flow__task_orchestrate "Build authentication service" --strategy=seq
 mcp__claude-flow__load_balance --tasks="auth_api,auth_tests,auth_docs" --strategy=capability_based
 
 # Sync coordination state
-mcp__claude-flow__coordination_sync --namespace=hierarchy
+mcp__ruflo__coordination_sync --namespace=hierarchy
 ```
 
 ### Performance & Analytics
 ```bash
 # Generate performance reports
-mcp__claude-flow__performance_report --format=detailed --timeframe=24h
+mcp__ruflo__performance_report --format=detailed --timeframe=24h
 
 # Analyze bottlenecks
 mcp__claude-flow__bottleneck_analyze --component=coordination --metrics="throughput,latency,success_rate"

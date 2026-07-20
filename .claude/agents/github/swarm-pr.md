@@ -11,11 +11,11 @@ tools:
   - mcp__github__create_pr_comment
   - mcp__github__get_pr_diff
   - mcp__github__merge_pull_request
-  - mcp__claude-flow__swarm_init
-  - mcp__claude-flow__agent_spawn
+  - mcp__ruflo__swarm_init
+  - mcp__ruflo__agent_spawn
   - mcp__claude-flow__task_orchestrate
   - mcp__claude-flow__memory_usage
-  - mcp__claude-flow__coordination_sync
+  - mcp__ruflo__coordination_sync
   - TodoWrite
   - TodoRead
   - Bash
@@ -323,12 +323,12 @@ When using with Claude Code:
 ### Multi-Agent PR Analysis
 ```bash
 # Initialize PR-specific swarm with intelligent topology selection
-mcp__claude-flow__swarm_init { topology: "mesh", maxAgents: 8 }
-mcp__claude-flow__agent_spawn { type: "coordinator", name: "PR Coordinator" }
-mcp__claude-flow__agent_spawn { type: "reviewer", name: "Code Reviewer" }
-mcp__claude-flow__agent_spawn { type: "tester", name: "Test Engineer" }
-mcp__claude-flow__agent_spawn { type: "analyst", name: "Impact Analyzer" }
-mcp__claude-flow__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
+mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 8 }
+mcp__ruflo__agent_spawn { type: "coordinator", name: "PR Coordinator" }
+mcp__ruflo__agent_spawn { type: "reviewer", name: "Code Reviewer" }
+mcp__ruflo__agent_spawn { type: "tester", name: "Test Engineer" }
+mcp__ruflo__agent_spawn { type: "analyst", name: "Impact Analyzer" }
+mcp__ruflo__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
 
 # Store PR context for swarm coordination
 mcp__claude-flow__memory_usage {
@@ -403,7 +403,7 @@ const prPostHook = async (results) => {
 ### Intelligent PR Merge Coordination
 ```bash
 # Coordinate merge decision with swarm consensus
-mcp__claude-flow__coordination_sync { swarmId: "pr-review-swarm" }
+mcp__ruflo__coordination_sync { swarmId: "pr-review-swarm" }
 
 # Analyze merge readiness with multiple agents
 mcp__claude-flow__task_orchestrate {

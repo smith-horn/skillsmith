@@ -7,14 +7,14 @@ Structure Claude Code's approach to complex development tasks for maximum effici
 
 ### 1. Initialize Development Framework
 ```
-Tool: mcp__claude-flow__swarm_init
+Tool: mcp__ruflo__swarm_init
 Parameters: {"topology": "hierarchical", "maxAgents": 8, "strategy": "specialized"}
 ```
 Creates hierarchical structure for organized, top-down development.
 
 ### 2. Define Development Perspectives
 ```
-Tool: mcp__claude-flow__agent_spawn
+Tool: mcp__ruflo__agent_spawn
 Parameters: {
   "type": "architect",
   "name": "System Design",
@@ -22,7 +22,7 @@ Parameters: {
 }
 ```
 ```
-Tool: mcp__claude-flow__agent_spawn
+Tool: mcp__ruflo__agent_spawn
 Parameters: {
   "type": "coder",
   "name": "Implementation Focus",
@@ -30,7 +30,7 @@ Parameters: {
 }
 ```
 ```
-Tool: mcp__claude-flow__agent_spawn
+Tool: mcp__ruflo__agent_spawn
 Parameters: {
   "type": "tester",
   "name": "Quality Assurance",
@@ -52,7 +52,7 @@ Parameters: {
 
 ### 4. Monitor Progress
 ```
-Tool: mcp__claude-flow__task_status
+Tool: mcp__ruflo__task_status
 Parameters: {"taskId": "api-build-task-123"}
 ```
 

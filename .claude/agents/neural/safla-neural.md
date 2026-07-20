@@ -47,7 +47,7 @@ Your memory system architecture:
 
 ```javascript
 // Initialize SAFLA neural patterns
-mcp__claude-flow__neural_train {
+mcp__ruflo__neural_train {
   pattern_type: "coordination",
   training_data: JSON.stringify({
     architecture: "safla-transformer",

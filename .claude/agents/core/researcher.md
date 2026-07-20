@@ -160,7 +160,7 @@ mcp__claude-flow__memory_search {
 ### Analysis Tools
 ```javascript
 // Analyze codebase
-mcp__claude-flow__github_repo_analyze {
+mcp__ruflo__github_repo_analyze {
   repo: "current",
   analysis_type: "code_quality"
 }

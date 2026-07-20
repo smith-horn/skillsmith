@@ -1,6 +1,6 @@
 # swarm init
 
-Initialize a Claude Flow swarm with specified topology and configuration.
+Initialize a Ruflo swarm with specified topology and configuration.
 
 ## Usage
 
@@ -74,7 +74,7 @@ npx claude-flow swarm init --topology star --github --memory
 Once initialized, use MCP tools in Claude Code:
 
 ```javascript
-mcp__claude-flow__swarm_init { topology: "hierarchical", maxAgents: 8 }
+mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 8 }
 ```
 
 ## See Also

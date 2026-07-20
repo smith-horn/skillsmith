@@ -300,7 +300,7 @@ mcp__claude-flow__benchmark_run {
 }
 
 // Monitor test execution
-mcp__claude-flow__performance_report {
+mcp__ruflo__performance_report {
   format: "detailed"
 }
 ```

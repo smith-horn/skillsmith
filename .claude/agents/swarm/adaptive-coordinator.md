@@ -15,21 +15,21 @@ hooks:
   pre: |
     echo "🔄 Adaptive Coordinator analyzing workload patterns: $TASK"
     # Initialize with auto-detection
-    mcp__claude-flow__swarm_init auto --maxAgents=15 --strategy=adaptive
+    mcp__ruflo__swarm_init auto --maxAgents=15 --strategy=adaptive
     # Analyze current workload patterns
-    mcp__claude-flow__neural_patterns analyze --operation="workload_analysis" --metadata="{\"task\":\"$TASK\"}"
+    mcp__ruflo__neural_patterns analyze --operation="workload_analysis" --metadata="{\"task\":\"$TASK\"}"
     # Train adaptive models
-    mcp__claude-flow__neural_train coordination --training_data="historical_swarm_data" --epochs=30
+    mcp__ruflo__neural_train coordination --training_data="historical_swarm_data" --epochs=30
     # Store baseline metrics
-    mcp__claude-flow__memory_usage store "adaptive:baseline:${TASK_ID}" "$(mcp__claude-flow__performance_report --format=json)" --namespace=adaptive
+    mcp__claude-flow__memory_usage store "adaptive:baseline:${TASK_ID}" "$(mcp__ruflo__performance_report --format=json)" --namespace=adaptive
     # Set up real-time monitoring
     mcp__claude-flow__swarm_monitor --interval=2000 --swarmId="${SWARM_ID}"
   post: |
     echo "✨ Adaptive coordination complete - topology optimized"
     # Generate comprehensive analysis
-    mcp__claude-flow__performance_report --format=detailed --timeframe=24h
+    mcp__ruflo__performance_report --format=detailed --timeframe=24h
     # Store learning outcomes
-    mcp__claude-flow__neural_patterns learn --operation="coordination_complete" --outcome="success" --metadata="{\"final_topology\":\"$(mcp__claude-flow__swarm_status | jq -r '.topology')\"}"
+    mcp__ruflo__neural_patterns learn --operation="coordination_complete" --outcome="success" --metadata="{\"final_topology\":\"$(mcp__ruflo__swarm_status | jq -r '.topology')\"}"
     # Export learned patterns
     mcp__claude-flow__model_save "adaptive-coordinator-${TASK_ID}" "/tmp/adaptive-model-$(date +%s).json"
     # Update persistent knowledge base
@@ -133,22 +133,22 @@ Switch to HYBRID when:
 ### Pattern Recognition & Learning
 ```bash
 # Analyze coordination patterns
-mcp__claude-flow__neural_patterns analyze --operation="topology_analysis" --metadata="{\"current_topology\":\"mesh\",\"performance_metrics\":{}}"
+mcp__ruflo__neural_patterns analyze --operation="topology_analysis" --metadata="{\"current_topology\":\"mesh\",\"performance_metrics\":{}}"
 
 # Train adaptive models
-mcp__claude-flow__neural_train coordination --training_data="swarm_performance_history" --epochs=50
+mcp__ruflo__neural_train coordination --training_data="swarm_performance_history" --epochs=50
 
 # Make predictions
-mcp__claude-flow__neural_predict --modelId="adaptive-coordinator" --input="{\"workload\":\"high_complexity\",\"agents\":10}"
+mcp__ruflo__neural_predict --modelId="adaptive-coordinator" --input="{\"workload\":\"high_complexity\",\"agents\":10}"
 
 # Learn from outcomes
-mcp__claude-flow__neural_patterns learn --operation="topology_switch" --outcome="improved_performance_15%" --metadata="{\"from\":\"hierarchical\",\"to\":\"mesh\"}"
+mcp__ruflo__neural_patterns learn --operation="topology_switch" --outcome="improved_performance_15%" --metadata="{\"from\":\"hierarchical\",\"to\":\"mesh\"}"
 ```
 
 ### Performance Optimization
 ```bash
 # Real-time performance monitoring
-mcp__claude-flow__performance_report --format=json --timeframe=1h
+mcp__ruflo__performance_report --format=json --timeframe=1h
 
 # Bottleneck analysis
 mcp__claude-flow__bottleneck_analyze --component="coordination" --metrics="latency,throughput,success_rate"
@@ -166,7 +166,7 @@ mcp__claude-flow__load_balance --swarmId="${SWARM_ID}" --strategy="ml_optimized"
 mcp__claude-flow__trend_analysis --metric="agent_utilization" --period="7d"
 
 # Predict resource needs
-mcp__claude-flow__neural_predict --modelId="resource-predictor" --input="{\"time_horizon\":\"4h\",\"current_load\":0.7}"
+mcp__ruflo__neural_predict --modelId="resource-predictor" --input="{\"time_horizon\":\"4h\",\"current_load\":0.7}"
 
 # Auto-scale swarm
 mcp__claude-flow__swarm_scale --swarmId="${SWARM_ID}" --targetSize="12" --strategy="predictive"

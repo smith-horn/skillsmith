@@ -1,6 +1,6 @@
 # Memory Commands
 
-Commands for memory operations in Claude Flow.
+Commands for memory operations in Ruflo.
 
 ## Available Commands
 

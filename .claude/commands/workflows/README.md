@@ -1,6 +1,6 @@
 # Workflows Commands
 
-Commands for workflows operations in Claude Flow.
+Commands for workflows operations in Ruflo.
 
 ## Available Commands
 

@@ -1,6 +1,6 @@
 # Optimization Commands
 
-Commands for optimization operations in Claude Flow.
+Commands for optimization operations in Ruflo.
 
 ## Available Commands
 

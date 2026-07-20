@@ -77,7 +77,7 @@ mcp__claude-flow__memory_backup({
 **Manual control:**
 ```bash
 # View stored memory
-ls .claude-flow/memory/
+ls .ruflo/memory/
 
 # Disable memory
 export CLAUDE_FLOW_MEMORY_PERSIST=false

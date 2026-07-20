@@ -311,13 +311,13 @@ mcp__claude-flow__memory_usage {
 ### Code Analysis
 ```javascript
 // Analyze code quality
-mcp__claude-flow__github_repo_analyze {
+mcp__ruflo__github_repo_analyze {
   repo: "current",
   analysis_type: "code_quality"
 }
 
 // Run security scan
-mcp__claude-flow__github_repo_analyze {
+mcp__ruflo__github_repo_analyze {
   repo: "current",
   analysis_type: "security"
 }
