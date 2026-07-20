@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+#
+# prune-orphaned-docker-volumes.sh - Targeted reclaim of orphaned per-worktree
+# Docker volumes/images (SMI-5750)
+#
+# Problem: <slug>_node_modules and <slug>_native-seed-<module> volumes (the
+# latter declared per-worktree by _lib.sh's enumerate_native_module_volumes,
+# SMI-5650) and <slug>-dev images accumulate whenever a worktree disappears
+# without remove-worktree.sh running (crashes, manual `rm -rf`, `git worktree
+# remove` by hand), and nothing safe ever reclaims them. On this machine, the
+# native-seed volumes are the numerically DOMINANT orphan class (5 volumes
+# per worktree vs. 1 node_modules volume) -- both conventions must be covered
+# or this script does not meet its own goal of preventing unbounded orphan
+# accumulation (SMI-5616). A blanket `docker volume prune` is unsafe: it
+# deletes ANY volume not attached to a RUNNING container, including a
+# still-existing worktree's volume whose container is merely stopped, forcing
+# an expensive native-module rebuild (better-sqlite3 / onnxruntime-node /
+# hnswlib-node, SMI-4698) in a concurrently-active session.
+#
+# Safety predicate: WORKTREE EXISTENCE (`git worktree list`), NOT
+# container-running-state. A volume/image is only a deletion candidate if its
+# derived project name is absent from every worktree git currently knows
+# about, regardless of whether that worktree's container is running,
+# stopped, or was never started. This is what makes the prune safe at ANY
+# concurrency level, unlike a blanket `docker volume prune`.
+#
+# Ownership gate: the generic Compose-label shape checks below
+# (com.docker.compose.volume=<key>, com.docker.compose.service=dev) are
+# conventions ANY other repo's `dev` service + same-named volume also
+# satisfies -- they are not proof a resource belongs to Skillsmith. Real
+# ownership is the `app.skillsmith.owned=true` label (added to
+# docker-compose.yml's node_modules volume and to each per-worktree
+# native-seed-<module> volume declaration in _lib.sh's
+# enumerate_native_module_volumes, by this same change). A candidate that
+# passes the generic checks but lacks that label is REPORT-ONLY ("UNCONFIRMED
+# ownership") unless --include-unlabeled is passed explicitly.
+#
+# Residual risks (accepted, NOT eliminated -- see docs/internal/implementation/
+# smi-5750-targeted-volume-prune.md § Shared-State audit):
+#   1. TOCTOU -- narrowed, not eliminated. The protected set is re-derived
+#      immediately before the delete loop, but this is NOT a locking
+#      mechanism: a concurrent create-worktree.sh can still register a
+#      worktree after that re-scan and before `docker volume rm` /
+#      `docker rmi` runs. Worst case: a just-created worktree's still-empty
+#      volume is deleted and silently recreated empty by its next
+#      `compose up` -- one redundant native-module rebuild, no data loss.
+#   2. Cross-repo -- another repo's `*_node_modules` / `*_native-seed-*`
+#      volume or `*-dev` image that happens to pass the generic Compose-shape
+#      checks is never auto-deleted (the ownership gate above). The residual
+#      is confined to explicit --include-unlabeled runs, where the operator
+#      reviews the reported UNCONFIRMED list first, and the deleted artifact
+#      is always a rebuildable dependency cache, never data.
+#
+# Usage: ./scripts/prune-orphaned-docker-volumes.sh [--dry-run] [--include-unlabeled]
+#   --dry-run             Report what would be deleted; delete nothing.
+#   --include-unlabeled   Also delete UNCONFIRMED-ownership candidates (the
+#                          one-time pre-label backlog escape hatch).
+#
+# Opt-out: SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 skips the prune entirely (exit
+# 0), used when invoked from remove-worktree.sh. Registered in
+# docs/internal/process/guards-and-opt-outs.md (SMI-5418).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
+
+DRY_RUN=false
+INCLUDE_UNLABELED=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --include-unlabeled)
+            INCLUDE_UNLABELED=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $(basename "$0") [--dry-run] [--include-unlabeled]"
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+if [[ "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
+    info "SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 set -- skipping targeted orphan prune"
+    exit 0
+fi
+
+if ! command -v docker &>/dev/null; then
+    warn "Docker not found -- skipping targeted orphan prune"
+    exit 0
+fi
+
+if ! docker info &>/dev/null; then
+    warn "Docker daemon not reachable -- skipping targeted orphan prune"
+    exit 0
+fi
+
+repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+main_gitdir="$(get_main_git_dir "$repo_root" 2>/dev/null || true)"
+if [[ -n "$main_gitdir" ]]; then
+    main_repo="$(dirname "$main_gitdir")"
+else
+    main_repo="$repo_root"
+fi
+
+# sanitize(name): IDENTICAL sanitization result to remove-worktree.sh:121's
+# project_name derivation (docker compose v2 ProjectName sanitization) --
+# lowercase, then strip any char outside [a-z0-9_-]. The trailing '\n' in the
+# printf (absent from remove-worktree.sh:121, which only ever captures one
+# value per invocation) is required here: derive_protected() calls this in a
+# loop and concatenates every call's stdout into one command substitution. On
+# BSD sed (macOS), a sed input with no trailing newline produces output with
+# no trailing newline either, so without the '\n' every sanitized name would
+# be glued onto the next one -- e.g. "foo-bar" + "baz-qux" -> "foo-barbaz-qux"
+# on one line -- silently breaking is_protected()'s exact-line grep -qxF match
+# for every case with more than one worktree registered (i.e. almost always).
+sanitize() {
+    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g'
+}
+
+# derive_protected(): canonical enumeration via `git worktree list
+# --porcelain` (covers out-of-tree worktrees -- create-worktree.sh:49-52),
+# UNIONED with a `.worktrees/*/` directory scan as conservative
+# belt-and-braces. Two distinct names sanitizing to the same project name
+# can only OVER-protect (both land in the set) -- never false-orphan.
+derive_protected() {
+    local wt_path base
+    while IFS= read -r wt_path; do
+        [[ -z "$wt_path" ]] && continue
+        base="$(basename "$wt_path")"
+        sanitize "$base"
+    done < <(git -C "$main_repo" worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2 }')
+
+    if [[ -d "$main_repo/.worktrees" ]]; then
+        local d
+        for d in "$main_repo"/.worktrees/*/; do
+            [[ -d "$d" ]] || continue
+            sanitize "$(basename "${d%/}")"
+        done
+    fi
+}
+
+is_protected() {
+    local project="$1" protected_set="$2"
+    grep -qxF "$project" <<< "$protected_set"
+}
+
+# Classify a volume name into a (project, expected compose.volume label)
+# pair, covering both conventions this script recognizes: the base
+# `<project>_node_modules` volume (docker-compose.yml) and the per-module
+# `<project>_native-seed-<module>` volumes (_lib.sh's
+# enumerate_native_module_volumes, SMI-5650) -- 5 of the latter per worktree,
+# the numerically dominant orphan class on this machine (see header). Sets
+# $project and $expected_vol_key; returns 1 (no match) for anything else, so
+# `classify_volume "$vol" || continue` skips unrelated volumes cleanly.
+# Native module names can themselves contain hyphens (e.g.
+# onnxruntime-node), so the split point is the LAST "_native-seed-"
+# occurrence (bash `%pattern` removes the shortest matching suffix, which
+# for a "*_native-seed-*" glob means matching starts as late as possible in
+# the string, i.e. at the last occurrence) -- project names never embed that
+# literal substring in practice, so there is normally only one occurrence
+# anyway.
+classify_volume() {
+    local vol="$1"
+    if [[ "$vol" == *_node_modules ]]; then
+        project="${vol%_node_modules}"
+        expected_vol_key="node_modules"
+    elif [[ "$vol" == *_native-seed-* ]]; then
+        project="${vol%_native-seed-*}"
+        expected_vol_key="${vol#"${project}"_}"
+    else
+        return 1
+    fi
+}
+
+protected="$(derive_protected)"
+
+# --- volumes: build candidates against the initial protected snapshot ---
+declare -a vol_candidates=()
+while IFS= read -r vol; do
+    [[ -z "$vol" ]] && continue
+    classify_volume "$vol" || continue
+    is_protected "$project" "$protected" && continue
+
+    vol_shape_label="$(docker volume inspect "$vol" --format '{{index .Labels "com.docker.compose.volume"}}' 2>/dev/null || true)"
+    vol_project_label="$(docker volume inspect "$vol" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+    vol_owned_label="$(docker volume inspect "$vol" --format '{{index .Labels "app.skillsmith.owned"}}' 2>/dev/null || true)"
+
+    [[ "$vol_shape_label" == "$expected_vol_key" ]] || continue
+    [[ "$vol_project_label" == "$project" ]] || continue
+    [[ -n "$(docker ps -aq --filter "volume=$vol" 2>/dev/null || true)" ]] && continue
+
+    if [[ "$vol_owned_label" != "true" ]]; then
+        echo "UNCONFIRMED ownership: $vol"
+        [[ "$INCLUDE_UNLABELED" != true ]] && continue
+    fi
+
+    vol_candidates+=("$vol")
+done < <(docker volume ls --format '{{.Name}}' 2>/dev/null || true)
+
+# TOCTOU narrowing (NOT elimination -- see header + Shared-State audit):
+# re-derive the protected set once, immediately before the delete loop. A
+# concurrent create-worktree.sh can still register a worktree after this
+# re-scan and before `volume rm` -- that residual window is accepted, not
+# closed. This is a narrowing measure, not a locking mechanism.
+protected="$(derive_protected)"
+
+if (( ${#vol_candidates[@]} > 0 )); then
+    for vol in "${vol_candidates[@]}"; do
+        classify_volume "$vol" || continue
+        is_protected "$project" "$protected" && continue
+        if [[ "$DRY_RUN" == true ]]; then
+            info "[dry-run] would remove volume $vol"
+        elif docker volume rm "$vol" >/dev/null 2>&1; then
+            success "  Removed volume $vol"
+        else
+            warn "  Could not remove volume $vol (already gone or in use -- continuing)"
+        fi
+    done
+fi
+
+# --- images: same existence + ownership checks, against the re-derived set ---
+while IFS= read -r img; do
+    [[ -z "$img" || "$img" == "<none>" ]] && continue
+    [[ "$img" == *-dev ]] || continue
+    project="${img%-dev}"
+    is_protected "$project" "$protected" && continue
+
+    img_service_label="$(docker image inspect "$img" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || true)"
+    [[ "$img_service_label" == "dev" ]] || continue
+    [[ -n "$(docker ps -aq --filter "ancestor=$img" 2>/dev/null || true)" ]] && continue
+
+    img_owned_label="$(docker image inspect "$img" --format '{{index .Config.Labels "app.skillsmith.owned"}}' 2>/dev/null || true)"
+    if [[ "$img_owned_label" != "true" ]]; then
+        echo "UNCONFIRMED ownership: $img"
+        [[ "$INCLUDE_UNLABELED" != true ]] && continue
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        info "[dry-run] would remove image $img"
+    elif docker rmi "$img" >/dev/null 2>&1; then
+        success "  Removed image $img"
+    else
+        warn "  Could not remove image $img (already gone or in use -- continuing)"
+    fi
+done < <(docker images --format '{{.Repository}}' 2>/dev/null | sort -u || true)

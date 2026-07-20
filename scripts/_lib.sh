@@ -913,6 +913,14 @@ enumerate_native_module_volumes() {
         if [[ -d "$repo_root/node_modules/$native_module" && ! -L "$repo_root/node_modules/$native_module" ]]; then
             printf '  native-seed-%s:\n' "$(native_module_volume_name "$native_module")"
             printf '    driver: local\n'
+            # SMI-5750: positive ownership marker so
+            # prune-orphaned-docker-volumes.sh can identify these as
+            # Skillsmith-owned and auto-reclaim orphaned ones (worktree
+            # removed without going through remove-worktree.sh) instead of
+            # leaving them perpetually UNCONFIRMED. Same label/rationale as
+            # docker-compose.yml's node_modules volume.
+            printf '    labels:\n'
+            printf '      app.skillsmith.owned: "true"\n'
         fi
     done
 }
