@@ -28,6 +28,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [edge-function-attribution-queries.md](.claude/development/edge-function-attribution-queries.md) | Canonical pooler queries for edge function attribution monitoring (SMI-4370 / Wave 4d) |
 | [concurrency-patterns.md](.claude/development/concurrency-patterns.md) | Pattern-to-incident-to-canonical-fix index for the five `concurrency-auditor` patterns (SMI-4895/4896/4861/4887) |
 | [guards-and-opt-outs.md](docs/internal/process/guards-and-opt-outs.md) | Canonical Guards & Opt-Outs registry (guard → trigger → marker → disable var → scope) — SMI-5418 DoD #5 |
+| [upstash-redis-operations.md](docs/internal/runbooks/upstash-redis-operations.md) | Upstash Redis architecture (4 consumers), setup, credential rotation, health-check monitoring |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 
