@@ -1,6 +1,6 @@
 # Github Commands
 
-Commands for github operations in Claude Flow.
+Commands for github operations in Ruflo.
 
 ## Available Commands
 

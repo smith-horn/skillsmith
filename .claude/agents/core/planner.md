@@ -143,7 +143,7 @@ mcp__claude-flow__memory_usage {
 }
 
 // Monitor task progress
-mcp__claude-flow__task_status {
+mcp__ruflo__task_status {
   taskId: "auth-implementation"
 }
 ```

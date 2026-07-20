@@ -7,18 +7,18 @@ Coordinate Claude Code's research activities for comprehensive, systematic explo
 
 ### 1. Initialize Research Framework
 ```
-Tool: mcp__claude-flow__swarm_init
+Tool: mcp__ruflo__swarm_init
 Parameters: {"topology": "mesh", "maxAgents": 5, "strategy": "balanced"}
 ```
 Creates a mesh topology for comprehensive exploration from multiple angles.
 
 ### 2. Define Research Perspectives
 ```
-Tool: mcp__claude-flow__agent_spawn
+Tool: mcp__ruflo__agent_spawn
 Parameters: {"type": "researcher", "name": "Literature Review"}
 ```
 ```
-Tool: mcp__claude-flow__agent_spawn  
+Tool: mcp__ruflo__agent_spawn  
 Parameters: {"type": "analyst", "name": "Data Analysis"}
 ```
 Sets up different analytical approaches for Claude Code to use.

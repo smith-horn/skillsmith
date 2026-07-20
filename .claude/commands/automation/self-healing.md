@@ -56,7 +56,7 @@ mcp__claude-flow__memory_usage({
 })
 
 // Analyze patterns
-mcp__claude-flow__neural_patterns({
+mcp__ruflo__neural_patterns({
   "action": "analyze",
   "operation": "error-recovery",
   "outcome": "success"
@@ -68,14 +68,14 @@ mcp__claude-flow__neural_patterns({
 ### MCP Tool Coordination
 ```javascript
 // Initialize self-healing swarm
-mcp__claude-flow__swarm_init({
+mcp__ruflo__swarm_init({
   "topology": "star",
   "maxAgents": 4,
   "strategy": "adaptive"
 })
 
 // Spawn recovery agents
-mcp__claude-flow__agent_spawn({
+mcp__ruflo__agent_spawn({
   "type": "monitor",
   "name": "Error Monitor",
   "capabilities": ["error-detection", "recovery"]

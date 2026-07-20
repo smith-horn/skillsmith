@@ -14,7 +14,7 @@ Every successful operation trains the neural networks:
 
 ### 2. Manual Training
 ```
-Tool: mcp__claude-flow__neural_train
+Tool: mcp__ruflo__neural_train
 Parameters: {
   "pattern_type": "coordination",
   "training_data": "successful task patterns",
@@ -34,7 +34,7 @@ Parameters: {
 
 ### 4. Improvement Tracking
 ```
-Tool: mcp__claude-flow__neural_status
+Tool: mcp__ruflo__neural_status
 Result: {
   "patterns": {
     "convergent": 0.92,
@@ -48,7 +48,7 @@ Result: {
 
 ## Pattern Analysis
 ```
-Tool: mcp__claude-flow__neural_patterns
+Tool: mcp__ruflo__neural_patterns
 Parameters: {
   "action": "analyze",
   "operation": "recent_edits"

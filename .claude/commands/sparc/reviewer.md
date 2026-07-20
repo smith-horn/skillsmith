@@ -17,20 +17,9 @@ mcp__claude-flow__sparc_mode {
 }
 ```
 
-### Option 2: Using NPX CLI (Fallback when MCP not available)
-```bash
-# Use when running from terminal or MCP tools unavailable
-npx claude-flow sparc run reviewer "review pull request #123"
+### Option 2: SPARC CLI is unavailable in v3
 
-# For alpha features
-npx claude-flow@alpha sparc run reviewer "review pull request #123"
-```
-
-### Option 3: Local Installation
-```bash
-# If claude-flow is installed locally
-./claude-flow sparc run reviewer "review pull request #123"
-```
+The `sparc` subcommand does not exist in ruflo v3 (`npx -y ruflo@3.14.2 sparc --help` returns `[ERROR] Unknown command: sparc`) -- there is no CLI equivalent to `sparc run reviewer "..."`. Use the `sparc-methodology` skill for SPARC-workflow guidance, or dispatch a role-specific subagent via the Agent tool for `reviewer`-type work (e.g. `review pull request #123`).
 
 ## Core Capabilities
 - Code quality assessment

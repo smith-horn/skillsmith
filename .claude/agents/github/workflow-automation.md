@@ -9,13 +9,13 @@ tools:
   - mcp__github__list_workflows
   - mcp__github__get_workflow_runs
   - mcp__github__create_workflow_dispatch
-  - mcp__claude-flow__swarm_init
-  - mcp__claude-flow__agent_spawn
+  - mcp__ruflo__swarm_init
+  - mcp__ruflo__agent_spawn
   - mcp__claude-flow__task_orchestrate
   - mcp__claude-flow__memory_usage
-  - mcp__claude-flow__performance_report
+  - mcp__ruflo__performance_report
   - mcp__claude-flow__bottleneck_analyze
-  - mcp__claude-flow__workflow_create
+  - mcp__ruflo__workflow_create
   - mcp__claude-flow__automation_setup
   - TodoWrite
   - TodoRead
@@ -481,14 +481,14 @@ npx ruv-swarm actions profile \
 ### Multi-Agent Pipeline Orchestration
 ```bash
 # Initialize comprehensive workflow automation swarm
-mcp__claude-flow__swarm_init { topology: "mesh", maxAgents: 12 }
-mcp__claude-flow__agent_spawn { type: "coordinator", name: "Workflow Coordinator" }
-mcp__claude-flow__agent_spawn { type: "architect", name: "Pipeline Architect" }
-mcp__claude-flow__agent_spawn { type: "coder", name: "Workflow Developer" }
-mcp__claude-flow__agent_spawn { type: "tester", name: "CI/CD Tester" }
-mcp__claude-flow__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
-mcp__claude-flow__agent_spawn { type: "monitor", name: "Automation Monitor" }
-mcp__claude-flow__agent_spawn { type: "analyst", name: "Workflow Analyzer" }
+mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 12 }
+mcp__ruflo__agent_spawn { type: "coordinator", name: "Workflow Coordinator" }
+mcp__ruflo__agent_spawn { type: "architect", name: "Pipeline Architect" }
+mcp__ruflo__agent_spawn { type: "coder", name: "Workflow Developer" }
+mcp__ruflo__agent_spawn { type: "tester", name: "CI/CD Tester" }
+mcp__ruflo__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
+mcp__ruflo__agent_spawn { type: "monitor", name: "Automation Monitor" }
+mcp__ruflo__agent_spawn { type: "analyst", name: "Workflow Analyzer" }
 
 # Create intelligent workflow automation rules
 mcp__claude-flow__automation_setup {
@@ -518,7 +518,7 @@ mcp__claude-flow__task_orchestrate {
 ### Intelligent Performance Monitoring
 ```bash
 # Generate comprehensive workflow performance reports
-mcp__claude-flow__performance_report {
+mcp__ruflo__performance_report {
   format: "detailed",
   timeframe: "30d"
 }

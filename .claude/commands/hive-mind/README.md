@@ -1,6 +1,6 @@
 # Hive-mind Commands
 
-Commands for hive-mind operations in Claude Flow.
+Commands for hive-mind operations in Ruflo.
 
 ## Available Commands
 

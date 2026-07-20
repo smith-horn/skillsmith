@@ -97,24 +97,14 @@ The SPARC methodology enhances GOAP planning by providing a structured framework
 
 ### SPARC Command Integration
 
-```bash
-# Execute SPARC phases for goal achievement
-npx claude-flow sparc run spec-pseudocode "OAuth2 authentication system"
-npx claude-flow sparc run architect "microservices communication layer"
-npx claude-flow sparc tdd "payment processing feature"
-npx claude-flow sparc pipeline "complete feature implementation"
-
-# Batch processing for complex goals
-npx claude-flow sparc batch spec,arch,refine "user management system"
-npx claude-flow sparc concurrent tdd tasks.json
-```
+The `sparc` subcommand does not exist in ruflo v3 (`npx -y ruflo@3.14.2 sparc --help` returns `[ERROR] Unknown command: sparc`) -- there is no CLI equivalent to `sparc run`/`sparc tdd`/`sparc pipeline`/`sparc batch`/`sparc concurrent`. Use the `sparc-methodology` skill for SPARC-phase guidance, or dispatch a role-specific subagent per phase via the Agent tool.
 
 ### SPARC-GOAP Feature Implementation Plan
 ```yaml
 goal: implement_payment_processing_with_sparc
 sparc_phases:
   specification:
-    command: "npx claude-flow sparc run spec-pseudocode 'payment processing'"
+    command: "N/A -- sparc CLI unavailable in v3; use sparc-methodology skill"
     deliverables:
       - requirements_doc
       - acceptance_criteria
@@ -125,7 +115,7 @@ sparc_phases:
       - compliance_standards_identified
       
   pseudocode:
-    command: "npx claude-flow sparc run pseudocode 'payment flow algorithms'"
+    command: "N/A -- sparc CLI unavailable in v3; use sparc-methodology skill"
     deliverables:
       - payment_flow_logic
       - error_handling_patterns
@@ -135,7 +125,7 @@ sparc_phases:
       - edge_cases_covered
       
   architecture:
-    command: "npx claude-flow sparc run architect 'payment system design'"
+    command: "N/A -- sparc CLI unavailable in v3; use sparc-methodology skill"
     deliverables:
       - system_components
       - api_contracts
@@ -145,7 +135,7 @@ sparc_phases:
       - security_layers_defined
       
   refinement:
-    command: "npx claude-flow sparc tdd 'payment feature'"
+    command: "N/A -- sparc CLI unavailable in v3; use sparc-methodology skill"
     deliverables:
       - unit_tests
       - integration_tests
@@ -155,7 +145,7 @@ sparc_phases:
       - all_tests_passing
       
   completion:
-    command: "npx claude-flow sparc run integration 'deploy payment system'"
+    command: "N/A -- sparc CLI unavailable in v3; use sparc-methodology skill"
     deliverables:
       - deployed_system
       - documentation
@@ -330,19 +320,19 @@ async function implementFeatureWithSPARC(feature: string) {
 
 ```javascript
 // Initialize SPARC-enhanced development swarm
-mcp__claude-flow__swarm_init {
+mcp__ruflo__swarm_init {
   topology: "hierarchical",
   maxAgents: 5
 }
 
 // Spawn SPARC-specific agents
-mcp__claude-flow__agent_spawn {
+mcp__ruflo__agent_spawn {
   type: "sparc-coder",
   capabilities: ["specification", "pseudocode", "architecture", "refinement", "completion"]
 }
 
 // Spawn specialized agents
-mcp__claude-flow__agent_spawn {
+mcp__ruflo__agent_spawn {
   type: "coder",
   capabilities: ["refactoring", "optimization"]
 }
@@ -412,22 +402,7 @@ class SPARCGoalPlanner {
 
 ### Example: Complete Feature Implementation
 
-```bash
-# 1. Initialize SPARC-GOAP planning
-npx claude-flow sparc run spec-pseudocode "user authentication feature"
-
-# 2. Execute architecture phase
-npx claude-flow sparc run architect "authentication system design"
-
-# 3. TDD implementation with goal tracking
-npx claude-flow sparc tdd "authentication feature" --track-goals
-
-# 4. Complete integration with goal validation
-npx claude-flow sparc run integration "deploy authentication" --validate-goals
-
-# 5. Verify goal achievement
-npx claude-flow sparc verify "authentication feature complete"
-```
+SPARC-GOAP planning proceeds through the five phases above (specification, pseudocode, architecture, refinement, completion). There is no `sparc` CLI to drive this in ruflo v3 -- use the `sparc-methodology` skill for phase guidance, or dispatch a role-specific subagent per phase via the Agent tool.
 
 ## Continuous Improvement
 

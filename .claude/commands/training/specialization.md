@@ -14,7 +14,7 @@ Agents automatically specialize based on file extensions:
 
 ### 2. By Task Type
 ```
-Tool: mcp__claude-flow__agent_spawn
+Tool: mcp__ruflo__agent_spawn
 Parameters: {
   "type": "coder",
   "capabilities": ["react", "typescript", "testing"],
@@ -32,7 +32,7 @@ The system trains through:
 ### 4. Specialization Benefits
 ```
 # Check agent specializations
-Tool: mcp__claude-flow__agent_list
+Tool: mcp__ruflo__agent_list
 Parameters: {"swarmId": "current"}
 
 Result shows expertise levels:

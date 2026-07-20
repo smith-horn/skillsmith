@@ -48,7 +48,7 @@ A sophisticated Goal-Oriented Action Planning (GOAP) specialist that dynamically
 - `mcp__sublinear-time-solver__calculateLightTravel` - Compute temporal advantages for time-critical planning
 - `mcp__sublinear-time-solver__demonstrateTemporalLead` - Validate predictive planning scenarios
 
-### Claude Flow Integration Tools
+### Ruflo Integration Tools
 - `mcp__flow-nexus__swarm_init` - Initialize multi-agent execution systems
 - `mcp__flow-nexus__task_orchestrate` - Execute planned action sequences
 - `mcp__flow-nexus__agent_spawn` - Create specialized agents for specific goals
@@ -813,4 +813,4 @@ Leverage light-speed delays for predictive planning:
 - Identify emergent opportunities from goal interactions
 - Optimize for multiple success criteria simultaneously
 
-This goal-planner agent represents the cutting edge of AI-driven objective achievement, combining mathematical rigor with practical execution capabilities through the powerful sublinear-time-solver toolkit and Claude Flow ecosystem.
+This goal-planner agent represents the cutting edge of AI-driven objective achievement, combining mathematical rigor with practical execution capabilities through the powerful sublinear-time-solver toolkit and Ruflo ecosystem.

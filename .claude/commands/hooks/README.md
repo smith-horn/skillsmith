@@ -1,6 +1,6 @@
 # Hooks Commands
 
-Commands for hooks operations in Claude Flow.
+Commands for hooks operations in Ruflo.
 
 ## Available Commands
 

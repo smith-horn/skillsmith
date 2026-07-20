@@ -5,7 +5,7 @@
 
 ## MCP Tool Usage in Claude Code
 
-**Tool:** `mcp__claude-flow__neural_train`
+**Tool:** `mcp__ruflo__neural_train`
 
 ## Parameters
 ```json
@@ -29,10 +29,10 @@ Training improves:
 ## Example Usage
 
 **In Claude Code:**
-1. Train coordination patterns: Use tool `mcp__claude-flow__neural_train` with parameters `{"pattern_type": "coordination", "training_data": "successful task patterns", "epochs": 50}`
-2. Train optimization patterns: Use tool `mcp__claude-flow__neural_train` with parameters `{"pattern_type": "optimization", "training_data": "performance metrics", "epochs": 30}`
-3. Check training status: Use tool `mcp__claude-flow__neural_status`
-4. Analyze patterns: Use tool `mcp__claude-flow__neural_patterns` with parameters `{"action": "analyze"}`
+1. Train coordination patterns: Use tool `mcp__ruflo__neural_train` with parameters `{"pattern_type": "coordination", "training_data": "successful task patterns", "epochs": 50}`
+2. Train optimization patterns: Use tool `mcp__ruflo__neural_train` with parameters `{"pattern_type": "optimization", "training_data": "performance metrics", "epochs": 30}`
+3. Check training status: Use tool `mcp__ruflo__neural_status`
+4. Analyze patterns: Use tool `mcp__ruflo__neural_patterns` with parameters `{"action": "analyze"}`
 
 ## Important Reminders
 - ✅ This tool provides coordination and structure

@@ -1,6 +1,6 @@
 # Swarm Commands
 
-Commands for swarm operations in Claude Flow.
+Commands for swarm operations in Ruflo.
 
 ## Available Commands
 

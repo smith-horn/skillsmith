@@ -1,7 +1,7 @@
 ---
 name: issue-tracker
 description: Intelligent issue management and project coordination with automated tracking, progress monitoring, and team coordination
-tools: mcp__claude-flow__swarm_init, mcp__claude-flow__agent_spawn, mcp__claude-flow__task_orchestrate, mcp__claude-flow__memory_usage, Bash, TodoWrite, Read, Write
+tools: mcp__ruflo__swarm_init, mcp__ruflo__agent_spawn, mcp__claude-flow__task_orchestrate, mcp__claude-flow__memory_usage, Bash, TodoWrite, Read, Write
 color: green
 type: development
 capabilities:
@@ -52,10 +52,10 @@ Intelligent issue management and project coordination with ruv-swarm integration
 ### 1. Create Coordinated Issue with Swarm Tracking
 ```javascript
 // Initialize issue management swarm
-mcp__claude-flow__swarm_init { topology: "star", maxAgents: 3 }
-mcp__claude-flow__agent_spawn { type: "coordinator", name: "Issue Coordinator" }
-mcp__claude-flow__agent_spawn { type: "researcher", name: "Requirements Analyst" }
-mcp__claude-flow__agent_spawn { type: "coder", name: "Implementation Planner" }
+mcp__ruflo__swarm_init { topology: "star", maxAgents: 3 }
+mcp__ruflo__agent_spawn { type: "coordinator", name: "Issue Coordinator" }
+mcp__ruflo__agent_spawn { type: "researcher", name: "Requirements Analyst" }
+mcp__ruflo__agent_spawn { type: "coder", name: "Implementation Planner" }
 
 // Create comprehensive issue
 mcp__github__create_issue {
@@ -152,10 +152,10 @@ mcp__github__update_issue {
 ```javascript
 [Single Message - Issue Lifecycle Management]:
   // Initialize issue coordination swarm
-  mcp__claude-flow__swarm_init { topology: "mesh", maxAgents: 4 }
-  mcp__claude-flow__agent_spawn { type: "coordinator", name: "Issue Manager" }
-  mcp__claude-flow__agent_spawn { type: "analyst", name: "Progress Tracker" }
-  mcp__claude-flow__agent_spawn { type: "researcher", name: "Context Gatherer" }
+  mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 4 }
+  mcp__ruflo__agent_spawn { type: "coordinator", name: "Issue Manager" }
+  mcp__ruflo__agent_spawn { type: "analyst", name: "Progress Tracker" }
+  mcp__ruflo__agent_spawn { type: "researcher", name: "Context Gatherer" }
   
   // Create multiple related issues using gh CLI
   Bash(`gh issue create \
