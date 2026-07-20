@@ -1,0 +1,40 @@
+# SMI-5771: validate the NEEDLE-based Codex dispatch script before merge
+# (SMI-5668, ADR-128). dispatch.sh itself is maintainer-machine-only (the
+# real needle/bf/codex CLIs need interactive login / per-seat licensing not
+# available in a CI container — see scripts/needle/README.md), but its unit
+# test fakes out all three binaries with scripted shell stand-ins and needs
+# only bash/git/jq/openssl, all present on ubuntu-latest — confirmed CI-safe.
+name: Validate Needle Dispatch
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/needle/dispatch.sh'
+      - 'scripts/needle/lib.sh'
+      - 'scripts/tests/needle-dispatch.test.sh'
+      - '.github/workflows/validate-needle-dispatch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  needle-dispatch-test:
+    name: Needle Dispatch Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: shellcheck
+        run: |
+          shellcheck -S warning scripts/needle/dispatch.sh scripts/needle/lib.sh scripts/tests/needle-dispatch.test.sh
+
+      - name: Syntax check (bash -n)
+        run: |
+          bash -n scripts/needle/dispatch.sh
+          bash -n scripts/needle/lib.sh
+          bash -n scripts/tests/needle-dispatch.test.sh
+
+      - name: Needle dispatch unit tests
+        run: |
+          bash scripts/tests/needle-dispatch.test.sh

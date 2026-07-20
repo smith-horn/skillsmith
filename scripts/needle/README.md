@@ -2,9 +2,14 @@
 
 One-time personal setup for `scripts/needle/dispatch.sh`, the queen's only
 mechanism for dispatching a Codex-tier task (ADR-128, "Harness-of-Harnesses").
-**Maintainer-machine-only, like `scripts/agent-evals/`: none of this is wired
-into CI** — the binaries below need interactive login, per-seat licensing, or
-a from-source build not available in a CI container.
+**Maintainer-machine-only, like `scripts/agent-evals/`: a real dispatch is
+never run in CI** — the binaries below need interactive login, per-seat
+licensing, or a from-source build not available in a CI container. The unit
+test (`scripts/tests/needle-dispatch.test.sh`) fakes out all three binaries
+and needs only bash/git/jq/openssl, so it IS CI-wired
+(`validate-needle-dispatch.yml`, SMI-5771) — that test proves the script's
+own logic (flag handling, false-success detection, secret-scanner guard),
+not that a real dispatch succeeds.
 
 Full design: [`docs/internal/implementation/smi-5668-needle-codex-dispatch.md`](../../docs/internal/implementation/smi-5668-needle-codex-dispatch.md).
 Architecture decision: [ADR-128](../../docs/internal/adr/128-harness-of-harnesses-multi-cli-agent-orchestration.md).

@@ -180,14 +180,43 @@ EOF
 # Test 5a: python3 hidden from PATH entirely → still exits 0 with the
 # fixed JSON envelope on stdout (via Gate 1's SOURCE-parse-failure
 # fallback short-circuit).
+#
+# On a merged-usr Linux layout (e.g. ubuntu-latest CI), /usr/bin holds
+# EVERY coreutil (bash, cat, mktemp, ...) AND python3/python in the same
+# directory — invisible on macOS, where /bin/bash and Homebrew's python3
+# live in separate directories. So this can't just skip whole PATH
+# directories that contain python3/python (that would strip bash/cat/etc.
+# too, exit 127, tested and confirmed locally by simulating the layout).
+# Instead, shadow each such directory: symlink every entry EXCEPT
+# python3/python into a scratch dir, so every other tool stays resolvable
+# while python3/python genuinely aren't. BASH_BIN is also resolved before
+# filtering and the script is invoked through it explicitly, as a second
+# layer of defense against the interpreter itself being shadowed out.
+# SMI-5771 CI-wiring is what first exercised this test on Linux at all —
+# it was never CI-run before, only ever run by hand on a macOS host.
 # ----------------------------------------------------------------------
+BASH_BIN="$(command -v bash)"
 FILTERED_PATH=""
+FILTERED_PATH_SHADOW_DIRS=()
 IFS=':' read -ra PATH_DIRS <<< "$PATH"
 for d in "${PATH_DIRS[@]}"; do
-  if [ -x "$d/python3" ] || [ -x "$d/python" ]; then
+  if [ ! -d "$d" ]; then
     continue
   fi
-  FILTERED_PATH="${FILTERED_PATH:+$FILTERED_PATH:}$d"
+  if [ -x "$d/python3" ] || [ -x "$d/python" ]; then
+    shadow_dir=$(mktemp -d -t skillsmith-mcpguard-pathshadow.XXXXXX)
+    FILTERED_PATH_SHADOW_DIRS+=("$shadow_dir")
+    for entry in "$d"/*; do
+      entry_base=$(basename "$entry")
+      case "$entry_base" in
+        python3 | python) continue ;;
+      esac
+      ln -s "$entry" "$shadow_dir/$entry_base" 2>/dev/null || true
+    done
+    FILTERED_PATH="${FILTERED_PATH:+$FILTERED_PATH:}$shadow_dir"
+  else
+    FILTERED_PATH="${FILTERED_PATH:+$FILTERED_PATH:}$d"
+  fi
 done
 
 {
@@ -199,7 +228,7 @@ done
   set +e
   printf '{"source":"startup","cwd":"%s","session_id":"t","transcript_path":""}' "$REPO" \
     | env -i HOME="$REPO/fake-home" PATH="$FILTERED_PATH" \
-        "$REPO/scripts/session-start-mcp-command-guard.sh" \
+        "$BASH_BIN" "$REPO/scripts/session-start-mcp-command-guard.sh" \
         >"$STDOUT_FILE" 2>"$STDERR_FILE"
   hook_exit=$?
   set -e
@@ -230,7 +259,7 @@ done
   set +e
   printf '{"source":"startup","cwd":"%s","session_id":"t","transcript_path":""}' "$REPO" \
     | env -i HOME="$REPO/fake-home" PATH="$FILTERED_PATH" SKILLSMITH_MCP_COMMAND_GUARD_DISABLE=1 \
-        "$REPO/scripts/session-start-mcp-command-guard.sh" \
+        "$BASH_BIN" "$REPO/scripts/session-start-mcp-command-guard.sh" \
         >"$STDOUT_FILE" 2>"$STDERR_FILE"
   hook_exit=$?
   set -e
@@ -241,6 +270,10 @@ done
 
   rm -rf "$REPO" "$STDOUT_FILE" "$STDERR_FILE"
 }
+
+for shadow_dir in "${FILTERED_PATH_SHADOW_DIRS[@]}"; do
+  rm -rf "$shadow_dir"
+done
 
 # ----------------------------------------------------------------------
 echo

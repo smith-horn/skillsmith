@@ -1,0 +1,36 @@
+# SMI-5771: validate the Supabase pooler psql helper before merge.
+# Keeps the canonical pooler entry point honest — a shell regression here
+# breaks every session's ad-hoc query/short-write path (CLAUDE.md's Varlock
+# Security section).
+name: Validate Pooler Psql
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/pooler-psql.sh'
+      - 'scripts/tests/pooler-psql.test.sh'
+      - '.github/workflows/validate-pooler-psql.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pooler-psql-test:
+    name: Pooler Psql Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: shellcheck
+        run: |
+          shellcheck -S warning scripts/pooler-psql.sh scripts/tests/pooler-psql.test.sh
+
+      - name: Syntax check (bash -n)
+        run: |
+          bash -n scripts/pooler-psql.sh
+          bash -n scripts/tests/pooler-psql.test.sh
+
+      - name: Pooler psql unit tests
+        run: |
+          bash scripts/tests/pooler-psql.test.sh

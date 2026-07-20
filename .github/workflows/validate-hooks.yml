@@ -25,11 +25,19 @@ on:
       - 'scripts/retrieval-liveness-check.sh'
       - 'docker-entrypoint.sh'
       - 'scripts/lib/repair-worktree-container-symlinks.sh'
+      - 'scripts/regen-worktree-overrides.sh'
+      - 'scripts/worktree-docker.sh'
+      - 'scripts/session-start-mcp-command-guard.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/session-start-audit.test.sh'
       - 'scripts/tests/reclaim-node-modules.test.sh'
       - 'scripts/tests/enumerate-compose-mounts.test.sh'
       - 'scripts/tests/enumerate-compose-mounts-smi5650.test.sh'
+      - 'scripts/tests/repair-worktree-container-symlinks.test.sh'
+      - 'scripts/tests/worktree-port-collision.test.sh'
+      - 'scripts/tests/regen-worktree-overrides.test.sh'
+      - 'scripts/tests/worktree-docker-resolve.test.sh'
+      - 'scripts/tests/session-start-mcp-command-guard.test.sh'
       - 'scripts/check-file-length.mjs'
       - 'lint-staged.config.js'
       - '.github/workflows/validate-hooks.yml'
@@ -59,11 +67,19 @@ jobs:
             scripts/retrieval-liveness-check.sh \
             docker-entrypoint.sh \
             scripts/lib/repair-worktree-container-symlinks.sh \
+            scripts/regen-worktree-overrides.sh \
+            scripts/worktree-docker.sh \
+            scripts/session-start-mcp-command-guard.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/session-start-audit.test.sh \
             scripts/tests/reclaim-node-modules.test.sh \
             scripts/tests/enumerate-compose-mounts.test.sh \
-            scripts/tests/enumerate-compose-mounts-smi5650.test.sh
+            scripts/tests/enumerate-compose-mounts-smi5650.test.sh \
+            scripts/tests/repair-worktree-container-symlinks.test.sh \
+            scripts/tests/worktree-port-collision.test.sh \
+            scripts/tests/regen-worktree-overrides.test.sh \
+            scripts/tests/worktree-docker-resolve.test.sh \
+            scripts/tests/session-start-mcp-command-guard.test.sh
 
       - name: Syntax check (bash -n)
         run: |
@@ -76,11 +92,19 @@ jobs:
           bash -n scripts/retrieval-liveness-check.sh
           bash -n docker-entrypoint.sh
           bash -n scripts/lib/repair-worktree-container-symlinks.sh
+          bash -n scripts/regen-worktree-overrides.sh
+          bash -n scripts/worktree-docker.sh
+          bash -n scripts/session-start-mcp-command-guard.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
           bash -n scripts/tests/reclaim-node-modules.test.sh
           bash -n scripts/tests/enumerate-compose-mounts.test.sh
           bash -n scripts/tests/enumerate-compose-mounts-smi5650.test.sh
+          bash -n scripts/tests/repair-worktree-container-symlinks.test.sh
+          bash -n scripts/tests/worktree-port-collision.test.sh
+          bash -n scripts/tests/regen-worktree-overrides.test.sh
+          bash -n scripts/tests/worktree-docker-resolve.test.sh
+          bash -n scripts/tests/session-start-mcp-command-guard.test.sh
           sh -n .husky/pre-commit
           sh -n .husky/post-merge
 
@@ -103,3 +127,8 @@ jobs:
           bash scripts/tests/reclaim-node-modules.test.sh
           bash scripts/tests/enumerate-compose-mounts.test.sh
           bash scripts/tests/enumerate-compose-mounts-smi5650.test.sh
+          bash scripts/tests/repair-worktree-container-symlinks.test.sh
+          bash scripts/tests/worktree-port-collision.test.sh
+          bash scripts/tests/regen-worktree-overrides.test.sh
+          bash scripts/tests/worktree-docker-resolve.test.sh
+          bash scripts/tests/session-start-mcp-command-guard.test.sh

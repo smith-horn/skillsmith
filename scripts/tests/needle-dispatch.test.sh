@@ -8,8 +8,12 @@
 # (real 'git'/'jq' are used as-is) so the full dispatch.sh flow — including
 # its background-poll loop and outcome classification — runs deterministically
 # without needing the real NEEDLE/bead-forge/Codex CLIs or a live Codex
-# session installed. Same "maintainer-run-only, not CI-wired" posture as the
-# rest of scripts/agent-evals/*.sh (see scripts/needle/README.md).
+# session installed. Unlike scripts/agent-evals/*.sh (real harness binaries,
+# genuinely maintainer-run-only), this file needs nothing beyond bash/git/jq/
+# openssl — all present on ubuntu-latest — so it IS CI-wired (SMI-5771,
+# validate-needle-dispatch.yml). dispatch.sh's real-dispatch path (actually
+# invoking needle/bf/codex) remains maintainer-machine-only; see
+# scripts/needle/README.md.
 #
 # Usage: ./scripts/tests/needle-dispatch.test.sh
 
