@@ -29,6 +29,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
     <li>Stream events to a SIEM (Splunk, Elastic, Datadog)</li>
     <li>Run skill-level and pack-level security audits</li>
     <li>Read the session-start governance summary at the start of every Claude Code session</li>
+    <li>Export a CycloneDX AI-BOM for compliance evidence</li>
   </ul>
 
   <h2>Tools that map to Govern</h2>
@@ -72,6 +73,12 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
         <td><code>siem_export</code></td>
         <td>Export audit events for SIEM ingestion (CEF / LEEF / JSON)</td>
         <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>compliance_report</code></td>
+        <td>Generate SOC 2, CycloneDX AI-BOM, or JSON compliance reports</td>
+        <td>Team+</td>
       </tr>
       <tr>
         <td>CLI</td>
@@ -243,6 +250,54 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
     Both apply tools return a non-mutating preview by default; pass
     <code>confirmed: true</code> to actually write the change.
   </p>
+
+  <h2 id="cyclonedx-export">Step 8 — Export a CycloneDX AI-BOM for compliance evidence</h2>
+
+  <p>
+    Regulatory and procurement obligations — EU AI Act technical-documentation requirements (Article
+    11 / Annex IV, for systems in the Annex III high-risk categories) and SBOM expectations flowing
+    from US EO 14028 and its implementing OMB guidance — increasingly call for a machine-readable
+    bill of materials, not just an audit log. <code>compliance_report</code> covers this: call it
+    with <code>format: "cyclonedx"</code> to get a CycloneDX 1.5 AI/ML-BOM document of your installed
+    skills, inferred dependencies, MCP server dependencies, and model requirements. The same tool
+    also supports <code>format: "soc2"</code> and <code>format: "json"</code> for other compliance
+    workflows.
+  </p>
+
+  <p><strong>Try this prompt:</strong></p>
+
+  <ul>
+    <li>"Generate a CycloneDX AI-BOM for my installed skills"</li>
+  </ul>
+
+  <p>
+    If your machine hasn't run <code>skill_rescan</code> recently, the export legitimately comes back
+    with <code>dependencyDataSource: "pending-rescan"</code> for some or all skills — the dependency
+    graph hasn't been extracted yet, not a bug. Pass <code>backfillDependencies: true</code> on the
+    same call to trigger that extraction inline during export instead of running
+    <code>skill_rescan</code> separately first; this only takes effect on the native
+    <code>better-sqlite3</code> driver, not the WASM <code>sql.js</code> fallback some installs use.
+    A mix of rescanned and not-yet-rescanned skills produces <code>dependencyDataSource: "partial"</code>
+    — also expected, not an error.
+  </p>
+
+  <p>
+    Validate the output against the CycloneDX 1.5 JSON schema with
+    <code>@cyclonedx/cyclonedx-library</code>'s <code>Validation.JsonStrictValidator</code> (the same
+    library Skillsmith validates with internally) or the official web validator at
+    <a href="https://cyclonedx.org/">cyclonedx.org</a>.
+  </p>
+
+  <div class="callout warning">
+    <p class="callout-heading">Newly launched, not yet validated at scale</p>
+    <p>
+      The CycloneDX AI-BOM export is a new capability. Every generated BOM carries a
+      <code>skillsmith:notice</code> metadata property saying so until design-partner UAT concludes.
+      Review output before relying on it for a regulatory submission, and note that v1 does not
+      include license, vulnerability (VEX), or provenance fields, and does not redact locally-authored
+      or proprietary skills from the export.
+    </p>
+  </div>
 
   <h2>Common pitfalls</h2>
 
