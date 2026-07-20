@@ -140,11 +140,22 @@ add_worktree() {
 }
 
 # write_fixed_override <worktree_path> <name> <base_port> -> hand-writes a
-# minimal override whose 4 port lines match the real generator's shape
-# (quoted "HOST:CONTAINER") at HOST ports base_port..base_port+3, regardless
-# of what bucket <name>'s own cksum hash would produce. Used to manufacture
-# an exact bucket collision without needing the fixture name's hash to
-# cooperate.
+# minimal override with 4 quoted "HOST:CONTAINER" port lines at HOST ports
+# base_port..base_port+3, regardless of what bucket <name>'s own cksum hash
+# would produce. Used to manufacture an exact bucket collision without
+# needing the fixture name's hash to cooperate.
+#
+# SMI-5748: the 4th port (base+3, "orchestrator" service below) no longer
+# matches the REAL generator's shape post-SMI-5719, which deleted the
+# orchestrator service and now only ever writes 3 ports (see _lib.sh:1239-
+# 1244's own comment). Kept here anyway, deliberately: _resolve_worktree_
+# port_offset's collision-check loop (_lib.sh:1058-1066) still reserves and
+# checks all 4 slots in a bucket regardless of what a real override
+# populates, and _parse_override_host_ports (_lib.sh:950-954) is
+# service-name-agnostic — it greps port VALUES, not service names. Shrinking
+# this fixture to 3 ports would silently drop test coverage for that 4th
+# reserved-but-currently-unwritten slot. "orchestrator" below is a fixture
+# label only — no such service exists in docker-compose.yml anymore.
 write_fixed_override() {
   local wt_path="$1" name="$2" base="$3"
   cat > "$wt_path/docker-compose.override.yml" << EOF
@@ -161,6 +172,8 @@ services:
   orchestrator:
     container_name: ${name}-orchestrator-1
     ports:
+      # SMI-5748: fictional 4th slot -- see docstring above. Exercises the
+      # collision loop's full reserved bucket width, not a real service.
       - "$((base + 3)):3000"  # Orchestrator
 EOF
 }

@@ -192,9 +192,21 @@ describe('updateWorkspaceDependencies (SMI-5057)', () => {
   })
 
   it('treats peerDependencies with non-bumped key as a no-op (SMI-5057 M-5)', () => {
-    // @smith-horn/enterprise: "*" in cli's peerDependencies is NOT in
-    // PACKAGE_SPECS, so it never lands in the bump map and is naturally
-    // skipped. No `*`-string heuristic needed.
+    // This test's `plans` array below deliberately omits an enterprise bump,
+    // so "@smith-horn/enterprise" never lands in this call's bump map and is
+    // naturally skipped — regardless of its *current* range. `readFileSync`
+    // is unmocked here (only `writeFileSync` is spied), so this reads the
+    // real, currently-checked-out packages/cli/package.json. On a pristine
+    // checkout that range is "*"; on a release-cadence branch where a prior
+    // `--all` bump already advanced enterprise (SMI-5120 added it to
+    // PACKAGE_SPECS), it's already `^<version>`. Assert against whatever
+    // that pre-call value actually is, not a hardcoded "*" literal — the
+    // behavioral contract under test is "unchanged by this call", not "is
+    // the wildcard".
+    const cliPackageJsonPath = join(ROOT_DIR, 'packages/cli/package.json')
+    const cliPkgBefore = JSON.parse(readFileSync(cliPackageJsonPath, 'utf-8'))
+    const enterpriseRangeBefore = cliPkgBefore.peerDependencies?.['@smith-horn/enterprise']
+
     const corePlan = {
       spec: PACKAGE_SPECS.find((s) => s.shortName === 'core')!,
       newVersion: '0.7.3',
@@ -202,15 +214,15 @@ describe('updateWorkspaceDependencies (SMI-5057)', () => {
 
     updateWorkspaceDependencies([corePlan])
 
-    // If we wrote cli/package.json, verify the peerDependencies entry was
-    // preserved as "*" (not converted to a versioned range).
+    // If we wrote cli/package.json (e.g. because core's own dep range
+    // changed), verify the peerDependencies entry was left untouched.
     const cliWrite = mockedWriteFileSync.mock.calls.find((c) =>
       String(c[0]).endsWith('packages/cli/package.json')
     )
     if (cliWrite) {
       const cliPkg = JSON.parse(String(cliWrite![1]))
       if (cliPkg.peerDependencies?.['@smith-horn/enterprise']) {
-        expect(cliPkg.peerDependencies['@smith-horn/enterprise']).toBe('*')
+        expect(cliPkg.peerDependencies['@smith-horn/enterprise']).toBe(enterpriseRangeBefore)
       }
     }
   })
