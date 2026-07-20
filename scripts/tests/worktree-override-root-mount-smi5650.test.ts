@@ -24,6 +24,12 @@
  * entry, sanitized to `native-seed-esbuild-scope` (volume names can't
  * contain `@`).
  *
+ * SMI-5750: each top-level native-seed volume declaration also carries an
+ * `app.skillsmith.owned: "true"` label (added in enumerate_native_module_
+ * volumes alongside `driver: local`) so prune-orphaned-docker-volumes.sh can
+ * identify and auto-reclaim orphaned native-seed volumes -- these are the
+ * numerically dominant orphan class (5 per worktree).
+ *
  * Cases:
  *   6  Darwin: the 2 alias-scope tmpfs overlays present per service with
  *      valid YAML shape (Wave 1).
@@ -31,10 +37,10 @@
  *      per service (dev/test, 10 total, including the @esbuild
  *      -> native-seed-esbuild-scope sanitization), the generated override's
  *      top-level `volumes:` YAML key exists with exactly the 5 expected
- *      `driver: local` entries (no driver_opts, no tmpfs annotation), and
- *      the root `:ro` mount precedes every native-module volume-reference
- *      line within each service (same order invariant as the alias-scope
- *      tmpfs entries) (Wave 2).
+ *      `driver: local` + `app.skillsmith.owned` entries (no driver_opts, no
+ *      tmpfs annotation), and the root `:ro` mount precedes every
+ *      native-module volume-reference line within each service (same order
+ *      invariant as the alias-scope tmpfs entries) (Wave 2).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { join } from 'node:path'
@@ -180,9 +186,12 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     }
 
     // Top-level `volumes:` YAML key: exactly the 5 expected named volumes,
-    // each declared as a bare `{ driver: 'local' }` — no driver_opts, no
-    // tmpfs annotation at all (the fix for Compose's tmpfs-hardcodes-noexec
-    // discovery is an ordinary named volume, not a tmpfs variant of it).
+    // each declared as `{ driver: 'local' }` — no driver_opts, no tmpfs
+    // annotation at all (the fix for Compose's tmpfs-hardcodes-noexec
+    // discovery is an ordinary named volume, not a tmpfs variant of it) —
+    // plus the SMI-5750 `app.skillsmith.owned` ownership label so
+    // prune-orphaned-docker-volumes.sh can identify and auto-reclaim
+    // orphaned native-seed volumes.
     expect(doc.volumes, 'top-level volumes: key').toBeDefined()
     const topLevelVolumeNames = Object.keys(doc.volumes!).sort()
     expect(topLevelVolumeNames).toEqual(
@@ -195,7 +204,10 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
       ].sort()
     )
     for (const [name, decl] of Object.entries(doc.volumes!)) {
-      expect(decl, `top-level volume declaration for ${name}`).toEqual({ driver: 'local' })
+      expect(decl, `top-level volume declaration for ${name}`).toEqual({
+        driver: 'local',
+        labels: { 'app.skillsmith.owned': 'true' },
+      })
     }
 
     // Mount order: the root :ro mount (a plain string) must precede every

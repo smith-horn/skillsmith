@@ -63,6 +63,30 @@ native_module_volume_name() {
 }
 
 #######################################
+# Sanitize an arbitrary name (worktree directory basename, branch name) into
+# a Docker Compose v2 project name: lowercase, then strip any character
+# outside [a-z0-9_-]. This is the single canonical implementation --
+# remove-worktree.sh's project_name derivation and
+# prune-orphaned-docker-volumes.sh's protected-set derivation both call this
+# rather than each inlining their own copy of the tr/sed pipeline, so the two
+# can never independently drift out of sync (SMI-5750 governance finding:
+# they previously duplicated this logic verbatim).
+#
+# A trailing newline is always emitted (needed by callers that invoke this
+# in a loop and capture the combined output via one outer `$(...)` --
+# without it, BSD sed's no-trailing-newline-preserving behavior would
+# silently glue consecutive outputs together with no separator).
+#
+# Arguments:
+#   $1 - Name to sanitize (e.g. a worktree directory basename)
+# Outputs:
+#   Sanitized project-name-safe string, followed by a newline, to stdout
+#######################################
+sanitize_project_name() {
+    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g'
+}
+
+#######################################
 # Print error message and exit
 #######################################
 error() {
@@ -913,6 +937,14 @@ enumerate_native_module_volumes() {
         if [[ -d "$repo_root/node_modules/$native_module" && ! -L "$repo_root/node_modules/$native_module" ]]; then
             printf '  native-seed-%s:\n' "$(native_module_volume_name "$native_module")"
             printf '    driver: local\n'
+            # SMI-5750: positive ownership marker so
+            # prune-orphaned-docker-volumes.sh can identify these as
+            # Skillsmith-owned and auto-reclaim orphaned ones (worktree
+            # removed without going through remove-worktree.sh) instead of
+            # leaving them perpetually UNCONFIRMED. Same label/rationale as
+            # docker-compose.yml's node_modules volume.
+            printf '    labels:\n'
+            printf '      app.skillsmith.owned: "true"\n'
         fi
     done
 }
