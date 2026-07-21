@@ -15,6 +15,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
+# SMI-5773: git-crypt filter management (get_encrypted_paths, restore_filter_config,
+# force_resmudge, scan_ciphertext, check_resmudge_scan_result) split out per
+# CLAUDE.md's 500-line file-length convention.
+# shellcheck source=_rebase-git-crypt.sh
+source "$SCRIPT_DIR/_rebase-git-crypt.sh"
+# SMI-5773: submodule directional-guard alignment (is_allow_ahead_for,
+# step_rebase_submodule) split out per CLAUDE.md's 500-line file-length
+# convention.
+# shellcheck source=_rebase-submodule.sh
+source "$SCRIPT_DIR/_rebase-submodule.sh"
 
 # Flags
 DRY_RUN=false
@@ -29,6 +39,14 @@ EXPECTED_BRANCH=""
 MAIN_REPO_ROOT=""
 STASH_REF="" ORIG_SMUDGE="" ORIG_CLEAN=""
 HAS_GIT_CRYPT=false FILTERS_DISABLED=false
+# SMI-5773: post-resmudge ciphertext-scan result, consumed in main() after
+# Step 11 (stash pop) so a detected residue never strands the user's stash.
+# shellcheck disable=SC2034 # read by check_resmudge_scan_result() in the sourced _rebase-git-crypt.sh (shellcheck's unused-var check doesn't follow cross-file usage even via source=)
+RESMUDGE_SCAN_FAILED=false
+# shellcheck disable=SC2034 # read by check_resmudge_scan_result() in _rebase-git-crypt.sh; written by scan_ciphertext() there too
+SCAN_RESULT_BAD=()
+# shellcheck disable=SC2034 # read by check_resmudge_scan_result() in _rebase-git-crypt.sh; written by scan_ciphertext() there too
+SCAN_RESULT_MISSING=()
 
 # SMI-4829: parallel arrays indexed by position (macOS bash 3.2 lacks assoc arrays).
 SUBMODULES=()
@@ -61,6 +79,8 @@ Exit Codes:
   1  Validation failure (not a worktree, staged changes, etc.)
   2  Rebase conflict — manual resolution required
   3  Stash pop conflict — rebase succeeded but stash needs manual resolution
+  4  Rebase (and stash pop) succeeded, but a post-rebase ciphertext scan found
+     encrypted-path files still needing re-smudge — see printed remediation
 
 Examples:
   $(basename "$0") .worktrees/my-feature
@@ -68,46 +88,6 @@ Examples:
   $(basename "$0") --no-submodule .worktrees/my-feature origin/main
   $(basename "$0") --allow-submodule-ahead=docs/internal .worktrees/my-feature
 EOF
-}
-
-# SMI-4829: returns 0 (true) if --allow-submodule-ahead applies to $1 (global form, or a matching scoped form).
-is_allow_ahead_for() {
-    [ "$ALLOW_SUBMODULE_AHEAD_GLOBAL" = true ] && return 0
-    local p; for p in "${ALLOW_SUBMODULE_AHEAD_PATHS[@]:-}"; do [ "$p" = "$1" ] && return 0; done
-    return 1
-}
-
-# Extract encrypted path prefixes from .gitattributes (strips trailing /**)
-# Falls back to empty string if .gitattributes is missing or has no git-crypt entries
-get_encrypted_paths() {
-    grep 'filter=git-crypt' "$WORKTREE_PATH/.gitattributes" 2>/dev/null \
-        | awk '{print $1}' \
-        | sed 's|/\*\*$||' \
-        || echo ""
-}
-
-# Restore git-crypt filters to their original values
-_restore_filter_kind() {
-    local kind="$1" orig="$2"
-    if [ -n "$orig" ]; then
-        git -C "$WORKTREE_PATH" config --local "filter.git-crypt.$kind" "$orig"
-    else
-        git -C "$WORKTREE_PATH" config --local --unset "filter.git-crypt.$kind" 2>/dev/null || true
-    fi
-}
-restore_filters() {
-    [ "$FILTERS_DISABLED" = true ] || return 0
-    info "Restoring git-crypt filters..."
-    _restore_filter_kind smudge "$ORIG_SMUDGE"
-    _restore_filter_kind clean  "$ORIG_CLEAN"
-    FILTERS_DISABLED=false
-    # Re-checkout encrypted paths to restore plaintext via smudge filter
-    local encrypted_paths; encrypted_paths=$(get_encrypted_paths)
-    if [ -n "$encrypted_paths" ]; then
-        # shellcheck disable=SC2086
-        git -C "$WORKTREE_PATH" checkout HEAD -- $encrypted_paths 2>/dev/null || true
-    fi
-    success "  Git-crypt filters restored"
 }
 
 # Step 1: Validate worktree
@@ -246,56 +226,8 @@ step_disable_filters() {
     if [ "$DRY_RUN" = true ]; then info "  [dry-run] Would disable git-crypt smudge/clean filters"; return 0; fi
     git -C "$WORKTREE_PATH" config --local filter.git-crypt.smudge "cat"
     git -C "$WORKTREE_PATH" config --local filter.git-crypt.clean "cat"
-    FILTERS_DISABLED=true; trap restore_filters EXIT
+    FILTERS_DISABLED=true; trap restore_filter_config EXIT
     success "  Git-crypt filters disabled (trap registered)"
-}
-
-# Step 8: Rebase submodule (directional guard via merge-base --is-ancestor).
-# SMI-4829: iterates over every submodule; --allow-submodule-ahead is
-# evaluated per-path so an allowance for one does not permit drift for another.
-step_rebase_submodule() {
-    if [ "$SKIP_SUBMODULE" = true ]; then
-        info "Step 8: Skipping submodule rebase (--no-submodule)"; return 0
-    fi
-    if [ "${#SUBMODULES[@]}" -eq 0 ]; then
-        info "Step 8: Skipping submodule rebase (no submodules declared)"; return 0
-    fi
-    info "Step 8: Checking submodule alignment..."
-    local i sub_path expected_sha wt_sub target_sub_sha
-    for i in "${!SUBMODULES[@]}"; do
-        sub_path="${SUBMODULES[$i]}"
-        expected_sha="${EXPECTED_SUBMODULE_SHAS[$i]:-}"
-        wt_sub="${WT_SUB_PATHS[$i]:-$WORKTREE_PATH/$sub_path}"
-        if [ -z "$expected_sha" ]; then info "  ($sub_path) not initialized — skipping"; continue; fi
-        target_sub_sha=$(git -C "$WORKTREE_PATH" ls-tree "$TARGET_REF" -- "$sub_path" 2>/dev/null | awk '{print $3}')
-        if [ -z "$target_sub_sha" ]; then info "  ($sub_path) target has no entry — skipping"; continue; fi
-        if [ "$target_sub_sha" = "$expected_sha" ]; then info "  ($sub_path) already at target pointer"; continue; fi
-        # Directional guard: worktree's submodule must not be ahead of target
-        if ! git -C "$wt_sub" merge-base --is-ancestor "$expected_sha" "$target_sub_sha" 2>/dev/null; then
-            if git -C "$wt_sub" merge-base --is-ancestor "$target_sub_sha" "$expected_sha" 2>/dev/null; then
-                # SMI-4773/SMI-4829: when allowed for this submodule keep the descendant SHA; divergence errors below.
-                if is_allow_ahead_for "$sub_path"; then
-                    info "  ($sub_path) worktree submodule is ahead of target (strict descendant) — keeping worktree SHA"
-                    info "    Worktree: ${expected_sha:0:12} / Target: ${target_sub_sha:0:12}"
-                    continue
-                fi
-                error "Worktree submodule ($sub_path) is AHEAD of target's pointer.
-  Worktree: $expected_sha
-  Target:   $target_sub_sha
-Push and merge your submodule changes first, then retry.
-(Pass --allow-submodule-ahead or --allow-submodule-ahead=$sub_path to keep the worktree's strict-descendant pointer.)"
-            else
-                error "Worktree submodule ($sub_path) has diverged from target.
-  Worktree: $expected_sha
-  Target:   $target_sub_sha
-The submodule has local commits not in the target. Push and merge first, then retry."
-            fi
-        fi
-        if [ "$DRY_RUN" = true ]; then info "  ($sub_path) [dry-run] Would update submodule to ${target_sub_sha:0:12}"; continue; fi
-        git -C "$wt_sub" checkout "$target_sub_sha" 2>/dev/null
-        git -C "$WORKTREE_PATH" add "$sub_path"
-        success "  ($sub_path) updated to ${target_sub_sha:0:12}"
-    done
 }
 
 # Step 9: Rebase parent (trap cleared before rebase, re-registered on success).
@@ -333,10 +265,10 @@ step_rebase_parent() {
                 git -C "$WORKTREE_PATH" add "$conflict_line"
             done <<< "$conflicted"
             GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git -C "$WORKTREE_PATH" rebase --continue || {
-                trap restore_filters EXIT
+                trap restore_filter_config EXIT
                 error "Rebase --continue failed after submodule auto-resolve."
             }
-            trap restore_filters EXIT
+            trap restore_filter_config EXIT
             success "  Rebase completed (submodule conflict auto-resolved)"
         else
             echo ""
@@ -355,6 +287,12 @@ step_rebase_parent() {
                 echo "  git -C $WORKTREE_PATH config --local --unset filter.git-crypt.clean"
                 local enc_paths
                 enc_paths=$(get_encrypted_paths | tr '\n' ' ')
+                # SMI-5773: NUL-safe ls-files -z + while-loop, same form as
+                # force_resmudge() — a bare `checkout HEAD -- <paths>` is a
+                # no-op on files git already considers stat-clean (the exact
+                # files that carry ciphertext after this filter window), and
+                # `ls-files | xargs rm` is unsafe on macOS (xargs lacks -r).
+                echo "  git -C $WORKTREE_PATH ls-files -z -- $enc_paths | while IFS= read -r -d '' f; do rm -f -- \"$WORKTREE_PATH/\$f\"; done"
                 echo "  git -C $WORKTREE_PATH checkout HEAD -- $enc_paths"
             fi
             echo ""
@@ -362,12 +300,16 @@ step_rebase_parent() {
             exit 2
         fi
     else
-        trap restore_filters EXIT
+        trap restore_filter_config EXIT
         success "  Rebase completed"
     fi
 }
 
-# Step 10: Restore git-crypt filters (explicit call; trap is backup)
+# Step 10: Restore git-crypt filters (explicit call; trap is backup), then
+# force a re-smudge of any files the rebase rewrote under smudge=cat and
+# scan for surviving ciphertext (SMI-5773). RESMUDGE_SCAN_FAILED is consumed
+# by main() AFTER Step 11 (stash pop) so a detected residue never strands
+# the user's stash.
 step_restore_filters() {
     if [ "$DRY_RUN" = true ]; then
         [ "$HAS_GIT_CRYPT" = true ] && info "Step 10: [dry-run] Would restore git-crypt filters" \
@@ -376,7 +318,22 @@ step_restore_filters() {
     fi
     if [ "$FILTERS_DISABLED" = true ]; then
         info "Step 10: Restoring git-crypt filters..."
-        trap - EXIT; restore_filters
+        # SMI-5773: capture $FILTERS_DISABLED's pre-call value BEFORE calling
+        # restore_filter_config() — that function sets FILTERS_DISABLED=false
+        # as its own side effect, so checking the flag AFTER the call would
+        # always read the post-call value and this guard would never gate
+        # correctly (it would always see "false" and skip force_resmudge).
+        local was_disabled="$FILTERS_DISABLED"
+        trap - EXIT; restore_filter_config
+        if [ "$was_disabled" = true ] && [ "$HAS_GIT_CRYPT" = true ]; then
+            force_resmudge
+            if scan_ciphertext; then
+                RESMUDGE_SCAN_FAILED=false
+            else
+                # shellcheck disable=SC2034 # read by check_resmudge_scan_result() in the sourced _rebase-git-crypt.sh
+                RESMUDGE_SCAN_FAILED=true
+            fi
+        fi
     else
         info "Step 10: Skipping filter restore (not disabled)"
     fi
@@ -445,7 +402,10 @@ main() {
             -h|--help) usage; exit 0 ;;
             --dry-run) DRY_RUN=true ;;
             --no-submodule) SKIP_SUBMODULE=true ;;
-            --allow-submodule-ahead) ALLOW_SUBMODULE_AHEAD_GLOBAL=true ;;
+            --allow-submodule-ahead)
+                # shellcheck disable=SC2034 # read by is_allow_ahead_for() in the sourced _rebase-submodule.sh
+                ALLOW_SUBMODULE_AHEAD_GLOBAL=true
+                ;;
             --allow-submodule-ahead=*)
                 # SMI-4829: scoped form applies only to the named submodule.
                 ALLOW_SUBMODULE_AHEAD_PATHS+=("${1#--allow-submodule-ahead=}")
@@ -492,7 +452,15 @@ Run '$(basename "$0") --help' for usage information."
     step_restore_filters
     step_pop_stash
     step_verify_branch
+    check_resmudge_scan_result
     step_report
 }
 
-main "$@"
+# SMI-5773: allow this script to be `source`d (scripts/tests/rebase-worktree.helpers.ts
+# calls restore_filter_config/force_resmudge/scan_ciphertext directly for unit-style
+# coverage) without auto-running main(). Behavior when executed directly
+# (`./scripts/rebase-worktree.sh ...` or `bash scripts/rebase-worktree.sh ...`) is
+# unchanged — BASH_SOURCE[0] equals $0 in that case.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi

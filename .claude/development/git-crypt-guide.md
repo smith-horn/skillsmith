@@ -77,9 +77,11 @@ For worktree branches, use the rebase script which handles all steps automatical
 
 The script handles: submodule cross-fetching, git-crypt filter disable/restore, stash management, submodule conflict auto-resolution, and branch verification. Post-SMI-4829 the script processes all submodules in `.gitmodules` (`docs/internal` + up to 3 strategy mounts: `.claude/skills`, `.claude/plans`, `.claude/hive-mind`). Use `--allow-submodule-ahead=<path>` for per-submodule advance permission when one submodule pointer is a strict descendant of target's (unscoped `--allow-submodule-ahead` applies globally). See `./scripts/rebase-worktree.sh --help` for full details.
 
-**Exit codes**: 0 (success), 1 (validation failure), 2 (rebase conflict -- manual resolution needed), 3 (rebase succeeded but stash pop had conflicts).
+**Exit codes**: 0 (success), 1 (validation failure), 2 (rebase conflict -- manual resolution needed), 3 (rebase succeeded but stash pop had conflicts), 4 (SMI-5773: rebase and stash pop both succeeded, but the post-rebase ciphertext scan found encrypted-path files still carrying the `\x00GITCRYPT` header or missing entirely -- the script prints the affected files plus a remediation command).
 
 **When to use manual methods below**: Non-worktree branches, or when the script exits 2 (conflict requires manual resolution with filters already disabled).
+
+**Why exit 4 can happen at all (SMI-5773)**: `git checkout HEAD -- <paths>` skips any file Git already considers stat-clean (size/mtime/ctime/inode match the index) -- it never rewrites it, `force` notwithstanding. During the rebase's filter-disabled window (smudge/clean set to `cat`), any encrypted file the rebase itself rewrites lands on disk as ciphertext but gets recorded stat-clean, so a plain re-checkout after restoring filters silently no-ops on exactly the files that need re-smudging. The fix (`force_resmudge()`) deletes the tracked copies before re-checking them out, forcing an unconditional rewrite through the real smudge filter; `scan_ciphertext()` then verifies no `\x00GITCRYPT`-prefixed or missing file survived. If you're tempted to "fix" a future git-crypt desync by adding another bare `git checkout -- <paths>`, it will not work for this failure class -- delete-then-checkout is required.
 
 ### Manual fallback: Standard rebase (branch behind main, no squash-merge involved)
 

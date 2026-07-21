@@ -1,93 +1,28 @@
 /**
- * Integration tests for rebase-worktree.sh (SMI-3102, Wave 2)
+ * Integration tests for rebase-worktree.sh (SMI-3102, Wave 2).
  *
  * All tests create throwaway git repos in temp directories.
- * No actual Skillsmith repo or git-crypt encryption is used.
+ *
+ * SMI-5773 post-rebase git-crypt re-smudge tests live in the sibling
+ * `rebase-worktree.git-crypt-resmudge.test.ts` (split by concern, not just
+ * line count, once this file plus the new SMI-5773 suite together exceeded
+ * CLAUDE.md's 500-line file-length guidance). Fixture helpers for both
+ * files live in `rebase-worktree.helpers.ts` (same split convention as
+ * `prune-orphaned-docker-volumes.test.ts`/`.helpers.ts`, SMI-5750/PR#1968).
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { execSync } from 'child_process'
-import { rmSync, existsSync } from 'fs'
+import { existsSync, rmSync } from 'fs'
 import { join } from 'path'
 
-import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
-
-// Absolute path to the script under test
-const SCRIPT_PATH = join(__dirname, '..', 'rebase-worktree.sh')
-
-/**
- * SMI-4693: shared env routes through `makeFixtureEnv` so GIT_DISCOVERY_VARS
- * are stripped from every spawned git AND from the rebase-worktree.sh
- * subprocess (which itself shells out to git).
- */
-const GIT_ENV = makeFixtureEnv()
-
-/** SMI-4693: realpath-canonical mkdtemp so /var ↔ /private/var asymmetry can't cause discovery mismatches. */
-function makeTempDir(prefix: string): string {
-  return makeFixtureTempDir(prefix)
-}
-
-/** Run a git command in a directory, returning stdout */
-function git(cwd: string, args: string): string {
-  return execSync(`git -c init.defaultBranch=main -c protocol.file.allow=always ${args}`, {
-    cwd,
-    encoding: 'utf8',
-    env: GIT_ENV,
-  }).trim()
-}
-
-/** Run a shell command with the standard git env */
-function sh(cmd: string, opts?: { cwd?: string }): string {
-  return execSync(cmd, { encoding: 'utf8', env: GIT_ENV, ...opts }).trim()
-}
-
-/** Run the rebase-worktree.sh script, returning { status, stdout, stderr } */
-function runScript(args: string): { status: number; stdout: string; stderr: string } {
-  try {
-    const stdout = execSync(`bash "${SCRIPT_PATH}" ${args}`, {
-      encoding: 'utf8',
-      timeout: 30_000,
-      env: GIT_ENV,
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (err) {
-    const e = err as { status: number; stdout: string; stderr: string }
-    return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' }
-  }
-}
-
-/**
- * Create a bare "remote" repo, clone it, make an initial commit,
- * push to origin, and create a worktree on a feature branch.
- *
- * Returns { bareDir, cloneDir, worktreeDir, cleanup }
- */
-function setupRepoWithWorktree(tempRoot: string): {
-  bareDir: string
-  cloneDir: string
-  worktreeDir: string
-} {
-  const bareDir = join(tempRoot, 'bare.git')
-  const cloneDir = join(tempRoot, 'clone')
-  const worktreeDir = join(tempRoot, 'wt')
-
-  // Create bare remote with main as default branch
-  git(tempRoot, `init --bare "${bareDir}"`)
-
-  // Clone it
-  git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
-
-  // Initial commit on main
-  sh(`touch "${join(cloneDir, 'README.md')}"`)
-  git(cloneDir, 'add README.md')
-  git(cloneDir, 'commit -m "initial commit"')
-  git(cloneDir, 'push origin main')
-
-  // Create worktree on a feature branch
-  git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
-
-  return { bareDir, cloneDir, worktreeDir }
-}
+import {
+  git,
+  sh,
+  runScript,
+  makeTempDir,
+  setupRepoWithWorktree,
+  setupSubmoduleRepoWithWorktree,
+} from './rebase-worktree.helpers.js'
 
 // Collect temp dirs for cleanup
 const tempDirs: string[] = []
@@ -129,37 +64,7 @@ describe('SMI-3102: rebase-worktree.sh', () => {
   it('rebases with submodule pointer update', () => {
     const tempRoot = makeTempDir('rw-test2')
     tempDirs.push(tempRoot)
-
-    const bareDir = join(tempRoot, 'bare.git')
-    const subBareDir = join(tempRoot, 'sub-bare.git')
-    const cloneDir = join(tempRoot, 'clone')
-    const worktreeDir = join(tempRoot, 'wt')
-
-    // Create bare repos (main + submodule)
-    git(tempRoot, `init --bare "${bareDir}"`)
-    git(tempRoot, `init --bare "${subBareDir}"`)
-
-    // Seed the submodule bare repo with a commit
-    const subSeedDir = join(tempRoot, 'sub-seed')
-    git(tempRoot, `clone "${subBareDir}" "${subSeedDir}"`)
-    sh(`touch "${join(subSeedDir, 'doc.md')}"`)
-    git(subSeedDir, 'add doc.md')
-    git(subSeedDir, 'commit -m "sub initial"')
-    git(subSeedDir, 'push origin main')
-
-    // Clone main repo and add submodule
-    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
-    sh(`touch "${join(cloneDir, 'README.md')}"`)
-    git(cloneDir, 'add README.md')
-    git(cloneDir, 'commit -m "initial commit"')
-    git(cloneDir, `submodule add "${subBareDir}" docs/internal`)
-    git(cloneDir, 'commit -m "add submodule"')
-    git(cloneDir, 'push origin main')
-
-    // Create worktree
-    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
-    // Init submodule in worktree
-    git(worktreeDir, 'submodule update --init')
+    const { cloneDir, worktreeDir } = setupSubmoduleRepoWithWorktree(tempRoot)
 
     // Advance submodule in main: add a commit to submodule, update pointer in main
     const subInClone = join(cloneDir, 'docs', 'internal')
@@ -315,36 +220,7 @@ describe('SMI-3102: rebase-worktree.sh', () => {
   it('skips submodule steps when --no-submodule is passed', () => {
     const tempRoot = makeTempDir('rw-test7')
     tempDirs.push(tempRoot)
-
-    const bareDir = join(tempRoot, 'bare.git')
-    const subBareDir = join(tempRoot, 'sub-bare.git')
-    const cloneDir = join(tempRoot, 'clone')
-    const worktreeDir = join(tempRoot, 'wt')
-
-    // Create bare repos
-    git(tempRoot, `init --bare "${bareDir}"`)
-    git(tempRoot, `init --bare "${subBareDir}"`)
-
-    // Seed submodule
-    const subSeedDir = join(tempRoot, 'sub-seed')
-    git(tempRoot, `clone "${subBareDir}" "${subSeedDir}"`)
-    sh(`touch "${join(subSeedDir, 'doc.md')}"`)
-    git(subSeedDir, 'add doc.md')
-    git(subSeedDir, 'commit -m "sub initial"')
-    git(subSeedDir, 'push origin main')
-
-    // Clone + add submodule
-    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
-    sh(`touch "${join(cloneDir, 'README.md')}"`)
-    git(cloneDir, 'add README.md')
-    git(cloneDir, 'commit -m "initial"')
-    git(cloneDir, `submodule add "${subBareDir}" docs/internal`)
-    git(cloneDir, 'commit -m "add submodule"')
-    git(cloneDir, 'push origin main')
-
-    // Create worktree + init submodule
-    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
-    git(worktreeDir, 'submodule update --init')
+    const { cloneDir, worktreeDir } = setupSubmoduleRepoWithWorktree(tempRoot)
 
     // Advance main
     git(cloneDir, 'checkout main')
@@ -381,36 +257,7 @@ describe('SMI-3102: rebase-worktree.sh', () => {
   it('exits 1 when worktree submodule is ahead of target', () => {
     const tempRoot = makeTempDir('rw-test9')
     tempDirs.push(tempRoot)
-
-    const bareDir = join(tempRoot, 'bare.git')
-    const subBareDir = join(tempRoot, 'sub-bare.git')
-    const cloneDir = join(tempRoot, 'clone')
-    const worktreeDir = join(tempRoot, 'wt')
-
-    // Create bare repos
-    git(tempRoot, `init --bare "${bareDir}"`)
-    git(tempRoot, `init --bare "${subBareDir}"`)
-
-    // Seed submodule
-    const subSeedDir = join(tempRoot, 'sub-seed')
-    git(tempRoot, `clone "${subBareDir}" "${subSeedDir}"`)
-    sh(`touch "${join(subSeedDir, 'doc.md')}"`)
-    git(subSeedDir, 'add doc.md')
-    git(subSeedDir, 'commit -m "sub initial"')
-    git(subSeedDir, 'push origin main')
-
-    // Clone + add submodule
-    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
-    sh(`touch "${join(cloneDir, 'README.md')}"`)
-    git(cloneDir, 'add README.md')
-    git(cloneDir, 'commit -m "initial"')
-    git(cloneDir, `submodule add "${subBareDir}" docs/internal`)
-    git(cloneDir, 'commit -m "add submodule"')
-    git(cloneDir, 'push origin main')
-
-    // Create worktree + init submodule
-    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
-    git(worktreeDir, 'submodule update --init')
+    const { cloneDir, worktreeDir } = setupSubmoduleRepoWithWorktree(tempRoot)
 
     // Advance the worktree's submodule AHEAD of main's pointer
     const wtSub = join(worktreeDir, 'docs', 'internal')
@@ -436,32 +283,7 @@ describe('SMI-3102: rebase-worktree.sh', () => {
   it('exits 0 with --allow-submodule-ahead when worktree submodule is a strict descendant', () => {
     const tempRoot = makeTempDir('rw-test10')
     tempDirs.push(tempRoot)
-
-    const bareDir = join(tempRoot, 'bare.git')
-    const subBareDir = join(tempRoot, 'sub-bare.git')
-    const cloneDir = join(tempRoot, 'clone')
-    const worktreeDir = join(tempRoot, 'wt')
-
-    git(tempRoot, `init --bare "${bareDir}"`)
-    git(tempRoot, `init --bare "${subBareDir}"`)
-
-    const subSeedDir = join(tempRoot, 'sub-seed')
-    git(tempRoot, `clone "${subBareDir}" "${subSeedDir}"`)
-    sh(`touch "${join(subSeedDir, 'doc.md')}"`)
-    git(subSeedDir, 'add doc.md')
-    git(subSeedDir, 'commit -m "sub initial"')
-    git(subSeedDir, 'push origin main')
-
-    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
-    sh(`touch "${join(cloneDir, 'README.md')}"`)
-    git(cloneDir, 'add README.md')
-    git(cloneDir, 'commit -m "initial"')
-    git(cloneDir, `submodule add "${subBareDir}" docs/internal`)
-    git(cloneDir, 'commit -m "add submodule"')
-    git(cloneDir, 'push origin main')
-
-    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
-    git(worktreeDir, 'submodule update --init')
+    const { cloneDir, worktreeDir } = setupSubmoduleRepoWithWorktree(tempRoot)
 
     // Advance worktree submodule strictly ahead (descendant) of main's pointer
     const wtSub = join(worktreeDir, 'docs', 'internal')
@@ -491,32 +313,7 @@ describe('SMI-3102: rebase-worktree.sh', () => {
   it('exits 1 with --allow-submodule-ahead when worktree submodule has DIVERGED', () => {
     const tempRoot = makeTempDir('rw-test11')
     tempDirs.push(tempRoot)
-
-    const bareDir = join(tempRoot, 'bare.git')
-    const subBareDir = join(tempRoot, 'sub-bare.git')
-    const cloneDir = join(tempRoot, 'clone')
-    const worktreeDir = join(tempRoot, 'wt')
-
-    git(tempRoot, `init --bare "${bareDir}"`)
-    git(tempRoot, `init --bare "${subBareDir}"`)
-
-    const subSeedDir = join(tempRoot, 'sub-seed')
-    git(tempRoot, `clone "${subBareDir}" "${subSeedDir}"`)
-    sh(`touch "${join(subSeedDir, 'doc.md')}"`)
-    git(subSeedDir, 'add doc.md')
-    git(subSeedDir, 'commit -m "sub initial"')
-    git(subSeedDir, 'push origin main')
-
-    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
-    sh(`touch "${join(cloneDir, 'README.md')}"`)
-    git(cloneDir, 'add README.md')
-    git(cloneDir, 'commit -m "initial"')
-    git(cloneDir, `submodule add "${subBareDir}" docs/internal`)
-    git(cloneDir, 'commit -m "add submodule"')
-    git(cloneDir, 'push origin main')
-
-    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
-    git(worktreeDir, 'submodule update --init')
+    const { subBareDir, cloneDir, worktreeDir } = setupSubmoduleRepoWithWorktree(tempRoot)
 
     // Worktree advances submodule to its own SHA (commit A)
     const wtSub = join(worktreeDir, 'docs', 'internal')
