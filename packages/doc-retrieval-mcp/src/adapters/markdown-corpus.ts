@@ -102,6 +102,71 @@ async function expandGlobs(patterns: string[], cwd: string): Promise<string[]> {
   return [...results].sort()
 }
 
+// Root-repo `git diff --name-only` reports a submodule (gitlink, mode
+// 160000 — e.g. docs/internal, .claude/skills) as one opaque path, never
+// the files changed inside it. Left unresolved, every file inside every
+// submodule silently drops out of every incremental run forever (the
+// bare submodule path never matches a real glob-expanded file path) —
+// discovered 2026-07-21 when a real content edit inside docs/internal
+// produced a 0-file incremental run. This resolves each submodule entry
+// into its own internal file diff before the caller filters against the
+// glob-expanded file set.
+function listSubmodulePaths(root: string): string[] {
+  try {
+    const out = execFileSync('git', ['config', '--file', '.gitmodules', '--get-regexp', 'path'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' }),
+    })
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.split(' ')[1])
+      .filter((p): p is string => Boolean(p))
+  } catch {
+    return []
+  }
+}
+
+function submoduleCommitAt(root: string, sha: string, submodulePath: string): string | null {
+  try {
+    const out = execFileSync('git', ['ls-tree', sha, '--', submodulePath], {
+      cwd: root,
+      encoding: 'utf8',
+      env: stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' }),
+    })
+    const match = /^160000 commit ([0-9a-f]{40})\t/.exec(out)
+    return match ? match[1] : null
+  } catch {
+    return null
+  }
+}
+
+function submoduleChangedFiles(
+  root: string,
+  submodulePath: string,
+  oldSha: string | null,
+  newSha: string
+): string[] {
+  const submoduleRoot = join(root, submodulePath)
+  const env = stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' })
+  try {
+    // No prior SHA inside the submodule's own history (e.g. lastSha
+    // predates this submodule's initialization) — every tracked file
+    // counts as changed, matching the top-level "no lastSha" fallback.
+    const args = oldSha
+      ? ['--no-optional-locks', 'diff', '--name-only', `${oldSha}..${newSha}`]
+      : ['ls-tree', '-r', '--name-only', newSha]
+    const out = execFileSync('git', args, { cwd: submoduleRoot, encoding: 'utf8', env })
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((p) => join(submodulePath, p))
+  } catch {
+    return []
+  }
+}
+
 function gitChangedFiles(root: string, baseSha: string): string[] {
   if (!/^[0-9a-f]{40}$/i.test(baseSha)) return []
   try {
@@ -112,7 +177,22 @@ function gitChangedFiles(root: string, baseSha: string): string[] {
       // override `cwd` and diff the wrong repo.
       { cwd: root, encoding: 'utf8', env: stripGitDiscoveryEnv({ GIT_OPTIONAL_LOCKS: '0' }) }
     )
-    return out.split('\n').filter(Boolean)
+    const topLevel = out.split('\n').filter(Boolean)
+
+    const submodulePaths = new Set(listSubmodulePaths(root))
+    if (submodulePaths.size === 0) return topLevel
+
+    const resolved: string[] = []
+    for (const rel of topLevel) {
+      if (!submodulePaths.has(rel)) {
+        resolved.push(rel)
+        continue
+      }
+      const oldSha = submoduleCommitAt(root, baseSha, rel)
+      const newSha = submoduleCommitAt(root, 'HEAD', rel)
+      if (newSha) resolved.push(...submoduleChangedFiles(root, rel, oldSha, newSha))
+    }
+    return resolved
   } catch {
     return []
   }

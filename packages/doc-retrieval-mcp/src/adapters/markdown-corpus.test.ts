@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createMarkdownCorpusAdapter } from './markdown-corpus.js'
 import type { AdapterContext, AdapterFile } from '../types.js'
 import type { CorpusConfig } from '../config.js'
@@ -55,5 +59,130 @@ describe('markdown-corpus adapter — chunk provenance tagging (SMI-4703 §1)', 
     }
     const chunks = await adapter.chunk(file, makeCtx())
     expect(chunks).toEqual([])
+  })
+})
+
+/**
+ * Regression coverage for the 2026-07-21 incident: a real content edit
+ * inside docs/internal (a git submodule) produced a 0-file incremental
+ * run — `git diff --name-only` in the outer repo reports a changed
+ * submodule as one opaque gitlink path, never the files changed inside
+ * it, so every submodule file silently dropped out of every incremental
+ * run. Builds a REAL git repo with a REAL submodule (the prior
+ * integration test's `mkdtemp`-only fixtures never called `git init`, so
+ * `gitChangedFiles()` was never actually exercised against real history).
+ */
+describe('markdown-corpus adapter — incremental listFiles across a submodule boundary (2026-07-21 regression)', () => {
+  let outerRoot: string
+  let innerRoot: string
+
+  afterEach(async () => {
+    if (outerRoot) await rm(outerRoot, { recursive: true, force: true })
+    if (innerRoot) await rm(innerRoot, { recursive: true, force: true })
+  })
+
+  function git(cwd: string, args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8' })
+  }
+
+  function commit(cwd: string, message: string): string {
+    git(cwd, [
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'user.name=Test',
+      'commit',
+      '-q',
+      '-m',
+      message,
+    ])
+    return git(cwd, ['rev-parse', 'HEAD']).trim()
+  }
+
+  function makeCtxFor(repoRoot: string, lastSha: string | null): AdapterContext {
+    const cfg: CorpusConfig = {
+      storagePath: '.ruvector/store',
+      metadataPath: '.ruvector/metadata.json',
+      stateFile: '.ruvector/state.json',
+      embeddingDim: 384,
+      chunk: { targetTokens: 240, overlapTokens: 48, minTokens: 8 },
+      globs: ['docs/internal/**/*.md'],
+    }
+    return { repoRoot, cfg, mode: 'incremental', lastSha, lastRunAt: null }
+  }
+
+  it('resolves files changed inside a submodule, not just the opaque gitlink path', async () => {
+    innerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-submodule-'))
+    git(innerRoot, ['init', '-q'])
+    await writeFile(join(innerRoot, 'first.md'), '# First\n')
+    git(innerRoot, ['add', '.'])
+    commit(innerRoot, 'inner: initial')
+
+    outerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-outer-'))
+    git(outerRoot, ['init', '-q'])
+    git(outerRoot, [
+      '-c',
+      'protocol.file.allow=always',
+      'submodule',
+      'add',
+      '-q',
+      innerRoot,
+      'docs/internal',
+    ])
+    git(outerRoot, ['add', '.'])
+    const baseSha = commit(outerRoot, 'outer: add docs/internal submodule')
+
+    // Edit inside the submodule and advance its own history.
+    const innerCheckout = join(outerRoot, 'docs/internal')
+    await writeFile(join(innerCheckout, 'second.md'), '# Second\n')
+    git(innerCheckout, ['add', '.'])
+    commit(innerCheckout, 'inner: add second.md')
+
+    // Bump the outer repo's gitlink pointer — this is the only thing a
+    // plain `git diff --name-only` in the outer repo will ever show.
+    git(outerRoot, ['add', 'docs/internal'])
+    commit(outerRoot, 'outer: bump docs/internal pointer')
+
+    const adapter = createMarkdownCorpusAdapter()
+    const files = await adapter.listFiles(makeCtxFor(outerRoot, baseSha))
+    const paths = files.map((f) => f.logicalPath).sort()
+
+    // Before the fix this returned [] — the submodule's gitlink path
+    // never matches a glob-expanded file, so the new file inside it was
+    // silently dropped from the incremental run.
+    expect(paths).toContain('docs/internal/second.md')
+  })
+
+  it('treats a newly-initialized submodule as fully changed when lastSha predates it', async () => {
+    innerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-submodule-new-'))
+    git(innerRoot, ['init', '-q'])
+    await writeFile(join(innerRoot, 'a.md'), '# A\n')
+    await writeFile(join(innerRoot, 'b.md'), '# B\n')
+    git(innerRoot, ['add', '.'])
+    commit(innerRoot, 'inner: initial')
+
+    outerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-outer-new-'))
+    git(outerRoot, ['init', '-q'])
+    await writeFile(join(outerRoot, 'placeholder.md'), '# Placeholder\n')
+    git(outerRoot, ['add', '.'])
+    const baseSha = commit(outerRoot, 'outer: initial, before submodule exists')
+
+    git(outerRoot, [
+      '-c',
+      'protocol.file.allow=always',
+      'submodule',
+      'add',
+      '-q',
+      innerRoot,
+      'docs/internal',
+    ])
+    git(outerRoot, ['add', '.'])
+    commit(outerRoot, 'outer: add docs/internal submodule')
+
+    const adapter = createMarkdownCorpusAdapter()
+    const files = await adapter.listFiles(makeCtxFor(outerRoot, baseSha))
+    const paths = files.map((f) => f.logicalPath).sort()
+
+    expect(paths).toEqual(['docs/internal/a.md', 'docs/internal/b.md'])
   })
 })
