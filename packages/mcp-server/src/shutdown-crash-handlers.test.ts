@@ -34,19 +34,33 @@ vi.mock('@skillsmith/core/logging', () => ({
 
 describe('installGlobalCrashHandlers (SMI-5787)', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>
+  // Snapshot pre-existing listeners (e.g. vitest's own unhandled-rejection
+  // reporting) so afterEach removes only what THIS test's
+  // installGlobalCrashHandlers() call added — never a blanket
+  // removeAllListeners, which would also strip anything already registered
+  // by the test runner itself.
+  let uncaughtBefore: readonly NodeJS.UncaughtExceptionListener[]
+  let rejectionBefore: readonly NodeJS.UnhandledRejectionListener[]
 
   beforeEach(() => {
     mockLogger.error.mockClear()
     // Never let the test process actually exit — capture the call instead.
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    uncaughtBefore = process.listeners('uncaughtException')
+    rejectionBefore = process.listeners('unhandledRejection')
   })
 
   afterEach(() => {
-    // Each test calls installGlobalCrashHandlers() itself — strip the
-    // listeners it added so the next test (and the rest of the vitest
-    // worker's lifetime) starts clean rather than accumulating pairs.
-    process.removeAllListeners('uncaughtException')
-    process.removeAllListeners('unhandledRejection')
+    for (const listener of process.listeners('uncaughtException')) {
+      if (!uncaughtBefore.includes(listener)) {
+        process.removeListener('uncaughtException', listener)
+      }
+    }
+    for (const listener of process.listeners('unhandledRejection')) {
+      if (!rejectionBefore.includes(listener)) {
+        process.removeListener('unhandledRejection', listener)
+      }
+    }
     exitSpy.mockRestore()
   })
 
