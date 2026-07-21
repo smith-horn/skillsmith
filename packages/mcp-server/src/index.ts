@@ -81,7 +81,11 @@ import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
 // SMI-5479: flush-on-shutdown wiring lives in shutdown.js (own module — no
 // top-level side effects, so it stays independently unit-testable; this file
 // has `main().catch(...)` at module scope, which importing would trigger).
-import { createShutdownTrigger, startPeriodicFlush } from './shutdown.js'
+import {
+  createShutdownTrigger,
+  startPeriodicFlush,
+  installGlobalCrashHandlers,
+} from './shutdown.js'
 import { quiesceBackgroundSync } from './index.shutdown-helpers.js'
 // SMI-5039: probe extracted from this file to @skillsmith/core/embeddings/probe.
 // The call site (before server.connect) is unchanged; only the implementation
@@ -346,6 +350,12 @@ const shutdownAndExit = createShutdownTrigger(() => process.exit(0), {
   closeLlmFailover: () => toolContext?.llmFailover?.close(),
 })
 
+// SMI-5787: process-wide crash safety net — see shutdown.ts's doc comment on
+// installGlobalCrashHandlers for why this is needed even though the startup
+// sequence below is already carefully hardened. Registered at module scope,
+// as early as possible, alongside the other process-level wiring above.
+installGlobalCrashHandlers()
+
 // Start server
 async function main() {
   // SMI-4805: --version / --help must short-circuit before diagnostics, DB
@@ -456,6 +466,21 @@ async function main() {
   await server.connect(transport)
   // SMI-5615: plain console.error — startup-probe.test.ts waits on this exact stderr line.
   console.error('Skillsmith MCP server running')
+
+  // SMI-5787: test-only seam letting an integration test deterministically
+  // exercise installGlobalCrashHandlers() against a real running server,
+  // without depending on a real, hard-to-reproduce runtime bug. Never set in
+  // production; both are no-ops unless their env var is '1'.
+  if (process.env.SKILLSMITH_TEST_FORCE_UNCAUGHT === '1') {
+    setTimeout(() => {
+      throw new Error('SKILLSMITH_TEST_FORCE_UNCAUGHT')
+    }, 50)
+  }
+  if (process.env.SKILLSMITH_TEST_FORCE_UNHANDLED_REJECTION === '1') {
+    setTimeout(() => {
+      void Promise.reject(new Error('SKILLSMITH_TEST_FORCE_UNHANDLED_REJECTION'))
+    }, 50)
+  }
 }
 
 // SMI-5615: was `main().catch(console.error)` — handled, so it exited 0 with

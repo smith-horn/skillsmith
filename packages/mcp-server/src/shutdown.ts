@@ -328,3 +328,43 @@ export function stopPeriodicFlush(): void {
     flushTimer = null
   }
 }
+
+// ── global crash-safety net ─────────────────────────────────────────────────
+
+/**
+ * Installs the process-wide `uncaughtException`/`unhandledRejection`
+ * handlers (SMI-5787). Without these, an unhandled error ANYWHERE in this
+ * long-lived stdio process — a background timer, a webhook handler, a
+ * fire-and-forget promise anywhere in the tool-call surface, not just the
+ * startup sequence `index.ts` already guards carefully — crashes it with
+ * only a stderr stack trace. That stderr is visible solely in the MCP host's
+ * live `/mcp` panel; it is never persisted, so today such a crash leaves zero
+ * durable trace once the panel is closed or the session ends.
+ *
+ * These handlers do NOT change the crash-vs-continue outcome: surviving an
+ * uncaught exception with untrusted process state is unsafe, and Node has
+ * exited on an unhandled rejection by default since v15 regardless of a
+ * handler being registered. They exist solely to guarantee a disk record via
+ * `logger.error` before that same exit — identical in shape to the
+ * `main().catch()` fatal-startup-error handling in index.ts (SMI-5615): log,
+ * then `process.exit(1)` immediately. That existing call site already
+ * accepts the same disk-write-vs-exit race (the async part of
+ * `logger.error` — see its own doc comment) rather than awaiting a flush, so
+ * this mirrors established precedent instead of introducing a new one.
+ *
+ * Idempotent to call more than once is NOT guaranteed — each call adds a new
+ * pair of listeners. Call exactly once, at module scope, as early as
+ * possible (index.ts does so immediately after this module's other
+ * process-level wiring).
+ */
+export function installGlobalCrashHandlers(): void {
+  process.on('uncaughtException', (error) => {
+    logger.error('[skillsmith] Uncaught exception — server exiting', { err: error })
+    process.exit(1)
+  })
+  process.on('unhandledRejection', (reason) => {
+    const error = reason instanceof Error ? reason : new Error(String(reason))
+    logger.error('[skillsmith] Unhandled promise rejection — server exiting', { err: error })
+    process.exit(1)
+  })
+}
