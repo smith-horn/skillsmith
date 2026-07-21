@@ -84,7 +84,7 @@
     "@typescript-eslint/parser": "8.64.0",
     "@vercel/node": "^5.8.26",
     "@vitest/coverage-v8": "4.1.10",
-    "astro": "6.4.7",
+    "astro": "7.1.0",
     "chalk": "5.6.2",
     "cloudinary": "2.10.0",
     "commander": "14.0.3",
