@@ -156,6 +156,13 @@
       "checks": ["check_license_status_edge_fn"]
     },
     {
+      "id": "status-public",
+      "owner": "edge-functions",
+      "trigger_globs": ["supabase/functions/status-public/**"],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_status_public_healthy"]
+    },
+    {
       "id": "edge-fn-fuzzy-search",
       "owner": "edge-functions",
       "trigger_globs": ["supabase/functions/skills-recommend/**"],

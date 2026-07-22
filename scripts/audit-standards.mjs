@@ -513,6 +513,11 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // SMI-5752: status-check — pg_cron-invoked synthetic status-page check,
   // service-role internal. Mirrors webhook-heartbeat-monitor / quota-monitor.
   'status-check',
+  // SMI-5754: status-public — public, anonymous status-page read endpoint
+  // (Wave 4). Uses createSupabaseAdminClient() to read past the deliberate
+  // v_status_current/status_daily_rollups RLS gap, not for elevated
+  // privilege; consumes zero request input.
+  'status-public',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
