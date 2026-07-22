@@ -24,6 +24,11 @@ supabase/functions/email-inbound/**
 supabase/functions/advance-notice-email/**
 supabase/functions/skills-outreach-preferences/**
 supabase/functions/admin-grant-subscription/**
+# SMI-5776: admin-incident-manage is the admin-only status-page incident manager
+# (create/post_update/resolve). Mutating and gated on service-role or admin
+# profile — not an anonymous public surface to smoke; effects are verified via
+# the incidents/incident_updates tables and audit_logs.
+supabase/functions/admin-incident-manage/**
 supabase/functions/update-seat-count/**
 supabase/functions/webhook-dlq/**
 supabase/functions/quota-monitor/**

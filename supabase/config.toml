@@ -435,6 +435,13 @@ verify_jwt = false
 [functions.admin-grant-subscription]
 verify_jwt = false
 
+# SMI-5776: Admin incident manager for the public status page (Wave 3). Same
+# auth model as admin-grant-subscription — validates the caller in-handler
+# (service-role secret compare via isServiceRoleCallerBySecretCompare, else
+# profiles.role admin check); the gateway does NOT verify the JWT.
+[functions.admin-incident-manage]
+verify_jwt = false
+
 # SMI-4291: webhook-dlq relies on gateway JWT validation for RLS.
 # Unlike the internal-validation functions above, this one uses the
 # standard Authorization: Bearer flow so auth.uid() resolves for RLS

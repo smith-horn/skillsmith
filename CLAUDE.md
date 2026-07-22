@@ -229,6 +229,7 @@ npx supabase functions deploy create-portal-session --no-verify-jwt
 npx supabase functions deploy list-invoices --no-verify-jwt
 npx supabase functions deploy skills-outreach-preferences --no-verify-jwt
 npx supabase functions deploy admin-grant-subscription --no-verify-jwt
+npx supabase functions deploy admin-incident-manage --no-verify-jwt
 npx supabase functions deploy advance-notice-email --no-verify-jwt
 npx supabase functions deploy auth-device-code --no-verify-jwt
 npx supabase functions deploy auth-device-token --no-verify-jwt
