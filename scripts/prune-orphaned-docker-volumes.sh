@@ -5,12 +5,17 @@
 #
 # Problem: <slug>_node_modules and <slug>_native-seed-<module> volumes (the
 # latter declared per-worktree by _lib.sh's enumerate_native_module_volumes,
-# SMI-5650) and <slug>-dev images accumulate whenever a worktree disappears
+# SMI-5650 for the root-only volumes, SMI-5784 for the per-package
+# native-seed-<pkg>-<module> volumes layered on top of the SAME naming
+# convention) and <slug>-dev images accumulate whenever a worktree disappears
 # without remove-worktree.sh running (crashes, manual `rm -rf`, `git worktree
 # remove` by hand), and nothing safe ever reclaims them. On this machine, the
-# native-seed volumes are the numerically DOMINANT orphan class (5 volumes
-# per worktree vs. 1 node_modules volume) -- both conventions must be covered
-# or this script does not meet its own goal of preventing unbounded orphan
+# native-seed volumes are the numerically DOMINANT orphan class -- SMI-5650
+# shipped a fixed 5 per worktree (one per NATIVE_MODULES_FOR_OVERLAY entry);
+# SMI-5784 added an UNBOUNDED number more on top (up to 5 additional per
+# package that diverges from root, so the total varies per worktree rather
+# than being a fixed count) -- both conventions must be covered or this
+# script does not meet its own goal of preventing unbounded orphan
 # accumulation (SMI-5616). A blanket `docker volume prune` is unsafe: it
 # deletes ANY volume not attached to a RUNNING container, including a
 # still-existing worktree's volume whose container is merely stopped, forcing
@@ -153,9 +158,11 @@ is_protected() {
 # Classify a volume name into a (project, expected compose.volume label)
 # pair, covering both conventions this script recognizes: the base
 # `<project>_node_modules` volume (docker-compose.yml) and the per-module
-# `<project>_native-seed-<module>` volumes (_lib.sh's
-# enumerate_native_module_volumes, SMI-5650) -- 5 of the latter per worktree,
-# the numerically dominant orphan class on this machine (see header). Sets
+# `<project>_native-seed-<module>` / `<project>_native-seed-<pkg>-<module>`
+# volumes (_lib.sh's enumerate_native_module_volumes, SMI-5650 root-only +
+# SMI-5784 per-package) -- the numerically dominant orphan class on this
+# machine, and no longer a fixed count per worktree now that per-package
+# overlays exist (see header). Sets
 # $project and $expected_vol_key; returns 1 (no match) for anything else, so
 # `classify_volume "$vol" || continue` skips unrelated volumes cleanly.
 # Native module names can themselves contain hyphens (e.g.

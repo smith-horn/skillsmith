@@ -40,12 +40,14 @@ import {
   DOCKERFILE_PATH,
   LIB_SH_PATH,
   REGEN_LOCKFILE_PATH,
+  NATIVE_PER_PACKAGE_PATH,
   parseBashArray,
   parseDockerfileRebuildLine,
   parseQuotedSpaceSeparatedVar,
   parseDockerfileStashLoopModules,
   flatOnly,
 } from './docker-entrypoint-native-rebuild.helpers.js'
+import { extractPackageBootTimeSeedBlock } from './docker-entrypoint-native-seed-smi5784.helpers.js'
 
 // ---------------------------------------------------------------------------
 // Load files once
@@ -55,12 +57,17 @@ let entrypointSrc: string
 let dockerfileSrc: string
 let libSrc: string
 let regenLockfileSrc: string
+// SMI-5784 file-length split: validate_native_module() and the per-package
+// boot-time seed step this file cross-checks now live in this sourced
+// sibling, not docker-entrypoint.sh itself.
+let nativePerPackageSrc: string
 
 beforeAll(() => {
   entrypointSrc = readFileSync(ENTRYPOINT_PATH, 'utf8')
   dockerfileSrc = readFileSync(DOCKERFILE_PATH, 'utf8')
   libSrc = readFileSync(LIB_SH_PATH, 'utf8')
   regenLockfileSrc = readFileSync(REGEN_LOCKFILE_PATH, 'utf8')
+  nativePerPackageSrc = readFileSync(NATIVE_PER_PACKAGE_PATH, 'utf8')
 })
 
 // ---------------------------------------------------------------------------
@@ -173,6 +180,64 @@ describe('C2 (extended, SMI-5650 Wave 2): NATIVE_MODULES sync across _lib.sh, Do
 })
 
 // ---------------------------------------------------------------------------
+// C2 (extended, SMI-5784): the exact-set-equality drift check above already
+// proves the ROOT lists stay in sync. SMI-5784 added a SECOND, independent
+// copy of two of those lists — the per-package boot-time seed step's inline
+// module list in docker-entrypoint.sh, and the per-package flat stash
+// loop's module list in the Dockerfile — which could each independently
+// drift from NATIVE_MODULES / NATIVE_MODULES_FOR_OVERLAY without the checks
+// above ever noticing (they only see the FIRST "for module in …; do"
+// occurrence in each file, i.e. the ROOT loop). This block extends the SAME
+// exact-set-equality technique to those two per-package lists, rather than
+// adding a separate, weaker grep-only convention check (plan doc § 5:
+// "reviewer found the existing structural test is already stronger than
+// what this doc originally proposed... do not regress it").
+// ---------------------------------------------------------------------------
+
+describe('C2 (extended, SMI-5784): per-package module lists stay in sync with NATIVE_MODULES', () => {
+  it("the PER-PACKAGE boot-time seed step's inline module list matches NATIVE_MODULES (SMI-5784 — a second, independent copy of the same list the SMI-5650 test above already checks for the root loop)", () => {
+    // SMI-5784 file-length split: the per-package boot-time seed step now
+    // lives in docker-entrypoint-native-per-package.sh, not
+    // docker-entrypoint.sh — extracted from that file's source instead.
+    const packageBootBlock = extractPackageBootTimeSeedBlock(nativePerPackageSrc)
+    const packageBootModules = parseDockerfileStashLoopModules(packageBootBlock)
+    const nativeModules = parseBashArray(entrypointSrc, 'NATIVE_MODULES')
+    expect(packageBootModules, 'per-package boot-time seed step for-loop not found').not.toBeNull()
+    expect(nativeModules).not.toBeNull()
+    expect([...packageBootModules!].sort()).toEqual([...nativeModules!].sort())
+  })
+
+  it('the Dockerfile PER-PACKAGE flat stash loop module list equals docker-entrypoint.sh NATIVE_MODULES flat (non-scope) entries (set equality) — @esbuild is intentionally excluded from this loop too, same asymmetry rationale as the root flat stash loop (its own separate per-package @esbuild-scope stash block is asserted below)', () => {
+    const anchor = '# SMI-5784: PER-PACKAGE stash'
+    const anchorIdx = dockerfileSrc.indexOf(anchor)
+    expect(anchorIdx, 'SMI-5784 per-package stash anchor not found in Dockerfile').toBeGreaterThan(
+      -1
+    )
+    const packageStashSlice = dockerfileSrc.slice(anchorIdx)
+    const packageStashModules = parseDockerfileStashLoopModules(packageStashSlice)
+    const nativeModules = parseBashArray(entrypointSrc, 'NATIVE_MODULES')
+
+    expect(packageStashModules, 'Dockerfile per-package stash for-loop not found').not.toBeNull()
+    expect(nativeModules).not.toBeNull()
+
+    const nativeArr = flatOnly(nativeModules!)
+    const packageStashArr = [...packageStashModules!].sort()
+
+    expect(
+      packageStashArr,
+      `Dockerfile per-package /opt/native-seed stash loop [${packageStashArr.join(', ')}] must equal docker-entrypoint.sh NATIVE_MODULES flat entries [${nativeArr.join(', ')}]`
+    ).toEqual(nativeArr)
+  })
+
+  it('the Dockerfile has a SEPARATE dedicated per-package @esbuild scope stash block (mirrors the root-level dedicated block asserted in the asymmetry describe block above)', () => {
+    expect(dockerfileSrc).toMatch(/mkdir\s+-p\s+"\/opt\/native-seed\/\$\{pkg\}-@esbuild"/)
+    expect(dockerfileSrc).toMatch(
+      /cp\s+-a\s+"\$\{pkg_dir\}node_modules\/@esbuild\/\."\s+"\/opt\/native-seed\/\$\{pkg\}-@esbuild\/"/
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // C2 (further extended, SMI-5650 Wave 2 REVISED): the @esbuild asymmetry is
 // intentional, not drift.
 //
@@ -254,6 +319,12 @@ describe('C2 (further extended, SMI-5650 Wave 2 REVISED): the @esbuild asymmetry
 // reintroducing the exact bug this fix closed.
 // ---------------------------------------------------------------------------
 describe('validate_native_module dispatch (SMI-5650 amendment review, High finding)', () => {
+  // SMI-5784 file-length split: validate_native_module() (and its own
+  // path-aware extension) now lives in docker-entrypoint-native-per-package.sh,
+  // not docker-entrypoint.sh — every extraction below reads nativePerPackageSrc
+  // instead. docker-entrypoint.sh's own call SITES (the root loop calling
+  // `validate_native_module "$module"`) are unaffected and still work via the
+  // early `source` line.
   function extractValidateNativeModuleBody(src: string): string {
     const startIdx = src.indexOf('validate_native_module() {')
     expect(startIdx, 'validate_native_module() definition not found').toBeGreaterThan(-1)
@@ -263,7 +334,7 @@ describe('validate_native_module dispatch (SMI-5650 amendment review, High findi
   }
 
   it('better-sqlite3 gets a rigorous check — NOT a bare require() (the exact discovery-#3 false green)', () => {
-    const body = extractValidateNativeModuleBody(entrypointSrc)
+    const body = extractValidateNativeModuleBody(nativePerPackageSrc)
     const caseStart = body.indexOf('better-sqlite3)')
     expect(caseStart, 'better-sqlite3) case branch not found').toBeGreaterThan(-1)
     const caseEnd = body.indexOf(';;', caseStart)
@@ -274,7 +345,7 @@ describe('validate_native_module dispatch (SMI-5650 amendment review, High findi
   })
 
   it('esbuild and @esbuild share a rigorous transformSync() check — NOT a bare require()', () => {
-    const body = extractValidateNativeModuleBody(entrypointSrc)
+    const body = extractValidateNativeModuleBody(nativePerPackageSrc)
     const caseStart = body.indexOf('esbuild | @esbuild)')
     expect(caseStart, 'esbuild | @esbuild) case branch not found').toBeGreaterThan(-1)
     const caseEnd = body.indexOf(';;', caseStart)
@@ -283,8 +354,14 @@ describe('validate_native_module dispatch (SMI-5650 amendment review, High findi
   })
 
   it('the default branch keeps the bare require() check — sufficient for onnxruntime-node/hnswlib-node (both dlopen() at require() time, confirmed live)', () => {
-    const body = extractValidateNativeModuleBody(entrypointSrc)
-    const defaultCaseStart = body.indexOf('*)')
+    const body = extractValidateNativeModuleBody(nativePerPackageSrc)
+    // SMI-5784: lastIndexOf, not indexOf — the function body now ALSO
+    // contains an earlier `@*)` arm (inside the SMI-5784 path-aware
+    // pre-check's own `case "$1" in @*) probe="esbuild" ;; esac`), whose
+    // "*)" substring would otherwise be found FIRST by a plain indexOf and
+    // misidentified as this test's target. The true top-level default `*)`
+    // arm is always the LAST such occurrence in the function body.
+    const defaultCaseStart = body.lastIndexOf('*)')
     expect(defaultCaseStart, 'default *) case branch not found').toBeGreaterThan(-1)
     const caseEnd = body.indexOf(';;', defaultCaseStart)
     const caseBody = body.slice(defaultCaseStart, caseEnd)
@@ -292,13 +369,20 @@ describe('validate_native_module dispatch (SMI-5650 amendment review, High findi
   })
 
   it("all three of validate_native_module's call sites use the function, not an inline require() (would silently bypass the dispatch)", () => {
+    // SMI-5784: the function now lives in nativePerPackageSrc, but a bypass
+    // could in principle be introduced in EITHER file (a rogue inline check
+    // in docker-entrypoint.sh's own root loop, or one accidentally left
+    // behind in nativePerPackageSrc outside the function itself) — scan the
+    // combined text of both files, excluding only the function's own
+    // legitimate default-branch definition.
+    const combinedSrc = `${entrypointSrc}\n${nativePerPackageSrc}`
     const bareRequireChecks =
-      entrypointSrc.match(/node -e "require\('\$\{?module\}?'\)" 2>\/dev\/null/g) ?? []
+      combinedSrc.match(/node -e "require\('\$\{?module\}?'\)" 2>\/dev\/null/g) ?? []
     // The ONLY bare `require('${module}')`/`require('$module')` check outside
     // validate_native_module's own default branch would indicate a call site
     // bypassing the dispatch — none should exist.
-    const body = extractValidateNativeModuleBody(entrypointSrc)
-    const outsideFunction = entrypointSrc.replace(body, '')
+    const body = extractValidateNativeModuleBody(nativePerPackageSrc)
+    const outsideFunction = combinedSrc.replace(body, '')
     expect(bareRequireChecks.filter((m) => outsideFunction.includes(m))).toEqual([])
   })
 })

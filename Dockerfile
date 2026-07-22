@@ -117,6 +117,73 @@ RUN if [ -d "node_modules/@esbuild" ]; then \
       echo "WARNING: node_modules/@esbuild not found in this image — skipping seed (worktree containers will fall back to npm rebuild for esbuild)"; \
     fi
 
+# SMI-5784: PER-PACKAGE stash — extends the flat stash loop above with a
+# second pass over packages/*/node_modules/<module>. Workspace-local,
+# non-hoisted copies (e.g. packages/core/node_modules/better-sqlite3, pinned
+# independently of root per SMI-4484 — a structural, permanent divergence,
+# not incidental drift) need their own known-good stash entry so the
+# worktree entrypoint's per-package seed step (docker-entrypoint.sh) has
+# something deterministic and offline to restore from, even when the host
+# copy is itself broken or missing. `npm ci` (above) already materializes
+# these per-package node_modules dirs for any workspace whose package.json
+# pins a version that diverges from root's hoisted copy — no separate
+# install step is needed here.
+#
+# No --ignore-scripts=false override needed (resolved open item, see plan
+# doc's Context/§2): this `deps` stage never COPYs .npmrc in (only
+# package*.json globs above), so `ignore-scripts=true` never applies to
+# anything in this stage — including this loop's own npm-independent
+# `cp -a` + `node -e require(...)` steps, which don't invoke npm at all.
+#
+# Same per-module-missing-is-fine guard as the flat loop above — a missing
+# per-package copy is the COMMON case (most packages never diverge from
+# root) and must never fail the build. Validated by requiring the STASH
+# DESTINATION directly (an absolute path, not a bare module specifier) —
+# this sidesteps any node_modules-resolution ambiguity entirely (no
+# possibility of accidentally validating a different, unrelated copy), which
+# is simpler than needing the require.resolve()+prefix-check dance
+# docker-entrypoint.sh's runtime validation uses, because at Docker BUILD
+# time there is no bind-mount/worktree-overlay ambiguity to defend
+# against — the filesystem here is a single, deterministic image layer.
+RUN for pkg_dir in packages/*/; do \
+      pkg="$(basename "$pkg_dir")"; \
+      for module in better-sqlite3 onnxruntime-node esbuild hnswlib-node; do \
+        if [ -d "${pkg_dir}node_modules/${module}" ]; then \
+          mkdir -p "/opt/native-seed/${pkg}-${module}" \
+            && cp -a "${pkg_dir}node_modules/${module}/." "/opt/native-seed/${pkg}-${module}/" \
+            && node -e "require('/opt/native-seed/${pkg}-${module}')" \
+            && echo "[deps] Seeded ${pkg}/${module} into /opt/native-seed (validated)" \
+            || echo "WARNING: ${pkg}/${module} seed missing or failed require() validation — worktree containers will fall back to npm rebuild for this package/module"; \
+        fi; \
+      done; \
+    done
+
+# SMI-5784: PER-PACKAGE @esbuild scope stash — mirrors the dedicated
+# root-level @esbuild block above (a bare per-module loop iteration cannot
+# target a scope directory; see that block's comment for why @esbuild needs
+# its own stash step). No known real-world package currently diverges on
+# @esbuild specifically (today's only confirmed divergence is
+# packages/core's better-sqlite3, see the plan doc's Context) — this exists
+# for completeness/symmetry with the volume-declaration side
+# (scripts/_lib.sh's enumerate_native_module_volumes iterates the full
+# NATIVE_MODULES_FOR_OVERLAY set, including @esbuild, per-package). Validated
+# via existence/non-empty-copy only, NOT a functional transformSync() check
+# — unlike the root-level block, a per-package transformSync() probe would
+# need to assume a co-located flat `esbuild` copy also diverges in the SAME
+# package, which is not guaranteed; an existence check is the correct,
+# honestly-scoped validation here rather than a functional check resting on
+# an unproven assumption.
+RUN for pkg_dir in packages/*/; do \
+      pkg="$(basename "$pkg_dir")"; \
+      if [ -d "${pkg_dir}node_modules/@esbuild" ]; then \
+        mkdir -p "/opt/native-seed/${pkg}-@esbuild" \
+          && cp -a "${pkg_dir}node_modules/@esbuild/." "/opt/native-seed/${pkg}-@esbuild/" \
+          && [ -n "$(ls -A "/opt/native-seed/${pkg}-@esbuild")" ] \
+          && echo "[deps] Seeded ${pkg}/@esbuild scope into /opt/native-seed (validated: non-empty)" \
+          || echo "WARNING: ${pkg}/@esbuild scope seed missing or empty after copy — worktree containers will fall back to npm rebuild for esbuild in this package"; \
+      fi; \
+    done
+
 # -----------------------------------------------------------------------------
 # Stage 3: Builder - Compile TypeScript and build all packages
 # -----------------------------------------------------------------------------
@@ -165,6 +232,13 @@ COPY .prettierignore ./
 # Copy entrypoint script and make executable
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
+
+# SMI-5784: entrypoint's per-package native-module seed/validate logic was
+# split out of docker-entrypoint.sh into this sourced sibling per CLAUDE.md's
+# 500-line file-length convention — must live at the same destination
+# directory as docker-entrypoint.sh itself (it resolves the sibling via
+# SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)", i.e. /app).
+COPY docker-entrypoint-native-per-package.sh ./
 
 # Build packages for development
 RUN npm run build || echo "Build completed with warnings"

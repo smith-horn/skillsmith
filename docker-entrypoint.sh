@@ -16,6 +16,17 @@
 
 set -e
 
+# SMI-5784: per-package native-module seeding/validation split out per
+# CLAUDE.md's 500-line file-length convention (this file grew from 310 to
+# 510 lines adding that logic — new debt from this PR, not pre-existing).
+# Sourced early (mirrors scripts/rebase-worktree.sh's own
+# source-its-helpers-near-the-top convention) so validate_native_module() —
+# SHARED with the root-only NATIVE_MODULES validation loop below, not just
+# the per-package call sites — is available wherever either needs it.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=docker-entrypoint-native-per-package.sh
+source "$SCRIPT_DIR/docker-entrypoint-native-per-package.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -97,6 +108,13 @@ if [ -f "/app/.git" ] && [ "${SKILLSMITH_WORKTREE_NATIVE_SEED_DISABLE:-}" != "1"
         fi
     done
 fi
+
+# SMI-5784: per-package boot-time seed step — split out per CLAUDE.md's
+# 500-line file-length convention. See
+# docker-entrypoint-native-per-package.sh's
+# seed_per_package_native_modules_boot() for the full block + rationale
+# (companion to the root-only loop above; same disable-var gate).
+seed_per_package_native_modules_boot
 
 # ---------------------------------------------------------------------------
 # Dist check: rebuild if dist/ is missing (common on first container start
@@ -184,37 +202,12 @@ fi
 
 echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 
-# SMI-5650: a bare `require('<module>')` is not a sufficient validation check
-# for every module — confirmed live while verifying this exact self-heal
-# path: better-sqlite3 only dlopen()s its .node binary lazily, on `new
-# Database(...)`, not at require() time, and esbuild's JS wrapper only spawns
-# its binary on an actual transform/build call, not at require() time either.
-# A corrupted binary for either module passed the old bare-require check as a
-# false green, which meant the VALIDATION_FAILED rebuild/re-seed path never
-# triggered — silently leaving a broken binary in place across restarts.
-# onnxruntime-node and hnswlib-node dlopen() immediately at require() time
-# (confirmed live: both throw synchronously on a corrupted binary), so a bare
-# require() is already sufficient for those two.
-validate_native_module() {
-    case "$1" in
-    better-sqlite3)
-        node -e "new (require('better-sqlite3'))(':memory:').close()" 2>/dev/null
-        ;;
-    esbuild | @esbuild)
-        # Same check for both entries: esbuild's JS API spawns the actual
-        # native binary that lives in the separate @esbuild/<platform>-<arch>
-        # scope package, so transformSync() exercises both. @esbuild is
-        # listed as its own NATIVE_MODULES entry purely so the rebuild/re-seed
-        # loop re-seeds its content too — see the boot-time seed step's
-        # comment above for why the scope, not just the flat `esbuild`
-        # package, needs its own writable target.
-        node -e "require('esbuild').transformSync('1')" 2>/dev/null
-        ;;
-    *)
-        node -e "require('$1')" 2>/dev/null
-        ;;
-    esac
-}
+# validate_native_module() — including its SMI-5784 path-aware extension for
+# per-package targets — now lives in docker-entrypoint-native-per-package.sh
+# (sourced near the top of this file), split out per CLAUDE.md's 500-line
+# file-length convention. SHARED: called both by the root-only loop
+# immediately below and by the per-package validate/rebuild function called
+# later in this file.
 
 # List of native modules to validate.
 # Must match the `RUN npm rebuild …` line in the Dockerfile (the NATIVE_MODULES
@@ -303,6 +296,17 @@ if [ $VALIDATION_FAILED -eq 1 ]; then
 
     echo -e "${GREEN}[entrypoint] Native modules rebuilt successfully.${NC}"
 fi
+
+# SMI-5784: validate + self-heal PER-PACKAGE native-module overlays — split
+# out per CLAUDE.md's 500-line file-length convention. See
+# docker-entrypoint-native-per-package.sh's
+# validate_and_rebuild_per_package_native_modules() for the full block +
+# rationale. Deliberately a SIBLING call to the VALIDATION_FAILED block
+# above, not nested inside it: nesting inside `if [ $VALIDATION_FAILED -eq 1
+# ]` would skip per-package validation entirely whenever every ROOT module
+# happens to validate cleanly, which is exactly the failure mode this
+# section exists to catch.
+validate_and_rebuild_per_package_native_modules
 
 echo -e "${GREEN}[entrypoint] All native modules validated.${NC}"
 

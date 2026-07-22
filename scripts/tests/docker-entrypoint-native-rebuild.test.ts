@@ -30,17 +30,31 @@
  * region never closes (extractValidationFailedRegion returns null), which took
  * every L15/C1 test in this file down with it. Comments are still INCLUDED in
  * the returned region text (only excluded from the depth count itself).
+ *
+ * SMI-5784 note: the "npm rebuild calls do NOT appear outside the
+ * VALIDATION_FAILED guard" test below now strips a SECOND, independent
+ * region too — the SMI-5784 per-package validate+rebuild block, which is
+ * deliberately a SIBLING section to VALIDATION_FAILED (not nested inside
+ * it — see that block's own comment in docker-entrypoint.sh for why:
+ * nesting inside `if [ $VALIDATION_FAILED -eq 1 ]` would skip per-package
+ * validation whenever every ROOT module happens to validate cleanly). Its
+ * own `npm rebuild` call is therefore legitimately outside the ROOT
+ * region, gated by its OWN per-target failure detection instead of the
+ * root's global flag — the test now recognizes both as legitimate
+ * `npm rebuild` locations rather than treating the second one as a stray.
  */
 import { readFileSync } from 'fs'
 import { describe, expect, it, beforeAll } from 'vitest'
 import {
   ENTRYPOINT_PATH,
   DOCKERFILE_PATH,
+  NATIVE_PER_PACKAGE_PATH,
   parseBashArray,
   parseDockerfileRebuildLine,
   flatOnly,
   extractValidationFailedRegion,
 } from './docker-entrypoint-native-rebuild.helpers.js'
+import { extractPackageValidationRebuildBlock } from './docker-entrypoint-native-seed-smi5784.helpers.js'
 
 // ---------------------------------------------------------------------------
 // Load files once
@@ -48,10 +62,15 @@ import {
 
 let entrypointSrc: string
 let dockerfileSrc: string
+let nativePerPackageSrc: string
 
 beforeAll(() => {
   entrypointSrc = readFileSync(ENTRYPOINT_PATH, 'utf8')
   dockerfileSrc = readFileSync(DOCKERFILE_PATH, 'utf8')
+  // SMI-5784 file-length split: the per-package validate+rebuild block this
+  // file cross-checks now lives in this sourced sibling, not
+  // docker-entrypoint.sh itself.
+  nativePerPackageSrc = readFileSync(NATIVE_PER_PACKAGE_PATH, 'utf8')
 })
 
 // ---------------------------------------------------------------------------
@@ -70,14 +89,25 @@ describe('L15: rebuild loop nesting', () => {
     expect(region).toMatch(/for\s+module\s+in\s+"\$\{NATIVE_MODULES\[@\]\}"/)
   })
 
-  it('npm rebuild calls do NOT appear outside the VALIDATION_FAILED guard', () => {
+  it('npm rebuild calls do NOT appear outside the VALIDATION_FAILED guard OR the SMI-5784 per-package validate+rebuild block', () => {
     const region = extractValidationFailedRegion(entrypointSrc)
     expect(region).not.toBeNull()
+    // SMI-5784 file-length split: the per-package validate+rebuild block now
+    // lives in docker-entrypoint-native-per-package.sh, so it's extracted
+    // from THAT file's source — it no longer appears in entrypointSrc at
+    // all (only a short delegating comment + the function call do), which
+    // means entrypointSrc's own "outside the region" text now legitimately
+    // contains zero `npm rebuild` occurrences on its own; this still proves
+    // the invariant (no stray npm rebuild outside the two known-legitimate
+    // regions) without needing packageRegion to literally appear in
+    // entrypointSrc for the .replace() below to have any effect.
+    const packageRegion = extractPackageValidationRebuildBlock(nativePerPackageSrc)
 
-    // Remove the region from the full file and verify no `npm rebuild` COMMAND
-    // remains. Pure-comment lines legitimately discuss `npm rebuild` (the header
-    // + the explanatory block above NATIVE_MODULES), so strip them first — only
-    // actual command lines count (same comment-skip rule as C1(b) below).
+    // Remove BOTH known-legitimate regions from the full file and verify no
+    // stray `npm rebuild` COMMAND remains anywhere else. Pure-comment lines
+    // legitimately discuss `npm rebuild` (the header + the explanatory
+    // block above NATIVE_MODULES), so strip them first — only actual
+    // command lines count (same comment-skip rule as C1(b) below).
     //
     // SMI-5650: also strip `echo`/`printf` lines. The Wave 2 boot-time seed
     // step's own warning message ("… falling back to npm rebuild if
@@ -87,9 +117,16 @@ describe('L15: rebuild loop nesting', () => {
     // by design (the boot-time seed step runs before the region even
     // starts). Excluding echo/printf lines keeps this test targeted at
     // actual stray COMMAND invocations, the thing it exists to catch.
+    //
+    // SMI-5784: the per-package validate+rebuild block is a SIBLING section
+    // to VALIDATION_FAILED, not nested inside it (see that block's own
+    // comment in docker-entrypoint.sh), so its `npm rebuild` call is
+    // legitimately outside the root region — stripped here as a SECOND
+    // known-legitimate region rather than left to trip this test.
     const regionText = region as string
     const outsideCommands = entrypointSrc
       .replace(regionText, '')
+      .replace(packageRegion, '')
       .split('\n')
       .filter((l) => !/^\s*#/.test(l) && !/^\s*(echo|printf)\b/.test(l))
       .join('\n')
