@@ -50,6 +50,7 @@ AUTHENTICATED_FUNCTIONS=(
   "generate-license"
   "regenerate-license"
   "admin-grant-subscription"
+  "admin-incident-manage"
   "skills-outreach-preferences"
   "webhook-dlq"
   "auth-device-approve"

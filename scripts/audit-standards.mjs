@@ -492,6 +492,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   'list-invoices',
   'skills-outreach-preferences',
   'admin-grant-subscription',
+  // SMI-5776: admin-incident-manage — public status-page incident manager.
+  // Same auth model as admin-grant-subscription (in-handler service-role
+  // secret compare or profiles.role admin check); gateway does not verify JWT.
+  'admin-incident-manage',
   // Service-role batch-send functions (SMI-4400)
   // Deployed with --no-verify-jwt because service-role callers present the
   // service-role key in the Authorization header; gateway JWT check would

@@ -81,6 +81,7 @@ fi
 # --- Functions that require --no-verify-jwt (from supabase/config.toml) ---
 NO_VERIFY_JWT_FUNCTIONS=(
   admin-grant-subscription
+  admin-incident-manage
   advance-notice-email
   audit-unsubscribe
   auth-device-code
