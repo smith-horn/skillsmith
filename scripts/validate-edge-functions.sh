@@ -79,6 +79,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "quota-monitor"
   "webhook-heartbeat-monitor"
   "status-check"
+  "status-public"
 )
 
 echo ""

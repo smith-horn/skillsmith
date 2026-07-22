@@ -497,6 +497,16 @@ verify_jwt = false
 [functions.status-check]
 verify_jwt = false
 
+# status-public: public, anonymous read-only status-page endpoint (SMI-5754,
+# public status page Wave 4). Uses createSupabaseAdminClient() (service-role)
+# for every query because v_status_current and status_daily_rollups have NO
+# anon grant (deliberate Wave 1 RLS, see 20260719010000_status_page_schema.sql's
+# header) -- service-role is used here to read past that RLS gap, not because
+# the (anonymous) caller needs elevated privilege. No write path; no
+# user-controlled input reaches any query. Deploy WITH --no-verify-jwt.
+[functions.status-public]
+verify_jwt = false
+
 # SMI-4294: team-invite-send — gateway-verified user-action endpoint that
 # sends (or resends) the team invitation email. Calls
 # resend_team_invitation_email_check RPC as the authenticated user so the

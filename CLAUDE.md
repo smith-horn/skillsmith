@@ -236,6 +236,7 @@ npx supabase functions deploy auth-device-token --no-verify-jwt
 npx supabase functions deploy quota-monitor --no-verify-jwt
 npx supabase functions deploy webhook-heartbeat-monitor --no-verify-jwt
 npx supabase functions deploy status-check --no-verify-jwt
+npx supabase functions deploy status-public --no-verify-jwt
 npx supabase functions deploy audit-unsubscribe --no-verify-jwt
 npx supabase functions deploy team-compliance-check --no-verify-jwt
 npx supabase functions deploy telemetry-consent --no-verify-jwt

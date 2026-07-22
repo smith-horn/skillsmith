@@ -916,3 +916,53 @@ check_license_status_edge_fn() {
   report_pass "edge-fn-license-status" "check_license_status_edge_fn" "$url" "$ms"
   return 0
 }
+
+# ---- check_status_public_healthy --------------------------------------
+# SMI-5754 (Wave 4, public status page). GET the anonymous status-public
+# endpoint; asserts 200 + envelope shape: data.generated_at is a non-empty
+# string, data.components is an array, and partial is absent or false. A
+# `partial:true` on prod means a secondary query degraded -- the endpoint
+# still legitimately returns 200 by design (see index.ts's error table), but
+# a persistently-partial prod response is a real regression signal worth
+# surfacing in the smoke report rather than silently treated as healthy.
+check_status_public_healthy() {
+  _require_supabase_url || {
+    report_fail "status-public" "check_status_public_healthy" "" "SUPABASE_URL" "unset"
+    return 1
+  }
+  local url="${SMOKE_SUPABASE_URL}/functions/v1/status-public"
+  local t0 t1 ms resp status body ok
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "status-public" "check_status_public_healthy" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+
+  ok=$(printf '%s' "$body" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    data = d.get('data', {})
+    has_generated_at = isinstance(data.get('generated_at'), str) and len(data['generated_at']) > 0
+    has_components = isinstance(data.get('components'), list)
+    partial_ok = d.get('partial') in (None, False)
+    print('ok' if (has_generated_at and has_components and partial_ok) else 'bad')
+except Exception:
+    print('bad')
+" 2>/dev/null) || ok="bad"
+
+  if [ "$ok" != "ok" ]; then
+    report_fail "status-public" "check_status_public_healthy" "$url" \
+      "data.generated_at + data.components[] + partial absent/false" "${body:0:200}" "$ms"
+    return 1
+  fi
+
+  report_pass "status-public" "check_status_public_healthy" "$url" "$ms"
+  return 0
+}
