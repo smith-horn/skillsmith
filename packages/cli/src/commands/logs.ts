@@ -41,8 +41,16 @@ import {
 
 const logger = getCliLogger()
 
-/** Every surface that can write today's per-surface log file (types.ts's `Surface`). */
-const TAIL_SURFACES: readonly Surface[] = ['cli', 'mcp', 'vscode']
+/**
+ * Every surface that can write today's per-surface log file (types.ts's
+ * `Surface`). `'doc-retrieval'` (SMI-5793) is the `.husky/post-commit`
+ * reindex CLI's own surface — omitting it here would silently leave
+ * `sklx logs --tail` never watching its
+ * `skillsmith-doc-retrieval-<date>.jsonl` file even after `Surface` itself
+ * was widened in `types.ts` (`sklx logs` without `--tail` is unaffected — it
+ * scans the log directory rather than enumerating surfaces).
+ */
+const TAIL_SURFACES: readonly Surface[] = ['cli', 'mcp', 'vscode', 'doc-retrieval']
 
 export interface LogsCliOptions {
   tail?: boolean

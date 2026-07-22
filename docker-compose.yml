@@ -34,6 +34,14 @@ services:
       # an empty mount and the adapter's existsSync guard skips it gracefully.
       # Test profile omits this bind by design (CI runners have no host memory dir).
       - ${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED:-}/memory:/skillsmith-memory:ro
+      # SMI-5793: bind host ~/.skillsmith read-write so the reindex CLI
+      # (running inside this container via .husky/post-commit's `docker exec`)
+      # can persist its structured log + reindex.state to a host-visible path
+      # instead of the container's own throwaway filesystem. Read-write,
+      # unlike the memory-dir mount above, since this direction WRITES.
+      # dev-only — `test` never runs reindex (assertNotInCi() guards it
+      # unconditionally) and has no host ~/.skillsmith to bind anyway.
+      - ${HOME}/.skillsmith:/skillsmith-state
     environment:
       - NODE_ENV=development
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -41,6 +49,12 @@ services:
       # bypass its homedir()-derived path resolution and read from the
       # bind-mounted dir above instead.
       - SKILLSMITH_MEMORY_DIR_OVERRIDE=/skillsmith-memory
+      # SMI-5793: tells the reindex CLI's state/log-path resolvers
+      # (reindex-state.ts's resolveReindexStateDir(), rotation.ts's
+      # getLogDir()) to write to the bind-mounted path above instead of
+      # homedir()-derived /root/.skillsmith (the container's own throwaway
+      # home, invisible on the host).
+      - SKILLSMITH_STATE_DIR_OVERRIDE=/skillsmith-state
     entrypoint: ['/app/docker-entrypoint.sh']
     command: tail -f /dev/null
     healthcheck:

@@ -170,6 +170,8 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient pr
 
 **Memory adapter prerequisite (SMI-4677)**: the `memory-topic-files` adapter that ingests host-scope `~/.claude/projects/<encoded>/memory/feedback_*.md` and `project_*.md` files into the index requires `SKILLSMITH_PROJECT_DIR_ENCODED` set in `.env` (validated by Varlock; see `.env.schema`). Without it, the bind in `docker-compose.yml` resolves to a non-existent host path and the adapter produces zero memory chunks — silently degrading priming + the per-class boost above. Setup one-liner in [Setup (first run)](#setup-first-run).
 
+**Reindex staleness banner**: a third state-consumer, `reindex-state.ts`, tracks the last `.husky/post-commit`-triggered reindex run (main-repo-shared, matching the auto-heal/liveness key) and surfaces a banner when the last run failed, when ≥5 consecutive commits scanned zero files while HEAD kept advancing (a possible SMI-5786-shaped detection gap), or when no run has landed in 48h despite new commits. Structured per-run logs land in `~/.skillsmith/logs/skillsmith-doc-retrieval-<date>.jsonl` via the shared SMI-5615 logger. Disable: `SKILLSMITH_REINDEX_STALENESS_DISABLE=1`.
+
 ---
 
 ## Troubleshooting
