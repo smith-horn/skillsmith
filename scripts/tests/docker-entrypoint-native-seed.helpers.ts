@@ -44,7 +44,7 @@ import { join } from 'node:path'
 // missing … OR if SKILLSMITH_...").
 // ---------------------------------------------------------------------------
 
-function findIfBlockAfter(
+export function findIfBlockAfter(
   lines: string[],
   fromIdx: number
 ): { startIdx: number; endIdx: number } | null {
@@ -215,15 +215,25 @@ export function wrapInLoop(block: string, modules: string[]): string {
 }
 
 /**
- * Rewrite the block's hardcoded /app/node_modules, /opt/native-seed, and
- * /app/.git absolute prefixes to point inside an isolated fixture root.
- * Plain string split/join (not regex) — no escaping hazards from the
- * fixture's tmp-dir path.
+ * Rewrite the block's hardcoded /app/node_modules, /app/packages,
+ * /opt/native-seed, and /app/.git absolute prefixes to point inside an
+ * isolated fixture root. Plain string split/join (not regex) — no escaping
+ * hazards from the fixture's tmp-dir path.
+ *
+ * SMI-5784: `/app/packages/` was added for the per-package boot-seed and
+ * validate/rebuild blocks. It does not collide with the pre-existing
+ * `/app/node_modules/` replacement above — the literal substring
+ * `/app/node_modules/` never appears inside a per-package path like
+ * `/app/packages/<pkg>/node_modules/<module>` (there's always a
+ * `packages/<pkg>/` segment in between), so both replacements apply
+ * independently regardless of ordering.
  */
-function substituteFixturePaths(block: string, fixtureRoot: string): string {
+export function substituteFixturePaths(block: string, fixtureRoot: string): string {
   return block
     .split('/app/node_modules/')
     .join(`${fixtureRoot}/app/node_modules/`)
+    .split('/app/packages/')
+    .join(`${fixtureRoot}/app/packages/`)
     .split('/opt/native-seed/')
     .join(`${fixtureRoot}/opt/native-seed/`)
     .split('"/app/.git"')
@@ -240,6 +250,10 @@ export interface Fixture {
   npmRebuildLog: string
   nodeModulesDir: (moduleName: string) => string
   seedDir: (moduleName: string) => string
+  /** SMI-5784: packages/<pkg>/node_modules/<module> under the fixture root. */
+  packageNodeModulesDir: (pkg: string, moduleName: string) => string
+  /** SMI-5784: opt/native-seed/<pkg>-<module> under the fixture root. */
+  packageSeedDir: (pkg: string, moduleName: string) => string
 }
 
 /**
@@ -315,6 +329,10 @@ export function makeFixture(): Fixture {
     npmRebuildLog,
     nodeModulesDir: (moduleName: string) => join(root, 'app', 'node_modules', moduleName),
     seedDir: (moduleName: string) => join(root, 'opt', 'native-seed', moduleName),
+    packageNodeModulesDir: (pkg: string, moduleName: string) =>
+      join(root, 'app', 'packages', pkg, 'node_modules', moduleName),
+    packageSeedDir: (pkg: string, moduleName: string) =>
+      join(root, 'opt', 'native-seed', `${pkg}-${moduleName}`),
   }
 }
 

@@ -17,6 +17,14 @@ const __dirname = dirname(__filename)
 
 export const REPO_ROOT = resolve(__dirname, '..', '..')
 export const ENTRYPOINT_PATH = resolve(REPO_ROOT, 'docker-entrypoint.sh')
+// SMI-5784 file-length split: the per-package native-module seed/validate
+// logic (including the SHARED validate_native_module() function) was moved
+// out of docker-entrypoint.sh into this sourced sibling per CLAUDE.md's
+// 500-line convention. Anything that used to extract those blocks/that
+// function from ENTRYPOINT_PATH's own source must now read from here
+// instead — see docker-entrypoint-native-per-package.sh's own header for
+// the split rationale.
+export const NATIVE_PER_PACKAGE_PATH = resolve(REPO_ROOT, 'docker-entrypoint-native-per-package.sh')
 export const DOCKERFILE_PATH = resolve(REPO_ROOT, 'Dockerfile')
 export const LIB_SH_PATH = resolve(REPO_ROOT, 'scripts', '_lib.sh')
 export const REGEN_LOCKFILE_PATH = resolve(REPO_ROOT, 'scripts', 'regen-lockfile.sh')

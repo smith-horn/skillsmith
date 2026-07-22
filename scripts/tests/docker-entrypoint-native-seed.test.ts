@@ -45,24 +45,32 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const REPO_ROOT = resolve(__dirname, '..', '..')
 const ENTRYPOINT_PATH = resolve(REPO_ROOT, 'docker-entrypoint.sh')
+// SMI-5784 file-length split: validate_native_module() (the function the
+// reseed fast path below calls) now lives in this sourced sibling — see
+// docker-entrypoint-native-per-package.sh's own header for the rationale.
+const NATIVE_PER_PACKAGE_PATH = resolve(REPO_ROOT, 'docker-entrypoint-native-per-package.sh')
 
 describe('docker-entrypoint.sh native-module tmpfs seed (SMI-5650 Wave 2)', () => {
   let entrypointSrc: string
+  let nativePerPackageSrc: string
   let bootBlockRaw: string
   let reseedBlockRaw: string
   // The reseed fast path now calls the shared validate_native_module()
   // helper (SMI-5650 fix: a bare `require('${module}')` is a false green
   // for better-sqlite3/esbuild) — extracted once and prepended ahead of
   // reseedBlockRaw wherever it's executed, or the extracted snippet fails
-  // with "command not found: validate_native_module".
+  // with "command not found: validate_native_module". SMI-5784: the
+  // function itself now lives in docker-entrypoint-native-per-package.sh,
+  // so it's extracted from THAT file's source, not docker-entrypoint.sh's.
   let validateFnSrc: string
   const fixtures: Fixture[] = []
 
   beforeAll(() => {
     entrypointSrc = readFileSync(ENTRYPOINT_PATH, 'utf8')
+    nativePerPackageSrc = readFileSync(NATIVE_PER_PACKAGE_PATH, 'utf8')
     bootBlockRaw = extractBootTimeSeedBlock(entrypointSrc)
     reseedBlockRaw = extractReseedFastPathWithFallback(entrypointSrc)
-    validateFnSrc = extractValidateNativeModuleFunction(entrypointSrc)
+    validateFnSrc = extractValidateNativeModuleFunction(nativePerPackageSrc)
   })
 
   afterEach(() => {
@@ -92,15 +100,32 @@ describe('docker-entrypoint.sh native-module tmpfs seed (SMI-5650 Wave 2)', () =
       expect(seedIdx).toBeLessThan(validationIdx)
     })
 
-    it('both seed call-sites reference the IDENTICAL disable-var guard clause (H2 parity backstop)', () => {
+    it('all FOUR seed call-sites reference the IDENTICAL disable-var guard clause (H2 parity backstop, extended SMI-5784)', () => {
+      // SMI-5650 shipped 2 call-sites (root boot-time step + root
+      // validation-loop re-seed fast path) — both still in docker-entrypoint.sh.
+      // SMI-5784 added the per-package equivalents of both (per-package
+      // boot-time step + per-package validate-block re-seed fast path),
+      // reusing the SAME guard clause — so the expected count grew from 2
+      // to 4, not a new independent guard. The SMI-5784 file-length split
+      // moved those two per-package call-sites into the sourced
+      // docker-entrypoint-native-per-package.sh sibling, so the count is
+      // now summed across BOTH files — the invariant is "4 total across the
+      // entrypoint mechanism", not "4 in this one file". A regression that
+      // drops gating from ANY of the four call-sites (root or per-package,
+      // in either file) lowers this count and fails here, exactly the H2
+      // regression class this test was written to catch.
       const guard = '"${SKILLSMITH_WORKTREE_NATIVE_SEED_DISABLE:-}" != "1"'
-      const occurrences = entrypointSrc.split(guard).length - 1
+      const occurrences =
+        entrypointSrc.split(guard).length - 1 + (nativePerPackageSrc.split(guard).length - 1)
       expect(
         occurrences,
-        'Expected the disable-var guard clause to appear exactly twice (boot-time step + ' +
-          'validation-loop fast path). A count of 1 is the exact H2 regression plan-review caught: ' +
-          'only one of the two call-sites gated.'
-      ).toBe(2)
+        'Expected the disable-var guard clause to appear exactly four times across ' +
+          'docker-entrypoint.sh + docker-entrypoint-native-per-package.sh combined (root ' +
+          'boot-time step, root validation-loop re-seed fast path, per-package boot-time step, ' +
+          'per-package validate-block re-seed fast path). A lower count means one of the four ' +
+          'call-sites lost its gating — the H2 regression class plan-review originally caught, ' +
+          'now covering the SMI-5784 per-package call-sites too.'
+      ).toBe(4)
     })
   })
 

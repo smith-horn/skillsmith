@@ -866,6 +866,30 @@ enumerate_compose_node_modules_mounts() {
             printf '      - %s/%s:/app/packages/%s/node_modules/%s\n' \
                 "$main_target" "$build_cache_dir" "$pkg_name" "$build_cache_dir"
         done
+
+        # SMI-5784: PER-PACKAGE native-module writable overlays, same shape
+        # as the root-level native-module loop above (named volume, NOT
+        # tmpfs — see that loop's comment for the noexec rationale) but
+        # targeting a workspace-local, non-hoisted copy under THIS package's
+        # own node_modules (e.g. packages/core/node_modules/better-sqlite3,
+        # pinned independently of root per SMI-4484). Declared once by
+        # enumerate_native_module_volumes()'s matching per-package pass,
+        # referenced here by the same native-seed-<pkg>-<sanitized-module>
+        # name. Positioned immediately after the .vite/.vite-temp/.astro
+        # sub-loop above as an authoring CONVENTION (matches how every other
+        # per-package override line in this file is ordered) — Compose
+        # merges a service's `volumes:` entries by target path, not list
+        # position, so this ordering is not load-bearing the way the root
+        # `:ro` mount preceding the alias-scope tmpfs targets is (see that
+        # loop's own mount-order comment); verified against a real
+        # container-create test, not just this line-order convention.
+        local pkg_native_module
+        for pkg_native_module in "${NATIVE_MODULES_FOR_OVERLAY[@]}"; do
+            if [[ -d "$main_target/$pkg_native_module" && ! -L "$main_target/$pkg_native_module" ]]; then
+                printf '      - native-seed-%s-%s:/app/packages/%s/node_modules/%s\n' \
+                    "$pkg_name" "$(native_module_volume_name "$pkg_native_module")" "$pkg_name" "$pkg_native_module"
+            fi
+        done
     done
 }
 
@@ -932,6 +956,7 @@ ensure_build_cache_mount_sources() {
 enumerate_native_module_volumes() {
     local repo_root="$1"
     local native_module
+    local pkg_dir pkg_name
 
     for native_module in "${NATIVE_MODULES_FOR_OVERLAY[@]}"; do
         if [[ -d "$repo_root/node_modules/$native_module" && ! -L "$repo_root/node_modules/$native_module" ]]; then
@@ -946,6 +971,33 @@ enumerate_native_module_volumes() {
             printf '    labels:\n'
             printf '      app.skillsmith.owned: "true"\n'
         fi
+    done
+
+    # SMI-5784: second, PER-PACKAGE pass. Workspace-local, non-hoisted copies
+    # (e.g. packages/core/node_modules/better-sqlite3, pinned independently
+    # per SMI-4484 — a structural, permanent divergence from root, not
+    # incidental drift; see docs/internal/implementation/
+    # smi-5784-native-seed-per-package-volumes.md's Context) need their OWN
+    # writable overlay, distinct from the root-only volumes declared above.
+    # Same real-directory guard (not a symlink). Naming is
+    # native-seed-<pkg>-<sanitized-module> — the extra -<pkg>- segment makes
+    # collision with a root-only name or another package's volume for the
+    # SAME module impossible (each package is its own guarded loop
+    # iteration); package directory names (core, doc-retrieval-mcp,
+    # mcp-server, cli, …) are already lowercase-with-hyphens and
+    # Docker-volume-name-safe, so only the module segment needs
+    # native_module_volume_name()'s @-sanitization.
+    for pkg_dir in "$repo_root"/packages/*/; do
+        [[ -d "$pkg_dir" ]] || continue
+        pkg_name="$(basename "$pkg_dir")"
+        for native_module in "${NATIVE_MODULES_FOR_OVERLAY[@]}"; do
+            if [[ -d "$pkg_dir/node_modules/$native_module" && ! -L "$pkg_dir/node_modules/$native_module" ]]; then
+                printf '  native-seed-%s-%s:\n' "$pkg_name" "$(native_module_volume_name "$native_module")"
+                printf '    driver: local\n'
+                printf '    labels:\n'
+                printf '      app.skillsmith.owned: "true"\n'
+            fi
+        done
     done
 }
 

@@ -24,6 +24,7 @@ on:
       - 'scripts/retrieval-autoheal.sh'
       - 'scripts/retrieval-liveness-check.sh'
       - 'docker-entrypoint.sh'
+      - 'docker-entrypoint-native-per-package.sh'
       - 'scripts/lib/repair-worktree-container-symlinks.sh'
       - 'scripts/regen-worktree-overrides.sh'
       - 'scripts/worktree-docker.sh'
@@ -33,6 +34,7 @@ on:
       - 'scripts/tests/reclaim-node-modules.test.sh'
       - 'scripts/tests/enumerate-compose-mounts.test.sh'
       - 'scripts/tests/enumerate-compose-mounts-smi5650.test.sh'
+      - 'scripts/tests/enumerate-compose-mounts-smi5784.test.sh'
       - 'scripts/tests/repair-worktree-container-symlinks.test.sh'
       - 'scripts/tests/worktree-port-collision.test.sh'
       - 'scripts/tests/regen-worktree-overrides.test.sh'
@@ -66,6 +68,7 @@ jobs:
             scripts/retrieval-autoheal.sh \
             scripts/retrieval-liveness-check.sh \
             docker-entrypoint.sh \
+            docker-entrypoint-native-per-package.sh \
             scripts/lib/repair-worktree-container-symlinks.sh \
             scripts/regen-worktree-overrides.sh \
             scripts/worktree-docker.sh \
@@ -75,6 +78,7 @@ jobs:
             scripts/tests/reclaim-node-modules.test.sh \
             scripts/tests/enumerate-compose-mounts.test.sh \
             scripts/tests/enumerate-compose-mounts-smi5650.test.sh \
+            scripts/tests/enumerate-compose-mounts-smi5784.test.sh \
             scripts/tests/repair-worktree-container-symlinks.test.sh \
             scripts/tests/worktree-port-collision.test.sh \
             scripts/tests/regen-worktree-overrides.test.sh \
@@ -91,6 +95,7 @@ jobs:
           bash -n scripts/retrieval-autoheal.sh
           bash -n scripts/retrieval-liveness-check.sh
           bash -n docker-entrypoint.sh
+          bash -n docker-entrypoint-native-per-package.sh
           bash -n scripts/lib/repair-worktree-container-symlinks.sh
           bash -n scripts/regen-worktree-overrides.sh
           bash -n scripts/worktree-docker.sh
@@ -100,6 +105,7 @@ jobs:
           bash -n scripts/tests/reclaim-node-modules.test.sh
           bash -n scripts/tests/enumerate-compose-mounts.test.sh
           bash -n scripts/tests/enumerate-compose-mounts-smi5650.test.sh
+          bash -n scripts/tests/enumerate-compose-mounts-smi5784.test.sh
           bash -n scripts/tests/repair-worktree-container-symlinks.test.sh
           bash -n scripts/tests/worktree-port-collision.test.sh
           bash -n scripts/tests/regen-worktree-overrides.test.sh
@@ -127,6 +133,7 @@ jobs:
           bash scripts/tests/reclaim-node-modules.test.sh
           bash scripts/tests/enumerate-compose-mounts.test.sh
           bash scripts/tests/enumerate-compose-mounts-smi5650.test.sh
+          bash scripts/tests/enumerate-compose-mounts-smi5784.test.sh
           bash scripts/tests/repair-worktree-container-symlinks.test.sh
           bash scripts/tests/worktree-port-collision.test.sh
           bash scripts/tests/regen-worktree-overrides.test.sh
