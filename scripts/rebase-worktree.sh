@@ -17,7 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
 # SMI-5773: git-crypt filter management (get_encrypted_paths, restore_filter_config,
 # force_resmudge, scan_ciphertext, check_resmudge_scan_result) split out per
-# CLAUDE.md's 500-line file-length convention.
+# CLAUDE.md's 500-line file-length convention. SMI-5781 added
+# stabilize_encrypted_index_stats() to the same file.
 # shellcheck source=_rebase-git-crypt.sh
 source "$SCRIPT_DIR/_rebase-git-crypt.sh"
 # SMI-5773: submodule directional-guard alignment (is_allow_ahead_for,
@@ -210,6 +211,17 @@ step_stash() {
     if [ "$DRY_RUN" = true ]; then info "  [dry-run] Would stash unstaged changes"; return 0; fi
     git -C "$WORKTREE_PATH" stash push -m "rebase-worktree: auto-stash before rebase"
     STASH_REF=$(git -C "$WORKTREE_PATH" stash list | head -1 | cut -d: -f1)
+    # SMI-5781: `git stash push` above re-checks-out every previously-unstaged
+    # path back to HEAD's content, leaving a racy mtime on each -- if left
+    # unresolved, Step 9's rebase pre-flight can spuriously reject an
+    # encrypted path as dirty once Step 7 swaps in the identity clean filter.
+    # Must run here: after the stash exists, before Step 7's filter swap.
+    # force_racy_stash_restore_for_test is a test-only, inert-by-default
+    # determinism seam (SKILLSMITH_REBASE_FORCE_RACY_TEST=1) -- see its
+    # doc comment in _rebase-git-crypt.sh.
+    force_racy_stash_restore_for_test
+    info "  Stabilizing encrypted-file index timestamps..."
+    stabilize_encrypted_index_stats
     success "  Stashed as $STASH_REF"
 }
 

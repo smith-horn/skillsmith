@@ -241,13 +241,14 @@ describe('SMI-5773: post-rebase git-crypt re-smudge', () => {
     //
     // NOTE (SMI-5781, found in SMI-5773's code review): this manual
     // step-driving is NOT a stand-in proving the real end-to-end script
-    // succeeds on this input -- it doesn't. `runScript()` genuinely fails
-    // here via `git rebase`'s own pre-flight check (Step 9, unmodified by
-    // this PR), a distinct pre-existing bug filed as SMI-5781. This test
-    // verifies ONLY that force_resmudge/scan_ciphertext (this PR's actual
-    // fix, Step 10) behave correctly once that unrelated Step 9 failure is
-    // sidestepped. See the adjacent `it.fails()` KNOWN ISSUE test below for
-    // the real-script behavior.
+    // succeeds on this input -- it drives Steps 6/7/9/10 by hand and
+    // deliberately does NOT call step_stash()'s production
+    // stabilize_encrypted_index_stats() call site. This test verifies ONLY
+    // that force_resmudge/scan_ciphertext (Step 10) behave correctly once
+    // the stash/rebase window is sidestepped. See the adjacent promoted
+    // end-to-end test below ("full runScript() on the same encrypted-WIP-stash
+    // scenario") for proof that the real script -- including SMI-5781's
+    // stash-mtime-race fix -- succeeds on this input via the real Step 6.
     stashDisableRebaseRestore(worktreeDir)
     const restore = sourceAndRun({ worktreeDir, call: 'force_resmudge' })
     expect(restore.status).toBe(0)
@@ -257,44 +258,53 @@ describe('SMI-5773: post-rebase git-crypt re-smudge', () => {
     expect(sh(`cat "${join(worktreeDir, 'enc', 'file.txt')}"`)).toBe('v2 from main')
   })
 
-  // KNOWN ISSUE (SMI-5781, found during SMI-5773's code review): the real
-  // end-to-end script genuinely fails on this exact scenario -- NOT because
-  // of anything force_resmudge/scan_ciphertext (this PR's fix) touches, but
-  // because `git stash push`'s own internal re-checkout leaves a racy mtime
-  // on the just-restored encrypted file, and `git rebase`'s pre-flight
-  // clean-tree check (Step 9, unmodified by SMI-5773) then spuriously
-  // rejects it as dirty once Step 7 disables filters. Same racy-git family
-  // as SMI-5773's own root cause, but a different step/trigger, requiring
-  // its own ADR-109 SPARC+plan-review before a fix lands -- see SMI-5781.
-  // `it.fails()` documents this is a KNOWN, currently-failing case: if this
-  // ever starts passing (SMI-5781 landing, or an unrelated git/environment
-  // change), vitest will flag it so this gets promoted to a real assertion
-  // instead of silently staying stale.
-  it.fails(
-    'KNOWN ISSUE (SMI-5781): full runScript() on the same encrypted-WIP-stash scenario currently fails',
-    () => {
-      const tempRoot = makeTempDir('rw-5773-stash-enc-e2e')
-      tempDirs.push(tempRoot)
-      const { cloneDir, worktreeDir } = setupGitCryptRepoWithWorktree(tempRoot, {
-        'enc/file.txt': 'v1',
-        'enc/other.txt': 'v1',
-      })
+  // SMI-5781: the real end-to-end script used to genuinely fail on this
+  // exact scenario -- NOT because of anything force_resmudge/scan_ciphertext
+  // (SMI-5773's fix) touches, but because `git stash push`'s own internal
+  // re-checkout leaves a racy mtime on the just-restored encrypted file, and
+  // `git rebase`'s pre-flight clean-tree check (Step 9) then spuriously
+  // rejected it as dirty once Step 7 disabled filters. Same racy-git family
+  // as SMI-5773's own root cause, but a different step/trigger. Fixed by
+  // `stabilize_encrypted_index_stats()`, called from step_stash() right
+  // after the stash is created and before Step 7's filter swap -- this is
+  // now a permanent end-to-end regression test for that fix.
+  //
+  // SMI-5781 code-review followup: whether this test's own `runScript()`
+  // invocation naturally lands in the racy window is incidental filesystem
+  // timing (this file's header explains the mechanism) -- it could pass
+  // even with the fix reverted if the timing doesn't happen to be racy on a
+  // given run/machine. `SKILLSMITH_REBASE_FORCE_RACY_TEST=1` enables
+  // force_racy_stash_restore_for_test() (scripts/_rebase-git-crypt.sh),
+  // which step_stash() calls right after `git stash push` and right before
+  // stabilize_encrypted_index_stats() -- it deterministically backdates the
+  // just-restored encrypted path(s) WITHOUT refreshing the index, forcing
+  // the same class of stat-cache mismatch a real racy stash-restore
+  // produces, so this test's pass is a genuine proof the fix resolves it
+  // rather than a lucky timing coincidence.
+  it('full runScript() on the same encrypted-WIP-stash scenario succeeds (SMI-5781 regression)', () => {
+    const tempRoot = makeTempDir('rw-5773-stash-enc-e2e')
+    tempDirs.push(tempRoot)
+    const { cloneDir, worktreeDir } = setupGitCryptRepoWithWorktree(tempRoot, {
+      'enc/file.txt': 'v1',
+      'enc/other.txt': 'v1',
+    })
 
-      sh(`echo "wip enc edit" > "${join(worktreeDir, 'enc', 'other.txt')}"`)
+    sh(`echo "wip enc edit" > "${join(worktreeDir, 'enc', 'other.txt')}"`)
 
-      git(cloneDir, 'checkout main')
-      sh(`echo "v2 from main" > "${join(cloneDir, 'enc', 'file.txt')}"`)
-      git(cloneDir, 'add enc/file.txt')
-      git(cloneDir, 'commit -m "advance main"')
-      git(cloneDir, 'push origin main')
-      git(cloneDir, 'checkout -')
+    git(cloneDir, 'checkout main')
+    sh(`echo "v2 from main" > "${join(cloneDir, 'enc', 'file.txt')}"`)
+    git(cloneDir, 'add enc/file.txt')
+    git(cloneDir, 'commit -m "advance main"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
 
-      const result = runScript(`"${worktreeDir}"`)
-      expect(result.status).toBe(0)
-      expect(sh(`cat "${join(worktreeDir, 'enc', 'other.txt')}"`)).toBe('wip enc edit')
-      expect(sh(`cat "${join(worktreeDir, 'enc', 'file.txt')}"`)).toBe('v2 from main')
-    }
-  )
+    const result = runScript(`"${worktreeDir}"`, { SKILLSMITH_REBASE_FORCE_RACY_TEST: '1' })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Rebase complete')
+    expect(result.stdout).toContain('Stabilizing encrypted-file index timestamps')
+    expect(sh(`cat "${join(worktreeDir, 'enc', 'other.txt')}"`)).toBe('wip enc edit')
+    expect(sh(`cat "${join(worktreeDir, 'enc', 'file.txt')}"`)).toBe('v2 from main')
+  })
 
   it('trap-safety: EXIT trap restores filter config on a Step 8 failure without touching tracked files or clobbering the exit code', () => {
     const tempRoot = makeTempDir('rw-5773-trap')
