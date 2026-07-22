@@ -67,13 +67,22 @@ export function sh(cmd: string, opts?: { cwd?: string }): string {
   return execSync(cmd, { encoding: 'utf8', env: GIT_ENV, ...opts }).trim()
 }
 
-/** Run the rebase-worktree.sh script, returning { status, stdout, stderr } */
-export function runScript(args: string): { status: number; stdout: string; stderr: string } {
+/**
+ * Run the rebase-worktree.sh script, returning { status, stdout, stderr }.
+ * `extraEnv` merges over GIT_ENV -- used by the SMI-5781 end-to-end
+ * regression test to enable the force_racy_stash_restore_for_test()
+ * determinism seam (SKILLSMITH_REBASE_FORCE_RACY_TEST=1) without every
+ * other call site needing to know about it.
+ */
+export function runScript(
+  args: string,
+  extraEnv: Record<string, string> = {}
+): { status: number; stdout: string; stderr: string } {
   try {
     const stdout = execSync(`bash "${SCRIPT_PATH}" ${args}`, {
       encoding: 'utf8',
       timeout: 30_000,
-      env: GIT_ENV,
+      env: { ...GIT_ENV, ...extraEnv },
     })
     return { status: 0, stdout, stderr: '' }
   } catch (err) {

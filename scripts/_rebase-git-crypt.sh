@@ -109,6 +109,189 @@ scan_ciphertext() {
     return 0
 }
 
+# SMI-5781: portable ~1-hour-ago timestamp in `touch -t` form
+# ([[CC]YY]MMDDhhmm[.ss]) -- this form behaves identically on BSD/macOS and
+# GNU touch (unlike `touch -d`, which is GNU-only), so only the *timestamp
+# computation* below needs to branch, not the touch invocation itself.
+# Branches on `uname` rather than probing `date -r`/`date -d` support at
+# runtime, matching this codebase's existing macOS/Linux divergence-handling
+# convention (see scripts/_lib.sh, scripts/cleanup-orphans.sh,
+# scripts/create-worktree.sh: `[[ "$(uname)" == "Darwin" ]]`).
+#
+# Computed entirely in UTC (TZ=UTC0), not local wall-clock time: `touch -t`
+# interprets its [[CC]YY]MMDDhhmm[.ss] argument in whichever timezone is
+# active when `touch` itself runs, so if this function emitted LOCAL
+# wall-clock text, a fall DST transition could make "1 hour ago" and "now"
+# share the identical wall-clock representation (clocks fall back by the
+# same amount subtracted here), turning the backdate into a no-op exactly
+# when the racy-mtime bug this function exists to fix is most likely to
+# occur. UTC has no DST transitions, so the epoch->text conversion here and
+# the text->mtime conversion at the `touch -t` call site (which also sets
+# TZ=UTC0 -- see stabilize_encrypted_index_stats() below) always agree.
+_past_touch_timestamp() {
+    local epoch=$(( $(date +%s) - 3600 ))
+    if [[ "$(uname)" == "Darwin" ]]; then
+        TZ=UTC0 date -r "$epoch" +%Y%m%d%H%M.%S
+    else
+        TZ=UTC0 date -d "@$epoch" +%Y%m%d%H%M.%S
+    fi
+}
+
+# SMI-5781: stabilize the git index's cached stat info for every currently
+# tracked git-crypt-encrypted path. `git stash push` (step_stash(),
+# rebase-worktree.sh) re-checks-out every previously-unstaged path back to
+# HEAD's content, leaving each a RACY mtime (the file's mtime equals or is
+# too close to the index file's own last-write time for git to trust the
+# cached stat). If Step 7 then swaps filter.git-crypt.clean to the identity
+# `cat` filter before that raciness is resolved, Step 9's `git rebase`
+# pre-flight clean-tree check re-verifies the racy entry's content under the
+# WRONG (identity) clean filter instead of git-crypt's real encrypting
+# filter -- producing a spurious "You have unstaged changes" rejection on a
+# file that is genuinely clean. See
+# docs/internal/implementation/smi-5781-rebase-worktree-stash-racy-mtime.md
+# for the full root-cause writeup.
+#
+# Enumeration deliberately does NOT reuse get_encrypted_paths() -- that
+# function's grep/awk/sed .gitattributes parsing doesn't implement Git's
+# real attribute-resolution semantics (misses nested .gitattributes,
+# quoting/escaping, later overrides). `git check-attr -z filter --stdin` is
+# Git's own canonical attribute resolution instead: correct by
+# construction, with no custom parsing to get wrong. Output is NUL-delimited
+# <path>\0<attr-name>\0<attr-value>\0 triples (verified against this repo's
+# real .gitattributes -- see the plan doc's Surface Grounding table).
+#
+# Both enumeration pipelines (`ls-files -z | check-attr -z filter --stdin`
+# and `ls-files -s -z -- <paths>`) are captured to a temp file and checked
+# with `if ! ... > "$tmp"` rather than consumed directly via process
+# substitution (`< <(...)`). Process substitution runs the pipeline in a
+# detached background subshell whose exit status the parent shell never
+# observes (not even under `set -e`/`pipefail`) -- a real git failure there
+# would silently look identical to "no encrypted paths" and this function
+# would no-op with no diagnostic. Routing through a temp file makes the
+# failure observable: `if !` reflects the pipeline's real exit status (the
+# rightmost failing command, via the caller's `set -o pipefail` --
+# rebase-worktree.sh sets this unconditionally before sourcing this file,
+# and the test harness's sourceAndRun() does too), and a NUL-safe `while
+# read -d ''` loop over the temp file parses identically to the
+# process-substitution form (this file stays bash-3.2-safe for macOS's
+# default /bin/bash, which lacks `mapfile -d ''`).
+#
+# Excludes non-regular-file entries (symlinks, gitlinks/submodules): a
+# portable `touch` follows a symlink by default, so touching a tracked
+# symlink's path could mutate an mtime entirely outside the worktree, which
+# is both surprising and unrelated to this bug. Only index mode
+# 100644/100755 (regular files) are touched.
+#
+# Non-fatal, best-effort throughout: an enumeration-pipeline failure, a
+# touch failure, or an index-refresh failure each log a warn() naming the
+# exact downstream symptom this could cause, but none of them ever abort or
+# introduce a new exit code -- the point of the sharper messages is
+# diagnosability, not a new failure classification. The "Stabilized N ..."
+# success line is only ever printed when every touch AND the index refresh
+# all succeeded -- a partial failure prints the failure warn()s but never
+# ALSO claims success.
+stabilize_encrypted_index_stats() {
+    local path attr_name attr_value
+    local encrypted_paths=()
+
+    local attr_tmp
+    attr_tmp=$(mktemp) || {
+        warn "could not create a temp file while enumerating encrypted paths; skipping encrypted-path index-stat stabilization -- if Step 9 reports 'You have unstaged changes' on an encrypted path, this is why -- it is a stat-cache race, not a real conflict, and reflects no unmerged paths"
+        return 0
+    }
+    if ! git -C "$WORKTREE_PATH" ls-files -z | git -C "$WORKTREE_PATH" check-attr -z filter --stdin > "$attr_tmp"; then
+        rm -f "$attr_tmp"
+        warn "could not enumerate git-crypt-encrypted paths (ls-files/check-attr failed); skipping encrypted-path index-stat stabilization -- if Step 9 reports 'You have unstaged changes' on an encrypted path, this is why -- it is a stat-cache race, not a real conflict, and reflects no unmerged paths"
+        return 0
+    fi
+    # attr_name is always the literal "filter" (we asked check-attr for only
+    # that one attribute) -- read and discarded solely to stay in lockstep
+    # with the NUL-delimited <path>\0<attr-name>\0<attr-value>\0 triples.
+    # shellcheck disable=SC2034
+    while IFS= read -r -d '' path && IFS= read -r -d '' attr_name && IFS= read -r -d '' attr_value; do
+        [ "$attr_value" = "git-crypt" ] || continue
+        encrypted_paths+=("$path")
+    done < "$attr_tmp"
+    rm -f "$attr_tmp"
+    [ "${#encrypted_paths[@]}" -gt 0 ] || return 0
+
+    # Regular-file filter: index mode 100644/100755 only -- excludes
+    # symlinks (120000) and gitlinks/submodules (160000). Passed as a proper
+    # bash array (not the unquoted-glob-prefix style used by
+    # get_encrypted_paths() callers elsewhere in this file) because these
+    # are exact resolved paths, not patterns.
+    local regular_paths=()
+    local entry mode path_part
+    local ls_tmp
+    ls_tmp=$(mktemp) || {
+        warn "could not create a temp file while resolving encrypted-path index entries; skipping encrypted-path index-stat stabilization -- if Step 9 reports 'You have unstaged changes' on an encrypted path, this is why -- it is a stat-cache race, not a real conflict, and reflects no unmerged paths"
+        return 0
+    }
+    if ! git -C "$WORKTREE_PATH" ls-files -s -z -- "${encrypted_paths[@]}" > "$ls_tmp"; then
+        rm -f "$ls_tmp"
+        warn "could not resolve encrypted-path index entries (ls-files -s failed); skipping encrypted-path index-stat stabilization -- if Step 9 reports 'You have unstaged changes' on an encrypted path, this is why -- it is a stat-cache race, not a real conflict, and reflects no unmerged paths"
+        return 0
+    fi
+    while IFS= read -r -d '' entry; do
+        mode="${entry%% *}"
+        path_part="${entry#*$'\t'}"
+        case "$mode" in
+            100644|100755) regular_paths+=("$path_part") ;;
+        esac
+    done < "$ls_tmp"
+    rm -f "$ls_tmp"
+    [ "${#regular_paths[@]}" -gt 0 ] || return 0
+
+    local ts; ts=$(_past_touch_timestamp)
+    local f touch_failed=0
+    for f in "${regular_paths[@]}"; do
+        if ! TZ=UTC0 touch -t "$ts" -- "$WORKTREE_PATH/$f" 2>/dev/null; then
+            touch_failed=1
+            warn "could not stabilize index stats for $f; if Step 9 reports 'You have unstaged changes' on this file, this is why -- it is a stat-cache race, not a real conflict, and reflects no unmerged paths"
+        fi
+    done
+
+    local refresh_failed=0
+    if ! git -C "$WORKTREE_PATH" update-index -q --refresh >/dev/null 2>&1; then
+        refresh_failed=1
+        warn "git update-index --refresh failed while stabilizing encrypted-path index stats; if Step 9 reports 'You have unstaged changes' on an encrypted path, this is why -- it is a stat-cache race, not a real conflict, and reflects no unmerged paths"
+    fi
+
+    if [ "$touch_failed" -eq 0 ] && [ "$refresh_failed" -eq 0 ]; then
+        success "    Stabilized ${#regular_paths[@]} encrypted-path index timestamp(s)"
+    fi
+    return 0
+}
+
+# SMI-5781 test-only determinism seam -- see
+# scripts/tests/rebase-worktree.git-crypt-resmudge.test.ts's end-to-end
+# regression test ("full runScript() on the same encrypted-WIP-stash
+# scenario succeeds"). `git stash push`'s own internal re-checkout
+# naturally leaves the just-restored file's cached index stat racy, but
+# whether a fast synthetic test run actually lands in that ambiguous window
+# is incidental filesystem timing (see that test file's header comment for
+# the full mechanism) -- sometimes it reproduces the bug's precondition,
+# sometimes it doesn't. This forces the same class of stat-cache mismatch
+# deterministically: backdating the just-restored encrypted path(s) WITHOUT
+# refreshing the index leaves the index's cached entry pointing at the
+# original near-now mtime while the file itself now reads an hour old -- an
+# unambiguous mismatch git can never treat as trustworthy-clean until
+# something refreshes it, which is exactly what
+# stabilize_encrypted_index_stats() (called immediately afterward in
+# step_stash()) exists to do. Inert unless
+# SKILLSMITH_REBASE_FORCE_RACY_TEST=1 -- never runs outside that harness.
+force_racy_stash_restore_for_test() {
+    [ "${SKILLSMITH_REBASE_FORCE_RACY_TEST:-}" = "1" ] || return 0
+    local encrypted_paths; encrypted_paths=$(get_encrypted_paths)
+    [ -n "$encrypted_paths" ] || return 0
+    local ts; ts=$(_past_touch_timestamp)
+    local f
+    # shellcheck disable=SC2086
+    while IFS= read -r -d '' f; do
+        TZ=UTC0 touch -t "$ts" -- "$WORKTREE_PATH/$f" 2>/dev/null || true
+    done < <(git -C "$WORKTREE_PATH" ls-files -z -- $encrypted_paths)
+}
+
 # SMI-5773: post-Step-11 check — acts on the RESMUDGE_SCAN_FAILED result
 # recorded by step_restore_filters()/scan_ciphertext(). Deliberately run
 # AFTER step_pop_stash (so a detected residue never strands the user's
