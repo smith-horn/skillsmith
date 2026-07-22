@@ -1,25 +1,30 @@
 # topology-optimize
 
-Optimize swarm topology for current workload.
+Optimize swarm topology for the current workload.
 
-## Usage
-```bash
-npx claude-flow optimization topology-optimize [options]
+## Live v3 Ground Truth
+
+There is no CLI `topology-optimize` command — `optimization` is not a CLI family in v3 at all. Topology is:
+
+- **Set at swarm creation**: `swarm init -t <topology> --auto-scale`
+- **Adjusted at runtime**: MCP tool `mcp__ruflo__coordination_topology` (no CLI wrapper exists)
+
+**Trap**: CLI `performance optimize --target <metric> [--apply]` shares the `--target`/`--apply` flag shape with this file's old syntax, but it optimizes memory/cpu/latency — **not swarm topology**. Do not substitute one for the other; they are different target spaces.
+
+## MCP Usage
+
+```
+Tool: mcp__ruflo__coordination_topology
+Parameters: {"swarmId": "current"}
 ```
 
-## Options
-- `--analyze-first` - Analyze before optimizing
-- `--target <metric>` - Optimization target
-- `--apply` - Apply optimizations
+## Setting Topology at Init
 
-## Examples
 ```bash
-# Analyze and suggest
-npx claude-flow optimization topology-optimize --analyze-first
-
-# Optimize for speed
-npx claude-flow optimization topology-optimize --target speed
-
-# Apply changes
-npx claude-flow optimization topology-optimize --target efficiency --apply
+# Choose the topology when the swarm is created
+npx -y ruflo@3.14.2 swarm init -t hierarchical --auto-scale
 ```
+
+## Related
+
+- [auto-topology](./auto-topology.md) — automatic topology selection heuristics

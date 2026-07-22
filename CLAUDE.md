@@ -253,7 +253,7 @@ High-cadence: Skill Indexer (maintenance 00:00 UTC + recheck 03:00 UTC + discove
 
 ## Ruflo MCP Server + MCP Registry
 
-**Ruflo** (hive mind, agent spawning): auto-configured via `.mcp.json`. Tools `mcp__ruflo__{swarm_init, agent_spawn, task_orchestrate, memory_usage, swarm_destroy}`. Agent types: architect, coder, tester, reviewer, researcher. Full guide: [claude-flow-guide.md](.claude/development/claude-flow-guide.md). **MCP Registry**: `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/), auto-published via CI; sync `packages/mcp-server/{package,server}.json`. Auth: GitHub Actions OIDC (SMI-4534). Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
+**Ruflo** (hive mind, agent spawning): auto-configured via `.mcp.json`. Tools `mcp__ruflo__{swarm_init, agent_spawn, coordination_orchestrate, swarm_shutdown}`, plus `mcp__ruflo__memory_retrieve`, `mcp__ruflo__memory_list`, `mcp__ruflo__memory_delete` (SMI-5777 — `task_orchestrate`/`memory_usage`/`swarm_destroy` do not exist in the live registry; `memory_store` may also exist, see SMI-5777's plan doc H-4 for the live-verification protocol before writing it in). Agent types: architect, coder, tester, reviewer, researcher. Full guide: [claude-flow-guide.md](.claude/development/claude-flow-guide.md). **MCP Registry**: `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/), auto-published via CI; sync `packages/mcp-server/{package,server}.json`. Auth: GitHub Actions OIDC (SMI-4534). Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
 
 ---
 

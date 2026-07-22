@@ -23,14 +23,14 @@ Based on analysis, it selects:
 
 **Simple Task:**
 ```
-Tool: mcp__claude-flow__task_orchestrate
+Tool: mcp__ruflo__coordination_orchestrate
 Parameters: {"task": "Fix typo in README.md"}
 Result: Automatically uses star topology with single agent
 ```
 
 **Complex Task:**
 ```
-Tool: mcp__claude-flow__task_orchestrate
+Tool: mcp__ruflo__coordination_orchestrate
 Parameters: {"task": "Refactor authentication system with JWT, add tests, update documentation"}
 Result: Automatically uses hierarchical topology with architect, coder, and tester agents
 ```
@@ -42,21 +42,24 @@ Result: Automatically uses hierarchical topology with architect, coder, and test
 - 📊 Better resource utilization
 
 ## Hook Configuration
-The pre-task hook automatically handles topology selection:
+`--optimize-topology` is dead in v3 (falls through silently — no error). The pre-task hook itself
+no longer carries topology-selection logic; routing intent moves to `hooks route`:
 ```json
 {
-  "command": "npx claude-flow hook pre-task --optimize-topology"
+  "command": "npx -y ruflo@3.14.2 hooks pre-task -d \"<task>\" && npx -y ruflo@3.14.2 hooks route -t \"<task>\""
 }
 ```
 
 ## Direct Optimization
 ```
-Tool: mcp__claude-flow__topology_optimize
+Tool: mcp__ruflo__coordination_topology
 Parameters: {"swarmId": "current"}
 ```
 
 ## CLI Usage
+No `optimize` verb exists in v3. Topology is set at swarm creation and adjusted only via MCP at runtime:
 ```bash
-# Auto-optimize topology via CLI
-npx claude-flow optimize topology
+# Set topology at swarm creation
+npx -y ruflo@3.14.2 swarm init -t hierarchical --auto-scale
 ```
+Runtime adjustment is MCP-only — see [Direct Optimization](#direct-optimization) above (`mcp__ruflo__coordination_topology`).

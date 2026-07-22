@@ -252,30 +252,31 @@ async function findOptimalPath(startState, goalState, actions) {
 ```javascript
 async function coordinateWithSwarm(complexGoal) {
   // Initialize planning swarm
-  const swarm = await mcp__claude_flow__swarm_init({
+  const swarm = await mcp__ruflo__swarm_init({
     topology: "hierarchical",
     maxAgents: 8,
     strategy: "adaptive"
   });
 
   // Spawn specialized planning agents
-  const coordinator = await mcp__claude_flow__agent_spawn({
+  const coordinator = await mcp__ruflo__agent_spawn({
     type: "coordinator",
     capabilities: ["goal_decomposition", "plan_synthesis"]
   });
 
-  const analyst = await mcp__claude_flow__agent_spawn({
+  const analyst = await mcp__ruflo__agent_spawn({
     type: "analyst",
     capabilities: ["constraint_analysis", "feasibility_assessment"]
   });
 
-  const optimizer = await mcp__claude_flow__agent_spawn({
+  const optimizer = await mcp__ruflo__agent_spawn({
     type: "optimizer",
     capabilities: ["path_optimization", "resource_allocation"]
   });
 
-  // Orchestrate distributed planning
-  const planningTask = await mcp__claude_flow__task_orchestrate({
+  // Orchestrate distributed planning (no explicit task decomposition here,
+  // so this defaults to coordination_orchestrate per SMI-5777's 42-tool map)
+  const planningTask = await mcp__ruflo__coordination_orchestrate({
     task: `Plan execution for: ${complexGoal}`,
     strategy: "parallel",
     priority: "high"
@@ -407,17 +408,23 @@ class DynamicPlanner {
     if (newPlan && newPlan.confidence > 0.8) {
       this.currentPlan = newPlan;
 
-      // Store successful pattern
-      await mcp__claude_flow__memory_usage({
-        action: "store",
-        namespace: "goap-patterns",
-        key: `replan_${Date.now()}`,
-        value: JSON.stringify({
+      // Store successful pattern — CLI path, not an MCP tool call.
+      // mcp__ruflo__memory_store is not exposed in this session's connected
+      // MCP tool registry (SMI-5777 H-4 default). Shell via execFileSync
+      // with array args, never execSync string interpolation.
+      execFileSync("npx", [
+        "ruflo",
+        "memory",
+        "store",
+        "-k",
+        `goap-patterns/replan_${Date.now()}`,
+        "--value",
+        JSON.stringify({
           trigger: this.lastDeviation,
           solution: newPlan,
           worldState: Array.from(this.worldState.entries())
         })
-      });
+      ]);
     }
   }
 }
@@ -461,8 +468,10 @@ class PlanningLearner {
   }
 
   async retrieveSimilarPatterns(currentSituation) {
-    // Search for similar successful patterns
-    const patterns = await mcp__claude_flow__memory_search({
+    // Search for similar successful patterns — key/pattern-based list, not
+    // semantic (similarity is computed client-side below, so this maps to
+    // memory_list per SMI-5777's 42-tool table rather than embeddings_search)
+    const patterns = await mcp__ruflo__memory_list({
       pattern: `situation:${this.encodeSituation(currentSituation)}`,
       namespace: "goap-patterns",
       limit: 10

@@ -21,21 +21,20 @@ tools:
   - mcp__github__create_or_update_file
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
-  - mcp__claude-flow__memory_usage
+  - mcp__ruflo__coordination_orchestrate
 hooks:
   pre_task: |
     echo "🏗️ Initializing repository architecture analysis..."
-    npx ruv-swarm hook pre-task --mode repo-architect --analyze-structure
+    npx -y ruflo@3.14.2 hooks pre-task -d "repo-architect: repository architecture analysis"
   post_edit: |
     echo "📐 Validating architecture changes and updating structure documentation..."
-    npx ruv-swarm hook post-edit --mode repo-architect --validate-structure
+    npx -y ruflo@3.14.2 hooks post-edit -f "structure documentation" --success true
   post_task: |
     echo "🏛️ Architecture task completed. Generating structure recommendations..."
-    npx ruv-swarm hook post-task --mode repo-architect --generate-recommendations
+    npx -y ruflo@3.14.2 hooks post-task -i "repo-architect-task" --success true
   notification: |
     echo "📋 Notifying stakeholders of architecture improvements..."
-    npx ruv-swarm hook notification --mode repo-architect
+    npx -y ruflo@3.14.2 hooks notify -m "repo-architect: architecture improvements"
 ---
 
 # GitHub Repository Architect
@@ -56,10 +55,10 @@ Repository structure optimization and multi-repo management with ruv-swarm coord
 ```javascript
 // Initialize architecture analysis swarm
 mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 4 }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Structure Analyzer" }
-mcp__ruflo__agent_spawn { type: "architect", name: "Repository Architect" }
-mcp__ruflo__agent_spawn { type: "optimizer", name: "Structure Optimizer" }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Multi-Repo Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Structure Analyzer" }
+mcp__ruflo__agent_spawn { agentType: "architect", name: "Repository Architect" }
+mcp__ruflo__agent_spawn { agentType: "optimizer", name: "Structure Optimizer" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Multi-Repo Coordinator" }
 
 // Analyze current repository structure
 LS("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow")
@@ -73,7 +72,7 @@ mcp__github__search_repositories {
 }
 
 // Orchestrate structure optimization
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Analyze and optimize repository structure for scalability and maintainability",
   strategy: "adaptive",
   priority: "medium"
@@ -116,9 +115,9 @@ mcp__github__push_files {
           }
         },
         hooks: {
-          pre_task: "npx ruv-swarm hook pre-task",
-          post_edit: "npx ruv-swarm hook post-edit", 
-          notification: "npx ruv-swarm hook notification"
+          pre_task: "npx -y ruflo@3.14.2 hooks pre-task -d 'repo-architect: repository architecture analysis'",
+          post_edit: "npx -y ruflo@3.14.2 hooks post-edit -f 'structure documentation' --success true",
+          notification: "npx -y ruflo@3.14.2 hooks notify -m 'repo-architect: architecture improvements'"
         }
       }, null, 2)
     },
@@ -144,10 +143,12 @@ mcp__github__push_files {
 
 ## Quick Start
 \`\`\`bash
-npx claude-flow init --sparc
+npx -y ruflo@3.14.2 init
 npm install
-npx claude-flow start --ui
+npx -y ruflo@3.14.2 start
 \`\`\`
+
+(No \`--sparc\` flag in v3 — SPARC is not a CLI surface, see the \`sparc-methodology\` skill instead. No \`--ui\` flag in v3 \`start\` — available flags are \`--daemon\`, \`--port\`, \`--topology\`, \`--skip-mcp\`.)
 
 ## Features
 - 🧠 ruv-swarm integration
@@ -201,11 +202,11 @@ jobs:
 [Single Message - Repository Architecture Review]:
   // Initialize comprehensive architecture swarm
   mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 6 }
-  mcp__ruflo__agent_spawn { type: "architect", name: "Senior Architect" }
-  mcp__ruflo__agent_spawn { type: "analyst", name: "Structure Analyst" }
-  mcp__ruflo__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
-  mcp__ruflo__agent_spawn { type: "researcher", name: "Best Practices Researcher" }
-  mcp__ruflo__agent_spawn { type: "coordinator", name: "Multi-Repo Coordinator" }
+  mcp__ruflo__agent_spawn { agentType: "architect", name: "Senior Architect" }
+  mcp__ruflo__agent_spawn { agentType: "analyst", name: "Structure Analyst" }
+  mcp__ruflo__agent_spawn { agentType: "optimizer", name: "Performance Optimizer" }
+  mcp__ruflo__agent_spawn { agentType: "researcher", name: "Best Practices Researcher" }
+  mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Multi-Repo Coordinator" }
   
   // Analyze current repository structures
   LS("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow")
@@ -253,18 +254,15 @@ jobs:
     { id: "arch-docs", content: "Document architecture decisions", status: "pending", priority: "medium" }
   ]}
   
-  // Store architecture analysis
-  mcp__claude-flow__memory_usage {
-    action: "store",
-    key: "architecture/analysis/results",
-    value: {
-      timestamp: Date.now(),
-      repositories_analyzed: ["claude-code-flow", "ruv-swarm"],
-      optimization_areas: ["structure", "workflows", "templates", "documentation"],
-      recommendations: ["standardize_structure", "improve_workflows", "enhance_templates"],
-      implementation_status: "in_progress"
-    }
-  }
+  // Store architecture analysis — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+  // not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "architecture/analysis/results" --value '${JSON.stringify({
+    timestamp: Date.now(),
+    repositories_analyzed: ["claude-code-flow", "ruv-swarm"],
+    optimization_areas: ["structure", "workflows", "templates", "documentation"],
+    recommendations: ["standardize_structure", "improve_workflows", "enhance_templates"],
+    implementation_status: "in_progress"
+  })}'`);
 ```
 
 ## Architecture Patterns

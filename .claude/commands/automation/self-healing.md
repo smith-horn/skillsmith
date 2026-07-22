@@ -45,16 +45,18 @@ Each recovery improves future prevention:
 - Recovery strategies optimized
 
 **Pattern Storage:**
-```javascript
-// Store error patterns
-mcp__claude-flow__memory_usage({
-  "action": "store",
-  "key": "error-pattern-" + Date.now(),
-  "value": JSON.stringify(errorData),
-  "namespace": "error-patterns",
-  "ttl": 2592000 // 30 days
-})
+```bash
+# Store error patterns — CLI path is the documented default for memory-store
+# writes (see docs/internal/implementation/smi-5777-wave-b-cli-judgment-calls.md
+# § H-4: memory_store exists and works via `mcp exec`, but is not exposed in
+# every connected session's MCP tool discovery, so the CLI form is the safe default)
+npx -y ruflo@3.14.2 memory store -k "error-pattern-<timestamp>" --value '<errorData JSON>' -n "error-patterns" --ttl 2592000
 
+# Equivalent MCP-exec form:
+npx -y ruflo@3.14.2 mcp exec -t memory_store -p '{"key":"error-pattern-<timestamp>","value":"<errorData JSON>","namespace":"error-patterns","ttl":2592000}'
+```
+
+```javascript
 // Analyze patterns
 mcp__ruflo__neural_patterns({
   "action": "analyze",
@@ -76,13 +78,13 @@ mcp__ruflo__swarm_init({
 
 // Spawn recovery agents
 mcp__ruflo__agent_spawn({
-  "type": "monitor",
+  "agentType": "monitor",
   "name": "Error Monitor",
   "capabilities": ["error-detection", "recovery"]
 })
 
 // Orchestrate recovery
-mcp__claude-flow__task_orchestrate({
+mcp__ruflo__coordination_orchestrate({
   "task": "recover from error",
   "strategy": "sequential",
   "priority": "critical"
@@ -90,11 +92,12 @@ mcp__claude-flow__task_orchestrate({
 ```
 
 ### Fallback Hook Configuration
+`post-bash` is an alias for `post-command` in v3; `--auto-recover` no longer exists — v3 only records the outcome for learning, it does not itself recover:
 ```json
 {
   "PostToolUse": [{
     "matcher": "^Bash$",
-    "command": "npx claude-flow hook post-bash --exit-code '${tool.result.exitCode}' --auto-recover"
+    "command": "npx -y ruflo@3.14.2 hooks post-command -c '${tool.params.command}' --exit-code '${tool.result.exitCode}'"
   }]
 }
 ```

@@ -352,29 +352,32 @@ class CircuitBreaker {
 
 ### Load Balancing Commands
 ```bash
-# Initialize load balancer
-npx claude-flow agent spawn load-balancer --type coordinator
+# Spawn a load-balancing coordinator agent (positional name isn't supported — use --name)
+npx -y ruflo@3.14.2 agent spawn --type coordinator --name load-balancer
 
-# Start load balancing
-npx claude-flow load-balance --swarm-id <id> --strategy adaptive
+# Trigger load balancing — MCP-only, no CLI subcommand
+# mcp__ruflo__coordination_load_balance
+# CLI escape hatch: npx -y ruflo@3.14.2 mcp exec -t coordination_load_balance -p '{"swarmId":"<id>"}'
 
-# Monitor load distribution
-npx claude-flow agent-metrics --type load-balancer
+# Monitor load distribution (no --type filter; per-agent detail via `agent status`)
+npx -y ruflo@3.14.2 agent metrics
+npx -y ruflo@3.14.2 agent status <agent-id>
 
-# Adjust balancing parameters
-npx claude-flow config-manage --action update --config '{"stealThreshold": 5, "agingBoost": 10}'
+# Adjust balancing parameters via the config family
+npx -y ruflo@3.14.2 config set <key> <value>
 ```
 
 ### Performance Monitoring
 ```bash
 # Real-time load monitoring
-npx claude-flow performance-report --format detailed
+npx -y ruflo@3.14.2 performance metrics
+# MCP: mcp__ruflo__performance_report
 
-# Bottleneck analysis
-npx claude-flow bottleneck-analyze --component swarm-coordination
+# Bottleneck analysis (--component survives unchanged)
+npx -y ruflo@3.14.2 performance bottleneck --component swarm-coordination
 
-# Resource utilization tracking
-npx claude-flow metrics-collect --components ["load-balancer", "task-queue"]
+# Resource utilization tracking — single-component filter, not a list
+npx -y ruflo@3.14.2 performance metrics -c load-balancer
 ```
 
 ## Integration Points

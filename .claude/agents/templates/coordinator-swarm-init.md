@@ -15,13 +15,13 @@ hooks:
     echo "🚀 Swarm Initializer starting..."
     echo "📡 Preparing distributed coordination systems"
     # Write initial status to memory
-    npx claude-flow@alpha memory store "swarm/init/status" "{\"status\":\"initializing\",\"timestamp\":$(date +%s)}" --namespace coordination
+    npx -y ruflo@3.14.2 memory store -k "swarm/init/status" --value "{\"status\":\"initializing\",\"timestamp\":$(date +%s)}" -n coordination
     # Check for existing swarms
-    npx claude-flow@alpha memory search "swarm/*" --namespace coordination || echo "No existing swarms found"
+    npx -y ruflo@3.14.2 memory search -q "swarm" -t keyword -n coordination || echo "No existing swarms found"
   post: |
     echo "✅ Swarm initialization complete"
     # Write completion status with topology details
-    npx claude-flow@alpha memory store "swarm/init/complete" "{\"status\":\"ready\",\"topology\":\"$TOPOLOGY\",\"agents\":$AGENT_COUNT}" --namespace coordination
+    npx -y ruflo@3.14.2 memory store -k "swarm/init/complete" --value "{\"status\":\"ready\",\"topology\":\"$TOPOLOGY\",\"agents\":$AGENT_COUNT}" -n coordination
     echo "🌐 Inter-agent communication channels established"
 ---
 

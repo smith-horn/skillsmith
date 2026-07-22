@@ -1,45 +1,47 @@
-# hook pre-edit
+# hooks pre-edit
 
 Execute pre-edit validations and agent assignment before file modifications.
 
 ## Usage
 
 ```bash
-npx claude-flow hook pre-edit [options]
+npx -y ruflo@3.14.2 hooks pre-edit [options]
 ```
 
 ## Options
 
 - `--file, -f <path>` - File path to be edited
-- `--auto-assign-agent` - Automatically assign best agent (default: true)
-- `--validate-syntax` - Pre-validate syntax before edit
-- `--check-conflicts` - Check for merge conflicts
-- `--backup-file` - Create backup before editing
+- `--operation, -o <type>` - Operation type: create, update, delete, refactor (default: update)
+- `--context, -c <text>` - Additional context for the edit
+
+v3 `pre-edit` returns context and agent *suggestions* only — it does not auto-assign agents, validate syntax, check conflicts, or create backups.
 
 ## Examples
 
 ### Basic pre-edit hook
 
 ```bash
-npx claude-flow hook pre-edit --file "src/auth/login.js"
+hooks pre-edit --file "src/auth/login.js"
 ```
 
 ### With validation
 
 ```bash
-npx claude-flow hook pre-edit -f "config/database.js" --validate-syntax
+hooks pre-edit -f "config/database.js"
 ```
+
+Syntax validation is not a v3 hook capability.
 
 ### Manual agent assignment
 
 ```bash
-npx claude-flow hook pre-edit -f "api/users.ts" --auto-assign-agent false
+hooks pre-edit -f "api/users.ts"
 ```
 
-### Safe editing with backup
+### Safe editing with context
 
 ```bash
-npx claude-flow hook pre-edit -f "production.env" --backup-file --check-conflicts
+hooks pre-edit -f "production.env" -c "high-risk production config edit"
 ```
 
 ## Features
@@ -86,7 +88,7 @@ Manual usage in agents:
 
 ```bash
 # Before editing files
-npx claude-flow hook pre-edit --file "path/to/file.js" --validate-syntax
+hooks pre-edit --file "path/to/file.js"
 ```
 
 ## Output
@@ -107,7 +109,7 @@ Returns JSON with:
 
 ## See Also
 
-- `hook post-edit` - Post-edit processing
+- `hooks post-edit` - Post-edit processing
 - `Edit` - File editing tool
 - `MultiEdit` - Multiple edits tool
 - `agent spawn` - Manual agent creation

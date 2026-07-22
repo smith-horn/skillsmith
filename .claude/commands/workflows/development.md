@@ -16,7 +16,7 @@ Creates hierarchical structure for organized, top-down development.
 ```
 Tool: mcp__ruflo__agent_spawn
 Parameters: {
-  "type": "architect",
+  "agentType": "architect",
   "name": "System Design",
   "capabilities": ["api-design", "database-schema"]
 }
@@ -24,7 +24,7 @@ Parameters: {
 ```
 Tool: mcp__ruflo__agent_spawn
 Parameters: {
-  "type": "coder",
+  "agentType": "coder",
   "name": "Implementation Focus",
   "capabilities": ["nodejs", "typescript", "express"]
 }
@@ -32,7 +32,7 @@ Parameters: {
 ```
 Tool: mcp__ruflo__agent_spawn
 Parameters: {
-  "type": "tester",
+  "agentType": "tester",
   "name": "Quality Assurance",
   "capabilities": ["unit-testing", "integration-testing"]
 }
@@ -41,7 +41,7 @@ Sets up architectural and implementation thinking patterns.
 
 ### 3. Coordinate Implementation
 ```
-Tool: mcp__claude-flow__task_orchestrate
+Tool: mcp__ruflo__coordination_orchestrate
 Parameters: {
   "task": "Build REST API with authentication",
   "strategy": "parallel",
@@ -67,12 +67,14 @@ Remember: All code is written by Claude Code using its native tools!
 
 ## CLI Usage
 ```bash
-# Start development workflow via CLI
-npx claude-flow workflow dev "REST API with auth"
+# Start development workflow via CLI — `dev` is not a subcommand; `development` is a built-in template
+npx -y ruflo@3.14.2 workflow run -t development --task "REST API with auth"
 
-# Create custom workflow
-npx claude-flow workflow create --name "api-dev" --steps "design,implement,test,deploy"
+# Define stages in a workflow file, then register it as a template
+# (old: workflow create --name "api-dev" --steps "..." — no --steps flag, no `create` verb)
+workflow template create -n api-dev -f ./api-dev.yaml
+# or just validate it first: workflow validate -f ./api-dev.yaml
 
-# Execute saved workflow
-npx claude-flow workflow execute api-dev
+# Run the saved workflow (old: workflow execute api-dev — no name-addressing)
+workflow run -f ./api-dev.yaml
 ```

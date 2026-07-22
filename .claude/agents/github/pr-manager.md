@@ -14,11 +14,9 @@ tools:
   - TodoWrite
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
+  - mcp__ruflo__coordination_orchestrate
   - mcp__ruflo__swarm_status
-  - mcp__claude-flow__memory_usage
   - mcp__ruflo__github_pr_manage
-  - mcp__claude-flow__github_code_review
   - mcp__ruflo__github_metrics
 hooks:
   pre:
@@ -51,9 +49,9 @@ Comprehensive pull request management with swarm coordination for automated revi
 ```javascript
 // Initialize review swarm
 mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 4 }
-mcp__ruflo__agent_spawn { type: "reviewer", name: "Code Quality Reviewer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "Testing Agent" }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "PR Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Code Quality Reviewer" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "Testing Agent" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "PR Coordinator" }
 
 // Create PR and orchestrate review
 mcp__github__create_pull_request {
@@ -66,7 +64,7 @@ mcp__github__create_pull_request {
 }
 
 // Orchestrate review process
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Complete PR review with testing and validation",
   strategy: "parallel",
   priority: "high"
@@ -107,12 +105,9 @@ mcp__github__merge_pull_request {
   commit_message: "Comprehensive integration with swarm coordination"
 }
 
-// Post-merge coordination
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "pr/54/merged",
-  value: { timestamp: Date.now(), status: "success" }
-}
+// Post-merge coordination — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+// not present in this session's connected tool discovery, so the default is the CLI form.
+execSync(`ruflo memory store -k "pr/54/merged" --value '${JSON.stringify({ timestamp: Date.now(), status: "success" })}'`);
 ```
 
 ## Batch Operations Example
@@ -122,9 +117,9 @@ mcp__claude-flow__memory_usage {
 [Single Message - Complete PR Management]:
   // Initialize coordination
   mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 5 }
-  mcp__ruflo__agent_spawn { type: "reviewer", name: "Senior Reviewer" }
-  mcp__ruflo__agent_spawn { type: "tester", name: "QA Engineer" }
-  mcp__ruflo__agent_spawn { type: "coordinator", name: "Merge Coordinator" }
+  mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Senior Reviewer" }
+  mcp__ruflo__agent_spawn { agentType: "tester", name: "QA Engineer" }
+  mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Merge Coordinator" }
   
   // Create and manage PR using gh CLI
   Bash("gh pr create --repo :owner/:repo --title '...' --head '...' --base 'main'")

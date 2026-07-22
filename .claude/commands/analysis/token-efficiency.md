@@ -17,19 +17,19 @@ Reduce token consumption while maintaining quality through intelligent coordinat
 
 ### 3. Measurement & Tracking
 
+There is no `mcp__ruflo__token_usage` tool. Check savings via the CLI, or the learning-metrics MCP tool:
+
 ```bash
 # Check token savings after session
-Tool: mcp__claude-flow__token_usage
-Parameters: {"operation": "session", "timeframe": "24h"}
+npx -y ruflo@3.14.2 hooks token-optimize --stats
+```
 
-# Result shows:
-{
-  "metrics": {
-    "tokensSaved": 15420,
-    "operations": 45,
-    "efficiency": "343 tokens/operation"
-  }
-}
+```javascript
+// Equivalent MCP form
+mcp__ruflo__hooks_metrics({
+  "period": "24h",
+  "includeV3": true
+})
 ```
 
 ## Best Practices

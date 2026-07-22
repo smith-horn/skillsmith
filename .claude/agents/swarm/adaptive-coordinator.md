@@ -20,20 +20,18 @@ hooks:
     mcp__ruflo__neural_patterns analyze --operation="workload_analysis" --metadata="{\"task\":\"$TASK\"}"
     # Train adaptive models
     mcp__ruflo__neural_train coordination --training_data="historical_swarm_data" --epochs=30
-    # Store baseline metrics
-    mcp__claude-flow__memory_usage store "adaptive:baseline:${TASK_ID}" "$(mcp__ruflo__performance_report --format=json)" --namespace=adaptive
-    # Set up real-time monitoring
-    mcp__claude-flow__swarm_monitor --interval=2000 --swarmId="${SWARM_ID}"
+    # Store baseline metrics (CLI path — mcp__ruflo__memory_store not confirmed live this session, see SMI-5777 plan § H-4)
+    ruflo memory store -k "adaptive:baseline:${TASK_ID}" --value "$(mcp__ruflo__performance_report --format=json)" -n adaptive
+    # Check swarm health
+    mcp__ruflo__swarm_health --swarmId="${SWARM_ID}"
   post: |
     echo "✨ Adaptive coordination complete - topology optimized"
     # Generate comprehensive analysis
     mcp__ruflo__performance_report --format=detailed --timeframe=24h
     # Store learning outcomes
     mcp__ruflo__neural_patterns learn --operation="coordination_complete" --outcome="success" --metadata="{\"final_topology\":\"$(mcp__ruflo__swarm_status | jq -r '.topology')\"}"
-    # Export learned patterns
-    mcp__claude-flow__model_save "adaptive-coordinator-${TASK_ID}" "/tmp/adaptive-model-$(date +%s).json"
-    # Update persistent knowledge base
-    mcp__claude-flow__memory_usage store "adaptive:learned:${TASK_ID}" "$(date): Adaptive patterns learned and saved" --namespace=adaptive
+    # Update persistent knowledge base (CLI path — see SMI-5777 plan § H-4)
+    ruflo memory store -k "adaptive:learned:${TASK_ID}" --value "$(date): Adaptive patterns learned and saved" -n adaptive
 ---
 
 # Adaptive Swarm Coordinator
@@ -151,25 +149,25 @@ mcp__ruflo__neural_patterns learn --operation="topology_switch" --outcome="impro
 mcp__ruflo__performance_report --format=json --timeframe=1h
 
 # Bottleneck analysis
-mcp__claude-flow__bottleneck_analyze --component="coordination" --metrics="latency,throughput,success_rate"
+mcp__ruflo__performance_bottleneck --component="coordination" --metrics="latency,throughput,success_rate"
 
 # Automatic optimization
-mcp__claude-flow__topology_optimize --swarmId="${SWARM_ID}"
+mcp__ruflo__coordination_topology --swarmId="${SWARM_ID}"
 
 # Load balancing optimization
-mcp__claude-flow__load_balance --swarmId="${SWARM_ID}" --strategy="ml_optimized"
+mcp__ruflo__coordination_load_balance --swarmId="${SWARM_ID}" --strategy="ml_optimized"
 ```
 
 ### Predictive Scaling
 ```bash
-# Analyze usage trends
-mcp__claude-flow__trend_analysis --metric="agent_utilization" --period="7d"
+# Analyze usage trends (loose mapping — no dedicated trend-analysis tool in v3)
+mcp__ruflo__performance_report --metric="agent_utilization" --period="7d"
 
 # Predict resource needs
 mcp__ruflo__neural_predict --modelId="resource-predictor" --input="{\"time_horizon\":\"4h\",\"current_load\":0.7}"
 
-# Auto-scale swarm
-mcp__claude-flow__swarm_scale --swarmId="${SWARM_ID}" --targetSize="12" --strategy="predictive"
+# Auto-scale swarm (no dedicated auto-scale tool in v3 — size the agent pool directly; "predictive" strategy unverified, dropped)
+mcp__ruflo__agent_pool --swarmId="${SWARM_ID}" --targetSize="12"
 ```
 
 ## Dynamic Adaptation Algorithms

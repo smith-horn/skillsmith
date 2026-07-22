@@ -12,10 +12,9 @@ tools:
   - mcp__github__list_repositories
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
-  - mcp__claude-flow__memory_usage
+  - mcp__ruflo__coordination_orchestrate
   - mcp__ruflo__coordination_sync
-  - mcp__claude-flow__load_balance
+  - mcp__ruflo__coordination_load_balance
   - TodoWrite
   - TodoRead
   - Bash
@@ -52,7 +51,7 @@ Multi-package synchronization and version alignment with ruv-swarm coordination 
 - `mcp__github__get_file_contents`
 - `mcp__github__create_pull_request`
 - `mcp__github__search_repositories`
-- `mcp__claude-flow__*` (all swarm coordination tools)
+- `mcp__ruflo__*` (all swarm coordination tools)
 - `TodoWrite`, `TodoRead`, `Task`, `Bash`, `Read`, `Write`, `Edit`, `MultiEdit`
 
 ## Usage Patterns
@@ -61,10 +60,10 @@ Multi-package synchronization and version alignment with ruv-swarm coordination 
 ```javascript
 // Initialize sync coordination swarm
 mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 5 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Sync Coordinator" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Dependency Analyzer" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Integration Developer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "Validation Engineer" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Sync Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Dependency Analyzer" }
+mcp__ruflo__agent_spawn { agentType: "coder", name: "Integration Developer" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "Validation Engineer" }
 
 // Analyze current package states
 Read("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow/package.json")
@@ -83,7 +82,7 @@ Bash(`gh api repos/:owner/:repo/contents/claude-code-flow/claude-code-flow/packa
   -f sha="$(gh api repos/:owner/:repo/contents/claude-code-flow/claude-code-flow/package.json?ref=sync/package-alignment --jq '.sha')")`)
 
 // Orchestrate validation
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Validate package synchronization and run integration tests",
   strategy: "parallel",
   priority: "high"
@@ -108,12 +107,9 @@ Bash(`gh api repos/:owner/:repo/contents/claude-code-flow/claude-code-flow/CLAUD
   -f content="$(echo '# Claude Code Configuration for ruv-swarm\n\n[synchronized content]' | base64)" \
   -f sha="$(gh api repos/:owner/:repo/contents/claude-code-flow/claude-code-flow/CLAUDE.md?ref=sync/documentation --jq '.sha' 2>/dev/null || echo '')")`)
 
-// Store sync state in memory
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "sync/documentation/status",
-  value: { timestamp: Date.now(), status: "synchronized", files: ["CLAUDE.md"] }
-}
+// Store sync state in memory — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+// not present in this session's connected tool discovery, so the default is the CLI form.
+execSync(`ruflo memory store -k "sync/documentation/status" --value '${JSON.stringify({ timestamp: Date.now(), status: "synchronized", files: ["CLAUDE.md"] })}'`);
 ```
 
 ### 3. Cross-Package Feature Integration
@@ -184,11 +180,11 @@ This integration uses ruv-swarm agents for:
 [Single Message - Complete Synchronization]:
   // Initialize comprehensive sync swarm
   mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 6 }
-  mcp__ruflo__agent_spawn { type: "coordinator", name: "Master Sync Coordinator" }
-  mcp__ruflo__agent_spawn { type: "analyst", name: "Package Analyzer" }
-  mcp__ruflo__agent_spawn { type: "coder", name: "Integration Coder" }
-  mcp__ruflo__agent_spawn { type: "tester", name: "Validation Tester" }
-  mcp__ruflo__agent_spawn { type: "reviewer", name: "Quality Reviewer" }
+  mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Master Sync Coordinator" }
+  mcp__ruflo__agent_spawn { agentType: "analyst", name: "Package Analyzer" }
+  mcp__ruflo__agent_spawn { agentType: "coder", name: "Integration Coder" }
+  mcp__ruflo__agent_spawn { agentType: "tester", name: "Validation Tester" }
+  mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Quality Reviewer" }
   
   // Read current state of both packages
   Read("/workspaces/ruv-FANN/claude-code-flow/claude-code-flow/package.json")
@@ -221,19 +217,16 @@ This integration uses ruv-swarm agents for:
     { id: "sync-pr", content: "Create integration PR", status: "pending", priority: "high" }
   ]}
   
-  // Store comprehensive sync state
-  mcp__claude-flow__memory_usage {
-    action: "store",
-    key: "sync/complete/status",
-    value: {
-      timestamp: Date.now(),
-      packages_synced: ["claude-code-flow", "ruv-swarm"],
-      version_alignment: "completed",
-      documentation_sync: "completed",
-      github_integration: "completed",
-      validation_status: "passed"
-    }
-  }
+  // Store comprehensive sync state — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store
+  // is not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "sync/complete/status" --value '${JSON.stringify({
+    timestamp: Date.now(),
+    packages_synced: ["claude-code-flow", "ruv-swarm"],
+    version_alignment: "completed",
+    documentation_sync: "completed",
+    github_integration: "completed",
+    validation_status: "passed"
+  })}'`);
 ```
 
 ## Synchronization Strategies
@@ -328,15 +321,15 @@ const testMatrix = {
 ```bash
 # Initialize comprehensive synchronization swarm
 mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 10 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Master Sync Coordinator" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Dependency Analyzer" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Integration Developer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "Validation Engineer" }
-mcp__ruflo__agent_spawn { type: "reviewer", name: "Quality Assurance" }
-mcp__ruflo__agent_spawn { type: "monitor", name: "Sync Monitor" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Master Sync Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Dependency Analyzer" }
+mcp__ruflo__agent_spawn { agentType: "coder", name: "Integration Developer" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "Validation Engineer" }
+mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Quality Assurance" }
+mcp__ruflo__agent_spawn { agentType: "monitor", name: "Sync Monitor" }
 
 # Orchestrate complex synchronization workflow
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Execute comprehensive multi-repository synchronization with validation",
   strategy: "adaptive",
   priority: "critical",
@@ -344,7 +337,7 @@ mcp__claude-flow__task_orchestrate {
 }
 
 # Load balance synchronization tasks across agents
-mcp__claude-flow__load_balance {
+mcp__ruflo__coordination_load_balance {
   swarmId: "sync-coordination-swarm",
   tasks: [
     "package_json_sync",
@@ -360,26 +353,24 @@ mcp__claude-flow__load_balance {
 // Advanced conflict detection and resolution
 const syncConflictResolver = async (conflicts) => {
   // Initialize conflict resolution swarm
-  await mcp__claude_flow__swarm_init({ topology: "mesh", maxAgents: 6 });
+  await mcp__ruflo__swarm_init({ topology: "mesh", maxAgents: 6 });
   
   // Spawn specialized conflict resolution agents
-  await mcp__claude_flow__agent_spawn({ type: "analyst", name: "Conflict Analyzer" });
-  await mcp__claude_flow__agent_spawn({ type: "coder", name: "Resolution Developer" });
-  await mcp__claude_flow__agent_spawn({ type: "reviewer", name: "Solution Validator" });
+  await mcp__ruflo__agent_spawn({ agentType: "analyst", name: "Conflict Analyzer" });
+  await mcp__ruflo__agent_spawn({ agentType: "coder", name: "Resolution Developer" });
+  await mcp__ruflo__agent_spawn({ agentType: "reviewer", name: "Solution Validator" });
   
-  // Store conflict context in swarm memory
-  await mcp__claude_flow__memory_usage({
-    action: "store",
-    key: "sync/conflicts/current",
-    value: {
-      conflicts,
-      resolution_strategy: "automated_with_validation",
-      priority_order: conflicts.sort((a, b) => b.impact - a.impact)
-    }
-  });
+  // Store conflict context in swarm memory — CLI path per H-4/U1 (SMI-5777):
+  // mcp__ruflo__memory_store is not present in this session's connected tool discovery, so
+  // the default is the CLI form.
+  execSync(`ruflo memory store -k "sync/conflicts/current" --value '${JSON.stringify({
+    conflicts,
+    resolution_strategy: "automated_with_validation",
+    priority_order: conflicts.sort((a, b) => b.impact - a.impact)
+  })}'`);
   
   // Coordinate conflict resolution workflow
-  return await mcp__claude_flow__task_orchestrate({
+  return await mcp__ruflo__coordination_orchestrate({
     task: "Resolve synchronization conflicts with multi-agent validation",
     strategy: "sequential",
     priority: "high"
@@ -389,25 +380,9 @@ const syncConflictResolver = async (conflicts) => {
 
 ### Comprehensive Synchronization Metrics
 ```bash
-# Store detailed synchronization metrics
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "sync/metrics/session",
-  value: {
-    packages_synchronized: ["claude-code-flow", "ruv-swarm"],
-    version_alignment_score: 98.5,
-    dependency_conflicts_resolved: 12,
-    documentation_sync_percentage: 100,
-    integration_test_success_rate: 96.8,
-    total_sync_time: "23.4 minutes",
-    agent_efficiency_scores: {
-      "Master Sync Coordinator": 9.2,
-      "Dependency Analyzer": 8.7,
-      "Integration Developer": 9.0,
-      "Validation Engineer": 8.9
-    }
-  }
-}
+# Store detailed synchronization metrics — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store
+# is not present in this session's connected tool discovery, so the default is the CLI form.
+npx -y ruflo@3.14.2 memory store -k "sync/metrics/session" --value '{"packages_synchronized":["claude-code-flow","ruv-swarm"],"version_alignment_score":98.5,"dependency_conflicts_resolved":12,"documentation_sync_percentage":100,"integration_test_success_rate":96.8,"total_sync_time":"23.4 minutes","agent_efficiency_scores":{"Master Sync Coordinator":9.2,"Dependency Analyzer":8.7,"Integration Developer":9.0,"Validation Engineer":8.9}}'
 ```
 
 ## Error Handling and Recovery
@@ -416,27 +391,16 @@ mcp__claude-flow__memory_usage {
 ```bash
 # Initialize error recovery swarm
 mcp__ruflo__swarm_init { topology: "star", maxAgents: 5 }
-mcp__ruflo__agent_spawn { type: "monitor", name: "Error Monitor" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Failure Analyzer" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Recovery Developer" }
+mcp__ruflo__agent_spawn { agentType: "monitor", name: "Error Monitor" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Failure Analyzer" }
+mcp__ruflo__agent_spawn { agentType: "coder", name: "Recovery Developer" }
 
 # Coordinate recovery procedures
 mcp__ruflo__coordination_sync { swarmId: "error-recovery-swarm" }
 
-# Store recovery state
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "sync/recovery/state",
-  value: {
-    error_type: "version_conflict",
-    recovery_strategy: "incremental_rollback",
-    agent_assignments: {
-      "conflict_resolution": "Recovery Developer",
-      "validation": "Failure Analyzer",
-      "monitoring": "Error Monitor"
-    }
-  }
-}
+# Store recovery state — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is not
+# present in this session's connected tool discovery, so the default is the CLI form.
+npx -y ruflo@3.14.2 memory store -k "sync/recovery/state" --value '{"error_type":"version_conflict","recovery_strategy":"incremental_rollback","agent_assignments":{"conflict_resolution":"Recovery Developer","validation":"Failure Analyzer","monitoring":"Error Monitor"}}'
 ```
 
 ### Automatic handling of:

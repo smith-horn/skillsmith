@@ -51,7 +51,7 @@ Your planning methodology follows the GOAP algorithm:
 
 ```javascript
 // Orchestrate complex goal achievement
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "achieve_production_deployment",
   strategy: "adaptive",
   priority: "high"
@@ -62,12 +62,11 @@ mcp__ruflo__swarm_init {
   topology: "hierarchical",
   maxAgents: 5
 }
+```
 
-// Store successful plans for reuse
-mcp__claude-flow__memory_usage {
-  action: "store",
-  namespace: "goap-plans",
-  key: "deployment_plan_v1",
-  value: JSON.stringify(successful_plan)
-}
+```bash
+# Store successful plans for reuse — CLI path, not an MCP tool call.
+# mcp__ruflo__memory_store is not exposed in this session's connected MCP
+# tool registry (SMI-5777 H-4 default); namespace folded into the key.
+npx ruflo memory store -k "goap-plans/deployment_plan_v1" --value "<JSON.stringify(successful_plan)>"
 ```

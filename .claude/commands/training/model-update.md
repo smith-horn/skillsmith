@@ -1,25 +1,15 @@
 # model-update
 
-Update neural models with new data.
+## Status: no direct equivalent
 
-## Usage
+Ruflo's v3 CLI has no `model-update` (or `model-save`) subcommand — there is no incremental-update or post-update validation mode for an existing model.
+
+The nearest available path is to re-train the target model via `neural train`, which runs a full training pass rather than an incremental one:
+
 ```bash
-npx claude-flow training model-update [options]
+npx -y ruflo@3.14.2 neural train -m <id> --data <file-or-json>
 ```
 
-## Options
-- `--model <name>` - Model to update
-- `--incremental` - Incremental update
-- `--validate` - Validate after update
+`neural train` does not accept `--incremental` or `--validate` — neither flag exists in v3. To check the outcome of a training run, use `neural status`.
 
-## Examples
-```bash
-# Update all models
-npx claude-flow training model-update
-
-# Specific model
-npx claude-flow training model-update --model agent-selector
-
-# Incremental with validation
-npx claude-flow training model-update --incremental --validate
-```
+See [neural-train](./neural-train.md) for the full `neural train` reference.

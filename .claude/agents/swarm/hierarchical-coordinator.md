@@ -16,16 +16,16 @@ hooks:
     echo "👑 Hierarchical Coordinator initializing swarm: $TASK"
     # Initialize swarm topology
     mcp__ruflo__swarm_init hierarchical --maxAgents=10 --strategy=adaptive
-    # MANDATORY: Write initial status to coordination namespace
-    mcp__claude-flow__memory_usage store "swarm/hierarchical/status" "{\"agent\":\"hierarchical-coordinator\",\"status\":\"initializing\",\"timestamp\":$(date +%s),\"topology\":\"hierarchical\"}" --namespace=coordination
+    # MANDATORY: Write initial status to coordination namespace (CLI path — mcp__ruflo__memory_store not confirmed live this session, see SMI-5777 plan § H-4)
+    ruflo memory store -k "swarm/hierarchical/status" --value "{\"agent\":\"hierarchical-coordinator\",\"status\":\"initializing\",\"timestamp\":$(date +%s),\"topology\":\"hierarchical\"}" -n coordination
     # Set up monitoring
-    mcp__claude-flow__swarm_monitor --interval=5000 --swarmId="${SWARM_ID}"
+    mcp__ruflo__swarm_status --swarmId="${SWARM_ID}"
   post: |
     echo "✨ Hierarchical coordination complete"
     # Generate performance report
     mcp__ruflo__performance_report --format=detailed --timeframe=24h
-    # MANDATORY: Write completion status
-    mcp__claude-flow__memory_usage store "swarm/hierarchical/complete" "{\"status\":\"complete\",\"agents_used\":$(mcp__ruflo__swarm_status | jq '.agents.total'),\"timestamp\":$(date +%s)}" --namespace=coordination
+    # MANDATORY: Write completion status (CLI path — see SMI-5777 plan § H-4)
+    ruflo memory store -k "swarm/hierarchical/complete" --value "{\"status\":\"complete\",\"agents_used\":$(mcp__ruflo__swarm_status | jq '.agents.total'),\"timestamp\":$(date +%s)}" -n coordination
     # Cleanup resources
     mcp__ruflo__coordination_sync --swarmId="${SWARM_ID}"
 ---
@@ -146,65 +146,46 @@ WORKERS WORKERS WORKERS WORKERS
 
 ### Every spawned agent MUST follow this pattern:
 
+Writes below go through the CLI (`ruflo memory store`) — `mcp__ruflo__memory_store` is not a confirmed live tool in this session's connected registry (SMI-5777 plan § H-4). Reads use `mcp__ruflo__memory_retrieve` directly.
+
 ```javascript
 // 1️⃣ IMMEDIATELY write initial status
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/hierarchical/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "hierarchical-coordinator",
-    status: "active",
-    workers: [],
-    tasks_assigned: [],
-    progress: 0
-  })
-}
+execSync(`ruflo memory store -k "swarm/hierarchical/status" -n coordination --value '${JSON.stringify({
+  agent: "hierarchical-coordinator",
+  status: "active",
+  workers: [],
+  tasks_assigned: [],
+  progress: 0
+})}'`);
 
 // 2️⃣ UPDATE progress after each delegation
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/hierarchical/progress",
-  namespace: "coordination",
-  value: JSON.stringify({
-    completed: ["task1", "task2"],
-    in_progress: ["task3", "task4"],
-    workers_active: 5,
-    overall_progress: 45
-  })
-}
+execSync(`ruflo memory store -k "swarm/hierarchical/progress" -n coordination --value '${JSON.stringify({
+  completed: ["task1", "task2"],
+  in_progress: ["task3", "task4"],
+  workers_active: 5,
+  overall_progress: 45
+})}'`);
 
 // 3️⃣ SHARE command structure for workers
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/hierarchy",
-  namespace: "coordination",
-  value: JSON.stringify({
-    queen: "hierarchical-coordinator",
-    workers: ["worker1", "worker2"],
-    command_chain: {},
-    created_by: "hierarchical-coordinator"
-  })
-}
+execSync(`ruflo memory store -k "swarm/shared/hierarchy" -n coordination --value '${JSON.stringify({
+  queen: "hierarchical-coordinator",
+  workers: ["worker1", "worker2"],
+  command_chain: {},
+  created_by: "hierarchical-coordinator"
+})}'`);
 
 // 4️⃣ CHECK worker status before assigning
-const workerStatus = mcp__claude-flow__memory_usage {
-  action: "retrieve",
+const workerStatus = await mcp__ruflo__memory_retrieve({
   key: "swarm/worker-1/status",
   namespace: "coordination"
-}
+})
 
 // 5️⃣ SIGNAL completion
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/hierarchical/complete",
-  namespace: "coordination",
-  value: JSON.stringify({
-    status: "complete",
-    deliverables: ["final_product"],
-    metrics: {}
-  })
-}
+execSync(`ruflo memory store -k "swarm/hierarchical/complete" -n coordination --value '${JSON.stringify({
+  status: "complete",
+  deliverables: ["final_product"],
+  metrics: {}
+})}'`);
 ```
 
 ### Memory Key Structure:
@@ -226,16 +207,16 @@ mcp__ruflo__agent_spawn coder --capabilities="implementation,testing"
 mcp__ruflo__agent_spawn analyst --capabilities="data_analysis,reporting"
 
 # Monitor swarm health
-mcp__claude-flow__swarm_monitor --interval=5000
+mcp__ruflo__swarm_health
 ```
 
 ### Task Orchestration
 ```bash
-# Coordinate complex workflows
-mcp__claude-flow__task_orchestrate "Build authentication service" --strategy=sequential --priority=high
+# Coordinate complex workflows (single task string, not explicitly decomposed → coordination_orchestrate)
+mcp__ruflo__coordination_orchestrate "Build authentication service" --strategy=sequential --priority=high
 
 # Load balance across workers
-mcp__claude-flow__load_balance --tasks="auth_api,auth_tests,auth_docs" --strategy=capability_based
+mcp__ruflo__coordination_load_balance --tasks="auth_api,auth_tests,auth_docs" --strategy=capability_based
 
 # Sync coordination state
 mcp__ruflo__coordination_sync --namespace=hierarchy
@@ -247,10 +228,10 @@ mcp__ruflo__coordination_sync --namespace=hierarchy
 mcp__ruflo__performance_report --format=detailed --timeframe=24h
 
 # Analyze bottlenecks
-mcp__claude-flow__bottleneck_analyze --component=coordination --metrics="throughput,latency,success_rate"
+mcp__ruflo__performance_bottleneck --component=coordination --metrics="throughput,latency,success_rate"
 
-# Monitor resource usage
-mcp__claude-flow__metrics_collect --components="agents,tasks,coordination"
+# Monitor resource usage (swarm context → coordination_metrics)
+mcp__ruflo__coordination_metrics --components="agents,tasks,coordination"
 ```
 
 ## Decision Making Framework

@@ -4,22 +4,22 @@ View agent performance metrics.
 
 ## Usage
 ```bash
-npx claude-flow agent metrics [options]
+npx -y ruflo@3.14.2 agent metrics [options]
 ```
 
 ## Options
-- `--agent-id <id>` - Specific agent
-- `--period <time>` - Time period
-- `--format <type>` - Output format
+- `-p/--period <time>` - Time period (1h/24h/7d/30d)
+
+`--agent-id` does not exist in v3 — for a specific agent, use `agent status <id>` or `agent health <id>` instead. `--format` is a **global** CLI flag, not local to `agent metrics`. This is the CLI `agent metrics` command; there is no `mcp__ruflo__agent_metrics` MCP tool.
 
 ## Examples
 ```bash
 # All agents metrics
-npx claude-flow agent metrics
+agent metrics
 
 # Specific agent
-npx claude-flow agent metrics --agent-id agent-001
+agent status agent-001
 
 # Last hour
-npx claude-flow agent metrics --period 1h
+agent metrics --period 1h
 ```

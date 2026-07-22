@@ -338,19 +338,18 @@ mcp__ruflo__agent_spawn {
 }
 
 // Orchestrate development tasks
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "implement_oauth_system",
   strategy: "adaptive",
   priority: "high"
 }
+```
 
-// Store successful patterns
-mcp__claude-flow__memory_usage {
-  action: "store",
-  namespace: "code-patterns",
-  key: "oauth_implementation_plan",
-  value: JSON.stringify(successful_plan)
-}
+```bash
+# Store successful patterns — CLI path, not an MCP tool call.
+# mcp__ruflo__memory_store is not exposed in this session's connected MCP
+# tool registry (SMI-5777 H-4 default); namespace folded into the key.
+npx ruflo memory store -k "code-patterns/oauth_implementation_plan" --value "<JSON.stringify(successful_plan)>"
 ```
 
 ## Risk Assessment

@@ -59,16 +59,11 @@ mcp__ruflo__neural_train {
 }
 
 // Store learning patterns
-mcp__claude-flow__memory_usage {
-  action: "store",
-  namespace: "safla-learning",
-  key: "pattern_${timestamp}",
-  value: JSON.stringify({
-    context: interaction_context,
-    outcome: result_metrics,
-    learning: extracted_patterns,
-    confidence: confidence_score
-  }),
-  ttl: 604800  // 7 days
-}
+// Write path uses the CLI (mcp__ruflo__memory_store is not a confirmed live tool in this session's connected registry — see SMI-5777 plan § H-4)
+execSync(`ruflo memory store -k "pattern_${timestamp}" -n safla-learning --ttl 604800 --value '${JSON.stringify({
+  context: interaction_context,
+  outcome: result_metrics,
+  learning: extracted_patterns,
+  confidence: confidence_score
+})}'`); // ttl in seconds (7 days)
 ```

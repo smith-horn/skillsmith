@@ -1,7 +1,7 @@
 ---
 name: issue-tracker
 description: Intelligent issue management and project coordination with automated tracking, progress monitoring, and team coordination
-tools: mcp__ruflo__swarm_init, mcp__ruflo__agent_spawn, mcp__claude-flow__task_orchestrate, mcp__claude-flow__memory_usage, Bash, TodoWrite, Read, Write
+tools: mcp__ruflo__swarm_init, mcp__ruflo__agent_spawn, mcp__ruflo__coordination_orchestrate, mcp__ruflo__memory_retrieve, Bash, TodoWrite, Read, Write
 color: green
 type: development
 capabilities:
@@ -44,7 +44,7 @@ Intelligent issue management and project coordination with ruv-swarm integration
 - `mcp__github__update_issue`
 - `mcp__github__add_issue_comment`
 - `mcp__github__search_issues`
-- `mcp__claude-flow__*` (all swarm coordination tools)
+- `mcp__ruflo__*` (all swarm coordination tools)
 - `TodoWrite`, `TodoRead`, `Task`, `Bash`, `Read`, `Write`
 
 ## Usage Patterns
@@ -53,9 +53,9 @@ Intelligent issue management and project coordination with ruv-swarm integration
 ```javascript
 // Initialize issue management swarm
 mcp__ruflo__swarm_init { topology: "star", maxAgents: 3 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Issue Coordinator" }
-mcp__ruflo__agent_spawn { type: "researcher", name: "Requirements Analyst" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Implementation Planner" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Issue Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "researcher", name: "Requirements Analyst" }
+mcp__ruflo__agent_spawn { agentType: "coder", name: "Implementation Planner" }
 
 // Create comprehensive issue
 mcp__github__create_issue {
@@ -80,7 +80,7 @@ mcp__github__create_issue {
 }
 
 // Set up automated tracking
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Monitor and coordinate issue progress with automated updates",
   strategy: "adaptive",
   priority: "medium"
@@ -90,8 +90,7 @@ mcp__claude-flow__task_orchestrate {
 ### 2. Automated Progress Updates
 ```javascript
 // Update issue with progress from swarm memory
-mcp__claude-flow__memory_usage {
-  action: "retrieve",
+mcp__ruflo__memory_retrieve {
   key: "issue/54/progress"
 }
 
@@ -118,12 +117,9 @@ mcp__github__add_issue_comment {
   🤖 Generated with Claude Code using ruv-swarm coordination`
 }
 
-// Store progress in swarm memory
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "issue/54/latest_update",
-  value: { timestamp: Date.now(), progress: "89%", status: "near_completion" }
-}
+// Store progress in swarm memory — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+// not present in this session's connected tool discovery, so the default is the CLI form.
+execSync(`ruflo memory store -k "issue/54/latest_update" --value '${JSON.stringify({ timestamp: Date.now(), progress: "89%", status: "near_completion" })}'`);
 ```
 
 ### 3. Multi-Issue Project Coordination
@@ -153,9 +149,9 @@ mcp__github__update_issue {
 [Single Message - Issue Lifecycle Management]:
   // Initialize issue coordination swarm
   mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 4 }
-  mcp__ruflo__agent_spawn { type: "coordinator", name: "Issue Manager" }
-  mcp__ruflo__agent_spawn { type: "analyst", name: "Progress Tracker" }
-  mcp__ruflo__agent_spawn { type: "researcher", name: "Context Gatherer" }
+  mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Issue Manager" }
+  mcp__ruflo__agent_spawn { agentType: "analyst", name: "Progress Tracker" }
+  mcp__ruflo__agent_spawn { agentType: "researcher", name: "Context Gatherer" }
   
   // Create multiple related issues using gh CLI
   Bash(`gh issue create \
@@ -184,12 +180,9 @@ mcp__github__update_issue {
     { id: "docs-update", content: "Update documentation", status: "pending", priority: "medium" }
   ]}
   
-  // Store initial coordination state
-  mcp__claude-flow__memory_usage {
-    action: "store",
-    key: "project/github_integration/issues",
-    value: { created: Date.now(), total_issues: 3, status: "initialized" }
-  }
+  // Store initial coordination state — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store
+  // is not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "project/github_integration/issues" --value '${JSON.stringify({ created: Date.now(), total_issues: 3, status: "initialized" })}'`);
 ```
 
 ## Smart Issue Templates

@@ -1,10 +1,10 @@
-# Setting Up ruv-swarm Hooks
+# Setting Up Ruflo Hooks
 
 ## Quick Start
 
 ### 1. Initialize with Hooks
 ```bash
-npx claude-flow init --hooks
+npx -y ruflo@3.14.2 init hooks
 ```
 
 This automatically creates:
@@ -15,10 +15,10 @@ This automatically creates:
 ### 2. Test Hook Functionality
 ```bash
 # Test pre-edit hook
-npx claude-flow hook pre-edit --file test.js
+hooks pre-edit --file test.js
 
 # Test session summary
-npx claude-flow hook session-end --summary
+hooks session-end
 ```
 
 ### 3. Customize Hooks
@@ -33,7 +33,7 @@ Edit `.claude/settings.json` to customize:
         "matcher": "^Write$",
         "hooks": [{
           "type": "command",
-          "command": "npx claude-flow hook pre-write --file '${tool.params.file_path}'"
+          "command": "npx -y ruflo@3.14.2 hooks pre-edit -f '${tool.params.file_path}' -o create"
         }]
       }
     ]
@@ -68,11 +68,8 @@ Example blocking response:
 
 ## Debugging Hooks
 ```bash
-# Enable debug output
-export CLAUDE_FLOW_DEBUG=true
-
 # Test specific hook
-npx claude-flow hook pre-edit --file app.js --debug
+hooks pre-edit --file app.js
 ```
 
 ## Common Patterns
@@ -81,13 +78,13 @@ npx claude-flow hook pre-edit --file app.js --debug
 Already configured by default for common file types.
 
 ### Protected File Detection
+No v3 hooks equivalent (`check-protected` is dead) — use Claude Code's native permission system instead. Add the protected paths to `permissions.deny` in `.claude/settings.json`:
+
 ```json
 {
-  "matcher": "^(Write|Edit)$",
-  "hooks": [{
-    "type": "command",
-    "command": "npx claude-flow hook check-protected --file '${tool.params.file_path}'"
-  }]
+  "permissions": {
+    "deny": ["Write(.env.production)", "Edit(.env.production)"]
+  }
 }
 ```
 

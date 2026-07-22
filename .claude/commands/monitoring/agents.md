@@ -28,8 +28,8 @@ Filters:
 
 **In Claude Code:**
 1. List all agents: Use tool `mcp__ruflo__agent_list`
-2. Get specific agent metrics: Use tool `mcp__claude-flow__agent_metrics` with parameters `{"agentId": "coder-123"}`
-3. Monitor agent performance: Use tool `mcp__claude-flow__swarm_monitor` with parameters `{"interval": 2000}`
+2. Get specific agent metrics: Use tool `mcp__ruflo__agent_status` (per-agent; no `mcp__ruflo__agent_metrics` MCP tool exists — use `mcp__ruflo__performance_metrics` for a fleet-wide aggregate instead) with parameters `{"agentId": "coder-123"}`
+3. Monitor agent performance: Use tool `mcp__ruflo__swarm_status` (point-in-time — v3 has no interval-poll equivalent; call repeatedly)
 
 ## Important Reminders
 - ✅ This tool provides coordination and structure

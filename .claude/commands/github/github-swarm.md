@@ -4,44 +4,20 @@ Create a specialized swarm for GitHub repository management.
 
 ## Usage
 
-```bash
-npx claude-flow github swarm [options]
-```
+There is no GitHub-specialized swarm CLI verb or MCP tool in v3. `github swarm` doesn't exist as a command, and the MCP tool this file used to reference (`github_swarm`) isn't in the v3 registry — `github` survives only as 5 MCP tools (`github_repo_analyze`, `github_pr_manage`, `github_issue_track`, `github_workflow`, `github_metrics`), none of which is a swarm orchestrator. There is no 1:1 mapping from the old `--repository`/`--agents`/`--focus`/`--auto-pr`/`--issue-labels`/`--code-review` options onto anything in v3.
 
-## Options
+A similar outcome — a swarm scoped to GitHub repository work — is achieved by composing two separate, generic v3 surfaces instead of one purpose-built command:
 
-- `--repository, -r <owner/repo>` - Target GitHub repository
-- `--agents, -a <number>` - Number of specialized agents (default: 5)
-- `--focus, -f <type>` - Focus area: maintenance, development, review, triage
-- `--auto-pr` - Enable automatic pull request enhancements
-- `--issue-labels` - Auto-categorize and label issues
-- `--code-review` - Enable AI-powered code reviews
+- **`ruflo swarm`** (the generic swarm CLI/MCP surface — `swarm init`, `mcp__ruflo__agent_spawn`, `swarm status`, etc.) to stand up and coordinate the agents
+- **the `github_*` MCP tools** for the agents to actually act on the repository
 
-## Examples
+### Composing the equivalent
 
-### Basic GitHub swarm
+1. Initialize a generic swarm (CLI: `npx -y ruflo@3.14.2 swarm init`; MCP: `mcp__ruflo__swarm_init`), choosing a topology and agent count that fit the work.
+2. Spawn agents for the roles you need (`mcp__ruflo__agent_spawn`), each briefed to call the appropriate `github_*` tool — e.g. an agent using `mcp__ruflo__github_issue_track` for triage, another using `mcp__ruflo__github_pr_manage` for PR review, another using `mcp__ruflo__github_repo_analyze` for a repository health check.
+3. Coordinate and monitor with the generic swarm surface (`npx -y ruflo@3.14.2 swarm status`; MCP `mcp__ruflo__swarm_status`) rather than a GitHub-specific monitor.
 
-```bash
-npx claude-flow github swarm --repository owner/repo
-```
-
-### Maintenance-focused swarm
-
-```bash
-npx claude-flow github swarm -r owner/repo -f maintenance --issue-labels
-```
-
-### Development swarm with PR automation
-
-```bash
-npx claude-flow github swarm -r owner/repo -f development --auto-pr --code-review
-```
-
-### Full-featured triage swarm
-
-```bash
-npx claude-flow github swarm -r owner/repo -a 8 -f triage --issue-labels --auto-pr
-```
+There is no single "full-featured triage swarm" one-liner as before, and no `-r`/`-a`/`-f` flag set to carry forward — the equivalent is this generic-swarm-plus-`github_*`-tools composition, tuned per task rather than driven by dedicated GitHub-swarm flags.
 
 ## Agent Types
 
@@ -103,19 +79,17 @@ npx claude-flow github swarm -r owner/repo -a 8 -f triage --issue-labels --auto-
 
 ## Integration with Claude Code
 
-Use in Claude Code with MCP tools:
+There is no single `github_swarm` tool call that replaces the whole workflow. Instead, spawn agents via `mcp__ruflo__agent_spawn` and have each one call the specific `github_*` MCP tool it needs, for example:
 
 ```javascript
-mcp__claude-flow__github_swarm {
-  repository: "owner/repo",
-  agents: 6,
-  focus: "maintenance"
-}
+mcp__ruflo__github_repo_analyze({ repo: "owner/repo" })
 ```
+
+Coordinate the resulting agents with the generic swarm surface (`mcp__ruflo__swarm_init` / `mcp__ruflo__swarm_status`), not a GitHub-specific one.
 
 ## See Also
 
-- `repo analyze` - Deep repository analysis
-- `pr enhance` - Enhance pull requests
-- `issue triage` - Intelligent issue management
-- `code review` - Automated reviews
+- [repo-analyze.md](repo-analyze.md) - Deep repository analysis (`mcp__ruflo__github_repo_analyze`)
+- [pr-enhance.md](pr-enhance.md) - Enhance pull requests (`mcp__ruflo__github_pr_manage`)
+- [issue-triage.md](issue-triage.md) - Intelligent issue management (`mcp__ruflo__github_issue_track`)
+- [code-review.md](code-review.md) - Automated reviews (`mcp__ruflo__github_pr_manage` + `mcp__ruflo__analyze_diff`)

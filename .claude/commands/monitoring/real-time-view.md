@@ -2,24 +2,23 @@
 
 Real-time view of swarm activity.
 
+## v3 note
+
+`monitoring` is not a top-level command in v3 (`npx -y ruflo@3.14.2 monitoring` errors immediately —
+"Unknown command"). There is no `real-time-view` subcommand, `--filter`, `--highlight`, or `--tail`
+flag. The closest live equivalent is continuous monitoring on swarm start — see
+[swarm-monitor.md](./swarm-monitor.md) for the full point-in-time vs. continuous breakdown.
+
 ## Usage
 ```bash
-npx claude-flow monitoring real-time-view [options]
+npx -y ruflo@3.14.2 swarm start -o "<objective>" --monitor
 ```
-
-## Options
-- `--filter <type>` - Filter view
-- `--highlight <pattern>` - Highlight pattern
-- `--tail <n>` - Show last N events
 
 ## Examples
 ```bash
-# Start real-time view
-npx claude-flow monitoring real-time-view
+# Start a swarm with continuous monitoring on (default)
+npx -y ruflo@3.14.2 swarm start -o "Build REST API" --monitor
 
-# Filter errors
-npx claude-flow monitoring real-time-view --filter errors
-
-# Highlight pattern
-npx claude-flow monitoring real-time-view --highlight "API"
+# Point-in-time check instead
+npx -y ruflo@3.14.2 swarm status
 ```

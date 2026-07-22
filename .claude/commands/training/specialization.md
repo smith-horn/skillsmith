@@ -55,9 +55,10 @@ Agents share learnings across sessions for cumulative expertise!
 
 ## CLI Usage
 ```bash
-# Train agent specialization via CLI
-npx claude-flow train agent --type coder --capabilities "react,typescript"
+# There is no `train agent` verb in the CLI. Spawn an agent scoped to the
+# desired type instead — v3 has no --skills/--capabilities flag.
+npx -y ruflo@3.14.2 agent spawn --type coder
 
 # Check specializations
-npx claude-flow agent list --specializations
+npx -y ruflo@3.14.2 agent list
 ```

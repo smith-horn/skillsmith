@@ -117,31 +117,21 @@ plan:
 
 ### Task Orchestration
 ```javascript
-// Orchestrate complex tasks
-mcp__claude-flow__task_orchestrate {
+// Orchestrate complex tasks (default target per SMI-5777: coordination_orchestrate — this
+// call isn't decomposed into discrete task+assignment steps, so it isn't a task_create/task_assign case)
+mcp__ruflo__coordination_orchestrate {
   task: "Implement authentication system",
-  strategy: "parallel",
-  priority: "high",
-  maxAgents: 5
+  strategy: "parallel"
 }
+```
 
-// Share task breakdown
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/planner/task-breakdown",
-  namespace: "coordination",
-  value: JSON.stringify({
-    main_task: "authentication",
-    subtasks: [
-      {id: "1", task: "Research auth libraries", assignee: "researcher"},
-      {id: "2", task: "Design auth flow", assignee: "architect"},
-      {id: "3", task: "Implement auth service", assignee: "coder"},
-      {id: "4", task: "Write auth tests", assignee: "tester"}
-    ],
-    dependencies: {"3": ["1", "2"], "4": ["3"]}
-  })
-}
+```bash
+# Share task breakdown — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is not
+# present in this session's connected tool discovery, so the default is the CLI form.
+ruflo memory store -k "swarm/planner/task-breakdown" --value '{"main_task":"authentication","subtasks":[{"id":"1","task":"Research auth libraries","assignee":"researcher"},{"id":"2","task":"Design auth flow","assignee":"architect"},{"id":"3","task":"Implement auth service","assignee":"coder"},{"id":"4","task":"Write auth tests","assignee":"tester"}],"dependencies":{"3":["1","2"],"4":["3"]}}'
+```
 
+```javascript
 // Monitor task progress
 mcp__ruflo__task_status {
   taskId: "auth-implementation"
@@ -149,20 +139,10 @@ mcp__ruflo__task_status {
 ```
 
 ### Memory Coordination
-```javascript
-// Report planning status
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/planner/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "planner",
-    status: "planning",
-    tasks_planned: 12,
-    estimated_hours: 24,
-    timestamp: Date.now()
-  })
-}
+```bash
+# Report planning status — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is not
+# present in this session's connected tool discovery, so the default is the CLI form.
+ruflo memory store -k "swarm/planner/status" --value '{"agent":"planner","status":"planning","tasks_planned":12,"estimated_hours":24,"timestamp":"<epoch-ms>"}'
 ```
 
 Remember: A good plan executed now is better than a perfect plan executed never. Focus on creating actionable, practical plans that drive progress. Always coordinate through memory.

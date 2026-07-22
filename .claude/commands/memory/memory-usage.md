@@ -4,22 +4,28 @@ Manage persistent memory storage.
 
 ## Usage
 ```bash
-npx claude-flow memory usage [options]
+npx -y ruflo@3.14.2 memory <store|retrieve|list|delete> [options]
 ```
 
+`memory usage` does not exist as a v3 subcommand — it silently falls through to family help (exit 0, no error) instead of failing loudly. The `--action` dispatch flag is gone too; each action below is now its own subcommand.
+
 ## Options
-- `--action <type>` - Action (store, retrieve, list, clear)
-- `--key <key>` - Memory key
-- `--value <data>` - Data to store (JSON)
+- `store`: `-k/--key <key>` (required), `--value <data>` (JSON) — use `--value`, not `-v`: the global `-v` flag means verbose, so carrying it over silently changes what the command does
+- `retrieve`: `-k/--key <key>` (required), optional `--value-only`
+- `list`: no key required (default limit 20)
+- `delete`: `-k/--key <key>` removes a single key; there is no wipe-all `clear` — for stale/expired entries use `memory cleanup` instead
 
 ## Examples
 ```bash
 # Store memory
-npx claude-flow memory usage --action store --key "project-config" --value '{"api": "v2"}'
+memory store -k "project-config" --value '{"api": "v2"}'
 
 # Retrieve memory
-npx claude-flow memory usage --action retrieve --key "project-config"
+memory retrieve -k "project-config"
 
 # List all keys
-npx claude-flow memory usage --action list
+memory list
+
+# Delete a key
+memory delete -k "project-config"
 ```

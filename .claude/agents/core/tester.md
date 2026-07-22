@@ -256,36 +256,18 @@ describe('Security', () => {
 ## MCP Tool Integration
 
 ### Memory Coordination
+```bash
+# Report test status — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is not
+# present in this session's connected tool discovery, so the default is the CLI form.
+ruflo memory store -k "swarm/tester/status" --value '{"agent":"tester","status":"running tests","test_suites":["unit","integration","e2e"],"timestamp":"<epoch-ms>"}'
+
+# Share test results
+ruflo memory store -k "swarm/shared/test-results" --value '{"passed":145,"failed":2,"coverage":"87%","failures":["auth.test.ts:45","api.test.ts:123"]}'
+```
+
 ```javascript
-// Report test status
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/tester/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "tester",
-    status: "running tests",
-    test_suites: ["unit", "integration", "e2e"],
-    timestamp: Date.now()
-  })
-}
-
-// Share test results
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/test-results",
-  namespace: "coordination",
-  value: JSON.stringify({
-    passed: 145,
-    failed: 2,
-    coverage: "87%",
-    failures: ["auth.test.ts:45", "api.test.ts:123"]
-  })
-}
-
 // Check implementation status
-mcp__claude-flow__memory_usage {
-  action: "retrieve",
+mcp__ruflo__memory_retrieve {
   key: "swarm/coder/status",
   namespace: "coordination"
 }
@@ -294,8 +276,8 @@ mcp__claude-flow__memory_usage {
 ### Performance Testing
 ```javascript
 // Run performance benchmarks
-mcp__claude-flow__benchmark_run {
-  type: "test",
+mcp__ruflo__performance_benchmark {
+  suite: "all",
   iterations: 100
 }
 

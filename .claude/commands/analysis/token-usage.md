@@ -1,25 +1,34 @@
 # token-usage
 
-Analyze token usage patterns and optimize for efficiency.
+Analyze token usage patterns and optimize for efficiency. There is no `analysis` verb and no `token-usage` command in v3 — token savings come from `hooks token-optimize`, and per-model routing stats come from `hooks model-stats`.
 
 ## Usage
 ```bash
-npx claude-flow analysis token-usage [options]
+npx -y ruflo@3.14.2 hooks token-optimize [options]
+npx -y ruflo@3.14.2 hooks model-stats [options]
 ```
 
 ## Options
-- `--period <time>` - Analysis period (1h, 24h, 7d, 30d)
-- `--by-agent` - Break down by agent
-- `--by-operation` - Break down by operation type
+
+### `hooks token-optimize`
+- `-q, --query <text>` - Query for compact context retrieval
+- `-A, --agents <n>` - Agent count for optimal config (default: `6`)
+- `-r, --report` - Generate optimization report
+- `-s, --stats` - Show token savings statistics
+
+### `hooks model-stats`
+- `-d, --detailed` - Show detailed breakdown
+
+There is no `--period`, `--by-agent`, or `--export` flag on either command.
 
 ## Examples
 ```bash
-# Last 24 hours token usage
-npx claude-flow analysis token-usage --period 24h
+# Token savings stats
+npx -y ruflo@3.14.2 hooks token-optimize --stats
 
-# By agent breakdown
-npx claude-flow analysis token-usage --by-agent
+# Optimal config + report for 8 agents
+hooks token-optimize -A 8 --report
 
-# Export detailed report
-npx claude-flow analysis token-usage --period 7d --export tokens.csv
+# Per-model routing breakdown
+hooks model-stats --detailed
 ```

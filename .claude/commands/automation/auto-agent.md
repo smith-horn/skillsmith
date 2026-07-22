@@ -1,75 +1,68 @@
-# auto agent
+# route task (formerly "auto agent")
 
-Automatically spawn and manage agents based on task requirements.
+Automatically route a task to the optimal agent using Q-Learning. There is no `auto agent` family in v3 — the closest live surface is `route`, backed by `swarm coordinate` / `autopilot` for full multi-agent orchestration.
 
 ## Usage
 
 ```bash
-npx claude-flow auto agent [options]
+npx -y ruflo@3.14.2 route task "<task description>" [options]
 ```
 
 ## Options
 
-- `--task, -t <description>` - Task description for agent analysis
-- `--max-agents, -m <number>` - Maximum agents to spawn (default: auto)
-- `--min-agents <number>` - Minimum agents required (default: 1)
-- `--strategy, -s <type>` - Selection strategy: optimal, minimal, balanced
-- `--no-spawn` - Analyze only, don't spawn agents
+- `-a, --agent <type>` - Force a specific agent (bypasses Q-Learning)
+- `-q, --q-learning` - Use Q-Learning for agent selection (default: true)
+- `-e, --explore` - Enable exploration (random selection chance) (default: true)
+- `-j, --json` - Output in JSON format (default: false)
 
 ## Examples
 
-### Basic auto-spawning
+### Basic routing
 
 ```bash
-npx claude-flow auto agent --task "Build a REST API with authentication"
+npx -y ruflo@3.14.2 route task "Build a REST API with authentication"
 ```
 
-### Constrained spawning
+### Force a specific agent
 
 ```bash
-npx claude-flow auto agent -t "Debug performance issue" --max-agents 3
+route task "Debug performance issue" --agent reviewer
 ```
 
-### Analysis only
+### List available agent types for routing
 
 ```bash
-npx claude-flow auto agent -t "Refactor codebase" --no-spawn
+route list-agents
 ```
 
-### Minimal strategy
+### Disable exploration (always take the learned best route)
 
 ```bash
-npx claude-flow auto agent -t "Fix bug in login" -s minimal
+route task "Fix bug in login" --explore false
 ```
 
 ## How It Works
 
 1. **Task Analysis**
 
-   - Parses task description
-   - Identifies required skills
-   - Estimates complexity
-   - Determines parallelization opportunities
+   - Parses the task description
+   - Looks up learned Q-values for similar past tasks
+   - Falls back to exploration when confidence is low
 
 2. **Agent Selection**
 
-   - Matches skills to agent types
-   - Considers task dependencies
-   - Optimizes for efficiency
-   - Respects constraints
+   - Q-Learning picks the agent type with the best learned outcome for the task, unless `--agent` forces a specific one
+   - `route feedback` records the outcome so future routing improves
 
-3. **Topology Selection**
+3. **Full Orchestration**
 
-   - Chooses optimal swarm structure
-   - Configures communication patterns
-   - Sets up coordination rules
-   - Enables monitoring
+   `route task` only routes — it does not spawn or coordinate a swarm by itself. For multi-agent orchestration, hand off to:
 
-4. **Automatic Spawning**
-   - Creates selected agents
-   - Assigns specific roles
-   - Distributes subtasks
-   - Initiates coordination
+   ```bash
+   swarm coordinate --agents 15   # V3 15-agent hierarchical mesh coordination
+   autopilot enable                # keep agents working until all tasks are done
+   autopilot status
+   ```
 
 ## Agent Types Selected
 
@@ -80,43 +73,40 @@ npx claude-flow auto agent -t "Fix bug in login" -s minimal
 - **Researcher**: Documentation, best practices
 - **Coordinator**: Task management, progress tracking
 
-## Strategies
+## Selecting Between Routing Modes
 
-### Optimal
+### Q-Learning (default)
 
-- Maximum efficiency
-- May spawn more agents
-- Best for complex tasks
-- Highest resource usage
+- Learns from `route feedback` over time
+- Best when there's routing history to draw on
 
-### Minimal
+### Forced agent (`--agent <type>`)
 
-- Minimum viable agents
-- Conservative approach
-- Good for simple tasks
-- Lowest resource usage
+- Bypasses Q-Learning entirely
+- Best when you already know which agent type the task needs
 
-### Balanced
+### Exploration (`--explore`)
 
-- Middle ground
-- Adaptive to complexity
-- Default strategy
-- Good performance/resource ratio
+- Occasionally tries a non-optimal agent to keep learning
+- Disable (`--explore false`) once routing quality is trusted for a task class
 
 ## Integration with Claude Code
 
 ```javascript
-// In Claude Code after auto-spawning
-mcp__claude-flow__auto_agent {
-  task: "Build authentication system",
-  strategy: "balanced",
-  maxAgents: 6
-}
+// In Claude Code, pick an agent type then spawn it explicitly
+mcp__ruflo__guidance_recommend({
+  task: "Build authentication system"
+})
+
+mcp__ruflo__agent_spawn({
+  agentType: "coder",
+  name: "Auth Builder"
+})
 ```
 
 ## See Also
 
 - `agent spawn` - Manual agent creation
-- `swarm init` - Initialize swarm manually
-- `smart spawn` - Intelligent agent spawning
-- `workflow select` - Choose predefined workflows
+- `swarm init` / `swarm coordinate` - Initialize and run swarm coordination
+- `smart-spawn` - `hooks route` / `hooks build-agents` based agent spawning
+- `autopilot` - Persistent multi-task completion

@@ -1,46 +1,49 @@
-# hook post-edit
+# hooks post-edit
 
 Execute post-edit processing including formatting, validation, and memory updates.
 
 ## Usage
 
 ```bash
-npx claude-flow hook post-edit [options]
+npx -y ruflo@3.14.2 hooks post-edit [options]
 ```
 
 ## Options
 
 - `--file, -f <path>` - File path that was edited
-- `--auto-format` - Automatically format code (default: true)
-- `--memory-key, -m <key>` - Store edit context in memory
-- `--train-patterns` - Train neural patterns from edit
-- `--validate-output` - Validate edited file
+- `--success, -s` - Whether the edit succeeded
+- `--outcome, -o <text>` - Outcome description for the edit
+- `--metrics, -m <text>` - Metrics for the edit (**`-m` now means metrics, not memory-key**)
+
+Explicit memory storage moved to the `memory` family / MCP memory tools.
 
 ## Examples
 
 ### Basic post-edit hook
 
 ```bash
-npx claude-flow hook post-edit --file "src/components/Button.jsx"
+hooks post-edit --file "src/components/Button.jsx"
 ```
 
-### With memory storage
+### With outcome
 
 ```bash
-npx claude-flow hook post-edit -f "api/auth.js" --memory-key "auth/login-implementation"
+hooks post-edit -f "api/auth.js" --success true -o "implemented login flow"
 ```
 
-### Format and validate
+### Success with metrics
 
 ```bash
-npx claude-flow hook post-edit -f "config/webpack.js" --auto-format --validate-output
+hooks post-edit -f "config/webpack.js" --success true -m "time:500ms,quality:0.95"
 ```
 
-### Neural training
+### Basic success
 
 ```bash
-npx claude-flow hook post-edit -f "utils/helpers.ts" --train-patterns --memory-key "utils/refactor"
+hooks post-edit -f "utils/helpers.ts" --success true
 ```
+
+Pattern training is implicit in v3 `post-edit` — no separate flag needed.
 
 ## Features
 
@@ -86,7 +89,7 @@ Manual usage in agents:
 
 ```bash
 # After editing files
-npx claude-flow hook post-edit --file "path/to/edited.js" --memory-key "feature/step1"
+hooks post-edit --file "path/to/edited.js" --success true -o "feature/step1"
 ```
 
 ## Output
@@ -111,7 +114,7 @@ Returns JSON with:
 
 ## See Also
 
-- `hook pre-edit` - Pre-edit preparation
+- `hooks pre-edit` - Pre-edit preparation
 - `Edit` - File editing tool
 - `memory usage` - Memory management
 - `neural train` - Pattern training

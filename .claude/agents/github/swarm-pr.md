@@ -13,8 +13,7 @@ tools:
   - mcp__github__merge_pull_request
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
-  - mcp__claude-flow__memory_usage
+  - mcp__ruflo__coordination_orchestrate
   - mcp__ruflo__coordination_sync
   - TodoWrite
   - TodoRead
@@ -324,26 +323,18 @@ When using with Claude Code:
 ```bash
 # Initialize PR-specific swarm with intelligent topology selection
 mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 8 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "PR Coordinator" }
-mcp__ruflo__agent_spawn { type: "reviewer", name: "Code Reviewer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "Test Engineer" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Impact Analyzer" }
-mcp__ruflo__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "PR Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Code Reviewer" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "Test Engineer" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Impact Analyzer" }
+mcp__ruflo__agent_spawn { agentType: "optimizer", name: "Performance Optimizer" }
 
-# Store PR context for swarm coordination
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "pr/#{pr_number}/analysis",
-  value: { 
-    diff: "pr_diff_content", 
-    files_changed: ["file1.js", "file2.py"],
-    complexity_score: 8.5,
-    risk_assessment: "medium"
-  }
-}
+# Store PR context for swarm coordination — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store
+# is not present in this session's connected tool discovery, so the default is the CLI form.
+npx -y ruflo@3.14.2 memory store -k "pr/#{pr_number}/analysis" --value '{"diff":"pr_diff_content","files_changed":["file1.js","file2.py"],"complexity_score":8.5,"risk_assessment":"medium"}'
 
 # Orchestrate comprehensive PR workflow
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Execute multi-agent PR review and validation workflow",
   strategy: "parallel",
   priority: "high",
@@ -360,22 +351,19 @@ const prPreHook = async (prData) => {
   const topology = complexity > 7 ? "hierarchical" : "mesh";
   
   // Initialize swarm with PR-specific configuration
-  await mcp__claude_flow__swarm_init({ topology, maxAgents: 8 });
+  await mcp__ruflo__swarm_init({ topology, maxAgents: 8 });
   
-  // Store comprehensive PR context
-  await mcp__claude_flow__memory_usage({
-    action: "store",
-    key: `pr/${prData.number}/context`,
-    value: {
-      pr: prData,
-      complexity,
-      agents_assigned: await getOptimalAgents(prData),
-      timeline: generateTimeline(prData)
-    }
-  });
+  // Store comprehensive PR context — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+  // not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "pr/${prData.number}/context" --value '${JSON.stringify({
+    pr: prData,
+    complexity,
+    agents_assigned: await getOptimalAgents(prData),
+    timeline: generateTimeline(prData)
+  })}'`);
   
   // Coordinate initial agent synchronization
-  await mcp__claude_flow__coordination_sync({ swarmId: "current" });
+  await mcp__ruflo__coordination_sync({ swarmId: "current" });
 };
 
 // Post-hook: PR Completion and Metrics
@@ -386,17 +374,15 @@ const prPostHook = async (results) => {
   // Update PR with final swarm analysis
   await updatePRWithResults(report);
   
-  // Store completion metrics for future optimization
-  await mcp__claude_flow__memory_usage({
-    action: "store",
-    key: `pr/${results.number}/completion`,
-    value: {
-      completion_time: results.duration,
-      agent_efficiency: results.agentMetrics,
-      quality_score: results.qualityAssessment,
-      lessons_learned: results.insights
-    }
-  });
+  // Store completion metrics for future optimization — CLI path per H-4/U1 (SMI-5777):
+  // mcp__ruflo__memory_store is not present in this session's connected tool discovery, so
+  // the default is the CLI form.
+  execSync(`ruflo memory store -k "pr/${results.number}/completion" --value '${JSON.stringify({
+    completion_time: results.duration,
+    agent_efficiency: results.agentMetrics,
+    quality_score: results.qualityAssessment,
+    lessons_learned: results.insights
+  })}'`);
 };
 ```
 
@@ -406,23 +392,15 @@ const prPostHook = async (results) => {
 mcp__ruflo__coordination_sync { swarmId: "pr-review-swarm" }
 
 # Analyze merge readiness with multiple agents
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Evaluate PR merge readiness with comprehensive validation",
   strategy: "sequential",
   priority: "critical"
 }
 
-# Store merge decision context
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "pr/merge_decisions/#{pr_number}",
-  value: {
-    ready_to_merge: true,
-    validation_passed: true,
-    agent_consensus: "approved",
-    final_review_score: 9.2
-  }
-}
+# Store merge decision context — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+# not present in this session's connected tool discovery, so the default is the CLI form.
+npx -y ruflo@3.14.2 memory store -k "pr/merge_decisions/#{pr_number}" --value '{"ready_to_merge":true,"validation_passed":true,"agent_consensus":"approved","final_review_score":9.2}'
 ```
 
 See also: [swarm-issue.md](./swarm-issue.md), [sync-coordinator.md](./sync-coordinator.md), [workflow-automation.md](./workflow-automation.md)

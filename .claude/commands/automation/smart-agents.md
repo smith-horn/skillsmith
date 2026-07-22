@@ -34,8 +34,9 @@ mcp__ruflo__swarm_status({
   "swarmId": "current"
 })
 
-// Monitor agent performance
-mcp__claude-flow__agent_metrics({
+// Monitor agent performance (no mcp__ruflo__agent_metrics — use agent_status / agent_health,
+// or the CLI: npx -y ruflo@3.14.2 agent metrics)
+mcp__ruflo__agent_status({
   "agentId": "agent-123"
 })
 ```
@@ -63,7 +64,7 @@ mcp__ruflo__agent_spawn({
 ### Fallback Configuration
 If MCP tools are unavailable:
 ```bash
-npx claude-flow hook pre-task --auto-spawn-agents
+npx -y ruflo@3.14.2 hooks pre-task -d "<task description>" --auto-spawn
 ```
 
 ## Benefits

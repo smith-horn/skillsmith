@@ -1,46 +1,50 @@
-# hook pre-task
+# hooks pre-task
 
 Execute pre-task preparations and context loading.
 
 ## Usage
 
 ```bash
-npx claude-flow hook pre-task [options]
+npx -y ruflo@3.14.2 hooks pre-task [options]
 ```
 
 ## Options
 
-- `--description, -d <text>` - Task description for context
-- `--auto-spawn-agents` - Automatically spawn required agents (default: true)
-- `--load-memory` - Load relevant memory from previous sessions
-- `--optimize-topology` - Select optimal swarm topology
-- `--estimate-complexity` - Analyze task complexity
+- `--task-id, -i <id>` - Task identifier (auto-generated if omitted)
+- `--description, -d <text>` - Task description for context (required)
+- `--auto-spawn, -a` - Automatically spawn required agents (default: false)
 
 ## Examples
 
 ### Basic pre-task hook
 
 ```bash
-npx claude-flow hook pre-task --description "Implement user authentication"
+hooks pre-task --description "Implement user authentication"
 ```
 
-### With memory loading
+### Cross-session restore
 
 ```bash
-npx claude-flow hook pre-task -d "Continue API development" --load-memory
+hooks pre-task -d "Continue API development"
 ```
 
-### Manual agent control
+Cross-session memory restore is a separate step in v3: `hooks session-restore`.
+
+### No auto-spawn (default behavior)
 
 ```bash
-npx claude-flow hook pre-task -d "Debug issue #123" --auto-spawn-agents false
+hooks pre-task -d "Debug issue #123"
 ```
 
-### Full optimization
+Auto-spawn is off by default in v3; pass `--auto-spawn` to opt in.
+
+### Task description only
 
 ```bash
-npx claude-flow hook pre-task -d "Refactor codebase" --optimize-topology --estimate-complexity
+hooks pre-task -d "Refactor codebase"
 ```
+
+Topology and complexity routing moved to `hooks route -t "<task>"` and `hooks model-route`.
 
 ## Features
 
@@ -85,7 +89,7 @@ Manual usage in agents:
 
 ```bash
 # In agent coordination
-npx claude-flow hook pre-task --description "Your task here"
+hooks pre-task --description "Your task here"
 ```
 
 ## Output
@@ -105,7 +109,7 @@ Returns JSON with:
 
 ## See Also
 
-- `hook post-task` - Post-task cleanup
+- `hooks post-task` - Post-task cleanup
 - `agent spawn` - Manual agent creation
 - `memory usage` - Memory management
 - `swarm init` - Swarm initialization

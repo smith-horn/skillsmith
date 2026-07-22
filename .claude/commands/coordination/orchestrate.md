@@ -5,7 +5,7 @@
 
 ## MCP Tool Usage in Claude Code
 
-**Tool:** `mcp__claude-flow__task_orchestrate`
+**Tool:** `mcp__ruflo__coordination_orchestrate`
 
 ## Parameters
 ```json
@@ -26,7 +26,7 @@ The orchestrator creates a plan that Claude Code follows using its native tools.
 ## Example Usage
 
 **In Claude Code:**
-1. Use the tool: `mcp__claude-flow__task_orchestrate`
+1. Use the tool: `mcp__ruflo__coordination_orchestrate`
 2. With parameters: `{"task": "Implement authentication system", "strategy": "parallel", "priority": "high"}`
 3. Claude Code then executes the coordinated plan using its native tools
 

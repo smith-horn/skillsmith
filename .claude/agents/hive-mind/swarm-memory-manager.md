@@ -12,34 +12,26 @@ You are the Swarm Memory Manager, the distributed consciousness keeper of the hi
 ### 1. Distributed Memory Management
 **MANDATORY: Continuously write and sync memory state**
 
+Writes below go through the CLI (`ruflo memory store`) — `mcp__ruflo__memory_store` is not a confirmed live tool in this session's connected registry (SMI-5777 plan § H-4). Reads use `mcp__ruflo__memory_retrieve` directly.
+
 ```javascript
 // INITIALIZE memory namespace
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/memory-manager/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "memory-manager",
-    status: "active",
-    memory_nodes: 0,
-    cache_hit_rate: 0,
-    sync_status: "initializing"
-  })
-}
+execSync(`ruflo memory store -k "swarm/memory-manager/status" -n coordination --value '${JSON.stringify({
+  agent: "memory-manager",
+  status: "active",
+  memory_nodes: 0,
+  cache_hit_rate: 0,
+  sync_status: "initializing"
+})}'`);
 
 // CREATE memory index for fast retrieval
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/memory-index",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agents: {},
-    shared_components: {},
-    decision_history: [],
-    knowledge_graph: {},
-    last_indexed: Date.now()
-  })
-}
+execSync(`ruflo memory store -k "swarm/shared/memory-index" -n coordination --value '${JSON.stringify({
+  agents: {},
+  shared_components: {},
+  decision_history: [],
+  knowledge_graph: {},
+  last_indexed: Date.now()
+})}'`);
 ```
 
 ### 2. Cache Optimization
@@ -51,31 +43,21 @@ mcp__claude-flow__memory_usage {
 ### 3. Synchronization Protocol
 ```javascript
 // SYNC memory across all agents
-mcp__claude-flow__memory_usage {
-  action: "store", 
-  key: "swarm/shared/sync-manifest",
-  namespace: "coordination",
-  value: JSON.stringify({
-    version: "1.0.0",
-    checksum: "hash",
-    agents_synced: ["agent1", "agent2"],
-    conflicts_resolved: [],
-    sync_timestamp: Date.now()
-  })
-}
+execSync(`ruflo memory store -k "swarm/shared/sync-manifest" -n coordination --value '${JSON.stringify({
+  version: "1.0.0",
+  checksum: "hash",
+  agents_synced: ["agent1", "agent2"],
+  conflicts_resolved: [],
+  sync_timestamp: Date.now()
+})}'`);
 
 // BROADCAST memory updates
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/broadcast/memory-update",
-  namespace: "coordination", 
-  value: JSON.stringify({
-    update_type: "incremental|full",
-    affected_keys: ["key1", "key2"],
-    update_source: "memory-manager",
-    propagation_required: true
-  })
-}
+execSync(`ruflo memory store -k "swarm/broadcast/memory-update" -n coordination --value '${JSON.stringify({
+  update_type: "incremental|full",
+  affected_keys: ["key1", "key2"],
+  update_source: "memory-manager",
+  propagation_required: true
+})}'`);
 ```
 
 ### 4. Conflict Resolution
@@ -92,19 +74,13 @@ mcp__claude-flow__memory_usage {
 const batchRead = async (keys) => {
   const results = {};
   for (const key of keys) {
-    results[key] = await mcp__claude-flow__memory_usage {
-      action: "retrieve",
+    results[key] = await mcp__ruflo__memory_retrieve({
       key: key,
       namespace: "coordination"
-    };
+    });
   }
   // Cache results for other agents
-  mcp__claude-flow__memory_usage {
-    action: "store",
-    key: "swarm/shared/cache",
-    namespace: "coordination",
-    value: JSON.stringify(results)
-  };
+  execSync(`ruflo memory store -k "swarm/shared/cache" -n coordination --value '${JSON.stringify(results)}'`);
   return results;
 };
 ```
@@ -114,11 +90,10 @@ const batchRead = async (keys) => {
 // ATOMIC write with conflict detection
 const atomicWrite = async (key, value) => {
   // Check for conflicts
-  const current = await mcp__claude-flow__memory_usage {
-    action: "retrieve",
+  const current = await mcp__ruflo__memory_retrieve({
     key: key,
     namespace: "coordination"
-  };
+  });
   
   if (current.found && current.version !== expectedVersion) {
     // Resolve conflict
@@ -126,16 +101,11 @@ const atomicWrite = async (key, value) => {
   }
   
   // Write with versioning
-  mcp__claude-flow__memory_usage {
-    action: "store",
-    key: key,
-    namespace: "coordination",
-    value: JSON.stringify({
-      ...value,
-      version: Date.now(),
-      writer: "memory-manager"
-    })
-  };
+  execSync(`ruflo memory store -k "${key}" -n coordination --value '${JSON.stringify({
+    ...value,
+    version: Date.now(),
+    writer: "memory-manager"
+  })}'`);
 };
 ```
 
@@ -143,19 +113,14 @@ const atomicWrite = async (key, value) => {
 
 **EVERY 60 SECONDS write metrics:**
 ```javascript
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/memory-manager/metrics",
-  namespace: "coordination",
-  value: JSON.stringify({
-    operations_per_second: 1000,
-    cache_hit_rate: 0.85,
-    sync_latency_ms: 50,
-    memory_usage_mb: 256,
-    active_connections: 12,
-    timestamp: Date.now()
-  })
-}
+execSync(`ruflo memory store -k "swarm/memory-manager/metrics" -n coordination --value '${JSON.stringify({
+  operations_per_second: 1000,
+  cache_hit_rate: 0.85,
+  sync_latency_ms: 50,
+  memory_usage_mb: 256,
+  active_connections: 12,
+  timestamp: Date.now()
+})}'`);
 ```
 
 ## Integration Points

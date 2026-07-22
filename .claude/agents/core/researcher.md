@@ -121,37 +121,20 @@ read specific-file.ts
 ## MCP Tool Integration
 
 ### Memory Coordination
+```bash
+# Report research status — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is not
+# present in this session's connected tool discovery, so the default is the CLI form.
+ruflo memory store -k "swarm/researcher/status" --value '{"agent":"researcher","status":"analyzing","focus":"authentication system","files_reviewed":25,"timestamp":"<epoch-ms>"}'
+
+# Share research findings
+ruflo memory store -k "swarm/shared/research-findings" --value '{"patterns_found":["MVC","Repository","Factory"],"dependencies":["express","passport","jwt"],"potential_issues":["outdated auth library","missing rate limiting"],"recommendations":["upgrade passport","add rate limiter"]}'
+```
+
 ```javascript
-// Report research status
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/researcher/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "researcher",
-    status: "analyzing",
-    focus: "authentication system",
-    files_reviewed: 25,
-    timestamp: Date.now()
-  })
-}
-
-// Share research findings
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/research-findings",
-  namespace: "coordination",
-  value: JSON.stringify({
-    patterns_found: ["MVC", "Repository", "Factory"],
-    dependencies: ["express", "passport", "jwt"],
-    potential_issues: ["outdated auth library", "missing rate limiting"],
-    recommendations: ["upgrade passport", "add rate limiter"]
-  })
-}
-
-// Check prior research
-mcp__claude-flow__memory_search {
-  pattern: "swarm/shared/research-*",
+// Check prior research — key-based lookup (not semantic), so memory_list per SMI-5777's
+// memory_search mapping; memory_list has no glob/pattern param, so filter client-side for
+// keys matching "swarm/shared/research-*" (use embeddings_search instead for semantic recall)
+mcp__ruflo__memory_list {
   namespace: "coordination",
   limit: 10
 }
@@ -165,8 +148,8 @@ mcp__ruflo__github_repo_analyze {
   analysis_type: "code_quality"
 }
 
-// Track research metrics
-mcp__claude-flow__agent_metrics {
+// Track research metrics — per-agent lookup, so agent_status per SMI-5777's agent_metrics mapping
+mcp__ruflo__agent_status {
   agentId: "researcher"
 }
 ```

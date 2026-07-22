@@ -11,8 +11,7 @@ tools:
   - mcp__github__create_issue_comment
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
-  - mcp__claude-flow__memory_usage
+  - mcp__ruflo__coordination_orchestrate
   - TodoWrite
   - TodoRead
   - Bash
@@ -517,20 +516,17 @@ npx ruv-swarm github issue-init 567 \
 ```bash
 # Initialize issue-specific swarm with optimal topology
 mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 8 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Issue Coordinator" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Issue Analyzer" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Solution Developer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "Validation Engineer" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Issue Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Issue Analyzer" }
+mcp__ruflo__agent_spawn { agentType: "coder", name: "Solution Developer" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "Validation Engineer" }
 
-# Store issue context in swarm memory
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "issue/#{issue_number}/context",
-  value: { title: "issue_title", labels: ["labels"], complexity: "high" }
-}
+# Store issue context in swarm memory — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store
+# is not present in this session's connected tool discovery, so the default is the CLI form.
+npx -y ruflo@3.14.2 memory store -k "issue/#{issue_number}/context" --value '{"title":"issue_title","labels":["labels"],"complexity":"high"}'
 
 # Orchestrate issue resolution workflow
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Coordinate multi-agent issue resolution with progress tracking",
   strategy: "adaptive",
   priority: "high"
@@ -543,14 +539,11 @@ mcp__claude-flow__task_orchestrate {
 const preHook = async (issue) => {
   // Initialize swarm with issue-specific topology
   const topology = determineTopology(issue.complexity);
-  await mcp__claude_flow__swarm_init({ topology, maxAgents: 6 });
+  await mcp__ruflo__swarm_init({ topology, maxAgents: 6 });
   
-  // Store issue context for swarm agents
-  await mcp__claude_flow__memory_usage({
-    action: "store",
-    key: `issue/${issue.number}/metadata`,
-    value: { issue, analysis: await analyzeIssue(issue) }
-  });
+  // Store issue context for swarm agents — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store
+  // is not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "issue/${issue.number}/metadata" --value '${JSON.stringify({ issue, analysis: await analyzeIssue(issue) })}'`);
 };
 
 // Post-hook: Progress Updates and Coordination
@@ -561,12 +554,9 @@ const postHook = async (results) => {
   // Generate follow-up tasks
   await createFollowupTasks(results.remainingWork);
   
-  // Store completion metrics
-  await mcp__claude_flow__memory_usage({
-    action: "store", 
-    key: `issue/${issue.number}/completion`,
-    value: { metrics: results.metrics, timestamp: Date.now() }
-  });
+  // Store completion metrics — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+  // not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "issue/${issue.number}/completion" --value '${JSON.stringify({ metrics: results.metrics, timestamp: Date.now() })}'`);
 };
 ```
 
