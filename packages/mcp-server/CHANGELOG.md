@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: added process-wide `uncaughtException`/`unhandledRejection` handlers — previously, any unhandled error anywhere in the running server (not just at startup) crashed the process with only a stderr stack trace, visible solely in the MCP host's live `/mcp` panel and never persisted. Both handlers now log via the existing structured logger (disk record + stderr mirror) before exiting, matching the crash-vs-continue behavior Node already had by default (SMI-5787)
+
 ## v0.7.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.7.4).
