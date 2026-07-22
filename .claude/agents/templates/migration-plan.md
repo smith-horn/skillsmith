@@ -76,8 +76,8 @@ capabilities:
 tools:
   allowed:
     - mcp__ruflo__swarm_init
-    - mcp__claude-flow__topology_optimize
-    - mcp__claude-flow__memory_usage
+    - mcp__ruflo__coordination_topology
+    - mcp__ruflo__memory_retrieve
     - TodoWrite
   restricted:
     - Bash
@@ -110,7 +110,7 @@ tools:
     - mcp__ruflo__agent_spawn
     - mcp__ruflo__daa_agent_create
     - mcp__ruflo__agent_list
-    - mcp__claude-flow__memory_usage
+    - mcp__ruflo__memory_retrieve
   restricted:
     - Bash
     - Write
@@ -141,10 +141,10 @@ capabilities:
   - progress-tracking
 tools:
   allowed:
-    - mcp__claude-flow__task_orchestrate
+    - mcp__ruflo__coordination_orchestrate
     - mcp__ruflo__task_status
-    - mcp__claude-flow__task_results
-    - mcp__claude-flow__parallel_execute
+    - mcp__ruflo__task_summary
+    - mcp__ruflo__workflow_execute
     - TodoWrite
     - TodoRead
   restricted:
@@ -182,8 +182,8 @@ tools:
     - Bash  # For gh CLI commands
     - mcp__ruflo__swarm_init
     - mcp__ruflo__agent_spawn
-    - mcp__claude-flow__task_orchestrate
-    - mcp__claude-flow__memory_usage
+    - mcp__ruflo__coordination_orchestrate
+    - mcp__ruflo__memory_retrieve
     - TodoWrite
     - Read
   restricted:
@@ -220,8 +220,9 @@ tools:
     - Grep
     - mcp__ruflo__swarm_init
     - mcp__ruflo__agent_spawn
-    - mcp__claude-flow__github_code_review
-    - mcp__claude-flow__memory_usage
+    - mcp__ruflo__github_pr_manage
+    - mcp__ruflo__analyze_diff
+    - mcp__ruflo__memory_retrieve
   restricted:
     - Write
     - Edit
@@ -253,9 +254,9 @@ tools:
   allowed:
     - Bash
     - Read
-    - mcp__claude-flow__github_release_coord
+    - mcp__ruflo__github_workflow
     - mcp__ruflo__swarm_init
-    - mcp__claude-flow__task_orchestrate
+    - mcp__ruflo__coordination_orchestrate
     - TodoWrite
   restricted:
     - Write  # Use version control for releases
@@ -288,13 +289,12 @@ capabilities:
   - result-synthesis
 tools:
   allowed:
-    - mcp__claude-flow__sparc_mode
     - mcp__ruflo__swarm_init
     - mcp__ruflo__agent_spawn
-    - mcp__claude-flow__task_orchestrate
+    - mcp__ruflo__coordination_orchestrate
     - TodoWrite
     - TodoRead
-    - mcp__claude-flow__memory_usage
+    - mcp__ruflo__memory_retrieve
   restricted:
     - Bash
     - Write
@@ -330,7 +330,6 @@ tools:
     - Edit
     - MultiEdit
     - Bash
-    - mcp__claude-flow__sparc_mode
     - TodoWrite
   restricted:
     - mcp__ruflo__swarm_init  # Focus on implementation
@@ -364,9 +363,8 @@ tools:
     - Write
     - Edit
     - Bash
-    - mcp__claude-flow__sparc_mode
     - TodoWrite
-    - mcp__claude-flow__parallel_execute
+    - mcp__ruflo__coordination_orchestrate
   restricted:
     - mcp__ruflo__swarm_init
 triggers:
@@ -397,10 +395,9 @@ capabilities:
   - optimization-planning
 tools:
   allowed:
-    - mcp__claude-flow__bottleneck_analyze
+    - mcp__ruflo__performance_bottleneck
     - mcp__ruflo__performance_report
-    - mcp__claude-flow__metrics_collect
-    - mcp__claude-flow__trend_analysis
+    - mcp__ruflo__system_metrics
     - Read
     - Grep
   restricted:
@@ -433,10 +430,9 @@ capabilities:
   - report-generation
 tools:
   allowed:
-    - mcp__claude-flow__token_usage
-    - mcp__claude-flow__cost_analysis
-    - mcp__claude-flow__usage_stats
-    - mcp__claude-flow__memory_analytics
+    - mcp__ruflo__hooks_model-stats
+    - mcp__ruflo__system_metrics
+    - mcp__ruflo__memory_detailed-stats
     - Read
   restricted:
     - Write
@@ -470,11 +466,13 @@ capabilities:
   - synchronization
 tools:
   allowed:
-    - mcp__claude-flow__memory_usage
-    - mcp__claude-flow__memory_search
-    - mcp__claude-flow__memory_namespace
+    - mcp__ruflo__memory_retrieve
+    - mcp__ruflo__memory_list
+    - mcp__ruflo__embeddings_search
+    - mcp__ruflo__memory_delete
     - mcp__ruflo__memory_compress
-    - mcp__claude-flow__memory_sync
+    - mcp__ruflo__memory_export
+    - mcp__ruflo__memory_import
   restricted:
     - Write
     - Edit
@@ -508,8 +506,8 @@ tools:
     - mcp__ruflo__neural_train
     - mcp__ruflo__neural_patterns
     - mcp__ruflo__neural_predict
-    - mcp__claude-flow__cognitive_analyze
-    - mcp__claude-flow__learning_adapt
+    - mcp__ruflo__daa_cognitive_pattern
+    - mcp__ruflo__daa_agent_adapt
   restricted:
     - Write
     - Edit
@@ -543,10 +541,10 @@ capabilities:
 tools:
   allowed:
     - mcp__ruflo__daa_agent_create
-    - mcp__claude-flow__daa_capability_match
-    - mcp__claude-flow__daa_resource_alloc
-    - mcp__claude-flow__swarm_scale
-    - mcp__claude-flow__agent_metrics
+    - mcp__ruflo__task_assign
+    - mcp__ruflo__coordination_load_balance
+    - mcp__ruflo__agent_pool
+    - mcp__ruflo__agent_status
   restricted:
     - Write
     - Edit
@@ -577,10 +575,10 @@ capabilities:
   - error-analysis
 tools:
   allowed:
-    - mcp__claude-flow__daa_fault_tolerance
-    - mcp__claude-flow__health_check
-    - mcp__claude-flow__error_analysis
-    - mcp__claude-flow__diagnostic_run
+    - mcp__ruflo__task_retry
+    - mcp__ruflo__agent_spawn
+    - mcp__ruflo__swarm_health
+    - mcp__ruflo__system_health
     - Bash  # For system commands
   restricted:
     - Write  # Prevent accidental file modifications during recovery
@@ -613,9 +611,9 @@ capabilities:
   - bottleneck-removal
 tools:
   allowed:
-    - mcp__claude-flow__parallel_execute
-    - mcp__claude-flow__load_balance
-    - mcp__claude-flow__batch_process
+    - mcp__ruflo__coordination_orchestrate
+    - mcp__ruflo__coordination_load_balance
+    - mcp__ruflo__workflow_execute
     - mcp__ruflo__performance_report
     - TodoWrite
   restricted:
@@ -647,11 +645,11 @@ capabilities:
   - adaptive-configuration
 tools:
   allowed:
-    - mcp__claude-flow__topology_optimize
-    - mcp__claude-flow__swarm_monitor
+    - mcp__ruflo__coordination_topology
+    - mcp__ruflo__swarm_health
     - mcp__ruflo__coordination_sync
     - mcp__ruflo__swarm_status
-    - mcp__claude-flow__metrics_collect
+    - mcp__ruflo__coordination_metrics
   restricted:
     - Write
     - Edit
@@ -685,9 +683,9 @@ capabilities:
 tools:
   allowed:
     - mcp__ruflo__swarm_status
-    - mcp__claude-flow__swarm_monitor
-    - mcp__claude-flow__agent_metrics
-    - mcp__claude-flow__health_check
+    - mcp__ruflo__swarm_health
+    - mcp__ruflo__agent_status
+    - mcp__ruflo__system_health
     - mcp__ruflo__performance_report
   restricted:
     - Write

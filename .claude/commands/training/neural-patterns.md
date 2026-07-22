@@ -64,11 +64,11 @@ Parameters: {
 ## CLI Usage
 ```bash
 # Train neural patterns via CLI
-npx claude-flow neural train --type coordination --epochs 50
+npx -y ruflo@3.14.2 neural train -p coordination -e 50
 
 # Check neural status
-npx claude-flow neural status
+npx -y ruflo@3.14.2 neural status
 
 # Analyze patterns
-npx claude-flow neural patterns --analyze
+npx -y ruflo@3.14.2 neural patterns --action analyze
 ```

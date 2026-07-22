@@ -1,45 +1,45 @@
-# hook session-end
+# hooks session-end
 
 Cleanup and persist session state before ending work.
 
 ## Usage
 
 ```bash
-npx claude-flow hook session-end [options]
+npx -y ruflo@3.14.2 hooks session-end [options]
 ```
 
 ## Options
 
-- `--session-id, -s <id>` - Session identifier to end
-- `--save-state` - Save current session state (default: true)
-- `--export-metrics` - Export session metrics
-- `--generate-summary` - Create session summary
-- `--cleanup-temp` - Remove temporary files
+- `--save-state, -s` - Save current session state (default: true)
+
+v3 `session-end` takes no session-id argument (**`-s` now means `--save-state`, not session-id**). Session metrics are viewed via `hooks metrics`.
 
 ## Examples
 
 ### Basic session end
 
 ```bash
-npx claude-flow hook session-end --session-id "dev-session-2024"
+hooks session-end
 ```
 
-### With full export
+### With metrics export
 
 ```bash
-npx claude-flow hook session-end -s "feature-auth" --export-metrics --generate-summary
+hooks session-end
 ```
+
+View exported metrics separately via `hooks metrics`.
 
 ### Quick close
 
 ```bash
-npx claude-flow hook session-end -s "quick-fix" --save-state false --cleanup-temp
+hooks session-end --save-state false
 ```
 
 ### Complete persistence
 
 ```bash
-npx claude-flow hook session-end -s "major-refactor" --save-state --export-metrics --generate-summary
+hooks session-end --save-state true
 ```
 
 ## Features
@@ -86,7 +86,7 @@ Manual usage in agents:
 
 ```bash
 # At session end
-npx claude-flow hook session-end --session-id "your-session" --generate-summary
+hooks session-end
 ```
 
 ## Output
@@ -112,7 +112,6 @@ Returns JSON with:
 
 ## See Also
 
-- `hook session-start` - Session initialization
-- `hook session-restore` - Session restoration
+- `hooks session-restore` - Session initialization/restoration (`session-start` is a deprecated alias for the same command)
 - `performance report` - Detailed metrics
 - `memory backup` - State backup

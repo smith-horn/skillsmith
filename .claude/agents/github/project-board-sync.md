@@ -14,9 +14,9 @@ tools:
   - TodoWrite
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
+  - mcp__ruflo__coordination_orchestrate
   - mcp__ruflo__swarm_status
-  - mcp__claude-flow__memory_usage
+  - mcp__ruflo__memory_retrieve
   - mcp__ruflo__github_repo_analyze
   - mcp__ruflo__github_pr_manage
   - mcp__ruflo__github_issue_track

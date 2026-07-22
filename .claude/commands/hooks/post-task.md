@@ -1,45 +1,50 @@
-# hook post-task
+# hooks post-task
 
 Execute post-task cleanup, performance analysis, and memory storage.
 
 ## Usage
 
 ```bash
-npx claude-flow hook post-task [options]
+npx -y ruflo@3.14.2 hooks post-task [options]
 ```
 
 ## Options
 
-- `--task-id, -t <id>` - Task identifier for tracking
-- `--analyze-performance` - Generate performance metrics (default: true)
-- `--store-decisions` - Save task decisions to memory
-- `--export-learnings` - Export neural pattern learnings
-- `--generate-report` - Create task completion report
+- `--task-id, -i <id>` - Task identifier for tracking (short flag changed from `-t` to `-i`)
+- `--success, -s` - Whether the task succeeded
+- `--quality, -q <score>` - Quality score for the task
+- `--agent, -a <name>` - Agent that performed the task
+- `--parent-agent-id <id>` - Parent agent identifier
+- `--depth <n>` - Coordination depth
+
+Performance metrics (previously `--analyze-performance`, `--store-decisions`, `--export-learnings`, `--generate-report`) are now viewed via `hooks metrics`.
 
 ## Examples
 
 ### Basic post-task hook
 
 ```bash
-npx claude-flow hook post-task --task-id "auth-implementation"
+hooks post-task --task-id "auth-implementation"
 ```
 
-### With full analysis
+### Success tracking
 
 ```bash
-npx claude-flow hook post-task -t "api-refactor" --analyze-performance --generate-report
+hooks post-task -i "api-refactor" --success true
 ```
 
-### Memory storage
+View performance metrics separately via `hooks metrics`.
+
+### Quality score
 
 ```bash
-npx claude-flow hook post-task -t "bug-fix-123" --store-decisions --export-learnings
+hooks post-task -i "bug-fix-123" --success true -q 0.9
 ```
 
 ### Quick cleanup
 
 ```bash
-npx claude-flow hook post-task -t "minor-update" --analyze-performance false
+hooks post-task --task-id "minor-update" --success true
 ```
 
 ## Features
@@ -85,7 +90,7 @@ Manual usage in agents:
 
 ```bash
 # In agent coordination
-npx claude-flow hook post-task --task-id "your-task-id" --analyze-performance true
+hooks post-task --task-id "your-task-id" --success true
 ```
 
 ## Output
@@ -106,7 +111,7 @@ Returns JSON with:
 
 ## See Also
 
-- `hook pre-task` - Pre-task setup
+- `hooks pre-task` - Pre-task setup
 - `performance report` - Detailed metrics
 - `memory usage` - Memory management
 - `neural patterns` - Pattern analysis

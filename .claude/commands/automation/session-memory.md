@@ -15,22 +15,22 @@ At session end, automatically saves:
 
 ### 2. Session Restoration
 ```javascript
-// Using MCP tools for memory operations
-mcp__claude-flow__memory_usage({
-  "action": "retrieve",
+// Using MCP tools for memory operations (memory_usage has no action-dispatch form in v3 —
+// use the discrete tool for each action)
+mcp__ruflo__memory_retrieve({
   "key": "session-state",
   "namespace": "sessions"
 })
 
-// Restore swarm state
-mcp__claude-flow__context_restore({
-  "snapshotId": "sess-123"
+// Restore swarm state (no mcp__ruflo__context_restore — use session_restore)
+mcp__ruflo__session_restore({
+  "sessionId": "sess-123"
 })
 ```
 
 **Fallback with npx:**
 ```bash
-npx claude-flow hook session-restore --session-id "sess-123"
+npx -y ruflo@3.14.2 hooks session-restore --session-id "sess-123"
 ```
 
 ### 3. Memory Types
@@ -55,22 +55,20 @@ npx claude-flow hook session-restore --session-id "sess-123"
 
 ### 4. Privacy & Control
 ```javascript
-// List memory contents
-mcp__claude-flow__memory_usage({
-  "action": "list",
+// List memory contents (no action-dispatch form in v3 — discrete tool per action)
+mcp__ruflo__memory_list({
   "namespace": "sessions"
 })
 
 // Delete specific memory
-mcp__claude-flow__memory_usage({
-  "action": "delete",
+mcp__ruflo__memory_delete({
   "key": "session-123",
   "namespace": "sessions"
 })
 
-// Backup memory
-mcp__claude-flow__memory_backup({
-  "path": "./backups/memory-backup.json"
+// Backup memory (no mcp__ruflo__memory_backup — use memory_export)
+mcp__ruflo__memory_export({
+  "outputPath": "./backups/memory-backup.json"
 })
 ```
 
@@ -79,8 +77,7 @@ mcp__claude-flow__memory_backup({
 # View stored memory
 ls .ruflo/memory/
 
-# Disable memory
-export CLAUDE_FLOW_MEMORY_PERSIST=false
+# Disable memory persistence — env var not verified in v3, do not rely on this
 ```
 
 ## Benefits

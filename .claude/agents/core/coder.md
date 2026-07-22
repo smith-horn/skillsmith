@@ -203,37 +203,18 @@ src/
 ## MCP Tool Integration
 
 ### Memory Coordination
+```bash
+# Report implementation status — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+# not present in this session's connected tool discovery, so the default is the CLI form.
+ruflo memory store -k "swarm/coder/status" --value '{"agent":"coder","status":"implementing","feature":"user authentication","files":["auth.service.ts","auth.controller.ts"],"timestamp":"<epoch-ms>"}'
+
+# Share code decisions
+ruflo memory store -k "swarm/shared/implementation" --value '{"type":"code","patterns":["singleton","factory"],"dependencies":["express","jwt"],"api_endpoints":["/auth/login","/auth/logout"]}'
+```
+
 ```javascript
-// Report implementation status
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/coder/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "coder",
-    status: "implementing",
-    feature: "user authentication",
-    files: ["auth.service.ts", "auth.controller.ts"],
-    timestamp: Date.now()
-  })
-}
-
-// Share code decisions
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/implementation",
-  namespace: "coordination",
-  value: JSON.stringify({
-    type: "code",
-    patterns: ["singleton", "factory"],
-    dependencies: ["express", "jwt"],
-    api_endpoints: ["/auth/login", "/auth/logout"]
-  })
-}
-
 // Check dependencies
-mcp__claude-flow__memory_usage {
-  action: "retrieve",
+mcp__ruflo__memory_retrieve {
   key: "swarm/shared/dependencies",
   namespace: "coordination"
 }
@@ -242,15 +223,14 @@ mcp__claude-flow__memory_usage {
 ### Performance Monitoring
 ```javascript
 // Track implementation metrics
-mcp__claude-flow__benchmark_run {
-  type: "code",
+mcp__ruflo__performance_benchmark {
+  suite: "all",
   iterations: 10
 }
 
 // Analyze bottlenecks
-mcp__claude-flow__bottleneck_analyze {
-  component: "api-endpoint",
-  metrics: ["response-time", "memory-usage"]
+mcp__ruflo__performance_bottleneck {
+  component: "api-endpoint"
 }
 ```
 

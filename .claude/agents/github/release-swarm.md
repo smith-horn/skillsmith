@@ -19,22 +19,22 @@ tools:
   - mcp__github__create_issue
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
-  - mcp__claude-flow__parallel_execute
-  - mcp__claude-flow__load_balance
+  - mcp__ruflo__coordination_orchestrate
+  - mcp__ruflo__workflow_execute
+  - mcp__ruflo__coordination_load_balance
 hooks:
   pre_task: |
     echo "🐝 Initializing release swarm coordination..."
-    npx ruv-swarm hook pre-task --mode release-swarm --init-swarm
+    npx -y ruflo@3.14.2 hooks pre-task -d "release-swarm: release swarm coordination"
   post_edit: |
     echo "🔄 Synchronizing release swarm state and validating changes..."
-    npx ruv-swarm hook post-edit --mode release-swarm --sync-swarm
+    npx -y ruflo@3.14.2 hooks post-edit -f "release swarm state" --success true
   post_task: |
     echo "🎯 Release swarm task completed. Coordinating final deployment..."
-    npx ruv-swarm hook post-task --mode release-swarm --finalize-release
+    npx -y ruflo@3.14.2 hooks post-task -i "release-swarm-task" --success true
   notification: |
     echo "📡 Broadcasting release completion across all swarm agents..."
-    npx ruv-swarm hook notification --mode release-swarm --broadcast
+    npx -y ruflo@3.14.2 hooks notify -m "release-swarm: release completion broadcast"
 ---
 
 # Release Swarm - Intelligent Release Automation

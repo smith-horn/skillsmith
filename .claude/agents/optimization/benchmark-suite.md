@@ -574,34 +574,16 @@ const benchmarkIntegration = {
 
 ## Operational Commands
 
+**No compare/baseline, quality-assessment, performance-validation, or regression-detection surface exists in the v3 CLI or MCP** — `benchmark-compare`, `quality-assess`, `validate-performance`, `detect-regression`, `regression-monitor`, and `error-analysis` have no successor and have been removed rather than left as broken examples (a separate `mcp__aqe__quality_assess` exists on the unrelated AQE server — do not conflate it with this ruflo surface). The Regression Detection and Performance Validation Framework algorithms in Core Capabilities above are illustrative internal design only, not something triggerable via any live command.
+
 ### Benchmarking Commands
 ```bash
-# Run comprehensive benchmark suite
-npx claude-flow benchmark-run --suite comprehensive --duration 300
+# Run comprehensive benchmark suite (no --duration; suite names differ — flag set NOT LIVE-VERIFIED, confirm via `performance benchmark --help`)
+npx -y ruflo@3.14.2 performance benchmark -s all -o json
+# or top-level: npx -y ruflo@3.14.2 benchmark all
 
-# Execute specific benchmark
-npx claude-flow benchmark-run --suite throughput --iterations 10
-
-# Compare with baseline
-npx claude-flow benchmark-compare --current <results> --baseline <baseline>
-
-# Quality assessment
-npx claude-flow quality-assess --target swarm-performance --criteria throughput,latency
-
-# Performance validation
-npx claude-flow validate-performance --results <file> --criteria <file>
-```
-
-### Regression Detection Commands
-```bash
-# Detect performance regressions
-npx claude-flow detect-regression --current <results> --historical <data>
-
-# Set up automated regression monitoring
-npx claude-flow regression-monitor --enable --sensitivity 0.95
-
-# Analyze error patterns
-npx claude-flow error-analysis --logs <log-files>
+# Execute a specific benchmark (suite/iteration flags NOT LIVE-VERIFIED — confirm via --help)
+npx -y ruflo@3.14.2 performance benchmark -s wasm -i 10
 ```
 
 ## Integration Points

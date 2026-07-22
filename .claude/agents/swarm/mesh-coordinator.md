@@ -17,19 +17,19 @@ hooks:
     # Initialize mesh topology
     mcp__ruflo__swarm_init mesh --maxAgents=12 --strategy=distributed
     # Set up peer discovery and communication
-    mcp__claude-flow__daa_communication --from="mesh-coordinator" --to="all" --message="{\"type\":\"network_init\",\"topology\":\"mesh\"}"
+    mcp__ruflo__daa_knowledge_share --from="mesh-coordinator" --to="all" --message="{\"type\":\"network_init\",\"topology\":\"mesh\"}"
     # Initialize consensus mechanisms
-    mcp__claude-flow__daa_consensus --agents="all" --proposal="{\"coordination_protocol\":\"gossip\",\"consensus_threshold\":0.67}"
-    # Store network state
-    mcp__claude-flow__memory_usage store "mesh:network:${TASK_ID}" "$(date): Mesh network initialized" --namespace=mesh
+    mcp__ruflo__coordination_consensus --agents="all" --proposal="{\"coordination_protocol\":\"gossip\",\"consensus_threshold\":0.67}"
+    # Store network state (CLI path — mcp__ruflo__memory_store not confirmed live this session, see SMI-5777 plan § H-4)
+    ruflo memory store -k "mesh:network:${TASK_ID}" --value "$(date): Mesh network initialized" -n mesh
   post: |
     echo "✨ Mesh coordination complete - network resilient"
     # Generate network analysis
     mcp__ruflo__performance_report --format=json --timeframe=24h
-    # Store final network metrics
-    mcp__claude-flow__memory_usage store "mesh:metrics:${TASK_ID}" "$(mcp__ruflo__swarm_status)" --namespace=mesh
+    # Store final network metrics (CLI path — see SMI-5777 plan § H-4)
+    ruflo memory store -k "mesh:metrics:${TASK_ID}" --value "$(mcp__ruflo__swarm_status)" -n mesh
     # Graceful network shutdown
-    mcp__claude-flow__daa_communication --from="mesh-coordinator" --to="all" --message="{\"type\":\"network_shutdown\",\"reason\":\"task_complete\"}"
+    mcp__ruflo__daa_knowledge_share --from="mesh-coordinator" --to="all" --message="{\"type\":\"network_shutdown\",\"reason\":\"task_complete\"}"
 ---
 
 # Mesh Network Swarm Coordinator
@@ -193,19 +193,19 @@ class TaskAuction:
 mcp__ruflo__swarm_init mesh --maxAgents=12 --strategy=distributed
 
 # Establish peer connections
-mcp__claude-flow__daa_communication --from="node-1" --to="node-2" --message="{\"type\":\"peer_connect\"}"
+mcp__ruflo__daa_knowledge_share --from="node-1" --to="node-2" --message="{\"type\":\"peer_connect\"}"
 
 # Monitor network health
-mcp__claude-flow__swarm_monitor --interval=3000 --metrics="connectivity,latency,throughput"
+mcp__ruflo__swarm_health --metrics="connectivity,latency,throughput"
 ```
 
 ### Consensus Operations
 ```bash
 # Propose network-wide decision
-mcp__claude-flow__daa_consensus --agents="all" --proposal="{\"task_assignment\":\"auth-service\",\"assigned_to\":\"node-3\"}"
+mcp__ruflo__coordination_consensus --agents="all" --proposal="{\"task_assignment\":\"auth-service\",\"assigned_to\":\"node-3\"}"
 
 # Participate in voting
-mcp__claude-flow__daa_consensus --agents="current" --vote="approve" --proposal_id="prop-123"
+mcp__ruflo__coordination_consensus --agents="current" --vote="approve" --proposal_id="prop-123"
 
 # Monitor consensus status
 mcp__ruflo__neural_patterns analyze --operation="consensus_tracking" --outcome="decision_approved"
@@ -213,14 +213,15 @@ mcp__ruflo__neural_patterns analyze --operation="consensus_tracking" --outcome="
 
 ### Fault Tolerance
 ```bash
-# Detect failed nodes
-mcp__claude-flow__daa_fault_tolerance --agentId="node-4" --strategy="heartbeat_monitor"
+# Detect failed nodes (no single daa_fault_tolerance tool in v3 — detect via agent_health, see SMI-5777 plan's 42-tool table)
+mcp__ruflo__agent_health --agentId="node-4"
 
-# Trigger recovery procedures  
-mcp__claude-flow__daa_fault_tolerance --agentId="failed-node" --strategy="failover_recovery"
+# Trigger recovery procedures (recover via terminate + respawn — no single failover tool)
+mcp__ruflo__agent_terminate --agentId="failed-node"
+mcp__ruflo__agent_spawn --replaces="failed-node"
 
 # Update network topology
-mcp__claude-flow__topology_optimize --swarmId="${SWARM_ID}"
+mcp__ruflo__coordination_topology --swarmId="${SWARM_ID}"
 ```
 
 ## Consensus Algorithms

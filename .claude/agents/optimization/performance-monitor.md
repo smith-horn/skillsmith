@@ -579,34 +579,24 @@ class DashboardProvider {
 
 ## Operational Commands
 
+**No SLA/alerting/notification surface exists in the v3 CLI or MCP** — the SLA monitoring, alert-threshold, anomaly-detection-setup, and notification-channel commands this section previously documented (`sla-monitor`, `alert-config`, `anomaly-setup`, `notification-config`) have no successor and have been removed rather than left as broken examples. The SLA/anomaly logic in this file's Core Capabilities above is illustrative internal algorithm design only, not something triggerable via any live command.
+
 ### Monitoring Commands
 ```bash
 # Start comprehensive monitoring
-npx claude-flow performance-report --format detailed --timeframe 24h
+npx -y ruflo@3.14.2 performance metrics
+# MCP: mcp__ruflo__performance_report
 
 # Real-time bottleneck analysis
-npx claude-flow bottleneck-analyze --component swarm-coordination
+npx -y ruflo@3.14.2 performance bottleneck -c <component>
 
-# Health check all components
-npx claude-flow health-check --components ["swarm", "agents", "coordination"]
+# Health check all components (no per-component list arg)
+npx -y ruflo@3.14.2 status --health-check
+# or: npx -y ruflo@3.14.2 doctor
+# MCP: mcp__ruflo__system_health (or swarm_health / agent_health, scoped)
 
 # Collect specific metrics
-npx claude-flow metrics-collect --components ["cpu", "memory", "network"]
-
-# Monitor SLA compliance
-npx claude-flow sla-monitor --service swarm-coordination --threshold 99.9
-```
-
-### Alert Configuration
-```bash
-# Configure performance alerts
-npx claude-flow alert-config --metric cpu_usage --threshold 80 --severity warning
-
-# Set up anomaly detection
-npx claude-flow anomaly-setup --models ["statistical", "ml", "time_series"]
-
-# Configure notification channels
-npx claude-flow notification-config --channels ["slack", "email", "webhook"]
+npx -y ruflo@3.14.2 performance metrics
 ```
 
 ## Integration Points

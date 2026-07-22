@@ -600,34 +600,26 @@ const resourceIntegration = {
 ### Resource Management Commands
 ```bash
 # Analyze resource usage
-npx claude-flow metrics-collect --components ["cpu", "memory", "network"]
+npx -y ruflo@3.14.2 performance metrics
 
-# Optimize resource allocation
-npx claude-flow daa-resource-alloc --resources <resource-config>
-
-# Predictive scaling
-npx claude-flow swarm-scale --swarm-id <id> --target-size <size>
+# Predictive scaling (no --swarm-id/--target-size; single-swarm context)
+npx -y ruflo@3.14.2 swarm scale --agents <size> [--type <t>]
 
 # Performance profiling
-npx claude-flow performance-report --format detailed --timeframe 24h
-
-# Circuit breaker configuration
-npx claude-flow fault-tolerance --strategy circuit-breaker --config <config>
+npx -y ruflo@3.14.2 performance metrics -f json
+# MCP: mcp__ruflo__performance_report
 ```
 
 ### Optimization Commands
 ```bash
-# Run performance optimization
-npx claude-flow optimize-performance --swarm-id <id> --strategy adaptive
+# Run performance optimization (no --swarm-id/--strategy; targets memory/cpu/latency, NOT swarm topology)
+npx -y ruflo@3.14.2 performance optimize -t <target> [--apply|--dry-run]
 
-# Generate resource forecasts
-npx claude-flow forecast-resources --time-horizon 3600 --confidence 0.95
-
-# Profile system performance
-npx claude-flow profile-performance --duration 60000 --components all
+# Profile system performance (seconds, not ms; --components -> -t)
+npx -y ruflo@3.14.2 performance profile -t all -d 60
 
 # Analyze bottlenecks
-npx claude-flow bottleneck-analyze --component swarm-coordination
+npx -y ruflo@3.14.2 performance bottleneck -c <component>
 ```
 
 ## Integration Points

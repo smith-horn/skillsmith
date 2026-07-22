@@ -5,43 +5,49 @@ Initialize a Ruflo swarm with specified topology and configuration.
 ## Usage
 
 ```bash
-npx claude-flow swarm init [options]
+npx -y ruflo@3.14.2 swarm init [options]
 ```
 
 ## Options
 
 - `--topology, -t <type>` - Swarm topology: mesh, hierarchical, ring, star (default: hierarchical)
-- `--max-agents, -m <number>` - Maximum number of agents (default: 8)
-- `--strategy, -s <type>` - Execution strategy: balanced, parallel, sequential (default: parallel)
-- `--auto-spawn` - Automatically spawn agents based on task complexity
-- `--memory` - Enable cross-session memory persistence
-- `--github` - Enable GitHub integration features
+- `--max-agents, -m <number>` - Maximum number of agents (default: 15)
+- `--strategy, -s <type>` - Coordination strategy: `specialized`, `balanced`, `adaptive`, `research`,
+  `development` (default), `testing`, `optimization`, `maintenance`, `analysis` — confirmed values
+  only; see [swarm-strategies.md](../swarm/swarm-strategies.md) for the full verified list
+- `--auto-scale` - Enable automatic scaling (default: true)
+- `--v3-mode` - Enable V3 15-agent hierarchical mesh mode (default: false)
+
+No `--auto-spawn`, `--memory`, or `--github` flag exists on `swarm init` in v3.
 
 ## Examples
 
 ### Basic initialization
 
 ```bash
-npx claude-flow swarm init
+npx -y ruflo@3.14.2 swarm init
 ```
 
 ### Mesh topology for research
 
 ```bash
-npx claude-flow swarm init --topology mesh --max-agents 5 --strategy balanced
+npx -y ruflo@3.14.2 swarm init --topology mesh --max-agents 5 --strategy balanced
 ```
 
 ### Hierarchical for development
 
 ```bash
-npx claude-flow swarm init --topology hierarchical --max-agents 10 --strategy parallel --auto-spawn
+npx -y ruflo@3.14.2 swarm init --topology hierarchical --max-agents 10 --strategy development --auto-scale
 ```
 
-### GitHub-focused swarm
+### Star topology
 
 ```bash
-npx claude-flow swarm init --topology star --github --memory
+npx -y ruflo@3.14.2 swarm init --topology star
 ```
+
+GitHub integration and cross-session memory persistence are not `swarm init` flags in v3 — they're
+handled separately via the `github_*` MCP tools and the `memory` family respectively.
 
 ## Topologies
 
@@ -80,6 +86,6 @@ mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 8 }
 ## See Also
 
 - `agent spawn` - Create swarm agents
-- `task orchestrate` - Coordinate task execution
+- `task create` / `task assign` (or MCP `coordination_orchestrate`) - Coordinate task execution
 - `swarm status` - Check swarm state
 - `swarm monitor` - Real-time monitoring

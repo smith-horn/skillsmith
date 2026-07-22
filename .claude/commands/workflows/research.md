@@ -15,17 +15,17 @@ Creates a mesh topology for comprehensive exploration from multiple angles.
 ### 2. Define Research Perspectives
 ```
 Tool: mcp__ruflo__agent_spawn
-Parameters: {"type": "researcher", "name": "Literature Review"}
+Parameters: {"agentType": "researcher", "name": "Literature Review"}
 ```
 ```
 Tool: mcp__ruflo__agent_spawn  
-Parameters: {"type": "analyst", "name": "Data Analysis"}
+Parameters: {"agentType": "analyst", "name": "Data Analysis"}
 ```
 Sets up different analytical approaches for Claude Code to use.
 
 ### 3. Execute Coordinated Research
 ```
-Tool: mcp__claude-flow__task_orchestrate
+Tool: mcp__ruflo__coordination_orchestrate
 Parameters: {
   "task": "Research modern web frameworks performance",
   "strategy": "adaptive",
@@ -34,14 +34,10 @@ Parameters: {
 ```
 
 ### 4. Store Research Findings
-```
-Tool: mcp__claude-flow__memory_usage
-Parameters: {
-  "action": "store",
-  "key": "research_findings",
-  "value": "framework performance analysis results",
-  "namespace": "research"
-}
+CLI path per H-4/U1 (SMI-5777): `mcp__ruflo__memory_store` is not present in this session's
+connected tool discovery, so the default is the CLI form.
+```bash
+npx -y ruflo@3.14.2 memory store -k "research_findings" --value "framework performance analysis results" -n "research"
 ```
 
 ## What Claude Code Actually Does
@@ -55,9 +51,8 @@ Remember: The swarm coordinates HOW Claude Code researches, not WHAT it finds.
 
 ## CLI Usage
 ```bash
-# Start research workflow via CLI
-npx claude-flow workflow research "modern web frameworks"
-
-# Export research workflow
-npx claude-flow workflow export research --format json
+# Start research workflow via CLI — `research` is a built-in template, not a subcommand
+npx -y ruflo@3.14.2 workflow run -t research --task "modern web frameworks"
 ```
+
+There is no `workflow export` in v3 — no CLI verb, no `workflow_export` MCP tool. The workflow definition file is already the shareable artifact, so the "export research" example is dropped.

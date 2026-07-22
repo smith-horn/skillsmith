@@ -29,9 +29,9 @@ Shows:
 
 **In Claude Code:**
 1. Check swarm status: Use tool `mcp__ruflo__swarm_status`
-2. Monitor in real-time: Use tool `mcp__claude-flow__swarm_monitor` with parameters `{"interval": 1000}`
-3. Get agent metrics: Use tool `mcp__claude-flow__agent_metrics` with parameters `{"agentId": "agent-123"}`
-4. Health check: Use tool `mcp__claude-flow__health_check` with parameters `{"components": ["swarm", "memory", "neural"]}`
+2. Monitor in real-time: Use tool `mcp__ruflo__swarm_status` (point-in-time — v3 has no interval-poll equivalent; call repeatedly, or use `mcp__ruflo__swarm_health` for a health-scoped view)
+3. Get agent metrics: Use tool `mcp__ruflo__agent_status` (per-agent; no `mcp__ruflo__agent_metrics` MCP tool exists — use `mcp__ruflo__performance_metrics` for a fleet-wide aggregate instead) with parameters `{"agentId": "agent-123"}`
+4. Health check: Use tool `mcp__ruflo__system_health` (or `mcp__ruflo__swarm_health`/`mcp__ruflo__agent_health` for a scoped check) with parameters `{"components": ["swarm", "memory", "neural"]}`
 
 ## Important Reminders
 - ✅ This tool provides coordination and structure

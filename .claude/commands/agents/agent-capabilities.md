@@ -12,10 +12,16 @@ Matrix of agent capabilities and their specializations.
 | architect | Design, planning | System architecture |
 
 ## Querying Capabilities
-```bash
-# List all capabilities
-npx claude-flow agents capabilities
 
-# For specific agent
-npx claude-flow agents capabilities --type coder
+`agents capabilities` does not exist in v3 — there is no `capabilities` subcommand. Use `agent list` (optionally filtered by `--type`) to enumerate agents, and `agent status <id>` to inspect a specific instance; this file's capability matrix above remains the reference for what each type is best suited for.
+
+```bash
+# List all agent types
+npx -y ruflo@3.14.2 agent list
+
+# Filter by type
+agent list --type coder
+
+# Inspect a specific agent instance
+agent status <id>
 ```

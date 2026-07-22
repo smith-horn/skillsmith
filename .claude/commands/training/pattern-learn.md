@@ -4,22 +4,22 @@ Learn patterns from successful operations.
 
 ## Usage
 ```bash
-npx claude-flow training pattern-learn [options]
+npx -y ruflo@3.14.2 neural patterns --action learn [options]
 ```
 
 ## Options
-- `--source <type>` - Pattern source
-- `--threshold <score>` - Success threshold
-- `--save <name>` - Save pattern set
+- `--action, -a <mode>` - Pattern operation: `analyze`, `learn`, `predict`, `list` (default: `list`)
+- `--query, -q <text>` - Query to scope the pattern operation
+- `--limit, -l <n>` - Maximum number of patterns to return
 
 ## Examples
 ```bash
-# Learn from all ops
-npx claude-flow training pattern-learn
+# Learn patterns from recent operations
+npx -y ruflo@3.14.2 neural patterns --action learn
 
-# High success only
-npx claude-flow training pattern-learn --threshold 0.9
+# Learn patterns scoped to a query
+npx -y ruflo@3.14.2 neural patterns --action learn --query "successful task completions"
 
-# Save patterns
-npx claude-flow training pattern-learn --save optimal-patterns
+# Limit results
+npx -y ruflo@3.14.2 neural patterns --action learn --limit 10
 ```

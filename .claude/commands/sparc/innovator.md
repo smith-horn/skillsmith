@@ -5,17 +5,9 @@ Creative problem solving with WebSearch and Memory integration.
 
 ## Activation
 
-### Option 1: Using MCP Tools (Preferred in Claude Code)
-```javascript
-mcp__claude-flow__sparc_mode {
-  mode: "innovator",
-  task_description: "innovative solutions for scaling",
-  options: {
-    research_depth: "comprehensive",
-    creativity_level: "high"
-  }
-}
-```
+### Option 1: SPARC methodology (skill + phase agents)
+
+SPARC is not an MCP tool in ruflo v3 -- there is no `mcp__ruflo__sparc_mode` (or similarly named) tool. Use the `sparc-methodology` skill for full SPARC-workflow guidance, and dispatch the `specification`, `pseudocode`, `architecture`, or `refinement` subagent_type via the Agent tool for phase-specific work within a SPARC cycle (e.g. `innovative solutions for scaling`).
 
 ### Option 2: SPARC CLI is unavailable in v3
 

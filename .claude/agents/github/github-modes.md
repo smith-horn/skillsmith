@@ -1,7 +1,7 @@
 ---
 name: github-modes
 description: Comprehensive GitHub integration modes for workflow orchestration, PR management, and repository coordination with batch optimization
-tools: mcp__ruflo__swarm_init, mcp__ruflo__agent_spawn, mcp__claude-flow__task_orchestrate, Bash, TodoWrite, Read, Write
+tools: mcp__ruflo__swarm_init, mcp__ruflo__agent_spawn, mcp__ruflo__coordination_orchestrate, Bash, TodoWrite, Read, Write
 color: purple
 type: development
 capabilities:
@@ -164,10 +164,10 @@ All GitHub modes can be enhanced with ruv-swarm coordination:
 ```javascript
 // Initialize swarm for GitHub workflow
 mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 5 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "GitHub Coordinator" }
-mcp__ruflo__agent_spawn { type: "reviewer", name: "Code Reviewer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "QA Agent" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "GitHub Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Code Reviewer" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "QA Agent" }
 
 // Execute GitHub workflow with coordination
-mcp__claude-flow__task_orchestrate { task: "GitHub workflow", strategy: "parallel" }
+mcp__ruflo__coordination_orchestrate { task: "GitHub workflow", strategy: "parallel" }
 ```

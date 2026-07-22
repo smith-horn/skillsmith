@@ -18,7 +18,7 @@ Task("Tester", "Create tests...", "tester")
 MCP tools are ONLY for coordination:
 ```javascript
 mcp__ruflo__swarm_init { topology: "mesh" }
-mcp__ruflo__agent_spawn { type: "researcher" }
+mcp__ruflo__agent_spawn { agentType: "researcher" }
 ```
 
 ## Best Practices

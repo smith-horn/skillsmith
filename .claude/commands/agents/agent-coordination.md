@@ -7,19 +7,20 @@ Coordination patterns for multi-agent collaboration.
 ### Hierarchical
 Queen-led with worker specialization
 ```bash
-npx claude-flow swarm init --topology hierarchical
+npx -y ruflo@3.14.2 swarm init --topology hierarchical
 ```
 
 ### Mesh
 Peer-to-peer collaboration
 ```bash
-npx claude-flow swarm init --topology mesh
+npx -y ruflo@3.14.2 swarm init --topology mesh
 ```
 
 ### Adaptive
-Dynamic topology based on workload
+Dynamic topology based on workload — `adaptive` is not a documented `--topology` value in v3, so use
+`--auto-scale` (default true) on a documented topology instead of an unverified `adaptive` value:
 ```bash
-npx claude-flow swarm init --topology adaptive
+npx -y ruflo@3.14.2 swarm init --topology hierarchical --auto-scale
 ```
 
 ## Best Practices

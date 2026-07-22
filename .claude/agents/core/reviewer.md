@@ -272,37 +272,18 @@ npm run complexity-check
 ## MCP Tool Integration
 
 ### Memory Coordination
+```bash
+# Report review status — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is not
+# present in this session's connected tool discovery, so the default is the CLI form.
+ruflo memory store -k "swarm/reviewer/status" --value '{"agent":"reviewer","status":"reviewing","files_reviewed":12,"issues_found":{"critical":2,"major":5,"minor":8},"timestamp":"<epoch-ms>"}'
+
+# Share review findings
+ruflo memory store -k "swarm/shared/review-findings" --value '{"security_issues":["SQL injection in auth.js:45"],"performance_issues":["N+1 queries in user.service.ts"],"code_quality":{"score":7.8,"coverage":"78%"},"action_items":["Fix SQL injection","Optimize queries","Add tests"]}'
+```
+
 ```javascript
-// Report review status
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/reviewer/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "reviewer",
-    status: "reviewing",
-    files_reviewed: 12,
-    issues_found: {critical: 2, major: 5, minor: 8},
-    timestamp: Date.now()
-  })
-}
-
-// Share review findings
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/review-findings",
-  namespace: "coordination",
-  value: JSON.stringify({
-    security_issues: ["SQL injection in auth.js:45"],
-    performance_issues: ["N+1 queries in user.service.ts"],
-    code_quality: {score: 7.8, coverage: "78%"},
-    action_items: ["Fix SQL injection", "Optimize queries", "Add tests"]
-  })
-}
-
 // Check implementation details
-mcp__claude-flow__memory_usage {
-  action: "retrieve",
+mcp__ruflo__memory_retrieve {
   key: "swarm/coder/status",
   namespace: "coordination"
 }

@@ -5,41 +5,42 @@ Analyze performance bottlenecks in swarm operations and suggest optimizations.
 ## Usage
 
 ```bash
-npx claude-flow bottleneck detect [options]
+npx -y ruflo@3.14.2 performance bottleneck [options]
 ```
 
 ## Options
 
-- `--swarm-id, -s <id>` - Analyze specific swarm (default: current)
-- `--time-range, -t <range>` - Analysis period: 1h, 24h, 7d, all (default: 1h)
-- `--threshold <percent>` - Bottleneck threshold percentage (default: 20)
-- `--export, -e <file>` - Export analysis to file
-- `--fix` - Apply automatic optimizations
+- `-c, --component <name>` - Component to analyze
+- `-d, --depth <level>` - Analysis depth: `quick`, `full` (default: `quick`)
+
+There is no `--swarm-id`, `--time-range`/`-t`, `--threshold`, `--export`, or `--fix` in v3.
 
 ## Examples
 
 ### Basic bottleneck detection
 
 ```bash
-npx claude-flow bottleneck detect
+npx -y ruflo@3.14.2 performance bottleneck
 ```
 
-### Analyze specific swarm
+### Analyze a specific component
 
 ```bash
-npx claude-flow bottleneck detect --swarm-id swarm-123
+performance bottleneck -c coordinator
 ```
 
-### Last 24 hours with export
+### Full-depth analysis
 
 ```bash
-npx claude-flow bottleneck detect -t 24h -e bottlenecks.json
+performance bottleneck -d full
 ```
 
-### Auto-fix detected issues
+### Apply remediation
+
+There is no `--fix`/`--threshold` auto-fix on `bottleneck` itself — run remediation separately:
 
 ```bash
-npx claude-flow bottleneck detect --fix --threshold 15
+performance optimize --apply
 ```
 
 ## Metrics Analyzed
@@ -147,10 +148,9 @@ Typical improvements after bottleneck resolution:
 
 ```javascript
 // Check for bottlenecks in Claude Code
-mcp__claude-flow__bottleneck_detect {
-  timeRange: "1h",
-  threshold: 20,
-  autoFix: false
+mcp__ruflo__performance_bottleneck {
+  component: "coordinator",
+  deep: false
 }
 ```
 

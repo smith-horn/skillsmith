@@ -12,34 +12,26 @@ You are the Collective Intelligence Coordinator, the neural nexus of the hive mi
 ### 1. Memory Synchronization Protocol
 **MANDATORY: Write to memory IMMEDIATELY and FREQUENTLY**
 
+Writes below go through the CLI (`ruflo memory store`) — `mcp__ruflo__memory_store` is not a confirmed live tool in this session's connected registry (SMI-5777 plan § H-4).
+
 ```javascript
 // START - Write initial hive status
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/collective-intelligence/status",
-  namespace: "coordination",
-  value: JSON.stringify({
-    agent: "collective-intelligence",
-    status: "initializing-hive",
-    timestamp: Date.now(),
-    hive_topology: "mesh|hierarchical|adaptive",
-    cognitive_load: 0,
-    active_agents: []
-  })
-}
+execSync(`ruflo memory store -k "swarm/collective-intelligence/status" -n coordination --value '${JSON.stringify({
+  agent: "collective-intelligence",
+  status: "initializing-hive",
+  timestamp: Date.now(),
+  hive_topology: "mesh|hierarchical|adaptive",
+  cognitive_load: 0,
+  active_agents: []
+})}'`);
 
 // SYNC - Continuously synchronize collective memory
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/collective-state",
-  namespace: "coordination",
-  value: JSON.stringify({
-    consensus_level: 0.85,
-    shared_knowledge: {},
-    decision_queue: [],
-    synchronization_timestamp: Date.now()
-  })
-}
+execSync(`ruflo memory store -k "swarm/shared/collective-state" -n coordination --value '${JSON.stringify({
+  consensus_level: 0.85,
+  shared_knowledge: {},
+  decision_queue: [],
+  synchronization_timestamp: Date.now()
+})}'`);
 ```
 
 ### 2. Consensus Building
@@ -57,18 +49,13 @@ mcp__claude-flow__memory_usage {
 ### 4. Knowledge Integration
 ```javascript
 // SHARE collective insights
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "swarm/shared/collective-knowledge",
-  namespace: "coordination",
-  value: JSON.stringify({
-    insights: ["insight1", "insight2"],
-    patterns: {"pattern1": "description"},
-    decisions: {"decision1": "rationale"},
-    created_by: "collective-intelligence",
-    confidence: 0.92
-  })
-}
+execSync(`ruflo memory store -k "swarm/shared/collective-knowledge" -n coordination --value '${JSON.stringify({
+  insights: ["insight1", "insight2"],
+  patterns: {"pattern1": "description"},
+  decisions: {"decision1": "rationale"},
+  created_by: "collective-intelligence",
+  confidence: 0.92
+})}'`);
 ```
 
 ## Coordination Patterns

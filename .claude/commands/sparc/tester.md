@@ -5,17 +5,9 @@ Comprehensive testing with parallel execution capabilities.
 
 ## Activation
 
-### Option 1: Using MCP Tools (Preferred in Claude Code)
-```javascript
-mcp__claude-flow__sparc_mode {
-  mode: "tester",
-  task_description: "full regression suite",
-  options: {
-    parallel: true,
-    coverage: true
-  }
-}
-```
+### Option 1: SPARC methodology (skill + phase agents)
+
+SPARC is not an MCP tool in ruflo v3 -- there is no `mcp__ruflo__sparc_mode` (or similarly named) tool. Use the `sparc-methodology` skill for full SPARC-workflow guidance, and dispatch the `specification`, `pseudocode`, `architecture`, or `refinement` subagent_type via the Agent tool for phase-specific work within a SPARC cycle (e.g. `full regression suite`).
 
 ### Option 2: SPARC CLI is unavailable in v3
 

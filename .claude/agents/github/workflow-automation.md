@@ -11,12 +11,10 @@ tools:
   - mcp__github__create_workflow_dispatch
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
-  - mcp__claude-flow__memory_usage
+  - mcp__ruflo__coordination_orchestrate
   - mcp__ruflo__performance_report
-  - mcp__claude-flow__bottleneck_analyze
+  - mcp__ruflo__performance_bottleneck
   - mcp__ruflo__workflow_create
-  - mcp__claude-flow__automation_setup
   - TodoWrite
   - TodoRead
   - Bash
@@ -482,16 +480,18 @@ npx ruv-swarm actions profile \
 ```bash
 # Initialize comprehensive workflow automation swarm
 mcp__ruflo__swarm_init { topology: "mesh", maxAgents: 12 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Workflow Coordinator" }
-mcp__ruflo__agent_spawn { type: "architect", name: "Pipeline Architect" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Workflow Developer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "CI/CD Tester" }
-mcp__ruflo__agent_spawn { type: "optimizer", name: "Performance Optimizer" }
-mcp__ruflo__agent_spawn { type: "monitor", name: "Automation Monitor" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Workflow Analyzer" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Workflow Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "architect", name: "Pipeline Architect" }
+mcp__ruflo__agent_spawn { agentType: "coder", name: "Workflow Developer" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "CI/CD Tester" }
+mcp__ruflo__agent_spawn { agentType: "optimizer", name: "Performance Optimizer" }
+mcp__ruflo__agent_spawn { agentType: "monitor", name: "Automation Monitor" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Workflow Analyzer" }
 
-# Create intelligent workflow automation rules
-mcp__claude-flow__automation_setup {
+# Create intelligent workflow automation rules — automation_setup has no 1:1 tool
+# (SMI-5777 42-tool table); this is rule-setup (trigger/condition/action), so it
+# maps to workflow_create rather than hooks_init.
+mcp__ruflo__workflow_create {
   rules: [
     {
       trigger: "pull_request",
@@ -507,7 +507,7 @@ mcp__claude-flow__automation_setup {
 }
 
 # Orchestrate adaptive workflow management
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Manage intelligent CI/CD pipeline with continuous optimization",
   strategy: "adaptive",
   priority: "high",
@@ -524,22 +524,14 @@ mcp__ruflo__performance_report {
 }
 
 # Analyze workflow bottlenecks with swarm intelligence
-mcp__claude-flow__bottleneck_analyze {
+mcp__ruflo__performance_bottleneck {
   component: "github_actions_workflow",
   metrics: ["build_time", "test_duration", "deployment_latency", "resource_utilization"]
 }
 
-# Store performance insights in swarm memory
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "workflow/performance/analysis",
-  value: {
-    bottlenecks_identified: ["slow_test_suite", "inefficient_caching"],
-    optimization_opportunities: ["parallel_matrix", "smart_caching"],
-    performance_trends: "improving",
-    cost_optimization_potential: "23%"
-  }
-}
+# Store performance insights — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+# not present in this session's connected tool discovery, so the default is the CLI form.
+npx -y ruflo@3.14.2 memory store -k "workflow/performance/analysis" --value '{"bottlenecks_identified":["slow_test_suite","inefficient_caching"],"optimization_opportunities":["parallel_matrix","smart_caching"],"performance_trends":"improving","cost_optimization_potential":"23%"}'
 ```
 
 ### Dynamic Workflow Generation
@@ -547,16 +539,16 @@ mcp__claude-flow__memory_usage {
 // Swarm-powered workflow creation
 const createIntelligentWorkflow = async (repoContext) => {
   // Initialize workflow generation swarm
-  await mcp__claude_flow__swarm_init({ topology: "hierarchical", maxAgents: 8 });
+  await mcp__ruflo__swarm_init({ topology: "hierarchical", maxAgents: 8 });
   
   // Spawn specialized workflow agents
-  await mcp__claude_flow__agent_spawn({ type: "architect", name: "Workflow Architect" });
-  await mcp__claude_flow__agent_spawn({ type: "coder", name: "YAML Generator" });
-  await mcp__claude_flow__agent_spawn({ type: "optimizer", name: "Performance Optimizer" });
-  await mcp__claude_flow__agent_spawn({ type: "tester", name: "Workflow Validator" });
+  await mcp__ruflo__agent_spawn({ agentType: "architect", name: "Workflow Architect" });
+  await mcp__ruflo__agent_spawn({ agentType: "coder", name: "YAML Generator" });
+  await mcp__ruflo__agent_spawn({ agentType: "optimizer", name: "Performance Optimizer" });
+  await mcp__ruflo__agent_spawn({ agentType: "tester", name: "Workflow Validator" });
   
   // Create adaptive workflow based on repository analysis
-  const workflow = await mcp__claude_flow__workflow_create({
+  const workflow = await mcp__ruflo__workflow_create({
     name: "Intelligent CI/CD Pipeline",
     steps: [
       {
@@ -582,18 +574,15 @@ const createIntelligentWorkflow = async (repoContext) => {
     ]
   });
   
-  // Store workflow configuration in memory
-  await mcp__claude_flow__memory_usage({
-    action: "store",
-    key: `workflow/${repoContext.name}/config`,
-    value: {
-      workflow,
-      generated_at: Date.now(),
-      optimization_level: "high",
-      estimated_performance_gain: "40%",
-      cost_reduction: "25%"
-    }
-  });
+  // Store workflow configuration — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+  // not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "workflow/${repoContext.name}/config" --value '${JSON.stringify({
+    workflow,
+    generated_at: Date.now(),
+    optimization_level: "high",
+    estimated_performance_gain: "40%",
+    cost_reduction: "25%"
+  })}'`);
   
   return workflow;
 };
@@ -601,31 +590,12 @@ const createIntelligentWorkflow = async (repoContext) => {
 
 ### Continuous Learning and Optimization
 ```bash
-# Implement continuous workflow learning
-mcp__claude-flow__memory_usage {
-  action: "store",
-  key: "workflow/learning/patterns",
-  value: {
-    successful_patterns: [
-      "parallel_test_execution",
-      "smart_dependency_caching",
-      "conditional_deployment_stages"
-    ],
-    failure_patterns: [
-      "sequential_heavy_operations",
-      "inefficient_docker_builds",
-      "missing_error_recovery"
-    ],
-    optimization_history: {
-      "build_time_reduction": "45%",
-      "resource_efficiency": "60%",
-      "failure_rate_improvement": "78%"
-    }
-  }
-}
+# Implement continuous workflow learning — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store
+# is not present in this session's connected tool discovery, so the default is the CLI form.
+npx -y ruflo@3.14.2 memory store -k "workflow/learning/patterns" --value '{"successful_patterns":["parallel_test_execution","smart_dependency_caching","conditional_deployment_stages"],"failure_patterns":["sequential_heavy_operations","inefficient_docker_builds","missing_error_recovery"],"optimization_history":{"build_time_reduction":"45%","resource_efficiency":"60%","failure_rate_improvement":"78%"}}'
 
 # Generate workflow optimization recommendations
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Analyze workflow performance and generate optimization recommendations",
   strategy: "parallel",
   priority: "medium"

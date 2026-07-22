@@ -4,22 +4,27 @@ Search through stored memory.
 
 ## Usage
 ```bash
-npx claude-flow memory search [options]
+npx -y ruflo@3.14.2 memory search [options]
 ```
 
 ## Options
-- `--query <text>` - Search query
-- `--pattern <regex>` - Pattern matching
-- `--limit <n>` - Result limit
+- `-q/--query <text>` - Search query (required)
+- `-l/--limit <n>` - Result limit
+- `-t/--type <type>` - `semantic` (default), `keyword`, or `hybrid`
+- `--threshold <n>` - Similarity threshold
+- `-s/--smart` - Smart search
+- `--build-hnsw` - Build the HNSW index for faster search
+
+There is no `--pattern`/regex matching in v3 — passing one errors. For literal matching, use `-t keyword`.
 
 ## Examples
 ```bash
-# Search memory
-npx claude-flow memory search --query "authentication"
+# Search memory (v3 default search type is semantic)
+memory search -q "authentication"
 
-# Pattern search
-npx claude-flow memory search --pattern "api-.*"
+# Keyword (literal) search
+memory search -q "authentication" -t keyword
 
 # Limited results
-npx claude-flow memory search --query "config" --limit 10
+memory search -q "config" -l 10
 ```

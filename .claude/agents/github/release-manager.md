@@ -19,21 +19,20 @@ tools:
   - mcp__github__create_issue
   - mcp__ruflo__swarm_init
   - mcp__ruflo__agent_spawn
-  - mcp__claude-flow__task_orchestrate
-  - mcp__claude-flow__memory_usage
+  - mcp__ruflo__coordination_orchestrate
 hooks:
   pre_task: |
     echo "🚀 Initializing release management pipeline..."
-    npx ruv-swarm hook pre-task --mode release-manager
+    npx -y ruflo@3.14.2 hooks pre-task -d "release-manager: release management pipeline"
   post_edit: |
     echo "📝 Validating release changes and updating documentation..."
-    npx ruv-swarm hook post-edit --mode release-manager --validate-release
+    npx -y ruflo@3.14.2 hooks post-edit -f "release documentation" --success true
   post_task: |
     echo "✅ Release management task completed. Updating release status..."
-    npx ruv-swarm hook post-task --mode release-manager --update-status
+    npx -y ruflo@3.14.2 hooks post-task -i "release-manager-task" --success true
   notification: |
     echo "📢 Sending release notifications to stakeholders..."
-    npx ruv-swarm hook notification --mode release-manager
+    npx -y ruflo@3.14.2 hooks notify -m "release-manager: release status update"
 ---
 
 # GitHub Release Manager
@@ -54,11 +53,11 @@ Automated release coordination and deployment with ruv-swarm orchestration for s
 ```javascript
 // Initialize release management swarm
 mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 6 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Release Coordinator" }
-mcp__ruflo__agent_spawn { type: "tester", name: "QA Engineer" }
-mcp__ruflo__agent_spawn { type: "reviewer", name: "Release Reviewer" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Version Manager" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Deployment Analyst" }
+mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Release Coordinator" }
+mcp__ruflo__agent_spawn { agentType: "tester", name: "QA Engineer" }
+mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Release Reviewer" }
+mcp__ruflo__agent_spawn { agentType: "coder", name: "Version Manager" }
+mcp__ruflo__agent_spawn { agentType: "analyst", name: "Deployment Analyst" }
 
 // Create release preparation branch
 mcp__github__create_branch {
@@ -69,7 +68,7 @@ mcp__github__create_branch {
 }
 
 // Orchestrate release preparation
-mcp__claude-flow__task_orchestrate {
+mcp__ruflo__coordination_orchestrate {
   task: "Prepare release v1.0.72 with comprehensive testing and validation",
   strategy: "sequential",
   priority: "critical"
@@ -207,12 +206,12 @@ This release is production-ready with comprehensive validation and testing.
 [Single Message - Complete Release Management]:
   // Initialize comprehensive release swarm
   mcp__ruflo__swarm_init { topology: "star", maxAgents: 8 }
-  mcp__ruflo__agent_spawn { type: "coordinator", name: "Release Director" }
-  mcp__ruflo__agent_spawn { type: "tester", name: "QA Lead" }
-  mcp__ruflo__agent_spawn { type: "reviewer", name: "Senior Reviewer" }
-  mcp__ruflo__agent_spawn { type: "coder", name: "Version Controller" }
-  mcp__ruflo__agent_spawn { type: "analyst", name: "Performance Analyst" }
-  mcp__ruflo__agent_spawn { type: "researcher", name: "Compatibility Checker" }
+  mcp__ruflo__agent_spawn { agentType: "coordinator", name: "Release Director" }
+  mcp__ruflo__agent_spawn { agentType: "tester", name: "QA Lead" }
+  mcp__ruflo__agent_spawn { agentType: "reviewer", name: "Senior Reviewer" }
+  mcp__ruflo__agent_spawn { agentType: "coder", name: "Version Controller" }
+  mcp__ruflo__agent_spawn { agentType: "analyst", name: "Performance Analyst" }
+  mcp__ruflo__agent_spawn { agentType: "researcher", name: "Compatibility Checker" }
   
   // Create release branch and prepare files using gh CLI
   Bash("gh api repos/:owner/:repo/git/refs --method POST -f ref='refs/heads/release/v1.0.72' -f sha=$(gh api repos/:owner/:repo/git/refs/heads/main --jq '.object.sha')")
@@ -250,19 +249,16 @@ This release is production-ready with comprehensive validation and testing.
     { id: "rel-merge", content: "Merge and deploy release", status: "pending", priority: "critical" }
   ]}
   
-  // Store release state
-  mcp__claude-flow__memory_usage {
-    action: "store", 
-    key: "release/v1.0.72/status",
-    value: {
-      timestamp: Date.now(),
-      version: "1.0.72",
-      stage: "validation_complete",
-      packages: ["ruflo", "ruv-swarm"],
-      validation_passed: true,
-      ready_for_review: true
-    }
-  }
+  // Store release state — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is
+  // not present in this session's connected tool discovery, so the default is the CLI form.
+  execSync(`ruflo memory store -k "release/v1.0.72/status" --value '${JSON.stringify({
+    timestamp: Date.now(),
+    version: "1.0.72",
+    stage: "validation_complete",
+    packages: ["ruflo", "ruv-swarm"],
+    validation_passed: true,
+    ready_for_review: true
+  })}'`);
 ```
 
 ## Release Strategies
@@ -348,8 +344,10 @@ jobs:
         run: |
           cd claude-code-flow/claude-code-flow && npm install && npm test
           cd ../../ruv-swarm/npm && npm install && npm test:all
-      - name: Validate Release
-        run: npx claude-flow release validate
+      # No `release validate` command in v3 — there is no `release` family
+      # (`deployment` exists but is a different concept: environments/rollbacks,
+      # not pre-release checks). Release validation is covered by the test
+      # steps above; add project-specific checks here if needed.
 ```
 
 ## Monitoring and Metrics

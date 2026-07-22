@@ -7,7 +7,7 @@ Execute independent subtasks in parallel for maximum efficiency.
 
 ### 1. Task Decomposition
 ```
-Tool: mcp__claude-flow__task_orchestrate
+Tool: mcp__ruflo__coordination_orchestrate
 Parameters: {
   "task": "Build complete REST API with auth, CRUD operations, and tests",
   "strategy": "parallel",
@@ -30,9 +30,13 @@ For the REST API task:
 - **Agent 5 (Documenter)**: Update docs continuously
 
 ## CLI Usage
+No `parallel` verb exists in v3. Use `swarm coordinate` (or start a swarm directly with an objective):
 ```bash
-# Execute parallel tasks via CLI
-npx claude-flow parallel "Build REST API" --max-agents 8
+# Coordinate parallel execution across agents
+npx -y ruflo@3.14.2 swarm coordinate --agents 8
+
+# Or start a swarm with an objective directly
+npx -y ruflo@3.14.2 swarm start -o "Build REST API" -s development
 ```
 
 ## Performance Gains
@@ -42,9 +46,10 @@ npx claude-flow parallel "Build REST API" --max-agents 8
 - 📈 Linear scalability with agents
 
 ## Monitoring
+No interval-poll — `swarm_status` is point-in-time; call it repeatedly (or use CLI `swarm status`) to observe progress:
 ```
-Tool: mcp__claude-flow__swarm_monitor
-Parameters: {"interval": 1000, "swarmId": "current"}
+Tool: mcp__ruflo__swarm_status
+Parameters: {"swarmId": "current"}
 ```
 
 Watch real-time parallel execution progress!

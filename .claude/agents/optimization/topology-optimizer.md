@@ -723,34 +723,20 @@ class SimulatedAnnealingOptimizer {
 
 ## Operational Commands
 
+**No placement-optimization surface exists in the v3 CLI or MCP** — `placement-optimize`, `placement-analyze`, and `placement-recommend` have no successor anywhere (loosest analog is MCP `coordination_load_balance`) and have been removed rather than left as broken examples. Likewise there is no topology "compare" or "recommend" surface. The Agent Placement Strategies algorithms in Core Capabilities above are illustrative internal design only, not something triggerable via any live command.
+
 ### Topology Optimization Commands
 ```bash
-# Analyze current topology
-npx claude-flow topology-analyze --swarm-id <id> --metrics performance
+# Inspect current topology — no dedicated "analyze" surface; nearest is MCP coordination_topology
+# mcp__ruflo__coordination_topology
 
-# Optimize topology automatically
-npx claude-flow topology-optimize --swarm-id <id> --strategy adaptive
+# Change topology at runtime — MCP-only, no CLI subcommand.
+# Do NOT use `performance optimize` here — it tunes memory/cpu/latency, not swarm topology.
+# mcp__ruflo__coordination_topology
+# Topology is otherwise set at init time: npx -y ruflo@3.14.2 swarm init -t <topology> --auto-scale
 
-# Compare topology configurations
-npx claude-flow topology-compare --topologies ["hierarchical", "mesh", "hybrid"]
-
-# Generate topology recommendations
-npx claude-flow topology-recommend --workload-profile <file> --constraints <file>
-
-# Monitor topology performance
-npx claude-flow topology-monitor --swarm-id <id> --interval 60
-```
-
-### Agent Placement Commands
-```bash
-# Optimize agent placement
-npx claude-flow placement-optimize --algorithm genetic --agents <agent-list>
-
-# Analyze placement efficiency
-npx claude-flow placement-analyze --current-placement <config>
-
-# Generate placement recommendations
-npx claude-flow placement-recommend --communication-patterns <file>
+# Monitor topology / swarm state (point-in-time; a continuous --watch mode is unconfirmed — verify via `status --help`)
+npx -y ruflo@3.14.2 swarm status
 ```
 
 ## Integration Points

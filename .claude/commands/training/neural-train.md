@@ -4,22 +4,22 @@ Train neural patterns from operations.
 
 ## Usage
 ```bash
-npx claude-flow training neural-train [options]
+npx -y ruflo@3.14.2 neural train [options]
 ```
 
 ## Options
-- `--data <source>` - Training data source
-- `--model <name>` - Target model
-- `--epochs <n>` - Training epochs
+- `--data, -d <file-or-json>` - Training data (file path or inline JSON)
+- `--model, -m <id>` - Target model
+- `--epochs, -e <n>` - Training epochs
 
 ## Examples
 ```bash
-# Train from recent ops
-npx claude-flow training neural-train --data recent
+# Train from a data file
+npx -y ruflo@3.14.2 neural train --data ./training-data.json
 
 # Specific model
-npx claude-flow training neural-train --model task-predictor
+npx -y ruflo@3.14.2 neural train --model task-predictor
 
 # Custom epochs
-npx claude-flow training neural-train --epochs 100
+npx -y ruflo@3.14.2 neural train --epochs 100
 ```
