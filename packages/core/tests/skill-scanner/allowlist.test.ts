@@ -34,6 +34,15 @@ import type {
 
 // ------------------------ helpers ------------------------
 
+// SMI-5797: fixture dates must stay relative to test-run time, not a
+// hardcoded literal — a hardcoded expiresAt eventually crosses the wall
+// clock and every entry using it silently starts evaluating as expired.
+function isoDateDaysFromNow(offsetDays: number): string {
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() + offsetDays)
+  return d.toISOString().slice(0, 10)
+}
+
 function finding(
   overrides: Partial<SecurityFinding> & Pick<SecurityFinding, 'type' | 'severity' | 'message'>
 ): SecurityFinding {
@@ -81,8 +90,8 @@ const VALID_ENTRY: AllowlistEntry = {
   messagePattern: 'password|credentials',
   reason: 'Product name is password; guidance never accepts secrets in chat.',
   reviewedBy: 'ryansmith108',
-  reviewedAt: '2026-04-21',
-  expiresAt: '2026-07-21',
+  reviewedAt: isoDateDaysFromNow(-90),
+  expiresAt: isoDateDaysFromNow(30),
 }
 
 // ------------------------ FP pass-through ------------------------
@@ -184,7 +193,7 @@ describe('allowlist expiry (SMI-4396)', () => {
   it('current entries survive a matching date', () => {
     const matcher = buildMatcher([VALID_ENTRY])
     // One day before expiry.
-    const today = new Date('2026-07-20T12:00:00Z')
+    const today = new Date(`${isoDateDaysFromNow(29)}T12:00:00Z`)
     const f = finding({
       type: 'sensitive_path',
       severity: 'high',
@@ -234,8 +243,8 @@ describe('allowlist matchField (SMI-4396 C4)', () => {
       messagePattern: '[\\u200B-\\u200F\\u2028-\\u202F\\uFEFF\\u3000]',
       reason: 'CJK full-width space in Japanese description',
       reviewedBy: 'ryansmith108',
-      reviewedAt: '2026-04-21',
-      expiresAt: '2026-07-21',
+      reviewedAt: isoDateDaysFromNow(-90),
+      expiresAt: isoDateDaysFromNow(30),
     }
     const matcher = buildMatcher([entry])
     // Simulate the scanner's raw-byte line output for a U+3000 match.
@@ -256,8 +265,8 @@ describe('allowlist matchField (SMI-4396 C4)', () => {
       messagePattern: '[\\u3000]',
       reason: 'Intentional bare-message test',
       reviewedBy: 'ryansmith108',
-      reviewedAt: '2026-04-21',
-      expiresAt: '2026-07-21',
+      reviewedAt: isoDateDaysFromNow(-90),
+      expiresAt: isoDateDaysFromNow(30),
     }
     const matcher = buildMatcher([entry])
     const f = finding({
