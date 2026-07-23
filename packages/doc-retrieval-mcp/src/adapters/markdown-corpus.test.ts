@@ -1,11 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { writeFile, rm } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMarkdownCorpusAdapter } from './markdown-corpus.js'
 import type { AdapterContext, AdapterFile } from '../types.js'
 import type { CorpusConfig } from '../config.js'
+import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 /**
  * Focused unit test for the `markdown-corpus` adapter's `chunk()` provenance
@@ -81,21 +81,15 @@ describe('markdown-corpus adapter — incremental listFiles across a submodule b
     if (innerRoot) await rm(innerRoot, { recursive: true, force: true })
   })
 
+  // SMI-4693: sanitized env (strips GIT_DISCOVERY_VARS, pins test author/
+  // committer identity) so these spawned `git` calls can't resolve against
+  // an ambient parent .git via inherited env hints.
   function git(cwd: string, args: string[]): string {
-    return execFileSync('git', args, { cwd, encoding: 'utf8' })
+    return execFileSync('git', args, { cwd, encoding: 'utf8', env: makeFixtureEnv() })
   }
 
   function commit(cwd: string, message: string): string {
-    git(cwd, [
-      '-c',
-      'user.email=test@example.com',
-      '-c',
-      'user.name=Test',
-      'commit',
-      '-q',
-      '-m',
-      message,
-    ])
+    git(cwd, ['commit', '-q', '-m', message])
     return git(cwd, ['rev-parse', 'HEAD']).trim()
   }
 
@@ -112,13 +106,13 @@ describe('markdown-corpus adapter — incremental listFiles across a submodule b
   }
 
   it('resolves files changed inside a submodule, not just the opaque gitlink path', async () => {
-    innerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-submodule-'))
+    innerRoot = makeFixtureTempDir('doc-retrieval-submodule')
     git(innerRoot, ['init', '-q'])
     await writeFile(join(innerRoot, 'first.md'), '# First\n')
     git(innerRoot, ['add', '.'])
     commit(innerRoot, 'inner: initial')
 
-    outerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-outer-'))
+    outerRoot = makeFixtureTempDir('doc-retrieval-outer')
     git(outerRoot, ['init', '-q'])
     git(outerRoot, [
       '-c',
@@ -154,14 +148,14 @@ describe('markdown-corpus adapter — incremental listFiles across a submodule b
   })
 
   it('treats a newly-initialized submodule as fully changed when lastSha predates it', async () => {
-    innerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-submodule-new-'))
+    innerRoot = makeFixtureTempDir('doc-retrieval-submodule-new')
     git(innerRoot, ['init', '-q'])
     await writeFile(join(innerRoot, 'a.md'), '# A\n')
     await writeFile(join(innerRoot, 'b.md'), '# B\n')
     git(innerRoot, ['add', '.'])
     commit(innerRoot, 'inner: initial')
 
-    outerRoot = await mkdtemp(join(tmpdir(), 'doc-retrieval-outer-new-'))
+    outerRoot = makeFixtureTempDir('doc-retrieval-outer-new')
     git(outerRoot, ['init', '-q'])
     await writeFile(join(outerRoot, 'placeholder.md'), '# Placeholder\n')
     git(outerRoot, ['add', '.'])
