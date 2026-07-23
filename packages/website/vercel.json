@@ -8,7 +8,30 @@
       "main": false
     }
   },
+  "rewrites": [
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "status.skillsmith.app"
+        }
+      ],
+      "destination": "/status"
+    }
+  ],
   "redirects": [
+    {
+      "source": "/:path((?!_astro/).+)",
+      "has": [
+        {
+          "type": "host",
+          "value": "status.skillsmith.app"
+        }
+      ],
+      "destination": "https://www.skillsmith.app/:path",
+      "permanent": true
+    },
     {
       "source": "/changelog",
       "destination": "https://github.com/smith-horn/skillsmith/releases",
