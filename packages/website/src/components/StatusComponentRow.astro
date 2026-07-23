@@ -62,7 +62,12 @@ const {
       <span>Last checked: <span data-role="checked-at">{checkedAtText}</span></span>
     </div>
     <div class="mt-4">
-      <UptimeBarStrip uptime90d={uptime90d} anchorIsoDate={anchorIsoDate} label={name} />
+      <UptimeBarStrip
+        uptime90d={uptime90d}
+        anchorIsoDate={anchorIsoDate}
+        liveStatus={status}
+        label={name}
+      />
     </div>
   </Card>
 </div>

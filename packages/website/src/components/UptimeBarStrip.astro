@@ -34,19 +34,23 @@ import {
   buildUptimeStripAriaLabel,
   uptimeTileClassName,
   uptimeTileText,
+  withLiveAnchorStatus,
+  type ComponentStatus,
   type UptimeDay,
 } from '../lib/status-vocab'
 
 interface Props {
   uptime90d: UptimeDay[]
   anchorIsoDate: string
+  /** The component's LIVE current status — see withLiveAnchorStatus's header comment. */
+  liveStatus: ComponentStatus
   label: string
   class?: string
 }
 
-const { uptime90d, anchorIsoDate, label, class: className = '' } = Astro.props
+const { uptime90d, anchorIsoDate, liveStatus, label, class: className = '' } = Astro.props
 
-const tiles = buildUptimeGrid(uptime90d, anchorIsoDate)
+const tiles = withLiveAnchorStatus(buildUptimeGrid(uptime90d, anchorIsoDate), liveStatus)
 const lastIndex = tiles.length - 1
 
 // FIX (medium): counting logic now lives in buildUptimeStripAriaLabel

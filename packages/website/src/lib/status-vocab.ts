@@ -182,6 +182,37 @@ export function buildUptimeGrid(uptime90d: UptimeDay[], anchorIsoDate: string): 
   return tiles
 }
 
+/**
+ * FIX: "today" never has a daily-rollup row — the rollup cron only aggregates
+ * fully-elapsed calendar days (00:15 UTC for the PREVIOUS day), so
+ * buildUptimeGrid's last tile is ALWAYS `status: null` ("no data") until
+ * midnight, every single day. That gray tile sits immediately next to
+ * yesterday's real (possibly colored) tile, and with only a loose "Today"
+ * caption below the whole strip (not pointing at one specific tile), it's
+ * easy to misread yesterday's status as today's — the exact confusion this
+ * fixes. Overrides the LAST tile's status with the component's LIVE current
+ * status (already fetched for the pill above the strip), leaving
+ * `uptimePct`/`totalChecks` null (there is no historical percentage for an
+ * in-progress day — never fabricate one). `uptimeTileText` renders this
+ * combination (a real status with a null uptimePct) as "(current, today in
+ * progress)", a qualifier no other tile can produce, so hovering it can never
+ * be confused with a completed day's rollup reading. `liveStatus: 'unknown'`
+ * leaves the tile as the ordinary no-data gray (there is no DayStatus value
+ * for 'unknown' — it means the same thing as no data here).
+ */
+export function withLiveAnchorStatus(
+  tiles: UptimeTile[],
+  liveStatus: ComponentStatus
+): UptimeTile[] {
+  if (tiles.length === 0) return tiles
+  const lastIndex = tiles.length - 1
+  const dayStatus = toDayStatus(liveStatus)
+  if (dayStatus === null) return tiles
+  return tiles.map((tile, index) =>
+    index === lastIndex ? { ...tile, status: dayStatus, uptimePct: null, totalChecks: null } : tile
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Component status coercion
 // ---------------------------------------------------------------------------
@@ -367,6 +398,23 @@ export const COMPONENTS: ComponentScaffoldEntry[] = [
 /** "No data reported." — distinct from a tile's "No data" and a live 'unknown' status (Codex #15). */
 export const SCAFFOLD_NO_DATA_MESSAGE = 'No data reported.'
 
+/**
+ * Formats an ISO timestamp for human display (locale-aware date + time),
+ * never the raw ISO string. Shared by every builder in status-render.ts
+ * that surfaces a timestamp (component checked_at, incident started_at/
+ * resolved_at, incident-update posted_at) so none of them can independently
+ * regress back to displaying a raw ISO string — the bug this function fixes
+ * (SMI-5755 follow-up: `checkedAtText`/`startedAtText`/`resolvedAtText`/
+ * `postedAtText` were each assigned directly from the raw API string with
+ * no formatting at all).
+ */
+export function formatTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const parsed = new Date(iso)
+  if (Number.isNaN(parsed.getTime())) return '—'
+  return parsed.toLocaleString()
+}
+
 // ---------------------------------------------------------------------------
 // Uptime tile presentation — shared by UptimeBarStrip.astro's SSR render and
 // status-client.ts's client-side tile refresh, so the two never drift.
@@ -382,8 +430,13 @@ export function uptimeTileClassName(status: DayStatus | null): string {
 /** "No data" (a calendar day with no checks) — distinct from STATUS_LABELS.unknown (Codex #15). */
 export function uptimeTileText(tile: UptimeTile): string {
   if (tile.status === null) return `${tile.date}: No data`
-  const pctText = tile.uptimePct !== null ? ` (${tile.uptimePct.toFixed(2)}% uptime)` : ''
-  return `${tile.date}: ${STATUS_LABELS[tile.status]}${pctText}`
+  // A real status with a null uptimePct only ever comes from
+  // withLiveAnchorStatus's live override on today's tile (every OTHER tile
+  // either has a real rollup percentage or is no-data) — the qualifier makes
+  // this unambiguous on hover, never mistakable for a completed day's rollup.
+  if (tile.uptimePct === null)
+    return `${tile.date}: ${STATUS_LABELS[tile.status]} (current, today in progress)`
+  return `${tile.date}: ${STATUS_LABELS[tile.status]} (${tile.uptimePct.toFixed(2)}% uptime)`
 }
 
 /**

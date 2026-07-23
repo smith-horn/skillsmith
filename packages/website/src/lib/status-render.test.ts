@@ -47,6 +47,19 @@ function makeIncident(overrides: Partial<StatusIncident> = {}): StatusIncident {
 // ---------------------------------------------------------------------------
 
 describe('buildComponentRowContent / applyComponentRowContent', () => {
+  it('FIX: formats checked_at for human display, never the raw ISO string', () => {
+    const content = buildComponentRowContent(makeComponent({ checked_at: '2026-07-15T00:00:00Z' }))
+    expect(content.checkedAtText).not.toBe('2026-07-15T00:00:00Z')
+    expect(content.checkedAtText).not.toContain('T')
+  })
+
+  it('renders a missing or invalid checked_at as the em-dash placeholder, not "Invalid Date"', () => {
+    expect(buildComponentRowContent(makeComponent({ checked_at: null })).checkedAtText).toBe('—')
+    expect(
+      buildComponentRowContent(makeComponent({ checked_at: 'not-a-date' })).checkedAtText
+    ).toBe('—')
+  })
+
   it('preserves an adversarial name/message unchanged in the content descriptor', () => {
     const content = buildComponentRowContent(
       makeComponent({ name: ADVERSARIAL, message: ADVERSARIAL })
@@ -174,6 +187,28 @@ describe('buildIncidentContent', () => {
     expect(content.affectedText).toBe('Website')
   })
 
+  it('FIX: formats started_at/resolved_at/posted_at for human display, never the raw ISO string', () => {
+    const content = buildIncidentContent(
+      makeIncident({
+        started_at: '2026-07-15T00:00:00Z',
+        resolved_at: '2026-07-15T01:00:00Z',
+        updates: [{ status: 'resolved', message: 'fixed', posted_at: '2026-07-15T01:00:00Z' }],
+      }),
+      new Map()
+    )
+    expect(content.startedAtText).not.toBe('2026-07-15T00:00:00Z')
+    expect(content.startedAtText).not.toContain('T')
+    expect(content.resolvedAtText).not.toBe('2026-07-15T01:00:00Z')
+    expect(content.resolvedAtText).not.toContain('T')
+    expect(content.updates[0].postedAtText).not.toBe('2026-07-15T01:00:00Z')
+    expect(content.updates[0].postedAtText).not.toContain('T')
+  })
+
+  it('an unresolved incident (resolved_at: null) reads "Ongoing", not a formatted null', () => {
+    const content = buildIncidentContent(makeIncident({ resolved_at: null }), new Map())
+    expect(content.resolvedAtText).toBe('Ongoing')
+  })
+
   it('falls back to the raw status string when the incident status is unrecognized', () => {
     const content = buildIncidentContent(makeIncident({ status: 'weird' as never }), new Map())
     expect(content.statusLabel).toBe('weird')
@@ -234,5 +269,29 @@ describe('refreshUptimeStripTiles', () => {
     expect(stripAttrs['aria-label']).toBe(
       'Website: 90-day uptime — 1 operational, 0 degraded, 0 outage, 89 no data'
     )
+  })
+
+  it("FIX: a supplied liveStatus overrides today's tile instead of leaving it perpetually gray", () => {
+    const handles = Array.from({ length: 90 }, () => ({
+      className: '',
+      attrs: {} as Record<string, string>,
+      setAttribute(n: string, v: string) {
+        this.attrs[n] = v
+      },
+    }))
+    refreshUptimeStripTiles(handles, [], '2026-07-15', null, undefined, 'operational')
+    expect(handles[89].className).toContain('bg-green-500')
+    expect(handles[89].attrs['aria-label']).toContain('current, today in progress')
+    // Untouched historical tiles remain no-data.
+    expect(handles[0].className).toContain('bg-gray-700')
+  })
+
+  it("omitting liveStatus leaves today's tile as ordinary no-data (backward compatible)", () => {
+    const handles = Array.from({ length: 90 }, () => ({
+      className: '',
+      setAttribute() {},
+    }))
+    refreshUptimeStripTiles(handles, [], '2026-07-15')
+    expect(handles[89].className).toContain('bg-gray-700')
   })
 })

@@ -115,6 +115,7 @@ const banner = OVERALL_BANNER.unknown
     } from '../lib/status-client'
     import {
       COMPONENTS,
+      formatTimestamp,
       OVERALL_BANNER,
       type ComponentStatus,
       type StatusComponent,
@@ -140,13 +141,6 @@ const banner = OVERALL_BANNER.unknown
         currentPoller.stop()
         currentPoller = null
       }
-    }
-
-    function formatTimestamp(iso: string): string {
-      if (!iso) return '—'
-      const parsed = new Date(iso)
-      if (Number.isNaN(parsed.getTime())) return '—'
-      return parsed.toLocaleString()
     }
 
     function getRowElements(rowEl: Element): ComponentRowElements {
@@ -238,7 +232,8 @@ const banner = OVERALL_BANNER.unknown
             component.uptime_90d,
             anchorIsoDate,
             getUptimeStripHandle(rowEl),
-            component.name
+            component.name,
+            component.status
           )
         }
 
@@ -250,7 +245,8 @@ const banner = OVERALL_BANNER.unknown
             component.uptime_90d,
             anchorIsoDate,
             getUptimeStripHandle(rowEl),
-            component.name
+            component.name,
+            component.status
           )
         }
 
@@ -268,7 +264,8 @@ const banner = OVERALL_BANNER.unknown
             [],
             anchorIsoDate,
             getUptimeStripHandle(rowEl),
-            scaffold.name
+            scaffold.name,
+            'unknown'
           )
         }
       }

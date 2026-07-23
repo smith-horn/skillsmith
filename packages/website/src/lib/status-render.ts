@@ -17,6 +17,7 @@ import {
   buildUptimeGrid,
   buildUptimeStripAriaLabel,
   coerceComponentStatus,
+  formatTimestamp,
   IMPACT_CLASSES,
   IMPACT_LABELS,
   INCIDENT_STATUS_LABELS,
@@ -28,6 +29,7 @@ import {
   STATUS_PILL_CLASSES,
   uptimeTileClassName,
   uptimeTileText,
+  withLiveAnchorStatus,
   type ComponentScaffoldEntry,
   type ComponentStatus,
   type StatusComponent,
@@ -67,7 +69,7 @@ export function buildComponentRowContent(component: StatusComponent): ComponentR
     statusLabel: STATUS_LABELS[status],
     pillClassName: buildPillClassName(status),
     latencyText: isFiniteNumber(component.latency_ms) ? `${component.latency_ms} ms` : '—',
-    checkedAtText: component.checked_at ?? '—',
+    checkedAtText: formatTimestamp(component.checked_at),
   }
 }
 
@@ -145,15 +147,24 @@ export interface UptimeStripHandle {
  * `buildUptimeStripAriaLabel` (../lib/status-vocab.ts) — previously only the
  * per-tile `aria-label`s were refreshed, leaving the group-level summary
  * stuck at its SSR-time "0 operational ... 90 no data" reading forever.
+ *
+ * FIX: `liveStatus`, when supplied, overrides today's tile with the
+ * component's live current status via `withLiveAnchorStatus` (../lib/
+ * status-vocab.ts) — see that function's header comment for why today's
+ * rollup-derived tile is otherwise always gray/no-data and easily misread as
+ * yesterday's real status. Optional/trailing for the same backward-
+ * compatibility reason as `stripHandle`/`label`.
  */
 export function refreshUptimeStripTiles(
   tileHandles: UptimeTileHandle[],
   uptime90d: UptimeDay[],
   anchorIsoDate: string,
   stripHandle?: UptimeStripHandle | null,
-  label?: string
+  label?: string,
+  liveStatus?: ComponentStatus
 ): void {
-  const tiles = buildUptimeGrid(uptime90d, anchorIsoDate)
+  const rawTiles = buildUptimeGrid(uptime90d, anchorIsoDate)
+  const tiles = liveStatus !== undefined ? withLiveAnchorStatus(rawTiles, liveStatus) : rawTiles
   const count = Math.min(tileHandles.length, tiles.length)
   for (let i = 0; i < count; i++) {
     const tile = tiles[i]
@@ -242,12 +253,12 @@ export function buildIncidentContent(
     impactClassName: IMPACT_CLASSES[incident.impact] ?? IMPACT_CLASSES.none,
     statusLabel: INCIDENT_STATUS_LABELS[incident.status] ?? incident.status,
     affectedText: buildAffectedComponentsText(incident.affected_components, componentsBySlug),
-    startedAtText: incident.started_at || '—',
-    resolvedAtText: incident.resolved_at ?? 'Ongoing',
+    startedAtText: formatTimestamp(incident.started_at),
+    resolvedAtText: incident.resolved_at ? formatTimestamp(incident.resolved_at) : 'Ongoing',
     updates: incident.updates.map((update) => ({
       statusLabel: INCIDENT_STATUS_LABELS[update.status] ?? update.status,
       message: update.message,
-      postedAtText: update.posted_at || '—',
+      postedAtText: formatTimestamp(update.posted_at),
     })),
   }
 }
