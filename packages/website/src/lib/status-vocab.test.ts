@@ -4,6 +4,7 @@ import {
   buildUptimeStripAriaLabel,
   coerceComponentStatus,
   COMPONENTS,
+  formatTimestamp,
   isFiniteNumber,
   isNonNegativeInteger,
   isValidDayString,
@@ -14,6 +15,7 @@ import {
   STATUS_PILL_CLASSES,
   STATUS_TILE_CLASSES,
   uptimeTileText,
+  withLiveAnchorStatus,
   type ComponentStatus,
   type DayStatus,
   type UptimeDay,
@@ -286,5 +288,81 @@ describe('buildUptimeStripAriaLabel', () => {
   it('reflects the supplied label, not a hardcoded one', () => {
     const tiles = buildUptimeGrid([], ANCHOR)
     expect(buildUptimeStripAriaLabel(tiles, 'Search API')).toContain('Search API: 90-day uptime')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// formatTimestamp (SMI-5755 follow-up fix — checked_at/started_at/resolved_at/
+// posted_at were each displayed as raw, unreadable ISO strings)
+// ---------------------------------------------------------------------------
+
+describe('formatTimestamp', () => {
+  it('formats a valid ISO timestamp as a locale-aware string, never the raw ISO form', () => {
+    const result = formatTimestamp('2026-07-15T12:34:56Z')
+    expect(result).not.toBe('2026-07-15T12:34:56Z')
+    expect(result).not.toContain('T')
+    expect(result.length).toBeGreaterThan(0)
+  })
+
+  it('returns the em-dash placeholder for null/undefined/empty input', () => {
+    expect(formatTimestamp(null)).toBe('—')
+    expect(formatTimestamp(undefined)).toBe('—')
+    expect(formatTimestamp('')).toBe('—')
+  })
+
+  it('returns the em-dash placeholder for an unparseable string, never "Invalid Date"', () => {
+    expect(formatTimestamp('not-a-real-date')).toBe('—')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// withLiveAnchorStatus (UX follow-up: today always has no rollup row until
+// 00:15 UTC the next day, so it was previously perpetually gray — easily
+// misread as yesterday's real, colored tile right next to it)
+// ---------------------------------------------------------------------------
+
+describe('withLiveAnchorStatus', () => {
+  it("overrides only the LAST (today) tile with the component's live status", () => {
+    const tiles = buildUptimeGrid(
+      [makeDay('2026-07-14', { worst_status: 'degraded', uptime_pct: 90 })],
+      ANCHOR
+    )
+    const result = withLiveAnchorStatus(tiles, 'operational')
+    expect(result[89].status).toBe('operational')
+    // Yesterday's real rollup tile is untouched.
+    expect(result[88].status).toBe('degraded')
+    expect(result[88].uptimePct).toBe(90)
+  })
+
+  it("today's overridden tile never carries a fabricated percentage", () => {
+    const tiles = buildUptimeGrid([], ANCHOR)
+    const result = withLiveAnchorStatus(tiles, 'outage')
+    expect(result[89].status).toBe('outage')
+    expect(result[89].uptimePct).toBeNull()
+    expect(result[89].totalChecks).toBeNull()
+  })
+
+  it("a live status of 'unknown' leaves today as ordinary no-data (there is no DayStatus for it)", () => {
+    const tiles = buildUptimeGrid([], ANCHOR)
+    const result = withLiveAnchorStatus(tiles, 'unknown')
+    expect(result[89].status).toBeNull()
+  })
+
+  it('does not throw on an empty tile array', () => {
+    expect(withLiveAnchorStatus([], 'operational')).toEqual([])
+  })
+
+  it("uptimeTileText renders the override as 'current, today in progress', not a fake percentage", () => {
+    const tiles = buildUptimeGrid([], ANCHOR)
+    const result = withLiveAnchorStatus(tiles, 'degraded')
+    expect(uptimeTileText(result[89])).toBe(`${ANCHOR}: Degraded (current, today in progress)`)
+  })
+
+  it('a completed day with a real percentage is unaffected by the qualifier', () => {
+    const tiles = buildUptimeGrid([makeDay(ANCHOR, { uptime_pct: 99.5 })], '2026-07-16')
+    // ANCHOR (2026-07-15) is now yesterday relative to the new anchor 2026-07-16.
+    const yesterday = tiles.find((t) => t.date === ANCHOR)!
+    expect(uptimeTileText(yesterday)).toContain('99.50% uptime')
+    expect(uptimeTileText(yesterday)).not.toContain('current')
   })
 })
