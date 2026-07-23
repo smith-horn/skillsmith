@@ -8,6 +8,7 @@
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -48,7 +49,13 @@ import {
   encodeProjectSegment,
   resetProjectDirCache,
 } from '../../packages/doc-retrieval-mcp/src/retrieval-log/project-dir.js'
+import {
+  resolveMainRepoKey,
+  writeEntry as writeReindexEntry,
+  type ReindexEntry,
+} from '../../packages/doc-retrieval-mcp/src/retrieval-log/reindex-state.js'
 import type { SearchHit } from '../../packages/doc-retrieval-mcp/src/types.js'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 let tmp: string
 
@@ -297,5 +304,149 @@ describe('runQuery', () => {
     searchMock.mockResolvedValueOnce([makeHit('h1', 0.5, 'x.md')])
     await runQuery({ ...baseArgs, cwd: tmp })
     expect(searchMock).toHaveBeenCalledWith(expect.objectContaining({ k: 8, minScore: 0.35 }))
+  })
+})
+
+describe('runQuery — reindex staleness banner (SMI-5793)', () => {
+  const baseArgs = {
+    sessionId: 'sess-1',
+    branch: 'smi-5793-reindex-observability',
+    smi: 'smi-5793',
+    cwd: '',
+    out: '/tmp/o.md',
+  }
+
+  let repoDir: string
+  let stateDir: string
+  let originalStateOverride: string | undefined
+  let originalReindexDisable: string | undefined
+  let originalReindexStaleHours: string | undefined
+
+  beforeEach(() => {
+    // SMI-4693: every git invocation under test routes through
+    // makeFixtureEnv() (strips GIT_DISCOVERY_VARS + pins author/committer)
+    // so an inherited env var can never redirect a spawn into this repo's
+    // own parent worktree. makeFixtureTempDir realpath-canonicalizes the
+    // temp dir (SMI-4692 class) since this fixture hosts a real git repo.
+    repoDir = makeFixtureTempDir('priming-reindex-repo')
+    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', repoDir], {
+      env: makeFixtureEnv(),
+    })
+    stateDir = mkdtempSync(join(tmpdir(), 'priming-reindex-state-'))
+    originalStateOverride = process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+    originalReindexDisable = process.env.SKILLSMITH_REINDEX_STALENESS_DISABLE
+    originalReindexStaleHours = process.env.SKILLSMITH_REINDEX_STALE_HOURS
+    process.env.SKILLSMITH_STATE_DIR_OVERRIDE = stateDir
+    delete process.env.SKILLSMITH_REINDEX_STALENESS_DISABLE
+    delete process.env.SKILLSMITH_REINDEX_STALE_HOURS
+    // Isolate the reindex banner from signal-building/search: this suite
+    // only cares about contextBanner, which is computed (and returned)
+    // BEFORE the disabled short-circuit, same as the probe/liveness banners.
+    process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING = '1'
+  })
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true })
+    rmSync(stateDir, { recursive: true, force: true })
+    if (originalStateOverride === undefined) delete process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+    else process.env.SKILLSMITH_STATE_DIR_OVERRIDE = originalStateOverride
+    if (originalReindexDisable === undefined) {
+      delete process.env.SKILLSMITH_REINDEX_STALENESS_DISABLE
+    } else {
+      process.env.SKILLSMITH_REINDEX_STALENESS_DISABLE = originalReindexDisable
+    }
+    if (originalReindexStaleHours === undefined) {
+      delete process.env.SKILLSMITH_REINDEX_STALE_HOURS
+    } else {
+      process.env.SKILLSMITH_REINDEX_STALE_HOURS = originalReindexStaleHours
+    }
+    delete process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING
+  })
+
+  function seedEntry(overrides: Partial<ReindexEntry> = {}): void {
+    const key = resolveMainRepoKey(repoDir)
+    if (!key) throw new Error('test setup: resolveMainRepoKey failed for the fixture repo')
+    const entry: ReindexEntry = {
+      lastRunTs: new Date().toISOString(),
+      lastRunSha: 'abc123',
+      mode: 'incremental',
+      filesScanned: 3,
+      chunksUpserted: 3,
+      chunksDeleted: 0,
+      durationMs: 100,
+      success: true,
+      consecutiveZeroTouchRuns: 0,
+      ...overrides,
+    }
+    writeReindexEntry(key, entry)
+  }
+
+  function commitOne(): void {
+    // SMI-4693: routed through makeFixtureEnv() — see the beforeEach comment
+    // above. Author/committer identity comes from makeFixtureEnv()'s pinned
+    // GIT_AUTHOR_*/GIT_COMMITTER_* env vars, so no explicit -c user.email/
+    // user.name flags are needed here.
+    const env = makeFixtureEnv()
+    writeFileSync(join(repoDir, 'file.txt'), 'x')
+    execFileSync('git', ['-C', repoDir, 'add', '.'], { env })
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'x', '--quiet'], { env })
+  }
+
+  it('renders nothing when no reindex.state entry exists', async () => {
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toBe('')
+  })
+
+  it('renders a failed-run banner', async () => {
+    seedEntry({ success: false, errorReason: 'boom', filesScanned: 0, chunksUpserted: 0 })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[reindex]')
+    expect(result.additionalContext).toContain('last run failed: boom')
+  })
+
+  it('renders an anomaly banner at the zero-touch threshold', async () => {
+    seedEntry({
+      filesScanned: 0,
+      chunksUpserted: 0,
+      chunksDeleted: 0,
+      consecutiveZeroTouchRuns: 5,
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('5 consecutive commits scanned 0 files')
+    expect(result.additionalContext).toContain('SMI-5786')
+  })
+
+  it('renders a hung banner when no run in >48h despite HEAD advancing', async () => {
+    commitOne()
+    seedEntry({
+      lastRunTs: new Date(Date.now() - 49 * 3600 * 1000).toISOString(),
+      lastRunSha: 'stale-sha-not-matching-head',
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('possibly hung or not firing')
+  })
+
+  it('honors a custom SKILLSMITH_REINDEX_STALE_HOURS threshold', async () => {
+    commitOne()
+    process.env.SKILLSMITH_REINDEX_STALE_HOURS = '1'
+    seedEntry({
+      lastRunTs: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+      lastRunSha: 'stale-sha-not-matching-head',
+    })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('possibly hung or not firing')
+  })
+
+  it('renders nothing when healthy (recent run, no anomaly)', async () => {
+    seedEntry()
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toBe('')
+  })
+
+  it('SKILLSMITH_REINDEX_STALENESS_DISABLE=1 suppresses the banner even when the last run failed', async () => {
+    process.env.SKILLSMITH_REINDEX_STALENESS_DISABLE = '1'
+    seedEntry({ success: false, errorReason: 'boom', filesScanned: 0, chunksUpserted: 0 })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).not.toContain('[reindex]')
   })
 })

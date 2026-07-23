@@ -9,8 +9,14 @@
 /** Log severity, ordered `debug < info < warn < error`. */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
-/** Which invocation surface produced a record — one JSONL file per surface. */
-export type Surface = 'mcp' | 'cli' | 'vscode'
+/**
+ * Which invocation surface produced a record — one JSONL file per surface.
+ * `'doc-retrieval'` (SMI-5793) is the fire-and-forget `.husky/post-commit`
+ * reindex CLI (`packages/doc-retrieval-mcp/src/cli.ts`) — kept distinct from
+ * `'cli'` so its `skillsmith-doc-retrieval-<date>.jsonl` file never
+ * interleaves with `@skillsmith/cli`'s own records.
+ */
+export type Surface = 'mcp' | 'cli' | 'vscode' | 'doc-retrieval'
 
 /** Normalized, already-redacted error shape embedded in a `LogRecord`. */
 export interface LogRecordError {

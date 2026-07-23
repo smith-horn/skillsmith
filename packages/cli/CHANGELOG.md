@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `sklx logs --tail` now watches the doc-retrieval reindex CLI's structured log surface — added `'doc-retrieval'` to `commands/logs.ts`'s `TAIL_SURFACES` array (SMI-5793)
+
 ## v0.8.3
 
 - **Chore**: bump the opentelemetry group across 1 directory with 8 updates (#1862)

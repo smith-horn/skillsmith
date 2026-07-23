@@ -23,6 +23,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { __resetLoggingStateForTests, pruneExpiredLogs, writeLogLine } from './rotation.js'
 
+// SMI-5793: `homedir()` reads the OS passwd record and does NOT respect
+// `process.env.HOME` mutations (SMI-4711 precedent, see
+// memory-topic-files.test.ts) — under `--pool=threads` parallel test files
+// share a process, so `homedir()` always returns the real system home.
+// Only the "neither var set" fallback test below actually needs this stub;
+// every other test in this file sets `SKILLSMITH_LOG_DIR` directly, which
+// `getLogDir()` checks before ever calling `homedir()`.
+const { homedirMock } = vi.hoisted(() => ({
+  homedirMock: vi.fn(() => ''),
+}))
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  homedirMock.mockImplementation(actual.homedir)
+  return { ...actual, homedir: homedirMock }
+})
+
 let tempDir: string
 let originalLogDir: string | undefined
 
@@ -165,5 +181,72 @@ describe('rotation.ts — retention sweep', () => {
   it('is a no-op (never throws) when the log directory does not exist', async () => {
     process.env.SKILLSMITH_LOG_DIR = join(tempDir, 'does-not-exist')
     await expect(pruneExpiredLogs()).resolves.toBeUndefined()
+  })
+})
+
+describe('rotation.ts — SKILLSMITH_STATE_DIR_OVERRIDE precedence (SMI-5793)', () => {
+  let overrideDir: string
+  let originalStateOverride: string | undefined
+
+  beforeEach(() => {
+    overrideDir = mkdtempSync(join(tmpdir(), 'skillsmith-log-override-'))
+    originalStateOverride = process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+  })
+
+  afterEach(() => {
+    if (originalStateOverride === undefined) {
+      delete process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+    } else {
+      process.env.SKILLSMITH_STATE_DIR_OVERRIDE = originalStateOverride
+    }
+    // Only the "neither var set" case below customizes homedirMock's return
+    // value; reset unconditionally so it never leaks into a later-added test.
+    homedirMock.mockReset()
+    rmSync(overrideDir, { recursive: true, force: true })
+  })
+
+  it('SKILLSMITH_STATE_DIR_OVERRIDE alone resolves to <override>/logs', async () => {
+    delete process.env.SKILLSMITH_LOG_DIR
+    process.env.SKILLSMITH_STATE_DIR_OVERRIDE = overrideDir
+
+    await writeLogLine('doc-retrieval', JSON.stringify({ tier: 'override-alone' }))
+
+    const overrideLogsDir = join(overrideDir, 'logs')
+    const files = readdirSync(overrideLogsDir).filter((f) =>
+      f.startsWith('skillsmith-doc-retrieval-')
+    )
+    expect(files).toHaveLength(1)
+    // The SKILLSMITH_LOG_DIR temp dir (unset here) must NOT have received the write.
+    expect(existsSync(join(tempDir, files[0]))).toBe(false)
+  })
+
+  it('when both SKILLSMITH_LOG_DIR and SKILLSMITH_STATE_DIR_OVERRIDE are set, SKILLSMITH_LOG_DIR wins (precedence unchanged for existing callers)', async () => {
+    // beforeEach already points SKILLSMITH_LOG_DIR at tempDir.
+    process.env.SKILLSMITH_STATE_DIR_OVERRIDE = overrideDir
+
+    await writeLogLine('doc-retrieval', JSON.stringify({ tier: 'both-set' }))
+
+    const files = readdirSync(tempDir).filter((f) => f.startsWith('skillsmith-doc-retrieval-'))
+    expect(files).toHaveLength(1)
+    // The override dir's logs/ subdirectory must never have been created.
+    expect(existsSync(join(overrideDir, 'logs'))).toBe(false)
+  })
+
+  it('neither var set falls back to homedir()/.skillsmith/logs (unchanged behavior, newly asserted)', async () => {
+    delete process.env.SKILLSMITH_LOG_DIR
+    delete process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+    const fakeHome = mkdtempSync(join(tmpdir(), 'skillsmith-log-fakehome-'))
+    homedirMock.mockReturnValue(fakeHome)
+    try {
+      await writeLogLine('doc-retrieval', JSON.stringify({ tier: 'homedir-fallback' }))
+
+      const expectedDir = join(fakeHome, '.skillsmith', 'logs')
+      const files = readdirSync(expectedDir).filter((f) =>
+        f.startsWith('skillsmith-doc-retrieval-')
+      )
+      expect(files).toHaveLength(1)
+    } finally {
+      rmSync(fakeHome, { recursive: true, force: true })
+    }
   })
 })

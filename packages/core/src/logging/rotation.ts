@@ -62,9 +62,23 @@ const RETENTION_DAYS = 14
  * `~/.skillsmith/logs/`. Read lazily (not frozen at import time) so a test
  * can set the env var before its first write without needing
  * `vi.resetModules()`.
+ *
+ * SMI-5793: `SKILLSMITH_STATE_DIR_OVERRIDE` is a second, purpose-named
+ * precedence tier (checked after the `SKILLSMITH_LOG_DIR` test seam, before
+ * the `homedir()` fallback) — production container→host bridging for the
+ * doc-retrieval reindex CLI, which runs inside `skillsmith-dev-1` and needs
+ * its disk writes to land on a bind-mounted, host-visible path
+ * (`docker-compose.yml`'s `${HOME}/.skillsmith:/skillsmith-state` mount)
+ * rather than the container's own throwaway `homedir()`. Deliberately a
+ * separate var from `SKILLSMITH_LOG_DIR` so this production path-bridging
+ * concern never blurs with that var's documented test-isolation-only intent.
  */
 function getLogDir(): string {
-  return process.env.SKILLSMITH_LOG_DIR || join(homedir(), '.skillsmith', 'logs')
+  if (process.env.SKILLSMITH_LOG_DIR) return process.env.SKILLSMITH_LOG_DIR
+  if (process.env.SKILLSMITH_STATE_DIR_OVERRIDE) {
+    return join(process.env.SKILLSMITH_STATE_DIR_OVERRIDE, 'logs')
+  }
+  return join(homedir(), '.skillsmith', 'logs')
 }
 
 function dailyFilePath(surface: Surface, date: string): string {
