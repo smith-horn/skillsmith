@@ -1,0 +1,396 @@
+---
+/**
+ * Skillsmith public status page (SMI-5755, Wave 5).
+ *
+ * Static page — no `export const prerender = false` (matches this repo's
+ * convention for static pages like contact.astro/faq.astro; the page itself
+ * renders a fixed no-JS scaffold, and the client script below progressively
+ * enhances it with live data from status-public).
+ */
+import BaseLayout from '../layouts/BaseLayout.astro'
+import StatusComponentRow from '../components/StatusComponentRow.astro'
+import { COMPONENTS, OVERALL_BANNER } from '../lib/status-vocab'
+
+// Server-computed anchor for the initial (all-empty) uptime strips. The
+// client script recomputes its own anchor from each payload's own
+// `generated_at` on every poll (Codex #6) — this value is only ever used for
+// the very first, data-free paint.
+const todayIso = new Date().toISOString().slice(0, 10)
+const banner = OVERALL_BANNER.unknown
+---
+
+<BaseLayout
+  title="Status | Skillsmith"
+  description="Live status and 90-day uptime history for Skillsmith's website, API, MCP backend, and infrastructure."
+  activePath="/status"
+>
+  <Fragment slot="head">
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      title="Skillsmith Status"
+      href="/status.rss.xml"
+    />
+  </Fragment>
+
+  <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-16" data-smoke="status-page">
+    <div class="text-center mb-10">
+      <h1 class="text-4xl font-bold text-white mb-2">Skillsmith Status</h1>
+      <p class="text-dark-300">
+        Live status and 90-day uptime history for Skillsmith's core services.
+      </p>
+    </div>
+
+    <div
+      id="status-overall-banner"
+      class="rounded-xl border border-dark-700 bg-dark-900 p-6 mb-10 flex items-center gap-4"
+    >
+      <span id="status-overall-dot" class={`h-3 w-3 rounded-full flex-shrink-0 ${banner.dot}`}
+      ></span>
+      <div>
+        <p id="status-overall-headline" class={`font-semibold ${banner.text}`}>
+          {banner.headline}
+        </p>
+        <p id="status-overall-sub" class="text-sm text-gray-400 mt-1">
+          {banner.sub}
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-semibold text-white">Components</h2>
+      <p class="text-xs text-gray-500">
+        Last updated: <span id="status-last-updated">—</span>
+        <span id="status-stale-flag" class="text-yellow-400" hidden></span>
+      </p>
+    </div>
+
+    <div id="status-components-list" class="space-y-4 mb-16">
+      {
+        COMPONENTS.map((component) => (
+          <StatusComponentRow
+            slug={component.slug}
+            name={component.name}
+            anchorIsoDate={todayIso}
+          />
+        ))
+      }
+    </div>
+
+    <!--
+      Hidden clone source for dynamically-created rows (a component slug the
+      API returns that isn't one of the 6 fixed COMPONENTS). Rendered via the
+      exact same StatusComponentRow used for the visible scaffold above, so
+      the two can never drift (Codex #3 point 5). Never displayed directly —
+      `<template>` content is inert until cloned by ../lib/status-client.ts.
+    -->
+    <template id="status-row-template">
+      <StatusComponentRow slug="__template__" name="" anchorIsoDate={todayIso} />
+    </template>
+
+    <div>
+      <h2 class="text-xl font-semibold text-white mb-4">Incident History</h2>
+      <div id="status-incidents-list">
+        <p id="status-no-incidents" class="text-gray-400">No incidents reported.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    import {
+      applyComponentRowContent,
+      buildComponentRowContent,
+      buildComponentsBySlug,
+      buildIncidentContent,
+      buildScaffoldResetContent,
+      createStatusPoller,
+      planComponentReconciliation,
+      readCachedStatusPayload,
+      refreshUptimeStripTiles,
+      wireUptimeStripKeyboardNav,
+      writeCachedStatusPayload,
+      type ComponentRowElements,
+      type UptimeStripHandle,
+      type UptimeTileHandle,
+    } from '../lib/status-client'
+    import {
+      COMPONENTS,
+      OVERALL_BANNER,
+      type ComponentStatus,
+      type StatusComponent,
+      type StatusIncident,
+      type StatusResponse,
+    } from '../lib/status-vocab'
+
+    // DEVIATION from the brief's literal "is:inline define:vars" instruction
+    // — see the header comment in ../lib/status-client.ts for the full
+    // rationale (testability of the reconciliation contract without risking
+    // a shipped/tested-twin drift, matching BaseLayout.astro's own
+    // is:inline-shim + regular-imported-module split for the Supabase
+    // client). import.meta.env.PUBLIC_API_BASE_URL is available in a
+    // bundled <script> exactly as in an is:inline one (astro.config.mjs's
+    // vite.define), so the URL-construction idiom itself is unchanged.
+
+    const SCAFFOLD_SLUGS = new Set(COMPONENTS.map((c) => c.slug))
+
+    let currentPoller: ReturnType<typeof createStatusPoller> | null = null
+
+    function teardownCurrentPoller(): void {
+      if (currentPoller) {
+        currentPoller.stop()
+        currentPoller = null
+      }
+    }
+
+    function formatTimestamp(iso: string): string {
+      if (!iso) return '—'
+      const parsed = new Date(iso)
+      if (Number.isNaN(parsed.getTime())) return '—'
+      return parsed.toLocaleString()
+    }
+
+    function getRowElements(rowEl: Element): ComponentRowElements {
+      return {
+        nameEl: rowEl.querySelector('[data-role="name"]') as HTMLElement,
+        messageEl: rowEl.querySelector('[data-role="message"]') as HTMLElement,
+        latencyEl: rowEl.querySelector('[data-role="latency"]') as HTMLElement,
+        checkedAtEl: rowEl.querySelector('[data-role="checked-at"]') as HTMLElement,
+        pillTextEl: rowEl.querySelector('[data-status-pill-text]') as HTMLElement,
+        pillEl: rowEl.querySelector('[data-status-pill]') as HTMLElement,
+      }
+    }
+
+    function getUptimeTileHandles(rowEl: Element): UptimeTileHandle[] {
+      return Array.from(rowEl.querySelectorAll('[data-uptime-tile]'))
+    }
+
+    // FIX (medium): resolves the containing strip's own group-level
+    // `[data-uptime-strip]` element so `refreshUptimeStripTiles` can also
+    // recompute its `aria-label` — see ../lib/status-render.ts.
+    function getUptimeStripHandle(rowEl: Element): UptimeStripHandle | null {
+      return rowEl.querySelector('[data-uptime-strip]')
+    }
+
+    function initStatusPageInstance(): void {
+      const listEl = document.getElementById('status-components-list')
+      const templateEl = document.getElementById(
+        'status-row-template'
+      ) as HTMLTemplateElement | null
+      const overallDotEl = document.getElementById('status-overall-dot')
+      const overallHeadlineEl = document.getElementById('status-overall-headline')
+      const overallSubEl = document.getElementById('status-overall-sub')
+      const lastUpdatedEl = document.getElementById('status-last-updated')
+      const staleFlagEl = document.getElementById('status-stale-flag')
+      const incidentsListEl = document.getElementById('status-incidents-list')
+
+      if (
+        !listEl ||
+        !templateEl ||
+        !overallDotEl ||
+        !overallHeadlineEl ||
+        !overallSubEl ||
+        !lastUpdatedEl ||
+        !staleFlagEl ||
+        !incidentsListEl
+      ) {
+        // Navigated away from /status — stop any previous instance's poller
+        // so it doesn't keep fetching against now-detached DOM.
+        teardownCurrentPoller()
+        return
+      }
+
+      function buildRowMap(): Map<string, Element> {
+        const map = new Map<string, Element>()
+        listEl!.querySelectorAll('[data-component]').forEach((el) => {
+          const slug = (el as HTMLElement).dataset.component
+          if (slug) map.set(slug, el)
+        })
+        return map
+      }
+
+      function createRowElement(slug: string): Element {
+        const fragment = templateEl!.content.cloneNode(true) as DocumentFragment
+        const rowEl = fragment.firstElementChild as HTMLElement
+        rowEl.dataset.component = slug
+        listEl!.appendChild(rowEl)
+        return rowEl
+      }
+
+      function updateOverallBanner(status: ComponentStatus): void {
+        const banner = OVERALL_BANNER[status] ?? OVERALL_BANNER.unknown
+        overallDotEl!.className = `h-3 w-3 rounded-full flex-shrink-0 ${banner.dot}`
+        overallHeadlineEl!.className = `font-semibold ${banner.text}`
+        overallHeadlineEl!.textContent = banner.headline
+        overallSubEl!.textContent = banner.sub
+      }
+
+      function reconcileComponents(components: StatusComponent[], anchorIsoDate: string): void {
+        const rowMap = buildRowMap()
+        const existingSlugs = new Set(rowMap.keys())
+        const plan = planComponentReconciliation(components, existingSlugs, SCAFFOLD_SLUGS)
+
+        for (const component of plan.toUpsert) {
+          const rowEl = rowMap.get(component.slug)
+          if (!rowEl) continue
+          applyComponentRowContent(getRowElements(rowEl), buildComponentRowContent(component))
+          refreshUptimeStripTiles(
+            getUptimeTileHandles(rowEl),
+            component.uptime_90d,
+            anchorIsoDate,
+            getUptimeStripHandle(rowEl),
+            component.name
+          )
+        }
+
+        for (const component of plan.toCreate) {
+          const rowEl = createRowElement(component.slug)
+          applyComponentRowContent(getRowElements(rowEl), buildComponentRowContent(component))
+          refreshUptimeStripTiles(
+            getUptimeTileHandles(rowEl),
+            component.uptime_90d,
+            anchorIsoDate,
+            getUptimeStripHandle(rowEl),
+            component.name
+          )
+        }
+
+        for (const slug of plan.toRemoveSlugs) {
+          rowMap.get(slug)?.remove()
+        }
+
+        for (const slug of plan.toResetSlugs) {
+          const rowEl = rowMap.get(slug)
+          const scaffold = COMPONENTS.find((c) => c.slug === slug)
+          if (!rowEl || !scaffold) continue
+          applyComponentRowContent(getRowElements(rowEl), buildScaffoldResetContent(scaffold))
+          refreshUptimeStripTiles(
+            getUptimeTileHandles(rowEl),
+            [],
+            anchorIsoDate,
+            getUptimeStripHandle(rowEl),
+            scaffold.name
+          )
+        }
+      }
+
+      function renderIncidents(
+        incidents: StatusIncident[],
+        componentsBySlug: ReadonlyMap<string, { name: string }>
+      ): void {
+        incidentsListEl!.textContent = ''
+        if (incidents.length === 0) {
+          const emptyEl = document.createElement('p')
+          emptyEl.id = 'status-no-incidents'
+          emptyEl.className = 'text-gray-400'
+          emptyEl.textContent = 'No incidents reported.'
+          incidentsListEl!.appendChild(emptyEl)
+          return
+        }
+
+        for (const incident of incidents) {
+          const content = buildIncidentContent(incident, componentsBySlug)
+
+          const wrapperEl = document.createElement('div')
+          wrapperEl.id = `incident-${content.id}`
+          wrapperEl.className = 'border border-dark-700 rounded-lg p-4 mb-4'
+
+          const titleEl = document.createElement('h3')
+          titleEl.className = 'text-white font-semibold'
+          titleEl.textContent = content.title // untrusted — textContent only
+          wrapperEl.appendChild(titleEl)
+
+          const metaEl = document.createElement('p')
+          metaEl.className = 'text-xs text-gray-500 mt-1'
+          metaEl.textContent =
+            `${content.impactLabel} impact · ${content.statusLabel} · ` +
+            `Affects: ${content.affectedText} · Started: ${content.startedAtText} · ` +
+            `Resolved: ${content.resolvedAtText}`
+          wrapperEl.appendChild(metaEl)
+
+          const updatesEl = document.createElement('ul')
+          updatesEl.className = 'mt-3 space-y-2'
+          for (const update of content.updates) {
+            const itemEl = document.createElement('li')
+            itemEl.className = 'text-sm'
+
+            const statusEl = document.createElement('span')
+            statusEl.className = 'text-gray-300 font-medium'
+            statusEl.textContent = `${update.statusLabel} (${update.postedAtText}): `
+            itemEl.appendChild(statusEl)
+
+            const messageEl = document.createElement('span')
+            messageEl.className = 'text-gray-400'
+            messageEl.textContent = update.message // untrusted — textContent only
+            itemEl.appendChild(messageEl)
+
+            updatesEl.appendChild(itemEl)
+          }
+          wrapperEl.appendChild(updatesEl)
+          incidentsListEl!.appendChild(wrapperEl)
+        }
+      }
+
+      function onResult(payload: StatusResponse): void {
+        const data = payload.data
+        const anchorIsoDate =
+          typeof data.generated_at === 'string' && data.generated_at.length >= 10
+            ? data.generated_at.slice(0, 10)
+            : new Date().toISOString().slice(0, 10)
+
+        // FIX (medium): built FRESH from this poll's live components on every
+        // call — never a static map frozen from the compile-time scaffold at
+        // module scope — so a renamed fixed component or an incident
+        // affecting a dynamic (non-scaffold) component resolves to its real
+        // current display name (see buildComponentsBySlug in
+        // ../lib/status-render.ts).
+        const componentsBySlug = buildComponentsBySlug(data.components, COMPONENTS)
+
+        updateOverallBanner(data.overall_status)
+        reconcileComponents(data.components, anchorIsoDate)
+        renderIncidents(data.incidents, componentsBySlug)
+        lastUpdatedEl!.textContent = formatTimestamp(data.generated_at)
+
+        writeCachedStatusPayload(localStorage, payload)
+      }
+
+      function onStaleChange(isStale: boolean): void {
+        staleFlagEl!.hidden = !isStale
+        staleFlagEl!.textContent = isStale ? ' (may be outdated)' : ''
+      }
+
+      teardownCurrentPoller()
+
+      const cached = readCachedStatusPayload(localStorage)
+      if (cached) onResult(cached)
+
+      const apiUrl = `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/status-public`
+      currentPoller = createStatusPoller({ apiUrl }, { onResult, onStaleChange })
+      if (document.visibilityState === 'visible') {
+        currentPoller.start()
+      }
+    }
+
+    document.addEventListener('astro:page-load', () => {
+      initStatusPageInstance()
+
+      // Document-level lifecycle listeners are wired exactly once across
+      // view-transition navigations — see ../lib/status-client.ts's header
+      // comment. `currentPoller` is reassigned on every page-load above, so
+      // these always act on whichever instance is current.
+      if (document.documentElement.dataset.statusWired === 'true') return
+      document.documentElement.dataset.statusWired = 'true'
+
+      document.addEventListener('astro:before-swap', () => {
+        currentPoller?.handleBeforeSwap()
+      })
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          currentPoller?.handleVisibilityHidden()
+        } else {
+          currentPoller?.handleVisibilityVisible()
+        }
+      })
+      wireUptimeStripKeyboardNav(document)
+    })
+  </script>
+</BaseLayout>

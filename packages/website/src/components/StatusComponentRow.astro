@@ -1,0 +1,68 @@
+---
+/**
+ * StatusComponentRow — one status-page component row (SMI-5755, Wave 5).
+ *
+ * Rendered twice from status.astro with IDENTICAL markup: once per fixed
+ * scaffold component (visible), and once more inside a hidden
+ * `<template id="status-row-template">` (never visible, cloned by the client
+ * script in `../lib/status-client.ts` to create a "dynamic" row for a
+ * component slug the API returns that isn't one of the 6 fixed rows). Using
+ * one component for both guarantees the scaffold and dynamic-row markup can
+ * never drift apart (Codex #3 point 5 — "the shared renderer uses the exact
+ * same safe text/accessibility path regardless of whether the row is a
+ * scaffold row or a dynamic one").
+ *
+ * `data-role` attributes are the stable hooks the client script queries once
+ * per row and updates via `textContent`/`className` only — see
+ * `applyComponentRowContent()` in `../lib/status-client.ts`.
+ */
+import Card from './Card.astro'
+import StatusPill from './StatusPill.astro'
+import UptimeBarStrip from './UptimeBarStrip.astro'
+import { SCAFFOLD_NO_DATA_MESSAGE, type ComponentStatus, type UptimeDay } from '../lib/status-vocab'
+
+interface Props {
+  slug: string
+  name: string
+  message?: string
+  status?: ComponentStatus
+  latencyText?: string
+  checkedAtText?: string
+  uptime90d?: UptimeDay[]
+  anchorIsoDate: string
+}
+
+const {
+  slug,
+  name,
+  message = SCAFFOLD_NO_DATA_MESSAGE,
+  status = 'unknown',
+  latencyText = '—',
+  checkedAtText = '—',
+  uptime90d = [],
+  anchorIsoDate,
+} = Astro.props
+---
+
+<div data-component={slug}>
+  <Card variant="bordered" padding="md">
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h3 class="text-white font-semibold" data-role="name">
+          {name}
+        </h3>
+        <p class="text-sm text-gray-400 mt-1" data-role="message">
+          {message}
+        </p>
+      </div>
+      <StatusPill status={status} size="sm" />
+    </div>
+    <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+      <span>Latency: <span data-role="latency">{latencyText}</span></span>
+      <span>Last checked: <span data-role="checked-at">{checkedAtText}</span></span>
+    </div>
+    <div class="mt-4">
+      <UptimeBarStrip uptime90d={uptime90d} anchorIsoDate={anchorIsoDate} label={name} />
+    </div>
+  </Card>
+</div>

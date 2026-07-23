@@ -1,0 +1,78 @@
+---
+/**
+ * UptimeBarStrip — 90-day uptime strip for one status component
+ * (SMI-5755, Wave 5).
+ *
+ * FIX (Codex #14, accessibility, merge-blocking): does NOT make all 90 tiles
+ * independently `tabindex="0"` (540 tab stops across 6 strips would be
+ * unusable). Instead: roving tabindex — this strip is `role="group"` with a
+ * summary `aria-label`, exactly one tile starts at `tabindex="0"` (the most
+ * recent/last tile), every other tile is `tabindex="-1"`. Arrow-key
+ * (Left/Right, Home/End) navigation moves focus and updates which tile has
+ * `tabindex="0"`.
+ *
+ * Astro components can't easily own imperative keyboard logic shared across
+ * 6 instances, so the keydown handler is NOT implemented per-component here —
+ * it's a single delegated listener wired once from status.astro's client
+ * script, calling `wireUptimeStripKeyboardNav()` /
+ * `computeRovingTabindexMove()` in `../lib/status-client.ts`. This file only
+ * emits the `data-uptime-strip` / `data-uptime-tile` hooks that handler
+ * listens for.
+ *
+ * Each tile gets both a native `title` and an `aria-label` with the full date
+ * + status/uptime (or "No data"). Screen readers announce `aria-label` on
+ * focus regardless of `title`'s cross-browser hover-vs-focus inconsistency —
+ * that inconsistency is exactly why `aria-label` is the load-bearing channel;
+ * `title` is a bonus for mouse users only.
+ *
+ * Tile fill: solid `bg-{green|yellow|red}-500` for real statuses,
+ * `bg-gray-700` for no-data — never a border; tiles are separated by a flex
+ * gap.
+ */
+import {
+  buildUptimeGrid,
+  buildUptimeStripAriaLabel,
+  uptimeTileClassName,
+  uptimeTileText,
+  type UptimeDay,
+} from '../lib/status-vocab'
+
+interface Props {
+  uptime90d: UptimeDay[]
+  anchorIsoDate: string
+  label: string
+  class?: string
+}
+
+const { uptime90d, anchorIsoDate, label, class: className = '' } = Astro.props
+
+const tiles = buildUptimeGrid(uptime90d, anchorIsoDate)
+const lastIndex = tiles.length - 1
+
+// FIX (medium): counting logic now lives in buildUptimeStripAriaLabel
+// (../lib/status-vocab.ts) so this SSR computation and status-render.ts's
+// client-side refresh path share one implementation and can never drift.
+const groupAriaLabel = buildUptimeStripAriaLabel(tiles, label)
+---
+
+<div class={`flex flex-col gap-1 ${className}`}>
+  <div class="flex gap-0.5" role="group" aria-label={groupAriaLabel} data-uptime-strip>
+    {
+      tiles.map((tile, index) => (
+        <div
+          class={uptimeTileClassName(tile.status)}
+          tabindex={index === lastIndex ? '0' : '-1'}
+          role="img"
+          title={uptimeTileText(tile)}
+          aria-label={uptimeTileText(tile)}
+          data-uptime-tile
+          data-date={tile.date}
+        />
+      ))
+    }
+  </div>
+  <div class="flex justify-between text-xs text-gray-500">
+    <span>90 days ago</span>
+    <span>Today</span>
+  </div>
+</div>

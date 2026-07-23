@@ -163,6 +163,25 @@
       "checks": ["check_status_public_healthy"]
     },
     {
+      "id": "website-status-page",
+      "owner": "website",
+      "trigger_globs": [
+        "packages/website/src/pages/status.astro",
+        "packages/website/src/pages/status.rss.xml.ts",
+        "packages/website/src/components/StatusPill.astro",
+        "packages/website/src/components/StatusComponentRow.astro",
+        "packages/website/src/components/UptimeBarStrip.astro",
+        "packages/website/src/lib/status-vocab.ts",
+        "packages/website/src/lib/status-client.ts",
+        "packages/website/src/lib/status-payload.ts",
+        "packages/website/src/lib/status-reconcile.ts",
+        "packages/website/src/lib/status-render.ts",
+        "packages/website/src/lib/status-poller.ts"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_status_page_renders", "check_status_rss_feed_well_formed"]
+    },
+    {
       "id": "edge-fn-fuzzy-search",
       "owner": "edge-functions",
       "trigger_globs": ["supabase/functions/skills-recommend/**"],
