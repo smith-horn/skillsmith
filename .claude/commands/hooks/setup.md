@@ -7,6 +7,8 @@
 npx -y ruflo@3.14.2 init hooks
 ```
 
+MCP equivalent: `mcp__ruflo__hooks_init`.
+
 This automatically creates:
 - `.claude/settings.json` with hook configurations
 - Hook command documentation
