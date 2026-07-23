@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
+            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi"
           }
         ]
       },
@@ -93,7 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} node node_modules/ruflo/bin/ruflo.js hooks pre-edit --file '{}' --auto-assign-agents true --load-context true"
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then node node_modules/ruflo/bin/ruflo.js hooks pre-edit --file \"$FILE\" --auto-assign-agents true --load-context true; fi"
           }
         ]
       },
@@ -113,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
+            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi"
           }
         ]
       },
@@ -122,7 +122,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'FILE=\"{}\"; if [ -n \"$FILE\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi'"
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi"
           }
         ]
       },
@@ -131,7 +131,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r 'if (.tool_input.description // \"\" | test(\"review|code review\"; \"i\")) then \"GOVERNANCE_CHECK\" else empty end' | xargs -I {} sh -c 'echo \"🔒 Governance Gate: Running standards audit...\"; docker exec skillsmith-dev-1 npm run audit:standards || (echo \"❌ BLOCKED: Governance audit failed. Fix violations before continuing.\" && exit 1)'"
+            "command": "CHECK=$(cat | jq -r 'if (.tool_input.description // \"\" | test(\"review|code review\"; \"i\")) then \"GOVERNANCE_CHECK\" else empty end'); if [ -n \"$CHECK\" ]; then echo \"🔒 Governance Gate: Running standards audit...\"; docker exec skillsmith-dev-1 npm run audit:standards || (echo \"❌ BLOCKED: Governance audit failed. Fix violations before continuing.\" && exit 1); fi"
           }
         ]
       },
