@@ -966,3 +966,81 @@ except Exception:
   report_pass "status-public" "check_status_public_healthy" "$url" "$ms"
   return 0
 }
+
+# ---- check_status_page_renders -----------------------------------------
+# SMI-5755 Wave 5 (public status page). Verifies /status returns 200 and
+# renders the server-rendered no-JS scaffold. Uses the
+# data-smoke="status-page" attribute (present without JS, mirroring
+# check_device_page_renders' data-smoke fingerprint pattern above) rather
+# than prose text, so a copy edit can't silently break the check.
+check_status_page_renders() {
+  local url="${SMOKE_WEBSITE_URL}/status"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "website-status-page" "check_status_page_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'data-smoke="status-page"' "status-page-fingerprint"; then
+    report_fail "website-status-page" "check_status_page_renders" "$url" 'data-smoke="status-page"' "missing-fingerprint" "$ms"
+    return 1
+  fi
+  report_pass "website-status-page" "check_status_page_renders" "$url" "$ms"
+  return 0
+}
+
+# ---- check_status_rss_feed_well_formed ----------------------------------
+# SMI-5755 Wave 5. Verifies /status.rss.xml returns 200, an XML content type,
+# and ACTUALLY PARSES as well-formed XML -- not just a `<rss` substring grep,
+# which a truncated/malformed feed could still satisfy. Uses python3's
+# xml.etree.ElementTree, matching this script's existing idiom of shelling
+# out to python3 for structured-output validation (see
+# check_status_public_healthy / _skills_usage_count above) rather than
+# introducing a new tool -- xmllint is not guaranteed present in the smoke
+# environment, python3 already is (used extensively above).
+check_status_rss_feed_well_formed() {
+  local url="${SMOKE_WEBSITE_URL}/status.rss.xml"
+  local t0 t1 ms resp status body content_type parse_ok
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "website-status-page" "check_status_rss_feed_well_formed" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+
+  content_type=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" -D - -o /dev/null "$url" 2>/dev/null \
+    | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type"{print $2; exit}')
+  if ! assert_contains "$content_type" "xml" "status-rss-content-type"; then
+    report_fail "website-status-page" "check_status_rss_feed_well_formed" "$url" "*/xml content-type" "$content_type" "$ms"
+    return 1
+  fi
+
+  parse_ok=$(printf '%s' "$body" | python3 -c "
+import sys
+import xml.etree.ElementTree as ET
+try:
+    root = ET.fromstring(sys.stdin.read())
+    print('ok' if root.tag == 'rss' else 'bad-root')
+except Exception:
+    print('parse-error')
+" 2>/dev/null) || parse_ok="parse-error"
+
+  if [ "$parse_ok" != "ok" ]; then
+    report_fail "website-status-page" "check_status_rss_feed_well_formed" "$url" "well-formed <rss> XML" "$parse_ok" "$ms"
+    return 1
+  fi
+
+  report_pass "website-status-page" "check_status_rss_feed_well_formed" "$url" "$ms"
+  return 0
+}

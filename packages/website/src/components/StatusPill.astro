@@ -1,0 +1,61 @@
+---
+/**
+ * StatusPill — direct structural clone of Badge.astro for the public status
+ * page (SMI-5755, Wave 5). Sources every class/label/icon from
+ * `lib/status-vocab.ts`. Only trusted vocab constants are interpolated here —
+ * no incident/component free text ever reaches this component.
+ */
+import type { ComponentStatus } from '../lib/status-vocab'
+import {
+  PILL_BASE,
+  PILL_ICON_SIZE,
+  PILL_SIZE,
+  STATUS_ICONS,
+  STATUS_LABELS,
+  STATUS_PILL_CLASSES,
+} from '../lib/status-vocab'
+
+interface Props {
+  status: ComponentStatus
+  size?: 'sm' | 'md'
+  showIcon?: boolean
+  class?: string
+}
+
+const { status, size = 'md', showIcon = true, class: className = '' } = Astro.props
+
+// Graceful fallback to 'unknown' for any unrecognized value — mirrors
+// Badge's `?? tierConfig.unverified` pattern, but the fallback here is
+// 'unknown', never 'operational' (an unrecognized status must never read as
+// healthy).
+const safeStatus: ComponentStatus = STATUS_PILL_CLASSES[status] ? status : 'unknown'
+const colors = STATUS_PILL_CLASSES[safeStatus]
+const label = STATUS_LABELS[safeStatus]
+const iconPath = STATUS_ICONS[safeStatus]
+
+const classes = [
+  PILL_BASE,
+  colors.bgColor,
+  colors.textColor,
+  colors.borderColor,
+  PILL_SIZE[size],
+  className,
+].join(' ')
+---
+
+<span class={classes} data-status-pill data-status={safeStatus}>
+  {
+    showIcon && (
+      <svg
+        class={`${PILL_ICON_SIZE[size]} mr-1`}
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        data-status-pill-icon
+      >
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={iconPath} />
+      </svg>
+    )
+  }
+  <span data-status-pill-text>{label}</span>
+</span>
