@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi"
+            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" pre-command \"$CMD\" -- --command \"$CMD\" --validate-safety true --prepare-resources true; fi"
           }
         ]
       },
@@ -93,7 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then node node_modules/ruflo/bin/ruflo.js hooks pre-edit --file \"$FILE\" --auto-assign-agents true --load-context true; fi"
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" pre-edit \"$FILE\" -- --file \"$FILE\" --auto-assign-agents true --load-context true; fi"
           }
         ]
       },
@@ -113,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi"
+            "command": "CMD=$(cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' '); if [ -n \"$CMD\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" post-command \"$CMD\" -- --command \"$CMD\" --success true --track-metrics true --store-results true; fi"
           }
         ]
       },
@@ -122,7 +122,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then node node_modules/ruflo/bin/ruflo.js hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi"
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // .tool_input.path // empty'); if [ -n \"$FILE\" ]; then \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks-log-wrapper.sh\" post-edit \"$FILE\" -- --file \"$FILE\" --success true --format true --update-memory true; fi"
           }
         ]
       },
