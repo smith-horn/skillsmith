@@ -84,7 +84,7 @@ redact() {
     -e 's/xox[abprs]-[A-Za-z0-9-]+/[REDACTED]/g' \
     -e 's/npm_[A-Za-z0-9]+/[REDACTED]/g' \
     -e 's/AKIA[0-9A-Z]{16}/[REDACTED]/g' \
-    -e 's/[Bb]asic [A-Za-z0-9+\/=]{8,}/Basic [REDACTED]/g' \
+    -e 's/[Bb]asic [A-Za-z0-9+/=]{8,}/Basic [REDACTED]/g' \
     -e 's/([Xx]-[Aa]pi-[Kk]ey|[Xx]-[Aa]pi-[Tt]oken): *[^ "]+/\1: [REDACTED]/g' \
     -e "s/(-{1,2}[A-Za-z_-]*([Tt]oken|[Kk]ey|[Ss]ecret|[Pp]assword)[A-Za-z_-]*[= ])'[^']*'/\1'[REDACTED]'/g" \
     -e 's/(-{1,2}[A-Za-z_-]*([Tt]oken|[Kk]ey|[Ss]ecret|[Pp]assword)[A-Za-z_-]*[= ])"[^"]*"/\1"[REDACTED]"/g' \
