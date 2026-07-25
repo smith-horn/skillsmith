@@ -119,7 +119,8 @@
     "diff": "^8.0.3",
     "global-agent": "^4.1.3",
     "fast-uri": "^3.1.4",
-    "tar": "^7.5.8",
+    "tar": "^7.5.22",
+    "postcss": "^8.5.23",
     "sharp": "0.35.3",
     "js-yaml": "^4.2.0",
     "gray-matter": {
