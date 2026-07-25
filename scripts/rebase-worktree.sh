@@ -167,6 +167,16 @@ step_check_uptodate() {
 
 # Step 5: Cross-fetch submodule objects (worktree submodule lacks main repo's
 # objects). SMI-4829: iterates over every initialized submodule.
+#
+# SMI-5823: resolves each submodule's target object explicitly and only
+# reaches out to the submodule's own `origin` when the cheap local-copy
+# fetch didn't supply it — avoids an unconditional network fetch (and
+# possible auth prompt, since 3 of the 4 declared submodules are on a
+# privately-hosted repo) against every submodule on every single rebase.
+# The origin fetch is reached independently of whether the main checkout's
+# own submodule copy exists — the prior version's early `continue` when it
+# was absent used to skip a fetch here entirely, which was the actual
+# false-divergence trigger when main's copy was stale AND missing.
 step_crossfetch_submodule() {
     if [ "$SKIP_SUBMODULE" = true ]; then
         info "Step 5: Skipping submodule cross-fetch (--no-submodule)"; return 0
@@ -180,7 +190,7 @@ step_crossfetch_submodule() {
     MAIN_REPO_ROOT=$(cd "$common_dir/.." && pwd)
 
     WT_SUB_PATHS=()
-    local i sub_path sha wt_sub main_sub fetched_any=false
+    local i sub_path sha wt_sub main_sub fetched_any=false target_sha
     for i in "${!SUBMODULES[@]}"; do
         sub_path="${SUBMODULES[$i]}"
         sha="${EXPECTED_SUBMODULE_SHAS[$i]:-}"
@@ -191,17 +201,51 @@ step_crossfetch_submodule() {
         if [ ! -d "$wt_sub/.git" ] && [ ! -f "$wt_sub/.git" ]; then
             info "  ($sub_path) submodule .git not found — skipping cross-fetch"; continue
         fi
-        if [ ! -d "$main_sub/.git" ] && [ ! -f "$main_sub/.git" ]; then
-            warn "Main repo submodule not found at $main_sub — skipping cross-fetch"; continue
+
+        # Resolve the target's recorded pointer now — Step 8 re-resolves the
+        # same value, but Step 5 needs it FIRST to know whether a fetch is
+        # even necessary before doing one.
+        target_sha=$(git -C "$WORKTREE_PATH" ls-tree "$TARGET_REF" -- "$sub_path" 2>/dev/null | awk '{print $3}')
+        if [ -z "$target_sha" ]; then
+            info "  ($sub_path) target has no entry — skipping cross-fetch"; continue
         fi
+
         if [ "$DRY_RUN" = true ]; then
-            info "  [dry-run] Would cross-fetch: git -C \"$wt_sub\" fetch \"$main_sub\""
+            info "  [dry-run] Would cross-fetch: ensure object ${target_sha:0:12} is present for ($sub_path) — try the main checkout's copy, then origin if still missing"
             fetched_any=true; continue
         fi
-        git -C "$wt_sub" fetch "$main_sub" 2>/dev/null || true
-        fetched_any=true
+
+        # Already have the target object? No network I/O needed at all —
+        # the common case once the sync-main.sh submodule-update fix lands.
+        if git -C "$wt_sub" cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
+            continue
+        fi
+
+        # Cheap, local, no-auth: try the main repo's own submodule copy first.
+        if [ -d "$main_sub/.git" ] || [ -f "$main_sub/.git" ]; then
+            git -C "$wt_sub" fetch "$main_sub" 2>/dev/null || true
+            fetched_any=true
+        else
+            info "  ($sub_path) main repo submodule not found at $main_sub — trying origin"
+        fi
+
+        # Still missing? Fall through to the submodule's actual origin,
+        # bounded so a wedged network/auth prompt can't hang the rebase.
+        if ! git -C "$wt_sub" cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
+            run_with_timeout 15 -- git -C "$wt_sub" fetch origin 2>/dev/null || true
+            fetched_any=true
+        fi
+
+        # Object still absent after both attempts — surface it now, not as
+        # an opaque "diverged" error three steps later in Step 8.
+        if ! git -C "$wt_sub" cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
+            warn "  ($sub_path) could not obtain object ${target_sha:0:12} from the local main copy or origin — Step 8's ancestry check may report a false divergence. Check network/auth access to this submodule's origin remote."
+        fi
     done
-    [ "$fetched_any" = true ] && success "  Submodule objects cross-fetched"
+    if [ "$fetched_any" = true ]; then
+        success "  Submodule objects cross-fetched"
+    fi
+    return 0
 }
 
 # Step 6: Stash unstaged changes (captures specific ref for safe pop)

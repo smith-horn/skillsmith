@@ -322,4 +322,147 @@ describe('SMI-4829: rebase-worktree.sh multi-submodule', () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toContain('Submodules: none declared in .gitmodules')
   })
+
+  // SMI-5823: reproduces the actual false-divergence bug — main checkout's
+  // own submodule copy is stale (lacks the object the parent's tree now
+  // declares), but the submodule's real origin has it. Before the fix,
+  // Step 5 only ever fetched from the stale main-copy, so Step 8's ancestry
+  // check couldn't find a common ancestor and reported a hard "diverged"
+  // error even though this is a plain fast-forward.
+  it('succeeds when main checkout submodule copy is stale but origin has the target object', () => {
+    const tempRoot = makeTempDir('rw-multi-7')
+    tempDirs.push(tempRoot)
+    const { cloneDir, worktreeDir, subABare } = setupTwoSubmoduleWorktree(tempRoot)
+
+    // Advance submodule A on its real origin via an independent clone —
+    // simulating a different session having pushed this commit.
+    const subAClone = join(tempRoot, 'subA-advance')
+    git(tempRoot, `clone "${subABare}" "${subAClone}"`)
+    sh(`echo a-advance > "${join(subAClone, 'a-new.md')}"`)
+    git(subAClone, 'add a-new.md')
+    git(subAClone, 'commit -m "subA advance on origin"')
+    git(subAClone, 'push origin main')
+    const newASha = git(subAClone, 'rev-parse HEAD')
+
+    // Bump the parent's gitlink via --cacheinfo directly (gitlinks are
+    // never dereferenced by git, so this is valid without the object being
+    // present locally), WITHOUT running `submodule update` in cloneDir —
+    // its own submodule copy stays at the old SHA and never fetches the
+    // new commit. This reproduces the staleness precondition exactly.
+    git(cloneDir, 'checkout main')
+    git(cloneDir, `update-index --cacheinfo 160000,${newASha},docs/internal`)
+    git(cloneDir, 'commit -m "bump subA on main (cacheinfo only, no local checkout)"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
+
+    // Sanity: cloneDir's own submodule copy genuinely lacks the new object.
+    expect(() =>
+      git(join(cloneDir, 'docs', 'internal'), `cat-file -e ${newASha}^{commit}`)
+    ).toThrow()
+
+    const result = runScript(`"${worktreeDir}"`)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Rebase complete')
+    const wtSubA = join(worktreeDir, 'docs', 'internal')
+    expect(git(wtSubA, 'rev-parse HEAD')).toBe(newASha)
+  })
+
+  // SMI-5823: reproduces the control-flow trap — main checkout has NO local
+  // submodule copy at all (deinit'd/never initialized). Before the fix, the
+  // "main repo submodule not found" branch `continue`d past any fetch
+  // attempt whatsoever, so origin was never tried either.
+  it('succeeds via origin when the main checkout has no local submodule copy at all', () => {
+    const tempRoot = makeTempDir('rw-multi-8')
+    tempDirs.push(tempRoot)
+    const { cloneDir, worktreeDir, subABare } = setupTwoSubmoduleWorktree(tempRoot)
+
+    const subAClone = join(tempRoot, 'subA-advance')
+    git(tempRoot, `clone "${subABare}" "${subAClone}"`)
+    sh(`echo a-advance > "${join(subAClone, 'a-new.md')}"`)
+    git(subAClone, 'add a-new.md')
+    git(subAClone, 'commit -m "subA advance on origin"')
+    git(subAClone, 'push origin main')
+    const newASha = git(subAClone, 'rev-parse HEAD')
+
+    git(cloneDir, 'checkout main')
+    git(cloneDir, `update-index --cacheinfo 160000,${newASha},docs/internal`)
+    git(cloneDir, 'commit -m "bump subA on main"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'submodule deinit -f docs/internal')
+    git(cloneDir, 'checkout -')
+
+    expect(existsSync(join(cloneDir, 'docs', 'internal', '.git'))).toBe(false)
+
+    const result = runScript(`"${worktreeDir}"`)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Rebase complete')
+    const wtSubA = join(worktreeDir, 'docs', 'internal')
+    expect(git(wtSubA, 'rev-parse HEAD')).toBe(newASha)
+  })
+
+  // SMI-5823 regression guard: with BOTH submodule objects genuinely
+  // present and fetchable (real divergence, not a missing-object gap), the
+  // script must still report divergence — proves the new object-presence
+  // check doesn't swallow a real conflict into a misleading diagnostic.
+  it('still reports genuine divergence when both submodule objects are present', () => {
+    const tempRoot = makeTempDir('rw-multi-9')
+    tempDirs.push(tempRoot)
+    const { cloneDir, worktreeDir, subABare } = setupTwoSubmoduleWorktree(tempRoot)
+
+    const subAClone = join(tempRoot, 'subA-advance')
+    git(tempRoot, `clone "${subABare}" "${subAClone}"`)
+    sh(`echo a-on-origin > "${join(subAClone, 'a-origin.md')}"`)
+    git(subAClone, 'add a-origin.md')
+    git(subAClone, 'commit -m "subA advance on origin"')
+    git(subAClone, 'push origin main')
+    git(cloneDir, 'checkout main')
+    git(cloneDir, 'submodule update --remote docs/internal')
+    git(cloneDir, 'add docs/internal')
+    git(cloneDir, 'commit -m "bump subA on main"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
+
+    // Independently advance the WORKTREE's submodule with a real, fetchable
+    // commit that exists only there — neither side is an ancestor of the
+    // other.
+    const wtSubA = join(worktreeDir, 'docs', 'internal')
+    sh(`echo a-in-worktree > "${join(wtSubA, 'a-worktree.md')}"`)
+    git(wtSubA, 'add a-worktree.md')
+    git(wtSubA, 'commit -m "subA diverges in worktree"')
+
+    const result = runScript(`"${worktreeDir}"`)
+    expect(result.status).toBe(1)
+    const combined = result.stdout + result.stderr
+    expect(combined).toContain('diverged')
+    expect(combined).not.toContain('could not verify ancestry')
+  })
+
+  // SMI-5823: if neither the main checkout's local copy nor origin can
+  // supply the target object, Step 8 must report object unavailability
+  // instead of misclassifying the unverifiable history as divergence.
+  it('reports unavailable objects when origin cannot supply the target commit', () => {
+    const tempRoot = makeTempDir('rw-multi-10')
+    tempDirs.push(tempRoot)
+    const { cloneDir, worktreeDir } = setupTwoSubmoduleWorktree(tempRoot)
+    const missingSha = '1111111111111111111111111111111111111111'
+
+    // A gitlink can record an object the parent repository does not have.
+    // Point main at such an object, then make the worktree submodule's
+    // origin unavailable so both Step 5 fetch sources fail.
+    git(cloneDir, 'checkout main')
+    git(cloneDir, `update-index --cacheinfo 160000,${missingSha},docs/internal`)
+    git(cloneDir, 'commit -m "point subA at unavailable object"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
+
+    const wtSubA = join(worktreeDir, 'docs', 'internal')
+    git(wtSubA, `remote set-url origin "${join(tempRoot, 'missing-origin.git')}"`)
+
+    const result = runScript(`"${worktreeDir}"`)
+    expect(result.status).toBe(1)
+    const combined = result.stdout + result.stderr
+    expect(combined).toContain('could not verify ancestry')
+    expect(combined).toContain('commit objects are unavailable locally')
+    expect(combined).not.toContain('has diverged from target')
+  })
 })
