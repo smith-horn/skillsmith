@@ -23,6 +23,21 @@ function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
 }
 
+// SMI-5812: a single regex verifying href/rel/type are all attributes on ONE
+// <atom:link> element (not three independent substrings that could exist
+// unrelated to each other, e.g. on different elements). Attribute order
+// (href, rel, type) verified empirically against the actual serialized
+// output of @astrojs/rss@4.0.19 with this code's customData string, and it
+// matches the STATIC_FALLBACK_RSS_XML literal in status.rss.xml.ts exactly.
+const ATOM_SELF_LINK_RE =
+  /<atom:link[^>]*href="https:\/\/www\.skillsmith\.app\/status\.rss\.xml"[^>]*rel="self"[^>]*type="application\/rss\+xml"[^>]*\/>/
+
+function expectAtomSelfLink(xml: string): void {
+  expect(xml).toMatch(ATOM_SELF_LINK_RE)
+  // The atom namespace declaration must be on the root <rss> element.
+  expect(xml).toMatch(/<rss[^>]*xmlns:atom="http:\/\/www\.w3\.org\/2005\/Atom"[^>]*>/)
+}
+
 async function parseItems(
   xml: string
 ): Promise<{ titles: string[]; links: string[]; guids: string[] }> {
@@ -99,6 +114,13 @@ describe('status.rss.xml GET', () => {
     expect(response.status).toBe(200)
     const xml = await response.text()
     expect(countOccurrences(xml, '<item>')).toBe(4) // 2 incidents x 2 updates each
+  })
+
+  it('SMI-5812: channel <link> points at /status (not the bare origin), and the feed advertises a complete atom:link self reference', async () => {
+    mockFetchJson(VALID_PAYLOAD)
+    const xml = await (await GET(makeContext())).text()
+    expect(xml).toContain('<link>https://www.skillsmith.app/status</link>')
+    expectAtomSelfLink(xml)
   })
 
   it('sorts items descending by pubDate ACROSS incidents, not grouped by incident', async () => {
@@ -283,6 +305,8 @@ describe('status.rss.xml GET', () => {
     const xml = await response.text()
     expect(xml).toContain('<rss')
     expect(countOccurrences(xml, '<item>')).toBe(0)
+    // SMI-5812: the empty-feed fallback still advertises a complete atom:link self reference.
+    expectAtomSelfLink(xml)
   })
 
   it('FIX (Codex #5): a non-OK upstream response returns a zero-item feed', async () => {
@@ -395,6 +419,9 @@ describe('status.rss.xml GET', () => {
     expect(countOccurrences(xml, '<item>')).toBe(0)
     expect(response.headers.get('content-type')).toContain('rss')
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    // SMI-5812: this is the hand-built STATIC_FALLBACK_RSS_XML string --
+    // it too must advertise a complete atom:link self reference.
+    expectAtomSelfLink(xml)
   })
 
   it('FIX (high): a primary rss() call throwing for a non-fetch/parse/shape reason still recovers via the fallback', async () => {

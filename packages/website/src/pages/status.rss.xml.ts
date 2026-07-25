@@ -99,6 +99,14 @@ const FEED_DESCRIPTION = 'Incident history and status updates for Skillsmith ser
 // rss() library at all.
 const DEFAULT_SITE_URL = 'https://www.skillsmith.app'
 
+// SMI-5812: the feed is discoverable from status.skillsmith.app too, but must
+// always self-identify (channel <link> and <atom:link rel="self">) against
+// the canonical www host and the /status page, never the subdomain.
+const FEED_SELF_URL = new URL('/status.rss.xml', DEFAULT_SITE_URL).href
+const STATUS_PAGE_LINK = new URL('/status', DEFAULT_SITE_URL).href
+const ATOM_XMLNS = { atom: 'http://www.w3.org/2005/Atom' } as const
+const ATOM_SELF_LINK = `<atom:link href="${FEED_SELF_URL}" rel="self" type="application/rss+xml"/>`
+
 /**
  * FIX (high): a hand-built, minimal, well-formed RSS/XML string that depends
  * on NOTHING — not `context.site`, not the `rss()` library, not any upstream
@@ -111,10 +119,11 @@ const DEFAULT_SITE_URL = 'https://www.skillsmith.app'
  */
 const STATIC_FALLBACK_RSS_XML =
   '<?xml version="1.0" encoding="UTF-8"?>' +
-  '<rss version="2.0"><channel>' +
+  '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>' +
   `<title>${FEED_TITLE}</title>` +
   `<description>${FEED_DESCRIPTION}</description>` +
-  `<link>${DEFAULT_SITE_URL}</link>` +
+  `<link>${STATUS_PAGE_LINK}</link>` +
+  `${ATOM_SELF_LINK}` +
   '</channel></rss>'
 
 function staticFallbackResponse(): Response {
@@ -129,6 +138,7 @@ function staticFallbackResponse(): Response {
 
 export async function GET(context: APIContext): Promise<Response> {
   const site = context.site ?? new URL(DEFAULT_SITE_URL)
+  const channelSite = new URL('/status/', site)
 
   // FIX (Codex #5, merge-blocking): the ENTIRE handler — fetch, JSON parse,
   // normalization, and the rss() call itself — is wrapped in one try/catch.
@@ -149,8 +159,10 @@ export async function GET(context: APIContext): Promise<Response> {
     const rssResponse = await rss({
       title: FEED_TITLE,
       description: FEED_DESCRIPTION,
-      site,
+      site: channelSite,
       trailingSlash: false,
+      xmlns: ATOM_XMLNS,
+      customData: ATOM_SELF_LINK,
       items,
     })
     return withNoSniffHeader(rssResponse)
@@ -163,8 +175,10 @@ export async function GET(context: APIContext): Promise<Response> {
       const emptyFeedResponse = await rss({
         title: FEED_TITLE,
         description: FEED_DESCRIPTION,
-        site,
+        site: channelSite,
         trailingSlash: false,
+        xmlns: ATOM_XMLNS,
+        customData: ATOM_SELF_LINK,
         items: [],
       })
       return withNoSniffHeader(emptyFeedResponse)
