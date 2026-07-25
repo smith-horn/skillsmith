@@ -292,6 +292,49 @@ EOF
 }
 
 # ----------------------------------------------------------------------
+# Test 7: all-tier sprawl report, disable, debounce, and independent 2s cap.
+# ----------------------------------------------------------------------
+{
+  REPO=$(mk_test_repo)
+  cp "$HOOK" "$REPO/scripts/session-start-audit.sh"
+  chmod +x "$REPO/scripts/session-start-audit.sh"
+  mk_stub_helper "$REPO/scripts/lib/session-start-audit-helper.ts" 'namespace-audit'
+  cat > "$REPO/scripts/prune-orphaned-docker-volumes.sh" <<'EOF'
+#!/bin/sh
+echo 'Skillsmith container inventory: 1 finding(s)'
+echo '  sample-dev-1	live-old	25h	/tmp/sample'
+EOF
+  chmod +x "$REPO/scripts/prune-orphaned-docker-volumes.sh"
+  TMPHOME=$(mktemp -d -t skillsmith-sprawl-home.XXXXXX)
+  EVENT=$(printf '{"source":"startup","cwd":"%s"}' "$REPO")
+
+  FIRST=$(printf '%s' "$EVENT" | env HOME="$TMPHOME" "$REPO/scripts/session-start-audit.sh" 2>&1)
+  SECOND=$(printf '%s' "$EVENT" | env HOME="$TMPHOME" "$REPO/scripts/session-start-audit.sh" 2>&1)
+  DISABLED=$(printf '%s' "$EVENT" | env HOME="$TMPHOME/disabled" \
+    SKILLSMITH_CONTAINER_SPRAWL_AUDIT_DISABLE=1 "$REPO/scripts/session-start-audit.sh" 2>&1)
+  assert_contains "sprawl-all-tier-first-render" 'sample-dev-1' "$FIRST"
+  assert_not_contains "sprawl-debounce-second-silent" 'sample-dev-1' "$SECOND"
+  assert_not_contains "sprawl-disable-silent" 'sample-dev-1' "$DISABLED"
+
+  cat > "$REPO/scripts/prune-orphaned-docker-volumes.sh" <<'EOF'
+#!/bin/sh
+sleep 30
+echo 'too-late'
+EOF
+  start_s=$(date +%s)
+  printf '%s' "$EVENT" | env HOME="$TMPHOME/slow" "$REPO/scripts/session-start-audit.sh" >/dev/null 2>&1
+  elapsed=$(( $(date +%s) - start_s ))
+  if [ "$elapsed" -le 4 ]; then
+    echo "PASS sprawl-independent-timeout-${elapsed}s"
+    pass=$((pass + 1))
+  else
+    echo "FAIL sprawl-independent-timeout: took ${elapsed}s"
+    fail=$((fail + 1))
+  fi
+  rm -rf "$REPO" "$TMPHOME"
+}
+
+# ----------------------------------------------------------------------
 echo
 echo "SUMMARY: $pass passed, $fail failed"
 if [ "$fail" -gt 0 ]; then

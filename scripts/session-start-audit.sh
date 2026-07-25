@@ -37,11 +37,6 @@ emit_empty_and_exit() {
   exit 0
 }
 
-# Gate 0: opt-out via env var.
-if [ "${SKILLSMITH_SESSION_AUDIT_DISABLE:-0}" = "1" ]; then
-  emit_empty_and_exit
-fi
-
 # Parse stdin for source + cwd. Anything missing → fall through to silent.
 SOURCE=$(printf '%s' "$INPUT" | python3 -c "
 import json, sys
@@ -75,6 +70,44 @@ if [ -z "$REPO_ROOT" ]; then
   emit_empty_and_exit
 fi
 
+# SMI-5823: all-tier, report-only local container inventory. This has its
+# own 2-second cap because the helper's later 5-second cap cannot bound Docker.
+run_container_sprawl_audit() {
+  [ "${SKILLSMITH_CONTAINER_SPRAWL_AUDIT_DISABLE:-0}" = "1" ] && return 0
+  local reporter="$REPO_ROOT/scripts/prune-orphaned-docker-volumes.sh"
+  [ -x "$reporter" ] || return 0
+  local out state_dir state_file digest previous now
+  if [ -n "$TIMEOUT_BIN" ]; then
+    out=$("$TIMEOUT_BIN" --kill-after=1s 2s "$reporter" --report-containers 2>/dev/null || true)
+  else
+    local tmp pid wd
+    tmp=$(mktemp -t skillsmith-sprawl.XXXXXX) || return 0
+    ("$reporter" --report-containers >"$tmp" 2>/dev/null) & pid=$!
+    (sleep 2; kill "$pid" 2>/dev/null || true) & wd=$!
+    wait "$pid" 2>/dev/null || true
+    kill "$wd" 2>/dev/null || true
+    wait "$wd" 2>/dev/null || true
+    out=$(head -c 8192 "$tmp" 2>/dev/null || true)
+    rm -f "$tmp"
+  fi
+  [ -n "$out" ] || return 0
+  out=$(printf '%s' "$out" | head -c 8192)
+  state_dir="${HOME}/.skillsmith"
+  state_file="$state_dir/container-sprawl-audit.state"
+  digest=$(printf '%s' "$out" | cksum | awk '{print $1}')
+  now=$(date +%s)
+  previous=$(cat "$state_file" 2>/dev/null || true)
+  if printf '%s' "$previous" | grep -qE '^[0-9]+ [0-9]+$'; then
+    if [ "${previous%% *}" = "$digest" ] && [ $((now - ${previous#* })) -lt 86400 ]; then
+      return 0
+    fi
+  fi
+  printf '%s\n' "$out" >&2
+  mkdir -p "$state_dir" 2>/dev/null || return 0
+  printf '%s %s\n' "$digest" "$now" >"$state_file.tmp" 2>/dev/null &&
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
+}
+
 # Resolve the helper path. If missing (e.g., running on an older checkout),
 # fail soft.
 HELPER="$REPO_ROOT/scripts/lib/session-start-audit-helper.ts"
@@ -93,6 +126,13 @@ elif command -v timeout >/dev/null 2>&1 && timeout 1 true >/dev/null 2>&1; then
   # (`timeout --kill-after=0 0 true`) used GNU-specific flag syntax and
   # falsely failed on BusyBox, forcing the job-control fallback. (SMI-4753)
   TIMEOUT_BIN="timeout"
+fi
+
+run_container_sprawl_audit
+
+# Existing namespace audit opt-out does not disable the machine-health probe.
+if [ "${SKILLSMITH_SESSION_AUDIT_DISABLE:-0}" = "1" ]; then
+  emit_empty_and_exit
 fi
 
 # Stage B: invoke the helper via tsx with a 5-second wall-clock cap. The
