@@ -1,0 +1,38 @@
+# SMI-5756 (Wave 7, public status page — ADR-109-gated). Runs from GitHub's
+# infrastructure, outside both Supabase and Vercel, to detect "Supabase
+# itself is fully down" -- a blind spot no in-Supabase check can close (see
+# docs/internal/implementation/smi-5756-external-prober.md).
+#
+# Does NOT depend on docker-build (no npm/node job at all -- pure curl + gh)
+# so the SMI-4647 `# audit:carveout-pure-js` marker does not apply; that
+# marker only gates jobs declaring `needs: docker-build`.
+name: Status External Prober
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: status-external-prober
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe public status endpoints
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SKILLSMITH_STATUS_EXTERNAL_PROBE_SHADOW: ${{ vars.SKILLSMITH_STATUS_EXTERNAL_PROBE_SHADOW || '1' }}
+      SKILLSMITH_STATUS_EXTERNAL_PROBE_DISABLE: ${{ vars.SKILLSMITH_STATUS_EXTERNAL_PROBE_DISABLE || '' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Run external probe
+        run: ./scripts/status-external-probe.sh
