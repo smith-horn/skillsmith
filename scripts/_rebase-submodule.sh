@@ -41,6 +41,22 @@ step_rebase_submodule() {
         target_sub_sha=$(git -C "$WORKTREE_PATH" ls-tree "$TARGET_REF" -- "$sub_path" 2>/dev/null | awk '{print $3}')
         if [ -z "$target_sub_sha" ]; then info "  ($sub_path) target has no entry — skipping"; continue; fi
         if [ "$target_sub_sha" = "$expected_sha" ]; then info "  ($sub_path) already at target pointer"; continue; fi
+
+        # SMI-5823: distinguish "objects genuinely unavailable" (Step 5's
+        # fetch attempts — main checkout's copy, then origin — didn't obtain
+        # them) from "objects present but neither is an ancestor of the
+        # other" (a real divergence). Both used to hit the identical hard
+        # error below, which is what made a fixable missing-object gap look
+        # like an unresolvable submodule conflict.
+        if ! git -C "$wt_sub" cat-file -e "${expected_sha}^{commit}" 2>/dev/null || \
+           ! git -C "$wt_sub" cat-file -e "${target_sub_sha}^{commit}" 2>/dev/null; then
+            error "Worktree submodule ($sub_path): could not verify ancestry — one or both commit objects are unavailable locally.
+  Worktree: $expected_sha
+  Target:   $target_sub_sha
+Step 5's cross-fetch (main checkout's copy, then origin) could not obtain the missing object. Check network/auth access to this submodule's origin remote, then retry.
+This is NOT necessarily a real divergence — it means the objects couldn't be verified, not that they conflict."
+        fi
+
         # Directional guard: worktree's submodule must not be ahead of target
         if ! git -C "$wt_sub" merge-base --is-ancestor "$expected_sha" "$target_sub_sha" 2>/dev/null; then
             if git -C "$wt_sub" merge-base --is-ancestor "$target_sub_sha" "$expected_sha" 2>/dev/null; then
