@@ -56,7 +56,7 @@
 #      reviews the reported UNCONFIRMED list first, and the deleted artifact
 #      is always a rebuildable dependency cache, never data.
 #
-# Usage: ./scripts/prune-orphaned-docker-volumes.sh [--dry-run] [--include-unlabeled]
+# Usage: ./scripts/prune-orphaned-docker-volumes.sh [--dry-run] [--include-unlabeled] [--report-containers]
 #   --dry-run             Report what would be deleted; delete nothing.
 #   --include-unlabeled   Also delete UNCONFIRMED-ownership candidates (the
 #                          one-time pre-label backlog escape hatch).
@@ -73,6 +73,7 @@ source "$SCRIPT_DIR/_lib.sh"
 
 DRY_RUN=false
 INCLUDE_UNLABELED=false
+REPORT_CONTAINERS=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -84,8 +85,13 @@ while [[ $# -gt 0 ]]; do
             INCLUDE_UNLABELED=true
             shift
             ;;
+        --report-containers)
+            REPORT_CONTAINERS=true
+            shift
+            ;;
         -h|--help)
-            echo "Usage: $(basename "$0") [--dry-run] [--include-unlabeled]"
+            echo "Usage: $(basename "$0") [--dry-run] [--include-unlabeled] [--report-containers]"
+            echo "  --report-containers  Report live-old, excessive, and orphaned Skillsmith dev containers; mutate nothing."
             exit 0
             ;;
         *)
@@ -115,6 +121,61 @@ if [[ -n "$main_gitdir" ]]; then
     main_repo="$(dirname "$main_gitdir")"
 else
     main_repo="$repo_root"
+fi
+
+report_containers() {
+    local max_age="${SKILLSMITH_CONTAINER_SPRAWL_MAX_AGE_HOURS:-24}"
+    local max_count="${SKILLSMITH_CONTAINER_SPRAWL_MAX_COUNT:-3}"
+    [[ "$max_age" =~ ^[0-9]+$ ]] || max_age=24
+    [[ "$max_count" =~ ^[0-9]+$ ]] || max_count=3
+
+    local worktrees now count=0 shown=0
+    worktrees="$(git -C "$main_repo" worktree list --porcelain 2>/dev/null |
+        awk '/^worktree / { sub(/^worktree /, ""); print }' || true)"
+    now="$(date +%s)"
+    local -a findings=()
+    local id name created path created_epoch age_hours class normalized
+
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        name="$(docker inspect "$id" --format '{{.Name}}' 2>/dev/null | sed 's#^/##' || true)"
+        created="$(docker inspect "$id" --format '{{.Created}}' 2>/dev/null || true)"
+        path="$(docker inspect "$id" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true)"
+        [[ -n "$name" && -n "$created" && -n "$path" && "$path" = /* ]] || continue
+        count=$((count + 1))
+        normalized="$(cd "$path" 2>/dev/null && pwd -P || printf '%s' "$path")"
+        if date -j -f '%Y-%m-%dT%H:%M:%S' "${created%%.*}" +%s >/dev/null 2>&1; then
+            created_epoch="$(date -j -f '%Y-%m-%dT%H:%M:%S' "${created%%.*}" +%s)"
+        else
+            created_epoch="$(date -d "$created" +%s 2>/dev/null || printf '%s' "$now")"
+        fi
+        age_hours=$(((now - created_epoch) / 3600))
+        class=""
+        if ! grep -qxF "$normalized" <<< "$worktrees"; then
+            class="orphaned"
+        elif (( age_hours >= max_age )); then
+            class="live-old"
+        fi
+        [[ -n "$class" ]] && findings+=("$name"$'\t'"$class"$'\t'"${age_hours}h"$'\t'"$normalized")
+    done < <(docker ps -q \
+        --filter 'label=app.skillsmith.owned=true' \
+        --filter 'label=com.docker.compose.service=dev' 2>/dev/null || true)
+
+    if (( count > max_count )); then
+        findings+=("all-live"$'\t'"excessive"$'\t'"${count}/${max_count}"$'\t'"$main_repo")
+    fi
+    (( ${#findings[@]} == 0 )) && return 0
+    echo "Skillsmith container inventory: ${#findings[@]} finding(s); inspect resource use with: docker stats"
+    for finding in "${findings[@]}"; do
+        (( shown >= 5 )) && break
+        printf '  %s\n' "$finding"
+        shown=$((shown + 1))
+    done
+}
+
+if [[ "$REPORT_CONTAINERS" == true ]]; then
+    report_containers
+    exit 0
 fi
 
 # sanitize_project_name() (_lib.sh) is the single canonical sanitization

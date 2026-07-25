@@ -52,6 +52,7 @@ import {
   setVolumeRmExit,
   resetLog,
   runPrune,
+  containerResponses,
 } from './prune-orphaned-docker-volumes.helpers.js'
 
 const tempDirs: string[] = []
@@ -66,6 +67,39 @@ afterEach(() => {
 })
 
 describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
+  it('reports live-old, orphaned, and excessive containers without mutation', () => {
+    const fixture = setupFixture('container-report')
+    tempDirs.push(fixture.tempRoot)
+    const livePath = join(fixture.repoDir, '.worktrees', 'live-wt')
+    addWorktree(fixture.repoDir, livePath, 'feat-report-live')
+    containerResponses(fixture, [
+      {
+        id: 'live1',
+        name: 'live-wt-dev-1',
+        created: '2000-01-01T00:00:00Z',
+        path: livePath,
+      },
+      {
+        id: 'gone1',
+        name: 'gone-wt-dev-1',
+        created: '2000-01-01T00:00:00Z',
+        path: join(fixture.tempRoot, 'gone-wt'),
+      },
+      { id: 'bad1', name: '', created: '', path: 'not-absolute' },
+    ])
+
+    const result = runPrune(fixture, ['--report-containers'], {
+      SKILLSMITH_CONTAINER_SPRAWL_MAX_AGE_HOURS: '1',
+      SKILLSMITH_CONTAINER_SPRAWL_MAX_COUNT: '1',
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('live-wt-dev-1\tlive-old')
+    expect(result.stdout).toContain('gone-wt-dev-1\torphaned')
+    expect(result.stdout).toContain('all-live\texcessive\t2/1')
+    expect(result.dockerCalls.some((call) => /\b(rm|rmi|stop|kill)\b/.test(call))).toBe(false)
+  })
+
   it('1. deletes a labeled orphan volume (no matching worktree, app.skillsmith.owned=true)', () => {
     const fixture = setupFixture('prune-orphan')
     tempDirs.push(fixture.tempRoot)

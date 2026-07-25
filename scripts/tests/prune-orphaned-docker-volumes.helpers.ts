@@ -142,6 +142,10 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '    exit_override "rmi__$2"',
     '    ;;',
     '  ps)',
+    '    if [ "$2" = "-q" ]; then',
+    '      emit "container_ids"',
+    '      exit 0',
+    '    fi',
     '    key=""',
     '    for arg in "$@"; do',
     '      case "$arg" in',
@@ -150,6 +154,16 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '      esac',
     '    done',
     '    emit "$key"',
+    '    exit 0',
+    '    ;;',
+    '  inspect)',
+    '    id="$2"',
+    '    fmt="$4"',
+    '    case "$fmt" in',
+    '      *".Name"*) emit "container__${id}__name" ;;',
+    '      *".Created"*) emit "container__${id}__created" ;;',
+    '      *working_dir*) emit "container__${id}__path" ;;',
+    '    esac',
     '    exit 0',
     '    ;;',
     '  *)',
@@ -252,6 +266,22 @@ export function setVolumeRmExit(fixture: FixtureRepo, vol: string, code: number)
 
 export function resetLog(fixture: FixtureRepo): void {
   if (existsSync(fixture.logPath)) rmSync(fixture.logPath)
+}
+
+export function containerResponses(
+  fixture: FixtureRepo,
+  containers: Array<{ id: string; name: string; created: string; path: string }>
+): void {
+  setResponse(
+    fixture.responsesDir,
+    'container_ids',
+    containers.map((container) => container.id).join('\n')
+  )
+  for (const container of containers) {
+    setResponse(fixture.responsesDir, `container__${container.id}__name`, `/${container.name}`)
+    setResponse(fixture.responsesDir, `container__${container.id}__created`, container.created)
+    setResponse(fixture.responsesDir, `container__${container.id}__path`, container.path)
+  }
 }
 
 /**
