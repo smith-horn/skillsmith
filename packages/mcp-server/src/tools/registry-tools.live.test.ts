@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 
 import {
@@ -51,6 +51,7 @@ interface Recorded {
   op: 'select' | 'insert' | 'update' | 'delete'
   filters: Array<{ column: string; value: unknown }>
   payload?: Record<string, unknown>
+  selectCalled: boolean
 }
 
 type SingleResponder = () => { data: unknown; error: { code?: string; message?: string } | null }
@@ -65,10 +66,13 @@ function createFakeClient(opts: FakeClientOptions = {}): { client: unknown; call
   const calls: Recorded[] = []
 
   function makeQuery(table: string) {
-    const record: Recorded = { table, op: 'select', filters: [] }
+    const record: Recorded = { table, op: 'select', filters: [], selectCalled: false }
     calls.push(record)
     const chain: Record<string, unknown> = {
-      select: () => chain,
+      select: (_columns?: string) => {
+        record.selectCalled = true
+        return chain
+      },
       eq: (column: string, value: unknown) => {
         record.filters.push({ column, value })
         return chain
@@ -85,6 +89,15 @@ function createFakeClient(opts: FakeClientOptions = {}): { client: unknown; call
       },
       single: async () => opts.singleResponder?.() ?? { data: null, error: null },
       then: (onFulfilled: (v: { data: unknown[] | null; error: unknown }) => unknown) => {
+        // Mirrors real PostgREST: insert/update only return row data (`data`) when
+        // .select() was chained (sets `Prefer: return=representation`) — without it,
+        // `data` is null even on a successful mutation. A fake that always returns
+        // the scripted response regardless of whether .select() was called would not
+        // have caught the real bug this guards against (deprecate/undeprecate
+        // originally omitted .select() and so always reported "not found").
+        if ((record.op === 'update' || record.op === 'insert') && !record.selectCalled) {
+          return Promise.resolve(onFulfilled({ data: null, error: null }))
+        }
         const resp = opts.thenResponder?.() ?? { data: [], error: null }
         return Promise.resolve(onFulfilled(resp))
       },
@@ -156,10 +169,10 @@ describe('private_registry_publish live mode — SMI-5816', () => {
     expect(insertCall!.payload?.team_id).toBe(RESOLVED_TEAM)
     expect(insertCall!.payload?.skill_id).toBe('myteam/skill-a')
     expect(insertCall!.payload?.content).toEqual(SAMPLE_CONTENT)
-    const expectedHash = createHash('sha256')
-      .update(SAMPLE_CONTENT['SKILL.md'], 'utf8')
-      .digest('hex')
-    expect(insertCall!.payload?.content_hash).toBe(expectedHash)
+    // Uses the SAME shared sha256Hex the public inventory path uses
+    // (packages/core/src/journal/hash.ts) — plan doc's Shared-State/Coordination
+    // Audit invariant: one hash implementation, not independent inline copies.
+    expect(insertCall!.payload?.content_hash).toBe(sha256Hex(SAMPLE_CONTENT['SKILL.md']))
   })
 
   it('surfaces a clean immutability error when the (team, skill, version) already exists', async () => {
@@ -296,6 +309,84 @@ describe('private_registry_manage live mode — team scoping — SMI-5816', () =
 
     const result = await executePrivateRegistryManage(
       { action: 'deprecate', skillId: 'myteam/ghost' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not found/i)
+  })
+
+  it('deprecate requests a representation (select) so a real successful update is detected', async () => {
+    // Regression test: an update without .select() gets `data: null` back from
+    // PostgREST even when rows were actually changed — the fake client's `then()`
+    // enforces this. If deprecate() ever drops its .select() call again, this test
+    // fails because the "successful" mutation is (correctly) reported as not-found.
+    const { client } = createFakeClient({
+      thenResponder: () => ({ data: [publishedRow({ deprecated: true })], error: null }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage(
+      { action: 'deprecate', skillId: 'myteam/skill-a' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+  })
+
+  it('undeprecate requests a representation (select) so a real successful update is detected', async () => {
+    const { client } = createFakeClient({
+      thenResponder: () => ({ data: [publishedRow({ deprecated: false })], error: null }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage(
+      { action: 'undeprecate', skillId: 'myteam/skill-a' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+  })
+
+  it('get distinguishes a real database error from a not-found result', async () => {
+    const { client } = createFakeClient({
+      singleResponder: () => ({
+        data: null,
+        error: { code: '08006', message: 'connection failure' },
+      }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage(
+      { action: 'get', skillId: 'myteam/skill-a', version: '1.0.0' },
+      makeContext()
+    )
+
+    // A connectivity/permission failure must surface as an error, not silently
+    // read as "skill not found" — the two are operationally very different.
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/connection failure/i)
+    expect(result.error).not.toMatch(/not found/i)
+  })
+
+  it('get returns null (not-found) for PostgREST’s genuine no-rows code', async () => {
+    const { client } = createFakeClient({
+      singleResponder: () => ({
+        data: null,
+        error: {
+          code: 'PGRST116',
+          message: 'JSON object requested, multiple (or no) rows returned',
+        },
+      }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage(
+      { action: 'get', skillId: 'myteam/ghost', version: '1.0.0' },
       makeContext()
     )
 

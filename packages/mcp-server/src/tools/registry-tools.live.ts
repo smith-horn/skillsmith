@@ -20,13 +20,15 @@
  * — mirroring team-workspace.live.ts, where createWorkspace is admin-gated in RLS but
  * not re-checked here. Admin gating applies to the authenticated user-JWT path (e.g.
  * the website dashboard). See registry-tools.live.test.ts / private-registry-rls test.
+ * Tracked as SMI-5822 (repo-wide MCP-auth-model question, not specific to this table) —
+ * a team's license key is, in effect, an admin credential for MCP/CLI purposes today.
  *
  * Single-phase write: metadata + content land in one INSERT (ADR-129) — no two-phase
  * Supabase+S3 write/rollback. Published (team_id, skill_id, version) triples are
  * immutable; a re-publish raises a unique violation surfaced as a clear error.
  */
 
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '@skillsmith/core'
 import { getSupabaseAdminClient } from '../supabase-client.js'
 import type { PrivateRegistryService, RegistrySkill, SkillContent } from './registry-tools.js'
 
@@ -71,6 +73,19 @@ interface MinimalSupabaseClient {
 }
 
 const TABLE = 'private_registry_skills'
+
+/** Metadata columns only — excludes `content` (up to 2 MB/row) since mapRow() never
+ *  reads it and RegistrySkill never exposes it. An unqualified select() would pull
+ *  every matching row's full package content over the wire for nothing. */
+const METADATA_COLUMNS =
+  'id, team_id, skill_id, version, description, content_hash, deprecated, published_by, published_at'
+
+/** PostgREST's code for "no rows" (or >1 row) via .single() — a real absence, not a
+ *  failure. Any other error code/message is a genuine failure and must not be
+ *  silently mapped to null, or an outage would look identical to "not found". */
+function isNoRowsError(error: SupabaseError | null): boolean {
+  return error?.code === 'PGRST116'
+}
 
 function mapRow(teamId: string, row: PrivateRegistrySkillRow): RegistrySkill {
   return {
@@ -128,7 +143,7 @@ function prepareContent(content: SkillContent): { contentHash: string } {
       `Skill content is ${bytes} bytes, over the ${MAX_CONTENT_BYTES}-byte (2 MB) private-registry limit. Split large assets out of the skill package.`
     )
   }
-  return { contentHash: createHash('sha256').update(skillMd, 'utf8').digest('hex') }
+  return { contentHash: sha256Hex(skillMd) }
 }
 
 /**
@@ -168,7 +183,10 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
     async list(teamId, version): Promise<RegistrySkill[]> {
       const client = await getClient()
-      let query = client.from<PrivateRegistrySkillRow>(TABLE).select().eq('team_id', teamId)
+      let query = client
+        .from<PrivateRegistrySkillRow>(TABLE)
+        .select(METADATA_COLUMNS)
+        .eq('team_id', teamId)
       if (version) query = query.eq('version', version)
       const resp = await query
       if (resp.error) {
@@ -182,21 +200,28 @@ export function createLiveRegistryService(): PrivateRegistryService {
       if (version) {
         const resp = await client
           .from<PrivateRegistrySkillRow>(TABLE)
-          .select()
+          .select(METADATA_COLUMNS)
           .eq('team_id', teamId)
           .eq('skill_id', skillId)
           .eq('version', version)
           .single()
-        if (resp.error || !resp.data) return null
+        if (resp.error) {
+          if (isNoRowsError(resp.error)) return null
+          throw new Error(`Failed to get registry skill: ${resp.error.message ?? 'unknown error'}`)
+        }
+        if (!resp.data) return null
         return mapRow(teamId, resp.data)
       }
       // No version specified — return the most recently published version.
       const resp = await client
         .from<PrivateRegistrySkillRow>(TABLE)
-        .select()
+        .select(METADATA_COLUMNS)
         .eq('team_id', teamId)
         .eq('skill_id', skillId)
-      if (resp.error || !resp.data || resp.data.length === 0) return null
+      if (resp.error) {
+        throw new Error(`Failed to get registry skill: ${resp.error.message ?? 'unknown error'}`)
+      }
+      if (!resp.data || resp.data.length === 0) return null
       const latest = resp.data.reduce((a, b) => (a.published_at >= b.published_at ? a : b))
       return mapRow(teamId, latest)
     },
@@ -205,11 +230,16 @@ export function createLiveRegistryService(): PrivateRegistryService {
       const client = await getClient()
       // Deprecates every version of the skill within this team (hidden from search,
       // remains installable). team_id filter is load-bearing — never cross-team.
+      // .select() is REQUIRED here: PostgREST only returns affected-row data (the
+      // `Prefer: return=representation` the JS client sets via .select()) when asked;
+      // without it, `resp.data` is null on every call — including a successful
+      // update — and this method would always report "not found" in production.
       const resp = await client
         .from<PrivateRegistrySkillRow>(TABLE)
         .update({ deprecated: true })
         .eq('team_id', teamId)
         .eq('skill_id', skillId)
+        .select(METADATA_COLUMNS)
       if (resp.error) {
         throw new Error(`Failed to deprecate skill: ${resp.error.message ?? 'unknown error'}`)
       }
@@ -218,11 +248,13 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
     async undeprecate(teamId, skillId): Promise<boolean> {
       const client = await getClient()
+      // .select() required — see deprecate()'s comment above.
       const resp = await client
         .from<PrivateRegistrySkillRow>(TABLE)
         .update({ deprecated: false })
         .eq('team_id', teamId)
         .eq('skill_id', skillId)
+        .select(METADATA_COLUMNS)
       if (resp.error) {
         throw new Error(`Failed to undeprecate skill: ${resp.error.message ?? 'unknown error'}`)
       }

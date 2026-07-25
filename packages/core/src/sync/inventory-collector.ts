@@ -27,11 +27,11 @@
 
 import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
-import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { SkillParser } from '../indexer/SkillParser.js'
 import { CLIENT_IDS, CLIENT_NATIVE_PATHS, type ClientId } from '../install/paths.js'
 import type { InventorySkillEntry } from './inventory-types.js'
+import { sha256Hex } from '../journal/hash.js'
 
 /**
  * Resolve a path through `realpath` defensively. Returns the resolved path on
@@ -95,7 +95,7 @@ async function readSkillFields(skillDir: string): Promise<{
 }> {
   try {
     const content = await readFile(join(skillDir, 'SKILL.md'), 'utf-8')
-    const contentHash = createHash('sha256').update(content, 'utf8').digest('hex')
+    const contentHash = sha256Hex(content)
     const parsed = new SkillParser().parse(content)
     if (!parsed) {
       // SKILL.md is readable but has no valid frontmatter — hash still applies.

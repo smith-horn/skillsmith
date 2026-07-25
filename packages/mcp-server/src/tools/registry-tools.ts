@@ -48,7 +48,10 @@ export const privateRegistryPublishInputSchema = z.object({
     .describe('Skill identifier in author/name format'),
   version: z
     .string()
-    .regex(/^\d+\.\d+\.\d+/, 'Must be a valid semver version')
+    .regex(
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+      'Must be a valid semver version'
+    )
     .describe('Semver version to publish'),
   content: skillContentSchema.describe(
     'Packaged skill files as a { path: text } map; must include a "SKILL.md" entry (max 2 MB total)'
