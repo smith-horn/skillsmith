@@ -115,6 +115,7 @@
     "undici": "^7.18.0",
     "path-to-regexp": "^8.3.0",
     "axios": "^1.18.1",
+    "find-my-way": "^9.7.0",
     "esbuild": "^0.28.1",
     "diff": "^8.0.3",
     "global-agent": "^4.1.3",
