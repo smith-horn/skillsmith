@@ -32,6 +32,10 @@ export { getBetterSqlite3FailureReason } from './db/drivers/betterSqlite3Driver.
 // SMI-5006: createLogger exposed for @smith-horn/enterprise/billing consumers.
 // Internal utility promoted to public API to support billing module relocation.
 export { createLogger, type Logger } from './utils/logger.js'
+// SMI-5816: sha256Hex exposed so every content_hash computation (public inventory,
+// private registry) shares one implementation instead of independent inline copies
+// that can silently drift (plan doc's Shared-State/Coordination Audit invariant).
+export { sha256Hex } from './journal/hash.js'
 
 // Types - All type definitions
 export * from './exports/types.js'

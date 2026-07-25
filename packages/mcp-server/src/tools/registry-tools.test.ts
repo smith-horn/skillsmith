@@ -1,6 +1,12 @@
 /**
- * @fileoverview Tests for private registry MCP tools
+ * @fileoverview Tests for private registry MCP tools (stub-service path)
  * @see SMI-3902: Private Registry MCP Tools
+ * @see SMI-5816: Private skill registry — real implementation (ADR-129)
+ *
+ * These exercise the handlers against the in-memory stub (no Supabase configured).
+ * Live Supabase-backed behaviour (cross-team scoping, immutability, size cap) is in
+ * registry-tools.live.test.ts; RLS policy structure is in
+ * scripts/tests/private-registry-rls.test.ts.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -18,6 +24,8 @@ import {
 
 const mockContext = {} as ToolContext
 
+const SAMPLE_CONTENT = { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' }
+
 describe('registry-tools', () => {
   beforeEach(() => {
     // Reset to fresh stub service before each test
@@ -29,26 +37,39 @@ describe('registry-tools', () => {
   // ==========================================================================
 
   describe('privateRegistryPublishInputSchema', () => {
-    it('should accept valid publish input', () => {
-      const input = { skillId: 'myteam/my-skill', version: '1.0.0' }
+    it('should accept valid publish input with content', () => {
+      const input = { skillId: 'myteam/my-skill', version: '1.0.0', content: SAMPLE_CONTENT }
       const parsed = privateRegistryPublishInputSchema.parse(input)
       expect(parsed.skillId).toBe('myteam/my-skill')
       expect(parsed.version).toBe('1.0.0')
+      expect(parsed.content['SKILL.md']).toContain('My Skill')
     })
 
-    it('should accept publish input with description', () => {
+    it('should accept publish input with description and multi-file content', () => {
       const input = {
         skillId: 'myteam/my-skill',
         version: '1.0.0',
         description: 'A useful skill',
+        content: { 'SKILL.md': '# S', 'scripts/run.sh': 'echo hi' },
       }
       const parsed = privateRegistryPublishInputSchema.parse(input)
       expect(parsed.description).toBe('A useful skill')
+      expect(Object.keys(parsed.content)).toHaveLength(2)
+    })
+
+    it('should reject missing content', () => {
+      expect(() =>
+        privateRegistryPublishInputSchema.parse({ skillId: 'myteam/my-skill', version: '1.0.0' })
+      ).toThrow()
     })
 
     it('should reject invalid skill ID format', () => {
       expect(() =>
-        privateRegistryPublishInputSchema.parse({ skillId: 'no-slash', version: '1.0.0' })
+        privateRegistryPublishInputSchema.parse({
+          skillId: 'no-slash',
+          version: '1.0.0',
+          content: SAMPLE_CONTENT,
+        })
       ).toThrow()
     })
 
@@ -57,6 +78,7 @@ describe('registry-tools', () => {
         privateRegistryPublishInputSchema.parse({
           skillId: 'myteam/my-skill',
           version: 'not-semver',
+          content: SAMPLE_CONTENT,
         })
       ).toThrow()
     })
@@ -99,6 +121,7 @@ describe('registry-tools', () => {
       const input: PrivateRegistryPublishInput = {
         skillId: 'myteam/my-skill',
         version: '1.0.0',
+        content: SAMPLE_CONTENT,
       }
       const result = await executePrivateRegistryPublish(input, mockContext)
       expect(result.success).toBe(true)
@@ -114,6 +137,7 @@ describe('registry-tools', () => {
       const input: PrivateRegistryPublishInput = {
         skillId: 'myteam/my-skill',
         version: '1.0.0',
+        content: SAMPLE_CONTENT,
         description: 'A skill for testing',
       }
       const result = await executePrivateRegistryPublish(input, mockContext)
@@ -138,7 +162,7 @@ describe('registry-tools', () => {
     it('should list published skills', async () => {
       // Publish a skill first
       await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0' },
+        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
         mockContext
       )
 
@@ -150,7 +174,7 @@ describe('registry-tools', () => {
 
     it('should get a specific skill', async () => {
       await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0' },
+        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
         mockContext
       )
 
@@ -180,7 +204,7 @@ describe('registry-tools', () => {
 
     it('should deprecate a skill', async () => {
       await executePrivateRegistryPublish(
-        { skillId: 'myteam/old-skill', version: '1.0.0' },
+        { skillId: 'myteam/old-skill', version: '1.0.0', content: SAMPLE_CONTENT },
         mockContext
       )
 
@@ -216,7 +240,7 @@ describe('registry-tools', () => {
 
     it('should undeprecate a skill', async () => {
       await executePrivateRegistryPublish(
-        { skillId: 'myteam/revived', version: '2.0.0' },
+        { skillId: 'myteam/revived', version: '2.0.0', content: SAMPLE_CONTENT },
         mockContext
       )
       await executePrivateRegistryManage(
