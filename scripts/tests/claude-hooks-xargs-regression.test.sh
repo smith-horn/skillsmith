@@ -62,6 +62,15 @@ echo "--- Layer 1: structural (OS-independent primary guard) ---"
 XARGS_HITS=$(grep -c "xargs -I\|xargs -0" "$SETTINGS_JSON" || true)
 assert_true "settings.json has zero xargs -I/-0 instances (found: ${XARGS_HITS:-0})" \
   "$([ "${XARGS_HITS:-0}" -eq 0 ] && echo 0 || echo 1)"
+BOUNDED_WRAPPER_HOOKS=$(jq '
+  [.hooks.PreToolUse[], .hooks.PostToolUse[]]
+  | map(.hooks[]
+    | select(.command | contains("claude-hooks-log-wrapper.sh"))
+    | select(.timeout > 0 and .timeout <= 5))
+  | length
+' "$SETTINGS_JSON")
+assert_true "all 4 wrapper hooks have an explicit timeout of at most 5s (found: $BOUNDED_WRAPPER_HOOKS)" \
+  "$([ "$BOUNDED_WRAPPER_HOOKS" -eq 4 ] && echo 0 || echo 1)"
 
 # -----------------------------------------------------------------------
 # Layer 2: shimmed xargs — deterministic OS-independent behavioral guard

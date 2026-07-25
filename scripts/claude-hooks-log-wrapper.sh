@@ -33,6 +33,10 @@ IDENTIFIER="${2:-}"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 LOG_RETENTION_DAYS="${SKILLSMITH_HOOK_LOG_RETENTION_DAYS:-14}"
+HOOK_TIMEOUT_SECONDS="${SKILLSMITH_HOOK_TIMEOUT_SECONDS:-3}"
+case "$HOOK_TIMEOUT_SECONDS" in
+  ''|*[!0-9]*|0) HOOK_TIMEOUT_SECONDS=3 ;;
+esac
 # `set -u` aborts on an unset $HOME -- guard it explicitly rather than
 # relying on HOME always being set in every context this hook's shell runs in.
 LOG_DIR="${HOME:-/tmp}/.skillsmith/logs"
@@ -92,11 +96,39 @@ redact() {
     -e 's/([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*=)[^ ]+/\1[REDACTED]/g'
 }
 
-# `2>&1 >/dev/null` (in that order) duplicates stderr to the substitution's
-# capture pipe first, then discards stdout only -- the standard idiom for
-# capturing just stderr via `$(...)`.
-STDERR_OUT=$(node "$PROJECT_DIR/node_modules/ruflo/bin/ruflo.js" hooks "$HOOK_NAME" "$@" 2>&1 >/dev/null)
-EXIT_CODE=$?
+# Ruflo is advisory on this hot path. Run it behind an internal watchdog so
+# a wedged state/database/network operation cannot consume Claude Code's much
+# larger command-hook timeout before an ordinary Bash/Edit tool is dispatched.
+STDERR_FILE=$(mktemp -t skillsmith-hook-stderr.XXXXXX 2>/dev/null) || STDERR_FILE=""
+TIMEOUT_FILE=$(mktemp -t skillsmith-hook-timeout.XXXXXX 2>/dev/null) || TIMEOUT_FILE=""
+if [ -n "$STDERR_FILE" ] && [ -n "$TIMEOUT_FILE" ]; then
+  node "$PROJECT_DIR/node_modules/ruflo/bin/ruflo.js" hooks "$HOOK_NAME" "$@" \
+    > /dev/null 2>"$STDERR_FILE" &
+  RUFLO_PID=$!
+  (
+    sleep "$HOOK_TIMEOUT_SECONDS"
+    printf '1' >"$TIMEOUT_FILE"
+    kill "$RUFLO_PID" 2>/dev/null || true
+  ) &
+  WATCHDOG_PID=$!
+  wait "$RUFLO_PID" 2>/dev/null
+  EXIT_CODE=$?
+  kill "$WATCHDOG_PID" 2>/dev/null || true
+  wait "$WATCHDOG_PID" 2>/dev/null || true
+  STDERR_OUT=$(cat "$STDERR_FILE" 2>/dev/null)
+  if [ -s "$TIMEOUT_FILE" ]; then
+    STDERR_OUT="${STDERR_OUT}${STDERR_OUT:+
+}ruflo hook timed out after ${HOOK_TIMEOUT_SECONDS}s"
+  fi
+  rm -f "$STDERR_FILE" "$TIMEOUT_FILE"
+else
+  # If temporary-file creation fails, fail open without invoking an unbounded
+  # downstream process. Logging below still records the local failure.
+  EXIT_CODE=1
+  STDERR_OUT="ruflo hook skipped: unable to create watchdog files"
+  [ -n "$STDERR_FILE" ] && rm -f "$STDERR_FILE"
+  [ -n "$TIMEOUT_FILE" ] && rm -f "$TIMEOUT_FILE"
+fi
 STDERR_EXCERPT=$(redact "$STDERR_OUT" | head -c 500)
 
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)

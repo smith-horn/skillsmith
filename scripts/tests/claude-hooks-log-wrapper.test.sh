@@ -25,6 +25,8 @@
 #      (Bearer, provider-key prefixes, GitHub PAT, env-var assignment,
 #      quoted flag value) is actually stripped, and an ordinary command
 #      with no secrets passes through unmodified.
+#   G. A hanging ruflo subprocess is terminated by the internal watchdog,
+#      logged as a timeout, and still fails open.
 set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -183,6 +185,27 @@ for SHELL_BIN in bash dash; do
   LINE=$(latest_log_line)
   assert_eq "[$SHELL_BIN] ordinary command with no secrets passes through unmodified" \
     "git status --short" "$(printf '%s' "$LINE" | jq -r .identifier)"
+  teardown_fixture
+
+  echo ""
+  echo "=== Group G: hanging ruflo is bounded and fails open ==="
+  setup_fixture 0 "unused"
+  cat > "$FIXTURE_DIR/node_modules/ruflo/bin/ruflo.js" << 'NODE_EOF'
+#!/usr/bin/env node
+setInterval(() => {}, 1000);
+NODE_EOF
+  START_SECONDS=$(date +%s)
+  SKILLSMITH_HOOK_TIMEOUT_SECONDS=1 run_wrapper "$SHELL_BIN" pre-command "pwd" -- --command "pwd" >/dev/null 2>&1
+  RC=$?
+  ELAPSED_SECONDS=$(($(date +%s) - START_SECONDS))
+  assert_eq "[$SHELL_BIN] timed-out wrapper still exits 0" "0" "$RC"
+  assert_true "[$SHELL_BIN] hanging ruflo returns within 3s (elapsed=${ELAPSED_SECONDS}s)" \
+    "$([ "$ELAPSED_SECONDS" -le 3 ] && echo 0 || echo 1)"
+  LINE=$(latest_log_line)
+  assert_contains "[$SHELL_BIN] timeout is recorded in the durable log" \
+    "$(printf '%s' "$LINE" | jq -r .stderr)" "ruflo hook timed out after 1s"
+  assert_true "[$SHELL_BIN] timeout records a non-zero downstream exit" \
+    "$([ "$(printf '%s' "$LINE" | jq -r .exitCode)" -ne 0 ] && echo 0 || echo 1)"
   teardown_fixture
 
   echo ""
