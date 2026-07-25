@@ -343,6 +343,36 @@ patch_mcp_json() {
 }
 
 #######################################
+# Create the worktree's Git entry
+#
+# New branches based on main must start from the freshly fetched remote ref.
+# Existing branches bypass base selection entirely.
+#######################################
+add_worktree_git_entry() {
+    local worktree_path="$1"
+    local branch_name="$2"
+    local base_branch="$3"
+
+    if [[ "$USE_EXISTING_BRANCH" == true ]]; then
+        git worktree add --no-checkout "$worktree_path" "$branch_name"
+        return
+    fi
+
+    local resolved_base="$base_branch"
+    if [[ "$base_branch" == "main" ]]; then
+        info "  Fetching origin/main for a fresh default-branch base..."
+        if ! git fetch --no-recurse-submodules origin main; then
+            error "Could not fetch origin/main. Worktree creation stopped before creating '$branch_name'.
+
+Check your network and repository access, then retry."
+        fi
+        resolved_base="origin/main"
+    fi
+
+    git worktree add --no-checkout "$worktree_path" -b "$branch_name" "$resolved_base"
+}
+
+#######################################
 # Create worktree with git-crypt support
 #######################################
 create_worktree() {
@@ -356,11 +386,7 @@ create_worktree() {
 
     # Step 1: Create worktree without checkout
     info "Step 1: Creating worktree without checkout..."
-    if [[ "$USE_EXISTING_BRANCH" == true ]]; then
-        git worktree add --no-checkout "$worktree_path" "$branch_name"
-    else
-        git worktree add --no-checkout "$worktree_path" -b "$branch_name" "$base_branch"
-    fi
+    add_worktree_git_entry "$worktree_path" "$branch_name" "$base_branch"
     success "  Worktree created (without checkout)"
 
     # Step 2: Find worktree's gitdir
