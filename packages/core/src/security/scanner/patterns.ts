@@ -256,6 +256,15 @@ export const DATA_EXFILTRATION_PATTERNS = [
   /\b(?:curl|wget)\b[^\n]{0,200}?(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b[^\n]{0,100}?\$\{?[A-Za-z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASS|CRED)/i,
 ]
 
+// SMI-5833/SMI-5838: credential/auth-level substitution to defeat an auth check,
+// split out of PRIVILEGE_ESCALATION_PATTERNS (spread back in below, preserving
+// array order/count) so scanPrivilegeEscalation can identify these two entries by
+// reference and cap their severity — see the inline comment at the spread site.
+export const CREDENTIAL_SUBSTITUTION_PATTERNS = [
+  /\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,100}?\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b/i,
+  /\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b[^\n]{0,100}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b/i,
+]
+
 // SMI-685: Privilege escalation patterns
 export const PRIVILEGE_ESCALATION_PATTERNS = [
   /sudo\s+.*(-S|--stdin)/i, // sudo with password from stdin
@@ -325,8 +334,16 @@ export const PRIVILEGE_ESCALATION_PATTERNS = [
   // could invert that). Each chains bounded lazy quantifiers ([^\n]{0,N}?)
   // sequentially with no nested repetition — same ReDoS-safe shape as
   // CODE_EXECUTION_PATTERNS above.
-  /\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,100}?\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b/i,
-  /\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b[^\n]{0,100}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b/i,
+  //
+  // SMI-5838: purely lexical, so it can't distinguish real bypass intent from
+  // benign dev/test troubleshooting that happens to carry both signals (e.g.
+  // "To get around the 403 error in local testing, use a mock token instead of
+  // your expired token"). scanPrivilegeEscalation identifies these two entries
+  // by reference (CREDENTIAL_SUBSTITUTION_PATTERNS, declared above and spread
+  // in here to keep this array's order/count unchanged) and caps their severity
+  // below the install-blocking threshold — detection stays on, a false positive
+  // surfaces for review instead of rejecting a legitimate skill install.
+  ...CREDENTIAL_SUBSTITUTION_PATTERNS,
 ]
 
 /**

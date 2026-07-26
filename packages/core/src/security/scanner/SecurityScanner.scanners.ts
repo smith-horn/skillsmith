@@ -20,6 +20,7 @@ import {
   PROMPT_LEAKING_PATTERNS,
   DATA_EXFILTRATION_PATTERNS,
   PRIVILEGE_ESCALATION_PATTERNS,
+  CREDENTIAL_SUBSTITUTION_PATTERNS,
 } from './patterns.js'
 import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
 import type { LineContext } from './SecurityScanner.helpers.js'
@@ -239,8 +240,22 @@ export function scanPrivilegeEscalation(
       if (match) {
         const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
         const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-        const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-        const severity = inDocContext ? 'high' : 'critical'
+        // SMI-5838: the credential-substitution pattern pair (SMI-5833) is purely
+        // lexical and can false-positive on benign dev/test troubleshooting text
+        // (e.g. "get around the 403 in local testing... mock token instead of
+        // your expired token"). Cap severity at 'medium' for just these two
+        // patterns so a false positive surfaces for review instead of blocking
+        // a skill install (SecurityScanner.ts only blocks on 'critical'/'high');
+        // every other privilege_escalation pattern keeps its existing severity.
+        const isCredentialSubstitution = (CREDENTIAL_SUBSTITUTION_PATTERNS as RegExp[]).includes(
+          pattern
+        )
+        const confidence: FindingConfidence = isCredentialSubstitution
+          ? 'low'
+          : inDocContext
+            ? 'low'
+            : 'high'
+        const severity = isCredentialSubstitution ? 'medium' : inDocContext ? 'high' : 'critical'
 
         findings.push({
           type: 'privilege_escalation',
