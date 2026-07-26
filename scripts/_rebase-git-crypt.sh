@@ -4,9 +4,13 @@
 # Split out of rebase-worktree.sh per CLAUDE.md's 500-line file-length
 # convention (SMI-5773). Sourced only, never run standalone — relies on
 # rebase-worktree.sh's globals (WORKTREE_PATH, ORIG_SMUDGE, ORIG_CLEAN,
-# FILTERS_DISABLED, RESMUDGE_SCAN_FAILED, SCAN_RESULT_BAD, SCAN_RESULT_MISSING)
-# and _lib.sh's info/warn/success/error, all already in scope via bash's
-# shared-process sourcing model regardless of which file defines them.
+# FILTERS_DISABLED, RESMUDGE_SCAN_FAILED, SCAN_RESULT_BAD, SCAN_RESULT_MISSING,
+# STASH_REF, DRY_RUN) and _lib.sh's info/warn/success/error, all already in
+# scope via bash's shared-process sourcing model regardless of which file
+# defines them. step_stash() (Step 6) also lives here (moved from
+# rebase-worktree.sh when it again crossed the 500-line cap) — thematically
+# it belongs with the rest of this file's stash/index-timestamp-stability
+# logic, which it calls directly.
 #
 # SMI-5773: `git checkout HEAD -- <paths>` skips stat-clean files (Git's
 # checkout_entry_ca()/ie_match_stat() short-circuit) — files a rebase
@@ -312,4 +316,44 @@ check_resmudge_scan_result() {
     echo "    git -C $WORKTREE_PATH ls-files -z -- $enc_paths | while IFS= read -r -d '' f; do rm -f -- \"$WORKTREE_PATH/\$f\"; done"
     echo "    git -C $WORKTREE_PATH checkout HEAD -- $enc_paths"
     exit 4   # new exit code: rebase (and stash pop) succeeded, but working tree needs re-smudge
+}
+
+# Step 6: Stash unstaged changes (captures specific ref for safe pop)
+step_stash() {
+    info "Step 6: Stashing unstaged changes..."
+    if git -C "$WORKTREE_PATH" diff --quiet; then info "  No unstaged changes to stash"; return 0; fi
+    if [ "$DRY_RUN" = true ]; then info "  [dry-run] Would stash unstaged changes"; return 0; fi
+    # `git diff --quiet` above can report "dirty" purely from a dirty
+    # submodule (e.g. untracked content sitting inside docs/internal's own
+    # working tree), which `git stash push` cannot capture -- it then prints
+    # "No local changes to save" and creates no new stash entry. Capturing
+    # refs/stash before/after (instead of blindly reading `stash list | head
+    # -1`) detects that case: previously, a no-op push here would (a) grab
+    # whatever UNRELATED stash another session/branch had left at stash@{0},
+    # which Step 11 would then `stash pop` onto this worktree, and (b)
+    # SIGPIPE-crash under `pipefail` once the shared stash list (refs/stash
+    # is repo-wide, not per-worktree) grew past a couple of entries -- `head
+    # -1` closes its read end while `git stash list` is still writing.
+    local before_stash after_stash
+    before_stash=$(git -C "$WORKTREE_PATH" rev-parse -q --verify refs/stash 2>/dev/null || echo "")
+    git -C "$WORKTREE_PATH" stash push -m "rebase-worktree: auto-stash before rebase"
+    after_stash=$(git -C "$WORKTREE_PATH" rev-parse -q --verify refs/stash 2>/dev/null || echo "")
+    if [ "$before_stash" = "$after_stash" ]; then
+        info "  Nothing actually stashed (dirty state was submodule-only, not a real diff)"
+        STASH_REF=""
+        return 0
+    fi
+    STASH_REF="stash@{0}"
+    # SMI-5781: `git stash push` above re-checks-out every previously-unstaged
+    # path back to HEAD's content, leaving a racy mtime on each -- if left
+    # unresolved, Step 9's rebase pre-flight can spuriously reject an
+    # encrypted path as dirty once Step 7 swaps in the identity clean filter.
+    # Must run here: after the stash exists, before Step 7's filter swap.
+    # force_racy_stash_restore_for_test is a test-only, inert-by-default
+    # determinism seam (SKILLSMITH_REBASE_FORCE_RACY_TEST=1) -- see its
+    # doc comment above.
+    force_racy_stash_restore_for_test
+    info "  Stabilizing encrypted-file index timestamps..."
+    stabilize_encrypted_index_stats
+    success "  Stashed as $STASH_REF"
 }
