@@ -87,9 +87,14 @@ jobs:
 
           **$VIOLATION_COUNT issue(s)** created via the MCP tool path are missing required template fields (Acceptance Criteria section with >= 2 concrete items).
 
-          ### Violations
+          ### Violations (first 50 of $VIOLATION_COUNT)
           "
-          BODY+=$(jq -r '.violations[] | "- **\(.identifier)**: \(.title) (\(.url)) — \(.errors[0])"' /tmp/lint-results.json)
+          BODY+=$(jq -r '[.violations[] | "- **\(.identifier)**: \(.title) (\(.url)) — \(.errors[0])"] | .[0:50] | join("\n")' /tmp/lint-results.json)
+          if [ "$VIOLATION_COUNT" -gt 50 ]; then
+            BODY+="
+
+          …and $((VIOLATION_COUNT - 50)) more — see the [step summary](https://github.com/smith-horn/skillsmith/actions/workflows/lint-linear-issues.yml) of the triggering run for the full list."
+          fi
           BODY+="
 
           ### Resolution
