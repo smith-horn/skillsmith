@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `checkForModifications()` (`services/skill-installation.io.ts`) now tolerates up to 2 seconds of clock skew between a skill's `installDate` and its on-disk mtime, instead of a strict `mtime > installDate` comparison — closes a race where `install()`'s `writeInstallFiles()` timestamp and its later `installedAt` capture could disagree by a few milliseconds under load, causing `uninstall()` to spuriously report the skill as locally modified and fail (SMI-5828)
 - **Feature**: `sha256Hex` (`journal/hash.ts`) exposed from the package root — one shared content-hash implementation for every `content_hash` computation (public inventory, private registry) instead of independent inline `createHash('sha256')` copies that could silently drift. `sync/inventory-collector.ts` switched to it (SMI-5816)
 - **Feature**: `logging/types.ts`'s `Surface` union gains `'doc-retrieval'`, and `logging/rotation.ts`'s `getLogDir()` gains a `SKILLSMITH_STATE_DIR_OVERRIDE` precedence tier (checked after the existing `SKILLSMITH_LOG_DIR` test seam, before the `homedir()` fallback) — lets the doc-retrieval reindex CLI's structured logs land on a Docker-bind-mounted, host-visible path instead of the container's own throwaway filesystem (SMI-5793)
 
