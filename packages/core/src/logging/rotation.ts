@@ -319,10 +319,37 @@ if (process.env.VITEST !== 'true' && process.env.SKILLSMITH_LOG_DISABLE_STARTUP_
 
 /**
  * Closes any open streams and clears all in-memory state. Test-only — used
- * by `rotation.test.ts` between cases so state from one temp-dir scenario
- * never leaks into the next.
+ * by `rotation.test.ts`/`logger.test.ts` between cases so state from one
+ * temp-dir scenario never leaks into the next.
+ *
+ * SMI-5837: drains every surface's `queueTails` entry FIRST, before touching
+ * `states`/streams. `writeLogLine` is fire-and-forget from `logger.ts`'s
+ * perspective (F2's "logger never blocks" design) — a caller's test can
+ * observe ITS OWN write landing (via `waitForLogFile`) while an EARLIER
+ * write to the same surface is still queued behind it under I/O contention
+ * (`runExclusive` is FIFO per surface, but the queue only guarantees order,
+ * not that every prior write has drained by the time a later one resolves,
+ * if a test only awaits its own file appearing rather than the whole
+ * queue). Previously, clearing `queueTails` here (without awaiting it)
+ * detached any still-in-flight write from the mutex without cancelling it —
+ * it kept running as an orphaned promise, and because `resolveStream` reads
+ * `SKILLSMITH_LOG_DIR`/`states` LIVE (by design, so a test can repoint the
+ * log dir without `vi.resetModules()`), that orphaned write would land
+ * wherever those pointed by the time it finally completed: a LATER test's
+ * fresh temp directory. The stray record (missing that later test's own
+ * `correlationId`, `msg`, etc.) could then be the FIRST line a test reads
+ * back, failing an assertion that has nothing to do with the actual write
+ * under test. Reproduced under combined CPU+disk I/O contention (~1/15
+ * runs); never reproduced in isolation, matching the original flake report.
+ * Awaiting every tracked queue tail first guarantees no write can still be
+ * in flight once this function returns, closing that window. Every
+ * `runExclusive` task converts both success AND failure into a resolved
+ * (never rejected) tail promise (see `runExclusive` above), so this await
+ * is safe even for the crash-proofing tests' deliberately-failing writes.
  */
 export async function __resetLoggingStateForTests(): Promise<void> {
+  await Promise.all(Array.from(queueTails.values()))
+
   const closes: Promise<void>[] = []
   for (const state of states.values()) {
     if (state.stream) closes.push(closeStream(state.stream))
