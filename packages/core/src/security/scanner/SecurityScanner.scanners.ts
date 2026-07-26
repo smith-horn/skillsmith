@@ -247,9 +247,7 @@ export function scanPrivilegeEscalation(
         // patterns so a false positive surfaces for review instead of blocking
         // a skill install (SecurityScanner.ts only blocks on 'critical'/'high');
         // every other privilege_escalation pattern keeps its existing severity.
-        const isCredentialSubstitution = (CREDENTIAL_SUBSTITUTION_PATTERNS as RegExp[]).includes(
-          pattern
-        )
+        const isCredentialSubstitution = CREDENTIAL_SUBSTITUTION_PATTERNS.includes(pattern)
         const confidence: FindingConfidence = isCredentialSubstitution
           ? 'low'
           : inDocContext
