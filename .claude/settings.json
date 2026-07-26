@@ -107,6 +107,16 @@
             "command": "$CLAUDE_PROJECT_DIR/scripts/dogfood-skill-telemetry.sh pre"
           }
         ]
+      },
+      {
+        "matcher": "^mcp__linear__save_issue$",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/linear-issue-creation-guard.mjs\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
