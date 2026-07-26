@@ -40,6 +40,7 @@ import {
   auditSecdefAnonGrants,
   findServerJsonFieldLengthViolations,
   countUnreleasedEntries,
+  findUnreleasedHeadingLines,
   isReleasePrepDiff,
   parseGitCryptEncryptedFiles,
   classifyGitCryptScanResult,
@@ -2983,6 +2984,7 @@ console.log(`\n${BOLD}43. CHANGELOG [Unreleased] Placement (SMI-4776)${RESET}`)
   ]
 
   let placementIssues = 0
+  let duplicateIssues = 0
   for (const { changelogPath, label } of targets) {
     if (!existsSync(changelogPath)) continue
 
@@ -3005,6 +3007,23 @@ console.log(`\n${BOLD}43. CHANGELOG [Unreleased] Placement (SMI-4776)${RESET}`)
 
     if (headings.length === 0) continue
 
+    // SMI-5845: assert exactly one `[Unreleased]` heading BEFORE the
+    // firstVersionIdx/-1 guard below — a CHANGELOG with only [Unreleased]
+    // headings and zero version headings (e.g. packages/doc-retrieval-mcp,
+    // packages/skillsmith-cli) has firstVersionIdx === -1 and would `continue`
+    // past this check entirely if it ran after that guard, exactly
+    // reproducing the SMI-5845 root cause (a duplicate heading invisible to
+    // the placement logic) for that file shape.
+    const unreleasedLines = findUnreleasedHeadingLines(content)
+    if (unreleasedLines.length > 1) {
+      duplicateIssues++
+      const [keepLine, ...dupeLines] = unreleasedLines
+      fail(
+        `${label}: found ${unreleasedLines.length} '## [Unreleased]' headings in ${changelogPath} (line ${keepLine}, plus duplicate(s) at line ${dupeLines.join(', ')}) — expected exactly one`,
+        `Merge the content under the duplicate '## [Unreleased]' heading(s) at ${changelogPath}:${dupeLines.join(', ')} into their real version sections (or into line ${keepLine} if genuinely unreleased), then delete the duplicate heading(s)`
+      )
+    }
+
     const firstUnreleasedIdx = headings.findIndex((h) => h.isUnreleased)
     const firstVersionIdx = headings.findIndex((h) => h.isVersion)
 
@@ -3024,8 +3043,10 @@ console.log(`\n${BOLD}43. CHANGELOG [Unreleased] Placement (SMI-4776)${RESET}`)
     }
   }
 
-  if (placementIssues === 0) {
-    pass('All CHANGELOGs have [Unreleased] before any versioned section')
+  if (placementIssues === 0 && duplicateIssues === 0) {
+    pass(
+      'No CHANGELOG has more than one [Unreleased] heading, and placement is correct where present'
+    )
   }
 }
 

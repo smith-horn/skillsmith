@@ -121,6 +121,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## v0.5.7
 
 - **Refactor**: initSkill throws InitSkillError instead of process.exit (SMI-4314) (#642)
+- **Fix**: `skillsmith author init` now reports a friendly error and cleans up
+  partial output when a file operation fails. When an init is run against a
+  pre-existing directory that the user confirms to overwrite, the existing
+  directory is preserved on mid-scaffold failure instead of being removed
+  (SMI-4289, closes #602).
 
 ## v0.5.6
 
@@ -129,14 +134,6 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## v0.5.5
 
 - **Other**: SMI-4190: release cadence docs — ADR-114 + CHANGELOG backfill + CONTRIBUTING (#552)
-
-## [Unreleased]
-
-- **Fix**: `skillsmith author init` now reports a friendly error and cleans up
-  partial output when a file operation fails. When an init is run against a
-  pre-existing directory that the user confirms to overwrite, the existing
-  directory is preserved on mid-scaffold failure instead of being removed
-  (SMI-4289, closes #602).
 
 ## v0.5.4
 
