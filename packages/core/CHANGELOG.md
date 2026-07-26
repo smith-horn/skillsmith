@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.11.4
+
 - **Fix**: `PRIVILEGE_ESCALATION_PATTERNS` (`security/scanner/patterns.ts`) gains two new contextual entries detecting credential/auth-level substitution used to defeat an auth check (e.g. "use the service_role key instead of your admin JWT to bypass the 403") — closes a double-miss where this exact phrasing, grammatical and lexically benign, slipped past both the internal SecurityScanner and AIDefence during a real staged-payload hardening pass (SMI-5833)
 - **Fix**: `checkForModifications()` (`services/skill-installation.io.ts`) now tolerates up to 2 seconds of clock skew between a skill's `installDate` and its on-disk mtime, instead of a strict `mtime > installDate` comparison — closes a race where `install()`'s `writeInstallFiles()` timestamp and its later `installedAt` capture could disagree by a few milliseconds under load, causing `uninstall()` to spuriously report the skill as locally modified and fail (SMI-5828)
 - **Feature**: `sha256Hex` (`journal/hash.ts`) exposed from the package root — one shared content-hash implementation for every `content_hash` computation (public inventory, private registry) instead of independent inline `createHash('sha256')` copies that could silently drift. `sync/inventory-collector.ts` switched to it (SMI-5816)

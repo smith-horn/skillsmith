@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/cli",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "CLI tools for Skillsmith skill discovery and authentication",
   "type": "module",
   "bin": {
@@ -39,14 +39,14 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@skillsmith/core": "^0.11.3",
-    "@skillsmith/mcp-server": "^0.7.5",
+    "@skillsmith/core": "^0.11.4",
+    "@skillsmith/mcp-server": "^0.7.6",
     "@types/node": "^25.9.3",
     "esbuild": "0.28.1",
     "vitest": "4.1.10"
   },
   "peerDependencies": {
-    "@smith-horn/enterprise": "^0.3.3"
+    "@smith-horn/enterprise": "^0.3.4"
   },
   "peerDependenciesMeta": {
     "@smith-horn/enterprise": {
