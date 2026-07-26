@@ -373,6 +373,97 @@ Check your network and repository access, then retry."
 }
 
 #######################################
+# Print the post-creation "next steps" guidance for a freshly created
+# worktree. Extracted verbatim from create_worktree for SMI-4298 so the
+# DEV_PORT line is unit-testable via `source` (the BASH_SOURCE guard at the
+# bottom of this file already supports that, per SMI-5596) without running
+# a full worktree creation.
+#
+# SMI-4298: the hand-run compose command shown here now carries an explicit
+# DEV_PORT=<port> prefix read back from this worktree's own override, so a
+# copy-pasted `docker compose up` does not ALSO publish host port 3001 (the
+# base compose file's default) and collide with skillsmith-dev-1.
+#
+# Arguments:
+#   $1 - Worktree path
+#   $2 - Branch name
+#   $3 - Main repository root (for the worktree-docker.sh path shown)
+#######################################
+print_worktree_next_steps() {
+    local worktree_path="$1"
+    local branch_name="$2"
+    local repo_root="$3"
+
+    echo ""
+    success "Worktree created successfully!"
+    echo ""
+    echo "Worktree location: $worktree_path"
+    echo "Branch: $branch_name"
+    echo ""
+    echo "To start working:"
+    echo "  cd $worktree_path"
+    if [[ -f "$worktree_path/docker-compose.override.yml" ]]; then
+        # SMI-4298: read the assigned port back out of the override we just
+        # generated -- never recompute it (see _lib.sh's helper docstring).
+        local dev_port=""
+        dev_port="$(resolve_worktree_dev_port "$worktree_path/docker-compose.override.yml" || true)"
+        echo ""
+        echo "To start Docker in this worktree:"
+        echo "  $repo_root/scripts/worktree-docker.sh start $worktree_path"
+        echo "  (^ sets DEV_PORT for you -- SMI-4298)"
+        if [[ -n "$dev_port" ]]; then
+            echo ""
+            echo "Or by hand. The DEV_PORT prefix is REQUIRED (SMI-4298): Docker Compose"
+            echo "concatenates 'ports:' across -f files rather than replacing them, so"
+            echo "without it this worktree ALSO publishes host port 3001 and collides"
+            echo "with the main checkout's skillsmith-dev-1 container:"
+            echo "  cd $worktree_path && DEV_PORT=$dev_port docker compose --profile dev up -d"
+        else
+            # Plan-review fix (High #3): this override has no dev-block
+            # ":3001" mapping to read back, so there is no safe DEV_PORT to
+            # print -- but a bare, unwarned command here would silently
+            # reproduce the collision on copy-paste, exactly like the
+            # pre-fix `up -d` guidance this plan replaces. Warn explicitly
+            # instead of only warning on the happy path.
+            echo ""
+            echo "WARNING (SMI-4298): $worktree_path/docker-compose.override.yml has no"
+            echo "dev-service \":3001\" port mapping, so the command below will ALSO publish"
+            echo "host port 3001 and can collide with the main checkout's skillsmith-dev-1"
+            echo "container. Regenerate the override first:"
+            echo "  $repo_root/scripts/worktree-docker.sh generate $worktree_path"
+            echo "  cd $worktree_path && docker compose --profile dev up -d"
+        fi
+        echo ""
+        echo "SMI-5559: run commands via the container matching THIS worktree, not a"
+        echo "hardcoded name (the main checkout's container is long-lived, so"
+        echo "'docker exec skillsmith-dev-1 <cmd>' silently \"succeeds\" from any"
+        echo "worktree even if this one's own container never came up):"
+        echo "  $repo_root/scripts/worktree-docker.sh exec $worktree_path -- npm run preflight  # like: docker exec <container> npm run preflight"
+        echo "This errors loudly (not silently) if the container isn't running yet —"
+        echo "see CLAUDE.md's Troubleshooting table, 'Container won't start', if it does."
+        echo ""
+        echo "SMI-5570/SMI-5074: git push now requires THIS worktree's OWN container to"
+        echo "be running (the command above) — pre-push no longer routes through the"
+        echo "main checkout's container, which was silently testing main's own"
+        echo "dependency state instead of this branch's. If you push before starting"
+        echo "this container on a non-docs-only change, pre-push hard-fails with the"
+        echo "exact remediation command; escape hatches:"
+        echo "  SKILLSMITH_PRE_PUSH_HOST=1 git push                       # fall back to host once"
+        echo "  SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 git push   # always fall back this push"
+    fi
+    echo ""
+    echo "Pre-commit hooks: active (SMI-4377 + SMI-4381)"
+    echo "  - Hook discovery: .husky/_/ is tracked in main repo (inherited via checkout)"
+    echo "  - Host tooling: node_modules symlinked to main repo (relative)"
+    echo "  - Per-package: each packages/<pkg>/node_modules also symlinked"
+    echo "  - Typecheck: runs in Docker on Linux; on macOS Docker Desktop falls back"
+    echo "    to host (virtiofs cannot traverse relative symlinks); host fallback works"
+    echo ""
+    echo "Note: existing worktrees need a one-time manual fix if skillsmith MCP fails:"
+    echo "  Edit .mcp.json: set skillsmith command to 'npx', args to ['-y', '@skillsmith/mcp-server']"
+}
+
+#######################################
 # Create worktree with git-crypt support
 #######################################
 create_worktree() {
@@ -486,46 +577,7 @@ create_worktree() {
     (cd "$worktree_path" && git update-index --skip-worktree .mcp.json)
     success "  .mcp.json marked skip-worktree (SMI-4973)"
 
-    echo ""
-    success "Worktree created successfully!"
-    echo ""
-    echo "Worktree location: $worktree_path"
-    echo "Branch: $branch_name"
-    echo ""
-    echo "To start working:"
-    echo "  cd $worktree_path"
-    if [[ -f "$worktree_path/docker-compose.override.yml" ]]; then
-        echo ""
-        echo "To start Docker in this worktree:"
-        echo "  cd $worktree_path && docker compose --profile dev up -d"
-        echo ""
-        echo "SMI-5559: run commands via the container matching THIS worktree, not a"
-        echo "hardcoded name (the main checkout's container is long-lived, so"
-        echo "'docker exec skillsmith-dev-1 <cmd>' silently \"succeeds\" from any"
-        echo "worktree even if this one's own container never came up):"
-        echo "  $REPO_ROOT/scripts/worktree-docker.sh exec $worktree_path -- npm run preflight  # like: docker exec <container> npm run preflight"
-        echo "This errors loudly (not silently) if the container isn't running yet —"
-        echo "see CLAUDE.md's Troubleshooting table, 'Container won't start', if it does."
-        echo ""
-        echo "SMI-5570/SMI-5074: git push now requires THIS worktree's OWN container to"
-        echo "be running (docker compose --profile dev up -d above) — pre-push no longer"
-        echo "routes through the main checkout's container, which was silently testing"
-        echo "main's own dependency state instead of this branch's. If you push before"
-        echo "starting this container on a non-docs-only change, pre-push hard-fails"
-        echo "with the exact remediation command; escape hatches:"
-        echo "  SKILLSMITH_PRE_PUSH_HOST=1 git push                       # fall back to host once"
-        echo "  SKILLSMITH_WORKTREE_PREPUSH_HARDFAIL_DISABLE=1 git push   # always fall back this push"
-    fi
-    echo ""
-    echo "Pre-commit hooks: active (SMI-4377 + SMI-4381)"
-    echo "  - Hook discovery: .husky/_/ is tracked in main repo (inherited via checkout)"
-    echo "  - Host tooling: node_modules symlinked to main repo (relative)"
-    echo "  - Per-package: each packages/<pkg>/node_modules also symlinked"
-    echo "  - Typecheck: runs in Docker on Linux; on macOS Docker Desktop falls back"
-    echo "    to host (virtiofs cannot traverse relative symlinks); host fallback works"
-    echo ""
-    echo "Note: existing worktrees need a one-time manual fix if skillsmith MCP fails:"
-    echo "  Edit .mcp.json: set skillsmith command to 'npx', args to ['-y', '@skillsmith/mcp-server']"
+    print_worktree_next_steps "$worktree_path" "$branch_name" "$REPO_ROOT"
 }
 
 #######################################
