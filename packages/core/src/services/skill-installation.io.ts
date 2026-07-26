@@ -76,6 +76,18 @@ export async function fetchFromGitHub(
   return text
 }
 
+// SMI-5828: a raw `mtime > installDate` comparison is flaky by construction —
+// `installedAt` is captured via `new Date().toISOString()` moments AFTER the
+// skill's files are written to disk, so the two timestamps come from
+// independent wall-clock reads (write() syscall vs. a later Date.now()) that
+// can be skewed by NTP steps, VM/host clock drift (Docker Desktop), or plain
+// sub-millisecond scheduling noise under load — none of which reflect a real
+// local edit. A small tolerance absorbs that noise while still catching
+// genuine post-install modifications, which in practice trail installation
+// by seconds/minutes/hours, not milliseconds. This mirrors the standard
+// mitigation used by `make`/`rsync`-style mtime comparisons.
+const MODIFICATION_DETECTION_TOLERANCE_MS = 2000
+
 export async function checkForModifications(
   skillPath: string,
   installedAt: string
@@ -88,7 +100,7 @@ export async function checkForModifications(
       if (file.isFile()) {
         const filePath = path.join(skillPath, file.name)
         const stats = await fs.stat(filePath)
-        if (stats.mtime > installDate) {
+        if (stats.mtime.getTime() - installDate.getTime() > MODIFICATION_DETECTION_TOLERANCE_MS) {
           return true
         }
       }
