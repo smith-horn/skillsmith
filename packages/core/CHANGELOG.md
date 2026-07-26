@@ -148,7 +148,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## v0.5.4
 
-- **Fix**: rename webhook-dlq /retry → /resolve with migration 077 (SMI-4308) (#647)
+- **Feature**: Webhook dead-letter queue — new `WebhookDeadLetterRepository`, optional `deadLetterSink` on `WebhookQueueOptions`, and `webhook-dlq` authenticated edge function (SMI-4291, closes GitHub #601)
+- **Fix**: `WebhookDeadLetterRepository` gains `markResolved(id, resolvedBy?)` for operator acknowledgement and renames `listUnretried` → `listOpen` (the in-process filter now excludes both retried and resolved rows); `listUnretried` kept as a deprecated alias, removed when SMI-4322's delivery worker lands; repository types add `resolved_at` / `resolved_by` matching migration 077; `markRetried` unchanged — dormant until SMI-4322 (SMI-4308) (#647)
+- **Fix**: RLS recursion on `teams` and `team_members` that caused 500s on `/account/team*` pages once any user had a membership row — migration 072 rewrites the two legacy policies to call SECURITY DEFINER helpers (SMI-4306)
+- **Feature**: tree-sitter incremental parsing for Python analyzer — WASM-backed (`web-tree-sitter@0.25.10`), LRU tree cache (100 entries), query-based extraction replaces regex fallback; unchanged file re-parse ~0ms (memoised), incremental edit ~60ms on 1955-line fixture (well under 100ms target), ~27,000× speedup on cache hits vs cold parse; regression guard ensures query extraction matches or exceeds prior regex coverage on all fixtures (SMI-4293, PR #633, closes #604)
 - **Feature**: team provisioning on subscription (SMI-4307) (#646)
 - **Fix**: populate UndoSnapshot.backup_path in ActivationManager (SMI-4297) (#644)
 
@@ -161,17 +164,10 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fix**: restore category/security/repo in skill detail view (SMI-4240) (#583)
 - **Other**: SMI-4190: release cadence docs — ADR-114 + CHANGELOG backfill + CONTRIBUTING (#552)
 
-## [Unreleased]
-
-- **SMI-4308**: `WebhookDeadLetterRepository` gains `markResolved(id, resolvedBy?)` for operator acknowledgement and renames `listUnretried` → `listOpen` (the in-process filter now excludes both retried and resolved rows). `listUnretried` kept as a deprecated alias; removed when SMI-4322's delivery worker lands. Repository types add `resolved_at` / `resolved_by` matching migration 077. `markRetried` unchanged — dormant until SMI-4322.
-- **SMI-4306**: Fix RLS recursion on `teams` and `team_members` that caused 500s on `/account/team*` pages once any user had a membership row. Migration 072 rewrites the two legacy policies to call SECURITY DEFINER helpers.
-- **SMI-4293**: tree-sitter incremental parsing for Python analyzer — WASM-backed (`web-tree-sitter@0.25.10`), LRU tree cache (100 entries), query-based extraction replaces regex fallback. Unchanged file re-parse ~0ms (memoised); incremental edit ~60ms on 1955-line fixture (well under 100ms target); ~27,000× speedup on cache hits vs cold parse. Regression guard ensures query extraction matches or exceeds prior regex coverage on all fixtures (PR #633, closes #604).
-- **SMI-4291**: Webhook dead-letter queue — new `WebhookDeadLetterRepository`, optional `deadLetterSink` on `WebhookQueueOptions`, and `webhook-dlq` authenticated edge function. Closes GitHub #601.
-- **SMI-4124**: `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
-
 ## v0.5.1
 
 - **Fix**: SMI-4182 suppress CodeQL false positive on telemetry hash (#550 retro).
+- **Feature**: `skill_pack_audit` trigger-quality + namespace collision checks (SMI-4124, PR #505)
 
 ## v0.4.18
 
