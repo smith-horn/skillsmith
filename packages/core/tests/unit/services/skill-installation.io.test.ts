@@ -13,6 +13,7 @@ import * as fs from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import {
+  checkForModifications,
   fetchAndScanOptionalFiles,
   writeInstallFiles,
 } from '../../../src/services/skill-installation.io.js'
@@ -359,5 +360,63 @@ describe('writeInstallFiles rollback safety (SMI-5359 retro)', () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true }).catch(() => {})
     }
+  })
+})
+
+/**
+ * SMI-5828: checkForModifications must tolerate small clock/timestamp noise
+ * between "file written" (mtime) and "installedAt captured" (a separate,
+ * later `Date.now()` read) so an untouched, just-installed skill is never
+ * spuriously reported as locally modified. A real edit — which in practice
+ * trails installation by seconds/minutes, not milliseconds — must still be
+ * detected.
+ */
+describe('checkForModifications (SMI-5828 tolerance)', () => {
+  it('does not flag an untouched skill directory as modified', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cfm-clean-'))
+    try {
+      await fs.writeFile(path.join(root, 'SKILL.md'), '# hello')
+      const installedAt = new Date().toISOString()
+
+      expect(await checkForModifications(root, installedAt)).toBe(false)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  it('does not flag a file whose mtime is a few hundred ms after installedAt (clock/fs noise)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cfm-skew-'))
+    try {
+      const filePath = path.join(root, 'SKILL.md')
+      await fs.writeFile(filePath, '# hello')
+      // installedAt captured slightly BEFORE the file's mtime, simulating the
+      // same-ballpark clock/filesystem noise this tolerance exists to absorb.
+      const installedAt = new Date(Date.now() - 500).toISOString()
+
+      expect(await checkForModifications(root, installedAt)).toBe(false)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  it('flags a file modified well beyond the tolerance window as modified', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cfm-modified-'))
+    try {
+      const filePath = path.join(root, 'SKILL.md')
+      await fs.writeFile(filePath, '# hello')
+      const future = new Date(Date.now() + 60_000)
+      await fs.utimes(filePath, future, future)
+      const installedAt = new Date().toISOString()
+
+      expect(await checkForModifications(root, installedAt)).toBe(true)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  it('returns false (not modified) when the skill directory does not exist', async () => {
+    const missing = path.join(os.tmpdir(), 'cfm-missing-' + Date.now())
+
+    expect(await checkForModifications(missing, new Date().toISOString())).toBe(false)
   })
 })
