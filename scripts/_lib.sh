@@ -1157,6 +1157,109 @@ export_worktree_dev_port() {
 }
 
 #######################################
+# True if $1 is the MAIN checkout; false for a linked worktree (SMI-5836).
+#
+# A linked worktree's `--git-dir` is main's `.git/worktrees/<name>` while its
+# `--git-common-dir` is main's `.git`, so the two differ; in the main checkout
+# both resolve to the same path (`.git`, relative, with cwd at the root).
+# Verified live: main -> `.git`/`.git`; worktree -> `<root>/.git/worktrees/wt`
+# and `<root>/.git`.
+#
+# The `-n "$gcd"` test is load-bearing: on a NON-git path both rev-parse calls
+# fail and both vars are empty, which would otherwise compare equal and report
+# a non-git directory as the main checkout.
+#
+# Extracted from worktree-docker.sh's resolve_container_name so that script
+# holds exactly ONE copy of the test (SMI-5626 precedent: two copies of one
+# derivation drifted apart). Lives here, not locally, because _lib.sh already
+# owns every other worktree derivation helper -- and because the same idiom is
+# independently reimplemented in six OTHER places (hook-docker-detect.sh:137,
+# check-dist-fresh.sh:71, check-node-modules-fresh.sh:124, .husky/post-merge:26,
+# regen-lockfile.sh:75, dependabot-regenerate-lockfile.sh:94), two of them
+# POSIX `sh` hooks that cannot source this file. Consolidating those is a
+# separate refactor; this at least gives it a destination.
+#
+# Arguments:
+#   $1 - Path to a checkout or worktree
+# Returns:
+#   0 if $1 is the main checkout; 1 otherwise (including non-git paths)
+#######################################
+is_main_checkout() {
+    local path="$1" gcd gd
+    gcd=$(git -C "$path" rev-parse --git-common-dir 2>/dev/null)
+    gd=$(git -C "$path" rev-parse --git-dir 2>/dev/null)
+    [[ -n "$gcd" && "$gcd" == "$gd" ]]
+}
+
+#######################################
+# Refuse a worktree-only subcommand pointed at the MAIN checkout (SMI-5836).
+#
+# `start` and `generate` both WRITE a worktree-shaped
+# docker-compose.override.yml for whatever path they are given (cmd_start
+# auto-generates one when missing, worktree-docker.sh:184-189). Applied to
+# the main checkout that file overrides the base compose file's
+# `container_name: skillsmith-dev-1` (docker-compose.yml:14) with
+# `main-dev-1` (_lib.sh:1507), moves the documented 3001 publish to a
+# bucketed pair (3070/3071 for branch `main`), and on macOS bind-mounts
+# main's own node_modules READ-ONLY over /app/node_modules (_lib.sh:703-704),
+# replacing the base named volume at docker-compose.yml:26 -- so
+# `docker exec skillsmith-dev-1 npm install` afterwards fails EROFS against
+# a container that no longer exists under that name. Nothing undoes it: the
+# file is gitignored (.gitignore:190) and repair_worktrees_compose_override
+# skips the repo root (_lib.sh:1611).
+#
+# Hard error rather than degrading to a base-file-only `up`: `start .` from
+# main is a location mistake (docker-guide.md:137 documents that exact form
+# "from inside the worktree"), so quietly starting MAIN's container would
+# report success while the container the user actually wanted never came up --
+# the invisible-success class SMI-5559/SMI-5570 already fixed twice for
+# `docker exec`. Neither subcommand has any programmatic caller in the repo
+# (hook-docker-detect.sh:157 uses `resolve`), so this cannot break CI, hooks
+# or npm scripts. Full rationale:
+# docs/internal/implementation/smi-5836-worktree-docker-start-main-guard.md
+#
+# Lives here alongside is_main_checkout, not in worktree-docker.sh (SMI-5836
+# plan-review Critical #2): that script has only ~12 lines of headroom under
+# the 500-line check-file-length.mjs hard limit and is not grandfathered in
+# check-file-length.ignore, while _lib.sh already is (SMI-5660). Calls
+# error(), defined identically here (_lib.sh:92-95) and in worktree-docker.sh
+# (:83-86); which copy actually runs is inert since both are functionally
+# identical.
+#
+# Arguments:
+#   $1 - Subcommand name, for the message
+#   $2 - Path to check (no-op unless it is the main checkout)
+#######################################
+refuse_if_main_checkout() {
+    local subcommand="$1" path="$2" stray=""
+
+    is_main_checkout "$path" || return 0
+
+    if [[ -f "$path/docker-compose.override.yml" ]]; then
+        stray="
+
+Also, a stray override already exists here:
+  rm $path/docker-compose.override.yml
+Nothing regenerates or removes it automatically, so it keeps overriding this
+checkout's container name, ports and node_modules mount until you delete it."
+    fi
+
+    error "'$subcommand' is for linked worktrees, but $path is the MAIN checkout (SMI-5836).
+
+The base docker-compose.yml already provisions the main checkout completely:
+container skillsmith-dev-1 on host port 3001. A worktree override here renames
+that container, moves its ports, and (on macOS) remounts its node_modules
+read-only.
+
+If you meant the main checkout:
+  cd $path && docker compose --profile dev up -d
+
+If you meant a worktree ('$subcommand .' only works from INSIDE one):
+  $(basename "$0") $subcommand .worktrees/<name>
+  ./scripts/create-worktree.sh <branch>   # if it does not exist yet$stray"
+}
+
+#######################################
 # Enumerate host ports already claimed by SIBLING worktrees' override files,
 # excluding the main repo and the worktree being resolved itself (half of the
 # self-collision-avoidance fix — see _resolve_worktree_port_offset for the
