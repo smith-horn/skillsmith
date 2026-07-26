@@ -260,6 +260,10 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
       const privEscFindings = report.findings.filter((f) => f.type === 'privilege_escalation')
       expect(privEscFindings.length).toBeGreaterThan(0)
     })
+
+    // SMI-5838's severity-downgrade tests live in the sibling
+    // scanner-privesc-severity.test.ts (split out to stay under the 500-line/file
+    // CI gate — see that file's header comment).
   })
 
   describe('hostile-update detection (SMI-5535, R0 Wave 2A)', () => {
