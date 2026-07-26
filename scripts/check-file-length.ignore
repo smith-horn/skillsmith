@@ -59,6 +59,3 @@ scripts/create-worktree.sh
 
 # SMI-5660 split follow-up
 scripts/tests/create-worktree-hooks.test.sh
-
-# SMI-5660 split follow-up
-scripts/phases/phase-7-enterprise.sh
