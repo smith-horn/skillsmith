@@ -27,6 +27,7 @@
     "typecheck:watch": "tsc --build --watch",
     "audit:standards": "node scripts/audit-standards.mjs",
     "audit:drift": "node scripts/audit-linear-drift.mjs",
+    "lint:linear-issues": "node scripts/lint-linear-issues.mjs",
     "docs:folder-index": "node scripts/gen-docs-folder-index.mjs --write",
     "docs:folder-index:check": "node scripts/gen-docs-folder-index.mjs --check",
     "validate:skills": "node scripts/validate-local-skills.mjs",
