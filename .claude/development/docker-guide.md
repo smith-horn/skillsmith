@@ -134,7 +134,9 @@ cannot be set per-worktree there — it must be exported at `docker compose up` 
 Use the wrapper, which reads the port back out of the worktree's own override and exports it:
 
 ```bash
-./scripts/worktree-docker.sh start .        # from inside the worktree
+./scripts/worktree-docker.sh start .        # from inside the worktree ONLY
+# From the MAIN checkout this hard-errors (SMI-5836) — use plain
+# `docker compose --profile dev up -d` there.
 ```
 
 By hand, the prefix is required — take the value from the worktree's own override
