@@ -28,6 +28,7 @@ on:
       - 'scripts/lib/repair-worktree-container-symlinks.sh'
       - 'scripts/regen-worktree-overrides.sh'
       - 'scripts/worktree-docker.sh'
+      - 'scripts/docker-health.sh'
       - 'scripts/session-start-mcp-command-guard.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/session-start-audit.test.sh'
@@ -37,6 +38,7 @@ on:
       - 'scripts/tests/enumerate-compose-mounts-smi5784.test.sh'
       - 'scripts/tests/repair-worktree-container-symlinks.test.sh'
       - 'scripts/tests/worktree-port-collision.test.sh'
+      - 'scripts/tests/worktree-dev-port.test.sh'
       - 'scripts/tests/regen-worktree-overrides.test.sh'
       - 'scripts/tests/worktree-docker-resolve.test.sh'
       - 'scripts/tests/session-start-mcp-command-guard.test.sh'
@@ -76,6 +78,7 @@ jobs:
             scripts/lib/repair-worktree-container-symlinks.sh \
             scripts/regen-worktree-overrides.sh \
             scripts/worktree-docker.sh \
+            scripts/docker-health.sh \
             scripts/session-start-mcp-command-guard.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/session-start-audit.test.sh \
@@ -85,6 +88,7 @@ jobs:
             scripts/tests/enumerate-compose-mounts-smi5784.test.sh \
             scripts/tests/repair-worktree-container-symlinks.test.sh \
             scripts/tests/worktree-port-collision.test.sh \
+            scripts/tests/worktree-dev-port.test.sh \
             scripts/tests/regen-worktree-overrides.test.sh \
             scripts/tests/worktree-docker-resolve.test.sh \
             scripts/tests/session-start-mcp-command-guard.test.sh \
@@ -106,6 +110,7 @@ jobs:
           bash -n scripts/lib/repair-worktree-container-symlinks.sh
           bash -n scripts/regen-worktree-overrides.sh
           bash -n scripts/worktree-docker.sh
+          bash -n scripts/docker-health.sh
           bash -n scripts/session-start-mcp-command-guard.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
@@ -115,6 +120,7 @@ jobs:
           bash -n scripts/tests/enumerate-compose-mounts-smi5784.test.sh
           bash -n scripts/tests/repair-worktree-container-symlinks.test.sh
           bash -n scripts/tests/worktree-port-collision.test.sh
+          bash -n scripts/tests/worktree-dev-port.test.sh
           bash -n scripts/tests/regen-worktree-overrides.test.sh
           bash -n scripts/tests/worktree-docker-resolve.test.sh
           bash -n scripts/tests/session-start-mcp-command-guard.test.sh
@@ -146,6 +152,7 @@ jobs:
           bash scripts/tests/enumerate-compose-mounts-smi5784.test.sh
           bash scripts/tests/repair-worktree-container-symlinks.test.sh
           bash scripts/tests/worktree-port-collision.test.sh
+          bash scripts/tests/worktree-dev-port.test.sh
           bash scripts/tests/regen-worktree-overrides.test.sh
           bash scripts/tests/worktree-docker-resolve.test.sh
           bash scripts/tests/session-start-mcp-command-guard.test.sh

@@ -9,6 +9,16 @@ COMPOSE_PROFILE="${COMPOSE_PROFILE:-dev}"
 MAX_WAIT_SECONDS=60
 CHECK_INTERVAL=2
 
+# SMI-4298: shared worktree helpers (export_worktree_dev_port). Sourced
+# BEFORE this script's own color/log definitions below so those local
+# definitions take precedence -- mirrors worktree-docker.sh:21-30's ordering
+# and rationale. _lib.sh guards against double-sourcing (_LIB_SH_LOADED) and
+# its top level is nothing but variable assignments and function
+# definitions, so this is safe under `set -e`.
+DOCKER_HEALTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_lib.sh
+source "$DOCKER_HEALTH_LIB_DIR/_lib.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -101,6 +111,16 @@ wait_for_healthy() {
 main() {
     log_info "Checking Docker environment..."
     check_docker
+
+    # SMI-4298: the `up`/`restart` below run in the CALLER's cwd -- this
+    # script is wired into npm `pretest` (package.json), so from a worktree
+    # they act on THAT worktree's compose project. Export DEV_PORT from that
+    # worktree's own override first, or the base file's `${DEV_PORT:-3001}`
+    # publishes an extra host 3001: it either fails with EADDRINUSE against
+    # the main checkout's container, or -- worse -- silently squats 3001
+    # while main is down and breaks main's next `up`. Silent no-op in the
+    # main checkout, which has no override file (AC-6/AC-7).
+    export_worktree_dev_port "$PWD"
 
     if is_container_running; then
         log_info "Container '$CONTAINER_NAME' is already running"

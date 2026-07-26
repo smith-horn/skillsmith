@@ -1038,6 +1038,125 @@ _parse_override_host_ports() {
 }
 
 #######################################
+# Read back the host port a worktree's OWN docker-compose.override.yml
+# already publishes for the `dev` service's container port 3001 (SMI-4298).
+#
+# Why this exists: Docker Compose CONCATENATES `ports:` lists across `-f`
+# files rather than replacing them, so the base docker-compose.yml's
+# `'${DEV_PORT:-3001}:3001'` (docker-compose.yml:23) survives into every
+# worktree's merged config ALONGSIDE that worktree's own bucketed
+# `<base+1>:3001` entry from generate_docker_override_to_stdout. Every
+# worktree therefore also silently claims host port 3001 and collides with
+# the main checkout's skillsmith-dev-1 (verified live via `docker compose
+# --profile dev config`: 3 published entries without DEV_PORT, 2 with it).
+# `.env` is a symlink shared by the main checkout and every worktree
+# (create-worktree.sh:427), so DEV_PORT can never be set per-worktree
+# there -- it has to be exported by whatever invokes `docker compose up`.
+#
+# READS BACK the already-assigned value rather than recomputing the bucket
+# via _resolve_worktree_port_offset: that resolver is deliberately stateful
+# (sticky start-offset, sibling scan, host-bound probe), so a second
+# independent computation can disagree with what the override already
+# wrote. The override file is what actually provisioned the running
+# container -- the same ground-truth argument worktree-docker.sh's
+# resolve_container_name makes for container_name.
+#
+# Parsing: scoped to the `dev:` service block, because DEV_PORT governs the
+# `dev` service's 3001 publish specifically and the `test` service must
+# never supply it. The generator emits service keys at exactly 2-space
+# indent and their bodies at 4+, so `/^  dev:/,/^  [a-z]/` bounds the block
+# (sed evaluates the end pattern from the line AFTER the start, so `  dev:`
+# cannot close its own range). The grep/tr/cut chain is the same shape
+# _parse_override_host_ports already uses, narrowed to `:3001`.
+#
+# Arguments:
+#   $1 - Path to a docker-compose.override.yml (may not exist)
+# Outputs:
+#   stdout - the host port (e.g. 3891) when the dev block has a ":3001" map
+# Returns:
+#   0 on success; 1 if the file is absent or its dev block has no ":3001"
+#######################################
+resolve_worktree_dev_port() {
+    local file="$1"
+    local port
+    [ -f "$file" ] || return 1
+    port="$(sed -n '/^  dev:/,/^  [a-z]/p' "$file" 2>/dev/null \
+                | grep -oE '"[0-9]+:3001"' \
+                | head -1 | tr -d '"' | cut -d: -f1)"
+    [ -n "$port" ] || return 1
+    printf '%s\n' "$port"
+}
+
+#######################################
+# Export DEV_PORT for a worktree's `docker compose` invocation (SMI-4298).
+#
+# Sets DEV_PORT to the SAME host port the worktree's own override already
+# maps to container port 3001, so Compose's config resolution dedupes the
+# two now-identical `<port>:3001` entries into exactly one instead of
+# publishing an extra 3001. Verified live: with DEV_PORT unset the merged
+# config has 3 published entries (one of them the colliding 3001); with it
+# set to the override's own value, exactly 2, no stray 3001, no error.
+#
+# No override file at all (main checkout -- repair_worktrees_compose_override
+# skips repo_root at _lib.sh:1492 and the file is gitignored there; or a
+# worktree predating SMI-4377): SILENT no-op. There is no per-worktree port
+# assignment to honor and the base `:-3001` default is correct.
+#
+# Override present but with no dev-block ":3001" (hand-edited, or an old
+# format): print a one-line NOTE and fall through to the same default. That
+# is exactly today's behavior for every worktree -- degrading to the status
+# quo is not a regression, and hard-failing here would break `up` outright.
+#
+# Deliberately OVERWRITES a caller-supplied DEV_PORT: the override is ground
+# truth for what this compose project publishes, and a stale hand-set value
+# is precisely the drift recorded in
+# docs/internal/retros/2026-05-19-smi-5001-gh-866-882-historical-triage.md
+# ("DEV_PORT=3013 was ignored"). The printed line names the source so the
+# change is never silent. Typing `DEV_PORT=x docker compose up` by hand
+# still works -- it bypasses these scripts entirely.
+#
+# Uses `printf` rather than warn(): callers such as worktree-docker.sh
+# deliberately redefine warn() AFTER sourcing this file (see its header
+# comment at worktree-docker.sh:21-30), so warn()'s destination would
+# otherwise be caller-dependent. The two messages deliberately use
+# DIFFERENT streams (plan-review Critical #1): the success-path
+# confirmation goes to stderr, matching the neighboring SMI-5661 helpers'
+# style; the fallback NOTE goes to stdout, because it is the one message
+# that must survive `docker-health.sh`'s `pretest: "... 2>/dev/null || true"`
+# wiring (package.json:14) -- a stderr-only NOTE would be silently
+# swallowed on exactly the call site most likely to run unattended.
+#
+# Arguments:
+#   $1 - Absolute path to the worktree (NOT to the override file)
+# Returns:
+#   Always 0 -- every call site runs under `set -e` and the fallback is a
+#   documented degradation, not an error.
+#######################################
+export_worktree_dev_port() {
+    local worktree_path="$1"
+    local override="$worktree_path/docker-compose.override.yml"
+    local port
+
+    [ -f "$override" ] || return 0
+
+    if port="$(resolve_worktree_dev_port "$override")"; then
+        export DEV_PORT="$port"
+        printf 'DEV_PORT=%s (read back from %s -- SMI-4298)\n' "$port" "$override" >&2
+    else
+        # Plan-review fix (Critical #1): this NOTE — unlike the success-path
+        # confirmation above — goes to STDOUT, not stderr. docker-health.sh
+        # is wired into `npm test` as `pretest: "bash scripts/docker-health.sh
+        # 2>/dev/null || true"` (package.json:14), which discards stderr
+        # entirely. A stderr-only NOTE would be silently swallowed on
+        # exactly the call site most likely to run unattended, reproducing
+        # -- invisibly -- the exact collision this plan exists to fix.
+        printf 'NOTE: %s has no dev-service ":3001" port mapping -- leaving DEV_PORT unset, so this compose project ALSO publishes host port 3001 and can collide with the main checkout container. Regenerate it: ./scripts/worktree-docker.sh generate %s (SMI-4298)\n' \
+            "$override" "$worktree_path"
+    fi
+    return 0
+}
+
+#######################################
 # Enumerate host ports already claimed by SIBLING worktrees' override files,
 # excluding the main repo and the worktree being resolved itself (half of the
 # self-collision-avoidance fix — see _resolve_worktree_port_offset for the

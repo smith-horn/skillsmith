@@ -124,6 +124,30 @@ worktree, replace `docker exec skillsmith-dev-1` with `./scripts/worktree-docker
 container-name volume/recipe substitutions below down to whatever `docker ps` shows for
 that worktree.
 
+### Worktree Host-Port Collisions (SMI-4298)
+
+Docker Compose **concatenates** `ports:` across `-f` files instead of replacing them, so the base
+`docker-compose.yml`'s `${DEV_PORT:-3001}:3001` is published in *every* worktree in addition to that
+worktree's own bucketed ports. `.env` is a symlink shared by main and all worktrees, so `DEV_PORT`
+cannot be set per-worktree there — it must be exported at `docker compose up` time.
+
+Use the wrapper, which reads the port back out of the worktree's own override and exports it:
+
+```bash
+./scripts/worktree-docker.sh start .        # from inside the worktree
+```
+
+By hand, the prefix is required — take the value from the worktree's own override
+(`grep ':3001' docker-compose.override.yml`), never from a fresh guess:
+
+```bash
+DEV_PORT=$(grep -oE '"[0-9]+:3001"' docker-compose.override.yml | head -1 | tr -d '"' | cut -d: -f1) \
+  docker compose --profile dev up -d
+```
+
+Symptom without it: `EADDRINUSE` on 3001 if the main checkout's `skillsmith-dev-1` is up — or, if
+it is down, a *silent* squat on 3001 that breaks main's next `up` instead.
+
 ### Container Won't Start
 
 ```bash

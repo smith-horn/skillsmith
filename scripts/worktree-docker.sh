@@ -189,7 +189,19 @@ cmd_start() {
     fi
 
     info "Starting Docker containers..."
-    (cd "$worktree_path" && docker compose --profile dev up -d)
+    # SMI-4298: export DEV_PORT to the SAME host port this worktree's own
+    # override already maps to container port 3001, BEFORE `up`. Compose
+    # concatenates `ports:` across -f files rather than replacing them, so
+    # without this the base file's `${DEV_PORT:-3001}:3001` is published in
+    # ADDITION to this worktree's bucketed pair and every worktree also
+    # claims host port 3001. Runs AFTER the auto-generate block above so a
+    # just-generated override is read back, never a stale or absent one.
+    # Confined to this subshell so DEV_PORT does not leak into cmd_status.
+    (
+        cd "$worktree_path" \
+            && export_worktree_dev_port "$worktree_path" \
+            && docker compose --profile dev up -d
+    )
 
     echo ""
     success "Docker containers started!"
