@@ -64,5 +64,15 @@ export function createStubRegistryService(): PrivateRegistryService {
       skill.deprecated = false
       return true
     },
+
+    // No real `teams` table backs the stub, and existing stub-mode tests publish under
+    // whatever skillId prefix they choose (the stub never enforced namespace shape) — so
+    // this deliberately returns null ("unresolvable") rather than a fixed value that
+    // would silently reject every one of those existing fixtures via the handler's
+    // namespace pre-check. The live service (registry-tools.live.ts) is the real
+    // implementation.
+    async getNamespace(_teamId) {
+      return null
+    },
   }
 }

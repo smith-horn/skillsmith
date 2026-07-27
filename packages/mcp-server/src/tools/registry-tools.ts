@@ -62,7 +62,7 @@ export const privateRegistryPublishInputSchema = z.object({
 export type PrivateRegistryPublishInput = z.infer<typeof privateRegistryPublishInputSchema>
 
 export const privateRegistryManageInputSchema = z.object({
-  action: z.enum(['list', 'get', 'deprecate', 'undeprecate']),
+  action: z.enum(['list', 'get', 'deprecate', 'undeprecate', 'namespace']),
   skillId: z
     .string()
     .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
@@ -112,15 +112,17 @@ export const privateRegistryPublishToolSchema = {
 export const privateRegistryManageToolSchema = {
   name: 'private_registry_manage' as const,
   description:
-    'Manage skills in your private registry (list, get, deprecate, undeprecate). ' +
+    'Manage skills in your private registry (list, get, deprecate, undeprecate, namespace). ' +
     'Requires Enterprise tier (private_registry feature).',
   inputSchema: {
     type: 'object' as const,
     properties: {
       action: {
         type: 'string',
-        enum: ['list', 'get', 'deprecate', 'undeprecate'],
-        description: 'Registry operation to perform',
+        enum: ['list', 'get', 'deprecate', 'undeprecate', 'namespace'],
+        description:
+          'Registry operation to perform. "namespace" returns your team\'s publish ' +
+          'namespace (the required skill_id prefix) without attempting a publish.',
       },
       skillId: {
         type: 'string',
@@ -153,6 +155,9 @@ export interface PrivateRegistryPublishResult {
   success: boolean
   dataSource: 'stub' | 'live'
   skill?: RegistrySkill
+  /** The team's publish namespace (SMI-5852, AC-11) — surfaced on success too, not only
+   *  as an error-path side effect, so a first publish need not be how a team discovers it. */
+  skillNamespace?: string
   message?: string
   error?: string
 }
@@ -162,6 +167,8 @@ export interface PrivateRegistryManageResult {
   dataSource: 'stub' | 'live'
   skills?: RegistrySkill[]
   skill?: RegistrySkill
+  /** Present for action:'namespace' — the team's publish namespace (SMI-5852, AC-11). */
+  namespace?: string
   message?: string
   error?: string
 }
@@ -193,6 +200,14 @@ export interface PrivateRegistryService {
   get(teamId: string, skillId: string, version?: string): Promise<RegistrySkill | null>
   deprecate(teamId: string, skillId: string): Promise<boolean>
   undeprecate(teamId: string, skillId: string): Promise<boolean>
+  /**
+   * The team's publish namespace (teams.skill_namespace — SMI-5852), or null if it
+   * could not be resolved. Used both for a UX pre-check before publish (surfacing a
+   * namespace mismatch as a typed error instead of a raw DB-trigger exception) and
+   * for the dedicated `manage(action: 'namespace')` read path (AC-11) — a team should
+   * be able to discover its namespace without attempting a publish at all.
+   */
+  getNamespace(teamId: string): Promise<string | null>
 }
 
 /**
@@ -265,6 +280,29 @@ async function executePrivateRegistryPublishImpl(
     }
   }
 
+  // SMI-5852 UX pre-check: the DB trigger (enforce_private_skill_namespace) is the
+  // actual security boundary — this only surfaces a namespace mismatch as an
+  // actionable typed error instead of a raw 23514. A lookup failure (M3, known and
+  // accepted gap — not applied this round) does NOT block the publish attempt; the
+  // trigger still enforces correctness either way.
+  let skillNamespace: string | undefined
+  try {
+    const namespace = await service.getNamespace(teamId)
+    if (namespace) {
+      skillNamespace = namespace
+      const requestedNamespace = input.skillId.split('/')[0]
+      if (requestedNamespace !== namespace) {
+        return {
+          success: false,
+          dataSource,
+          error: `skill_id must start with "${namespace}/" for this team's private registry namespace.`,
+        }
+      }
+    }
+  } catch {
+    // Lookup failure — skip the pre-check, let the DB trigger be the sole gate.
+  }
+
   // Service errors (immutability conflict, size cap, missing SKILL.md, missing
   // service-role key) surface as typed {success:false} results, not exceptions.
   try {
@@ -279,6 +317,7 @@ async function executePrivateRegistryPublishImpl(
       success: true,
       dataSource,
       skill,
+      skillNamespace,
       message:
         `Published ${input.skillId}@${input.version} to private registry.\n` +
         `Registry URL: ${skill.registryUrl}`,
@@ -383,6 +422,25 @@ async function executePrivateRegistryManageImpl(
           success: true,
           dataSource,
           message: `Skill "${input.skillId}" has been undeprecated and is now visible in search results.`,
+        }
+      }
+
+      // SMI-5852, AC-11: discover the team's publish namespace without attempting a
+      // publish (the required skill_id prefix, e.g. "acme" for "acme/my-skill").
+      case 'namespace': {
+        const namespace = await service.getNamespace(teamId)
+        if (!namespace) {
+          return {
+            success: false,
+            dataSource,
+            error: "Unable to resolve this team's private registry namespace.",
+          }
+        }
+        return {
+          success: true,
+          dataSource,
+          namespace,
+          message: `Your team's private registry namespace is "${namespace}".`,
         }
       }
     }

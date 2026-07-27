@@ -246,6 +246,17 @@ export function createLiveRegistryService(): PrivateRegistryService {
       return Array.isArray(resp.data) ? resp.data.length > 0 : false
     },
 
+    async getNamespace(teamId): Promise<string | null> {
+      const client = await getClient()
+      const resp = await client
+        .from<{ skill_namespace: string }>('teams')
+        .select('skill_namespace')
+        .eq('id', teamId)
+        .single()
+      if (resp.error || !resp.data) return null
+      return resp.data.skill_namespace ?? null
+    },
+
     async undeprecate(teamId, skillId): Promise<boolean> {
       const client = await getClient()
       // .select() required — see deprecate()'s comment above.
