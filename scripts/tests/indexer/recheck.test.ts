@@ -21,8 +21,9 @@
  *     'recheck' with a populated counters object.
  *
  * GitHub fetch is stubbed on globalThis.fetch; the Supabase client is a
- * hand-rolled chainable mock (same approach as
- * revalidate-stale-quarantines.test.ts), both housed in recheck.test-helpers.ts.
+ * hand-rolled chainable mock (same approach as the
+ * revalidate-stale-quarantines.{outcomes,guards}.test.ts siblings, SMI-5865),
+ * both housed in recheck.test-helpers.ts.
  * The real processRow / loadRecheckCandidates run against these doubles so the
  * tests exercise the true integrated behavior, not a re-implementation.
  * writeIndexerAuditLog is mocked to assert the audit row shape without a DB.
