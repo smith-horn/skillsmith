@@ -39,6 +39,15 @@ const LINEAR_API_URL = 'https://api.linear.app/graphql'
 const TEAM_KEY = 'SMI'
 const RETRY_DELAYS = [1000, 2000, 4000]
 
+// Labels identifying issues created by this repo's own automation, not
+// human work items — these never carry an Acceptance Criteria section
+// by design and must not register as lint violations. Extend this list
+// as new bot-generation labels are added (SMI-5853). Note:
+// scripts/e2e/create-linear-issues.ts-created issues aren't yet
+// excludable this way — that script computes a labels array but never
+// attaches it to the mutation, a separate bug tracked as SMI-5855.
+export const BOT_LABELS = ['version-drift-auto']
+
 // --- CLI / date parsing ---
 
 export function parseArgs(argv) {
@@ -102,6 +111,7 @@ async function fetchRecentIssues(since) {
           url
           description
           createdAt
+          labels(first: 10) { nodes { name } }
         }
         pageInfo { hasNextPage endCursor }
       }
@@ -138,6 +148,13 @@ async function fetchRecentIssues(since) {
   return allIssues
 }
 
+// --- Bot-issue exclusion (SMI-5853) ---
+
+export function isBotGeneratedIssue(issue, botLabels = BOT_LABELS) {
+  const names = issue?.labels?.nodes?.map((l) => l.name) ?? []
+  return names.some((name) => botLabels.includes(name))
+}
+
 // --- Main ---
 
 async function main() {
@@ -145,7 +162,12 @@ async function main() {
   const issues = await fetchRecentIssues(since)
 
   const violations = []
+  let botExcluded = 0
   for (const issue of issues) {
+    if (isBotGeneratedIssue(issue)) {
+      botExcluded += 1
+      continue
+    }
     const errors = validateIssueDescription(issue.description)
     if (errors.length > 0) {
       violations.push({
@@ -157,12 +179,14 @@ async function main() {
     }
   }
 
-  const result = { since: since.toISOString(), total: issues.length, violations }
+  const result = { since: since.toISOString(), total: issues.length, botExcluded, violations }
 
   if (json) {
     console.log(JSON.stringify(result, null, 2))
   } else {
-    console.log(`Scanned ${result.total} issue(s) created since ${result.since}`)
+    console.log(
+      `Scanned ${result.total} issue(s) created since ${result.since} (${result.botExcluded} bot-generated, excluded)`
+    )
     if (violations.length === 0) {
       console.log('No template-contract violations found.')
     } else {

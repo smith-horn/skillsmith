@@ -127,11 +127,13 @@ jobs:
             TOTAL=$(jq -r '.total' /tmp/lint-results.json 2>/dev/null || echo "?")
             VIOLATIONS=$(jq -r '.violations | length' /tmp/lint-results.json 2>/dev/null || echo "?")
             SINCE=$(jq -r '.since' /tmp/lint-results.json 2>/dev/null || echo "?")
+            BOT_EXCLUDED=$(jq -r '.botExcluded // 0' /tmp/lint-results.json 2>/dev/null || echo "0")
             SHADOW="${{ vars.SKILLSMITH_LINT_LINEAR_ISSUES_SHADOW != '0' }}"
             echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
             echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
             echo "| Since | $SINCE |" >> "$GITHUB_STEP_SUMMARY"
             echo "| Total scanned | $TOTAL |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Bot-generated (excluded) | $BOT_EXCLUDED |" >> "$GITHUB_STEP_SUMMARY"
             echo "| **Violations** | **$VIOLATIONS** |" >> "$GITHUB_STEP_SUMMARY"
             echo "| Shadow mode (no issue paging) | $SHADOW |" >> "$GITHUB_STEP_SUMMARY"
             if [ "$VIOLATIONS" != "0" ] && [ "$VIOLATIONS" != "?" ]; then
