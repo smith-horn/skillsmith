@@ -229,7 +229,9 @@ describe('getLabels pagination (SMI-5859)', () => {
 
     const mod = await importLinearApi()
 
-    await expect(mod.getLabels()).rejects.toThrow(/pagination did not advance/)
+    await expect(mod.getLabels()).rejects.toThrow(
+      'Linear issueLabels pagination did not advance (hasNextPage: true, endCursor: null, after: null); refusing to return 2 possibly-partial labels'
+    )
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
@@ -249,7 +251,9 @@ describe('getLabels pagination (SMI-5859)', () => {
 
     const mod = await importLinearApi()
 
-    await expect(mod.getLabels()).rejects.toThrow(/pagination did not advance/)
+    await expect(mod.getLabels()).rejects.toThrow(
+      'Linear issueLabels pagination did not advance (hasNextPage: true, endCursor: "cursor-1", after: "cursor-1"); refusing to return 3 possibly-partial labels'
+    )
     expect(fetchMock).toHaveBeenCalledTimes(3)
 
     const thirdRequest = requestBody(fetchMock, 2)
