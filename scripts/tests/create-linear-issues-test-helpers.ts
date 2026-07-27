@@ -109,11 +109,15 @@ export function callQueries(fetchMock: { mock: { calls: unknown[][] } }): string
 }
 export function findCallBody(
   fetchMock: { mock: { calls: unknown[][] } },
-  match: (q: string) => boolean
+  match: (q: string, v: Record<string, unknown>) => boolean
 ) {
-  const call = fetchMock.mock.calls.find((c) =>
-    match((JSON.parse((c[1] as { body: string }).body) as { query: string }).query)
-  )
+  const call = fetchMock.mock.calls.find((c) => {
+    const parsed = JSON.parse((c[1] as { body: string }).body) as {
+      query: string
+      variables: Record<string, unknown>
+    }
+    return match(parsed.query, parsed.variables)
+  })
   if (!call) throw new Error('mockRoutedFetch: expected a matching call, found none')
   return JSON.parse((call[1] as { body: string }).body) as {
     variables: { input: Record<string, unknown> }
@@ -125,8 +129,21 @@ export const isBugLabelQuery = (q: string, v: Record<string, unknown>) =>
   q.includes('issueLabels(filter') && v.name === 'Bug'
 export const isAutoLabelQuery = (q: string, v: Record<string, unknown>) =>
   q.includes('issueLabels(filter') && v.name === 'e2e-failure-auto'
-export const isAutoLabelCreate = (q: string) => q.includes('issueLabelCreate')
-export const isOpenIssuesQuery = (q: string) => q.includes('$labelName')
+// Matches ANY issueLabelCreate call, regardless of what name it was sent
+// with — used for "no create call happened at all" assertions, where
+// checking the query shape alone is the correct (and only sensible) check.
+export const isAnyLabelCreateMutation = (q: string) => q.includes('issueLabelCreate')
+// Checks the mutation input's `name`, not just the query shape — a route
+// matching on query text alone would still match if the create mutation
+// were ever accidentally called with the wrong label name (e.g. "Bug",
+// which must never be created — see linear-client.ts), silently hiding
+// that regression behind a passing test. Used to route/identify the
+// specific e2e-failure-auto create call, not to assert its absence.
+export const isAutoLabelCreate = (q: string, v: Record<string, unknown>) =>
+  isAnyLabelCreateMutation(q) &&
+  (v.input as { name?: string } | undefined)?.name === 'e2e-failure-auto'
+export const isOpenIssuesQuery = (q: string, v: Record<string, unknown>) =>
+  q.includes('$labelName') && v.labelName === 'e2e-failure-auto'
 export const isIssueCreateMutation = (q: string) => q.includes('mutation CreateIssue')
 
 export const TEAM_OK = ok({ data: { teams: { nodes: [{ id: 'team-uuid' }] } } })
@@ -147,8 +164,15 @@ export const AUTO_CREATE_OK = ok({
 export const AUTO_CREATE_FAIL = ok({
   data: { issueLabelCreate: { success: false, issueLabel: null } },
 })
-export function openIssues(titles: string[]): RouteResult {
-  return ok({ data: { issues: { nodes: titles.map((title) => ({ title })) } } })
+export function openIssues(titles: string[], hasNextPage = false): RouteResult {
+  return ok({
+    data: {
+      issues: {
+        nodes: titles.map((title) => ({ title })),
+        pageInfo: { hasNextPage, endCursor: hasNextPage ? 'cursor-1' : null },
+      },
+    },
+  })
 }
 export function issueCreateOk(identifier: string): RouteResult {
   return ok({

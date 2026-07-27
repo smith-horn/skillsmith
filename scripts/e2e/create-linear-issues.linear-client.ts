@@ -193,28 +193,51 @@ export async function getOrCreateAutoLabelId(teamId: string): Promise<string> {
  * precedent (`list-issues` + title match before filing).
  */
 export async function fetchOpenE2eIssueTitles(teamId: string): Promise<Set<string>> {
-  const data = await retryQuery(() =>
-    graphql(
-      `
-        query ($teamId: ID!, $labelName: String!) {
-          issues(
-            filter: {
-              team: { id: { eq: $teamId } }
-              labels: { name: { eq: $labelName } }
-              state: { type: { in: ["backlog", "unstarted", "started"] } }
-            }
-            first: 250
-          ) {
-            nodes {
-              title
+  const titles = new Set<string>()
+  let after: string | null = null
+
+  // Paginated (not just a large first:) so dedup can't silently miss a
+  // later page once open e2e-failure-auto issues exceed one page — a
+  // missed page here means a duplicate issue gets created, not just a
+  // missed read.
+  for (;;) {
+    const data: {
+      issues: {
+        nodes: Array<{ title: string }>
+        pageInfo: { hasNextPage: boolean; endCursor: string | null }
+      }
+    } = await retryQuery(() =>
+      graphql(
+        `
+          query ($teamId: ID!, $labelName: String!, $after: String) {
+            issues(
+              filter: {
+                team: { id: { eq: $teamId } }
+                labels: { name: { eq: $labelName } }
+                state: { type: { in: ["backlog", "unstarted", "started"] } }
+              }
+              first: 250
+              after: $after
+            ) {
+              nodes {
+                title
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
             }
           }
-        }
-      `,
-      { teamId, labelName: AUTO_LABEL_NAME }
+        `,
+        { teamId, labelName: AUTO_LABEL_NAME, after }
+      )
     )
-  )
-  return new Set<string>(data.issues.nodes.map((n: { title: string }) => n.title))
+    for (const node of data.issues.nodes) titles.add(node.title)
+    if (!data.issues.pageInfo.hasNextPage) break
+    after = data.issues.pageInfo.endCursor
+  }
+
+  return titles
 }
 
 /**
@@ -274,7 +297,19 @@ export async function createLinearIssue(
     return { status: 'failed', reason }
   }
 
-  const result = await response.json()
+  let result: {
+    data?: {
+      issueCreate?: { success?: boolean; issue?: { identifier?: string; url?: string } | null }
+    }
+    errors?: unknown
+  }
+  try {
+    result = await response.json()
+  } catch (error) {
+    const reason = `Invalid JSON response: ${error instanceof Error ? error.message : String(error)}`
+    console.error(reason)
+    return { status: 'failed', reason }
+  }
 
   if (result.errors) {
     const reason = `GraphQL errors: ${JSON.stringify(result.errors)}`
@@ -289,6 +324,12 @@ export async function createLinearIssue(
   }
 
   const issue = result.data.issueCreate.issue
+  if (!issue?.identifier) {
+    const reason = 'issueCreate returned success=true but no issue'
+    console.error(reason)
+    return { status: 'failed', reason }
+  }
+
   console.log(`Created issue: ${issue.identifier} - ${issue.url}`)
   return { status: 'created', identifier: issue.identifier }
 }

@@ -39,6 +39,7 @@ import {
   transportError,
   isTeamQuery,
   isAutoLabelCreate,
+  isAnyLabelCreateMutation,
   isIssueCreateMutation,
   TEAM_OK,
   BUG_NOT_FOUND,
@@ -162,7 +163,7 @@ describe("fileIssuesForFailures - Bug resolve-only (SMI-5855, Q3(b'))", () => {
     expect(summary.created).toBe(1)
     const body = findCallBody(fetchMock, isIssueCreateMutation)
     expect(body.variables.input.labelIds).toEqual(['bug-uuid', 'auto-uuid'])
-    expect(callQueries(fetchMock).some(isAutoLabelCreate)).toBe(false)
+    expect(callQueries(fetchMock).some(isAnyLabelCreateMutation)).toBe(false)
   })
 
   it('Bug not found: omitted from labelIds, no issueLabelCreate attempted, the run continues', async () => {
@@ -179,7 +180,7 @@ describe("fileIssuesForFailures - Bug resolve-only (SMI-5855, Q3(b'))", () => {
     expect(summary.failed).toBe(0)
     const body = findCallBody(fetchMock, isIssueCreateMutation)
     expect(body.variables.input.labelIds).toEqual(['auto-uuid'])
-    expect(callQueries(fetchMock).some(isAutoLabelCreate)).toBe(false)
+    expect(callQueries(fetchMock).some(isAnyLabelCreateMutation)).toBe(false)
   })
 })
 
@@ -203,6 +204,12 @@ describe("fileIssuesForFailures - e2e-failure-auto get-or-create (SMI-5855, Q3(b
     expect(summary.created).toBe(1)
     const body = findCallBody(fetchMock, isIssueCreateMutation)
     expect(body.variables.input.labelIds).toContain('new-auto-uuid')
+    // Directly asserts the create mutation's own name, not just that some
+    // issueLabelCreate call matched a loose route (GPT-5.6-Sol review
+    // finding — a route matching on query text alone couldn't tell
+    // "e2e-failure-auto" from an accidental "Bug").
+    const createBody = findCallBody(fetchMock, isAutoLabelCreate)
+    expect((createBody.variables.input as { name?: string }).name).toBe('e2e-failure-auto')
   })
 
   it('does not call issueLabelCreate when the label already exists', async () => {
@@ -213,7 +220,7 @@ describe("fileIssuesForFailures - e2e-failure-auto get-or-create (SMI-5855, Q3(b
     await vi.runAllTimersAsync()
     await promise
 
-    expect(callQueries(fetchMock).some(isAutoLabelCreate)).toBe(false)
+    expect(callQueries(fetchMock).some(isAnyLabelCreateMutation)).toBe(false)
   })
 
   it('issueLabelCreate returning success:false surfaces as a run failure, not a silent skip', async () => {
