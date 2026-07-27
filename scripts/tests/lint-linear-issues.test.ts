@@ -7,11 +7,21 @@
  */
 import { describe, expect, it } from 'vitest'
 
-const mod = (await import('../lint-linear-issues.mjs')) as {
-  parseArgs: (argv: string[]) => { since: Date; json: boolean }
+interface LintIssueLabel {
+  name: string
 }
 
-const { parseArgs } = mod
+interface LintIssue {
+  labels?: { nodes: LintIssueLabel[] }
+}
+
+const mod = (await import('../lint-linear-issues.mjs')) as {
+  parseArgs: (argv: string[]) => { since: Date; json: boolean }
+  isBotGeneratedIssue: (issue: LintIssue, botLabels?: string[]) => boolean
+  BOT_LABELS: string[]
+}
+
+const { parseArgs, isBotGeneratedIssue, BOT_LABELS } = mod
 
 describe('parseArgs (SMI-5841)', () => {
   it('defaults to roughly 48h ago when --since is omitted', () => {
@@ -29,5 +39,37 @@ describe('parseArgs (SMI-5841)', () => {
   it('--json sets json to true', () => {
     expect(parseArgs(['--json']).json).toBe(true)
     expect(parseArgs([]).json).toBe(false)
+  })
+})
+
+describe('isBotGeneratedIssue (SMI-5853)', () => {
+  it('returns false when the issue has no labels field at all', () => {
+    expect(isBotGeneratedIssue({})).toBe(false)
+  })
+
+  it('returns false when labels.nodes is empty', () => {
+    expect(isBotGeneratedIssue({ labels: { nodes: [] } })).toBe(false)
+  })
+
+  it('returns true when labels.nodes contains a known bot label', () => {
+    expect(isBotGeneratedIssue({ labels: { nodes: [{ name: 'version-drift-auto' }] } })).toBe(true)
+  })
+
+  it('returns true when a bot label is present alongside an unrelated label', () => {
+    expect(
+      isBotGeneratedIssue({
+        labels: { nodes: [{ name: 'bug' }, { name: 'version-drift-auto' }] },
+      })
+    ).toBe(true)
+  })
+
+  it('returns false when only an unrelated label is present', () => {
+    expect(isBotGeneratedIssue({ labels: { nodes: [{ name: 'bug' }] } })).toBe(false)
+  })
+
+  it('uses a custom botLabels array when explicitly passed', () => {
+    const issue = { labels: { nodes: [{ name: 'custom-bot-label' }] } }
+    expect(isBotGeneratedIssue(issue, BOT_LABELS)).toBe(false)
+    expect(isBotGeneratedIssue(issue, ['custom-bot-label'])).toBe(true)
   })
 })
