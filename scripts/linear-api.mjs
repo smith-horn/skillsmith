@@ -819,4 +819,5 @@ export {
   getIssueId,
   resolveLabelIds,
   normalizeLabelEntries,
+  commands,
 }

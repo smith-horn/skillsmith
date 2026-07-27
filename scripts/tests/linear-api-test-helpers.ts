@@ -31,6 +31,7 @@ export interface CreatedIssue {
 
 export interface LinearApiModule {
   createIssue: (options: Record<string, unknown>) => Promise<CreatedIssue>
+  commands: Record<string, (args: Record<string, unknown>) => Promise<unknown>>
 }
 
 export interface LabelNode {
@@ -50,16 +51,22 @@ export function issueLookupResponse(id: string | null): GqlResponse {
 export type FetchStep =
   | { kind: 'ok'; body: GqlResponse }
   | { kind: 'httpError'; status: number; text?: string }
+  | { kind: 'transportError'; error?: Error }
 
 /**
  * Like mockFetchSequence(), but each step can also fail at the HTTP layer
- * (non-ok response) — needed for the retry/infrastructure-failure cases
- * (SMI-5854), which mockFetchSequence's always-ok shape can't express.
+ * (non-ok response) or reject outright at the transport layer (fetch()
+ * itself throwing, no response object at all) — needed for the
+ * retry/infrastructure-failure cases (SMI-5854), which mockFetchSequence's
+ * always-ok shape can't express.
  */
 export function mockFetchSteps(steps: FetchStep[]) {
   const fetchMock = vi.fn(async () => {
     const step = steps.shift()
     if (!step) throw new Error('fetch called more times than mocked steps')
+    if (step.kind === 'transportError') {
+      throw step.error ?? new Error('network down')
+    }
     if (step.kind === 'httpError') {
       return {
         ok: false,
