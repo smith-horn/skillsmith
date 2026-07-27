@@ -44,8 +44,9 @@ packages/core/tests/RawUrlSourceAdapter.security.test.ts
 # SMI-5439 split follow-up
 scripts/tests/indexer/parity.test.ts
 
-# SMI-5865 split follow-up
-scripts/tests/indexer/revalidate-stale-quarantines.test.ts
+# (SMI-5865 split follow-up cleared 2026-07-27: revalidate-stale-quarantines.test.ts
+#  was split into concern-scoped siblings under 500 lines each —
+#  revalidate-stale-quarantines.{outcomes,guards}.test.ts.)
 
 # (SMI-5263 split follow-up cleared 2026-06-12: install.integration.test.ts was
 #  split into 3 concern-scoped siblings under 500 lines each —

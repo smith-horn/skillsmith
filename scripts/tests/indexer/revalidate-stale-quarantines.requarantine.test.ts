@@ -9,8 +9,10 @@
  * LIVE/installable — an invisible-success false negative.
  *
  * Split from revalidate-stale-quarantines.test.ts to keep both files under the
- * 500-line limit (check-file-length). Network + DB are fully mocked; the scanner is
- * the real fixed edge scanner (content steers the outcome).
+ * 500-line limit (check-file-length). That file was later split further (SMI-5865)
+ * into revalidate-stale-quarantines.{outcomes,guards}.test.ts — this file's own
+ * split-out scope (requarantine) is unaffected. Network + DB are fully mocked; the
+ * scanner is the real fixed edge scanner (content steers the outcome).
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
