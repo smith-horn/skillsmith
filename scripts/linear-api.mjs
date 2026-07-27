@@ -63,6 +63,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // name is ambiguous, not that pagination is needed.
 const LABEL_PAGE_SIZE = 50
 
+// SMI-5859: page size for getLabels()' full-listing query. Named for its one
+// call site rather than `LABELS_*` so it cannot be confused — by a reader or
+// by autocomplete — with LABEL_PAGE_SIZE above, whose 50 is an
+// ambiguity-detection threshold for the exact-name filter, not a paging size.
+// 250 is Linear's max `first`.
+const GET_LABELS_PAGE_SIZE = 250
+
 // State IDs for common workflow states (cached on first query)
 let stateCache = null
 let teamCache = null
@@ -584,27 +591,72 @@ async function listIssues(options = {}) {
 }
 
 /**
- * Get available labels
+ * Get available labels. Paginated (first/after + pageInfo, SMI-5859):
+ * the workspace has more labels than Linear's default page size (50),
+ * which this query previously relied on silently. Mirrors
+ * fetchOpenE2eIssueTitles() in scripts/e2e/create-linear-issues.linear-client.ts
+ * until SMI-5858 extracts the shared client.
+ *
+ * Throws rather than returning a partial list when the API reports another
+ * page but gives no usable way to reach it — see the invariant below.
  */
 async function getLabels(teamKey = TEAM_KEY) {
-  const teamId = await getTeamId(teamKey)
+  const teamId = await retryQuery(() => getTeamId(teamKey))
+  const labels = []
+  let after = null
 
-  const data = await graphql(
-    `
-      query GetLabels($teamId: ID!) {
-        issueLabels(filter: { team: { id: { eq: $teamId } } }) {
-          nodes {
-            id
-            name
-            color
+  for (;;) {
+    const data = await retryQuery(() =>
+      graphql(
+        `
+          query GetLabels($teamId: ID!, $first: Int!, $after: String) {
+            issueLabels(
+              filter: { team: { id: { eq: $teamId } } }
+              first: $first
+              after: $after
+            ) {
+              nodes {
+                id
+                name
+                color
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
           }
-        }
-      }
-    `,
-    { teamId }
-  )
+        `,
+        { teamId, first: GET_LABELS_PAGE_SIZE, after }
+      )
+    )
+    labels.push(...data.issueLabels.nodes)
 
-  return data.issueLabels.nodes
+    const { hasNextPage, endCursor } = data.issueLabels.pageInfo
+    if (!hasNextPage) break
+
+    // Cursor-progress invariant (SMI-5859). A page claiming hasNextPage but
+    // carrying no cursor, or repeating the cursor we just sent, cannot be
+    // advanced past. Throw instead of breaking: returning what we have would
+    // be a silent partial result indistinguishable from success — the exact
+    // failure class this function is being fixed to eliminate.
+    //
+    // Deliberately OUTSIDE the retryQuery() callback above. isRetryable()
+    // treats a status-less Error as retryable, so throwing from inside would
+    // spend 1s+2s+4s re-issuing the same request against a deterministic fault.
+    if (!endCursor || endCursor === after) {
+      throw new Error(
+        `Linear issueLabels pagination did not advance ` +
+          `(hasNextPage: true, endCursor: ${JSON.stringify(endCursor)}, ` +
+          `after: ${JSON.stringify(after)}); refusing to return ` +
+          `${labels.length} possibly-partial labels`
+      )
+    }
+
+    after = endCursor
+  }
+
+  return labels
 }
 
 // CLI Argument Parsing
