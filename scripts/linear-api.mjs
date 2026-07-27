@@ -5,6 +5,16 @@
  * Provides reliable Linear API operations with proper JSON escaping
  * and error handling. Replaces fragile curl-based scripts.
  *
+ * `create-issue` validates its description against the shared
+ * Acceptance-Criteria contract (`scripts/lib/linear-issue-validation.mjs`,
+ * SMI-5841/5846) before calling the mutation (SMI-5853). Ships
+ * shadow-first, matching that same convention: a non-compliant
+ * description warns and still creates the issue by default; set
+ * SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW=0 to block instead.
+ * --force (or SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE=1) always
+ * bypasses regardless of shadow state. See `help()` below for the full
+ * flag/env-var reference.
+ *
  * Usage:
  *   node scripts/linear-api.mjs create-issue --title "Title" --description "Desc"
  *   node scripts/linear-api.mjs update-status --issue SMI-123 --status done
@@ -13,10 +23,25 @@
  *
  * Environment:
  *   LINEAR_API_KEY - Required API key for authentication
+ *   SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE - '1' to bypass
+ *     create-issue description validation entirely, regardless of shadow
+ *     state (SMI-5853)
+ *   SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW - default on (warn-only,
+ *     issue still created); set to '0' to make a non-compliant
+ *     create-issue description block instead of warn (SMI-5853)
  */
+import { validateIssueDescription } from './lib/linear-issue-validation.mjs'
 
 const TEAM_KEY = 'SMI'
 const API_URL = 'https://api.linear.app/graphql'
+
+const VALIDATION_DISABLE_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE'
+const VALIDATION_SHADOW_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW'
+// Aligned to SMI-5846's LINEAR_ISSUE_GUARD_SHADOW_END_DATE so all three
+// Linear-issue-creation enforcement layers (SMI-5841 CI lint, SMI-5846
+// MCP hook, this create-issue gate) flip to blocking together in one
+// dated follow-up review, not three staggered ones.
+export const VALIDATION_SHADOW_END_DATE = '2026-08-09'
 
 // State IDs for common workflow states (cached on first query)
 let stateCache = null
@@ -133,7 +158,38 @@ async function createIssue(options) {
     labels = [],
     parentId = null,
     teamKey = TEAM_KEY,
+    force = false,
   } = options
+
+  const descriptionText = typeof description === 'string' ? description : ''
+  const validationErrors = validateIssueDescription(descriptionText)
+  if (validationErrors.length > 0) {
+    const bypassed =
+      force === true ||
+      force === 'true' ||
+      force === '1' ||
+      process.env[VALIDATION_DISABLE_ENV_VAR] === '1'
+    const inShadow = process.env[VALIDATION_SHADOW_ENV_VAR] !== '0'
+    const reason =
+      validationErrors.join('; ') +
+      ' — see .claude/templates/linear-issue-template.md for the required format.'
+
+    if (!bypassed && !inShadow) {
+      throw new Error(
+        `[linear-api] description failed Acceptance-Criteria validation: ${reason} ` +
+          `Pass --force to create anyway, or set ${VALIDATION_DISABLE_ENV_VAR}=1.`
+      )
+    }
+    if (bypassed) {
+      console.warn(
+        `[linear-api] description failed Acceptance-Criteria validation (bypassed): ${reason}`
+      )
+    } else {
+      console.warn(
+        `[linear-api] description failed Acceptance-Criteria validation (shadow mode, proceeding): ${reason}`
+      )
+    }
+  }
 
   const teamId = await getTeamId(teamKey)
 
@@ -389,7 +445,7 @@ function parseArgs(args) {
 // CLI Commands
 const commands = {
   async 'create-issue'(args) {
-    const { title, description, priority, labels, parent } = args
+    const { title, description, priority, labels, parent, force } = args
 
     if (!title) {
       console.error('Error: --title is required')
@@ -402,6 +458,7 @@ const commands = {
       priority: priority ? parseInt(priority, 10) : 2,
       labels: labels ? labels.split(',') : [],
       parentId: parent || null,
+      force,
     })
 
     console.log(`Created: ${issue.identifier} - ${issue.title}`)
@@ -485,10 +542,14 @@ Usage:
 Commands:
   create-issue      Create a new issue
     --title         Issue title (required)
-    --description   Issue description
+    --description   Issue description (validated against the shared
+                    Acceptance-Criteria contract before the mutation,
+                    SMI-5853 - see Environment below)
     --priority      Priority (1=urgent, 2=high, 3=medium, 4=low)
     --labels        Comma-separated label IDs
     --parent        Parent issue ID
+    --force         Bypass Acceptance-Criteria description validation,
+                    regardless of shadow state (SMI-5853)
 
   update-status     Update issue status
     --issue         Issue identifier (e.g., SMI-123) (required)
@@ -510,6 +571,13 @@ Commands:
 
 Environment:
   LINEAR_API_KEY    API key for authentication (required)
+  SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE
+                    '1' to bypass create-issue description validation
+                    entirely, regardless of shadow state (SMI-5853)
+  SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW
+                    Default on (warn-only, issue still created). Set to
+                    '0' to make a non-compliant create-issue description
+                    block instead of warn (SMI-5853)
 
 Examples:
   node scripts/linear-api.mjs create-issue --title "New feature" --priority 2
