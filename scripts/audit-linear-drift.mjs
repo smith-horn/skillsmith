@@ -25,10 +25,10 @@
 
 import { execFileSync } from 'child_process'
 import { readFileSync, existsSync } from 'fs'
+import { graphql, withRetry, RETRY_DELAYS_MS } from './lib/linear-client.mjs'
 
 // --- Configuration ---
 
-const LINEAR_API_URL = 'https://api.linear.app/graphql'
 const SOURCE_GLOBS = [
   'packages/**/*.ts',
   'packages/**/*.tsx',
@@ -42,7 +42,6 @@ const SOURCE_GLOBS = [
   'supabase/functions/**/*.ts',
   '.github/workflows/**',
 ]
-const RETRY_DELAYS = [1000, 2000, 4000]
 const ALLOWLIST_PATH = '.linear-drift-allowlist'
 
 // SMI-5275: Structural out-of-scope tier. The SMI Linear team spans multiple
@@ -98,26 +97,6 @@ function loadAllowlist() {
 
 // --- Linear API ---
 
-async function fetchWithRetry(url, options, retries = RETRY_DELAYS) {
-  for (let i = 0; i <= retries.length; i++) {
-    try {
-      const res = await fetch(url, options)
-      if (res.ok) return res
-      if (res.status >= 500 && i < retries.length) {
-        await new Promise((r) => setTimeout(r, retries[i]))
-        continue
-      }
-      throw new Error(`HTTP ${res.status}: ${await res.text()}`)
-    } catch (err) {
-      if (i < retries.length) {
-        await new Promise((r) => setTimeout(r, retries[i]))
-        continue
-      }
-      throw err
-    }
-  }
-}
-
 async function fetchDoneIssues(since) {
   const apiKey = process.env.LINEAR_API_KEY
   if (!apiKey) {
@@ -154,28 +133,25 @@ async function fetchDoneIssues(since) {
   let cursor = null
 
   do {
-    const res = await fetchWithRetry(LINEAR_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: apiKey,
-      },
-      body: JSON.stringify({
-        query,
-        variables: { after: cursor, since: sinceDateTime },
-      }),
-    })
-
-    const data = await res.json()
-    if (data.errors) {
-      // Distinct from the drift `exit 1` gate: a Linear query rejection (e.g.
-      // a complexity error or schema drift) must never be mistaken for drift.
-      // exit 2 = audit could not run; exit 1 = audit ran and found drift.
-      console.error('Drift audit: Linear query failed:', JSON.stringify(data.errors))
-      process.exit(2)
+    let data
+    try {
+      data = await withRetry(
+        () => graphql(query, { after: cursor, since: sinceDateTime }),
+        RETRY_DELAYS_MS,
+        (err) => !err?.graphqlError
+      )
+    } catch (err) {
+      if (err?.graphqlError) {
+        // Distinct from the drift `exit 1` gate: a Linear query rejection (e.g.
+        // a complexity error or schema drift) must never be mistaken for drift.
+        // exit 2 = audit could not run; exit 1 = audit ran and found drift.
+        console.error('Drift audit: Linear query failed:', JSON.stringify(err.graphqlErrors))
+        process.exit(2)
+      }
+      throw err
     }
 
-    const { nodes, pageInfo } = data.data.issues
+    const { nodes, pageInfo } = data.issues
     allIssues.push(...nodes)
     cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null
   } while (cursor)
@@ -451,6 +427,7 @@ if (isDirectExecution) {
 export {
   loadAllowlist,
   parseArgs,
+  fetchDoneIssues,
   hasGitCommitWithSource,
   hasMergedPr,
   hasAnyGitCommit,

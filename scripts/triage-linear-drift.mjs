@@ -41,10 +41,10 @@
 
 import { execFileSync } from 'child_process'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { graphql } from './lib/linear-client.mjs'
 
 // --- Configuration ---
 
-const LINEAR_API_URL = 'https://api.linear.app/graphql'
 const OUTPUT_PATH = '/tmp/drift-buckets.json'
 const ESCALATION_THRESHOLD = 5
 
@@ -170,31 +170,42 @@ function readJson(path) {
  * whose names don't start with "Skillsmith" (e.g. "Release Hardening",
  * "Issue Description Validation", etc.).
  *
- * Returns { project, initiative } or null on failure.
+ * SMI-5860: migrated from a synchronous `curl` subprocess to the shared,
+ * `fetch()`-based `graphql()` client — this function (and its callers,
+ * `classifyEntry`/`main`) is async as a result. The `apiKey` parameter is
+ * a short-circuit check only; `graphql()` itself reads
+ * `process.env.LINEAR_API_KEY` directly, not this parameter (in
+ * production these are always the same value — the caller derives
+ * `apiKey` from that same env var below).
+ *
+ * Returns { project, initiative } or null on failure — including a
+ * genuine GraphQL error response, which `graphql()` throws on and this
+ * function's blanket catch turns back into `null`, matching this
+ * function's pre-migration behavior (the old curl path never checked
+ * `data.errors` either, so a GraphQL error response fell through the
+ * same optional-chaining miss to `null`).
  */
-function fetchLinearProject(smi, apiKey) {
+async function fetchLinearProject(smi, apiKey) {
   if (!apiKey) return null
   try {
-    const out = execFileSync(
-      'curl',
-      [
-        '-sS',
-        '-H',
-        `Authorization: ${apiKey}`,
-        '-H',
-        'Content-Type: application/json',
-        '-X',
-        'POST',
-        '--data',
-        JSON.stringify({
-          query: `query { issue(id: "${smi}") { project { name initiatives { nodes { name } } } } }`,
-        }),
-        LINEAR_API_URL,
-      ],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
+    const data = await graphql(
+      `
+        query GetIssueProject($id: String!) {
+          issue(id: $id) {
+            project {
+              name
+              initiatives {
+                nodes {
+                  name
+                }
+              }
+            }
+          }
+        }
+      `,
+      { id: smi }
     )
-    const data = JSON.parse(out || '{}')
-    const project = data?.data?.issue?.project
+    const project = data?.issue?.project
     if (!project) return null
     const initiatives = (project.initiatives?.nodes ?? []).map((n) => n.name)
     return {
@@ -275,7 +286,7 @@ function findCommitWithoutToken(smi, ghToken) {
 /**
  * Classify a single drift entry.
  */
-function classifyEntry(entry, ghToken, linearKey) {
+async function classifyEntry(entry, ghToken, linearKey) {
   const { id, title } = entry
 
   // 1. external-repo — title keywords win regardless of any local commits.
@@ -291,7 +302,7 @@ function classifyEntry(entry, ghToken, linearKey) {
   //    project (021.School, lin-cli, MAUI, minimax). Skip with
   //    TRIAGE_NO_LINEAR=1.
   if (!process.env.TRIAGE_NO_LINEAR && linearKey) {
-    const meta = fetchLinearProject(id, linearKey)
+    const meta = await fetchLinearProject(id, linearKey)
     if (meta && meta.initiative) {
       const isSkillsmith = /^Skillsmith$/i.test(meta.initiative)
       if (!isSkillsmith) {
@@ -356,7 +367,7 @@ function classifyEntry(entry, ghToken, linearKey) {
 
 // --- Main ---
 
-function main() {
+async function main() {
   const inputPath = process.argv[2] || '/tmp/drift-results.json'
   const data = readJson(inputPath)
 
@@ -390,7 +401,7 @@ function main() {
   for (let i = 0; i < driftEntries.length; i++) {
     const entry = driftEntries[i]
     if (i % 25 === 0) console.error(`  [${i}/${driftEntries.length}] processing...`)
-    const classification = classifyEntry(entry, ghToken, linearKey)
+    const classification = await classifyEntry(entry, ghToken, linearKey)
     buckets[classification.bucket].push({ ...entry, ...classification })
   }
 
@@ -418,4 +429,19 @@ function main() {
   }
 }
 
-main()
+// Only run when executed directly — importing this module for tests (SMI-5860
+// adds direct fetchLinearProject/classifyEntry coverage) must not trigger a
+// real main() run, which reads /tmp/drift-results.json and calls process.exit.
+const isDirectExecution =
+  process.argv[1] &&
+  (process.argv[1].endsWith('triage-linear-drift.mjs') ||
+    process.argv[1].endsWith('triage-linear-drift'))
+
+if (isDirectExecution) {
+  main().catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })
+}
+
+export { fetchLinearProject, classifyEntry }
