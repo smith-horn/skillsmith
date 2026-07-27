@@ -20,82 +20,25 @@
  * doesn't leak between cases and silently change how many `fetch` calls a
  * given case's mocked sequence expects to see consumed.
  *
- * Pattern mirrors `scripts/tests/linear-upsert-drift-issue.test.ts`'s
- * `mockFetchSequence()` helper. The `vi.mock('node:child_process', ...)`
- * shape that file also uses is not needed here — `linear-api.mjs` never
- * shells out.
+ * Shared fixtures/helpers (also used by the SMI-5854 UUID-resolution suite
+ * in `scripts/tests/linear-api-uuid-resolution.test.ts`) live in
+ * `scripts/tests/linear-api-test-helpers.ts` — split out to keep this file
+ * under `scripts/check-file-length.mjs`'s 500-line pre-commit gate.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import {
+  importLinearApi,
+  mockFetchSequence,
+  TEAM_RESPONSE,
+  ISSUE_CREATE_RESPONSE,
+  VALID_DESCRIPTION,
+} from './linear-api-test-helpers'
 
 const DISABLE_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE'
 const SHADOW_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW'
 
-interface GqlResponse {
-  data?: Record<string, unknown>
-  errors?: Array<{ message: string }>
-}
-
-interface CreatedIssue {
-  id: string
-  identifier: string
-  title: string
-  url: string
-}
-
-interface LinearApiModule {
-  createIssue: (options: Record<string, unknown>) => Promise<CreatedIssue>
-}
-
-function mockFetchSequence(responses: GqlResponse[]) {
-  const fetchMock = vi.fn(async () => {
-    const next = responses.shift()
-    if (!next) throw new Error('fetch called more times than mocked responses')
-    return {
-      ok: true,
-      status: 200,
-      json: async () => next,
-      text: async () => JSON.stringify(next),
-    } as unknown as Response
-  })
-  // @ts-expect-error -- patch global fetch
-  global.fetch = fetchMock
-  return fetchMock
-}
-
-const TEAM_RESPONSE: GqlResponse = {
-  data: { teams: { nodes: [{ id: 'team-uuid', key: 'SMI', name: 'Skillsmith' }] } },
-}
-
-const ISSUE_CREATE_RESPONSE: GqlResponse = {
-  data: {
-    issueCreate: {
-      success: true,
-      issue: {
-        id: 'new-uuid',
-        identifier: 'SMI-9999',
-        title: 'Test issue',
-        url: 'https://linear.app/smi/issue/SMI-9999',
-      },
-    },
-  },
-}
-
-// Compliant with validateIssueDescription's ported contract: non-empty,
-// >=120 body chars excluding heading lines, an "Acceptance Criteria"
-// heading, and >=2 non-placeholder bulleted items under it.
-const VALID_DESCRIPTION = `This is a well-formed Linear issue description with enough body text to clear the minimum length requirement enforced by validateIssueDescription for a compliant issue.
-
-## Acceptance Criteria
-- [ ] The first acceptance criterion is met
-- [ ] The second acceptance criterion is met
-`
-
 // No Acceptance Criteria heading at all -> always fails validation.
 const INVALID_DESCRIPTION = 'Short description with no Acceptance Criteria section at all.'
-
-async function importLinearApi(): Promise<LinearApiModule> {
-  return (await import('../linear-api.mjs')) as unknown as LinearApiModule
-}
 
 beforeEach(() => {
   process.env.LINEAR_API_KEY = 'test-key'
