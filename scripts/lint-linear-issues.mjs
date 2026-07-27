@@ -43,10 +43,15 @@ const RETRY_DELAYS = [1000, 2000, 4000]
 // human work items — these never carry an Acceptance Criteria section
 // by design and must not register as lint violations. Extend this list
 // as new bot-generation labels are added (SMI-5853). Note:
-// scripts/e2e/create-linear-issues.ts-created issues aren't yet
-// excludable this way — that script computes a labels array but never
-// attaches it to the mutation, a separate bug tracked as SMI-5855.
-export const BOT_LABELS = ['version-drift-auto']
+// scripts/e2e/create-linear-issues.ts-created issues DO carry a real
+// "## Acceptance Criteria" section as of SMI-5855 (belt-and-braces with
+// this exclusion), and now attach 'e2e-failure-auto' for real — the
+// mutation previously omitted labelIds entirely (and the required
+// teamId), so no e2e issue had ever been created. 'Bug' is deliberately
+// NOT added here — it is resolve-only in that script (never
+// get-or-created) and is a broad, human-reusable label; excluding it
+// would exempt real work items from this lint.
+export const BOT_LABELS = ['version-drift-auto', 'e2e-failure-auto']
 
 // --- CLI / date parsing ---
 
