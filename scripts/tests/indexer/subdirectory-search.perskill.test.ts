@@ -316,3 +316,48 @@ describe('runSubdirectorySearch — per-skill extraction (SMI-5286 Wave 1a §#1)
     expect(result.repos[0].installable).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// SMI-5849: defaultBranch propagation — the code-search API omits
+// `default_branch`, so the emitted repo must carry the branch RESOLVED via
+// fetchRepoLicense's `GET /repos` call (mockFetchRepoLicense here), never the
+// code-search item's own (always-undefined-in-prod) field.
+// ---------------------------------------------------------------------------
+
+describe('runSubdirectorySearch — defaultBranch propagation (SMI-5849)', () => {
+  it('emits defaultBranch from the resolved repo-metadata branch, matching what checkSkillMdExists was called with (code-search input carries NO defaultBranch)', async () => {
+    // Mirror prod: the code-search item has no defaultBranch (undefined).
+    const codeSearchRepo = makeCodeSearchRepo({ defaultBranch: undefined })
+    mockSearchCode.mockResolvedValueOnce(makeSearchResult([codeSearchRepo]))
+    mockSearchCode.mockResolvedValue(makeSearchResult([]))
+
+    // The ONLY source of a real branch: the GET /repos metadata fetch.
+    mockFetchRepoLicense.mockResolvedValue({
+      license: 'MIT',
+      defaultBranch: 'develop',
+      fetchFailed: false,
+    })
+
+    mockEnumerateRepoSkillPaths.mockResolvedValue({
+      entries: [{ path: '.agents/skills/a', blobSha: 'sha-a' }],
+      truncatedByCap: false,
+      truncatedByApi: false,
+    })
+
+    const result = await runSubdirectorySearch(new Set(), new Map(), {}, 1, noTelemetry)
+
+    expect(result.repos).toHaveLength(1)
+    // The emitted repo carries the RESOLVED branch, not the (undefined) code-search field.
+    expect(result.repos[0].defaultBranch).toBe('develop')
+
+    // Write-key-equals-read-key invariant (SMI-5849 root cause): the branch
+    // emitted on the repo must be the SAME value checkSkillMdExists was called
+    // with — that's the branch the upstream cache write happened under, and
+    // it's what the upsert-phase getCachedValidation(..., repo.defaultBranch, ...)
+    // lookup must match.
+    expect(mockCheckSkillMdExists).toHaveBeenCalled()
+    const branchPassedToValidation = mockCheckSkillMdExists.mock.calls[0][2]
+    expect(branchPassedToValidation).toBe('develop')
+    expect(result.repos[0].defaultBranch).toBe(branchPassedToValidation)
+  })
+})
