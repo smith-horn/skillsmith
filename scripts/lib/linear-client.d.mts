@@ -27,8 +27,12 @@ export const RETRY_DELAYS_MS: number[]
 export const UUID_RE: RegExp
 export const LABEL_PAGE_SIZE: number
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see header
-export function graphql(query: string, variables?: Record<string, unknown>): Promise<any>
+export function graphql(
+  query: string,
+  variables?: Record<string, unknown>,
+  options?: { signal?: AbortSignal }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see header
+): Promise<any>
 export function isRetryable(err: unknown): boolean
 export function withRetry<T>(
   fn: () => Promise<T>,

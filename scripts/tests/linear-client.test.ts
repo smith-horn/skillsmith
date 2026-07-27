@@ -122,6 +122,38 @@ describe('graphql (SMI-5858)', () => {
   })
 })
 
+describe('graphql (SMI-5860) - options.signal (additive)', () => {
+  it('threads options.signal through to the underlying fetch() call', async () => {
+    const fetchMock = mockFetchSteps([{ kind: 'ok', body: { data: { hello: 'world' } } }])
+    const ctrl = new AbortController()
+    await graphql('query {}', {}, { signal: ctrl.signal })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, { signal?: AbortSignal }]
+    expect(init.signal).toBe(ctrl.signal)
+  })
+
+  it('omitting options entirely behaves exactly as before (signal is undefined)', async () => {
+    const fetchMock = mockFetchSteps([{ kind: 'ok', body: { data: { hello: 'world' } } }])
+    await graphql('query {}')
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, { signal?: AbortSignal }]
+    expect(init.signal).toBeUndefined()
+  })
+
+  it('rejects when the signal is already aborted, propagated from fetch()', async () => {
+    const ctrl = new AbortController()
+    ctrl.abort()
+    // @ts-expect-error -- patch global fetch to honor AbortSignal like real fetch()
+    global.fetch = vi.fn((_url: string, init: { signal?: AbortSignal }) => {
+      if (init.signal?.aborted) {
+        return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'))
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ data: {} }) })
+    })
+    await expect(graphql('query {}', {}, { signal: ctrl.signal })).rejects.toThrow(
+      'The operation was aborted.'
+    )
+  })
+})
+
 describe('isRetryable (SMI-5858) - classification table', () => {
   it('treats a status-less error (pure transport failure) as retryable', () => {
     expect(isRetryable(new Error('ECONNRESET'))).toBe(true)

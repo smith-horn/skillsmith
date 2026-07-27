@@ -67,11 +67,21 @@ export const LABEL_PAGE_SIZE = 50
  * `reason` text, built from a mutation response's `errors` field rather than
  * from this function's thrown error) is untouched by this change.
  *
+ * `options.signal` (SMI-5860) is additive — an optional `AbortSignal` passed
+ * straight through to the underlying `fetch()` call. Every caller that
+ * predates SMI-5860 omits it (defaults to `undefined`, identical to not
+ * passing the key at all). It exists for
+ * `scripts/session-priming-query.helpers.ts`'s `buildSignal2()`, which runs
+ * inside a `SessionStart` hook and must not let a slow Linear response block
+ * Claude Code startup — timeout/timer policy stays local to that one caller;
+ * this module only forwards the signal.
+ *
  * @param {string} query
  * @param {Record<string, unknown>} [variables]
+ * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<any>}
  */
-export async function graphql(query, variables = {}) {
+export async function graphql(query, variables = {}, options = {}) {
   const apiKey = process.env.LINEAR_API_KEY
 
   if (!apiKey) {
@@ -85,6 +95,7 @@ export async function graphql(query, variables = {}) {
       Authorization: apiKey,
     },
     body: JSON.stringify({ query, variables }),
+    signal: options.signal,
   })
 
   if (!response.ok) {

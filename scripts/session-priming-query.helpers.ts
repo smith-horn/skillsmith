@@ -18,6 +18,7 @@ import {
   resolveSharedProjectDir,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/project-dir.js'
 import type { SearchHit } from '../packages/doc-retrieval-mcp/src/types.js'
+import { graphql } from './lib/linear-client.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -120,26 +121,25 @@ export async function getCurrentHeadSha(cwd: string): Promise<string | null> {
 
 export async function buildSignal2(args: CliArgs): Promise<string> {
   if (!args.smi) return ''
-  const apiKey = process.env.LINEAR_API_KEY
-  if (!apiKey) return ''
+  if (!process.env.LINEAR_API_KEY) return ''
 
   const query = `query GetIssue($id: String!) { issue(id: $id) { description } }`
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), LINEAR_TIMEOUT_MS)
   try {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), LINEAR_TIMEOUT_MS)
-    const res = await fetch('https://api.linear.app/graphql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: apiKey },
-      body: JSON.stringify({ query, variables: { id: args.smi.toUpperCase() } }),
-      signal: ctrl.signal,
-    })
-    clearTimeout(timer)
-    if (!res.ok) return ''
-    const json = (await res.json()) as { data?: { issue?: { description?: string | null } } }
-    const desc = json.data?.issue?.description ?? ''
+    const data = (await graphql(
+      query,
+      { id: args.smi.toUpperCase() },
+      { signal: ctrl.signal }
+    )) as {
+      issue?: { description?: string | null }
+    }
+    const desc = data.issue?.description ?? ''
     return truncateBytes(desc, SIGNAL_2_CAP_BYTES)
   } catch {
     return ''
+  } finally {
+    clearTimeout(timer)
   }
 }
 
