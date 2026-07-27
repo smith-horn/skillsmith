@@ -73,3 +73,18 @@ describe('isBotGeneratedIssue (SMI-5853)', () => {
     expect(isBotGeneratedIssue(issue, ['custom-bot-label'])).toBe(true)
   })
 })
+
+describe('isBotGeneratedIssue - SMI-5855 e2e-failure-auto exclusion', () => {
+  it('returns true when labels.nodes contains e2e-failure-auto under the default BOT_LABELS', () => {
+    expect(isBotGeneratedIssue({ labels: { nodes: [{ name: 'e2e-failure-auto' }] } })).toBe(true)
+  })
+
+  it('returns false when the issue carries only "Bug" — Bug must never count as bot-generated', () => {
+    expect(isBotGeneratedIssue({ labels: { nodes: [{ name: 'Bug' }] } })).toBe(false)
+  })
+
+  it('BOT_LABELS includes e2e-failure-auto and never includes the broad human "Bug" label', () => {
+    expect(BOT_LABELS).toContain('e2e-failure-auto')
+    expect(BOT_LABELS).not.toContain('Bug')
+  })
+})
