@@ -15,6 +15,18 @@
  * bypasses regardless of shadow state. See `help()` below for the full
  * flag/env-var reference.
  *
+ * `create-issue` also resolves `--parent`/`--labels` to real UUIDs
+ * (SMI-5854) instead of passing raw CLI values through to the mutation.
+ * `--parent` accepts an issue identifier (e.g. SMI-123) or an ID; an
+ * unresolvable parent throws (no silent orphan). `--labels` accepts
+ * comma-separated label names (matched exact-case) or IDs; an
+ * unresolvable/ambiguous label name is dropped with a warning and the
+ * issue is still created with whatever labels did resolve. Idempotent
+ * read queries (team/label/parent lookups) retry on transport failure or
+ * HTTP 429/5xx; the `issueCreate` mutation itself is never retried. Use
+ * `--dry-run` to resolve everything and print the mutation input without
+ * creating the issue.
+ *
  * Usage:
  *   node scripts/linear-api.mjs create-issue --title "Title" --description "Desc"
  *   node scripts/linear-api.mjs update-status --issue SMI-123 --status done
@@ -43,6 +55,14 @@ const VALIDATION_SHADOW_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW
 // dated follow-up review, not three staggered ones.
 export const VALIDATION_SHADOW_END_DATE = '2026-08-09'
 
+// SMI-5854: retry policy for idempotent READ queries only (team/label/
+// parent lookups). Never used for the issueCreate mutation.
+const RETRY_DELAYS_MS = [1000, 2000, 4000]
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// Exact-name filter returns <= 1 label per team; a full page means the
+// name is ambiguous, not that pagination is needed.
+const LABEL_PAGE_SIZE = 50
+
 // State IDs for common workflow states (cached on first query)
 let stateCache = null
 let teamCache = null
@@ -68,16 +88,46 @@ async function graphql(query, variables = {}) {
 
   if (!response.ok) {
     const text = await response.text()
-    throw new Error(`Linear API error: ${response.status} ${text}`)
+    const err = new Error(`Linear API error: ${response.status} ${text}`)
+    err.status = response.status
+    throw err
   }
 
   const json = await response.json()
 
   if (json.errors) {
-    throw new Error(`GraphQL errors: ${JSON.stringify(json.errors, null, 2)}`)
+    const err = new Error(`GraphQL errors: ${JSON.stringify(json.errors, null, 2)}`)
+    err.graphqlError = true
+    throw err
   }
 
   return json.data
+}
+
+/**
+ * Whether a graphql() error is safe to retry. Deterministic
+ * application-level errors (json.errors) are never retryable; transport
+ * errors (no status) and HTTP 429/5xx are.
+ */
+function isRetryable(err) {
+  if (err?.graphqlError) return false
+  if (err?.status === undefined) return true
+  return err.status === 429 || (err.status >= 500 && err.status < 600)
+}
+
+/** Retry an idempotent READ query. Never used for mutations. */
+async function retryQuery(fn, delays = RETRY_DELAYS_MS) {
+  let lastErr
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await fn()
+    } catch (e) {
+      lastErr = e
+      if (!isRetryable(e) || attempt === delays.length) throw e
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]))
+    }
+  }
+  throw lastErr
 }
 
 /**
@@ -148,6 +198,118 @@ async function getStates(teamKey = TEAM_KEY) {
 }
 
 /**
+ * Resolve an issue identifier (e.g. SMI-123) to its UUID. UUID input
+ * passes through unqueried. Returns null ONLY when the API successfully
+ * answered and no such issue exists — transport/5xx/429 failures
+ * propagate instead of masquerading as "not found".
+ */
+async function getIssueId(identifier) {
+  if (UUID_RE.test(identifier)) return identifier
+
+  const data = await retryQuery(() =>
+    graphql(
+      `
+        query ($id: String!) {
+          issue(id: $id) {
+            id
+          }
+        }
+      `,
+      { id: identifier }
+    )
+  )
+
+  return data.issue ? data.issue.id : null
+}
+
+/** Trim, drop blanks, dedupe preserving first-seen order. */
+function normalizeLabelEntries(entries) {
+  const seen = new Set()
+  const out = []
+  for (const raw of entries) {
+    const entry = String(raw).trim()
+    if (entry === '' || seen.has(entry)) continue
+    seen.add(entry)
+    out.push(entry)
+  }
+  return out
+}
+
+/**
+ * Resolve label names to UUIDs. UUID entries pass through unqueried.
+ * Exact-case team match, then exact-case workspace match; refuses to
+ * guess when more than one eligible node survives. Unresolvable/ambiguous
+ * entries are skipped with a warning and reported back to the caller via
+ * `omitted` rather than blocking issue creation.
+ *
+ * NOT wrapped in try/catch: an infrastructure failure must fail the
+ * creation, never masquerade as "label absent".
+ */
+async function resolveLabelIds(labels, teamKey = TEAM_KEY) {
+  const entries = normalizeLabelEntries(labels)
+  if (entries.length === 0) return { labelIds: [], omitted: [] }
+
+  const teamId = await retryQuery(() => getTeamId(teamKey))
+  const labelIds = []
+  const omitted = []
+
+  for (const entry of entries) {
+    if (UUID_RE.test(entry)) {
+      labelIds.push(entry)
+      continue
+    }
+
+    const data = await retryQuery(() =>
+      graphql(
+        `
+          query ($name: String!, $first: Int!) {
+            issueLabels(filter: { name: { eq: $name } }, first: $first) {
+              nodes {
+                id
+                name
+                team {
+                  id
+                }
+              }
+            }
+          }
+        `,
+        { name: entry, first: LABEL_PAGE_SIZE }
+      )
+    )
+    const nodes = data.issueLabels.nodes
+
+    // A full page means we cannot be confident we saw every candidate.
+    if (nodes.length >= LABEL_PAGE_SIZE) {
+      console.warn(`[linear-api] label "${entry}" matched ${nodes.length}+ labels — omitting it from this issue`)
+      omitted.push(entry)
+      continue
+    }
+
+    const teamMatches = nodes.filter((n) => n.team?.id === teamId)
+    const workspaceMatches = nodes.filter((n) => !n.team)
+    const eligible = teamMatches.length > 0 ? teamMatches : workspaceMatches
+
+    if (eligible.length === 0) {
+      // Zero nodes, or only other-team nodes — both are "not this team's label".
+      console.warn(`[linear-api] label "${entry}" not found — omitting it from this issue`)
+      omitted.push(entry)
+      continue
+    }
+    if (eligible.length > 1) {
+      console.warn(
+        `[linear-api] label "${entry}" matched ${eligible.length} labels, none unambiguously — omitting it from this issue`
+      )
+      omitted.push(entry)
+      continue
+    }
+    labelIds.push(eligible[0].id)
+  }
+
+  return { labelIds, omitted }
+}
+
+/**
  * Create a new issue
  */
 async function createIssue(options) {
@@ -159,6 +321,7 @@ async function createIssue(options) {
     parentId = null,
     teamKey = TEAM_KEY,
     force = false,
+    dryRun = false,
   } = options
 
   const descriptionText = typeof description === 'string' ? description : ''
@@ -191,7 +354,18 @@ async function createIssue(options) {
     }
   }
 
-  const teamId = await getTeamId(teamKey)
+  const teamId = await retryQuery(() => getTeamId(teamKey))
+
+  let resolvedParentId = null
+  if (parentId) {
+    resolvedParentId = await getIssueId(parentId)
+    if (!resolvedParentId) {
+      // No opt-out here: a silent orphan defeats the whole point of --parent.
+      throw new Error(`[linear-api] parent issue "${parentId}" not found — refusing to create an orphaned issue.`)
+    }
+  }
+
+  const { labelIds, omitted } = await resolveLabelIds(labels, teamKey)
 
   const input = {
     teamId,
@@ -200,12 +374,17 @@ async function createIssue(options) {
     priority,
   }
 
-  if (parentId) {
-    input.parentId = parentId
+  if (resolvedParentId) {
+    input.parentId = resolvedParentId
   }
 
-  if (labels.length > 0) {
-    input.labelIds = labels
+  if (labelIds.length > 0) {
+    input.labelIds = labelIds
+  }
+
+  if (dryRun) {
+    console.log(JSON.stringify({ input }, null, 2))
+    return { dryRun: true, input }
   }
 
   const data = await graphql(
@@ -227,6 +406,12 @@ async function createIssue(options) {
 
   if (!data.issueCreate.success) {
     throw new Error('Failed to create issue')
+  }
+
+  if (omitted.length > 0) {
+    console.warn(
+      `[linear-api] created ${data.issueCreate.issue.identifier} without requested label(s): ${omitted.join(', ')}`
+    )
   }
 
   return data.issueCreate.issue
@@ -446,6 +631,7 @@ function parseArgs(args) {
 const commands = {
   async 'create-issue'(args) {
     const { title, description, priority, labels, parent, force } = args
+    const dryRun = args['dry-run'] === true
 
     if (!title) {
       console.error('Error: --title is required')
@@ -459,7 +645,12 @@ const commands = {
       labels: labels ? labels.split(',') : [],
       parentId: parent || null,
       force,
+      dryRun,
     })
+
+    if (dryRun) {
+      return issue
+    }
 
     console.log(`Created: ${issue.identifier} - ${issue.title}`)
     console.log(`URL: ${issue.url}`)
@@ -546,10 +737,12 @@ Commands:
                     Acceptance-Criteria contract before the mutation,
                     SMI-5853 - see Environment below)
     --priority      Priority (1=urgent, 2=high, 3=medium, 4=low)
-    --labels        Comma-separated label IDs
-    --parent        Parent issue ID
+    --labels        Comma-separated label names (exact case) or IDs
+    --parent        Parent issue identifier (e.g. SMI-123) or ID
     --force         Bypass Acceptance-Criteria description validation,
                     regardless of shadow state (SMI-5853)
+    --dry-run       Resolve everything and print the mutation input
+                    without creating the issue
 
   update-status     Update issue status
     --issue         Issue identifier (e.g., SMI-123) (required)
@@ -623,4 +816,8 @@ export {
   getTeamId,
   getStates,
   graphql,
+  getIssueId,
+  resolveLabelIds,
+  normalizeLabelEntries,
+  commands,
 }
