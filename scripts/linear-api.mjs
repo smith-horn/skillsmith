@@ -43,9 +43,15 @@
  *     create-issue description block instead of warn (SMI-5853)
  */
 import { validateIssueDescription } from './lib/linear-issue-validation.mjs'
-
-const TEAM_KEY = 'SMI'
-const API_URL = 'https://api.linear.app/graphql'
+import {
+  TEAM_KEY,
+  graphql,
+  retryQuery,
+  getTeamId as sharedGetTeamId,
+  getIssueId as sharedGetIssueId,
+  normalizeLabelEntries,
+  resolveLabelIds,
+} from './lib/linear-client.mjs'
 
 const VALIDATION_DISABLE_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE'
 const VALIDATION_SHADOW_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW'
@@ -55,19 +61,11 @@ const VALIDATION_SHADOW_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW
 // dated follow-up review, not three staggered ones.
 export const VALIDATION_SHADOW_END_DATE = '2026-08-09'
 
-// SMI-5854: retry policy for idempotent READ queries only (team/label/
-// parent lookups). Never used for the issueCreate mutation.
-const RETRY_DELAYS_MS = [1000, 2000, 4000]
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-// Exact-name filter returns <= 1 label per team; a full page means the
-// name is ambiguous, not that pagination is needed.
-const LABEL_PAGE_SIZE = 50
-
 // SMI-5859: page size for getLabels()' full-listing query. Named for its one
 // call site rather than `LABELS_*` so it cannot be confused — by a reader or
-// by autocomplete — with LABEL_PAGE_SIZE above, whose 50 is an
-// ambiguity-detection threshold for the exact-name filter, not a paging size.
-// 250 is Linear's max `first`.
+// by autocomplete — with LABEL_PAGE_SIZE (scripts/lib/linear-client.mjs),
+// whose 50 is an ambiguity-detection threshold for the exact-name filter,
+// not a paging size. 250 is Linear's max `first`.
 const GET_LABELS_PAGE_SIZE = 250
 
 // State IDs for common workflow states (cached on first query)
@@ -75,98 +73,20 @@ let stateCache = null
 let teamCache = null
 
 /**
- * Execute a GraphQL query against Linear API
- */
-async function graphql(query, variables = {}) {
-  const apiKey = process.env.LINEAR_API_KEY
-
-  if (!apiKey) {
-    throw new Error('LINEAR_API_KEY environment variable is not set')
-  }
-
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: apiKey,
-    },
-    body: JSON.stringify({ query, variables }),
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    const err = new Error(`Linear API error: ${response.status} ${text}`)
-    err.status = response.status
-    throw err
-  }
-
-  const json = await response.json()
-
-  if (json.errors) {
-    const err = new Error(`GraphQL errors: ${JSON.stringify(json.errors, null, 2)}`)
-    err.graphqlError = true
-    throw err
-  }
-
-  return json.data
-}
-
-/**
- * Whether a graphql() error is safe to retry. Deterministic
- * application-level errors (json.errors) are never retryable; transport
- * errors (no status) and HTTP 429/5xx are.
- */
-function isRetryable(err) {
-  if (err?.graphqlError) return false
-  if (err?.status === undefined) return true
-  return err.status === 429 || (err.status >= 500 && err.status < 600)
-}
-
-/** Retry an idempotent READ query. Never used for mutations. */
-async function retryQuery(fn, delays = RETRY_DELAYS_MS) {
-  let lastErr
-  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
-    try {
-      return await fn()
-    } catch (e) {
-      lastErr = e
-      if (!isRetryable(e) || attempt === delays.length) throw e
-      await new Promise((resolve) => setTimeout(resolve, delays[attempt]))
-    }
-  }
-  throw lastErr
-}
-
-/**
- * Get team ID by key
+ * Get team ID by key. Local cache wrapper around the shared, single-attempt
+ * scripts/lib/linear-client.mjs#getTeamId (SMI-5858) — this function itself
+ * has no retry logic (matches pre-extraction behavior: it never had any);
+ * callers that want retry apply `retryQuery(() => getTeamId(teamKey))`
+ * explicitly at their own call site, same as before extraction.
  */
 async function getTeamId(teamKey = TEAM_KEY) {
   if (teamCache?.key === teamKey) {
     return teamCache.id
   }
 
-  const data = await graphql(
-    `
-      query GetTeam($key: String!) {
-        teams(filter: { key: { eq: $key } }) {
-          nodes {
-            id
-            key
-            name
-          }
-        }
-      }
-    `,
-    { key: teamKey }
-  )
-
-  const team = data.teams.nodes[0]
-  if (!team) {
-    throw new Error(`Team with key "${teamKey}" not found`)
-  }
-
-  teamCache = { key: teamKey, id: team.id, name: team.name }
-  return team.id
+  const id = await sharedGetTeamId(teamKey)
+  teamCache = { key: teamKey, id }
+  return id
 }
 
 /**
@@ -205,116 +125,15 @@ async function getStates(teamKey = TEAM_KEY) {
 }
 
 /**
- * Resolve an issue identifier (e.g. SMI-123) to its UUID. UUID input
- * passes through unqueried. Returns null ONLY when the API successfully
- * answered and no such issue exists — transport/5xx/429 failures
- * propagate instead of masquerading as "not found".
+ * Resolve an issue identifier (e.g. SMI-123) to its UUID. Thin retry
+ * wrapper around the shared, single-attempt
+ * scripts/lib/linear-client.mjs#getIssueId (SMI-5858) — this file's
+ * `getIssueId` retried internally pre-extraction, so this wrapper
+ * preserves that exported 4-attempt classified-retry behavior (skipping
+ * it would silently regress the `--parent` resolution path to zero
+ * retries).
  */
-async function getIssueId(identifier) {
-  if (UUID_RE.test(identifier)) return identifier
-
-  const data = await retryQuery(() =>
-    graphql(
-      `
-        query ($id: String!) {
-          issue(id: $id) {
-            id
-          }
-        }
-      `,
-      { id: identifier }
-    )
-  )
-
-  return data.issue ? data.issue.id : null
-}
-
-/** Trim, drop blanks, dedupe preserving first-seen order. */
-function normalizeLabelEntries(entries) {
-  const seen = new Set()
-  const out = []
-  for (const raw of entries) {
-    const entry = String(raw).trim()
-    if (entry === '' || seen.has(entry)) continue
-    seen.add(entry)
-    out.push(entry)
-  }
-  return out
-}
-
-/**
- * Resolve label names to UUIDs. UUID entries pass through unqueried.
- * Exact-case team match, then exact-case workspace match; refuses to
- * guess when more than one eligible node survives. Unresolvable/ambiguous
- * entries are skipped with a warning and reported back to the caller via
- * `omitted` rather than blocking issue creation.
- *
- * NOT wrapped in try/catch: an infrastructure failure must fail the
- * creation, never masquerade as "label absent".
- */
-async function resolveLabelIds(labels, teamKey = TEAM_KEY) {
-  const entries = normalizeLabelEntries(labels)
-  if (entries.length === 0) return { labelIds: [], omitted: [] }
-
-  const teamId = await retryQuery(() => getTeamId(teamKey))
-  const labelIds = []
-  const omitted = []
-
-  for (const entry of entries) {
-    if (UUID_RE.test(entry)) {
-      labelIds.push(entry)
-      continue
-    }
-
-    const data = await retryQuery(() =>
-      graphql(
-        `
-          query ($name: String!, $first: Int!) {
-            issueLabels(filter: { name: { eq: $name } }, first: $first) {
-              nodes {
-                id
-                name
-                team {
-                  id
-                }
-              }
-            }
-          }
-        `,
-        { name: entry, first: LABEL_PAGE_SIZE }
-      )
-    )
-    const nodes = data.issueLabels.nodes
-
-    // A full page means we cannot be confident we saw every candidate.
-    if (nodes.length >= LABEL_PAGE_SIZE) {
-      console.warn(`[linear-api] label "${entry}" matched ${nodes.length}+ labels — omitting it from this issue`)
-      omitted.push(entry)
-      continue
-    }
-
-    const teamMatches = nodes.filter((n) => n.team?.id === teamId)
-    const workspaceMatches = nodes.filter((n) => !n.team)
-    const eligible = teamMatches.length > 0 ? teamMatches : workspaceMatches
-
-    if (eligible.length === 0) {
-      // Zero nodes, or only other-team nodes — both are "not this team's label".
-      console.warn(`[linear-api] label "${entry}" not found — omitting it from this issue`)
-      omitted.push(entry)
-      continue
-    }
-    if (eligible.length > 1) {
-      console.warn(
-        `[linear-api] label "${entry}" matched ${eligible.length} labels, none unambiguously — omitting it from this issue`
-      )
-      omitted.push(entry)
-      continue
-    }
-    labelIds.push(eligible[0].id)
-  }
-
-  return { labelIds, omitted }
-}
+const getIssueId = (identifier) => retryQuery(() => sharedGetIssueId(identifier))
 
 /**
  * Create a new issue
@@ -372,7 +191,10 @@ async function createIssue(options) {
     }
   }
 
-  const { labelIds, omitted } = await resolveLabelIds(labels, teamKey)
+  // Passes this file's own CACHED getTeamId wrapper (SMI-5858) — teamId was
+  // just resolved above via the same wrapper, so resolveLabelIds's internal
+  // lookup hits that cache instead of firing a second, redundant fetch.
+  const { labelIds, omitted } = await resolveLabelIds(labels, teamKey, getTeamId)
 
   const input = {
     teamId,
@@ -594,8 +416,7 @@ async function listIssues(options = {}) {
  * Get available labels. Paginated (first/after + pageInfo, SMI-5859):
  * the workspace has more labels than Linear's default page size (50),
  * which this query previously relied on silently. Mirrors
- * fetchOpenE2eIssueTitles() in scripts/e2e/create-linear-issues.linear-client.ts
- * until SMI-5858 extracts the shared client.
+ * fetchOpenE2eIssueTitles() in scripts/e2e/create-linear-issues.linear-client.ts.
  *
  * Throws rather than returning a partial list when the API reports another
  * page but gives no usable way to reach it — see the invariant below.

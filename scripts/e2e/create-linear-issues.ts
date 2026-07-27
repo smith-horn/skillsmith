@@ -38,6 +38,9 @@
  * than importing it. Types live in `create-linear-issues.types.ts` and the
  * Linear GraphQL client lives in `create-linear-issues.linear-client.ts` —
  * both split out to keep this file under the repo's 500-line gate.
+ * (SMI-5858: that client's own transport/retry primitives now come from
+ * the shared `scripts/lib/linear-client.mjs`; this file's imports are
+ * unchanged.)
  */
 
 import { readFileSync, existsSync } from 'fs'

@@ -34,10 +34,9 @@
  * npm script: npm run lint:linear-issues
  */
 import { validateIssueDescription } from './lib/linear-issue-validation.mjs'
+import { graphql, withRetry, RETRY_DELAYS_MS } from './lib/linear-client.mjs'
 
-const LINEAR_API_URL = 'https://api.linear.app/graphql'
 const TEAM_KEY = 'SMI'
-const RETRY_DELAYS = [1000, 2000, 4000]
 
 // Labels identifying issues created by this repo's own automation, not
 // human work items — these never carry an Acceptance Criteria section
@@ -71,29 +70,11 @@ export function parseArgs(argv) {
   return { since, json }
 }
 
-// --- Linear API (pattern matches scripts/linear-api.mjs / scripts/audit-linear-drift.mjs) ---
+// --- Linear API (SMI-5858: shared transport/retry, scripts/lib/linear-client.mjs) ---
 
-async function fetchWithRetry(url, options, retries = RETRY_DELAYS) {
-  for (let i = 0; i <= retries.length; i++) {
-    try {
-      const res = await fetch(url, options)
-      if (res.ok) return res
-      if (res.status >= 500 && i < retries.length) {
-        await new Promise((r) => setTimeout(r, retries[i]))
-        continue
-      }
-      throw new Error(`HTTP ${res.status}: ${await res.text()}`)
-    } catch (err) {
-      if (i < retries.length) {
-        await new Promise((r) => setTimeout(r, retries[i]))
-        continue
-      }
-      throw err
-    }
-  }
-}
-
-async function fetchRecentIssues(since) {
+// Exported (not just called from main()) so scripts/tests/lint-linear-issues.test.ts
+// can drive the pagination/retry/exit-on-GraphQL-error behavior directly.
+export async function fetchRecentIssues(since) {
   const apiKey = process.env.LINEAR_API_KEY
   if (!apiKey) {
     console.error('LINEAR_API_KEY not set.')
@@ -127,25 +108,30 @@ async function fetchRecentIssues(since) {
   let cursor = null
 
   do {
-    const res = await fetchWithRetry(LINEAR_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: apiKey,
-      },
-      body: JSON.stringify({
-        query,
-        variables: { after: cursor, since: since.toISOString() },
-      }),
-    })
-
-    const data = await res.json()
-    if (data.errors) {
-      console.error('lint-linear-issues: Linear query failed:', JSON.stringify(data.errors))
-      process.exit(2)
+    let data
+    try {
+      // Retries transport failures and any HTTP status (429/5xx/4xx —
+      // matching this script's real pre-extraction behavior) but NEVER a
+      // deterministic GraphQL body error: shared graphql() converts that
+      // into a throw with `graphqlError = true`, and retrying it 4 times
+      // (~7s of pointless backoff) before reaching the same exit code
+      // would be a real regression, not just wasted time.
+      data = await withRetry(
+        () => graphql(query, { after: cursor, since: since.toISOString() }),
+        RETRY_DELAYS_MS,
+        (err) => !err?.graphqlError
+      )
+    } catch (err) {
+      if (err?.graphqlError) {
+        console.error('lint-linear-issues: Linear query failed:', JSON.stringify(err.graphqlErrors))
+        process.exit(2)
+      }
+      // Non-GraphQL errors that exhaust retries rethrow normally (as
+      // today) — main()'s own top-level catch converts them to exit 2.
+      throw err
     }
 
-    const { nodes, pageInfo } = data.data.issues
+    const { nodes, pageInfo } = data.issues
     allIssues.push(...nodes)
     cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null
   } while (cursor)

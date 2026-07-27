@@ -25,78 +25,18 @@
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
-const TEAM_KEY = 'SMI'
+// SMI-5858: graphql/getTeamId/withRetry/RETRY_DELAYS_MS moved to the shared
+// client. `withRetry` here is re-exported under its original name — its
+// default predicate (`() => true`) retries on ANY thrown error, matching
+// this file's pre-extraction always-retry semantics exactly (this file's
+// own tests assert 4-attempt/retry-any behavior).
+import { graphql, getTeamId, getIssueId, withRetry, RETRY_DELAYS_MS } from './lib/linear-client.mjs'
+
+export { withRetry }
+
 const PARENT_IDENTIFIER = 'SMI-4182'
 const AUTO_LABEL_NAME = 'version-drift-auto'
 const FALLBACK_GH_LABEL = 'linear-fallback'
-const RETRY_DELAYS_MS = [1000, 2000, 4000]
-const API_URL = 'https://api.linear.app/graphql'
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/**
- * Run an async function with exponential backoff retries.
- * Retries on any thrown error; returns the resolved value on first success.
- * After all delays exhausted, re-throws the last error.
- */
-export async function withRetry(fn, delays = RETRY_DELAYS_MS) {
-  let lastErr
-  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
-    try {
-      return await fn()
-    } catch (e) {
-      lastErr = e
-      if (attempt < delays.length) {
-        await sleep(delays[attempt])
-      }
-    }
-  }
-  throw lastErr
-}
-
-async function graphql(query, variables = {}) {
-  const apiKey = process.env.LINEAR_API_KEY
-  if (!apiKey) {
-    throw new Error('LINEAR_API_KEY environment variable is not set')
-  }
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: apiKey,
-    },
-    body: JSON.stringify({ query, variables }),
-  })
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Linear API error: ${response.status} ${text}`)
-  }
-  const json = await response.json()
-  if (json.errors) {
-    throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`)
-  }
-  return json.data
-}
-
-async function getTeamId(teamKey = TEAM_KEY) {
-  const data = await graphql(
-    `
-      query ($key: String!) {
-        teams(filter: { key: { eq: $key } }) {
-          nodes {
-            id
-          }
-        }
-      }
-    `,
-    { key: teamKey }
-  )
-  const team = data.teams.nodes[0]
-  if (!team) throw new Error(`Team ${teamKey} not found`)
-  return team.id
-}
 
 async function getOrCreateAutoLabelId(teamId) {
   const found = await graphql(
@@ -134,20 +74,18 @@ async function getOrCreateAutoLabelId(teamId) {
   return created.issueLabelCreate.issueLabel.id
 }
 
+/**
+ * Thin wrapper around the shared, single-attempt
+ * scripts/lib/linear-client.mjs#getIssueId (SMI-5858) — that function
+ * returns `null` on "not found" rather than throwing, so this wrapper
+ * restores this file's own throw-on-not-found semantics. Retry is applied
+ * externally by the caller (`withRetry(() => getIssueIdByIdentifier(...))`
+ * in upsertDriftIssue()), same as before extraction.
+ */
 async function getIssueIdByIdentifier(identifier) {
-  const data = await graphql(
-    `
-      query ($id: String!) {
-        issue(id: $id) {
-          id
-          identifier
-        }
-      }
-    `,
-    { id: identifier }
-  )
-  if (!data.issue) throw new Error(`Issue ${identifier} not found`)
-  return data.issue.id
+  const id = await getIssueId(identifier)
+  if (!id) throw new Error(`Issue ${identifier} not found`)
+  return id
 }
 
 async function findExistingOpenAutoIssue(teamId, labelId) {
