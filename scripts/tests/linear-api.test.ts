@@ -29,9 +29,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   importLinearApi,
   mockFetchSequence,
+  requestBody,
   TEAM_RESPONSE,
   ISSUE_CREATE_RESPONSE,
   VALID_DESCRIPTION,
+  labelsPageResponse,
 } from './linear-api-test-helpers'
 
 const DISABLE_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE'
@@ -159,5 +161,98 @@ describe('createIssue validation gate (SMI-5853)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(warnSpy).toHaveBeenCalledTimes(1)
     expect(warnSpy.mock.calls[0]?.[0] as string).toContain('(bypassed)')
+  })
+})
+
+describe('getLabels pagination (SMI-5859)', () => {
+  it('merges multiple pages in order, paging first:250 with the right cursor each time', async () => {
+    const page1 = labelsPageResponse(
+      [
+        { id: 'label-1', name: 'Bug', color: '#e11d21' },
+        { id: 'label-2', name: 'Feature', color: '#2ecc40' },
+      ],
+      { hasNextPage: true, endCursor: 'cursor-1' }
+    )
+    const page2 = labelsPageResponse([{ id: 'label-3', name: 'Security', color: '#b71c1c' }], {
+      hasNextPage: false,
+      endCursor: null,
+    })
+    const fetchMock = mockFetchSequence([TEAM_RESPONSE, page1, page2])
+
+    const mod = await importLinearApi()
+    const labels = await mod.getLabels()
+
+    expect(labels).toEqual([
+      { id: 'label-1', name: 'Bug', color: '#e11d21' },
+      { id: 'label-2', name: 'Feature', color: '#2ecc40' },
+      { id: 'label-3', name: 'Security', color: '#b71c1c' },
+    ])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    const secondRequest = requestBody(fetchMock, 1)
+    const thirdRequest = requestBody(fetchMock, 2)
+    expect(secondRequest.variables.after).toBeNull()
+    expect(thirdRequest.variables.after).toBe('cursor-1')
+    expect(secondRequest.variables.first).toBe(250)
+    expect(thirdRequest.variables.first).toBe(250)
+  })
+
+  it('terminates after a single page with no phantom second-page request', async () => {
+    const page = labelsPageResponse(
+      [
+        { id: 'label-1', name: 'Bug', color: '#e11d21' },
+        { id: 'label-2', name: 'Feature', color: '#2ecc40' },
+      ],
+      { hasNextPage: false, endCursor: null }
+    )
+    const fetchMock = mockFetchSequence([TEAM_RESPONSE, page])
+
+    const mod = await importLinearApi()
+    const labels = await mod.getLabels()
+
+    expect(labels).toEqual([
+      { id: 'label-1', name: 'Bug', color: '#e11d21' },
+      { id: 'label-2', name: 'Feature', color: '#2ecc40' },
+    ])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects with a specific pagination-invariant message when hasNextPage is true but endCursor is null', async () => {
+    const page = labelsPageResponse(
+      [
+        { id: 'label-1', name: 'Bug', color: '#e11d21' },
+        { id: 'label-2', name: 'Feature', color: '#2ecc40' },
+      ],
+      { hasNextPage: true, endCursor: null }
+    )
+    const fetchMock = mockFetchSequence([TEAM_RESPONSE, page])
+
+    const mod = await importLinearApi()
+
+    await expect(mod.getLabels()).rejects.toThrow(/pagination did not advance/)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects with a specific pagination-invariant message when endCursor repeats the cursor just sent', async () => {
+    const page1 = labelsPageResponse(
+      [
+        { id: 'label-1', name: 'Bug', color: '#e11d21' },
+        { id: 'label-2', name: 'Feature', color: '#2ecc40' },
+      ],
+      { hasNextPage: true, endCursor: 'cursor-1' }
+    )
+    const page2 = labelsPageResponse([{ id: 'label-3', name: 'Security', color: '#b71c1c' }], {
+      hasNextPage: true,
+      endCursor: 'cursor-1',
+    })
+    const fetchMock = mockFetchSequence([TEAM_RESPONSE, page1, page2])
+
+    const mod = await importLinearApi()
+
+    await expect(mod.getLabels()).rejects.toThrow(/pagination did not advance/)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    const thirdRequest = requestBody(fetchMock, 2)
+    expect(thirdRequest.variables.after).toBe('cursor-1')
   })
 })

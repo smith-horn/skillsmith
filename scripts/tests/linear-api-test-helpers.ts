@@ -31,6 +31,7 @@ export interface CreatedIssue {
 
 export interface LinearApiModule {
   createIssue: (options: Record<string, unknown>) => Promise<CreatedIssue>
+  getLabels: (teamKey?: string) => Promise<GetLabelsNode[]>
   commands: Record<string, (args: Record<string, unknown>) => Promise<unknown>>
 }
 
@@ -42,6 +43,27 @@ export interface LabelNode {
 
 export function labelResponse(nodes: LabelNode[]): GqlResponse {
   return { data: { issueLabels: { nodes } } }
+}
+
+export interface GetLabelsNode {
+  id: string
+  name: string
+  color: string
+}
+
+export interface LabelsPageInfo {
+  hasNextPage: boolean
+  endCursor: string | null
+}
+
+/**
+ * Mocked `issueLabels` page response for getLabels()'s paginated query
+ * (SMI-5859) — distinct from labelResponse() above, whose fixed
+ * `{ nodes }` shape has no `pageInfo` and backs the unrelated
+ * exact-name-filter query.
+ */
+export function labelsPageResponse(nodes: GetLabelsNode[], pageInfo: LabelsPageInfo): GqlResponse {
+  return { data: { issueLabels: { nodes, pageInfo } } }
 }
 
 export function issueLookupResponse(id: string | null): GqlResponse {
