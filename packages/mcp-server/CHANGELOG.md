@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `private_registry_publish` gets a UX pre-check surfacing a team's private-registry namespace mismatch as a typed error before ever touching the database (the DB trigger remains the actual security boundary), and `private_registry_manage` gains a `namespace` action so a team can discover its publish namespace without attempting a publish first; `publish()`'s success response now also includes `skillNamespace` (SMI-5852)
 - **Feature**: `private_registry_manage`/`private_registry_publish` (`tools/registry-tools.live.ts`) — real, live implementation of the private skill registry backed by Supabase's `private_registry_skills` table, replacing the stub. Publish computes `content_hash` via `@skillsmith/core`'s shared `sha256Hex`, enforces (team, skill, version) immutability, and scopes list/get to the resolved team; deprecate/undeprecate correctly request a PostgREST representation via `.select()` so affected-row data is actually returned instead of always reporting "not found" (SMI-5816)
 - **Fix**: added process-wide `uncaughtException`/`unhandledRejection` handlers — previously, any unhandled error anywhere in the running server (not just at startup) crashed the process with only a stderr stack trace, visible solely in the MCP host's live `/mcp` panel and never persisted. Both handlers now log via the existing structured logger (disk record + stderr mirror) before exiting, matching the crash-vs-continue behavior Node already had by default (SMI-5787)
 
