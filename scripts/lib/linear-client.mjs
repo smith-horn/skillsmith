@@ -52,6 +52,21 @@ export const LABEL_PAGE_SIZE = 50
  * `scripts/lint-linear-issues.mjs` reproduce its exact current stderr
  * message without re-deriving it from `err.message`).
  *
+ * `err.message`'s `errors` dump is pretty-printed (`JSON.stringify(..., null, 2)`),
+ * matching `scripts/linear-api.mjs`'s pre-SMI-5858 canonical format, which this
+ * function is moved from verbatim. `scripts/linear-upsert-drift-issue.mjs` and
+ * `scripts/e2e/create-linear-issues.linear-client.ts` each independently
+ * hand-rolled a compact (non-pretty-printed) version before this extraction —
+ * a second, named exception to this refactor's no-behavior-change goal (GPT-5.6-Sol
+ * code review on commit 64a78d38), alongside the team-query field-selection
+ * reduction in the plan doc's Design Question 5. Verified no test or caller in
+ * either script depends on the exact compact format; `err.message` is not
+ * asserted anywhere, and the one place both scripts DO construct their own
+ * "GraphQL errors: ..." string outside this shared function (e.g.
+ * `create-linear-issues.linear-client.ts`'s `createLinearIssue()` failure
+ * `reason` text, built from a mutation response's `errors` field rather than
+ * from this function's thrown error) is untouched by this change.
+ *
  * @param {string} query
  * @param {Record<string, unknown>} [variables]
  * @returns {Promise<any>}

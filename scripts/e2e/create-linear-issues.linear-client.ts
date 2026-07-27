@@ -23,10 +23,18 @@ import type {
 } from './create-linear-issues.types.js'
 import {
   API_URL,
+  RETRY_DELAYS_MS,
   getTeamId as sharedGetTeamId,
   graphql,
   retryQuery,
 } from '../lib/linear-client.mjs'
+
+// Re-exported for parity with this file's pre-SMI-5858 public surface — no
+// current in-repo consumer imports these from here, but silently dropping a
+// module's exports during a "no behavior change" refactor is itself a
+// behavior change (GPT-5.6-Sol code review finding on commit 64a78d38).
+export const LINEAR_API_URL = API_URL
+export { RETRY_DELAYS_MS, graphql, retryQuery }
 
 export const TEAM_KEY = 'SMI'
 
