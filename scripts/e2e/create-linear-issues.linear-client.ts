@@ -2,22 +2,33 @@
  * Linear API client for scripts/e2e/create-linear-issues.ts (SMI-5855).
  *
  * Split out to keep create-linear-issues.ts under the repo's 500-line
- * file-length gate. Deliberately self-contained (Q4 in the plan doc
+ * file-length gate. SMI-5858 extracted this file's transport/retry
+ * primitives (`graphql`/`isRetryable`/`retryQuery`) plus `getTeamId`'s
+ * underlying lookup into the shared `scripts/lib/linear-client.mjs` — four
+ * different Linear scripts had each independently hand-rolled a
+ * near-verbatim copy of that code, this one included. Label/issue
+ * resolution below (`resolveLabelId`, `getOrCreateAutoLabelId`,
+ * `fetchOpenE2eIssueTitles`, `createLinearIssue`) remains local and
+ * deliberately self-contained (Q4 in the plan doc
  * docs/internal/implementation/smi-5854-5855-linear-issue-label-parent-resolution.md)
  * rather than delegating to scripts/linear-api.mjs's createIssue() — this
  * mirrors scripts/linear-upsert-drift-issue.mjs's team/label resolution
- * pattern (getOrCreateAutoLabelId, retry-on-idempotent-reads) rather than
- * importing it, matching that script's own accepted duplication.
+ * pattern rather than importing it, matching that script's own accepted
+ * duplication.
  */
 import type {
   CreateIssueOutcome,
   GqlLabelNode,
   LinearIssueInput,
 } from './create-linear-issues.types.js'
+import {
+  API_URL,
+  getTeamId as sharedGetTeamId,
+  graphql,
+  retryQuery,
+} from '../lib/linear-client.mjs'
 
-export const LINEAR_API_URL = 'https://api.linear.app/graphql'
 export const TEAM_KEY = 'SMI'
-export const RETRY_DELAYS_MS = [1000, 2000, 4000]
 
 // `Bug` is workspace-level (team: null) and already exists — resolve-only,
 // NEVER get-or-create it (issueLabelCreate({ teamId, ... }) would mint a
@@ -30,98 +41,16 @@ export const AUTO_LABEL_NAME = 'e2e-failure-auto'
 export const AUTO_LABEL_COLOR = '#eb5757'
 
 /**
- * Execute a GraphQL query/mutation against the Linear API. Throws on
- * transport failure, a non-2xx HTTP response, or a GraphQL `errors` array —
- * callers must NOT wrap this in a catch-all that degrades an infrastructure
- * failure into "not found" (mirrors the SMI-5854 design constraint).
+ * Resolve the SMI team's UUID (retried read). Thin wrapper around the
+ * shared, single-attempt scripts/lib/linear-client.mjs#getTeamId
+ * (SMI-5858) — this function retried INSIDE itself pre-extraction, so the
+ * retry moves to this one line above the shared (single-attempt) call,
+ * preserving identical behavior: same 4 attempts, same delays, same
+ * classification, same not-found error, same zero-argument exported
+ * signature create-linear-issues.ts already calls it with.
  */
-export async function graphql(query: string, variables: Record<string, unknown> = {}) {
-  const apiKey = process.env.LINEAR_API_KEY
-  if (!apiKey) {
-    throw new Error('LINEAR_API_KEY environment variable is not set')
-  }
-
-  const response = await fetch(LINEAR_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: apiKey,
-    },
-    body: JSON.stringify({ query, variables }),
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    const err = new Error(`Linear API error: ${response.status} ${text}`) as Error & {
-      status?: number
-    }
-    err.status = response.status
-    throw err
-  }
-
-  const json = await response.json()
-
-  if (json.errors) {
-    const err = new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`) as Error & {
-      graphqlError?: boolean
-    }
-    err.graphqlError = true
-    throw err
-  }
-
-  return json.data
-}
-
-function isRetryable(err: unknown): boolean {
-  const e = err as { graphqlError?: boolean; status?: number } | undefined
-  if (e?.graphqlError) return false // deterministic, application-level — retrying re-fails
-  if (e?.status === undefined) return true // transport/network throw from fetch itself
-  return e.status === 429 || (e.status >= 500 && e.status < 600)
-}
-
-/**
- * Retry an idempotent READ query with exponential backoff. Never used for
- * `issueCreate`/`issueLabelCreate` mutations — a retried mutation after
- * Linear already committed the write would risk a duplicate.
- */
-export async function retryQuery<T>(
-  fn: () => Promise<T>,
-  delays: number[] = RETRY_DELAYS_MS
-): Promise<T> {
-  let lastErr: unknown
-  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
-    try {
-      return await fn()
-    } catch (e) {
-      lastErr = e
-      if (!isRetryable(e) || attempt === delays.length) throw e
-      await new Promise((resolve) => setTimeout(resolve, delays[attempt]))
-    }
-  }
-  throw lastErr
-}
-
-/** Resolve the SMI team's UUID (retried read). */
 export async function getTeamId(): Promise<string> {
-  const data = await retryQuery(() =>
-    graphql(
-      `
-        query ($key: String!) {
-          teams(filter: { key: { eq: $key } }) {
-            nodes {
-              id
-            }
-          }
-        }
-      `,
-      {
-        key: TEAM_KEY,
-      }
-    )
-  )
-  const team = data.teams.nodes[0]
-  if (!team) throw new Error(`Team "${TEAM_KEY}" not found`)
-  return team.id
+  return retryQuery(() => sharedGetTeamId(TEAM_KEY))
 }
 
 /**
@@ -277,7 +206,7 @@ export async function createLinearIssue(
 
   let response: Response
   try {
-    response = await fetch(LINEAR_API_URL, {
+    response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
