@@ -25,7 +25,10 @@ const execFileAsync = promisify(execFile)
 const SIGNAL_2_CAP_BYTES = 1024
 const SIGNAL_3_BULLETS = 15
 const MEMORY_FILE_MAX_READ = 100 * 1024
-const LINEAR_TIMEOUT_MS = 1800
+// Exported so `session-priming-query-helpers.test.ts` can drive its fake-timer
+// abort test off the real value instead of a hardcoded duplicate — raising this
+// would otherwise turn that test into an opaque "test timed out" failure.
+export const LINEAR_TIMEOUT_MS = 1800
 
 export interface CliArgs {
   sessionId: string

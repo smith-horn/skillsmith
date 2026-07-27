@@ -9,7 +9,7 @@
  * `graphql()`/`withRetry`-based transport.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockFetchSteps } from './linear-api-test-helpers'
+import { mockFetchSteps, requestBody } from './linear-api-test-helpers'
 
 async function importModule() {
   return await import('../audit-linear-drift.mjs')
@@ -148,6 +148,21 @@ describe('fetchDoneIssues transport (SMI-5860)', () => {
 
     expect(issues.map((i) => i.identifier)).toEqual(['SMI-1', 'SMI-2'])
     expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    // Anti-false-green: the mock hands back page 2 regardless of what variables
+    // the caller sent, so without these two assertions this test would still
+    // pass if cursor threading broke (page 2 requested with `after: null`, i.e.
+    // an infinite first-page loop in production) or if the `since` -> Linear
+    // DateTime conversion changed. Both are asserted against independently
+    // restated literals, not values read back off the request.
+    expect(requestBody(fetchMock, 0).variables).toEqual({
+      after: null,
+      since: `${SINCE}T00:00:00Z`,
+    })
+    expect(requestBody(fetchMock, 1).variables).toEqual({
+      after: 'cursor-1',
+      since: `${SINCE}T00:00:00Z`,
+    })
   })
 
   it('DESIGN QUESTION 1 named micro-delta: retries the full attempt count on a malformed-2xx-JSON body before rethrowing (today this fails unretried, outside the pre-migration fetchWithRetry) — deliberate, not accidental', async () => {

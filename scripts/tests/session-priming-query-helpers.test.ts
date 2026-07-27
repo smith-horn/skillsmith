@@ -8,7 +8,7 @@
  * `options.signal`-accepting `graphql()` client.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildSignal2, type CliArgs } from '../session-priming-query.helpers.js'
+import { buildSignal2, LINEAR_TIMEOUT_MS, type CliArgs } from '../session-priming-query.helpers.js'
 import { mockFetchSteps } from './linear-api-test-helpers'
 
 function args(overrides: Partial<CliArgs> = {}): CliArgs {
@@ -113,7 +113,9 @@ describe('buildSignal2 (SMI-5860)', () => {
       })
     })
     const promise = buildSignal2(args())
-    await vi.advanceTimersByTimeAsync(1800)
+    // Driven off the source constant, not a hardcoded 1800 — a raised timeout
+    // would otherwise surface as an opaque vitest "test timed out".
+    await vi.advanceTimersByTimeAsync(LINEAR_TIMEOUT_MS)
     const result = await promise
     expect(result).toBe('')
   })
