@@ -13,6 +13,7 @@
 import { sanitizeForLog } from './_shared/validation.ts'
 import type { GitHubRepository } from './topic-search.ts'
 import { getHighTrustAuthor, type HighTrustAuthor } from './high-trust-authors.ts'
+import { getCachedValidation, type SkillMdValidation } from './skill-processor.ts'
 
 /**
  * SMI-4387: Increment the discovery-path yield counter for a repo that just
@@ -55,4 +56,30 @@ export function resolveHighTrustAuthor(
   if (fromMap) return [fromMap, false]
   const fromRegistry = getHighTrustAuthor(repo.owner, repo.repoName)
   return [fromRegistry, fromRegistry !== undefined]
+}
+
+/**
+ * SMI-5849 AC-3: on a prehash-matched (skinny) row, decide whether to repair
+ * a NULL content_hash for free instead of taking the skinny path. True only
+ * on a cache hit (discovery already validated this repo this run — a pure
+ * Map lookup, zero extra I/O); false on any cache miss, leaving the skinny
+ * path fully unchanged.
+ *
+ * Pure, exported for direct unit testing.
+ */
+export function canRepairContentHashFromCache(
+  repo: GitHubRepository,
+  existingHashes: Map<string, string | null>,
+  validationCache: Map<string, SkillMdValidation>
+): boolean {
+  if (existingHashes.get(repo.url)) return false
+  return (
+    getCachedValidation(
+      repo.owner,
+      repo.repoName,
+      repo.defaultBranch,
+      validationCache,
+      repo.skillPath
+    ) !== undefined
+  )
 }

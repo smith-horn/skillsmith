@@ -281,6 +281,10 @@ export async function processSearchResults(
 
       // SMI-5319: emit with the cached license as surfaced metadata (possibly
       // null). Admission was already governed by the strict validity gate above.
+      // SMI-5849: code-search omits default_branch; checkSkillMdExists above
+      // cached the validation under the FETCHED branch, so the emitted repo
+      // must carry that same value or the upsert-phase cache lookup
+      // (getCachedValidation, keyed on repo.defaultBranch) never matches.
       repos.push({
         ...repo,
         url: skillUrl,
@@ -288,6 +292,7 @@ export async function processSearchResults(
         skillPath,
         treeHash: entry.blobSha,
         license: spdx,
+        defaultBranch: branch,
       })
       stats.admitted++
       await delay(50)

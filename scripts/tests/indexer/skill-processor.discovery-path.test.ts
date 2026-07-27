@@ -11,7 +11,9 @@
 
 import { describe, it, expect } from 'vitest'
 import { repositoryToSkill } from '../../indexer/skill-processor.ts'
+import type { SkillMdValidation } from '../../indexer/skill-processor.ts'
 import type { GitHubRepository } from '../../indexer/topic-search.ts'
+import type { EdgeScanResult } from '../../indexer/_shared/security-scanner-edge.ts'
 
 function makeRepo(overrides: Partial<GitHubRepository> = {}): GitHubRepository {
   return {
@@ -70,5 +72,65 @@ describe('repositoryToSkill — discovery_path (SMI-5286 Wave 1b R-2)', () => {
     const payload = repositoryToSkill(makeRepo())
 
     expect('discovery_path' in payload).toBe(true)
+  })
+})
+
+/**
+ * repositoryToSkill — content_hash independence (SMI-5849)
+ *
+ * Prior to SMI-5849, `content_hash` was sourced ONLY from
+ * `validation.securityScan.contentHash`. Discovery's subdirectory-search path
+ * never set `repo.defaultBranch` on the emitted repo object, so the upsert
+ * phase's `getCachedValidation` lookup always missed, `validation` was always
+ * `undefined`, and `content_hash` landed NULL for ~99% of the registry. The
+ * fix adds an independent `validation.contentHash` (set whenever SKILL.md
+ * content was fetched, regardless of whether the security scan ran) that
+ * `repositoryToSkill` now prefers.
+ */
+function cleanScan(overrides: Partial<EdgeScanResult> = {}): EdgeScanResult {
+  return {
+    findings: [],
+    riskScore: 0,
+    passed: true,
+    contentHash: 'scan-hash-abc123',
+    scannedAt: '2026-07-26T00:00:00.000Z',
+    scanDurationMs: 0,
+    ...overrides,
+  }
+}
+
+describe('repositoryToSkill — content_hash independence (SMI-5849)', () => {
+  it('uses validation.contentHash when securityScan is absent (independence from the scan)', () => {
+    const validation: SkillMdValidation = {
+      valid: true,
+      errors: [],
+      content: '# My Skill\n',
+      contentHash: 'validation-hash-only',
+      // securityScan intentionally omitted.
+    }
+
+    const payload = repositoryToSkill(makeRepo(), undefined, validation)
+
+    expect(payload.content_hash).toBe('validation-hash-only')
+  })
+
+  it('falls back to securityScan.contentHash when validation.contentHash is absent', () => {
+    const validation: SkillMdValidation = {
+      valid: true,
+      errors: [],
+      content: '# My Skill\n',
+      // contentHash intentionally omitted (pre-SMI-5849 shape).
+      securityScan: cleanScan({ contentHash: 'scan-hash-fallback' }),
+    }
+
+    const payload = repositoryToSkill(makeRepo(), undefined, validation)
+
+    expect(payload.content_hash).toBe('scan-hash-fallback')
+  })
+
+  it('returns null content_hash when there is no validation at all (unchanged behavior)', () => {
+    const payload = repositoryToSkill(makeRepo(), undefined, undefined)
+
+    expect(payload.content_hash).toBeNull()
   })
 })

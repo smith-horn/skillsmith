@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { processRow, loadCandidates } from '../../indexer/revalidate-stale-quarantines.ts'
 import type { StaleQuarantinedRow } from '../../indexer/revalidate-stale-quarantines.ts'
+import { generateContentHash } from '../../indexer/_shared/security-scanner-edge.ts'
 
 // SMI-5437 Wave 2: processRow now runs sibling re-scan on quarantined=true/undefined
 // rows with clean SKILL.md before clearing. Existing processRow tests (SMI-5165/5166)
@@ -246,6 +247,7 @@ describe('processRow — kept-security', () => {
     expect(updateArg.security_score).toBeGreaterThanOrEqual(40)
     expect(Array.isArray(updateArg.security_findings)).toBe(true)
     expect(typeof updateArg.quarantine_reason).toBe('string')
+    expect(updateArg.content_hash).toBe(await generateContentHash(MALICIOUS_CONTENT)) // SMI-5849
     // Re-tag is audited for parity with the cleared/repo-gone paths.
     expect(db.insert).toHaveBeenCalledOnce()
     const insertArg = db.insert.mock.calls[0][0]

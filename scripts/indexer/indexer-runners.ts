@@ -33,7 +33,11 @@ import {
   warmOrgVerifiedCache,
   type OrgVerifiedCache,
 } from './org-verification.ts'
-import { bumpDiscoveryPath, resolveHighTrustAuthor } from './indexer-runners.helpers.ts'
+import {
+  bumpDiscoveryPath,
+  canRepairContentHashFromCache,
+  resolveHighTrustAuthor,
+} from './indexer-runners.helpers.ts'
 import { fetchRepoReadme, isMetaListRepo } from './meta-list-filter.ts'
 import { flushUpsertAccumulator, type UpsertAccumulatorItem } from './indexer-runners.batch.ts'
 
@@ -287,13 +291,8 @@ export async function runUpsertPhase(
       const [highTrustAuthor, fallbackFired] = resolveHighTrustAuthor(highTrustSkillMap, repo)
       if (fallbackFired) high_trust_fallback_hits++
 
-      // SMI-4846: First skip-gate — `repo.updatedAt` matches the prior upsert's
-      // recorded `repo_updated_at`. Bypass `getCachedValidation`, `repositoryToSkill`,
-      // and the upsert. The downstream `validateSkillMd` HTTP fetch is paid in
-      // Phase 1/3a; this gate lets a future PR push the skip up to those phases
-      // (where the ~240s wall-clock saving from skipping `validateSkillMd` lives).
-      // For this PR, the gate avoids upsert work + cache thrash, and the on-disk
-      // `repo_updated_at` is what unlocks upstream phases later.
+      // SMI-4846: First skip-gate — repo.updatedAt matches the prior upsert's
+      // repo_updated_at, so bypass getCachedValidation/repositoryToSkill/upsert.
       const prehashKey = repoUpdatedAtKey(repo)
       const existingPrehash = existingRepoUpdatedAt.get(repo.url)
       if (
@@ -301,18 +300,23 @@ export async function runUpsertPhase(
         existingPrehash !== null &&
         existingPrehash === prehashKey
       ) {
-        unchanged++
-        // SMI-3540: Collect ID for last_seen_at touch (skip if recently touched).
-        const id = repoUrlToId.get(repo.url)
-        const lastSeen = repoUrlToLastSeen.get(repo.url)
-        if (id && (!lastSeen || lastSeen < lastSeenTouchCutoff)) {
-          unchangedIds.push(id)
+        // SMI-5849 AC-3: repair a NULL content_hash for free on a cache hit; skinny path otherwise.
+        if (!canRepairContentHashFromCache(repo, existingHashes, validationCache)) {
+          unchanged++
+          // SMI-3540: Collect ID for last_seen_at touch (skip if recently touched).
+          const id = repoUrlToId.get(repo.url)
+          const lastSeen = repoUrlToLastSeen.get(repo.url)
+          if (id && (!lastSeen || lastSeen < lastSeenTouchCutoff)) {
+            unchangedIds.push(id)
+          }
+          // Push minimal payload so the row's `repo_updated_at` column is reaffirmed
+          // even when the value hasn't changed (SMI-5491: this skinny write no longer
+          // touches last_seen_at — the 12h-gated post-batch touch is its sole writer).
+          accumulator.push({ repo, skillData: minimalSkillPayload(repo), unchangedSkip: true })
+          continue
         }
-        // Push minimal payload so the row's `repo_updated_at` column is reaffirmed
-        // even when the value hasn't changed (SMI-5491: this skinny write no longer
-        // touches last_seen_at — the 12h-gated post-batch touch is its sole writer).
-        accumulator.push({ repo, skillData: minimalSkillPayload(repo), unchangedSkip: true })
-        continue
+        // Cache hit with a NULL stored content_hash: fall through to the full
+        // re-index path below instead of taking the skinny path.
       }
 
       // Miss path: lazy-validation cache lookup (H-4 case c — only here, never on hit path).

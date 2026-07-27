@@ -23,6 +23,7 @@ import {
   scanSkillContent,
   shouldQuarantine,
   QUARANTINE_THRESHOLD,
+  generateContentHash,
   type EdgeScanResult,
 } from './_shared/security-scanner-edge.ts'
 
@@ -73,6 +74,9 @@ export interface SkillMdValidation {
   }
   /** SMI-2272: Raw SKILL.md content for security scanning */
   content?: string
+  // SMI-5849: SHA-256 of the fetched SKILL.md content, computed independent of
+  // whether a security scan ran.
+  contentHash?: string
   /** SMI-2272: Security scan result */
   securityScan?: EdgeScanResult
   /** SMI-5436 Wave 2: merged scan (SKILL.md + sibling files); present when siblings were fetched */
@@ -178,6 +182,11 @@ export async function validateSkillMd(
       return { valid: false, errors }
     }
 
+    // SMI-5849: hash the content as soon as it's confirmed non-empty, independent
+    // of whether the security scan below succeeds — content_hash must never be
+    // NULL just because a downstream gate failed.
+    const contentHash = await generateContentHash(content)
+
     // Quality gate 2: Minimum length
     if (content.length < minContentLength) {
       errors.push(`SKILL.md too short (${content.length} chars, minimum ${minContentLength})`)
@@ -280,6 +289,7 @@ export async function validateSkillMd(
       errors,
       metadata,
       content, // Store content for hash tracking
+      contentHash, // SMI-5849: independent of securityScan
       securityScan, // Include security scan results
       mergedSecurityScan,
     }
@@ -444,7 +454,9 @@ export function repositoryToSkill(
     stars: repo.stars,
     installable: repo.installable,
     indexed_at: new Date().toISOString(),
-    content_hash: securityScan?.contentHash ?? null,
+    // SMI-5849: prefer validation.contentHash (set whenever content was fetched,
+    // independent of whether a security scan ran) over securityScan.contentHash.
+    content_hash: validation?.contentHash ?? securityScan?.contentHash ?? null,
     last_scanned_at: securityScan?.scannedAt ?? null,
     security_score: mergedScan?.riskScore ?? securityScan?.riskScore ?? null,
     security_findings: mergedScan?.findings ?? securityScan?.findings ?? [],

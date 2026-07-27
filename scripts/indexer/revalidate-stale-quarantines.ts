@@ -197,6 +197,7 @@ export async function processRow(
           security_score: scan.riskScore,
           security_findings: scan.findings,
           last_scanned_at: now,
+          content_hash: scan.contentHash, // SMI-5849: backfill on requarantine too
         })
         .eq('id', row.id)
         .select('id')
@@ -239,7 +240,7 @@ export async function processRow(
     // E1: CAS guards against a row quarantined by maintenance between load and write.
     const { data: touched, error: touchErr } = await db
       .from('skills')
-      .update({ last_seen_at: now })
+      .update({ last_seen_at: now, content_hash: scan.contentHash }) // SMI-5849: backfill on live-touch too
       .eq('id', row.id)
       .eq('quarantined', false)
       .select('id')
