@@ -227,7 +227,12 @@ describe('private_registry_publish live mode — SMI-5816', () => {
 
   it('surfaces a typed error when SUPABASE_SERVICE_ROLE_KEY is not configured', async () => {
     const { getSupabaseAdminClient } = await import('../supabase-client.js')
-    vi.mocked(getSupabaseAdminClient).mockRejectedValueOnce(
+    // mockRejectedValue (not -Once): a genuinely-missing service-role key fails EVERY
+    // call, not just the first — SMI-5852's namespace pre-check (getNamespace) now makes
+    // an extra call before publish() itself, and -Once would silently consume that first
+    // rejection, letting publish()'s own call fall through to the mock's default (resolved)
+    // behavior instead of re-throwing.
+    vi.mocked(getSupabaseAdminClient).mockRejectedValue(
       new Error('Supabase admin not configured: SUPABASE_SERVICE_ROLE_KEY required')
     )
 
@@ -238,6 +243,101 @@ describe('private_registry_publish live mode — SMI-5816', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/SUPABASE_SERVICE_ROLE_KEY/)
+  })
+})
+
+// ============================================================================
+// SMI-5852 — namespace pre-check (UX only; the DB trigger is the real boundary)
+// and AC-11 namespace discoverability
+// ============================================================================
+
+describe('private_registry_publish namespace pre-check — SMI-5852', () => {
+  it('rejects a mismatched skill_id namespace before ever attempting an insert', async () => {
+    const { client, calls } = createFakeClient({
+      singleResponder: () => ({ data: { skill_namespace: 'myteam' }, error: null }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryPublish(
+      { skillId: 'anthropic/commit', version: '1.0.0', content: SAMPLE_CONTENT },
+      makeContext()
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/myteam/)
+    // The UX pre-check short-circuits — the DB trigger never needs to reject it.
+    expect(calls.find((c) => c.op === 'insert')).toBeUndefined()
+  })
+
+  it('includes the team namespace on a successful publish (AC-11)', async () => {
+    // The fake client's singleResponder isn't table-aware, so it's shared between the
+    // pre-check's `teams` lookup and the actual `private_registry_skills` insert — merge
+    // both shapes into one fixture rather than a bare { skill_namespace } that would make
+    // the eventual mapRow() output unrealistically empty.
+    const { client } = createFakeClient({
+      singleResponder: () => ({
+        data: { ...publishedRow(), skill_namespace: 'myteam' },
+        error: null,
+      }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryPublish(
+      { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.skillNamespace).toBe('myteam')
+    expect(result.skill?.skillId).toBe('myteam/skill-a')
+  })
+
+  it('does not block publish when the namespace lookup is unresolvable (known gap, M3)', async () => {
+    const { client, calls } = createFakeClient({
+      singleResponder: () => ({ data: publishedRow(), error: null }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryPublish(
+      { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
+      makeContext()
+    )
+
+    // publishedRow() has no skill_namespace field, so the pre-check treats it as
+    // unresolvable and the DB trigger remains the sole gate — publish proceeds.
+    expect(result.success).toBe(true)
+    expect(calls.find((c) => c.op === 'insert')).toBeDefined()
+  })
+})
+
+describe('private_registry_manage namespace action — SMI-5852 AC-11', () => {
+  it('returns the team namespace without attempting a publish', async () => {
+    const { client } = createFakeClient({
+      singleResponder: () => ({ data: { skill_namespace: 'myteam' }, error: null }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
+
+    expect(result.success).toBe(true)
+    expect(result.namespace).toBe('myteam')
+  })
+
+  it('surfaces a typed error when the namespace cannot be resolved', async () => {
+    const { client } = createFakeClient({
+      singleResponder: () => ({ data: null, error: { message: 'not found' } }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage({ action: 'namespace' }, makeContext())
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/unable to resolve/i)
   })
 })
 
