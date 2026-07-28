@@ -1,5 +1,7 @@
 # Skillsmith
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.smith-horn%2Fskillsmith.svg)](https://mcptoplist.com/server/io.github.smith-horn%2Fskillsmith)
+
 **Craft your agent skill workflow.**
 
 Skillsmith is a lifecycle manager for agent skills, handling discovery, recommendation, installation, and updates for MCP-compatible AI tools. Find the right skills for your projects, install them safely, and learn to use them effectively.
