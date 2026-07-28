@@ -52,6 +52,7 @@ import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
 import { extractWhatsNewVersion } from './audit-readme-whats-new-helpers.mjs'
 import { evaluateInternalVersionCoherence } from './audit-internal-version-coherence-helpers.mjs'
+import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
 import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
@@ -5129,6 +5130,45 @@ console.log(`\n${BOLD}Check 60: README "What's New" Currency (SMI-5613)${RESET}`
 
   if (whatsNewIssues === 0) {
     pass(`Check 60: all README "What's New" sections are current with their package.json versions`)
+  }
+}
+
+// Check 61: git-crypt filter `--unset` remediation ban (SMI-5702)
+//
+// `git config --local --unset filter.git-crypt.{smudge,clean}` writes to
+// the shared repo-wide $GIT_COMMON_DIR/config -- ALL worktrees and the main
+// checkout share this state (git-crypt's own worktreeConfig=true extension
+// is set but unused). Printed remediation text containing this command was
+// followed literally and broke the filter repo-wide, TWICE (SMI-5702,
+// recurrence 12 days later as SMI-5861). The fix is
+// scripts/_lib.sh's ensure_git_crypt_filter_registered() self-heal
+// (write-only, never removes keys) plus
+// ./scripts/worktree-crypt.sh fix <path> as the single canonical
+// remediation printed everywhere. This check is the mechanical backstop
+// that makes a doc-only fix (what shipped, and silently regressed, the
+// first time) structurally impossible: it fails on any remaining `--unset`
+// near a `filter.git-crypt` mention, repo-wide, with a narrow carve-out for
+// historical plan docs and the skillsmith-strategy submodule (fixed
+// separately, see docs/internal/implementation/
+// smi-5702-worktree-git-crypt-filter-deadlock.md Wave 4).
+//
+// scripts/tests/git-crypt-remediation-strings.test.ts (T11) is the
+// executable twin of this check -- same helper, same invariant -- so a
+// green unit suite and a green CI gate can never silently disagree.
+console.log(`\n${BOLD}Check 61: git-crypt filter --unset remediation ban (SMI-5702)${RESET}`)
+{
+  const gitCryptUnsetFindings = findGitCryptUnsetRemediations('.')
+  if (gitCryptUnsetFindings.length === 0) {
+    pass(
+      'Check 61: no `--unset filter.git-crypt` remediation text found outside historical plan docs'
+    )
+  } else {
+    for (const f of gitCryptUnsetFindings) {
+      fail(
+        `Check 61: ${f.file}:${f.line} — \`--unset\` near \`filter.git-crypt\`: ${f.text}`,
+        'Replace with ensure_git_crypt_filter_registered() (scripts/_lib.sh) or print_git_crypt_filter_remediation() (single line: ./scripts/worktree-crypt.sh fix <path>) — never write a bare `--unset filter.git-crypt.*` command, printed or executed. See docs/internal/implementation/smi-5702-worktree-git-crypt-filter-deadlock.md.'
+      )
+    }
   }
 }
 

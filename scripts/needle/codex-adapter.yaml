@@ -1,10 +1,11 @@
 # Corrected `codex` adapter, overriding NEEDLE's built-in one (which targets
 # a stale Codex CLI flag surface: `codex --model {model} --approval-mode
 # full-auto ...` — missing the `exec` subcommand, and `--approval-mode` is
-# not a real flag on the installed codex-cli 0.144.3).
+# not a real flag on the installed codex-cli 0.145.0).
 #
 # Flags verified directly via `codex exec --help` (ADR-128 / SMI-5668
-# diligence pass, 2026-07-13/14):
+# diligence pass, 2026-07-13/14; -m/-s/--json re-verified unchanged against
+# codex-cli 0.145.0 during the SMI-5847 pass, 2026-07-28):
 #   -m/--model <MODEL>    per-invocation model selection
 #   -s/--sandbox <MODE>   read-only | workspace-write | danger-full-access
 #   --json                stream events as JSONL (required for
@@ -21,7 +22,7 @@
 # (scripts/needle/README.md step 5). Validate with `needle test-agent codex`
 # → should report `Status: READY`.
 name: codex
-description: "OpenAI Codex CLI, corrected for codex-cli 0.144.x's real exec subcommand + flag surface"
+description: "OpenAI Codex CLI, corrected for codex-cli 0.145.x's real exec subcommand + flag surface"
 agent_cli: codex
 version_command: 'codex --version'
 invoke_template: 'cd {workspace} && codex exec -m {model} -s read-only --json "$(cat {prompt_file})"'
