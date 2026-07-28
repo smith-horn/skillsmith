@@ -1,6 +1,6 @@
 #!/bin/sh
 # smi-5863-apply-staging.sh -- staging invocation wrapper for
-# supabase/migrations/20260727020000_public_arm_bare_name_fallback.sql
+# supabase/migrations/20260728010000_public_arm_bare_name_fallback.sql
 # (SMI-5863, required staging-verification step before this migration can
 # be applied to prod -- the migration modifies a SECURITY DEFINER RPC
 # already hardened twice this initiative, SMI-5817/SMI-5852).
@@ -31,7 +31,7 @@
 # Usage: ./scripts/staging/smi-5863-apply-staging.sh (works from any cwd --
 # paths below are resolved relative to this script's own location).
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-SQL_FILE="$REPO_ROOT/supabase/migrations/20260727020000_public_arm_bare_name_fallback.sql"
+SQL_FILE="$REPO_ROOT/supabase/migrations/20260728010000_public_arm_bare_name_fallback.sql"
 if [ ! -f "$SQL_FILE" ]; then
   echo "REFUSING: $SQL_FILE not found." >&2
   exit 1
