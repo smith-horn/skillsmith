@@ -24,11 +24,23 @@ import { findGitCryptUnsetRemediations } from '../audit-git-crypt-remediation-he
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '..', '..')
 
+// A full recursive repo-root walk + readFileSync of every non-excluded file
+// legitimately exceeds the 15s vitest.preset.ts default under normal
+// multi-worktree-container contention (this repo's default dev workflow,
+// CLAUDE.md § Default Execution Model) -- 60s matches the E2E convention
+// (vitest.e2e.config.ts) rather than widening the global preset for one
+// inherently I/O-heavy test.
+const REPO_WALK_TIMEOUT_MS = 60_000
+
 describe('SMI-5702 T11: no `--unset filter.git-crypt` remediation text anywhere', () => {
-  it('finds zero occurrences repo-wide outside historical plan docs and the strategy submodule', () => {
-    const findings = findGitCryptUnsetRemediations(REPO_ROOT)
-    expect(findings).toEqual([])
-  })
+  it(
+    'finds zero occurrences repo-wide outside historical plan docs and the strategy submodule',
+    () => {
+      const findings = findGitCryptUnsetRemediations(REPO_ROOT)
+      expect(findings).toEqual([])
+    },
+    REPO_WALK_TIMEOUT_MS
+  )
 })
 
 describe('SMI-5702: direct string assertions on the two most operator-visible remediation sites', () => {

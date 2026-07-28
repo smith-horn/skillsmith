@@ -17,6 +17,12 @@
  *   - .git/, node_modules/, dist/, .worktrees/, .git-crypt/ (binary/VCS
  *     internals, or a nested worktree checkout that duplicates this
  *     repo's own history under a gitignored path)
+ *   - .ruvector/ (the local skillsmith-doc-retrieval semantic-search index,
+ *     gitignored and never present in CI -- its embeddings payload verbatim-
+ *     copies chunked text from indexed docs, including historical snippets
+ *     that legitimately quote the pre-fix pattern under the docs-exempt
+ *     carve-out below; without this exclusion, `npm run audit:standards`
+ *     non-reproducibly fails only on machines with a stale local index)
  *   - docs/internal/{implementation,retros}/** (historical plan docs
  *     legitimately quote the old broken snippet as before/after examples)
  *   - the skillsmith-strategy submodule mount-points (.claude/skills,
@@ -32,7 +38,14 @@
 import { readFileSync, readdirSync, statSync } from 'fs'
 import { join, relative } from 'path'
 
-const EXCLUDED_DIR_NAMES = new Set(['.git', 'node_modules', 'dist', '.worktrees', '.git-crypt'])
+const EXCLUDED_DIR_NAMES = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  '.worktrees',
+  '.git-crypt',
+  '.ruvector',
+])
 
 // SMI-5702 Wave 4: fixed separately against the skillsmith-strategy
 // submodule's own checkout/review gate -- see file header.
