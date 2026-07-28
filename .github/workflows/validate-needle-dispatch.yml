@@ -12,6 +12,8 @@ on:
       - 'scripts/needle/dispatch.sh'
       - 'scripts/needle/lib.sh'
       - 'scripts/tests/needle-dispatch.test.sh'
+      - 'scripts/tests/needle-dispatch.bead-lifecycle.test.sh'
+      - 'scripts/tests/_lib/needle-dispatch-fixtures.sh'
       - '.github/workflows/validate-needle-dispatch.yml'
 
 permissions:
@@ -27,14 +29,17 @@ jobs:
 
       - name: shellcheck
         run: |
-          shellcheck -S warning scripts/needle/dispatch.sh scripts/needle/lib.sh scripts/tests/needle-dispatch.test.sh
+          shellcheck -S warning scripts/needle/dispatch.sh scripts/needle/lib.sh scripts/tests/needle-dispatch.test.sh scripts/tests/needle-dispatch.bead-lifecycle.test.sh scripts/tests/_lib/needle-dispatch-fixtures.sh
 
       - name: Syntax check (bash -n)
         run: |
           bash -n scripts/needle/dispatch.sh
           bash -n scripts/needle/lib.sh
           bash -n scripts/tests/needle-dispatch.test.sh
+          bash -n scripts/tests/needle-dispatch.bead-lifecycle.test.sh
+          bash -n scripts/tests/_lib/needle-dispatch-fixtures.sh
 
       - name: Needle dispatch unit tests
         run: |
           bash scripts/tests/needle-dispatch.test.sh
+          bash scripts/tests/needle-dispatch.bead-lifecycle.test.sh

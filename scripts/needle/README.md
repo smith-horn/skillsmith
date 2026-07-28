@@ -114,16 +114,43 @@ guaranteed for every model/prompt.
 
 ## Known behavior
 
-- **A dispatch processes every ready bead in the workspace, not just the one
-  it just created.** `needle run --count 1` launches one *worker process*,
-  not "process one bead then exit" — a worker drains the entire ready queue
-  in the workspace's `.beads` store before going idle. If a workspace has
-  leftover open/in-progress beads from an earlier interrupted run,
-  `dispatch.sh` will process those too. This doesn't affect the outcome
-  `dispatch.sh` reports (it classifies strictly by the bead ID it created),
-  but it does mean a workspace with stale beads is observably slower and
-  does extra, unrequested work. Prefer a clean worktree per dispatch, or
-  periodically `bf list --workspace <dir>` to check for stale open beads.
+- **`dispatch.sh` always closes the bead it created, on every terminal path
+  (success, a downgraded outcome, or a poll-loop timeout).** (SMI-5847)
+  Neither NEEDLE nor `bf` does this on their own: NEEDLE's own bead-close
+  handler is `action: "none"` by design (no config knob), and its `mend`
+  janitor's repair path shells out to `bf release` — a subcommand that does
+  not exist in this `bf` version. Left unclosed, a bead is re-claimed and
+  re-run at real Codex cost after `bf`'s `claim_ttl_minutes` (30 min)
+  expires. `bf close` is idempotent, so a future SMI-5701 agent-side close
+  is harmless on top of this. `dispatch.sh` never trusts `bf close`'s own
+  exit code — it re-reads via `bf show` and, if the bead is still not
+  closed (e.g. a transient `bf` error), prints a loud `WARNING` with the
+  exact manual remediation command; this never changes the dispatch's own
+  outcome or exit code.
+- **A `needle run --count 1` worker drains the ENTIRE ready queue in the
+  workspace's `.beads` store, oldest-first — not just the bead this
+  dispatch just created — and `dispatch.sh` refuses to dispatch into a
+  workspace already holding stale `open`/`in_progress` beads by default.**
+  "Observably slower and does extra, unrequested work" understated the real
+  cost: a live 7-day sample of this repo's own dispatch history found
+  **66/66** real dispatches left their own bead `in_progress` forever (the
+  defect SMI-5847 fixed above), and **17 of 59** `agent.completed` runs
+  (28.8%) were undetected re-runs of already-finished work — a single
+  dispatch that only asked for one bead silently ran three, at ~1.4x the
+  requested Codex cost. Worse, a re-run **overwrites** the stale bead's own
+  `.beads/traces/<bead-id>/` directory in place, destroying whatever answer
+  it held. `dispatch.sh` now refuses (exit 2) before ever creating its own
+  bead when the target workspace holds any stale bead — see this repo's
+  `CLAUDE.md` Troubleshooting table for the exact refusal message and its
+  registered opt-out (`SKILLSMITH_NEEDLE_STALE_BEAD_GUARD_DISABLE=1`).
+  **One dispatch per workspace at a time** is the underlying constraint
+  this guard enforces: `bf`'s `claim_ttl_minutes` (30 min) is shorter than
+  `dispatch.sh`'s own default `--timeout` (3600s), so a legitimately
+  long-running dispatch's own claim can expire mid-flight and trip this
+  same guard for a second, genuinely-concurrent dispatch into the same
+  workspace — wait for it to finish rather than reaching for the opt-out.
+  Prefer a clean worktree per dispatch, or `bf list --workspace <dir>` to
+  check for stale beads by hand.
 
 ## Troubleshooting
 
@@ -170,19 +197,31 @@ guaranteed for every model/prompt.
   read-only sandbox is a deliberate, permanent design choice (see
   `codex-adapter.yaml`'s `-s read-only`), not something to work around.
   `dispatch.sh` now catches this two ways: (1) it always greps the bead's
-  `stderr.txt` trace for a `patch rejected:` signature and downgrades the
-  outcome to `blocked-by-sandbox` if found, regardless of whether
-  `--expect-write` was passed; (2) if the caller passes `--expect-write`
-  (meaning the dispatch was supposed to produce a real workspace change,
-  not just analysis/review output) and the workspace shows no diff since
-  the dispatch started, the outcome is downgraded to
-  `no-diff-despite-expected-write`. Either downgrade makes `dispatch.sh`
-  exit non-zero, same as any other failure — **a task that requires actual
-  file writes cannot succeed under the current read-only-only adapter,
-  full stop; route it through normal Claude-tier routing instead of
-  retrying the same dispatch.** Pass `--expect-write` whenever the prompt
-  asks Codex to make a real change; omit it for pure analysis/review
-  prompts, where "no diff" is the expected, successful outcome.
+  `stderr.txt` trace for a `patch rejected:` signature and records that as
+  an audit-only `sandbox_write_rejected=yes` field in the results log —
+  **but this only downgrades the outcome to `blocked-by-sandbox` when the
+  caller passed `--expect-write`** (SMI-5847 corrected this: under the
+  `pluck` prompt template's `notes/<bead>.md` write plus the permanently
+  read-only sandbox, a rejected write is the *expected steady state* on
+  every dispatch that never asked for one — downgrading it unconditionally
+  was discarding complete, correct answers on analysis-only dispatches; see
+  the note below and the SMI-5709 Part 2 entry below for how this shows up
+  in the results log); (2) if the caller passes `--expect-write` (meaning
+  the dispatch was supposed to produce a real workspace change, not just
+  analysis/review output) and the workspace shows no diff since the
+  dispatch started, the outcome is downgraded to
+  `no-diff-despite-expected-write`. **Either of these — plus the
+  zero-`agent_message` downgrade in the SMI-5709 Part 2 entry below — makes
+  `dispatch.sh` exit non-zero when it fires**, same as any other failure —
+  **a task that requires actual file writes cannot succeed under the
+  current read-only-only adapter, full stop; route it through normal
+  Claude-tier routing instead of retrying the same dispatch.** Pass
+  `--expect-write` whenever the prompt asks Codex to make a real change;
+  omit it for pure analysis/review prompts, where "no diff", and an
+  incidental `patch rejected:` from the always-forbidden `notes/<bead>.md`
+  write, are both the expected, still-successful outcome — do not
+  re-dispatch a `success` result just because
+  `sandbox_write_rejected=yes` also appears in the log.
 - **`bf create` fails with `secret detected: ... [Azure Key]` on an
   ordinary long file path in the title/body — or, a separate and unrelated
   finding from the same investigation, an analysis-only dispatch's trace
@@ -221,15 +260,29 @@ guaranteed for every model/prompt.
   long paths, not against `bf`'s real rule for base64-shaped secrets (which
   may include `+`/`=`) — a real base64 credential could in principle slip
   past this guard and still hit `bf`'s own rejection.
-  **Part 2 — trace gap, unrelated to Part 1.** For a dispatch made without
-  `--expect-write`, the trace file `dispatch.sh` prints (built by
-  `needle_bead_trace_path()` in `scripts/needle/lib.sh`) only ever contains
+  **Part 2 — trace gap, unrelated to Part 1. Superseded by SMI-5847 —
+  the original guidance below to go read `~/.codex/sessions/` was wrong;
+  read on for the corrected location.** The trace file `dispatch.sh` prints
+  as `trace=`/`trace:` (built by `needle_bead_trace_path()` in
+  `scripts/needle/lib.sh`, pointing at `trace.jsonl`) only ever contains
   `tool_call`/`tool_result`/`tokens` events — never the dispatched model's
-  final text response. That response lives only in the Codex CLI's own
-  session log, `~/.codex/sessions/<year>/<month>/<day>/rollout-<timestamp>-<uuid>.jsonl`,
-  as JSON lines where `type == "event_msg"` and
-  `payload.type == "agent_message"` — the *last* such line is the final
-  answer, extractable with a small `jq`/Python snippet reading
-  `payload.message`. Don't expect an analysis-only Codex review's actual
-  answer to show up in the bead trace; go to the Codex session log
-  instead.
+  final text response, regardless of `--expect-write`. This originally led
+  us to document `~/.codex/sessions/<year>/<month>/<day>/rollout-<timestamp>-<uuid>.jsonl`
+  as the place to find it — **that was wrong.** The final answer actually
+  lives in the *sibling* file in the same trace directory,
+  `.beads/traces/<bead-id>/stdout.txt`, as JSON lines where
+  `type == "item.completed"` and `item.type == "agent_message"` — the last
+  such line's `item.text` is the final answer (verified live against real
+  trace output on 4 beads). `dispatch.sh` now prints this path directly as
+  `stdout=`/`stdout:` right alongside `trace=`/`trace:`, both on stdout and
+  in the results-log line, so there's no need to hunt for it manually.
+  `dispatch.sh` also now extracts it itself (Wave 2 Step 3, SMI-5847): if
+  an otherwise-`success` run's `stdout.txt` has zero `agent_message` items
+  — e.g. Codex exited 0 having emitted only `command_execution` items
+  (killed mid-turn, a transform failure, or similar) — the outcome is
+  downgraded to `success-without-agent-message` and `dispatch.sh` exits
+  non-zero, the same non-override invariant as the SMI-5700 checks above
+  (it only ever downgrades an already-`success` outcome, never overrides a
+  real failure back to success). A missing or corrupt `stdout.txt` never
+  changes the outcome or exit code by itself — extraction failure degrades
+  to "treat it as having no answer," not to a crash.
