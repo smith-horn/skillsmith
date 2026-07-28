@@ -491,6 +491,11 @@ verify_jwt = false
 [functions.webhook-heartbeat-monitor]
 verify_jwt = false
 
+# scan-coverage-monitor: pg_cron-invoked, service-role internal (SMI-5866).
+# Deploy WITH --no-verify-jwt; mirrors webhook-heartbeat-monitor / quota-monitor.
+[functions.scan-coverage-monitor]
+verify_jwt = false
+
 # status-check: pg_cron-invoked, service-role internal (SMI-5752, public
 # status page Wave 2). Deploy WITH --no-verify-jwt; mirrors
 # webhook-heartbeat-monitor / quota-monitor.

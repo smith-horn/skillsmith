@@ -59,20 +59,33 @@ export function resolveHighTrustAuthor(
 }
 
 /**
- * SMI-5849 AC-3: on a prehash-matched (skinny) row, decide whether to repair
- * a NULL content_hash for free instead of taking the skinny path. True only
- * on a cache hit (discovery already validated this repo this run — a pure
- * Map lookup, zero extra I/O); false on any cache miss, leaving the skinny
- * path fully unchanged.
+ * SMI-5849 AC-3 / SMI-5866: on a prehash-matched (skinny) row, decide whether
+ * to repair a NULL content_hash and/or a NULL security_score for free instead
+ * of taking the skinny path. True only on a cache hit (discovery already
+ * validated this repo this run — a pure Map lookup, zero extra I/O) AND at
+ * least one of the two scan fields is missing on the existing row; false on
+ * any cache miss, or when both fields are already populated, leaving the
+ * skinny path fully unchanged.
+ *
+ * SMI-5866: generalized from `canRepairContentHashFromCache` — SMI-5849's
+ * deliberate decoupling of `content_hash` from `securityScan`
+ * (skill-processor.ts:457-459) can manufacture a row with a non-NULL
+ * content_hash but a NULL security_score, which the content_hash-only check
+ * would never repair. `existingSecurityScores` uses an explicit null/undefined
+ * check (not truthiness) — 0 is a legitimate low-risk score.
  *
  * Pure, exported for direct unit testing.
  */
-export function canRepairContentHashFromCache(
+export function canRepairScanFieldsFromCache(
   repo: GitHubRepository,
   existingHashes: Map<string, string | null>,
+  existingSecurityScores: Map<string, number | null>,
   validationCache: Map<string, SkillMdValidation>
 ): boolean {
-  if (existingHashes.get(repo.url)) return false
+  const hashPresent = Boolean(existingHashes.get(repo.url))
+  const existingScore = existingSecurityScores.get(repo.url)
+  const scorePresent = existingScore !== null && existingScore !== undefined
+  if (hashPresent && scorePresent) return false
   return (
     getCachedValidation(
       repo.owner,

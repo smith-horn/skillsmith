@@ -154,6 +154,13 @@ describe('processRow — requarantine of a LIVE clean->malicious row (SMI-5377)'
     // SMI-5849: the clean/live-touch write also backfills content_hash from the
     // freshly-fetched + scanned SKILL.md.
     expect(updateArg?.content_hash).toBe(await generateContentHash(CLEAN_CONTENT))
+    // SMI-5866: a live row with a NULL security_score (e.g. from the SMI-5849
+    // discard bug) gains a score after one --apply sweep — the live-touch
+    // branch must persist security_score + last_scanned_at unconditionally,
+    // not just last_seen_at/content_hash.
+    expect(updateArg?.security_score).toBe(result.score)
+    expect(typeof updateArg?.security_score).toBe('number')
+    expect(typeof updateArg?.last_scanned_at).toBe('string')
   })
 
   it('re-tags (not re-quarantines) an already-quarantined malicious row', async () => {

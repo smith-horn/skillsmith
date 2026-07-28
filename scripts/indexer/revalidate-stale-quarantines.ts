@@ -28,37 +28,11 @@ import {
 } from './revalidate-stale-quarantines.sibling.ts'
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (split into revalidate-stale-quarantines.types.ts, SMI-5866)
 // ---------------------------------------------------------------------------
 
-/** A stale-quarantined `skills` row narrowed to the columns this sweep reads. */
-export interface StaleQuarantinedRow {
-  id: string
-  author: string | null
-  name: string
-  repo_url: string | null
-  skill_path: string | null
-  quarantine_reason: string | null
-  security_findings: unknown
-  /** SMI-5166: present only for recheck candidates (loadRecheckCandidates selects them). Absent (undefined) for the Wave-1 loadCandidates cohort, which preserves clear-path behavior. */
-  quarantined?: boolean
-  last_seen_at?: string
-}
-
-/** Per-row outcome of the stale-revalidation sweep. */
-export type StaleOutcome =
-  | 'cleared'
-  | 'live-touched'
-  | 'kept-security'
-  | 'requarantined'
-  | 'repo-gone'
-  | 'parse-failed'
-  | 'fetch-error'
-  | 'cas-skipped'
-  | 'error'
-  | 'sibling-requarantined' // SMI-5437 W2: additive with requarantined + sibling_requarantined
-  | 'sibling-recovered' //     SMI-5437 W2: additive with cleared + sibling_recovered
-  | 'deferred-cap' //          SMI-5445 C2: PASS-3 row that would have cleared but hit the per-run sibling-clear cap
+export type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
+import type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
 
 interface RowResult {
   row: StaleQuarantinedRow
@@ -238,9 +212,16 @@ export async function processRow(
   if (row.quarantined === false) {
     if (!apply) return { row, outcome: 'live-touched', score: scan.riskScore }
     // E1: CAS guards against a row quarantined by maintenance between load and write.
+    // SMI-5866: also persists security_score/last_scanned_at (mirrors requarantine above) so a live row with a NULL prior score (SMI-5849) gets repaired here too.
+    // SMI-5849: content_hash backfilled on live-touch too.
     const { data: touched, error: touchErr } = await db
       .from('skills')
-      .update({ last_seen_at: now, content_hash: scan.contentHash }) // SMI-5849: backfill on live-touch too
+      .update({
+        last_seen_at: now,
+        content_hash: scan.contentHash,
+        security_score: scan.riskScore,
+        last_scanned_at: now,
+      })
       .eq('id', row.id)
       .eq('quarantined', false)
       .select('id')

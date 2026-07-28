@@ -149,14 +149,17 @@ describe('runRecheck — prevention invariant (live row, CAS touch)', () => {
     expect(result.recheck.live_touched).toBe(1)
     expect(result.recheck.cleared).toBe(0)
     // The prevention write must set last_seen_at and content_hash (SMI-5849:
-    // backfills content_hash from the freshly-fetched + scanned SKILL.md) and
-    // nothing else.
+    // backfills content_hash from the freshly-fetched + scanned SKILL.md), plus
+    // security_score + last_scanned_at (SMI-5866: repairs a NULL score on the
+    // live-touch branch instead of leaving it permanently unclearable) — nothing else.
     expect(handle.updatePayloads).toHaveLength(1)
     expect(Object.keys(handle.updatePayloads[0]).sort()).toEqual(
-      ['content_hash', 'last_seen_at'].sort()
+      ['content_hash', 'last_scanned_at', 'last_seen_at', 'security_score'].sort()
     )
     expect(typeof handle.updatePayloads[0].last_seen_at).toBe('string')
     expect(handle.updatePayloads[0].content_hash).toBe(await generateContentHash(CLEAN_CONTENT))
+    expect(typeof handle.updatePayloads[0].security_score).toBe('number')
+    expect(handle.updatePayloads[0].last_scanned_at).toBe(handle.updatePayloads[0].last_seen_at)
     // CAS guard MUST be `.eq('quarantined', false)` (prevention path), plus the id.
     expect(handle.eqCalls).toContainEqual(['id', row.id])
     expect(handle.eqCalls).toContainEqual(['quarantined', false])

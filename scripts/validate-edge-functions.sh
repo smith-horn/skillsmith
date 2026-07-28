@@ -80,6 +80,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "webhook-heartbeat-monitor"
   "status-check"
   "status-public"
+  "scan-coverage-monitor"
 )
 
 echo ""

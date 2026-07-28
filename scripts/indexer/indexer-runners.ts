@@ -35,7 +35,7 @@ import {
 } from './org-verification.ts'
 import {
   bumpDiscoveryPath,
-  canRepairContentHashFromCache,
+  canRepairScanFieldsFromCache,
   resolveHighTrustAuthor,
 } from './indexer-runners.helpers.ts'
 import { fetchRepoReadme, isMetaListRepo } from './meta-list-filter.ts'
@@ -247,6 +247,8 @@ export async function runUpsertPhase(
   // batchedIn chunks the IN clause to handle large repo sets safely.
   // SMI-3540: Also select id and last_seen_at for hash-matched touch + grace period.
   // SMI-4846: Also select repo_updated_at for the skip-gate prefetch.
+  // SMI-5866: Also select security_score so both skip-gates can detect (and repair)
+  // a NULL score even when content_hash is already populated.
   // SMI-4852: PostgrestFilterBuilder strict-mode types fail TS2589 (excessively deep);
   // hoist `any` to a local so eslint-disable-next-line is prettier-stable.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -257,16 +259,18 @@ export async function runUpsertPhase(
     content_hash: string | null
     last_seen_at: string | null
     repo_updated_at: string | null
+    security_score: number | null
   }>(
     () =>
       supabaseAny
         .from('skills')
-        .select('id, repo_url, content_hash, last_seen_at, repo_updated_at'),
+        .select('id, repo_url, content_hash, last_seen_at, repo_updated_at, security_score'),
     'repo_url',
     repoUrls
   )
   const existingUrls = new Set(existingSkills.map((s: { repo_url: string }) => s.repo_url))
   const existingHashes = new Map<string, string | null>()
+  const existingSecurityScores = new Map<string, number | null>()
   const repoUrlToId = new Map<string, string>()
   const repoUrlToLastSeen = new Map<string, string | null>()
   // SMI-4846: Skip-gate map (`repo_updated_at` of existing rows). Compared
@@ -276,6 +280,7 @@ export async function runUpsertPhase(
   const existingRepoUpdatedAt = new Map<string, string | null>()
   for (const s of existingSkills) {
     existingHashes.set(s.repo_url, s.content_hash ?? null)
+    existingSecurityScores.set(s.repo_url, s.security_score ?? null)
     repoUrlToId.set(s.repo_url, s.id)
     repoUrlToLastSeen.set(s.repo_url, s.last_seen_at ?? null)
     existingRepoUpdatedAt.set(s.repo_url, s.repo_updated_at ?? null)
@@ -300,8 +305,16 @@ export async function runUpsertPhase(
         existingPrehash !== null &&
         existingPrehash === prehashKey
       ) {
-        // SMI-5849 AC-3: repair a NULL content_hash for free on a cache hit; skinny path otherwise.
-        if (!canRepairContentHashFromCache(repo, existingHashes, validationCache)) {
+        // SMI-5849 AC-3 / SMI-5866: repair a NULL content_hash and/or NULL
+        // security_score for free on a cache hit; skinny path otherwise.
+        if (
+          !canRepairScanFieldsFromCache(
+            repo,
+            existingHashes,
+            existingSecurityScores,
+            validationCache
+          )
+        ) {
           unchanged++
           // SMI-3540: Collect ID for last_seen_at touch (skip if recently touched).
           const id = repoUrlToId.get(repo.url)
@@ -315,8 +328,8 @@ export async function runUpsertPhase(
           accumulator.push({ repo, skillData: minimalSkillPayload(repo), unchangedSkip: true })
           continue
         }
-        // Cache hit with a NULL stored content_hash: fall through to the full
-        // re-index path below instead of taking the skinny path.
+        // Cache hit with a NULL stored content_hash and/or security_score: fall
+        // through to the full re-index path below instead of taking the skinny path.
       }
 
       // Miss path: lazy-validation cache lookup (H-4 case c — only here, never on hit path).
@@ -366,8 +379,23 @@ export async function runUpsertPhase(
       // authoritative on the real-fetch path even though prehash is the
       // upstream gate). Catches the case where repo_updated_at changed but
       // SKILL.md content didn't (metadata-only commit, README change, etc.).
+      // SMI-5866: also require the existing row's security_score to be
+      // non-NULL before taking the skinny path — SMI-5849's deliberate
+      // decoupling of content_hash from securityScan (skill-processor.ts:
+      // 457-459) can otherwise manufacture a content_hash match on a row
+      // whose security_score is still NULL, latching it unrepairable forever
+      // (the skinny path never re-runs the scanner). A NULL score here always
+      // falls through to the full path, which recomputes it from `skillData`.
       const existingHash = existingHashes.get(repo.url)
-      if (existingHash && skillData.content_hash && existingHash === skillData.content_hash) {
+      const existingScoreForGate2 = existingSecurityScores.get(repo.url)
+      const scoreMissingForGate2 =
+        existingScoreForGate2 === null || existingScoreForGate2 === undefined
+      if (
+        existingHash &&
+        skillData.content_hash &&
+        existingHash === skillData.content_hash &&
+        !scoreMissingForGate2
+      ) {
         unchanged++
         const id = repoUrlToId.get(repo.url)
         const lastSeen = repoUrlToLastSeen.get(repo.url)
