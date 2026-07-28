@@ -143,7 +143,18 @@ function runScript(
   // Minimal PATH so `docker` is not picked up from the host.
   // /usr/bin and /bin are needed for git, bash, basename, sed, etc.
   const restrictedPath = binDir ? `${binDir}:/usr/bin:/bin` : `/usr/bin:/bin`
-  const env = { ...GIT_ENV, PATH: restrictedPath }
+  // SMI-5702: this file's fixture repo has no git-crypt filter registered
+  // at all (MISSING state to the new classifier) — disabling the new
+  // ensure_git_crypt_filter_registered() call keeps these tests scoped to
+  // the Docker-active guard they're actually about, and avoids the
+  // restricted PATH above needing to also carry a git-crypt shim (which
+  // several of these tests deliberately control the exact contents of, to
+  // probe `timeout`/`gtimeout`/`docker` PATH-resolution edge cases).
+  const env = {
+    ...GIT_ENV,
+    PATH: restrictedPath,
+    SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE: '1',
+  }
   const scriptPath = join(repoDir, 'scripts', 'repair-worktrees.sh')
   // spawnSync captures stdout + stderr regardless of exit status, unlike
   // execSync which only surfaces stderr on non-zero exit. The force-flag

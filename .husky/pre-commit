@@ -278,16 +278,26 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     CLEAN_CMD=$(git config --local filter.git-crypt.clean 2>/dev/null)
     if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
       # Restore function — called explicitly on success and via trap on crash/signal.
+      # SMI-5702: the else-branches used to remove the config key entirely
+      # when no pre-image was captured (filter.git-crypt.{smudge,clean} was
+      # genuinely MISSING before this hook ran) -- an operator/agent running
+      # that exact removal against this repo-shared config is what broke the
+      # filter for every worktree AND the main checkout at once, twice
+      # (SMI-5702, recurrence SMI-5861). A missing pre-image now heals to
+      # canonical registration instead of restoring "missing" -- a stronger,
+      # loud-by-default outcome (required=true only fails loudly when SOME
+      # filter is configured) than reproducing the exact hazard this fix
+      # exists to eliminate.
       _restore_smudge_filter() {
         if [ -n "$SMUDGE_CMD" ]; then
           git config --local filter.git-crypt.smudge "$SMUDGE_CMD"
         else
-          git config --local --unset filter.git-crypt.smudge 2>/dev/null || true
+          git config --local filter.git-crypt.smudge 'git-crypt smudge'
         fi
         if [ -n "$CLEAN_CMD" ]; then
           git config --local filter.git-crypt.clean "$CLEAN_CMD"
         else
-          git config --local --unset filter.git-crypt.clean 2>/dev/null || true
+          git config --local filter.git-crypt.clean 'git-crypt clean'
         fi
       }
       # Register trap BEFORE disabling the filter so any unexpected exit restores it.
@@ -314,11 +324,14 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       echo "${RED}  Auto-restore failed. Manual recovery:${NC}"
       echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
       echo ""
-      echo "    git config --local filter.git-crypt.smudge cat"
-      echo "    git config --local filter.git-crypt.clean cat"
+      # SMI-5702: previously printed a 6-line cat/cat-disable + literal-
+      # spelling-restore recipe -- if run out of order, or if the "cat"
+      # sentinel step were ever skipped, this reproduced the exact
+      # corruption vector this fix eliminates. Single canonical remediation
+      # instead (scripts/worktree-crypt.sh fix, backed by
+      # ensure_git_crypt_filter_registered() in scripts/_lib.sh).
       echo "    git checkout $EXPECTED_BRANCH  # <- main recovery step"
-      echo "    git config --local filter.git-crypt.smudge 'git-crypt smudge'  # or your actual smudge command"
-      echo "    git config --local filter.git-crypt.clean 'git-crypt clean'    # or your actual clean command"
+      echo "    ./scripts/worktree-crypt.sh fix ."
       echo "    git commit  # retry"
       echo ""
       echo "  ${YELLOW}Emergency bypass:${NC} git commit --no-verify"

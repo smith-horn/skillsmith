@@ -26,20 +26,43 @@ source "$SCRIPT_DIR/_lib.sh"
 
 # Extract encrypted path prefixes from .gitattributes (strips trailing /**)
 # Falls back to empty string if .gitattributes is missing or has no git-crypt entries
+#
+# SMI-5702: optional first arg, defaulting to $WORKTREE_PATH -- preserves
+# every existing zero-arg caller in this file (force_resmudge,
+# check_resmudge_scan_result, rebase-worktree.sh's own conflict-remediation
+# text) while letting create-worktree.sh (which has no WORKTREE_PATH global)
+# pass its own worktree path explicitly.
 get_encrypted_paths() {
-    grep 'filter=git-crypt' "$WORKTREE_PATH/.gitattributes" 2>/dev/null \
+    local dir="${1:-$WORKTREE_PATH}"
+    grep 'filter=git-crypt' "$dir/.gitattributes" 2>/dev/null \
         | awk '{print $1}' \
         | sed 's|/\*\*$||' \
         || echo ""
 }
 
-# Restore git-crypt filters to their original values
+# Restore git-crypt filters to their original values.
+#
+# SMI-5702: the empty-pre-image branch used to `git config --local --unset`
+# -- Step 6.5 (rebase-worktree.sh's step_ensure_filter_registered, which
+# runs before Step 7 captures ORIG_SMUDGE/ORIG_CLEAN) now guarantees a
+# classified, non-empty pre-image in practice (CANONICAL or a deliberate
+# DISABLED "cat"), so this branch should be effectively unreachable going
+# forward. Kept defensive rather than assuming that invariant always holds:
+# an empty pre-image now heals to canonical registration instead of
+# reproducing "missing" via --unset, which is what caused two repo-wide
+# corruption incidents when this exact command was printed/run literally
+# elsewhere (SMI-5702, recurrence SMI-5861).
 _restore_filter_kind() {
     local kind="$1" orig="$2"
     if [ -n "$orig" ]; then
         git -C "$WORKTREE_PATH" config --local "filter.git-crypt.$kind" "$orig"
     else
-        git -C "$WORKTREE_PATH" config --local --unset "filter.git-crypt.$kind" 2>/dev/null || true
+        local canonical
+        case "$kind" in
+            smudge) canonical="$GIT_CRYPT_CANONICAL_SMUDGE" ;;
+            clean)  canonical="$GIT_CRYPT_CANONICAL_CLEAN" ;;
+        esac
+        git -C "$WORKTREE_PATH" config --local "filter.git-crypt.$kind" "$canonical"
     fi
 }
 
@@ -90,26 +113,38 @@ force_resmudge() {
 # scans ALL tracked encrypted files, not one hardcoded sentinel. Returns
 # status only — never exits — so the caller controls sequencing relative to
 # stash pop (a scan failure must never strand the user's stash).
+#
+# SMI-5702: optional first arg, defaulting to $WORKTREE_PATH (preserves
+# rebase-worktree.sh:363's zero-arg call and every existing test). Also:
+# zero enumerated encrypted paths is now a FAILURE, not a silent pass — a
+# real git-crypt repo (this one: supabase/functions/**,
+# supabase/migrations/**) should always have at least one declared path;
+# finding none guards against a `.gitattributes` regression silently
+# defeating this whole scan. Uses has_git_crypt_magic_header() (scripts/
+# _lib.sh) rather than duplicating the head+tr check inline.
 scan_ciphertext() {
-    local encrypted_paths f head9
-    encrypted_paths=$(get_encrypted_paths)
-    [ -n "$encrypted_paths" ] || return 0
+    local scan_path="${1:-$WORKTREE_PATH}"
+    local encrypted_paths f
+    encrypted_paths=$(get_encrypted_paths "$scan_path")
+    if [ -z "$encrypted_paths" ]; then
+        warn "  Ciphertext scan: no git-crypt-encrypted path declared in $scan_path/.gitattributes — expected at least one (supabase/functions/**, supabase/migrations/**). Treating as a failure, not a silent pass."
+        return 1
+    fi
     SCAN_RESULT_BAD=()
     SCAN_RESULT_MISSING=()
     # shellcheck disable=SC2086
     while IFS= read -r -d '' f; do
-        if [ ! -f "$WORKTREE_PATH/$f" ]; then
+        if [ ! -f "$scan_path/$f" ]; then
             SCAN_RESULT_MISSING+=("$f")   # a missing tracked file is itself a failure, not a skip
             continue
         fi
-        head9=$(head -c 9 "$WORKTREE_PATH/$f" | LC_ALL=C tr -d '\0')
-        [ "$head9" = "GITCRYPT" ] && SCAN_RESULT_BAD+=("$f")
-    done < <(git -C "$WORKTREE_PATH" ls-files -z -- $encrypted_paths)
+        has_git_crypt_magic_header "$scan_path/$f" && SCAN_RESULT_BAD+=("$f")
+    done < <(git -C "$scan_path" ls-files -z -- $encrypted_paths)
     if [ "${#SCAN_RESULT_BAD[@]}" -gt 0 ] || [ "${#SCAN_RESULT_MISSING[@]}" -gt 0 ]; then
         return 1
     fi
     # shellcheck disable=SC2086
-    success "  Ciphertext scan clean ($(git -C "$WORKTREE_PATH" ls-files -- $encrypted_paths | wc -l | tr -d ' ') files)"
+    success "  Ciphertext scan clean ($(git -C "$scan_path" ls-files -- $encrypted_paths | wc -l | tr -d ' ') files)"
     return 0
 }
 
@@ -356,4 +391,25 @@ step_stash() {
     info "  Stabilizing encrypted-file index timestamps..."
     stabilize_encrypted_index_stats
     success "  Stashed as $STASH_REF"
+}
+
+# Step 6.5 (SMI-5702): heal git-crypt filter registration BEFORE Step 7
+# (below, in rebase-worktree.sh) captures ORIG_SMUDGE/ORIG_CLEAN. Without
+# this, capturing a HALF state round-trips HALF right back at Step 10's
+# restore (_restore_filter_kind just replays whatever Step 7 captured,
+# broken or not) instead of ever reaching canonical, and a genuinely-stuck
+# (not live) DISABLED state perpetuates silently forever with no
+# diagnostic -- ensure_git_crypt_filter_registered() prints the warn +
+# one-line remediation that makes that visible instead. A live DISABLED
+# window (another session's own conflict-resolution) is left untouched
+# either way -- Half 1's design never heals over that. Defined here (not
+# rebase-worktree.sh, which sources this file) purely to stay under that
+# file's line limit -- same reason step_stash above lives here.
+step_ensure_filter_registered() {
+    info "Step 6.5: Verifying git-crypt filter registration..."
+    if [ "$DRY_RUN" = true ]; then
+        info "  [dry-run] Would verify/repair git-crypt filter registration"
+        return 0
+    fi
+    ensure_git_crypt_filter_registered "$WORKTREE_PATH"
 }

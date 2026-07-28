@@ -1,43 +1,26 @@
 /**
  * Fixture/shim infrastructure for rebase-worktree.test.ts (SMI-5773). Split
- * out per CLAUDE.md's 500-line file-length guidance — see the sibling test
- * file's header for the full rationale. Follows the same `.test.ts` +
- * `.helpers.ts` split convention introduced for
- * prune-orphaned-docker-volumes.test.ts/.helpers.ts (SMI-5750, PR #1968).
- *
- * Two families of helpers live here:
+ * out per CLAUDE.md's 500-line guidance, `.test.ts`/`.helpers.ts` convention
+ * from SMI-5750 (PR #1968) — see the sibling test file's header for the
+ * full rationale. Two families of helpers live here:
  *
  *  1. The original SMI-3102 black-box helpers (`runScript`, `git`, `sh`,
- *     `setupRepoWithWorktree`) — spawn the real script as a subprocess and
- *     assert on its stdout/stderr/exit code, same as every pre-SMI-5773 test.
+ *     `setupRepoWithWorktree`) — spawn the real script, assert on its
+ *     stdout/stderr/exit code, same as every pre-SMI-5773 test.
  *
  *  2. New SMI-5773 helpers for git-crypt simulation and direct function-level
  *     testing:
  *       - `setupGitCryptFixture()` registers a portable, reversible filter
  *         pair (clean: prepend `\0GITCRYPT`; smudge: strip it) via
- *         `.gitattributes` + local git config, standing in for real
- *         git-crypt (no git-crypt binary or key material needed).
+ *         `.gitattributes` + local git config — no real git-crypt needed.
  *       - `sourceAndRun()` sources the real `scripts/rebase-worktree.sh`
- *         (which, per SMI-5773, no longer auto-runs `main()` when sourced —
- *         see the file's trailing `BASH_SOURCE[0]`-guard) and invokes one or
- *         more of its functions (`restore_filter_config`, `force_resmudge`,
- *         `scan_ciphertext`) directly against a caller-supplied fixture
- *         state. This tests the REAL functions, not shell reimplementations.
- *       - `backdateMtime()` is the deterministic (non-flaky) trigger for
- *         git's stat-clean-skip mechanism that the regression/detector tests
- *         depend on. Full mechanism explanation lives as a comment at each
- *         call site in rebase-worktree.test.ts — summary: git's
- *         `checkout_entry_ca()` calls `ie_match_stat()` WITHOUT
- *         `CE_MATCH_RACY_IS_DIRTY`, so a "racy" cache entry (one whose cached
- *         mtime is not safely older than the index file's own last-write
- *         time — true for any fast back-to-back sequence, which is exactly
- *         what a synthetic test naturally produces) falls through to an
- *         actual content re-verification instead of trusting the stat, and
- *         that re-verification happens to self-correct in this specific
- *         repro shape. Backdating the file's mtime (then `git update-index
- *         --refresh` to re-cache it) reproduces the genuinely non-racy state
- *         a real multi-second script run naturally has, without relying on
- *         wall-clock timing in the test itself.
+ *         (no longer auto-runs `main()` when sourced, SMI-5773's trailing
+ *         `BASH_SOURCE[0]`-guard) and invokes its functions directly
+ *         against a fixture state — tests the REAL functions, not shims.
+ *       - `backdateMtime()` deterministically triggers git's stat-clean-skip
+ *         mechanism the regression/detector tests depend on, without relying
+ *         on wall-clock timing. Full mechanism explanation is a comment at
+ *         each call site in rebase-worktree.test.ts, not repeated here.
  */
 
 import { execSync, spawnSync } from 'child_process'
@@ -45,6 +28,11 @@ import { mkdirSync, utimesSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+// SMI-5702: re-exported for this file's own consumers (rebase-worktree.test.ts
+// and friends) — split into their own file to keep this one under the
+// 500-line limit. See scripts/tests/_lib/git-crypt-shims.ts for the shims'
+// own doc comments.
+export { GIT_CRYPT_ROUNDTRIP_SHIM_PATH, GIT_CRYPT_SHIM_PATH } from './_lib/git-crypt-shims.js'
 
 export const SCRIPT_PATH = join(__dirname, '..', 'rebase-worktree.sh')
 
@@ -73,6 +61,18 @@ export function sh(cmd: string, opts?: { cwd?: string }): string {
  * regression test to enable the force_racy_stash_restore_for_test()
  * determinism seam (SKILLSMITH_REBASE_FORCE_RACY_TEST=1) without every
  * other call site needing to know about it.
+ *
+ * SMI-5702: defaults SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE=1. Step 6.5
+ * (step_ensure_filter_registered) now runs unconditionally in main(), and
+ * this file's fixtures register a PORTABLE SIMULATED filter pair, not real
+ * git-crypt's spelling -- indistinguishable from FOREIGN to the classifier,
+ * so without this default the heal would overwrite the simulation (and
+ * hard-error, since git-crypt isn't installed in this repo's own Docker dev
+ * container by design). None of these pre-existing SMI-5773/SMI-5781 tests
+ * are about SMI-5702's healing itself -- that's covered separately in
+ * scripts/tests/git-crypt-filter-registration.test.ts, via a real PATH
+ * shim. `extraEnv` can override this back off
+ * (`{ SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE: '0' }`).
  */
 export function runScript(
   args: string,
@@ -82,7 +82,7 @@ export function runScript(
     const stdout = execSync(`bash "${SCRIPT_PATH}" ${args}`, {
       encoding: 'utf8',
       timeout: 30_000,
-      env: { ...GIT_ENV, ...extraEnv },
+      env: { ...GIT_ENV, SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE: '1', ...extraEnv },
     })
     return { status: 0, stdout, stderr: '' }
   } catch (err) {
