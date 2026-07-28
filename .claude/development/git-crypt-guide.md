@@ -53,6 +53,29 @@ git-crypt status | grep "encrypted:" | head -10
 git checkout -- path/to/encrypted/file
 ```
 
+## Filter Registration Manual Rollback (SMI-5702)
+
+`filter.git-crypt.{smudge,clean,required}` and `diff.git-crypt.textconv` are repo-**shared** state — even `git config --local` from inside a worktree writes to the main checkout's `$GIT_COMMON_DIR/config`, so a broken registration breaks every worktree AND the main checkout at once. Symptom: `fatal: <path>: clean filter 'git-crypt' failed` on worktree creation, `git status`, or `git-crypt unlock` itself hanging/failing with this message.
+
+**Automated fix (always try this first)**:
+
+```bash
+./scripts/worktree-crypt.sh fix <worktree-path>
+```
+
+This runs `ensure_git_crypt_filter_registered()` (`scripts/_lib.sh`), which classifies the current state (CANONICAL/DISABLED/MISSING/HALF/FOREIGN) and self-heals all four keys, with a post-write read-back verification. Full bypass: `SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE=1`.
+
+**Manual fallback** (only if the automated fix is unavailable) — these are the exact canonical values `ensure_git_crypt_filter_registered()` itself writes, live-verified against `git config --local --get-regexp 'filter\.git-crypt|diff\.git-crypt'`:
+
+```bash
+git config --local filter.git-crypt.smudge 'git-crypt smudge'
+git config --local filter.git-crypt.clean 'git-crypt clean'
+git config --local filter.git-crypt.required true
+git config --local diff.git-crypt.textconv '"git-crypt" diff'
+```
+
+**Never** remove the `filter.git-crypt.*` config keys directly as a "restore" step (e.g. via `git config --local` with a removal flag) — that is the exact action that broke encryption repo-wide twice, by deleting the shared config outright instead of restoring it (SMI-5702, recurrence SMI-5861). Always set values, never unset them. Full root-cause writeup: [smi-5702-worktree-git-crypt-filter-deadlock.md](../../docs/internal/implementation/smi-5702-worktree-git-crypt-filter-deadlock.md).
+
 ## Rebasing with Git-Crypt
 
 `git pull --rebase` fails in git-crypt repos because the smudge filter creates persistent dirty files that block rebasing.
