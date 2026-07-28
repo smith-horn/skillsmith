@@ -63,3 +63,8 @@ scripts/create-worktree.sh
 
 # SMI-5660 split follow-up
 scripts/tests/create-worktree-hooks.test.sh
+
+# SMI-5866 split follow-up (genuinely pre-existing: baseline was already 503
+# lines before this PR touched it to add the SMI-5866 skip-gate change; not
+# new debt introduced by this PR)
+scripts/indexer/indexer-runners.ts

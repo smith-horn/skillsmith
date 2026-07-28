@@ -35,6 +35,8 @@ interface ExistingRow {
   content_hash: string | null
   last_seen_at: string | null
   repo_updated_at: string | null
+  /** SMI-5866: threaded into the prefetch select alongside content_hash. */
+  security_score: number | null
 }
 
 function repairRepo(url: string, updatedAt: string): GitHubRepository {
@@ -78,6 +80,7 @@ function buildDb(
                     content_hash: hit.content_hash,
                     last_seen_at: hit.last_seen_at,
                     repo_updated_at: hit.repo_updated_at,
+                    security_score: hit.security_score,
                   }
                 : null
             })
@@ -131,6 +134,9 @@ describe('SMI-5849 AC-3: content_hash NULL-repair on the prehash skip-gate (Node
           content_hash: 'already-set-hash',
           last_seen_at: new Date().toISOString(),
           repo_updated_at: repoUpdatedAt,
+          // SMI-5866: security_score is ALSO already set — this test isolates
+          // the content_hash-only regression; see test (d) for the score-only case.
+          security_score: 5,
         },
       ],
     ])
@@ -138,8 +144,9 @@ describe('SMI-5849 AC-3: content_hash NULL-repair on the prehash skip-gate (Node
     const skinnyUpdates: Array<{ url: string; patch: Record<string, unknown> }> = []
     const db = buildDb(existingByUrl, upserted, skinnyUpdates)
 
-    // Cache DOES hold a validation for this repo, but content_hash is already
-    // non-NULL — the repair check must never even consult it.
+    // Cache DOES hold a validation for this repo, but content_hash and
+    // security_score are already non-NULL — the repair check must never even
+    // consult it.
     const validationCache = new Map<string, SkillMdValidation>([
       ['acme/skill-x/main', { valid: true, errors: [], content: '# x', contentHash: 'unused' }],
     ])
@@ -170,6 +177,7 @@ describe('SMI-5849 AC-3: content_hash NULL-repair on the prehash skip-gate (Node
           content_hash: null,
           last_seen_at: new Date().toISOString(),
           repo_updated_at: repoUpdatedAt,
+          security_score: null,
         },
       ],
     ])
@@ -203,6 +211,7 @@ describe('SMI-5849 AC-3: content_hash NULL-repair on the prehash skip-gate (Node
           content_hash: null,
           last_seen_at: new Date().toISOString(),
           repo_updated_at: repoUpdatedAt,
+          security_score: null,
         },
       ],
     ])
@@ -239,5 +248,48 @@ describe('SMI-5849 AC-3: content_hash NULL-repair on the prehash skip-gate (Node
     expect(skinnyUpdates).toHaveLength(0)
     expect(upserted).toHaveLength(1)
     expect(upserted[0].content_hash).toBe('repaired-hash-xyz')
+  })
+
+  // SMI-5866: the Gate-1 analog of the Gate-2 latch fix — SMI-5849 decoupled
+  // content_hash from securityScan, so a row can have content_hash already set
+  // while security_score is still NULL. The repair check must fall through on
+  // EITHER field missing, not content_hash alone.
+  it('(d) existing content_hash non-NULL, security_score NULL, cached validation available — falls through to the full path', async () => {
+    const repoUpdatedAt = '2026-07-01T00:00:00Z'
+    const url = 'https://github.com/acme/skill-x'
+    const existingByUrl = new Map<string, ExistingRow>([
+      [
+        url,
+        {
+          id: 'id-1',
+          content_hash: 'already-set-hash',
+          last_seen_at: new Date().toISOString(),
+          repo_updated_at: repoUpdatedAt,
+          security_score: null, // the manufactured-latch shape (SMI-5849)
+        },
+      ],
+    ])
+    const upserted: Array<Record<string, unknown>> = []
+    const skinnyUpdates: Array<{ url: string; patch: Record<string, unknown> }> = []
+    const db = buildDb(existingByUrl, upserted, skinnyUpdates)
+
+    const validationCache = new Map<string, SkillMdValidation>([
+      ['acme/skill-x/main', { valid: true, errors: [], content: '# Skill X\n', contentHash: 'x' }],
+    ])
+
+    const result = await runUpsertPhase(
+      db,
+      [repairRepo(url, repoUpdatedAt)],
+      new Map(),
+      validationCache,
+      false,
+      newRateLimitTelemetry()
+    )
+
+    expect(result.errors).toEqual([])
+    // Full path fires despite content_hash already being set — score repairs.
+    expect(result.unchanged).toBe(0)
+    expect(skinnyUpdates).toHaveLength(0)
+    expect(upserted).toHaveLength(1)
   })
 })

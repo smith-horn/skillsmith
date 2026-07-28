@@ -159,10 +159,11 @@ describe('runRecheck — SMI-5437 sibling re-scan: live rows (quarantined=false)
     expect(result.recheck.live_touched).toBe(1)
     expect(result.recheck.sibling_requarantined).toBe(0)
     expect(result.recheck.sibling_recovered).toBe(0)
-    // Only one write: the last_seen_at CAS touch (+ SMI-5849 content_hash backfill).
+    // Only one write: the last_seen_at CAS touch (+ SMI-5849 content_hash backfill
+    // + SMI-5866 security_score/last_scanned_at repair).
     expect(handle.updatePayloads).toHaveLength(1)
     expect(Object.keys(handle.updatePayloads[0]).sort()).toEqual(
-      ['content_hash', 'last_seen_at'].sort()
+      ['content_hash', 'last_scanned_at', 'last_seen_at', 'security_score'].sort()
     )
     expect(handle.updatePayloads[0].content_hash).toBe(await generateContentHash(CLEAN_CONTENT))
   })

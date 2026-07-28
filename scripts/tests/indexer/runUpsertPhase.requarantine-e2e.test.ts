@@ -107,6 +107,8 @@ interface ExistingSkillRow {
   content_hash: string | null
   last_seen_at: string | null
   repo_updated_at: string | null
+  /** SMI-5866: threaded into the prefetch select so Gate 2 can detect a NULL score. */
+  security_score: number | null
 }
 
 interface UpsertCapture {
@@ -276,6 +278,7 @@ describe('SMI-5358 — content change re-quarantines end to end', () => {
         content_hash: cleanHash,
         last_seen_at: '2026-01-01T00:00:00.000Z',
         repo_updated_at: null,
+        security_score: 5,
       },
     ])
 
@@ -332,6 +335,8 @@ describe('SMI-5358 — content change re-quarantines end to end', () => {
     // The content-hash gate MUST treat the row as unchanged: the full re-index
     // upsert never fires, proving the hash diff in the first test is what
     // triggers the re-scan (not an unconditional re-process every run).
+    // SMI-5866: security_score is also already non-NULL — the skinny path stays
+    // available when BOTH scan fields are populated (no false-positive latch).
     const cleanHash = await generateContentHash(CLEAN_SKILL_MD)
 
     const capture = makeUpsertDb([
@@ -341,6 +346,7 @@ describe('SMI-5358 — content change re-quarantines end to end', () => {
         content_hash: cleanHash,
         last_seen_at: new Date().toISOString(),
         repo_updated_at: null,
+        security_score: 5,
       },
     ])
 
@@ -361,5 +367,49 @@ describe('SMI-5358 — content change re-quarantines end to end', () => {
     expect(result.quarantined).toBe(0)
     expect(result.updated).toBe(0)
     expect(result.indexed).toBe(0)
+  })
+
+  // SMI-5866: Gate-2 latch fix. SMI-5849 deliberately decoupled content_hash
+  // from securityScan (skill-processor.ts:457-459), so a matching content_hash
+  // no longer proves security_score was ever populated. Before this fix, a row
+  // in this shape (hash matches, score NULL) took the skinny path forever and
+  // could never repair — a forward hazard for the birth-cohort NULL-rate
+  // monitor this issue adds. Prod currently has 0 such rows.
+  it('SMI-5866: content_hash matches but security_score is NULL — falls through to the full path and repairs the score', async () => {
+    const cleanHash = await generateContentHash(CLEAN_SKILL_MD)
+
+    const capture = makeUpsertDb([
+      {
+        id: 'skill-1',
+        repo_url: REPO_URL,
+        content_hash: cleanHash,
+        last_seen_at: new Date().toISOString(),
+        repo_updated_at: null,
+        security_score: null, // the manufactured-latch shape
+      },
+    ])
+
+    const validationCache = await seedValidationCache(CLEAN_SKILL_MD)
+
+    const result = await runUpsertPhase(
+      capture.db,
+      [makeRepo()],
+      makeHighTrustMap(),
+      validationCache,
+      false,
+      newRateLimitTelemetry()
+    )
+
+    // Full path fires despite the content_hash match — NOT the skinny path.
+    expect(result.unchanged).toBe(0)
+    expect(capture.skinnyUpdates).toHaveLength(0)
+    expect(capture.upsertPayloads).toHaveLength(1)
+    expect(capture.upsertPayloads[0]).toHaveLength(1)
+    const row = capture.upsertPayloads[0][0]
+    // The re-scan repairs the NULL score; content stayed clean so no quarantine.
+    expect(typeof row.security_score).toBe('number')
+    expect(row.security_score as number).toBeLessThan(QUARANTINE_THRESHOLD)
+    expect(row.quarantined).toBe(false)
+    expect(row.content_hash).toBe(cleanHash)
   })
 })

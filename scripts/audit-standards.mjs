@@ -520,6 +520,9 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // v_status_current/status_daily_rollups RLS gap, not for elevated
   // privilege; consumes zero request input.
   'status-public',
+  // SMI-5866: scan-coverage-monitor — pg_cron-invoked indexer self-check,
+  // service-role internal. Mirrors webhook-heartbeat-monitor / quota-monitor.
+  'scan-coverage-monitor',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
@@ -3867,7 +3870,9 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
   // the allowlist is not extensible (CI will reject new entries via a
   // future audit guard or code review).
   const TEST_BACKFILL_ALLOWLIST = new Set([
-    'alert-notify',
+    // SMI-5866: alert-notify's index.test.ts landed (HTML-escaping regression
+    // coverage) — removed per this allowlist's own "entries are removed only
+    // after the test file lands" convention.
     'checkout',
     'contact-submit',
     'coverage-report',

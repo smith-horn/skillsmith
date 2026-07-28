@@ -98,6 +98,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   list-invoices
   quota-monitor
   regenerate-license
+  scan-coverage-monitor
   skills-get
   skills-outreach-preferences
   skills-recommend
