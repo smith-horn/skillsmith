@@ -244,8 +244,7 @@ step_crossfetch_submodule() {
     return 0
 }
 
-# Step 6 (step_stash — stash unstaged changes) lives in _rebase-git-crypt.sh.
-
+# Steps 6/6.5 (step_stash, step_ensure_filter_registered) live in _rebase-git-crypt.sh.
 # Step 7: Disable git-crypt filters (with EXIT trap for restore)
 step_disable_filters() {
     ORIG_SMUDGE=$(git -C "$WORKTREE_PATH" config --local --get filter.git-crypt.smudge 2>/dev/null || echo "")
@@ -316,8 +315,8 @@ step_rebase_parent() {
             if [ "$HAS_GIT_CRYPT" = true ]; then
                 echo ""
                 echo "After resolving, restore git-crypt filters:"
-                echo "  git -C $WORKTREE_PATH config --local --unset filter.git-crypt.smudge"
-                echo "  git -C $WORKTREE_PATH config --local --unset filter.git-crypt.clean"
+                # SMI-5702: previously removed these keys (broke config twice, SMI-5702/5861); now canonical.
+                print_git_crypt_filter_remediation "$WORKTREE_PATH"
                 local enc_paths
                 enc_paths=$(get_encrypted_paths | tr '\n' ' ')
                 # SMI-5773: NUL-safe ls-files -z + while-loop, same form as
@@ -479,6 +478,7 @@ Run '$(basename "$0") --help' for usage information."
     step_check_uptodate
     step_crossfetch_submodule
     step_stash
+    step_ensure_filter_registered
     step_disable_filters
     step_rebase_submodule
     step_rebase_parent

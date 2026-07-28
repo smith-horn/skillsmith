@@ -331,4 +331,52 @@ describe('SMI-5773: post-rebase git-crypt re-smudge', () => {
     // encrypted file is untouched.
     expect(existsSync(fx.encFilePath)).toBe(true)
   })
+
+  // SMI-5702: scan_ciphertext() gained an optional first arg (defaulting to
+  // $WORKTREE_PATH) so create-worktree.sh's Half 2 post-checkout verification
+  // can reuse it without this script's own globals. Two things must hold:
+  // every existing zero-arg call site above still passes unmodified
+  // (signature-compat -- proven implicitly by every test above still
+  // passing), and the explicit-arg form works independently of
+  // $WORKTREE_PATH ever being set.
+  it('SMI-5702: scan_ciphertext accepts an explicit path arg, independent of $WORKTREE_PATH', () => {
+    const tempRoot = makeTempDir('rw-5702-scan-explicit-arg')
+    tempDirs.push(tempRoot)
+    const { worktreeDir } = setupGitCryptRepoWithWorktree(tempRoot)
+
+    // Deliberately do NOT set WORKTREE_PATH in the sourced shell -- only the
+    // explicit argument should matter.
+    const clean = sourceAndRun({
+      worktreeDir, // sourceAndRun sets WORKTREE_PATH itself for setup; override it away below
+      setup: ['unset WORKTREE_PATH'],
+      call: `scan_ciphertext ${JSON.stringify(worktreeDir)}; echo "RC:$?"`,
+    })
+    expect(clean.stdout).toContain('RC:0')
+    expect(clean.stdout).toContain('Ciphertext scan clean')
+  })
+
+  // SMI-5702: zero enumerated encrypted paths now FAILS instead of silently
+  // passing -- guards a .gitattributes regression that would otherwise
+  // defeat this whole scan without any diagnostic.
+  it('SMI-5702: scan_ciphertext fails (not passes) when zero encrypted paths are declared', () => {
+    const tempRoot = makeTempDir('rw-5702-scan-zero-paths')
+    tempDirs.push(tempRoot)
+    const bareDir = join(tempRoot, 'bare.git')
+    const cloneDir = join(tempRoot, 'clone')
+    const worktreeDir = join(tempRoot, 'wt')
+    git(tempRoot, `init --bare "${bareDir}"`)
+    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
+    sh(`touch "${join(cloneDir, 'README.md')}"`) // no .gitattributes at all -- no git-crypt declared
+    git(cloneDir, 'add README.md')
+    git(cloneDir, 'commit -m "initial, no git-crypt"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
+
+    const result = sourceAndRun({
+      worktreeDir,
+      call: 'rc=0; scan_ciphertext || rc=$?; echo "RC:$rc"',
+    })
+    expect(result.stdout).toContain('RC:1')
+    expect(result.stdout + result.stderr).toContain('no git-crypt-encrypted path declared')
+  })
 })

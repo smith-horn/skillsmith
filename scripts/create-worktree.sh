@@ -16,6 +16,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
+# SMI-5702: scan_ciphertext()/get_encrypted_paths() for Step 4a's post-checkout
+# ciphertext verification (Half 2). Sourced-only file (see its own header) --
+# safe to source here even though this script never sets the
+# rebase-specific globals it also references (STASH_REF, DRY_RUN, etc.),
+# since those are only read by functions this script never calls
+# (step_stash, force_resmudge's non-scan callers).
+# shellcheck source=_rebase-git-crypt.sh
+source "$SCRIPT_DIR/_rebase-git-crypt.sh"
 
 # Get the repository root (where this script is run from should be repo root)
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
@@ -119,94 +127,57 @@ Please unlock git-crypt first:
 }
 
 #######################################
-# Verify project-level skill files are readable after worktree checkout
-# Warns if any agent-prompt.md or SKILL.md files remain git-crypt encrypted
+# Verify an encrypted-path file is readable (git-crypt decrypted) after
+# worktree checkout. Warns and attempts an auto-unlock if it still shows
+# raw ciphertext.
+#
+# SMI-5702: previously hardcoded a scan of `.claude/skills/**` for
+# agent-prompt.md/SKILL.md files — that directory has NOT been an encrypted
+# path since the SMI-4829 cutover (.gitattributes encrypts only
+# supabase/functions/**  and supabase/migrations/**), which made this
+# effectively dead code (it never found anything encrypted to warn about).
+# Now derives its target dynamically via find_encrypted_test_file(), which
+# reads the real encrypted-path prefix straight out of .gitattributes —
+# correct regardless of which paths are encrypted, and never goes stale
+# again if that set changes.
 #######################################
 verify_skill_readability() {
     local worktree_path="$1"
-    local skills_dir="$worktree_path/.claude/skills"
-    local encrypted_count=0
-    local checked_count=0
 
-    if [[ ! -d "$skills_dir" ]]; then
+    local test_file
+    if ! test_file=$(find_encrypted_test_file "$worktree_path"); then
+        return 0  # No git-crypt-encrypted path declared — nothing to verify
+    fi
+
+    if ! has_git_crypt_magic_header "$test_file"; then
+        success "  Encrypted-path readability verified (git-crypt decryption confirmed): ${test_file#"$worktree_path/"}"
         return 0
     fi
 
-    # SMI-4829 gate #3: if .claude/skills is a registered submodule mount-point
-    # AND the directory contains no SKILL.md files, the strategy submodule is
-    # simply not initialized for this contributor (external devs without access,
-    # or pre-cutover state). Log an info line and skip — never hard-error here.
-    local skills_is_submodule=false
-    if [[ -f "$REPO_ROOT/.gitmodules" ]]; then
-        local sub_path
-        while IFS= read -r sub_path; do
-            if [[ "$sub_path" == ".claude/skills" ]]; then
-                skills_is_submodule=true
-                break
-            fi
-        done < <(enumerate_submodules "$REPO_ROOT")
-    fi
-    if [[ "$skills_is_submodule" == true ]]; then
-        local has_skill_md=false
-        if find "$skills_dir" -name 'SKILL.md' -maxdepth 5 2>/dev/null | grep -q .; then
-            has_skill_md=true
-        fi
-        if [[ "$has_skill_md" == false ]]; then
-            info "  Strategy submodule not initialized — skipping skill readability check"
-            return 0
-        fi
-    fi
-
-    # Skip silently if xxd unavailable
-    if ! command -v xxd >/dev/null 2>&1; then
-        info "  xxd not available — skill readability check skipped"
-        return 0
-    fi
-
-    while IFS= read -r -d '' skill_file; do
-        checked_count=$((checked_count + 1))
-        if is_git_crypt_encrypted "$skill_file"; then
-            warn "Skill appears encrypted: ${skill_file#"$worktree_path/"}"
-            encrypted_count=$((encrypted_count + 1))
-        fi
-    done < <(find "$skills_dir" \( -name "agent-prompt.md" -o -name "SKILL.md" \) -print0 2>/dev/null)
-
-    if [[ $encrypted_count -gt 0 ]]; then
-        # Auto-remedy: attempt git-crypt unlock if .env symlink is present
-        if [[ -L "$worktree_path/.env" ]] || [[ -f "$worktree_path/.env" ]]; then
-            info "  Attempting auto-unlock (git-crypt) in worktree..."
-            local unlock_output
-            if unlock_output=$(cd "$worktree_path" && varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"' 2>&1); then
-                # Re-check after unlock
-                encrypted_count=0
-                while IFS= read -r -d '' skill_file; do
-                    if is_git_crypt_encrypted "$skill_file"; then
-                        encrypted_count=$((encrypted_count + 1))
-                    fi
-                done < <(find "$skills_dir" \( -name "agent-prompt.md" -o -name "SKILL.md" \) -print0 2>/dev/null)
-
-                if [[ $encrypted_count -eq 0 ]]; then
-                    success "  Auto-unlock succeeded — all skill files now readable"
-                    return 0
-                else
-                    warn "  Auto-unlock ran but $encrypted_count file(s) still encrypted"
-                fi
+    # Auto-remedy: attempt git-crypt unlock if .env symlink is present
+    if [[ -L "$worktree_path/.env" ]] || [[ -f "$worktree_path/.env" ]]; then
+        info "  Attempting auto-unlock (git-crypt) in worktree..."
+        local unlock_output
+        if unlock_output=$(cd "$worktree_path" && varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"' 2>&1); then
+            if ! has_git_crypt_magic_header "$test_file"; then
+                success "  Auto-unlock succeeded — encrypted files now readable"
+                return 0
             else
-                warn "  Auto-unlock failed: $unlock_output"
+                warn "  Auto-unlock ran but ${test_file#"$worktree_path/"} is still encrypted"
             fi
+        else
+            warn "  Auto-unlock failed: $unlock_output"
         fi
-
-        echo ""
-        warn "$encrypted_count of $checked_count skill file(s) are encrypted in this worktree."
-        warn "Skills requiring git-crypt (e.g., /launchpad Stage 4 hive-mind-execution) will silently degrade."
-        echo ""
-        echo "To unlock:"
-        echo "  cd $worktree_path"
-        echo "  varlock run -- sh -c 'git-crypt unlock \"\${GIT_CRYPT_KEY_PATH/#\\~/$HOME}\"'"
-        echo ""
-    elif [[ $checked_count -gt 0 ]]; then
-        success "  All $checked_count skill file(s) readable (git-crypt decryption verified)"
     fi
+
+    echo ""
+    warn "Encrypted-path file still shows raw ciphertext: ${test_file#"$worktree_path/"}"
+    warn "Encrypted paths (supabase/functions/**, supabase/migrations/**) will silently degrade."
+    echo ""
+    echo "To unlock:"
+    echo "  cd $worktree_path"
+    echo "  varlock run -- sh -c 'git-crypt unlock \"\${GIT_CRYPT_KEY_PATH/#\\~/$HOME}\"'"
+    echo ""
 }
 
 #######################################
@@ -521,10 +492,44 @@ create_worktree() {
         warn "  No .env in main repo ($REPO_ROOT/.env) — Varlock commands will fail in this worktree"
     fi
 
+    # Step 3c (SMI-5702): heal git-crypt filter registration BEFORE checkout.
+    # filter.git-crypt.{smudge,clean,required} is repo-shared state -- if a
+    # prior corrupted run (or a concurrent session's bad remediation) left it
+    # MISSING or HALF, Step 4's `git reset --hard HEAD` below would otherwise
+    # check out raw ciphertext to disk SILENTLY (exit 0, no error) despite
+    # `required=true` still being set -- confirmed live during this plan's
+    # verification repro. Must run before Step 4, not after: healing after
+    # checkout only detects the corruption (Half 2 below), it cannot undo an
+    # already-ciphertext working tree.
+    info "Step 3c: Verifying git-crypt filter registration..."
+    ensure_git_crypt_filter_registered "$worktree_path"
+
     # Step 4: Checkout files with decryption
     info "Step 4: Checking out files (with decryption)..."
     (cd "$worktree_path" && git reset --hard HEAD)
     success "  Files checked out successfully"
+
+    # Step 4a (SMI-5702 Half 2): positively verify no encrypted-path file
+    # checked out as raw ciphertext. Step 3c's DISABLED exemption is
+    # load-bearing (it deliberately does NOT heal a "cat"/"cat" filter that
+    # another session left mid-conflict-resolution) -- under that state,
+    # `git reset --hard` above exits 0 and writes real ciphertext to disk,
+    # same as the MISSING case verified live in this plan's repro. This scan
+    # is the backstop that catches it either way, leaving the worktree
+    # intact (so `worktree-crypt.sh fix` can run) rather than silently
+    # reporting success.
+    if ! scan_ciphertext "$worktree_path"; then
+        error "[git-crypt-verify] Encrypted-path file(s) checked out as raw ciphertext in $worktree_path.
+
+This is caused by either:
+  (a) another session's deliberate git-crypt filter disable (DISABLED state,
+      e.g. rebase-worktree.sh or pre-commit mid-conflict-resolution) that
+      Step 3c correctly left untouched, or
+  (b) a genuinely broken git-crypt key or filter registration.
+
+The worktree has been left intact. Fix with:
+  ./scripts/worktree-crypt.sh fix $worktree_path"
+    fi
 
     # Step 4b: Initialize submodules (docs/internal)
     if [[ -f "$worktree_path/.gitmodules" ]]; then

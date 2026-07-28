@@ -15,60 +15,18 @@
 
 set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# SMI-5702: colors, logging (error/warn/info/success), and get_main_git_dir
+# now come from the shared _lib.sh instead of this file's own duplicated
+# copies — also brings in ensure_git_crypt_filter_registered(), the actual
+# fix for `cmd_fix` (see below).
+# shellcheck source=_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
+
 # Get the repository root
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
-
-# Get the actual .git directory (handles worktrees where .git is a file)
-get_main_git_dir() {
-    local repo_root="$1"
-    local git_path="$repo_root/.git"
-
-    if [[ -f "$git_path" ]]; then
-        # We're in a worktree - .git is a file pointing to the gitdir
-        local worktree_gitdir
-        worktree_gitdir=$(sed 's/gitdir: //' "$git_path")
-
-        # Handle relative paths
-        if [[ ! "$worktree_gitdir" = /* ]]; then
-            worktree_gitdir="$repo_root/$worktree_gitdir"
-        fi
-
-        # Normalize and find the main .git directory
-        worktree_gitdir=$(cd "$worktree_gitdir" 2>/dev/null && pwd)
-
-        # The main .git dir is the parent of "worktrees" directory
-        if [[ "$worktree_gitdir" == */.git/worktrees/* ]]; then
-            echo "${worktree_gitdir%/worktrees/*}"
-        else
-            # Fallback: try to find commondir
-            if [[ -f "$worktree_gitdir/commondir" ]]; then
-                local commondir
-                commondir=$(cat "$worktree_gitdir/commondir")
-                if [[ ! "$commondir" = /* ]]; then
-                    commondir="$worktree_gitdir/$commondir"
-                fi
-                cd "$commondir" 2>/dev/null && pwd
-            else
-                echo "$worktree_gitdir"
-            fi
-        fi
-    elif [[ -d "$git_path" ]]; then
-        # Normal repository - .git is a directory
-        echo "$git_path"
-    else
-        echo ""
-    fi
-}
 
 MAIN_GIT_DIR=""
 
@@ -101,26 +59,6 @@ Examples:
   $(basename "$0") status ../worktrees/my-feature
 
 EOF
-}
-
-#######################################
-# Print messages
-#######################################
-error() {
-    echo -e "${RED}Error: $1${NC}" >&2
-    exit 1
-}
-
-warn() {
-    echo -e "${YELLOW}Warning: $1${NC}" >&2
-}
-
-info() {
-    echo -e "${BLUE}$1${NC}"
-}
-
-success() {
-    echo -e "${GREEN}$1${NC}"
 }
 
 #######################################
@@ -171,20 +109,16 @@ get_worktree_gitdir() {
 
 #######################################
 # Check if an encrypted file is readable
+#
+# SMI-5702: delegates to _lib.sh's has_git_crypt_magic_header() (the
+# canonical consolidation of this file's former inline grep check, _lib.sh's
+# old xxd-based is_git_crypt_encrypted(), and _rebase-git-crypt.sh's inline
+# head+tr check).
 #######################################
 is_file_decrypted() {
     local file="$1"
-
-    if [[ ! -f "$file" ]]; then
-        return 1
-    fi
-
-    # Check if file starts with git-crypt binary header
-    if head -c 10 "$file" 2>/dev/null | grep -q "GITCRYPT"; then
-        return 1  # Still encrypted
-    fi
-
-    return 0  # Decrypted (readable)
+    [[ -f "$file" ]] || return 1  # missing file: not readable, same as before
+    ! has_git_crypt_magic_header "$file"  # readable == NOT carrying the magic header
 }
 
 #######################################
@@ -246,13 +180,22 @@ Please unlock git-crypt in the main repository first:
     fi
 
     # Copy keys
-    info "Step 1/2: Copying git-crypt keys..."
+    info "Step 1/3: Copying git-crypt keys..."
     mkdir -p "$gitdir/git-crypt"
     cp -r "$source_keys" "$gitdir/git-crypt/"
     success "  Keys copied to worktree gitdir"
 
+    # SMI-5702: this is what actually breaks the fix-loop the plan describes
+    # -- cmd_fix previously never touched filter config at all, so a
+    # MISSING/HALF/FOREIGN filter.git-crypt registration survived a `fix`
+    # run untouched and `git checkout -- .` below hard-errored under
+    # `set -euo pipefail` in the MISSING state (a dead end for anything
+    # re-running `fix` hoping it would self-correct).
+    info "Step 2/3: Verifying git-crypt filter registration..."
+    ensure_git_crypt_filter_registered "$worktree_path"
+
     # Re-checkout files
-    info "Step 2/2: Re-checking out encrypted files..."
+    info "Step 3/3: Re-checking out encrypted files..."
     (cd "$worktree_path" && git checkout -- .)
     success "  Files re-checked out"
 
@@ -291,16 +234,20 @@ cmd_status() {
         has_keys=true
     fi
 
-    # Find an encrypted file to test
+    # Find an encrypted file to test.
+    #
+    # SMI-5702: was its own hand-rolled pattern derivation
+    # (`sed 's/\*\*//' | sed 's/^\///'`), which strips the trailing `**` but
+    # leaves a trailing `/` — `find -path "*<pattern>" -type f` can then
+    # never match, since no file path ends in `/`. Confirmed broken live
+    # against this repo's own `.gitattributes` shape
+    # (`supabase/functions/** filter=git-crypt`) during this plan's
+    # verification: `cmd_fix` genuinely repaired a corrupted worktree, but
+    # this derivation still reported "NEEDS FIX" because it never found a
+    # test file to check in the first place. find_encrypted_test_file()
+    # (scripts/_lib.sh) is the canonical, correctly-matching replacement.
     local encrypted_file=""
-    if [[ -f "$worktree_path/.gitattributes" ]]; then
-        local pattern
-        pattern=$(grep -E 'filter=git-crypt' "$worktree_path/.gitattributes" 2>/dev/null | head -1 | awk '{print $1}' | sed 's/\*\*//' | sed 's/^\///' || echo "")
-
-        if [[ -n "$pattern" ]]; then
-            encrypted_file=$(find "$worktree_path" -path "*$pattern" -type f 2>/dev/null | head -1 || echo "")
-        fi
-    fi
+    encrypted_file=$(find_encrypted_test_file "$worktree_path" || echo "")
 
     # Check if encrypted file is readable
     local files_readable=false

@@ -142,6 +142,16 @@ fi
 
 assert_host_node_modules "$REPO_ROOT"
 
+# SMI-5702: because filter.git-crypt.{smudge,clean,required} and
+# diff.git-crypt.textconv are repo-shared state, this single call retroactively
+# repairs an ALREADY-corrupted repo (main checkout + every worktree at once) --
+# not just the worktree this script happens to be iterating. Runs before the
+# symlink-repair phases below since a broken filter registration is the more
+# severe failure mode (silent plaintext/ciphertext, not just a missing dev
+# convenience symlink).
+info "Verifying git-crypt filter registration (SMI-5702)..."
+ensure_git_crypt_filter_registered "$REPO_ROOT"
+
 info "Repairing worktrees missing node_modules symlink (SMI-4377)..."
 repair_worktrees_node_modules "$REPO_ROOT"
 
