@@ -288,6 +288,11 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       # loud-by-default outcome (required=true only fails loudly when SOME
       # filter is configured) than reproducing the exact hazard this fix
       # exists to eliminate.
+      # The literal fallback values below MUST stay byte-identical to
+      # GIT_CRYPT_CANONICAL_SMUDGE/GIT_CRYPT_CANONICAL_CLEAN in
+      # scripts/_lib.sh (governance finding, SMI-5702 review) -- duplicated
+      # rather than sourced because this hook is POSIX sh (no `local`,
+      # `[[ ]]`, or BASH_SOURCE) and _lib.sh is bash-only.
       _restore_smudge_filter() {
         if [ -n "$SMUDGE_CMD" ]; then
           git config --local filter.git-crypt.smudge "$SMUDGE_CMD"
