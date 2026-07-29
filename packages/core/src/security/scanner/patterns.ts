@@ -91,11 +91,11 @@ export const VALUE_GATED_KEYWORD_PATTERNS: ReadonlySet<RegExp> = new Set([
 // Re-exported here so every existing import path (memory-injection-scanner.ts,
 // SecurityScanner.ts, index.ts, scanner-regression-guard.test.ts) keeps
 // working with zero churn — this re-export is load-bearing, do not remove.
-export {
-  JAILBREAK_PATTERNS,
-  AI_DEFENCE_PATTERNS,
-  EVIDENCE_TYPE_BY_PATTERN,
-} from './patterns.jailbreak.js'
+export { JAILBREAK_PATTERNS, AI_DEFENCE_PATTERNS } from './patterns.jailbreak.js'
+// SMI-5881: EVIDENCE_TYPE_BY_PATTERN moved to patterns.jailbreak.evidence.ts
+// (kept out of patterns.jailbreak.ts's own 500-line budget). Re-exported here
+// unchanged — same load-bearing reasoning as above.
+export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
 
 /**
  * SMI-5876 §0.1/§0.2: bump on ANY pattern-array or evidence-table change in
@@ -113,8 +113,16 @@ export {
  * widened #6 (bypass) + J-N1 in place — this is precisely the
  * previously-clean-content-now-fires scenario the ruleset-version gate
  * exists for.
+ *
+ * Bumped to `2026-07-29.1`: SMI-5881 P0 — AD_CRLF_INJECTION's source changed
+ * (ReDoS fix, same match language, see patterns.jailbreak.ts) and 4
+ * AI_DEFENCE_PATTERNS entries were promoted from 'line' to 'both' scope
+ * (AD_HTML_COMMENT_VERB/NOUN, AD_NESTED_INSTRUCTION_BLOCK, AD_ZERO_WIDTH — new
+ * cross-line matches now possible where none fired before), plus SSRF_
+ * INSTRUCTION_PATTERNS word-boundary narrowing (some previously-firing
+ * substring FPs, e.g. "budget to localhost", no longer match).
  */
-export const SCANNER_RULESET_VERSION = '2026-07-28.2' as const
+export const SCANNER_RULESET_VERSION = '2026-07-29.1' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [
@@ -362,18 +370,30 @@ export const PRIVILEGE_ESCALATION_PATTERNS = [
  * SMI-3509: SSRF instruction patterns
  * Detects content instructing fetches to internal/dangerous endpoints.
  * These are text-oriented patterns for skill content scanning (not URL validators).
+ *
+ * SMI-5881: leading `\b` added to every verb alternation below — the verbs
+ * (fetch/request/curl/wget/get/open/load/read/connect/send) previously had no
+ * boundary, so they matched as a SUBSTRING of an unrelated word ("get" inside
+ * "budget"/"target"/"forget"/"widget", "connect" inside "disconnect", "load"
+ * inside "download"/"reload", "open" inside "reopen", "read" inside
+ * "bread"/"spread"/"thread"). A trailing `\b` was also added after the bare
+ * `localhost` literal (both the single-line and multiline forms) so
+ * "localhosting" no longer matches via a "localhost" prefix. Every existing
+ * `\s` quantifier is unchanged — replacing them with newline-exclusive classes
+ * was tried and reverted (breaks a verb+target split across a real line
+ * break, a real evasion). See scanner-ssrf-word-boundary.test.ts.
  */
 export const SSRF_INSTRUCTION_PATTERNS = [
   // Dangerous protocol schemes in skill instructions
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?file:\/\//i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?gopher:\/\//i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?dict:\/\//i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?ldap:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?file:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?gopher:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?dict:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?ldap:\/\//i,
 
   // Instructions targeting localhost/internal IPs
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?localhost/i,
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?127\.0\.0\.\d+/i,
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?0\.0\.0\.0/i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?localhost\b/i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?127\.0\.0\.\d+/i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?0\.0\.0\.0/i,
 
   // Cloud metadata service endpoints
   /169\.254\.169\.254/,
@@ -383,9 +403,9 @@ export const SSRF_INSTRUCTION_PATTERNS = [
   /gopher:\/\/localhost/i,
 
   // SMI-3522: Multi-line SSRF patterns (split across lines)
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*file:\/\//i,
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:the\s*)?\n\s*(?:https?:\/\/)?(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0)/i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*gopher:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*file:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:the\s*)?\n\s*(?:https?:\/\/)?(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0)\b/i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*gopher:\/\//i,
 ]
 
 /**

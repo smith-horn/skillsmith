@@ -17,6 +17,7 @@ import {
   MAX_EVIDENCE_RANK,
   resolveEvidenceSeverity,
 } from './SecurityScanner.evidence.js'
+import { resolvePatternScope } from './patterns.scope.js'
 
 // ============================================================================
 // Types
@@ -39,22 +40,6 @@ export interface LineContext {
    * this context are documentation, not code.
    */
   inFrontmatter: boolean
-}
-
-// ============================================================================
-// Pattern Helpers
-// ============================================================================
-
-/**
- * SMI-1532: Check if a regex pattern requires multi-line matching
- * Patterns that contain newline/carriage-return characters or start with
- * multi-line anchors need to be tested against full content, not line-by-line.
- */
-export function isMultilinePattern(pattern: RegExp): boolean {
-  const patternStr = pattern.source
-  return (
-    patternStr.includes('\\r') || patternStr.includes('\\n') || patternStr.startsWith('(?:^|\\n)')
-  )
 }
 
 // ============================================================================
@@ -229,7 +214,15 @@ interface EvidenceCandidate {
 export function scanPatternsWithMultilineSupport(
   content: string,
   config: MultilineScanConfig,
-  lineContexts?: LineContext[]
+  lineContexts?: LineContext[],
+  /**
+   * SMI-5881: explicit cap (UTF-16 code units) for the pass-1 full-content
+   * regex scan — `Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, maxContentLength)`,
+   * computed once by SecurityScanner.scan() and threaded through so the
+   * truncation finding it emits matches what actually gets scanned. Omitted
+   * (undefined) falls back to safeRegexTest's own default.
+   */
+  maxLength?: number
 ): SecurityFinding[] {
   const lines = content.split('\n')
   const contexts = lineContexts ?? analyzeMarkdownContext(content)
@@ -237,13 +230,13 @@ export function scanPatternsWithMultilineSupport(
 
   const rank = (t: EvidenceType): number => EVIDENCE_RANK[t]
 
-  // First pass: multi-line patterns against full content. No break — every
-  // multiline pattern is independently tested (same cost as before: at most
-  // one full-content scan per multiline pattern), and the strongest tier per
+  // First pass: 'content' | 'both'-scope patterns against full content. No
+  // break — every such pattern is independently tested (same cost as before:
+  // at most one full-content scan per pattern), and the strongest tier per
   // line wins.
   for (const pattern of config.patterns) {
-    if (!isMultilinePattern(pattern)) continue
-    const match = safeRegexTest(pattern, content)
+    if (resolvePatternScope(pattern) === 'line') continue
+    const match = safeRegexTest(pattern, content, maxLength)
     if (!match) continue
 
     // SMI-5876: use the match's own reported index rather than a fresh
@@ -271,16 +264,17 @@ export function scanPatternsWithMultilineSupport(
     }
   }
 
-  // Second pass: single-line patterns per-line. Seeds `best` from pass 1
-  // (does NOT skip a line pass 1 already flagged) so a line-local directive
-  // can still beat a weaker multiline mention on the same line (Hazard B).
+  // Second pass: 'line' | 'both'-scope patterns, per-line. Seeds `best` from
+  // pass 1 (does NOT skip a line pass 1 already flagged) so a line-local
+  // directive can still beat a weaker multiline mention on the same line
+  // (Hazard B).
   lines.forEach((line, index) => {
     const lineNumber = index + 1
     const ctx = contexts[index]
     let best = bestByLine.get(lineNumber) ?? null
 
     for (const pattern of config.patterns) {
-      if (isMultilinePattern(pattern)) continue
+      if (resolvePatternScope(pattern) === 'content') continue
       const match = safeRegexTest(pattern, line)
       if (!match) continue
 

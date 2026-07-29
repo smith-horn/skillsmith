@@ -41,7 +41,12 @@ export {
 export { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
 
 // Regex utilities (for testing/extending)
-export { MAX_LINE_LENGTH_FOR_REGEX, safeRegexTest, safeRegexCheck } from './regex-utils.js'
+export {
+  MAX_LINE_LENGTH_FOR_REGEX,
+  MAX_CONTENT_LENGTH_FOR_REGEX,
+  safeRegexTest,
+  safeRegexCheck,
+} from './regex-utils.js'
 
 // Obfuscation-defeat primitive (SMI-4703: reused by
 // packages/doc-retrieval-mcp/src/security/memory-injection-scanner.ts's

@@ -2,11 +2,12 @@
  * Security Scanner — evidence-tier severity resolution (SMI-5876)
  * @module @skillsmith/core/security/scanner/SecurityScanner.evidence
  *
- * Turns a pattern's `EvidenceType` (classified in `patterns.jailbreak.ts`'s
- * `EVIDENCE_TYPE_BY_PATTERN`) plus documentation context into a
- * severity/confidence pair, and provides the corroboration escalation that
- * lifts a `mention`-tier finding when it co-occurs with a genuinely dangerous
- * non-documentation signal elsewhere in the same scan.
+ * Turns a pattern's `EvidenceType` (classified in
+ * `patterns.jailbreak.evidence.ts`'s `EVIDENCE_TYPE_BY_PATTERN`, SMI-5881)
+ * plus documentation context into a severity/confidence pair, and provides
+ * the corroboration escalation that lifts a `mention`-tier finding when it
+ * co-occurs with a genuinely dangerous non-documentation signal elsewhere in
+ * the same scan.
  */
 
 import type {
@@ -16,7 +17,7 @@ import type {
   SecuritySeverity,
   FindingConfidence,
 } from './types.js'
-import { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.js'
+import { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
 
 /**
  * Classify a pattern's evidence tier by object identity. Unmapped patterns

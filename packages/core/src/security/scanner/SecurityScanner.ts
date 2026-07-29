@@ -11,12 +11,11 @@ import {
   SUSPICIOUS_PATTERNS,
   AI_DEFENCE_PATTERNS,
 } from './patterns.js'
-import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
+import { safeRegexTest, safeRegexCheck, MAX_CONTENT_LENGTH_FOR_REGEX } from './regex-utils.js'
 
 // Import helpers
 import type { LineContext } from './SecurityScanner.helpers.js'
 import {
-  isMultilinePattern,
   analyzeMarkdownContext,
   isDocumentationContext,
   isWithinInlineCode,
@@ -61,7 +60,6 @@ import {
 // Re-export helpers and formatters for public API
 export {
   LineContext,
-  isMultilinePattern,
   analyzeMarkdownContext,
   isDocumentationContext,
   isWithinInlineCode,
@@ -129,7 +127,11 @@ export class SecurityScanner {
     return findings
   }
 
-  private scanJailbreakPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
+  private scanJailbreakPatterns(
+    content: string,
+    lineContexts: LineContext[] | undefined,
+    maxMultilineLength: number
+  ): SecurityFinding[] {
     return scanPatternsWithMultilineSupport(
       content,
       {
@@ -138,7 +140,8 @@ export class SecurityScanner {
         patterns: JAILBREAK_PATTERNS,
         classify: classifyEvidence,
       },
-      lineContexts
+      lineContexts,
+      maxMultilineLength
     )
   }
 
@@ -205,7 +208,8 @@ export class SecurityScanner {
 
   private scanAIDefenceVulnerabilities(
     content: string,
-    lineContexts?: LineContext[]
+    lineContexts: LineContext[] | undefined,
+    maxMultilineLength: number
   ): SecurityFinding[] {
     return scanPatternsWithMultilineSupport(
       content,
@@ -215,7 +219,8 @@ export class SecurityScanner {
         patterns: AI_DEFENCE_PATTERNS,
         classify: classifyEvidence,
       },
-      lineContexts
+      lineContexts,
+      maxMultilineLength
     )
   }
 
@@ -231,13 +236,30 @@ export class SecurityScanner {
       findings.push({
         type: 'suspicious_pattern',
         severity: 'low',
-        message: `Content exceeds maximum length (${this.maxContentLength} bytes)`,
+        message: `Content exceeds maximum length (${this.maxContentLength} code units)`,
+      })
+    }
+
+    // SMI-5881: the multiline (full-content) regex pass has its OWN, much
+    // smaller cap than maxContentLength — a ReDoS budget input, not a free
+    // parameter (see MAX_CONTENT_LENGTH_FOR_REGEX's own comment for why this
+    // isn't simply raised to match maxContentLength). A lower configured
+    // maxContentLength tightens this further; it never widens it.
+    const effectiveMultilineLimit = Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, this.maxContentLength)
+    if (content.length > effectiveMultilineLimit) {
+      findings.push({
+        type: 'suspicious_pattern',
+        severity: 'low',
+        message:
+          `Multiline regex scan truncated at ${effectiveMultilineLimit} code units ` +
+          `(content is ${content.length} code units; configured maxContentLength is ` +
+          `${this.maxContentLength} code units)`,
       })
     }
 
     findings.push(...this.scanUrls(content))
     findings.push(...scanSensitivePaths(content, lineContexts))
-    findings.push(...this.scanJailbreakPatterns(content, lineContexts))
+    findings.push(...this.scanJailbreakPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...this.scanSuspiciousPatterns(content, lineContexts))
     findings.push(...scanSocialEngineering(content, lineContexts))
     findings.push(...scanPromptLeaking(content, lineContexts))
@@ -254,8 +276,10 @@ export class SecurityScanner {
         .map((f) => f.lineNumber as number)
     )
     findings.push(...scanChmodFetchCompound(content, privEscLines, lineContexts))
-    findings.push(...this.scanAIDefenceVulnerabilities(content, lineContexts))
-    findings.push(...scanSsrfPatterns(content, lineContexts))
+    findings.push(
+      ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
+    )
+    findings.push(...scanSsrfPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...scanPiiPatterns(content, lineContexts))
     findings.push(...scanCodeExecution(content, lineContexts))
     findings.push(...scanObfuscatedDirective(content))
