@@ -23,12 +23,14 @@
  *     that legitimately quote the pre-fix pattern under the docs-exempt
  *     carve-out below; without this exclusion, `npm run audit:standards`
  *     non-reproducibly fails only on machines with a stale local index)
- *   - docs/internal/{implementation,retros,code_review}/** (historical plan
- *     docs, retros, and code-review reports legitimately quote the old
- *     broken snippet as before/after examples -- code_review/ added after
- *     the SMI-5873 fix's own post-merge retro report, itself filed there
- *     per the governance skill's convention, tripped this exact check by
- *     quoting the banned pattern while describing what was fixed)
+ *   - docs/internal/{implementation,retros,code_review,pr-reviews}/**
+ *     (historical plan docs, retros, code-review reports, and PR-review
+ *     reports legitimately quote the old broken snippet as before/after
+ *     examples -- code_review/ added after the SMI-5873 fix's own
+ *     post-merge retro report tripped this exact check; pr-reviews/ added
+ *     after the SMI-5702 Wave 4 PR-review report (2026-07-28) tripped it
+ *     the same way, quoting the banned pattern while verifying it was
+ *     fixed in the reviewed PR)
  *   - this file and audit-standards.mjs itself, and the T11 test file --
  *     each legitimately names the banned pattern in comments/regex source
  *     to describe what it detects
@@ -85,7 +87,8 @@ function isDocsExemptPath(relPath) {
   return (
     relPath.startsWith('docs/internal/implementation/') ||
     relPath.startsWith('docs/internal/retros/') ||
-    relPath.startsWith('docs/internal/code_review/')
+    relPath.startsWith('docs/internal/code_review/') ||
+    relPath.startsWith('docs/internal/pr-reviews/')
   )
 }
 
