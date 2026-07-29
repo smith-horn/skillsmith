@@ -8,10 +8,15 @@ import type {
   SecurityFindingType,
   RiskScoreBreakdown,
   FindingConfidence,
-  SecuritySeverity,
+  EvidenceType,
 } from './types.js'
 import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
 import { safeRegexTest } from './regex-utils.js'
+import {
+  EVIDENCE_RANK,
+  MAX_EVIDENCE_RANK,
+  resolveEvidenceSeverity,
+} from './SecurityScanner.evidence.js'
 
 // ============================================================================
 // Types
@@ -182,84 +187,145 @@ interface MultilineScanConfig {
   type: SecurityFindingType
   messagePrefix: string
   patterns: RegExp[]
-  /** Severity pair: [inDocContext, normalContext] */
-  severities: [SecuritySeverity, SecuritySeverity]
+  /**
+   * SMI-5876: replaces the flat `[docContext, normal]` severity pair — returns
+   * the evidence tier for a given pattern (by object identity) so
+   * severity/confidence can be resolved per-line via `resolveEvidenceSeverity`
+   * once the strongest tier for that line is known.
+   */
+  classify: (pattern: RegExp) => EvidenceType
+}
+
+/** Best evidence found so far for a given line, across both scan passes. */
+interface EvidenceCandidate {
+  tier: EvidenceType
+  matchText: string
+  location: string
+  inDocContext: boolean
 }
 
 /**
  * Scan content for patterns that may span multiple lines.
  * Multi-line patterns are tested against full content; single-line patterns per-line.
+ *
+ * SMI-5876: patterns within a single category (jailbreak / ai_defence) can now
+ * carry DIFFERENT evidence tiers (a bare "jailbreak" mention vs. an explicit
+ * "ignore all previous instructions" override), so array-declaration order is
+ * no longer sufficient to decide which match wins on a line where multiple
+ * patterns fire — the STRONGEST evidence tier per line wins, computed via a
+ * merge across both passes (`bestByLine`), not "first match, in array order."
+ *
+ * Two hazards this closes (see the SMI-5876 design doc §5 for the full
+ * argument):
+ *   Hazard A — pass 2 used to `break` on the FIRST matching pattern
+ *     regardless of tier, so a weaker mention declared earlier in the array
+ *     could shadow a stronger directive declared later on the same line.
+ *   Hazard B — a multiline pattern match used to suppress ALL single-line
+ *     patterns on that line (`flaggedLines`), so a mention-tier multiline
+ *     match could hide a directive-tier single-line match on the same line.
+ *     `bestByLine` SEEDS pass 2 with pass 1's result instead of skipping the
+ *     line outright, so pass 2 can still find something stronger.
  */
 export function scanPatternsWithMultilineSupport(
   content: string,
   config: MultilineScanConfig,
   lineContexts?: LineContext[]
 ): SecurityFinding[] {
-  const findings: SecurityFinding[] = []
   const lines = content.split('\n')
   const contexts = lineContexts ?? analyzeMarkdownContext(content)
-  const flaggedLines = new Set<number>()
+  const bestByLine = new Map<number, EvidenceCandidate>()
 
-  // First pass: multi-line patterns against full content
+  const rank = (t: EvidenceType): number => EVIDENCE_RANK[t]
+
+  // First pass: multi-line patterns against full content. No break — every
+  // multiline pattern is independently tested (same cost as before: at most
+  // one full-content scan per multiline pattern), and the strongest tier per
+  // line wins.
   for (const pattern of config.patterns) {
-    if (isMultilinePattern(pattern)) {
-      const match = safeRegexTest(pattern, content)
-      if (match) {
-        const matchIndex = content.indexOf(match[0])
-        const lineNumber = content.slice(0, matchIndex).split('\n').length
-        const ctx = contexts[lineNumber - 1]
-        const matchLine = lines[lineNumber - 1] ?? ''
-        const lineOffset = content.lastIndexOf('\n', matchIndex - 1) + 1
-        const matchCol = matchIndex - lineOffset
-        const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(matchLine, matchCol)
-        const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-        const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-        const severity = inDocContext ? config.severities[0] : config.severities[1]
-        const truncated = match[0].slice(0, 50)
+    if (!isMultilinePattern(pattern)) continue
+    const match = safeRegexTest(pattern, content)
+    if (!match) continue
 
-        findings.push({
-          type: config.type,
-          severity,
-          message: `${config.messagePrefix}: "${truncated}${match[0].length > 50 ? '...' : ''}"`,
-          location: match[0].trim().slice(0, 100),
-          lineNumber,
-          category: config.type,
-          inDocumentationContext: inDocContext,
-          confidence,
-        })
-        flaggedLines.add(lineNumber)
-      }
+    // SMI-5876: use the match's own reported index rather than a fresh
+    // content.indexOf(match[0]) — the latter misreports the line whenever the
+    // matched text ALSO occurs earlier in the content (a real hazard fixed in
+    // the same pass as the evidence-tier merge).
+    const matchIndex = match.index ?? content.indexOf(match[0])
+    const lineNumber = content.slice(0, matchIndex).split('\n').length
+    const ctx = contexts[lineNumber - 1]
+    const matchLine = lines[lineNumber - 1] ?? ''
+    const lineOffset = content.lastIndexOf('\n', matchIndex - 1) + 1
+    const matchCol = matchIndex - lineOffset
+    const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(matchLine, matchCol)
+    const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+    const tier = config.classify(pattern)
+
+    const incumbent = bestByLine.get(lineNumber)
+    if (!incumbent || rank(tier) > rank(incumbent.tier)) {
+      bestByLine.set(lineNumber, {
+        tier,
+        matchText: match[0],
+        location: match[0].trim().slice(0, 100),
+        inDocContext,
+      })
     }
   }
 
-  // Second pass: single-line patterns per-line
+  // Second pass: single-line patterns per-line. Seeds `best` from pass 1
+  // (does NOT skip a line pass 1 already flagged) so a line-local directive
+  // can still beat a weaker multiline mention on the same line (Hazard B).
   lines.forEach((line, index) => {
-    if (flaggedLines.has(index + 1)) return
+    const lineNumber = index + 1
     const ctx = contexts[index]
+    let best = bestByLine.get(lineNumber) ?? null
 
     for (const pattern of config.patterns) {
       if (isMultilinePattern(pattern)) continue
       const match = safeRegexTest(pattern, line)
-      if (match) {
+      if (!match) continue
+
+      const tier = config.classify(pattern)
+      if (!best || rank(tier) > rank(best.tier)) {
         const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
         const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-        const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-        const severity = inDocContext ? config.severities[0] : config.severities[1]
-
-        findings.push({
-          type: config.type,
-          severity,
-          message: `${config.messagePrefix}: "${match[0].slice(0, 50)}${match[0].length > 50 ? '...' : ''}"`,
+        best = {
+          tier,
+          matchText: match[0],
           location: line.trim().slice(0, 100),
-          lineNumber: index + 1,
-          category: config.type,
-          inDocumentationContext: inDocContext,
-          confidence,
-        })
-        break
+          inDocContext,
+        }
       }
+      // Cannot be beaten — stop scanning this line's remaining patterns.
+      if (rank(tier) === MAX_EVIDENCE_RANK) break
     }
+
+    if (best) bestByLine.set(lineNumber, best)
   })
+
+  // Emit one finding per flagged line, in ascending line-number order
+  // (matches the line-by-line order callers/tests expect from a per-line
+  // scan; emission cardinality only ever tightens — one finding per line per
+  // category, same as before the merge).
+  const findings: SecurityFinding[] = []
+  const orderedLines = Array.from(bestByLine.keys()).sort((a, b) => a - b)
+  for (const lineNumber of orderedLines) {
+    const candidate = bestByLine.get(lineNumber)
+    if (!candidate) continue
+    const { severity, confidence } = resolveEvidenceSeverity(candidate.tier, candidate.inDocContext)
+    const truncated = candidate.matchText.slice(0, 50)
+
+    findings.push({
+      type: config.type,
+      severity,
+      message: `${config.messagePrefix}: "${truncated}${candidate.matchText.length > 50 ? '...' : ''}"`,
+      location: candidate.location,
+      lineNumber,
+      category: config.type,
+      inDocumentationContext: candidate.inDocContext,
+      confidence,
+      evidenceType: candidate.tier,
+    })
+  }
 
   return findings
 }

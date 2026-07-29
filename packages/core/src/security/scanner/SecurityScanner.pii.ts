@@ -123,7 +123,21 @@ export function scanPiiPatterns(content: string, lineContexts?: LineContext[]): 
         const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
         const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
         const isEmailPattern = pi === emailPatternIndex
-        const isAuthorLine = /^\s*(?:author|contact|support|email)\s*:/i.test(line)
+        // SMI-5876: the author-line exemption was anchored directly at `^\s*`,
+        // so a markdown list bullet defeated it — `- Email:
+        // support@skillsmith.app` in a `## Getting Help` section scored `high`
+        // while the identical `Email: …` line scored `low`. That failed this
+        // repo's own bundled SKILL.md, an SMI-5876 acceptance fixture. Allows
+        // an optional list marker (`-`/`*`/`+`/`1.`/`>`) and optional
+        // bold/italic emphasis around the label. Scoped to the EMAIL pattern
+        // only (gated below by `isEmailPattern`), so no credential PII
+        // severity changes. An unlabelled address
+        // (`Send to victim@target.com`) and a multi-address list
+        // (`- Users: a@x, b@x`) still score `high`.
+        const isAuthorLine =
+          /^\s*(?:[-*+]|\d+\.|>)?\s*(?:\*\*|__|\*|_)?(?:author|contact|support|email|maintainer)(?:\*\*|__|\*|_)?\s*:/i.test(
+            line
+          )
         const inEmailSafeContext = isEmailPattern && (inFrontmatter || isAuthorLine)
         let severity: 'low' | 'medium' | 'high' | 'critical'
         if (inEmailSafeContext) severity = 'low'

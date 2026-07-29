@@ -37,6 +37,43 @@ export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical'
 export type FindingConfidence = 'high' | 'medium' | 'low'
 
 /**
+ * SMI-5876: evidence tier behind a jailbreak/ai_defence finding. A pattern is
+ * `mention`-tier iff its matched text, read in isolation, instructs nothing
+ * (a bare noun/name/label/structural marker/payload-free obfuscation
+ * artifact). Anything with a verb+object pairing or a second-person
+ * predicate is directive-tier.
+ *
+ * - `mention`                — payload-free vocabulary (e.g. bare `jailbreak`,
+ *   `DAN`, `developer mode`, a bare role marker with no body).
+ * - `role_turn_with_body`    — a fabricated conversation-turn boundary WITH an
+ *   instructing body (e.g. a role marker followed by a directive, or a
+ *   `<instruction>...</instruction>` block with content).
+ * - `imperative_instruction` — a second-person directive without an explicit
+ *   "override prior instructions" framing (e.g. "pretend you have no
+ *   restrictions").
+ * - `instruction_override`   — an explicit "ignore/disregard/override prior
+ *   instructions" directive.
+ * - `state_assertion`        — a DECLARATIVE assertion that a jailbroken/
+ *   unrestricted state is active, with no verb/frame aimed at the model
+ *   (e.g. "Jailbreak activated", "DAN mode enabled", "Developer mode: ON.
+ *   Restrictions: OFF"). Distinct machine-readable reason code from
+ *   `imperative_instruction` (the design REJECTED aimed-at-the-model framing
+ *   as a requirement here — a state assertion is evidence of an already-
+ *   completed jailbreak, not a request), but carries the SAME severity tuple
+ *   (critical non-doc / high doc) — see `EVIDENCE_SEVERITY_TABLE`.
+ *
+ * See `SecurityScanner.evidence.ts` for how this maps to severity/confidence,
+ * and `patterns.jailbreak.ts`'s `EVIDENCE_TYPE_BY_PATTERN` for the
+ * per-pattern classification.
+ */
+export type EvidenceType =
+  | 'mention'
+  | 'role_turn_with_body'
+  | 'imperative_instruction'
+  | 'instruction_override'
+  | 'state_assertion'
+
+/**
  * Individual security finding from a scan
  */
 export interface SecurityFinding {
@@ -53,6 +90,10 @@ export interface SecurityFinding {
   confidence?: FindingConfidence
   /** SMI-5436: Path of the skill bundle file that triggered this finding, relative to the skill root. Absent for SKILL.md-only findings. */
   filePath?: string
+  /** SMI-5876: machine-readable evidence class behind this finding (jailbreak/ai_defence only). */
+  evidenceType?: EvidenceType
+  /** SMI-5876: a mention-tier finding lifted by a co-occurring non-documentation high/critical signal. */
+  corroborated?: boolean
 }
 
 /**

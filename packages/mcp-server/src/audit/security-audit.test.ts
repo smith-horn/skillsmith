@@ -8,6 +8,7 @@
  * wiring on benign content (no false positive).
  */
 
+import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -280,6 +281,68 @@ describe('runSecurityAudit', () => {
     expect(scanCalls).toBe(1)
     expect(res.summary.scanned).toBe(1)
     expect(res.summary.unchanged).toBe(0)
+  })
+
+  it('a stored baseline with absent rulesetVersion (pre-SMI-5876) forces a re-scan on otherwise-unchanged content — and does NOT emit a spurious hostile verdict from the ruleset bump alone (SMI-5876 §0.1/§0.2)', async () => {
+    const e = entry('foo')
+    const contentHash = crypto.createHash('sha256').update('v1').digest('hex')
+
+    // Simulate a pre-SMI-5876 baseline on disk directly: previously benign,
+    // `rulesetVersion` field absent entirely (as any real baseline written
+    // before this change would be).
+    fs.mkdirSync(path.dirname(baselinePath), { recursive: true })
+    fs.writeFileSync(
+      baselinePath,
+      JSON.stringify({
+        version: 1,
+        skills: {
+          [e.source_path]: {
+            contentHash,
+            threshold: 40,
+            report: {
+              skillId: 'foo',
+              passed: true,
+              riskScore: 5,
+              findings: [],
+              riskBreakdown: { ...ZERO_BREAKDOWN },
+              scannedAt: '2026-01-01T00:00:00.000Z',
+              scanDurationMs: 1,
+            },
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            // rulesetVersion intentionally absent.
+          },
+        },
+      })
+    )
+
+    let scanCalls = 0
+    const res = await runSecurityAudit({
+      baselinePath,
+      inventory: [e],
+      readContent: () => 'v1', // IDENTICAL bytes to the stale-ruleset baseline
+      riskThreshold: 40,
+      scan: () => {
+        scanCalls += 1
+        // Under the NEW ruleset this exact content now fails.
+        return report('foo', { passed: false, riskScore: 80, findings: [CRITICAL_EXFIL] })
+      },
+    })
+
+    // Forced re-scan despite byte-identical content.
+    expect(scanCalls).toBe(1)
+    expect(res.summary.scanned).toBe(1)
+    expect(res.summary.unchanged).toBe(0)
+
+    // Surfaced as `malicious` (first-sight-style, since the stale-ruleset
+    // prior is not "comparable") — NOT `hostile`, which would be a false
+    // rug-pull alarm caused purely by the scanner upgrade rather than a real
+    // benign->malicious content change.
+    expect(res.findings).toHaveLength(1)
+    expect(res.findings[0]?.verdict).toBe('malicious')
+
+    // The refreshed baseline entry is now stamped with the current version.
+    const base = loadSecurityBaseline(baselinePath)
+    expect(base.skills[e.source_path]?.rulesetVersion).toBeDefined()
   })
 
   it('non-scannable kinds (claude_md_rule) are ignored', async () => {

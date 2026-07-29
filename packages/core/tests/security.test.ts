@@ -249,7 +249,13 @@ For documentation, see https://github.com/testing-library/react-testing-library
       const jailbreakFindings = report.findings.filter((f) => f.type === 'jailbreak')
       expect(jailbreakFindings.length).toBeGreaterThan(0)
       expect(jailbreakFindings[0].inDocumentationContext).toBe(true)
-      expect(jailbreakFindings[0].confidence).toBe('low')
+      // SMI-5876: "ignore previous instructions" is `instruction_override`-tier
+      // (a genuine override payload, not a bare mention) — its doc-context
+      // confidence is `medium`, not `low`. `low` would be self-contradictory
+      // next to a still-failing `high` severity, and would cut the risk-score
+      // weight to 0.3x for what is still a real directive that merely sits
+      // inside a fenced/inline example. See EVIDENCE_SEVERITY_TABLE.
+      expect(jailbreakFindings[0].confidence).toBe('medium')
     })
 
     it('should detect inline code context in analyzeMarkdownContext', () => {
@@ -436,7 +442,10 @@ For documentation, see https://github.com/testing-library/react-testing-library
       const jailbreakFindings = report.findings.filter((f) => f.type === 'jailbreak')
       expect(jailbreakFindings.length).toBeGreaterThan(0)
       expect(jailbreakFindings[0].severity).toBe('high')
-      expect(jailbreakFindings[0].confidence).toBe('low')
+      // SMI-5876: doc-context confidence for a directive tier
+      // (instruction_override here) is `medium`, not `low` — see
+      // EVIDENCE_SEVERITY_TABLE / the sibling assertion above for why.
+      expect(jailbreakFindings[0].confidence).toBe('medium')
     })
   })
 

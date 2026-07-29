@@ -84,25 +84,37 @@ export const VALUE_GATED_KEYWORD_PATTERNS: ReadonlySet<RegExp> = new Set([
 ])
 
 // Jailbreak attempt patterns
-export const JAILBREAK_PATTERNS = [
-  /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)/i,
-  /disregard\s+(all\s+)?(previous|prior|your)\s+(instructions?|programming)/i,
-  /developer\s+mode/i,
-  /\bDAN\b/,
-  /do\s+anything\s+now/i,
-  /jailbreak/i,
-  /bypass\s+(all\s+)?(restrictions?|filters?|safety)/i,
-  /pretend\s+(you\s+)?(are|have)\s+no\s+(restrictions?|limits?)/i,
-  /act\s+as\s+(if\s+)?you\s+(have\s+)?no\s+ethics/i,
-  /you\s+are\s+now\s+(free|unrestricted|unfiltered)/i,
-  /ignore\s+your\s+(safety|ethical)\s+(guidelines?|rules?)/i,
-  /hypothetical\s+scenario\s+where\s+you\s+can/i,
+// SMI-5876 Wave 1: JAILBREAK_PATTERNS and AI_DEFENCE_PATTERNS (below) moved to
+// patterns.jailbreak.ts together with the evidence-tier classification map
+// that now governs their severity (a bare-vocabulary match like /jailbreak/i
+// no longer categorically fails a scan the same way a real directive does).
+// Re-exported here so every existing import path (memory-injection-scanner.ts,
+// SecurityScanner.ts, index.ts, scanner-regression-guard.test.ts) keeps
+// working with zero churn — this re-export is load-bearing, do not remove.
+export {
+  JAILBREAK_PATTERNS,
+  AI_DEFENCE_PATTERNS,
+  EVIDENCE_TYPE_BY_PATTERN,
+} from './patterns.jailbreak.js'
 
-  // Multi-line split-word obfuscation patterns (tested against full content)
-  /ig\s*\n\s*nore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)/i,
-  /dis\s*\n\s*regard\s+(?:all\s+)?(?:previous|prior|your)\s+(?:instructions?|programming)/i,
-  /by\s*\n\s*pass\s+(?:all\s+)?(?:restrictions?|filters?|safety)/i,
-]
+/**
+ * SMI-5876 §0.1/§0.2: bump on ANY pattern-array or evidence-table change in
+ * this module or patterns.jailbreak.ts. The security-audit baseline
+ * (packages/mcp-server/src/audit/security-baseline.ts /
+ * security-audit.ts) stamps every stored entry with the version that
+ * produced it and treats a mismatch as "not comparable" — forcing a re-scan
+ * instead of silently reusing a stale verdict from a scanner that no longer
+ * exists. Without this, the pattern/evidence-tier fix could not clear an
+ * already-flagged skill's stale `malicious` baseline on any machine that had
+ * scanned it before (see the security-audit.ts `comparable` gate).
+ *
+ * Bumped to `.2`: SMI-5876 design-pass follow-up added the `state_assertion`
+ * evidence tier + 5 new JAILBREAK_PATTERNS entries (J-S1/S2/S3a/S3b/S4) and
+ * widened #6 (bypass) + J-N1 in place — this is precisely the
+ * previously-clean-content-now-fires scenario the ruleset-version gate
+ * exists for.
+ */
+export const SCANNER_RULESET_VERSION = '2026-07-28.2' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [
@@ -377,18 +389,6 @@ export const SSRF_INSTRUCTION_PATTERNS = [
 ]
 
 /**
- * SMI-1532: AIDefence CVE-hardened injection patterns
- * Optimized for sub-10ms scan time with compiled regex and no backtracking
- *
- * These patterns detect sophisticated prompt injection attacks based on
- * known CVEs and security research findings.
- *
- * References:
- * - OWASP LLM Top 10: LLM01 Prompt Injection
- * - Anthropic Responsible Disclosure Program findings
- * - Academic research on prompt injection attacks
- */
-/**
  * SMI-3864: PII detection patterns
  * Detects personally identifiable information and credentials in skill content.
  * Complements AIDefence's aidefence_has_pii() for offline/local scanning.
@@ -419,60 +419,4 @@ export const PII_PATTERNS = [
   /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/i,
 ]
 
-export const AI_DEFENCE_PATTERNS = [
-  // Role injection patterns - attempts to inject system/assistant/user roles
-  // Pattern detects role markers that could manipulate conversation boundaries
-  // Covers: start of line, after whitespace, with various delimiters
-  /(?:^|\s)(?:system|assistant|user)\s*:\s*(?:\n|$)/i,
-
-  // Hidden instruction brackets - obfuscated commands
-  /\[\[\s*[^\]]{1,200}\s*\]\]/,
-
-  // HTML/XML comment injection - hiding malicious instructions
-  /<!--[\s\S]{0,100}?(?:ignore|override|bypass|system|instruction)[\s\S]{0,100}?-->/i,
-
-  // Unicode homograph attacks - visually similar characters
-  // Detects Cyrillic, Greek, or other homoglyphs mixed with Latin
-  /[\u0400-\u04FF\u0370-\u03FF]{2,}[\w\s]+(?:ignore|bypass|instruction)/i,
-
-  // Mixed-script detection: Latin + Cyrillic/Greek in same word (homoglyph attack)
-  // Note: \b word boundaries don't work with Unicode; use space/start/end anchors
-  /(?:^|[\s,."'(])(?:[a-zA-Z]+[\u0400-\u04FF\u0370-\u03FF]|[\u0400-\u04FF\u0370-\u03FF]+[a-zA-Z])[a-zA-Z\u0400-\u04FF\u0370-\u03FF]*/,
-
-  // Prompt structure manipulation - XML/markdown injection
-  /<\/?(?:system|prompt|instruction|context|message)(?:\s[^>]*)?>/i,
-
-  // Base64 encoded instructions (common evasion technique)
-  /(?:base64|b64)\s*[:=]\s*["']?[A-Za-z0-9+/]{20,}={0,2}["']?/i,
-
-  // Delimiter injection - breaking out of prompt boundaries
-  /(?:^|\n)(?:---|\*{3}|#{3,})\s*(?:system|prompt|instruction|override)/i,
-
-  // JSON structure injection in prompts
-  // SMI-1532: Refined to require suspicious values, not just field names
-  // Matches: "role": "system" or "instruction": "ignore" but not "content": "Hello"
-  /["']\s*(?:role|system|instruction)\s*["']\s*:\s*["'](?:system|assistant|user|ignore|override|bypass)/i,
-
-  // Nested instruction blocks
-  /<instruction[^>]*>[\s\S]{0,500}?<\/instruction>/i,
-
-  // CRLF injection for prompt manipulation
-  /(?:\r\n|\r|\n){2,}\s*(?:ignore|forget|override|bypass)\s+(?:all|previous|above)/i,
-
-  // Template literal injection
-  /\$\{\s*(?:system|prompt|instruction|config)/i,
-
-  // Zero-width character obfuscation detection
-  // SMI-1532: Enhanced to detect single zero-width chars near sensitive keywords
-  /[\u200B-\u200F\u2028-\u202F\uFEFF](?:[\s\S]{0,20}(?:ignore|bypass|system|instruction)|[\u200B-\u200F\u2028-\u202F\uFEFF])/i,
-
-  // Markdown link injection with suspicious targets
-  /\[(?:click|here|link|url)[^\]]*\]\([^)]*(?:javascript|data|vbscript):/i,
-
-  // Escape sequence abuse
-  /\\x[0-9a-fA-F]{2}(?:\\x[0-9a-fA-F]{2}){3,}/,
-
-  // Unicode normalization attacks - combining characters that render differently
-  // Detects combining diacritical marks used to obfuscate text
-  /[\u0300-\u036F]{2,}/,
-]
+// AI_DEFENCE_PATTERNS moved to patterns.jailbreak.ts (see the re-export above).
