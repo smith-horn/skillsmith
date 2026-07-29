@@ -347,6 +347,10 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
       expect(hasExfilCoSignal).toBe(true)
     })
 
+    // SMI-5880: the far-apart (>40-line) code_execution locality-bound
+    // regression test lives in scanner-regression-guard.exec-locality.test.ts
+    // (split out to stay under the 500-line/file CI gate).
+
     it('does not flag benign whitespace/prose churn (false-positive guard)', () => {
       const scanner = new SecurityScanner()
 
