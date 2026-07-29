@@ -46,6 +46,10 @@ import {
   escalateCodeExecution,
 } from './SecurityScanner.exec.js'
 
+// SMI-5876: evidence-tier classification + corroboration escalation for
+// jailbreak/ai_defence findings.
+import { classifyEvidence, escalateCorroboratedMentions } from './SecurityScanner.evidence.js'
+
 // Import formatters (used for both re-export and static methods)
 import {
   toMinimalRefs,
@@ -132,7 +136,7 @@ export class SecurityScanner {
         type: 'jailbreak',
         messagePrefix: 'Potential jailbreak pattern detected',
         patterns: JAILBREAK_PATTERNS,
-        severities: ['high', 'critical'],
+        classify: classifyEvidence,
       },
       lineContexts
     )
@@ -209,7 +213,7 @@ export class SecurityScanner {
         type: 'ai_defence',
         messagePrefix: 'AI injection pattern detected',
         patterns: AI_DEFENCE_PATTERNS,
-        severities: ['high', 'critical'],
+        classify: classifyEvidence,
       },
       lineContexts
     )
@@ -260,6 +264,17 @@ export class SecurityScanner {
     // non-documentation exfiltration / privilege / credential / obfuscation signal.
     // Runs after every detector so all co-signals are present.
     escalateCodeExecution(findings)
+
+    // SMI-5876: lift a bare-vocabulary jailbreak/ai_defence "mention" finding
+    // to high/medium when a non-documentation high/critical finding from a
+    // DIFFERENT category is also present — e.g. the word "jailbreak" sitting
+    // next to a real remote-fetch-to-interpreter is corroborating evidence,
+    // not benign prose. MUST run after escalateCodeExecution so a
+    // freshly-critical code_execution finding can itself serve as a
+    // corroborator (verified: CODE_EXECUTION_CO_OCCURRENCE never contains
+    // 'jailbreak'/'ai_defence', so this can't create a feedback loop back
+    // into escalateCodeExecution's own decision).
+    escalateCorroboratedMentions(findings)
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

@@ -14,6 +14,8 @@ export type {
   ScannerOptions,
   HostileUpdateVerdict,
   TyposquatEnforcementMode,
+  // SMI-5876: evidence-tier classification behind jailbreak/ai_defence findings.
+  EvidenceType,
 } from './types.js'
 
 // Patterns (for testing/extending)
@@ -30,6 +32,9 @@ export {
   SSRF_INSTRUCTION_PATTERNS,
   PII_PATTERNS,
   CODE_EXECUTION_PATTERNS,
+  // SMI-5876: ruleset version stamp, consumed by the security-audit baseline
+  // to force a re-scan when the pattern/evidence-tier definitions change.
+  SCANNER_RULESET_VERSION,
 } from './patterns.js'
 
 // Weights (for testing/extending)

@@ -56,6 +56,18 @@ export interface SecurityBaselineEntry {
    * the `compareScanReports` caller contract (both reports at one threshold).
    */
   threshold: number
+  /**
+   * SMI-5876: `SCANNER_RULESET_VERSION` the stored `report` was produced
+   * under. Optional so an existing (pre-SMI-5876) baseline entry — which has
+   * no such field — reads as `undefined`, which never equals the current
+   * scanner's version string: a mismatch forces a re-scan rather than
+   * silently reusing a verdict computed by a pattern set that no longer
+   * exists (e.g. a skill flagged `malicious` under the old bare-vocabulary
+   * jailbreak/ai_defence patterns would otherwise re-emit that stale verdict
+   * forever, since its content bytes never changed). Zero migration code
+   * needed — the `undefined !== currentVersion` comparison IS the migration.
+   */
+  rulesetVersion?: string
   report: StoredScanReport
   updatedAt: string
 }

@@ -30,7 +30,12 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 
-import { SecurityScanner, compareScanReports, DEFAULT_RISK_THRESHOLD } from '@skillsmith/core'
+import {
+  SecurityScanner,
+  compareScanReports,
+  DEFAULT_RISK_THRESHOLD,
+  SCANNER_RULESET_VERSION,
+} from '@skillsmith/core'
 import type { ScanReport } from '@skillsmith/core'
 
 import { scanLocalInventory } from '../utils/local-inventory.js'
@@ -178,11 +183,19 @@ export async function runSecurityAudit(
 
     const contentHash = sha256(content)
     const priorEntry = prior.skills[entry.source_path]
-    // "Unchanged" requires identical bytes AND the same threshold the stored
-    // verdict was computed under — a threshold change re-scans rather than
-    // trusting a verdict from a different bar (compareScanReports contract).
-    const sameThreshold = priorEntry !== undefined && priorEntry.threshold === threshold
-    const isUnchanged = sameThreshold && priorEntry.contentHash === contentHash
+    // "Comparable" requires the stored verdict to have been produced under
+    // the SAME threshold AND the SAME scanner ruleset — a threshold change or
+    // a pattern/evidence-tier bump (SCANNER_RULESET_VERSION) both re-scan
+    // rather than trusting a verdict from a different bar or a scanner that
+    // no longer exists (compareScanReports contract; SMI-5876 §0.1/§0.2). An
+    // existing baseline entry with no `rulesetVersion` (pre-SMI-5876) reads as
+    // `undefined`, which never equals the current version string — forced
+    // re-scan, zero migration code needed.
+    const comparable =
+      priorEntry !== undefined &&
+      priorEntry.threshold === threshold &&
+      priorEntry.rulesetVersion === SCANNER_RULESET_VERSION
+    const isUnchanged = comparable && priorEntry.contentHash === contentHash
 
     // Current report: reuse the stored one byte-for-byte when unchanged (no
     // re-scan) but STILL evaluate posture (a persistently-failing skill keeps
@@ -208,7 +221,7 @@ export async function runSecurityAudit(
     let riskDelta: number | null = null
     let newFindingCount = 0
     let transitionReason = ''
-    if (priorEntry && !isUnchanged && sameThreshold) {
+    if (priorEntry && !isUnchanged && comparable) {
       const verdict = compareScanReports(reviveReport(priorEntry.report), current, threshold)
       riskDelta = verdict.riskDelta
       newFindingCount = verdict.newFindings.length
@@ -263,12 +276,15 @@ export async function runSecurityAudit(
 
     // Advance the baseline: on the unchanged fast path carry the prior entry
     // forward but refresh `updatedAt` (it WAS re-verified this run); else store
-    // the fresh scan stamped with the threshold it was produced under.
+    // the fresh scan stamped with the threshold AND ruleset version it was
+    // produced under (SMI-5876) — so a future run can detect a scanner bump
+    // even if the skill's own content never changes again.
     next.skills[entry.source_path] = isUnchanged
       ? { ...priorEntry, updatedAt: nowIso() }
       : {
           contentHash,
           threshold,
+          rulesetVersion: SCANNER_RULESET_VERSION,
           report: serializeReport(current),
           updatedAt: current.scannedAt.toISOString(),
         }

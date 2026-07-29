@@ -63,6 +63,26 @@ describe('ContinuousSecurity - SecurityScanner', () => {
       })
     })
 
+    // SMI-5876: "DAN stands for Do Anything Now" is exposition ABOUT the DAN
+    // acronym, not a payload aimed at the model — it carries no adoption
+    // frame (J-N1/J-N3) and no state predicate (J-S1/J-S2), so it correctly
+    // stays mention-tier under the evidence-tier design. Reclassified out of
+    // `danMode` (which asserts the scan FAILS) into its own category that
+    // asserts the opposite: detected, but not blocked.
+    describe('DAN Mentions (exposition, not payload — SMI-5876)', () => {
+      it.each(toTestCases(maliciousPrompts.categories.danMentionOnly))(
+        'should detect but not block: %s',
+        (prompt) => {
+          const report = scanner.scan('test-skill', prompt)
+          const jailbreakFindings = report.findings.filter((f) => f.type === 'jailbreak')
+
+          expect(jailbreakFindings.length).toBeGreaterThan(0)
+          expect(jailbreakFindings.every((f) => f.severity === 'low')).toBe(true)
+          expect(report.passed).toBe(true)
+        }
+      )
+    })
+
     describe('Developer Mode Patterns', () => {
       it.each(toTestCases(maliciousPrompts.categories.developerMode))(
         'should detect: %s',

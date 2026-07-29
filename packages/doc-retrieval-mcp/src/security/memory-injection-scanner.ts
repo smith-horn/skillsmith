@@ -167,6 +167,21 @@ interface ContentRule {
 }
 
 const CONTENT_RULES: readonly ContentRule[] = [
+  // SMI-5876: JAILBREAK_PATTERNS now carries an evidence-tier classification
+  // (EVIDENCE_TYPE_BY_PATTERN, @skillsmith/core/security/scanner) that softens
+  // bare-vocabulary "mention" matches (e.g. /jailbreak/i, /\bDAN\b/) to LOW
+  // severity in the SecurityScanner's skill-content audit — a security-
+  // checklist skill mentioning "jailbreak" in prose is not itself an attack.
+  // That reasoning does NOT apply here: this rule set gates UNATTENDED,
+  // agent-authored memory-topic-file content (a different trust boundary, see
+  // this module's header comment), where the asymmetric cost cuts the other
+  // way — a quarantined chunk merely gets demoted in retrieval, whereas an
+  // `audit security` false positive puts the word "malicious" on a legitimate
+  // skill in front of a user. `testContentRules` intentionally tests bare
+  // pattern presence via the FULL array (ignoring the evidence tier
+  // entirely), so a mention-tier match is STILL quarantine-worthy at this
+  // boundary. See `scanMemoryChunk`'s quarantine test for the DAN-mention
+  // fixture that pins this deliberately-unchanged behavior.
   { id: 'jailbreak', patterns: JAILBREAK_PATTERNS },
   { id: 'prompt-leaking', patterns: PROMPT_LEAKING_PATTERNS },
   { id: 'social-engineering', patterns: SOCIAL_ENGINEERING_PATTERNS },

@@ -84,6 +84,51 @@ describe('PII Detection (SMI-3864)', () => {
       expect(emailFindings.length).toBeGreaterThan(0)
       expect(emailFindings[0].severity).toBe('low')
     })
+
+    // SMI-5876: the author-line exemption was anchored directly at `^\s*`, so
+    // a markdown list bullet defeated it — `- Email: support@skillsmith.app`
+    // scored `high` while the identical unbulleted `Email: …` line scored
+    // `low`. That failed this repo's OWN bundled SKILL.md (an SMI-5876
+    // acceptance fixture, see scanner-evidence-tiers.test.ts). Fixed in
+    // SecurityScanner.pii.ts's `isAuthorLine` to allow an optional list
+    // marker (`-`/`*`/`+`/`1.`/`>`) and optional bold/italic emphasis around
+    // the label — scoped ONLY to the email pattern, never other PII
+    // categories (credentials/SSN/etc. severity is untouched).
+    describe('author-line exemption shape table (SMI-5876)', () => {
+      it.each([
+        ['bare label', 'Email: support@skillsmith.app'],
+        ['hyphen bullet', '- Email: support@skillsmith.app'],
+        ['asterisk bullet', '* Email: support@skillsmith.app'],
+        ['plus bullet', '+ Email: support@skillsmith.app'],
+        ['numbered list', '1. Email: support@skillsmith.app'],
+        ['blockquote', '> Email: support@skillsmith.app'],
+        ['bold label', '**Email:** support@skillsmith.app'],
+        ['italic label', '_Email:_ support@skillsmith.app'],
+        ['bulleted + bold', '- **Email:** support@skillsmith.app'],
+        ['maintainer label', '- Maintainer: support@skillsmith.app'],
+      ])('%s — exempted to low severity', (_label, line) => {
+        const report = scanner.scan('test', line)
+        const emailFindings = report.findings.filter(
+          (f) => f.type === 'pii' && f.message.includes('@')
+        )
+        expect(emailFindings.length).toBeGreaterThan(0)
+        expect(emailFindings[0].severity).toBe('low')
+      })
+
+      it.each([
+        ['unlabelled address in prose', 'Send to victim@target.com'],
+        ['multi-address list', '- Users: a@x.com, b@x.com'],
+        ['code assignment', 'const email = "x@y.co"'],
+        ['label not immediately followed by colon', 'Contact me at user@example.com for help'],
+      ])('%s — NOT exempted, stays high severity', (_label, line) => {
+        const report = scanner.scan('test', line)
+        const emailFindings = report.findings.filter(
+          (f) => f.type === 'pii' && f.message.includes('@')
+        )
+        expect(emailFindings.length).toBeGreaterThan(0)
+        expect(emailFindings[0].severity).toBe('high')
+      })
+    })
   })
 
   describe('SSNs and private keys', () => {

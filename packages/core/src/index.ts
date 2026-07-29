@@ -70,6 +70,10 @@ export { SecurityScanner } from './security/index.js'
 // re-export style above (a direct named re-export from the security barrel).
 export { compareScanReports, DEFAULT_RISK_THRESHOLD } from './security/index.js'
 export type { HostileUpdateVerdict } from './security/index.js'
+// SMI-5876: ruleset version stamp, consumed by the client-side security-audit
+// baseline (packages/mcp-server/src/audit/security-audit.ts) to force a
+// re-scan when the scanner's pattern/evidence-tier definitions change.
+export { SCANNER_RULESET_VERSION } from './security/index.js'
 
 // SMI-898: Path Traversal Protection
 export {
