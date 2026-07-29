@@ -134,8 +134,19 @@ export function scanPiiPatterns(content: string, lineContexts?: LineContext[]): 
         // severity changes. An unlabelled address
         // (`Send to victim@target.com`) and a multi-address list
         // (`- Users: a@x, b@x`) still score `high`.
+        //
+        // ReDoS note (CodeQL js/polynomial-redos, caught in CI): the first
+        // draft had two adjacent `\s*` groups separated only by an optional
+        // bullet (`^\s*(?:...)?\s*...`) — for a run of N spaces with no
+        // bullet present, the two `\s*` groups can split the run N+1
+        // different ways, which is polynomial backtracking on a failed
+        // match. Fixed by folding the second whitespace run INTO the bullet
+        // group as a mandatory `\s+` that only exists when a bullet is
+        // actually present — the leading `^\s*` and the bullet-group's
+        // `\s+` can never compete over the same span, since a literal
+        // bullet character (never whitespace) always separates them.
         const isAuthorLine =
-          /^\s*(?:[-*+]|\d+\.|>)?\s*(?:\*\*|__|\*|_)?(?:author|contact|support|email|maintainer)(?:\*\*|__|\*|_)?\s*:/i.test(
+          /^\s*(?:(?:[-*+]|\d+\.|>)\s+)?(?:\*\*|__|\*|_)?(?:author|contact|support|email|maintainer)(?:\*\*|__|\*|_)?\s*:/i.test(
             line
           )
         const inEmailSafeContext = isEmailPattern && (inFrontmatter || isAuthorLine)
