@@ -31,12 +31,14 @@ vi.mock('../supabase-client.js', () => ({
   isSupabaseConfigured: vi.fn(() => true),
   getSupabaseClient: vi.fn(),
   getSupabaseAdminClient: vi.fn(),
+  getSupabaseUserClient: vi.fn(),
   resetSupabaseClients: vi.fn(),
 }))
 
 vi.mock('./team-resolver.js', () => ({
   readLicenseKey: vi.fn(() => 'sk_test_fake_license'),
   resolveLicenseTeamId: vi.fn(async () => 'team-alpha'),
+  resolveUserAccessToken: vi.fn(async () => 'fake-user-access-token'),
 }))
 
 const RESOLVED_TEAM = 'team-alpha'
@@ -110,6 +112,18 @@ function createFakeClient(opts: FakeClientOptions = {}): { client: unknown; call
 
 function makeContext(): ToolContext {
   return {} as unknown as ToolContext
+}
+
+/**
+ * Point both client factories at one recorder.
+ *
+ * Since SMI-5822, deprecate/undeprecate run through the signed-in user's client while the
+ * audit write still uses the service-role client, so a test touching those paths needs both.
+ */
+async function mockBothClients(client: unknown): Promise<void> {
+  const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
+  vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+  vi.mocked(getSupabaseUserClient).mockResolvedValue(client)
 }
 
 function publishedRow(overrides: Record<string, unknown> = {}) {
@@ -384,8 +398,7 @@ describe('private_registry_manage live mode — team scoping — SMI-5816', () =
     const { client, calls } = createFakeClient({
       thenResponder: () => ({ data: [publishedRow({ deprecated: true })], error: null }),
     })
-    const { getSupabaseAdminClient } = await import('../supabase-client.js')
-    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    await mockBothClients(client)
 
     const result = await executePrivateRegistryManage(
       { action: 'deprecate', skillId: 'myteam/skill-a' },
@@ -403,9 +416,10 @@ describe('private_registry_manage live mode — team scoping — SMI-5816', () =
   })
 
   it('deprecate returns not-found when no row in this team matches', async () => {
+    // Zero updated rows AND zero readable rows: the skill genuinely does not exist for this
+    // team. Contrast with the "member, not admin" case below, where the rows ARE readable.
     const { client } = createFakeClient({ thenResponder: () => ({ data: [], error: null }) })
-    const { getSupabaseAdminClient } = await import('../supabase-client.js')
-    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    await mockBothClients(client)
 
     const result = await executePrivateRegistryManage(
       { action: 'deprecate', skillId: 'myteam/ghost' },
@@ -416,34 +430,21 @@ describe('private_registry_manage live mode — team scoping — SMI-5816', () =
     expect(result.error).toMatch(/not found/i)
   })
 
-  it('deprecate requests a representation (select) so a real successful update is detected', async () => {
-    // Regression test: an update without .select() gets `data: null` back from
-    // PostgREST even when rows were actually changed — the fake client's `then()`
-    // enforces this. If deprecate() ever drops its .select() call again, this test
-    // fails because the "successful" mutation is (correctly) reported as not-found.
+  // Regression test: an update without .select() gets `data: null` back from PostgREST even when
+  // rows were actually changed — the fake client's `then()` enforces this. If either method ever
+  // drops its .select() call again, this fails because the "successful" mutation is (correctly)
+  // reported as not-found.
+  it.each([
+    { action: 'deprecate' as const, deprecated: true },
+    { action: 'undeprecate' as const, deprecated: false },
+  ])('$action requests a representation (select) so a real update is detected', async (c) => {
     const { client } = createFakeClient({
-      thenResponder: () => ({ data: [publishedRow({ deprecated: true })], error: null }),
+      thenResponder: () => ({ data: [publishedRow({ deprecated: c.deprecated })], error: null }),
     })
-    const { getSupabaseAdminClient } = await import('../supabase-client.js')
-    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    await mockBothClients(client)
 
     const result = await executePrivateRegistryManage(
-      { action: 'deprecate', skillId: 'myteam/skill-a' },
-      makeContext()
-    )
-
-    expect(result.success).toBe(true)
-  })
-
-  it('undeprecate requests a representation (select) so a real successful update is detected', async () => {
-    const { client } = createFakeClient({
-      thenResponder: () => ({ data: [publishedRow({ deprecated: false })], error: null }),
-    })
-    const { getSupabaseAdminClient } = await import('../supabase-client.js')
-    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
-
-    const result = await executePrivateRegistryManage(
-      { action: 'undeprecate', skillId: 'myteam/skill-a' },
+      { action: c.action, skillId: 'myteam/skill-a' },
       makeContext()
     )
 
