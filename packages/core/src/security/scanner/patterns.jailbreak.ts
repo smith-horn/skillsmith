@@ -3,13 +3,15 @@
  * @module @skillsmith/core/security/scanner/patterns.jailbreak
  *
  * Split out of patterns.ts (which was approaching the 500-line audit:standards
- * gate) to hold `JAILBREAK_PATTERNS` and `AI_DEFENCE_PATTERNS` together with the
- * evidence-tier classification that now governs their severity.
+ * gate) to hold `JAILBREAK_PATTERNS` and `AI_DEFENCE_PATTERNS`; the
+ * evidence-tier classification that governs their severity now lives
+ * alongside them in `patterns.jailbreak.evidence.ts` (SMI-5881, split out for
+ * the same 500-line reason).
  *
  * Background: both arrays previously matched bare vocabulary with no context
  * requirement (`/jailbreak/i`, `/\bDAN\b/`, a bare role marker, a bare `[[...]]`
  * bracket, ...) — a security-checklist skill's prose tripped the same
- * CRITICAL/HIGH severity as a real attack. `EVIDENCE_TYPE_BY_PATTERN` below
+ * CRITICAL/HIGH severity as a real attack. `EVIDENCE_TYPE_BY_PATTERN`
  * classifies every pattern in both arrays into one of FIVE evidence tiers
  * (`types.ts`'s `EvidenceType` — `mention`, `role_turn_with_body`,
  * `imperative_instruction`, `instruction_override`, and `state_assertion`, the
@@ -34,8 +36,6 @@
  * attack on its own, and the only tool that would separate it from the
  * "guards against bypass" documentation case is the rejected frame guard.
  */
-
-import type { EvidenceType } from './types.js'
 
 // ============================================================================
 // Jailbreak attempt patterns
@@ -195,6 +195,11 @@ const JB_JS2_NOUN_MODE_STATE = new RegExp(
 // ignore safety", "Developer mode: ON. Restrictions: OFF", "Switch to
 // developer mode for unrestricted access"); Chrome/VS Code/device mentions
 // carry no CAPABILITY co-signal, so they stay clean.
+//
+// SMI-5881: `[^\n]{0,80}?`'s literal `\n` misclassifies these 'content'-scope
+// in PATTERN_SCOPE (patterns.scope.ts) despite the negated class forbidding a
+// newline crossing — a known naive-heuristic FP, NOT reclassified here
+// (changes finding cardinality; needs its own corpus review).
 const JB_JS3A_DEV_MODE_THEN_CAPABILITY = new RegExp(
   `\\b${NOUN_WEAK_SRC}\\b[^\\n]{0,80}?${CAPABILITY_SRC}`,
   'i'
@@ -249,6 +254,14 @@ export const JAILBREAK_PATTERNS = [
 // corpus is skill documentation, much of which is legitimately about
 // prompting. Each demotion below names the detector that retains coverage of
 // the real attack.
+//
+// SMI-5881: PATTERN_SCOPE (patterns.scope.ts) replaces the old per-source-text
+// multiline-detection heuristic. AD_HTML_COMMENT_VERB/NOUN, AD_NESTED_
+// INSTRUCTION_BLOCK, and AD_ZERO_WIDTH span lines via a bounded `[\s\S]{0,N}`
+// with no literal `\r`/`\n`, a real cross-line false negative the heuristic
+// missed — promoted below to scope 'both'. AD_BRACKET_HIDDEN/AD_XML_TAG_BARE
+// can also span lines but stay 'line'-scoped — a wider window there is a bad
+// FP trade, not a missed attack.
 
 // Role injection: a bare role marker with NO body is payload-free. Coverage
 // of a role-turn WITH a directive body is retained by A-N1 (same line) and
@@ -256,7 +269,8 @@ export const JAILBREAK_PATTERNS = [
 const AD_ROLE_MARKER_BARE = /(?:^|\s)(?:system|assistant|user)\s*:\s*(?:\n|$)/i
 
 // Hidden instruction brackets: matches ANY `[[...]]` — wiki-links, Obsidian
-// links, Lua long strings. Zero directive requirement.
+// links, Lua long strings. Zero directive requirement. SMI-5881: kept
+// 'line'-scoped despite technically spanning lines (see header note above).
 const AD_BRACKET_HIDDEN = /\[\[\s*[^\]]{1,200}\s*\]\]/
 
 // SMI-5876: split from the original single HTML-comment-injection pattern
@@ -264,6 +278,7 @@ const AD_BRACKET_HIDDEN = /\[\[\s*[^\]]{1,200}\s*\]\]/
 // no benign reading) and a noun half (2b, demoted — `<!-- system architecture
 // notes -->` / `<!-- see instructions above -->` currently fire high/critical
 // on bare nouns). Union of 2a∪2b is provably identical to the original.
+// SMI-5881: promoted to scope 'both' (see AI_DEFENCE_PATTERNS header note).
 const AD_HTML_COMMENT_VERB = /<!--[\s\S]{0,100}?(?:ignore|override|bypass)[\s\S]{0,100}?-->/i
 const AD_HTML_COMMENT_NOUN = /<!--[\s\S]{0,100}?(?:system|instruction)[\s\S]{0,100}?-->/i
 
@@ -282,7 +297,8 @@ const AD_MIXED_SCRIPT_WORD =
 
 // Prompt structure manipulation: `<context>`, `<message>`, `<system>` are
 // Anthropic's own documented XML-tag prompt style. Body case (a role-scoped
-// block WITH content) is covered by A-N3a/A-N3b via CHAT_TOKEN_SRC.
+// block WITH content) is covered by A-N3a/A-N3b via CHAT_TOKEN_SRC. SMI-5881:
+// kept 'line'-scoped despite technically spanning lines (see header note).
 const AD_XML_TAG_BARE = /<\/?(?:system|prompt|instruction|context|message)(?:\s[^>]*)?>/i
 
 // Base64 encoded instructions: NOT payload-free — the blob IS the payload.
@@ -303,11 +319,28 @@ const AD_JSON_ROLE_FIELD =
 
 // Nested instruction blocks: a role-scoped block WITH a body — exactly
 // `role_turn_with_body`. Non-doc high (fails); fenced example medium (passes).
+// SMI-5881: promoted to scope 'both' (see AI_DEFENCE_PATTERNS header note).
+// The opening tag's `[^>]*` attribute span stays UNBOUNDED — bounding it
+// (tried, withdrawn) is a trivial evasion (pad past the bound, never match).
 const AD_NESTED_INSTRUCTION_BLOCK = /<instruction[^>]*>[\s\S]{0,500}?<\/instruction>/i
 
 // CRLF injection: verb + scope, kept directive.
+//
+// SMI-5881 P0: the original `(?:\r\n|\r|\n){2,}` shape is catastrophic-
+// backtracking ReDoS — 64 bytes of alternating CRLF pairs hung
+// SecurityScanner.scan() ~45s, ~80 bytes ~3 hours, via the public scan() API,
+// no crafted payload needed. Fixed with a bare CR-or-LF class quantified
+// exactly-2 plus a negative lookbehind rejecting a match starting right after
+// another terminator char — language-preserving (any 2+-terminator run is
+// still matchable), not narrower: JS's leftmost-match `.match()` semantics
+// mean a match starting right after a terminator is always preceded by an
+// earlier-starting match that already wins. Verified via a 22-case
+// equivalence fixture + 20,000-case randomized fuzz vs. the old pattern, zero
+// mismatches (ad-crlf-injection.test.ts). Deliberately NOT a CRLF/lone-CR/
+// lone-LF split with recombination-blocking lookarounds — changes the match
+// language (a real CRLF document stops matching), a regression this avoids.
 const AD_CRLF_INJECTION =
-  /(?:\r\n|\r|\n){2,}\s*(?:ignore|forget|override|bypass)\s+(?:all|previous|above)/i
+  /(?<![\r\n])[\r\n]{2}\s*(?:ignore|forget|override|bypass)\s+(?:all|previous|above)/i
 
 // Template literal injection: `${config.x}` / `${systemPrompt}` in any JS/TS
 // example. Instructs nothing.
@@ -316,6 +349,8 @@ const AD_TEMPLATE_LITERAL = /\$\{\s*(?:system|prompt|instruction|config)/i
 // Zero-width character obfuscation: payload-free (second branch) or
 // noun-gated (system/instruction). Real concealed directives are owned by
 // `scanObfuscatedDirective` (critical, no doc downgrade).
+//
+// SMI-5881: promoted to scope 'both' (see AI_DEFENCE_PATTERNS header note).
 const AD_ZERO_WIDTH =
   /[\u200B-\u200F\u2028-\u202F\uFEFF](?:[\s\S]{0,20}(?:ignore|bypass|system|instruction)|[\u200B-\u200F\u2028-\u202F\uFEFF])/i
 
@@ -365,15 +400,18 @@ const AD_AN1_ROLE_BODY_SAME_LINE = new RegExp(
 // A-N2 (pass 1, full content — source contains \n): role marker alone on its
 // line with the instructing body on the NEXT line. This is the shape the
 // demoted AD_ROLE_MARKER_BARE actually covered; without A-N2 the demotion
-// would be a real coverage loss (isMultilinePattern() returns true for
-// AD_ROLE_MARKER_BARE because \s matches newlines, so it fires today on a
-// real transcript injection whose body starts on the next line).
+// would be a real coverage loss (PATTERN_SCOPE, patterns.scope.ts, classifies
+// AD_ROLE_MARKER_BARE 'content' because \s matches newlines, so it fires
+// today on a real transcript injection whose body starts on the next line).
 const AD_AN2_ROLE_BODY_NEXT_LINE = new RegExp(
   `(?:^|\\n)[ \\t]{0,8}(?:#{1,6}[ \\t]*|[-*>][ \\t]*|-{3,}[ \\t]*)?${ROLE_MARKER_SRC}[ \\t]*:[ \\t]*\\n[ \\t]{0,8}${INSTRUCTION_BODY_SRC}\\b`,
   'i'
 )
 
-// A-N3a (pass 2): chat-template role token + instructing body, same line.
+// A-N3a: chat-template role token + instructing body, same line by intent —
+// but SMI-5881 found `[^\n]{0,40}?`'s literal `\n` misclassifies it
+// 'content'-scope (same naive-heuristic FP as J-S3a/J-S3b). NOT reclassified
+// here (baseline-preserving); still matches via the full-content pass.
 const AD_AN3A_CHAT_TOKEN_BODY_SAME_LINE = new RegExp(
   `${CHAT_TOKEN_SRC}[^\\n]{0,40}?${CHAT_BODY_SRC}\\b`,
   'i'
@@ -413,69 +451,7 @@ export const AI_DEFENCE_PATTERNS = [
   AD_AN3B_CHAT_TOKEN_BODY_NEXT_LINE,
 ]
 
-// ============================================================================
-// SMI-5876: evidence tier per pattern, by OBJECT IDENTITY. Exhaustive over
-// both arrays (asserted by test in scanner-evidence-tiers.test.ts), but
-// classifyEvidence() (SecurityScanner.evidence.ts) still defaults UNMAPPED
-// patterns to `imperative_instruction` — fail-closed: forgetting to classify
-// a newly added pattern makes it strongest, never weakest.
-//
-// Consumed ONLY by SecurityScanner's severity resolution. Every other
-// consumer of JAILBREAK_PATTERNS / AI_DEFENCE_PATTERNS (memory-injection-
-// scanner.ts's quarantine gate, SecurityScanner.quickCheck()) ignores it by
-// design — both those call sites test bare pattern presence, not evidence
-// tier, and that is intentional (see their own inline comments).
-// ============================================================================
-
-export const EVIDENCE_TYPE_BY_PATTERN: ReadonlyMap<RegExp, EvidenceType> = new Map<
-  RegExp,
-  EvidenceType
->([
-  // JAILBREAK_PATTERNS
-  [JB_IGNORE_PREVIOUS, 'instruction_override'],
-  [JB_DISREGARD_PREVIOUS, 'instruction_override'],
-  [JB_DEVELOPER_MODE, 'mention'],
-  [JB_DAN_BARE, 'mention'],
-  [JB_DO_ANYTHING_NOW, 'mention'],
-  [JB_JAILBREAK_BARE, 'mention'],
-  [JB_BYPASS_RESTRICTIONS, 'imperative_instruction'],
-  [JB_PRETEND_NO_RESTRICTIONS, 'imperative_instruction'],
-  [JB_ACT_NO_ETHICS, 'imperative_instruction'],
-  [JB_YOU_ARE_NOW_FREE, 'imperative_instruction'],
-  [JB_IGNORE_SAFETY_GUIDELINES, 'instruction_override'],
-  [JB_HYPOTHETICAL_SCENARIO, 'imperative_instruction'],
-  [JB_JN1_MODE_FRAME, 'imperative_instruction'],
-  [JB_JN2_DEVELOPER_MODE_FRAME, 'imperative_instruction'],
-  [JB_JN3_PERSONA_FRAME, 'imperative_instruction'],
-  [JB_JS1_STATE_BARE, 'state_assertion'],
-  [JB_JS2_NOUN_MODE_STATE, 'state_assertion'],
-  [JB_JS3A_DEV_MODE_THEN_CAPABILITY, 'state_assertion'],
-  [JB_JS3B_CAPABILITY_THEN_DEV_MODE, 'state_assertion'],
-  [JB_JS4_OBEDIENCE_COMPULSION, 'imperative_instruction'],
-  [JB_SPLIT_IGNORE, 'instruction_override'],
-  [JB_SPLIT_DISREGARD, 'instruction_override'],
-  [JB_SPLIT_BYPASS, 'imperative_instruction'],
-
-  // AI_DEFENCE_PATTERNS
-  [AD_ROLE_MARKER_BARE, 'mention'],
-  [AD_BRACKET_HIDDEN, 'mention'],
-  [AD_HTML_COMMENT_VERB, 'instruction_override'],
-  [AD_HTML_COMMENT_NOUN, 'mention'],
-  [AD_HOMOGRAPH_RUN_PLUS_KEYWORD, 'imperative_instruction'],
-  [AD_MIXED_SCRIPT_WORD, 'mention'],
-  [AD_XML_TAG_BARE, 'mention'],
-  [AD_BASE64_INSTRUCTIONS, 'imperative_instruction'],
-  [AD_DELIMITER_BARE, 'mention'],
-  [AD_JSON_ROLE_FIELD, 'mention'],
-  [AD_NESTED_INSTRUCTION_BLOCK, 'role_turn_with_body'],
-  [AD_CRLF_INJECTION, 'instruction_override'],
-  [AD_TEMPLATE_LITERAL, 'mention'],
-  [AD_ZERO_WIDTH, 'mention'],
-  [AD_MARKDOWN_LINK_PAYLOAD, 'imperative_instruction'],
-  [AD_ESCAPE_SEQUENCE_ABUSE, 'imperative_instruction'],
-  [AD_ZALGO_COMBINING, 'mention'],
-  [AD_AN1_ROLE_BODY_SAME_LINE, 'role_turn_with_body'],
-  [AD_AN2_ROLE_BODY_NEXT_LINE, 'role_turn_with_body'],
-  [AD_AN3A_CHAT_TOKEN_BODY_SAME_LINE, 'role_turn_with_body'],
-  [AD_AN3B_CHAT_TOKEN_BODY_NEXT_LINE, 'role_turn_with_body'],
-])
+// SMI-5881: EVIDENCE_TYPE_BY_PATTERN moved to patterns.jailbreak.evidence.ts
+// (this file was approaching the 500-line audit:standards gate again — same
+// reason it was split out of patterns.ts in SMI-5876). Re-exported from
+// patterns.ts unchanged for existing consumers.

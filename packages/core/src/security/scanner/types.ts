@@ -63,7 +63,7 @@ export type FindingConfidence = 'high' | 'medium' | 'low'
  *   (critical non-doc / high doc) — see `EVIDENCE_SEVERITY_TABLE`.
  *
  * See `SecurityScanner.evidence.ts` for how this maps to severity/confidence,
- * and `patterns.jailbreak.ts`'s `EVIDENCE_TYPE_BY_PATTERN` for the
+ * and `patterns.jailbreak.evidence.ts`'s `EVIDENCE_TYPE_BY_PATTERN` for the
  * per-pattern classification.
  */
 export type EvidenceType =

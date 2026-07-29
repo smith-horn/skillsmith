@@ -35,8 +35,9 @@ import { SecurityScanner } from '../../src/security/scanner/index.js'
 import {
   JAILBREAK_PATTERNS,
   AI_DEFENCE_PATTERNS,
-  EVIDENCE_TYPE_BY_PATTERN,
 } from '../../src/security/scanner/patterns.jailbreak.js'
+// SMI-5881: EVIDENCE_TYPE_BY_PATTERN moved to patterns.jailbreak.evidence.ts.
+import { EVIDENCE_TYPE_BY_PATTERN } from '../../src/security/scanner/patterns.jailbreak.evidence.js'
 import { classifyEvidence } from '../../src/security/scanner/SecurityScanner.evidence.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
