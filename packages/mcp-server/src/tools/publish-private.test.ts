@@ -42,12 +42,19 @@ describe('publishPrivateInputSchema', () => {
     expect(result.skillId).toBe('author/my-skill')
   })
 
-  it('accepts input with explicit teamId', () => {
+  it('drops a caller-supplied teamId -- resolved from license only (ADR-116, SMI-5882 W2.S5)', () => {
+    // teamId was removed from the schema entirely: publish-private.ts must
+    // resolve team_id exclusively via getTeamWorkspaceService().resolveTeamId(),
+    // matching the Enterprise registry-tools.ts path, which never accepts
+    // teamId from tool input either. Zod's default (non-.strict()) object
+    // mode strips unrecognized keys, so an attacker-supplied teamId never
+    // reaches the handler.
     const result = publishPrivateInputSchema.parse({
       skillId: 'author/my-skill',
-      teamId: 'team-123',
+      teamId: 'attacker-supplied-team-id',
     })
-    expect(result.teamId).toBe('team-123')
+    expect(result).toEqual({ skillId: 'author/my-skill' })
+    expect('teamId' in result).toBe(false)
   })
 
   it('rejects skillId without slash', () => {
@@ -92,21 +99,25 @@ describe('executePublishPrivate', () => {
     expect(row.team_id).toBeTruthy()
   })
 
-  it('uses explicit teamId when provided', async () => {
+  it('ignores a caller-supplied teamId end-to-end -- resolves from the license/team-workspace service instead', async () => {
     insertSkill(db, 'author/my-skill')
 
-    const result = await executePublishPrivate(
-      { skillId: 'author/my-skill', teamId: 'explicit-team-id' },
-      makeContext(db)
-    )
+    // Simulate the real dispatch path (tool-dispatch.ts -> withLicenseAndQuota),
+    // which parses raw untyped args through publishPrivateInputSchema before
+    // ever calling the handler. An attacker-supplied teamId must not survive
+    // that parse, and must not appear in the persisted row.
+    const rawArgs: unknown = { skillId: 'author/my-skill', teamId: 'attacker-supplied-team-id' }
+    const parsedInput = publishPrivateInputSchema.parse(rawArgs)
+
+    const result = await executePublishPrivate(parsedInput, makeContext(db))
 
     expect(result.success).toBe(true)
-    expect(result.teamId).toBe('explicit-team-id')
+    expect(result.teamId).not.toBe('attacker-supplied-team-id')
 
     const row = db.prepare('SELECT team_id FROM skills WHERE id = ?').get('author/my-skill') as {
       team_id: string
     }
-    expect(row.team_id).toBe('explicit-team-id')
+    expect(row.team_id).not.toBe('attacker-supplied-team-id')
   })
 
   it('returns error for nonexistent skill', async () => {
