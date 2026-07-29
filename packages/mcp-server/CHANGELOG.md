@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.6
+
+- **Fix**: SMI-5882 private-registry privilege hardening (#2126)
+- **Fix**: Evidence-tier severity for jailbreak/ai_defence findings (#2120)
 - **Fix**: `private_registry_manage`'s `deprecate`/`undeprecate` actions now require an authenticated user JWT (the same credential `skillsmith login` already provisions) instead of falling back to the unrestricted service-role client — closes a privilege-escalation gap where any team member's shared license key could deprecate or undeprecate any skill in the team's private registry, the same access only a team admin should have. Authorization is enforced by the existing `_admin_update` RLS policy in Postgres, not reimplemented in application code (SMI-5822)
 - **Fix**: `registry-tools.live.ts`'s private-registry writes now record real `audit_logs` attribution (previously none) via a new `registry-tools.live.audit.ts`, correctly distinguishing the JWT-authenticated actor from the license-key path
 - **Fix**: `publish_private` (Team-tier) no longer accepts `teamId` from tool input — the license-resolved value is now the only source, matching the Enterprise `private_registry_publish` path's ADR-116 discipline; also corrects its tool description, which previously implied cross-teammate visibility this local-only, single-device feature doesn't provide
