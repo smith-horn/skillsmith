@@ -29,14 +29,20 @@
  *     the SMI-5873 fix's own post-merge retro report, itself filed there
  *     per the governance skill's convention, tripped this exact check by
  *     quoting the banned pattern while describing what was fixed)
- *   - the skillsmith-strategy submodule mount-points (.claude/skills,
- *     .claude/plans, .claude/hive-mind) -- fixed in a separate PR against
- *     that submodule's own checkout (SMI-5702 plan doc Wave 4), gated
- *     behind that repo's own review, sequenced last so the main-repo fix
- *     is not blocked on it
  *   - this file and audit-standards.mjs itself, and the T11 test file --
  *     each legitimately names the banned pattern in comments/regex source
  *     to describe what it detects
+ *
+ * SMI-5702 Wave 4 (this commit): the skillsmith-strategy submodule
+ * mount-points (.claude/skills, .claude/plans, .claude/hive-mind) used to
+ * be exempted here, pending a separate PR against that submodule's own
+ * checkout, gated behind that repo's own review, sequenced last so the
+ * main-repo fix wasn't blocked on it. That PR (skillsmith-strategy#11) has
+ * now merged and this commit bumps the pointer to it, so the exemption is
+ * retired -- these mount-points are scanned like any other path from here
+ * on, closing the regression gap a standing carve-out would otherwise
+ * leave (nothing in this submodule's own repo re-runs this check, since it
+ * has no CI of its own).
  */
 
 import { readFileSync, readdirSync, statSync } from 'fs'
@@ -51,10 +57,6 @@ const EXCLUDED_DIR_NAMES = new Set([
   '.ruvector',
 ])
 
-// SMI-5702 Wave 4: fixed separately against the skillsmith-strategy
-// submodule's own checkout/review gate -- see file header.
-const EXCLUDED_SUBMODULE_MOUNTS = ['.claude/skills', '.claude/plans', '.claude/hive-mind']
-
 // Files that legitimately contain the literal banned substrings in
 // comments, regex source, or descriptive strings, not as an executable
 // remediation snippet.
@@ -68,6 +70,12 @@ const SELF_EXEMPT_FILES = new Set([
   // check exists to ban. Same rationale as the docs-exempt carve-out above,
   // applied to test code instead of historical plan prose.
   'scripts/tests/create-worktree-base.test.ts',
+  // SMI-5702 Wave 4 (skillsmith-strategy#11): both files' own fix comments
+  // describe the banned pattern they just removed, the same "describe what
+  // it detects/fixed" rationale as this file's own self-exemption above --
+  // not executable remediation snippets.
+  '.claude/skills/git-crypt/SKILL.md',
+  '.claude/skills/git-crypt/scripts/git-crypt-worktree.sh',
 ])
 
 const UNSET_RE = /--unset/
@@ -79,10 +87,6 @@ function isDocsExemptPath(relPath) {
     relPath.startsWith('docs/internal/retros/') ||
     relPath.startsWith('docs/internal/code_review/')
   )
-}
-
-function isSubmoduleMountPath(relPath) {
-  return EXCLUDED_SUBMODULE_MOUNTS.some((m) => relPath === m || relPath.startsWith(`${m}/`))
 }
 
 function walk(dir, out) {
@@ -125,7 +129,6 @@ export function findGitCryptUnsetRemediations(repoRoot) {
   for (const full of files) {
     const relPath = relative(repoRoot, full).split('\\').join('/')
     if (SELF_EXEMPT_FILES.has(relPath)) continue
-    if (isSubmoduleMountPath(relPath)) continue
     if (isDocsExemptPath(relPath)) continue
 
     let content
