@@ -34,7 +34,7 @@ const REPO_WALK_TIMEOUT_MS = 60_000
 
 describe('SMI-5702 T11: no `--unset filter.git-crypt` remediation text anywhere', () => {
   it(
-    'finds zero occurrences repo-wide outside historical plan docs and the strategy submodule',
+    'finds zero occurrences repo-wide outside historical plan docs and self-exempt explanatory comments',
     () => {
       const findings = findGitCryptUnsetRemediations(REPO_ROOT)
       expect(findings).toEqual([])
