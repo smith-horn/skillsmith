@@ -65,13 +65,15 @@ describe('SMI-5702: direct string assertions on the two most operator-visible re
 
   it('print_git_crypt_filter_remediation() (the function rebase-worktree.sh calls) prints the safe one-liner', () => {
     const libScript = resolve(REPO_ROOT, 'scripts', '_lib.sh')
+    // Pass libScript via env rather than interpolating it into the -c string:
+    // JSON.stringify() only produces JS-string-safe quoting, not shell-safe
+    // quoting -- it doesn't escape `$`, so a checkout path containing `$(...)`
+    // would be live for bash's double-quote command substitution (CodeQL
+    // #113 finding, verified by direct reproduction during SMI-5887).
     const result = execFileSync(
       'bash',
-      [
-        '-c',
-        `source ${JSON.stringify(libScript)}; print_git_crypt_filter_remediation /some/worktree`,
-      ],
-      { encoding: 'utf8' }
+      ['-c', 'source "$LIB_SCRIPT"; print_git_crypt_filter_remediation /some/worktree'],
+      { encoding: 'utf8', env: { ...process.env, LIB_SCRIPT: libScript } }
     )
     expect(result).toContain('./scripts/worktree-crypt.sh fix /some/worktree')
     expect(result).not.toContain('--unset')

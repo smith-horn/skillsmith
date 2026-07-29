@@ -44,16 +44,27 @@ const MCP_SERVER_SH = resolve(SMOKE_PROD_DIR, 'mcp-server.sh')
 const SMOKE_PROD_SH = resolve(__dirname, '..', 'smoke-prod.sh')
 
 describe('smoke-prod/lib.sh — SMOKE_LIB_SOURCED guard (L-1)', () => {
+  // LIB_SH is passed via env (below), not interpolated into the script
+  // string: a raw `${LIB_SH}` template-literal interpolation into a
+  // double-quoted `. "..."` line doesn't escape `$`, so a checkout path
+  // containing `$(...)` would be live for bash's command substitution —
+  // the same defect class CodeQL #113 flagged in the sibling
+  // git-crypt-remediation-strings.test.ts (SMI-5887), verified here by
+  // direct reproduction even though these alerts (#110/#111) were already
+  // dismissed under SMI-5652 before this was discovered.
   it('preserves SMOKE_FAIL_COUNT/SMOKE_PASS_COUNT/SMOKE_RESULTS_JSON across a re-source', () => {
     const script = `
       set -euo pipefail
-      . "${LIB_SH}"
+      . "$LIB_SH"
       report_fail "surfaceA" "checkA" "url" "expected" "actual" "10"
-      . "${LIB_SH}"
+      . "$LIB_SH"
       report_pass "surfaceB" "checkB" "url" "5"
       printf 'fail=%s pass=%s results=%s\\n' "$SMOKE_FAIL_COUNT" "$SMOKE_PASS_COUNT" "$SMOKE_RESULTS_JSON"
     `
-    const out = execFileSync('bash', ['-c', script], { encoding: 'utf-8' })
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf-8',
+      env: { ...process.env, LIB_SH },
+    })
     expect(out).toContain('fail=1 pass=1')
     expect(out).toContain('"surface":"surfaceA"')
     expect(out).toContain('"surface":"surfaceB"')
@@ -62,10 +73,13 @@ describe('smoke-prod/lib.sh — SMOKE_LIB_SOURCED guard (L-1)', () => {
   it('still resets accumulators on the FIRST source of a fresh process', () => {
     const script = `
       set -euo pipefail
-      . "${LIB_SH}"
+      . "$LIB_SH"
       printf 'fail=%s pass=%s results=[%s]\\n' "$SMOKE_FAIL_COUNT" "$SMOKE_PASS_COUNT" "$SMOKE_RESULTS_JSON"
     `
-    const out = execFileSync('bash', ['-c', script], { encoding: 'utf-8' })
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf-8',
+      env: { ...process.env, LIB_SH },
+    })
     expect(out.trim()).toBe('fail=0 pass=0 results=[]')
   })
 })
