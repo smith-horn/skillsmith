@@ -78,6 +78,15 @@ const SELF_EXEMPT_FILES = new Set([
   // not executable remediation snippets.
   '.claude/skills/git-crypt/SKILL.md',
   '.claude/skills/git-crypt/scripts/git-crypt-worktree.sh',
+  // docs/internal/index.md is a rolling changelog whose "Last updated" line
+  // permanently accumulates prior entries -- unlike docs/internal/*/**
+  // subdirectories (already exempted below via isDocsExemptPath), the root
+  // index.md itself isn't covered by that prefix match. It will keep
+  // legitimately describing git-crypt-related fixes as they land (as this
+  // one does), so it gets the same file-level exemption as this file's own
+  // self-description above, rather than requiring every future changelog
+  // entry to route around the literal phrase.
+  'docs/internal/index.md',
 ])
 
 const UNSET_RE = /--unset/
