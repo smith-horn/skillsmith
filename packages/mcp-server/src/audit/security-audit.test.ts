@@ -22,10 +22,16 @@ import type { InventoryEntry } from '../utils/local-inventory.types.js'
 
 let tmpDir: string
 let baselinePath: string
+// SMI-5883 Wave 2: every runSecurityAudit() call below now also touches the
+// acceptance store. Scoped into the same per-test tmpDir (mirroring
+// baselinePath) so these pre-existing tests stay hermetic -- they never read
+// or write the real ~/.skillsmith/audits/security-acceptance.json.
+let acceptancePath: string
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sec-audit-'))
   baselinePath = path.join(tmpDir, 'security-baseline.json')
+  acceptancePath = path.join(tmpDir, 'security-acceptance.json')
 })
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
@@ -97,6 +103,7 @@ describe('runSecurityAudit', () => {
     const e = entry('foo')
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'benign-v1',
       scan: () => report('foo', { passed: true, riskScore: 5 }),
@@ -111,6 +118,7 @@ describe('runSecurityAudit', () => {
   it('first-sight failing skill → malicious finding (critical)', async () => {
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [entry('evil')],
       readContent: () => 'bad',
       scan: () => report('evil', { passed: false, riskScore: 80, findings: [CRITICAL_EXFIL] }),
@@ -128,6 +136,7 @@ describe('runSecurityAudit', () => {
     // Establish a benign baseline.
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v1',
       scan: () => report('foo', { passed: true, riskScore: 5 }),
@@ -135,6 +144,7 @@ describe('runSecurityAudit', () => {
     // Content changes and now fails.
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v2-malicious',
       scan: () => report('foo', { passed: false, riskScore: 80, findings: [CRITICAL_EXFIL] }),
@@ -151,12 +161,14 @@ describe('runSecurityAudit', () => {
     const e = entry('foo')
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v1',
       scan: () => report('foo', { passed: true, riskScore: 5 }),
     })
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v1',
       scan: scanMustNotRun,
@@ -171,12 +183,14 @@ describe('runSecurityAudit', () => {
     const e = entry('evil')
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'bad',
       scan: () => report('evil', { passed: false, riskScore: 80, findings: [CRITICAL_EXFIL] }),
     })
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'bad',
       scan: scanMustNotRun,
@@ -190,6 +204,7 @@ describe('runSecurityAudit', () => {
   it('unreadable content → counted as unreadable (not unchanged), no finding, no throw', async () => {
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [entry('foo')],
       readContent: () => null,
       scan: () => report('foo', { passed: true, riskScore: 1 }),
@@ -206,6 +221,7 @@ describe('runSecurityAudit', () => {
     // Run 1: establish a benign baseline.
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v1',
       scan: () => report('foo', { passed: true, riskScore: 5 }),
@@ -213,6 +229,7 @@ describe('runSecurityAudit', () => {
     // Run 2: a transient read failure. The prior baseline must NOT be pruned.
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => null,
       scan: scanMustNotRun,
@@ -222,6 +239,7 @@ describe('runSecurityAudit', () => {
     // first-sight `malicious` (which is what a pruned baseline would produce).
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v2-malicious',
       scan: () => report('foo', { passed: false, riskScore: 80, findings: [CRITICAL_EXFIL] }),
@@ -235,6 +253,7 @@ describe('runSecurityAudit', () => {
     // Seed a benign baseline for `a`.
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [a],
       readContent: () => 'a-v1',
       scan: () => report('a', { passed: true, riskScore: 5 }),
@@ -242,6 +261,7 @@ describe('runSecurityAudit', () => {
     // `a`'s scan throws (content changed → re-scan path); `b` scans fine.
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [a, b],
       readContent: (p) => (p === a.source_path ? 'a-v2' : 'b-v1'),
       scan: (id) => {
@@ -261,6 +281,7 @@ describe('runSecurityAudit', () => {
     const e = entry('foo')
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v1',
       riskThreshold: 40,
@@ -270,6 +291,7 @@ describe('runSecurityAudit', () => {
     let scanCalls = 0
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v1',
       riskThreshold: 30,
@@ -318,6 +340,7 @@ describe('runSecurityAudit', () => {
     let scanCalls = 0
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [e],
       readContent: () => 'v1', // IDENTICAL bytes to the stale-ruleset baseline
       riskThreshold: 40,
@@ -349,6 +372,7 @@ describe('runSecurityAudit', () => {
     const rule = entry('CLAUDE.md', 'claude_md_rule', '/home/u/.claude/CLAUDE.md')
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [rule],
       readContent: () => 'do a thing',
       scan: () => report('x', { passed: false, riskScore: 99, findings: [CRITICAL_EXFIL] }),
@@ -365,6 +389,7 @@ describe('runSecurityAudit', () => {
     const b = entry('b')
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [a, b],
       readContent: (p) => p,
       scan: (id) => report(id, { passed: true, riskScore: 1 }),
@@ -372,6 +397,7 @@ describe('runSecurityAudit', () => {
     // Re-run with only `a`, content changed so it is re-scanned.
     await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [a],
       readContent: (p) => `${p}-changed`,
       scan: (id) => report(id, { passed: true, riskScore: 1 }),
@@ -386,6 +412,7 @@ describe('runSecurityAudit', () => {
     fs.writeFileSync(baselinePath, 'not json {{{')
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [entry('foo')],
       readContent: () => 'x',
       scan: () => report('foo', { passed: true, riskScore: 1 }),
@@ -398,6 +425,7 @@ describe('runSecurityAudit', () => {
   it('integration: the real SecurityScanner is wired and does not flag benign content', async () => {
     const res = await runSecurityAudit({
       baselinePath,
+      acceptancePath,
       inventory: [entry('hello-world')],
       // A plain, benign skill body — the real scanner should pass it.
       readContent: () =>

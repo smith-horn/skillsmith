@@ -46,12 +46,48 @@ export type {
 // producer that feeds the shipped 2A comparator; content is client-only per ADR-124).
 export { runSecurityAudit } from './security-audit.js'
 export type {
+  Candidate,
   RunSecurityAuditOptions,
   RunSecurityAuditResult,
   SecurityAuditFinding,
   SecurityAuditSummary,
   SecurityVerdict,
 } from './security-audit.types.js'
+
+// SMI-5883 Wave 2 — `InventoryEntry` re-exported so CLI-side test seams
+// (audit-security.types.ts's `AuditSecurityCliSeams.inventory`) can inject a
+// fixed inventory into `runSecurityAudit` without reaching past the barrel.
+export type { InventoryEntry, InventoryKind } from '../utils/local-inventory.types.js'
+
+// SMI-5883 Wave 2 — local security-acceptance store (per-user allowlist for
+// reviewed SecurityScanner false positives). Suppression is applied in
+// runSecurityAudit's own shared result assembly, so any consumer of it (not
+// only the CLI) sees the same accepted annotation -- but never by
+// compareScanReports, which always sees the raw, un-annotated report
+// (code-review round 2; see security-acceptance.types.ts's module comment).
+export {
+  computeAcceptKey,
+  computeStoreDigest,
+  defaultAcceptancePath,
+  findingFingerprint,
+  fingerprintTuple,
+  isValidAcceptKeyFormat,
+  loadAcceptanceStore,
+} from './security-acceptance.js'
+export { acceptFinding, revokeAcceptance } from './security-acceptance.mutate.js'
+export type { AcceptOutcome, RevokeOutcome } from './security-acceptance.mutate.js'
+export {
+  ACCEPTANCE_STORE_VERSION,
+  emptyAcceptanceStore,
+  MAX_RECORDS as ACCEPTANCE_MAX_RECORDS,
+  MAX_STORE_BYTES as ACCEPTANCE_MAX_STORE_BYTES,
+} from './security-acceptance.types.js'
+export type {
+  AcceptanceRecord,
+  AcceptanceStore,
+  AcceptanceWarning,
+  AcceptanceWarningCode,
+} from './security-acceptance.types.js'
 export {
   defaultBaselinePath,
   loadSecurityBaseline,

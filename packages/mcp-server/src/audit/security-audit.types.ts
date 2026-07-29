@@ -13,7 +13,10 @@
  * uniformly.
  */
 
+import type { SecurityFinding } from '@skillsmith/core'
+
 import type { InventoryEntry } from '../utils/local-inventory.types.js'
+import type { AcceptanceRecord, AcceptanceWarning } from './security-acceptance.types.js'
 
 /**
  * The three user-facing security verdicts.
@@ -59,6 +62,69 @@ export interface SecurityAuditFinding {
   newFindingCount: number
   /** One concrete human-readable sentence citing the deciding signal. */
   reason: string
+  /**
+   * SMI-5883 Wave 2: present iff this skill's `malicious` verdict was
+   * suppressed because EVERY finding on it has an active local acceptance
+   * (§3g). The finding itself is NOT removed from `findings[]` (INV-5 --
+   * accepted findings are shown as accepted, never silently hidden); the CLI
+   * renders it under a distinct "ACCEPTED" section instead of "FAILING".
+   * `acceptedAt`/`reason` reflect the MOST RECENTLY accepted covering
+   * record. Never set for `hostile`/`suspicious` (INV-2 -- acceptance never
+   * suppresses those).
+   */
+  accepted?: {
+    count: number
+    acceptedAt: string
+    reason: string
+  }
+}
+
+/**
+ * SMI-5883 Wave 2 (§3a): one candidate finding for `--accept` resolution.
+ * Raw and verdict-independent -- every finding on every scanned skill is a
+ * candidate, INCLUDING skills whose report currently passes (D-10): a later
+ * content change could push that same finding across the bar, and
+ * pre-accepting it is a legitimate user action.
+ */
+export interface Candidate {
+  /** Primary key -- see `computeAcceptKey` (`@skillsmith/mcp-server/audit/security-acceptance`). Full 64-hex. */
+  acceptKey: string
+  /** Absolute inventory `source_path` of the owning skill. */
+  sourcePath: string
+  /** Human identifier of the owning skill. */
+  identifier: string
+  /** sha256 of the exact scanned content. */
+  contentDigest: string
+  /** 64-hex fingerprint of this specific finding. */
+  findingFingerprint: string
+  /** `SCANNER_RULESET_VERSION` this candidate was derived under. */
+  rulesetVersion: string
+  /** The raw, unmodified finding. */
+  finding: SecurityFinding
+  /** `report.passed` for the owning skill (D-10 -- candidacy does not depend on the verdict). */
+  skillPassed: boolean
+  /** ISO-8601 acceptedAt iff an active acceptance matches this candidate's key; else `null`. */
+  acceptedAt: string | null
+  /**
+   * Count of byte-identical findings across the WHOLE RUN (not necessarily
+   * the same skill -- keying is content-based, per D-1) that collapsed into
+   * this one candidate (H-15e). 1 when there is no collision. Code-review
+   * round 2: this can legitimately span more than one skill (see
+   * `affectedSkills`) when two different skills happen to share byte-
+   * identical scanned content and the same finding.
+   */
+  duplicateCount: number
+  /**
+   * Distinct (sourcePath, identifier) pairs whose finding collapsed into
+   * this candidate -- almost always just the one recorded in `sourcePath`/
+   * `identifier` above. Code-review round 2 finding: keying purely on
+   * content (D-1) means a genuinely different skill with byte-identical
+   * content and the same finding collapses into this SAME candidate --
+   * accepting it suppresses the finding on EVERY skill listed here, not
+   * only the first one recorded. Surfaced so the CLI can disclose this
+   * rather than silently suppressing an unseen skill.
+   */
+  affectedSkills: ReadonlyArray<{ sourcePath: string; identifier: string }>
 }
 
 /** Per-run counts for the summary + the email digest header. */
@@ -77,6 +143,10 @@ export interface SecurityAuditSummary {
   hostile: number
   suspicious: number
   malicious: number
+  /** SMI-5883 Wave 2: count of skills whose `malicious` verdict was suppressed this run via full acceptance (§3g). */
+  accepted: number
+  /** SMI-5883 Wave 2: total uncapped candidate count across the whole run (INV-6 -- every candidate is resolvable regardless of what was rendered). */
+  candidateTotal: number
   durationMs: number
 }
 
@@ -86,6 +156,18 @@ export interface RunSecurityAuditResult {
   auditId: string
   findings: SecurityAuditFinding[]
   summary: SecurityAuditSummary
+  /**
+   * SMI-5883 Wave 2: the UNCAPPED candidate index -- the ONLY resolution
+   * surface for `--accept` (§3f). Not JSON-serializable as-is (a `Map`); the
+   * CLI's own render layer projects it into the paginated `candidates[]` +
+   * `pagination` JSON fields. Absent (empty Map) when
+   * `SKILLSMITH_AUDIT_ACCEPT_DISABLE=1`.
+   */
+  candidateIndex: Map<string, Candidate>
+  /** SMI-5883 Wave 2: the full acceptance store contents (<=500 by construction) -- `--json`'s `acceptances` field and `--revoke`'s resolution surface (D-9). */
+  acceptances: AcceptanceRecord[]
+  /** SMI-5883 Wave 2: structured, machine-triageable acceptance-store warnings (fail-open causes, GC counts). Empty when the store was clean or the kill switch is set. */
+  warnings: AcceptanceWarning[]
 }
 
 /**
@@ -112,4 +194,11 @@ export interface RunSecurityAuditOptions {
    * the `SecurityScanner` + comparator default.
    */
   riskThreshold?: number
+  /**
+   * SMI-5883 Wave 2: override the acceptance-store path (test seam +
+   * `homeDir`-relative default override; NOT security-sensitive the way the
+   * scanner/reader seams are, since it only relocates where local acceptance
+   * judgments are read from). Defaults to `defaultAcceptancePath(homeDir)`.
+   */
+  acceptancePath?: string
 }
