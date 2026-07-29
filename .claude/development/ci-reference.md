@@ -23,6 +23,8 @@ The CI system classifies changes into tiers to run appropriate checks:
 | `.github/ISSUE_TEMPLATE/**` | Issue templates |
 | `.github/CODEOWNERS` | Code owners file |
 
+**Submodule gitlink bumps (SMI-5665)**: a changed submodule (e.g. `docs/internal`) is reported as a bare mount path matching none of the globs above; `classify-changes.ts` recognizes these via exact-match entries derived from `.gitmodules` (`getSubmoduleMounts()`), not prefix globs — keep this doc in sync if `.gitmodules` changes.
+
 **Important**: Mixed commits (docs + code) trigger full CI. Docs-only commits run lightweight `docs-only.yml`. See [ADR-105](../adr/105-ci-path-filtering.md).
 
 **`verify-implementation.ts` vs `classify-changes.ts` (SMI-4243)**: these answer different questions. `classify-changes.ts` routes a commit to the right CI workflow (tier above). `verify-implementation.ts` asks whether an SMI-referenced PR contains real implementation; its `source` set now includes root-level `*.config.{ts,mjs,cjs,js}` and `.github/workflows/*.{yml,yaml}` so legitimate infra-only PRs pass without `[skip-impl-check]`.

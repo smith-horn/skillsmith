@@ -17,8 +17,8 @@
  */
 
 import { execSync } from 'child_process'
-import { existsSync, appendFileSync } from 'fs'
-import { dirname } from 'path'
+import { existsSync, appendFileSync, readFileSync } from 'fs'
+import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { minimatch } from 'minimatch'
 
@@ -52,6 +52,75 @@ export interface ClassificationResult {
   reason: string
 }
 
+/**
+ * Parse submodule mount paths out of `.gitmodules` (SMI-5665).
+ *
+ * A changed git submodule (mode 160000 gitlink — e.g. `docs/internal`,
+ * `.claude/skills`) is reported by `git diff --name-only` as a single bare mount
+ * path with no file extension and never a sub-path under it — the submodule's
+ * interior is opaque to the parent repo's diff by construction. `TIER_PATTERNS`
+ * has no glob that matches a bare mount path, so callers check `isSubmoduleMount()`
+ * against this function's result as a literal, exact-match set (never passed to
+ * `minimatch` — see `isSubmoduleMount()`'s doc comment for why).
+ *
+ * @param gitmodulesContent - Optional raw `.gitmodules` file content, for testing
+ *   without touching the filesystem. When omitted, reads the real `.gitmodules`
+ *   from the repo root.
+ * @returns Submodule mount paths (e.g. `['docs/internal', '.claude/skills']`).
+ *   Returns `[]` on any read error (missing file, unreadable, etc.) rather than
+ *   throwing — a missing `.gitmodules` degrades to today's safe-but-expensive
+ *   unknown-file-defaults-to-`code` behavior, never to an unsafe classification.
+ */
+export function getSubmoduleMounts(gitmodulesContent?: string): string[] {
+  let content: string
+  try {
+    if (gitmodulesContent !== undefined) {
+      content = gitmodulesContent
+    } else {
+      const scriptDir = dirname(fileURLToPath(import.meta.url))
+      const gitmodulesPath = join(scriptDir, '..', '..', '.gitmodules')
+      content = readFileSync(gitmodulesPath, 'utf-8')
+    }
+  } catch {
+    return []
+  }
+
+  const mounts: string[] = []
+  for (const match of content.matchAll(/^\s*path\s*=\s*(.+)$/gm)) {
+    let trimmed = match[1].trim()
+    // Git config values may be double-quoted (e.g. `path = "docs/internal"`);
+    // strip a matching pair before use (SMI-5665 review finding).
+    const quoted = trimmed.match(/^"(.*)"$/)
+    if (quoted) {
+      trimmed = quoted[1]
+    }
+    if (trimmed.length > 0) {
+      mounts.push(trimmed)
+    }
+  }
+  return mounts
+}
+
+/**
+ * Check whether `file` is exactly one of the given submodule mount paths
+ * (SMI-5665). Uses plain string equality, NOT `minimatch` — a mount path is
+ * data read from `.gitmodules`, not a pattern authored by this script's
+ * maintainer, so it must never be interpreted as a glob. Passing it through
+ * `minimatch` instead would (a) silently fail to match itself for any mount
+ * path containing glob metacharacters (`[`, `]`, `*`, `?`, `{`, `}` — e.g.
+ * `minimatch('vendor/[abc]', 'vendor/[abc]')` is `false`), and (b) turn a
+ * mount path that happened to equal a wildcard like `**` into a catch-all
+ * matching every file, defeating the unmatched-file safety net entirely.
+ * None of today's 4 real mount paths contain glob metacharacters, but the
+ * exact-match guarantee must hold structurally, not by accident.
+ */
+export function isSubmoduleMount(file: string, mounts: string[]): boolean {
+  return mounts.includes(file)
+}
+
+// Submodule mount paths derived from .gitmodules, computed once at module init.
+const SUBMODULE_MOUNTS = getSubmoduleMounts()
+
 // Pattern definitions for each tier
 const TIER_PATTERNS: Record<Tier, string[]> = {
   docs: [
@@ -62,6 +131,10 @@ const TIER_PATTERNS: Record<Tier, string[]> = {
     '.github/ISSUE_TEMPLATE/**',
     '.github/CODEOWNERS',
     '.github/PULL_REQUEST_TEMPLATE.md',
+    // NOTE: submodule mount paths (SMI-5665) are intentionally NOT listed here.
+    // They're checked via isSubmoduleMount()'s exact string equality instead of
+    // being added to this glob list — see isSubmoduleMount()'s doc comment for
+    // why passing .gitmodules-derived paths through minimatch is unsafe.
   ],
   config: [
     '.github/workflows/**',
@@ -218,14 +291,20 @@ export function classifyChanges(changedFiles: string[]): ClassificationResult {
   for (const file of files) {
     let matched = false
 
-    // Check tiers in reverse priority order (code first)
-    for (const tier of [...tierPriority].reverse()) {
-      if (matchesPatterns(file, TIER_PATTERNS[tier])) {
-        matched = true
-        if (tierPriority.indexOf(tier) > tierPriority.indexOf(highestTier)) {
-          highestTier = tier
+    // Submodule gitlink mounts (SMI-5665) are checked via exact string
+    // equality, never via minimatch -- see isSubmoduleMount()'s doc comment.
+    if (isSubmoduleMount(file, SUBMODULE_MOUNTS)) {
+      matched = true
+    } else {
+      // Check tiers in reverse priority order (code first)
+      for (const tier of [...tierPriority].reverse()) {
+        if (matchesPatterns(file, TIER_PATTERNS[tier])) {
+          matched = true
+          if (tierPriority.indexOf(tier) > tierPriority.indexOf(highestTier)) {
+            highestTier = tier
+          }
+          break
         }
-        break
       }
     }
 
@@ -253,7 +332,10 @@ export function classifyChanges(changedFiles: string[]): ClassificationResult {
   // Build reason string
   const reasons: string[] = []
   for (const tier of tierPriority) {
-    const matchingFiles = files.filter((f) => matchesPatterns(f, TIER_PATTERNS[tier]))
+    const matchingFiles = files.filter((f) => {
+      if (tier === 'docs' && isSubmoduleMount(f, SUBMODULE_MOUNTS)) return true
+      return matchesPatterns(f, TIER_PATTERNS[tier])
+    })
     if (matchingFiles.length > 0) {
       reasons.push(`${tier}: ${matchingFiles.length} file(s)`)
     }

@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { classifyChanges, matchesPatterns, isValidGitRef } from '../ci/classify-changes'
+import {
+  classifyChanges,
+  matchesPatterns,
+  isValidGitRef,
+  getSubmoduleMounts,
+  isSubmoduleMount,
+} from '../ci/classify-changes'
 
 describe('SMI-2187: CI Change Classifier', () => {
   describe('isValidGitRef', () => {
@@ -294,6 +300,143 @@ describe('SMI-2187: CI Change Classifier', () => {
         // When git fails, getChangedFiles returns ['**/*']
         // This doesn't match any tier, so should trigger code for safety
         const result = classifyChanges(['**/*'])
+        expect(result.tier).toBe('code')
+      })
+    })
+  })
+
+  describe('gitlink submodule pointer bumps (SMI-5665)', () => {
+    describe('classifyChanges', () => {
+      it('should classify a docs/internal gitlink bump as docs', () => {
+        const result = classifyChanges(['docs/internal'])
+        expect(result.tier).toBe('docs')
+        expect(result.skipDocker).toBe(true)
+        expect(result.skipTests).toBe(true)
+      })
+
+      it('should classify a .claude/skills gitlink bump as docs', () => {
+        const result = classifyChanges(['.claude/skills'])
+        expect(result.tier).toBe('docs')
+        expect(result.skipDocker).toBe(true)
+        expect(result.skipTests).toBe(true)
+      })
+
+      it('should classify a .claude/plans gitlink bump as docs', () => {
+        const result = classifyChanges(['.claude/plans'])
+        expect(result.tier).toBe('docs')
+        expect(result.skipDocker).toBe(true)
+        expect(result.skipTests).toBe(true)
+      })
+
+      it('should classify a .claude/hive-mind gitlink bump as docs', () => {
+        const result = classifyChanges(['.claude/hive-mind'])
+        expect(result.tier).toBe('docs')
+        expect(result.skipDocker).toBe(true)
+        expect(result.skipTests).toBe(true)
+      })
+
+      it('should classify multiple gitlink bumps together as docs', () => {
+        const result = classifyChanges(['docs/internal', '.claude/skills'])
+        expect(result.tier).toBe('docs')
+      })
+
+      it('should classify a gitlink bump alongside a real markdown file as docs', () => {
+        const result = classifyChanges(['docs/internal', 'README.md'])
+        expect(result.tier).toBe('docs')
+      })
+
+      it('should NOT down-classify a gitlink bump mixed with real code (regression guard)', () => {
+        const result = classifyChanges(['docs/internal', 'packages/core/src/index.ts'])
+        expect(result.tier).toBe('code')
+        expect(result.skipDocker).toBe(false)
+        expect(result.skipTests).toBe(false)
+      })
+
+      it('should treat a real file path merely nested under a mount as unmatched, not exact-match (boundary guard)', () => {
+        // Proves the rule is exact-match on the bare mount path, not a prefix —
+        // a file that happens to live under a mount directory still hits the
+        // existing unmatched-files-default-to-code safety net.
+        const nestedUnderDocsInternal = classifyChanges(['docs/internal/foo.ts'])
+        expect(nestedUnderDocsInternal.tier).toBe('code')
+
+        const nestedUnderClaudeSkills = classifyChanges(['.claude/skills/foo.ts'])
+        expect(nestedUnderClaudeSkills.tier).toBe('code')
+      })
+    })
+
+    describe('getSubmoduleMounts', () => {
+      it('should parse mount paths from synthetic .gitmodules content', () => {
+        const content = [
+          '[submodule "docs/internal"]',
+          '\tpath = docs/internal',
+          '\turl = https://github.com/smith-horn/skillsmith-docs.git',
+          '\tbranch = main',
+          '',
+          '[submodule ".claude/skills"]',
+          '\tpath = .claude/skills',
+          '\turl = https://github.com/smith-horn/skillsmith-strategy.git',
+          '\tbranch = skills',
+        ].join('\n')
+
+        const mounts = getSubmoduleMounts(content)
+        expect(mounts).toEqual(['docs/internal', '.claude/skills'])
+      })
+
+      it('should return an empty array when no "path = " lines are present (M2)', () => {
+        const mounts = getSubmoduleMounts('not a valid gitmodules file, no path lines here')
+        expect(mounts).toEqual([])
+      })
+
+      it('should drop an empty/whitespace-only path value rather than returning it (M2)', () => {
+        const mounts = getSubmoduleMounts('[submodule "x"]\n\tpath =   \n')
+        expect(mounts).toEqual([])
+      })
+
+      it('should return a superset containing all 4 known mounts when reading the real .gitmodules', () => {
+        // No arg — reads the real .gitmodules from the repo root. Robust to a
+        // future 5th mount being added (superset, not exact-equal).
+        const mounts = getSubmoduleMounts()
+        expect(mounts).toEqual(
+          expect.arrayContaining([
+            'docs/internal',
+            '.claude/skills',
+            '.claude/plans',
+            '.claude/hive-mind',
+          ])
+        )
+      })
+
+      it('should strip a matching pair of double quotes from a path value (review finding)', () => {
+        const mounts = getSubmoduleMounts('[submodule "x"]\n\tpath = "docs/internal"\n')
+        expect(mounts).toEqual(['docs/internal'])
+      })
+    })
+
+    describe('isSubmoduleMount (exact-match guarantee, review finding)', () => {
+      it('should use plain string equality, not glob matching', () => {
+        expect(isSubmoduleMount('docs/internal', ['docs/internal'])).toBe(true)
+        expect(isSubmoduleMount('docs/internal', ['other/path'])).toBe(false)
+      })
+
+      it('should still match a mount path containing glob metacharacters against itself', () => {
+        // minimatch('vendor/[abc]', 'vendor/[abc]') is false -- a character
+        // class doesn't match its own literal text. isSubmoduleMount must not
+        // have this failure mode since mount paths are data, not patterns.
+        expect(isSubmoduleMount('vendor/[abc]', ['vendor/[abc]'])).toBe(true)
+      })
+
+      it('should NOT treat a "**" mount path as a wildcard matching every file', () => {
+        // If a mount path ever equaled '**', passing it through minimatch
+        // would match arbitrary files. Exact-match must not have this hazard.
+        expect(isSubmoduleMount('packages/core/src/index.ts', ['**'])).toBe(false)
+        expect(isSubmoduleMount('**', ['**'])).toBe(true)
+      })
+
+      it('classifyChanges should apply the same exact-match guarantee end-to-end', () => {
+        // random-file.xyz is unrelated to any real submodule mount and must
+        // still hit the safety fallback -- proves isSubmoduleMount's exact
+        // match doesn't accidentally widen what counts as a mount.
+        const result = classifyChanges(['random-file.xyz'])
         expect(result.tier).toBe('code')
       })
     })
