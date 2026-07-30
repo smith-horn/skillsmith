@@ -110,6 +110,13 @@ function stripControl(s: string): string {
  * user who accepted a finding specifically to stop being bothered by it kept
  * getting emailed about it, and the payload's own `malicious` count and its
  * `findings[]` length could silently disagree.
+ *
+ * Like every other consumer of `result`, this reflects a single acceptance-
+ * store snapshot taken before the scan ran — see the "Single-snapshot-per-run"
+ * note in `security-acceptance.types.ts`'s module doc for why a concurrent
+ * `--accept` mid-scan is picked up on the NEXT run, not retroactively applied
+ * to this one (SMI-5901 code-review round 1: not a gap specific to this
+ * function, so not fixed here in isolation).
  */
 export function buildAuditDigestPayload(result: RunSecurityAuditResult): AuditDigestPushPayload {
   const findings: AuditDigestPushFinding[] = [...result.findings]
