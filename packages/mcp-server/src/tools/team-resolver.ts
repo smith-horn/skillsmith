@@ -24,7 +24,7 @@
  *    own Supabase JWT, stored by `skillsmith login` (SMI-4402) and refreshed on expiry.
  */
 
-import { loadCredentials, tryRefreshToken } from '@skillsmith/core'
+import { resolveFreshAccessToken } from '@skillsmith/core'
 import { getSupabaseClient, isSupabaseConfigured } from '../supabase-client.js'
 
 /**
@@ -68,22 +68,19 @@ export async function resolveLicenseTeamId(licenseKey?: string): Promise<string 
   return data
 }
 
-/** Refresh a token this many ms before its recorded expiry, matching context.async.ts. */
-const TOKEN_EXPIRY_SKEW_MS = 60_000
-
 /**
  * Resolve the signed-in user's Supabase access token, refreshing it if it has expired.
  *
  * Mirrors the credential handling `context.async.ts` already performs for the API client, so the
  * MCP process has exactly one notion of "the logged-in user" (SMI-4402).
  *
+ * SMI-5905 Wave 1: the refresh-or-null logic (including the `TOKEN_EXPIRY_SKEW_MS=60s` skew) now
+ * lives in `@skillsmith/core`'s `resolveFreshAccessToken()` — extracted so the CLI can reuse it
+ * too. This function is an unchanged-behavior delegate; no call site here needs to change.
+ *
  * @returns the access token, or null when the user has not run `skillsmith login` on this machine
  *          (or the stored refresh token is no longer valid)
  */
 export async function resolveUserAccessToken(): Promise<string | null> {
-  const creds = await loadCredentials()
-  if (!creds) return null
-  if (Date.now() < creds.expiresAt - TOKEN_EXPIRY_SKEW_MS) return creds.accessToken
-  const refreshed = await tryRefreshToken()
-  return refreshed ?? null
+  return resolveFreshAccessToken()
 }

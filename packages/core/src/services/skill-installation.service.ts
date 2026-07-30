@@ -12,6 +12,7 @@ import {
   type ProgressCallback,
   type InstallOptions,
   type InstallResult,
+  type InstallFromContentOptions,
   type UninstallOptions,
   type UninstallResult,
   type RegistryLookup,
@@ -19,6 +20,7 @@ import {
   type QuarantineStatus,
   type AiDefenceFeedback,
 } from './skill-installation.types.js'
+import { installFromContent } from './skill-installation.content.js'
 import { recordAiDefenceFeedback, collectTrendWarnings } from './skill-installation.feedback.js'
 import { ManifestManager } from './skill-manifest.js'
 import {
@@ -458,6 +460,22 @@ export class SkillInstallationService {
         error: sanitizeInstallError(error),
       })
     }
+  }
+
+  /**
+   * SMI-5905 Wave 1: install an already-resolved private-registry skill's
+   * content to disk. Thin delegate — see skill-installation.content.ts for
+   * the full implementation and its documented scope trim vs. install().
+   */
+  async installFromContent(options: InstallFromContentOptions): Promise<InstallResult> {
+    return installFromContent({
+      ...options,
+      db: this.db,
+      skillsDir: this.skillsDir,
+      manifest: this.manifest,
+      client: this.client,
+      onProgress: this.onProgress,
+    })
   }
 
   async uninstall(skillName: string, options: UninstallOptions = {}): Promise<UninstallResult> {

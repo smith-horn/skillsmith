@@ -443,6 +443,9 @@ export {
   type InstallOptions,
   type InstallResult as CoreInstallResult,
   type InstallErrorCode,
+  // SMI-5905 Wave 1: content-based install path (private registry).
+  type SkillContent,
+  type InstallFromContentOptions,
   type UninstallOptions,
   type UninstallResult as CoreUninstallResult,
   type SkillManifest,

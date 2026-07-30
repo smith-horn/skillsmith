@@ -278,7 +278,11 @@ export {
   refreshAccessToken,
   type TokenCredentials,
 } from './config/token-credentials.js'
-export { tryRefreshToken, loadStoredAccessToken } from './api/client.token-refresh.js'
+export {
+  tryRefreshToken,
+  loadStoredAccessToken,
+  resolveFreshAccessToken,
+} from './api/client.token-refresh.js'
 
 // SMI-5391: Cross-harness inventory device identity + local consent/throttle gate
 export {
