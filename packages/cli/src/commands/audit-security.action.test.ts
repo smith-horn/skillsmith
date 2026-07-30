@@ -7,7 +7,10 @@
  * to isolate pure CLI presentation), this file exercises the REAL
  * `runSecurityAudit` + acceptance-store mutation, proving `runAuditSecurity`
  * resolves `--accept`/`--revoke` against a FRESH audit rather than a stale
- * caller-held one (R2). Covers H-4b, H-6b, H-8, H-17, H-18.
+ * caller-held one (R2). Covers H-4b, H-6b, H-8, H-17.
+ *
+ * H-18 (SKILLSMITH_AUDIT_ACCEPT_DISABLE=1 kill switch) moved to the sibling
+ * audit-security.action.killswitch.test.ts (SMI-5901 post-merge retro).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
