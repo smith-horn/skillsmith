@@ -9,6 +9,7 @@
 import type { ScanReport, ScannerOptions } from '../security/index.js'
 import type { TrustTier } from '../types/skill.js'
 import type { DependencyDeclaration } from '../types/dependencies.js'
+import type { ClientId } from '../install/paths.js'
 
 // ============================================================================
 // Progress Callback
@@ -182,6 +183,13 @@ export interface SkillManifestEntry {
   pinnedVersion?: string
   /** How updates are handled */
   updatePolicy?: 'auto' | 'manual' | 'never'
+  /**
+   * SMI-5894 (Wave 1 Step 3): which client this installation targets.
+   * Absent on manifest entries written before multi-client re-keying —
+   * treat a missing value as the canonical client (`claude-code`), matching
+   * `manifestKeyFor()`'s own default.
+   */
+  client?: ClientId
 }
 
 /** Manifest tracking all installed skills */

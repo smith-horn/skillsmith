@@ -11,6 +11,7 @@
 import { Command } from 'commander'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { listAction, updateAction, removeAction } from './manage.action.js'
+import { VALID_CLIENT_HINT } from './install.js'
 
 export {
   getInstalledSkills,
@@ -32,6 +33,13 @@ export function createListCommand(): Command {
     .description('List all installed skills')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('--outdated', 'Show only skills with available updates (requires Individual tier)')
+    .option(
+      '--client <id>',
+      // SMI-5894 Wave 1 Step 2: `list` already scans every client's
+      // directory by default — this flag NARROWS that inventory to one
+      // client, it does not fix a detection gap (there wasn't one).
+      `show only this client's installed skills, instead of every client (${VALID_CLIENT_HINT})`
+    )
     .action(listAction)
 }
 
@@ -49,6 +57,10 @@ export function createUpdateCommand(): Command {
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-a, --all', 'Update all installed skills')
     .option('-n, --dry-run', 'Show what would update without installing')
+    .option(
+      '--client <id>',
+      `update the copy installed for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .action(updateAction)
 }
 
@@ -63,5 +75,9 @@ export function createRemoveCommand(): Command {
     .argument('<skill>', 'Skill name to remove')
     .option('-f, --force', 'Skip confirmation prompt and force removal of modified/orphan skills')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
+    .option(
+      '--client <id>',
+      `remove the copy installed for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .action(removeAction)
 }

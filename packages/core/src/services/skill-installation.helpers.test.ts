@@ -1,16 +1,24 @@
 /**
  * @fileoverview Tests for the SMI-5676 `.mcp.json` cross-check additions to
  *   skill-installation.helpers.ts (`getRegisteredMcpServers`, and the
- *   resolution-aware warning filtering in `extractDepIntel`).
+ *   resolution-aware warning filtering in `extractDepIntel`), plus the
+ *   SMI-5894 Wave 1 multi-client manifest-keying + tips additions
+ *   (`manifestKeyFor`, `generateTips`).
  * @module @skillsmith/core/services/skill-installation.helpers.test
  * @see SMI-5676: Wave 1 Step 3b — harden extractMcpReferences
+ * @see SMI-5894: Wave 1 Steps 3/5 — multi-client manifest re-keying + tips
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
-import { extractDepIntel, getRegisteredMcpServers } from './skill-installation.helpers.js'
+import {
+  extractDepIntel,
+  getRegisteredMcpServers,
+  generateTips,
+  manifestKeyFor,
+} from './skill-installation.helpers.js'
 
 describe('getRegisteredMcpServers (SMI-5676)', () => {
   let tmpDir: string
@@ -101,5 +109,40 @@ describe('extractDepIntel resolution-aware warnings (SMI-5676)', () => {
     const result = extractDepIntel('Use mcp__linear__save_issue to create issues.')
 
     expect(result.dep_warnings.some((w) => w.includes('linear'))).toBe(true)
+  })
+})
+
+describe('manifestKeyFor (SMI-5894 Wave 1 Step 3)', () => {
+  it('keys the canonical client (claude-code) by bare name — backward compatible', () => {
+    expect(manifestKeyFor('my-skill', 'claude-code')).toBe('my-skill')
+  })
+
+  it('keys a non-canonical client with a composite name::client key', () => {
+    expect(manifestKeyFor('my-skill', 'cursor')).toBe('my-skill::cursor')
+    expect(manifestKeyFor('my-skill', 'windsurf')).toBe('my-skill::windsurf')
+  })
+
+  it('produces distinct keys for the same skill name under different clients', () => {
+    const claudeKey = manifestKeyFor('same-name', 'claude-code')
+    const cursorKey = manifestKeyFor('same-name', 'cursor')
+    expect(claudeKey).not.toBe(cursorKey)
+  })
+})
+
+describe('generateTips (SMI-5894 Wave 1 Step 5)', () => {
+  const optimizationInfo = { optimized: false } as const
+
+  it('defaults to Claude Code wording when client/skillsDir are omitted (backward compatible)', () => {
+    const tips = generateTips('my-skill', optimizationInfo)
+    expect(tips.join('\n')).toContain('mention it in Claude Code')
+    expect(tips.join('\n')).toContain('ls ~/.claude/skills/')
+  })
+
+  it('names the actual client and install path when a non-canonical client is resolved', () => {
+    const tips = generateTips('my-skill', optimizationInfo, 'cursor', '/home/user/.cursor/skills')
+    const joined = tips.join('\n')
+    expect(joined).toContain('mention it in Cursor')
+    expect(joined).toContain('ls /home/user/.cursor/skills/')
+    expect(joined).not.toContain('Claude Code')
   })
 })

@@ -19,10 +19,11 @@ import {
   type Skill,
 } from '@skillsmith/core'
 import { openCliDatabase } from '../utils/open-database.js'
-import { DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
+import { DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
-import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
+import { getInstalledSkillsForClient, type InstalledSkill } from '../utils/skills-directory.js'
 import { createApiBackedRegistryLookup } from './install.js'
+import { CANONICAL_CLIENT, getInstallPath, type ClientId } from '@skillsmith/core/install'
 
 /**
  * Extended Skill type with optional version field.
@@ -70,12 +71,21 @@ interface SkillDiff {
  * Returns `'not-installed'` when the skill isn't installed at all, or
  * `'unresolvable'` when it's installed but has no recorded registry ID
  * (locally or in its own SKILL.md front-matter) to update against.
+ *
+ * SMI-5894 (Wave 1 Steps 2/3): `client` scopes the "is this installed"
+ * lookup to the resolved client's own directory (plus repo-local skills)
+ * via `getInstalledSkillsForClient`, instead of `getInstalledSkills()`'s
+ * global cross-client dedup. Without this, a skill installed under two
+ * clients with the same name would always resolve to whichever client wins
+ * that dedup's precedence (Claude Code), not necessarily the client the
+ * caller asked `update --client <id>` to target.
  */
 async function getSkillDiff(
   skillName: string,
-  dbPath: string
+  dbPath: string,
+  client: ClientId = CANONICAL_CLIENT
 ): Promise<SkillDiff | 'not-installed' | 'unresolvable'> {
-  const installed = (await getInstalledSkills(dbPath)).find(
+  const installed = (await getInstalledSkillsForClient(client, dbPath)).find(
     (s) => s.name.toLowerCase() === skillName.toLowerCase()
   )
   if (!installed) {
@@ -147,12 +157,23 @@ async function getSkillDiff(
 /**
  * Update a single skill. With `dryRun`, shows the same diff preview without
  * prompting or installing.
+ *
+ * SMI-5894 (Wave 1 Steps 2/3): `client` selects which agent's copy to
+ * update — resolved by the caller (explicit `--client`, else
+ * `SKILLSMITH_CLIENT`, else canonical). Replaces the previously frozen
+ * `DEFAULT_SKILLS_DIR` (always Claude Code) with a per-invocation
+ * resolution via `getInstallPath(client)`.
  */
-async function updateSkill(skillName: string, dbPath: string, dryRun = false): Promise<boolean> {
+async function updateSkill(
+  skillName: string,
+  dbPath: string,
+  dryRun = false,
+  client: ClientId = CANONICAL_CLIENT
+): Promise<boolean> {
   const spinner = ora(`Checking updates for ${skillName}...`).start()
 
   try {
-    const diff = await getSkillDiff(skillName, dbPath)
+    const diff = await getSkillDiff(skillName, dbPath, client)
 
     if (diff === 'not-installed') {
       spinner.fail(
@@ -208,9 +229,10 @@ async function updateSkill(skillName: string, dbPath: string, dryRun = false): P
         db,
         skillRepo,
         skillDependencyRepo,
-        skillsDir: DEFAULT_SKILLS_DIR,
+        skillsDir: getInstallPath(client),
         manifestPath: DEFAULT_MANIFEST_PATH,
         registryLookup,
+        client,
         onProgress: (_stage: string, detail: string) => {
           updateSpinner.text = detail
         },
@@ -238,13 +260,18 @@ async function updateSkill(skillName: string, dbPath: string, dryRun = false): P
  * Update a set of skills by name, or every installed skill when `names` is
  * omitted (the `--all` path). Shared by the explicit-list and `--all`
  * commander paths so both print the same per-skill progress + summary.
+ *
+ * SMI-5894 (Wave 1 Steps 2/3): `client` scopes both the `--all` skill-name
+ * enumeration and each per-skill update to the resolved client.
  */
 async function updateSkills(
   names: string[] | undefined,
   dbPath: string,
-  dryRun: boolean
+  dryRun: boolean,
+  client: ClientId = CANONICAL_CLIENT
 ): Promise<void> {
-  const targetNames = names ?? (await getInstalledSkills(dbPath)).map((s) => s.name)
+  const targetNames =
+    names ?? (await getInstalledSkillsForClient(client, dbPath)).map((s) => s.name)
 
   if (targetNames.length === 0) {
     console.log(chalk.yellow('No skills installed'))
@@ -257,7 +284,7 @@ async function updateSkills(
   let failed = 0
 
   for (const name of targetNames) {
-    const success = await updateSkill(name, dbPath, dryRun)
+    const success = await updateSkill(name, dbPath, dryRun, client)
     if (success) {
       updated++
     } else {

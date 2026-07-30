@@ -11,6 +11,7 @@
  */
 export {
   CANONICAL_CLIENT,
+  CLIENT_DISPLAY_LABELS,
   CLIENT_IDS,
   CLIENT_NATIVE_PATHS,
   assertClientId,
