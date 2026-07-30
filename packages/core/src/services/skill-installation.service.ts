@@ -29,7 +29,9 @@ import {
   applyOptimization,
   performUninstall,
   sanitizeInstallError,
+  manifestKeyFor,
 } from './skill-installation.helpers.js'
+import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
 import {
   parseSkillIdInternal,
   validateSkillMd,
@@ -57,6 +59,17 @@ export interface SkillInstallationServiceParams {
   quarantineLookup?: (skillId: string) => QuarantineStatus | null // SMI-3871
   riskHistoryRepo?: RiskScoreHistoryRepository // SMI-3874
   aiDefenceFeedback?: AiDefenceFeedback // SMI-3873
+  /**
+   * SMI-5894 (Wave 1 Step 3): the client this install/uninstall targets.
+   * Defaults to the canonical client (`claude-code`) — every existing
+   * caller that doesn't pass it (MCP's install/uninstall tools, and any
+   * pre-Wave-1 test) keeps writing/reading manifest entries under the
+   * legacy bare-name key, unchanged. Only used for manifest keying
+   * (`manifestKeyFor`) and post-install tips — callers still supply their
+   * own already-resolved `skillsDir` (e.g. via `resolveClientPath`/
+   * `getInstallPath`); this does not re-derive `skillsDir` from `client`.
+   */
+  client?: ClientId
 }
 export class SkillInstallationService {
   private readonly db: Database
@@ -71,6 +84,7 @@ export class SkillInstallationService {
   private readonly quarantineLookup?: (skillId: string) => QuarantineStatus | null
   private readonly riskHistoryRepo?: RiskScoreHistoryRepository
   private readonly aiDefenceFeedback?: AiDefenceFeedback
+  private readonly client: ClientId
   constructor(params: SkillInstallationServiceParams) {
     this.db = params.db
     this.skillRepo = params.skillRepo
@@ -84,6 +98,7 @@ export class SkillInstallationService {
     this.riskHistoryRepo = params.riskHistoryRepo
     this.aiDefenceFeedback = params.aiDefenceFeedback
     this.sessionInstalledSkillIds = params.sessionInstalledSkillIds ?? []
+    this.client = params.client ?? CANONICAL_CLIENT
   }
   async install(skillId: string, options: InstallOptions = {}): Promise<InstallResult> {
     let trustTier: TrustTier = 'unknown'
@@ -128,7 +143,8 @@ export class SkillInstallationService {
       const installPath = path.join(this.skillsDir, skillName)
       this.onProgress('manifest', 'Checking manifest')
       const manifest = await this.manifest.load()
-      if (manifest.installedSkills[skillName] && !options.force) {
+      const manifestKey = manifestKeyFor(skillName, this.client)
+      if (manifest.installedSkills[manifestKey] && !options.force) {
         return buildInstallFailure('ALREADY_INSTALLED', {
           skillId,
           installPath,
@@ -354,7 +370,7 @@ export class SkillInstallationService {
         ...currentManifest,
         installedSkills: {
           ...currentManifest.installedSkills,
-          [skillName]: {
+          [manifestKey]: {
             id: skillId,
             name: skillName,
             version: '1.0.0',
@@ -363,6 +379,7 @@ export class SkillInstallationService {
             installedAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
             originalContentHash: contentHash, // hash of optimized content (post-applyOptimization)
+            client: this.client,
           },
         },
       }))
@@ -409,7 +426,7 @@ export class SkillInstallationService {
         blocked: false,
       })
       this.onProgress('done', 'Installation complete')
-      const tips = generateTips(skillName, optimizationInfo)
+      const tips = generateTips(skillName, optimizationInfo, this.client, this.skillsDir)
       tips.unshift(...trendWarnings)
       tips.push(...optionalFiles.configWarnings)
       if (options.skipScan) {
@@ -451,6 +468,7 @@ export class SkillInstallationService {
       manifest: this.manifest,
       skillDependencyRepo: this.skillDependencyRepo,
       onProgress: this.onProgress,
+      client: this.client,
     })
   }
 }

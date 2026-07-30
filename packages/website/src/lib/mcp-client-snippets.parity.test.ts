@@ -134,9 +134,15 @@ describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', (
           })
         } else {
           const mcpServers = parsed.mcpServers as Record<string, { env?: Record<string, string> }>
-          expect(mcpServers['@skillsmith/mcp-server'].env).toEqual({
-            SKILLSMITH_API_KEY: expectedValue,
-          })
+          // SMI-5894 Wave 1 Step 7: cursor's body already carries
+          // SKILLSMITH_CLIENT before withApiKey() runs — the merged env
+          // block keeps that key alongside the injected API key, unlike
+          // every other JSON client whose env block starts empty.
+          const expectedEnv =
+            snippet.id === 'cursor'
+              ? { SKILLSMITH_CLIENT: 'cursor', SKILLSMITH_API_KEY: expectedValue }
+              : { SKILLSMITH_API_KEY: expectedValue }
+          expect(mcpServers['@skillsmith/mcp-server'].env).toEqual(expectedEnv)
         }
       } else if (snippet.format === 'toml') {
         expect(withKey).toContain(`SKILLSMITH_API_KEY = "${expectedValue}"`)
@@ -144,5 +150,19 @@ describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', (
         expect(withKey).toContain(`SKILLSMITH_API_KEY: "${expectedValue}"`)
       }
     }
+  })
+
+  // SMI-5894 Wave 1 Step 7: without SKILLSMITH_CLIENT, a Cursor user who
+  // copies the MCP snippet gets Claude Code's default install path
+  // (~/.claude/skills) instead of ~/.cursor/skills.
+  it('cursor snippet includes SKILLSMITH_CLIENT="cursor" even before an API key is added', () => {
+    const cursor = MCP_CLIENT_SNIPPETS.find((s) => s.id === 'cursor')
+    expect(cursor).toBeDefined()
+    const parsed = JSON.parse(cursor!.body) as {
+      mcpServers: Record<string, { env?: Record<string, string> }>
+    }
+    expect(parsed.mcpServers['@skillsmith/mcp-server'].env).toEqual({
+      SKILLSMITH_CLIENT: 'cursor',
+    })
   })
 })

@@ -64,6 +64,25 @@ const STANDARD_JSON_BODY = `{
   }
 }`
 
+// SMI-5894 Wave 1 Step 7: Cursor is the one "standard" JSON client that
+// does NOT reuse STANDARD_JSON_BODY — it needs SKILLSMITH_CLIENT in its own
+// env block so installs route to ~/.cursor/skills instead of the default
+// ~/.claude/skills. withApiKeyJson() below special-cases this body (like
+// the OpenCode branch) to merge SKILLSMITH_API_KEY into the EXISTING env
+// block rather than creating a new one via the generic STANDARD_ARGS_LINE
+// path, which assumes no env block is present yet.
+const CURSOR_JSON_BODY = `{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_CLIENT": "cursor"
+      }
+    }
+  }
+}`
+
 /** Per-client snippet matrix, in SNIPPET_DISPLAY_ORDER. */
 export const MCP_CLIENT_SNIPPETS: ReadonlyArray<McpClientSnippet> = [
   {
@@ -79,8 +98,9 @@ export const MCP_CLIENT_SNIPPETS: ReadonlyArray<McpClientSnippet> = [
     label: 'Cursor',
     configPath: '~/.cursor/mcp.json',
     format: 'json',
-    body: STANDARD_JSON_BODY,
-    notes: 'Cursor 2.4+ required. Reload the window after saving.',
+    body: CURSOR_JSON_BODY,
+    notes:
+      'Cursor 2.4+ required. Reload the window after saving. <code>SKILLSMITH_CLIENT</code> routes installs to <code>~/.cursor/skills</code> instead of the default <code>~/.claude/skills</code>. Recommended: <code>npm install -g @skillsmith/mcp-server</code> first, then point <code>command</code> at the installed <code>skillsmith-mcp</code> binary (run <code>which skillsmith-mcp</code> to get the exact path — it is platform/npm-prefix specific, e.g. <code>/opt/homebrew/bin/skillsmith-mcp</code> on macOS/Homebrew; Linux and Windows paths differ). The <code>npx</code> form above still works as a fallback, but re-resolves the package on every launch and may hit <code>EBADENGINE</code> (Cursor bundles its own Node, sometimes older than the <code>&gt;=22.22</code> this package requires) or <code>ENOTEMPTY</code> on repeated installs.',
   },
   {
     id: 'copilot',
@@ -164,6 +184,11 @@ args = ["-y", "@skillsmith/mcp-server"]`,
 
 const STANDARD_ARGS_LINE = /(\n {6}"args": \[[^\n]*\])\n( {4}\}\n)/
 const OPENCODE_ENABLED_LINE = /(\n {6}"enabled": true)\n( {4}\}\n)/
+// SMI-5894 Wave 1 Step 7: cursor's body already has an "env" block
+// (SKILLSMITH_CLIENT) before withApiKey() runs — matches the
+// "SKILLSMITH_CLIENT" line so SKILLSMITH_API_KEY is merged INTO that block
+// instead of STANDARD_ARGS_LINE trying (and failing) to insert a second one.
+const CURSOR_ENV_LINE = /(\n {8}"SKILLSMITH_CLIENT": "cursor")\n( {6}\}\n)/
 
 function withApiKeyJson(body: string, id?: McpClientId): string {
   // OpenCode's shape is keyed differently (`mcp` + `environment`, not
@@ -173,6 +198,15 @@ function withApiKeyJson(body: string, id?: McpClientId): string {
     return body.replace(
       OPENCODE_ENABLED_LINE,
       '$1,\n      "environment": {\n        "SKILLSMITH_API_KEY": "sk_live_your_key_here"\n      }\n$2'
+    )
+  }
+  // Cursor already has an "env" block (SKILLSMITH_CLIENT) — merge the API
+  // key into it rather than inserting a second "env" block via the generic
+  // STANDARD_ARGS_LINE branch below, which assumes none exists yet.
+  if (id === 'cursor') {
+    return body.replace(
+      CURSOR_ENV_LINE,
+      '$1,\n        "SKILLSMITH_API_KEY": "sk_live_your_key_here"\n$2'
     )
   }
   // Windsurf documents `${env:VAR}` interpolation, so its example shows the

@@ -8,7 +8,7 @@
 
 import chalk from 'chalk'
 import { createLocalFilesystemAdapter, type AdapterError, type SyncResult } from '@skillsmith/core'
-import { DEFAULT_SKILLS_DIR } from '../config.js'
+import { resolveClientPath } from '@skillsmith/core/install'
 
 /**
  * SMI-4482: Detect whether a failed sync was caused by exhausted/absent
@@ -51,15 +51,21 @@ export function formatAuthGuidance(): string[] {
 }
 
 /**
- * Scan `~/.claude/skills` for non-fatal adapter warnings.
+ * Scan the resolved client's skills directory for non-fatal adapter warnings.
  *
  * Pulls `SourceSearchResult.warnings[]` from a fresh LocalFilesystemAdapter
  * so `sync status` surfaces symlink-escape / permission / loop issues.
  * Returns an empty array if the skills dir does not exist (e.g. fresh
  * install) or the adapter fails to initialise — `sync status` must not
  * crash just because local skills couldn't be scanned.
+ *
+ * SMI-5894 (Wave 1 Step 4): `client` is resolved the same way as
+ * install/list/remove/update — explicit `--client`, else
+ * `SKILLSMITH_CLIENT`, else the canonical client — via
+ * `resolveClientPath()`, replacing the previously frozen `DEFAULT_SKILLS_DIR`
+ * (always Claude Code regardless of the env var).
  */
-export async function scanLocalSkillsForWarnings(): Promise<AdapterError[]> {
+export async function scanLocalSkillsForWarnings(client?: string): Promise<AdapterError[]> {
   try {
     const adapter = createLocalFilesystemAdapter({
       id: 'sync-status-local',
@@ -67,7 +73,7 @@ export async function scanLocalSkillsForWarnings(): Promise<AdapterError[]> {
       type: 'local',
       baseUrl: 'file://',
       enabled: true,
-      rootDir: DEFAULT_SKILLS_DIR,
+      rootDir: resolveClientPath(client),
       followSymlinks: true,
     })
     await adapter.initialize()

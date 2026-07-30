@@ -57,18 +57,31 @@ export const CLIENT_SNIPPETS: Record<SnippetClientId, ClientSnippet> = {
     label: 'Cursor',
     configPath: '~/.cursor/mcp.json',
     format: 'json',
+    // SMI-5894 Wave 1 Step 7: SKILLSMITH_CLIENT tells the server to install
+    // to ~/.cursor/skills instead of the default ~/.claude/skills — without
+    // it, Cursor users silently get Claude Code's install path.
     body: `{
   "mcpServers": {
     "{{name}}": {
       "command": "npx",
       "args": ["-y", "{{name}}"],
       "env": {
-        "SKILLSMITH_API_KEY": "sk_live_..."
+        "SKILLSMITH_API_KEY": "sk_live_...",
+        "SKILLSMITH_CLIENT": "cursor"
       }
     }
   }
 }`,
-    notes: 'Cursor 2.4+ required. Reload the window after saving.',
+    notes:
+      'Cursor 2.4+ required. Reload the window after saving. ' +
+      'Recommended: `npm install -g {{name}}` first, then point `command` at the ' +
+      'installed `skillsmith-mcp` binary (run `which skillsmith-mcp` after installing ' +
+      'to get the exact path — it varies by platform/npm prefix, e.g. ' +
+      '`/opt/homebrew/bin/skillsmith-mcp` on macOS/Homebrew, a different path on Linux/Windows). ' +
+      'The `npx -y {{name}}` form above still works as a fallback, but re-resolves the ' +
+      'package on every launch — expect a slower cold start, and watch for EBADENGINE ' +
+      '(Cursor bundles its own Node, sometimes older than the >=22.22 this package requires) ' +
+      'or ENOTEMPTY errors on repeated installs.',
   },
   copilot: {
     label: 'GitHub Copilot (VS Code)',

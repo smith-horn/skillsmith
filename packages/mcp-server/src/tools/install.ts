@@ -21,7 +21,7 @@ import {
   type RegistrySkillInfo,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import { addLink, getInstallPath, resolveClientPath } from '@skillsmith/core/install'
+import { addLink, getInstallPath, resolveClientId } from '@skillsmith/core/install'
 import { resolveAuditMode, isAuditMode, type Tier } from '@skillsmith/core/config/audit-mode'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
@@ -164,11 +164,16 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
 
   const context = _context ?? getToolContext()
 
-  // SMI-4578: resolve target install directory. Explicit `client` arg
-  // wins; otherwise fall back to SKILLSMITH_CLIENT env (or claude-code).
-  const effectiveSkillsDir = validInput.client
-    ? getInstallPath(validInput.client)
-    : resolveClientPath()
+  // SMI-4578: resolve target client + install directory together. Explicit
+  // `client` arg wins; otherwise fall back to SKILLSMITH_CLIENT env (or
+  // claude-code). SMI-5894 review: previously only the directory was
+  // resolved here and `client` was never passed to SkillInstallationService,
+  // so a non-canonical MCP install (e.g. Cursor) landed in the right
+  // directory but was keyed in the manifest as if it were canonical --
+  // colliding with a real canonical install of the same skill name and
+  // invisible to `name::cursor`-scoped removal.
+  const effectiveClient = resolveClientId(validInput.client)
+  const effectiveSkillsDir = getInstallPath(effectiveClient)
 
   // SMI-3483: Create core service instance with MCP context wiring
   // SMI-3873: aiDefenceFeedback omitted -- MCP server cannot call Ruflo tools.
@@ -180,6 +185,7 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     coInstallRecorder: context.coInstallRepository,
     sessionInstalledSkillIds: context.sessionInstalledSkillIds,
     skillsDir: effectiveSkillsDir,
+    client: effectiveClient,
   })
 
   // SMI-1867: Pre-flight conflict check for reinstall with force

@@ -27,13 +27,24 @@ import {
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { openCliDatabase } from '../utils/open-database.js'
-import { addLink, assertClientId, getInstallPath, type ClientId } from '@skillsmith/core/install'
+import {
+  addLink,
+  assertClientId,
+  getInstallPath,
+  resolveClientId,
+  type ClientId,
+} from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 
 const logger = getCliLogger()
 
-const VALID_CLIENT_HINT =
+/**
+ * SMI-5894 (Wave 1 Step 1/2/4): shared help-text fragment for every
+ * `--client` flag across install/list/remove/update/sync — kept in one
+ * place so the valid-IDs list can't drift between commands.
+ */
+export const VALID_CLIENT_HINT =
   'Valid IDs: claude-code | cursor | copilot | windsurf | agents | opencode | hermes ' +
   '(Codex users pass --client agents).'
 
@@ -258,16 +269,20 @@ async function installActionImpl(
   const jsonOutput = opts.json ?? false
 
   try {
-    // SMI-4578: validate --client and parse --also-link before any
-    // I/O so a bad flag fails fast with a friendly hint.
-    const rawClient = opts.client ?? 'claude-code'
-    if (rawClient.includes(',')) {
+    // SMI-4578 / SMI-5894 Wave 1 Step 1: validate --client and parse
+    // --also-link before any I/O so a bad flag fails fast with a friendly
+    // hint. An explicit --client always wins; otherwise fall back to
+    // SKILLSMITH_CLIENT (mirrors MCP's install_skill tool pattern —
+    // packages/mcp-server/src/tools/install.ts's `resolveClientPath()`
+    // call) instead of silently defaulting to claude-code and ignoring the
+    // env var, which was the actual bug (SKILLSMITH_CLIENT=cursor was
+    // silently ignored unless --client was ALSO passed explicitly).
+    if (opts.client !== undefined && opts.client.includes(',')) {
       throw new Error(
-        `--client takes a single value (got '${rawClient}'). Pass --also-link <ids> to fan-out into additional clients.`
+        `--client takes a single value (got '${opts.client}'). Pass --also-link <ids> to fan-out into additional clients.`
       )
     }
-    assertClientId(rawClient)
-    const client: ClientId = rawClient
+    const client: ClientId = resolveClientId(opts.client ?? process.env['SKILLSMITH_CLIENT'])
     const alsoLinkClients = parseAlsoLink(opts.alsoLink, client)
     const skillsDir = getInstallPath(client)
 
@@ -308,6 +323,7 @@ async function installActionImpl(
         skillsDir,
         manifestPath: DEFAULT_MANIFEST_PATH,
         registryLookup,
+        client,
         onProgress: (_stage: string, detail: string) => {
           if (spinner) {
             spinner.text = detail
@@ -425,7 +441,10 @@ export function createInstallCommand(): Command {
     .option('-q, --quiet', 'Suppress advisory output')
     .option('--json', 'Output structured JSON result')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
-    .option('--client <id>', `install for a specific agent (${VALID_CLIENT_HINT})`, 'claude-code')
+    .option(
+      '--client <id>',
+      `install for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .option(
       '--also-link <ids>',
       'comma-separated additional clients to fan-out into (default: copy; pair with --symlink for POSIX symlinks)',

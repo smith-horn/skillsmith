@@ -88,14 +88,17 @@ Restart Claude Code after editing settings.json.
       "command": "npx",
       "args": ["-y", "@skillsmith/mcp-server"],
       "env": {
-        "SKILLSMITH_API_KEY": "sk_live_..."
+        "SKILLSMITH_API_KEY": "sk_live_...",
+        "SKILLSMITH_CLIENT": "cursor"
       }
     }
   }
 }
 ```
 
-Cursor 2.4+ required. Reload the window after saving.
+Cursor 2.4+ required. Reload the window after saving. `SKILLSMITH_CLIENT` routes installs to `~/.cursor/skills` instead of the default `~/.claude/skills`.
+
+**Recommended**: `npm install -g @skillsmith/mcp-server` first, then point `command` at the installed `skillsmith-mcp` binary — run `which skillsmith-mcp` after installing to get the exact path (it's platform/npm-prefix specific, e.g. `/opt/homebrew/bin/skillsmith-mcp` on macOS/Homebrew; Linux and Windows paths differ). The `npx -y @skillsmith/mcp-server` form above still works as a fallback, but re-resolves the package on every launch — expect a slower cold start, and watch for `EBADENGINE` (Cursor bundles its own Node, sometimes older than the `>=22.22` this package requires) or `ENOTEMPTY` errors on repeated installs.
 
 </details>
 
@@ -377,7 +380,7 @@ See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+ (Docker with glibc)
+- **Runtime**: Node.js >=22.22 (Docker with glibc)
 - **Protocol**: MCP (Model Context Protocol)
 - **Database**: SQLite with FTS5
 - **Embeddings**: all-MiniLM-L6-v2 via onnxruntime-node
