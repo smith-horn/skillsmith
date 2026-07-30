@@ -53,9 +53,10 @@ const supabaseConfig = getSupabaseConfig()
     <script is:inline>
       window.dataLayer = window.dataLayer || []
       function gtag() {
+        // eslint-disable-next-line prefer-rest-params -- Google's official gtag.js/GTM Consent Mode snippet, copied verbatim; do not modify (SMI-5899)
         dataLayer.push(arguments)
       }
-      var consent = localStorage.getItem('skillsmith_cookie_consent')
+      const consent = localStorage.getItem('skillsmith_cookie_consent')
       gtag('consent', 'default', {
         analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
         ad_storage: 'denied',
@@ -371,15 +372,15 @@ const supabaseConfig = getSupabaseConfig()
     <!-- MCP config copy button -->
     <script is:inline>
       document.addEventListener('astro:page-load', function () {
-        var btn = document.getElementById('copy-mcp-config')
+        const btn = document.getElementById('copy-mcp-config')
         if (!btn) return
         btn.addEventListener('click', function () {
-          var code = document.getElementById('mcp-install-code')
+          const code = document.getElementById('mcp-install-code')
           if (!code) return
           navigator.clipboard.writeText(code.textContent || '').then(function () {
-            var copyIcon = document.getElementById('copy-icon')
-            var checkIcon = document.getElementById('check-icon')
-            var copyText = document.getElementById('copy-text')
+            const copyIcon = document.getElementById('copy-icon')
+            const checkIcon = document.getElementById('check-icon')
+            const copyText = document.getElementById('copy-text')
             if (copyIcon) copyIcon.classList.add('hidden')
             if (checkIcon) checkIcon.classList.remove('hidden')
             if (copyText) copyText.textContent = 'Copied!'

@@ -196,9 +196,10 @@ const jsonLd = {
     <script is:inline>
       window.dataLayer = window.dataLayer || []
       function gtag() {
+        // eslint-disable-next-line prefer-rest-params -- Google's official gtag.js/GTM Consent Mode snippet, copied verbatim; do not modify (SMI-5899)
         dataLayer.push(arguments)
       }
-      var consent = localStorage.getItem('skillsmith_cookie_consent')
+      const consent = localStorage.getItem('skillsmith_cookie_consent')
       gtag('consent', 'default', {
         analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
         ad_storage: 'denied',
@@ -903,7 +904,7 @@ const jsonLd = {
         document.querySelectorAll('details').forEach(function (el) {
           el.addEventListener('toggle', function () {
             if (el.open && typeof gtag === 'function') {
-              var q = el.querySelector('summary')
+              const q = el.querySelector('summary')
               gtag('event', 'homepage_faq_expand', {
                 faq_question: q ? q.textContent.trim().slice(0, 100) : '',
               })
@@ -976,9 +977,9 @@ const jsonLd = {
     </div>
     <script is:inline>
       ;(function () {
-        var c = localStorage.getItem('skillsmith_cookie_consent')
+        const c = localStorage.getItem('skillsmith_cookie_consent')
         if (c) return
-        var b = document.getElementById('cookie-consent')
+        const b = document.getElementById('cookie-consent')
         if (!b) return
         b.hidden = false
         document.getElementById('cookie-accept').addEventListener('click', function () {
@@ -1015,7 +1016,7 @@ const jsonLd = {
           const elFeature = document.getElementById('skill-count-feature')
           const elInstall = document.getElementById('skill-count-install')
           if (count > 0) {
-            var formattedCount = formatNumber(count) + '+'
+            const formattedCount = formatNumber(count) + '+'
             if (elFeature) elFeature.textContent = formattedCount
             if (elInstall) elInstall.textContent = formattedCount
           }
@@ -1023,26 +1024,26 @@ const jsonLd = {
 
         function updateGithubTotal(total, skillCount) {
           if (total > 0 && total > skillCount) {
-            var formatted = formatNumber(total) + '+'
-            var elInstallCount = document.getElementById('github-total-count-install')
+            const formatted = formatNumber(total) + '+'
+            const elInstallCount = document.getElementById('github-total-count-install')
             if (elInstallCount) elInstallCount.textContent = formatted
-            var elInstall = document.getElementById('github-total-install')
+            const elInstall = document.getElementById('github-total-install')
             if (elInstall) elInstall.classList.remove('hidden')
           }
         }
 
         // Check localStorage cache first
         try {
-          var cached = localStorage.getItem(CACHE_KEY)
+          const cached = localStorage.getItem(CACHE_KEY)
           if (cached) {
-            var parsed = JSON.parse(cached)
+            const parsed = JSON.parse(cached)
             if (Date.now() - parsed.timestamp < CACHE_TTL) {
               updateCount(parsed.count)
             }
           }
-          var cachedGithub = localStorage.getItem(CACHE_KEY_GITHUB)
+          const cachedGithub = localStorage.getItem(CACHE_KEY_GITHUB)
           if (cachedGithub) {
-            var parsedGithub = JSON.parse(cachedGithub)
+            const parsedGithub = JSON.parse(cachedGithub)
             if (Date.now() - parsedGithub.timestamp < CACHE_TTL && cached) {
               updateGithubTotal(parsedGithub.total, JSON.parse(cached).count)
             }
@@ -1056,7 +1057,7 @@ const jsonLd = {
           })
           .then(function (data) {
             if (data.data && data.data.skillCount) {
-              var count = data.data.skillCount
+              const count = data.data.skillCount
               updateCount(count)
               try {
                 localStorage.setItem(
@@ -1066,7 +1067,7 @@ const jsonLd = {
               } catch (e) {}
 
               // Update GitHub total if available
-              var githubTotal = data.data.githubTotal
+              const githubTotal = data.data.githubTotal
               if (githubTotal) {
                 updateGithubTotal(githubTotal, count)
                 try {
