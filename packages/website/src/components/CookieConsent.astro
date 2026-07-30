@@ -111,10 +111,10 @@
 
 <script is:inline>
   ;(function () {
-    var consent = localStorage.getItem('skillsmith_cookie_consent')
+    const consent = localStorage.getItem('skillsmith_cookie_consent')
     if (consent) return // Already made a choice
 
-    var banner = document.getElementById('cookie-consent')
+    const banner = document.getElementById('cookie-consent')
     if (!banner) return
     banner.hidden = false
 

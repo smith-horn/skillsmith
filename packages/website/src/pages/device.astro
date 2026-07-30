@@ -322,7 +322,7 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
 
       codeInput?.addEventListener('paste', (e: ClipboardEvent) => {
         e.preventDefault()
-        const pasted = (e.clipboardData?.getData('text') ?? '').replace(/[\s\-]/g, '')
+        const pasted = (e.clipboardData?.getData('text') ?? '').replace(/[\s-]/g, '')
         if (codeInput) {
           codeInput.value = ''
           codeInput.value = formatCode(pasted)

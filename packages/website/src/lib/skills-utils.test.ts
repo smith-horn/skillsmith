@@ -46,8 +46,8 @@ describe('formatNumber', () => {
   it('formats numbers with locale grouping', () => {
     // Asserts grouping happens without pinning a locale-specific separator.
     expect(formatNumber(0)).toBe('0')
-    expect(formatNumber(1234).replace(/[,.\s ]/g, '')).toBe('1234')
-    expect(formatNumber(10000).replace(/[,.\s ]/g, '')).toBe('10000')
+    expect(formatNumber(1234).replace(/[,.\s]/g, '')).toBe('1234')
+    expect(formatNumber(10000).replace(/[,.\s]/g, '')).toBe('10000')
   })
 })
 

@@ -28,6 +28,8 @@ declare global {
     __AUTH_REDIRECT_TO__?: string
     /** Google Analytics gtag function (injected by GA script in BaseLayout) */
     gtag?: (...args: unknown[]) => void
+    /** SMI-3909: tier pricing lookup injected server-side for client-side plan display. */
+    __TIER_LOOKUP__?: Record<string, { name: string; price: string; apiCalls: string }>
     /** SMI-4895/4896: device-login state — on window so it survives hard navigations. */
     __deviceInited?: boolean
     __deviceState?: 'input' | 'preview' | 'approved' | 'expired' | 'denied'
