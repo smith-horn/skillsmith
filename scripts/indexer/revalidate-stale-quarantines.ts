@@ -340,9 +340,15 @@ export async function loadCandidates(
   return out
 }
 
-/** Run the full stale-revalidation sweep. */
-export async function runSweep(opts: { apply: boolean; limit?: number }): Promise<SweepCounts> {
-  const db = createSupabaseAdminClient()
+/**
+ * Run the full stale-revalidation sweep. `db` is caller-constructed (SMI-Q,
+ * design 11.2.7) so Gate C's client-construction ordering is observable in
+ * `main()`, not hidden behind a second client built inside this function.
+ */
+export async function runSweep(
+  db: SupabaseClient,
+  opts: { apply: boolean; limit?: number }
+): Promise<SweepCounts> {
   const headers = await buildGitHubHeaders()
 
   const rows = await loadCandidates(db, opts.limit)
@@ -465,17 +471,20 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
 /** Parse CLI arguments and run the sweep. Skipped when imported by tests. */
 async function main(): Promise<void> {
   // SMI-5879 Gate C: env-sourced check first (no dependency on a DB round
-  // trip), then the DB-sourced freeze marker immediately after client
-  // construction — see the call-site contract in the design doc (8.3.3.2).
+  // trip), then the client is constructed ONCE (round-7 SMI-Q — the same
+  // client Gate C's freeze-marker check reads is the same client runSweep()
+  // writes with, so the "immediately after client construction" ordering is
+  // observable in one function, not hidden behind a second, independently
+  // constructed client inside runSweep() — see the design doc 11.2.7).
   assertRunAllowed('revalidate')
-  const gateClient = createSupabaseAdminClient()
-  await assertFreezeMarkerClear(gateClient, 'revalidate')
+  const db = createSupabaseAdminClient()
+  await assertFreezeMarkerClear(db, 'revalidate')
   const apply = process.argv.includes('--apply')
   const limitArg = process.argv.find((a) => a.startsWith('--limit'))
   const limit = limitArg
     ? Number(limitArg.split('=')[1] ?? process.argv[process.argv.indexOf(limitArg) + 1])
     : undefined
-  await runSweep({ apply, limit: Number.isFinite(limit) ? limit : undefined })
+  await runSweep(db, { apply, limit: Number.isFinite(limit) ? limit : undefined })
 }
 
 // Run only when invoked directly (not when imported by the test suite).
