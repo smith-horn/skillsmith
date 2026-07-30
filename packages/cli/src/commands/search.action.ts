@@ -20,6 +20,7 @@ import {
   type SearchOptions,
   type TrustTier,
 } from '@skillsmith/core'
+import { getInstallPath, resolveClientId } from '@skillsmith/core/install'
 // SMI-5039: lazy embedding-capability probe.
 import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
 import { getCliLogger } from '../cli-logger.js'
@@ -222,11 +223,20 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
                 // flags (shared with `install`), so a quarantined skill cannot be
                 // installed from interactive search.
                 const registryLookup = await createApiBackedRegistryLookup(skillRepo, db)
+                // SMI-5894 retro: this sibling install path predates Wave 1 and
+                // was never updated alongside `install`'s own client-targeting
+                // fix -- it always installed to the canonical directory
+                // regardless of SKILLSMITH_CLIENT. No --client flag on
+                // `search` itself (that's its own scope decision), but the
+                // env var is honored, matching install's Step 1 baseline.
+                const client = resolveClientId(process.env['SKILLSMITH_CLIENT'])
                 const installService = new SkillInstallationService({
                   db,
                   skillRepo,
                   skillDependencyRepo,
                   registryLookup,
+                  skillsDir: getInstallPath(client),
+                  client,
                   onProgress: (_stage: string, detail: string) => {
                     installSpinner.text = detail
                   },
