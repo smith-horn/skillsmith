@@ -53,9 +53,10 @@ const supabaseConfig = getSupabaseConfig()
     <script is:inline>
       window.dataLayer = window.dataLayer || []
       function gtag() {
+        // eslint-disable-next-line prefer-rest-params -- Google's official gtag.js/GTM Consent Mode snippet, copied verbatim; do not modify (SMI-5902)
         dataLayer.push(arguments)
       }
-      var consent = localStorage.getItem('skillsmith_cookie_consent')
+      const consent = localStorage.getItem('skillsmith_cookie_consent')
       gtag('consent', 'default', {
         analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
         ad_storage: 'denied',
@@ -299,15 +300,15 @@ const supabaseConfig = getSupabaseConfig()
     <!-- MCP config copy button -->
     <script is:inline>
       document.addEventListener('astro:page-load', function () {
-        var btn = document.getElementById('copy-mcp-config')
+        const btn = document.getElementById('copy-mcp-config')
         if (!btn) return
         btn.addEventListener('click', function () {
-          var code = document.getElementById('mcp-install-code')
+          const code = document.getElementById('mcp-install-code')
           if (!code) return
           navigator.clipboard.writeText(code.textContent || '').then(function () {
-            var copyIcon = document.getElementById('copy-icon')
-            var checkIcon = document.getElementById('check-icon')
-            var copyText = document.getElementById('copy-text')
+            const copyIcon = document.getElementById('copy-icon')
+            const checkIcon = document.getElementById('check-icon')
+            const copyText = document.getElementById('copy-text')
             if (copyIcon) copyIcon.classList.add('hidden')
             if (checkIcon) checkIcon.classList.remove('hidden')
             if (copyText) copyText.textContent = 'Copied!'
@@ -333,11 +334,11 @@ const supabaseConfig = getSupabaseConfig()
       }}
     >
       document.addEventListener('astro:page-load', function () {
-        var input = document.getElementById('v2-search-input')
-        var results = document.getElementById('v2-search-results')
+        const input = document.getElementById('v2-search-input')
+        const results = document.getElementById('v2-search-results')
         if (!input || !results) return
 
-        var debounceTimer = null
+        let debounceTimer = null
 
         // SMI-5217: 5-tier public vocabulary (ApiTrustTier). Colors come from the
         // shared trustTierPillClasses map (define:vars). The API never returns
@@ -348,21 +349,21 @@ const supabaseConfig = getSupabaseConfig()
         }
 
         function renderSkill(skill) {
-          var a = document.createElement('a')
+          const a = document.createElement('a')
           a.href = '/skills/' + encodeURIComponent(skill.id || '')
           a.className =
             'flex flex-col gap-1 p-4 rounded-xl border border-white/[0.06] hover:border-primary-400/40 bg-dark-900/40 hover:bg-dark-900 transition-all'
-          var top = document.createElement('div')
+          const top = document.createElement('div')
           top.className = 'flex items-center gap-2'
-          var name = document.createElement('span')
+          const name = document.createElement('span')
           name.className = 'font-semibold text-white text-sm truncate'
           name.textContent = skill.name || skill.id || ''
-          var badge = document.createElement('span')
+          const badge = document.createElement('span')
           badge.className = badgeClasses(skill.trust_tier)
           badge.textContent = skill.trust_tier || 'unverified'
           top.appendChild(name)
           top.appendChild(badge)
-          var desc = document.createElement('p')
+          const desc = document.createElement('p')
           desc.className = 'text-xs text-dark-400 line-clamp-2'
           desc.textContent = skill.description || ''
           a.appendChild(top)
@@ -381,7 +382,7 @@ const supabaseConfig = getSupabaseConfig()
             })
             .then(function (data) {
               results.innerHTML = ''
-              var skills = data.skills || []
+              const skills = data.skills || []
               if (skills.length === 0) {
                 results.innerHTML =
                   '<p class="text-dark-500 text-sm col-span-2 text-center pt-8">No results for &ldquo;' +

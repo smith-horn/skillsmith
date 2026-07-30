@@ -830,7 +830,7 @@ const tierLookup = Object.fromEntries(
       ) as HTMLElement
 
       // Tier data injected from canonical pricing source (SMI-3909)
-      const tl = (window as any).__TIER_LOOKUP__ || {}
+      const tl = window.__TIER_LOOKUP__ || {}
       const tierInfo = tl[tier] || {
         name: 'Community Plan',
         price: 'Free',
