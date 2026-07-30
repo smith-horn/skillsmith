@@ -61,6 +61,11 @@ AUTHENTICATED_FUNCTIONS=(
   "inventory-upload"
   "purge-inventory"
   "team-compliance-check"
+  # SMI-5905: verify_jwt = false at the gateway, but the handler authoritatively
+  # validates the caller's own user JWT (adminClient.auth.getUser) and then re-reads
+  # the row under that token so RLS scopes it — an AUTHENTICATED runtime auth model
+  # deployed with --no-verify-jwt, same as admin-grant-subscription above.
+  "private-registry-get"
 )
 
 # Service role functions (scheduled jobs, internal)

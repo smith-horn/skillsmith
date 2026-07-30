@@ -498,6 +498,13 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // Same auth model as admin-grant-subscription (in-handler service-role
   // secret compare or profiles.role admin check); gateway does not verify JWT.
   'admin-incident-manage',
+  // SMI-5905: private-registry-get — private-registry skill content fetch. The
+  // gateway is deliberately NOT the gate: the handler authoritatively validates
+  // the caller's own user JWT via adminClient.auth.getUser(), independent of the
+  // shared auth-middleware's JWT_AUTH_PERCENTAGE rollout flag (which defaults to
+  // 0), then re-reads the row under that same token so RLS scopes it. Same
+  // in-handler-auth shape as admin-grant-subscription / admin-incident-manage.
+  'private-registry-get',
   // Service-role batch-send functions (SMI-4400)
   // Deployed with --no-verify-jwt because service-role callers present the
   // service-role key in the Authorization header; gateway JWT check would
