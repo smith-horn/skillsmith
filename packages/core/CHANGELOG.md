@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Change**: `hashContent` and `manifestKeyFor` are now re-exported from the package root (`@skillsmith/core`) alongside the existing `@skillsmith/core/services/skill-installation-helpers` subpath, so callers outside `core` can reach them through the specifier they already import. Additive — the subpath export is unchanged (SMI-5895)
 - **Feature**: new two-level owned-lock primitive at `@skillsmith/core/config/owned-lock` (`acquireOwnedLock`) replacing the single-level, age-based `acquireConfigLock` (which `config-atomic-write.ts` now implements as a thin wrapper over it). The single-level design was unsound under review: it turned "I inspected this path and concluded the holder is dead" into an unconditional destructive unlink with no mutual exclusion against another reclaimer doing the same. The new design adds a second, strict-never-auto-reclaimed reclaim lock that serializes every reclaim decision, so the authorization to reclaim can no longer go stale between being computed and being consumed. Ownership is verified on release (a token, not just file presence); ships with `StuckLockError` naming a stable `reason` for mechanical triage plus the manual-unstick procedure. Opt-out: `SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1` (SMI-5883)
 
 ## v0.11.4
