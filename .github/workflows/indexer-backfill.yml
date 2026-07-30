@@ -238,8 +238,14 @@ jobs:
           # RUN_TYPE always discovery for backfill (no maintenance or recheck).
           RUN_TYPE: 'discovery'
           # STALE_DAYS not set -- backfill mode bypasses the freshness window entirely.
-          # CONCURRENCY_KILL_SWITCH honored via EFFECTIVE_KILL_SWITCH at job level;
-          # indexer run.ts also checks this env var for in-run abort.
+          # CONCURRENCY_KILL_SWITCH honored via EFFECTIVE_KILL_SWITCH at job level.
+          # SMI-5879 (8.3.2.1): CORRECTED -- this comment previously claimed
+          # "indexer run.ts also checks this env var for in-run abort," which is
+          # false. parse-env.ts's `kill_switch_engaged` is CONCURRENCY_KILL_SWITCH's
+          # ONLY consumer, and it only forces concurrency=1 -- there is no abort
+          # path in run.ts. What actually aborts THIS workflow before any work is
+          # the "Kill-switch gate" step above (checks EFFECTIVE_KILL_SWITCH itself,
+          # sourced from BACKFILL_KILL_SWITCH / the kill_switch input).
           CONCURRENCY_KILL_SWITCH: ${{ env.EFFECTIVE_KILL_SWITCH }}
         run: |
           set -eo pipefail

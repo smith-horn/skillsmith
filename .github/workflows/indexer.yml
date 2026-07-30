@@ -116,6 +116,34 @@ jobs:
       CONCURRENCY_KILL_SWITCH: ${{ (vars.INDEXER_CONCURRENCY_KILL_SWITCH == '1' || github.event.inputs.concurrency_kill_switch == 'true') && '1' || '0' }}
 
     steps:
+      - name: Allow-list gate (A)
+        # SMI-5879: job-level freeze switch, checked before ANY secret is read
+        # or run-type derived. No dependency on run-type derivation, so a
+        # blanket freeze cannot be defeated by a malformed dispatch payload.
+        # Byte-for-byte the indexer-backfill.yml "Kill-switch gate" shape.
+        # Inert in steady state (unset/'all', the default).
+        env:
+          INDEXER_RUN_ALLOWLIST: ${{ vars.INDEXER_RUN_ALLOWLIST }}
+        run: |
+          if [ "$INDEXER_RUN_ALLOWLIST" = "none" ]; then
+            echo "::error::Indexer run-type allow-list is engaged (INDEXER_RUN_ALLOWLIST=none) -- all indexer run types are frozen. Aborting before any secret is read."
+            exit 1
+          fi
+          echo "Allow-list gate (A): INDEXER_RUN_ALLOWLIST=${INDEXER_RUN_ALLOWLIST:-<unset>} -- proceeding."
+
+      - name: Pinned-SHA gate (D)
+        # SMI-5879: during a change window the operator pins the exact commit every
+        # substrate-N-CI writer may execute. A merge landing mid-cycle changes the code
+        # the NEXT phase runs (checkout has no `ref:`, so it tracks main's HEAD) -- this
+        # fails that phase red instead of running unverified code against the quarantine
+        # gate. Inert when the variable is empty, which is the steady-state default.
+        if: vars.INDEXER_RUN_PINNED_SHA != ''
+        run: |
+          if [ "${{ github.sha }}" != "${{ vars.INDEXER_RUN_PINNED_SHA }}" ]; then
+            echo "::error::Run SHA ${{ github.sha }} != pinned ${{ vars.INDEXER_RUN_PINNED_SHA }} -- a merge landed since the last canary. Aborting; re-canary before lifting the pin."
+            exit 1
+          fi
+
       - name: Validate Secrets
         env:
           # Issue #17: select prod vs staging secret pair based on supabase_env input.
@@ -271,6 +299,48 @@ jobs:
           echo "discovery_phase=$DISCOVERY_PHASE" >> "$GITHUB_OUTPUT"
           echo "Run type: $RUN_TYPE, Stale days: $STALE_DAYS, Cron slot: ${CRON_SLOT:-<none>}, Discovery phase: ${DISCOVERY_PHASE:-<none>}"
 
+      - name: Allow-list gate (B)
+        # SMI-5879: second layer -- after run-type derivation, before Run indexer.
+        # Same vocabulary as assertRunAllowed (scripts/indexer/run-gate.ts):
+        # unset/'all' permits everything; 'none' refuses everything; a
+        # comma-separated subset permits only the listed run types; any other
+        # value refuses (fail closed -- a typo must never read as 'all').
+        env:
+          INDEXER_RUN_ALLOWLIST: ${{ vars.INDEXER_RUN_ALLOWLIST }}
+          RUN_TYPE: ${{ steps.config.outputs.run_type }}
+        run: |
+          ALLOWLIST=$(echo "${INDEXER_RUN_ALLOWLIST:-}" | tr '[:upper:]' '[:lower:]' | xargs)
+          if [ -z "$ALLOWLIST" ] || [ "$ALLOWLIST" = "all" ]; then
+            echo "Allow-list gate (B): no restriction (INDEXER_RUN_ALLOWLIST=${ALLOWLIST:-<unset>}) -- proceeding with run_type=$RUN_TYPE."
+            exit 0
+          fi
+          if [ "$ALLOWLIST" = "none" ]; then
+            echo "::error::Indexer run-type allow-list is engaged (INDEXER_RUN_ALLOWLIST=none) -- refusing run_type=$RUN_TYPE."
+            exit 1
+          fi
+          # Validate every comma-separated token is a recognised run type;
+          # an unrecognised token anywhere fails the WHOLE value closed.
+          IFS=',' read -ra TOKENS <<< "$ALLOWLIST"
+          PERMITTED=false
+          for TOKEN in "${TOKENS[@]}"; do
+            TOKEN=$(echo "$TOKEN" | xargs)
+            case "$TOKEN" in
+              discovery|maintenance|recheck|dequarantine|purge|revalidate) ;;
+              *)
+                echo "::error::INDEXER_RUN_ALLOWLIST=\"$ALLOWLIST\" contains an unrecognised value \"$TOKEN\" -- refusing run_type=$RUN_TYPE (fail closed)."
+                exit 1
+                ;;
+            esac
+            if [ "$TOKEN" = "$RUN_TYPE" ]; then
+              PERMITTED=true
+            fi
+          done
+          if [ "$PERMITTED" != "true" ]; then
+            echo "::error::INDEXER_RUN_ALLOWLIST=\"$ALLOWLIST\" does not permit run_type=$RUN_TYPE. Aborting."
+            exit 1
+          fi
+          echo "Allow-list gate (B): run_type=$RUN_TYPE permitted by INDEXER_RUN_ALLOWLIST=\"$ALLOWLIST\"."
+
       - name: Checkout
         # SHA-pinned per audit-workflow-sha-pin (Check 42 / SMI-4758). Tag = v6.
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -314,6 +384,11 @@ jobs:
           RECHECK_MAX_CANDIDATES: ${{ vars.RECHECK_MAX_CANDIDATES || '2000' }}
           RECHECK_BATCH: ${{ vars.RECHECK_BATCH || '5' }}
           RECHECK_DRY_RUN: ${{ vars.RECHECK_DRY_RUN || 'true' }}
+          # SMI-5879: plumbs recheck.ts's own execution gate (recheck.ts:188,
+          # 212-234) into the workflow -- previously dead code from the repo-variable
+          # surface (no workflow ever set it). Defaults enabled; an explicit
+          # 'false'/'0' repo var skips the recheck writer's own fetch/write path.
+          RECHECK_ENABLED: ${{ vars.RECHECK_ENABLED || 'true' }}
           # SMI-5356: dequarantine-sweep dry-run gate, independent of the workflow
           # dry_run input (mirrors RECHECK_DRY_RUN). Defaults 'true' so a dispatch
           # is read-only unless the repo var is deliberately flipped to 'false' for

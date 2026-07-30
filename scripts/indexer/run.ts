@@ -29,6 +29,7 @@ import {
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
 import { parseEnv, type IndexerEnv } from './parse-env.ts'
+import { assertRunAllowed } from './run-gate.ts'
 import { DEFAULT_TOPICS } from './topic-search.ts'
 import { DEFAULT_MIN_CONTENT_LENGTH } from './skill-processor.ts'
 import { selectTopics, type RotationSource } from './topic-rotation.ts'
@@ -295,6 +296,7 @@ async function runRecheckBranch(
 
 async function main(): Promise<void> {
   const env = parseEnv()
+  assertRunAllowed(env.RUN_TYPE)
   const requestId = getRequestId()
   const supabase = createSupabaseAdminClient()
   const telemetry = newRateLimitTelemetry()

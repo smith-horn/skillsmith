@@ -12,6 +12,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createSupabaseAdminClient } from './_shared/supabase.ts'
+import { assertRunAllowed, assertFreezeMarkerClear } from './run-gate.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import {
   scanSkillContent,
@@ -463,6 +464,12 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
 
 /** Parse CLI arguments and run the sweep. Skipped when imported by tests. */
 async function main(): Promise<void> {
+  // SMI-5879 Gate C: env-sourced check first (no dependency on a DB round
+  // trip), then the DB-sourced freeze marker immediately after client
+  // construction — see the call-site contract in the design doc (8.3.3.2).
+  assertRunAllowed('revalidate')
+  const gateClient = createSupabaseAdminClient()
+  await assertFreezeMarkerClear(gateClient, 'revalidate')
   const apply = process.argv.includes('--apply')
   const limitArg = process.argv.find((a) => a.startsWith('--limit'))
   const limit = limitArg
