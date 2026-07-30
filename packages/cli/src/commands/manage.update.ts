@@ -10,18 +10,28 @@ import { confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
 import { readFile } from 'fs/promises'
-import { join } from 'path'
+import { basename, join } from 'path'
 import {
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
-  SkillParser,
+  SourceRecoveryService,
+  hashContent,
+  manifestKeyFor,
+  type DatabaseType,
+  type RecoveryConfidence,
   type Skill,
+  type SkillRecoveryResult,
 } from '@skillsmith/core'
 import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
+import { loadManifest } from '../utils/manifest.js'
 import { getInstalledSkillsForClient, type InstalledSkill } from '../utils/skills-directory.js'
+import {
+  buildFindCandidatesByName,
+  buildFindRegistryIdByRepoUrl,
+} from '../utils/source-recovery-deps.js'
 import { createApiBackedRegistryLookup } from './install.js'
 import { CANONICAL_CLIENT, getInstallPath, type ClientId } from '@skillsmith/core/install'
 
@@ -34,22 +44,70 @@ interface SkillWithVersion extends Skill {
 }
 
 /**
- * SMI-5593: read an installed skill's own SKILL.md front-matter `id` field
- * (conventionally `author/name`, stamped at install time — see SMI-5442
- * provenance capture). This is the fallback source of truth for resolving a
- * bare skill name to a full registry ID when the local SQLite cache doesn't
- * have the skill (the common case per SMI-5427 remote-default search).
- * Returns null when SKILL.md is unreadable or has no `author/name`-shaped id.
+ * SMI-5895 (Wave 2 Step 1): confidence tiers that {@link recoverConfidentSourceId}
+ * auto-applies without asking the user to confirm — matches the same
+ * "exact/high/user-specified auto-backfill, medium/low review-only" floor
+ * `backfillManifest`'s own default `minConfidence: 'high'` already encodes
+ * (`provenance/backfill.ts`, `commands/audit-sources.ts --min-confidence`
+ * default). A medium/low match is a *speculative* name lookup — silently
+ * trusting it here could overwrite a local skill with the wrong upstream
+ * version, so `update` fails safely instead (plan-review correction).
  */
-async function resolveInstalledSkillId(installed: InstalledSkill): Promise<string | null> {
+const AUTO_APPLY_RECOVERY_CONFIDENCES = new Set<RecoveryConfidence>([
+  'exact',
+  'high',
+  'user-specified',
+])
+
+/**
+ * SMI-5895 (Wave 2 Step 1): fall back to `SourceRecoveryService` (SMI-5407,
+ * already exposed via `sklx audit sources` / `skill_recover_source`) ONLY
+ * when the manifest has no entry for this skill at all. Gated on confidence
+ * — see {@link AUTO_APPLY_RECOVERY_CONFIDENCES}. Returns null (never
+ * throws) when recovery is unavailable, unresolved/ambiguous, or below the
+ * auto-apply confidence floor; the caller directs the user to
+ * `sklx audit sources` for manual review in that case.
+ */
+async function recoverConfidentSourceId(
+  skillName: string,
+  installed: InstalledSkill,
+  db: DatabaseType
+): Promise<string | null> {
+  let skillMd: string | null
   try {
-    const content = await readFile(join(installed.path, 'SKILL.md'), 'utf-8')
-    const parsed = new SkillParser().parse(content) as unknown as Record<string, unknown> | null
-    const id = parsed?.['id']
-    return typeof id === 'string' && id.includes('/') ? id : null
+    skillMd = await readFile(join(installed.path, 'SKILL.md'), 'utf-8')
   } catch {
+    skillMd = null
+  }
+  const service = new SourceRecoveryService({
+    hashContent,
+    findCandidatesByName: buildFindCandidatesByName(db),
+    findRegistryIdByRepoUrl: buildFindRegistryIdByRepoUrl(db),
+  })
+  let result: SkillRecoveryResult
+  try {
+    result = await service.recoverOne(installed.path, skillName, skillMd)
+  } catch {
+    // The injected deps hit the local `skills` cache directly, so a missing/
+    // corrupt table throws rather than returning zero candidates. Recovery is
+    // a best-effort fallback — degrade to "unresolvable" (whose message points
+    // at `sklx audit sources`) instead of failing the whole update command.
     return null
   }
+  if (result.status !== 'recovered' || !AUTO_APPLY_RECOVERY_CONFIDENCES.has(result.confidence)) {
+    return null
+  }
+  // SMI-5895 review (D-1): prefer the skill-specific recoveredSource.url over
+  // registryId. registryId comes from findRegistryIdByRepoUrl's `repo_url`-only
+  // lookup (source-recovery-deps.ts), which has no per-skill disambiguation --
+  // a multi-skill plugin/monorepo shares one repo_url across every skill in it,
+  // so it can resolve to a DIFFERENT skill's registry row than the one being
+  // recovered. recoveredSource is always populated alongside registryId for
+  // both auto-apply-eligible tiers (SourceRecoveryService.recoverOne's
+  // git-remote/plugin-json branches), so this never loses real recovery
+  // coverage -- registryId only remains as a defensive fallback for a future
+  // confidence tier that might populate one without the other.
+  return result.recoveredSource?.url ?? result.registryId ?? null
 }
 
 /** Resolved diff/update target for a single installed skill. */
@@ -69,8 +127,9 @@ interface SkillDiff {
  * "not found in registry" for most real installs).
  *
  * Returns `'not-installed'` when the skill isn't installed at all, or
- * `'unresolvable'` when it's installed but has no recorded registry ID
- * (locally or in its own SKILL.md front-matter) to update against.
+ * `'unresolvable'` when it's installed but no registry ID can be resolved
+ * for it — from the local cache, the manifest, or (below) a confident
+ * SourceRecoveryService recovery.
  *
  * SMI-5894 (Wave 1 Steps 2/3): `client` scopes the "is this installed"
  * lookup to the resolved client's own directory (plus repo-local skills)
@@ -79,6 +138,20 @@ interface SkillDiff {
  * clients with the same name would always resolve to whichever client wins
  * that dedup's precedence (Claude Code), not necessarily the client the
  * caller asked `update --client <id>` to target.
+ *
+ * SMI-5895 (Wave 2 Step 1): when the local cache doesn't have the skill,
+ * this now consults `~/.skillsmith/manifest.json` — which
+ * `SkillInstallationService.install()` already writes a correct `id`/
+ * `source` into on every successful install (skill-installation.service.ts)
+ * — keyed by `manifestKeyFor(<install dir basename>, client)` so a
+ * same-named skill installed independently under two clients resolves to
+ * the entry that actually matches the client being asked about, not
+ * whichever one was written last (see the key-derivation note at the lookup
+ * site). Only when the manifest entry is genuinely missing does this
+ * fall back to a confidence-gated `SourceRecoveryService` recovery (see
+ * {@link recoverConfidentSourceId}) — replacing the previous
+ * `resolveInstalledSkillId()` dead code, which read a `SKILL.md`
+ * front-matter `id` field `SkillParser` never actually populates.
  */
 async function getSkillDiff(
   skillName: string,
@@ -124,12 +197,51 @@ async function getSkillDiff(
       }
     }
 
-    // Not in the local cache — resolve via the skill's own recorded id and
-    // confirm it against the remote registry (same fallback shape as
-    // install.ts's createApiBackedRegistryLookup, SMI-5427).
-    const resolvedId = await resolveInstalledSkillId(installed)
+    // Not in the local cache — consult the manifest first (SMI-5895 Wave 2
+    // Step 1: the manifest entry install() already wrote is the source of
+    // truth this was previously never reading), keyed by (name, client) per
+    // Wave 1 Step 3 so a same-named skill installed under two clients
+    // resolves the entry that matches THIS client, not name alone.
+    //
+    // The key is derived from the install DIRECTORY basename, not from
+    // `skillName` (the caller-supplied argument) or `installed.name` (which
+    // `getSkillsFromDirectory` takes from SKILL.md front-matter, falling
+    // back to the directory name). `install()` builds both `installPath =
+    // join(skillsDir, skillName)` and `manifestKeyFor(skillName, client)`
+    // from the same string, so the basename is the only value guaranteed to
+    // reproduce the key it wrote — the argument is matched case-insensitively
+    // ("update Astro" resolves the `astro` install) and front-matter `name`
+    // can differ from the directory outright, so keying off either silently
+    // misses the entry and falls through to source recovery.
+    const manifest = await loadManifest()
+    const manifestEntry =
+      manifest.installedSkills?.[manifestKeyFor(basename(installed.path), client)]
+    const manifestId =
+      manifestEntry && typeof manifestEntry.id === 'string' && manifestEntry.id.trim().length > 0
+        ? manifestEntry.id
+        : null
+
+    // Genuinely missing from the manifest — fall back to a confidence-gated
+    // SourceRecoveryService recovery (SMI-5407). Never silently trust a
+    // medium/low-confidence speculative match here.
+    const resolvedId = manifestId ?? (await recoverConfidentSourceId(skillName, installed, db))
     if (!resolvedId) {
       return 'unresolvable'
+    }
+
+    // A raw GitHub URL (a direct-URL install's manifest `id`, or a
+    // git-remote/plugin-json SourceRecoveryService recovery) isn't a
+    // registry ID — skip the registry API confirmation below and let the
+    // force-install fetch it directly, same as a direct-URL `install` does.
+    if (resolvedId.startsWith('https://github.com/')) {
+      return {
+        skillId: resolvedId,
+        oldVersion: installed.version,
+        newVersion: null,
+        changes: [
+          `Source resolved to ${resolvedId} — no cached version to diff; will fetch and overwrite with the latest content.`,
+        ],
+      }
     }
 
     const registryLookup = await createApiBackedRegistryLookup(skillRepo, db)
@@ -184,7 +296,7 @@ async function updateSkill(
 
     if (diff === 'unresolvable') {
       spinner.fail(
-        `"${skillName}" has no recorded registry source — try "skillsmith install <author>/${skillName} --force" with the full ID`
+        `"${skillName}" has no recorded registry source — run "sklx audit sources" to recover it, or "skillsmith install <author>/${skillName} --force" with the full ID`
       )
       return false
     }

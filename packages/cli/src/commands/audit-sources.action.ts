@@ -21,13 +21,11 @@
 import { input } from '@inquirer/prompts'
 import chalk from 'chalk'
 
-import { hashContent } from '@skillsmith/core/services/skill-installation-helpers'
 import {
   SourceRecoveryService,
   defaultSkillsRoot,
   backfillManifest,
-  parseRepoUrl,
-  skillNameVariants,
+  hashContent,
   METHOD_LABELS,
   type RecoveryCandidate,
   type RecoveryConfidence,
@@ -40,6 +38,10 @@ import { openCliDatabase } from '../utils/open-database.js'
 import { loadManifest } from '../utils/manifest.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { DEFAULT_DB_PATH } from '../config.js'
+import {
+  buildFindCandidatesByName,
+  buildFindRegistryIdByRepoUrl,
+} from '../utils/source-recovery-deps.js'
 
 const logger = getCliLogger()
 
@@ -271,61 +273,13 @@ export async function runAuditSources(options: AuditSourcesOptions): Promise<voi
   let report: RecoveryReport
 
   try {
-    const findCandidatesByName = async (name: string): Promise<RecoveryCandidate[]> => {
-      type SkillRow = {
-        id: string
-        name: string
-        repo_url: string | null
-        quality_score: number | null
-      }
-      const variants = skillNameVariants(name)
-      const placeholders = variants.map(() => '?').join(', ')
-      const rows = db
-        .prepare<SkillRow>(
-          `SELECT id, name, repo_url, quality_score FROM skills WHERE name IN (${placeholders})`
-        )
-        .all(...variants)
-
-      const candidates: RecoveryCandidate[] = []
-      for (const row of rows) {
-        if (!row.repo_url) continue
-        try {
-          const parsed = parseRepoUrl(row.repo_url)
-          candidates.push({
-            id: row.id,
-            name: row.name,
-            owner: parsed.owner,
-            repo: parsed.repo,
-            url: `https://github.com/${parsed.owner}/${parsed.repo}`,
-            qualityScore: row.quality_score ?? 0,
-          })
-        } catch {
-          // Non-GitHub repo_url — skip candidate.
-        }
-      }
-      // Prefer an exact-name match so the affix-broadened query never downgrades
-      // a clean exact hit to ambiguous; fall back to affix variants. SMI-5413.
-      const exact = candidates.filter((c) => c.name.toLowerCase() === name.toLowerCase())
-      return exact.length > 0 ? exact : candidates
-    }
-
-    // SMI-5411: enrich a git/plugin-recovered source's manifest id with the
-    // registry UUID when the repo is catalog-known. The recovered URL is the
-    // canonical `https://github.com/<owner>/<repo>` form, and the catalog stores
-    // repo_url in that same canonical form, so an exact match is correct (and
-    // safer than normalizing, which would false-positive across monorepo
-    // siblings sharing one repo root). Returns null when no row matches.
-    const findRegistryIdByRepoUrl = async (repoUrl: string): Promise<string | null> => {
-      const row = db
-        .prepare<{ id: string }>('SELECT id FROM skills WHERE repo_url = ?')
-        .get(repoUrl)
-      return row?.id ?? null
-    }
-
+    // SMI-5895 Wave 2 Step 1: findCandidatesByName / findRegistryIdByRepoUrl
+    // (SMI-5411's offline UUID enrichment) are shared with manage.update.ts's
+    // own SourceRecoveryService fallback — see utils/source-recovery-deps.ts.
     const service = new SourceRecoveryService({
       hashContent,
-      findCandidatesByName,
-      findRegistryIdByRepoUrl,
+      findCandidatesByName: buildFindCandidatesByName(db),
+      findRegistryIdByRepoUrl: buildFindRegistryIdByRepoUrl(db),
     })
 
     report = await service.recoverSources({

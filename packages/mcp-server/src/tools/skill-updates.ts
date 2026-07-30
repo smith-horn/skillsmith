@@ -16,6 +16,8 @@
 import { z } from 'zod'
 import { SkillVersionRepository } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+import { loadManifest } from './install.helpers.js'
+import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
 import type { ToolContext } from '../context.js'
 
 // ============================================================================
@@ -98,9 +100,11 @@ export const skillUpdatesToolSchema = {
 /**
  * Execute the skill_updates tool.
  *
- * Reads all tracked skills from skill_versions (or filters by skillIds),
- * gets the latest version record for each, and compares it to the oldest
- * recorded version (used as a proxy for "what was installed").
+ * Resolves which skills to check either from `input.skillIds` or (SMI-5895
+ * Wave 2 Step 2) the local manifest's installed-skill IDs — never an
+ * unbounded registry-wide scan — then gets the latest version record for
+ * each and compares it to the oldest recorded version (used as a proxy for
+ * "what was installed").
  *
  * @param input   Validated tool input
  * @param context Tool context with database connection
@@ -112,17 +116,23 @@ async function executeSkillUpdatesImpl(
 ): Promise<CheckUpdatesResponse> {
   const versionRepo = new SkillVersionRepository(context.db)
 
-  // Determine which skill IDs to check
+  // Determine which skill IDs to check.
+  //
+  // SMI-5895 (Wave 2 Step 2): previously this ran an unfiltered `SELECT
+  // DISTINCT skill_id FROM skill_versions` here whenever skillIds was
+  // omitted — a registry-wide scan of every skill ever indexed, not just
+  // the ones actually installed (the reported `updatesAvailable: 2833`
+  // bug). Bound it the same way the sibling skill_outdated tool already
+  // does correctly: the local manifest, via the shared
+  // getManifestInstalledSkillIds() helper so the two tools can't drift
+  // apart on this again.
   let skillIds: string[]
 
   if (input.skillIds && input.skillIds.length > 0) {
     skillIds = input.skillIds
   } else {
-    // Query all distinct skill_ids that have version records
-    const rows = context.db
-      .prepare(`SELECT DISTINCT skill_id FROM skill_versions ORDER BY skill_id`)
-      .all() as Array<{ skill_id: string }>
-    skillIds = rows.map((r) => r.skill_id)
+    const manifest = await loadManifest()
+    skillIds = getManifestInstalledSkillIds(manifest)
   }
 
   const now = Math.floor(Date.now() / 1000) // Unix seconds
