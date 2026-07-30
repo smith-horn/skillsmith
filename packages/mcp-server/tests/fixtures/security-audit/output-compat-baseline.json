@@ -1,0 +1,114 @@
+{
+  "auditId": "SENTINEL_AUDIT_ID",
+  "findings": [
+    {
+      "kind": "security",
+      "securityId": "bdca7be5b540b0ee",
+      "entry": {
+        "kind": "skill",
+        "identifier": "jailbreak-checklist",
+        "source_path": "/skills/jailbreak-checklist/SKILL.md",
+        "triggerSurface": []
+      },
+      "verdict": "malicious",
+      "severity": "critical",
+      "riskScore": 80,
+      "riskDelta": null,
+      "newFindingCount": 0,
+      "reason": "Installed skill fails the security scan (risk 80, 1 high/critical finding(s)); no prior baseline — establishing one now."
+    }
+  ],
+  "summary": {
+    "scanned": 3,
+    "unchanged": 0,
+    "unreadable": 0,
+    "hostile": 0,
+    "suspicious": 0,
+    "malicious": 1,
+    "accepted": 0,
+    "candidateTotal": 3,
+    "durationMs": 0
+  },
+  "candidates": [
+    {
+      "key": "5997f0a4504f4b127a15ae982a7d63a1c8b6f447bf614cad1f5bf0397124e967",
+      "acceptKey": "5997f0a4504f4b127a15ae982a7d63a1c8b6f447bf614cad1f5bf0397124e967",
+      "sourcePath": "/commands/some-command.md",
+      "identifier": "some-command",
+      "contentDigest": "c66306af18349092309de76d385bc21fb8901407fb7ebb5a5242bb467ee39b6c",
+      "findingFingerprint": "97ab68d5426964d8c3071475e6377dc70b4ac2a2327bfb1264bbe68aa79f2e1b",
+      "rulesetVersion": "2026-07-29.1",
+      "finding": {
+        "type": "suspicious_pattern",
+        "severity": "low",
+        "message": "borderline pattern in an example",
+        "location": "some-command.md",
+        "lineNumber": 3,
+        "inDocumentationContext": true
+      },
+      "skillPassed": true,
+      "acceptedAt": null,
+      "duplicateCount": 1,
+      "affectedSkills": [
+        {
+          "sourcePath": "/commands/some-command.md",
+          "identifier": "some-command"
+        }
+      ]
+    },
+    {
+      "key": "6539cb4de7dc20b57392bea1bb88a4f9d2eb43ccc21ab87dac09205fb45a989c",
+      "acceptKey": "6539cb4de7dc20b57392bea1bb88a4f9d2eb43ccc21ab87dac09205fb45a989c",
+      "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
+      "identifier": "jailbreak-checklist",
+      "contentDigest": "1c2a50029a9b0cbbd8910e94dd7fe624851171a8dcb6e4f937f8242c2d855ded",
+      "findingFingerprint": "e88edf38adbff96a12d8f7edbce4ce9a0d394413081ae39685838050b67dc42d",
+      "rulesetVersion": "2026-07-29.1",
+      "finding": {
+        "type": "jailbreak",
+        "severity": "medium",
+        "message": "bare jailbreak mention",
+        "location": "SKILL.md",
+        "lineNumber": 40,
+        "inDocumentationContext": true
+      },
+      "skillPassed": false,
+      "acceptedAt": null,
+      "duplicateCount": 1,
+      "affectedSkills": [
+        {
+          "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
+          "identifier": "jailbreak-checklist"
+        }
+      ]
+    },
+    {
+      "key": "bc3a14a3d8d7b101e0d0224c1ce08b5c01792aea8d8f8e677b99d327a213f810",
+      "acceptKey": "bc3a14a3d8d7b101e0d0224c1ce08b5c01792aea8d8f8e677b99d327a213f810",
+      "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
+      "identifier": "jailbreak-checklist",
+      "contentDigest": "1c2a50029a9b0cbbd8910e94dd7fe624851171a8dcb6e4f937f8242c2d855ded",
+      "findingFingerprint": "524ee7779065e767dc81756b9f620e7e5c0ca99c7da7fa674941abad0dbd89dd",
+      "rulesetVersion": "2026-07-29.1",
+      "finding": {
+        "type": "jailbreak",
+        "severity": "critical",
+        "message": "fabricated instruction override",
+        "location": "SKILL.md",
+        "lineNumber": 12,
+        "inDocumentationContext": false
+      },
+      "skillPassed": false,
+      "acceptedAt": null,
+      "duplicateCount": 1,
+      "affectedSkills": [
+        {
+          "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
+          "identifier": "jailbreak-checklist"
+        }
+      ]
+    }
+  ],
+  "acceptances": [],
+  "warnings": []
+}

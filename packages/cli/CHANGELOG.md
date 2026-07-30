@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `sklx audit security` gains `--accept <key> --reason "<why>"` / `--revoke <key>` / `--candidates` / `--list-accepted` for the new local security-acceptance allowlist — a reviewed false-positive finding can be marked accepted so it stops re-surfacing, without ever affecting rug-pull/hostile-update detection. `--accept` re-runs the real audit before matching a key (a stale key from changed content is rejected as `key_not_found`, never blindly trusted); `--revoke` resolves against the stored ledger, not the current run's candidates, since the records most worth revoking are often ones that no longer match live content. `--json` candidate output is paginated (`--page`/`--page-size`, or `--all-candidates` for the complete uncapped array) with a deterministic total ordering so no candidate is skipped or duplicated across pages (SMI-5883)
+
 ## v0.8.4
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.8.3).

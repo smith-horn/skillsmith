@@ -91,6 +91,16 @@
       "import": "./dist/src/config/audit-mode.js",
       "default": "./dist/src/config/audit-mode.js"
     },
+    "./config/owned-lock": {
+      "types": "./dist/src/config/owned-lock.d.ts",
+      "import": "./dist/src/config/owned-lock.js",
+      "default": "./dist/src/config/owned-lock.js"
+    },
+    "./config/atomic-write": {
+      "types": "./dist/src/config/config-atomic-write.d.ts",
+      "import": "./dist/src/config/config-atomic-write.js",
+      "default": "./dist/src/config/config-atomic-write.js"
+    },
     "./skills/index-local": {
       "types": "./dist/src/skills/index-local.d.ts",
       "import": "./dist/src/skills/index-local.js",

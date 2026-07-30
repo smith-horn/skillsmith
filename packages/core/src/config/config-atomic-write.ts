@@ -17,9 +17,17 @@
  *     principle observe a partially-written file.
  *
  * This module fixes both:
- *  - {@link acquireConfigLock} serializes ALL writers (cross-process, via a
- *    create-exclusive `.lock` sentinel file) so a caller's full
- *    read-modify-write sequence is one atomic critical section.
+ *  - {@link acquireConfigLock} serializes ALL writers (cross-process) so a
+ *    caller's full read-modify-write sequence is one atomic critical
+ *    section. SMI-5883 Wave 2: this is now a thin wrapper over the shared
+ *    two-level {@link acquireOwnedLock} primitive (`owned-lock.ts`) —
+ *    staleness is determined by OWNER LIVENESS (not file age), and a stale
+ *    lock is reclaimed only from inside a second, strict-no-auto-reclaim
+ *    lock that serializes reclaim decisions. The prior age-based
+ *    `STALE_LOCK_AGE_MS` force-clear is REMOVED, not tuned — a lock held
+ *    legitimately longer than any timeout now correctly times out instead
+ *    of being force-cleared out from under its live holder. See
+ *    `owned-lock.ts`'s module docstring for the full soundness argument.
  *  - {@link atomicWriteFile} writes to a temp file in the same directory,
  *    then `renameSync`s it into place — POSIX guarantees `rename(2)` is
  *    atomic, so a concurrent reader (which never needs the lock — only
@@ -28,16 +36,10 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import {
-  openSync,
-  closeSync,
-  unlinkSync,
-  writeFileSync,
-  renameSync,
-  statSync,
-  chmodSync,
-} from 'node:fs'
+import { writeFileSync, renameSync, chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+
+import { acquireOwnedLock } from './owned-lock.js'
 
 /**
  * Max time to wait for a lock before giving up (ms). This guards a
@@ -46,37 +48,27 @@ import { dirname, join } from 'node:path'
  */
 const LOCK_ACQUIRE_TIMEOUT_MS = 5_000
 
-/** Backoff between lock-acquisition retries (ms). */
-const LOCK_RETRY_DELAY_MS = 20
-
 /**
- * A lock file older than this is assumed to be left behind by a crashed
- * process (stale) and is force-removed. A healthy holder releases the lock
- * within milliseconds of a local JSON read+write, so this is a generous
- * margin, not a tight race.
- */
-const STALE_LOCK_AGE_MS = 10_000
-
-/**
- * Synchronously block the calling thread for `ms` milliseconds without
- * spinning the CPU. `Atomics.wait` on a throwaway `SharedArrayBuffer` is the
- * standard synchronous-sleep primitive in Node (unlike browsers, Node does
- * not forbid calling it on the main thread).
- */
-function sleepSync(ms: number): void {
-  const view = new Int32Array(new SharedArrayBuffer(4))
-  Atomics.wait(view, 0, 0, ms)
-}
-
-/**
- * Acquire an exclusive, cross-process lock guarding `configPath`.
+ * Acquire an exclusive, cross-process lock guarding `configPath`. Thin
+ * wrapper over {@link acquireOwnedLock} (SMI-5883 Wave 2) — preserves this
+ * function's signature and its `${configPath}.lock` path so no caller needs
+ * to change. Behaviour deltas vs the pre-SMI-5883 implementation (each
+ * covered by a test in `config-atomic-write.test.ts`):
  *
- * Uses atomic create-exclusive (the `wx` flag — fails with `EEXIST` if the
- * lock file already exists) as the mutual-exclusion primitive: portable
- * (identical behavior on macOS/Linux/Windows) and needs no extra
- * dependency. Retries with a short backoff until `LOCK_ACQUIRE_TIMEOUT_MS`
- * elapses. If the held lock is older than `STALE_LOCK_AGE_MS` it is assumed
- * abandoned by a crashed process and force-cleared once, then retried.
+ *  1. A stale lock is cleared on OWNER DEATH, not on AGE. A lock held by a
+ *     live process for longer than the old 10s threshold is no longer
+ *     force-cleared — it now correctly waits, then times out.
+ *  2. A legacy bare-PID lock (this module's OWN pre-SMI-5883 on-disk format)
+ *     is no longer cleared at all — `StuckLockError { reason:
+ *     'unreclaimable_legacy' }` (D-5: a legacy claim carries no `host`, so
+ *     "dead on this host" cannot establish "dead").
+ *  3. The on-disk lock content changes from a bare PID to a v1 JSON record.
+ *     No in-repo consumer parses it directly (only this module's own
+ *     `acquireConfigLock`/release touch the file).
+ *  4. The timeout message keeps the stable prefix "Timed out waiting for
+ *     config lock" (via `label: 'config lock'`) so existing assertions
+ *     still match, with the failure reason and the manual unstick procedure
+ *     appended.
  *
  * @param configPath - Path to the config file being guarded (NOT the lock
  * file itself — the lock file is `${configPath}.lock`).
@@ -89,56 +81,7 @@ export function acquireConfigLock(
   configPath: string,
   timeoutMs: number = LOCK_ACQUIRE_TIMEOUT_MS
 ): () => void {
-  const lockPath = `${configPath}.lock`
-  const deadline = Date.now() + timeoutMs
-  let staleClearAttempted = false
-
-  for (;;) {
-    try {
-      const fd = openSync(lockPath, 'wx', 0o600)
-      try {
-        writeFileSync(fd, String(process.pid))
-      } finally {
-        closeSync(fd)
-      }
-      return () => {
-        try {
-          unlinkSync(lockPath)
-        } catch {
-          // Already gone. Releasing an already-released lock is a no-op,
-          // not an error (defensive — should not happen in practice since
-          // each acquire pairs with exactly one release).
-        }
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-
-      if (!staleClearAttempted) {
-        staleClearAttempted = true
-        try {
-          const age = Date.now() - statSync(lockPath).mtimeMs
-          if (age > STALE_LOCK_AGE_MS) {
-            unlinkSync(lockPath)
-            continue // retry immediately — don't burn the backoff budget on this attempt
-          }
-        } catch {
-          // Lock file vanished between the failed open and this stat (the
-          // holder released it concurrently, or another waiter already
-          // cleared it) — just retry the open below.
-          continue
-        }
-      }
-
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `[skillsmith] Timed out waiting for config lock at ${lockPath} after ` +
-            `${timeoutMs}ms. If this persists, a crashed process may have left a ` +
-            `stale lock — verify no other skillsmith process is running, then remove ${lockPath} manually.`
-        )
-      }
-      sleepSync(LOCK_RETRY_DELAY_MS)
-    }
-  }
+  return acquireOwnedLock(configPath, { timeoutMs, label: 'config lock' })
 }
 
 /**

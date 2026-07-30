@@ -74,9 +74,14 @@ function result(
       hostile: findings.filter((f) => f.verdict === 'hostile').length,
       suspicious: findings.filter((f) => f.verdict === 'suspicious').length,
       malicious: findings.filter((f) => f.verdict === 'malicious').length,
+      accepted: 0,
+      candidateTotal: 0,
       durationMs: 1,
       ...summary,
     },
+    candidateIndex: new Map(),
+    acceptances: [],
+    warnings: [],
   }
 }
 

@@ -1,0 +1,9 @@
+[
+  "\n=== Skillsmith — Security audit ===",
+  "Scanned 3, unchanged 0, unreadable 0.",
+  "Found 1 issue(s): 0 rug-pull, 1 failing, 0 suspicious, 0 accepted.\n",
+  "FAILING jailbreak-checklist (skill)",
+  "  Installed skill fails the security scan (risk 80, 1 high/critical finding(s)); no prior baseline — establishing one now.",
+  "  /skills/jailbreak-checklist/SKILL.md",
+  "\nReview flagged skills before trusting them. Remove one with `sklx uninstall <skill>`, re-install it from a trusted source to reset its baseline, or `sklx audit security --accept <key> --reason \"<why>\"` a reviewed false positive."
+]
