@@ -103,9 +103,17 @@ function stripControl(s: string): string {
  * identifier / kind / verdict travel (control-sanitized), plus a CONTENT-FREE
  * synthesized reason ({@link digestReason}) — never the audit's excerpt-bearing
  * reason, never `source_path`, never raw skill content.
+ *
+ * SMI-5883 post-merge retro: `f.accepted` findings are excluded here, matching
+ * `result.summary.malicious` (which already excludes them) — the digest's own
+ * `findings[]` used to include every accepted `malicious` finding anyway, so a
+ * user who accepted a finding specifically to stop being bothered by it kept
+ * getting emailed about it, and the payload's own `malicious` count and its
+ * `findings[]` length could silently disagree.
  */
 export function buildAuditDigestPayload(result: RunSecurityAuditResult): AuditDigestPushPayload {
   const findings: AuditDigestPushFinding[] = [...result.findings]
+    .filter((f) => f.accepted === undefined)
     .sort((a, b) => verdictRank(a.verdict) - verdictRank(b.verdict))
     .slice(0, MAX_DIGEST_FINDINGS)
     .map((f) => ({

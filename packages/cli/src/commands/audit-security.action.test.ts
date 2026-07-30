@@ -388,67 +388,9 @@ describe('H-17: flag validation -- rejected before any lock/file touch', () => {
   )
 })
 
-describe('H-18: SKILLSMITH_AUDIT_ACCEPT_DISABLE=1 kill switch', () => {
-  it('bypasses the store entirely -- output matches the empty-store baseline, store mtime unchanged', async () => {
-    const entry: InventoryEntry = {
-      kind: 'skill',
-      identifier: 'S',
-      source_path: '/skills/S/SKILL.md',
-      triggerSurface: [],
-    }
-    const finding: SecurityFinding = {
-      type: 'jailbreak',
-      severity: 'critical',
-      message: 'flagged pattern',
-    }
-
-    // Populate the store with a real acceptance for this exact finding.
-    await runAuditSecurity(
-      baseOpts({
-        json: true,
-        inventory: [entry],
-        readContent: () => 'bad-content',
-        scan: () => report('S', { passed: false, riskScore: 80, findings: [finding] }),
-      })
-    )
-    const captured = jsonOutput() as { candidates: Array<{ acceptKey: string }> }
-    logSpy.mockClear()
-    await runAuditSecurity(
-      baseOpts({
-        json: true,
-        accept: captured.candidates[0]?.acceptKey,
-        reason: 'reviewed',
-        inventory: [entry],
-        readContent: () => 'bad-content',
-        scan: () => report('S', { passed: false, riskScore: 80, findings: [finding] }),
-      })
-    )
-    const mtimeBefore = fs.statSync(acceptancePath).mtimeMs
-
-    logSpy.mockClear()
-    process.env['SKILLSMITH_AUDIT_ACCEPT_DISABLE'] = '1'
-    try {
-      await runAuditSecurity(
-        baseOpts({
-          json: true,
-          inventory: [entry],
-          readContent: () => 'bad-content',
-          scan: () => report('S', { passed: false, riskScore: 80, findings: [finding] }),
-        })
-      )
-    } finally {
-      delete process.env['SKILLSMITH_AUDIT_ACCEPT_DISABLE']
-    }
-
-    const disabledResult = jsonOutput() as {
-      findings: Array<{ accepted?: unknown }>
-      acceptances: unknown[]
-    }
-    expect(disabledResult.findings[0]?.accepted).toBeUndefined() // no suppression despite a populated store
-    expect(disabledResult.acceptances).toEqual([])
-    expect(fs.statSync(acceptancePath).mtimeMs).toBe(mtimeBefore) // never touched
-  })
-})
+// H-18 (SKILLSMITH_AUDIT_ACCEPT_DISABLE=1 kill switch) moved to
+// audit-security.action.killswitch.test.ts to keep this file under the
+// 500-line gate.
 
 // Sanity: printFindings is still directly usable (unit-level, no full orchestration).
 describe('printFindings smoke (accepted-tag rendering)', () => {

@@ -76,6 +76,7 @@ export {
 } from './security-acceptance.js'
 export { acceptFinding, revokeAcceptance } from './security-acceptance.mutate.js'
 export type { AcceptOutcome, RevokeOutcome } from './security-acceptance.mutate.js'
+export { isAcceptDisabled } from './security-audit.candidates.js'
 export {
   ACCEPTANCE_STORE_VERSION,
   emptyAcceptanceStore,
