@@ -14,11 +14,25 @@
  * version of this comment claimed (code-review round 2) -- any consumer of
  * `runSecurityAudit` (the CLI, but also any future MCP tool or the email
  * digest) sees the SAME `finding.accepted` annotation and the SAME adjusted
- * `summary.malicious`/`summary.accepted` counts. The one invariant that
- * matters is still true regardless of consumer: `compareScanReports` (the
- * rug-pull/hostile-update comparator, called earlier in that same assembly)
- * always sees the RAW, unmodified scan report -- acceptance state is
- * annotated onto `findings[]` strictly AFTER that comparison runs, never fed
+ * `summary.malicious`/`summary.accepted` counts.
+ *
+ * Single-snapshot-per-run (SMI-5901 post-merge retro): the store is loaded
+ * ONCE, before the scan proceeds -- every consumer of one `runSecurityAudit`
+ * call (JSON output, printed ACCEPTED tag, `summary.malicious`, and the
+ * email digest's `findings[]`) is consistent with EACH OTHER for that run,
+ * but a `--accept`/`--revoke` from a concurrent process mid-scan is not
+ * retroactively reflected in the run already in flight -- it is picked up by
+ * the NEXT `runSecurityAudit` call. This is deliberate (a single audit run
+ * must report one coherent point-in-time picture, not some findings checked
+ * against an older store state and others against a newer one) and matches
+ * how the CLI's own JSON output already behaves; it is not specific to the
+ * email digest.
+ *
+ * The one invariant that matters is still true regardless of consumer:
+ * `compareScanReports` (the rug-pull/hostile-update comparator, called
+ * earlier in that same assembly) always sees the RAW, unmodified scan
+ * report -- acceptance state is annotated onto `findings[]` strictly AFTER
+ * that comparison runs, never fed
  * into it.
  */
 

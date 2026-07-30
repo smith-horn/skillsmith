@@ -9,6 +9,7 @@ import chalk from 'chalk'
 
 import {
   acceptFinding,
+  isAcceptDisabled,
   isValidAcceptKeyFormat,
   revokeAcceptance,
   type AcceptanceRecord,
@@ -25,6 +26,7 @@ export type ValidationCode =
   | 'conflicting_options'
   | 'all_candidates_requires_json'
   | 'invalid_numeric_option'
+  | 'accept_disabled'
 
 export interface ValidationResult {
   ok: boolean
@@ -34,6 +36,20 @@ export interface ValidationResult {
 
 /** Flag validation (H-17) -- runs BEFORE any audit, any lock, any file touch. */
 export function validateOptions(options: AuditSecurityOptions): ValidationResult {
+  // Post-merge retro: SKILLSMITH_AUDIT_ACCEPT_DISABLE's own doc comment says
+  // it "bypasses the store entirely -- no load, no suppression, no store
+  // write" -- but --accept/--revoke previously wrote a real (if dormant)
+  // record anyway while the flag was set, printing a false "OK Accepted"/
+  // "OK Revoked" success message for a mutation that had no actual effect
+  // until the flag was later removed.
+  if ((options.accept !== undefined || options.revoke !== undefined) && isAcceptDisabled()) {
+    return {
+      ok: false,
+      code: 'accept_disabled',
+      message:
+        '--accept/--revoke are disabled while SKILLSMITH_AUDIT_ACCEPT_DISABLE=1 is set (the acceptance store is bypassed entirely).',
+    }
+  }
   if (options.accept !== undefined && options.revoke !== undefined) {
     return {
       ok: false,
