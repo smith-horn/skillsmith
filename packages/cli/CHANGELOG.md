@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.5
+
+- **Fix**: Resolve update source from manifest, not dead-code/unfiltered scans (#2158)
+- **Fix**: Thread SKILLSMITH_CLIENT into interactive search's install path (#2155)
+- **Fix**: Add per-client targeting to install/list/remove/update/sync (#2154)
+- **Fix**: SMI-5901 post-merge retro — digest suppression + kill-switch gating (#2147)
 - **Fix**: `skillsmith update <name>` now resolves an installed skill's registry source from `~/.skillsmith/manifest.json` — the entry `install` already writes on every successful install, looked up by the `(name, client)` key so a same-named skill installed under two clients resolves the copy the caller asked about — instead of a `SKILL.md` front-matter `id:` read that `SkillParser` never populated. `update` therefore no longer reports `"<name>" has no recorded registry source` for a normally-installed skill. When the manifest genuinely has no entry, it falls back to `SourceRecoveryService` and auto-applies only `exact`/`high`/`user-specified` matches; a speculative medium/low name match fails safe with a pointer to `sklx audit sources` rather than silently updating from a guessed source (SMI-5895)
 - **Fix**: `skillsmith search -i`'s "Install this skill" action now honors `SKILLSMITH_CLIENT` — previously it always installed to the canonical Claude Code directory regardless of the environment variable, the same class of bug SMI-5894 fixed for `install`/`list`/`remove`/`update`/`sync` (SMI-5894 post-merge retro)
 - **Fix**: `--accept`/`--revoke` are now rejected outright (a new `accept_disabled` validation code, before any audit/lock/file touch) while `SKILLSMITH_AUDIT_ACCEPT_DISABLE=1` is set, instead of writing a real but dormant record and printing a false "OK Accepted"/"OK Revoked" success message (SMI-5883 post-merge retro)
