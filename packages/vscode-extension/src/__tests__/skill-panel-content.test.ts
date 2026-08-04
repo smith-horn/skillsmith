@@ -58,6 +58,24 @@ describe('getContentHtml', () => {
     expect(html).not.toContain('javascript:')
   })
 
+  it('strips <form> tags with a javascript: action (GHSA-vccv-cmxp-4j9h)', () => {
+    const html = getContentHtml('<form action="javascript:alert(1)"></form>')
+    expect(html).not.toContain('<form')
+    expect(html).not.toContain('javascript:')
+  })
+
+  it('strips <button> tags with a javascript: formaction (GHSA-vccv-cmxp-4j9h)', () => {
+    const html = getContentHtml('<button formaction="javascript:alert(1)">click</button>')
+    expect(html).not.toContain('<button')
+    expect(html).not.toContain('javascript:')
+  })
+
+  it('strips <object> tags with a javascript: data attribute (GHSA-vccv-cmxp-4j9h)', () => {
+    const html = getContentHtml('<object data="javascript:alert(1)"></object>')
+    expect(html).not.toContain('<object')
+    expect(html).not.toContain('javascript:')
+  })
+
   it('truncates content over 10KB', () => {
     const longContent = 'x'.repeat(20_000)
     const html = getContentHtml(longContent)
