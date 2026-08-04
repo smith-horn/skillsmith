@@ -55,6 +55,13 @@ export {
   getGlobalCache,
   DEFAULT_TTL,
   type ApiClientConfig,
+  // SMI-5905 Wave 4: private-registry content fetch (CLI's only transport
+  // to private_registry_skills.content).
+  getPrivateRegistrySkillContent,
+  type PrivateRegistrySkillContent,
+  type PrivateRegistryGetErrorCode,
+  type PrivateRegistryGetResult,
+  type GetPrivateRegistrySkillContentParams,
 } from './api/index.js'
 
 // Search

@@ -24,6 +24,16 @@ export {
   type TelemetryEvent,
 } from './client.js'
 
+// SMI-5905 Wave 4: private-registry content fetch — the CLI's only transport
+// to `private_registry_skills.content` (see client.private-registry.ts header).
+export {
+  getPrivateRegistrySkillContent,
+  type PrivateRegistrySkillContent,
+  type PrivateRegistryGetErrorCode,
+  type PrivateRegistryGetResult,
+  type GetPrivateRegistrySkillContentParams,
+} from './client.private-registry.js'
+
 // SMI-4119: Event batching
 export {
   EventBatcher,
