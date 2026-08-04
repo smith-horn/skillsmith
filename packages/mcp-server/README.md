@@ -4,12 +4,11 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
-## What's New in v0.7.4
+## What's New in v0.7.6
 
-- **Cross-session rename revert**: `apply_namespace_rename`'s `action: 'revert'` is now exposed, closing the gap where a rename applied in a prior session had no reachable undo path.
-- **Shutdown persistence fix**: Recently-installed skills and dependency data are now correctly persisted on shutdown — previously silently discarded when running without native SQLite support (common on macOS/npx installs).
-- **Corrected quota enforcement**: Local quota limits reduced 10x to match actual tier limits, with a `SKILLSMITH_ENFORCE_MCP_QUOTA` kill-switch to disable hard-blocking without a redeploy.
-- **Subscription tier resolution fix**: Personal API keys now resolve the real subscription tier correctly.
+- **Private-registry privilege hardening**: `deprecate`/`undeprecate` actions now require an authenticated user JWT instead of the unrestricted service-role client, closing a gap where any team member's shared license key could deprecate or undeprecate any skill in the team's private registry.
+- **Evidence-tier security scanning**: jailbreak/`ai_defence` findings now carry an evidence tier instead of a flat severity, closing a false-positive class in the scanner shared with `@skillsmith/core`.
+- **Crash resilience**: process-wide `uncaughtException`/`unhandledRejection` handlers now log via the structured logger (disk + stderr) before exiting, instead of a stderr-only crash visible solely in the MCP host's live panel.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 

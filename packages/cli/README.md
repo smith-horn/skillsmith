@@ -14,11 +14,11 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.2
+## What's New in v0.8.4
 
-- **Corrected tier quota display**: Community/Individual/Team quota labels shown by the CLI are reduced 10x (100/mo, 1,000/mo, 10,000/mo respectively) to match actual enforcement — display-only; enforcement lives in `@skillsmith/mcp-server`.
+- **Fix**: `sklx logs --tail` now watches the doc-retrieval reindex CLI's structured log surface, alongside the MCP server and CLI's own logs.
 
-> v0.8.2 is a scheduled cadence release with no functional changes beyond v0.8.1.
+> v0.8.4 also includes a mechanical cadence release (v0.8.3 → v0.8.4) with no additional functional changes.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 

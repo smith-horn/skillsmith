@@ -10,12 +10,11 @@ Core library for Skillsmith - provides database operations, search services, cac
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.11.2
+## What's New in v0.11.4
 
-- **Cross-session rename revert**: `apply_namespace_rename`'s `action: 'revert'` is now exposed, and `JournalAction`/`JOURNAL_SCHEMA_VERSION` are widened so an older reader no longer flags a legitimate revert journal record as corrupt.
-- **Unified shutdown coordinator**: Awaitable sync stop consolidates shutdown handling across the database and background writers.
-- **Production-grade error logging and diagnostics**: Structured error logging and diagnostics for easier triage in production.
-- **Dependency backfill**: `skill_dependencies` now backfills correctly for installs that predate v0.7.1.
+- **Evidence-tier security scanning**: jailbreak/`ai_defence` findings now carry an evidence tier (mention / role-turn-with-body / imperative-instruction / instruction-override / state-assertion) instead of a flat severity, closing a false-positive class where a skill that *documents* jailbreak/prompt-injection patterns defensively scored identically to a skill containing an actual attack payload.
+- **Fixed a live production denial-of-service**: `AD_CRLF_INJECTION` no longer has catastrophic-backtracking behavior — an ~80-byte adversarial input could previously hang a scan for hours.
+- **Locality-bounded corroboration**: `escalateCodeExecution` now only escalates to `critical` when its corroborating finding is within 40 lines, matching an existing bound on the sibling escalation mechanism.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
