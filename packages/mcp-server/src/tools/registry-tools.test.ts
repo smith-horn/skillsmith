@@ -82,6 +82,21 @@ describe('registry-tools', () => {
         })
       ).toThrow()
     })
+
+    // SMI-5905 Sol final-code-review finding #1: the bare author/name regex accepts "."/".."
+    // as either segment, which installFromContent() would otherwise turn into a path escape.
+    it.each(['myteam/..', 'myteam/.', '../myteam', 'myteam/   '])(
+      'should reject skillId "%s" (unsafe path segment)',
+      (skillId) => {
+        expect(() =>
+          privateRegistryPublishInputSchema.parse({
+            skillId,
+            version: '1.0.0',
+            content: SAMPLE_CONTENT,
+          })
+        ).toThrow()
+      }
+    )
   })
 
   describe('privateRegistryManageInputSchema', () => {
@@ -115,6 +130,17 @@ describe('registry-tools', () => {
       })
       expect(parsed.version).toBe('1.0.0')
     })
+
+    // SMI-5905 Sol final-code-review finding #1 — same fix as the publish schema above,
+    // applied here too since "install" derives its on-disk path from this skillId.
+    it.each(['myteam/..', 'myteam/.', '../myteam'])(
+      'should reject skillId "%s" (unsafe path segment) for the install action',
+      (skillId) => {
+        expect(() =>
+          privateRegistryManageInputSchema.parse({ action: 'install', skillId })
+        ).toThrow()
+      }
+    )
   })
 
   // ==========================================================================

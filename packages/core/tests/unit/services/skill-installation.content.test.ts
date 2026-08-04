@@ -240,6 +240,30 @@ describe('SMI-5905 Wave 1: installFromContent()', () => {
     expect(result.error).toContain('same on-disk path')
   })
 
+  // SMI-5905 Sol final-code-review finding #1 (confirmed exploitable): the skillId itself,
+  // not just content-map keys, must be rejected if a segment is "." / ".." / whitespace-only —
+  // installFromContent() derives the on-disk skill directory from skillId's final segment, so
+  // "team/.." previously collapsed the install path to skillsDir's PARENT.
+  it.each([
+    ['acme/..', '..'],
+    ['acme/.', '.'],
+    ['../acme', '..'],
+    ['acme/   ', '   '],
+  ])('rejects skillId "%s" (unsafe segment %j) before any disk write', async (skillId) => {
+    const service = createService(db)
+    const content: SkillContent = { 'SKILL.md': VALID_SKILL_MD }
+
+    const result = await service.installFromContent({ skillId, version: '1.0.0', content })
+
+    expect(result.success).toBe(false)
+    expect(result.errorCode).toBe('INVALID_CONTENT')
+    // ".." from skillsDir resolves to tmpDir itself — confirm nothing was written there
+    // (the exploit this closes: a "SKILL.md" landing directly in tmpDir), and skillsDir
+    // gained no new entries either.
+    await expect(fs.access(path.join(tmpDir, 'SKILL.md'))).rejects.toThrow()
+    expect(await fs.readdir(skillsDir)).toEqual([])
+  })
+
   it('prevents reinstall without force', async () => {
     const service = createService(db)
     const content: SkillContent = { 'SKILL.md': VALID_SKILL_MD }

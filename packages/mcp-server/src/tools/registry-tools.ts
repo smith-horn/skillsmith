@@ -29,6 +29,7 @@ import type {
   PrivateRegistryInstallSummary,
   RegistrySkillContent,
 } from './registry-tools.content.types.js'
+import { hasSafeSkillIdSegments } from './registry-tools.skill-id.js'
 
 // Re-export stub factory for external consumers and tests
 export { createStubRegistryService } from './registry-tools.stub.js'
@@ -50,6 +51,7 @@ export const privateRegistryPublishInputSchema = z.object({
   skillId: z
     .string()
     .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
+    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
     .describe('Skill identifier in author/name format'),
   version: z
     .string()
@@ -71,6 +73,7 @@ export const privateRegistryManageInputSchema = z.object({
   skillId: z
     .string()
     .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
+    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
     .optional()
     .describe('Skill identifier (required for get/deprecate/undeprecate/install)'),
   version: z.string().optional().describe('Version filter; "install" defaults to most recent'),

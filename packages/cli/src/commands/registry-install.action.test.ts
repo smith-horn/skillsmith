@@ -199,6 +199,21 @@ describe('SMI-5905: `skillsmith registry install` command — registration and h
       expect(mockExit).toHaveBeenCalledWith(1)
       expect(mocks.getPrivateRegistrySkillContent).not.toHaveBeenCalled()
     })
+
+    // SMI-5905 Sol final-code-review finding #1: "." / ".." segments must be rejected locally
+    // too, matching the Edge Function's own tightened SKILL_ID_PATTERN check.
+    it.each(['acme/..', 'acme/.', '../acme'])(
+      'rejects skillId "%s" (unsafe path segment), without calling the Edge Function',
+      async (skillId) => {
+        const { createRegistryInstallCommand } = await import('./registry-install.js')
+        const cmd = createRegistryInstallCommand()
+
+        await cmd.parseAsync(['node', 'test', skillId])
+
+        expect(mockExit).toHaveBeenCalledWith(1)
+        expect(mocks.getPrivateRegistrySkillContent).not.toHaveBeenCalled()
+      }
+    )
   })
 
   // ==========================================================================

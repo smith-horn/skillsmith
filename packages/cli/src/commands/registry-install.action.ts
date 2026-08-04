@@ -68,10 +68,26 @@ const logger = getCliLogger()
 const SKILL_ID_PATTERN = /^[^/]+\/[^/]+$/
 const MAX_SKILL_ID_LENGTH = 200
 
+/**
+ * Sol final-code-review finding #1: SKILL_ID_PATTERN alone accepts "." / ".." as either
+ * segment (e.g. "team/.."), which installFromContent() would otherwise turn into an install
+ * path outside the skills directory. Reject it here too, matching the same check added to
+ * registry-tools.ts and skill-installation.content.ts.
+ */
+function hasSafeSkillIdSegments(skillId: string): boolean {
+  return skillId.split('/').every((segment) => {
+    const trimmed = segment.trim()
+    return trimmed.length > 0 && trimmed !== '.' && trimmed !== '..'
+  })
+}
+
 /** @internal Exported for tests. */
 export function isValidPrivateRegistrySkillId(skillId: string): boolean {
   return (
-    skillId.length > 0 && skillId.length <= MAX_SKILL_ID_LENGTH && SKILL_ID_PATTERN.test(skillId)
+    skillId.length > 0 &&
+    skillId.length <= MAX_SKILL_ID_LENGTH &&
+    SKILL_ID_PATTERN.test(skillId) &&
+    hasSafeSkillIdSegments(skillId)
   )
 }
 

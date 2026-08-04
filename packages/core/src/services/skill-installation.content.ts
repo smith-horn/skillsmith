@@ -190,10 +190,27 @@ function scanContentFiles(
   return null
 }
 
-/** Derive the on-disk skill name from an `author/name`-format skillId. */
-function skillNameFromSkillId(skillId: string): string {
+/**
+ * Derive the on-disk skill name from an `author/name`-format skillId, or `null` if any
+ * `/`-separated segment is unsafe as a path component.
+ *
+ * Sol final-code-review finding #1 (confirmed exploitable): callers upstream (the MCP/CLI/Edge
+ * Function skillId validators, and the `private_registry_skills.skill_id` DB CHECK itself) all
+ * share the same permissive `/^[^/]+\/[^/]+$/` format check, which accepts "." and ".." as
+ * either segment — "myteam/.." passes it. Without this check, `path.join(skillsDir, '..')`
+ * collapses the install path to skillsDir's PARENT, and `writeInstallFiles()` would happily
+ * write "SKILL.md" there. This is the actual disk-write boundary and the last line of defense
+ * regardless of what any upstream schema/DB-constraint layer allows — a schema-only fix would
+ * not protect a stub/test call site (or a future caller) that bypasses Zod entirely.
+ */
+function skillNameFromSkillId(skillId: string): string | null {
   const parts = skillId.split('/')
-  return parts.length >= 2 ? parts[parts.length - 1] : skillId
+  const name = parts.length >= 2 ? parts[parts.length - 1] : skillId
+  for (const part of parts) {
+    const trimmed = part.trim()
+    if (trimmed.length === 0 || trimmed === '.' || trimmed === '..') return null
+  }
+  return name
 }
 
 /** Internal params bag: the caller's InstallFromContentOptions plus the service state
@@ -226,8 +243,17 @@ export async function installFromContent(params: InstallFromContentParams): Prom
   } = params
 
   const skillName = skillNameFromSkillId(skillId)
-  const installPath = path.join(skillsDir, skillName)
   const trustTier = CONTENT_INSTALL_TRUST_TIER
+
+  if (skillName === null) {
+    return buildInstallFailure('INVALID_CONTENT', {
+      skillId,
+      installPath: skillsDir,
+      trustTier,
+      error: `Rejected skillId "${skillId}": segments must not be empty, ".", or "..".`,
+    })
+  }
+  const installPath = path.join(skillsDir, skillName)
 
   try {
     onProgress('validate', 'Validating package content')
