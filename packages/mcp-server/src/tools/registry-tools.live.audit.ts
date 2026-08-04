@@ -44,8 +44,17 @@ import { sha256Hex } from '@skillsmith/core'
 import { getSupabaseAdminClient } from '../supabase-client.js'
 import { readLicenseKey } from './team-resolver.js'
 
-/** Registry write operations worth an audit row. Reads are deliberately not audited. */
-export type RegistryAuditOperation = 'publish' | 'deprecate' | 'undeprecate'
+/**
+ * Registry operations worth an audit row.
+ *
+ * Metadata reads (`list`/`get`) are still deliberately not audited — they carry no file bytes.
+ * `content_read` (SMI-5905 Wave 3) is: it is the operation that hands a team's packaged skill
+ * content to a caller, so it gets the same coverage the mutations do. `event_type` and `action`
+ * are byte-identical to what the `private-registry-get` Edge Function writes
+ * (supabase/functions/private-registry-get/access.ts), so both transports land in one queryable
+ * stream and neither can be audited without the other showing up in the same query.
+ */
+export type RegistryAuditOperation = 'publish' | 'deprecate' | 'undeprecate' | 'content_read'
 
 /**
  * Which credential authorized the call.
@@ -67,8 +76,19 @@ export interface RegistryAuditEvent {
    * rather than backfilled with the license-key actor, which did not authorize the call.
    */
   actorUserId?: string | null
+  /**
+   * SMI-5905 Wave 3: which of the two user-client getters authorized this call —
+   * `getAdminUserClient()` or `getMemberUserClient()`. Recorded so the "no call site may use the
+   * wrong one" invariant is observable in the audit trail itself, not only in a unit test.
+   * Absent on the license-key path, which has no user role at all.
+   */
+  authRole?: 'admin' | 'member'
   /** Short reason for a non-success result. Never include credential material. */
   detail?: string
+  /** Number of files handed to the caller. Count ONLY — never the filenames, never the bytes. */
+  fileCount?: number
+  /** The row's stored content_hash. A digest of SKILL.md, not the content itself. */
+  contentHash?: string | null
 }
 
 /** Truncated so the audit row correlates keys without being a verification oracle for one. */
@@ -170,6 +190,13 @@ export async function recordRegistryAudit(event: RegistryAuditEvent): Promise<vo
         // the team key their session was configured with.
         license_key_fingerprint: fingerprint,
         actor_user_id: event.actorUserId ?? null,
+        auth_role: event.authRole ?? null,
+        // Distinguishes these rows from the `private-registry-get` Edge Function's, which write
+        // the same event_type with `transport: 'edge_function'` (SMI-5905 Wave 2).
+        transport: 'mcp_server',
+        // Count and digest only — the content map itself is never recorded.
+        file_count: event.fileCount ?? null,
+        content_hash: event.contentHash ?? null,
         // Recorded per-row so a future reader can tell an unattributed row from one written
         // before published_by existed, without diffing migration timestamps.
         published_by_available: event.authPath === 'user_jwt',

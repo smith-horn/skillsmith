@@ -24,6 +24,11 @@ import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubRegistryService } from './registry-tools.stub.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
+import { executeRegistryInstall } from './registry-tools.install-action.js'
+import type {
+  PrivateRegistryInstallSummary,
+  RegistrySkillContent,
+} from './registry-tools.content.types.js'
 
 // Re-export stub factory for external consumers and tests
 export { createStubRegistryService } from './registry-tools.stub.js'
@@ -62,13 +67,14 @@ export const privateRegistryPublishInputSchema = z.object({
 export type PrivateRegistryPublishInput = z.infer<typeof privateRegistryPublishInputSchema>
 
 export const privateRegistryManageInputSchema = z.object({
-  action: z.enum(['list', 'get', 'deprecate', 'undeprecate', 'namespace']),
+  action: z.enum(['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install']),
   skillId: z
     .string()
     .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
     .optional()
-    .describe('Skill identifier (required for get/deprecate/undeprecate)'),
-  version: z.string().optional().describe('Optional version filter'),
+    .describe('Skill identifier (required for get/deprecate/undeprecate/install)'),
+  version: z.string().optional().describe('Version filter; "install" defaults to most recent'),
+  force: z.boolean().optional().describe('SMI-5905: reinstall over an existing install'),
 })
 
 export type PrivateRegistryManageInput = z.infer<typeof privateRegistryManageInputSchema>
@@ -112,26 +118,28 @@ export const privateRegistryPublishToolSchema = {
 export const privateRegistryManageToolSchema = {
   name: 'private_registry_manage' as const,
   description:
-    'Manage skills in your private registry (list, get, deprecate, undeprecate, namespace). ' +
-    'Requires Enterprise tier (private_registry feature).',
+    'Manage skills in your private registry (list, get, install, deprecate, undeprecate, ' +
+    'namespace). Requires Enterprise tier (private_registry feature).',
   inputSchema: {
     type: 'object' as const,
     properties: {
       action: {
         type: 'string',
-        enum: ['list', 'get', 'deprecate', 'undeprecate', 'namespace'],
+        enum: ['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install'],
         description:
           'Registry operation to perform. "namespace" returns your team\'s publish ' +
-          'namespace (the required skill_id prefix) without attempting a publish.',
+          'namespace (the required skill_id prefix) without attempting a publish. ' +
+          '"install" downloads the skill and writes it to your skills directory.',
       },
       skillId: {
         type: 'string',
-        description: 'Skill ID in author/name format (required for get/deprecate/undeprecate)',
+        description: 'Skill ID in author/name format (get/deprecate/undeprecate/install)',
       },
       version: {
         type: 'string',
-        description: 'Optional version filter',
+        description: 'Version filter; "install" defaults to the most recently published',
       },
+      force: { type: 'boolean', description: 'Reinstall over an existing install' },
     },
     required: ['action'],
   },
@@ -169,6 +177,8 @@ export interface PrivateRegistryManageResult {
   skill?: RegistrySkill
   /** Present for action:'namespace' — the team's publish namespace (SMI-5852, AC-11). */
   namespace?: string
+  /** Present for action:'install' (SMI-5905). An allowlist — never carries raw `content`. */
+  install?: PrivateRegistryInstallSummary
   message?: string
   error?: string
 }
@@ -198,6 +208,15 @@ export interface PrivateRegistryService {
   ): Promise<RegistrySkill>
   list(teamId: string, version?: string): Promise<RegistrySkill[]>
   get(teamId: string, skillId: string, version?: string): Promise<RegistrySkill | null>
+  /** SMI-5905: one version's packaged `content`, for install. `null` when nothing visible
+   *  matches (absent OR cross-team — deliberately indistinguishable). Throws when the row's OWN
+   *  team is no longer Enterprise-entitled: that check lives in the implementation, never in a
+   *  caller. Version semantics are `get()`'s — explicit pins, omitted = most recently published. */
+  getContent(
+    teamId: string,
+    skillId: string,
+    version?: string
+  ): Promise<RegistrySkillContent | null>
   deprecate(teamId: string, skillId: string): Promise<boolean>
   undeprecate(teamId: string, skillId: string): Promise<boolean>
   /**
@@ -336,7 +355,7 @@ async function executePrivateRegistryPublishImpl(
  */
 async function executePrivateRegistryManageImpl(
   input: PrivateRegistryManageInput,
-  _context: ToolContext
+  context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   let teamId: string
@@ -378,6 +397,10 @@ async function executePrivateRegistryManageImpl(
         }
         return { success: true, dataSource, skill }
       }
+
+      // SMI-5905 Wave 3. Handler lives in a companion file (this one was 466/500 lines).
+      case 'install':
+        return executeRegistryInstall({ input, teamId, dataSource, service, context })
 
       case 'deprecate': {
         if (!input.skillId) {
