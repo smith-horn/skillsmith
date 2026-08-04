@@ -21,6 +21,17 @@ import AccountSidebar from '../../components/AccountSidebar.astro'
 import Nav from '../../components/Nav.astro'
 
 const supabaseConfig = getSupabaseConfig()
+
+// SMI-5911: JSON-LD moved into a frontmatter const + set:html={JSON.stringify(...)} to
+// avoid Astro template-parser breakage on a raw `>` inside a future string edit
+// (mirrors the SMI-5902 quickstart.astro fix).
+const webPageSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'WebPage',
+  name: 'CLI Token | Skillsmith',
+  url: 'https://www.skillsmith.app/account/cli-token',
+  description: 'Generate a Skillsmith CLI API token',
+}
 ---
 
 <!doctype html>
@@ -45,15 +56,7 @@ const supabaseConfig = getSupabaseConfig()
       window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
     <!-- JSON-LD: Page metadata -->
-    <script is:inline type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "WebPage",
-        "name": "CLI Token | Skillsmith",
-        "url": "https://www.skillsmith.app/account/cli-token",
-        "description": "Generate a Skillsmith CLI API token"
-      }
-    </script>
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(webPageSchema)} />
     <!-- Enable smooth page transitions (SMI-2066) -->
     <ClientRouter />
   </head>
