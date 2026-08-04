@@ -173,8 +173,12 @@ export async function createApiBackedRegistryLookup(
 
 /**
  * Format install result for --json output
+ *
+ * SMI-5905 Wave 4: exported so `registry-install.action.ts` can reuse this
+ * without duplicating output formatting — `CoreInstallResult` is the same
+ * type `SkillInstallationService.installFromContent()` returns.
  */
-function formatJsonResult(result: CoreInstallResult): string {
+export function formatJsonResult(result: CoreInstallResult): string {
   return JSON.stringify(
     {
       success: result.success,
@@ -192,8 +196,11 @@ function formatJsonResult(result: CoreInstallResult): string {
 
 /**
  * Display install result in human-readable format
+ *
+ * SMI-5905 Wave 4: exported so `registry-install.action.ts` can reuse this
+ * without duplicating output formatting — see `formatJsonResult` above.
  */
-function displayResult(result: CoreInstallResult, quiet: boolean): void {
+export function displayResult(result: CoreInstallResult, quiet: boolean): void {
   if (result.success) {
     console.log(chalk.green('\nSkill installed successfully!'))
     console.log(chalk.dim(`  Path: ${result.installPath}`))

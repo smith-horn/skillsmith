@@ -55,6 +55,13 @@ export {
   getGlobalCache,
   DEFAULT_TTL,
   type ApiClientConfig,
+  // SMI-5905 Wave 4: private-registry content fetch (CLI's only transport
+  // to private_registry_skills.content).
+  getPrivateRegistrySkillContent,
+  type PrivateRegistrySkillContent,
+  type PrivateRegistryGetErrorCode,
+  type PrivateRegistryGetResult,
+  type GetPrivateRegistrySkillContentParams,
 } from './api/index.js'
 
 // Search
@@ -278,7 +285,11 @@ export {
   refreshAccessToken,
   type TokenCredentials,
 } from './config/token-credentials.js'
-export { tryRefreshToken, loadStoredAccessToken } from './api/client.token-refresh.js'
+export {
+  tryRefreshToken,
+  loadStoredAccessToken,
+  resolveFreshAccessToken,
+} from './api/client.token-refresh.js'
 
 // SMI-5391: Cross-harness inventory device identity + local consent/throttle gate
 export {

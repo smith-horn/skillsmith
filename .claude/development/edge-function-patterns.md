@@ -350,6 +350,7 @@ Authoritative auth/JWT-verification table for every edge function. CLAUDE.md kee
 | `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |
 | `skills-outreach-preferences` | Authenticated (User JWT, handler-level) | Yes |
 | `admin-grant-subscription` | Authenticated (Admin JWT) | Yes |
+| `private-registry-get` | Authenticated (User JWT, handler-level — validated via `adminClient.auth.getUser()`, deliberately NOT the `JWT_AUTH_PERCENTAGE`-gated `runAuthMiddleware` classification) + Enterprise entitlement of **the row's own team** (`teams.subscription_id → subscriptions.tier/status`, never the caller's `profiles.tier`). `Cache-Control: no-store` on every response. (SMI-5905) | Yes |
 | `webhook-dlq` | Authenticated (User JWT, gateway-verified for RLS) | No |
 | `update-seat-count` | Authenticated | No |
 | `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify`, `coverage-report` | Service Role | No |
