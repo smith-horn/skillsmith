@@ -4,18 +4,19 @@ Core library for Skillsmith - provides database operations, search services, cac
 
 ## Contents
 
-- [What's New](#whats-new-in-v0112)
+- [What's New](#whats-new-in-v0114)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.11.2
+## What's New in v0.11.4
 
-- **Cross-session rename revert**: `apply_namespace_rename`'s `action: 'revert'` is now exposed, and `JournalAction`/`JOURNAL_SCHEMA_VERSION` are widened so an older reader no longer flags a legitimate revert journal record as corrupt.
-- **Unified shutdown coordinator**: Awaitable sync stop consolidates shutdown handling across the database and background writers.
-- **Production-grade error logging and diagnostics**: Structured error logging and diagnostics for easier triage in production.
-- **Dependency backfill**: `skill_dependencies` now backfills correctly for installs that predate v0.7.1.
+- **Security scanner false-positive fix**: jailbreak/AI-defence findings now carry an evidence tier instead of a flat severity, so a skill that *documents* these patterns defensively (a security-checklist skill, Skillsmith's own bundled SKILL.md) no longer scores identically to a skill containing an actual attack payload.
+- **Denial-of-service fix**: a regex pattern used in security scanning had catastrophic-backtracking behavior reachable through the public `SecurityScanner.scan()` API with no crafted payload — fixed and verified against a 20,000-case fuzz suite with zero mismatches.
+- **Typosquat/impersonation detection**: new detector for skill names using confusable-character matching, edit-distance, and authority-claiming affixes (e.g. `-official`, `-verified`).
+- **Atomic config writes**: config saves now run under a cross-process exclusive lock with temp-file-then-rename, closing a lost-update race between concurrent writers.
+- **New harness support**: Grok Build (xAI's coding CLI) added to cross-machine skill inventory scanning.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
