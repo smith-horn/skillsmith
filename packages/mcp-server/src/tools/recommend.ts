@@ -8,7 +8,12 @@
  * @see SMI-2741: Split to meet 500-line standard
  */
 
-import { SkillMatcher, OverlapDetector, trackEvent } from '@skillsmith/core'
+import {
+  SkillMatcher,
+  OverlapDetector,
+  trackEvent,
+  buildEmptyStackGuidance,
+} from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import { getInstalledSkills } from '../utils/installed-skills.js'
@@ -122,6 +127,61 @@ async function executeRecommendImpl(
       .filter((w) => w.length > 3)
       .slice(0, 5)
     stack.push(...contextWords)
+  }
+
+  // SMI-5896: an empty derived stack (no installed_skills and no usable
+  // project_context) is a legitimate under-detection, not an invalid request
+  // or a registry/backend fault. The skills-recommend edge function
+  // hard-rejects an empty `stack` with a 400 (defense in depth, unchanged by
+  // this fix) — detect the case client-side first, matching the CLI
+  // `recommend` command's identical guard, and return the same structured
+  // degraded result instead of spending a network round trip on a call
+  // guaranteed to fail. Previously this was only caught after the fact by
+  // Promise.allSettled below, silently producing candidates_considered: 0
+  // with no explanation surfaced to the caller.
+  //
+  // SMI-5896 review: this guard is intentionally unconditional on
+  // apiClient.isOffline() below, per the plan's decided Step 2 contract
+  // ("neither CLI nor MCP calls the API with an empty derived stack" — no
+  // offline carve-out). One consequence: an offline caller with a genuinely
+  // empty stack no longer reaches the local-only semantic-search fallback
+  // (searchLocalSkillsForRecommend with the generic 'development
+  // productivity tools' query) a few lines below — it now always returns
+  // this guidance response instead. That fallback query was never a
+  // documented/tested contract, just an emergent side effect of the
+  // pre-existing offline branch, so this is accepted as the plan's explicit
+  // decided behavior, not a regression to fix.
+  if (stack.length === 0) {
+    const endTime = performance.now()
+    const response: RecommendResponse = {
+      recommendations: [],
+      candidates_considered: 0,
+      overlap_filtered: 0,
+      role_filtered: 0,
+      discovery_only_hidden: 0,
+      suggestion: buildEmptyStackGuidance(),
+      context: {
+        installed_count: installed_skills.length,
+        has_project_context: !!project_context,
+        using_semantic_matching: false,
+        auto_detected: autoDetected,
+        role_filter: role,
+      },
+      timing: {
+        totalMs: Math.round(endTime - startTime),
+      },
+    }
+
+    // SMI-1184: Track recommend event (silent on failure)
+    if (context.distinctId) {
+      trackEvent(context.distinctId, 'skill_recommend', {
+        result_count: 0,
+        duration_ms: response.timing.totalMs,
+        source: 'mcp',
+      })
+    }
+
+    return response
   }
 
   // Build query string for local skill search

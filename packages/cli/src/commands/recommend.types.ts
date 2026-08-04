@@ -38,6 +38,14 @@ export interface RecommendResponse {
   overlap_filtered: number
   /** SMI-1631: Skills filtered due to role mismatch */
   role_filtered: number
+  /**
+   * SMI-5896: present when `recommendations` is empty, explaining why (e.g.
+   * no technology stack could be derived) and suggesting next steps. Mirrors
+   * the MCP `skill_recommend` tool's `suggestion` field (SMI-5556) so both
+   * surfaces guide the caller with the same wording instead of independently
+   * worded (or missing) guidance.
+   */
+  suggestion?: string
   context: {
     installed_count: number
     has_project_context: boolean

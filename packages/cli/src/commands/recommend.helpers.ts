@@ -103,12 +103,21 @@ export function formatRecommendations(
   if (response.recommendations.length === 0) {
     lines.push(chalk.yellow('No recommendations found.'))
     lines.push('')
-    lines.push('Suggestions:')
-    lines.push('  - Ensure the project has a package.json')
-    lines.push('  - Try a project with more dependencies')
-    lines.push('  - Use --context to provide additional context')
-    if (response.context.role_filter) {
-      lines.push(`  - Try removing the --role filter (currently: ${response.context.role_filter})`)
+    // SMI-5896: prefer the response's own suggestion (e.g. the empty-derived-
+    // stack guard) over the generic canned list below — mirrors the MCP
+    // skill_recommend tool's formatRecommendations (recommend.format.ts).
+    if (response.suggestion) {
+      lines.push(response.suggestion)
+    } else {
+      lines.push('Suggestions:')
+      lines.push('  - Ensure the project has a package.json')
+      lines.push('  - Try a project with more dependencies')
+      lines.push('  - Use --context to provide additional context')
+      if (response.context.role_filter) {
+        lines.push(
+          `  - Try removing the --role filter (currently: ${response.context.role_filter})`
+        )
+      }
     }
   } else {
     lines.push(`Found ${chalk.bold(response.recommendations.length)} recommendation(s):`)
@@ -199,6 +208,8 @@ export function formatAsJson(response: RecommendResponse, context: CodebaseConte
       role_filter: response.context.role_filter ?? null,
       installed_count: response.context.installed_count,
       auto_detected: response.context.auto_detected,
+      // SMI-5896: surfaced only when present (e.g. the empty-derived-stack guard).
+      suggestion: response.suggestion ?? null,
       timing_ms: response.timing.totalMs,
     },
   }
