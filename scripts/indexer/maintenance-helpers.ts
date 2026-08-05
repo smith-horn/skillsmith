@@ -3,9 +3,10 @@
  * @module scripts/indexer/maintenance-helpers
  *
  * SMI-4852: Node-flavored sibling of `supabase/functions/indexer/maintenance-helpers.ts`.
- * Pure logic + Supabase RPCs — no GitHub fetches. Byte-identical to the Deno
- * parent apart from the npm import for `@supabase/supabase-js` and the
- * relative imports landing inside `scripts/indexer/`.
+ * Behaviorally aligned with the Deno parent apart from the npm import for
+ * `@supabase/supabase-js` and the relative imports landing inside
+ * `scripts/indexer/`. (Since SMI-5551 the Phase 6 reconcile it drives performs
+ * direct GitHub verification fetches — see stale-reconciliation.ts.)
  *
  * SMI-4241 + SMI-4376: Pure decision functions extracted from index.ts so
  * they can be unit-tested without invoking the Deno.serve handler. The
@@ -14,7 +15,11 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { reconcileStaleSkills } from './stale-reconciliation.ts'
+import {
+  reconcileStaleSkills,
+  resolveStaleThresholdDays,
+  MAINTENANCE_STALE_DEFAULT_DAYS,
+} from './stale-reconciliation.ts'
 import { notifyBulkQuarantine } from './_shared/notification.ts'
 import { writeIndexerAuditLog } from './indexer-audit-log.ts'
 import {
@@ -73,13 +78,14 @@ export interface MaintenanceResponseData {
  *
  * Returns 7 by default (SMI-4203 production value). Any positive finite
  * numeric override is honored.
+ *
+ * SMI-5551 item 3: delegates to the canonical `resolveStaleThresholdDays`
+ * resolver in stale-reconciliation.ts — the maintenance (7-day) and discovery
+ * (30-day) thresholds are one policy with two caller defaults, not two
+ * independently-tunable constants.
  */
 export function resolveMaintenanceStaleThreshold(body: { staleThresholdDays?: unknown }): number {
-  const raw = body.staleThresholdDays
-  if (typeof raw === 'number' && !isNaN(raw) && isFinite(raw) && raw > 0) {
-    return raw
-  }
-  return 7
+  return resolveStaleThresholdDays(body.staleThresholdDays, MAINTENANCE_STALE_DEFAULT_DAYS)
 }
 
 /**
@@ -123,9 +129,15 @@ export function buildMaintenanceResponseData(
  * elapsed time.
  *
  * - `errors.length > 0` → 'partial'
- * - elapsed > 60 000 ms → 'partial' (reconcile took longer than expected;
+ * - elapsed > 600 000 ms → 'partial' (reconcile took longer than expected;
  *   ops-report will surface the anomaly)
  * - otherwise → 'success'
+ *
+ * SMI-5551: thresholds scaled 10x (30s/60s → 5min/10min). The reconcile is no
+ * longer a pure DB sweep — it now direct-verifies up to STALE_BATCH_LIMIT
+ * (500) candidates against GitHub at concurrency 5, so multi-minute runs are
+ * the expected steady state, not an anomaly. The old 60s ceiling would have
+ * flagged every full sweep 'partial'.
  *
  * Returns the audit result plus a log level (`'warn' | 'error' | null`)
  * so callers can emit a human-readable console entry.
@@ -138,14 +150,14 @@ export function classifyMaintenanceResult(
   logLevel: 'warn' | 'error' | null
   logMessage: string | null
 } {
-  if (elapsedMs > 60_000) {
+  if (elapsedMs > 600_000) {
     return {
       auditResult: 'partial',
       logLevel: 'error',
       logMessage: `[indexer:maintenance] reconcile took ${elapsedMs}ms — downgrading to partial`,
     }
   }
-  if (elapsedMs > 30_000) {
+  if (elapsedMs > 300_000) {
     return {
       auditResult: staleResult.errors.length === 0 ? 'success' : 'partial',
       logLevel: 'warn',
@@ -205,7 +217,8 @@ export async function runMaintenanceReconciliation(params: {
   const staleResult = await reconcileStaleSkills(supabase, staleThresholdDays)
   const elapsedMs = Date.now() - startedAt
 
-  // Timing guards: soft warn at 30s, hard error + downgrade to partial at 60s.
+  // Timing guards: soft warn at 5min, hard error + downgrade to partial at
+  // 10min (SMI-5551: reconcile now direct-verifies candidates against GitHub).
   const { auditResult, logLevel, logMessage } = classifyMaintenanceResult(staleResult, elapsedMs)
   if (logLevel === 'error' && logMessage) {
     console.error(logMessage)
