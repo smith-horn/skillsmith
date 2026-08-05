@@ -3,14 +3,7 @@
  * @module @skillsmith/core/security/scanner/SecurityScanner.helpers
  */
 
-import type {
-  SecurityFinding,
-  SecurityFindingType,
-  RiskScoreBreakdown,
-  FindingConfidence,
-  EvidenceType,
-} from './types.js'
-import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
+import type { SecurityFinding, SecurityFindingType, EvidenceType } from './types.js'
 import { safeRegexTest } from './regex-utils.js'
 import {
   EVIDENCE_RANK,
@@ -168,6 +161,35 @@ export function isWithinInlineCode(line: string, matchIndex: number): boolean {
 // Shared Pattern Scanning
 // ============================================================================
 
+/**
+ * SMI-5879 (design §3.3.4): correctness ceiling on distinct lines recorded per
+ * pattern in the pass-1 full-content scan — score-neutral by proof (Lemma
+ * 3.3-B): once one pattern alone has pushed its category's raw subtotal past
+ * the per-category `Math.min(100, …)` cap, no further line from that SAME
+ * pattern can change the post-cap value. Derived floor:
+ * `ceil(100 / min_raw_per_finding)` where `min_raw_per_finding` is the
+ * smallest (severity × category-weight × confidence) reachable from the
+ * multiline pass — today an `ai_defence` `mention` in either context:
+ * `low(5) × 1.9 × low(0.3) = 2.85`, giving `ceil(100/2.85) = 36`. Set to 64
+ * (1.78x headroom over the derived floor) so a future weight change that
+ * lowers the minimum per-finding contribution doesn't immediately breach it;
+ * `scanner-multiline-cap.test.ts` recomputes the floor from the live weight
+ * tables and asserts this constant stays `>=` it.
+ */
+export const MAX_MULTILINE_LINES_PER_PATTERN = 64
+
+/**
+ * SMI-5879 (design §3.3.3/3.3.6): wall-clock LIVENESS bound on a single
+ * pattern's pass-1 loop — NOT score-neutral (unlike the line cap above). A
+ * same-line repetition (e.g. 200 matches on one line) costs one iteration per
+ * match even though `seenLines` never grows past 1, so this bounds worst-case
+ * iteration count on a pathological same-line-repetition input. Binding marks
+ * the scan `multilineTruncated`; a truncated scan may only ever RAISE a
+ * verdict, never lower one (design §3.3.6) — enforced by the write path, not
+ * here.
+ */
+export const MAX_MULTILINE_ITERATIONS_PER_PATTERN = 10_000
+
 interface MultilineScanConfig {
   type: SecurityFindingType
   messagePrefix: string
@@ -211,6 +233,19 @@ interface EvidenceCandidate {
  *     `bestByLine` SEEDS pass 2 with pass 1's result instead of skipping the
  *     line outright, so pass 2 can still find something stronger.
  */
+export interface MultilineScanResult {
+  findings: SecurityFinding[]
+  /**
+   * SMI-5879 (design §3.3.6): true when at least one pattern's pass-1 loop
+   * hit MAX_MULTILINE_ITERATIONS_PER_PATTERN before exhausting its matches.
+   * NOT provably score-neutral (unlike the line cap) — a truncated scan may
+   * under-count. The write path must treat a truncated scan as authoritative
+   * for RAISING a verdict only, never for lowering one or clearing an
+   * existing quarantine.
+   */
+  truncated: boolean
+}
+
 export function scanPatternsWithMultilineSupport(
   content: string,
   config: MultilineScanConfig,
@@ -223,44 +258,79 @@ export function scanPatternsWithMultilineSupport(
    * (undefined) falls back to safeRegexTest's own default.
    */
   maxLength?: number
-): SecurityFinding[] {
+): MultilineScanResult {
   const lines = content.split('\n')
   const contexts = lineContexts ?? analyzeMarkdownContext(content)
   const bestByLine = new Map<number, EvidenceCandidate>()
+  let truncated = false
 
   const rank = (t: EvidenceType): number => EVIDENCE_RANK[t]
 
-  // First pass: 'content' | 'both'-scope patterns against full content. No
-  // break — every such pattern is independently tested (same cost as before:
-  // at most one full-content scan per pattern), and the strongest tier per
-  // line wins.
+  // First pass: 'content' | 'both'-scope patterns against full content.
+  //
+  // SMI-5879 (design §3.3): each multiline pattern gets its OWN global-flag
+  // clone (never mutating the shared pattern object) and its own per-pattern
+  // `seenLines` set. A second match on a line already recorded by THIS
+  // pattern is a provable no-op (Lemma 3.3-A: same tier, same line, strict
+  // `>` merge comparison) and costs nothing once skipped. The effective input
+  // is truncated to `maxLength` up front (mirroring safeRegexTest's own
+  // truncation) so `lineNumberOf` never reads past what was actually scanned.
+  const scannedContent =
+    maxLength !== undefined && content.length > maxLength ? content.slice(0, maxLength) : content
+
   for (const pattern of config.patterns) {
     if (resolvePatternScope(pattern) === 'line') continue
-    const match = safeRegexTest(pattern, content, maxLength)
-    if (!match) continue
 
-    // SMI-5876: use the match's own reported index rather than a fresh
-    // content.indexOf(match[0]) — the latter misreports the line whenever the
-    // matched text ALSO occurs earlier in the content (a real hazard fixed in
-    // the same pass as the evidence-tier merge).
-    const matchIndex = match.index ?? content.indexOf(match[0])
-    const lineNumber = content.slice(0, matchIndex).split('\n').length
-    const ctx = contexts[lineNumber - 1]
-    const matchLine = lines[lineNumber - 1] ?? ''
-    const lineOffset = content.lastIndexOf('\n', matchIndex - 1) + 1
-    const matchCol = matchIndex - lineOffset
-    const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(matchLine, matchCol)
-    const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
-    const tier = config.classify(pattern)
+    const flags = pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'
+    const g = new RegExp(pattern.source, flags)
+    const seenLines = new Set<number>()
+    let iterations = 0
+    let m: RegExpExecArray | null
 
-    const incumbent = bestByLine.get(lineNumber)
-    if (!incumbent || rank(tier) > rank(incumbent.tier)) {
-      bestByLine.set(lineNumber, {
-        tier,
-        matchText: match[0],
-        location: match[0].trim().slice(0, 100),
-        inDocContext,
-      })
+    while ((m = g.exec(scannedContent)) !== null) {
+      if (m[0].length === 0) g.lastIndex++ // zero-length-match advance
+
+      if (++iterations > MAX_MULTILINE_ITERATIONS_PER_PATTERN) {
+        truncated = true
+        break
+      }
+
+      // SMI-5879: many content-scope patterns lead with a captured `(?:^|\n)`
+      // (a line-start anchor), so `m.index` for the 2nd+ occurrence points at
+      // the NEWLINE ending the PREVIOUS line, not at the matched line's own
+      // content — attributing raw `m.index` directly under-counts the target
+      // line by one and (worse) collides with an already-seen earlier line,
+      // silently dropping the real match. Skip past any leading `\n`
+      // character(s) to the match's actual content start before resolving
+      // the line/column.
+      const matchIndex = m.index
+      let contentIndex = matchIndex
+      while (scannedContent[contentIndex] === '\n') contentIndex++
+
+      const lineNumber = scannedContent.slice(0, contentIndex).split('\n').length
+      if (seenLines.has(lineNumber)) continue // Lemma 3.3-A: costs nothing
+
+      if (seenLines.size >= MAX_MULTILINE_LINES_PER_PATTERN) break // score-neutral (Lemma 3.3-B)
+
+      seenLines.add(lineNumber)
+
+      const ctx = contexts[lineNumber - 1]
+      const matchLine = lines[lineNumber - 1] ?? ''
+      const lineOffset = scannedContent.lastIndexOf('\n', contentIndex - 1) + 1
+      const matchCol = contentIndex - lineOffset
+      const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(matchLine, matchCol)
+      const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+      const tier = config.classify(pattern)
+
+      const incumbent = bestByLine.get(lineNumber)
+      if (!incumbent || rank(tier) > rank(incumbent.tier)) {
+        bestByLine.set(lineNumber, {
+          tier,
+          matchText: m[0],
+          location: m[0].trim().slice(0, 100),
+          inDocContext,
+        })
+      }
     }
   }
 
@@ -306,12 +376,12 @@ export function scanPatternsWithMultilineSupport(
     const candidate = bestByLine.get(lineNumber)
     if (!candidate) continue
     const { severity, confidence } = resolveEvidenceSeverity(candidate.tier, candidate.inDocContext)
-    const truncated = candidate.matchText.slice(0, 50)
+    const truncatedText = candidate.matchText.slice(0, 50)
 
     findings.push({
       type: config.type,
       severity,
-      message: `${config.messagePrefix}: "${truncated}${candidate.matchText.length > 50 ? '...' : ''}"`,
+      message: `${config.messagePrefix}: "${truncatedText}${candidate.matchText.length > 50 ? '...' : ''}"`,
       location: candidate.location,
       lineNumber,
       category: config.type,
@@ -321,144 +391,14 @@ export function scanPatternsWithMultilineSupport(
     })
   }
 
-  return findings
+  return { findings, truncated }
 }
 
 // ============================================================================
 // Risk Score Calculation
 // ============================================================================
+// SMI-5879: moved to SecurityScanner.risk-score.ts (this file was approaching
+// the 500-line audit:standards gate again after the RC-1 two-bound multiline
+// loop grew it) — re-exported here unchanged for existing consumers.
 
-/**
- * SMI-685: Calculate risk score from findings
- * SMI-1513: Accounts for confidence levels (low confidence = reduced weight)
- * Aggregates multiple findings into a risk score from 0-100
- */
-export function calculateRiskScore(findings: SecurityFinding[]): {
-  total: number
-  breakdown: RiskScoreBreakdown
-} {
-  const breakdown: RiskScoreBreakdown = {
-    jailbreak: 0,
-    socialEngineering: 0,
-    promptLeaking: 0,
-    dataExfiltration: 0,
-    privilegeEscalation: 0,
-    suspiciousCode: 0,
-    sensitivePaths: 0,
-    externalUrls: 0,
-    aiDefence: 0,
-    ssrf: 0,
-    pii: 0,
-    codeExecution: 0,
-    obfuscatedDirective: 0,
-    typosquat: 0,
-  }
-
-  const confidenceWeights: Record<FindingConfidence, number> = {
-    high: 1.0,
-    medium: 0.7,
-    low: 0.3,
-  }
-
-  for (const finding of findings) {
-    const severityWeight = SEVERITY_WEIGHTS[finding.severity]
-    const categoryWeight = CATEGORY_WEIGHTS[finding.type] ?? 1.0
-    const confidenceWeight = confidenceWeights[finding.confidence ?? 'high']
-    const score = severityWeight * categoryWeight * confidenceWeight
-
-    switch (finding.type) {
-      case 'jailbreak':
-        breakdown.jailbreak += score
-        break
-      case 'social_engineering':
-        breakdown.socialEngineering += score
-        break
-      case 'prompt_leaking':
-        breakdown.promptLeaking += score
-        break
-      case 'data_exfiltration':
-        breakdown.dataExfiltration += score
-        break
-      case 'privilege_escalation':
-        breakdown.privilegeEscalation += score
-        break
-      case 'suspicious_pattern':
-        breakdown.suspiciousCode += score
-        break
-      case 'sensitive_path':
-        breakdown.sensitivePaths += score
-        break
-      case 'url':
-        breakdown.externalUrls += score
-        break
-      case 'ai_defence':
-        breakdown.aiDefence += score
-        break
-      case 'ssrf':
-        breakdown.ssrf += score
-        break
-      case 'pii':
-        breakdown.pii += score
-        break
-      case 'code_execution':
-        breakdown.codeExecution += score
-        break
-      case 'obfuscated_directive':
-        breakdown.obfuscatedDirective += score
-        break
-      case 'typosquat':
-        // SMI-595: this switch has NO default case — a missing arm here would
-        // silently drop every typosquat finding from the breakdown with zero
-        // compile-time or runtime error. See the switch-case coverage test in
-        // SecurityScanner.scoring.test.ts, added specifically to guard this.
-        breakdown.typosquat += score
-        break
-    }
-  }
-
-  // Cap each category at 100
-  breakdown.jailbreak = Math.min(100, breakdown.jailbreak)
-  breakdown.socialEngineering = Math.min(100, breakdown.socialEngineering)
-  breakdown.promptLeaking = Math.min(100, breakdown.promptLeaking)
-  breakdown.dataExfiltration = Math.min(100, breakdown.dataExfiltration)
-  breakdown.privilegeEscalation = Math.min(100, breakdown.privilegeEscalation)
-  breakdown.suspiciousCode = Math.min(100, breakdown.suspiciousCode)
-  breakdown.sensitivePaths = Math.min(100, breakdown.sensitivePaths)
-  breakdown.externalUrls = Math.min(100, breakdown.externalUrls)
-  breakdown.aiDefence = Math.min(100, breakdown.aiDefence)
-  breakdown.ssrf = Math.min(100, breakdown.ssrf)
-  breakdown.pii = Math.min(100, breakdown.pii)
-  breakdown.codeExecution = Math.min(100, breakdown.codeExecution)
-  breakdown.obfuscatedDirective = Math.min(100, breakdown.obfuscatedDirective)
-  breakdown.typosquat = Math.min(100, breakdown.typosquat)
-
-  // SMI-5359 Wave 4.2: the two new categories use a 0.40 coefficient and are ADDITIVE
-  // (the original eleven coefficients sum to 1.0; these add on top). No code assumes the
-  // coefficients sum to 1.0, and the final Math.min(100, ...) cap is preserved — so a skill
-  // that triggers neither new category scores exactly as before (both breakdown entries 0).
-  // SMI-595: typosquat is likewise ADDITIVE, at the 0.04 coefficient already used for
-  // sensitivePaths/externalUrls/ssrf (the "advisory tier" of this second-stage formula) —
-  // NOT folded into the eleven-category budget that sums to 1.0. See weights.ts's
-  // CATEGORY_WEIGHTS.typosquat comment for the worked calculation this pairs with.
-  const total = Math.min(
-    100,
-    Math.round(
-      breakdown.jailbreak * 0.2 +
-        breakdown.socialEngineering * 0.11 +
-        breakdown.promptLeaking * 0.11 +
-        breakdown.dataExfiltration * 0.08 +
-        breakdown.privilegeEscalation * 0.11 +
-        breakdown.suspiciousCode * 0.07 +
-        breakdown.sensitivePaths * 0.04 +
-        breakdown.externalUrls * 0.04 +
-        breakdown.aiDefence * 0.12 +
-        breakdown.ssrf * 0.04 +
-        breakdown.pii * 0.08 +
-        breakdown.codeExecution * 0.4 +
-        breakdown.obfuscatedDirective * 0.4 +
-        breakdown.typosquat * 0.04
-    )
-  )
-
-  return { total, breakdown }
-}
+export { calculateRiskScore } from './SecurityScanner.risk-score.js'
