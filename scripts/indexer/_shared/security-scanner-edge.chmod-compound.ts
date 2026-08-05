@@ -12,6 +12,10 @@ import type { SecurityFinding, LineContext } from './security-scanner-edge.conte
 import { classifyMatch } from './security-scanner-edge.context.ts'
 import { safeRegexTest } from './security-scanner-edge.regex-utils.ts'
 
+// ============================================================================
+// Owner-perm chmod compound signal
+// ============================================================================
+
 // SMI-5424 PR2: owner-permission chmod is a COMPOUND signal, not standalone.
 // `chmod 755 ./bin/cli` / `chmod 600 .env` / `chmod +x build.sh` are benign idioms
 // that the broad owner-perm pattern previously false-fired as

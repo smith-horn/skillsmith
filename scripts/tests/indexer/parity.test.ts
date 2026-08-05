@@ -110,6 +110,48 @@ const NODE_SCANNER_PATTERNS = resolve(
 // core's. Host-side plaintext (no git-crypt).
 const CORE_PATTERNS = resolve(REPO_ROOT, 'packages/core/src/security/scanner/patterns.ts')
 const CORE_SCANNER = resolve(REPO_ROOT, 'packages/core/src/security/scanner/SecurityScanner.ts')
+// SMI-5879: the evidence-tier classification + pattern scope + corroboration
+// module (new sibling twin, 500-line limit). Drift here means the two indexers
+// would classify/score jailbreak+prompt_injection evidence differently.
+const DENO_SCANNER_EVIDENCE = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.evidence.ts'
+)
+const NODE_SCANNER_EVIDENCE = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.evidence.ts'
+)
+// SMI-5879: the multiline-scan two-pass engine (new sibling twin, 500-line
+// limit). Drift here means the two indexers would find a different set of
+// matches for 'content'/'both'-scope jailbreak/prompt_injection patterns.
+const DENO_SCANNER_MULTILINE = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.multiline.ts'
+)
+const NODE_SCANNER_MULTILINE = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.multiline.ts'
+)
+// SMI-5879: the shared regex-safety constants/helper (new sibling twin, 500-line
+// limit).
+const DENO_SCANNER_REGEX_UTILS = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.regex-utils.ts'
+)
+const NODE_SCANNER_REGEX_UTILS = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.regex-utils.ts'
+)
+// SMI-5424 PR2 / SMI-5879: the owner-perm chmod compound signal (new sibling
+// twin, 500-line limit).
+const DENO_SCANNER_CHMOD_COMPOUND = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.chmod-compound.ts'
+)
+const NODE_SCANNER_CHMOD_COMPOUND = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.chmod-compound.ts'
+)
 // SMI-5436 Wave 1: core↔edge SecurityFinding interface parity.
 const CORE_TYPES = resolve(REPO_ROOT, 'packages/core/src/security/scanner/types.ts')
 // SMI-5436 Wave 0: skill-processor.security.ts twins (extraction parity + BUNDLED_SCAN_FILES sync).
@@ -366,6 +408,124 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
       }
     }
   )
+})
+
+// SMI-5879 (design §6.1): the new evidence-tier machinery gained 4 sibling
+// twins (evidence.ts, multiline.ts, regex-utils.ts, chmod-compound.ts). Whole-
+// body extraction plus per-function spot checks for the evidence classifier,
+// the severity resolver, the corroboration function, and the multiline merge
+// function — so a drift failure points at the specific helper, not just "the
+// file differs somewhere."
+describe('SMI-5879 — Deno <-> Node evidence-tier machinery parity', () => {
+  const denoEvidenceEncrypted = isGitCryptEncrypted(DENO_SCANNER_EVIDENCE)
+  const denoMultilineEncrypted = isGitCryptEncrypted(DENO_SCANNER_MULTILINE)
+  const denoRegexUtilsEncrypted = isGitCryptEncrypted(DENO_SCANNER_REGEX_UTILS)
+  const denoChmodCompoundEncrypted = isGitCryptEncrypted(DENO_SCANNER_CHMOD_COMPOUND)
+
+  it.skipIf(denoEvidenceEncrypted)(
+    'scanner evidence body is byte-identical from the first section marker (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractScannerBody(DENO_SCANNER_EVIDENCE))
+      const node = normalizeWs(extractScannerBody(NODE_SCANNER_EVIDENCE))
+      expect(
+        node,
+        'security-scanner-edge.evidence.ts drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins'
+      ).toBe(deno)
+    }
+  )
+
+  it.skipIf(denoMultilineEncrypted)(
+    'scanner multiline body is byte-identical from the first section marker (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractScannerBody(DENO_SCANNER_MULTILINE))
+      const node = normalizeWs(extractScannerBody(NODE_SCANNER_MULTILINE))
+      expect(
+        node,
+        'security-scanner-edge.multiline.ts drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins'
+      ).toBe(deno)
+    }
+  )
+
+  it.skipIf(denoRegexUtilsEncrypted)(
+    'scanner regex-utils body is byte-identical from the first section marker (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractScannerBody(DENO_SCANNER_REGEX_UTILS))
+      const node = normalizeWs(extractScannerBody(NODE_SCANNER_REGEX_UTILS))
+      expect(
+        node,
+        'security-scanner-edge.regex-utils.ts drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins'
+      ).toBe(deno)
+    }
+  )
+
+  it.skipIf(denoChmodCompoundEncrypted)(
+    'scanner chmod-compound body is byte-identical from the first section marker (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractScannerBody(DENO_SCANNER_CHMOD_COMPOUND))
+      const node = normalizeWs(extractScannerBody(NODE_SCANNER_CHMOD_COMPOUND))
+      expect(
+        node,
+        'security-scanner-edge.chmod-compound.ts drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins'
+      ).toBe(deno)
+    }
+  )
+
+  for (const fn of [
+    'classifyEvidence',
+    'resolveEvidenceSeverity',
+    'escalateCorroboratedMentions',
+  ]) {
+    it.skipIf(denoEvidenceEncrypted)(`${fn} body is byte-identical (normalized whitespace)`, () => {
+      const deno = normalizeWs(extractBody(DENO_SCANNER_EVIDENCE, fn))
+      const node = normalizeWs(extractBody(NODE_SCANNER_EVIDENCE, fn))
+      expect(node).toBe(deno)
+    })
+  }
+
+  it.skipIf(denoMultilineEncrypted)(
+    'scanPatternsWithMultilineSupport (the multiline merge function) body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(
+        extractBody(DENO_SCANNER_MULTILINE, 'scanPatternsWithMultilineSupport')
+      )
+      const node = normalizeWs(
+        extractBody(NODE_SCANNER_MULTILINE, 'scanPatternsWithMultilineSupport')
+      )
+      expect(node).toBe(deno)
+    }
+  )
+
+  // Design §6.4: encrypted-twin hard-fail guard. Every `it.skipIf(denoXEncrypted)`
+  // assertion above (plus the pre-existing scanner/context/exec/patterns twins)
+  // silently no-ops when the Deno twin is git-crypt-encrypted — correct for a
+  // CI lane that genuinely never receives the key (dependabot/fork PRs), but a
+  // silent skip is indistinguishable from a passing assertion on a PR run that
+  // SHOULD have the key. This guard fails LOUDLY instead, unless the
+  // environment explicitly opts out (registered in
+  // docs/internal/process/guards-and-opt-outs.md).
+  if (process.env.SKILLSMITH_PARITY_ALLOW_ENCRYPTED_DENO !== '1') {
+    it('no Deno scanner twin is git-crypt-encrypted in this environment (opt out: SKILLSMITH_PARITY_ALLOW_ENCRYPTED_DENO=1)', () => {
+      const denoScannerPaths = [
+        DENO_SCANNER,
+        DENO_SCANNER_CONTEXT,
+        DENO_SCANNER_EXEC,
+        DENO_SCANNER_PATTERNS,
+        DENO_SCANNER_EVIDENCE,
+        DENO_SCANNER_MULTILINE,
+        DENO_SCANNER_REGEX_UTILS,
+        DENO_SCANNER_CHMOD_COMPOUND,
+      ]
+      for (const path of denoScannerPaths) {
+        expect(
+          isGitCryptEncrypted(path),
+          `${path} is git-crypt-encrypted — every skipIf(...) assertion above for this twin was ` +
+            'silently skipped, not passed. Unlock git-crypt, or set ' +
+            'SKILLSMITH_PARITY_ALLOW_ENCRYPTED_DENO=1 if this environment is documented as ' +
+            'legitimately without the key (docs/internal/process/guards-and-opt-outs.md).'
+        ).toBe(false)
+      }
+    })
+  }
 })
 
 // SMI-5402: core <-> edge suspicious_pattern parity. The twin-pair guards above
