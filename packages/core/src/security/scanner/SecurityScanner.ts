@@ -243,13 +243,26 @@ export class SecurityScanner {
    * text contains. This disables ONLY the encoded-payload detector on the
    * inner call, not the rest of the suite — a decoded `curl|bash` still
    * trips `code_execution`, decoded secrets still trip `sensitive_path`, etc.
+   *
+   * SMI-5879: `EncodedPayloadRescanner`'s contract is a bare
+   * `SecurityFinding[]` return (SecurityScanner.encoding.ts, out of scope for
+   * this change), so a recursive `runDetectors` call for decoded content has
+   * no return channel of its own to report multiline truncation.
+   * `truncationRef` is a shared mutable out-param instead: every call (outer
+   * and any recursive rescan) ORs its own jailbreak/AI-defence truncation
+   * into it, so truncation anywhere in the recursion is visible to the
+   * original (outermost) caller. Per `ScanReport.multilineTruncated`'s own
+   * doc: being truncated is only ever used to RAISE caution, never to lower
+   * it, so over-reporting here (e.g. attributing an inner rescan's
+   * truncation to the whole document) is safe by that same design.
    */
   private runDetectors(
     content: string,
     lineContexts: LineContext[],
     skipEncodedPayload: boolean,
     isHighTrustAuthor = false,
-    isMarkdown = true
+    isMarkdown = true,
+    truncationRef?: { truncated: boolean }
   ): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     // SMI-5881: the multiline (full-content) regex pass has its OWN, much
@@ -312,6 +325,10 @@ export class SecurityScanner {
       effectiveMultilineLimit
     )
     findings.push(...aiDefenceResult.findings)
+    if (truncationRef) {
+      truncationRef.truncated =
+        truncationRef.truncated || jailbreakResult.truncated || aiDefenceResult.truncated
+    }
     findings.push(...scanSsrfPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...scanPiiPatterns(content, lineContexts))
     findings.push(...scanCodeExecution(content, lineContexts))
@@ -347,7 +364,8 @@ export class SecurityScanner {
             analyzeMarkdownContext(decodedContent, isMarkdown),
             true,
             isHighTrustAuthor,
-            isMarkdown
+            isMarkdown,
+            truncationRef
           )
         )
       )
@@ -402,7 +420,17 @@ export class SecurityScanner {
       })
     }
 
-    findings.push(...this.runDetectors(content, lineContexts, false, isHighTrustAuthor, isMarkdown))
+    const truncationRef = { truncated: false }
+    findings.push(
+      ...this.runDetectors(
+        content,
+        lineContexts,
+        false,
+        isHighTrustAuthor,
+        isMarkdown,
+        truncationRef
+      )
+    )
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)
@@ -419,7 +447,7 @@ export class SecurityScanner {
       scanDurationMs: endTime - startTime,
       riskScore,
       riskBreakdown,
-      multilineTruncated: jailbreakResult.truncated || aiDefenceResult.truncated,
+      multilineTruncated: truncationRef.truncated,
     }
   }
 
