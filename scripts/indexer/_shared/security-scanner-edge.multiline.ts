@@ -22,6 +22,10 @@ import {
 } from './security-scanner-edge.evidence.ts'
 import { safeRegexTest, MAX_CONTENT_SCAN_LENGTH } from './security-scanner-edge.regex-utils.ts'
 
+// ============================================================================
+// Multiline-scan two-pass engine
+// ============================================================================
+
 /**
  * SMI-5879 (design §3.3.4): correctness ceiling on distinct lines recorded per
  * pattern in the pass-1 full-content scan — score-neutral by proof (Lemma
