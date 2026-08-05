@@ -14,8 +14,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 // vi.mock is hoisted before imports — mock the two dependencies that
 // runStaleReconciliationPhase imports from its siblings.
+// SMI-5551 item 3: phase-split now also imports the canonical threshold
+// resolver + discovery default from stale-reconciliation.ts, so the factory
+// must provide them (real logic — it's a pure function).
 vi.mock('../../indexer/stale-reconciliation.ts', () => ({
   reconcileStaleSkills: vi.fn(),
+  DISCOVERY_STALE_DEFAULT_DAYS: 30,
+  resolveStaleThresholdDays: (raw: unknown, defaultDays: number) =>
+    typeof raw === 'number' && !isNaN(raw) && isFinite(raw) && raw > 0 ? raw : defaultDays,
 }))
 
 vi.mock('../../indexer/_shared/notification.ts', () => ({
@@ -30,6 +36,22 @@ import { notifyBulkQuarantine } from '../../indexer/_shared/notification.ts'
 // Typed mock references so TypeScript is happy
 const mockReconcileStaleSkills = vi.mocked(reconcileStaleSkills)
 const mockNotifyBulkQuarantine = vi.mocked(notifyBulkQuarantine)
+
+// SMI-5551: StaleReconciliationResult grew verification counters — build
+// fixtures through one helper so future shape growth lands in one place.
+function staleResult(
+  overrides: Partial<Awaited<ReturnType<typeof reconcileStaleSkills>>> = {}
+): Awaited<ReturnType<typeof reconcileStaleSkills>> {
+  return {
+    staleQuarantined: 0,
+    quarantinedIds: [],
+    errors: [],
+    verifiedLive: 0,
+    transientSkipped: 0,
+    maliciousQuarantined: 0,
+    ...overrides,
+  }
+}
 
 // Minimal no-op Supabase client (the skip path never touches it)
 const noop = {} as unknown as SupabaseClient
@@ -68,11 +90,7 @@ describe('runStaleReconciliationPhase — backfillMode=true (skip gate)', () => 
 
 describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () => {
   it('calls reconcileStaleSkills when backfillMode is false', async () => {
-    mockReconcileStaleSkills.mockResolvedValueOnce({
-      staleQuarantined: 0,
-      quarantinedIds: [],
-      errors: [],
-    })
+    mockReconcileStaleSkills.mockResolvedValueOnce(staleResult())
 
     await runStaleReconciliationPhase(noop, 30, true, false)
 
@@ -80,11 +98,7 @@ describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () 
   })
 
   it('passes the supabase client and stale threshold to reconcileStaleSkills', async () => {
-    mockReconcileStaleSkills.mockResolvedValueOnce({
-      staleQuarantined: 0,
-      quarantinedIds: [],
-      errors: [],
-    })
+    mockReconcileStaleSkills.mockResolvedValueOnce(staleResult())
 
     await runStaleReconciliationPhase(noop, 14, true, false)
 
@@ -92,11 +106,12 @@ describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () 
   })
 
   it('forwards staleQuarantined count from reconcileStaleSkills', async () => {
-    mockReconcileStaleSkills.mockResolvedValueOnce({
-      staleQuarantined: 7,
-      quarantinedIds: ['id-1', 'id-2', 'id-3', 'id-4', 'id-5', 'id-6', 'id-7'],
-      errors: [],
-    })
+    mockReconcileStaleSkills.mockResolvedValueOnce(
+      staleResult({
+        staleQuarantined: 7,
+        quarantinedIds: ['id-1', 'id-2', 'id-3', 'id-4', 'id-5', 'id-6', 'id-7'],
+      })
+    )
 
     const result = await runStaleReconciliationPhase(noop, 30, true, false)
 
@@ -104,11 +119,7 @@ describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () 
   })
 
   it('forwards errors from reconcileStaleSkills', async () => {
-    mockReconcileStaleSkills.mockResolvedValueOnce({
-      staleQuarantined: 0,
-      quarantinedIds: [],
-      errors: ['some error'],
-    })
+    mockReconcileStaleSkills.mockResolvedValueOnce(staleResult({ errors: ['some error'] }))
 
     const result = await runStaleReconciliationPhase(noop, 30, true, false)
 
@@ -116,11 +127,9 @@ describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () 
   })
 
   it('calls notifyBulkQuarantine when quarantinedIds is non-empty and dryRun=false', async () => {
-    mockReconcileStaleSkills.mockResolvedValueOnce({
-      staleQuarantined: 2,
-      quarantinedIds: ['id-a', 'id-b'],
-      errors: [],
-    })
+    mockReconcileStaleSkills.mockResolvedValueOnce(
+      staleResult({ staleQuarantined: 2, quarantinedIds: ['id-a', 'id-b'] })
+    )
     mockNotifyBulkQuarantine.mockResolvedValueOnce(undefined)
 
     await runStaleReconciliationPhase(noop, 30, false, false)
@@ -130,11 +139,9 @@ describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () 
   })
 
   it('does NOT call notifyBulkQuarantine when dryRun=true', async () => {
-    mockReconcileStaleSkills.mockResolvedValueOnce({
-      staleQuarantined: 2,
-      quarantinedIds: ['id-a', 'id-b'],
-      errors: [],
-    })
+    mockReconcileStaleSkills.mockResolvedValueOnce(
+      staleResult({ staleQuarantined: 2, quarantinedIds: ['id-a', 'id-b'] })
+    )
 
     await runStaleReconciliationPhase(noop, 30, true, false)
 
@@ -142,11 +149,7 @@ describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () 
   })
 
   it('coerces undefined staleThresholdDays to 30', async () => {
-    mockReconcileStaleSkills.mockResolvedValueOnce({
-      staleQuarantined: 0,
-      quarantinedIds: [],
-      errors: [],
-    })
+    mockReconcileStaleSkills.mockResolvedValueOnce(staleResult())
 
     await runStaleReconciliationPhase(noop, undefined, true, false)
 

@@ -53,6 +53,22 @@ vi.mock('../../indexer/_shared/quarantine.ts', () => ({
   },
 }))
 
+// SMI-5551: reconcileStaleSkills now direct-verifies each candidate before
+// quarantining. This suite pins the THRESHOLD boundary, not the verification
+// branches (stale-reconciliation-verify.test.ts covers those), so stub the
+// network layer to a deterministic 404 — every selected candidate verifies as
+// confirmed-dead and the original boundary assertions keep their meaning.
+vi.mock('../../indexer/_shared/github-auth.ts', () => ({
+  buildGitHubHeaders: vi.fn(async () => ({})),
+}))
+vi.mock('../../indexer/_shared/skill-md-fetch.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../indexer/_shared/skill-md-fetch.ts')>()
+  return {
+    ...actual, // keep the real parseSkillMdUrl (fixtures carry valid GitHub URLs)
+    fetchSkillMd: vi.fn(async () => ({ kind: 'not-found' as const })),
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -68,8 +84,10 @@ const FROZEN_NOW_MS = 1_752_393_600_000
 
 interface ReconcileRow {
   id: string
+  author: string | null
   name: string
   repo_url: string
+  skill_path: string | null
   last_seen_at: string
   quarantined: boolean
 }
@@ -77,8 +95,10 @@ interface ReconcileRow {
 function makeReconcileRow(id: string, last_seen_at: string): ReconcileRow {
   return {
     id,
+    author: 'acme',
     name: `skill-${id}`,
     repo_url: `https://github.com/acme/${id}`,
+    skill_path: null,
     last_seen_at,
     quarantined: false,
   }
