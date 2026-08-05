@@ -206,6 +206,15 @@ export function parseSkillId(input: string): ParsedSkillId {
  * SMI-1491: Enables install to work with registry IDs like "author/skill-name"
  *
  * Follows API-first pattern: tries live API, falls back to local DB
+ *
+ * SMI-5896: deliberately NOT folded into core's shared `resolveSkillApiFirst`
+ * (used by `get_skill`/`skill_compare`) — three contract differences make that
+ * a behavior change, not a refactor: (1) returns `null` rather than throwing
+ * SKILL_NOT_FOUND; (2) `null` also covers "registry has it but no repo_url"
+ * (discovery-only, SMI-2723) and that case must NOT fall through to a stale
+ * local `repoUrl`; (3) it derives the security-relevant `quarantined` flag per
+ * branch, which the shared resolver has no concept of — any future
+ * consolidation must preserve that gate on both branches (cf. SMI-5447).
  */
 export async function lookupSkillFromRegistry(
   skillId: string,

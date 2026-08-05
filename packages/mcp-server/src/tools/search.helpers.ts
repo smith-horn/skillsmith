@@ -19,6 +19,46 @@ import { extractCategoryFromTags, mapTrustTierFromDb } from '../utils/validation
 import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
 
 /**
+ * SMI-5896: Default/bound for the MCP search tool's `limit` parameter.
+ * Matches the public API's own server-side clamp
+ * (supabase/functions/_shared/supabase.ts:validatePagination) — [1, 100] —
+ * so a caller-supplied limit behaves identically whether it's satisfied by
+ * the API-path branch or the local-fallback branch. The *default* when
+ * omitted (10, not the API's own default of 20) preserves the tool's
+ * pre-existing hardcoded behavior for callers who don't pass `limit` at all.
+ */
+export const DEFAULT_SEARCH_LIMIT = 10
+export const MIN_SEARCH_LIMIT = 1
+export const MAX_SEARCH_LIMIT = 100
+
+/**
+ * Resolve the effective MCP search `limit`: defaults to
+ * {@link DEFAULT_SEARCH_LIMIT} when omitted, clamped (not rejected) to
+ * [{@link MIN_SEARCH_LIMIT}, {@link MAX_SEARCH_LIMIT}] otherwise. A caller
+ * passing an out-of-range value gets a smaller/larger *page*, not an error —
+ * mirrors the public API's own clamp-not-reject behavior.
+ *
+ * Accepts `unknown` deliberately: `tool-dispatch.ts` hands `search` its raw
+ * JSON arguments with a bare cast (`(args ?? {}) as SearchInput`) and no
+ * runtime schema check, so this function IS the validation boundary for
+ * `limit`. Anything that isn't a finite number (JSON `null`, `"abc"`, `true`,
+ * `[]`) resolves to the default rather than propagating `NaN` into
+ * `Array.prototype.slice`, which would silently return zero results.
+ */
+export function resolveSearchLimit(limit: unknown): number {
+  const numeric =
+    typeof limit === 'number'
+      ? limit
+      : typeof limit === 'string' && limit.trim() !== ''
+        ? Number(limit)
+        : Number.NaN
+  if (Number.isNaN(numeric)) return DEFAULT_SEARCH_LIMIT
+  // ±Infinity intentionally clamps to MAX/MIN rather than falling back to the
+  // default — "clamped, not rejected" applies to any orderable value.
+  return Math.min(Math.max(Math.trunc(numeric), MIN_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
+}
+
+/**
  * SMI-2760: Filter search results by compatibility tags.
  * Skills with no compatibility data are included (`[]`/absent = unknown/unscoped,
  * NOT incompatible — they may be compatible but simply haven't declared it).

@@ -20,13 +20,13 @@
  * console.log(result.recommendation);
  */
 
-import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import { SkillsmithError, ErrorCodes, resolveSkillApiFirst } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
 import { isValidSkillId } from '../utils/validation.js'
 
 // Import types
-import type { CompareInput, CompareResponse } from './compare.types.js'
+import type { CompareInput, CompareResponse, ExtendedSkill } from './compare.types.js'
 import { compareInputSchema } from './compare.types.js'
 
 // Import helpers
@@ -35,6 +35,7 @@ import {
   generateDifferences,
   generateRecommendation,
   dbSkillToExtended,
+  apiSkillToExtended,
   padEnd,
   formatScoreBar,
 } from './compare.helpers.js'
@@ -109,27 +110,26 @@ async function executeCompareImpl(
     )
   }
 
-  // Look up skills from database
-  const dbSkillA = context.skillRepository.findById(skill_a)
-  const dbSkillB = context.skillRepository.findById(skill_b)
-
-  if (!dbSkillA) {
-    throw new SkillsmithError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill_a}" not found`, {
-      details: { id: skill_a },
-      suggestion: 'Try searching for similar skills with the search tool',
-    })
-  }
-
-  if (!dbSkillB) {
-    throw new SkillsmithError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill_b}" not found`, {
-      details: { id: skill_b },
-      suggestion: 'Try searching for similar skills with the search tool',
-    })
-  }
+  // SMI-5896: resolve both skills via the shared API-first / local-fallback
+  // resolver (packages/core/src/services/skill-resolution.ts) — previously
+  // compare only ever queried the local cache via skillRepository.findById(),
+  // which (per SMI-5427) is no longer kept in sync in the remote-first search
+  // world, so a real, searchable registry skill was often simply absent
+  // locally. Resolved sequentially (not Promise.all) so a not-found error
+  // deterministically names skill_a first when both are missing, matching
+  // this tool's prior behavior.
+  const resolvedA = await resolveSkillApiFirst(skill_a, context.apiClient, context.skillRepository)
+  const resolvedB = await resolveSkillApiFirst(skill_b, context.apiClient, context.skillRepository)
 
   // Convert to extended format
-  const skillA = dbSkillToExtended(dbSkillA)
-  const skillB = dbSkillToExtended(dbSkillB)
+  const skillA: ExtendedSkill =
+    resolvedA.source === 'api'
+      ? apiSkillToExtended(resolvedA.apiSkill)
+      : dbSkillToExtended(resolvedA.dbSkill)
+  const skillB: ExtendedSkill =
+    resolvedB.source === 'api'
+      ? apiSkillToExtended(resolvedB.apiSkill)
+      : dbSkillToExtended(resolvedB.dbSkill)
 
   // Generate differences
   const differences = generateDifferences(skillA, skillB)

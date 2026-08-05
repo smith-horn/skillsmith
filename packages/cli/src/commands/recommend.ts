@@ -12,6 +12,7 @@ import {
   CodebaseAnalyzer,
   createApiClient,
   loadStoredAccessToken,
+  buildEmptyStackGuidance,
   type SkillRole,
   SKILL_ROLES,
 } from '@skillsmith/core'
@@ -75,6 +76,61 @@ async function runRecommend(targetPath: string, options: RecommendOptions): Prom
         .filter((w) => w.length > 3)
         .slice(0, 5)
       stack.push(...contextWords)
+    }
+
+    // SMI-5896 review: the guard below tells the caller to "supply project
+    // context or an installed-skills list" to escape it, but --installed
+    // wasn't actually feeding into `stack` -- an explicit --installed on a
+    // codebase with no auto-detected stack and no --context still hit the
+    // guard, silently ignoring the very list the guidance text just told the
+    // user to provide. Mirrors MCP recommend.ts's identical stack-building.
+    if (options.installed?.length) {
+      stack.push(...options.installed.map((id) => id.toLowerCase().split('/').pop() ?? id))
+    }
+
+    // SMI-5896: an empty derived stack (non-Node project, all-devDeps, or an
+    // unsupported language) is a legitimate under-detection, not an invalid
+    // request — the skills-recommend edge function hard-rejects an empty
+    // `stack` with a 400, which previously propagated straight through the
+    // outer catch into a hard `process.exit(1)` crash. Detect it client-side
+    // first and return the same structured degraded result MCP's
+    // skill_recommend tool returns for the equivalent input, instead of
+    // spending a network round trip on a call guaranteed to fail.
+    if (stack.length === 0) {
+      const installedSkills = options.installed?.length
+        ? options.installed.map((id) => ({
+            name: id.toLowerCase().split('/').pop() ?? id.toLowerCase(),
+            directory: id,
+            tags: [],
+            category: null,
+          }))
+        : getInstalledSkills()
+      const autoDetected = !options.installed || options.installed.length === 0
+
+      const response: RecommendResponse = {
+        recommendations: [],
+        candidates_considered: 0,
+        overlap_filtered: 0,
+        role_filtered: 0,
+        suggestion: buildEmptyStackGuidance(),
+        context: {
+          installed_count: installedSkills.length,
+          has_project_context: !!options.context,
+          using_semantic_matching: false,
+          auto_detected: autoDetected,
+          ...(options.role ? { role_filter: options.role } : {}),
+        },
+        timing: { totalMs: codebaseContext.metadata.durationMs },
+      }
+
+      spinner.warn('No technology stack detected — skipping recommendation lookup')
+
+      if (options.json) {
+        console.log(formatAsJson(response, codebaseContext))
+      } else {
+        console.log(formatRecommendations(response, codebaseContext))
+      }
+      return
     }
 
     // Step 3: Call recommendation API

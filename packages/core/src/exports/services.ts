@@ -463,3 +463,15 @@ export {
   recordAiDefenceFeedback,
   collectTrendWarnings,
 } from '../services/skill-installation.feedback.js'
+
+// ============================================================================
+// Discovery-Tool Consistency (SMI-5896: Wave 3)
+// ============================================================================
+
+export {
+  resolveSkillApiFirst,
+  type ResolvedSkill,
+  type ResolveSkillOptions,
+} from '../services/skill-resolution.js'
+
+export { buildEmptyStackGuidance } from '../services/recommend-guard.js'
