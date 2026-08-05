@@ -53,13 +53,13 @@ describe('runDequarantineBranch (SMI-5356)', () => {
   it('DEQUARANTINE_DRY_RUN=true => runSweep apply:false (read-only failsafe)', async () => {
     const res = await runDequarantineBranch(envWith(true), 'req-1')
     expect(runSweepMock).toHaveBeenCalledTimes(1)
-    expect(runSweepMock).toHaveBeenCalledWith({ apply: false })
+    expect(runSweepMock).toHaveBeenCalledWith({ __client: 'mock' }, { apply: false })
     expect(res).toEqual({ dequarantine: sample, dryRun: true })
   })
 
   it('DEQUARANTINE_DRY_RUN=false => runSweep apply:true (deliberate apply)', async () => {
     const res = await runDequarantineBranch(envWith(false), 'req-2')
-    expect(runSweepMock).toHaveBeenCalledWith({ apply: true })
+    expect(runSweepMock).toHaveBeenCalledWith({ __client: 'mock' }, { apply: true })
     expect(res.dryRun).toBe(false)
   })
 
@@ -69,7 +69,7 @@ describe('runDequarantineBranch (SMI-5356)', () => {
       { DEQUARANTINE_DRY_RUN: true, DRY_RUN: false } as unknown as IndexerEnv,
       'req-3'
     )
-    expect(runSweepMock).toHaveBeenCalledWith({ apply: false })
+    expect(runSweepMock).toHaveBeenCalledWith({ __client: 'mock' }, { apply: false })
   })
 
   it('writes a top-level indexer:run audit row carrying the sweep counts', async () => {

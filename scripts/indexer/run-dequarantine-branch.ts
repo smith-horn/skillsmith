@@ -43,9 +43,9 @@ export async function runDequarantineBranch(
   requestId: string
 ): Promise<DequarantineBranchResult> {
   const dryRun = env.DEQUARANTINE_DRY_RUN
-  const counts = await runSweep({ apply: !dryRun })
-
   const supabase = createSupabaseAdminClient()
+  const counts = await runSweep(supabase, { apply: !dryRun })
+
   await writeIndexerAuditLog(supabase, counts.errors > 0 ? 'partial' : 'success', {
     requestId,
     topics: [],

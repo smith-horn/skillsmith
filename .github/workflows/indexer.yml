@@ -318,6 +318,18 @@ jobs:
             echo "::error::Indexer run-type allow-list is engaged (INDEXER_RUN_ALLOWLIST=none) -- refusing run_type=$RUN_TYPE."
             exit 1
           fi
+          # SMI-5879 retro fix: a trailing/leading/doubled comma must fail
+          # closed here exactly as it does in run-gate.ts's isRunTypePermitted
+          # (.split(',') keeps the resulting empty string as a token, which
+          # matches no recognised run type). `IFS=',' read -ra` below silently
+          # drops a trailing empty field, which previously let Gate B permit
+          # on the identical malformed input that Gate C refuses.
+          case "$ALLOWLIST" in
+            ,*|*,|*,,*)
+              echo "::error::INDEXER_RUN_ALLOWLIST=\"$ALLOWLIST\" contains a leading/trailing/doubled comma -- refusing run_type=$RUN_TYPE (fail closed)."
+              exit 1
+              ;;
+          esac
           # Validate every comma-separated token is a recognised run type;
           # an unrecognised token anywhere fails the WHOLE value closed.
           IFS=',' read -ra TOKENS <<< "$ALLOWLIST"
@@ -369,6 +381,12 @@ jobs:
           MAX_REPOS: ${{ github.event.client_payload.max_repos || '100' }}
           CODE_SEARCH_MAX_PAGES: ${{ github.event.client_payload.code_search_max_pages || '1' }}
           RUN_TYPE: ${{ steps.config.outputs.run_type }}
+          # SMI-5879 retro fix: Gate C (assertRunAllowed inside run.ts) reads
+          # this from process.env. Gates A/B already check the same repo
+          # variable earlier in this job, but without this line Gate C was
+          # silently dead code -- run.ts always saw an unset var and permitted
+          # unconditionally, regardless of the real INDEXER_RUN_ALLOWLIST value.
+          INDEXER_RUN_ALLOWLIST: ${{ vars.INDEXER_RUN_ALLOWLIST }}
           STALE_DAYS: ${{ steps.config.outputs.stale_days }}
           CRON_SLOT: ${{ steps.config.outputs.cron_slot }}
           # SMI-4870: empty = full sequential discovery; 1/2/3 = single phase.

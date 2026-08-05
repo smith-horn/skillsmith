@@ -291,7 +291,7 @@ describe('runPurge', () => {
     installMockDb({ selectRows: [makeRow({ id: 'a' }), makeRow({ id: 'b' })] })
     const exportPath = join(dir, 'export.csv')
 
-    const counts = await runPurge({ apply: false, exportPath })
+    const counts = await runPurge(mockDb, { apply: false, exportPath })
 
     expect(counts.total).toBe(2)
     expect(counts.deleted).toBe(0)
@@ -308,7 +308,7 @@ describe('runPurge', () => {
     installMockDb({ selectRows: rows })
     const exportPath = join(dir, 'export.csv')
 
-    const counts = await runPurge({ apply: true, exportPath })
+    const counts = await runPurge(mockDb, { apply: true, exportPath })
 
     expect(counts.total).toBe(1200)
     expect(counts.deleted).toBe(1200)
@@ -332,7 +332,11 @@ describe('runPurge', () => {
     const rows = Array.from({ length: 100 }, (_, i) => makeRow({ id: `id-${i}` }))
     installMockDb({ selectRows: rows })
 
-    const counts = await runPurge({ apply: true, limit: 10, exportPath: join(dir, 'e.csv') })
+    const counts = await runPurge(mockDb, {
+      apply: true,
+      limit: 10,
+      exportPath: join(dir, 'e.csv'),
+    })
 
     expect(counts.total).toBe(10)
     expect(counts.deleted).toBe(10)
@@ -345,7 +349,7 @@ describe('runPurge', () => {
     installMockDb({
       selectRows: [makeRow({ id: 'a', quarantine_reason: 'security scan:\ninjected' })],
     })
-    const counts = await runPurge({ apply: true, exportPath: join(dir, 'e.csv') })
+    const counts = await runPurge(mockDb, { apply: true, exportPath: join(dir, 'e.csv') })
     expect(counts.deleted).toBe(1)
     expect(skillDeleteBatches.flat()).toEqual(['a'])
   })
