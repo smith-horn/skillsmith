@@ -28,6 +28,7 @@ with 2s backoff per call. Exit codes: `0` ok, `1` fail, `2` skipped.
 | `edge-fn-skills-search` | Authenticated GET with `X-API-Key: $SMOKE_SKILLS_API_KEY` → 200; asserts `user_api_usage.search_count` incremented by 1 | `supabase/functions/skills-search/**` or `_shared/usage-counter.ts` / `_shared/auth-middleware.ts` change |
 | `edge-fn-skills-get` | Authenticated GET with `X-API-Key` → 200 or 404 (skill not found is OK); asserts `user_api_usage.get_count` incremented by 1 | `supabase/functions/skills-get/**` or `_shared/usage-counter.ts` / `_shared/auth-middleware.ts` change |
 | `edge-fn-skills-recommend` | Authenticated POST `{"stack":["typescript"]}` with `X-API-Key` → 200; asserts `user_api_usage.recommend_count` incremented by 1 | `supabase/functions/skills-recommend/**` or `_shared/usage-counter.ts` / `_shared/auth-middleware.ts` change |
+| `edge-fn-private-registry-get` (SMI-5922) | Unauthenticated GET with a valid-shaped `skillId` → 401 + `Cache-Control: no-store` (must be GET — non-GET 405s before auth ever runs) | `supabase/functions/private-registry-get/**` or the SMI-5905/5882 hardening migrations change |
 | `cli-published` | `npx -y @skillsmith/cli@latest --help` exits 0 with a `Commands:` section; `--version` exits 0 | `packages/cli/**` change |
 | `mcp-server-published` | `npx -y @skillsmith/mcp-server@latest --version` exits 0 | `packages/mcp-server/**` change |
 

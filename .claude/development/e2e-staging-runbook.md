@@ -221,3 +221,45 @@ Wave 6 is blocked until **either** (a) **post-merge**, the workflow is promoted 
 ### Cleanup
 
 The weekly `cross-harness-inventory-e2e-cleanup.yml` (Sundays 04:00 UTC, via `STAGING_POOLER_URL`) deletes `user_devices WHERE label LIKE 'e2e-inv-%' AND last_seen_at < now() - interval '1 day'` (FK-cascades `device_skills`). The main job also runs a `run_id`-scoped defensive delete every run. The two seeded users persist by design.
+
+## Private Registry Install e2e (SMI-5922)
+
+Third sibling harness in the **same** `e2e-staging` GitHub Environment. Workflow: `.github/workflows/private-registry-e2e.yml` (no separate weekly cleanup workflow — the nightly's own `always()` defensive cleanup is the sweeper; revisit only if rows demonstrably accumulate). Proves publish (real user-JWT insert) → fetch (Edge Function + MCP-live) → install (real `skillsmith registry install` CLI subprocess) → boundary outcomes against staging via a plain `tsx` round-trip script — no browser, no Vercel, no website build (this feature has zero UI). One deliberate structural departure from the sibling workflows: the spec step runs inside the worktree's Docker dev container (`docker exec skillsmith-dev-1 npx tsx scripts/e2e-registry-roundtrip.ts`), not bare on the runner, because it now invokes the real CLI subprocess, which loads `better-sqlite3` via `openCliDatabase()`.
+
+### Required secrets (in addition to the shared `STAGING_*` above)
+
+| Secret | Purpose |
+|---|---|
+| `E2E_REG_ADMIN_USER_ID` | UUID of Team A's admin/owner (Enterprise) |
+| `E2E_REG_MEMBER_USER_ID` | UUID of Team A's non-admin member |
+| `E2E_REG_NONENT_USER_ID` | UUID of Team B's owner (non-Enterprise) |
+| `E2E_REG_DUAL_USER_ID` | UUID of the dual-membership actor (member of both Team A and Team B) — the load-bearing regression case for a row-scoped-not-global entitlement check |
+| `E2E_REG_USER_PASSWORD` | shared password for all four seeded users (also kept locally in `.env`, never committed) |
+| `E2E_REG_TEAM_A_LICENSE_KEY` | Team A's team-scoped license key — the MCP tool surface resolves "which team" exclusively from `SKILLSMITH_LICENSE_KEY`, never from the caller's own `team_members` rows |
+| `E2E_REG_TEAM_B_LICENSE_KEY` | Team B's team-scoped license key, same reason |
+
+### One-time setup
+
+1. **Deploy the edge fn to staging** (anonymous, in-handler auth — `--no-verify-jwt`):
+   `varlock run -- npx supabase functions deploy private-registry-get --project-ref ovhcifugwqnzoebwfuku`
+   (the private-registry migrations must already be on staging — verify via the workflow's drift preflight, which asserts an exact count of 5 hardening procs).
+2. **Seed the fixtures** (idempotent, fail-closed prod guard):
+   `E2E_REG_USER_PASSWORD='<pick>' varlock run -- npx tsx scripts/seed-e2e-registry-users.ts` → prints the four user IDs, plus each team's license key **the run that creates it only** (the key is stored as a one-way hash — a re-run cannot recover it).
+3. **Set the secrets**: `gh secret set <NAME> --env e2e-staging --body '<value>'` for each (read the password/keys from `.env` or the seed run's own captured output — never re-print a license key by re-running the seed script, which no-ops on an existing active key).
+
+### Reading the gate — invisible-success guard
+
+During Phase 1 the `test` job is `continue-on-error: true`, so **the run conclusion is masked to "success" even when the spec fails.** The true signal is:
+
+- the **`Run private registry round-trip spec`** step conclusion (`gh run view <id> --json jobs`), and
+- the **`Surface real e2e result`** guard step, which emits a `::warning::` annotation + a run-summary line on any non-pass.
+
+Never treat a green run *conclusion* as a pass — confirm the spec step / the guard annotation.
+
+### Promotion gate (SMI-5922 Wave 4, post-merge, calendar-gated)
+
+Unlike the inventory/device-login siblings there is no blocked prod rollout waiting on this promotion (the feature is already live) — it exists purely so future regressions block merges instead of only surfacing on the next nightly. **N = 10 consecutive green nightly runs**, then: remove `continue-on-error`, wire the `alert-notify` failure step, add to required checks. Track the date of the first nightly on the Linear issue, not as an open-ended "later."
+
+### Cleanup
+
+The main job's `always()` defensive cleanup step deletes, every run, both a run-scoped (`skill_id LIKE '%/e2e-reg-<run_id>%'`) and an age-scoped (`created_at < now() - interval '1 day'`) set of rows — **both bound to `team_id IN (...)` for the two seeded test teams**, never a bare `skill_id LIKE` alone (a real staging row could otherwise collide with the predictable test pattern). The durable Team B fetch-target skill (`.../durable-skill`, no run_id) is excluded by construction and persists by design, same as the four seeded users and two seeded teams.
