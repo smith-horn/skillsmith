@@ -1,0 +1,292 @@
+# SMI-5922 -- private registry install staging e2e round-trip.
+# Proves the full publish -> fetch (Edge Function / MCP-live) -> install (real CLI
+# subprocess) -> boundary-outcome path against staging Supabase
+# (ovhcifugwqnzoebwfuku -- never prod). Third sibling in the e2e-staging
+# GitHub Environment, alongside device-login-roundtrip.yml and
+# cross-harness-inventory-e2e.yml.
+#
+# Hard gate: "green" means the SPEC STEP conclusion = success (surfaced by the
+# "Surface real e2e result" guard below), NOT the job conclusion -- Phase-1
+# continue-on-error masks a spec failure to "success" at the job level.
+#
+# Phase 1 rollout: PR + dispatch (+ nightly post-merge) with continue-on-error:
+# true. Promotion (SMI-5922 Wave 4): remove continue-on-error, wire an
+# alert-notify failure step, add to required checks after 10 consecutive green
+# nightly runs. Unlike the inventory/device-login siblings there is no blocked
+# prod rollout waiting on this (the feature is already live) -- promotion is
+# purely so future regressions block merges.
+#
+# Docker (deliberate departure from the sibling workflows -- SMI-5922 plan
+# review finding #4): the spec now invokes the REAL `skillsmith registry
+# install` CLI subprocess, which loads better-sqlite3 via openCliDatabase() --
+# a native module, so it needs glibc (ADR-002) and this repo's Docker-first
+# execution model. Only the spec step itself runs in Docker; everything else
+# (checkout, drift preflight, cleanup, guard step) stays on the bare runner,
+# matching this repo's default Docker-first model without pulling in the full
+# CI docker-build/cache pipeline (ci.yml) -- this is a nightly + path-triggered
+# workflow, not the main per-push gate, so a plain `docker compose up` cold
+# build is an acceptable trade for staying self-contained.
+#
+# H3 (borrowed from the sibling workflows): prod-ref grep gate is scoped to the
+# UNENCRYPTED surface only. Do NOT add supabase/migrations/** or
+# supabase/functions/** -- grep reads ciphertext there and would false-alarm.
+
+name: Private Registry Install E2E
+
+on:
+  schedule:
+    - cron: '0 7 * * *' # 07:00 UTC daily -- offset from device-login (06:00) and inventory (06:30)
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - 'packages/core/src/api/client.private-registry.ts'
+      - 'packages/core/src/services/skill-installation.content.ts'
+      - 'packages/cli/src/commands/registry-install.action.ts'
+      - 'packages/mcp-server/src/tools/registry-tools.live.*'
+      - 'supabase/functions/private-registry-get/**'
+      - 'supabase/migrations/20260724000000_private_registry_skills.sql'
+      - 'supabase/migrations/20260727000000_private_registry_skill_namespace_enforcement.sql'
+      - 'supabase/migrations/20260729000000_private_registry_privilege_hardening.sql'
+      - 'supabase/migrations/20260729000001_private_registry_hardening_backfill.sql'
+      - 'scripts/seed-e2e-registry-users.ts'
+      - 'scripts/e2e-registry-roundtrip.ts'
+      - '.github/workflows/private-registry-e2e.yml'
+
+concurrency:
+  group: private-registry-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight (prod-ref grep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Refuse if prod project ref present in registry e2e surface (non-negotiable)
+        run: |
+          set -eu
+          # Prod ref must not appear in the registry e2e surface EXCEPT on lines
+          # bearing the explicit allowlist marker `SMI-5922-allow-prod-ref` (used
+          # in scripts/seed-e2e-registry-users.ts and scripts/e2e-registry-roundtrip.ts's
+          # own refuse-on-match guards -- the very thing this gate protects). Any
+          # other occurrence is presumed to be an accidentally-pasted prod URL.
+          # The needle is split across two parts so the literal never appears
+          # contiguously in this file (avoids the gate matching its own source).
+          # Grep ONLY the unencrypted surface -- NOT supabase/migrations/**,
+          # NOT supabase/functions/** (grep reads ciphertext and false-alarms).
+          # SMI-5922-allow-prod-ref-needle.
+          NEEDLE="vrcnzpmnd""troqxxoqkzy"
+          MATCHES="$(grep -rEn "$NEEDLE" \
+             scripts/seed-e2e-registry-users.ts \
+             scripts/e2e-registry-roundtrip.ts \
+             .github/workflows/private-registry-e2e.yml \
+             | grep -vE 'SMI-5922-allow-prod-ref' || true)"
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Prod project ref detected in registry e2e surface -- refusing to run"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "Prod-ref grep gate clean."
+
+  test:
+    name: Private registry round-trip test
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: e2e-staging
+    permissions:
+      contents: read
+    # Dependabot PRs are same-repo but receive no repository secrets (SMI-5485).
+    # Event-scoped (not a bare actor check): on `schedule`, github.actor is
+    # attributed to the last workflow editor, which can be dependabot[bot] after
+    # a merged github-actions bump -- a bare check would silently skip the
+    # nightly burn-in run. This form only excludes dependabot *PRs*.
+    if: github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'
+    continue-on-error: true # audit:allow-continue-on-error
+    env:
+      STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+      STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      E2E_REG_ADMIN_USER_ID: ${{ secrets.E2E_REG_ADMIN_USER_ID }}
+      E2E_REG_MEMBER_USER_ID: ${{ secrets.E2E_REG_MEMBER_USER_ID }}
+      E2E_REG_NONENT_USER_ID: ${{ secrets.E2E_REG_NONENT_USER_ID }}
+      E2E_REG_DUAL_USER_ID: ${{ secrets.E2E_REG_DUAL_USER_ID }}
+      E2E_REG_USER_PASSWORD: ${{ secrets.E2E_REG_USER_PASSWORD }}
+      E2E_REG_TEAM_A_LICENSE_KEY: ${{ secrets.E2E_REG_TEAM_A_LICENSE_KEY }}
+      E2E_REG_TEAM_B_LICENSE_KEY: ${{ secrets.E2E_REG_TEAM_B_LICENSE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Migration drift preflight (private-registry hardening objects must exist)
+        env:
+          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+        run: |
+          set -eu
+          REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
+          if [ -z "$REF" ]; then
+            echo "::error::Could not derive project ref from STAGING_SUPABASE_URL"; exit 1
+          fi
+          # Fail-closed runtime ref guard (defense-in-depth beyond the file-content
+          # grep gate): refuse to connect unless the derived ref is staging.
+          if [ "$REF" != "ovhcifugwqnzoebwfuku" ]; then
+            echo "::error::derived project ref '${REF}' is not the staging ref -- refusing to connect"; exit 1
+          fi
+          # Assert exact count == 5 (a half-applied migration state must fail):
+          # private_registry_content_hash, enforce_private_registry_content_hash
+          # (20260729000000), derive_team_skill_namespace,
+          # prevent_skill_namespace_mutation, enforce_private_skill_namespace
+          # (20260727000000). Transaction pooler (port 6543) for a short read.
+          CONN="host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require connect_timeout=15"
+          QUERY="SELECT count(*) FROM pg_proc WHERE proname IN ('private_registry_content_hash','enforce_private_registry_content_hash','derive_team_skill_namespace','prevent_skill_namespace_mutation','enforce_private_skill_namespace');"
+          COUNT=""
+          for attempt in 1 2 3; do
+            if COUNT="$(printf '%s' "$QUERY" | psql "$CONN" -P pager=off -At)"; then
+              break
+            fi
+            COUNT=""
+            if [ "$attempt" -lt 3 ]; then
+              echo "drift preflight: psql attempt ${attempt} could not connect; retrying in 10s..." >&2
+              sleep 10
+            else
+              echo "drift preflight: psql attempt ${attempt} could not connect; no more retries." >&2
+            fi
+          done
+          if [ -z "$COUNT" ]; then
+            echo "::error::staging pooler unreachable after 3 attempts (transient pooler/network timeout on port 6543) -- NOT migration drift; re-run the workflow."
+            exit 1
+          fi
+          if [ "$COUNT" != "5" ]; then
+            echo "::error::staging migration drift detected: expected exactly 5 private-registry hardening procs, got ${COUNT}. Apply migrations via supabase db push --db-url (never --linked)."
+            exit 1
+          fi
+          echo "Migration drift preflight clean (5 private-registry hardening procs confirmed)."
+
+      - name: Start dev container
+        run: docker compose --profile dev up -d
+
+      - name: Wait for dev container healthy
+        run: |
+          set -eu
+          for i in $(seq 1 30); do
+            STATUS="$(docker inspect --format='{{.State.Health.Status}}' skillsmith-dev-1 2>/dev/null || echo starting)"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Container healthy."
+              exit 0
+            fi
+            echo "Container status: ${STATUS} (attempt ${i}/30)"
+            sleep 5
+          done
+          echo "::error::skillsmith-dev-1 did not become healthy in time"
+          docker logs skillsmith-dev-1 || true
+          exit 1
+
+      - name: Build workspace inside the container (dist/ is bind-mount-shadowed, not baked)
+        run: |
+          # docker-compose.yml's `.:/app` bind mount replaces the image's baked
+          # /app at container start with this fresh checkout, which has no dist/
+          # (gitignored) -- only node_modules survives, via its own named volume.
+          # A stale/missing dist/ here would make the CLI subprocess step in the
+          # spec fail with a confusing "command not found" rather than a real
+          # test failure, so this build is required, not optional.
+          docker exec skillsmith-dev-1 npm run build
+
+      - name: Run private registry round-trip spec
+        id: spec
+        # Teed to test-results/ (artifact-upload allowlist below) as well as the
+        # Actions log -- `run:`'s default bash shell has `pipefail` on
+        # (GitHub Actions default: `bash --noprofile --norc -eo pipefail`), so
+        # `docker exec`'s real exit code still propagates through the pipe and
+        # sets steps.spec.outcome correctly, not tee's own (near-always-zero) one.
+        run: |
+          mkdir -p test-results
+          docker exec \
+            -e STAGING_SUPABASE_URL \
+            -e STAGING_SUPABASE_ANON_KEY \
+            -e STAGING_SUPABASE_SERVICE_ROLE_KEY \
+            -e E2E_REG_ADMIN_USER_ID \
+            -e E2E_REG_MEMBER_USER_ID \
+            -e E2E_REG_NONENT_USER_ID \
+            -e E2E_REG_DUAL_USER_ID \
+            -e E2E_REG_USER_PASSWORD \
+            -e E2E_REG_TEAM_A_LICENSE_KEY \
+            -e E2E_REG_TEAM_B_LICENSE_KEY \
+            -e GITHUB_RUN_ID \
+            skillsmith-dev-1 npx tsx scripts/e2e-registry-roundtrip.ts \
+            2>&1 | tee test-results/registry-roundtrip.log
+
+      - name: Surface real e2e result (Phase-1 invisible-success guard)
+        # The job is continue-on-error during Phase 1, so its conclusion is
+        # "success" even when the spec FAILS. This reads the spec step's raw
+        # outcome and emits a ::warning:: + a run-summary line so a masked
+        # failure is never silently green -- the true gate signal lives here,
+        # not in the job conclusion.
+        if: always()
+        run: |
+          if [ "${{ steps.spec.outcome }}" = "success" ]; then
+            echo "### Private Registry E2E -- spec PASSED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=Private Registry E2E spec FAILED::spec outcome=${{ steps.spec.outcome }}. The job is green ONLY due to Phase-1 continue-on-error -- do NOT treat this run as a passing gate. Inspect the spec step + uploaded artifacts."
+            echo "### Private Registry E2E -- spec FAILED (outcome=${{ steps.spec.outcome }}), masked by Phase-1 continue-on-error" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload artifacts on spec failure (allowlisted paths only -- no secrets)
+        if: steps.spec.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: private-registry-e2e-${{ github.run_id }}
+          path: |
+            test-results/registry-*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop dev container
+        if: always()
+        run: docker compose --profile dev down || true
+
+      - name: Defensive cleanup (run-scoped + age-scoped, team_id-bound)
+        # Always team_id-scoped to the two seeded test teams -- a bare skill_id
+        # LIKE pattern alone (run-scoped or age-scoped) could otherwise match a
+        # real staging row whose name happens to collide with the predictable
+        # test pattern. The durable Team B skill (no run_id, meant to persist) is
+        # excluded by construction -- neither LIKE pattern below matches its
+        # exact skill_id (it has no 'e2e-reg-<digits/local->' suffix segment).
+        if: always()
+        env:
+          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+        run: |
+          set -eu
+          REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
+          if [ "$REF" != "ovhcifugwqnzoebwfuku" ]; then
+            echo "::warning::derived project ref '${REF}' is not staging -- skipping defensive cleanup"; exit 0
+          fi
+          CONN="host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require connect_timeout=15"
+          cat <<'SQL' | psql "$CONN" -P pager=off -At || true
+          DELETE FROM private_registry_skills
+            WHERE skill_id LIKE '%/e2e-reg-${{ github.run_id }}%'
+              AND team_id IN (
+                SELECT id FROM teams WHERE subscription_id IN ('e2e-reg-ent-sub', 'e2e-reg-nonent-sub')
+              );
+          DELETE FROM private_registry_skills
+            WHERE skill_id LIKE '%/e2e-reg-%'
+              AND skill_id NOT LIKE '%/durable-skill'
+              AND created_at < now() - interval '1 day'
+              AND team_id IN (
+                SELECT id FROM teams WHERE subscription_id IN ('e2e-reg-ent-sub', 'e2e-reg-nonent-sub')
+              );
+          SQL
+
+      # Phase-1 failure visibility is the GitHub Actions tab: a red nightly run
+      # plus the PR annotation. An alert-notify failure step is intentionally NOT
+      # added while `continue-on-error: true` is in effect -- see the sibling
+      # workflows' identical rationale. Wired as part of the SMI-5922 Wave 4
+      # promotion (10 consecutive green nightlies), when continue-on-error is
+      # removed and the job becomes a required check.
