@@ -11,7 +11,7 @@ This harness replaces that folklore with a falsifiable benchmark:
 - **55-entry gold set** across 6 query categories and 3 difficulty levels
 - **Recall@5, Recall@10, MRR, nDCG@10** metrics computed per-run
 - **Ablation sweeps** over boost, dampen, floor, and BM25 dimensions
-- **CI gate** (Layer A structural + Layer B baseline drift — see [implementation plan](../../../docs/internal/implementation/smi-4702-retrieval-eval-harness.md))
+- **CI gate** (Layer A structural + Layer B baseline drift — see [implementation plan](../../../docs/internal/implementation/smi-4702-retrieval-eval-harness.md)); the gate's unit-test step runs `tests/eval/` via the job's own `npm ci`-resolved vitest, not a separately pinned copy (see [SMI-5931 plan](../../../docs/internal/implementation/smi-5931-eval-gate-vitest-pin.md))
 - **Baseline promotion**: `baseline.json` tracks `prior` and `current` recall@5 values; a PR that regresses >5% fails CI
 
 ---
