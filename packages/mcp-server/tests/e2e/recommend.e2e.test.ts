@@ -172,8 +172,17 @@ describe('E2E: skill_recommend tool', () => {
 
   describe('Basic Recommendations', () => {
     it('should return recommendations without installed skills', async () => {
+      // SMI-5896 review: an empty installed_skills falls through to
+      // auto-detection from ~/.claude/skills/, making this test's outcome
+      // depend on the CI runner's ambient filesystem state rather than the
+      // code under test -- a genuinely empty derived stack now correctly
+      // returns the shared empty-stack guard response instead of a generic
+      // fallback-query result. Supply project_context so this deterministically
+      // exercises real recommendation logic regardless of ambient auto-detected
+      // skills; the guard itself has dedicated coverage elsewhere.
       const input: RecommendInput = {
         installed_skills: [],
+        project_context: 'React frontend with Jest testing',
         limit: 5,
       }
 

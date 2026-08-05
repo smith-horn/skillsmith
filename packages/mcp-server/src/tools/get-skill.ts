@@ -31,6 +31,7 @@ import {
   ErrorCodes,
   trackSkillView,
   QuarantineRepository,
+  resolveSkillApiFirst,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
@@ -127,100 +128,88 @@ async function executeGetSkillImpl(
     )
   }
 
-  // SMI-1183: Try API first, fall back to local DB
-  if (!context.apiClient.isOffline()) {
-    try {
-      // SMI-3672: Request content alongside metadata
-      const apiResponse = await context.apiClient.getSkill(skillId, { includeContent: true })
-      const apiSkill = apiResponse.data
+  // SMI-1183/SMI-5896: shared API-first + local-fallback resolver (also used
+  // by skill_compare) — see packages/core/src/services/skill-resolution.ts.
+  // SMI-3672: Request content alongside metadata.
+  const resolved = await resolveSkillApiFirst(skillId, context.apiClient, context.skillRepository, {
+    includeContent: true,
+  })
 
-      // SMI-4240: Derive security summary from the API response so the extension
-      // can render real scan status instead of falling back to "Not scanned"
-      // for every skill. Skills that have never been scanned return `undefined`
-      // (the extension treats undefined and { passed: null } identically in
-      // getSecurityScanHtml). SMI-5562: derivation extracted to a shared helper
-      // (security-summary.ts) reused by recommend.ts and search.ts.
-      const security = deriveSecuritySummaryFromApiSkill(apiSkill)
+  if (resolved.source === 'api') {
+    const apiSkill = resolved.apiSkill
 
-      // Convert API skill to MCP skill format
-      const skill: Skill = {
-        id: apiSkill.id,
-        name: apiSkill.name,
-        description: apiSkill.description || '',
-        author: apiSkill.author || 'unknown',
-        repository: apiSkill.repo_url || undefined,
-        // SMI-4954: installable when the registry row carries a repo_url —
-        // discovery-only entries (repo_url null, SMI-2723) cannot be installed.
-        // SMI-5360: a quarantined skill is never installable — install_skill
-        // refuses it (validate.ts:149), so reporting installable:true here would
-        // be a self-contradictory response next to the security warning.
-        installable: Boolean(apiSkill.repo_url) && apiSkill.quarantined !== true,
-        version: undefined,
-        // SMI-4240: Prefer the category joined from skill_categories by the API
-        // (populated by the indexer's classifier) over tag-based inference.
-        // normalizeApiCategory handles case/slash/pluralization drift between
-        // the DB categories table and the SkillCategory enum; null falls back
-        // to tag inference for skills where the API didn't return a category.
-        category:
-          normalizeApiCategory(apiSkill.categories?.[0]) ?? extractCategoryFromTags(apiSkill.tags),
-        trustTier: mapTrustTierFromDb(apiSkill.trust_tier as import('@skillsmith/core').TrustTier),
-        score: Math.round((apiSkill.quality_score ?? 0) * 100),
-        scoreBreakdown: undefined,
-        tags: apiSkill.tags || [],
-        installCommand: 'claude skill add ' + apiSkill.id,
-        security,
-        // SMI-1577: Handle optional date fields with sentinel value
-        createdAt: apiSkill.created_at ?? '1970-01-01T00:00:00.000Z',
-        updatedAt: apiSkill.updated_at ?? '1970-01-01T00:00:00.000Z',
-        // SMI-5327: SPDX license from the API. Null means "unknown / not detected".
-        license: apiSkill.license ?? null,
-      }
+    // SMI-4240: Derive security summary from the API response so the extension
+    // can render real scan status instead of falling back to "Not scanned"
+    // for every skill. Skills that have never been scanned return `undefined`
+    // (the extension treats undefined and { passed: null } identically in
+    // getSecurityScanHtml). SMI-5562: derivation extracted to a shared helper
+    // (security-summary.ts) reused by recommend.ts and search.ts.
+    const security = deriveSecuritySummaryFromApiSkill(apiSkill)
 
-      const endTime = performance.now()
+    // Convert API skill to MCP skill format
+    const skill: Skill = {
+      id: apiSkill.id,
+      name: apiSkill.name,
+      description: apiSkill.description || '',
+      author: apiSkill.author || 'unknown',
+      repository: apiSkill.repo_url || undefined,
+      // SMI-4954: installable when the registry row carries a repo_url —
+      // discovery-only entries (repo_url null, SMI-2723) cannot be installed.
+      // SMI-5360: a quarantined skill is never installable — install_skill
+      // refuses it (validate.ts:149), so reporting installable:true here would
+      // be a self-contradictory response next to the security warning.
+      installable: Boolean(apiSkill.repo_url) && apiSkill.quarantined !== true,
+      version: undefined,
+      // SMI-4240: Prefer the category joined from skill_categories by the API
+      // (populated by the indexer's classifier) over tag-based inference.
+      // normalizeApiCategory handles case/slash/pluralization drift between
+      // the DB categories table and the SkillCategory enum; null falls back
+      // to tag inference for skills where the API didn't return a category.
+      category:
+        normalizeApiCategory(apiSkill.categories?.[0]) ?? extractCategoryFromTags(apiSkill.tags),
+      trustTier: mapTrustTierFromDb(apiSkill.trust_tier as import('@skillsmith/core').TrustTier),
+      score: Math.round((apiSkill.quality_score ?? 0) * 100),
+      scoreBreakdown: undefined,
+      tags: apiSkill.tags || [],
+      installCommand: 'claude skill add ' + apiSkill.id,
+      security,
+      // SMI-1577: Handle optional date fields with sentinel value
+      createdAt: apiSkill.created_at ?? '1970-01-01T00:00:00.000Z',
+      updatedAt: apiSkill.updated_at ?? '1970-01-01T00:00:00.000Z',
+      // SMI-5327: SPDX license from the API. Null means "unknown / not detected".
+      license: apiSkill.license ?? null,
+    }
 
-      // SMI-1184: Track skill view event (silent on failure)
-      if (context.distinctId) {
-        trackSkillView(context.distinctId, skill.id, 'mcp')
-      }
+    const endTime = performance.now()
 
-      // SMI-2761: Populate also_installed from local co-install repository
-      const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(
-        skill.id
-      )
+    // SMI-1184: Track skill view event (silent on failure)
+    if (context.distinctId) {
+      trackSkillView(context.distinctId, skill.id, 'mcp')
+    }
 
-      // SMI-3137: Include dependency data
-      const dependencies = context.skillDependencyRepository.getDependencies(skill.id)
+    // SMI-2761: Populate also_installed from local co-install repository
+    const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(
+      skill.id
+    )
 
-      return {
-        skill,
-        installCommand: skill.installCommand || 'claude skill add ' + skill.id,
-        // SMI-3672: Include SKILL.md content from API response
-        content: apiSkill.content || undefined,
-        also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
-        dependencies: dependencies.length > 0 ? dependencies : undefined,
-        timing: {
-          totalMs: Math.round(endTime - startTime),
-        },
-      }
-    } catch (error) {
-      // SMI-1183: Log and fall through to local database for all errors
-      // This allows local-only skills to be found even if API returns 404
-      console.warn(
-        '[skillsmith] API getSkill failed, using local database:',
-        (error as Error).message
-      )
+    // SMI-3137: Include dependency data
+    const dependencies = context.skillDependencyRepository.getDependencies(skill.id)
+
+    return {
+      skill,
+      installCommand: skill.installCommand || 'claude skill add ' + skill.id,
+      // SMI-3672: Include SKILL.md content from API response
+      content: apiSkill.content || undefined,
+      also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
+      dependencies: dependencies.length > 0 ? dependencies : undefined,
+      timing: {
+        totalMs: Math.round(endTime - startTime),
+      },
     }
   }
 
-  // Fallback: Look up skill from local database using SkillRepository
-  const dbSkill = context.skillRepository.findById(skillId)
-
-  if (!dbSkill) {
-    throw new SkillsmithError(ErrorCodes.SKILL_NOT_FOUND, 'Skill "' + input.id + '" not found', {
-      details: { id: input.id },
-      suggestion: 'Try searching for similar skills with the search tool',
-    })
-  }
+  // Fallback: local database skill, resolved above via resolveSkillApiFirst.
+  const dbSkill = resolved.dbSkill
 
   // SMI-5360: mirror the API-path quarantine gate on the local DB fallback.
   // Local quarantine lives in a separate table (QuarantineRepository), not on
