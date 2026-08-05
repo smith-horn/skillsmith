@@ -339,8 +339,7 @@ interface PurgeOptions {
 }
 
 /** Run the purge (dry-run by default). Returns the run counts. */
-export async function runPurge(opts: PurgeOptions): Promise<PurgeCounts> {
-  const db = createSupabaseAdminClient()
+export async function runPurge(db: SupabaseClient, opts: PurgeOptions): Promise<PurgeCounts> {
   const exportPath = opts.exportPath ?? defaultExportPath()
 
   if (opts.apply) {
@@ -447,10 +446,10 @@ async function main(): Promise<void> {
   // trip), then the DB-sourced freeze marker immediately after client
   // construction — see the call-site contract in the design doc (8.3.3.2).
   assertRunAllowed('purge')
-  const gateClient = createSupabaseAdminClient()
-  await assertFreezeMarkerClear(gateClient, 'purge')
+  const db = createSupabaseAdminClient()
+  await assertFreezeMarkerClear(db, 'purge')
   const apply = process.argv.includes('--apply')
-  await runPurge({
+  await runPurge(db, {
     apply,
     limit: parseLimitArg(process.argv),
     exportPath: parseExportArg(process.argv),

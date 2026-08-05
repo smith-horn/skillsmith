@@ -50,13 +50,16 @@ describe('runPurgeBranch (SMI-5357)', () => {
   it('PURGE_DRY_RUN=true => runPurge apply:false (read-only failsafe)', async () => {
     const res = await runPurgeBranch(envWith(true), 'req-1')
     expect(runPurgeMock).toHaveBeenCalledTimes(1)
-    expect(runPurgeMock).toHaveBeenCalledWith({ apply: false })
+    expect(runPurgeMock).toHaveBeenCalledWith({ __client: 'mock' }, { apply: false })
     expect(res).toEqual({ purge: sample, dryRun: true })
   })
 
   it('PURGE_DRY_RUN=false => runPurge apply:true (deliberate apply)', async () => {
     const res = await runPurgeBranch(envWith(false), 'req-2')
-    expect(runPurgeMock).toHaveBeenCalledWith({ apply: true, limit: undefined })
+    expect(runPurgeMock).toHaveBeenCalledWith(
+      { __client: 'mock' },
+      { apply: true, limit: undefined }
+    )
     expect(res.dryRun).toBe(false)
   })
 
@@ -65,13 +68,13 @@ describe('runPurgeBranch (SMI-5357)', () => {
       { PURGE_DRY_RUN: false, PURGE_LIMIT: 100 } as unknown as IndexerEnv,
       'req-limit'
     )
-    expect(runPurgeMock).toHaveBeenCalledWith({ apply: true, limit: 100 })
+    expect(runPurgeMock).toHaveBeenCalledWith({ __client: 'mock' }, { apply: true, limit: 100 })
   })
 
   it('the gate is !PURGE_DRY_RUN, NOT the workflow dry_run input', async () => {
     // Even with DRY_RUN-ish noise on the env, only PURGE_DRY_RUN decides.
     await runPurgeBranch({ PURGE_DRY_RUN: true, DRY_RUN: false } as unknown as IndexerEnv, 'req-3')
-    expect(runPurgeMock).toHaveBeenCalledWith({ apply: false })
+    expect(runPurgeMock).toHaveBeenCalledWith({ __client: 'mock' }, { apply: false })
   })
 
   it('writes a top-level indexer:run audit row carrying the purge counts', async () => {
