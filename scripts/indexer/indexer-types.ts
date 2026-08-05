@@ -13,6 +13,7 @@
  */
 
 import type { BackfillCrawlOutcome } from './backfill-checkpoint.ts'
+import type { StaleVerificationCounters } from './stale-reconciliation.ts'
 
 /**
  * Indexer request body
@@ -50,6 +51,8 @@ export interface IndexerResult {
   failed: number
   quarantined: number
   stale: number
+  /** SMI-5551 follow-up: verification-outcome breakdown for `stale` (SMI-5926). */
+  staleVerification: StaleVerificationCounters
   quality_gate_filtered: number
   /** SMI-4842: Repos rejected as curated `awesome-*` link-lists (not skills). */
   meta_list_filtered: number

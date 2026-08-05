@@ -269,6 +269,48 @@ describe('writeIndexerAuditLog — meta envelope persistence (SMI-4857)', () => 
     expect(meta.tree_hash_cache_misses).toBe(421)
   })
 
+  // SMI-5551 follow-up (SMI-5926): reconcileStaleSkills computed
+  // verifiedLive/transientSkipped/maliciousQuarantined all along, but no
+  // caller ever forwarded them into writeIndexerAuditLog — audit_logs.stale
+  // persisted while the breakdown silently disappeared. This pins the fix.
+  it('persists stale_verification when staleVerification is provided (SMI-5551 follow-up)', async () => {
+    const captured: CapturedInsert[] = []
+    const supabase = makeCapturingSupabase(captured)
+
+    await writeIndexerAuditLog(
+      supabase,
+      'success',
+      makeParams({
+        stale: 0,
+        staleVerification: {
+          verifiedLive: 412,
+          transientSkipped: 6,
+          maliciousQuarantined: 2,
+          errors: 1,
+        },
+      })
+    )
+
+    const metadata = captured[0].payload.metadata as Record<string, unknown>
+    expect(metadata.stale).toBe(0)
+    expect(metadata.stale_verification).toEqual({
+      verifiedLive: 412,
+      transientSkipped: 6,
+      maliciousQuarantined: 2,
+      errors: 1,
+    })
+  })
+
+  it('omits stale_verification when staleVerification is undefined', async () => {
+    const captured: CapturedInsert[] = []
+    const supabase = makeCapturingSupabase(captured)
+
+    await writeIndexerAuditLog(supabase, 'success', makeParams({ staleVerification: undefined }))
+
+    const metadata = captured[0].payload.metadata as Record<string, unknown>
+    expect(metadata.stale_verification).toBeUndefined()
+  })
+
   // SMI-4918: per-bucket rate-limit telemetry persistence
   it('persists per-bucket rate-limit minimums through meta envelope (SMI-4918)', async () => {
     const captured: CapturedInsert[] = []

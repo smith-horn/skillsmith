@@ -24,6 +24,10 @@ import type { ScoreDistribution } from './indexer-runners.ts'
 import type { SweepCounts } from './dequarantine-false-positives.ts'
 // SMI-5357: purge-dead-quarantine counts for the `purge` run-type audit row.
 import type { PurgeCounts } from './purge-dead-quarantines.ts'
+// SMI-5551 follow-up: verification-outcome breakdown for the `stale` counter,
+// present on both discovery and maintenance run-type rows (both callers
+// invoke reconcileStaleSkills). See SMI-5926.
+import type { StaleVerificationCounters } from './stale-reconciliation.ts'
 
 /**
  * SMI-4857: Run-scoped meta envelope persisted alongside the flat metadata
@@ -112,6 +116,14 @@ export interface AuditLogParams {
   updated: number
   failed: number
   stale: number
+  /**
+   * SMI-5551 follow-up: breakdown of what happened to the `stale` candidates
+   * during verification. Optional only for pre-SMI-5551-follow-up callers
+   * (there are none left after this change, but kept optional to avoid
+   * forcing every test fixture to specify it) — persisted under
+   * `metadata.stale_verification`; omitted from the JSON when absent.
+   */
+  staleVerification?: StaleVerificationCounters
   quality_gate_filtered: number
   /** SMI-4842: Repos rejected as curated `awesome-*` link-lists. Optional — absent on maintenance runs. */
   meta_list_filtered?: number
@@ -196,6 +208,9 @@ export async function writeIndexerAuditLog(
         updated: params.updated,
         failed: params.failed,
         stale: params.stale,
+        // SMI-5551 follow-up: verification-outcome breakdown for `stale` —
+        // undefined for callers that don't pass it, omitted from the JSON.
+        stale_verification: params.staleVerification,
         quality_gate_filtered: params.quality_gate_filtered,
         meta_list_filtered: params.meta_list_filtered ?? 0,
         unchanged: params.unchanged,

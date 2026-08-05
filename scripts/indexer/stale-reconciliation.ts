@@ -115,6 +115,30 @@ export interface StaleReconciliationResult {
   maliciousQuarantined: number
 }
 
+/**
+ * SMI-5551 follow-up: persisted-audit-log shape for the verification-outcome
+ * breakdown, derived from `StaleReconciliationResult`. `errors` is a count
+ * (not the raw message array) to match the flat-counter convention used by
+ * `RecheckAuditCounters` / `SweepCounts` / `PurgeCounts` in `indexer-audit-log.ts`.
+ * Without this, `metadata.stale` alone can't distinguish "0 confirmed-dead
+ * because everything verified live" from "0 because verification is silently
+ * failing" — see SMI-5926.
+ */
+export interface StaleVerificationCounters {
+  verifiedLive: number
+  transientSkipped: number
+  maliciousQuarantined: number
+  errors: number
+}
+
+/** Shared zero value — backfill-mode skip and pre-Phase-6 discovery state both need it. */
+export const ZERO_STALE_VERIFICATION: StaleVerificationCounters = {
+  verifiedLive: 0,
+  transientSkipped: 0,
+  maliciousQuarantined: 0,
+  errors: 0,
+}
+
 /** A live `skills` row past the stale threshold, narrowed to verification columns. */
 export interface StaleCandidateRow {
   id: string

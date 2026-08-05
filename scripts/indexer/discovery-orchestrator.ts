@@ -38,6 +38,7 @@ import {
   selectCategorizationRepoUrls,
   writeDiscoveryAuditLog,
   runStaleReconciliationPhase,
+  buildInitialDiscoveryResult,
 } from './discovery-orchestrator.phase-split.ts'
 
 /**
@@ -183,26 +184,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   // Reference it once so unused-vars doesn't flag the param.
   void params.codeSearchTokenBucket
 
-  const result: IndexerResult = {
-    found: 0,
-    indexed: 0,
-    updated: 0,
-    failed: 0,
-    quarantined: 0,
-    stale: 0,
-    quality_gate_filtered: 0,
-    meta_list_filtered: 0,
-    unchanged: 0,
-    github_skill_count: 0,
-    high_trust_wildcard: {
-      authors_with_wildcards: 0,
-      total_paths_expanded: 0,
-      trees_api_calls: 0,
-      truncated_responses: 0,
-    },
-    errors: [],
-    dryRun,
-  }
+  const result: IndexerResult = buildInitialDiscoveryResult(dryRun)
 
   const seenUrls = new Set<string>()
   const repositories: GitHubRepository[] = []
@@ -454,6 +436,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
         backfillMode
       )
       result.stale = staleResult.stale
+      result.staleVerification = staleResult.staleVerification
       result.errors.push(...staleResult.errors)
     }
 
@@ -471,6 +454,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       updated: result.updated,
       failed: result.failed,
       stale: result.stale,
+      staleVerification: result.staleVerification,
       quality_gate_filtered: result.quality_gate_filtered,
       meta_list_filtered: result.meta_list_filtered,
       unchanged: result.unchanged,

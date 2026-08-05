@@ -243,6 +243,14 @@ export async function runMaintenanceReconciliation(params: {
     updated: 0,
     failed: 0,
     stale: staleResult.staleQuarantined,
+    // SMI-5551 follow-up: verification-outcome breakdown, previously computed
+    // but silently dropped before reaching audit_logs — see SMI-5926.
+    staleVerification: {
+      verifiedLive: staleResult.verifiedLive,
+      transientSkipped: staleResult.transientSkipped,
+      maliciousQuarantined: staleResult.maliciousQuarantined,
+      errors: staleResult.errors.length,
+    },
     quality_gate_filtered: 0,
     unchanged: 0,
     quarantined: 0,
