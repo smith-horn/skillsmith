@@ -23,8 +23,40 @@ import {
   reconcileStaleSkills,
   resolveStaleThresholdDays,
   DISCOVERY_STALE_DEFAULT_DAYS,
+  ZERO_STALE_VERIFICATION,
+  type StaleVerificationCounters,
 } from './stale-reconciliation.ts'
 import { notifyBulkQuarantine } from './_shared/notification.ts'
+import type { IndexerResult } from './indexer-types.ts'
+
+/**
+ * SMI-5551 follow-up: extracted from `runDiscovery`'s `result` initializer
+ * to keep `discovery-orchestrator.ts` under its 500-line CI gate (it was
+ * already at the limit before the `staleVerification` field landed).
+ */
+export function buildInitialDiscoveryResult(dryRun: boolean): IndexerResult {
+  return {
+    found: 0,
+    indexed: 0,
+    updated: 0,
+    failed: 0,
+    quarantined: 0,
+    stale: 0,
+    staleVerification: ZERO_STALE_VERIFICATION,
+    quality_gate_filtered: 0,
+    meta_list_filtered: 0,
+    unchanged: 0,
+    github_skill_count: 0,
+    high_trust_wildcard: {
+      authors_with_wildcards: 0,
+      total_paths_expanded: 0,
+      trees_api_calls: 0,
+      truncated_responses: 0,
+    },
+    errors: [],
+    dryRun,
+  }
+}
 
 /**
  * SMI-4870: the per-phase sub-slot a discovery process is running.
@@ -96,6 +128,8 @@ export interface DiscoveryAuditLogInput {
   updated: number
   failed: number
   stale: number
+  /** SMI-5551 follow-up: verification-outcome breakdown for `stale` (SMI-5926). */
+  staleVerification: StaleVerificationCounters
   quality_gate_filtered: number
   /** SMI-4842: Repos rejected as curated `awesome-*` link-lists (not skills). */
   meta_list_filtered: number
@@ -167,6 +201,7 @@ export async function writeDiscoveryAuditLog(
     updated: input.updated,
     failed: input.failed,
     stale: input.stale,
+    staleVerification: input.staleVerification,
     quality_gate_filtered: input.quality_gate_filtered,
     meta_list_filtered: input.meta_list_filtered,
     unchanged: input.unchanged,
@@ -204,17 +239,20 @@ export async function writeDiscoveryAuditLog(
  *   discovery default of 30 when not a positive finite number.
  * @param dryRun - when true, suppresses the bulk-quarantine notification.
  * @param backfillMode - when true, the whole phase is a no-op (returns zeros).
- * @returns `{ stale, errors }` for the caller to fold into the run result.
+ * @returns `{ stale, staleVerification, errors }` for the caller to fold into
+ *   the run result. `staleVerification` is the SMI-5551 follow-up
+ *   verification-outcome breakdown (SMI-5926) — zeroed in backfill mode
+ *   since the phase never runs reconcileStaleSkills there.
  */
 export async function runStaleReconciliationPhase(
   supabase: SupabaseClient,
   staleThresholdDays: number | undefined,
   dryRun: boolean,
   backfillMode: boolean
-): Promise<{ stale: number; errors: string[] }> {
+): Promise<{ stale: number; staleVerification: StaleVerificationCounters; errors: string[] }> {
   if (backfillMode) {
     console.log('[Backfill] SMI-5286: skipping Phase 6 stale reconciliation (backfill mode)')
-    return { stale: 0, errors: [] }
+    return { stale: 0, staleVerification: ZERO_STALE_VERIFICATION, errors: [] }
   }
   // SMI-5551 item 3: one canonical threshold policy for both callers —
   // maintenance passes MAINTENANCE_STALE_DEFAULT_DAYS (7), discovery passes
@@ -225,5 +263,14 @@ export async function runStaleReconciliationPhase(
   if (staleResult.quarantinedIds.length > 0 && !dryRun) {
     await notifyBulkQuarantine(supabase, staleResult.quarantinedIds)
   }
-  return { stale: staleResult.staleQuarantined, errors: staleResult.errors }
+  return {
+    stale: staleResult.staleQuarantined,
+    staleVerification: {
+      verifiedLive: staleResult.verifiedLive,
+      transientSkipped: staleResult.transientSkipped,
+      maliciousQuarantined: staleResult.maliciousQuarantined,
+      errors: staleResult.errors.length,
+    },
+    errors: staleResult.errors,
+  }
 }

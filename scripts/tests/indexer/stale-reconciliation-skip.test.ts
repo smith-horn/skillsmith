@@ -17,11 +17,19 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // SMI-5551 item 3: phase-split now also imports the canonical threshold
 // resolver + discovery default from stale-reconciliation.ts, so the factory
 // must provide them (real logic — it's a pure function).
+// SMI-5551 follow-up: also provide ZERO_STALE_VERIFICATION — the
+// backfill-mode skip branch returns it directly (real logic, not mockable).
 vi.mock('../../indexer/stale-reconciliation.ts', () => ({
   reconcileStaleSkills: vi.fn(),
   DISCOVERY_STALE_DEFAULT_DAYS: 30,
   resolveStaleThresholdDays: (raw: unknown, defaultDays: number) =>
     typeof raw === 'number' && !isNaN(raw) && isFinite(raw) && raw > 0 ? raw : defaultDays,
+  ZERO_STALE_VERIFICATION: {
+    verifiedLive: 0,
+    transientSkipped: 0,
+    maliciousQuarantined: 0,
+    errors: 0,
+  },
 }))
 
 vi.mock('../../indexer/_shared/notification.ts', () => ({
@@ -73,10 +81,19 @@ describe('runStaleReconciliationPhase — backfillMode=true (skip gate)', () => 
     expect(mockNotifyBulkQuarantine).not.toHaveBeenCalled()
   })
 
-  it('returns stale=0 and an empty errors array', async () => {
+  it('returns stale=0, zeroed staleVerification, and an empty errors array', async () => {
     const result = await runStaleReconciliationPhase(noop, 30, false, true)
 
-    expect(result).toEqual({ stale: 0, errors: [] })
+    expect(result).toEqual({
+      stale: 0,
+      staleVerification: {
+        verifiedLive: 0,
+        transientSkipped: 0,
+        maliciousQuarantined: 0,
+        errors: 0,
+      },
+      errors: [],
+    })
   })
 
   it('returns zeros regardless of staleThresholdDays value', async () => {
@@ -124,6 +141,29 @@ describe('runStaleReconciliationPhase — backfillMode=false (normal path)', () 
     const result = await runStaleReconciliationPhase(noop, 30, true, false)
 
     expect(result.errors).toEqual(['some error'])
+  })
+
+  // SMI-5551 follow-up (SMI-5926): staleVerification was computed by
+  // reconcileStaleSkills all along but silently dropped before reaching
+  // audit_logs — this pins the forwarding contract at the phase-fn boundary.
+  it('forwards verifiedLive/transientSkipped/maliciousQuarantined as staleVerification', async () => {
+    mockReconcileStaleSkills.mockResolvedValueOnce(
+      staleResult({
+        verifiedLive: 12,
+        transientSkipped: 3,
+        maliciousQuarantined: 2,
+        errors: ['fetch failed', 'parse failed'],
+      })
+    )
+
+    const result = await runStaleReconciliationPhase(noop, 30, true, false)
+
+    expect(result.staleVerification).toEqual({
+      verifiedLive: 12,
+      transientSkipped: 3,
+      maliciousQuarantined: 2,
+      errors: 2,
+    })
   })
 
   it('calls notifyBulkQuarantine when quarantinedIds is non-empty and dryRun=false', async () => {
