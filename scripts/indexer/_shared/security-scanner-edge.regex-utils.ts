@@ -12,6 +12,10 @@
 
 import { MAX_SKILL_CONTENT_SIZE } from './constants.ts'
 
+// ============================================================================
+// Regex-safety constants + helper
+// ============================================================================
+
 /**
  * ReDoS protection: maximum line length for regex matching
  */
