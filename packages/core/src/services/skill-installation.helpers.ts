@@ -33,6 +33,7 @@ import type {
 import { checkForModifications } from './skill-installation.io.js'
 export { fetchFromGitHub } from './skill-installation.io.js'
 import type { ManifestManager } from './skill-manifest.js'
+import { CANONICAL_CLIENT, CLIENT_DISPLAY_LABELS, type ClientId } from '../install/paths.js'
 
 /** Result of applying optimization to a skill's content. */
 export interface OptimizationResult {
@@ -47,11 +48,26 @@ export function hashContent(content: string): string {
   return createHash('sha256').update(content).digest('hex')
 }
 
-export function generateTips(skillName: string, optimizationInfo: OptimizationInfo): string[] {
+/**
+ * SMI-5894 (Wave 1 Step 5): `client`/`skillsDir` default to the canonical
+ * (Claude Code) client so every existing caller that doesn't pass them
+ * (tests, and anywhere the service is constructed without `client`) keeps
+ * seeing exactly the previous "Claude Code" / `~/.claude/skills/` wording —
+ * only a caller that actually resolved a non-canonical client sees the tips
+ * name that client and its real install path.
+ */
+export function generateTips(
+  skillName: string,
+  optimizationInfo: OptimizationInfo,
+  client: ClientId = CANONICAL_CLIENT,
+  skillsDir?: string
+): string[] {
+  const clientLabel = CLIENT_DISPLAY_LABELS[client]
+  const dir = skillsDir ?? '~/.claude/skills'
   const tips = [
     'Skill "' + skillName + '" installed successfully!',
-    'To use this skill, mention it in Claude Code: "Use the ' + skillName + ' skill to..."',
-    'View installed skills: ls ~/.claude/skills/',
+    'To use this skill, mention it in ' + clientLabel + ': "Use the ' + skillName + ' skill to..."',
+    'View installed skills: ls ' + dir + '/',
   ]
 
   if (optimizationInfo.optimized) {
@@ -173,6 +189,28 @@ export function persistDependencies(
   return rows.length
 }
 
+/**
+ * SMI-5894 (Wave 1 Step 3): compute the `~/.skillsmith/manifest.json`
+ * `installedSkills` key for a given skill name + client.
+ *
+ * Canonical-client (`claude-code`) entries keep the legacy bare-name key —
+ * every manifest reader written before multi-client installs existed
+ * (`pin.ts`, `diff.ts`, MCP's `install.conflict.ts`, MCP's `uninstall_skill`
+ * `listInstalledSkills()`, none of which are in this wave's scope) indexes
+ * `installedSkills[name]` directly and must keep working unmodified for the
+ * single-client-install case, which remains the overwhelming majority.
+ * Only non-canonical clients get the composite `name::client` key, since
+ * those are the ONLY entries that could previously silently collide with
+ * (overwrite) a same-named install recorded under a different client —
+ * exactly the bug this function exists to close. See the plan doc
+ * (docs/internal/implementation/cursor-integration-readiness-cli-mcp-parity.md,
+ * Wave 1 Step 3) for the full rationale and the deliberately additive,
+ * backward-compatible shape of this fix.
+ */
+export function manifestKeyFor(name: string, client: ClientId): string {
+  return client === CANONICAL_CLIENT ? name : `${name}::${client}`
+}
+
 /** Perform skill uninstall with manifest awareness and orphan fallback. */
 export async function performUninstall(params: {
   skillName: string
@@ -181,13 +219,25 @@ export async function performUninstall(params: {
   manifest: ManifestManager
   skillDependencyRepo: SkillDependencyRepository
   onProgress: ProgressCallback
+  /** SMI-5894 Wave 1 Step 3: defaults to the canonical client for callers
+   *  that don't yet resolve a client (preserves pre-existing behavior). */
+  client?: ClientId
 }): Promise<UninstallResult> {
-  const { skillName, force, skillsDir, manifest, skillDependencyRepo, onProgress } = params
+  const {
+    skillName,
+    force,
+    skillsDir,
+    manifest,
+    skillDependencyRepo,
+    onProgress,
+    client = CANONICAL_CLIENT,
+  } = params
+  const manifestKey = manifestKeyFor(skillName, client)
 
   try {
     onProgress('manifest', 'Loading manifest')
     const manifestData = await manifest.load()
-    const skillEntry = manifestData.installedSkills[skillName]
+    const skillEntry = manifestData.installedSkills[manifestKey]
 
     if (!skillEntry) {
       const potentialPath = path.join(skillsDir, skillName)
@@ -251,7 +301,7 @@ export async function performUninstall(params: {
     }
 
     onProgress('manifest', 'Updating manifest')
-    delete manifestData.installedSkills[skillName]
+    delete manifestData.installedSkills[manifestKey]
     await manifest.save(manifestData)
 
     onProgress('done', 'Uninstall complete')

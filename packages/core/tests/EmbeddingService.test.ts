@@ -4,12 +4,23 @@
  *
  * @see ADR-009: Embedding Service Fallback Strategy
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   EmbeddingService,
   testUtils,
   type EmbeddingServiceOptions,
 } from '../src/embeddings/index.js'
+
+// SMI-5897 (C-18/C-19): force loadModel()'s catch-block path (real
+// transformers-module load failure) without depending on whether
+// @huggingface/transformers is actually installed/reachable in CI.
+vi.mock('../src/embeddings/embedding-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/embeddings/embedding-utils.js')>()
+  return {
+    ...actual,
+    loadTransformersModule: vi.fn().mockResolvedValue(null),
+  }
+})
 
 describe('EmbeddingService', () => {
   describe('constructor', () => {
@@ -311,6 +322,62 @@ describe('EmbeddingService', () => {
       const service = new EmbeddingService({ useFallback: true })
       const model = await service.loadModel()
       expect(model).toBeNull()
+    })
+  })
+
+  describe('loadModel failure warning (SMI-5897 C-18/C-19)', () => {
+    // SMI-5897: loadModel()'s catch block was a second, unguarded console.warn
+    // path — it printed unconditionally even when probeEmbeddingCapability()'s
+    // own SKILLSMITH_QUIET guard would have suppressed the equivalent boot-time
+    // warning. loadTransformersModule() is mocked (module-level, top of file)
+    // to resolve null so the catch path fires deterministically without
+    // depending on whether @huggingface/transformers is actually reachable.
+    //
+    // SMI-5897 (Wave 4 fix): each `it()` below previously called
+    // `warnSpy.mockRestore()` as its last statement — if an `expect()`
+    // earlier in the same test threw, that restore never ran, leaking the
+    // `console.warn` spy into later tests in this file (which already has a
+    // module-level `vi.mock` — see top of file). `vi.restoreAllMocks()` in
+    // this shared `afterEach` only restores spies created via `vi.spyOn`
+    // (per Vitest's own contract); it does not touch the module-level
+    // `loadTransformersModule` mock above, which is a plain `vi.fn()`, not a
+    // spy on an existing object.
+    afterEach(() => {
+      delete process.env['SKILLSMITH_QUIET']
+      vi.restoreAllMocks()
+    })
+
+    it('warns via console.warn when the model fails to load and SKILLSMITH_QUIET is unset', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const service = new EmbeddingService({ useFallback: false })
+
+      const model = await service.loadModel()
+
+      expect(model).toBeNull()
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy.mock.calls[0][0]).toContain('Failed to load model')
+    })
+
+    it('suppresses the console.warn when SKILLSMITH_QUIET=true', async () => {
+      process.env['SKILLSMITH_QUIET'] = 'true'
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const service = new EmbeddingService({ useFallback: false })
+
+      const model = await service.loadModel()
+
+      expect(model).toBeNull()
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
+    it('still marks modelLoadFailed (fallback engages) even when the warning is suppressed', async () => {
+      process.env['SKILLSMITH_QUIET'] = 'true'
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const service = new EmbeddingService({ useFallback: false })
+
+      await service.loadModel()
+      // isUsingFallback() is true once modelLoadFailed is set, regardless of
+      // whether the warning was printed — suppression must be display-only.
+      expect(service.isUsingFallback()).toBe(true)
     })
   })
 })

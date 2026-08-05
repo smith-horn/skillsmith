@@ -1,21 +1,30 @@
 /**
- * @fileoverview Shared license-key → team_id resolver
+ * @fileoverview Credential resolution for team-scoped MCP tools
  * @module @skillsmith/mcp-server/tools/team-resolver
  * @see SMI-4292: Wave 5A — Team workspaces foundation (finding C3)
+ * @see SMI-5822 / SMI-5882: admin operations need a user-bound credential, not a team one
  *
- * Unified team resolution for MCP tools. Both team-workspace.ts and
- * registry-tools.ts call `resolveLicenseTeamId` so they share one auth
- * path (no split auth resolution).
+ * Two distinct credentials, for two distinct questions:
  *
- * License key source, in order:
- *   1. explicit `licenseKey` argument (from `ToolContext` or tool input)
- *   2. `process.env.SKILLSMITH_LICENSE_KEY`
+ * 1. `resolveLicenseTeamId` — **which team** is this call for? Unified team resolution for MCP
+ *    tools; both team-workspace.ts and registry-tools.ts call it so there is one auth path.
+ *    License key source, in order: explicit `licenseKey` argument (from `ToolContext` or tool
+ *    input), then `process.env.SKILLSMITH_LICENSE_KEY`. Calls the `resolve_team_from_license` RPC
+ *    (migration 071) using an anon-key Supabase client (the RPC is SECURITY DEFINER). Returns null
+ *    if the key is missing, invalid, expired, or not attached to a team.
  *
- * Calls the `resolve_team_from_license` RPC (migration 071) using an
- * anon-key Supabase client (RPC is SECURITY DEFINER). Returns null if
- * the key is missing, invalid, expired, or not attached to a team.
+ * 2. `resolveUserAccessToken` — **who** is making this call? A license key cannot answer that.
+ *    `resolve_team_from_license` is `(p_license_key TEXT) RETURNS TEXT`: it resolves a *team*,
+ *    never a *person*, and never reads `team_members`. Nor could a wider return type help — a
+ *    team's resolvable key is the single row the checkout webhook created for the *purchaser*
+ *    (`license_keys.user_id` = purchaser, `subscription_id` = the team's subscription), then
+ *    shared with the whole team. `license_keys.user_id` therefore names the buyer, not the caller,
+ *    so deriving a role from it would produce a check that passes for everyone — worse than no
+ *    check, because it would look like one. Admin-gated operations instead require the end user's
+ *    own Supabase JWT, stored by `skillsmith login` (SMI-4402) and refreshed on expiry.
  */
 
+import { resolveFreshAccessToken } from '@skillsmith/core'
 import { getSupabaseClient, isSupabaseConfigured } from '../supabase-client.js'
 
 /**
@@ -57,4 +66,21 @@ export async function resolveLicenseTeamId(licenseKey?: string): Promise<string 
 
   if (error || !data) return null
   return data
+}
+
+/**
+ * Resolve the signed-in user's Supabase access token, refreshing it if it has expired.
+ *
+ * Mirrors the credential handling `context.async.ts` already performs for the API client, so the
+ * MCP process has exactly one notion of "the logged-in user" (SMI-4402).
+ *
+ * SMI-5905 Wave 1: the refresh-or-null logic (including the `TOKEN_EXPIRY_SKEW_MS=60s` skew) now
+ * lives in `@skillsmith/core`'s `resolveFreshAccessToken()` — extracted so the CLI can reuse it
+ * too. This function is an unchanged-behavior delegate; no call site here needs to change.
+ *
+ * @returns the access token, or null when the user has not run `skillsmith login` on this machine
+ *          (or the stored refresh token is no longer valid)
+ */
+export async function resolveUserAccessToken(): Promise<string | null> {
+  return resolveFreshAccessToken()
 }

@@ -8,7 +8,7 @@
 
 import chalk from 'chalk'
 import Table from 'cli-table3'
-import type { SearchResult, TrustTier } from '@skillsmith/core'
+import { DEFAULT_RISK_THRESHOLD, type SearchResult, type TrustTier } from '@skillsmith/core'
 import type { TrustTierColors } from './search-types.js'
 
 /**
@@ -28,7 +28,24 @@ export const TRUST_TIER_COLORS: TrustTierColors = {
 }
 
 /**
+ * SMI-5897 (Wave 4 fix): A "passed" skill only reads as comfortably safe when
+ * its risk score is well clear of the quarantine bar (`DEFAULT_RISK_THRESHOLD`,
+ * 40 — 0-100 scale, lower is safer). A skill scoring e.g. 39 technically
+ * `passed`, but is one point from quarantine — coloring it the same bright
+ * green as a skill scoring 2 is misleading. Half the quarantine threshold is
+ * used as a reasonable "comfortably safe" cutoff; `riskScore === null`
+ * (passed with no numeric score) is still treated as comfortably safe.
+ */
+function isComfortablySafe(passed: boolean | null, riskScore: number | null): boolean {
+  return passed === true && (riskScore === null || riskScore < DEFAULT_RISK_THRESHOLD / 2)
+}
+
+/**
  * SMI-825: Format security status for display
+ * SMI-5897 (Wave 4 fix): green is now reserved for a comfortably-safe pass
+ * (see `isComfortablySafe`) — a borderline pass (risk score near the
+ * quarantine threshold) renders yellow instead, same as the cautionary
+ * 'community' trust-tier color. Text ("PASS"/"FAIL") is unchanged.
  */
 export function formatSecurityStatus(skill: SearchResult['skill']): string {
   if (skill.securityPassed === null) {
@@ -36,7 +53,10 @@ export function formatSecurityStatus(skill: SearchResult['skill']): string {
   }
   if (skill.securityPassed) {
     const riskText = skill.riskScore !== null ? ` (${skill.riskScore})` : ''
-    return chalk.green('PASS' + riskText)
+    const colorFn = isComfortablySafe(skill.securityPassed, skill.riskScore)
+      ? chalk.green
+      : chalk.yellow
+    return colorFn('PASS' + riskText)
   }
   const riskText = skill.riskScore !== null ? ` (${skill.riskScore})` : ''
   return chalk.red('FAIL' + riskText)
@@ -131,12 +151,17 @@ export function displaySkillDetails(result: SearchResult): void {
   console.log(chalk.bold('Repository: ') + (skill.repoUrl || 'N/A'))
 
   // SMI-825: Security information
+  // SMI-5897 (Wave 4 fix): same comfortably-safe color gate as
+  // formatSecurityStatus — a borderline pass renders yellow, not green.
   console.log(chalk.bold('\nSecurity Status:'))
   if (skill.securityPassed === null) {
     console.log('  Status: ' + chalk.gray('Not scanned'))
   } else if (skill.securityPassed) {
-    console.log('  Status: ' + chalk.green('PASSED'))
-    console.log('  Risk Score: ' + chalk.green((skill.riskScore ?? 0) + '/100'))
+    const colorFn = isComfortablySafe(skill.securityPassed, skill.riskScore)
+      ? chalk.green
+      : chalk.yellow
+    console.log('  Status: ' + colorFn('PASSED'))
+    console.log('  Risk Score: ' + colorFn((skill.riskScore ?? 0) + '/100'))
     console.log('  Findings: ' + (skill.securityFindingsCount ?? 0))
   } else {
     console.log('  Status: ' + chalk.red('FAILED'))

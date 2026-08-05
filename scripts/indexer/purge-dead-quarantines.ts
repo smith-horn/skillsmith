@@ -68,6 +68,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createSupabaseAdminClient } from './_shared/supabase.ts'
+import { assertRunAllowed, assertFreezeMarkerClear } from './run-gate.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -338,8 +339,7 @@ interface PurgeOptions {
 }
 
 /** Run the purge (dry-run by default). Returns the run counts. */
-export async function runPurge(opts: PurgeOptions): Promise<PurgeCounts> {
-  const db = createSupabaseAdminClient()
+export async function runPurge(db: SupabaseClient, opts: PurgeOptions): Promise<PurgeCounts> {
   const exportPath = opts.exportPath ?? defaultExportPath()
 
   if (opts.apply) {
@@ -442,8 +442,14 @@ function parseLimitArg(argv: string[]): number | undefined {
 
 /** CLI entrypoint (skipped when imported by tests). */
 async function main(): Promise<void> {
+  // SMI-5879 Gate C: env-sourced check first (no dependency on a DB round
+  // trip), then the DB-sourced freeze marker immediately after client
+  // construction — see the call-site contract in the design doc (8.3.3.2).
+  assertRunAllowed('purge')
+  const db = createSupabaseAdminClient()
+  await assertFreezeMarkerClear(db, 'purge')
   const apply = process.argv.includes('--apply')
-  await runPurge({
+  await runPurge(db, {
     apply,
     limit: parseLimitArg(process.argv),
     exportPath: parseExportArg(process.argv),

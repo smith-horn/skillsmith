@@ -22,15 +22,37 @@ import {
   type TrustTier,
 } from '@skillsmith/core'
 import { openCliDatabase } from '../utils/open-database.js'
-import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
-import { removeLinks } from '@skillsmith/core/install'
+import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
+import {
+  removeLinks,
+  getInstallPath,
+  resolveClientId,
+  CANONICAL_CLIENT,
+  type ClientId,
+} from '@skillsmith/core/install'
 import { getCliLogger } from '../cli-logger.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
+import {
+  getInstalledSkills,
+  getInstalledSkillsForClient,
+  type InstalledSkill,
+} from '../utils/skills-directory.js'
 import { getSkillDiff, updateSkill, updateSkills } from './manage.update.js'
 
 const logger = getCliLogger()
+
+/**
+ * SMI-5894 (Wave 1 Step 2): resolve the effective client for `remove` and
+ * `update` the same way `install` does (Wave 1 Step 1) — an explicit
+ * `--client` wins, otherwise fall back to `SKILLSMITH_CLIENT`, otherwise
+ * the canonical client. This replaces the frozen `DEFAULT_SKILLS_DIR`
+ * constant these commands used to read (always Claude Code, regardless of
+ * the env var) with a per-invocation resolution.
+ */
+function resolveEffectiveClient(explicit: string | undefined): ClientId {
+  return resolveClientId(explicit ?? process.env['SKILLSMITH_CLIENT'])
+}
 
 /**
  * SMI-1809: Added 'local' tier color for local skills
@@ -91,15 +113,32 @@ function displaySkillsTable(skills: InstalledSkill[]): void {
 /**
  * Remove a skill using SkillInstallationService for manifest-aware removal.
  * Falls back to direct removal for orphan skills (on disk but not in manifest).
+ *
+ * SMI-5894 (Wave 1 Steps 2/3): `client` selects which agent's copy to
+ * target — resolved by the caller via `resolveEffectiveClient()` (explicit
+ * `--client`, else `SKILLSMITH_CLIENT`, else canonical). Both the
+ * pre-confirm lookup and the actual removal now consistently target the
+ * SAME resolved client's directory; previously the confirm-dialog lookup
+ * scanned every client (`getInstalledSkills()`) while the actual removal
+ * was hardcoded to Claude Code's directory regardless — so a skill
+ * installed ONLY under a non-canonical client would show correctly in the
+ * confirm dialog, then fail ("not installed") when actually removed.
  */
-async function removeSkill(skillName: string, force: boolean, dbPath: string): Promise<boolean> {
+async function removeSkill(
+  skillName: string,
+  force: boolean,
+  dbPath: string,
+  client: ClientId
+): Promise<boolean> {
+  const skillsDir = getInstallPath(client)
+
   // Show skill info and confirm before proceeding (unless --force)
   if (!force) {
-    const installed = await getInstalledSkills()
+    const installed = await getInstalledSkillsForClient(client)
     const skill = installed.find((s) => s.name.toLowerCase() === skillName.toLowerCase())
 
     if (!skill) {
-      console.log(chalk.red(`Skill "${skillName}" is not installed`))
+      console.log(chalk.red(`Skill "${skillName}" is not installed for client "${client}"`))
       return false
     }
 
@@ -134,8 +173,9 @@ async function removeSkill(skillName: string, force: boolean, dbPath: string): P
       db,
       skillRepo,
       skillDependencyRepo,
-      skillsDir: DEFAULT_SKILLS_DIR,
+      skillsDir,
       manifestPath: DEFAULT_MANIFEST_PATH,
+      client,
       onProgress: (_stage: string, detail: string) => {
         spinner.text = detail
       },
@@ -147,17 +187,28 @@ async function removeSkill(skillName: string, force: boolean, dbPath: string): P
       // SMI-4578: tear down any --also-link fan-out destinations recorded
       // for this skill. Best-effort — uninstall must succeed even if the
       // manifest is missing or a destination was already cleaned up.
-      try {
-        const linkCount = await removeLinks(skillName)
-        if (linkCount > 0) {
-          spinner.text = `Removed ${linkCount} cross-client link${linkCount > 1 ? 's' : ''}`
-        }
-      } catch (linkErr) {
-        console.log(
-          chalk.yellow(
-            `  Warning: could not clean up cross-client links: ${sanitizeError(linkErr)}`
+      //
+      // SMI-5894 review: fan-out links are always recorded FROM the
+      // canonical install (getDefaultFromClient()) -- removeLinks(skillId)
+      // has no per-destination client scoping, so calling it unconditionally
+      // would delete a canonical install's unrelated fan-out links whenever
+      // a *non-canonical* independent install of the same-named skill is
+      // removed (e.g. `remove foo --client cursor` nuking a canonical
+      // `foo`'s `--also-link vscode` copy). Only the canonical removal path
+      // legitimately owns those links.
+      if (client === CANONICAL_CLIENT) {
+        try {
+          const linkCount = await removeLinks(skillName)
+          if (linkCount > 0) {
+            spinner.text = `Removed ${linkCount} cross-client link${linkCount > 1 ? 's' : ''}`
+          }
+        } catch (linkErr) {
+          console.log(
+            chalk.yellow(
+              `  Warning: could not clean up cross-client links: ${sanitizeError(linkErr)}`
+            )
           )
-        )
+        }
       }
 
       spinner.succeed(`Successfully removed ${skillName}`)
@@ -189,8 +240,19 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
   try {
     const dbPath = opts['db'] as string
     const outdated = (opts['outdated'] as boolean) ?? false
+    const clientOpt = opts['client'] as string | undefined
 
-    const skills = await getInstalledSkills(dbPath)
+    // SMI-5894 (Wave 1 Step 2): `list` already scans every client by
+    // default (this is a working cross-client inventory, not a detection
+    // gap) — `--client` narrows that inventory down to one client. Unlike
+    // `remove`/`update`, this is an explicit-opt-in filter only: it does
+    // NOT fall back to SKILLSMITH_CLIENT, since that would silently change
+    // `list`'s existing "show everything" default for anyone who already
+    // sets the env var for install/remove/update.
+    const skills =
+      clientOpt !== undefined
+        ? await getInstalledSkillsForClient(resolveClientId(clientOpt), dbPath)
+        : await getInstalledSkills(dbPath)
     const filtered = outdated ? skills.filter((s) => s.hasUpdates) : skills
 
     if (outdated && filtered.length === 0) {
@@ -228,15 +290,16 @@ async function updateActionImpl(
   const dryRun = (opts['dryRun'] as boolean) ?? false
 
   try {
+    const client = resolveEffectiveClient(opts['client'] as string | undefined)
     if (updateAll) {
       if (skillNames.length > 0) {
         logger.error(chalk.red('Cannot combine --all with specific skill names.'))
         process.exit(1)
         return
       }
-      await updateSkills(undefined, dbPath, dryRun)
+      await updateSkills(undefined, dbPath, dryRun, client)
     } else if (skillNames.length > 0) {
-      await updateSkills(skillNames, dbPath, dryRun)
+      await updateSkills(skillNames, dbPath, dryRun, client)
     } else {
       console.log(
         chalk.yellow('Specify one or more skills to update, or pass --all for everything.')
@@ -270,7 +333,8 @@ async function removeActionImpl(
   const dbPath = (opts['db'] as string) ?? DEFAULT_DB_PATH
 
   try {
-    const success = await removeSkill(skillName, force, dbPath)
+    const client = resolveEffectiveClient(opts['client'] as string | undefined)
+    const success = await removeSkill(skillName, force, dbPath, client)
     process.exit(success ? 0 : 1)
   } catch (error) {
     logger.error(`${chalk.red('Error removing skill:')} ${sanitizeError(error)}`)

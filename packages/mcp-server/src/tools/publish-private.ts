@@ -4,8 +4,11 @@
  * @see SMI-3896: Private Skills Publishing
  *
  * Sets `visibility = 'private'` and `team_id` on a skill record in the
- * local SQLite database. Private skills are excluded from community search
- * results and only visible to members of the owning team.
+ * caller's own local SQLite database. This hides the skill from local
+ * community-search results on this machine only -- today there is no
+ * server-side team record or cross-teammate sync (see SMI-5882). For a
+ * real shared team registry, see the Enterprise-tier
+ * `private_registry_publish`/`private_registry_manage` tools.
  *
  * Tier gate: Team (private_skills feature flag).
  */
@@ -22,8 +25,6 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 export const publishPrivateInputSchema = z.object({
   /** Skill identifier in author/name format */
   skillId: z.string().regex(/^[^/]+\/[^/]+$/, 'Must be author/name format'),
-  /** Team ID to assign (resolved from license if not provided) */
-  teamId: z.string().optional(),
 })
 
 export type PublishPrivateInput = z.infer<typeof publishPrivateInputSchema>
@@ -44,17 +45,16 @@ export interface PublishPrivateResult {
 export const publishPrivateToolSchema = {
   name: 'publish_private',
   description:
-    'Mark a skill as private to your team. Private skills are hidden from community search. Requires Team tier license.',
+    'Mark a skill as private on this machine: hides it from local community-search results. ' +
+    'This is a local-only setting today -- it does not sync or share the skill with your ' +
+    'teammates. For a real shared team registry, see the Enterprise-tier private_registry_publish ' +
+    'tool. Requires Team tier license.',
   inputSchema: {
     type: 'object' as const,
     properties: {
       skillId: {
         type: 'string',
         description: 'Skill ID in author/name format',
-      },
-      teamId: {
-        type: 'string',
-        description: 'Team ID (resolved from license if not provided)',
       },
     },
     required: ['skillId'],
@@ -77,13 +77,12 @@ async function executePublishPrivateImpl(
 ): Promise<PublishPrivateResult> {
   const { skillId } = input
 
-  // Resolve team_id: explicit param or from license
-  let teamId = input.teamId ?? null
-  if (!teamId) {
-    const licenseKey = process.env.SKILLSMITH_LICENSE_KEY ?? ''
-    const svc = getTeamWorkspaceService()
-    teamId = await svc.resolveTeamId(licenseKey)
-  }
+  // Resolve team_id from the license only -- never accept it from tool
+  // input (ADR-116; matches the Enterprise registry-tools.ts path, which
+  // never accepts teamId from input either). SMI-5882 W2.S5.
+  const licenseKey = process.env.SKILLSMITH_LICENSE_KEY ?? ''
+  const svc = getTeamWorkspaceService()
+  const teamId = await svc.resolveTeamId(licenseKey)
 
   // Check skill exists in local DB
   const skill = context.db.prepare('SELECT id FROM skills WHERE id = ?').get(skillId) as

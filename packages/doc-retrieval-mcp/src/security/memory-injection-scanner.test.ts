@@ -29,6 +29,18 @@ describe('memory-injection-scanner — rule 1: jailbreak', () => {
     expect(result.tier).toBe('tier-a')
     expect(result.matchedRules).toEqual([])
   })
+
+  // SMI-5876: JAILBREAK_PATTERNS gained an evidence-tier classification that
+  // softens a bare "mention" match (e.g. /jailbreak/i, /\bDAN\b/) to LOW
+  // severity in SecurityScanner's skill-content audit. That softening does
+  // NOT apply at this trust boundary — `testContentRules` tests bare pattern
+  // presence over the full array regardless of tier, so a mention-only match
+  // is still quarantine-worthy here (see the CONTENT_RULES comment above).
+  it('still quarantines a bare mention-tier match (DAN/jailbreak vocabulary), unlike the skill-content scanner', () => {
+    const result = scanMemoryChunk('This note documents the DAN jailbreak persona')
+    expect(result.tier).toBe('quarantine')
+    expect(result.matchedRules).toContain('jailbreak')
+  })
 })
 
 describe('memory-injection-scanner — rule 2: prompt-leaking', () => {

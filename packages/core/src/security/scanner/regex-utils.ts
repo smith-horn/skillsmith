@@ -13,6 +13,27 @@
 export const MAX_LINE_LENGTH_FOR_REGEX = 10000
 
 /**
+ * SMI-5881: Cap for the FULL-CONTENT (multiline "pass 1") regex scan, in
+ * UTF-16 code units (JavaScript `string.length` — NOT bytes/code points; see
+ * SecurityScanner.ts's content-length finding message).
+ *
+ * Equal to MAX_LINE_LENGTH_FOR_REGEX today (both 10_000) but declared
+ * separately because the two caps protect different scan passes (per-line vs
+ * whole-document) and may need to diverge later. This is a ReDoS budget
+ * input, not a free parameter — raising it requires first proving
+ * AD_CRLF_INJECTION-class patterns stay linear at the new size. Measured
+ * (SMI-5881): the fixed AD_CRLF_INJECTION pattern is already ~4x slower per
+ * doubling of input size on some adversarial inputs at sizes past this cap,
+ * extrapolating to unacceptable latency well before 1,000,000 — so this cap
+ * is NOT raised as part of SMI-5881 even though larger trust tiers allow a
+ * much bigger `maxContentLength`. See SecurityScanner.ts's
+ * `effectiveMultilineLimit` (`Math.min(MAX_CONTENT_LENGTH_FOR_REGEX,
+ * maxContentLength)`) for how this interacts with the per-tier content-length
+ * ceiling.
+ */
+export const MAX_CONTENT_LENGTH_FOR_REGEX = MAX_LINE_LENGTH_FOR_REGEX
+
+/**
  * SMI-882: Safe regex test with length limit
  * Applies input length limit before regex matching to prevent ReDoS attacks.
  *

@@ -81,6 +81,14 @@ export default defineConfig({
   // Build output configuration - static with SSR adapter for dynamic routes
   output: 'static',
 
+  // SMI-5892: default compressHTML "jsx" mode applies JSX whitespace
+  // semantics to .astro templates — it removes (not collapses) a
+  // newline-containing whitespace-only text node at an inline-tag
+  // boundary, silently swallowing spaces in hand-wrapped prose
+  // (e.g. "Install & Use</a>\ntutorial." -> "Install & Usetutorial.").
+  // `true` uses standard HTML-spec whitespace collapsing instead.
+  compressHTML: true,
+
   // TypeScript configuration
   typescript: {
     strict: true,

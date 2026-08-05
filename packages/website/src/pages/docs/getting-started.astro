@@ -1,41 +1,45 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
 import { MCP_CLIENT_SNIPPETS, withApiKey } from '../../lib/mcp-client-snippets';
+
+const howToSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'HowTo',
+  name: 'How to Configure Skillsmith API Key',
+  description:
+    'Set up your personal API key for higher rate limits and usage tracking on your Skillsmith account dashboard',
+  totalTime: 'PT2M',
+  tool: [
+    {
+      '@type': 'HowToTool',
+      name: 'Skillsmith CLI or MCP server (installed via 5-Minute Setup)',
+    },
+  ],
+  step: [
+    {
+      '@type': 'HowToStep',
+      position: 1,
+      name: 'Generate an API Key',
+      text: 'Create a free account at www.skillsmith.app/signup and visit the CLI Token page to generate your personal API key.',
+    },
+    {
+      '@type': 'HowToStep',
+      position: 2,
+      name: 'Configure the Key',
+      text: "Run 'skillsmith login' to store the key securely in your OS keyring, or add it to ~/.skillsmith/config.json or your MCP client settings.",
+    },
+    {
+      '@type': 'HowToStep',
+      position: 3,
+      name: 'Verify Configuration',
+      text: "Ask your assistant 'List available MCP tools' or run 'skillsmith --version' to verify everything is working.",
+    },
+  ],
+};
 ---
 
 <DocsLayout title="Configuration Guide" description="Set up API keys, verify your installation, configure advanced options, and troubleshoot Skillsmith">
-  <script is:inline type="application/ld+json" slot="head">
-  {
-    "@context": "https://schema.org",
-    "@type": "HowTo",
-    "name": "How to Configure Skillsmith API Key",
-    "description": "Set up your personal API key for higher rate limits and usage tracking on your Skillsmith account dashboard",
-    "totalTime": "PT2M",
-    "tool": [
-      { "@type": "HowToTool", "name": "Skillsmith CLI or MCP server (installed via 5-Minute Setup)" }
-    ],
-    "step": [
-      {
-        "@type": "HowToStep",
-        "position": 1,
-        "name": "Generate an API Key",
-        "text": "Create a free account at www.skillsmith.app/signup and visit the CLI Token page to generate your personal API key."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 2,
-        "name": "Configure the Key",
-        "text": "Run 'skillsmith login' to store the key securely in your OS keyring, or add it to ~/.skillsmith/config.json or your MCP client settings."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 3,
-        "name": "Verify Configuration",
-        "text": "Ask your assistant 'List available MCP tools' or run 'skillsmith --version' to verify everything is working."
-      }
-    ]
-  }
-  </script>
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(howToSchema)} />
   <h1>Configuration Guide</h1>
 
   <div class="callout">

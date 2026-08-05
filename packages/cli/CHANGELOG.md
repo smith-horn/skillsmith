@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `search-formatters.ts`'s security-status coloring (`formatSecurityStatus`, `displaySkillDetails`) no longer renders bright green purely from `securityPassed === true` — a skill scoring just under the quarantine threshold (`DEFAULT_RISK_THRESHOLD`, 40 — lower is safer) rendered identically to one scoring near 0, misleadingly implying "very safe" for a borderline pass. Green is now reserved for a comfortably-safe pass (risk score under half the threshold, or no numeric score); a borderline pass renders yellow instead. Text ("PASS"/"PASSED") is unchanged — this is a color-only fix (SMI-5897)
+- **Feature**: new `skillsmith registry install <skillId>` command (optional `--version`) — pulls a skill previously published to your team's Enterprise private registry and installs it locally, closing the publish→install gap (previously the registry could only be published to and browsed). Talks to the new `private-registry-get` Edge Function under your signed-in user JWT (`skillsmith login`) — the CLI never carries Supabase credentials directly. `403` maps to "Enterprise subscription required for your team's private registry"; a cross-team or nonexistent `skillId` both map to a non-leaking "not found", matching the Edge Function's own contract (SMI-5905)
+- **Fix**: `registry-install`'s `skillId` validation rejects `.`/`..` path segments (e.g. `"team/.."`) before any network call or disk write — the same guard added at every layer of this feature's stack (SMI-5905)
+- **Fix**: `skillsmith recommend --installed <ids...>` now actually feeds those IDs into the recommendation query — previously an explicit `--installed` list was reported back in the output but never fed into the empty-derived-stack guard, so a codebase where analysis detects nothing (non-Node stack, all-devDeps) still hit the guard's degraded response even though the user had already supplied exactly the escape-hatch information the guard's own guidance text asks for (SMI-5896)
+- **Fix**: `skillsmith update <name>` now resolves an installed skill's registry source from `~/.skillsmith/manifest.json` — the entry `install` already writes on every successful install, looked up by the `(name, client)` key so a same-named skill installed under two clients resolves the copy the caller asked about — instead of a `SKILL.md` front-matter `id:` read that `SkillParser` never populated. `update` therefore no longer reports `"<name>" has no recorded registry source` for a normally-installed skill. When the manifest genuinely has no entry, it falls back to `SourceRecoveryService` and auto-applies only `exact`/`high`/`user-specified` matches; a speculative medium/low name match fails safe with a pointer to `sklx audit sources` rather than silently updating from a guessed source (SMI-5895)
+- **Fix**: `skillsmith search -i`'s "Install this skill" action now honors `SKILLSMITH_CLIENT` — previously it always installed to the canonical Claude Code directory regardless of the environment variable, the same class of bug SMI-5894 fixed for `install`/`list`/`remove`/`update`/`sync` (SMI-5894 post-merge retro)
+- **Fix**: `--accept`/`--revoke` are now rejected outright (a new `accept_disabled` validation code, before any audit/lock/file touch) while `SKILLSMITH_AUDIT_ACCEPT_DISABLE=1` is set, instead of writing a real but dormant record and printing a false "OK Accepted"/"OK Revoked" success message (SMI-5883 post-merge retro)
+- **Feature**: `sklx audit security` gains `--accept <key> --reason "<why>"` / `--revoke <key>` / `--candidates` / `--list-accepted` for the new local security-acceptance allowlist — a reviewed false-positive finding can be marked accepted so it stops re-surfacing, without ever affecting rug-pull/hostile-update detection. `--accept` re-runs the real audit before matching a key (a stale key from changed content is rejected as `key_not_found`, never blindly trusted); `--revoke` resolves against the stored ledger, not the current run's candidates, since the records most worth revoking are often ones that no longer match live content. `--json` candidate output is paginated (`--page`/`--page-size`, or `--all-candidates` for the complete uncapped array) with a deterministic total ordering so no candidate is skipped or duplicated across pages (SMI-5883)
+
+## v0.8.4
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.3).
 - **Fix**: `sklx logs --tail` now watches the doc-retrieval reindex CLI's structured log surface — added `'doc-retrieval'` to `commands/logs.ts`'s `TAIL_SURFACES` array (SMI-5793)
 
 ## v0.8.3
@@ -121,6 +133,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## v0.5.7
 
 - **Refactor**: initSkill throws InitSkillError instead of process.exit (SMI-4314) (#642)
+- **Fix**: `skillsmith author init` now reports a friendly error and cleans up
+  partial output when a file operation fails. When an init is run against a
+  pre-existing directory that the user confirms to overwrite, the existing
+  directory is preserved on mid-scaffold failure instead of being removed
+  (SMI-4289, closes #602).
 
 ## v0.5.6
 
@@ -129,14 +146,6 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## v0.5.5
 
 - **Other**: SMI-4190: release cadence docs — ADR-114 + CHANGELOG backfill + CONTRIBUTING (#552)
-
-## [Unreleased]
-
-- **Fix**: `skillsmith author init` now reports a friendly error and cleans up
-  partial output when a file operation fails. When an init is run against a
-  pre-existing directory that the user confirms to overwrite, the existing
-  directory is preserved on mid-scaffold failure instead of being removed
-  (SMI-4289, closes #602).
 
 ## v0.5.4
 

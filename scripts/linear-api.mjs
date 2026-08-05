@@ -5,6 +5,28 @@
  * Provides reliable Linear API operations with proper JSON escaping
  * and error handling. Replaces fragile curl-based scripts.
  *
+ * `create-issue` validates its description against the shared
+ * Acceptance-Criteria contract (`scripts/lib/linear-issue-validation.mjs`,
+ * SMI-5841/5846) before calling the mutation (SMI-5853). Ships
+ * shadow-first, matching that same convention: a non-compliant
+ * description warns and still creates the issue by default; set
+ * SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW=0 to block instead.
+ * --force (or SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE=1) always
+ * bypasses regardless of shadow state. See `help()` below for the full
+ * flag/env-var reference.
+ *
+ * `create-issue` also resolves `--parent`/`--labels` to real UUIDs
+ * (SMI-5854) instead of passing raw CLI values through to the mutation.
+ * `--parent` accepts an issue identifier (e.g. SMI-123) or an ID; an
+ * unresolvable parent throws (no silent orphan). `--labels` accepts
+ * comma-separated label names (matched exact-case) or IDs; an
+ * unresolvable/ambiguous label name is dropped with a warning and the
+ * issue is still created with whatever labels did resolve. Idempotent
+ * read queries (team/label/parent lookups) retry on transport failure or
+ * HTTP 429/5xx; the `issueCreate` mutation itself is never retried. Use
+ * `--dry-run` to resolve everything and print the mutation input without
+ * creating the issue.
+ *
  * Usage:
  *   node scripts/linear-api.mjs create-issue --title "Title" --description "Desc"
  *   node scripts/linear-api.mjs update-status --issue SMI-123 --status done
@@ -13,78 +35,58 @@
  *
  * Environment:
  *   LINEAR_API_KEY - Required API key for authentication
+ *   SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE - '1' to bypass
+ *     create-issue description validation entirely, regardless of shadow
+ *     state (SMI-5853)
+ *   SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW - default on (warn-only,
+ *     issue still created); set to '0' to make a non-compliant
+ *     create-issue description block instead of warn (SMI-5853)
  */
+import { validateIssueDescription } from './lib/linear-issue-validation.mjs'
+import {
+  TEAM_KEY,
+  graphql,
+  retryQuery,
+  getTeamId as sharedGetTeamId,
+  getIssueId as sharedGetIssueId,
+  normalizeLabelEntries,
+  resolveLabelIds,
+} from './lib/linear-client.mjs'
 
-const TEAM_KEY = 'SMI'
-const API_URL = 'https://api.linear.app/graphql'
+const VALIDATION_DISABLE_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE'
+const VALIDATION_SHADOW_ENV_VAR = 'SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW'
+// Aligned to SMI-5846's LINEAR_ISSUE_GUARD_SHADOW_END_DATE so all three
+// Linear-issue-creation enforcement layers (SMI-5841 CI lint, SMI-5846
+// MCP hook, this create-issue gate) flip to blocking together in one
+// dated follow-up review, not three staggered ones.
+export const VALIDATION_SHADOW_END_DATE = '2026-08-09'
+
+// SMI-5859: page size for getLabels()' full-listing query. Named for its one
+// call site rather than `LABELS_*` so it cannot be confused — by a reader or
+// by autocomplete — with LABEL_PAGE_SIZE (scripts/lib/linear-client.mjs),
+// whose 50 is an ambiguity-detection threshold for the exact-name filter,
+// not a paging size. 250 is Linear's max `first`.
+const GET_LABELS_PAGE_SIZE = 250
 
 // State IDs for common workflow states (cached on first query)
 let stateCache = null
 let teamCache = null
 
 /**
- * Execute a GraphQL query against Linear API
- */
-async function graphql(query, variables = {}) {
-  const apiKey = process.env.LINEAR_API_KEY
-
-  if (!apiKey) {
-    throw new Error('LINEAR_API_KEY environment variable is not set')
-  }
-
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: apiKey,
-    },
-    body: JSON.stringify({ query, variables }),
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Linear API error: ${response.status} ${text}`)
-  }
-
-  const json = await response.json()
-
-  if (json.errors) {
-    throw new Error(`GraphQL errors: ${JSON.stringify(json.errors, null, 2)}`)
-  }
-
-  return json.data
-}
-
-/**
- * Get team ID by key
+ * Get team ID by key. Local cache wrapper around the shared, single-attempt
+ * scripts/lib/linear-client.mjs#getTeamId (SMI-5858) — this function itself
+ * has no retry logic (matches pre-extraction behavior: it never had any);
+ * callers that want retry apply `retryQuery(() => getTeamId(teamKey))`
+ * explicitly at their own call site, same as before extraction.
  */
 async function getTeamId(teamKey = TEAM_KEY) {
   if (teamCache?.key === teamKey) {
     return teamCache.id
   }
 
-  const data = await graphql(
-    `
-      query GetTeam($key: String!) {
-        teams(filter: { key: { eq: $key } }) {
-          nodes {
-            id
-            key
-            name
-          }
-        }
-      }
-    `,
-    { key: teamKey }
-  )
-
-  const team = data.teams.nodes[0]
-  if (!team) {
-    throw new Error(`Team with key "${teamKey}" not found`)
-  }
-
-  teamCache = { key: teamKey, id: team.id, name: team.name }
-  return team.id
+  const id = await sharedGetTeamId(teamKey)
+  teamCache = { key: teamKey, id }
+  return id
 }
 
 /**
@@ -123,6 +125,17 @@ async function getStates(teamKey = TEAM_KEY) {
 }
 
 /**
+ * Resolve an issue identifier (e.g. SMI-123) to its UUID. Thin retry
+ * wrapper around the shared, single-attempt
+ * scripts/lib/linear-client.mjs#getIssueId (SMI-5858) — this file's
+ * `getIssueId` retried internally pre-extraction, so this wrapper
+ * preserves that exported 4-attempt classified-retry behavior (skipping
+ * it would silently regress the `--parent` resolution path to zero
+ * retries).
+ */
+const getIssueId = (identifier) => retryQuery(() => sharedGetIssueId(identifier))
+
+/**
  * Create a new issue
  */
 async function createIssue(options) {
@@ -133,9 +146,55 @@ async function createIssue(options) {
     labels = [],
     parentId = null,
     teamKey = TEAM_KEY,
+    force = false,
+    dryRun = false,
   } = options
 
-  const teamId = await getTeamId(teamKey)
+  const descriptionText = typeof description === 'string' ? description : ''
+  const validationErrors = validateIssueDescription(descriptionText)
+  if (validationErrors.length > 0) {
+    const bypassed =
+      force === true ||
+      force === 'true' ||
+      force === '1' ||
+      process.env[VALIDATION_DISABLE_ENV_VAR] === '1'
+    const inShadow = process.env[VALIDATION_SHADOW_ENV_VAR] !== '0'
+    const reason =
+      validationErrors.join('; ') +
+      ' — see .claude/templates/linear-issue-template.md for the required format.'
+
+    if (!bypassed && !inShadow) {
+      throw new Error(
+        `[linear-api] description failed Acceptance-Criteria validation: ${reason} ` +
+          `Pass --force to create anyway, or set ${VALIDATION_DISABLE_ENV_VAR}=1.`
+      )
+    }
+    if (bypassed) {
+      console.warn(
+        `[linear-api] description failed Acceptance-Criteria validation (bypassed): ${reason}`
+      )
+    } else {
+      console.warn(
+        `[linear-api] description failed Acceptance-Criteria validation (shadow mode, proceeding): ${reason}`
+      )
+    }
+  }
+
+  const teamId = await retryQuery(() => getTeamId(teamKey))
+
+  let resolvedParentId = null
+  if (parentId) {
+    resolvedParentId = await getIssueId(parentId)
+    if (!resolvedParentId) {
+      // No opt-out here: a silent orphan defeats the whole point of --parent.
+      throw new Error(`[linear-api] parent issue "${parentId}" not found — refusing to create an orphaned issue.`)
+    }
+  }
+
+  // Passes this file's own CACHED getTeamId wrapper (SMI-5858) — teamId was
+  // just resolved above via the same wrapper, so resolveLabelIds's internal
+  // lookup hits that cache instead of firing a second, redundant fetch.
+  const { labelIds, omitted } = await resolveLabelIds(labels, teamKey, getTeamId)
 
   const input = {
     teamId,
@@ -144,12 +203,17 @@ async function createIssue(options) {
     priority,
   }
 
-  if (parentId) {
-    input.parentId = parentId
+  if (resolvedParentId) {
+    input.parentId = resolvedParentId
   }
 
-  if (labels.length > 0) {
-    input.labelIds = labels
+  if (labelIds.length > 0) {
+    input.labelIds = labelIds
+  }
+
+  if (dryRun) {
+    console.log(JSON.stringify({ input }, null, 2))
+    return { dryRun: true, input }
   }
 
   const data = await graphql(
@@ -171,6 +235,12 @@ async function createIssue(options) {
 
   if (!data.issueCreate.success) {
     throw new Error('Failed to create issue')
+  }
+
+  if (omitted.length > 0) {
+    console.warn(
+      `[linear-api] created ${data.issueCreate.issue.identifier} without requested label(s): ${omitted.join(', ')}`
+    )
   }
 
   return data.issueCreate.issue
@@ -343,27 +413,71 @@ async function listIssues(options = {}) {
 }
 
 /**
- * Get available labels
+ * Get available labels. Paginated (first/after + pageInfo, SMI-5859):
+ * the workspace has more labels than Linear's default page size (50),
+ * which this query previously relied on silently. Mirrors
+ * fetchOpenE2eIssueTitles() in scripts/e2e/create-linear-issues.linear-client.ts.
+ *
+ * Throws rather than returning a partial list when the API reports another
+ * page but gives no usable way to reach it — see the invariant below.
  */
 async function getLabels(teamKey = TEAM_KEY) {
-  const teamId = await getTeamId(teamKey)
+  const teamId = await retryQuery(() => getTeamId(teamKey))
+  const labels = []
+  let after = null
 
-  const data = await graphql(
-    `
-      query GetLabels($teamId: ID!) {
-        issueLabels(filter: { team: { id: { eq: $teamId } } }) {
-          nodes {
-            id
-            name
-            color
+  for (;;) {
+    const data = await retryQuery(() =>
+      graphql(
+        `
+          query GetLabels($teamId: ID!, $first: Int!, $after: String) {
+            issueLabels(
+              filter: { team: { id: { eq: $teamId } } }
+              first: $first
+              after: $after
+            ) {
+              nodes {
+                id
+                name
+                color
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
           }
-        }
-      }
-    `,
-    { teamId }
-  )
+        `,
+        { teamId, first: GET_LABELS_PAGE_SIZE, after }
+      )
+    )
+    labels.push(...data.issueLabels.nodes)
 
-  return data.issueLabels.nodes
+    const { hasNextPage, endCursor } = data.issueLabels.pageInfo
+    if (!hasNextPage) break
+
+    // Cursor-progress invariant (SMI-5859). A page claiming hasNextPage but
+    // carrying no cursor, or repeating the cursor we just sent, cannot be
+    // advanced past. Throw instead of breaking: returning what we have would
+    // be a silent partial result indistinguishable from success — the exact
+    // failure class this function is being fixed to eliminate.
+    //
+    // Deliberately OUTSIDE the retryQuery() callback above. isRetryable()
+    // treats a status-less Error as retryable, so throwing from inside would
+    // spend 1s+2s+4s re-issuing the same request against a deterministic fault.
+    if (!endCursor || endCursor === after) {
+      throw new Error(
+        `Linear issueLabels pagination did not advance ` +
+          `(hasNextPage: true, endCursor: ${JSON.stringify(endCursor)}, ` +
+          `after: ${JSON.stringify(after)}); refusing to return ` +
+          `${labels.length} possibly-partial labels`
+      )
+    }
+
+    after = endCursor
+  }
+
+  return labels
 }
 
 // CLI Argument Parsing
@@ -389,7 +503,8 @@ function parseArgs(args) {
 // CLI Commands
 const commands = {
   async 'create-issue'(args) {
-    const { title, description, priority, labels, parent } = args
+    const { title, description, priority, labels, parent, force } = args
+    const dryRun = args['dry-run'] === true
 
     if (!title) {
       console.error('Error: --title is required')
@@ -402,7 +517,13 @@ const commands = {
       priority: priority ? parseInt(priority, 10) : 2,
       labels: labels ? labels.split(',') : [],
       parentId: parent || null,
+      force,
+      dryRun,
     })
+
+    if (dryRun) {
+      return issue
+    }
 
     console.log(`Created: ${issue.identifier} - ${issue.title}`)
     console.log(`URL: ${issue.url}`)
@@ -485,10 +606,16 @@ Usage:
 Commands:
   create-issue      Create a new issue
     --title         Issue title (required)
-    --description   Issue description
+    --description   Issue description (validated against the shared
+                    Acceptance-Criteria contract before the mutation,
+                    SMI-5853 - see Environment below)
     --priority      Priority (1=urgent, 2=high, 3=medium, 4=low)
-    --labels        Comma-separated label IDs
-    --parent        Parent issue ID
+    --labels        Comma-separated label names (exact case) or IDs
+    --parent        Parent issue identifier (e.g. SMI-123) or ID
+    --force         Bypass Acceptance-Criteria description validation,
+                    regardless of shadow state (SMI-5853)
+    --dry-run       Resolve everything and print the mutation input
+                    without creating the issue
 
   update-status     Update issue status
     --issue         Issue identifier (e.g., SMI-123) (required)
@@ -510,6 +637,13 @@ Commands:
 
 Environment:
   LINEAR_API_KEY    API key for authentication (required)
+  SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_DISABLE
+                    '1' to bypass create-issue description validation
+                    entirely, regardless of shadow state (SMI-5853)
+  SKILLSMITH_LINEAR_API_ISSUE_VALIDATION_SHADOW
+                    Default on (warn-only, issue still created). Set to
+                    '0' to make a non-compliant create-issue description
+                    block instead of warn (SMI-5853)
 
 Examples:
   node scripts/linear-api.mjs create-issue --title "New feature" --priority 2
@@ -555,4 +689,8 @@ export {
   getTeamId,
   getStates,
   graphql,
+  getIssueId,
+  resolveLabelIds,
+  normalizeLabelEntries,
+  commands,
 }

@@ -154,8 +154,18 @@ async function syncActionImpl(options: {
 
 /**
  * Show sync status
+ *
+ * SMI-5894 (Wave 1 Step 4): `client` (optional) scopes the local-skills
+ * adapter-warnings scan to a specific agent's directory, resolved by
+ * `scanLocalSkillsForWarnings()` the same way install/list/remove/update
+ * resolve their target directory (explicit --client, else
+ * SKILLSMITH_CLIENT, else the canonical client).
  */
-async function syncStatusActionImpl(options: { dbPath: string; json: boolean }): Promise<void> {
+async function syncStatusActionImpl(options: {
+  dbPath: string
+  json: boolean
+  client?: string | undefined
+}): Promise<void> {
   try {
     const db = await openCliDatabase(options.dbPath)
 
@@ -238,7 +248,7 @@ async function syncStatusActionImpl(options: { dbPath: string; json: boolean }):
       // Local-skills adapter warnings (SMI-4287, GitHub #600).
       // Surface symlink-escape / permission / loop errors so the user can
       // act on them (e.g. `chmod +r`, remove rogue symlink).
-      const adapterWarnings = await scanLocalSkillsForWarnings()
+      const adapterWarnings = await scanLocalSkillsForWarnings(options.client)
       if (adapterWarnings.length > 0) {
         console.log()
         console.log(chalk.bold.yellow('Local skill warnings:'))

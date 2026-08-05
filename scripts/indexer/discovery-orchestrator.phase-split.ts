@@ -19,7 +19,11 @@ import { summarizeRateLimitTelemetry, type RateLimitTelemetry } from './_shared/
 import { writeIndexerAuditLog } from './indexer-runners.ts'
 import type { ScoreDistribution } from './indexer-runners.ts'
 import type { RotationSource } from './topic-rotation.ts'
-import { reconcileStaleSkills } from './stale-reconciliation.ts'
+import {
+  reconcileStaleSkills,
+  resolveStaleThresholdDays,
+  DISCOVERY_STALE_DEFAULT_DAYS,
+} from './stale-reconciliation.ts'
 import { notifyBulkQuarantine } from './_shared/notification.ts'
 
 /**
@@ -195,8 +199,9 @@ export async function writeDiscoveryAuditLog(
  * them be.
  *
  * @param supabase - Supabase admin client.
- * @param staleThresholdDays - raw `body.staleThresholdDays`; coerced to 30 when
- *   not a finite number.
+ * @param staleThresholdDays - raw `body.staleThresholdDays`; resolved through
+ *   the canonical `resolveStaleThresholdDays` (SMI-5551 item 3) with the
+ *   discovery default of 30 when not a positive finite number.
  * @param dryRun - when true, suppresses the bulk-quarantine notification.
  * @param backfillMode - when true, the whole phase is a no-op (returns zeros).
  * @returns `{ stale, errors }` for the caller to fold into the run result.
@@ -211,8 +216,10 @@ export async function runStaleReconciliationPhase(
     console.log('[Backfill] SMI-5286: skipping Phase 6 stale reconciliation (backfill mode)')
     return { stale: 0, errors: [] }
   }
-  const threshold =
-    typeof staleThresholdDays === 'number' && !isNaN(staleThresholdDays) ? staleThresholdDays : 30
+  // SMI-5551 item 3: one canonical threshold policy for both callers —
+  // maintenance passes MAINTENANCE_STALE_DEFAULT_DAYS (7), discovery passes
+  // DISCOVERY_STALE_DEFAULT_DAYS (30) — instead of two inline clamps.
+  const threshold = resolveStaleThresholdDays(staleThresholdDays, DISCOVERY_STALE_DEFAULT_DAYS)
   const staleResult = await reconcileStaleSkills(supabase, threshold)
   // SMI-3347: Notify if any author had >= 3 skills quarantined in this run.
   if (staleResult.quarantinedIds.length > 0 && !dryRun) {

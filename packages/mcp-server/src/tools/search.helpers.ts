@@ -14,9 +14,50 @@ import {
   type ApiSearchResult,
   CLIENT_TO_COMPATIBILITY_SLUG,
   type SearchResult,
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
 } from '@skillsmith/core'
 import { extractCategoryFromTags, mapTrustTierFromDb } from '../utils/validation.js'
-import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
+
+/**
+ * SMI-5896: Default/bound for the MCP search tool's `limit` parameter.
+ * Matches the public API's own server-side clamp
+ * (supabase/functions/_shared/supabase.ts:validatePagination) — [1, 100] —
+ * so a caller-supplied limit behaves identically whether it's satisfied by
+ * the API-path branch or the local-fallback branch. The *default* when
+ * omitted (10, not the API's own default of 20) preserves the tool's
+ * pre-existing hardcoded behavior for callers who don't pass `limit` at all.
+ */
+export const DEFAULT_SEARCH_LIMIT = 10
+export const MIN_SEARCH_LIMIT = 1
+export const MAX_SEARCH_LIMIT = 100
+
+/**
+ * Resolve the effective MCP search `limit`: defaults to
+ * {@link DEFAULT_SEARCH_LIMIT} when omitted, clamped (not rejected) to
+ * [{@link MIN_SEARCH_LIMIT}, {@link MAX_SEARCH_LIMIT}] otherwise. A caller
+ * passing an out-of-range value gets a smaller/larger *page*, not an error —
+ * mirrors the public API's own clamp-not-reject behavior.
+ *
+ * Accepts `unknown` deliberately: `tool-dispatch.ts` hands `search` its raw
+ * JSON arguments with a bare cast (`(args ?? {}) as SearchInput`) and no
+ * runtime schema check, so this function IS the validation boundary for
+ * `limit`. Anything that isn't a finite number (JSON `null`, `"abc"`, `true`,
+ * `[]`) resolves to the default rather than propagating `NaN` into
+ * `Array.prototype.slice`, which would silently return zero results.
+ */
+export function resolveSearchLimit(limit: unknown): number {
+  const numeric =
+    typeof limit === 'number'
+      ? limit
+      : typeof limit === 'string' && limit.trim() !== ''
+        ? Number(limit)
+        : Number.NaN
+  if (Number.isNaN(numeric)) return DEFAULT_SEARCH_LIMIT
+  // ±Infinity intentionally clamps to MAX/MIN rather than falling back to the
+  // default — "clamped, not rejected" applies to any orderable value.
+  return Math.min(Math.max(Math.trunc(numeric), MIN_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
+}
 
 /**
  * SMI-2760: Filter search results by compatibility tags.
@@ -132,6 +173,10 @@ export function mapApiSkillToSearchResult(item: ApiSearchResult): SkillSearchRes
  * SMI-2734: installHint guarded on real registry owner (not 'unknown').
  * SMI-2760: compatibility tags.
  * SMI-5327: SPDX license parity with the API path.
+ * SMI-5897 (Wave 4 fix): security summary now derived via the shared
+ * `deriveSecuritySummaryFromSkillRow()` — was previously built unconditionally,
+ * shipping a placeholder `{ passed: null, ... }` object even for skills that
+ * were never scanned at all, instead of `undefined`.
  */
 export function mapLocalSkillToSearchResult(item: SearchResult): SkillSearchResult {
   return {
@@ -150,13 +195,8 @@ export function mapLocalSkillToSearchResult(item: SearchResult): SkillSearchResu
       item.skill.author && item.skill.author !== 'unknown'
         ? item.skill.author + '/' + item.skill.name
         : undefined,
-    // SMI-825: Security summary
-    security: {
-      passed: item.skill.securityPassed,
-      riskScore: item.skill.riskScore,
-      findingsCount: item.skill.securityFindingsCount,
-      scannedAt: item.skill.securityScannedAt,
-    },
+    // SMI-825 / SMI-5897: Security summary — undefined when never scanned.
+    security: deriveSecuritySummaryFromSkillRow(item.skill),
     // SMI-2760: Compatibility tags
     compatibility: item.skill.compatibility,
     // SMI-5327: SPDX license — parity with API path's `item.license ?? null`

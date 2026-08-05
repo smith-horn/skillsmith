@@ -71,8 +71,8 @@ const uniqueId = `code-block-${Math.random().toString(36).substring(7)}`
         button.classList.add('bg-[#81B29A]')
 
         // Track in GA if available
-        if (typeof (window as any).gtag === 'function') {
-          ;(window as any).gtag('event', 'copy_config', {
+        if (typeof window.gtag === 'function') {
+          window.gtag('event', 'copy_config', {
             event_category: 'engagement',
             event_label: 'mcp_install_snippet',
           })

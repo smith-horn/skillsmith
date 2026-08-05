@@ -27,6 +27,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createSupabaseAdminClient } from './_shared/supabase.ts'
+import { assertRunAllowed, assertFreezeMarkerClear } from './run-gate.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import {
   scanSkillContent,
@@ -180,8 +181,10 @@ export async function processRow(
 }
 
 /** Run the full sweep over every `security_scan`-quarantined row. */
-export async function runSweep(opts: { apply: boolean; limit?: number }): Promise<SweepCounts> {
-  const db = createSupabaseAdminClient()
+export async function runSweep(
+  db: SupabaseClient,
+  opts: { apply: boolean; limit?: number }
+): Promise<SweepCounts> {
   const headers = await buildGitHubHeaders()
 
   let query = db
@@ -287,12 +290,18 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
 
 /** CLI entrypoint (skipped when imported by tests). */
 async function main(): Promise<void> {
+  // SMI-5879 Gate C: env-sourced check first (no dependency on a DB round
+  // trip), then the DB-sourced freeze marker immediately after client
+  // construction — see the call-site contract in the design doc (8.3.3.2).
+  assertRunAllowed('dequarantine')
+  const db = createSupabaseAdminClient()
+  await assertFreezeMarkerClear(db, 'dequarantine')
   const apply = process.argv.includes('--apply')
   const limitArg = process.argv.find((a) => a.startsWith('--limit'))
   const limit = limitArg
     ? Number(limitArg.split('=')[1] ?? process.argv[process.argv.indexOf(limitArg) + 1])
     : undefined
-  await runSweep({ apply, limit: Number.isFinite(limit) ? limit : undefined })
+  await runSweep(db, { apply, limit: Number.isFinite(limit) ? limit : undefined })
 }
 
 // Run only when invoked directly (not when imported by the test suite).

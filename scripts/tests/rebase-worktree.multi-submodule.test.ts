@@ -42,7 +42,12 @@ function runScript(args: string): { status: number; stdout: string; stderr: stri
     const stdout = execSync(`bash "${SCRIPT_PATH}" ${args}`, {
       encoding: 'utf8',
       timeout: 30_000,
-      env: GIT_ENV,
+      // SMI-5702: this file's fixtures never register a git-crypt filter at
+      // all (MISSING to the new classifier) and this suite is entirely
+      // about submodule cross-fetch/directional-guard behavior — disabling
+      // the new Step 6.5 heal keeps it scoped to that, same rationale as
+      // rebase-worktree.helpers.ts's runScript().
+      env: { ...GIT_ENV, SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE: '1' },
     })
     return { status: 0, stdout, stderr: '' }
   } catch (err) {

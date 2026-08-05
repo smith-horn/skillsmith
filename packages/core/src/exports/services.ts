@@ -392,6 +392,24 @@ export { mergeDependencies, type MergedDependency } from '../analysis/Dependency
 
 export { getRegisteredMcpServers } from '../services/skill-installation.helpers.js'
 
+// SMI-5895 Wave 2 Step 1: `manifestKeyFor` (SMI-5894 Wave 1 Step 3's (name,
+// client) manifest keying) and `hashContent` are re-exported at the package
+// root so CLI callers outside `core`'s own services (e.g.
+// `manage.update.ts`'s SourceRecoveryService fallback) can reach them via
+// the same `@skillsmith/core` specifier they already import, rather than the
+// `@skillsmith/core/services/skill-installation-helpers` subpath.
+//
+// This adds no new module to the root barrel's graph — the line above
+// already re-exports `getRegisteredMcpServers` from the same file, so
+// `skill-installation.helpers.ts` (and its `skill-installation.io.ts` ->
+// `fs/promises` chain) was reachable from the root either way. What the
+// subpath costs is *mockability*: a caller whose suite does
+// `vi.mock('@skillsmith/core', factory)` only intercepts that exact
+// specifier, so a subpath import of the same helper still loads for real and
+// drags in the real `fs/promises` surface a test that stubs `fs/promises`
+// wholesale (as manage.update's suite does) cannot satisfy.
+export { hashContent, manifestKeyFor } from '../services/skill-installation.helpers.js'
+
 // ============================================================================
 // Billing (SMI-1062 to SMI-1070) — RELOCATED in SMI-5006 (core 0.7.0)
 // ============================================================================
@@ -425,6 +443,9 @@ export {
   type InstallOptions,
   type InstallResult as CoreInstallResult,
   type InstallErrorCode,
+  // SMI-5905 Wave 1: content-based install path (private registry).
+  type SkillContent,
+  type InstallFromContentOptions,
   type UninstallOptions,
   type UninstallResult as CoreUninstallResult,
   type SkillManifest,
@@ -442,3 +463,15 @@ export {
   recordAiDefenceFeedback,
   collectTrendWarnings,
 } from '../services/skill-installation.feedback.js'
+
+// ============================================================================
+// Discovery-Tool Consistency (SMI-5896: Wave 3)
+// ============================================================================
+
+export {
+  resolveSkillApiFirst,
+  type ResolvedSkill,
+  type ResolveSkillOptions,
+} from '../services/skill-resolution.js'
+
+export { buildEmptyStackGuidance } from '../services/recommend-guard.js'

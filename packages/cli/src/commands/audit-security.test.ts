@@ -36,6 +36,14 @@ vi.mock('@skillsmith/mcp-server/audit', () => ({
   runSecurityAudit: mocks.runSecurityAudit,
   buildAuditDigestPayload: mocks.buildAuditDigestPayload,
   hashDigest: mocks.hashDigest,
+  // SMI-5883 Wave 2: audit-security.action.ts / .mutate.ts also pull these
+  // from the same module -- unmocked, they'd resolve to `undefined` and
+  // crash `runAuditSecurity` before it ever reaches the (pre-existing)
+  // presentation logic these tests exercise.
+  defaultAcceptancePath: vi.fn(() => '/tmp/unused-acceptance-path.json'),
+  isValidAcceptKeyFormat: (key: string) => /^[0-9a-f]{64}$/.test(key),
+  acceptFinding: vi.fn(() => ({ ok: true, warnings: [] })),
+  revokeAcceptance: vi.fn(() => ({ ok: true, warnings: [] })),
 }))
 vi.mock('@skillsmith/core', () => ({
   sendAuditDigest: mocks.sendAuditDigest,
@@ -90,9 +98,14 @@ function result(
       hostile: findings.filter((f) => f.verdict === 'hostile').length,
       suspicious: findings.filter((f) => f.verdict === 'suspicious').length,
       malicious: findings.filter((f) => f.verdict === 'malicious').length,
+      accepted: 0,
+      candidateTotal: 0,
       durationMs: 1,
       ...summary,
     },
+    candidateIndex: new Map(),
+    acceptances: [],
+    warnings: [],
   }
 }
 

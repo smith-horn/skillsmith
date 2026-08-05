@@ -21,6 +21,7 @@ import type { SkillDependencyRow } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { hashContent } from './install.conflict-helpers.js'
 import { loadManifest } from './install.helpers.js'
+import { getManifestInstalledSkillIds } from './manifest-skill-ids.helpers.js'
 import type { SkillManifestEntry } from './install.types.js'
 
 // ============================================================================
@@ -209,8 +210,10 @@ async function executeOutdatedImpl(
   const versionRepo = new SkillVersionRepository(context.db)
   const depRepo = context.skillDependencyRepository
 
-  // Build set of installed skill IDs for dependency checking — filter out corrupt entries
-  const installedSkillIds = new Set<string>(entries.filter((e) => e.id).map((e) => e.id))
+  // Build set of installed skill IDs for dependency checking — filter out
+  // corrupt entries (SMI-5895 Wave 2 Step 2: shared with skill_updates via
+  // getManifestInstalledSkillIds, so the two tools can't drift on this).
+  const installedSkillIds = new Set<string>(getManifestInstalledSkillIds(manifest))
 
   const skills: OutdatedSkillInfo[] = []
   let outdatedCount = 0

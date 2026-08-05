@@ -44,6 +44,10 @@ packages/core/tests/RawUrlSourceAdapter.security.test.ts
 # SMI-5439 split follow-up
 scripts/tests/indexer/parity.test.ts
 
+# (SMI-5865 split follow-up cleared 2026-07-27: revalidate-stale-quarantines.test.ts
+#  was split into concern-scoped siblings under 500 lines each —
+#  revalidate-stale-quarantines.{outcomes,guards}.test.ts.)
+
 # (SMI-5263 split follow-up cleared 2026-06-12: install.integration.test.ts was
 #  split into 3 concern-scoped siblings under 500 lines each —
 #  install.{parsing,execution}.integration.test.ts; suite still 174 passed / 6 skipped.)
@@ -60,5 +64,7 @@ scripts/create-worktree.sh
 # SMI-5660 split follow-up
 scripts/tests/create-worktree-hooks.test.sh
 
-# SMI-5660 split follow-up
-scripts/phases/phase-7-enterprise.sh
+# SMI-5866 split follow-up (genuinely pre-existing: baseline was already 503
+# lines before this PR touched it to add the SMI-5866 skip-gate change; not
+# new debt introduced by this PR)
+scripts/indexer/indexer-runners.ts

@@ -48,11 +48,11 @@ export async function runPurgeBranch(
   requestId: string
 ): Promise<PurgeBranchResult> {
   const dryRun = env.PURGE_DRY_RUN
+  const supabase = createSupabaseAdminClient()
   // SMI-5357: PURGE_LIMIT (optional) caps rows per apply for a staged first prod
   // run; undefined = no cap (delete the full dead set).
-  const counts = await runPurge({ apply: !dryRun, limit: env.PURGE_LIMIT })
+  const counts = await runPurge(supabase, { apply: !dryRun, limit: env.PURGE_LIMIT })
 
-  const supabase = createSupabaseAdminClient()
   await writeIndexerAuditLog(supabase, 'success', {
     requestId,
     topics: [],

@@ -42,6 +42,21 @@
  * bare "use key X instead of key Y" alone does not fire (see GAP-13 false-positive
  * discipline documented inline in patterns.ts).
  *
+ * SMI-5876 (evidence-tier taxonomy — see patterns.jailbreak.ts, SecurityScanner.evidence.ts):
+ * JAILBREAK_PATTERNS: 15 → 23. AI_DEFENCE_PATTERNS: 16 → 21 (one entry split in two).
+ * Bare-vocabulary entries (jailbreak / DAN / developer mode / do-anything-now / a
+ * role marker with no body / ...) are reclassified `mention`-tier — softened to LOW
+ * severity outside a corroborating co-signal — rather than removed, so both counts
+ * only GROW. New patterns close the false-negative gaps that demotion would
+ * otherwise open: activation/persona frames, declarative jailbroken-state
+ * assertions ("DAN mode enabled"), an obedience-compulsion pattern, and
+ * role-marker-plus-injected-body variants. Severity is now carried by an
+ * evidence-tier classification (`EVIDENCE_TYPE_BY_PATTERN`) rather than a flat
+ * per-category severity pair — see scanner-evidence-tiers.test.ts for the full
+ * tier decision table and its dedicated test matrix, and
+ * docs/internal/implementation/smi-5876-grok-uat-scanner-fp-and-differentiators.md
+ * for the design rationale.
+ *
  * Reference: docs/internal/security/two-scanner-runbook.md
  *            docs/internal/implementation/smi-4396-imported-skills-security-triage.md
  */
@@ -71,14 +86,14 @@ import type { ScanReport } from '../../src/security/scanner/index.js'
  */
 const BASELINE_PATTERN_COUNTS = {
   SENSITIVE_PATH_PATTERNS: 15, // SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit); SMI-5359 Wave 4 narrowed .env/api_key/auth_token in place (count unchanged)
-  JAILBREAK_PATTERNS: 15,
+  JAILBREAK_PATTERNS: 23, // SMI-5876: 15 → 18 (+J-N1/J-N2/J-N3); 18 → 23 (design-pass follow-up: +J-S1/J-S2/J-S3a/J-S3b/J-S4 state_assertion + obedience-compulsion patterns, closing a 12-fixture recall gap; 4 existing bare-vocabulary entries reclassified `mention`-tier in place, not removed)
   SUSPICIOUS_PATTERNS: 11,
   SOCIAL_ENGINEERING_PATTERNS: 12,
   PROMPT_LEAKING_PATTERNS: 14,
   DATA_EXFILTRATION_PATTERNS: 24, // SMI-4396 Wave 2: 20 → 22 (word-boundary + key-upload + verb-object prose); SMI-5359 Wave 4: 22 → 24 (outbound-curl credential-in-URL query + POST/form body exfil)
   PRIVILEGE_ESCALATION_PATTERNS: 28, // SMI-4396 Wave 2: 23 → 25 (-1 bare +3 contextual); SMI-5424 PR2 relocated owner-perm chmod to scanChmodFetchCompound (count unchanged — world-writable/setuid stay standalone); SMI-5428: 25 → 26 (symbolic world/others-writable chmod o+w / a+w / go+w); SMI-5833: 26 → 28 (credential/auth-level substitution to defeat an auth check, both orderings)
   SSRF_INSTRUCTION_PATTERNS: 13,
-  AI_DEFENCE_PATTERNS: 16,
+  AI_DEFENCE_PATTERNS: 21, // SMI-5876: 16 → 21 (#2 HTML-comment-injection split into verb/noun halves: 16 → 17; +A-N1/A-N2/A-N3a/A-N3b role/chat-turn patterns: 17 → 21)
   PII_PATTERNS: 11,
   CODE_EXECUTION_PATTERNS: 9, // SMI-5424: 6 → 9 (FN-1 chained download-then-exec, FN-2 npx-remote, FN-4 node/python inline-eval; FN-3 fish/bun/deno folded into existing sinks)
 } as const
@@ -260,6 +275,10 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
       const privEscFindings = report.findings.filter((f) => f.type === 'privilege_escalation')
       expect(privEscFindings.length).toBeGreaterThan(0)
     })
+
+    // SMI-5838's severity-downgrade tests live in the sibling
+    // scanner-privesc-severity.test.ts (split out to stay under the 500-line/file
+    // CI gate — see that file's header comment).
   })
 
   describe('hostile-update detection (SMI-5535, R0 Wave 2A)', () => {
@@ -327,6 +346,10 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
       )
       expect(hasExfilCoSignal).toBe(true)
     })
+
+    // SMI-5880: the far-apart (>40-line) code_execution locality-bound
+    // regression test lives in scanner-regression-guard.exec-locality.test.ts
+    // (split out to stay under the 500-line/file CI gate).
 
     it('does not flag benign whitespace/prose churn (false-positive guard)', () => {
       const scanner = new SecurityScanner()

@@ -287,6 +287,17 @@
       "always_run": true,
       "script": "scripts/smoke-prod/api-proxy.sh",
       "checks": ["check_api_proxy_header_fidelity"]
+    },
+    {
+      "id": "edge-fn-private-registry-get",
+      "owner": "edge-functions",
+      "trigger_globs": [
+        "supabase/functions/private-registry-get/**",
+        "supabase/migrations/20260729000000_private_registry_privilege_hardening.sql",
+        "supabase/migrations/20260729000001_private_registry_hardening_backfill.sql"
+      ],
+      "script": "scripts/smoke-prod/registry-health.sh",
+      "checks": ["check_private_registry_get_requires_jwt"]
     }
   ]
 }

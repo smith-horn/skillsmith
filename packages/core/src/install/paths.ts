@@ -63,6 +63,26 @@ export const CLIENT_NATIVE_PATHS: Record<ClientId, string> = {
 
 export const CANONICAL_CLIENT: ClientId = 'claude-code'
 
+/**
+ * SMI-5894 (Wave 1 Step 5): human-readable label per client, used by
+ * post-install tips/guidance so the messaging names the actual install
+ * target (e.g. "mention it in Cursor:") instead of unconditionally saying
+ * "Claude Code" regardless of `SKILLSMITH_CLIENT`/`--client`. Lives here
+ * (not in the CLI's `CLIENT_SNIPPETS` table) so both `@skillsmith/core`
+ * (shared install/uninstall tip generation) and any MCP-side caller can use
+ * it without introducing a core -> cli dependency.
+ */
+export const CLIENT_DISPLAY_LABELS: Record<ClientId, string> = {
+  'claude-code': 'Claude Code',
+  cursor: 'Cursor',
+  copilot: 'GitHub Copilot',
+  windsurf: 'Windsurf',
+  agents: 'your agent',
+  opencode: 'OpenCode',
+  hermes: 'Hermes',
+  grok: 'Grok Build',
+}
+
 export const CLIENT_IDS: ReadonlyArray<ClientId> = Object.freeze([
   'claude-code',
   'cursor',

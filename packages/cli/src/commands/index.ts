@@ -38,6 +38,9 @@ export { createMergeCommand } from './merge.js'
 // SMI-3484: Install skill from registry/GitHub
 export { createInstallCommand } from './install.js'
 
+// SMI-5905 Wave 4: `skillsmith registry install <skillId>` (Enterprise private registry)
+export { createRegistryCommand } from './registry-install.js'
+
 // SMI-824: Install Skillsmith Skill Command (renamed to 'setup')
 export { createInstallSkillCommand } from './install-skill.js'
 

@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest'
 
 const helpers = (await import('../audit-standards-helpers.mjs')) as {
   countUnreleasedEntries: (changelogContent: string) => number | null
+  findUnreleasedHeadingLines: (changelogContent: string) => number[]
   isReleasePrepDiff: (
     pkgJsonAtBase: string,
     pkgJsonAtHead: string,
@@ -25,7 +26,7 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
   ) => boolean
 }
 
-const { countUnreleasedEntries, isReleasePrepDiff } = helpers
+const { countUnreleasedEntries, findUnreleasedHeadingLines, isReleasePrepDiff } = helpers
 
 // ---------------------------------------------------------------------------
 // countUnreleasedEntries
@@ -272,5 +273,81 @@ describe('isReleasePrepDiff (SMI-5680 C1 / Step 0)', () => {
         changelogHeadNoHeading
       )
     ).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findUnreleasedHeadingLines (SMI-5845)
+// ---------------------------------------------------------------------------
+
+describe('findUnreleasedHeadingLines (SMI-5845)', () => {
+  it('single heading → array of length 1 with its 1-indexed line number', () => {
+    const changelog = [
+      '# Changelog',
+      '',
+      '## [Unreleased]',
+      '',
+      '- **Fix**: something',
+      '',
+      '## v0.11.1',
+    ].join('\n')
+    expect(findUnreleasedHeadingLines(changelog)).toEqual([3])
+  })
+
+  it('two headings → array of length 2, in document order (reproduces SMI-5845)', () => {
+    const changelog = [
+      '## [Unreleased]',
+      '',
+      '## v0.5.2',
+      '',
+      '- **Fix**: restore category/security/repo',
+      '',
+      '## [Unreleased]',
+      '',
+      '- **SMI-4308**: stray entry that actually shipped in a later release',
+      '',
+      '## v0.5.1',
+    ].join('\n')
+    expect(findUnreleasedHeadingLines(changelog)).toEqual([1, 7])
+  })
+
+  it('three headings → array of length 3', () => {
+    const changelog = [
+      '## [Unreleased]',
+      '## v1.0.0',
+      '## Unreleased',
+      '## v0.9.0',
+      '## [unreleased]',
+    ].join('\n')
+    expect(findUnreleasedHeadingLines(changelog)).toEqual([1, 3, 5])
+  })
+
+  it('no heading at all → empty array', () => {
+    const changelog = ['# Changelog', '', '## v1.0.0', '', '- **Fix**: something'].join('\n')
+    expect(findUnreleasedHeadingLines(changelog)).toEqual([])
+  })
+
+  it('zero version headings, single [Unreleased] → array of length 1 (doc-retrieval-mcp/skillsmith-cli shape)', () => {
+    const changelog = ['# Changelog', '', '## [Unreleased]', '', '- **Fix**: something'].join('\n')
+    expect(findUnreleasedHeadingLines(changelog)).toEqual([3])
+  })
+
+  it('zero version headings, two [Unreleased] headings → still detected as duplicates (the exact shape the Check 43 insertion-point fix defends against — the existing headings.findIndex((h) => h.isVersion) === -1 short-circuit must not skip this check)', () => {
+    const changelog = [
+      '# Changelog',
+      '',
+      '## [Unreleased]',
+      '',
+      '- **Fix**: something',
+      '',
+      '## [Unreleased]',
+      '',
+      '- **Fix**: something else, stray',
+    ].join('\n')
+    expect(findUnreleasedHeadingLines(changelog)).toEqual([3, 7])
+  })
+
+  it('non-string input → empty array', () => {
+    expect(findUnreleasedHeadingLines(undefined as unknown as string)).toEqual([])
   })
 })

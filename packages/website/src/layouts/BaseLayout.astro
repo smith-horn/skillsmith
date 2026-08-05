@@ -79,10 +79,11 @@ const supabaseConfig = getSupabaseConfig()
     <script is:inline>
       window.dataLayer = window.dataLayer || []
       function gtag() {
+        // eslint-disable-next-line prefer-rest-params -- Google's official gtag.js/GTM Consent Mode snippet, copied verbatim; do not modify (SMI-5902)
         dataLayer.push(arguments)
       }
       // Set default consent state BEFORE loading gtag.js
-      var consent = localStorage.getItem('skillsmith_cookie_consent')
+      const consent = localStorage.getItem('skillsmith_cookie_consent')
       gtag('consent', 'default', {
         analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
         ad_storage: 'denied',
@@ -94,7 +95,7 @@ const supabaseConfig = getSupabaseConfig()
       gtag('config', 'G-GGZQZM1Y1L')
       // Defer the 149KB gtag.js network fetch until idle — removes it from the critical path
       function loadGtag() {
-        var s = document.createElement('script')
+        const s = document.createElement('script')
         s.async = true
         s.src = 'https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L'
         document.head.appendChild(s)

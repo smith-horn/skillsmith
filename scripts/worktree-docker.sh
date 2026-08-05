@@ -75,6 +75,11 @@ Note:
   This script ensures each worktree has unique container names and ports
   to allow parallel Docker development across multiple worktrees.
 
+  start and generate REFUSE the main checkout (SMI-5836): the base
+  docker-compose.yml already provisions it, and writing a worktree override
+  there renames skillsmith-dev-1 and moves its ports. In the main checkout
+  run docker compose --profile dev up -d instead.
+
 EOF
 }
 
@@ -133,6 +138,14 @@ get_worktree_name() {
 cmd_generate() {
     local worktree_path="$1"
 
+    # SMI-5836: refuse before ANY side effect. Guarded here as well as in
+    # cmd_start because `generate` is the command that actually writes the
+    # file, and alone it is the worse of the two -- it leaves a gitignored,
+    # worktree-shaped override behind with no `up` in the same invocation to
+    # make the consequence visible, so the main checkout's NEXT plain
+    # `docker compose --profile dev up -d` silently picks it up.
+    refuse_if_main_checkout "generate" "$worktree_path"
+
     if [[ ! -f "$worktree_path/docker-compose.yml" ]]; then
         error "No docker-compose.yml found in $worktree_path"
     fi
@@ -176,6 +189,13 @@ cmd_generate() {
 #######################################
 cmd_start() {
     local worktree_path="$1"
+
+    # SMI-5836: refuse before the auto-generate block below, which writes a
+    # worktree-shaped override for whatever path it is given. Checked before
+    # the docker-compose.yml precondition because the target's IDENTITY is
+    # prior to its contents -- "No docker-compose.yml found in <main>" would
+    # send the user after the wrong thing.
+    refuse_if_main_checkout "start" "$worktree_path"
 
     if [[ ! -f "$worktree_path/docker-compose.yml" ]]; then
         error "No docker-compose.yml found in $worktree_path"
@@ -272,11 +292,12 @@ resolve_container_name() {
         error "Not a git checkout: $worktree_path"
     fi
 
-    local gcd gd container_name resolved_from
-    gcd=$(git -C "$worktree_path" rev-parse --git-common-dir 2>/dev/null)
-    gd=$(git -C "$worktree_path" rev-parse --git-dir 2>/dev/null)
+    local container_name resolved_from
 
-    if [[ -n "$gcd" && "$gcd" == "$gd" ]]; then
+    # SMI-5836: the main-checkout test now lives in _lib.sh's
+    # is_main_checkout, shared with refuse_if_main_checkout in _lib.sh so
+    # this script carries one copy rather than two.
+    if is_main_checkout "$worktree_path"; then
         # Main checkout (git-common-dir == git-dir, i.e. not a linked
         # worktree) — container name is the hardcoded base-compose name,
         # never a derived slug.

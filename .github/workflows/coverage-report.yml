@@ -114,7 +114,7 @@ jobs:
           GAP_LINES=$(echo "$RESPONSE" | jq -r '.data.true_coverage_gaps // [] | .[] | "- " + .owner + "/" + .repo + " (" + (.license // "no license") + ")"')
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          BODY=$(printf 'Weekly coverage-report job (SMI-4963) flagged %s publisher(s).\n\nQuarantine-threshold breaches:\n%s\n\nTrue coverage gaps:\n%s\n\nRun: %s' \
+          BODY=$(printf 'Weekly coverage-report job (SMI-4963) flagged %s publisher(s).\n\nQuarantine-threshold breaches:\n%s\n\nTrue coverage gaps:\n%s\n\n## Acceptance Criteria\n- [ ] The flagged publisher(s) are re-verified as passing the quarantine threshold\n- [ ] OR the regression is confirmed a false positive, with rationale documented in a comment on this issue\n\nRun: %s' \
             "$FLAGGED" "${BREACH_LINES:-none}" "${GAP_LINES:-none}" "$RUN_URL")
 
           # Dedupe: look for an open issue whose title starts with the stable

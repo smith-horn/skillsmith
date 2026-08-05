@@ -1959,6 +1959,35 @@ export function countUnreleasedEntries(changelogContent) {
 }
 
 /**
+ * Find every `## [Unreleased]` heading in a CHANGELOG, in document order.
+ *
+ * A CHANGELOG should have exactly one `[Unreleased]` heading (matching the
+ * same case-insensitive, optional-brackets pattern `countUnreleasedEntries`
+ * uses: `## [Unreleased]`, `## Unreleased`, etc). A second, later one is
+ * invisible to Check 43's placement check (SMI-4776) — that check only ever
+ * compares the FIRST `[Unreleased]` heading's position against the first
+ * version heading, so a stray duplicate further down silently passes
+ * (SMI-5845: `packages/core/CHANGELOG.md` and `packages/cli/CHANGELOG.md`
+ * both carried one for months, undetected, because the check's own logic
+ * had no assertion that exactly one such heading exists).
+ *
+ * @param {string} changelogContent - Full CHANGELOG.md contents.
+ * @returns {number[]} 1-indexed line numbers of every `[Unreleased]` heading
+ *   found, in document order. Length 0 means no such heading exists; length
+ *   1 is the healthy case; length >= 2 means duplicates exist (Check 43 in
+ *   audit-standards.mjs decides how to report this).
+ */
+export function findUnreleasedHeadingLines(changelogContent) {
+  if (typeof changelogContent !== 'string') return []
+  const lines = changelogContent.split('\n')
+  const found = []
+  lines.forEach((line, i) => {
+    if (/^## \[?Unreleased\]?\s*$/i.test(line.trim())) found.push(i + 1)
+  })
+  return found
+}
+
+/**
  * Detect a release-prep diff for one package (SMI-5680 C1 / Step 0).
  *
  * `prepare-release.ts --all=patch` bumps a package's `package.json` version

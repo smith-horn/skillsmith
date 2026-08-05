@@ -194,11 +194,67 @@ const CODE_EXECUTION_CO_OCCURRENCE: ReadonlySet<SecurityFindingType> = new Set([
 ])
 
 /**
+ * Maximum line distance between the `code_execution` finding and the co-signal
+ * that escalates it (SMI-5880). Before this bound, a co-signal ANYWHERE in the
+ * document — any distance, any unrelated section — escalated the single
+ * `code_execution` finding to critical.
+ *
+ * Why a bounded window is NOT a bypass vector: every eligible co-signal is
+ * already `high` or `critical`, and `scan()` (SecurityScanner.ts) computes
+ * `passed = !hasCritical && !hasHigh && !exceedsThreshold` across ALL findings
+ * with no locality filter and no documentation filter. A qualifying co-signal
+ * anywhere therefore forces `passed === false` on its own, BEFORE this function
+ * runs. Splitting the two signals to duck this window cannot turn a failing scan
+ * into a passing one; it changes only this finding's own label (medium vs
+ * critical) and the risk-score magnitude of a scan that already blocks.
+ * Hostile-update detection is likewise untouched: `detectSupplyChain()`
+ * (SecurityScanner.hostile-update.ts) pairs a NEW non-doc `code_execution` of ANY
+ * severity with a NEW non-doc high/critical co-signal at ANY distance, so a
+ * far-apart rug-pull still returns the `hostile` verdict and its supply-chain
+ * reason string.
+ *
+ * Deliberately the same 40 as the sibling corroboration mechanism's locality
+ * constant (SecurityScanner.evidence.ts) so the scanner has ONE locality model
+ * — but kept as its own constant, not imported: the two mechanisms are
+ * independently tunable, and the edge twins (SMI-5879) cannot import from core
+ * and must carry their own copy.
+ */
+const MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE = 40
+
+/**
+ * Locality gate for `escalateCodeExecution`. Fail-CLOSED on missing metadata:
+ * when either side has no `lineNumber` the distance is unknowable, and this
+ * subsystem's convention is that missing metadata must never SILENTLY weaken
+ * detection — cf. `classifyEvidence` (SecurityScanner.evidence.ts), whose
+ * unmapped-pattern default is the STRONGEST tier for exactly this reason. An
+ * unknowable distance therefore preserves the pre-SMI-5880 unbounded behavior for
+ * that pair rather than suppressing the co-signal.
+ *
+ * Unreachable through `scan()` today: `scanCodeExecution` above and every emitter
+ * of the four CODE_EXECUTION_CO_OCCURRENCE types set `lineNumber` unconditionally
+ * (the sensitive-path/data-exfiltration/privilege-escalation scanners in the
+ * scanners module, the chmod-compound detector, and `scanObfuscatedDirective`
+ * above). Kept as an explicit, directly-tested branch so a future detector that
+ * forgets `lineNumber` degrades safe instead of silently ceasing to escalate.
+ */
+function isWithinCoSignalWindow(codeExecLine?: number, coSignalLine?: number): boolean {
+  if (typeof codeExecLine !== 'number' || typeof coSignalLine !== 'number') return true
+  return Math.abs(codeExecLine - coSignalLine) <= MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE
+}
+
+/**
  * Escalate the code_execution finding to CRITICAL when a NON-documentation
  * high/critical exfiltration / privilege / credential-path / obfuscation signal
- * is also present. Mutates the finding in place. Requiring the co-signal to be
+ * is also present WITHIN `MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE` lines
+ * (SMI-5880 — previously any distance qualified, so an unrelated finding in a
+ * different section of a long document escalated an unrelated code_execution
+ * finding). Mutates the finding in place. Requiring the co-signal to be
  * non-documentation keeps legitimate security-research skills (whose examples
  * live in fenced blocks) at MEDIUM.
+ *
+ * Runs BEFORE the sibling corroboration mechanism in `scan()` — see that
+ * function's doc comment (SecurityScanner.evidence.ts) for why the ordering is
+ * safe in both directions.
  */
 export function escalateCodeExecution(findings: SecurityFinding[]): void {
   const codeExec = findings.find((f) => f.type === 'code_execution')
@@ -209,7 +265,8 @@ export function escalateCodeExecution(findings: SecurityFinding[]): void {
       f !== codeExec &&
       CODE_EXECUTION_CO_OCCURRENCE.has(f.type) &&
       f.inDocumentationContext !== true &&
-      (f.severity === 'high' || f.severity === 'critical')
+      (f.severity === 'high' || f.severity === 'critical') &&
+      isWithinCoSignalWindow(codeExec.lineNumber, f.lineNumber)
   )
 
   if (hasDangerousCoSignal) {

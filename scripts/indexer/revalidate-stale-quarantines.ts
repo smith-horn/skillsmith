@@ -12,6 +12,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createSupabaseAdminClient } from './_shared/supabase.ts'
+import { assertRunAllowed, assertFreezeMarkerClear } from './run-gate.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import {
   scanSkillContent,
@@ -28,37 +29,11 @@ import {
 } from './revalidate-stale-quarantines.sibling.ts'
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (split into revalidate-stale-quarantines.types.ts, SMI-5866)
 // ---------------------------------------------------------------------------
 
-/** A stale-quarantined `skills` row narrowed to the columns this sweep reads. */
-export interface StaleQuarantinedRow {
-  id: string
-  author: string | null
-  name: string
-  repo_url: string | null
-  skill_path: string | null
-  quarantine_reason: string | null
-  security_findings: unknown
-  /** SMI-5166: present only for recheck candidates (loadRecheckCandidates selects them). Absent (undefined) for the Wave-1 loadCandidates cohort, which preserves clear-path behavior. */
-  quarantined?: boolean
-  last_seen_at?: string
-}
-
-/** Per-row outcome of the stale-revalidation sweep. */
-export type StaleOutcome =
-  | 'cleared'
-  | 'live-touched'
-  | 'kept-security'
-  | 'requarantined'
-  | 'repo-gone'
-  | 'parse-failed'
-  | 'fetch-error'
-  | 'cas-skipped'
-  | 'error'
-  | 'sibling-requarantined' // SMI-5437 W2: additive with requarantined + sibling_requarantined
-  | 'sibling-recovered' //     SMI-5437 W2: additive with cleared + sibling_recovered
-  | 'deferred-cap' //          SMI-5445 C2: PASS-3 row that would have cleared but hit the per-run sibling-clear cap
+export type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
+import type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
 
 interface RowResult {
   row: StaleQuarantinedRow
@@ -197,6 +172,7 @@ export async function processRow(
           security_score: scan.riskScore,
           security_findings: scan.findings,
           last_scanned_at: now,
+          content_hash: scan.contentHash, // SMI-5849: backfill on requarantine too
         })
         .eq('id', row.id)
         .select('id')
@@ -237,9 +213,16 @@ export async function processRow(
   if (row.quarantined === false) {
     if (!apply) return { row, outcome: 'live-touched', score: scan.riskScore }
     // E1: CAS guards against a row quarantined by maintenance between load and write.
+    // SMI-5866: also persists security_score/last_scanned_at (mirrors requarantine above) so a live row with a NULL prior score (SMI-5849) gets repaired here too.
+    // SMI-5849: content_hash backfilled on live-touch too.
     const { data: touched, error: touchErr } = await db
       .from('skills')
-      .update({ last_seen_at: now })
+      .update({
+        last_seen_at: now,
+        content_hash: scan.contentHash,
+        security_score: scan.riskScore,
+        last_scanned_at: now,
+      })
       .eq('id', row.id)
       .eq('quarantined', false)
       .select('id')
@@ -357,9 +340,15 @@ export async function loadCandidates(
   return out
 }
 
-/** Run the full stale-revalidation sweep. */
-export async function runSweep(opts: { apply: boolean; limit?: number }): Promise<SweepCounts> {
-  const db = createSupabaseAdminClient()
+/**
+ * Run the full stale-revalidation sweep. `db` is caller-constructed (SMI-Q,
+ * design 11.2.7) so Gate C's client-construction ordering is observable in
+ * `main()`, not hidden behind a second client built inside this function.
+ */
+export async function runSweep(
+  db: SupabaseClient,
+  opts: { apply: boolean; limit?: number }
+): Promise<SweepCounts> {
   const headers = await buildGitHubHeaders()
 
   const rows = await loadCandidates(db, opts.limit)
@@ -481,12 +470,21 @@ export async function runSweep(opts: { apply: boolean; limit?: number }): Promis
 
 /** Parse CLI arguments and run the sweep. Skipped when imported by tests. */
 async function main(): Promise<void> {
+  // SMI-5879 Gate C: env-sourced check first (no dependency on a DB round
+  // trip), then the client is constructed ONCE (round-7 SMI-Q — the same
+  // client Gate C's freeze-marker check reads is the same client runSweep()
+  // writes with, so the "immediately after client construction" ordering is
+  // observable in one function, not hidden behind a second, independently
+  // constructed client inside runSweep() — see the design doc 11.2.7).
+  assertRunAllowed('revalidate')
+  const db = createSupabaseAdminClient()
+  await assertFreezeMarkerClear(db, 'revalidate')
   const apply = process.argv.includes('--apply')
   const limitArg = process.argv.find((a) => a.startsWith('--limit'))
   const limit = limitArg
     ? Number(limitArg.split('=')[1] ?? process.argv[process.argv.indexOf(limitArg) + 1])
     : undefined
-  await runSweep({ apply, limit: Number.isFinite(limit) ? limit : undefined })
+  await runSweep(db, { apply, limit: Number.isFinite(limit) ? limit : undefined })
 }
 
 // Run only when invoked directly (not when imported by the test suite).

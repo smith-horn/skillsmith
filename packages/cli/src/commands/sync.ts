@@ -19,6 +19,7 @@
 import { Command } from 'commander'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { syncAction, syncStatusAction, syncHistoryAction, syncConfigAction } from './sync.action.js'
+import { VALID_CLIENT_HINT } from './install.js'
 
 /**
  * Create sync status subcommand
@@ -28,10 +29,18 @@ function createStatusCommand(): Command {
     .description('Show sync status and statistics')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('--json', 'Output as JSON')
+    .option(
+      '--client <id>',
+      // SMI-5894 Wave 1 Step 4: local-skills adapter-warnings scan follows
+      // the same per-invocation client resolution as install/list/remove/
+      // update, replacing the previously frozen (always Claude Code) default.
+      `scan a specific agent's skills directory for warnings (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .action(async (opts: Record<string, string | boolean | undefined>) => {
       await syncStatusAction({
         dbPath: opts['db'] as string,
         json: (opts['json'] as boolean) ?? false,
+        client: opts['client'] as string | undefined,
       })
     })
 }

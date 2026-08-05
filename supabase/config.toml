@@ -491,6 +491,11 @@ verify_jwt = false
 [functions.webhook-heartbeat-monitor]
 verify_jwt = false
 
+# scan-coverage-monitor: pg_cron-invoked, service-role internal (SMI-5866).
+# Deploy WITH --no-verify-jwt; mirrors webhook-heartbeat-monitor / quota-monitor.
+[functions.scan-coverage-monitor]
+verify_jwt = false
+
 # status-check: pg_cron-invoked, service-role internal (SMI-5752, public
 # status page Wave 2). Deploy WITH --no-verify-jwt; mirrors
 # webhook-heartbeat-monitor / quota-monitor.
@@ -554,6 +559,14 @@ verify_jwt = true
 # same non-gateway-auth pattern as generate-license/checkout above. Deploy
 # WITH --no-verify-jwt.
 [functions.team-compliance-check]
+verify_jwt = false
+
+# SMI-5905: private-registry-get validates the caller's own user JWT IN-HANDLER
+# (adminClient.auth.getUser) rather than relying on the gateway or on the shared
+# auth-middleware's JWT_AUTH_PERCENTAGE-gated classification, then re-reads the row
+# under that same token so RLS scopes it. Same in-handler-auth pattern as
+# admin-grant-subscription / admin-incident-manage above. Deploy WITH --no-verify-jwt.
+[functions.private-registry-get]
 verify_jwt = false
 
 # [edge_runtime.secrets]

@@ -219,27 +219,335 @@ get_main_git_dir() {
 }
 
 #######################################
-# Check if a file is git-crypt encrypted
-# Uses xxd for cross-platform compatibility (macOS + Linux)
+# Check if a file's first bytes carry git-crypt's binary magic header
+# (\0GITCRYPT\0). SMI-5702: canonical consolidation of three previously
+# independent copies -- this file's old xxd-based is_git_crypt_encrypted()
+# (below; had a fail-open gap when xxd was unavailable, fine as an advisory
+# check but unacceptable as a verification gate, plan doc finding R5),
+# _rebase-git-crypt.sh's scan_ciphertext() inline `head -c 9 | tr -d '\0'`
+# check, and worktree-crypt.sh's is_file_decrypted() grep form. Uses only
+# head/tr (POSIX, always present on the platforms this repo supports) -- no
+# xxd dependency, so there is no fail-open case left to reason about.
 #
 # Arguments:
 #   $1 - File path to check
 #
 # Returns:
-#   0 if encrypted, 1 if not encrypted or xxd unavailable
+#   0 if the file's first 9 bytes are the git-crypt magic header, 1
+#   otherwise (including a missing/unreadable file)
+#######################################
+has_git_crypt_magic_header() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    local head9
+    head9=$(head -c 9 "$file" 2>/dev/null | LC_ALL=C tr -d '\0')
+    [[ "$head9" == "GITCRYPT" ]]
+}
+
+#######################################
+# Check if a file is git-crypt encrypted
+#
+# SMI-5702: thin wrapper over has_git_crypt_magic_header() -- kept as a
+# separate name for existing callers (create-worktree.sh's
+# check_git_crypt_unlocked / verify_skill_readability). No longer requires
+# xxd; the prior xxd-unavailable fail-open case no longer exists.
+#
+# Arguments:
+#   $1 - File path to check
+#
+# Returns:
+#   0 if encrypted, 1 if not encrypted
 #######################################
 is_git_crypt_encrypted() {
-    local file="$1"
-    local header
+    has_git_crypt_magic_header "$1"
+}
 
-    # Require xxd for reliable cross-platform binary detection
-    if ! command -v xxd >/dev/null 2>&1; then
-        return 1  # Cannot determine; treat as not encrypted (non-fatal)
+# SMI-5702: canonical spellings git-crypt itself writes (escape_shell_arg),
+# live-verified via `git config --local --get-regexp 'filter\.git-crypt'`
+# -- see the plan doc's Surface Grounding table. Used both when WRITING a
+# repair (unquoted form -- the tolerant CANONICAL regex below accepts either
+# spelling on READ, matching what a real `git-crypt unlock` produces
+# depending on git-crypt version) and when documenting the canonical values.
+GIT_CRYPT_CANONICAL_SMUDGE='git-crypt smudge'
+GIT_CRYPT_CANONICAL_CLEAN='git-crypt clean'
+GIT_CRYPT_CANONICAL_TEXTCONV='"git-crypt" diff'
+
+#######################################
+# SMI-5702: classify the current git-crypt filter registration state.
+# Primary axis (smudge, clean) -> one of 5 states; secondary axis
+# (required, textconv) captured as raw values for the caller to repair
+# unconditionally. Populates globals rather than returning via stdout --
+# this is always called directly (never via command substitution), so
+# callers see the globals immediately with no subshell-visibility gap.
+#
+# Tolerant CANONICAL match: /^"?git-crypt"? smudge$/ (and clean). The live
+# value carries embedded double quotes (git-crypt's own escape_shell_arg);
+# an exact-equality implementation would classify a HEALTHY repo as FOREIGN
+# and churn config on every invocation (plan doc finding R1).
+#
+# Arguments:
+#   $1 - git_context_dir  Any directory git can resolve (main checkout root
+#        or any worktree path) -- filter.git-crypt.* config is repo-shared
+#        (git-crypt's worktreeConfig=true extension is set but unused), so
+#        `git -C <any-of-these>` all resolve to the same underlying
+#        $GIT_COMMON_DIR/config file.
+#
+# Globals set:
+#   GIT_CRYPT_FILTER_STATE     - CANONICAL | DISABLED | MISSING | HALF | FOREIGN
+#   GIT_CRYPT_FILTER_SMUDGE    - raw filter.git-crypt.smudge value (may be empty)
+#   GIT_CRYPT_FILTER_CLEAN     - raw filter.git-crypt.clean value (may be empty)
+#   GIT_CRYPT_FILTER_REQUIRED  - raw filter.git-crypt.required value (may be empty)
+#   GIT_CRYPT_FILTER_TEXTCONV  - raw diff.git-crypt.textconv value (may be empty)
+#######################################
+classify_git_crypt_filter_state() {
+    local git_context_dir="$1"
+
+    GIT_CRYPT_FILTER_SMUDGE="$(git -C "$git_context_dir" config --local --get filter.git-crypt.smudge 2>/dev/null || echo "")"
+    GIT_CRYPT_FILTER_CLEAN="$(git -C "$git_context_dir" config --local --get filter.git-crypt.clean 2>/dev/null || echo "")"
+    GIT_CRYPT_FILTER_REQUIRED="$(git -C "$git_context_dir" config --local --get filter.git-crypt.required 2>/dev/null || echo "")"
+    GIT_CRYPT_FILTER_TEXTCONV="$(git -C "$git_context_dir" config --local --get diff.git-crypt.textconv 2>/dev/null || echo "")"
+
+    local canon_smudge_re='^"?git-crypt"? smudge$'
+    local canon_clean_re='^"?git-crypt"? clean$'
+
+    local smudge_canon=false clean_canon=false
+    [[ "$GIT_CRYPT_FILTER_SMUDGE" =~ $canon_smudge_re ]] && smudge_canon=true
+    [[ "$GIT_CRYPT_FILTER_CLEAN" =~ $canon_clean_re ]] && clean_canon=true
+
+    local smudge_absent=false clean_absent=false
+    [[ -z "$GIT_CRYPT_FILTER_SMUDGE" ]] && smudge_absent=true
+    [[ -z "$GIT_CRYPT_FILTER_CLEAN" ]] && clean_absent=true
+
+    local smudge_cat=false clean_cat=false
+    [[ "$GIT_CRYPT_FILTER_SMUDGE" == "cat" ]] && smudge_cat=true
+    [[ "$GIT_CRYPT_FILTER_CLEAN" == "cat" ]] && clean_cat=true
+
+    if $smudge_canon && $clean_canon; then
+        GIT_CRYPT_FILTER_STATE="CANONICAL"
+    elif $smudge_cat && $clean_cat; then
+        GIT_CRYPT_FILTER_STATE="DISABLED"
+    elif $smudge_absent && $clean_absent; then
+        GIT_CRYPT_FILTER_STATE="MISSING"
+    elif [[ "$smudge_absent" != "$clean_absent" ]] || [[ "$smudge_cat" != "$clean_cat" ]]; then
+        # Exactly one side absent, or exactly one side "cat" (T4/T4b) --
+        # asymmetric shape. Deliberately checked BEFORE the FOREIGN
+        # catch-all so e.g. (canonical, cat) lands here, not FOREIGN.
+        GIT_CRYPT_FILTER_STATE="HALF"
+    else
+        # Both present, neither pair canonical, neither pair "cat", and not
+        # asymmetric -- a real (if wrong) custom filter pair.
+        GIT_CRYPT_FILTER_STATE="FOREIGN"
+    fi
+}
+
+#######################################
+# SMI-5702: print the single canonical one-line remediation for a broken or
+# intentionally-disabled git-crypt filter registration. Replaces the
+# multiple config-key-removal snippets previously printed at various call
+# sites (rebase-worktree.sh's conflict text, .husky/pre-commit's manual
+# recovery block) -- operators/agents running those literally against the
+# shared repo-wide .git/config caused two real corruption incidents
+# (SMI-5702, recurrence SMI-5861).
+# worktree-crypt.sh's `fix` command runs ensure_git_crypt_filter_registered()
+# itself, so this is always safe to print and safe to run regardless of the
+# actual underlying state (CANONICAL: no-op; DISABLED: warns and leaves it
+# alone; MISSING/HALF/FOREIGN: repairs).
+#
+# Arguments:
+#   $1 - target_path  Path to pass through to `worktree-crypt.sh fix`
+#######################################
+print_git_crypt_filter_remediation() {
+    local target_path="$1"
+    echo "  ./scripts/worktree-crypt.sh fix $target_path"
+}
+
+#######################################
+# SMI-5702: idempotent self-heal for git-crypt filter registration. See
+# docs/internal/implementation/smi-5702-worktree-git-crypt-filter-deadlock.md
+# for the full root-cause writeup and design rationale -- summary: filter.
+# git-crypt.{smudge,clean,required} and diff.git-crypt.textconv are
+# repo-SHARED state (git-crypt's own worktreeConfig=true extension is set
+# but unused -- `git config --local` always resolves to
+# $GIT_COMMON_DIR/config, shared by the main checkout and every worktree).
+# A classifier bug here breaks every worktree AND the main checkout at
+# once -- the same failure this function exists to prevent, hence the
+# defensive guarantees below.
+#
+# Guarantees:
+#   - SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE=1 -> full no-op, checked
+#     first, before the lock/classify/write sequence.
+#   - Never writes filter.git-crypt.{smudge,clean} when the classified
+#     state is DISABLED (another session's deliberate in-flight
+#     filter-disable window -- rebase-worktree.sh Step 7 /
+#     .husky/pre-commit's branch-switch recovery). The secondary axis
+#     (required/textconv) IS still repaired even in DISABLED: a missing
+#     `required` turns a loud checkout failure into a silent
+#     plaintext-commit path, and `required=true` alongside `cat`/`cat` is
+#     inert (`cat` always exits 0).
+#   - `command -v git-crypt` gate before ANY write this call would make --
+#     never points config at a nonexistent binary (same pattern as
+#     scripts/pre-push-check.sh:64).
+#   - Narrow flock (acquire_worktree_port_lock/release_worktree_port_lock,
+#     SMI-5661) around the read-classify-write sequence only -- explicitly
+#     NOT around the DISABLED window itself, which is bounded by another
+#     session's human-time conflict resolution; a lock spanning it would
+#     deadlock every worktree operation repo-wide.
+#   - Read-back verification: re-classifies after writing and hard-fails on
+#     mismatch -- a silent partial write is worse than the original bug.
+#
+# Arguments:
+#   $1 - git_context_dir  Any directory git can resolve (main checkout root
+#        or any worktree path) -- see classify_git_crypt_filter_state()'s
+#        doc comment for why this is safe regardless of which is passed.
+#
+# Returns:
+#   0 - healthy (no-op, healed, disabled-by-env, or DISABLED-state warn);
+#   1 - hard failure only via error() (git-crypt missing when a write is
+#       needed, or read-back verification mismatch) -- error() exits the
+#       calling process, matching this codebase's existing convention for
+#       genuinely unrecoverable conditions (e.g. check_git_crypt_unlocked).
+#######################################
+ensure_git_crypt_filter_registered() {
+    local git_context_dir="$1"
+
+    if [[ "${SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE:-0}" == "1" ]]; then
+        info "  git-crypt filter self-heal disabled (SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE=1)"
+        return 0
     fi
 
-    header=$(head -c 4 "$file" 2>/dev/null | xxd -p 2>/dev/null || echo "")
-    # git-crypt binary header: \x00GIT = 00 47 49 54 (4-byte read = exactly 8 hex chars)
-    [[ "$header" == "00474954" ]]
+    local main_git_dir repo_root
+    main_git_dir="$(get_main_git_dir "$git_context_dir")"
+    if [[ -z "$main_git_dir" ]] || [[ ! -d "$main_git_dir" ]]; then
+        warn "  git-crypt filter self-heal: could not resolve main .git directory for $git_context_dir -- skipping"
+        return 0
+    fi
+    repo_root="$(dirname "$main_git_dir")"
+
+    acquire_worktree_port_lock "$repo_root" || true
+    _ensure_git_crypt_filter_registered_locked "$git_context_dir"
+    local rc=$?
+    release_worktree_port_lock
+    return "$rc"
+}
+
+#######################################
+# Internal: the actual read-classify-write sequence for
+# ensure_git_crypt_filter_registered(), run under the caller's lock. Not
+# intended to be called directly outside tests.
+#######################################
+_ensure_git_crypt_filter_registered_locked() {
+    local git_context_dir="$1"
+
+    classify_git_crypt_filter_state "$git_context_dir"
+    local state="$GIT_CRYPT_FILTER_STATE"
+    local pre_smudge="$GIT_CRYPT_FILTER_SMUDGE" pre_clean="$GIT_CRYPT_FILTER_CLEAN"
+    local pre_required="$GIT_CRYPT_FILTER_REQUIRED" pre_textconv="$GIT_CRYPT_FILTER_TEXTCONV"
+
+    local needs_primary_write=false
+    case "$state" in
+        MISSING|HALF|FOREIGN) needs_primary_write=true ;;
+    esac
+    local needs_secondary_write=false
+    [[ "$pre_required" != "true" ]] && needs_secondary_write=true
+    [[ -z "$pre_textconv" ]] && needs_secondary_write=true
+
+    if { $needs_primary_write || $needs_secondary_write; } && ! command -v git-crypt >/dev/null 2>&1; then
+        error "git-crypt filter registration needs repair (state: $state) but the git-crypt binary is not on PATH -- refusing to write config pointing at a nonexistent binary.
+
+Install git-crypt (e.g. \`brew install git-crypt\` on macOS, \`apt-get install git-crypt\` on Debian/Ubuntu) and re-run."
+    fi
+
+    case "$state" in
+        CANONICAL)
+            : # no-op, silent
+            ;;
+        DISABLED)
+            warn "  git-crypt filters are deliberately disabled (smudge=clean=\"cat\") -- likely another session mid-conflict-resolution (rebase-worktree.sh Step 7 / pre-commit branch-switch recovery). NOT healing smudge/clean."
+            print_git_crypt_filter_remediation "$git_context_dir"
+            ;;
+        MISSING)
+            git -C "$git_context_dir" config --local filter.git-crypt.smudge "$GIT_CRYPT_CANONICAL_SMUDGE"
+            git -C "$git_context_dir" config --local filter.git-crypt.clean "$GIT_CRYPT_CANONICAL_CLEAN"
+            success "  git-crypt filter registration repaired (was missing)"
+            ;;
+        HALF)
+            git -C "$git_context_dir" config --local filter.git-crypt.smudge "$GIT_CRYPT_CANONICAL_SMUDGE"
+            git -C "$git_context_dir" config --local filter.git-crypt.clean "$GIT_CRYPT_CANONICAL_CLEAN"
+            warn "  git-crypt filter registration was HALF-configured (smudge=\"$pre_smudge\" clean=\"$pre_clean\") -- repaired to canonical"
+            ;;
+        FOREIGN)
+            git -C "$git_context_dir" config --local filter.git-crypt.smudge "$GIT_CRYPT_CANONICAL_SMUDGE"
+            git -C "$git_context_dir" config --local filter.git-crypt.clean "$GIT_CRYPT_CANONICAL_CLEAN"
+            warn "  git-crypt filter registration was FOREIGN (smudge=\"$pre_smudge\" clean=\"$pre_clean\") -- overwritten with canonical (this may have been an intentional customization -- check the values above)"
+            ;;
+    esac
+
+    # Secondary axis: repaired unconditionally in ALL five states, DISABLED
+    # included -- `required` absent is a silent-plaintext-commit hazard, not
+    # a DX bug (see docstring above).
+    if [[ "$pre_required" != "true" ]]; then
+        git -C "$git_context_dir" config --local filter.git-crypt.required true
+    fi
+    if [[ -z "$pre_textconv" ]]; then
+        git -C "$git_context_dir" config --local diff.git-crypt.textconv "$GIT_CRYPT_CANONICAL_TEXTCONV"
+    fi
+
+    # SMI-5702 test-only determinism seam for T10 (injected read-back
+    # mismatch) -- inert unless the env var is set. Simulates a concurrent
+    # writer clobbering our just-written value before we re-read it.
+    if [[ "${SKILLSMITH_GIT_CRYPT_FILTER_FORCE_READBACK_MISMATCH_TEST:-}" == "1" ]]; then
+        git -C "$git_context_dir" config --local filter.git-crypt.smudge "corrupted-by-test"
+    fi
+
+    # Read-back verification: a silent partial write is worse than the
+    # original bug. Skips the primary-axis check only when we deliberately
+    # did not touch smudge/clean (DISABLED) -- the secondary-axis checks
+    # below always run.
+    classify_git_crypt_filter_state "$git_context_dir"
+    if [[ "$state" != "DISABLED" ]] && [[ "$GIT_CRYPT_FILTER_STATE" != "CANONICAL" ]]; then
+        error "git-crypt filter self-heal read-back verification failed: expected CANONICAL after repair, got $GIT_CRYPT_FILTER_STATE (smudge=\"$GIT_CRYPT_FILTER_SMUDGE\" clean=\"$GIT_CRYPT_FILTER_CLEAN\"). A silent partial write is worse than the original bug -- inspect .git/config directly."
+    fi
+    if [[ "$GIT_CRYPT_FILTER_REQUIRED" != "true" ]]; then
+        error "git-crypt filter self-heal read-back verification failed: filter.git-crypt.required is \"$GIT_CRYPT_FILTER_REQUIRED\" after repair (expected \"true\")."
+    fi
+    if [[ -z "$GIT_CRYPT_FILTER_TEXTCONV" ]]; then
+        error "git-crypt filter self-heal read-back verification failed: diff.git-crypt.textconv is empty after repair."
+    fi
+    return 0
+}
+
+#######################################
+# SMI-5702: find a real, on-disk file matching the first git-crypt-encrypted
+# glob prefix declared in <dir>/.gitattributes. De-duplicates the pattern
+# previously inlined at create-worktree.sh's check_git_crypt_unlocked
+# (formerly lines 97-116) and independently re-derived (differently, and
+# staler) by verify_skill_readability's hardcoded .claude/skills/** scan.
+#
+# Arguments:
+#   $1 - dir  Directory to search (repo root or worktree root)
+#
+# Outputs:
+#   Path to a real, on-disk file under the first `filter=git-crypt`
+#   .gitattributes prefix, to stdout.
+# Returns:
+#   0 if a file was found and printed; 1 otherwise (nothing printed) --
+#   .gitattributes missing, no git-crypt filter declared, or no matching
+#   file exists on disk.
+#######################################
+find_encrypted_test_file() {
+    local dir="$1"
+    local gitattributes="$dir/.gitattributes"
+    [[ -f "$gitattributes" ]] || return 1
+
+    local encrypted_pattern
+    encrypted_pattern=$(grep -E 'filter=git-crypt' "$gitattributes" 2>/dev/null | head -1 | awk '{print $1}' || echo "")
+    [[ -n "$encrypted_pattern" ]] || return 1
+
+    local test_file
+    test_file=$(find "$dir" -path "*/$encrypted_pattern" -type f 2>/dev/null | head -1 || echo "")
+    [[ -n "$test_file" ]] || return 1
+
+    printf '%s\n' "$test_file"
 }
 
 #######################################
@@ -1154,6 +1462,109 @@ export_worktree_dev_port() {
             "$override" "$worktree_path"
     fi
     return 0
+}
+
+#######################################
+# True if $1 is the MAIN checkout; false for a linked worktree (SMI-5836).
+#
+# A linked worktree's `--git-dir` is main's `.git/worktrees/<name>` while its
+# `--git-common-dir` is main's `.git`, so the two differ; in the main checkout
+# both resolve to the same path (`.git`, relative, with cwd at the root).
+# Verified live: main -> `.git`/`.git`; worktree -> `<root>/.git/worktrees/wt`
+# and `<root>/.git`.
+#
+# The `-n "$gcd"` test is load-bearing: on a NON-git path both rev-parse calls
+# fail and both vars are empty, which would otherwise compare equal and report
+# a non-git directory as the main checkout.
+#
+# Extracted from worktree-docker.sh's resolve_container_name so that script
+# holds exactly ONE copy of the test (SMI-5626 precedent: two copies of one
+# derivation drifted apart). Lives here, not locally, because _lib.sh already
+# owns every other worktree derivation helper -- and because the same idiom is
+# independently reimplemented in six OTHER places (hook-docker-detect.sh:137,
+# check-dist-fresh.sh:71, check-node-modules-fresh.sh:124, .husky/post-merge:26,
+# regen-lockfile.sh:75, dependabot-regenerate-lockfile.sh:94), two of them
+# POSIX `sh` hooks that cannot source this file. Consolidating those is a
+# separate refactor; this at least gives it a destination.
+#
+# Arguments:
+#   $1 - Path to a checkout or worktree
+# Returns:
+#   0 if $1 is the main checkout; 1 otherwise (including non-git paths)
+#######################################
+is_main_checkout() {
+    local path="$1" gcd gd
+    gcd=$(git -C "$path" rev-parse --git-common-dir 2>/dev/null)
+    gd=$(git -C "$path" rev-parse --git-dir 2>/dev/null)
+    [[ -n "$gcd" && "$gcd" == "$gd" ]]
+}
+
+#######################################
+# Refuse a worktree-only subcommand pointed at the MAIN checkout (SMI-5836).
+#
+# `start` and `generate` both WRITE a worktree-shaped
+# docker-compose.override.yml for whatever path they are given (cmd_start
+# auto-generates one when missing, worktree-docker.sh:184-189). Applied to
+# the main checkout that file overrides the base compose file's
+# `container_name: skillsmith-dev-1` (docker-compose.yml:14) with
+# `main-dev-1` (_lib.sh:1507), moves the documented 3001 publish to a
+# bucketed pair (3070/3071 for branch `main`), and on macOS bind-mounts
+# main's own node_modules READ-ONLY over /app/node_modules (_lib.sh:703-704),
+# replacing the base named volume at docker-compose.yml:26 -- so
+# `docker exec skillsmith-dev-1 npm install` afterwards fails EROFS against
+# a container that no longer exists under that name. Nothing undoes it: the
+# file is gitignored (.gitignore:190) and repair_worktrees_compose_override
+# skips the repo root (_lib.sh:1611).
+#
+# Hard error rather than degrading to a base-file-only `up`: `start .` from
+# main is a location mistake (docker-guide.md:137 documents that exact form
+# "from inside the worktree"), so quietly starting MAIN's container would
+# report success while the container the user actually wanted never came up --
+# the invisible-success class SMI-5559/SMI-5570 already fixed twice for
+# `docker exec`. Neither subcommand has any programmatic caller in the repo
+# (hook-docker-detect.sh:157 uses `resolve`), so this cannot break CI, hooks
+# or npm scripts. Full rationale:
+# docs/internal/implementation/smi-5836-worktree-docker-start-main-guard.md
+#
+# Lives here alongside is_main_checkout, not in worktree-docker.sh (SMI-5836
+# plan-review Critical #2): that script has only ~12 lines of headroom under
+# the 500-line check-file-length.mjs hard limit and is not grandfathered in
+# check-file-length.ignore, while _lib.sh already is (SMI-5660). Calls
+# error(), defined identically here (_lib.sh:92-95) and in worktree-docker.sh
+# (:83-86); which copy actually runs is inert since both are functionally
+# identical.
+#
+# Arguments:
+#   $1 - Subcommand name, for the message
+#   $2 - Path to check (no-op unless it is the main checkout)
+#######################################
+refuse_if_main_checkout() {
+    local subcommand="$1" path="$2" stray=""
+
+    is_main_checkout "$path" || return 0
+
+    if [[ -f "$path/docker-compose.override.yml" ]]; then
+        stray="
+
+Also, a stray override already exists here:
+  rm $path/docker-compose.override.yml
+Nothing regenerates or removes it automatically, so it keeps overriding this
+checkout's container name, ports and node_modules mount until you delete it."
+    fi
+
+    error "'$subcommand' is for linked worktrees, but $path is the MAIN checkout (SMI-5836).
+
+The base docker-compose.yml already provisions the main checkout completely:
+container skillsmith-dev-1 on host port 3001. A worktree override here renames
+that container, moves its ports, and (on macOS) remounts its node_modules
+read-only.
+
+If you meant the main checkout:
+  cd $path && docker compose --profile dev up -d
+
+If you meant a worktree ('$subcommand .' only works from INSIDE one):
+  $(basename "$0") $subcommand .worktrees/<name>
+  ./scripts/create-worktree.sh <branch>   # if it does not exist yet$stray"
 }
 
 #######################################

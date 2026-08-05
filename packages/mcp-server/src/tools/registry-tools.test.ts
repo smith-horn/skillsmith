@@ -82,6 +82,21 @@ describe('registry-tools', () => {
         })
       ).toThrow()
     })
+
+    // SMI-5905 Sol final-code-review finding #1: the bare author/name regex accepts "."/".."
+    // as either segment, which installFromContent() would otherwise turn into a path escape.
+    it.each(['myteam/..', 'myteam/.', '../myteam', 'myteam/   '])(
+      'should reject skillId "%s" (unsafe path segment)',
+      (skillId) => {
+        expect(() =>
+          privateRegistryPublishInputSchema.parse({
+            skillId,
+            version: '1.0.0',
+            content: SAMPLE_CONTENT,
+          })
+        ).toThrow()
+      }
+    )
   })
 
   describe('privateRegistryManageInputSchema', () => {
@@ -103,6 +118,11 @@ describe('registry-tools', () => {
       expect(() => privateRegistryManageInputSchema.parse({ action: 'invalid' })).toThrow()
     })
 
+    it('should accept namespace action (SMI-5852, AC-11)', () => {
+      const parsed = privateRegistryManageInputSchema.parse({ action: 'namespace' })
+      expect(parsed.action).toBe('namespace')
+    })
+
     it('should accept optional version filter', () => {
       const parsed = privateRegistryManageInputSchema.parse({
         action: 'list',
@@ -110,6 +130,17 @@ describe('registry-tools', () => {
       })
       expect(parsed.version).toBe('1.0.0')
     })
+
+    // SMI-5905 Sol final-code-review finding #1 — same fix as the publish schema above,
+    // applied here too since "install" derives its on-disk path from this skillId.
+    it.each(['myteam/..', 'myteam/.', '../myteam'])(
+      'should reject skillId "%s" (unsafe path segment) for the install action',
+      (skillId) => {
+        expect(() =>
+          privateRegistryManageInputSchema.parse({ action: 'install', skillId })
+        ).toThrow()
+      }
+    )
   })
 
   // ==========================================================================
@@ -267,6 +298,16 @@ describe('registry-tools', () => {
       const result = await executePrivateRegistryManage({ action: 'undeprecate' }, mockContext)
       expect(result.success).toBe(false)
       expect(result.error).toContain('skillId is required')
+    })
+
+    // SMI-5852 AC-11: the stub has no real `teams` table, so it always reports the
+    // namespace as unresolvable — a deliberate, documented limitation (see
+    // registry-tools.stub.ts), not a stub bug. Live behavior is covered in
+    // registry-tools.live.test.ts.
+    it('should report the namespace as unresolvable against the stub', async () => {
+      const result = await executePrivateRegistryManage({ action: 'namespace' }, mockContext)
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/unable to resolve/i)
     })
   })
 })

@@ -15,6 +15,7 @@
  * - author transform: Upgrade existing skill with subagent (SMI-1390)
  * - author mcp-init: Scaffold a new MCP server project (SMI-1433)
  * - install: Install a skill from registry or GitHub URL (SMI-3484)
+ * - registry install: Install a skill from your team's private registry (SMI-5905, Enterprise)
  * - setup: Install skillsmith skill for /skillsmith slash command (SMI-824, renamed from install-skill)
  */
 
@@ -34,6 +35,7 @@ import {
   createRecommendCommand,
   createSyncCommand,
   createInstallCommand,
+  createRegistryCommand,
   createInstallSkillCommand,
   createLoginCommand,
   createLogoutCommand,
@@ -115,6 +117,9 @@ program.addCommand(createRemoveCommand())
 
 // SMI-3484: Install skill from registry or GitHub URL
 program.addCommand(createInstallCommand())
+
+// SMI-5905 Wave 4: `skillsmith registry install <skillId>` (Enterprise private registry)
+program.addCommand(createRegistryCommand())
 
 // SMI-746: Skill authoring commands (under 'author' group)
 // SMI-1389, SMI-1390: Subagent generation

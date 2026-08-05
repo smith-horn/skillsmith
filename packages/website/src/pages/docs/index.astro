@@ -1,98 +1,99 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+
+const techArticleSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'TechArticle',
+  headline: 'Skillsmith Documentation',
+  description:
+    'Complete documentation for Skillsmith - AI-powered skill discovery and management for development environments',
+  url: 'https://www.skillsmith.app/docs',
+  author: {
+    '@id': 'https://www.skillsmith.app/#organization',
+  },
+  publisher: {
+    '@type': 'Organization',
+    '@id': 'https://www.skillsmith.app/#organization',
+    name: 'Skillsmith',
+    url: 'https://www.skillsmith.app',
+  },
+  about: {
+    '@type': 'SoftwareApplication',
+    name: 'Skillsmith',
+    applicationCategory: 'DeveloperApplication',
+  },
+  mainEntity: {
+    '@type': 'ItemList',
+    name: 'Documentation Sections',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Quickstart Guide',
+        url: 'https://www.skillsmith.app/docs/quickstart',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Getting Started',
+        url: 'https://www.skillsmith.app/docs/getting-started',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: 'CLI Reference',
+        url: 'https://www.skillsmith.app/docs/cli',
+      },
+      {
+        '@type': 'ListItem',
+        position: 4,
+        name: 'MCP Server',
+        url: 'https://www.skillsmith.app/docs/mcp-server',
+      },
+      {
+        '@type': 'ListItem',
+        position: 5,
+        name: 'API Reference',
+        url: 'https://www.skillsmith.app/docs/api',
+      },
+      {
+        '@type': 'ListItem',
+        position: 6,
+        name: 'Security',
+        url: 'https://www.skillsmith.app/docs/security',
+      },
+      {
+        '@type': 'ListItem',
+        position: 7,
+        name: 'Trust Tiers',
+        url: 'https://www.skillsmith.app/docs/trust-tiers',
+      },
+      {
+        '@type': 'ListItem',
+        position: 8,
+        name: 'Quarantine',
+        url: 'https://www.skillsmith.app/docs/quarantine',
+      },
+      {
+        '@type': 'ListItem',
+        position: 9,
+        name: 'Dependencies',
+        url: 'https://www.skillsmith.app/docs/dependencies',
+      },
+      {
+        '@type': 'ListItem',
+        position: 10,
+        name: 'Cross-machine skill inventory',
+        url: 'https://www.skillsmith.app/docs/inventory',
+      },
+    ],
+  },
+};
 ---
 
 <DocsLayout title="Documentation" description="Learn how to use Skillsmith for agent skill discovery and management">
   <!-- JSON-LD Schema -->
-  <script is:inline type="application/ld+json" slot="head">
-  {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "Skillsmith Documentation",
-    "description": "Complete documentation for Skillsmith - AI-powered skill discovery and management for development environments",
-    "url": "https://www.skillsmith.app/docs",
-    "author": {
-      "@id": "https://www.skillsmith.app/#organization"
-    },
-    "publisher": {
-      "@type": "Organization",
-      "@id": "https://www.skillsmith.app/#organization",
-      "name": "Skillsmith",
-      "url": "https://www.skillsmith.app"
-    },
-    "about": {
-      "@type": "SoftwareApplication",
-      "name": "Skillsmith",
-      "applicationCategory": "DeveloperApplication"
-    },
-    "mainEntity": {
-      "@type": "ItemList",
-      "name": "Documentation Sections",
-      "itemListElement": [
-        {
-          "@type": "ListItem",
-          "position": 1,
-          "name": "Quickstart Guide",
-          "url": "https://www.skillsmith.app/docs/quickstart"
-        },
-        {
-          "@type": "ListItem",
-          "position": 2,
-          "name": "Getting Started",
-          "url": "https://www.skillsmith.app/docs/getting-started"
-        },
-        {
-          "@type": "ListItem",
-          "position": 3,
-          "name": "CLI Reference",
-          "url": "https://www.skillsmith.app/docs/cli"
-        },
-        {
-          "@type": "ListItem",
-          "position": 4,
-          "name": "MCP Server",
-          "url": "https://www.skillsmith.app/docs/mcp-server"
-        },
-        {
-          "@type": "ListItem",
-          "position": 5,
-          "name": "API Reference",
-          "url": "https://www.skillsmith.app/docs/api"
-        },
-        {
-          "@type": "ListItem",
-          "position": 6,
-          "name": "Security",
-          "url": "https://www.skillsmith.app/docs/security"
-        },
-        {
-          "@type": "ListItem",
-          "position": 7,
-          "name": "Trust Tiers",
-          "url": "https://www.skillsmith.app/docs/trust-tiers"
-        },
-        {
-          "@type": "ListItem",
-          "position": 8,
-          "name": "Quarantine",
-          "url": "https://www.skillsmith.app/docs/quarantine"
-        },
-        {
-          "@type": "ListItem",
-          "position": 9,
-          "name": "Dependencies",
-          "url": "https://www.skillsmith.app/docs/dependencies"
-        },
-        {
-          "@type": "ListItem",
-          "position": 10,
-          "name": "Cross-machine skill inventory",
-          "url": "https://www.skillsmith.app/docs/inventory"
-        }
-      ]
-    }
-  }
-  </script>
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(techArticleSchema)} />
 
   <h1>Skillsmith Documentation</h1>
 

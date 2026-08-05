@@ -6,7 +6,7 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 
 ## Contents
 
-- [What's New](#whats-new-in-v082)
+- [What's New](#whats-new-in-v084)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -14,11 +14,13 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.2
+## What's New in v0.8.4
 
-- **Corrected tier quota display**: Community/Individual/Team quota labels shown by the CLI are reduced 10x (100/mo, 1,000/mo, 10,000/mo respectively) to match actual enforcement — display-only; enforcement lives in `@skillsmith/mcp-server`.
-
-> v0.8.2 is a scheduled cadence release with no functional changes beyond v0.8.1.
+- **`sklx logs --tail` covers doc-retrieval**: now watches the doc-retrieval reindex CLI's structured log surface alongside the other tail-able components.
+- **Enterprise license validation fixed**: license checks now import `@smith-horn/enterprise` (the package's real name) instead of a name that never existed, which had silently broken Enterprise-tier license validation for every install.
+- **Symlinked skill discovery fixed**: a skill installed via a symlinked directory (e.g. `ln -s ~/.claude/skills/foo ~/.cursor/skills/foo`) is now correctly discovered per-harness instead of being silently skipped.
+- **Compliance reports expanded**: `compliance_reports` availability widened from Enterprise-only to Team + Enterprise.
+- **New MCP client support**: Grok Build (`~/.grok/config.toml`) added to the per-client MCP config snippets.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 

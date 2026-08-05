@@ -84,25 +84,45 @@ export const VALUE_GATED_KEYWORD_PATTERNS: ReadonlySet<RegExp> = new Set([
 ])
 
 // Jailbreak attempt patterns
-export const JAILBREAK_PATTERNS = [
-  /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)/i,
-  /disregard\s+(all\s+)?(previous|prior|your)\s+(instructions?|programming)/i,
-  /developer\s+mode/i,
-  /\bDAN\b/,
-  /do\s+anything\s+now/i,
-  /jailbreak/i,
-  /bypass\s+(all\s+)?(restrictions?|filters?|safety)/i,
-  /pretend\s+(you\s+)?(are|have)\s+no\s+(restrictions?|limits?)/i,
-  /act\s+as\s+(if\s+)?you\s+(have\s+)?no\s+ethics/i,
-  /you\s+are\s+now\s+(free|unrestricted|unfiltered)/i,
-  /ignore\s+your\s+(safety|ethical)\s+(guidelines?|rules?)/i,
-  /hypothetical\s+scenario\s+where\s+you\s+can/i,
+// SMI-5876 Wave 1: JAILBREAK_PATTERNS and AI_DEFENCE_PATTERNS (below) moved to
+// patterns.jailbreak.ts together with the evidence-tier classification map
+// that now governs their severity (a bare-vocabulary match like /jailbreak/i
+// no longer categorically fails a scan the same way a real directive does).
+// Re-exported here so every existing import path (memory-injection-scanner.ts,
+// SecurityScanner.ts, index.ts, scanner-regression-guard.test.ts) keeps
+// working with zero churn — this re-export is load-bearing, do not remove.
+export { JAILBREAK_PATTERNS, AI_DEFENCE_PATTERNS } from './patterns.jailbreak.js'
+// SMI-5881: EVIDENCE_TYPE_BY_PATTERN moved to patterns.jailbreak.evidence.ts
+// (kept out of patterns.jailbreak.ts's own 500-line budget). Re-exported here
+// unchanged — same load-bearing reasoning as above.
+export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
 
-  // Multi-line split-word obfuscation patterns (tested against full content)
-  /ig\s*\n\s*nore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)/i,
-  /dis\s*\n\s*regard\s+(?:all\s+)?(?:previous|prior|your)\s+(?:instructions?|programming)/i,
-  /by\s*\n\s*pass\s+(?:all\s+)?(?:restrictions?|filters?|safety)/i,
-]
+/**
+ * SMI-5876 §0.1/§0.2: bump on ANY pattern-array or evidence-table change in
+ * this module or patterns.jailbreak.ts. The security-audit baseline
+ * (packages/mcp-server/src/audit/security-baseline.ts /
+ * security-audit.ts) stamps every stored entry with the version that
+ * produced it and treats a mismatch as "not comparable" — forcing a re-scan
+ * instead of silently reusing a stale verdict from a scanner that no longer
+ * exists. Without this, the pattern/evidence-tier fix could not clear an
+ * already-flagged skill's stale `malicious` baseline on any machine that had
+ * scanned it before (see the security-audit.ts `comparable` gate).
+ *
+ * Bumped to `.2`: SMI-5876 design-pass follow-up added the `state_assertion`
+ * evidence tier + 5 new JAILBREAK_PATTERNS entries (J-S1/S2/S3a/S3b/S4) and
+ * widened #6 (bypass) + J-N1 in place — this is precisely the
+ * previously-clean-content-now-fires scenario the ruleset-version gate
+ * exists for.
+ *
+ * Bumped to `2026-07-29.1`: SMI-5881 P0 — AD_CRLF_INJECTION's source changed
+ * (ReDoS fix, same match language, see patterns.jailbreak.ts) and 4
+ * AI_DEFENCE_PATTERNS entries were promoted from 'line' to 'both' scope
+ * (AD_HTML_COMMENT_VERB/NOUN, AD_NESTED_INSTRUCTION_BLOCK, AD_ZERO_WIDTH — new
+ * cross-line matches now possible where none fired before), plus SSRF_
+ * INSTRUCTION_PATTERNS word-boundary narrowing (some previously-firing
+ * substring FPs, e.g. "budget to localhost", no longer match).
+ */
+export const SCANNER_RULESET_VERSION = '2026-07-29.1' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [
@@ -256,6 +276,15 @@ export const DATA_EXFILTRATION_PATTERNS = [
   /\b(?:curl|wget)\b[^\n]{0,200}?(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b[^\n]{0,100}?\$\{?[A-Za-z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASS|CRED)/i,
 ]
 
+// SMI-5833/SMI-5838: credential/auth-level substitution to defeat an auth check,
+// split out of PRIVILEGE_ESCALATION_PATTERNS (spread back in below, preserving
+// array order/count) so scanPrivilegeEscalation can identify these two entries by
+// reference and cap their severity — see the inline comment at the spread site.
+export const CREDENTIAL_SUBSTITUTION_PATTERNS = [
+  /\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,100}?\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b/i,
+  /\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b[^\n]{0,100}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b/i,
+]
+
 // SMI-685: Privilege escalation patterns
 export const PRIVILEGE_ESCALATION_PATTERNS = [
   /sudo\s+.*(-S|--stdin)/i, // sudo with password from stdin
@@ -325,26 +354,46 @@ export const PRIVILEGE_ESCALATION_PATTERNS = [
   // could invert that). Each chains bounded lazy quantifiers ([^\n]{0,N}?)
   // sequentially with no nested repetition — same ReDoS-safe shape as
   // CODE_EXECUTION_PATTERNS above.
-  /\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,100}?\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b/i,
-  /\b(?:bypass|circumvent|defeat|get\s+around|work\s+around|get\s+past)\b[^\n]{0,40}?\b(?:error|check|4\d{2}|permission|restriction|auth(?:orization)?(?:\s+check)?|access\s+control)\b[^\n]{0,100}?\b(?:key|token|jwt|credentials?)\b[^\n]{0,40}?\b(?:instead\s+of|in\s+place\s+of|rather\s+than)\b[^\n]{0,40}?\b(?:key|token|jwt|credentials?)\b/i,
+  //
+  // SMI-5838: purely lexical, so it can't distinguish real bypass intent from
+  // benign dev/test troubleshooting that happens to carry both signals (e.g.
+  // "To get around the 403 error in local testing, use a mock token instead of
+  // your expired token"). scanPrivilegeEscalation identifies these two entries
+  // by reference (CREDENTIAL_SUBSTITUTION_PATTERNS, declared above and spread
+  // in here to keep this array's order/count unchanged) and caps their severity
+  // below the install-blocking threshold — detection stays on, a false positive
+  // surfaces for review instead of rejecting a legitimate skill install.
+  ...CREDENTIAL_SUBSTITUTION_PATTERNS,
 ]
 
 /**
  * SMI-3509: SSRF instruction patterns
  * Detects content instructing fetches to internal/dangerous endpoints.
  * These are text-oriented patterns for skill content scanning (not URL validators).
+ *
+ * SMI-5881: leading `\b` added to every verb alternation below — the verbs
+ * (fetch/request/curl/wget/get/open/load/read/connect/send) previously had no
+ * boundary, so they matched as a SUBSTRING of an unrelated word ("get" inside
+ * "budget"/"target"/"forget"/"widget", "connect" inside "disconnect", "load"
+ * inside "download"/"reload", "open" inside "reopen", "read" inside
+ * "bread"/"spread"/"thread"). A trailing `\b` was also added after the bare
+ * `localhost` literal (both the single-line and multiline forms) so
+ * "localhosting" no longer matches via a "localhost" prefix. Every existing
+ * `\s` quantifier is unchanged — replacing them with newline-exclusive classes
+ * was tried and reverted (breaks a verb+target split across a real line
+ * break, a real evasion). See scanner-ssrf-word-boundary.test.ts.
  */
 export const SSRF_INSTRUCTION_PATTERNS = [
   // Dangerous protocol schemes in skill instructions
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?file:\/\//i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?gopher:\/\//i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?dict:\/\//i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?ldap:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?file:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?gopher:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?dict:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?ldap:\/\//i,
 
   // Instructions targeting localhost/internal IPs
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?localhost/i,
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?127\.0\.0\.\d+/i,
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?0\.0\.0\.0/i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?localhost\b/i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?127\.0\.0\.\d+/i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?0\.0\.0\.0/i,
 
   // Cloud metadata service endpoints
   /169\.254\.169\.254/,
@@ -354,23 +403,11 @@ export const SSRF_INSTRUCTION_PATTERNS = [
   /gopher:\/\/localhost/i,
 
   // SMI-3522: Multi-line SSRF patterns (split across lines)
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*file:\/\//i,
-  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:the\s*)?\n\s*(?:https?:\/\/)?(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0)/i,
-  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*gopher:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*file:\/\//i,
+  /\b(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:the\s*)?\n\s*(?:https?:\/\/)?(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0)\b/i,
+  /\b(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*gopher:\/\//i,
 ]
 
-/**
- * SMI-1532: AIDefence CVE-hardened injection patterns
- * Optimized for sub-10ms scan time with compiled regex and no backtracking
- *
- * These patterns detect sophisticated prompt injection attacks based on
- * known CVEs and security research findings.
- *
- * References:
- * - OWASP LLM Top 10: LLM01 Prompt Injection
- * - Anthropic Responsible Disclosure Program findings
- * - Academic research on prompt injection attacks
- */
 /**
  * SMI-3864: PII detection patterns
  * Detects personally identifiable information and credentials in skill content.
@@ -402,60 +439,4 @@ export const PII_PATTERNS = [
   /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/i,
 ]
 
-export const AI_DEFENCE_PATTERNS = [
-  // Role injection patterns - attempts to inject system/assistant/user roles
-  // Pattern detects role markers that could manipulate conversation boundaries
-  // Covers: start of line, after whitespace, with various delimiters
-  /(?:^|\s)(?:system|assistant|user)\s*:\s*(?:\n|$)/i,
-
-  // Hidden instruction brackets - obfuscated commands
-  /\[\[\s*[^\]]{1,200}\s*\]\]/,
-
-  // HTML/XML comment injection - hiding malicious instructions
-  /<!--[\s\S]{0,100}?(?:ignore|override|bypass|system|instruction)[\s\S]{0,100}?-->/i,
-
-  // Unicode homograph attacks - visually similar characters
-  // Detects Cyrillic, Greek, or other homoglyphs mixed with Latin
-  /[\u0400-\u04FF\u0370-\u03FF]{2,}[\w\s]+(?:ignore|bypass|instruction)/i,
-
-  // Mixed-script detection: Latin + Cyrillic/Greek in same word (homoglyph attack)
-  // Note: \b word boundaries don't work with Unicode; use space/start/end anchors
-  /(?:^|[\s,."'(])(?:[a-zA-Z]+[\u0400-\u04FF\u0370-\u03FF]|[\u0400-\u04FF\u0370-\u03FF]+[a-zA-Z])[a-zA-Z\u0400-\u04FF\u0370-\u03FF]*/,
-
-  // Prompt structure manipulation - XML/markdown injection
-  /<\/?(?:system|prompt|instruction|context|message)(?:\s[^>]*)?>/i,
-
-  // Base64 encoded instructions (common evasion technique)
-  /(?:base64|b64)\s*[:=]\s*["']?[A-Za-z0-9+/]{20,}={0,2}["']?/i,
-
-  // Delimiter injection - breaking out of prompt boundaries
-  /(?:^|\n)(?:---|\*{3}|#{3,})\s*(?:system|prompt|instruction|override)/i,
-
-  // JSON structure injection in prompts
-  // SMI-1532: Refined to require suspicious values, not just field names
-  // Matches: "role": "system" or "instruction": "ignore" but not "content": "Hello"
-  /["']\s*(?:role|system|instruction)\s*["']\s*:\s*["'](?:system|assistant|user|ignore|override|bypass)/i,
-
-  // Nested instruction blocks
-  /<instruction[^>]*>[\s\S]{0,500}?<\/instruction>/i,
-
-  // CRLF injection for prompt manipulation
-  /(?:\r\n|\r|\n){2,}\s*(?:ignore|forget|override|bypass)\s+(?:all|previous|above)/i,
-
-  // Template literal injection
-  /\$\{\s*(?:system|prompt|instruction|config)/i,
-
-  // Zero-width character obfuscation detection
-  // SMI-1532: Enhanced to detect single zero-width chars near sensitive keywords
-  /[\u200B-\u200F\u2028-\u202F\uFEFF](?:[\s\S]{0,20}(?:ignore|bypass|system|instruction)|[\u200B-\u200F\u2028-\u202F\uFEFF])/i,
-
-  // Markdown link injection with suspicious targets
-  /\[(?:click|here|link|url)[^\]]*\]\([^)]*(?:javascript|data|vbscript):/i,
-
-  // Escape sequence abuse
-  /\\x[0-9a-fA-F]{2}(?:\\x[0-9a-fA-F]{2}){3,}/,
-
-  // Unicode normalization attacks - combining characters that render differently
-  // Detects combining diacritical marks used to obfuscate text
-  /[\u0300-\u036F]{2,}/,
-]
+// AI_DEFENCE_PATTERNS moved to patterns.jailbreak.ts (see the re-export above).

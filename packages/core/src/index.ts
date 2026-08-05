@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.11.3'
+export const VERSION = '0.11.4'
 
 // ============================================================================
 // Grouped Exports from Barrel Files
@@ -55,6 +55,17 @@ export {
   getGlobalCache,
   DEFAULT_TTL,
   type ApiClientConfig,
+  // SMI-5905 Wave 4: private-registry content fetch (CLI's only transport
+  // to private_registry_skills.content).
+  getPrivateRegistrySkillContent,
+  type PrivateRegistrySkillContent,
+  type PrivateRegistryGetErrorCode,
+  type PrivateRegistryGetResult,
+  type GetPrivateRegistrySkillContentParams,
+  // SMI-5897 (C-15): shared security-summary derivation (CLI + MCP).
+  // SMI-5897 (Wave 4 fix): local-DB-shaped sibling derivation.
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
 } from './api/index.js'
 
 // Search
@@ -70,6 +81,10 @@ export { SecurityScanner } from './security/index.js'
 // re-export style above (a direct named re-export from the security barrel).
 export { compareScanReports, DEFAULT_RISK_THRESHOLD } from './security/index.js'
 export type { HostileUpdateVerdict } from './security/index.js'
+// SMI-5876: ruleset version stamp, consumed by the client-side security-audit
+// baseline (packages/mcp-server/src/audit/security-audit.ts) to force a
+// re-scan when the scanner's pattern/evidence-tier definitions change.
+export { SCANNER_RULESET_VERSION } from './security/index.js'
 
 // SMI-898: Path Traversal Protection
 export {
@@ -274,7 +289,11 @@ export {
   refreshAccessToken,
   type TokenCredentials,
 } from './config/token-credentials.js'
-export { tryRefreshToken, loadStoredAccessToken } from './api/client.token-refresh.js'
+export {
+  tryRefreshToken,
+  loadStoredAccessToken,
+  resolveFreshAccessToken,
+} from './api/client.token-refresh.js'
 
 // SMI-5391: Cross-harness inventory device identity + local consent/throttle gate
 export {

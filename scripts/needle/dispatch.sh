@@ -74,10 +74,20 @@ Examples:
   $(basename "$0") --workspace .worktrees/smi-1234-thing --title "Draft README section" --body-file /tmp/prompt.txt
   $(basename "$0") --workspace .worktrees/smi-1234-thing --title "second opinion on auth design" --body-file /tmp/prompt.txt --model gpt-5.5 --timeout 1800
 
-On a failed or unclassifiable outcome, this script exits non-zero and says
-so in the result log — the queen re-dispatches the task through normal
-Claude-tier routing rather than treating a Codex-dispatch failure as final
-(see CLAUDE.md's Default Execution Model, Codex row).
+dispatch.sh's terminal outcomes: 'success' is FINAL — consume the result,
+never re-dispatch, even when the results log also carries an incidental
+sandbox_write_rejected=yes note (that's expected steady-state under the
+read-only sandbox, not a partial result; see scripts/needle/README.md's
+Troubleshooting section). Every other outcome ('blocked-by-sandbox',
+'no-diff-despite-expected-write', 'success-without-agent-message', or an
+unclassifiable failure) exits non-zero and says so in the result log — the
+queen re-dispatches the task through normal Claude-tier routing rather than
+treating a Codex-dispatch failure as final (see CLAUDE.md's Default
+Execution Model, Codex row). A pre-flight refusal (exit 2 — this
+--workspace already holds stale open/in_progress beads, SMI-5847) is NOT a
+dispatch failure: clear the stale beads ('bf close <id> --workspace <dir>')
+or wait for a legitimately concurrent dispatch to finish, then retry the
+identical dispatch rather than falling back to Claude-tier.
 EOF
 }
 
@@ -174,125 +184,29 @@ CODEX_VERSION="$(codex --version 2>/dev/null || echo 'unknown')"
 
 echo "[needle-dispatch] workspace=$WORKSPACE model=$MODEL timeout=${TIMEOUT}s codex_version=$CODEX_VERSION"
 
-# ---- SMI-5709: secret-scanner compatibility guard ----
-#
-# `bf create` (invoked below) runs its own secret scanner over --title and
-# --description before this dispatch ever reaches Codex. That scanner has a
-# generic heuristic — labeled "Azure Key" in its own output, confirmed via
-# `strings $(which bf)` in a prior investigation — that flags any unbroken
-# run of 44+ characters from [A-Za-z0-9/_-]. Ordinary long file/worktree
-# paths in a title or prompt body trip this constantly; it has nothing to
-# do with real secrets. Left unguarded, that surfaces as an opaque
-# "secret detected: ... [Azure Key]" failure deep inside `bf create`,
-# after this script has already committed to the dispatch. This block
-# scans the exact raw bytes that will be passed to `bf create` below and
-# fails fast, before any `bf`/`codex` process is touched, with actionable
-# guidance instead of bf's own opaque error.
-#
-# The character class ([A-Za-z0-9/_-]) intentionally reproduces bf's own
-# broad heuristic exactly, as confirmed against the actual compiled rule in
-# a prior investigation — this is deliberately NOT a smarter/narrower
-# filter. Do not "improve" this into a tighter pattern later; that would
-# desync this guard from what bf actually rejects and defeat the entire
-# point of a compatibility pre-check.
-#
-# Matching runs in grep's default per-line mode only, never a
-# multiline/slurp mode — a match must never be allowed to span a newline
-# (44 path-safe characters split across two lines are two separate short
-# runs in the real content, not one long one that should trip anything).
-#
-# Separate, related fact (also from a prior investigation, not re-verified
-# here): bf additionally supports a `secret_protection.allowlist` key in a
-# workspace's `.beads/config.yaml`, and — as observed behavior against the
-# bf version in use at the time of that investigation, not an unconditional
-# guarantee for every future bf release — the scanner consults it with
-# substring-match semantics against the *entire* scanned field's content:
-# a pattern anchored at both ends (^...$) can only match a field whose
-# entire content equals the pattern; a pattern anchored at only one end can
-# only match at that corresponding boundary; an unanchored pattern must
-# match text embedded anywhere within a longer field.
-#
-# IMPORTANT: this guard has no knowledge of that allowlist — it is a pure
-# compatibility pre-check and cannot tell whether bf would actually accept
-# a given match. Allowlisting a pattern in bf's own config does NOT get you
-# past THIS guard; use SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 for that (see
-# below and docs/internal/process/guards-and-opt-outs.md). Note bf's own
-# scanner still runs after this guard is skipped, so the allowlist entry is
-# still required for the dispatch to actually succeed end-to-end.
-#
-# Scope note: this pattern is verified against ordinary long file/worktree
-# paths (its actual purpose) — it has not been verified against bf's real
-# rule for base64-shaped secrets (which may include `+`/`=`, outside this
-# class), so a real base64 credential could in principle still slip past
-# this guard and hit bf's own rejection instead. That's an acceptable gap:
-# this guard exists to fail fast on the common path-false-positive case,
-# not to be a complete re-implementation of bf's scanner.
-needle_secret_scan_guard() {
-    local pattern='[A-Za-z0-9/_-]{44,}'
-    local findings=() entry field lineinfo m rest head tail redacted
-    local report="" shown=0 total
-
-    while IFS= read -r m; do
-        [[ -z "$m" ]] && continue
-        findings+=("title||$m")
-    done < <(printf '%s\n' "$TITLE" | grep -oE "$pattern" || true)
-
-    local line_match lineno
-    while IFS= read -r line_match; do
-        [[ -z "$line_match" ]] && continue
-        lineno="${line_match%%:*}"
-        m="${line_match#*:}"
-        findings+=("body|$lineno|$m")
-    done < <(grep -n -oE "$pattern" "$BODY_FILE" || true)
-
-    total=${#findings[@]}
-    if [[ "$total" -eq 0 ]]; then
-        return 0
-    fi
-
-    for entry in "${findings[@]}"; do
-        shown=$((shown + 1))
-        if [[ $shown -gt 5 ]]; then
-            continue
-        fi
-        field="${entry%%|*}"
-        rest="${entry#*|}"
-        lineinfo="${rest%%|*}"
-        m="${rest#*|}"
-        head="${m:0:10}"
-        tail="${m: -4}"
-        redacted="${head}…${tail}"
-        if [[ "$field" == "body" ]]; then
-            report+="  - body (line $lineinfo): $redacted (${#m} chars)"$'\n'
-        else
-            report+="  - title: $redacted (${#m} chars)"$'\n'
-        fi
-    done
-    if [[ "$total" -gt 5 ]]; then
-        report+="  ... and $((total - 5)) more match(es) not shown"$'\n'
-    fi
-
-    needle_error "Title/body contains $total unbroken run(s) of 44+ characters from [A-Za-z0-9/_-] — bf create's own secret scanner will very likely reject this dispatch with a 'secret detected: ... [Azure Key]' error before Codex is ever invoked.
-
-$report
-Most matches like this are ordinary long file/worktree paths, not real
-secrets — but this guard (matching bf's own heuristic on purpose) can't
-tell the difference, and neither can bf. Fix: state any long directory
-prefix ONCE in prose (e.g. 'files under scripts/needle/') and refer to
-bare filenames afterward instead of repeating a full path in every
-reference."
-}
-
-if [[ "${SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE:-0}" == "1" ]]; then
-    echo "[needle-dispatch] WARNING: SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 — skipping the SMI-5709 secret-scanner compatibility guard. bf's own scanner still runs on 'bf create' below and may still reject this dispatch." >&2
-else
-    needle_secret_scan_guard
-fi
+# ---- SMI-5709: secret-scanner compatibility guard (needle_secret_scan_guard,
+# lib.sh) -- `bf create` below runs its own secret scanner over --title and
+# --description before this dispatch ever reaches Codex; this pre-check
+# fails fast with actionable guidance instead of bf's own opaque error. See
+# lib.sh for the full rationale (bf's heuristic, the allowlist interaction,
+# and this guard's deliberate scope limits) and
+# SKILLSMITH_NEEDLE_SECRET_GUARD_DISABLE=1 to bypass.
+needle_secret_scan_guard "$TITLE" "$BODY_FILE"
 
 # ---- Ensure a bead-forge workspace exists ----
 if [[ ! -d "$WORKSPACE/.beads" ]]; then
     bf init --workspace "$WORKSPACE" >/dev/null
 fi
+
+# ---- SMI-5847: pre-flight stale-bead refusal (needle_stale_bead_preflight,
+# lib.sh) -- a 'needle run' worker drains the ENTIRE ready queue for the
+# workspace oldest-first, not just the bead about to be created, so stale
+# open/in_progress beads get re-claimed and re-run at real Codex cost ahead
+# of this dispatch's own bead. Must run after 'bf init' above (so a fresh
+# workspace counts 0) and before 'bf create' below (or it would count the
+# bead about to be created). See lib.sh for the full rationale and
+# SKILLSMITH_NEEDLE_STALE_BEAD_GUARD_DISABLE=1 to bypass.
+needle_stale_bead_preflight "$WORKSPACE" "$TIMEOUT"
 
 # ---- Create the bead. bf create has no --body-file flag (a discrepancy
 # from an earlier draft of the implementation doc, corrected here after
@@ -398,6 +312,15 @@ set -e
 
 BEAD_STATE="$(bf show "$BEAD_ID" --format json --workspace "$WORKSPACE" 2>/dev/null | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")"
 TRACE_PATH="$(needle_bead_trace_path "$WORKSPACE" "$BEAD_ID")"
+# TRACE_DIR/STDOUT_PATH are computed unconditionally (not only on the
+# success path) -- Step 1 below now needs TRACE_DIR/stderr.txt regardless
+# of the current OUTCOME (SANDBOX_WRITE_REJECTED is an audit field, not
+# itself a downgrade), and Step 3 needs STDOUT_PATH. stdout.txt is where
+# the dispatched agent's final answer actually lives (SMI-5847 correcting
+# README's earlier, wrong ~/.codex/sessions/ pointer) -- trace.jsonl
+# structurally cannot contain it (tool_call/tool_result/tokens events only).
+TRACE_DIR="$(dirname "$TRACE_PATH")"
+STDOUT_PATH="$TRACE_DIR/stdout.txt"
 
 OUTCOME="failure"
 if [[ -n "$OUTCOME_EVENT" ]]; then
@@ -407,23 +330,36 @@ if [[ -n "$OUTCOME_EVENT" ]]; then
     fi
 fi
 
-# ---- SMI-5700: NEEDLE's outcome.classified is based purely on the
-# dispatched agent process's exit code — it does not verify a work product
-# actually exists. Two independent downgrade checks below catch the false-
-# success case confirmed via bead bf-1aj's trace evidence (Codex's write
-# rejected by the read-only sandbox; Codex exited 0 anyway; NEEDLE correctly
-# but insufficiently classified that as "success"). Both checks only ever
-# downgrade an already-"success" outcome — a real "failure" from NEEDLE is
-# never overridden back to success. ----
+# ---- SMI-5700 (steps 1-2) / SMI-5847 (step 3): NEEDLE's outcome.classified
+# is based purely on the dispatched agent process's exit code — it does not
+# verify a work product actually exists. Three independent downgrade checks
+# below catch the false-success case confirmed via bead bf-1aj's trace
+# evidence (Codex's write rejected by the read-only sandbox; Codex exited 0
+# anyway; NEEDLE correctly but insufficiently classified that as "success").
+# All three checks only ever downgrade an already-"success" outcome — a
+# real "failure" from NEEDLE is never overridden back to success. ----
 
-# Step 1: sandbox-rejection stderr signature, independent of --expect-write
-# (a rejected write is suspicious even on an analysis-only dispatch). Gated
-# on stderr.txt's own existence, not trace.jsonl's (dirname needs no file to
+# Step 1: sandbox-rejection stderr signature. SANDBOX_WRITE_REJECTED is an
+# independent AUDIT field, always recorded whenever the signature is
+# present in stderr.txt -- it is not itself an outcome downgrade. Gated on
+# stderr.txt's own existence, not trace.jsonl's (dirname needs no file to
 # exist — gating on the wrong file would silently skip this check on a bead
 # that wrote stderr.txt but not trace.jsonl for any reason).
-if [[ "$OUTCOME" == "success" ]]; then
-    TRACE_DIR="$(dirname "$TRACE_PATH")"
-    if [[ -f "$TRACE_DIR/stderr.txt" ]] && grep -qF "patch rejected:" "$TRACE_DIR/stderr.txt" 2>/dev/null; then
+#
+# SMI-5847: this used to downgrade any "success" outcome unconditionally
+# ("a rejected write is suspicious even on an analysis-only dispatch" — now
+# FALSIFIED). Under the 'pluck' prompt template's notes/<bead>.md write +
+# the permanently read-only sandbox (codex-adapter.yaml, ADR-128 rule 2), a
+# rejected write is the EXPECTED steady state on every dispatch that never
+# asked for one, not a signal that anything went wrong. The downgrade to
+# 'blocked-by-sandbox' below therefore only fires when the caller actually
+# signaled a write was required via --expect-write; an analysis-only run
+# that hits this same signature stays "success" (see the log-block note
+# below) — do not re-dispatch it.
+SANDBOX_WRITE_REJECTED=no
+if [[ -f "$TRACE_DIR/stderr.txt" ]] && grep -qF "patch rejected:" "$TRACE_DIR/stderr.txt" 2>/dev/null; then
+    SANDBOX_WRITE_REJECTED=yes
+    if [[ "$EXPECT_WRITE" == true ]] && [[ "$OUTCOME" == "success" ]]; then
         OUTCOME="blocked-by-sandbox"
     fi
 fi
@@ -439,25 +375,75 @@ if [[ "$OUTCOME" == "success" ]] && [[ "$EXPECT_WRITE" == true ]] && [[ "$IS_GIT
     fi
 fi
 
+# Step 3 (SMI-5847): zero-agent_message downgrade. Steps 1/2 above (and
+# NEEDLE's own outcome.classified event) only ever prove the Codex process
+# exited 0, or that a real diff landed -- none of them prove the agent
+# actually said anything readable. A 'codex exec' that exited 0 having
+# emitted only command_execution items (e.g. killed mid-turn, or the
+# SMI-5678 transform-failure class) would otherwise silently report success
+# with nothing for the operator to consume. Extraction failure (missing or
+# corrupt stdout.txt) must never flip OUTCOME or the exit code by itself --
+# the trailing '|| true' inside the substitution guarantees ANSWER_CHARS is
+# always a plain digit string (defaulting to "0"), the same non-override
+# invariant as steps 1/2: this can only ever push an already-"success" run
+# to a new failure label, never the reverse.
+ANSWER_CHARS="$(jq -r 'select(.type=="item.completed" and .item.type=="agent_message") | .item.text' \
+    "$STDOUT_PATH" 2>/dev/null | wc -c | tr -dc '0-9' || true)"
+ANSWER_CHARS="${ANSWER_CHARS:-0}"
+if [[ "$OUTCOME" == "success" ]] && [[ "$ANSWER_CHARS" -eq 0 ]]; then
+    OUTCOME="success-without-agent-message"
+fi
+
+# ---- SMI-5847: close the bead unconditionally on every terminal path
+# (including the poll-deadline-expiry failure path above) -- once OUTCOME
+# is final (all downgrades above have run) but before the log block, so the
+# log's bead_closed= field reflects the real result. Leaving a bead open
+# guarantees a paid Codex re-run of work nobody will ever consume: a
+# non-success dispatch already tells the queen to re-route to Claude-tier
+# (see usage()'s epilogue), so nothing downstream reads this bead's result
+# either way. 'bf close' is idempotent (a future SMI-5701 agent-side close
+# is therefore harmless) and NOT trusted by exit code alone (re-read via
+# 'bf show', SMI-5569 class) -- see needle_close_bead() in lib.sh.
+BEAD_CLOSED="$(needle_close_bead "$BEAD_ID" "$OUTCOME" "$WORKSPACE")"
+if [[ "$BEAD_CLOSED" != "yes" ]]; then
+    echo "[needle-dispatch] WARNING: bead $BEAD_ID is NOT closed — it stays claimable and WILL be re-run (and re-billed) by the next dispatch into this workspace after the 30-minute claim TTL. Close it manually: bf close $BEAD_ID --workspace $WORKSPACE" >&2
+fi
+
+# INCIDENTAL_NOTE is non-empty only when a rejected write was incidental to
+# an otherwise-successful analysis-only dispatch — used both in the log
+# block below and in the final stdout summary line.
+INCIDENTAL_NOTE=""
+if [[ "$OUTCOME" == "success" ]] && [[ "$SANDBOX_WRITE_REJECTED" == "yes" ]]; then
+    INCIDENTAL_NOTE=yes
+fi
+
 {
     echo "=== DISPATCH: $BEAD_ID ($(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown) UTC) ==="
     echo "workspace=$WORKSPACE model=$MODEL codex_version=$CODEX_VERSION"
-    echo "needle_run_exit=$NEEDLE_EXIT bead_state=$BEAD_STATE outcome=$OUTCOME"
+    echo "needle_run_exit=$NEEDLE_EXIT bead_state=$BEAD_STATE bead_closed=$BEAD_CLOSED outcome=$OUTCOME expect_write=$EXPECT_WRITE sandbox_write_rejected=$SANDBOX_WRITE_REJECTED"
     echo "trace=$TRACE_PATH"
+    echo "stdout=$STDOUT_PATH"
     case "$OUTCOME" in
-        success) ;;
+        success)
+            if [[ "$SANDBOX_WRITE_REJECTED" == "yes" ]]; then
+                echo "NOTE: an incidental write was rejected by the read-only sandbox (\`patch rejected:\` in the trace), but --expect-write was not set — no write was required for this dispatch to succeed. This is a complete, successful result; do not re-dispatch. See scripts/needle/README.md's Troubleshooting section."
+            fi
+            ;;
         blocked-by-sandbox)
-            echo "CODEX WRITE BLOCKED BY READ-ONLY SANDBOX — NEEDLE reported outcome=success but the trace shows a rejected write (see scripts/needle/README.md's Troubleshooting section). Re-dispatch through normal Claude-tier routing; do not treat this as the task's final outcome." ;;
+            echo "CODEX WRITE BLOCKED BY READ-ONLY SANDBOX — NEEDLE reported outcome=success but the trace shows a rejected write, and --expect-write was set (see scripts/needle/README.md's Troubleshooting section). Re-dispatch through normal Claude-tier routing; do not treat this as the task's final outcome." ;;
         no-diff-despite-expected-write)
             echo "NO WORKSPACE CHANGE DESPITE --expect-write — NEEDLE reported outcome=success but the workspace shows no diff since dispatch started (see scripts/needle/README.md's Troubleshooting section). Re-dispatch through normal Claude-tier routing; do not treat this as the task's final outcome." ;;
+        success-without-agent-message)
+            echo "CODEX EXITED SUCCESSFULLY BUT stdout.txt HAS NO agent_message — nothing readable was produced (killed mid-turn, a transform failure, or similar; see scripts/needle/README.md's Troubleshooting section). Re-dispatch through normal Claude-tier routing; do not treat this as the task's final outcome." ;;
         *)
             echo "FAILED OR UNCLASSIFIABLE — re-dispatch through normal Claude-tier routing (Sonnet by default); do not treat this as the task's final outcome." ;;
     esac
     echo ""
 } >> "$LOG"
 
-echo "[needle-dispatch] outcome=$OUTCOME bead_state=$BEAD_STATE"
+echo "[needle-dispatch] outcome=$OUTCOME bead_state=$BEAD_STATE${INCIDENTAL_NOTE:+ note=incidental-write-rejected}"
 echo "[needle-dispatch] trace: $TRACE_PATH"
+echo "[needle-dispatch] stdout: $STDOUT_PATH"
 echo "[needle-dispatch] log: $LOG"
 
 if [[ "$OUTCOME" != "success" ]]; then

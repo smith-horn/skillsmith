@@ -22,9 +22,10 @@ import Footer from '../../components/Footer.astro'
     <script is:inline>
       window.dataLayer = window.dataLayer || []
       function gtag() {
+        // eslint-disable-next-line prefer-rest-params -- Google's official gtag.js/GTM Consent Mode snippet, copied verbatim; do not modify (SMI-5899)
         dataLayer.push(arguments)
       }
-      var consent = localStorage.getItem('skillsmith_cookie_consent')
+      const consent = localStorage.getItem('skillsmith_cookie_consent')
       gtag('consent', 'default', {
         analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
         ad_storage: 'denied',
@@ -167,9 +168,9 @@ import Footer from '../../components/Footer.astro'
     </div>
     <script is:inline>
       ;(function () {
-        var c = localStorage.getItem('skillsmith_cookie_consent')
+        const c = localStorage.getItem('skillsmith_cookie_consent')
         if (c) return
-        var b = document.getElementById('cookie-consent')
+        const b = document.getElementById('cookie-consent')
         if (!b) return
         b.hidden = false
         document.getElementById('cookie-accept').addEventListener('click', function () {
@@ -448,15 +449,15 @@ import Footer from '../../components/Footer.astro'
     if (typeof window.gtag !== 'function') return
 
     // Read session_id from URL (Stripe checkout session)
-    var params = new URLSearchParams(window.location.search)
-    var sessionId = params.get('session_id')
+    const params = new URLSearchParams(window.location.search)
+    const sessionId = params.get('session_id')
 
     // Read checkout context saved before Stripe redirect
-    var raw = sessionStorage.getItem('skillsmith_checkout')
+    const raw = sessionStorage.getItem('skillsmith_checkout')
     if (!raw) return
 
     try {
-      var checkout = JSON.parse(raw)
+      const checkout = JSON.parse(raw)
       window.gtag('event', 'purchase', {
         transaction_id: sessionId || 'fallback_' + Date.now(),
         value: checkout.value || 0,

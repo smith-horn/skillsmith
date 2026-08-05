@@ -30,6 +30,10 @@ import {
   mapLocalSkillToSearchResult,
   resolveDefaultCompatibility,
   buildEmptySearchSuggestion,
+  resolveSearchLimit,
+  MIN_SEARCH_LIMIT,
+  MAX_SEARCH_LIMIT,
+  DEFAULT_SEARCH_LIMIT,
 } from './search.helpers.js'
 export { formatSearchResults } from './search.formatter.js'
 
@@ -110,6 +114,14 @@ export const searchToolSchema = {
           },
         },
       },
+      // SMI-5896: advertised in the description but absent here. Bounds are
+      // advisory to the client only — resolveSearchLimit() enforces them.
+      limit: {
+        type: 'number',
+        description: `Maximum results to return (default ${DEFAULT_SEARCH_LIMIT}). Out-of-range values are clamped, not rejected.`,
+        minimum: MIN_SEARCH_LIMIT,
+        maximum: MAX_SEARCH_LIMIT,
+      },
     },
     required: [], // Query is optional if filters are provided
   },
@@ -136,6 +148,12 @@ export interface SearchInput {
   max_risk?: number
   /** SMI-2760: Filter by IDE/LLM compatibility */
   compatible_with?: CompatibilityFilter
+  /**
+   * SMI-5896: Maximum results to return. Defaults to
+   * {@link DEFAULT_SEARCH_LIMIT} (10) when omitted; clamped (not rejected)
+   * to [{@link MIN_SEARCH_LIMIT}, {@link MAX_SEARCH_LIMIT}] otherwise.
+   */
+  limit?: number
 }
 
 /**
@@ -258,6 +276,11 @@ async function executeSearchImpl(
     filters.maxRiskScore = input.max_risk
   }
 
+  // SMI-5896: hardcoded to 10 in both branches below despite the description
+  // already advertising `limit` — it was simply never read. resolveSearchLimit
+  // doubles as this parameter's validation boundary (args aren't validated).
+  const limit = resolveSearchLimit(input.limit)
+
   const searchStart = performance.now()
 
   // SMI-1183: Try API first, fall back to local DB
@@ -265,7 +288,7 @@ async function executeSearchImpl(
     try {
       const apiResponse = await context.apiClient.search({
         query: hasQuery ? input.query!.trim() : '',
-        limit: 10,
+        limit,
         offset: 0,
         trustTier: filters.trustTier ? mapTrustTierToDb(filters.trustTier) : undefined,
         minQualityScore: filters.minScore,
@@ -310,7 +333,7 @@ async function executeSearchImpl(
       const endTime = performance.now()
 
       const response: SearchResponse = {
-        results: mergedResults.slice(0, 10), // Limit to 10 total
+        results: mergedResults.slice(0, limit), // SMI-5896: was hardcoded to 10
         // SMI-4954/C1: key off effectiveInstallableOnly so default-ON also
         // reports the filtered total (not the registry grand-total).
         total: effectiveInstallableOnly
@@ -374,7 +397,7 @@ async function executeSearchImpl(
 
   const searchResults = context.searchService.search({
     query: searchQuery,
-    limit: 10,
+    limit,
     offset: 0,
     trustTier: dbTrustTier,
     minQualityScore: filters.minScore,
@@ -417,7 +440,7 @@ async function executeSearchImpl(
   const endTime = performance.now()
 
   const response: SearchResponse = {
-    results: mergedResults.slice(0, 10), // Limit to 10 total
+    results: mergedResults.slice(0, limit), // SMI-5896: was hardcoded to 10
     // SMI-4954/C1: key off effectiveInstallableOnly so default-ON reports filtered total.
     total: effectiveInstallableOnly
       ? mergedResults.length

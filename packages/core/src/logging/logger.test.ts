@@ -55,6 +55,17 @@ async function waitForLogFile(surfacePrefix: string): Promise<string[]> {
     () => {
       const files = readdirSync(tempDir).filter((f) => f.startsWith(surfacePrefix))
       expect(files.length).toBeGreaterThan(0)
+      // SMI-5837: `createWriteStream`'s `'open'` event (which makes the file
+      // show up in `readdirSync` below) can fire — under I/O contention —
+      // before the first `write()` callback actually lands the bytes; a
+      // caller that immediately `readFileSync`s + `JSON.parse`s right after
+      // this resolves would then observe a 0-byte file and fail with
+      // "Unexpected end of JSON input", unrelated to whatever the test is
+      // actually asserting. Requiring non-empty content here (not just
+      // existence) closes that window for every call site at once, instead
+      // of requiring each one to duplicate its own follow-up wait.
+      const content = readFileSync(join(tempDir, files[0]), 'utf8')
+      expect(content.length).toBeGreaterThan(0)
       return files
     },
     { timeout: 2000, interval: 20 }
@@ -347,6 +358,52 @@ describe('logger.ts — crash-proofing', () => {
     const calledWith = errorSpy.mock.calls.map((call) => call[0]).join('\n')
     expect(calledWith).not.toContain(secret)
     expect(calledWith).toContain('sk_live_[REDACTED]')
+  })
+})
+
+describe('logger.ts — SMI-5837 regression: write queue drains before test-state reset', () => {
+  // Deterministic (not stress/probabilistic) regression coverage for the
+  // actual root cause: `logger.error()` is fire-and-forget (F2's design —
+  // callers never await the disk write), so immediately calling
+  // `__resetLoggingStateForTests()` right after, with NO poll/wait in
+  // between, exercises exactly the window the bug lived in. Before the fix,
+  // `__resetLoggingStateForTests()` only closed whatever stream was
+  // *currently* tracked and cleared state — it did not await the pending
+  // write itself, so at this point in the test the write realistically
+  // cannot have completed yet (`mkdir`+`open`+`write` all cross real event
+  // loop turns), and the assertions below would reliably fail against the
+  // old code. After the fix, `__resetLoggingStateForTests()` awaits every
+  // surface's queue tail first, so the write is guaranteed complete by the
+  // time it resolves — no waiting/polling needed here, and none of the
+  // `vi.waitFor`-based tests elsewhere in this file would have caught a
+  // regression here since they mask exactly this race by retrying.
+  it('the write is durably on disk immediately after __resetLoggingStateForTests() resolves, with zero additional waiting', async () => {
+    for (let i = 0; i < 10; i++) {
+      const iterDir = mkdtempSync(join(tmpdir(), 'skillsmith-logger-drain-'))
+      const priorLogDir = process.env.SKILLSMITH_LOG_DIR
+      process.env.SKILLSMITH_LOG_DIR = iterDir
+      try {
+        const logger = createLogger('mcp')
+        await runWithCorrelationId(`corr-drain-${i}`, async () => {
+          logger.error(`drain iteration ${i}`)
+        })
+
+        // No waitForLogFile / vi.waitFor here — that's the point.
+        await __resetLoggingStateForTests()
+
+        const files = readdirSync(iterDir).filter((f) => f.startsWith('skillsmith-mcp-'))
+        expect(files).toHaveLength(1)
+        const content = readFileSync(join(iterDir, files[0]), 'utf8')
+        expect(content.length).toBeGreaterThan(0)
+        const record = JSON.parse(content.trim().split('\n')[0])
+        expect(record.msg).toBe(`drain iteration ${i}`)
+        expect(record.correlationId).toBe(`corr-drain-${i}`)
+      } finally {
+        if (priorLogDir === undefined) delete process.env.SKILLSMITH_LOG_DIR
+        else process.env.SKILLSMITH_LOG_DIR = priorLogDir
+        rmSync(iterDir, { recursive: true, force: true })
+      }
+    }
   })
 })
 

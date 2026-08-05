@@ -24,6 +24,12 @@ import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubRegistryService } from './registry-tools.stub.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
+import { executeRegistryInstall } from './registry-tools.install-action.js'
+import type {
+  PrivateRegistryInstallSummary,
+  RegistrySkillContent,
+} from './registry-tools.content.types.js'
+import { hasSafeSkillIdSegments } from './registry-tools.skill-id.js'
 
 // Re-export stub factory for external consumers and tests
 export { createStubRegistryService } from './registry-tools.stub.js'
@@ -45,6 +51,7 @@ export const privateRegistryPublishInputSchema = z.object({
   skillId: z
     .string()
     .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
+    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
     .describe('Skill identifier in author/name format'),
   version: z
     .string()
@@ -62,13 +69,15 @@ export const privateRegistryPublishInputSchema = z.object({
 export type PrivateRegistryPublishInput = z.infer<typeof privateRegistryPublishInputSchema>
 
 export const privateRegistryManageInputSchema = z.object({
-  action: z.enum(['list', 'get', 'deprecate', 'undeprecate']),
+  action: z.enum(['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install']),
   skillId: z
     .string()
     .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
+    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
     .optional()
-    .describe('Skill identifier (required for get/deprecate/undeprecate)'),
-  version: z.string().optional().describe('Optional version filter'),
+    .describe('Skill identifier (required for get/deprecate/undeprecate/install)'),
+  version: z.string().optional().describe('Version filter; "install" defaults to most recent'),
+  force: z.boolean().optional().describe('SMI-5905: reinstall over an existing install'),
 })
 
 export type PrivateRegistryManageInput = z.infer<typeof privateRegistryManageInputSchema>
@@ -112,24 +121,28 @@ export const privateRegistryPublishToolSchema = {
 export const privateRegistryManageToolSchema = {
   name: 'private_registry_manage' as const,
   description:
-    'Manage skills in your private registry (list, get, deprecate, undeprecate). ' +
-    'Requires Enterprise tier (private_registry feature).',
+    'Manage skills in your private registry (list, get, install, deprecate, undeprecate, ' +
+    'namespace). Requires Enterprise tier (private_registry feature).',
   inputSchema: {
     type: 'object' as const,
     properties: {
       action: {
         type: 'string',
-        enum: ['list', 'get', 'deprecate', 'undeprecate'],
-        description: 'Registry operation to perform',
+        enum: ['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install'],
+        description:
+          'Registry operation to perform. "namespace" returns your team\'s publish ' +
+          'namespace (the required skill_id prefix) without attempting a publish. ' +
+          '"install" downloads the skill and writes it to your skills directory.',
       },
       skillId: {
         type: 'string',
-        description: 'Skill ID in author/name format (required for get/deprecate/undeprecate)',
+        description: 'Skill ID in author/name format (get/deprecate/undeprecate/install)',
       },
       version: {
         type: 'string',
-        description: 'Optional version filter',
+        description: 'Version filter; "install" defaults to the most recently published',
       },
+      force: { type: 'boolean', description: 'Reinstall over an existing install' },
     },
     required: ['action'],
   },
@@ -153,6 +166,9 @@ export interface PrivateRegistryPublishResult {
   success: boolean
   dataSource: 'stub' | 'live'
   skill?: RegistrySkill
+  /** The team's publish namespace (SMI-5852, AC-11) — surfaced on success too, not only
+   *  as an error-path side effect, so a first publish need not be how a team discovers it. */
+  skillNamespace?: string
   message?: string
   error?: string
 }
@@ -162,6 +178,10 @@ export interface PrivateRegistryManageResult {
   dataSource: 'stub' | 'live'
   skills?: RegistrySkill[]
   skill?: RegistrySkill
+  /** Present for action:'namespace' — the team's publish namespace (SMI-5852, AC-11). */
+  namespace?: string
+  /** Present for action:'install' (SMI-5905). An allowlist — never carries raw `content`. */
+  install?: PrivateRegistryInstallSummary
   message?: string
   error?: string
 }
@@ -191,8 +211,25 @@ export interface PrivateRegistryService {
   ): Promise<RegistrySkill>
   list(teamId: string, version?: string): Promise<RegistrySkill[]>
   get(teamId: string, skillId: string, version?: string): Promise<RegistrySkill | null>
+  /** SMI-5905: one version's packaged `content`, for install. `null` when nothing visible
+   *  matches (absent OR cross-team — deliberately indistinguishable). Throws when the row's OWN
+   *  team is no longer Enterprise-entitled: that check lives in the implementation, never in a
+   *  caller. Version semantics are `get()`'s — explicit pins, omitted = most recently published. */
+  getContent(
+    teamId: string,
+    skillId: string,
+    version?: string
+  ): Promise<RegistrySkillContent | null>
   deprecate(teamId: string, skillId: string): Promise<boolean>
   undeprecate(teamId: string, skillId: string): Promise<boolean>
+  /**
+   * The team's publish namespace (teams.skill_namespace — SMI-5852), or null if it
+   * could not be resolved. Used both for a UX pre-check before publish (surfacing a
+   * namespace mismatch as a typed error instead of a raw DB-trigger exception) and
+   * for the dedicated `manage(action: 'namespace')` read path (AC-11) — a team should
+   * be able to discover its namespace without attempting a publish at all.
+   */
+  getNamespace(teamId: string): Promise<string | null>
 }
 
 /**
@@ -265,6 +302,29 @@ async function executePrivateRegistryPublishImpl(
     }
   }
 
+  // SMI-5852 UX pre-check: the DB trigger (enforce_private_skill_namespace) is the
+  // actual security boundary — this only surfaces a namespace mismatch as an
+  // actionable typed error instead of a raw 23514. A lookup failure (M3, known and
+  // accepted gap — not applied this round) does NOT block the publish attempt; the
+  // trigger still enforces correctness either way.
+  let skillNamespace: string | undefined
+  try {
+    const namespace = await service.getNamespace(teamId)
+    if (namespace) {
+      skillNamespace = namespace
+      const requestedNamespace = input.skillId.split('/')[0]
+      if (requestedNamespace !== namespace) {
+        return {
+          success: false,
+          dataSource,
+          error: `skill_id must start with "${namespace}/" for this team's private registry namespace.`,
+        }
+      }
+    }
+  } catch {
+    // Lookup failure — skip the pre-check, let the DB trigger be the sole gate.
+  }
+
   // Service errors (immutability conflict, size cap, missing SKILL.md, missing
   // service-role key) surface as typed {success:false} results, not exceptions.
   try {
@@ -279,6 +339,7 @@ async function executePrivateRegistryPublishImpl(
       success: true,
       dataSource,
       skill,
+      skillNamespace,
       message:
         `Published ${input.skillId}@${input.version} to private registry.\n` +
         `Registry URL: ${skill.registryUrl}`,
@@ -297,7 +358,7 @@ async function executePrivateRegistryPublishImpl(
  */
 async function executePrivateRegistryManageImpl(
   input: PrivateRegistryManageInput,
-  _context: ToolContext
+  context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   let teamId: string
@@ -339,6 +400,10 @@ async function executePrivateRegistryManageImpl(
         }
         return { success: true, dataSource, skill }
       }
+
+      // SMI-5905 Wave 3. Handler lives in a companion file (this one was 466/500 lines).
+      case 'install':
+        return executeRegistryInstall({ input, teamId, dataSource, service, context })
 
       case 'deprecate': {
         if (!input.skillId) {
@@ -383,6 +448,25 @@ async function executePrivateRegistryManageImpl(
           success: true,
           dataSource,
           message: `Skill "${input.skillId}" has been undeprecated and is now visible in search results.`,
+        }
+      }
+
+      // SMI-5852, AC-11: discover the team's publish namespace without attempting a
+      // publish (the required skill_id prefix, e.g. "acme" for "acme/my-skill").
+      case 'namespace': {
+        const namespace = await service.getNamespace(teamId)
+        if (!namespace) {
+          return {
+            success: false,
+            dataSource,
+            error: "Unable to resolve this team's private registry namespace.",
+          }
+        }
+        return {
+          success: true,
+          dataSource,
+          namespace,
+          message: `Your team's private registry namespace is "${namespace}".`,
         }
       }
     }

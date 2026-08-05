@@ -51,6 +51,21 @@ jobs:
       mode: ${{ steps.detect.outputs.mode }}
       functions: ${{ steps.detect.outputs.functions }}
     steps:
+      - name: Deploy-freeze gate (E)
+        # SMI-5879: shares ONE variable with Gate D (indexer.yml) so a single operator
+        # action arms both -- the deployed revision D and the writer SHA S cannot
+        # desynchronize. Non-empty pin => the ONLY source that may reach prod is that
+        # exact commit. Blocks a workflow_dispatch from ANY ref (including a feature
+        # branch with deploy_all:true, which would otherwise take the mode=all arm
+        # below and push 31 functions from an unrelated tree). Inert when empty =
+        # steady state.
+        if: vars.INDEXER_RUN_PINNED_SHA != ''
+        run: |
+          if [ "${{ github.sha }}" != "${{ vars.INDEXER_RUN_PINNED_SHA }}" ]; then
+            echo "::error::SMI-5879 deploy freeze: source SHA ${{ github.sha }} != pinned ${{ vars.INDEXER_RUN_PINNED_SHA }}. Edge deploys are frozen for the change window. If this is the PR's own merge-triggered run, this red run is EXPECTED -- see the runbook; re-point the pin to the squash SHA and re-dispatch with deploy_all=true."
+            exit 1
+          fi
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 2 # Need parent commit for diff (assumes squash-merge)

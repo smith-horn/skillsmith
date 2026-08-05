@@ -1,58 +1,57 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+
+const howToSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'HowTo',
+  name: 'How to Set Up Cross-Machine Skill Inventory',
+  description:
+    "Push your installed agent skills to your Skillsmith account so you can compare what's installed across every machine and harness you use",
+  totalTime: 'PT5M',
+  tool: [{ '@type': 'HowToTool', name: 'Skillsmith CLI (npm install -g @skillsmith/cli)' }],
+  step: [
+    {
+      '@type': 'HowToStep',
+      position: 1,
+      name: 'Create or sign in to a Skillsmith account',
+      text: 'Create a free account, or sign in if you already have one, at https://www.skillsmith.app.',
+    },
+    {
+      '@type': 'HowToStep',
+      position: 2,
+      name: 'Install the CLI',
+      text: "Run 'npm install -g @skillsmith/cli'. Requires Node.js 22.22 or newer.",
+    },
+    {
+      '@type': 'HowToStep',
+      position: 3,
+      name: 'Log in',
+      text: "Run 'skillsmith login' to complete a device login in your browser, linking the CLI to the same account as your web session.",
+    },
+    {
+      '@type': 'HowToStep',
+      position: 4,
+      name: 'Enable cross-machine skill inventory',
+      text: "Visit https://www.skillsmith.app/account/telemetry, turn on 'Cross-machine skill inventory', and press Save.",
+    },
+    {
+      '@type': 'HowToStep',
+      position: 5,
+      name: 'Push your inventory',
+      text: "Run 'skillsmith inventory push'.",
+    },
+    {
+      '@type': 'HowToStep',
+      position: 6,
+      name: 'View your inventory',
+      text: 'Visit https://www.skillsmith.app/account/skills to see the skills installed across your machines.',
+    },
+  ],
+};
 ---
 
 <DocsLayout title="Cross-Machine Skill Inventory" description="See the agent skills installed across every machine and harness you use — opt-in, read-only, and synced from a CLI push">
-  <script is:inline type="application/ld+json" slot="head">
-  {
-    "@context": "https://schema.org",
-    "@type": "HowTo",
-    "name": "How to Set Up Cross-Machine Skill Inventory",
-    "description": "Push your installed agent skills to your Skillsmith account so you can compare what's installed across every machine and harness you use",
-    "totalTime": "PT5M",
-    "tool": [
-      { "@type": "HowToTool", "name": "Skillsmith CLI (npm install -g @skillsmith/cli)" }
-    ],
-    "step": [
-      {
-        "@type": "HowToStep",
-        "position": 1,
-        "name": "Create or sign in to a Skillsmith account",
-        "text": "Create a free account, or sign in if you already have one, at https://www.skillsmith.app."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 2,
-        "name": "Install the CLI",
-        "text": "Run 'npm install -g @skillsmith/cli'. Requires Node.js 22.22 or newer."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 3,
-        "name": "Log in",
-        "text": "Run 'skillsmith login' to complete a device login in your browser, linking the CLI to the same account as your web session."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 4,
-        "name": "Enable cross-machine skill inventory",
-        "text": "Visit https://www.skillsmith.app/account/telemetry, turn on 'Cross-machine skill inventory', and press Save."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 5,
-        "name": "Push your inventory",
-        "text": "Run 'skillsmith inventory push'."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 6,
-        "name": "View your inventory",
-        "text": "Visit https://www.skillsmith.app/account/skills to see the skills installed across your machines."
-      }
-    ]
-  }
-  </script>
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(howToSchema)} />
 
   <h1>Cross-Machine Skill Inventory</h1>
 

@@ -47,7 +47,7 @@ export interface InstalledSkill {
  * Returns the local skills directory path.
  * Computed at call time to handle working directory changes.
  */
-function getLocalSkillsDir(): string {
+export function getLocalSkillsDir(): string {
   return join(process.cwd(), '.claude', 'skills')
 }
 
@@ -407,6 +407,33 @@ export async function getInstalledSkillsPerHarness(): Promise<HarnessSkillEntry[
  * @param dbPath Optional path to the Skillsmith SQLite database for
  *               update detection.
  */
+/**
+ * Dedup a precedence-ordered list of scan results by both skill name AND
+ * resolved path. Name-keying enforces "first entry in the array wins" when
+ * two directories carry independently-installed copies of the same skill.
+ * Realpath-keying collapses symlinked aliases (e.g. `~/.agents/skills` ->
+ * `~/.claude/skills`) so the symlinked entry doesn't appear twice when the
+ * second hop has a different `installedVia` label.
+ *
+ * Shared by {@link getInstalledSkills} (dedupes across every client) and
+ * {@link getInstalledSkillsForClient} (dedupes across just local + one
+ * client) so the two functions can't drift on dedup semantics (SMI-5894).
+ */
+async function dedupeByNameAndPath(ordered: InstalledSkill[]): Promise<InstalledSkill[]> {
+  const seenNames = new Set<string>()
+  const seenPaths = new Set<string>()
+  const out: InstalledSkill[] = []
+  for (const skill of ordered) {
+    if (seenNames.has(skill.name)) continue
+    const realPath = await safeRealpath(skill.path)
+    if (seenPaths.has(realPath)) continue
+    seenNames.add(skill.name)
+    seenPaths.add(realPath)
+    out.push(skill)
+  }
+  return out
+}
+
 export async function getInstalledSkills(dbPath?: string): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
 
@@ -429,22 +456,36 @@ export async function getInstalledSkills(dbPath?: string): Promise<InstalledSkil
     if (list) ordered.push(...list)
   }
 
-  // Dedup by both skill name AND resolved path. Name-keying enforces the
-  // precedence rule (local > canonical > others) when two clients carry
-  // independently-installed copies of the same skill. Realpath-keying
-  // collapses symlinked aliases (e.g. `~/.agents/skills` → `~/.claude/skills`)
-  // so the symlinked entry doesn't appear twice when the second hop has a
-  // different `installedVia` label.
-  const seenNames = new Set<string>()
-  const seenPaths = new Set<string>()
-  const out: InstalledSkill[] = []
-  for (const skill of ordered) {
-    if (seenNames.has(skill.name)) continue
-    const realPath = await safeRealpath(skill.path)
-    if (seenPaths.has(realPath)) continue
-    seenNames.add(skill.name)
-    seenPaths.add(realPath)
-    out.push(skill)
-  }
-  return out
+  return dedupeByNameAndPath(ordered)
+}
+
+/**
+ * SMI-5894 (Wave 1 Steps 2/3): like {@link getInstalledSkills}, but scoped
+ * to a single resolved client's directory instead of scanning + deduping
+ * across every client.
+ *
+ * Repo-local skills (`./.claude/skills`) still take precedence, matching
+ * the SMI-1630 "repo-local overrides global" rule `getInstalledSkills()`
+ * already applies — local skills aren't tied to any particular client's
+ * harness config, so they stay in scope regardless of which client is
+ * targeted.
+ *
+ * This is what lets `remove`/`update --client cursor` resolve unambiguously
+ * to the Cursor copy of a same-named skill, instead of being silently
+ * redirected to a different client's copy by {@link getInstalledSkills}'s
+ * global cross-client dedup (which keeps whichever client wins precedence,
+ * not necessarily the one the caller asked about).
+ */
+export async function getInstalledSkillsForClient(
+  client: ClientId,
+  dbPath?: string
+): Promise<InstalledSkill[]> {
+  const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
+
+  const [localSkills, clientSkills] = await Promise.all([
+    getSkillsFromDirectory(getLocalSkillsDir(), resolvedDbPath, 'local'),
+    getSkillsFromDirectory(CLIENT_NATIVE_PATHS[client], resolvedDbPath, client),
+  ])
+
+  return dedupeByNameAndPath([...localSkills, ...clientSkills])
 }

@@ -51,6 +51,41 @@ export async function getSupabaseAdminClient(): Promise<unknown> {
   }
 }
 
+/**
+ * Build a Supabase client bound to a specific end-user's access token (SMI-5882 / SMI-5822).
+ *
+ * Deliberately NOT a singleton: the returned client carries one user's JWT in its headers, so
+ * caching it process-wide would let a later caller inherit an earlier caller's identity — the
+ * exact confusion this path exists to remove.
+ *
+ * Requests made through it reach PostgREST as the `authenticated` role with `auth.uid()` resolved
+ * from the token, so row-level security (e.g. `private_registry_skills_admin_update`) is the thing
+ * that authorizes them, rather than app-level logic that can drift from the policy.
+ *
+ * @param accessToken - a Supabase user access token (from `skillsmith login`)
+ */
+export async function getSupabaseUserClient(accessToken: string): Promise<unknown> {
+  const url = process.env.SUPABASE_URL
+  const anonKey = process.env.SUPABASE_ANON_KEY
+  if (!url || !anonKey) {
+    throw new Error('Supabase not configured: SUPABASE_URL and SUPABASE_ANON_KEY required')
+  }
+  if (!accessToken) {
+    throw new Error('Supabase user client requires a non-empty access token')
+  }
+  try {
+    const { createClient } = await import('@supabase/supabase-js')
+    return createClient(url, anonKey, {
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      // The MCP subprocess is not a browser session: never persist or background-refresh here.
+      // Token lifecycle is owned by the CLI credential store (SMI-4402).
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  } catch {
+    throw new Error('Supabase client unavailable: @supabase/supabase-js not installed')
+  }
+}
+
 /** Check if Supabase is configured (env vars present) */
 export function isSupabaseConfigured(): boolean {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)

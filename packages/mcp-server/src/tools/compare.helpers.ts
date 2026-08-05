@@ -3,8 +3,12 @@
  * @module @skillsmith/mcp-server/tools/compare.helpers
  */
 
-import type { MCPTrustTier as TrustTier } from '@skillsmith/core'
-import { mapTrustTierFromDb, extractCategoryFromTags } from '../utils/validation.js'
+import type { MCPTrustTier as TrustTier, ApiSearchResult } from '@skillsmith/core'
+import {
+  mapTrustTierFromDb,
+  extractCategoryFromTags,
+  normalizeApiCategory,
+} from '../utils/validation.js'
 import type {
   ExtendedSkill,
   SkillSummary,
@@ -12,6 +16,20 @@ import type {
   DbSkillRecord,
 } from './compare.types.js'
 import { TRUST_TIER_RANK } from './compare.types.js'
+
+/** Non-category tags filtered out when deriving `features` from tags. */
+const FEATURE_EXCLUDED_TAGS = [
+  'development',
+  'testing',
+  'documentation',
+  'devops',
+  'database',
+  'security',
+  'productivity',
+  'integration',
+  'ai-ml',
+  'other',
+]
 
 /**
  * Convert skill to summary
@@ -256,21 +274,50 @@ export function dbSkillToExtended(dbSkill: DbSkillRecord): ExtendedSkill {
     // Note: Dependencies not yet stored in database - field reserved for future use
     dependencies: [],
     // Use non-category tags as feature indicators
-    features: tags.filter(
-      (t) =>
-        ![
-          'development',
-          'testing',
-          'documentation',
-          'devops',
-          'database',
-          'security',
-          'productivity',
-          'integration',
-          'ai-ml',
-          'other',
-        ].includes(t.toLowerCase())
-    ),
+    features: tags.filter((t) => !FEATURE_EXCLUDED_TAGS.includes(t.toLowerCase())),
+  }
+}
+
+/**
+ * Convert an API-sourced skill (registry search/get result) to extended
+ * skill format.
+ *
+ * SMI-5896: sibling to dbSkillToExtended, added so skill_compare can render
+ * an API-resolved skill through the same comparison logic used for a
+ * local-DB one — resolveSkillApiFirst (packages/core) now tries the registry
+ * API first, so compare needs an API-shape converter it previously never had.
+ *
+ * Category resolution mirrors get-skill.ts's API-path preference (the API's
+ * `categories[0]`, falling back to tag inference) rather than inventing a
+ * third category-resolution strategy for this one call site.
+ *
+ * Note: the registry API does not return per-skill dependency data for
+ * compare's purposes — always `[]` here too, mirroring dbSkillToExtended's
+ * "reserved for future use" comment.
+ */
+export function apiSkillToExtended(apiSkill: ApiSearchResult): ExtendedSkill {
+  const tags = apiSkill.tags || []
+  return {
+    id: apiSkill.id,
+    name: apiSkill.name,
+    description: apiSkill.description || '',
+    author: apiSkill.author || 'unknown',
+    repository: apiSkill.repo_url || undefined,
+    version: undefined,
+    category: normalizeApiCategory(apiSkill.categories?.[0]) ?? extractCategoryFromTags(tags),
+    trustTier: mapTrustTierFromDb(apiSkill.trust_tier as TrustTier),
+    score: Math.round((apiSkill.quality_score ?? 0) * 100),
+    scoreBreakdown: undefined,
+    tags,
+    installCommand: 'claude skill add ' + apiSkill.id,
+    // SMI-1577: Handle optional date fields with sentinel value — parity with
+    // get-skill.ts's API-path defensive fallback for the same fields.
+    createdAt: apiSkill.created_at ?? '1970-01-01T00:00:00.000Z',
+    updatedAt: apiSkill.updated_at ?? '1970-01-01T00:00:00.000Z',
+    // Note: dependencies not returned by the registry API for this shape — reserved for future use
+    dependencies: [],
+    // Use non-category tags as feature indicators
+    features: tags.filter((t) => !FEATURE_EXCLUDED_TAGS.includes(t.toLowerCase())),
   }
 }
 

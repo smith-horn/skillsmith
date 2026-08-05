@@ -112,6 +112,10 @@ jobs:
           - Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
           Action: bump the pinned esm.sh version in \`supabase/functions/**/*.ts\` to a release outside the affected range. Verify via \`npm view $PKG versions --json\` and update the import URL to a fresh semver pin.
+
+          ## Acceptance Criteria
+          - [ ] The pinned version is bumped past the affected range ($RANGE)
+          - [ ] Verified via \`npm view $PKG versions --json\` that the new pin is outside the affected range
           EOF
           )
             node scripts/linear-api.mjs create-issue \
@@ -141,6 +145,10 @@ jobs:
           - Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
           This is an advisory signal only — staleness alone is NOT a CVE. Consider bumping if the diff is small and there is no behavior change. The advisory check (separate Linear issues) is the load-bearing supply-chain signal.
+
+          ## Acceptance Criteria
+          - [ ] The pin is bumped to \`$LATEST\` (or a newer release), OR an explicit decision to defer is documented in a comment on this issue
+          - [ ] If deferred, the rationale references why the diff/behavior-change risk outweighs the staleness signal
           EOF
           )
             node scripts/linear-api.mjs create-issue \

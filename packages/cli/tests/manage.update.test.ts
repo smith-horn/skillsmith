@@ -223,38 +223,11 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       }
     })
 
-    it('falls back to the remote registry when the local cache is empty (SMI-5427)', async () => {
-      await mockInstalledSkill('astro', { version: '1.0.0', id: 'wrsmith108/astro' })
-      mockCache([])
-      mocks.apiClient.isOffline = () => false
-      mocks.apiClient.getSkill = vi.fn().mockResolvedValue({
-        data: {
-          repo_url: 'https://github.com/wrsmith108/astro',
-          name: 'astro',
-          trust_tier: 'community',
-        },
-      })
-
-      const { getSkillDiff } = await import('../src/commands/manage.js')
-      const result = await getSkillDiff('astro', '/fake/db.sqlite')
-
-      expect(result).not.toBe('not-installed')
-      expect(result).not.toBe('unresolvable')
-      if (typeof result === 'object') {
-        expect(result.skillId).toBe('wrsmith108/astro')
-      }
-    })
-
-    it('returns "unresolvable" when installed but no registry id can be found', async () => {
-      // No `id:` front-matter and empty local cache and offline registry.
-      await mockInstalledSkill('mystery-skill', { version: '1.0.0' })
-      mockCache([])
-
-      const { getSkillDiff } = await import('../src/commands/manage.js')
-      const result = await getSkillDiff('mystery-skill', '/fake/db.sqlite')
-
-      expect(result).toBe('unresolvable')
-    })
+    // SMI-5895 Wave 2 Step 1: the "local cache empty -> fall back to a
+    // recorded source" and "unresolvable" cases now resolve via the
+    // manifest / a confidence-gated SourceRecoveryService recovery instead
+    // of the dead `resolveInstalledSkillId()` SKILL.md front-matter read
+    // this file previously exercised. See manage.update.source-recovery.test.ts.
   })
 
   describe('updateSkill', () => {

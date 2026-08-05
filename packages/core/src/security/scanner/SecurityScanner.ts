@@ -11,12 +11,11 @@ import {
   SUSPICIOUS_PATTERNS,
   AI_DEFENCE_PATTERNS,
 } from './patterns.js'
-import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
+import { safeRegexTest, safeRegexCheck, MAX_CONTENT_LENGTH_FOR_REGEX } from './regex-utils.js'
 
 // Import helpers
 import type { LineContext } from './SecurityScanner.helpers.js'
 import {
-  isMultilinePattern,
   analyzeMarkdownContext,
   isDocumentationContext,
   isWithinInlineCode,
@@ -46,6 +45,10 @@ import {
   escalateCodeExecution,
 } from './SecurityScanner.exec.js'
 
+// SMI-5876: evidence-tier classification + corroboration escalation for
+// jailbreak/ai_defence findings.
+import { classifyEvidence, escalateCorroboratedMentions } from './SecurityScanner.evidence.js'
+
 // Import formatters (used for both re-export and static methods)
 import {
   toMinimalRefs,
@@ -57,7 +60,6 @@ import {
 // Re-export helpers and formatters for public API
 export {
   LineContext,
-  isMultilinePattern,
   analyzeMarkdownContext,
   isDocumentationContext,
   isWithinInlineCode,
@@ -125,16 +127,21 @@ export class SecurityScanner {
     return findings
   }
 
-  private scanJailbreakPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
+  private scanJailbreakPatterns(
+    content: string,
+    lineContexts: LineContext[] | undefined,
+    maxMultilineLength: number
+  ): SecurityFinding[] {
     return scanPatternsWithMultilineSupport(
       content,
       {
         type: 'jailbreak',
         messagePrefix: 'Potential jailbreak pattern detected',
         patterns: JAILBREAK_PATTERNS,
-        severities: ['high', 'critical'],
+        classify: classifyEvidence,
       },
-      lineContexts
+      lineContexts,
+      maxMultilineLength
     )
   }
 
@@ -201,7 +208,8 @@ export class SecurityScanner {
 
   private scanAIDefenceVulnerabilities(
     content: string,
-    lineContexts?: LineContext[]
+    lineContexts: LineContext[] | undefined,
+    maxMultilineLength: number
   ): SecurityFinding[] {
     return scanPatternsWithMultilineSupport(
       content,
@@ -209,9 +217,10 @@ export class SecurityScanner {
         type: 'ai_defence',
         messagePrefix: 'AI injection pattern detected',
         patterns: AI_DEFENCE_PATTERNS,
-        severities: ['high', 'critical'],
+        classify: classifyEvidence,
       },
-      lineContexts
+      lineContexts,
+      maxMultilineLength
     )
   }
 
@@ -227,13 +236,30 @@ export class SecurityScanner {
       findings.push({
         type: 'suspicious_pattern',
         severity: 'low',
-        message: `Content exceeds maximum length (${this.maxContentLength} bytes)`,
+        message: `Content exceeds maximum length (${this.maxContentLength} code units)`,
+      })
+    }
+
+    // SMI-5881: the multiline (full-content) regex pass has its OWN, much
+    // smaller cap than maxContentLength — a ReDoS budget input, not a free
+    // parameter (see MAX_CONTENT_LENGTH_FOR_REGEX's own comment for why this
+    // isn't simply raised to match maxContentLength). A lower configured
+    // maxContentLength tightens this further; it never widens it.
+    const effectiveMultilineLimit = Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, this.maxContentLength)
+    if (content.length > effectiveMultilineLimit) {
+      findings.push({
+        type: 'suspicious_pattern',
+        severity: 'low',
+        message:
+          `Multiline regex scan truncated at ${effectiveMultilineLimit} code units ` +
+          `(content is ${content.length} code units; configured maxContentLength is ` +
+          `${this.maxContentLength} code units)`,
       })
     }
 
     findings.push(...this.scanUrls(content))
     findings.push(...scanSensitivePaths(content, lineContexts))
-    findings.push(...this.scanJailbreakPatterns(content, lineContexts))
+    findings.push(...this.scanJailbreakPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...this.scanSuspiciousPatterns(content, lineContexts))
     findings.push(...scanSocialEngineering(content, lineContexts))
     findings.push(...scanPromptLeaking(content, lineContexts))
@@ -250,8 +276,10 @@ export class SecurityScanner {
         .map((f) => f.lineNumber as number)
     )
     findings.push(...scanChmodFetchCompound(content, privEscLines, lineContexts))
-    findings.push(...this.scanAIDefenceVulnerabilities(content, lineContexts))
-    findings.push(...scanSsrfPatterns(content, lineContexts))
+    findings.push(
+      ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
+    )
+    findings.push(...scanSsrfPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...scanPiiPatterns(content, lineContexts))
     findings.push(...scanCodeExecution(content, lineContexts))
     findings.push(...scanObfuscatedDirective(content))
@@ -260,6 +288,17 @@ export class SecurityScanner {
     // non-documentation exfiltration / privilege / credential / obfuscation signal.
     // Runs after every detector so all co-signals are present.
     escalateCodeExecution(findings)
+
+    // SMI-5876: lift a bare-vocabulary jailbreak/ai_defence "mention" finding
+    // to high/medium when a non-documentation high/critical finding from a
+    // DIFFERENT category is also present — e.g. the word "jailbreak" sitting
+    // next to a real remote-fetch-to-interpreter is corroborating evidence,
+    // not benign prose. MUST run after escalateCodeExecution so a
+    // freshly-critical code_execution finding can itself serve as a
+    // corroborator (verified: CODE_EXECUTION_CO_OCCURRENCE never contains
+    // 'jailbreak'/'ai_defence', so this can't create a feedback loop back
+    // into escalateCodeExecution's own decision).
+    escalateCorroboratedMentions(findings)
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

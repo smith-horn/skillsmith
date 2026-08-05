@@ -74,9 +74,14 @@ function result(
       hostile: findings.filter((f) => f.verdict === 'hostile').length,
       suspicious: findings.filter((f) => f.verdict === 'suspicious').length,
       malicious: findings.filter((f) => f.verdict === 'malicious').length,
+      accepted: 0,
+      candidateTotal: 0,
       durationMs: 1,
       ...summary,
     },
+    candidateIndex: new Map(),
+    acceptances: [],
+    warnings: [],
   }
 }
 
@@ -149,6 +154,23 @@ describe('buildAuditDigestPayload', () => {
     const payload = buildAuditDigestPayload(result([hostile]))
     expect(payload.findings[0]!.identifier).not.toContain('\n')
     expect(payload.findings[0]!.identifier).toBe('a  FAKE  b')
+  })
+
+  it('post-merge retro (SMI-5883): excludes accepted findings from the pushed findings list, matching summary.malicious', () => {
+    // Round 1 shipped: summary.malicious already excludes accepted findings
+    // (computed upstream in security-audit.ts), but findings[] here did not --
+    // so a user who accepted a finding specifically to stop being emailed
+    // about it kept getting emailed, and payload.malicious/payload.findings
+    // could silently disagree in length.
+    const accepted: SecurityAuditFinding = {
+      ...finding('malicious', 'accepted-skill'),
+      accepted: { count: 1, acceptedAt: '2026-07-30T00:00:00.000Z', reason: 'reviewed FP' },
+    }
+    const stillFailing = finding('malicious', 'failing-skill')
+    const payload = buildAuditDigestPayload(result([accepted, stillFailing], { malicious: 1 }))
+    expect(payload.findings).toHaveLength(1)
+    expect(payload.findings[0]!.identifier).toBe('failing-skill')
+    expect(payload.malicious).toBe(payload.findings.length)
   })
 })
 

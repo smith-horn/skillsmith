@@ -30,12 +30,20 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 
-import { SecurityScanner, compareScanReports, DEFAULT_RISK_THRESHOLD } from '@skillsmith/core'
+import {
+  SecurityScanner,
+  compareScanReports,
+  DEFAULT_RISK_THRESHOLD,
+  SCANNER_RULESET_VERSION,
+} from '@skillsmith/core'
 import type { ScanReport } from '@skillsmith/core'
 
 import { scanLocalInventory } from '../utils/local-inventory.js'
 import type { InventoryEntry } from '../utils/local-inventory.types.js'
 import { newAuditId } from './audit-history.js'
+import { deriveCandidatesForEntry, isAcceptDisabled } from './security-audit.candidates.js'
+import { defaultAcceptancePath, loadAcceptanceStore } from './security-acceptance.js'
+import type { AcceptanceRecord, AcceptanceWarning } from './security-acceptance.types.js'
 import {
   defaultBaselinePath,
   emptyBaseline,
@@ -46,6 +54,7 @@ import {
   type SecurityBaseline,
 } from './security-baseline.js'
 import type {
+  Candidate,
   RunSecurityAuditOptions,
   RunSecurityAuditResult,
   SecurityAuditFinding,
@@ -90,8 +99,10 @@ function buildFinding(params: {
   riskDelta: number | null
   newFindingCount: number
   reason: string
+  accepted?: { count: number; acceptedAt: string; reason: string }
 }): SecurityAuditFinding {
-  const { auditId, entry, verdict, riskScore, riskDelta, newFindingCount, reason } = params
+  const { auditId, entry, verdict, riskScore, riskDelta, newFindingCount, reason, accepted } =
+    params
   return {
     kind: 'security',
     securityId: sha256(`${auditId}:${entry.source_path}:${verdict}`).slice(0, 16),
@@ -102,6 +113,7 @@ function buildFinding(params: {
     riskDelta,
     newFindingCount,
     reason,
+    ...(accepted ? { accepted } : {}),
   }
 }
 
@@ -138,8 +150,26 @@ export async function runSecurityAudit(
   const threshold = opts.riskThreshold ?? DEFAULT_RISK_THRESHOLD
   const readContent = opts.readContent ?? defaultReadContent
   const baselinePath = opts.baselinePath ?? defaultBaselinePath(homeDir)
+  const acceptancePath = opts.acceptancePath ?? defaultAcceptancePath(homeDir)
 
   const inventory = opts.inventory ?? (await scanLocalInventory({ homeDir })).entries
+
+  // SMI-5883 Wave 2: local acceptance store (§2/§3). SKILLSMITH_AUDIT_ACCEPT_DISABLE=1
+  // bypasses it entirely -- no load, no suppression, no store write (§5) --
+  // restoring exact pre-change behavior; `acceptedByKey` then stays empty, so
+  // `deriveCandidatesForEntry` below never marks a finding accepted and
+  // suppression never fires, while candidate derivation itself (which never
+  // touches the store) still runs so `summary.candidateTotal`/`candidates[]`
+  // are populated identically to the empty-store case (H-18).
+  let acceptances: AcceptanceRecord[] = []
+  let acceptanceWarnings: AcceptanceWarning[] = []
+  if (!isAcceptDisabled()) {
+    const loaded = loadAcceptanceStore(acceptancePath)
+    acceptances = loaded.store.records
+    acceptanceWarnings = loaded.warnings
+  }
+  const acceptedByKey = new Map<string, AcceptanceRecord>(acceptances.map((r) => [r.acceptKey, r]))
+  const candidateIndex = new Map<string, Candidate>()
 
   const prior = loadSecurityBaseline(baselinePath)
   // Rebuilt from currently-present skills only → prunes GENUINELY-uninstalled
@@ -178,11 +208,19 @@ export async function runSecurityAudit(
 
     const contentHash = sha256(content)
     const priorEntry = prior.skills[entry.source_path]
-    // "Unchanged" requires identical bytes AND the same threshold the stored
-    // verdict was computed under — a threshold change re-scans rather than
-    // trusting a verdict from a different bar (compareScanReports contract).
-    const sameThreshold = priorEntry !== undefined && priorEntry.threshold === threshold
-    const isUnchanged = sameThreshold && priorEntry.contentHash === contentHash
+    // "Comparable" requires the stored verdict to have been produced under
+    // the SAME threshold AND the SAME scanner ruleset — a threshold change or
+    // a pattern/evidence-tier bump (SCANNER_RULESET_VERSION) both re-scan
+    // rather than trusting a verdict from a different bar or a scanner that
+    // no longer exists (compareScanReports contract; SMI-5876 §0.1/§0.2). An
+    // existing baseline entry with no `rulesetVersion` (pre-SMI-5876) reads as
+    // `undefined`, which never equals the current version string — forced
+    // re-scan, zero migration code needed.
+    const comparable =
+      priorEntry !== undefined &&
+      priorEntry.threshold === threshold &&
+      priorEntry.rulesetVersion === SCANNER_RULESET_VERSION
+    const isUnchanged = comparable && priorEntry.contentHash === contentHash
 
     // Current report: reuse the stored one byte-for-byte when unchanged (no
     // re-scan) but STILL evaluate posture (a persistently-failing skill keeps
@@ -202,13 +240,27 @@ export async function runSecurityAudit(
       scanned += 1
     }
 
+    // SMI-5883 Wave 2 (§3a): raw, uncapped, verdict-independent candidate
+    // derivation -- every finding on `current` becomes a candidate, whether
+    // or not the skill currently passes (D-10). This reads ONLY `current`
+    // and the acceptance store -- never the baseline or `compareScanReports`
+    // inputs below (INV-1/INV-2).
+    const candidateResult = deriveCandidatesForEntry({
+      candidateIndex,
+      entry,
+      current,
+      contentDigest: contentHash,
+      rulesetVersion: SCANNER_RULESET_VERSION,
+      acceptedByKey,
+    })
+
     // Rug-pull detection needs a prior produced under the SAME threshold AND an
     // actual content change (an unchanged skill can't have transitioned).
     let transition: SecurityVerdict | null = null
     let riskDelta: number | null = null
     let newFindingCount = 0
     let transitionReason = ''
-    if (priorEntry && !isUnchanged && sameThreshold) {
+    if (priorEntry && !isUnchanged && comparable) {
       const verdict = compareScanReports(reviveReport(priorEntry.report), current, threshold)
       riskDelta = verdict.riskDelta
       newFindingCount = verdict.newFindings.length
@@ -236,6 +288,12 @@ export async function runSecurityAudit(
       const reason = priorEntry
         ? `Installed skill still fails the security scan (risk ${current.riskScore}, ${serious} high/critical finding(s)).`
         : `Installed skill fails the security scan (risk ${current.riskScore}, ${serious} high/critical finding(s)); no prior baseline — establishing one now.`
+      // SMI-5883 Wave 2 (§3g): suppression fires ONLY here (never for
+      // hostile/suspicious -- INV-2) and ONLY when EVERY finding on this
+      // skill has an active local acceptance. The finding is NOT dropped
+      // from `findings[]` (INV-5) -- it is annotated instead, so the CLI can
+      // render it under a distinct "ACCEPTED" section rather than silently
+      // hiding it.
       findings.push(
         buildFinding({
           auditId,
@@ -245,6 +303,17 @@ export async function runSecurityAudit(
           riskDelta: null,
           newFindingCount: 0,
           reason,
+          ...(candidateResult.allFindingsAccepted &&
+          candidateResult.mostRecentAcceptedAt !== null &&
+          candidateResult.mostRecentReason !== null
+            ? {
+                accepted: {
+                  count: candidateResult.acceptedCount,
+                  acceptedAt: candidateResult.mostRecentAcceptedAt,
+                  reason: candidateResult.mostRecentReason,
+                },
+              }
+            : {}),
         })
       )
     } else if (transition === 'suspicious') {
@@ -263,12 +332,15 @@ export async function runSecurityAudit(
 
     // Advance the baseline: on the unchanged fast path carry the prior entry
     // forward but refresh `updatedAt` (it WAS re-verified this run); else store
-    // the fresh scan stamped with the threshold it was produced under.
+    // the fresh scan stamped with the threshold AND ruleset version it was
+    // produced under (SMI-5876) — so a future run can detect a scanner bump
+    // even if the skill's own content never changes again.
     next.skills[entry.source_path] = isUnchanged
       ? { ...priorEntry, updatedAt: nowIso() }
       : {
           contentHash,
           threshold,
+          rulesetVersion: SCANNER_RULESET_VERSION,
           report: serializeReport(current),
           updatedAt: current.scannedAt.toISOString(),
         }
@@ -288,9 +360,14 @@ export async function runSecurityAudit(
     unreadable,
     hostile: findings.filter((f) => f.verdict === 'hostile').length,
     suspicious: findings.filter((f) => f.verdict === 'suspicious').length,
-    malicious: findings.filter((f) => f.verdict === 'malicious').length,
+    // A suppressed (fully-accepted) `malicious` finding is counted under
+    // `accepted`, not `malicious` -- it is no longer an ACTIONABLE failure,
+    // though it remains present and visible in `findings[]` (INV-5).
+    malicious: findings.filter((f) => f.verdict === 'malicious' && !f.accepted).length,
+    accepted: findings.filter((f) => f.accepted !== undefined).length,
+    candidateTotal: candidateIndex.size,
     durationMs,
   }
 
-  return { auditId, findings, summary }
+  return { auditId, findings, summary, candidateIndex, acceptances, warnings: acceptanceWarnings }
 }

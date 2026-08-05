@@ -4,12 +4,13 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
-## What's New in v0.7.4
+## What's New in v0.7.6
 
-- **Cross-session rename revert**: `apply_namespace_rename`'s `action: 'revert'` is now exposed, closing the gap where a rename applied in a prior session had no reachable undo path.
-- **Shutdown persistence fix**: Recently-installed skills and dependency data are now correctly persisted on shutdown — previously silently discarded when running without native SQLite support (common on macOS/npx installs).
-- **Corrected quota enforcement**: Local quota limits reduced 10x to match actual tier limits, with a `SKILLSMITH_ENFORCE_MCP_QUOTA` kill-switch to disable hard-blocking without a redeploy.
-- **Subscription tier resolution fix**: Personal API keys now resolve the real subscription tier correctly.
+- **Private registry hardened and made live**: `private_registry_manage`/`private_registry_publish` are now a real implementation backed by Supabase (previously a stub), with `deprecate`/`undeprecate` requiring proper team-admin authentication instead of falling back to an unrestricted service-role client.
+- **Crash resilience**: process-wide handlers now log any unhandled error or rejection to the structured logger (disk + stderr) before exiting, instead of only surfacing in the MCP host's live panel.
+- **Enterprise license validation fixed**: license checks now import `@smith-horn/enterprise` (the package's real name) instead of a name that never existed, which had silently broken Enterprise-tier license validation and audit tools for every install.
+- **Real CycloneDX export**: `compliance_report`'s `cyclonedx` format now emits a genuine CycloneDX 1.5 AI/ML-BOM instead of a hand-rolled document.
+- **Compliance reports expanded**: `compliance_reports` availability widened from Enterprise-only to Team + Enterprise.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
@@ -72,14 +73,17 @@ Restart Claude Code after editing settings.json.
       "command": "npx",
       "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
       "env": {
-        "SKILLSMITH_API_KEY": "sk_live_..."
+        "SKILLSMITH_API_KEY": "sk_live_...",
+        "SKILLSMITH_CLIENT": "cursor"
       }
     }
   }
 }
 ```
 
-Cursor 2.4+ required. Reload the window after saving.
+Cursor 2.4+ required. Reload the window after saving. `SKILLSMITH_CLIENT` routes installs to `~/.cursor/skills` instead of the default `~/.claude/skills`.
+
+**Recommended**: `npm install -g @skillsmith/mcp-server` first, then point `command` at the installed `skillsmith-mcp` binary — run `which skillsmith-mcp` after installing to get the exact path (it's platform/npm-prefix specific, e.g. `/opt/homebrew/bin/skillsmith-mcp` on macOS/Homebrew; Linux and Windows paths differ). The `npx` form above still works as a fallback, but re-resolves the package on every launch — expect a slower cold start, and watch for `EBADENGINE` (Cursor bundles its own Node, sometimes older than the `>=22.22` this package requires) or `ENOTEMPTY` errors on repeated installs.
 
 </details>
 

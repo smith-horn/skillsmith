@@ -24,6 +24,11 @@ import {
   getBetterSqlite3FailureReason,
 } from './drivers/betterSqlite3Driver.js'
 import { createSqlJsDatabase, isSqlJsAvailable } from './drivers/sqljsDriver.js'
+// SMI-5897 (C-18/C-19, Wave 4 fix): shared SKILLSMITH_QUIET guard — this was
+// the second, unguarded fallback-warning path C-18/C-19 didn't originally
+// cover; the WASM-driver notice below always printed at least once per
+// process regardless of SKILLSMITH_QUIET.
+import { isQuietModeEnabled } from '../utils/quiet-mode.js'
 
 /**
  * SMI-4807: guard so the WASM-fallback notice is emitted at most once per
@@ -174,16 +179,23 @@ export async function createDatabaseAsync(
   if (isSqlJsAvailable()) {
     if (!wasmFallbackNoticeEmitted) {
       wasmFallbackNoticeEmitted = true
-      let message =
-        '[Skillsmith] Using WASM SQLite driver ' +
-        '(native better-sqlite3 not loaded — expected on direct macOS/npx installs).'
-      if (process.env.SKILLSMITH_DEBUG) {
-        const reason = getBetterSqlite3FailureReason()
-        if (reason) {
-          message += ` Reason: ${reason}`
+      // SMI-5897 (Wave 4 fix): honor SKILLSMITH_QUIET, same as the
+      // embeddings-layer fallback warnings — the notice still guards
+      // print-once-per-process via wasmFallbackNoticeEmitted above (set
+      // regardless of quiet mode, so a later non-quiet caller doesn't get a
+      // stale re-print of a decision already made this process).
+      if (!isQuietModeEnabled()) {
+        let message =
+          '[Skillsmith] Using WASM SQLite driver ' +
+          '(native better-sqlite3 not loaded — expected on direct macOS/npx installs).'
+        if (process.env.SKILLSMITH_DEBUG) {
+          const reason = getBetterSqlite3FailureReason()
+          if (reason) {
+            message += ` Reason: ${reason}`
+          }
         }
+        console.warn(message)
       }
-      console.warn(message)
     }
     return await createSqlJsDatabase(path, options)
   }

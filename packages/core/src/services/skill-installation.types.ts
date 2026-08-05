@@ -9,6 +9,7 @@
 import type { ScanReport, ScannerOptions } from '../security/index.js'
 import type { TrustTier } from '../types/skill.js'
 import type { DependencyDeclaration } from '../types/dependencies.js'
+import type { ClientId } from '../install/paths.js'
 
 // ============================================================================
 // Progress Callback
@@ -26,6 +27,41 @@ export type ProgressCallback = (stage: string, detail: string) => void
 
 /** Action to take when a conflict is detected during skill update */
 export type ConflictAction = 'overwrite' | 'merge' | 'cancel'
+
+/**
+ * SMI-5905: a packaged skill's files as a flat { relativePath: fileText } map,
+ * e.g. `{ "SKILL.md": "...", "scripts/foo.sh": "..." }`.
+ *
+ * Deliberately duplicated (not imported) from the mcp-server's own
+ * `SkillContent` (zod-inferred in `registry-tools.ts`) — core cannot depend
+ * on mcp-server. Keep the shape in sync if it ever changes.
+ */
+export type SkillContent = Record<string, string>
+
+/**
+ * Options for `installFromContent()` — the content-based install path used by
+ * private-registry installs (SMI-5905). Distinct from `InstallOptions` (used
+ * by the GitHub-fetch `install()` path): the caller has already resolved
+ * `skillId`/`version`/`content` (e.g. via a registry `getContent()` call one
+ * layer up) rather than supplying a skillId for `install()` to resolve itself.
+ */
+export interface InstallFromContentOptions {
+  /** Registry skill ID (author/name format) this content was published under. */
+  skillId: string
+  /**
+   * Already-resolved semver version string. `installFromContent()` does not
+   * choose a version itself — the caller resolves "no version specified"
+   * (defaulting to the most-recently-published version) before calling this,
+   * mirroring `registry-tools.live.ts`'s `get(teamId, skillId, version)`
+   * convention, so `install` and `get` never disagree about what "no
+   * version specified" means.
+   */
+  version: string
+  /** Packaged skill files; must include a non-empty `"SKILL.md"` entry. */
+  content: SkillContent
+  /** Force reinstall if the skill is already installed (mirrors `InstallOptions.force`). */
+  force?: boolean
+}
 
 /** Options for the install operation */
 export interface InstallOptions {
@@ -88,6 +124,7 @@ export type InstallErrorCode =
   | 'SKIP_SCAN_FORBIDDEN' // skipScan requested but trust tier disallows it
   | 'SCAN_REJECTED' // Security scan returned non-passing report
   | 'CONFIRMATION_REQUIRED' // Experimental/unknown registry skill needs confirmed=true
+  | 'INVALID_CONTENT' // SMI-5905: installFromContent() content shape/path-safety rejected
   | 'UNKNOWN' // Unhandled exception caught by outer try/catch
 
 /** Result of an install operation */
@@ -182,6 +219,13 @@ export interface SkillManifestEntry {
   pinnedVersion?: string
   /** How updates are handled */
   updatePolicy?: 'auto' | 'manual' | 'never'
+  /**
+   * SMI-5894 (Wave 1 Step 3): which client this installation targets.
+   * Absent on manifest entries written before multi-client re-keying —
+   * treat a missing value as the canonical client (`claude-code`), matching
+   * `manifestKeyFor()`'s own default.
+   */
+  client?: ClientId
 }
 
 /** Manifest tracking all installed skills */

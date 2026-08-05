@@ -112,32 +112,59 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
 }
 
 /**
+ * Exhaustive DB-tier -> MCP-tier map, used by `mapTrustTierFromDb` below.
+ *
+ * SMI-5897 (Wave 4 fix): replaces a hand-written `switch` with a `default`
+ * fallback. A `switch`'s `default` branch silently swallows any unhandled
+ * case — exactly how 'official'/'unverified' went missing after SMI-5205
+ * (see the C-16 note on `mapTrustTierFromDb` below) with no compiler error.
+ * A `Record<DBTrustTier, MCPTrustTier>` literal instead makes a FUTURE
+ * `TrustTier` addition a compile-time error here (an object literal missing
+ * a required key fails to type-check) until this map is updated — the same
+ * exhaustive-map convention already used by `getTrustBadge` below.
+ *
+ * Exported (not module-private) specifically so the SMI-5897 round-trip test
+ * (`__tests__/utils/validation.test.ts`) can enumerate `Object.keys()` of
+ * THIS map — the actual `DBTrustTier` input domain — instead of a
+ * separately-declared object (`TrustTierDescriptions`) that happens to match
+ * today by coincidence, not by any structural guarantee.
+ */
+export const DB_TO_MCP_TRUST_TIER: Record<DBTrustTier, MCPTrustTier> = {
+  official: 'official',
+  verified: 'verified',
+  community: 'community',
+  experimental: 'experimental',
+  curated: 'curated',
+  local: 'local',
+  unverified: 'unverified',
+  unknown: 'unknown',
+}
+
+/**
  * Map database trust tier to MCP trust tier.
  *
  * Accepts string input and validates, returning 'unknown' for invalid values.
- * Types are unified: verified, community, experimental, curated, unknown, local
+ * Types are unified: official, verified, community, experimental, curated,
+ * unknown, unverified, local
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  * SMI-2381 / SMI-4520: Added 'curated' for third-party publishers
+ * SMI-5205: Added 'official' and 'unverified' to match the public 5-tier model
+ * SMI-5897 (C-16): 'official' and 'unverified' were missing cases here —
+ * both silently collapsed to the `default: 'unknown'` branch even though the
+ * sibling `mapTrustTierToDb` already round-trips them correctly. This was an
+ * asymmetric miss from SMI-5205, not a design gap — every `TrustTier` enum
+ * value must round-trip through `mapTrustTierToDb` -> `mapTrustTierFromDb`.
+ * SMI-5897 (Wave 4 fix): rewritten atop `DB_TO_MCP_TRUST_TIER` (see its own
+ * doc comment) so a future enum addition can't silently repeat the C-16 miss.
+ * The `?? 'unknown'` fallback is still required for the `string` half of this
+ * function's input type — an arbitrary runtime string is never a compile-time
+ * `DBTrustTier`, so it can't be exhaustively covered by the Record literal.
  *
  * @param dbTier - Database trust tier (string or typed)
  * @returns MCP trust tier
  */
 export function mapTrustTierFromDb(dbTier: DBTrustTier | string): MCPTrustTier {
-  switch (dbTier) {
-    case 'verified':
-      return 'verified'
-    case 'community':
-      return 'community'
-    case 'experimental':
-      return 'experimental'
-    case 'curated':
-      return 'curated'
-    case 'local':
-      return 'local'
-    case 'unknown':
-    default:
-      return 'unknown'
-  }
+  return DB_TO_MCP_TRUST_TIER[dbTier as DBTrustTier] ?? 'unknown'
 }
 
 /**
