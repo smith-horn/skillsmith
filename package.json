@@ -90,7 +90,7 @@
     "commander": "14.0.3",
     "eslint": "9.39.2",
     "eslint-config-prettier": "10.1.8",
-    "globals": "17.6.0",
+    "globals": "17.8.0",
     "husky": "9.1.7",
     "jose": "5.10.0",
     "lint-staged": "16.4.0",
