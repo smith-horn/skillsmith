@@ -93,8 +93,11 @@ console.log(example);
       const report = scanner.scan('large-skill', largeContent)
       const duration = performance.now() - start
 
-      // Should complete in under 100ms even for large content (increased for Docker overhead)
-      expect(duration).toBeLessThan(100)
+      // Should complete in under 200ms even for large content (SMI-3880/SMI-5783: a single
+      // unaveraged scan is uniquely exposed to CI-runner scheduling noise — this test's 3
+      // siblings all average over 5-100 iterations for exactly this reason; 100ms flaked at
+      // 108-138ms under real runner load, comfortably inside 200ms)
+      expect(duration).toBeLessThan(200)
       // And report should include duration
       expect(report.scanDurationMs).toBeDefined()
     })
