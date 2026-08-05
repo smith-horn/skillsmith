@@ -390,7 +390,13 @@ jobs:
       - name: Run eval unit tests (metrics, ablation, drift check)
         if: steps.filter.outputs.relevant == 'true'
         working-directory: packages/doc-retrieval-mcp
-        run: npx --yes -p vitest@4.1.2 -- vitest run tests/eval/
+        # SMI-5931: resolve vitest from the job's own `npm ci` install (root pin,
+        # Dependabot-maintained) — never `-p vitest@<ver>`, which mismatches root's
+        # pin after any bump and trips a known npm Arborist crash
+        # (npm/cli#9787 / npm/cli#8261) inside a workspace member. Requires the
+        # package-lock.json dedup in this same change — see (a) above — or this
+        # resolves a stale nested copy instead of root's pinned version.
+        run: npx vitest run tests/eval/
       - name: Validate baseline.json schema
         if: steps.filter.outputs.relevant == 'true'
         run: |
