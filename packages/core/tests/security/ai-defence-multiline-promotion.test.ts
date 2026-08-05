@@ -6,20 +6,18 @@
  *  - the 4 patterns promoted 'line' -> 'both' (AD_HTML_COMMENT_VERB/NOUN,
  *    AD_NESTED_INSTRUCTION_BLOCK, AD_ZERO_WIDTH) now catch a genuinely
  *    cross-line match that was a false negative before this PR
- *  - required correction #2 (design review): the merge with the per-line
- *    pass fixes duplicate/lost findings on a SINGLE occurrence, but does NOT
- *    make the full-content pass exhaustive across MULTIPLE occurrences of
- *    the same cross-line-spanning pattern — safeRegexTest's non-global
- *    `.match()` only ever finds the FIRST occurrence in the whole document.
- *    This is a KNOWN, ACCEPTED limitation (not fixed in this PR — tracked
- *    alongside the already-planned truncation-limit follow-up; the queen
- *    files the Linear issue) — pinned here as a tested regression fixture,
- *    not a silent gap.
+ *  - SMI-5879 (design §3.3): the first-occurrence-only limitation this file
+ *    used to pin as a known, accepted gap is now FIXED — the RC-1 two-bound
+ *    global-exec loop records every distinct matching line per pattern (up
+ *    to MAX_MULTILINE_LINES_PER_PATTERN), not just the first match in the
+ *    whole document, so two independently-matching occurrences now both
+ *    surface.
  *  - section 3.2: maxContentLength enforcement — a lower configured
  *    maxContentLength tightens the multiline-scan effective limit, and
- *    content beyond that limit produces a visible truncation finding
- *    (section 3.3: the underlying 10,000-code-unit cap itself is NOT raised
- *    in this PR, see MAX_CONTENT_LENGTH_FOR_REGEX's own comment)
+ *    content beyond that limit produces a visible truncation finding.
+ *    SMI-5879 (design §3.4) raised the underlying cap itself from 10,000 to
+ *    1,000,000 code units (see MAX_CONTENT_LENGTH_FOR_REGEX's own comment) to
+ *    close the 10 KB pass-1 truncation blind spot on large SKILL.md files.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -68,18 +66,14 @@ describe('SMI-5881 — promoted patterns catch a genuinely cross-line match', ()
   })
 })
 
-describe('SMI-5881 required correction #2 — first-occurrence-only limitation on "both"-scope patterns', () => {
-  it('two separate, well-separated cross-line HTML comments each matching AD_HTML_COMMENT_VERB produce exactly ONE finding', () => {
-    // KNOWN LIMITATION, not a bug introduced by this PR and not fixed here:
-    // scanPatternsWithMultilineSupport's pass-1 full-content test
-    // (safeRegexTest(pattern, content)) is a NON-GLOBAL `.match()`, so it
-    // finds only the FIRST occurrence of each 'content'/'both'-scope pattern
-    // in the whole document — true both before and after SMI-5881. Neither
-    // comment is caught by the per-line pass either (each spans 3+ lines, so
-    // no SINGLE line contains the full `<!--...-->` shape). Making the
-    // full-content pass exhaustive across multiple occurrences is explicitly
-    // OUT OF SCOPE for this PR (tracked as a follow-up alongside the
-    // truncation-limit item — see MAX_CONTENT_LENGTH_FOR_REGEX's comment).
+describe('SMI-5879 (design §3.3) — RC-1 fix: the first-occurrence-only limitation is now resolved', () => {
+  it('two separate, well-separated cross-line HTML comments each matching AD_HTML_COMMENT_VERB produce TWO findings', () => {
+    // FIXED by the RC-1 two-bound global-exec loop (design §3.3.3): each
+    // multiline pattern now iterates every match via a global-flag clone,
+    // recording one finding per distinct matching line (up to
+    // MAX_MULTILINE_LINES_PER_PATTERN) instead of stopping at the first
+    // match in the whole document. Both comments below are independently
+    // caught, attributed to their own opening line.
     const scanner = new SecurityScanner()
     const content = [
       '<!--',
@@ -96,15 +90,14 @@ describe('SMI-5881 required correction #2 — first-occurrence-only limitation o
       '-->',
     ].join('\n')
 
-    const report = scanner.scan('two-occurrence-limitation', content)
+    const report = scanner.scan('two-occurrence-fix', content)
     const findings = report.findings.filter((f) => f.type === 'ai_defence')
 
-    // Pinning the CURRENT (first-occurrence-only) behavior — exactly one
-    // finding, attributed to the FIRST comment (line 1), even though the
-    // document contains two independently-matching occurrences.
-    expect(findings).toHaveLength(1)
+    expect(findings).toHaveLength(2)
     expect(findings[0]?.lineNumber).toBe(1)
     expect(findings[0]?.message).toContain('the first hidden instruction here')
+    expect(findings[1]?.lineNumber).toBe(9)
+    expect(findings[1]?.message).toContain('the second hidden instruction here')
   })
 })
 
@@ -137,9 +130,9 @@ describe('SMI-5881 section 3.2 — maxContentLength enforcement for the multilin
     )
   })
 
-  it('a generous maxContentLength (above the 10,000 cap) still truncates the multiline scan at the cap, not maxContentLength', () => {
-    const scanner = new SecurityScanner({ maxContentLength: 1_000_000 })
-    const content = 'a'.repeat(20_000)
+  it('a generous maxContentLength (above the 1,000,000 cap) still truncates the multiline scan at the cap, not maxContentLength', () => {
+    const scanner = new SecurityScanner({ maxContentLength: 2_000_000 })
+    const content = 'a'.repeat(1_500_000)
     const report = scanner.scan('generous-max-content-length', content)
 
     const truncationFinding = report.findings.find((f) =>
@@ -150,7 +143,7 @@ describe('SMI-5881 section 3.2 — maxContentLength enforcement for the multilin
       `truncated at ${MAX_CONTENT_LENGTH_FOR_REGEX} code units`
     )
     // The unrelated, much-larger maxContentLength check must NOT also fire —
-    // 20,000 is still well under 1,000,000.
+    // 1,500,000 is still well under 2,000,000.
     expect(report.findings.some((f) => f.message.includes('exceeds maximum length'))).toBe(false)
   })
 

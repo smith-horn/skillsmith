@@ -14,7 +14,7 @@ import {
 import { safeRegexTest, safeRegexCheck, MAX_CONTENT_LENGTH_FOR_REGEX } from './regex-utils.js'
 
 // Import helpers
-import type { LineContext } from './SecurityScanner.helpers.js'
+import type { LineContext, MultilineScanResult } from './SecurityScanner.helpers.js'
 import {
   analyzeMarkdownContext,
   isDocumentationContext,
@@ -132,7 +132,7 @@ export class SecurityScanner {
     content: string,
     lineContexts: LineContext[] | undefined,
     maxMultilineLength: number
-  ): SecurityFinding[] {
+  ): MultilineScanResult {
     return scanPatternsWithMultilineSupport(
       content,
       {
@@ -211,7 +211,7 @@ export class SecurityScanner {
     content: string,
     lineContexts: LineContext[] | undefined,
     maxMultilineLength: number
-  ): SecurityFinding[] {
+  ): MultilineScanResult {
     return scanPatternsWithMultilineSupport(
       content,
       {
@@ -263,7 +263,12 @@ export class SecurityScanner {
 
     findings.push(...this.scanUrls(content))
     findings.push(...scanSensitivePaths(content, lineContexts))
-    findings.push(...this.scanJailbreakPatterns(content, lineContexts, effectiveMultilineLimit))
+    const jailbreakResult: MultilineScanResult = this.scanJailbreakPatterns(
+      content,
+      lineContexts,
+      effectiveMultilineLimit
+    )
+    findings.push(...jailbreakResult.findings)
     findings.push(...this.scanSuspiciousPatterns(content, lineContexts))
     findings.push(...scanSocialEngineering(content, lineContexts))
     findings.push(...scanPromptLeaking(content, lineContexts))
@@ -301,9 +306,12 @@ export class SecurityScanner {
     // run before escalateCodeExecution below since a later dispatch wires
     // this finding type into that co-signal mechanism.
     findings.push(...scanDecoyMisdirection(content, lineContexts))
-    findings.push(
-      ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
+    const aiDefenceResult: MultilineScanResult = this.scanAIDefenceVulnerabilities(
+      content,
+      lineContexts,
+      effectiveMultilineLimit
     )
+    findings.push(...aiDefenceResult.findings)
     findings.push(...scanSsrfPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...scanPiiPatterns(content, lineContexts))
     findings.push(...scanCodeExecution(content, lineContexts))
@@ -411,6 +419,7 @@ export class SecurityScanner {
       scanDurationMs: endTime - startTime,
       riskScore,
       riskBreakdown,
+      multilineTruncated: jailbreakResult.truncated || aiDefenceResult.truncated,
     }
   }
 
