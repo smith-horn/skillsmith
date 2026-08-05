@@ -151,7 +151,7 @@
     "@opentelemetry/semantic-conventions": "1.43.0",
     "fts5-sql-bundle": "1.0.2",
     "lru-cache": "11.5.2",
-    "posthog-node": "5.29.2",
+    "posthog-node": "5.47.3",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "5.9.3",
     "web-tree-sitter": "0.25.10",

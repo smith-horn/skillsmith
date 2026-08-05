@@ -32,7 +32,7 @@
     "gray-matter": "4.0.3",
     "open": "11.0.0",
     "ora": "9.4.1",
-    "posthog-node": "5.29.2",
+    "posthog-node": "5.47.3",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "5.9.3",
     "web-tree-sitter": "0.25.10",
