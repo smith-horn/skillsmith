@@ -261,14 +261,47 @@ async function main(): Promise<void> {
     console.error(`[SMI-5922 seed] Final-state team_members read failed: ${finalErr.message}`)
     process.exit(1)
   }
-  const has = (teamId: string, userId: string) =>
-    (finalMembers ?? []).some((m) => m.team_id === teamId && m.user_id === userId)
+  // Role, not just presence (GPT-5.6-Sol review finding #4): a member drifted to 'admin'
+  // (e.g. manually promoted between runs) makes assertion #3's "ordinary member can
+  // install" check vacuous, since ensureMembership's own upsert now repairs this on
+  // every run but a stale prior-run state must still be caught here too.
+  const hasRole = (teamId: string, userId: string, role: string) =>
+    (finalMembers ?? []).some(
+      (m) => m.team_id === teamId && m.user_id === userId && m.role === role
+    )
   const missing: string[] = []
-  if (!has(teamAId, adminId)) missing.push('Team A admin')
-  if (!has(teamAId, memberId)) missing.push('Team A member')
-  if (!has(teamAId, dualId)) missing.push('Team A dual actor')
-  if (!has(teamBId, nonentId)) missing.push('Team B nonent owner')
-  if (!has(teamBId, dualId)) missing.push('Team B dual actor')
+  if (!hasRole(teamAId, adminId, 'owner')) missing.push('Team A admin (role=owner)')
+  if (!hasRole(teamAId, memberId, 'member')) missing.push('Team A member (role=member)')
+  if (!hasRole(teamAId, dualId, 'member')) missing.push('Team A dual actor (role=member)')
+  if (!hasRole(teamBId, nonentId, 'owner')) missing.push('Team B nonent owner (role=owner)')
+  if (!hasRole(teamBId, dualId, 'member')) missing.push('Team B dual actor (role=member)')
+
+  // profiles.tier, not just the recompute_user_tier() call succeeding (GPT-5.6-Sol
+  // review finding #1 — High): calling the RPC doesn't prove it actually persisted the
+  // expected value. Without this read-back, round-trip assertion #6 (the load-bearing
+  // dual-membership regression case) could silently pass under BOTH a correct
+  // row-scoped entitlement check AND the incorrect global-profiles.tier check it exists
+  // to catch, if the dual actor's tier never actually reached 'enterprise' -- both
+  // checks would then agree (403), proving nothing.
+  const { data: finalProfiles, error: finalProfilesErr } = await admin
+    .from('profiles')
+    .select('id,tier')
+    .in('id', [adminId, memberId, nonentId, dualId])
+  if (finalProfilesErr) {
+    console.error(`[SMI-5922 seed] Final-state profiles read failed: ${finalProfilesErr.message}`)
+    process.exit(1)
+  }
+  const tierOf = (userId: string) => (finalProfiles ?? []).find((p) => p.id === userId)?.tier
+  if (tierOf(adminId) !== 'enterprise')
+    missing.push(`Team A admin profiles.tier (got ${tierOf(adminId)}, want enterprise)`)
+  if (tierOf(memberId) !== 'enterprise')
+    missing.push(`Team A member profiles.tier (got ${tierOf(memberId)}, want enterprise)`)
+  if (tierOf(nonentId) !== 'team')
+    missing.push(`Team B nonent profiles.tier (got ${tierOf(nonentId)}, want team)`)
+  if (tierOf(dualId) !== 'enterprise')
+    missing.push(
+      `Dual actor profiles.tier (got ${tierOf(dualId)}, want enterprise -- load-bearing for round-trip assertion #6)`
+    )
 
   const { data: finalSkill, error: finalSkillErr } = await admin
     .from('private_registry_skills')

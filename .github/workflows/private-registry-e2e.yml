@@ -39,17 +39,31 @@ on:
   workflow_dispatch: {}
   pull_request:
     paths:
+      # GPT-5.6-Sol review finding #7: the original filter named only one file per
+      # transport (registry-install.action.ts, the two top-level spec/seed scripts),
+      # so a PR touching the commander factory, a companion file, CLI DB/credential
+      # primitives, or package metadata alone would not trigger this workflow.
       - 'packages/core/src/api/client.private-registry.ts'
+      - 'packages/core/src/api/client.token-refresh.ts'
+      - 'packages/core/src/config/token-credentials.ts'
+      - 'packages/core/src/install/paths.ts'
       - 'packages/core/src/services/skill-installation.content.ts'
-      - 'packages/cli/src/commands/registry-install.action.ts'
+      - 'packages/cli/src/commands/registry-install.*'
+      - 'packages/cli/src/utils/open-database.ts'
+      - 'packages/cli/package.json'
       - 'packages/mcp-server/src/tools/registry-tools.live.*'
+      - 'packages/mcp-server/src/tools/registry-tools.ts'
+      - 'packages/mcp-server/src/tools/team-resolver.ts'
       - 'supabase/functions/private-registry-get/**'
       - 'supabase/migrations/20260724000000_private_registry_skills.sql'
       - 'supabase/migrations/20260727000000_private_registry_skill_namespace_enforcement.sql'
       - 'supabase/migrations/20260729000000_private_registry_privilege_hardening.sql'
       - 'supabase/migrations/20260729000001_private_registry_hardening_backfill.sql'
       - 'scripts/seed-e2e-registry-users.ts'
+      - 'scripts/seed-e2e-registry-users.helpers.ts'
       - 'scripts/e2e-registry-roundtrip.ts'
+      - 'scripts/e2e-registry-roundtrip.mcp-live.ts'
+      - 'scripts/e2e-registry-roundtrip.types.ts'
       - '.github/workflows/private-registry-e2e.yml'
 
 concurrency:
@@ -86,7 +100,10 @@ jobs:
           NEEDLE="vrcnzpmnd""troqxxoqkzy"
           MATCHES="$(grep -rEn "$NEEDLE" \
              scripts/seed-e2e-registry-users.ts \
+             scripts/seed-e2e-registry-users.helpers.ts \
              scripts/e2e-registry-roundtrip.ts \
+             scripts/e2e-registry-roundtrip.mcp-live.ts \
+             scripts/e2e-registry-roundtrip.types.ts \
              .github/workflows/private-registry-e2e.yml \
              | grep -vE 'SMI-5922-allow-prod-ref' || true)"
           if [ -n "$MATCHES" ]; then

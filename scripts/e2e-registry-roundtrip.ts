@@ -137,6 +137,14 @@ async function rawPrivateRegistryGet(
  * esbuild bundle package.json's "bin" points at) -- not the parallel unbundled
  * dist/src/index.js tsc output that also exists in a dev build but is never what a
  * real `npm install -g @skillsmith/cli` user runs.
+ *
+ * Scope, stated precisely (GPT-5.6-Sol review finding #6): this proves the bundled
+ * entrypoint itself -- credential loading, HTTP fetch, SQLite manifest bookkeeping,
+ * disk install, exit-code contract -- all work. It does NOT run `npm pack` or install
+ * from a packed tarball, so a broken `package.json` `bin`/`files` field or an npm
+ * packaging failure could still slip through undetected by this check specifically
+ * (smoke-prod's `cli-published` surface covers the published-package angle instead,
+ * post-publish, against the real npm registry).
  */
 async function runCliInstall(
   actorLabel: string,

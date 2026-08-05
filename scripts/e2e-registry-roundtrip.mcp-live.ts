@@ -11,6 +11,18 @@
  * by the package's declared "exports" map. If this import genuinely fails to resolve,
  * degrades to a loud warning + TODO instead of crashing the whole spec.
  *
+ * Scope, stated precisely (GPT-5.6-Sol review finding #5): this calls
+ * `resolveLicenseTeamId()` / `getMemberUserClient()` / `getSkillContent()` directly —
+ * the entitlement + RLS + credential-resolution primitives the real MCP tool is built
+ * on. It does NOT go through `private_registry_manage`'s own input-schema validation
+ * or its `executePrivateRegistryManage`/action-dispatch switch (`registry-tools.ts`),
+ * so a regression in THAT routing layer (e.g. `install` wired to the wrong getter, or
+ * the dispatcher no longer calling `getSkillContent` at all) would not be caught here.
+ * The CLI subprocess and raw-HTTP checks elsewhere in this spec already exercise a
+ * full real request path end-to-end; this piece's job is deep coverage of the
+ * MCP-specific credential/entitlement internals those paths don't touch, not a second
+ * full dispatcher-level proof.
+ *
  * Team resolution here deliberately does NOT reuse the main script's own
  * service-role-based teamAId/teamBId lookup. The real MCP tool surface
  * (`private_registry_manage`, `registry-tools.ts`'s `resolveTeamId()`) resolves
@@ -144,24 +156,26 @@ export async function runMcpLiveCoverage(
 
   // Row 6 analogue (load-bearing): dual-membership actor, scoped to Team B via
   // Team B's own license key, fetches Team B's own durable skill -- expect a
-  // throw (not-entitled). This is the actual regression case: dual holds
-  // Enterprise entitlement via Team A, but the license key here resolves them to
-  // Team B, whose subscription is not Enterprise -- a global profiles.tier check
-  // would incorrectly grant access.
-  let r6Threw = false
-  let r6Detail = ''
-  try {
-    await seedAndGetContent('dual', dualSession, teamBLicenseKey, durableSkillId).then((r) => {
-      if (!r.ok) {
-        r6Threw = true
-        r6Detail = r.error ?? ''
-      } else {
-        r6Detail = `expected a throw (not-entitled), got: ${JSON.stringify(r.content)}`
-      }
-    })
-  } catch (err) {
-    r6Threw = true
-    r6Detail = err instanceof Error ? err.message : String(err)
-  }
-  record('mcp-live-row6', r6Threw, r6Detail)
+  // throw whose message identifies the ENTITLEMENT denial specifically (not just
+  // any thrown error). This is the actual regression case: dual holds Enterprise
+  // entitlement via Team A, but the license key here resolves them to Team B,
+  // whose subscription is not Enterprise -- a global profiles.tier check would
+  // incorrectly grant access.
+  //
+  // GPT-5.6-Sol review finding #2: the original check treated ANY failure --
+  // invalid credentials, token-load failure, license-resolution failure, a DB
+  // outage, an audit-write failure -- as "entitlement denied", so this row would
+  // pass even if the entitlement path was never reached (e.g. a broken refresh
+  // token). Matches getSkillContent()'s exact denial message substring
+  // (registry-tools.live.content.ts's "requires an active Enterprise" throw) so
+  // only the real denial counts.
+  const ENTITLEMENT_DENIAL_MARKER = 'requires an active Enterprise'
+  const r6 = await seedAndGetContent('dual', dualSession, teamBLicenseKey, durableSkillId)
+  const r6IsEntitlementDenial = !r6.ok && (r6.error ?? '').includes(ENTITLEMENT_DENIAL_MARKER)
+  const r6Detail = r6.ok
+    ? `expected an entitlement-denial throw, got a result: ${JSON.stringify(r6.content)}`
+    : r6IsEntitlementDenial
+      ? r6.error
+      : `threw, but not the expected entitlement denial (got: ${r6.error})`
+  record('mcp-live-row6', r6IsEntitlementDenial, r6Detail)
 }

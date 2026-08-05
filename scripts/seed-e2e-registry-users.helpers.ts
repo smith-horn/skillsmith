@@ -58,7 +58,18 @@ export async function ensureUser(
     userId = data.user!.id
     console.error(`[SMI-5922 seed] Created auth user ${email} (id=${userId})`)
   } else {
-    console.error(`[SMI-5922 seed] Auth user ${email} already exists (id=${userId})`)
+    // GPT-5.6-Sol review finding #4: an existing user's password was never resynced,
+    // so re-running the seed after rotating E2E_REG_USER_PASSWORD wouldn't restore
+    // sign-in -- repair it unconditionally on every run, matching this script's
+    // "a re-run repairs drift" contract for every other fixture.
+    const { error: pwErr } = await admin.auth.admin.updateUserById(userId, { password })
+    if (pwErr) {
+      console.error(`[SMI-5922 seed] password resync failed for ${email}: ${pwErr.message}`)
+      process.exit(1)
+    }
+    console.error(
+      `[SMI-5922 seed] Auth user ${email} already exists (id=${userId}), password resynced`
+    )
   }
 
   return userId
@@ -123,8 +134,12 @@ export async function ensureSubscriptionAndTeam(
 }
 
 /**
- * Idempotently ensures a team_members row exists (ON CONFLICT DO NOTHING semantics via
- * ignoreDuplicates — never overwrites a role set by ensureSubscriptionAndTeam's RPC).
+ * Idempotently ensures a team_members row exists WITH the expected role — repairs role
+ * drift on re-run (GPT-5.6-Sol review finding #4: a plain ignoreDuplicates upsert left a
+ * previously-promoted member stuck at 'admin', silently making round-trip assertion #3's
+ * "ordinary member can install" check vacuous, since an accidentally-admin member proves
+ * nothing about the member-level gate). Only ever called for non-owner memberships
+ * (ensureSubscriptionAndTeam's RPC owns the owner row) — a real DO UPDATE here is safe.
  */
 export async function ensureMembership(
   admin: SupabaseClient,
@@ -136,7 +151,7 @@ export async function ensureMembership(
     .from('team_members')
     .upsert(
       { team_id: teamId, user_id: userId, role, joined_at: new Date().toISOString() },
-      { onConflict: 'team_id,user_id', ignoreDuplicates: true }
+      { onConflict: 'team_id,user_id' }
     )
   if (error) {
     console.error(
@@ -184,6 +199,13 @@ function generateLicenseKey(): { key: string; keyHash: string; keyPrefix: string
  * the FIRST time it's called for a given subscription; subsequent runs detect the
  * existing active key and return null (nothing new to print — the operator already has
  * the value from the run that created it, captured as a GitHub Actions secret).
+ *
+ * Known gap (GPT-5.6-Sol review finding #3): if the process crashes or the operator
+ * loses the captured stdout AFTER this function inserts the row but BEFORE the value
+ * reaches a GitHub Actions secret, the raw key is unrecoverable — a re-run sees the
+ * active row and returns null, not a fresh key. Recovery in that case is manual:
+ * `DELETE FROM license_keys WHERE subscription_id = '<SUB_ID_ENT|SUB_ID_NONENT>' AND status = 'active'`
+ * via `./scripts/pooler-psql.sh` against staging, then re-run the seed script.
  */
 export async function ensureLicenseKey(
   admin: SupabaseClient,
