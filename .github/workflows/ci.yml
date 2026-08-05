@@ -394,8 +394,9 @@ jobs:
         # Dependabot-maintained) — never `-p vitest@<ver>`, which mismatches root's
         # pin after any bump and trips a known npm Arborist crash
         # (npm/cli#9787 / npm/cli#8261) inside a workspace member. Requires the
-        # package-lock.json dedup in this same change — see (a) above — or this
-        # resolves a stale nested copy instead of root's pinned version.
+        # package-lock.json nested-vitest dedup landed alongside this line (see
+        # docs/internal/implementation/smi-5931-eval-gate-vitest-pin.md) — without
+        # it, this resolves a stale nested copy instead of root's pinned version.
         run: npx vitest run tests/eval/
       - name: Validate baseline.json schema
         if: steps.filter.outputs.relevant == 'true'
