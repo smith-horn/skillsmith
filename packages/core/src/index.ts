@@ -62,6 +62,10 @@ export {
   type PrivateRegistryGetErrorCode,
   type PrivateRegistryGetResult,
   type GetPrivateRegistrySkillContentParams,
+  // SMI-5897 (C-15): shared security-summary derivation (CLI + MCP).
+  // SMI-5897 (Wave 4 fix): local-DB-shaped sibling derivation.
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
 } from './api/index.js'
 
 // Search

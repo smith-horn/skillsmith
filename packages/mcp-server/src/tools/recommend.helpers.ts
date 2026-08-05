@@ -5,9 +5,12 @@
 
 import type { SkillRole, ApiSearchResult } from '@skillsmith/core'
 import type { SkillMatchResult } from '@skillsmith/core'
+import {
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
+} from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { mapTrustTierFromDb } from '../utils/validation.js'
-import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
 import type { SkillData, SkillRecommendation } from './recommend.types.js'
 import type { LocalSkill } from '../indexer/LocalIndexer.js'
 
@@ -206,6 +209,10 @@ export function buildApiRecommendation(
  * that was never scanned at all. When a summary IS returned, riskScore/
  * scannedAt/passed pass through RAW from SkillData — never coerce/default to
  * 0/a fabricated timestamp, which would read as "confirmed clean."
+ * SMI-5897 (Wave 4 fix): the never-scanned-check + object construction now
+ * goes through the shared `deriveSecuritySummaryFromSkillRow()` instead of
+ * this file's own inline ternary, so `search.helpers.ts`/`get-skill.ts`'s
+ * local-DB paths can't re-diverge from this one.
  */
 export function buildDbFallbackRecommendation(
   result: SkillMatchResult,
@@ -229,15 +236,7 @@ export function buildDbFallbackRecommendation(
     installable: skill.installable !== false ? true : false,
     // SkillData.description is typed `string` (not nullable), so `??` (not `||`).
     description: skill.description ?? '',
-    security:
-      skill.securityScannedAt == null
-        ? undefined
-        : {
-            passed: skill.securityPassed,
-            riskScore: skill.riskScore,
-            findingsCount: skill.securityFindingsCount,
-            scannedAt: skill.securityScannedAt,
-          },
+    security: deriveSecuritySummaryFromSkillRow(skill),
   }
 }
 

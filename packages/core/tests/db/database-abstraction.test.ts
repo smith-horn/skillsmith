@@ -5,7 +5,7 @@
  * These tests should pass with any conforming driver (better-sqlite3, sql.js).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { Database } from '../../src/db/database-interface.js'
 import {
   createDatabaseSync,
@@ -278,6 +278,61 @@ describe('Database Abstraction Layer', () => {
       expect(native.open).toBe(true)
 
       db.close()
+    })
+  })
+
+  describe('WASM fallback notice quiet-mode (SMI-5897 Wave 4 fix)', () => {
+    // The WASM-fallback console.warn only fires on the "native unavailable,
+    // fall back to sql.js" branch — reached only when isBetterSqlite3Available()
+    // returns false, which SKILLSMITH_FORCE_WASM (used above) does NOT exercise
+    // (that env var takes an earlier, separate branch). Mock the driver module
+    // to force the fallback branch, and use resetModules() + a dynamic import
+    // to get a fresh `wasmFallbackNoticeEmitted` module-level guard per test —
+    // otherwise only the FIRST test in the whole run to hit this branch would
+    // ever see the warning (print-once-per-process, SMI-4807).
+    afterEach(() => {
+      vi.doUnmock('../../src/db/drivers/betterSqlite3Driver.js')
+      vi.resetModules()
+      delete process.env.SKILLSMITH_QUIET
+    })
+
+    it('suppresses the WASM fallback console.warn when SKILLSMITH_QUIET=1', async () => {
+      vi.doMock('../../src/db/drivers/betterSqlite3Driver.js', async (importOriginal) => {
+        const actual =
+          await importOriginal<typeof import('../../src/db/drivers/betterSqlite3Driver.js')>()
+        return { ...actual, isBetterSqlite3Available: () => false }
+      })
+      process.env.SKILLSMITH_QUIET = '1'
+      vi.resetModules()
+
+      const { createDatabaseAsync: freshCreateDatabaseAsync } =
+        await import('../../src/db/createDatabase.js')
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const db = await freshCreateDatabaseAsync(':memory:')
+
+      expect(warnSpy).not.toHaveBeenCalled()
+      db.close()
+      warnSpy.mockRestore()
+    })
+
+    it('still warns (unsuppressed) when SKILLSMITH_QUIET is unset', async () => {
+      vi.doMock('../../src/db/drivers/betterSqlite3Driver.js', async (importOriginal) => {
+        const actual =
+          await importOriginal<typeof import('../../src/db/drivers/betterSqlite3Driver.js')>()
+        return { ...actual, isBetterSqlite3Available: () => false }
+      })
+      delete process.env.SKILLSMITH_QUIET
+      vi.resetModules()
+
+      const { createDatabaseAsync: freshCreateDatabaseAsync } =
+        await import('../../src/db/createDatabase.js')
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const db = await freshCreateDatabaseAsync(':memory:')
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy.mock.calls[0][0]).toContain('Using WASM SQLite driver')
+      db.close()
+      warnSpy.mockRestore()
     })
   })
 

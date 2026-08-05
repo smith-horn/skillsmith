@@ -30,6 +30,9 @@
  */
 
 import { EmbeddingService } from './index.js'
+// SMI-5897 (Wave 4 fix): moved to utils/ so db/createDatabase.ts can share
+// this guard too without a db-layer file reaching into embeddings/.
+import { isQuietModeEnabled } from '../utils/quiet-mode.js'
 
 /** Hard upper bound on probe execution (preserved from SMI-5009). */
 const DEFAULT_TIMEOUT_MS = 2000
@@ -59,13 +62,6 @@ export interface ProbeEmbeddingCapabilityOptions {
   quiet?: boolean
 }
 
-/** Detect SKILLSMITH_QUIET env var (case-insensitive truthy match). */
-function envQuiet(): boolean {
-  const v = process.env.SKILLSMITH_QUIET
-  if (v == null) return false
-  return v.toLowerCase() === 'true' || v === '1'
-}
-
 /**
  * Probe `@huggingface/transformers` availability with a hard timeout +
  * structured stderr warning when the mock fallback engages.
@@ -79,7 +75,7 @@ export async function probeEmbeddingCapability(
 ): Promise<void> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const log = opts.logger ?? ((msg: string) => console.error(msg))
-  const quiet = opts.quiet === true || envQuiet()
+  const quiet = opts.quiet === true || isQuietModeEnabled()
   const emit = (msg: string): void => {
     if (!quiet) log(msg)
   }

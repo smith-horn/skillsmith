@@ -34,6 +34,13 @@ import {
   findSimilarBruteForceFromMap,
 } from './embedding-utils.js'
 
+// SMI-5897 (C-18/C-19, Wave 4 fix): shared SKILLSMITH_QUIET guard, also used
+// by probe.ts and db/createDatabase.ts — moved to utils/quiet-mode.ts so a
+// db-layer consumer doesn't have to reach into embeddings/ for a generic
+// env-var check (see utils/quiet-mode.ts for the original cycle-avoidance
+// rationale, which still applies to this module's own probe.ts import).
+import { isQuietModeEnabled } from '../utils/quiet-mode.js'
+
 // SMI-4577: HNSW backend for findSimilar — see docs/internal/adr/009-embedding-service-fallback.md
 import {
   loadOrBuildHnsw,
@@ -173,10 +180,16 @@ export class EmbeddingService {
       return this.model
     } catch (error) {
       this.modelLoadFailed = true
-      console.warn(
-        `[EmbeddingService] Failed to load model "${this.modelName}", using fallback mode:`,
-        error instanceof Error ? error.message : error
-      )
+      // SMI-5897 (C-18/C-19): this was a second, unguarded warning path —
+      // probeEmbeddingCapability() (probe.ts) already honors SKILLSMITH_QUIET,
+      // but this catch block printed unconditionally regardless of it. Now
+      // covered by the same shared guard so both paths agree.
+      if (!isQuietModeEnabled()) {
+        console.warn(
+          `[EmbeddingService] Failed to load model "${this.modelName}", using fallback mode:`,
+          error instanceof Error ? error.message : error
+        )
+      }
       return null
     }
   }
@@ -471,23 +484,7 @@ export class EmbeddingService {
 
 export default EmbeddingService
 
-// HNSW Store (SMI-1519)
-export {
-  HNSWEmbeddingStore,
-  createHNSWStore,
-  isHNSWAvailable,
-  loadHNSWLib,
-  DEFAULT_HNSW_CONFIG,
-  HNSW_PRESETS,
-} from './hnsw-store.js'
-
-export type {
-  IEmbeddingStore,
-  HNSWConfig,
-  HNSWEmbeddingStoreOptions,
-  HNSWIndexStats,
-  BatchInsertResult,
-  HierarchicalNSW,
-  HierarchicalNSWConstructor,
-  HNSWSearchResult,
-} from './hnsw-store.js'
+// HNSW Store (SMI-1519). SMI-5897: moved to its own file (hnsw-store.exports.ts)
+// to keep this file under the 500-line cap — pure re-export forward, no
+// behavior change for consumers of @skillsmith/core/embeddings.
+export * from './hnsw-store.exports.js'

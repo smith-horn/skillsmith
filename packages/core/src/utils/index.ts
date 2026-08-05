@@ -25,3 +25,8 @@ export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './github-url.js'
 
 // SMI-2274: Safe filesystem operations (symlink protection)
 export { safeWriteFile, SymlinkError, HardlinkError } from './safe-fs.js'
+
+// SMI-5897 (C-18/C-19, Wave 4 fix): shared SKILLSMITH_QUIET guard — used by
+// embeddings/probe.ts, embeddings/index.ts, and db/createDatabase.ts.
+// Deliberately not re-exported from the package root (internal-only helper).
+export { isQuietModeEnabled } from './quiet-mode.js'

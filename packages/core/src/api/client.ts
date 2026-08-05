@@ -36,6 +36,7 @@ import { buildClientEventBatcher } from './client.events.js'
 import { ApiCache } from './cache.js'
 import { buildResponseCache, withResponseCache, type CallCacheOptions } from './client.cache.js'
 import { tryRefreshToken } from './client.token-refresh.js'
+import { deriveSecuritySummaryFromApiSkill } from './security-summary.js'
 
 export type { CallCacheOptions } from './client.cache.js'
 
@@ -447,6 +448,15 @@ export class SkillsmithApiClient {
   static toSkill(result: ApiSearchResult): Skill {
     // Sentinel value for missing timestamps - clearly indicates unknown date
     const UNKNOWN_DATE = '1970-01-01T00:00:00.000Z'
+    // SMI-5897 (C-15): derive real security-status fields via the shared
+    // helper instead of hardcoding "not scanned" for every API-sourced
+    // skill — this is what made CLI `info`/`search` show "Not scanned" for
+    // skills MCP correctly reported as passed (both now derive from the
+    // same underlying last_scanned_at/quarantined/security_score fields).
+    // `security` is `undefined` when the skill has never been scanned;
+    // the flat Skill shape signals that the same way MCP's nested
+    // SecuritySummary does — securityPassed: null, securityScannedAt: null.
+    const security = deriveSecuritySummaryFromApiSkill(result)
     return {
       id: result.id,
       name: result.name,
@@ -457,11 +467,11 @@ export class SkillsmithApiClient {
       trustTier: result.trust_tier,
       tags: result.tags || [],
       installable: result.installable ?? false,
-      // SMI-825: Security scan fields (default to not scanned for API results)
-      riskScore: null,
-      securityFindingsCount: 0,
-      securityScannedAt: null,
-      securityPassed: null,
+      // SMI-825: Security scan fields
+      riskScore: security?.riskScore ?? null,
+      securityFindingsCount: security?.findingsCount ?? 0,
+      securityScannedAt: security?.scannedAt ?? null,
+      securityPassed: security?.passed ?? null,
       createdAt: result.created_at ?? UNKNOWN_DATE,
       updatedAt: result.updated_at ?? UNKNOWN_DATE,
     }
