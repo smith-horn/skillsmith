@@ -150,7 +150,7 @@
     "@opentelemetry/sdk-trace-base": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
     "fts5-sql-bundle": "1.0.2",
-    "lru-cache": "11.3.3",
+    "lru-cache": "11.5.2",
     "posthog-node": "5.29.2",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "5.9.3",
