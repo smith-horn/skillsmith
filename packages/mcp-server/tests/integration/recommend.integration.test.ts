@@ -31,11 +31,23 @@ describe('Recommend Tool Integration', () => {
   })
 
   describe('executeRecommend', () => {
-    it('should return recommendations with auto-detected skills when installed skills is empty', async () => {
-      // SMI-906: Empty installed_skills now triggers auto-detection from ~/.claude/skills/
+    it('should return recommendations from project_context when installed_skills is empty', async () => {
+      // SMI-906: empty installed_skills falls through to auto-detection from
+      // ~/.claude/skills/ -- but that makes this test's outcome depend on the
+      // CI runner's ambient filesystem state, not the code under test (SMI-5896
+      // review: an empty derived stack -- no installed_skills AND no usable
+      // project_context -- now correctly returns the shared empty-stack guard
+      // response instead of falling through to a generic 'development
+      // productivity tools' fallback query, so a CI environment with a
+      // genuinely empty ~/.claude/skills/ correctly gets 0 recommendations +
+      // guidance here, not a flaky pass/fail depending on what's on disk).
+      // Supply project_context so this test deterministically exercises real
+      // recommendation logic regardless of ambient auto-detected skills; the
+      // guard itself has dedicated coverage in recommend.empty-stack.test.ts.
       const result = await executeRecommend(
         {
           installed_skills: [],
+          project_context: 'React frontend with Jest testing',
           limit: 5,
         },
         toolContext
@@ -44,7 +56,6 @@ describe('Recommend Tool Integration', () => {
       expect(result.recommendations).toBeDefined()
       expect(result.recommendations.length).toBeGreaterThan(0)
       expect(result.recommendations.length).toBeLessThanOrEqual(5)
-      // installed_count may be > 0 due to auto-detection from ~/.claude/skills/
       expect(result.context.installed_count).toBeGreaterThanOrEqual(0)
       expect(result.context.using_semantic_matching).toBe(true)
     })
@@ -284,9 +295,15 @@ describe('Recommend Tool Integration', () => {
 
   describe('formatRecommendations', () => {
     it('should format recommendations for terminal display', async () => {
+      // SMI-5896 review: same ambient-filesystem-dependence issue as the
+      // executeRecommend test above -- supply project_context so this
+      // deterministically exercises the real-recommendations format path,
+      // not whichever of the two (recommendations vs. empty-stack guard)
+      // the CI runner's ~/.claude/skills/ state happens to produce.
       const result = await executeRecommend(
         {
           installed_skills: [],
+          project_context: 'React frontend with Jest testing',
           detect_overlap: false,
           limit: 3,
         },
