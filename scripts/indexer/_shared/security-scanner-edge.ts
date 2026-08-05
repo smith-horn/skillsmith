@@ -343,7 +343,7 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
  * ONCE at module load, not hand-maintained, so it can never silently drift
  * from JAILBREAK_PATTERNS' own evidence-tier classification.
  */
-const DIRECTIVE_JAILBREAK_PATTERNS: readonly RegExp[] = JAILBREAK_PATTERNS.filter(
+export const DIRECTIVE_JAILBREAK_PATTERNS: readonly RegExp[] = JAILBREAK_PATTERNS.filter(
   (p) => classifyEvidence(p) !== 'mention'
 )
 

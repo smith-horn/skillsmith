@@ -68,6 +68,17 @@ export {
 export { scanSsrfPatterns }
 export { toMinimalRefs, toSARIF, toGitHubAnnotations, toSummary }
 
+/**
+ * SMI-5879 (design §5): quickCheck is a fast pre-filter, not the full scan —
+ * a bare mention-tier match (a documentation page discussing "jailbreak" or
+ * "DAN") should not by itself fail the quick path. Derived ONCE at module
+ * load, not hand-maintained, so it can never silently drift from
+ * JAILBREAK_PATTERNS' own evidence-tier classification.
+ */
+export const DIRECTIVE_JAILBREAK_PATTERNS: readonly RegExp[] = JAILBREAK_PATTERNS.filter(
+  (p) => classifyEvidence(p) !== 'mention'
+)
+
 export class SecurityScanner {
   private allowedDomains: Set<string>
   private blockedPatterns: RegExp[]
@@ -327,8 +338,13 @@ export class SecurityScanner {
     }
   }
 
+  /**
+   * SMI-5879 (design §5): tests only the directive-tier derived subset (a
+   * bare mention like "jailbreak" or "DAN" alone should not fail the quick
+   * path — see DIRECTIVE_JAILBREAK_PATTERNS above).
+   */
   quickCheck(content: string): boolean {
-    for (const pattern of JAILBREAK_PATTERNS) {
+    for (const pattern of DIRECTIVE_JAILBREAK_PATTERNS) {
       if (safeRegexCheck(pattern, content)) return false
     }
     return true

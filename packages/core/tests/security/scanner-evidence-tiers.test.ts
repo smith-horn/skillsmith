@@ -39,6 +39,7 @@ import {
 // SMI-5881: EVIDENCE_TYPE_BY_PATTERN moved to patterns.jailbreak.evidence.ts.
 import { EVIDENCE_TYPE_BY_PATTERN } from '../../src/security/scanner/patterns.jailbreak.evidence.js'
 import { classifyEvidence } from '../../src/security/scanner/SecurityScanner.evidence.js'
+import { DIRECTIVE_JAILBREAK_PATTERNS } from '../../src/security/scanner/SecurityScanner.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -313,5 +314,22 @@ describe('SMI-5876 — the new directive patterns still reach critical for real 
 
     expect(jailbreakFindings.some((f) => f.severity === 'critical')).toBe(true)
     expect(report.passed).toBe(false)
+  })
+})
+
+describe('SMI-5879 (design §5) — quickCheck derived directive-only pattern set', () => {
+  it('is non-empty', () => {
+    expect(DIRECTIVE_JAILBREAK_PATTERNS.length).toBeGreaterThan(0)
+  })
+
+  it('contains no mention-tier pattern', () => {
+    for (const pattern of DIRECTIVE_JAILBREAK_PATTERNS) {
+      expect(classifyEvidence(pattern)).not.toBe('mention')
+    }
+  })
+
+  it('is a strict subset of JAILBREAK_PATTERNS, excluding exactly the mention-tier entries', () => {
+    const mentionCount = JAILBREAK_PATTERNS.filter((p) => classifyEvidence(p) === 'mention').length
+    expect(DIRECTIVE_JAILBREAK_PATTERNS.length).toBe(JAILBREAK_PATTERNS.length - mentionCount)
   })
 })
