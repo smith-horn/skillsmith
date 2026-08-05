@@ -1,6 +1,9 @@
 /**
  * SMI-5562: Unit coverage for the shared security-summary derivation helper,
  * extracted from get-skill.ts's inline derivation (SMI-4240).
+ * SMI-5897 (C-15): moved from packages/mcp-server/src/utils/security-summary.test.ts
+ * to packages/core so the CLI (`SkillsmithApiClient.toSkill()`) and MCP tool
+ * call sites share and test one implementation.
  */
 
 import { describe, it, expect } from 'vitest'

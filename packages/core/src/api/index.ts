@@ -42,6 +42,16 @@ export {
   type BatchFlushFn,
 } from './event-batcher.js'
 
+// SMI-5897 (C-15): shared security-summary derivation — CLI (`toSkill()`)
+// and MCP tool call sites both import this instead of independently
+// reconstructing the passed/riskScore/findingsCount/scannedAt logic.
+// SMI-5897 (Wave 4 fix): sibling `deriveSecuritySummaryFromSkillRow()` for
+// the local-DB-shaped (pre-computed field) call sites.
+export {
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
+} from './security-summary.js'
+
 // ============================================================================
 // API Cache
 // ============================================================================

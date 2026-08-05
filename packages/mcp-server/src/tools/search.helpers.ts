@@ -14,9 +14,10 @@ import {
   type ApiSearchResult,
   CLIENT_TO_COMPATIBILITY_SLUG,
   type SearchResult,
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
 } from '@skillsmith/core'
 import { extractCategoryFromTags, mapTrustTierFromDb } from '../utils/validation.js'
-import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
 
 /**
  * SMI-5896: Default/bound for the MCP search tool's `limit` parameter.
@@ -172,6 +173,10 @@ export function mapApiSkillToSearchResult(item: ApiSearchResult): SkillSearchRes
  * SMI-2734: installHint guarded on real registry owner (not 'unknown').
  * SMI-2760: compatibility tags.
  * SMI-5327: SPDX license parity with the API path.
+ * SMI-5897 (Wave 4 fix): security summary now derived via the shared
+ * `deriveSecuritySummaryFromSkillRow()` — was previously built unconditionally,
+ * shipping a placeholder `{ passed: null, ... }` object even for skills that
+ * were never scanned at all, instead of `undefined`.
  */
 export function mapLocalSkillToSearchResult(item: SearchResult): SkillSearchResult {
   return {
@@ -190,13 +195,8 @@ export function mapLocalSkillToSearchResult(item: SearchResult): SkillSearchResu
       item.skill.author && item.skill.author !== 'unknown'
         ? item.skill.author + '/' + item.skill.name
         : undefined,
-    // SMI-825: Security summary
-    security: {
-      passed: item.skill.securityPassed,
-      riskScore: item.skill.riskScore,
-      findingsCount: item.skill.securityFindingsCount,
-      scannedAt: item.skill.securityScannedAt,
-    },
+    // SMI-825 / SMI-5897: Security summary — undefined when never scanned.
+    security: deriveSecuritySummaryFromSkillRow(item.skill),
     // SMI-2760: Compatibility tags
     compatibility: item.skill.compatibility,
     // SMI-5327: SPDX license — parity with API path's `item.license ?? null`

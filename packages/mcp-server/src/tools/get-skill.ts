@@ -32,6 +32,8 @@ import {
   trackSkillView,
   QuarantineRepository,
   resolveSkillApiFirst,
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
@@ -41,7 +43,6 @@ import {
   extractCategoryFromTags,
   normalizeApiCategory,
 } from '../utils/validation.js'
-import { deriveSecuritySummaryFromApiSkill } from '../utils/security-summary.js'
 
 /**
  * Zod schema for get-skill input validation
@@ -142,8 +143,10 @@ async function executeGetSkillImpl(
     // can render real scan status instead of falling back to "Not scanned"
     // for every skill. Skills that have never been scanned return `undefined`
     // (the extension treats undefined and { passed: null } identically in
-    // getSecurityScanHtml). SMI-5562: derivation extracted to a shared helper
-    // (security-summary.ts) reused by recommend.ts and search.ts.
+    // getSecurityScanHtml). SMI-5562: derivation extracted to a shared helper,
+    // reused by recommend.ts and search.ts. SMI-5897 (C-15): helper moved to
+    // @skillsmith/core (api/security-summary.ts) so the CLI's toSkill() shares
+    // the exact same implementation instead of independently reconstructing it.
     const security = deriveSecuritySummaryFromApiSkill(apiSkill)
 
     // Convert API skill to MCP skill format
@@ -237,13 +240,10 @@ async function executeGetSkillImpl(
     scoreBreakdown: undefined, // Breakdown not stored in current schema
     tags: dbSkill.tags || [],
     installCommand: 'claude skill add ' + dbSkill.id,
-    // SMI-825: Security summary
-    security: {
-      passed: dbSkill.securityPassed,
-      riskScore: dbSkill.riskScore,
-      findingsCount: dbSkill.securityFindingsCount,
-      scannedAt: dbSkill.securityScannedAt,
-    },
+    // SMI-825 / SMI-5897: Security summary — undefined when never scanned
+    // (was previously built unconditionally, shipping a placeholder
+    // `{ passed: null, ... }` object for never-scanned skills).
+    security: deriveSecuritySummaryFromSkillRow(dbSkill),
     createdAt: dbSkill.createdAt,
     updatedAt: dbSkill.updatedAt,
   }
