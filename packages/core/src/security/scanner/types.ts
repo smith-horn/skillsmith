@@ -129,6 +129,15 @@ export interface ScanReport {
   riskScore: number
   /** Breakdown of risk score by category */
   riskBreakdown: RiskScoreBreakdown
+  /**
+   * SMI-5879 (design §3.3.6): true when the jailbreak or ai_defence multiline
+   * pass hit its per-pattern iteration ceiling before exhausting matches on a
+   * pathological same-line-repetition input. NOT provably score-neutral — the
+   * write path must treat this scan as authoritative for RAISING a verdict
+   * only, never for lowering an existing quarantine. Absent/undefined is
+   * equivalent to `false` (not truncated) for gating purposes.
+   */
+  multilineTruncated?: boolean
 }
 
 /**
