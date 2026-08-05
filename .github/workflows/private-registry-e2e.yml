@@ -62,6 +62,7 @@ on:
       - 'scripts/seed-e2e-registry-users.ts'
       - 'scripts/seed-e2e-registry-users.helpers.ts'
       - 'scripts/e2e-registry-roundtrip.ts'
+      - 'scripts/e2e-registry-roundtrip.helpers.ts'
       - 'scripts/e2e-registry-roundtrip.mcp-live.ts'
       - 'scripts/e2e-registry-roundtrip.types.ts'
       - '.github/workflows/private-registry-e2e.yml'
@@ -102,6 +103,7 @@ jobs:
              scripts/seed-e2e-registry-users.ts \
              scripts/seed-e2e-registry-users.helpers.ts \
              scripts/e2e-registry-roundtrip.ts \
+             scripts/e2e-registry-roundtrip.helpers.ts \
              scripts/e2e-registry-roundtrip.mcp-live.ts \
              scripts/e2e-registry-roundtrip.types.ts \
              .github/workflows/private-registry-e2e.yml \
