@@ -164,6 +164,18 @@ done
   rm -rf "$HOME_DIR"
 }
 
+# Reciprocal of the above (pr-reviewer PR-12 finding): a skillsmith disconnect
+# must not bump the doc-retrieval counter either — both directions, not just one.
+{
+  HOME_DIR=$(tmp_home)
+  OUT=$(run_hook "mcp__skillsmith__search" "transport closed" "SKILLSMITH_MCP_DISCONNECT_HOME=$HOME_DIR")
+  SS_COUNT=$(state_total_count "$HOME_DIR/.skillsmith/mcp-disconnect.state" "skillsmith")
+  DR_COUNT=$(state_total_count "$HOME_DIR/.skillsmith/mcp-disconnect.state" "skillsmith-doc-retrieval")
+  assert_eq "skillsmith-own-counter" "1" "$SS_COUNT"
+  assert_eq "skillsmith-does-not-bump-doc-retrieval" "0" "$DR_COUNT"
+  rm -rf "$HOME_DIR"
+}
+
 # ----------------------------------------------------------------------
 # Test 9: kill-switch suppresses everything (no output, no state write).
 # ----------------------------------------------------------------------
@@ -208,6 +220,26 @@ done
   set -e
   assert_eq "broken-state-dir-exit-0" "0" "$HOOK_EXIT"
   assert_contains "broken-state-dir-still-warns" '"systemMessage"' "$OUT"
+  rm -rf "$HOME_DIR"
+}
+
+# ----------------------------------------------------------------------
+# Test 12 (pr-reviewer PR-12 finding): fail-soft on a genuine lock-acquisition
+# timeout, distinct from Test 11's directory-creation failure -- here the lock
+# dir already exists with a live owner (our own PID, guaranteed alive), so
+# the guard's underlying `record` call cannot acquire it within the timeout
+# and must skip persistence while still emitting systemMessage.
+# ----------------------------------------------------------------------
+{
+  HOME_DIR=$(tmp_home)
+  mkdir -p "$HOME_DIR/.skillsmith/mcp-disconnect.state.lock"
+  echo "$$" > "$HOME_DIR/.skillsmith/mcp-disconnect.state.lock/owner"
+  OUT=$(run_hook "mcp__skillsmith__search" "transport closed" \
+    "SKILLSMITH_MCP_DISCONNECT_HOME=$HOME_DIR" \
+    "SKILLSMITH_MCP_DISCONNECT_LOCK_ACQUIRE_TIMEOUT_MS=200")
+  assert_contains "lock-timeout-still-warns" '"systemMessage"' "$OUT"
+  COUNT=$(state_total_count "$HOME_DIR/.skillsmith/mcp-disconnect.state" "skillsmith")
+  assert_eq "lock-timeout-does-not-persist" "0" "$COUNT"
   rm -rf "$HOME_DIR"
 }
 
