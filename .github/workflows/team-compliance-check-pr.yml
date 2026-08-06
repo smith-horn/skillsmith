@@ -23,14 +23,18 @@ name: Skillsmith Team Compliance Check
 # changed.
 #
 # SHADOW MODE: the final step uses `continue-on-error: true` so the check
-# warns but does not block merge. SHADOW_MODE_END_DATE below is computed as
-# (2026-07-08 push date + 21 days) -- recompute again if actual merge slips
-# materially past that. The flip-to-mandatory follow-up is tracked in
-# SMI-5587, with a real Linear due date (2026-08-02) specifically so it
-# doesn't repeat SMI-4904's failure mode: that issue was cited as
-# concurrency-audit-pr.yml's flip tracker but was actually a same-day-closed
-# build issue, so that workflow's flip never happened and it silently stayed
-# non-blocking for ~7 weeks past its own shadow-end date (see SMI-5591).
+# warns but does not block merge. Original SHADOW_MODE_END_DATE (2026-07-29)
+# passed with zero soak evidence gathered -- this is a `workflow_call`
+# reusable workflow that only runs in external customer repos, and the
+# `team-compliance-check` edge function didn't log verdicts anywhere durable,
+# so the flip decision had no data to go on (see SMI-5587 comments for the
+# full investigation, 2026-08-06). SMI-5587 (this same PR) adds that logging
+# (`audit_logs`, event_type='team_compliance:check_performed'). New
+# SHADOW_MODE_END_DATE below is (2026-08-06 merge/deploy date + 28 days),
+# giving the new telemetry a real accumulation window before the next flip
+# attempt queries it -- recompute again if actual merge slips materially past
+# that. Same SMI-4904 failure-mode caution as before: don't let this date
+# lapse silently a second time (see SMI-5591).
 #
 # Admin-facing shadow-mode/flip notification (a deduped GitHub issue opened
 # in the calling repo, mirroring the telemetry-liveness dedup pattern) is
@@ -77,8 +81,8 @@ env:
   # project-refs table; this hits prod skills-registry data from a customer's CI).
   SKILLSMITH_API_BASE: 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
   # PLACEHOLDER -- see the top-of-file DESIGN NOTE. Must be recomputed as
-  # (actual merge date + 21 days) at merge time.
-  SHADOW_MODE_END_DATE: '2026-07-29'
+  # (actual merge/deploy date + 28 days) at merge time.
+  SHADOW_MODE_END_DATE: '2026-09-03'
 
 jobs:
   compliance-check:
