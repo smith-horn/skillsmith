@@ -17,6 +17,13 @@
  *   - .git/, node_modules/, dist/, .worktrees/, .git-crypt/ (binary/VCS
  *     internals, or a nested worktree checkout that duplicates this
  *     repo's own history under a gitignored path)
+ *   - .beads/ (gitignored NEEDLE/bead-forge dispatch trace transcripts,
+ *     scripts/needle/README.md -- generated, local-only workspace state, not
+ *     reviewable source. A trace can legitimately echo CLAUDE.md's own
+ *     git-crypt troubleshooting prose verbatim (which describes the banned
+ *     pattern, same rationale as this file's own self-exemption below),
+ *     producing a host-history-dependent false positive in any worktree
+ *     that's ever run a Codex dispatch, found live 2026-08-06)
  *   - .ruvector/ (the local skillsmith-doc-retrieval semantic-search index,
  *     gitignored and never present in CI -- its embeddings payload verbatim-
  *     copies chunked text from indexed docs, including historical snippets
@@ -56,6 +63,7 @@ const EXCLUDED_DIR_NAMES = new Set([
   'dist',
   '.worktrees',
   '.git-crypt',
+  '.beads',
   '.ruvector',
 ])
 
