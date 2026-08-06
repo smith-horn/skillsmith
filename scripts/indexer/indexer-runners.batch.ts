@@ -10,13 +10,23 @@
  *      H-2: PostgREST batch upsert with `returning: 'representation'` filters
  *      null-url rows out of the returned `data`, silently dropping the
  *      `indexer_skill_md_missing` audit branch).
- *   2. Single batched upsert of `validUrlItems`.
+ *   2. Chunked upsert of `validUrlItems` (SMI-5934: was a single unchunked
+ *      call that silently discarded an entire batch — up to ~21K rows — on a
+ *      Postgres statement timeout; now issued in `chunkSize`-row slices so a
+ *      timeout only costs that one chunk).
  *   3. Partial-failure diff: PostgREST batch upsert is NOT row-atomic. If
  *      `data.length < input.length`, the missing rows count as `failed`
- *      and are surfaced in `errors[]` (C-3 review finding).
+ *      and are surfaced in `errors[]` (C-3 review finding). Applies per
+ *      chunk since SMI-5934.
  *
  * No GitHub fetches issued here — Supabase-only. Telemetry threading is
  * therefore unnecessary in this module.
+ *
+ * Prior incidents in this file: SMI-4846/H-2 (null-url audit log dropped by
+ * `returning: 'representation'`), SMI-4858/SMI-5491 (skinny/full column-union
+ * NULL propagation tripped `skills.name NOT NULL`), SMI-5934 (unchunked
+ * upsert silently discarded whole batches on an 8s statement timeout for
+ * ~10 days, SMI-5334 rollout).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -54,14 +64,27 @@ export interface FlushResult {
 }
 
 /**
- * SMI-4846 + H-2 + C-3: Drain the upsert accumulator with one batched call,
- * preserving the per-row audit-log branch for null-url items and surfacing
- * partial failures.
+ * SMI-5934: Default upsert chunk size. A live dispatch admitting ~9,170 rows
+ * completed with NO 8s statement timeout (docs/internal/runbooks/
+ * indexer-backfill.md §3.6, run 27918147798) -- `fullItems` (post
+ * skinny/null-url filtering) is always <=admitted, so the demonstrated
+ * no-timeout ceiling is <=9,170 rows; 2000 keeps meaningful headroom under
+ * that without a byte-accounting layer this data doesn't justify. Exported
+ * + accepted as a parameter (not inlined) so tests can exercise multi-chunk
+ * behavior with a small `chunkSize` instead of a 2000+-row fixture.
+ */
+export const UPSERT_CHUNK_SIZE = 2000
+
+/**
+ * SMI-4846 + H-2 + C-3 + SMI-5934: Drain the upsert accumulator with a
+ * chunked upsert, preserving the per-row audit-log branch for null-url items
+ * and surfacing partial failures.
  */
 export async function flushUpsertAccumulator(
   supabase: SupabaseClient,
   accumulator: UpsertAccumulatorItem[],
-  existingUrls: Set<string>
+  existingUrls: Set<string>,
+  chunkSize: number = UPSERT_CHUNK_SIZE
 ): Promise<FlushResult> {
   let indexed = 0
   let updated = 0
@@ -145,32 +168,54 @@ export async function flushUpsertAccumulator(
     return { indexed, updated, failed, quarantined, errors, upsertOkUrls }
   }
 
-  // C-3: PostgREST batch upsert is NOT row-atomic. Behavior:
-  //   • `error` non-null → entire batch failed (mark all rows as failed).
-  //   • `error` null + `data.length < input.length` → partial failure;
-  //     diff by repo_url to identify missing rows; mark each as failed.
-  //   • `error` null + `data.length === input.length` → all rows succeeded.
-  const payload = fullItems.map((a) => a.skillData)
-  const { data, error } = await supabase
-    .from('skills')
-    .upsert(payload, { onConflict: 'repo_url', ignoreDuplicates: false })
-    .select('repo_url')
+  // C-3 + SMI-5934: PostgREST batch upsert is NOT row-atomic, and (since
+  // SMI-5934) is issued in `chunkSize`-row chunks rather than one call for
+  // all of `fullItems`, so a statement timeout only costs one chunk instead
+  // of the whole dispatch. Per chunk:
+  //   • `error` non-null → that chunk failed (its rows go in `chunkErrorUrls`,
+  //     one summarized `errors[]` entry per failed chunk -- not one per row).
+  //   • `error` null + `data.length < chunk.length` → partial failure within
+  //     an otherwise-successful chunk; the post-loop walk below diffs by
+  //     repo_url and marks each missing row failed individually (rare C-3 case).
+  //   • `error` null + `data.length === chunk.length` → all rows in the chunk
+  //     succeeded.
+  // The chunk loop itself never touches `failed`/`indexed`/`updated` -- the
+  // post-loop walk over all of `fullItems` is the single source of truth for
+  // counting, so a row is never booked failed both inside the chunk loop and
+  // again in the per-row walk.
+  const chunkErrorUrls = new Set<string>()
+  for (let i = 0; i < fullItems.length; i += chunkSize) {
+    const chunk = fullItems.slice(i, i + chunkSize)
+    const payload = chunk.map((a) => a.skillData)
+    const { data, error } = await supabase
+      .from('skills')
+      .upsert(payload, { onConflict: 'repo_url', ignoreDuplicates: false })
+      .select('repo_url')
 
-  if (error) {
-    failed += fullItems.length
-    errors.push(`Batch upsert failed (${fullItems.length} rows): ${error.message}`)
-    return { indexed, updated, failed, quarantined, errors, upsertOkUrls }
-  }
+    if (error) {
+      const chunkNum = Math.floor(i / chunkSize) + 1
+      errors.push(
+        `Batch upsert failed (chunk ${chunkNum}, rows ${i}-${i + chunk.length - 1} of ${fullItems.length}): ${error.message}`
+      )
+      for (const { skillData } of chunk) {
+        const url = skillData.repo_url as string | null
+        if (url) chunkErrorUrls.add(url)
+      }
+      continue
+    }
 
-  for (const row of (data ?? []) as { repo_url: string | null }[]) {
-    if (row.repo_url) upsertOkUrls.add(row.repo_url)
+    for (const row of (data ?? []) as { repo_url: string | null }[]) {
+      if (row.repo_url) upsertOkUrls.add(row.repo_url)
+    }
   }
 
   for (const { repo, skillData } of fullItems) {
     const url = skillData.repo_url as string | null
     if (!url || !upsertOkUrls.has(url)) {
       failed++
-      errors.push(`Batch upsert partial-fail: ${repo.fullName}`)
+      if (!url || !chunkErrorUrls.has(url)) {
+        errors.push(`Batch upsert partial-fail: ${repo.fullName}`)
+      }
       continue
     }
     if (existingUrls.has(url)) {
