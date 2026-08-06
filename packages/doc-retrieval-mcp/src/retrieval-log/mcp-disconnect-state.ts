@@ -385,15 +385,3 @@ function ymdLocal(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
-
-/** Test-only: force-clear the lock dir, for tests that need a clean slate. */
-export function _resetLockForTests(): void {
-  try {
-    rmSync(resolveLockDirPath(), { recursive: true, force: true })
-  } catch {
-    // best-effort
-  }
-}
-
-/** Test-only: whether a PID is alive, exposed for the reclaim-safety test. */
-export const _isProcessAliveForTests = isProcessAlive

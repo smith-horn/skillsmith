@@ -288,6 +288,56 @@ describe('real OS-process concurrency: producer/consumer interleave with seeded 
   }, 30_000)
 })
 
+describe('lock-acquisition timeout — fail-soft (the durable write may be skipped, but nothing throws)', () => {
+  it('recordDisconnect returns false and does not persist when the lock cannot be acquired in time', async () => {
+    freshHome()
+    process.env.SKILLSMITH_MCP_DISCONNECT_LOCK_ACQUIRE_TIMEOUT_MS = '150'
+
+    const dir = tmpDir('mcp-disconnect-timeout-producer')
+    const ready = join(dir, 'ready')
+    const go = join(dir, 'go')
+    const holder = spawnWorker('hold-lock', ready, go, '/fake/repo', 'skillsmith', ['1000'])
+    await waitForAsync(() => existsSync(ready))
+    writeFileSync(go, '1')
+    await sleep(50) // let the holder acquire before we contend
+
+    const persisted = recordDisconnect('/fake/repo', 'skillsmith', {
+      tool: 'mcp__skillsmith__search',
+      errorExcerpt: 'transport closed',
+      timestamp: new Date().toISOString(),
+    })
+    expect(persisted).toBe(false)
+    expect(readState()['/fake/repo']?.skillsmith).toBeUndefined()
+
+    await holder
+  }, 10_000)
+
+  it('readAndAck returns null and does not crash when the lock cannot be acquired in time', async () => {
+    freshHome()
+    // Seed an unacknowledged entry while the lock is free.
+    recordDisconnect('/fake/repo', 'skillsmith', {
+      tool: 'mcp__skillsmith__search',
+      errorExcerpt: 'transport closed',
+      timestamp: new Date().toISOString(),
+    })
+
+    process.env.SKILLSMITH_MCP_DISCONNECT_LOCK_ACQUIRE_TIMEOUT_MS = '150'
+    const dir = tmpDir('mcp-disconnect-timeout-consumer')
+    const ready = join(dir, 'ready')
+    const go = join(dir, 'go')
+    const holder = spawnWorker('hold-lock', ready, go, '/fake/repo', 'skillsmith', ['1000'])
+    await waitForAsync(() => existsSync(ready))
+    writeFileSync(go, '1')
+    await sleep(50)
+
+    expect(readAndAck('/fake/repo', 'skillsmith')).toBeNull()
+
+    await holder
+    // Nothing was lost — the seeded entry is still there, unacknowledged, for the next attempt.
+    expect(readState()['/fake/repo']?.skillsmith?.sinceAckCount).toBe(1)
+  }, 10_000)
+})
+
 describe('lock reclaim safety (pass-3 C1 — the actual bug this design fixes)', () => {
   it('never reclaims a lock held by a live-but-slow process', async () => {
     freshHome()
