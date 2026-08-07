@@ -17,6 +17,7 @@ Internal MCP server (SMI-4417) wrapping `@ruvector/core` for semantic doc retrie
   transformers is unavailable.
 
 ### Added
+- `retrieval-log/mcp-disconnect-state.ts` (SMI-5941) — fourth `SessionStart` state-consumer sibling (alongside auto-heal/liveness/reindex): records a `skillsmith`/`skillsmith-doc-retrieval` MCP disconnect at the moment a `PostToolUseFailure` hook observes one, guarded by a portable mkdir-based mutual-exclusion lock with PID-liveness-verified stale-lock reclaim (new to this codebase — no sibling state file previously needed real concurrent-writer protection), and surfaces unacknowledged disconnects in the next session's priming banner via `scripts/session-priming-query.ts`.
 - `retrieval-log/{schema,writer}.ts` — append-only SQLite instrumentation at `~/.claude/projects/<encoded-cwd>/retrieval-logs.db` (SMI-4450 Wave 1 Step 3). Tables: `meta`, `retrieval_events`, `frontmatter_lint_events`. `$USER` ownership guard, `IS_DOCKER=true` no-op, lazy schema creation on first use.
 - `FRONTMATTER_LINT_EVENTS_DDL` exported from `schema.ts` for the Step 5 runtime divergence guard.
 - 5 source adapters under `src/adapters/` behind a `SourceAdapter` registry (Wave 1 Step 4):

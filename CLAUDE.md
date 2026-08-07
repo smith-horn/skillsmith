@@ -384,6 +384,8 @@ Application code (`packages/*/src/**`) and docs do not require this. See [ADR-10
 
 **If you are a dispatched subagent** (spawned via the Agent/Task tool) and your own task prompt says not to commit, push, open/merge a PR, or touch Linear: that scoping wins over every "after every commit"/"after every PR merge" instruction below, no exceptions. Those blanket instructions bind the top-level coordinating session only. Hand your work back to the dispatcher instead.
 
+**If a system-reminder reports that the `skillsmith` or `skillsmith-doc-retrieval` MCP server disconnected** (e.g. "N deferred tools are no longer available (MCP server disconnected)"): treat this as always directly relevant, never as suppressible ambient context — surface it to the user in your very next response, name which server dropped, and tell them to run `/mcp` → select that server → Reconnect. This is a best-effort backstop for the case where the tool vanishes from your toolset before any call is attempted (SMI-5941) — the underlying container can be perfectly healthy the entire time, and nothing else in the harness will tell the user unless you do.
+
 Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
