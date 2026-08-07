@@ -47,6 +47,10 @@ import {
   renderReindexBanner,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/reindex-state.js'
 import {
+  readAndAck,
+  renderDisconnectBanner,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/mcp-disconnect-state.js'
+import {
   logRetrievalEvent,
   resolveRetrievalLogPaths,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/writer.js'
@@ -223,8 +227,32 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     }
   }
 
-  // Combined banner: stale-probe section first, liveness one-liner, reindex one-liner below.
-  const contextBanner = [probeBanner, livenessLine, reindexLine].filter(Boolean).join('\n')
+  // SMI-5941 — MCP live-disconnect banner (session-priming state-consumer,
+  // mirrors the autoheal/liveness/reindex banners above). Computed BEFORE the
+  // disabled short-circuit for the same reason as the others: a disconnect a
+  // user hasn't seen yet should surface even when priming itself is disabled
+  // for this session. Checks both MCP servers this feature covers.
+  let disconnectLine = ''
+  if (process.env.SKILLSMITH_MCP_DISCONNECT_DISABLE !== '1') {
+    try {
+      const disconnectKey = resolveMainRepoKey(args.cwd)
+      if (disconnectKey) {
+        const lines: string[] = []
+        for (const server of ['skillsmith', 'skillsmith-doc-retrieval'] as const) {
+          const entry = readAndAck(disconnectKey, server)
+          if (entry) lines.push(renderDisconnectBanner(server, entry))
+        }
+        disconnectLine = lines.join('\n')
+      }
+    } catch {
+      /* fail-soft — must never crash the priming hook */
+    }
+  }
+
+  // Combined banner: stale-probe section first, liveness one-liner, reindex one-liner, disconnect one-liner below.
+  const contextBanner = [probeBanner, livenessLine, reindexLine, disconnectLine]
+    .filter(Boolean)
+    .join('\n')
 
   if (process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING === '1') {
     logRetrievalEvent({

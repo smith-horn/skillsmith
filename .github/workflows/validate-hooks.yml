@@ -30,6 +30,8 @@ on:
       - 'scripts/worktree-docker.sh'
       - 'scripts/docker-health.sh'
       - 'scripts/session-start-mcp-command-guard.sh'
+      - 'scripts/session-mcp-disconnect-guard.sh'
+      - 'scripts/tests/session-mcp-disconnect-guard.test.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/session-start-audit.test.sh'
       - 'scripts/tests/reclaim-node-modules.test.sh'
@@ -80,6 +82,8 @@ jobs:
             scripts/worktree-docker.sh \
             scripts/docker-health.sh \
             scripts/session-start-mcp-command-guard.sh \
+            scripts/session-mcp-disconnect-guard.sh \
+            scripts/tests/session-mcp-disconnect-guard.test.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/session-start-audit.test.sh \
             scripts/tests/reclaim-node-modules.test.sh \
@@ -112,6 +116,8 @@ jobs:
           bash -n scripts/worktree-docker.sh
           bash -n scripts/docker-health.sh
           bash -n scripts/session-start-mcp-command-guard.sh
+          bash -n scripts/session-mcp-disconnect-guard.sh
+          bash -n scripts/tests/session-mcp-disconnect-guard.test.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
           bash -n scripts/tests/reclaim-node-modules.test.sh
@@ -144,6 +150,7 @@ jobs:
 
       - name: Hooks unit tests
         run: |
+          bash scripts/tests/session-mcp-disconnect-guard.test.sh
           bash scripts/tests/create-worktree-hooks.test.sh
           bash scripts/tests/session-start-audit.test.sh
           bash scripts/tests/reclaim-node-modules.test.sh
