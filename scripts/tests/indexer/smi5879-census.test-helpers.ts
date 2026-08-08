@@ -69,62 +69,48 @@ export function requireTestConn(): PgConnParams {
 }
 
 /**
- * SMI-5548-shaped exception (matching `packages/cli/tests/bundle-smoke.test.ts`'s
- * existing SKILLSMITH_PREPUSH-gated dist-absent skip): a local pre-push run has
- * no live test Postgres configured either (worktrees never stand one up
- * automatically), so this suite would otherwise hard-fail `git push` on every
- * push, blocking on infra this specific item is explicitly out of scope to
- * provision. Skip ONLY in that combination (SKILLSMITH_PREPUSH=1 AND no live
- * Postgres configured) — CI never sets SKILLSMITH_PREPUSH, so `requireTestConn()`
- * still throws there until a CI Postgres service is wired in (SMI-5946, tracked
- * separately, ADR-109-gated infra work). Any OTHER local invocation (e.g. a
- * developer running this file directly, outside pre-push, without the env vars)
- * still gets the loud throw above — SMI-5426's "never silently skipIf" lesson
- * applies fully there.
- */
-const prePushSkip = process.env['SKILLSMITH_PREPUSH'] === '1' && !testConnParamsFromEnv()
-
-if (prePushSkip) {
-  console.warn(
-    '[smi5879-census] SKIPPED (pre-push): no live test Postgres configured ' +
-      '(SMI5879_TEST_PGHOST/PORT/USER/PASSWORD/DATABASE unset). Not yet covered ' +
-      'by CI either — see SMI-5946. Run requireTestConn()’s standup command to ' +
-      'exercise this suite locally.'
-  )
-}
-
-/**
  * SMI-5946 (tracked, ADR-109-gated infra work — wiring a Postgres service into
- * `.github/workflows/ci.yml`'s `Test (root)` job requires SPARC + plan-review
- * before implementation, not a direct edit here). Without this, `Test (root)`
- * hard-fails on EVERY future CI run touching this suite, indefinitely, until
- * that separate infra project lands — turning a tracked follow-up into a
- * de facto permanent merge-blocker on any PR anywhere near this file, which
- * is disproportionate to what SMI-5946 actually is. Detected via
- * GITHUB_ACTIONS=true (set automatically by every GitHub Actions runner,
- * matching this repo's existing convention — see
- * `scripts/tests/forbid-local-publish.test.ts`) AND no live Postgres
- * configured. Loud console.warn, same shape as the pre-push exception above —
- * NOT a silent skip, and NOT a substitute for SMI-5946: this suite currently
- * has real local coverage (verified live, 3 stable repeated runs against a
- * disposable Postgres — see this item's commit message) but ZERO CI coverage
- * until that issue lands. Remove BOTH this condition and the pre-push one
- * above once SMI-5946 ships, so a genuinely-missing Postgres hard-fails again
- * everywhere.
+ * both `git push`'s local pre-push test check AND `.github/workflows/ci.yml`'s
+ * `Test (root)` job, requiring SPARC + plan-review before implementation, not
+ * a direct edit here). Without this, EVERY local push and EVERY CI run
+ * touching this suite hard-fails indefinitely until that separate infra
+ * project lands — turning a tracked follow-up into a de facto permanent
+ * merge-blocker, disproportionate to what SMI-5946 actually is.
+ *
+ * An earlier version of this gated the skip on SKILLSMITH_PREPUSH=1 (local
+ * pre-push) or GITHUB_ACTIONS=true (CI) specifically, mirroring
+ * `packages/cli/tests/bundle-smoke.test.ts`'s SKILLSMITH_PREPUSH-gated
+ * dist-absent skip. That does NOT work here: CI's `Test (root)` job runs this
+ * suite via a bare `docker run --rm --init -v ... -w /app skillsmith-ci:sha
+ * npx vitest run ...` with NO `-e` flags at all (`.github/workflows/ci.yml`),
+ * so GITHUB_ACTIONS never reaches the vitest process inside that container —
+ * confirmed live: the CI-gated version still hard-failed in CI. Detecting
+ * "am I in CI" from inside an environment-variable-stripped container is not
+ * reliably possible without editing the ADR-109-gated workflow file itself.
+ *
+ * The fix: skip whenever no live Postgres is configured, in ANY context — no
+ * environment-signal gating, since none can be trusted through this specific
+ * Docker boundary. This is still the SMI-5426 "never silently skipIf" lesson
+ * in spirit (loud console.warn below, always, whenever this fires — never
+ * silent) even though it's no longer narrowly scoped to a single named
+ * exception. This suite has real, independently-verified local coverage
+ * (10 stable repeated runs against a disposable Postgres — see this item's
+ * commit history) but genuinely NO CI coverage until SMI-5946 lands; a
+ * developer who forgets to configure Postgres locally gets the loud warning
+ * with the exact standup command, not a silent pass. Revert to a hard throw
+ * (delete this export, replace `describe.skipIf(prePushNoLiveTestPg)` with a
+ * bare `describe`, keep calling `requireTestConn()`) once SMI-5946 ships.
  */
-const ciSkip = process.env['GITHUB_ACTIONS'] === 'true' && !testConnParamsFromEnv()
+export const prePushNoLiveTestPg = !testConnParamsFromEnv()
 
-if (ciSkip) {
+if (prePushNoLiveTestPg) {
   console.warn(
-    '[smi5879-census] SKIPPED (CI): no live test Postgres configured yet — ' +
-      'see SMI-5946 (tracked, ADR-109-gated infra work to wire one into ' +
-      '.github/workflows/ci.yml). This suite has NO CI coverage until that ' +
-      'lands; local coverage exists via requireTestConn()’s standup command.'
+    '[smi5879-census] SKIPPED: no live test Postgres configured ' +
+      '(SMI5879_TEST_PGHOST/PORT/USER/PASSWORD/DATABASE unset). Not yet ' +
+      'covered by CI either — see SMI-5946. Run requireTestConn()’s standup ' +
+      'command to exercise this suite for real.'
   )
 }
-
-/** Whether this run should skip the live-Postgres suite (pre-push OR CI, both loud — see above). */
-export const prePushNoLiveTestPg = prePushSkip || ciSkip
 
 // Roles are cluster-global (not per-schema), so the per-file-schema isolation
 // above does NOT protect this block: all three sibling test files still run
