@@ -14,7 +14,7 @@ import {
 import { safeRegexTest, safeRegexCheck, MAX_CONTENT_LENGTH_FOR_REGEX } from './regex-utils.js'
 
 // Import helpers
-import type { LineContext } from './SecurityScanner.helpers.js'
+import type { LineContext, MultilineScanResult } from './SecurityScanner.helpers.js'
 import {
   analyzeMarkdownContext,
   isDocumentationContext,
@@ -67,6 +67,17 @@ export {
 }
 export { scanSsrfPatterns }
 export { toMinimalRefs, toSARIF, toGitHubAnnotations, toSummary }
+
+/**
+ * SMI-5879 (design §5): quickCheck is a fast pre-filter, not the full scan —
+ * a bare mention-tier match (a documentation page discussing "jailbreak" or
+ * "DAN") should not by itself fail the quick path. Derived ONCE at module
+ * load, not hand-maintained, so it can never silently drift from
+ * JAILBREAK_PATTERNS' own evidence-tier classification.
+ */
+export const DIRECTIVE_JAILBREAK_PATTERNS: readonly RegExp[] = JAILBREAK_PATTERNS.filter(
+  (p) => classifyEvidence(p) !== 'mention'
+)
 
 export class SecurityScanner {
   private allowedDomains: Set<string>
@@ -131,7 +142,7 @@ export class SecurityScanner {
     content: string,
     lineContexts: LineContext[] | undefined,
     maxMultilineLength: number
-  ): SecurityFinding[] {
+  ): MultilineScanResult {
     return scanPatternsWithMultilineSupport(
       content,
       {
@@ -210,7 +221,7 @@ export class SecurityScanner {
     content: string,
     lineContexts: LineContext[] | undefined,
     maxMultilineLength: number
-  ): SecurityFinding[] {
+  ): MultilineScanResult {
     return scanPatternsWithMultilineSupport(
       content,
       {
@@ -259,7 +270,12 @@ export class SecurityScanner {
 
     findings.push(...this.scanUrls(content))
     findings.push(...scanSensitivePaths(content, lineContexts))
-    findings.push(...this.scanJailbreakPatterns(content, lineContexts, effectiveMultilineLimit))
+    const jailbreakResult: MultilineScanResult = this.scanJailbreakPatterns(
+      content,
+      lineContexts,
+      effectiveMultilineLimit
+    )
+    findings.push(...jailbreakResult.findings)
     findings.push(...this.scanSuspiciousPatterns(content, lineContexts))
     findings.push(...scanSocialEngineering(content, lineContexts))
     findings.push(...scanPromptLeaking(content, lineContexts))
@@ -276,9 +292,12 @@ export class SecurityScanner {
         .map((f) => f.lineNumber as number)
     )
     findings.push(...scanChmodFetchCompound(content, privEscLines, lineContexts))
-    findings.push(
-      ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
+    const aiDefenceResult: MultilineScanResult = this.scanAIDefenceVulnerabilities(
+      content,
+      lineContexts,
+      effectiveMultilineLimit
     )
+    findings.push(...aiDefenceResult.findings)
     findings.push(...scanSsrfPatterns(content, lineContexts, effectiveMultilineLimit))
     findings.push(...scanPiiPatterns(content, lineContexts))
     findings.push(...scanCodeExecution(content, lineContexts))
@@ -315,11 +334,17 @@ export class SecurityScanner {
       scanDurationMs: endTime - startTime,
       riskScore,
       riskBreakdown,
+      multilineTruncated: jailbreakResult.truncated || aiDefenceResult.truncated,
     }
   }
 
+  /**
+   * SMI-5879 (design §5): tests only the directive-tier derived subset (a
+   * bare mention like "jailbreak" or "DAN" alone should not fail the quick
+   * path — see DIRECTIVE_JAILBREAK_PATTERNS above).
+   */
   quickCheck(content: string): boolean {
-    for (const pattern of JAILBREAK_PATTERNS) {
+    for (const pattern of DIRECTIVE_JAILBREAK_PATTERNS) {
       if (safeRegexCheck(pattern, content)) return false
     }
     return true

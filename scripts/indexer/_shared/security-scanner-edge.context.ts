@@ -41,6 +41,33 @@ export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical'
 export type FindingConfidence = 'high' | 'medium' | 'low'
 
 /**
+ * SMI-5879: evidence tier behind a jailbreak/prompt_injection finding, ported
+ * from @skillsmith/core types.ts. A pattern is `mention`-tier iff its matched
+ * text, read in isolation, instructs nothing (a bare noun/name/label/
+ * structural marker/payload-free obfuscation artifact). Anything with a
+ * verb+object pairing or a second-person predicate is directive-tier.
+ *
+ * - `mention`                — payload-free vocabulary (e.g. bare `jailbreak`,
+ *   `DAN`, a bare role marker with no body).
+ * - `role_turn_with_body`    — a fabricated conversation-turn boundary WITH an
+ *   instructing body.
+ * - `imperative_instruction` — a second-person directive without an explicit
+ *   "override prior instructions" framing.
+ * - `instruction_override`   — an explicit "ignore/disregard/override prior
+ *   instructions" directive.
+ * - `state_assertion`        — a DECLARATIVE assertion that a jailbroken/
+ *   unrestricted state is active, with no verb/frame aimed at the model.
+ *   Same severity tuple as `imperative_instruction` (see
+ *   `security-scanner-edge.evidence.ts`'s `EVIDENCE_SEVERITY_TABLE`).
+ */
+export type EvidenceType =
+  | 'mention'
+  | 'role_turn_with_body'
+  | 'imperative_instruction'
+  | 'instruction_override'
+  | 'state_assertion'
+
+/**
  * Individual security finding
  */
 export interface SecurityFinding {
@@ -59,6 +86,10 @@ export interface SecurityFinding {
   confidence?: FindingConfidence
   /** SMI-5436: Path of the skill bundle file that triggered this finding, relative to the skill root. Absent for SKILL.md-only findings. */
   filePath?: string
+  /** SMI-5879: machine-readable evidence class behind this finding (jailbreak/prompt_injection only). */
+  evidenceType?: EvidenceType
+  /** SMI-5879: a mention-tier finding lifted by a co-occurring non-documentation high/critical signal. */
+  corroborated?: boolean
 }
 
 /**
