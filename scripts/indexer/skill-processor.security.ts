@@ -5,6 +5,9 @@
  * skill-processor.ts to keep that file ≤500 lines.
  * Wave 2: adds sibling-scan plumbing — enumerateSiblingTargets,
  * fetchSiblingContent, mergeSiblingScans, buildMergedQuarantineReason.
+ * SMI-5879 PR-2192a: adds scanSkillBundle — the enumerate -> fetch -> scan ->
+ * merge loop extracted verbatim out of validateSkillMd (skill-processor.ts),
+ * so the pre-merge simulator can call the same function production uses.
  *
  * Parity with supabase/functions/indexer/skill-processor.security.ts is
  * enforced by parity.test.ts.
@@ -14,6 +17,7 @@ import {
   QUARANTINE_THRESHOLD,
   shouldQuarantine,
   summarizeFindings,
+  scanSkillContent,
   type EdgeScanResult,
   type SecurityFinding,
 } from './_shared/security-scanner-edge.ts'
@@ -231,4 +235,106 @@ export function buildMergedQuarantineReason(
   const appealUrl = `https://www.skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
 
   return `Security scan detected ${merged.findings.length} finding${merged.findings.length === 1 ? '' : 's'}${locationStr} (risk score: ${merged.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
+}
+
+// =============================================================================
+// SMI-5879 PR-2192a: scanSkillBundle extraction (design 8.2.1 / 8.2.1.1)
+// =============================================================================
+
+/**
+ * SMI-5879 PR-2192a: injectable fetch/scan layers for scanSkillBundle. Tests
+ * (and the Wave 3 simulator's tier-1 retry wrapper, per 8.2.1.1 item 3) swap
+ * either layer; production callers pass no `deps` and get the real
+ * implementations below.
+ */
+export interface ScanSkillBundleDeps {
+  fetchSiblingContent?: typeof fetchSiblingContent
+  scanSkillContent?: typeof scanSkillContent
+}
+
+/**
+ * SMI-5879 PR-2192a (8.2.2): one skipped-sibling record. Observability only —
+ * its addition changes no quarantine verdict.
+ */
+export interface SiblingFailure {
+  relPath: string
+  kind: 'transient' | 'removed'
+}
+
+export interface ScanSkillBundleResult {
+  securityScan: EdgeScanResult
+  siblingScans: SiblingEdgeScan[]
+  /** Present when at least one sibling was successfully fetched and scanned. */
+  mergedSecurityScan?: MergedEdgeScanResult
+  siblingFailures: SiblingFailure[]
+}
+
+/**
+ * SMI-5879 PR-2192a: the single scan-surface entry point (design 8.2.1 /
+ * 8.2.1.1). Body is the pre-existing inline enumerate -> fetch -> scan ->
+ * merge loop from validateSkillMd (skill-processor.ts, both twins), moved
+ * verbatim, plus the additive siblingFailures observable (8.2.2). Production
+ * quarantine behaviour is UNCHANGED by this extraction.
+ *
+ * The pre-merge simulator (Wave 3, per 8.2 RC-2) calls this SAME function, so
+ * identity between the production quarantine gate and the simulated verdict
+ * is structural, not a test-time coincidence.
+ *
+ * Deliberately NOT unified with runSiblingRescan
+ * (revalidate-stale-quarantines.sibling.ts): that path is fail-CLOSED (any
+ * transient sibling failure aborts the rescan and keeps the quarantine in
+ * place); this path is fail-OPEN (a transient failure skips that sibling and
+ * merges without it). Unifying them would change a live production
+ * quarantine decision, which a behaviour-preserving extraction must not do —
+ * see revalidate-stale-quarantines.sibling.ts's own header.
+ */
+export async function scanSkillBundle(
+  owner: string,
+  repo: string,
+  branch: string,
+  skillPath: string | undefined,
+  primaryContent: string,
+  telemetry: RateLimitTelemetry,
+  deps?: ScanSkillBundleDeps
+): Promise<ScanSkillBundleResult> {
+  const doFetchSiblingContent = deps?.fetchSiblingContent ?? fetchSiblingContent
+  const doScanSkillContent = deps?.scanSkillContent ?? scanSkillContent
+
+  // SMI-2272: Run security scan on SKILL.md content
+  const securityScan = await doScanSkillContent(primaryContent)
+  if (!securityScan.passed) {
+    console.log(
+      `[SecurityScan] ${owner}/${repo}: riskScore=${securityScan.riskScore}, findings=${securityScan.findings.length}`
+    )
+  }
+
+  // SMI-5436 Wave 2: scan sibling files (CDN fetch, zero core quota)
+  const siblingPaths = enumerateSiblingTargets(skillPath ?? '')
+  const siblingScans: SiblingEdgeScan[] = []
+  // SMI-5879 (8.2.2): observability only — never consulted by the merge below.
+  const siblingFailures: SiblingFailure[] = []
+  for (const relPath of siblingPaths) {
+    const sibResult = await doFetchSiblingContent(owner, repo, branch, relPath, telemetry)
+    if (sibResult !== null && !('removed' in sibResult)) {
+      const sibContent = sibResult.content
+      const sibScan = await doScanSkillContent(sibContent)
+      siblingScans.push({ relPath, scan: sibScan })
+    } else if (sibResult === null) {
+      // Transient: network error, 429, or oversized — same fail-open behavior as before.
+      siblingFailures.push({ relPath, kind: 'transient' })
+    } else {
+      // 404: file confirmed absent from repo — same skip behavior as before.
+      siblingFailures.push({ relPath, kind: 'removed' })
+    }
+  }
+  const mergedSecurityScan =
+    siblingScans.length > 0 ? mergeSiblingScans(securityScan, siblingScans) : undefined
+
+  if (mergedSecurityScan?.quarantine && !securityScan.findings.length) {
+    console.log(
+      `[SecurityScan] ${owner}/${repo}: sibling triggered quarantine (${mergedSecurityScan.primarySiblingPath})`
+    )
+  }
+
+  return { securityScan, siblingScans, mergedSecurityScan, siblingFailures }
 }
