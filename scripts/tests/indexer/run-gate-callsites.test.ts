@@ -11,6 +11,23 @@
  *     "executable-looking library" (today, only `recheck.ts`) that must be
  *     asserted to STAY that way, because the day it gains a `main()` call it
  *     becomes an ungated direct entry point to a production writer.
+ *   - Shape 4 (SMI-5879 Wave 3 item 1, new): guarded direct entry that is
+ *     deliberately NOT run-gated. `smi5879-census.ts` uses the identical
+ *     Shape-1 guard (so `hasDirectEntryGuard` matches it too) but must NOT
+ *     call `assertRunAllowed`/`assertFreezeMarkerClear` — it is a READER of
+ *     `skills` (never a writer through the indexer's normal write path;
+ *     its own `smi5879_snapshot_pre`/`smi5879_repo_branch` tables are
+ *     independently guarded by `smi5879_snapshot_guard()`,
+ *     `supabase/migrations/20260808000000_smi5879_snapshot_generations.sql`)
+ *     and, more fundamentally, it is the tool the SMI-5879 change-window
+ *     freeze exists to PROTECT, not one the freeze should block: design doc
+ *     8.3.2.5.7's runbook runs it at T-3d/T-0 20:15 UTC while
+ *     `INDEXER_RUN_ALLOWLIST=maintenance,recheck`/`none` is already engaged,
+ *     so gating it on the same mechanism would be circular. Pinned as its own
+ *     explicit single-file set (Shape 1's "exactly 3" assertion below is
+ *     `PINNED_SHAPE1 ∪ PINNED_SHAPE4_UNGATED_GUARD`) rather than silently
+ *     absorbed, so a FUTURE guard-shaped file that SHOULD be gated cannot
+ *     hide behind this exclusion.
  *
  * Each shape's set is pinned exactly (not just "at least") so a new file in
  * any shape fails this suite with a message naming the new file, rather than
@@ -36,6 +53,8 @@ const PINNED_SHAPE1 = [
 
 const PINNED_SHAPE2 = ['run.ts']
 
+const PINNED_SHAPE4_UNGATED_GUARD = ['smi5879-census.ts']
+
 const PINNED_SHEBANG_FILES = [
   'dequarantine-false-positives.ts',
   'purge-dead-quarantines.ts',
@@ -48,8 +67,8 @@ describe('Shape 1 — guarded direct-entry census', () => {
   const files = listIndexerSourceFiles()
   const shape1Files = files.filter((f) => hasDirectEntryGuard(readIndexerSource(f))).sort()
 
-  it('is EXACTLY the pinned set of three files', () => {
-    expect(shape1Files).toEqual(PINNED_SHAPE1)
+  it('is EXACTLY the pinned Shape-1 (gated) set plus the Shape-4 (deliberately ungated) set', () => {
+    expect(shape1Files).toEqual([...PINNED_SHAPE1, ...PINNED_SHAPE4_UNGATED_GUARD].sort())
   })
 
   it.each(PINNED_SHAPE1)(
@@ -64,6 +83,27 @@ describe('Shape 1 — guarded direct-entry census', () => {
       const source = readIndexerSource(file)
       expect(source).toMatch(/\bassertRunAllowed\s*\(/)
       expect(source).toMatch(/\bassertFreezeMarkerClear\s*\(/)
+    }
+  )
+})
+
+describe('Shape 4 — guarded direct entry that is deliberately NOT an indexer writer', () => {
+  it('is EXACTLY the pinned single-file set {smi5879-census.ts}', () => {
+    const files = listIndexerSourceFiles()
+    const shape4Files = files
+      .filter(
+        (f) => hasDirectEntryGuard(readIndexerSource(f)) && !PINNED_SHAPE1.includes(f) // excludes the real writers
+      )
+      .sort()
+    expect(shape4Files).toEqual(PINNED_SHAPE4_UNGATED_GUARD)
+  })
+
+  it.each(PINNED_SHAPE4_UNGATED_GUARD)(
+    '%s does NOT call assertRunAllowed/assertFreezeMarkerClear — it is the tool the change-window freeze runs INSIDE, not one the freeze blocks',
+    (file) => {
+      const source = readIndexerSource(file)
+      expect(source).not.toMatch(/\bassertRunAllowed\s*\(/)
+      expect(source).not.toMatch(/\bassertFreezeMarkerClear\s*\(/)
     }
   )
 })
