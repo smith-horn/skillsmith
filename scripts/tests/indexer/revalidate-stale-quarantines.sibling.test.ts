@@ -17,6 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { FetchSiblingResult } from '../../indexer/skill-processor.security.ts'
+import { scanSkillBundle } from '../../indexer/skill-processor.security.ts'
 import type { EdgeScanResult } from '../../indexer/_shared/security-scanner-edge.ts'
 import { runSiblingRescan } from '../../indexer/revalidate-stale-quarantines.sibling.ts'
 import { newRateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
@@ -382,5 +383,70 @@ describe('runSiblingRescan — SMI-5445 C1: merged-score gate (no code_exec)', (
     expect(result.mergedScore).toBeDefined()
     expect(typeof result.mergedScore).toBe('number')
     expect(Number.isFinite(result.mergedScore!)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5879 PR-2192a (design 8.2.1.1 item 4): fail-open (scanSkillBundle) vs
+// fail-closed (runSiblingRescan) asymmetry is DELIBERATE and must stay
+// untouched. A transient sibling fetch failure is handled oppositely by
+// design: the quarantine-detection path (scanSkillBundle) is fail-OPEN — it
+// skips the failed sibling and merges without it, recording the failure in
+// `siblingFailures` for observability only; the recheck/unquarantine path
+// (runSiblingRescan) is fail-CLOSED — it aborts immediately and the skill
+// stays quarantined. Unifying them would silently change a live production
+// quarantine decision in one direction or the other, which PR-2192a's
+// behaviour-preserving extraction must not do. This regression guard exists
+// so a future contributor cannot "clean up" the asymmetry by unifying them.
+// ---------------------------------------------------------------------------
+
+describe('scanSkillBundle vs runSiblingRescan — fail-open vs fail-closed asymmetry (SMI-5879 PR-2192a, design 8.2.1.1 item 4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  })
+
+  it('the SAME transient (null) sibling failure completes fail-open in scanSkillBundle but aborts fail-closed in runSiblingRescan', async () => {
+    // Every sibling target returns null (transient failure/429/network error) —
+    // the worst case for both paths.
+    mockFetchSiblingContent.mockResolvedValue(null)
+
+    // Fail-OPEN: scanSkillBundle completes the full loop, records every
+    // skipped sibling as a transient siblingFailure, and still produces a
+    // verdict from whatever it has (the clean primary, in this case).
+    const bundleResult = await scanSkillBundle(
+      'acme',
+      'my-skill',
+      'main',
+      '',
+      '---\nname: clean\ndescription: A benign fixture with no risky content at all.\n---\n# Clean\n',
+      telemetry,
+      { fetchSiblingContent: mockFetchSiblingContent }
+    )
+    expect(mockFetchSiblingContent).toHaveBeenCalledTimes(7) // completes — does not abort
+    expect(bundleResult.siblingScans).toHaveLength(0) // every sibling skipped
+    expect(bundleResult.siblingFailures).toHaveLength(7)
+    expect(bundleResult.siblingFailures.every((f) => f.kind === 'transient')).toBe(true)
+    // A fully-skipped sibling set with a clean primary produces no merge at all
+    // (mergeSiblingScans is only called when >=1 sibling was actually scanned) —
+    // this is itself part of the pre-existing fail-open contract, unchanged here.
+    expect(bundleResult.mergedSecurityScan).toBeUndefined()
+
+    vi.clearAllMocks()
+    mockFetchSiblingContent.mockResolvedValue(null)
+
+    // Fail-CLOSED: runSiblingRescan aborts on the FIRST transient failure and
+    // never completes the loop — the skill stays quarantined.
+    const rescanResult = await runSiblingRescan(
+      'acme',
+      'my-skill',
+      'main',
+      '',
+      telemetry,
+      CLEAN_ROOT_SCAN
+    )
+    expect(mockFetchSiblingContent).toHaveBeenCalledTimes(1) // aborts immediately
+    expect(rescanResult.status).toBe('unknown')
   })
 })

@@ -20,7 +20,6 @@ import {
 } from './_shared/validation.ts'
 
 import {
-  scanSkillContent,
   shouldQuarantine,
   QUARANTINE_THRESHOLD,
   generateContentHash,
@@ -44,14 +43,13 @@ import {
 export * from './skill-processor.helpers.ts'
 
 // SMI-5436 Wave 0+2: security helpers extracted to keep this file ≤500 lines.
+// SMI-5879 PR-2192a: enumerate/fetch/merge helpers extracted further into
+// scanSkillBundle (skill-processor.security.ts) — see the call site below.
 import {
   buildQuarantineReason,
   buildMergedQuarantineReason,
   readResponseWithLimit,
-  enumerateSiblingTargets,
-  fetchSiblingContent,
-  mergeSiblingScans,
-  type SiblingEdgeScan,
+  scanSkillBundle,
   type MergedEdgeScanResult,
 } from './skill-processor.security.ts'
 export { buildQuarantineReason, buildMergedQuarantineReason } from './skill-processor.security.ts'
@@ -255,34 +253,17 @@ export async function validateSkillMd(
       errors.push('SKILL.md missing YAML frontmatter')
     }
 
-    // SMI-2272: Run security scan on SKILL.md content
-    const securityScan = await scanSkillContent(content)
-    if (!securityScan.passed) {
-      console.log(
-        `[SecurityScan] ${owner}/${repo}: riskScore=${securityScan.riskScore}, findings=${securityScan.findings.length}`
-      )
-    }
-
-    // SMI-5436 Wave 2: scan sibling files (CDN fetch, zero core quota)
-    const siblingPaths = enumerateSiblingTargets(skillPath ?? '')
-    const siblingScans: SiblingEdgeScan[] = []
-    for (const relPath of siblingPaths) {
-      const sibResult = await fetchSiblingContent(owner, repo, branch, relPath, telemetry)
-      if (sibResult !== null && !('removed' in sibResult)) {
-        const sibContent = sibResult.content
-        const sibScan = await scanSkillContent(sibContent)
-        siblingScans.push({ relPath, scan: sibScan })
-      }
-      // null (error) and { removed: true } (404) both skip — same behavior as before
-    }
-    const mergedSecurityScan =
-      siblingScans.length > 0 ? mergeSiblingScans(securityScan, siblingScans) : undefined
-
-    if (mergedSecurityScan?.quarantine && !securityScan.findings.length) {
-      console.log(
-        `[SecurityScan] ${owner}/${repo}: sibling triggered quarantine (${mergedSecurityScan.primarySiblingPath})`
-      )
-    }
+    // SMI-5879 PR-2192a: primary scan + sibling enumerate -> fetch -> scan ->
+    // merge moved into scanSkillBundle (skill-processor.security.ts) so the
+    // pre-merge simulator (Wave 3) can call the SAME function production uses.
+    const { securityScan, mergedSecurityScan } = await scanSkillBundle(
+      owner,
+      repo,
+      branch,
+      skillPath,
+      content,
+      telemetry
+    )
 
     return {
       valid: errors.length === 0,
