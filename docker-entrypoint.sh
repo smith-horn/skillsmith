@@ -207,7 +207,19 @@ if [ ! -f "$CORE_DIST_ENTRY" ] || [ ! -f "$MCP_DIST_ENTRY" ] || [ ! -f "$DOC_RET
     # same process invocation that just built it.
     BUILD_FILTER='--filter=@skillsmith/core --filter=@skillsmith/mcp-server --filter=@skillsmith/doc-retrieval-mcp --filter=@skillsmith/cli'
 
-    if npx turbo run build $BUILD_FILTER && bash scripts/lib/check-dist-fresh.sh --write-sentinel; then
+    # SMI-5957 correction #3 (from a SECOND real-CI failure, again never
+    # reproduced locally): even after correction #2, a live CI run reported
+    # this build succeeding (script continued past this `if`, container
+    # reached healthy) while `packages/core/dist/src/index.js` was actually
+    # absent afterward -- a turbo cache-hit ("cache hit, replaying logs")
+    # that does not reliably restore the cached dist/** output to this
+    # specific bind-mounted, cold `docker compose up` filesystem, even
+    # though the build task itself reports success. `--force` makes every
+    # task in this filter execute fresh, bypassing turbo's local cache
+    # (both the one baked into the image at `docker compose build` time and
+    # any it tries to reuse at runtime) entirely, so there is no cache
+    # entry whose restore-to-disk step can silently no-op.
+    if npx turbo run build --force $BUILD_FILTER && bash scripts/lib/check-dist-fresh.sh --write-sentinel; then
         echo -e "${GREEN}  ✓ Build complete.${NC}"
     else
         echo -e "${RED}  ✗ Build failed — run npm run build inside this container to see details.${NC}"

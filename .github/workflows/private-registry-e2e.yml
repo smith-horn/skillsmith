@@ -260,12 +260,20 @@ jobs:
           # invocation sidesteps both, rather than working around either.
           docker exec skillsmith-dev-1 sh -c '
             set -eu
+            missing=0
             for f in packages/core/dist/src/index.js packages/mcp-server/dist/src/index.js packages/doc-retrieval-mcp/dist/src/server.js packages/cli/dist/cli.js; do
               if [ ! -f "$f" ]; then
-                echo "::error::$f missing -- the entrypoint build did not produce it. Check docker-entrypoint.sh output above."
-                exit 1
+                echo "::error::$f missing -- the entrypoint build did not produce it."
+                missing=1
               fi
             done
+            if [ "$missing" -eq 1 ]; then
+              echo "--- diagnostics: entrypoint build/turbo state ---"
+              echo "node_modules/.bin/turbo: $(ls -la node_modules/.bin/turbo 2>&1)"
+              echo "packages/core/dist/ contents:"; ls -la packages/core/dist/ 2>&1 || echo "  (dist/ dir itself absent)"
+              echo "packages/core/dist/.tsbuildinfo mtime: $(stat -c "%y" packages/core/dist/.tsbuildinfo 2>&1 || echo absent)"
+              exit 1
+            fi
             echo "All required dist/ outputs present."
           '
 
