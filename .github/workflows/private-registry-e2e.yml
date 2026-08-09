@@ -202,24 +202,38 @@ jobs:
       - name: Start dev container
         run: docker compose --profile dev up -d
 
-      - name: Wait for dev container healthy
+      - name: Wait for dev container ready (entrypoint build complete)
         run: |
           set -eu
-          # SMI-5957: 300s (60 x 5s), up from 150s -- defense-in-depth for a
-          # genuine slow cold build under CI resource contention. NOT a fix
-          # for a crash-restart loop (that's docker-entrypoint.sh's
-          # BUILD_FILTER scoping, SMI-5957) -- a deterministic crash loop
-          # never becomes healthy regardless of budget.
+          # SMI-5957 correction #4 (from live evidence -- the unconditional
+          # "Dump entrypoint build log" step below): docker-compose.yml's
+          # healthcheck is `node -e "console.log('healthy')"`, which the
+          # Docker daemon runs as an INDEPENDENT `docker exec` probe on its
+          # own interval -- it has never been coupled to whether the
+          # entrypoint script (the container's PID 1) has finished its own
+          # build. A live CI run's diagnostic dump captured the entrypoint's
+          # log cut off mid-`tsc` on the FIRST of 4 packages at the exact
+          # instant this step (in its prior Health.Status-polling form)
+          # already reported healthy and let the next step ("Verify
+          # workspace dist/") run -- i.e. every prior correction (#1-#3)
+          # fixed a real build-reliability bug, but none of them fixed this
+          # step trusting a health signal that was never actually gated on
+          # the build. Poll for the entrypoint's own "dist/ outputs ready"
+          # log line instead -- printed unconditionally after its dist/
+          # check succeeds, whether it just built (cold start) or found
+          # dist/ already present (skip-build path) -- which is the actual
+          # condition this step (and the next one) needs, not a proxy for
+          # it. 300s (60 x 5s) budget unchanged.
           for i in $(seq 1 60); do
-            STATUS="$(docker inspect --format='{{.State.Health.Status}}' skillsmith-dev-1 2>/dev/null || echo starting)"
-            if [ "$STATUS" = "healthy" ]; then
-              echo "Container healthy."
+            if docker logs skillsmith-dev-1 2>&1 | grep -q 'dist/ outputs ready'; then
+              echo "Entrypoint build complete (dist/ outputs ready)."
               exit 0
             fi
-            echo "Container status: ${STATUS} (attempt ${i}/60)"
+            STATUS="$(docker inspect --format='{{.State.Health.Status}}' skillsmith-dev-1 2>/dev/null || echo starting)"
+            echo "Entrypoint build not yet complete (container status: ${STATUS}, attempt ${i}/60)"
             sleep 5
           done
-          echo "::error::skillsmith-dev-1 did not become healthy in time"
+          echo "::error::skillsmith-dev-1's entrypoint did not finish its dist/ build in time"
           echo "--- Restart/exit diagnostics ---"
           RESTARTS="$(docker inspect --format='{{.RestartCount}}' skillsmith-dev-1 2>/dev/null || echo unknown)"
           EXITCODE="$(docker inspect --format='{{.State.ExitCode}}' skillsmith-dev-1 2>/dev/null || echo unknown)"
