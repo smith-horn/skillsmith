@@ -90,6 +90,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Repositioned public messaging from "skill discovery" to "agent skill lifecycle management"**
+  (2026-08-08, SMI-5948): website (homepage and all three A/B variants, pricing
+  page, docs pages, footer, legal-page metadata, RSS feed, `llms.txt`/`llms-full.txt`),
+  root README, every published package README and `package.json` description,
+  the MCP registry manifest (`server.json`), and the CLI's `--help` text now
+  lead with a team-scoped registry/versioning/deprecation lifecycle story
+  instead of search/discovery. No pricing, plan names, feature bullets, tier
+  CTAs, or API surfaces changed — messaging only. Capability claims are
+  scoped to what's verified shipped today (team-scoped publish, immutable
+  versioning with per-install drift detection, automated security scoring
+  with quarantine for flagged skills, deprecation) — a submitter/approver
+  review-gate workflow and Enterprise RBAC are tracked separately as
+  unshipped (SMI-5949), not described as present.
 - **Reduced Community/Individual/Team monthly API-call quotas 10x** (2026-07-06,
   SMI-5558): Community was 1,000 requests/month, now 100/month. Individual was
   10,000 requests/month, now 1,000/month. Team was 100,000 requests/month, now

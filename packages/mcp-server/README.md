@@ -2,7 +2,9 @@
 
 > **Important:** The bare `skillsmith` package on npm is **not** this project. Install `@skillsmith/mcp-server` for the MCP server or [`@skillsmith/cli`](https://www.npmjs.com/package/@skillsmith/cli) for CLI usage.
 
-MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
+MCP (Model Context Protocol) server for agent skill publishing, installation, and lifecycle management.
+
+Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## What's New in v0.7.6
 
@@ -179,7 +181,7 @@ After adding to your MCP client settings and restarting, try asking:
 
 ## Live Skill Registry
 
-The Skillsmith API provides access to **14,000+ curated skills** from 20,000+ on GitHub that are:
+The Skillsmith API provides access to **hundreds of thousands of indexed skills** that are:
 
 - **Indexed daily** from GitHub repositories
 - **Security screened hourly** for vulnerabilities and malicious patterns

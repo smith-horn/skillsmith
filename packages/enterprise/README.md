@@ -1,6 +1,6 @@
-# @skillsmith/enterprise
+# @smith-horn/enterprise
 
-Enterprise features for Skillsmith skill discovery platform.
+Enterprise features for Skillsmith, a lifecycle layer for agent skills across teams.
 
 ## Overview
 
@@ -37,23 +37,23 @@ This package is distributed via GitHub Packages (private registry).
 
 ```bash
 # Configure npm for GitHub Packages
-npm login --registry=https://npm.pkg.github.com --scope=@skillsmith
+npm login --registry=https://npm.pkg.github.com --scope=@smith-horn
 
 # Or add to ~/.npmrc
-@skillsmith:registry=https://npm.pkg.github.com
+@smith-horn:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
 ```
 
 ### Install
 
 ```bash
-npm install @skillsmith/enterprise
+npm install @smith-horn/enterprise
 ```
 
 ## Usage
 
 ```typescript
-import { LicenseValidator, AuditLogger } from '@skillsmith/enterprise';
+import { LicenseValidator, AuditLogger } from '@smith-horn/enterprise';
 
 // Validate license
 const validator = new LicenseValidator();
@@ -99,7 +99,7 @@ import {
   createTestLicenseToken,
   createExpiredToken,
   createWrongSignatureToken,
-} from '@skillsmith/enterprise/tests/fixtures/license-test-utils';
+} from '@smith-horn/enterprise/tests/fixtures/license-test-utils';
 
 // Generate RSA key pair for testing
 const { publicKey, privateKey } = await generateTestKeyPair();
@@ -122,9 +122,9 @@ A valid Skillsmith Enterprise or Team subscription is required.
 
 ## Support
 
-- **Enterprise Support**: enterprise@skillsmith.dev
-- **Documentation**: https://skillsmith.dev/docs/enterprise
-- **Feature Requests**: https://github.com/smith-horn-group/skillsmith/issues
+- **Enterprise Support**: enterprise@skillsmith.app
+- **Documentation**: https://skillsmith.app/docs/enterprise
+- **Feature Requests**: https://github.com/smith-horn/skillsmith/issues
 
 ## Related Packages
 

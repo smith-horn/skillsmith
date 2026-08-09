@@ -16,7 +16,8 @@ export async function GET(context: APIContext) {
   )
   return rss({
     title: 'Skillsmith Blog',
-    description: 'AI-powered agent skill discovery and management',
+    description:
+      "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
     site: context.site!,
     items: posts.map((post: CollectionEntry<'blog'>) => ({
       title: post.data.title,

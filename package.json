@@ -1,7 +1,7 @@
 {
   "name": "skillsmith",
   "version": "0.1.2",
-  "description": "Agent skill discovery, recommendation, and management for MCP-compatible AI tools",
+  "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "private": true,
   "type": "module",
   "workspaces": [

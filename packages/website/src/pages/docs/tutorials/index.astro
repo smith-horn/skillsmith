@@ -4,14 +4,23 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
 
 <DocsLayout
   title="Tutorials"
-  description="Walk through every stage of the Skillsmith skill lifecycle — Discover, Evaluate, Install, Use, Maintain, Author, Govern, Retire."
+  description="Walk through every stage of using Skillsmith day to day — Discover, Evaluate, Install, Use, Maintain, Author, Govern, Uninstall."
 >
   <h1>Tutorials</h1>
 
   <p class="lead">
-    Skillsmith is the lifecycle manager for agent skills. These tutorials walk you through every
-    stage of that lifecycle in order — from finding your first skill to retiring one that has
-    outlived its purpose.
+    These tutorials walk you through how you personally use and manage agent skills with
+    Skillsmith, day to day — from finding your first skill to uninstalling one that has outlived
+    its purpose.
+  </p>
+
+  <p>
+    This is a different sequence from the org-level registry lifecycle (publish, version,
+    deprecate) described on the <a href="/">homepage</a> and in the
+    <a href="https://github.com/smith-horn/skillsmith#readme">README</a> — that lifecycle covers
+    how a team publishes and versions skills into a shared registry. These tutorials cover what you
+    do with skills once they exist: finding, evaluating, installing, running, maintaining,
+    authoring, auditing, and uninstalling them.
   </p>
 
   <p>
@@ -20,12 +29,12 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
     <a href="/docs/getting-started">Getting Started</a>.
   </p>
 
-  <h2>The Skillsmith lifecycle</h2>
+  <h2>How you use a skill, day to day</h2>
 
   <p>
-    Every agent skill moves through eight stages. You can revisit Maintain, Use, and Author
-    indefinitely; Discover, Evaluate, Install, Govern, and Retire bracket the lifespan of any single
-    installed skill on your machine or your team's.
+    Every agent skill you personally work with moves through eight stages. You can revisit
+    Maintain, Use, and Author indefinitely; Discover, Evaluate, Install, Govern, and Uninstall
+    bracket the lifespan of any single installed skill on your machine or your team's.
   </p>
 
   <div class="card-grid">
@@ -72,13 +81,13 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
     <a href="/docs/tutorials/govern" class="doc-card">
       <h3>6. Govern</h3>
       <p>
-        Query audit logs, export to SIEM, and apply namespace policy at team scale. Team and
-        Enterprise tiers.
+        Query audit logs, export events for a SIEM, and roll up namespace-audit findings at team
+        scale. Team and Enterprise tiers.
       </p>
     </a>
 
-    <a href="/docs/tutorials/retire" class="doc-card">
-      <h3>7. Retire</h3>
+    <a href="/docs/tutorials/uninstall" class="doc-card">
+      <h3>7. Uninstall</h3>
       <p>
         Uninstall a skill cleanly. One command, one outcome — but worth doing deliberately so you do
         not leave orphaned references behind.

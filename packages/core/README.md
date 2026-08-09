@@ -1,6 +1,8 @@
 # @skillsmith/core
 
-Core library for Skillsmith - provides database operations, search services, caching, security, analytics, and **multi-language codebase analysis** for agent skill discovery.
+Core library for Skillsmith — database operations, search, caching, security, analytics, and **multi-language codebase analysis** for agent skill management.
+
+Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## Contents
 

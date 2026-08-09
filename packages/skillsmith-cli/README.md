@@ -4,6 +4,8 @@
 
 **Important:** The bare `skillsmith` package on npm is **not** this project. Use `@skillsmith/cli` or this wrapper (`skillsmith-cli`).
 
+Part of Skillsmith: a lifecycle layer for agent skills across teams.
+
 ## Install
 
 ```bash

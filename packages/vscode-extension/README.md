@@ -1,6 +1,8 @@
 # Skillsmith
 
-Discover, search, and install agent skills directly in VS Code. Works with any MCP-compatible agent — Claude Code, Cursor, Copilot, Codex, Windsurf.
+Search, install, and manage agent skills directly in VS Code. Works with any MCP-compatible agent — Claude Code, Cursor, Copilot, Codex, Windsurf.
+
+Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## Why Skillsmith?
 

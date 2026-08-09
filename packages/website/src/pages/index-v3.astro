@@ -26,10 +26,10 @@ const supabaseConfig = getSupabaseConfig()
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Skillsmith - Agent Skill Discovery & Management</title>
+    <title>Skillsmith - Lifecycle Management for Agent Skills</title>
     <meta
       name="description"
-      content="Find the right agent skills for your stack. Thousands of skills indexed from GitHub with semantic search, quality scores, and stack-aware recommendations. Get started for free."
+      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
     />
     <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href={`${import.meta.env.SITE}/`} />
@@ -84,10 +84,10 @@ const supabaseConfig = getSupabaseConfig()
     </script>
 
     <!-- Open Graph -->
-    <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
+    <meta property="og:title" content="Skillsmith - Lifecycle Management for Agent Skills" />
     <meta
       property="og:description"
-      content="Find the right agent skills for your stack. Thousands of skills indexed from GitHub with semantic search, quality scores, and stack-aware recommendations. Get started for free."
+      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://www.skillsmith.app/" />
@@ -124,17 +124,16 @@ const supabaseConfig = getSupabaseConfig()
             class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up"
             style="animation-delay: 0.05s;"
           >
-            Save Hours Finding<br />the Right Skills.
+            Lifecycle management for agent skills.
           </h1>
 
           <p
             class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
             style="animation-delay: 0.08s;"
           >
-            <span id="github-total" class="hidden"
-              ><span id="github-total-count">280,000+</span> SKILL.md files scanned on GitHub &mdash;
-            </span><span id="skill-count">7,900+</span> skills indexed. Finally searchable.<br />
-            Get stack-aware recommendations before anyone else.
+            Skills spread across teams faster than anyone can govern them. Skillsmith gives them a
+            lifecycle: publish immutable versions to your team's registry, catch drift before it
+            spreads, and deprecate what's gone stale.
           </p>
 
           <!-- CTA Buttons -->
@@ -194,9 +193,7 @@ const supabaseConfig = getSupabaseConfig()
                 </svg>
               </div>
               <h3 class="text-lg font-bold mb-2">Semantic Search</h3>
-              <p class="text-sm text-[#A1A1AA]">
-                Search by intent, not keywords. AI-powered skill discovery.
-              </p>
+              <p class="text-sm text-[#A1A1AA]">Search by intent, not keywords.</p>
             </div>
             <div class="text-center">
               <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">

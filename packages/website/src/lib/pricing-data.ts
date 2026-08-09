@@ -79,8 +79,8 @@ export const pricingTiers: PricingTier[] = [
     id: 'community',
     name: 'Community',
     monthlyPrice: 0,
-    // SMI-4839: free dev surface of the Agent Skills SDK
-    description: 'The free dev surface for the Agent Skills SDK and registry.',
+    // Lifecycle framing (messaging reframe, replaces SMI-4839 SDK positioning)
+    description: 'The free tier for agent skills — search, install, and publish.',
     apiCalls: 100,
     apiCallsFormatted: '100 API calls/month',
     features: [
@@ -98,8 +98,8 @@ export const pricingTiers: PricingTier[] = [
     name: 'Individual',
     monthlyPrice: 9.99,
     period: '/month',
-    // SMI-4839: solo builders working across multiple agents/projects
-    description: 'For solo builders authoring and using skills across multiple projects.',
+    // Lifecycle framing (messaging reframe, replaces SMI-4839 SDK positioning)
+    description: 'For solo builders — publish and version skills across your own projects.',
     apiCalls: 1000,
     apiCallsFormatted: '1,000 API calls/month',
     features: [
@@ -117,8 +117,9 @@ export const pricingTiers: PricingTier[] = [
     name: 'Team',
     monthlyPrice: 25,
     period: '/user/month',
-    // SMI-4839: SDK-for-teams positioning — author, version, govern, retire
-    description: 'The Agent Skills SDK for teams — author, version, govern, and retire together.',
+    // Lifecycle framing (messaging reframe — LOCKED copy, byte-identical per
+    // docs/internal/implementation/messaging-lifecycle-reframe.md): publish, version, deprecate
+    description: 'The lifecycle layer for teams — publish, version, and deprecate together.',
     apiCalls: 10000,
     apiCallsFormatted: '10,000 API calls/month',
     features: [
@@ -135,8 +136,9 @@ export const pricingTiers: PricingTier[] = [
     name: 'Enterprise',
     monthlyPrice: 55,
     period: '/user/month',
-    // SMI-4839: SDK-for-teams at org scale — governance, compliance, dedicated support
-    description: 'The SDK at org scale — governance, compliance, and dedicated support.',
+    // Lifecycle framing (messaging reframe, replaces SMI-4839 SDK positioning)
+    description:
+      'The lifecycle layer at org scale — publish, version, and deprecate, with audit logging, compliance reporting, and dedicated support.',
     apiCalls: 'unlimited',
     apiCallsFormatted: 'Unlimited API calls',
     features: [
