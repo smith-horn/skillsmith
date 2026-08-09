@@ -261,8 +261,10 @@ skillsmith config set audit_mode power_user`}</code></pre>
     <p>
       <code>apply_namespace_rename</code> and
       <code>apply_recommended_edit</code> are available on every tier today. Team/Enterprise
-      tier-gating for these two tools is not yet enforced. There's no CLI fallback for either tool
-      yet — apply suggestions via the MCP tools.
+      tier-gating for these two tools is not yet enforced. <code>apply_namespace_rename</code> also
+      has a CLI fallback (<code>skillsmith audit collisions</code>, same apply / custom / skip
+      flow, plus a <code>--apply-all</code> batch mode) — <code>apply_recommended_edit</code> does
+      not, so use the MCP tool directly for prose edits.
     </p>
   </div>
 
