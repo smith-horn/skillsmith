@@ -164,7 +164,7 @@ Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/ac
 | Community | 30/min | Free |
 | Individual | 60/min | $9.99/mo |
 | Team | 120/min | $25/user/mo |
-| Enterprise | 300/min | $55/user/mo |
+| Enterprise | 300/min | Custom |
 
 > **Note:** Never paste API keys in chat. Configure via settings.json only.
 
