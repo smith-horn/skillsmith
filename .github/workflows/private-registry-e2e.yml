@@ -230,6 +230,16 @@ jobs:
           docker logs skillsmith-dev-1 || true
           exit 1
 
+      - name: Dump entrypoint build log (diagnostic, always runs -- SMI-5957)
+        # Unconditional (not just on healthcheck failure): correction #3's
+        # failure happened AFTER the container reported healthy, so the
+        # prior step's own conditional log dump never fires for it. This
+        # gives direct visibility into what the entrypoint's own
+        # `npx turbo run build --force ...` actually did/printed, instead
+        # of inferring it from dist/'s post-hoc file state.
+        if: always()
+        run: docker logs skillsmith-dev-1 2>&1 | sed -n '/Checking dist. outputs/,/dist. outputs ready/p' || true
+
       - name: Verify workspace dist/ (built by the entrypoint, not rebuilt here)
         run: |
           # SMI-5957 (superseding this step's original design): docker-compose.yml's
