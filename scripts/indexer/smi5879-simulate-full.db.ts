@@ -25,8 +25,6 @@ import type {
 } from './smi5879-simulate-full.types.ts'
 import type { Smi5879Purpose, Smi5879RunStatus } from './smi5879-census.types.ts'
 
-const SIMULATED_COHORTS: readonly SimulatedCohort[] = ['C1', 'C2', 'C3', 'C4']
-
 /**
  * Assert a raw `queryRows` cell is present. `tsconfig.base.json`'s
  * `noUncheckedIndexedAccess` types every destructured cell as `string | undefined`
@@ -166,12 +164,3 @@ export function createSmi5879SimulateFullDbDeps(conn: PgConnParams): Smi5879Simu
     },
   }
 }
-
-/** Total row count across the simulated cohorts, for a fresh run's coverage denominators. */
-export function countByCohort(rows: SimSnapshotRow[]): Record<SimulatedCohort, number> {
-  const counts: Record<SimulatedCohort, number> = { C1: 0, C2: 0, C3: 0, C4: 0 }
-  for (const row of rows) counts[row.cohort]++
-  return counts
-}
-
-export { SIMULATED_COHORTS }

@@ -44,6 +44,7 @@ import {
   poolerSessionConnParams,
   runPsql,
   queryRows,
+  queryScalar,
   nullable,
   type PgConnParams,
 } from './smi5879-census.pg.ts'
@@ -114,6 +115,81 @@ function buildHolder(): string {
 /** Build a fresh `run_id` — legible (`purpose` + timestamp) plus a random suffix for uniqueness. */
 function buildRunId(purpose: Smi5879Purpose): string {
   return `smi5879-${purpose}-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
+}
+
+/** Handle returned by {@link startCensusHeartbeat}. */
+export interface CensusHeartbeat {
+  /** Stop the timer and suppress any in-flight tick's fatal-abort/error logging. */
+  stop(): void
+}
+
+/**
+ * Start the claim's independent heartbeat (design doc 8.3.5.2.5): calls
+ * `heartbeat(runId, token)` on a fixed interval. A `null` return means the
+ * claim was stolen or the run was abandoned — design doc 8.3.5.2.5 states
+ * this is "fatal and immediate: the runner stops fetching, stops writing
+ * checkpoints... and exits non-zero. It must not attempt to re-claim" — so
+ * `onFatal` fires and the timer stops itself; the caller must not re-claim.
+ *
+ * SMI-5879 retro finding (sibling-implementation audit, 2026-08-08): this
+ * runner previously called `smi5879_heartbeat` on a bare `setInterval` and
+ * only ever caught a THROWN error — it never read the call's own return
+ * value, so a stolen claim (which `smi5879_heartbeat` signals by returning
+ * SQL NULL, not by throwing — see
+ * `smi5879-census.claim-gc.test.ts`'s "heartbeat returns NULL for a
+ * stolen/mismatched token" case, which asserts the DB function's half of
+ * this contract) went completely undetected: this tool would keep
+ * populating/resolving branches/sealing under a claim it no longer actually
+ * held. Extracted as its own exported, unit-testable function — mirroring
+ * `lock-heartbeat.ts`'s `startLockHeartbeat` (SMI-5311), which exists for
+ * the identical "auto-execing main() on import" testability reason — so the
+ * fatal-abort path can be exercised with a fake `heartbeat` function and
+ * fake timers instead of a live Postgres claim-theft race. A thrown/rejected
+ * `heartbeat` call is left non-fatal (log + retry next tick): unlike item
+ * 3's multi-day unattended `smi5879-simulate-full.ts` run, this tool's
+ * lifecycle is short and typically operator-observed directly.
+ */
+export function startCensusHeartbeat(
+  heartbeat: (runId: string, token: string) => Promise<string | null>,
+  runId: string,
+  token: string,
+  intervalMs: number = HEARTBEAT_INTERVAL_MS,
+  onFatal: (message: string) => void = (message) => {
+    console.error(`[smi5879-census] FATAL: ${message} Exiting without re-claiming.`)
+    process.exit(1)
+  }
+): CensusHeartbeat {
+  let stopped = false
+  const timer = setInterval(() => {
+    if (stopped) return
+    void heartbeat(runId, token)
+      .then((result) => {
+        // A late callback after stop() must not fire — the run is done.
+        if (stopped) return
+        if (result === null) {
+          stopped = true
+          clearInterval(timer)
+          onFatal(
+            `heartbeat lost for run_id=${runId} — claim was stolen or the run was abandoned ` +
+              '(design doc 8.3.5.2.5).'
+          )
+        }
+      })
+      .catch((err) => {
+        if (!stopped) {
+          console.error(`[smi5879-census] heartbeat failed: ${(err as Error).message}`)
+        }
+      })
+  }, intervalMs)
+  // Don't keep the event loop alive on the heartbeat alone (in-flight I/O still
+  // pins it). Node's setInterval handle has unref; guard for non-Node timers.
+  timer.unref?.()
+  return {
+    stop() {
+      stopped = true
+      clearInterval(timer)
+    },
+  }
 }
 
 /** Population load — design doc 8.3.5.2.3's exact SQL shape, one `REPEATABLE READ` transaction. */
@@ -224,15 +300,15 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
     )
   }
 
-  const heartbeat = setInterval(() => {
-    void runPsql(conn, `SELECT smi5879_heartbeat(:'run_id', :'token');`, {
-      run_id: runId,
-      token,
-    }).catch((err) => {
-      console.error(`[smi5879-census] heartbeat failed: ${(err as Error).message}`)
-    })
-  }, HEARTBEAT_INTERVAL_MS)
-  heartbeat.unref?.()
+  const heartbeat = startCensusHeartbeat(
+    (rid, tok) =>
+      queryScalar(conn, `SELECT smi5879_heartbeat(:'run_id', :'token');`, {
+        run_id: rid,
+        token: tok,
+      }),
+    runId,
+    token
+  )
 
   let branchSummary: BranchResolutionSummary | null = null
   try {
@@ -247,7 +323,7 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
 
     await seal(conn, runId)
   } finally {
-    clearInterval(heartbeat)
+    heartbeat.stop()
     await runPsql(conn, `SELECT smi5879_release_run(:'run_id', :'token');`, {
       run_id: runId,
       token,
