@@ -1,29 +1,25 @@
 /**
- * G-1, G-2, G-3, G-5, G-7, G-8 evaluators (design doc §8.5, corrected by §12).
- * G-2R lives in the sibling `smi5879-gate-check.g2r.ts` (own file — three
- * short-circuiting phases, materially more code than any of these six).
+ * G-1, G-2, G-3, G-5 evaluators (design doc §8.5, corrected by §12). G-7/G-8
+ * live in the sibling `smi5879-gate-check.gates.attestation.ts` (split out,
+ * CLAUDE.md's <500-line-per-file convention) and are re-exported below so
+ * existing `from './smi5879-gate-check.gates.ts'` imports keep working. G-2R
+ * lives in `smi5879-gate-check.g2r.ts` (own file — three short-circuiting
+ * phases, materially more code than any of these).
  * @module scripts/indexer/smi5879-gate-check.gates
  */
 
-import {
-  checkAttestationCompleteness,
-  checkDeltaBound,
-  computeR,
-  G7_REQUIRED_ATTESTATION_IDS,
-  G8_REQUIRED_ATTESTATION_IDS,
-  type LoadResult,
-  type ResolvedLedger,
-} from './smi5879-gate-check.helpers.ts'
+import { checkDeltaBound, computeR, type ResolvedLedger } from './smi5879-gate-check.helpers.ts'
 import {
   DRIFT_CLASSES_REQUIRING_EXCLUSION,
   type DriftRow,
   type GateResult,
-  type Smi5879FreezeAttestation,
   type Smi5879GateCheckMode,
   type Smi5879SimulateFullReport,
   type StructuralClosureResult,
 } from './smi5879-gate-check.types.ts'
 import type { SimulatedCohort } from './smi5879-simulate-full.types.ts'
+
+export { evaluateG7, evaluateG8 } from './smi5879-gate-check.gates.attestation.ts'
 
 const SIMULATED_COHORTS: readonly SimulatedCohort[] = ['C1', 'C2', 'C3', 'C4']
 
@@ -145,29 +141,24 @@ export function evaluateG3(simReport: Smi5879SimulateFullReport): GateResult {
 // ---------------------------------------------------------------------------
 
 /**
- * JUDGMENT CALL (flagged per task instructions — §8.5 doesn't mandate a
- * mechanism for the fixture-corpus corroboration check, and the plan
- * explicitly says to "pick one and document the choice"): design doc
- * §8.3.1.2.4's THIRD corroboration bullet — "no non-AI RiskScoreBreakdown
- * key changes over the fixture corpus" — has no producing artifact anywhere
- * in the repo (item 2 shipped only the structural closure tests, which are
- * fixture-free by design — see their own module docs). Building a NEW
- * fixture-corpus RiskScoreBreakdown-parity test is an item-2-shaped
- * deliverable, out of scope for this gate-checker. Per the plan's explicit
- * option (b) ("`npm run preflight`/CI is the actual enforcement point and
- * `gate-check.ts`'s own output says so explicitly"), this gate does NOT
- * independently re-run that corroboration — it says so in its PASS reason
- * text below, so the gap is visible in every report rather than silently
- * assumed. The other TWO corroboration bullets ARE independently
- * re-verified here: the structural closure test itself (self-invoked,
- * §12.1) and the per-row +32 bound over "the entire simulated population" —
- * which is exactly the simulator report's own rows, not a fixture corpus.
+ * FIX (finding #3, adversarial review — supersedes the prior "judgment
+ * call" note below the fold): design doc §8.5's G-5 row is explicit —
+ * "**Both halves block merge uniformly**" — the structural closure test AND
+ * the fixture-corpus corroboration check (§8.3.1.2.4's THIRD bullet, "no
+ * non-AI RiskScoreBreakdown key changes over the fixture corpus"). Grepped
+ * directly against all three closure test files (item 2, `CLOSURE_TEST_FILES`
+ * in `smi5879-gate-check.closure.ts`): every one is a pure AST/structural
+ * routing census (call-site + pattern-array introspection), explicitly
+ * documented as "fixture-free by design" in their own module docs — none of
+ * them runs a fixture corpus through the scanner and diffs `RiskScoreBreakdown`
+ * keys. That means this corroboration evidence is genuinely unavailable
+ * today (confirmed by inspection, not assumed), so noting the gap in a PASS
+ * reason string — the PRIOR behavior — violates the module's own governing
+ * rule ("absence of evidence is INCONCLUSIVE, never PASS"). G-5 is therefore
+ * INCONCLUSIVE whenever `!closure.fixtureCorpusCorroborationVerified` — see
+ * that field's doc comment in `smi5879-gate-check.types.ts` for how a future
+ * item-2-shaped producer flips it true.
  */
-const G5_FIXTURE_CORPUS_NOTE =
-  'NOTE: the fixture-corpus RiskScoreBreakdown-key corroboration (design doc §8.3.1.2.4) is NOT ' +
-  'independently re-run by gate-check.ts — no producing artifact exists for it; enforcement is ' +
-  'via npm run preflight/CI (documented judgment call, plan option (b)).'
-
 export function evaluateG5(
   skipClosureTests: boolean,
   closure: StructuralClosureResult | null,
@@ -224,160 +215,24 @@ export function evaluateG5(
       detail: { violations: bound.violations, missingScoreIds: bound.missingScoreIds },
     }
   }
+  if (!closure.fixtureCorpusCorroborationVerified) {
+    return {
+      id: 'G-5',
+      outcome: 'INCONCLUSIVE',
+      reason:
+        'fixture-corpus RiskScoreBreakdown-key corroboration (design doc §8.3.1.2.4, third ' +
+        'bullet) evidence is unavailable — no producing artifact exists yet. §8.5 G-5 requires ' +
+        '"both halves" (structural closure test AND this corroboration) to block merge uniformly; ' +
+        'the structural closure test and the +32 bound alone are NOT sufficient for a PASS',
+    }
+  }
   return {
     id: 'G-5',
     outcome: 'PASS',
     reason:
-      `structural closure test passed (baseline_commit=${closure.baseline_commit}) and every ` +
-      `simulated row's delta <= +32. ${G5_FIXTURE_CORPUS_NOTE}`,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// G-7 — freeze
-// ---------------------------------------------------------------------------
-
-export function evaluateG7(attestation: LoadResult<Smi5879FreezeAttestation>): GateResult {
-  if (attestation.status === 'missing') {
-    return {
-      id: 'G-7',
-      outcome: 'INCONCLUSIVE',
-      reason: `freeze attestation unavailable: ${attestation.reason}`,
-    }
-  }
-  if (attestation.status === 'malformed') {
-    return {
-      id: 'G-7',
-      outcome: 'INCONCLUSIVE',
-      reason: `freeze attestation malformed: ${attestation.reason}`,
-    }
-  }
-  const att = attestation.value
-  const completeness = checkAttestationCompleteness(att.checks, G7_REQUIRED_ATTESTATION_IDS)
-  if (!completeness.ok) {
-    const parts: string[] = []
-    if (completeness.missingIds.length > 0) {
-      parts.push(`missing (never recorded): ${completeness.missingIds.join(', ')}`)
-    }
-    if (completeness.redIds.length > 0)
-      parts.push(`present but red: ${completeness.redIds.join(', ')}`)
-    return {
-      id: 'G-7',
-      outcome: 'INCONCLUSIVE',
-      reason: `F-1..F-9/F-1S..F-6S incomplete — ${parts.join('; ')}`,
-      detail: { missingIds: completeness.missingIds, redIds: completeness.redIds },
-    }
-  }
-  if (!att.backfill_kill_switch_clean) {
-    return {
-      id: 'G-7',
-      outcome: 'INCONCLUSIVE',
-      reason:
-        'BACKFILL_KILL_SWITCH was not clean for the full Δ span — a successful indexer-backfill.yml ' +
-        'run was recorded during the freeze',
-    }
-  }
-  return {
-    id: 'G-7',
-    outcome: 'PASS',
-    reason: 'F-1..F-9 and F-1S..F-6S all recorded green; selective freeze held unbroken for Δ',
-  }
-}
-
-// ---------------------------------------------------------------------------
-// G-8 — gate pre-condition
-// ---------------------------------------------------------------------------
-
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
-
-export function evaluateG8(
-  attestation: LoadResult<Smi5879FreezeAttestation>,
-  /** DB-sourced (`smi5879_run.snapshot_started_at` for the DECISION generation) — never
-   *  file-provided, per the task spec's "independently re-derive from the DB" instruction. */
-  decisionSnapshotStartedAt: string | null
-): GateResult {
-  if (attestation.status === 'missing') {
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason: `freeze attestation unavailable: ${attestation.reason}`,
-    }
-  }
-  if (attestation.status === 'malformed') {
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason: `freeze attestation malformed: ${attestation.reason}`,
-    }
-  }
-  const att = attestation.value
-  const completeness = checkAttestationCompleteness(att.checks, G8_REQUIRED_ATTESTATION_IDS)
-  if (!completeness.ok) {
-    const parts: string[] = []
-    if (completeness.missingIds.length > 0) {
-      parts.push(`missing (never recorded): ${completeness.missingIds.join(', ')}`)
-    }
-    if (completeness.redIds.length > 0)
-      parts.push(`present but red: ${completeness.redIds.join(', ')}`)
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason: `P-0.1..P-0.6 incomplete — ${parts.join('; ')}`,
-      detail: { missingIds: completeness.missingIds, redIds: completeness.redIds },
-    }
-  }
-  if (!att.pr2192a_merged) {
-    return { id: 'G-8', outcome: 'INCONCLUSIVE', reason: 'PR-2192a not recorded as merged' }
-  }
-  if (!att.pr2192a_deploy_green) {
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason: 'PR-2192a scoped deploy (mode=changed functions=indexer) not recorded green',
-    }
-  }
-  if (!att.pr2192a_merged_at) {
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason: 'pr2192a_merged_at missing — cannot verify the 24h settle window',
-    }
-  }
-  if (!decisionSnapshotStartedAt) {
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason:
-        'decision generation snapshot_started_at unavailable from the DB — cannot independently ' +
-        'verify the 24h settle window',
-    }
-  }
-  const mergedAtMs = Date.parse(att.pr2192a_merged_at)
-  const snapshotMs = Date.parse(decisionSnapshotStartedAt)
-  if (Number.isNaN(mergedAtMs) || Number.isNaN(snapshotMs)) {
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason: 'pr2192a_merged_at or the DB-sourced snapshot_started_at is not a parseable date',
-    }
-  }
-  const elapsedMs = snapshotMs - mergedAtMs
-  if (elapsedMs < TWENTY_FOUR_HOURS_MS) {
-    return {
-      id: 'G-8',
-      outcome: 'INCONCLUSIVE',
-      reason:
-        `only ${(elapsedMs / 3_600_000).toFixed(2)}h elapsed between PR-2192a's merge and the ` +
-        `decision snapshot (DB-sourced snapshot_started_at=${decisionSnapshotStartedAt}) — 24h required`,
-      detail: { elapsedMs },
-    }
-  }
-  return {
-    id: 'G-8',
-    outcome: 'PASS',
-    reason:
-      'P-0.1..P-0.6 recorded green; PR-2192a merged, deploy green, and >=24h elapsed before the ' +
-      'decision snapshot (independently verified against the DB)',
+      `structural closure test passed (baseline_commit=${closure.baseline_commit}), every ` +
+      "simulated row's delta <= +32, and fixture-corpus RiskScoreBreakdown-key corroboration " +
+      '(design doc §8.3.1.2.4) verified — both halves of G-5 satisfied',
   }
 }
 

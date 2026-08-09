@@ -18,8 +18,11 @@ import { join } from 'node:path'
 import { evaluateGateCheck } from '../../indexer/smi5879-gate-check.ts'
 import type { GateResult } from '../../indexer/smi5879-gate-check.types.ts'
 import {
+  ALL_PASSING_INVARIANTS,
   DECISION_RUN_ID,
   SAMPLE_COMMIT,
+  WINDOW_RUN_ID,
+  buildReconciliationArgs,
   buildRequiredArgs,
   makeCensusReportJson,
   makeFakeDb,
@@ -27,6 +30,7 @@ import {
   makeScratchDir,
   makeSimRow,
   makeSimulatorReportJson,
+  makeWindowCensusReportJson,
 } from './smi5879-gate-check.fixtures.ts'
 
 function findGate(gates: readonly GateResult[], id: string): GateResult {
@@ -40,7 +44,13 @@ describe('smi5879-gate-check.ts — preconditions and artifact/generation bindin
     const dir = makeScratchDir()
     const args = buildRequiredArgs(dir, {
       censusJson: makeCensusReportJson({
-        invariants: [{ id: 'I-1', name: 'totality', passed: false, detail: 'boom' }],
+        // Full I-1..I-5 set (finding #1's completeness check requires it) —
+        // only I-1 fails, so this exercises the SAME "a failed invariant
+        // short-circuits" behavior without tripping the completeness gate.
+        invariants: [
+          { id: 'I-1', name: 'totality', passed: false, detail: 'boom' },
+          ...ALL_PASSING_INVARIANTS.slice(1),
+        ],
       }),
     })
     const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
@@ -48,6 +58,25 @@ describe('smi5879-gate-check.ts — preconditions and artifact/generation bindin
     expect(report.gates).toEqual([])
     expect(report.overall).toBe('INCONCLUSIVE')
     expect(report.precondition_failure_reason).toContain('I-1')
+  })
+
+  it('§12.1/finding #10: a thrown runStructuralClosureTests makes G-5 INCONCLUSIVE, not the whole evaluation reject', async () => {
+    const dir = makeScratchDir()
+    const args = buildRequiredArgs(dir)
+    const test = makeFakeTestDeps({
+      async runStructuralClosureTests() {
+        throw new Error('boom — dependency exploded')
+      },
+    })
+    // MUST resolve to a real report, never reject.
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test }, args)
+    expect(report.artifact_binding_ok).toBe(true)
+    const g5 = findGate(report.gates, 'G-5')
+    expect(g5.outcome).toBe('INCONCLUSIVE')
+    expect(g5.reason).toMatch(/boom — dependency exploded/)
+    // Every OTHER gate still evaluates normally — only G-5 is affected.
+    expect(findGate(report.gates, 'G-2').outcome).toBe('PASS')
+    expect(findGate(report.gates, 'G-3').outcome).toBe('PASS')
   })
 
   it('a missing census report file is INCONCLUSIVE, not a thrown error', async () => {
@@ -92,6 +121,7 @@ describe('smi5879-gate-check.ts — preconditions and artifact/generation bindin
           passed: true,
           baseline_commit: 'a-totally-different-sha',
           unavailable_reason: null,
+          fixtureCorpusCorroborationVerified: true,
         }
       },
     })
@@ -176,6 +206,49 @@ describe('smi5879-gate-check.ts — preconditions and artifact/generation bindin
   })
 })
 
+describe('smi5879-gate-check.ts — finding #2: window census report binding (reconciliation mode)', () => {
+  it('a window census report whose run_id does not match --window-run-id is INCONCLUSIVE', async () => {
+    const dir = makeScratchDir()
+    const args = buildReconciliationArgs(dir, {
+      windowRunId: WINDOW_RUN_ID,
+      windowCensusJson: makeWindowCensusReportJson({ run_id: 'some-other-window-run-id' }),
+    })
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/window census report run_id/)
+    expect(report.artifact_binding_reason).toMatch(/does not match --window-run-id/)
+    expect(report.gates).toEqual([])
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it('a window census report whose purpose is not "window" is INCONCLUSIVE', async () => {
+    const dir = makeScratchDir()
+    const args = buildReconciliationArgs(dir, {
+      windowRunId: WINDOW_RUN_ID,
+      // Wrong purpose but a valid I-1..I-5 set (avoids tripping finding #1's
+      // completeness check instead of finding #2's binding check).
+      windowCensusJson: makeWindowCensusReportJson({
+        run_id: WINDOW_RUN_ID,
+        purpose: 'decision',
+        invariants: ALL_PASSING_INVARIANTS,
+      }),
+    })
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(false)
+    expect(report.artifact_binding_reason).toMatch(/window census report purpose="decision"/)
+  })
+
+  it('a correctly-bound window census report proceeds past binding into gate evaluation', async () => {
+    const dir = makeScratchDir()
+    const args = buildReconciliationArgs(dir, { windowRunId: WINDOW_RUN_ID })
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    expect(report.artifact_binding_ok).toBe(true)
+    expect(report.gates.length).toBeGreaterThan(0)
+    // G-2R is evaluated (not the decision-mode NOT_APPLICABLE) once binding succeeds.
+    expect(findGate(report.gates, 'G-2R').outcome).not.toBe('NOT_APPLICABLE')
+  })
+})
+
 describe('smi5879-gate-check.ts — G-2 coverage', () => {
   it('PASSes when every cohort is full with zero unevaluable', async () => {
     const dir = makeScratchDir()
@@ -186,8 +259,19 @@ describe('smi5879-gate-check.ts — G-2 coverage', () => {
 
   it('is INCONCLUSIVE when coverage.status is "full" but unevaluable > 0 (never trust the label alone)', async () => {
     const dir = makeScratchDir()
+    // 5 C1 rows, 2 unevaluable — matches the claimed coverage below so this
+    // test isolates G-2's OWN "status:full but unevaluable>0" check rather
+    // than tripping finding #7's coverage/rows cross-validation at load time.
+    const rows = [
+      makeSimRow({ id: 'r1', cohort: 'C1', outcome: 'unevaluable' }),
+      makeSimRow({ id: 'r2', cohort: 'C1', outcome: 'unevaluable' }),
+      makeSimRow({ id: 'r3', cohort: 'C1', outcome: 'unchanged_clean' }),
+      makeSimRow({ id: 'r4', cohort: 'C1', outcome: 'unchanged_clean' }),
+      makeSimRow({ id: 'r5', cohort: 'C1', outcome: 'unchanged_clean' }),
+    ]
     const args = buildRequiredArgs(dir, {
       simulatorJson: makeSimulatorReportJson({
+        rows,
         coverage: {
           C1: { status: 'full', scanned: 5, total: 5, unevaluable: 2, unfetchable: 0 },
           C2: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
@@ -222,9 +306,17 @@ describe('smi5879-gate-check.ts — G-2 coverage', () => {
     const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
     expect(findGate(report.gates, 'G-2').outcome).toBe('PASS')
 
-    // But unevaluable > 0 in ANY cohort DOES block, distinctly from the two above.
+    // But unevaluable > 0 in ANY cohort DOES block, distinctly from the two
+    // above. 4 C1 rows recorded (matching `scanned: 4`), 1 unevaluable.
+    const rows2 = [
+      makeSimRow({ id: 's1', cohort: 'C1', outcome: 'unevaluable' }),
+      makeSimRow({ id: 's2', cohort: 'C1', outcome: 'unchanged_clean' }),
+      makeSimRow({ id: 's3', cohort: 'C1', outcome: 'unchanged_clean' }),
+      makeSimRow({ id: 's4', cohort: 'C1', outcome: 'unchanged_clean' }),
+    ]
     const args2 = buildRequiredArgs(dir, {
       simulatorJson: makeSimulatorReportJson({
+        rows: rows2,
         coverage: {
           C1: { status: 'partial', scanned: 4, total: 5, unevaluable: 1, unfetchable: 0 },
           C2: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
@@ -265,9 +357,13 @@ describe('smi5879-gate-check.ts — G-3 two-sided reporting', () => {
     const dir = makeScratchDir()
     const rows = [makeSimRow({ id: 'r1', outcome: 'newly_quarantined' })]
     const simJson = makeSimulatorReportJson({ rows })
-    // Force a mismatch: counts CLAIMS a newly_cleared row that isn't in `rows`.
+    // Force a wrong-BUCKET mismatch (total stays 1, matching rows.length, so
+    // this isolates G-3's OWN per-bucket check rather than finding #7's
+    // load-time total-sum cross-validation): counts claims the row was
+    // newly_cleared, not newly_quarantined, even though `rows` says otherwise.
     simJson['counts'] = {
       ...(simJson['counts'] as Record<string, number>),
+      newly_quarantined: 0,
       newly_cleared: 1,
     }
     const args = buildRequiredArgs(dir, { simulatorJson: simJson })
@@ -287,6 +383,7 @@ describe('smi5879-gate-check.ts — G-5 structural closure + delta bound', () =>
           passed: false,
           baseline_commit: SAMPLE_COMMIT,
           unavailable_reason: 'spawn error',
+          fixtureCorpusCorroborationVerified: false,
         }
       },
     })
@@ -305,6 +402,7 @@ describe('smi5879-gate-check.ts — G-5 structural closure + delta bound', () =>
           passed: false,
           baseline_commit: SAMPLE_COMMIT,
           unavailable_reason: null,
+          fixtureCorpusCorroborationVerified: true,
         }
       },
     })
@@ -339,13 +437,38 @@ describe('smi5879-gate-check.ts — G-5 structural closure + delta bound', () =>
     expect(findGate(report.gates, 'G-5').detail?.['missingScoreIds']).toContain('r1')
   })
 
-  it('PASSes and its reason discloses the fixture-corpus corroboration is not independently re-run (documented judgment call)', async () => {
+  it('finding #3: is INCONCLUSIVE, not PASS, when fixture-corpus RiskScoreBreakdown corroboration evidence is unavailable — the exact shape production returns today', async () => {
+    const dir = makeScratchDir()
+    const args = buildRequiredArgs(dir)
+    // This is what runStructuralClosureTestsViaVitest ACTUALLY returns
+    // today (fixtureCorpusCorroborationVerified always false — no producing
+    // artifact exists) — this scenario used to silently PASS.
+    const test = makeFakeTestDeps({
+      async runStructuralClosureTests() {
+        return {
+          ran: true,
+          passed: true,
+          baseline_commit: SAMPLE_COMMIT,
+          unavailable_reason: null,
+          fixtureCorpusCorroborationVerified: false,
+        }
+      },
+    })
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test }, args)
+    const g5 = findGate(report.gates, 'G-5')
+    expect(g5.outcome).toBe('INCONCLUSIVE')
+    expect(g5.reason).toMatch(/RiskScoreBreakdown/)
+    expect(g5.reason).toMatch(/both halves/i)
+    expect(report.overall).toBe('INCONCLUSIVE')
+  })
+
+  it('PASSes only when fixture-corpus corroboration evidence IS available (both halves of §8.5 G-5 satisfied)', async () => {
     const dir = makeScratchDir()
     const args = buildRequiredArgs(dir)
     const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
     const g5 = findGate(report.gates, 'G-5')
     expect(g5.outcome).toBe('PASS')
     expect(g5.reason).toMatch(/RiskScoreBreakdown/)
-    expect(g5.reason).toMatch(/preflight\/CI/)
+    expect(g5.reason).toMatch(/both halves/i)
   })
 })

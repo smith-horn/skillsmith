@@ -40,6 +40,51 @@ export const CLOSURE_TEST_FILES = [
   'scripts/tests/indexer/security-scanner-edge.multiline-category-closure.supabase-twin.test.ts',
 ] as const
 
+/**
+ * Finding #4 (adversarial review): the dirty-worktree check MUST cover
+ * everything the structural closure tests actually import or read, not just
+ * the 3 test-file paths themselves — otherwise an uncommitted change to,
+ * say, `SecurityScanner.ts` or the edge twin's pattern arrays could silently
+ * ride along on a "clean" HEAD, because `git status` never looked at it.
+ * Grepped directly against the 3 test files' own imports/`readFileSync`
+ * calls (per §12.1's "verify the RELEVANT PATHS are clean" wording — not
+ * merely the test files themselves):
+ *   - Node core: `SecurityScanner.ts` (read), `patterns.jailbreak.ts`,
+ *     `patterns.jailbreak.evidence.ts`, `patterns.scope.ts` (all imported).
+ *   - Edge twin, Node mirror: `security-scanner-edge.{ts,exec,context,patterns}.ts`
+ *     (read + imported, via the shared fixtures.ts both edge test files use).
+ *   - Edge twin, DEPLOYED Supabase copy: the same four files under
+ *     `supabase/functions/_shared/`, read directly by the supabase-twin test.
+ *   - The shared `security-scanner-edge.multiline-category-closure.fixtures.ts`
+ *     itself — two of the three test files import it, so a dirty fixtures.ts
+ *     changes what the vitest run exercises just as much as a dirty test file
+ *     would, and the ORIGINAL 3-file list never watched it either.
+ *   - `vitest.config.ts` — the repository-pinned config the self-invoked run
+ *     relies on staying unmodified (§12.1: "repository-pinned config... no
+ *     `--config` override"); a dirty config could silently change what "ran"
+ *     even means.
+ * Deliberately NOT used for the vitest invocation itself ({@link
+ * CLOSURE_TEST_FILES} stays exactly the 3 real test files there — `vitest
+ * run` takes test-file paths, not arbitrary source files).
+ */
+export const CLOSURE_WATCHED_SOURCE_PATHS = [
+  ...CLOSURE_TEST_FILES,
+  'scripts/tests/indexer/security-scanner-edge.multiline-category-closure.fixtures.ts',
+  'packages/core/src/security/scanner/SecurityScanner.ts',
+  'packages/core/src/security/scanner/patterns.jailbreak.ts',
+  'packages/core/src/security/scanner/patterns.jailbreak.evidence.ts',
+  'packages/core/src/security/scanner/patterns.scope.ts',
+  'scripts/indexer/_shared/security-scanner-edge.ts',
+  'scripts/indexer/_shared/security-scanner-edge.exec.ts',
+  'scripts/indexer/_shared/security-scanner-edge.context.ts',
+  'scripts/indexer/_shared/security-scanner-edge.patterns.ts',
+  'supabase/functions/_shared/security-scanner-edge.ts',
+  'supabase/functions/_shared/security-scanner-edge.exec.ts',
+  'supabase/functions/_shared/security-scanner-edge.context.ts',
+  'supabase/functions/_shared/security-scanner-edge.patterns.ts',
+  'vitest.config.ts',
+] as const
+
 const CLOSURE_TEST_TIMEOUT_MS = 120_000
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -60,7 +105,7 @@ export interface GitCheckResult {
  * (repo root, {@link CLOSURE_TEST_FILES}).
  */
 export function checkGitTreeClean(
-  paths: readonly string[] = CLOSURE_TEST_FILES,
+  paths: readonly string[] = CLOSURE_WATCHED_SOURCE_PATHS,
   cwd?: string
 ): GitCheckResult {
   try {
@@ -104,6 +149,7 @@ export async function runStructuralClosureTestsViaVitest(): Promise<StructuralCl
     return {
       ran: false,
       passed: false,
+      fixtureCorpusCorroborationVerified: false,
       baseline_commit: null,
       unavailable_reason: gitCheck.error
         ? `git status --porcelain failed: ${gitCheck.error}`
@@ -117,6 +163,7 @@ export async function runStructuralClosureTestsViaVitest(): Promise<StructuralCl
     return {
       ran: false,
       passed: false,
+      fixtureCorpusCorroborationVerified: false,
       baseline_commit: null,
       unavailable_reason: 'git rev-parse HEAD failed — cannot determine the executed commit',
     }
@@ -140,6 +187,7 @@ export async function runStructuralClosureTestsViaVitest(): Promise<StructuralCl
       return {
         ran: false,
         passed: false,
+        fixtureCorpusCorroborationVerified: false,
         baseline_commit: head,
         unavailable_reason: `vitest spawn/exit failed with no parseable stdout: ${execErr.message}`,
       }
@@ -153,6 +201,7 @@ export async function runStructuralClosureTestsViaVitest(): Promise<StructuralCl
     return {
       ran: false,
       passed: false,
+      fixtureCorpusCorroborationVerified: false,
       baseline_commit: head,
       unavailable_reason: `vitest JSON output was not parseable: ${(err as Error).message}`,
     }
@@ -161,6 +210,7 @@ export async function runStructuralClosureTestsViaVitest(): Promise<StructuralCl
     return {
       ran: false,
       passed: false,
+      fixtureCorpusCorroborationVerified: false,
       baseline_commit: head,
       unavailable_reason: 'vitest JSON report root was not an object',
     }
@@ -172,6 +222,7 @@ export async function runStructuralClosureTestsViaVitest(): Promise<StructuralCl
     return {
       ran: false,
       passed: false,
+      fixtureCorpusCorroborationVerified: false,
       baseline_commit: head,
       unavailable_reason:
         `vitest collected ${typeof numTotalTests === 'number' ? numTotalTests : '(unknown)'} ` +
@@ -182,10 +233,17 @@ export async function runStructuralClosureTestsViaVitest(): Promise<StructuralCl
     return {
       ran: false,
       passed: false,
+      fixtureCorpusCorroborationVerified: false,
       baseline_commit: head,
       unavailable_reason: 'vitest JSON report had no boolean `success` field',
     }
   }
 
-  return { ran: true, passed: success, baseline_commit: head, unavailable_reason: null }
+  return {
+    ran: true,
+    passed: success,
+    baseline_commit: head,
+    unavailable_reason: null,
+    fixtureCorpusCorroborationVerified: false,
+  }
 }

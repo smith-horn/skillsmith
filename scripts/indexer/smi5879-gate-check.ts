@@ -34,7 +34,11 @@ import { writeFileSync } from 'node:fs'
 import { poolerSessionConnParams } from './smi5879-census.pg.ts'
 import { createSmi5879GateCheckDbDeps } from './smi5879-gate-check.pg.ts'
 import { runStructuralClosureTestsViaVitest } from './smi5879-gate-check.closure.ts'
-import { bindGeneration, checkArtifactRunIdBinding } from './smi5879-gate-check.binding.ts'
+import {
+  bindGeneration,
+  checkArtifactRunIdBinding,
+  checkWindowCensusBinding,
+} from './smi5879-gate-check.binding.ts'
 import { evaluateG2R } from './smi5879-gate-check.g2r.ts'
 import {
   evaluateG1,
@@ -45,90 +49,28 @@ import {
   evaluateG8,
 } from './smi5879-gate-check.gates.ts'
 import {
+  checkArtifactRunIdMatch,
   loadJsonFile,
   resolveLedger,
   validateDispositionLedgerShape,
   validateFreezeAttestationShape,
 } from './smi5879-gate-check.helpers.ts'
 import { loadCensusReport, loadSimulatorReport } from './smi5879-gate-check.io.ts'
-import type { InvariantResult } from './smi5879-census.types.ts'
+import { parseArgs, type CliArgs } from './smi5879-gate-check.cli.ts'
+import type { InvariantResult, Smi5879Purpose } from './smi5879-census.types.ts'
 import type {
   GateResult,
   Smi5879FreezeAttestation,
   Smi5879G2rReport,
   Smi5879GateCheckDbDeps,
-  Smi5879GateCheckMode,
   Smi5879GateCheckReport,
   Smi5879GateCheckTestDeps,
   StructuralClosureResult,
 } from './smi5879-gate-check.types.ts'
 
-// ---------------------------------------------------------------------------
-// CLI args
-// ---------------------------------------------------------------------------
-
-export interface CliArgs {
-  mode: Smi5879GateCheckMode
-  decisionRunId: string
-  censusReportPath: string
-  simulatorReportPath: string
-  dispositionsPath?: string
-  attestationPath?: string
-  windowRunId?: string
-  windowCensusReportPath?: string
-  reportPath: string
-  skipClosureTests: boolean
-}
-
-export function parseArgs(argv: string[]): CliArgs {
-  const find = (name: string): string | undefined => {
-    const prefix = `--${name}=`
-    const hit = argv.find((a) => a.startsWith(prefix))
-    return hit ? hit.slice(prefix.length) : undefined
-  }
-  const mode = find('mode')
-  if (mode !== 'decision' && mode !== 'reconciliation') {
-    throw new Error(
-      `SMI-5879: --mode=<decision|reconciliation> is required, got ${mode ?? '(missing)'}.`
-    )
-  }
-  const decisionRunId = find('decision-run-id')
-  if (!decisionRunId) throw new Error('SMI-5879: --decision-run-id=<run_id> is required.')
-  const censusReportPath = find('census-report')
-  if (!censusReportPath) throw new Error('SMI-5879: --census-report=<path> is required.')
-  const simulatorReportPath = find('simulator-report')
-  if (!simulatorReportPath) throw new Error('SMI-5879: --simulator-report=<path> is required.')
-
-  const dispositionsPath = find('dispositions')
-  const attestationPath = find('attestation')
-  const windowRunId = find('window-run-id')
-  const windowCensusReportPath = find('window-census-report')
-  if (mode === 'reconciliation') {
-    if (!windowRunId) {
-      throw new Error('SMI-5879: --window-run-id=<run_id> is required when --mode=reconciliation.')
-    }
-    if (!windowCensusReportPath) {
-      throw new Error(
-        'SMI-5879: --window-census-report=<path> is required when --mode=reconciliation.'
-      )
-    }
-  }
-  const reportPath = find('report-path') ?? `smi5879-gate-check-report-${Date.now()}.json`
-  const skipClosureTests = argv.includes('--skip-closure-tests')
-
-  return {
-    mode,
-    decisionRunId,
-    censusReportPath,
-    simulatorReportPath,
-    ...(dispositionsPath !== undefined ? { dispositionsPath } : {}),
-    ...(attestationPath !== undefined ? { attestationPath } : {}),
-    ...(windowRunId !== undefined ? { windowRunId } : {}),
-    ...(windowCensusReportPath !== undefined ? { windowCensusReportPath } : {}),
-    reportPath,
-    skipClosureTests,
-  }
-}
+// Re-exported so existing `from './smi5879-gate-check.ts'` imports (e.g. the
+// test fixtures' `CliArgs`) keep working after the CLAUDE.md <500-line split.
+export { parseArgs, type CliArgs }
 
 // ---------------------------------------------------------------------------
 // Evaluator
@@ -213,6 +155,8 @@ export async function evaluateGateCheck(
   }
 
   let windowInvariants: InvariantResult[] = []
+  let windowCensusRunId: string | null = null
+  let windowCensusPurpose: Smi5879Purpose | null = null
   if (args.mode === 'reconciliation') {
     const windowCensusLoad = loadCensusReport(args.windowCensusReportPath, 'window-census-report')
     if (windowCensusLoad.status !== 'ok') {
@@ -230,6 +174,8 @@ export async function evaluateGateCheck(
       })
     }
     windowInvariants = windowCensusLoad.value.invariants
+    windowCensusRunId = windowCensusLoad.value.run_id
+    windowCensusPurpose = windowCensusLoad.value.purpose
   }
 
   // --- I-1..I-5 preconditions, fail-closed, before any gate ------------
@@ -270,33 +216,98 @@ export async function evaluateGateCheck(
     })
   }
 
+  // Finding #2 (adversarial review): the window census report is loaded
+  // above but was never itself bound to --window-run-id — apply the SAME
+  // artifact-binding check used for the decision census/simulator reports.
+  if (args.mode === 'reconciliation') {
+    if (!args.windowRunId || windowCensusRunId === null || windowCensusPurpose === null) {
+      const reason =
+        'internal error: reconciliation mode reached window binding without a window census report'
+      return buildReport(args, {
+        preconditions: allInvariants,
+        preconditionsPassed: true,
+        preconditionFailureReason: null,
+        artifactBindingOk: false,
+        artifactBindingReason: reason,
+        gates: [],
+        g2r: null,
+        overall: 'INCONCLUSIVE',
+        overallReason: reason,
+      })
+    }
+    const windowBinding = checkWindowCensusBinding(
+      args.windowRunId,
+      windowCensusRunId,
+      windowCensusPurpose
+    )
+    if (!windowBinding.bound) {
+      return buildReport(args, {
+        preconditions: allInvariants,
+        preconditionsPassed: true,
+        preconditionFailureReason: null,
+        artifactBindingOk: false,
+        artifactBindingReason: windowBinding.reason,
+        gates: [],
+        g2r: null,
+        overall: 'INCONCLUSIVE',
+        overallReason: windowBinding.reason,
+      })
+    }
+  }
+
   // §12.1: the closure test is bound on baseline_commit, not run_id — this
   // is the ONLY place the (expensive) self-invoked vitest run happens; G-5
   // later reuses this SAME result rather than re-running it. Skipped
   // entirely when --skip-closure-tests is set (no vitest spawn, no git
   // check) — G-5 alone is then forced INCONCLUSIVE, everything else can
   // still evaluate and pass, per the flag's documented scope.
+  //
+  // Finding #10 (adversarial review): a thrown/rejected
+  // runStructuralClosureTests must never make the WHOLE evaluator reject —
+  // it becomes G-5 INCONCLUSIVE via the SAME `!closure.ran` branch that
+  // already handles a non-throwing failure result (`evaluateG5` in
+  // smi5879-gate-check.gates.ts), by synthesizing the identical
+  // `{ran:false, ...}` shape `runStructuralClosureTestsViaVitest` itself
+  // returns for its own internal failure paths. Deliberately does NOT run
+  // the baseline_commit "mismatch" check below in this case (that check is
+  // for git-derivable-HEAD mismatches, not dependency exceptions) so
+  // execution proceeds to evaluate every OTHER gate normally — only G-5 is
+  // affected, exactly as the finding specifies.
   let closureResult: StructuralClosureResult | null = null
   if (!args.skipClosureTests) {
-    closureResult = await deps.test.runStructuralClosureTests()
-    const mismatch =
-      closureResult.baseline_commit === null
-        ? `structural closure test could not derive a baseline_commit: ${closureResult.unavailable_reason ?? '(no reason recorded)'}`
-        : closureResult.baseline_commit !== simLoad.value.baseline_commit
-          ? `structural closure test baseline_commit="${closureResult.baseline_commit}" does not match simulator report baseline_commit="${simLoad.value.baseline_commit}" (§12.1)`
-          : null
-    if (mismatch) {
-      return buildReport(args, {
-        preconditions: allInvariants,
-        preconditionsPassed: true,
-        preconditionFailureReason: null,
-        artifactBindingOk: false,
-        artifactBindingReason: mismatch,
-        gates: [],
-        g2r: null,
-        overall: 'INCONCLUSIVE',
-        overallReason: mismatch,
-      })
+    let closureThrew: string | null = null
+    try {
+      closureResult = await deps.test.runStructuralClosureTests()
+    } catch (err) {
+      closureThrew = (err as Error).message ?? String(err)
+      closureResult = {
+        ran: false,
+        passed: false,
+        baseline_commit: null,
+        unavailable_reason: `runStructuralClosureTests threw: ${closureThrew}`,
+        fixtureCorpusCorroborationVerified: false,
+      }
+    }
+    if (closureThrew === null) {
+      const mismatch =
+        closureResult.baseline_commit === null
+          ? `structural closure test could not derive a baseline_commit: ${closureResult.unavailable_reason ?? '(no reason recorded)'}`
+          : closureResult.baseline_commit !== simLoad.value.baseline_commit
+            ? `structural closure test baseline_commit="${closureResult.baseline_commit}" does not match simulator report baseline_commit="${simLoad.value.baseline_commit}" (§12.1)`
+            : null
+      if (mismatch) {
+        return buildReport(args, {
+          preconditions: allInvariants,
+          preconditionsPassed: true,
+          preconditionFailureReason: null,
+          artifactBindingOk: false,
+          artifactBindingReason: mismatch,
+          gates: [],
+          g2r: null,
+          overall: 'INCONCLUSIVE',
+          overallReason: mismatch,
+        })
+      }
     }
   }
 
@@ -317,10 +328,18 @@ export async function evaluateGateCheck(
   }
 
   // --- Numbered gates, in order: G-8 -> G-7 -> G-2 -> G-3 -> G-5 -> G-2R -> G-1 ---
-  const attestationLoad = loadJsonFile<Smi5879FreezeAttestation>(
-    args.attestationPath,
-    'attestation',
-    validateFreezeAttestationShape
+  // Finding #5 (adversarial review): the freeze attestation's and disposition
+  // ledger's own run_id must be bound to --decision-run-id, same as the
+  // census/simulator reports — a stale artifact from a DIFFERENT run must
+  // never silently satisfy G-1/G-7/G-8.
+  const attestationLoad = checkArtifactRunIdMatch(
+    loadJsonFile<Smi5879FreezeAttestation>(
+      args.attestationPath,
+      'attestation',
+      validateFreezeAttestationShape
+    ),
+    args.decisionRunId,
+    'attestation'
   )
 
   const gates: GateResult[] = []
@@ -331,10 +350,10 @@ export async function evaluateGateCheck(
   gates.push(evaluateG3(simLoad.value))
   gates.push(evaluateG5(args.skipClosureTests, closureResult, simLoad.value))
 
-  const dispositionsLoad = loadJsonFile(
-    args.dispositionsPath,
-    'dispositions',
-    validateDispositionLedgerShape
+  const dispositionsLoad = checkArtifactRunIdMatch(
+    loadJsonFile(args.dispositionsPath, 'dispositions', validateDispositionLedgerShape),
+    args.decisionRunId,
+    'dispositions'
   )
   const resolvedLedger = resolveLedger(dispositionsLoad)
 

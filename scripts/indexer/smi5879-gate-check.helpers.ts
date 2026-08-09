@@ -12,6 +12,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import type {
   AttestationCheck,
+  AttestationCheckStatus,
   DispositionRecord,
   DispositionVerdict,
   Smi5879DispositionLedger,
@@ -68,6 +69,35 @@ export function loadJsonFile<T>(
     }
   }
   return { status: 'ok', value: result.value }
+}
+
+/**
+ * Finding #5 (adversarial review): the disposition ledger's and freeze
+ * attestation's own `run_id` field is never cross-checked against the CLI's
+ * `--decision-run-id` — a stale artifact left over from a DIFFERENT run
+ * could silently satisfy G-1/G-7/G-8. Applies the SAME binding pattern
+ * already used for the census/simulator report (`checkArtifactRunIdBinding`
+ * in `smi5879-gate-check.binding.ts`) to these two operator-authored
+ * artifacts too: a `run_id` mismatch is folded into the `LoadResult`'s
+ * `malformed` status (the file DOES exist and IS well-formed JSON, but its
+ * content doesn't correspond to the run being gated) — this reuses G-1's
+ * existing `loadFailureReason`-checks-first plumbing and G-7/G-8's existing
+ * `attestation.status === 'malformed'` branch with NO other code changes
+ * needed at either call site.
+ */
+export function checkArtifactRunIdMatch<T extends { run_id: string }>(
+  load: LoadResult<T>,
+  expectedRunId: string,
+  label: string
+): LoadResult<T> {
+  if (load.status !== 'ok') return load
+  if (load.value.run_id !== expectedRunId) {
+    return {
+      status: 'malformed',
+      reason: `${label} run_id="${load.value.run_id}" does not match --decision-run-id=${expectedRunId}`,
+    }
+  }
+  return load
 }
 
 // ---------------------------------------------------------------------------
@@ -272,26 +302,57 @@ export interface AttestationCompletenessResult {
   missingIds: string[]
   /** ids with a recorded check whose status is `red` (or explicit `missing`). */
   redIds: string[]
+  /** ids with two-or-more recorded checks disagreeing on status — never resolved by
+   *  last-write-wins (finding #8, adversarial review — same pattern as
+   *  {@link validateDispositionLedger}'s `conflictingIds`). */
+  conflictingIds: string[]
 }
 
+/**
+ * Finding #8 (adversarial review): a RED record for some check id followed
+ * by a GREEN record for the SAME id must never be silently deduplicated by
+ * a `new Map(checks.map(c => [c.id, c]))`-style last-write-wins collapse —
+ * that would let whichever record happened to be written last (or appear
+ * last in the array) silently win. Applies the SAME conflict-detection
+ * pattern {@link validateDispositionLedger} already uses for the disposition
+ * ledger: a duplicate id is fine IFF every recorded check for that id agrees
+ * on `status`; a genuine disagreement makes that id's completeness
+ * unresolvable, never last-write-wins. Checked across the WHOLE `checks`
+ * array (not scoped to `requiredIds`) — a conflicting entry anywhere taints
+ * trust in the attestation file as a whole, same as the ledger's `conflicting`
+ * set is whole-ledger, not per-row.
+ */
 export function checkAttestationCompleteness(
   checks: readonly AttestationCheck[],
   requiredIds: readonly string[]
 ): AttestationCompletenessResult {
-  const byId = new Map(checks.map((c) => [c.id, c]))
+  const byId = new Map<string, AttestationCheckStatus>()
+  const conflicting = new Set<string>()
+  for (const check of checks) {
+    const existing = byId.get(check.id)
+    if (existing !== undefined && existing !== check.status) {
+      conflicting.add(check.id)
+      continue
+    }
+    byId.set(check.id, check.status)
+  }
   const missingIds: string[] = []
   const redIds: string[] = []
   for (const id of requiredIds) {
-    const check = byId.get(id)
-    if (!check) {
+    if (conflicting.has(id)) continue
+    const status = byId.get(id)
+    if (status === undefined || status === 'missing') {
       missingIds.push(id)
-    } else if (check.status === 'missing') {
-      missingIds.push(id)
-    } else if (check.status === 'red') {
+    } else if (status === 'red') {
       redIds.push(id)
     }
   }
-  return { ok: missingIds.length === 0 && redIds.length === 0, missingIds, redIds }
+  return {
+    ok: missingIds.length === 0 && redIds.length === 0 && conflicting.size === 0,
+    missingIds,
+    redIds,
+    conflictingIds: [...conflicting].sort(),
+  }
 }
 
 const VALID_ATTESTATION_STATUSES = ['green', 'red', 'missing'] as const

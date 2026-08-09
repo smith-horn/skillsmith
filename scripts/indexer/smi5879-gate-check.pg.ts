@@ -45,6 +45,30 @@ function isDriftClassString(value: string): value is DriftRow['drift_class'] {
   )
 }
 
+const NON_NEGATIVE_INTEGER_RE = /^\d+$/
+
+/**
+ * Finding #6 (adversarial review): a NULL, negative, non-integer, or
+ * non-finite `count(*)` result must never be silently coerced to a "clean"
+ * 0 — `Number(raw ?? '0')` did exactly that, letting a malformed DB response
+ * satisfy G-2R.2's hard freeze-leak check (`freeze_leak_rows === 0`) when it
+ * should instead be unevaluable. This is a DB-shape assertion, not a
+ * business-logic INCONCLUSIVE (same category as `requireCell` above) — it
+ * throws, matching how every other "the query returned something we don't
+ * understand" case in this file already fails loudly rather than silently
+ * defaulting.
+ */
+export function parseFreezeLeakCount(raw: string | null): number {
+  if (raw === null || !NON_NEGATIVE_INTEGER_RE.test(raw)) {
+    throw new Error(
+      `SMI-5879: G-2R.2 freeze-leak count(*) query returned an unparseable/malformed scalar ` +
+        `(raw=${raw === null ? 'null' : JSON.stringify(raw)}) — expected a non-negative integer ` +
+        'string. Refusing to silently treat this as a clean freeze-leak count of 0.'
+    )
+  }
+  return Number(raw)
+}
+
 /** Build the real, psql-backed dependency set for a given connection. */
 export function createSmi5879GateCheckDbDeps(conn: PgConnParams): Smi5879GateCheckDbDeps {
   return {
@@ -140,7 +164,7 @@ export function createSmi5879GateCheckDbDeps(conn: PgConnParams): Smi5879GateChe
             );`,
         { decision_run: decisionRunId, window_run: windowRunId }
       )
-      return Number(raw ?? '0')
+      return parseFreezeLeakCount(raw)
     },
 
     // G-2R.1 — design doc §8.3.2.5.7, CASE statement corrected per §12.2.

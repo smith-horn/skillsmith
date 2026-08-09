@@ -158,6 +158,36 @@ export function makeSimRow(overrides: Record<string, unknown> = {}): Record<stri
   }
 }
 
+const SIMULATED_COHORT_IDS = ['C1', 'C2', 'C3', 'C4'] as const
+
+/**
+ * Finding #7 (adversarial review) made `loadSimulatorReport` cross-validate
+ * `coverage`/`rows`/`counts` for internal consistency — same as
+ * `counts` below, `coverage` is now DERIVED from `rows` by default (every
+ * row present in `rows` counts as "scanned" for its cohort, matching
+ * production's `computeCoverage` semantics in `smi5879-simulate-full.sweep.ts`)
+ * so tests that only customize `rows` stay automatically consistent. Tests
+ * that need a genuine coverage/rows MISMATCH (there is exactly one, G-2's
+ * own "full but unevaluable>0" test) pass BOTH `rows` and `coverage`
+ * explicitly in the same overrides call, same pattern as the `counts`
+ * override escape hatch this mirrors.
+ */
+function deriveCoverageFromRows(rows: readonly Record<string, unknown>[]): Record<string, unknown> {
+  const coverage: Record<string, unknown> = {}
+  for (const cohort of SIMULATED_COHORT_IDS) {
+    const cohortRows = rows.filter((r) => r['cohort'] === cohort)
+    const unevaluable = cohortRows.filter((r) => r['outcome'] === 'unevaluable').length
+    const unfetchable = cohortRows.filter((r) => r['outcome'] === 'unfetchable').length
+    coverage[cohort] = makeCoverage({
+      scanned: cohortRows.length,
+      total: cohortRows.length,
+      unevaluable,
+      unfetchable,
+    })
+  }
+  return coverage
+}
+
 export function makeSimulatorReportJson(
   overrides: Record<string, unknown> = {}
 ): Record<string, unknown> {
@@ -174,19 +204,19 @@ export function makeSimulatorReportJson(
     status: 'sealed',
     token_source: 'pat',
     baseline_commit: SAMPLE_COMMIT,
-    coverage: makeFullCoverageAllCohorts(),
+    coverage: deriveCoverageFromRows(rows),
     estimated_completion_at: null,
     sweep: { passes_run: 1, hard_stopped: null },
     rows,
     counts,
     generated_at: new Date().toISOString(),
     ...overrides,
-    // `counts` computed above must win over a raw `overrides.counts` UNLESS
-    // the caller explicitly wants to force a mismatch (G-3's own test does
-    // that by passing counts directly in overrides, which correctly
-    // overrides this spread order since object spread is last-wins and
-    // `overrides` is spread AFTER `counts` above — tests needing a forced
-    // mismatch pass `{ rows, counts: {...} }` together in one overrides call.
+    // `counts`/`coverage` computed above must win over raw
+    // `overrides.counts`/`overrides.coverage` UNLESS the caller explicitly
+    // wants to force a mismatch (a few gate-specific tests do that by
+    // passing them directly in overrides, which correctly overrides this
+    // spread order since object spread is last-wins and `overrides` is
+    // spread AFTER these computed defaults).
   }
 }
 
@@ -285,7 +315,21 @@ export function makeFakeTestDeps(
 ): Smi5879GateCheckTestDeps {
   return {
     async runStructuralClosureTests(): Promise<StructuralClosureResult> {
-      return { ran: true, passed: true, baseline_commit: SAMPLE_COMMIT, unavailable_reason: null }
+      // Default fake represents "everything about this specific check +
+      // subprocess succeeded" (matching the file's existing convention for
+      // `ran`/`passed`) — including the fixture-corpus corroboration
+      // evidence (finding #3), so tests focused on OTHER gates keep working
+      // unmodified. The PRODUCTION implementation
+      // (`runStructuralClosureTestsViaVitest`) always returns `false` for
+      // this field today (no producing artifact exists yet) — tests proving
+      // that specific gap set this to `false` explicitly at the call site.
+      return {
+        ran: true,
+        passed: true,
+        baseline_commit: SAMPLE_COMMIT,
+        unavailable_reason: null,
+        fixtureCorpusCorroborationVerified: true,
+      }
     },
     ...overrides,
   }
@@ -342,6 +386,36 @@ export function buildRequiredArgs(
     simulatorReportPath: simulatorPath,
     reportPath: join(dir, 'out.json'),
     skipClosureTests: false,
+  }
+}
+
+/**
+ * `--mode=reconciliation` needs a window census report too — wraps
+ * {@link buildRequiredArgs} and additionally writes the window census file
+ * (defaulting to {@link makeWindowCensusReportJson}'s well-formed shape) and
+ * sets `windowRunId`/`windowCensusReportPath`, mirroring what `parseArgs`
+ * itself requires in reconciliation mode.
+ */
+export function buildReconciliationArgs(
+  dir: string,
+  opts: {
+    decisionRunId?: string
+    censusJson?: Record<string, unknown>
+    simulatorJson?: Record<string, unknown>
+    windowRunId?: string
+    windowCensusJson?: Record<string, unknown>
+  } = {}
+): CliArgs {
+  const windowRunId = opts.windowRunId ?? WINDOW_RUN_ID
+  const windowCensusReportPath = writeFixtureFile(
+    dir,
+    'window-census.json',
+    opts.windowCensusJson ?? makeWindowCensusReportJson({ run_id: windowRunId })
+  )
+  return {
+    ...buildRequiredArgs(dir, { mode: 'reconciliation', ...opts }),
+    windowRunId,
+    windowCensusReportPath,
   }
 }
 

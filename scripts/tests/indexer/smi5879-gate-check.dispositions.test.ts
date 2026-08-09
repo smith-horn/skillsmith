@@ -11,13 +11,18 @@
 
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { evaluateGateCheck } from '../../indexer/smi5879-gate-check.ts'
-import { checkGitTreeClean } from '../../indexer/smi5879-gate-check.closure.ts'
+import {
+  checkGitTreeClean,
+  CLOSURE_TEST_FILES,
+  CLOSURE_WATCHED_SOURCE_PATHS,
+} from '../../indexer/smi5879-gate-check.closure.ts'
 import type { GateResult } from '../../indexer/smi5879-gate-check.types.ts'
 import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.ts'
 import {
+  DECISION_RUN_ID,
   buildRequiredArgs,
   makeAttestationChecks,
   makeAttestationJson,
@@ -94,6 +99,48 @@ describe('smi5879-gate-check.ts — G-7/G-8 attestation', () => {
     expect(findGate(report.gates, 'G-7').outcome).toBe('PASS')
   })
 
+  it('finding #5: an attestation file with a run_id from a DIFFERENT run is INCONCLUSIVE for both G-7 and G-8', async () => {
+    const dir = makeScratchDir()
+    const attestationPath = writeFixtureFile(
+      dir,
+      'attestation.json',
+      makeAttestationJson({
+        run_id: 'a-stale-run-from-last-week',
+        checks: makeAttestationChecks(G7_IDS.concat(G8_IDS)),
+      })
+    )
+    const args = { ...buildRequiredArgs(dir), attestationPath }
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    expect(findGate(report.gates, 'G-7').outcome).toBe('INCONCLUSIVE')
+    expect(findGate(report.gates, 'G-7').reason).toMatch(/malformed/)
+    expect(findGate(report.gates, 'G-8').outcome).toBe('INCONCLUSIVE')
+    const g7 = findGate(report.gates, 'G-7')
+    // The underlying reason names the mismatched run_id.
+    expect(g7.reason).toMatch(/a-stale-run-from-last-week/)
+  })
+
+  it('finding #8: a RED then GREEN duplicate record for the same check id is a conflict, never last-write-wins', async () => {
+    const dir = makeScratchDir()
+    const checks = makeAttestationChecks(G7_IDS.concat(G8_IDS)).concat([
+      // F-1 recorded twice with DISAGREEING status — the array's GREEN entry
+      // for F-1 (from makeAttestationChecks above) is followed by a
+      // conflicting RED one.
+      { id: 'F-1', status: 'red' },
+    ])
+    const attestationPath = writeFixtureFile(
+      dir,
+      'attestation.json',
+      makeAttestationJson({ checks })
+    )
+    const args = { ...buildRequiredArgs(dir), attestationPath }
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    const g7 = findGate(report.gates, 'G-7')
+    expect(g7.outcome).toBe('INCONCLUSIVE')
+    expect(g7.reason).toMatch(/conflicting duplicate records/)
+    expect(g7.reason).toMatch(/F-1/)
+    expect(g7.detail?.['conflictingIds']).toEqual(['F-1'])
+  })
+
   it('G-8 independently re-derives the 24h settle window from the DB, never the file', async () => {
     const dir = makeScratchDir()
     const attestationPath = writeFixtureFile(
@@ -162,8 +209,12 @@ describe('smi5879-gate-check.ts — G-1 hand review', () => {
     const args = {
       ...buildRequiredArgs(dir, {
         simulatorJson: makeSimulatorReportJson({
+          // status:'partial' alone is enough to make G-2 INCONCLUSIVE (which
+          // is all this test needs) — unevaluable stays 0, matching the
+          // (empty) `rows` array, so finding #7's coverage/rows
+          // cross-validation doesn't short-circuit before G-2 even runs.
           coverage: {
-            C1: { status: 'partial', scanned: 0, total: 1, unevaluable: 1, unfetchable: 0 },
+            C1: { status: 'partial', scanned: 0, total: 1, unevaluable: 0, unfetchable: 0 },
             C2: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
             C3: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
             C4: { status: 'full', scanned: 0, total: 0, unevaluable: 0, unfetchable: 0 },
@@ -174,6 +225,26 @@ describe('smi5879-gate-check.ts — G-1 hand review', () => {
     }
     const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
     expect(findGate(report.gates, 'G-1').reason).toMatch(/G-2 has not passed/)
+  })
+
+  it('finding #5: a disposition ledger with a run_id from a DIFFERENT run is INCONCLUSIVE, never silently trusted', async () => {
+    const dir = makeScratchDir()
+    const rows = [makeSimRow({ id: 'r1', outcome: 'newly_quarantined' })]
+    const dispositionsPath = writeFixtureFile(
+      dir,
+      'dispositions.json',
+      makeDispositionLedgerJson([{ id: 'r1', verdict: 'confirm' }], 'a-stale-run-from-last-week')
+    )
+    const args = {
+      ...buildRequiredArgs(dir, { simulatorJson: makeSimulatorReportJson({ rows }) }),
+      dispositionsPath,
+    }
+    const report = await evaluateGateCheck({ db: makeFakeDb(), test: makeFakeTestDeps() }, args)
+    const g1 = findGate(report.gates, 'G-1')
+    expect(g1.outcome).toBe('INCONCLUSIVE')
+    expect(g1.reason).toMatch(/disposition ledger unavailable/)
+    expect(g1.reason).toMatch(/a-stale-run-from-last-week/)
+    expect(g1.reason).toMatch(new RegExp(DECISION_RUN_ID))
   })
 
   it('rejects a disposition ledger with conflicting verdicts for the same id (never last-write-wins)', async () => {
@@ -310,5 +381,33 @@ describe('smi5879-gate-check.closure.ts — §12.1 dirty-worktree hardening', ()
     writeFileSync(join(tmpRepo, trackedPath), 'export const x = 2\n')
     const dirtyResult = checkGitTreeClean([trackedPath], tmpRepo)
     expect(dirtyResult.clean).toBe(false)
+  })
+
+  it('finding #4: the DEFAULT watch list also catches dirtiness in the scanner implementation, not just the 3 test files', () => {
+    const tmpRepo = makeFixtureTempDir('smi5879-gate-check-dirty-tree-broadened')
+    const env = makeFixtureEnv()
+    execFileSync('git', ['init', '-q'], { cwd: tmpRepo, env })
+    // Materialize every CLOSURE_WATCHED_SOURCE_PATHS entry as a tracked file.
+    for (const relPath of CLOSURE_WATCHED_SOURCE_PATHS) {
+      const full = join(tmpRepo, relPath)
+      mkdirSync(dirname(full), { recursive: true })
+      writeFileSync(full, `// ${relPath}\n`)
+    }
+    execFileSync('git', ['add', '-A'], { cwd: tmpRepo, env })
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: tmpRepo, env })
+
+    // Clean immediately after commit, using the REAL default (no explicit
+    // paths arg) — proves the production default really is the broadened list.
+    expect(checkGitTreeClean(undefined, tmpRepo).clean).toBe(true)
+
+    // Dirty a NON-test-file path (the scanner implementation itself) that the
+    // OLD 3-file-only watch list would have completely missed.
+    const scannerPath = join(tmpRepo, 'packages/core/src/security/scanner/SecurityScanner.ts')
+    writeFileSync(scannerPath, '// dirty, uncommitted\n')
+    expect(checkGitTreeClean(undefined, tmpRepo).clean).toBe(false)
+
+    // Proof the gap existed before the fix: the OLD narrow 3-file list would
+    // have reported this exact worktree state as clean.
+    expect(checkGitTreeClean(CLOSURE_TEST_FILES, tmpRepo).clean).toBe(true)
   })
 })

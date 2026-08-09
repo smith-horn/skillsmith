@@ -32,6 +32,53 @@ const VALID_PURPOSES: readonly Smi5879Purpose[] = ['rehearsal', 'decision', 'win
 const VALID_STATUSES: readonly Smi5879RunStatus[] = ['open', 'sealed', 'abandoned']
 const VALID_INVARIANT_IDS = ['I-1', 'I-2', 'I-3', 'I-4', 'I-5'] as const
 
+/**
+ * Every fetching generation (`rehearsal`/`decision`) must report exactly
+ * these five. A `window` generation performs no GitHub I/O and never runs
+ * I-5 (design doc §8.3.5.2.2 / `smi5879-census.invariants.ts`'s
+ * `runInvariantChecks(..., isFetchingGeneration)` — I-5 is only pushed when
+ * `isFetchingGeneration` is true), so it must report exactly the first four.
+ */
+const REQUIRED_INVARIANT_IDS_FETCHING: readonly string[] = ['I-1', 'I-2', 'I-3', 'I-4', 'I-5']
+const REQUIRED_INVARIANT_IDS_WINDOW: readonly string[] = ['I-1', 'I-2', 'I-3', 'I-4']
+
+/**
+ * Finding #1 (adversarial review): a missing/partial/duplicate `invariants`
+ * array must never silently satisfy the I-1..I-5 precondition — an EMPTY
+ * array trivially "passes" a naive "no failing invariant found" scan
+ * (vacuous truth over zero entries). This asserts the loaded set is EXACTLY
+ * the expected id set for the generation's `purpose` (§8.3.5.2.2's
+ * fetching-vs-window split) — no fewer, no more, no duplicates — before
+ * `evaluateGateCheck` ever filters the array for `passed === false`.
+ */
+function validateInvariantCompleteness(
+  invariants: readonly InvariantResult[],
+  purpose: Smi5879Purpose
+): { ok: true } | { ok: false; reason: string } {
+  const expectedIds =
+    purpose === 'window' ? REQUIRED_INVARIANT_IDS_WINDOW : REQUIRED_INVARIANT_IDS_FETCHING
+  const counts = new Map<string, number>()
+  for (const inv of invariants) counts.set(inv.id, (counts.get(inv.id) ?? 0) + 1)
+  const missing = expectedIds.filter((id) => !counts.has(id))
+  const duplicated = [...counts.entries()].filter(([, n]) => n > 1).map(([id]) => id)
+  const unexpected = [...counts.keys()].filter((id) => !expectedIds.includes(id))
+  if (missing.length > 0 || duplicated.length > 0 || unexpected.length > 0) {
+    const parts: string[] = []
+    if (missing.length > 0) parts.push(`missing: ${missing.join(', ')}`)
+    if (duplicated.length > 0) parts.push(`duplicated: ${duplicated.join(', ')}`)
+    if (unexpected.length > 0) {
+      parts.push(`unexpected (not valid for purpose="${purpose}"): ${unexpected.join(', ')}`)
+    }
+    return {
+      ok: false,
+      reason:
+        `invariants array must contain exactly {${expectedIds.join(', ')}} for purpose="${purpose}"` +
+        ` — ${parts.join('; ')}`,
+    }
+  }
+  return { ok: true }
+}
+
 // ---------------------------------------------------------------------------
 // Census report — only the fields gate-check actually reads (run_id,
 // purpose, status, invariants). The full `Smi5879CensusReport` carries
@@ -88,6 +135,8 @@ export function loadCensusReport(
         return { ok: false, reason: `invariants[${i}].detail must be a string` }
       invariants.push({ id: id as InvariantResult['id'], name, passed, detail })
     }
+    const completeness = validateInvariantCompleteness(invariants, purpose as Smi5879Purpose)
+    if (!completeness.ok) return { ok: false, reason: completeness.reason }
     return {
       ok: true,
       value: {
@@ -201,6 +250,64 @@ function validateRow(
   }
 }
 
+/**
+ * Finding #7 (adversarial review): the simulator report's `coverage`,
+ * `rows`, and `counts` fields are three independently-writable views over
+ * the SAME underlying `results` map (`smi5879-simulate-full.ts`:
+ * `coverage = computeCoverage(rowsByCohort, results)`, `counts =
+ * summarizeCounts(results.values())`, `rows = [...results.values()]`) — for
+ * a genuinely-generated report they can never disagree. G-2/G-3 each read
+ * only a narrow slice of this (G-2 reads `coverage`, G-3 reads two of the
+ * eight `counts` buckets against `rows`) — neither alone catches a
+ * truncated/tampered report whose `coverage` claims full scan coverage while
+ * `rows` was cut short, or vice versa. Cross-validated once, at load time,
+ * for every cohort and every outcome bucket, not just the two G-3 checks.
+ */
+function validateSimulatorReportConsistency(
+  report: Smi5879SimulateFullReport
+): { ok: true } | { ok: false; reason: string } {
+  const countsSum = VALID_OUTCOMES.reduce((sum, outcome) => sum + report.counts[outcome], 0)
+  if (countsSum !== report.rows.length) {
+    return {
+      ok: false,
+      reason:
+        `counts sums to ${countsSum} across all outcome buckets but rows.length is ` +
+        `${report.rows.length} — report may be truncated or tampered`,
+    }
+  }
+  for (const cohort of SIMULATED_COHORTS) {
+    const cohortRows = report.rows.filter((r) => r.cohort === cohort)
+    const cov = report.coverage[cohort]
+    if (cov.scanned !== cohortRows.length) {
+      return {
+        ok: false,
+        reason:
+          `coverage.${cohort}.scanned=${cov.scanned} does not equal the number of cohort=${cohort} ` +
+          `rows in report.rows (${cohortRows.length})`,
+      }
+    }
+    const actualUnevaluable = cohortRows.filter((r) => r.outcome === 'unevaluable').length
+    if (cov.unevaluable !== actualUnevaluable) {
+      return {
+        ok: false,
+        reason:
+          `coverage.${cohort}.unevaluable=${cov.unevaluable} does not equal the number of ` +
+          `unevaluable cohort=${cohort} rows in report.rows (${actualUnevaluable})`,
+      }
+    }
+    const actualUnfetchable = cohortRows.filter((r) => r.outcome === 'unfetchable').length
+    if (cov.unfetchable !== actualUnfetchable) {
+      return {
+        ok: false,
+        reason:
+          `coverage.${cohort}.unfetchable=${cov.unfetchable} does not equal the number of ` +
+          `unfetchable cohort=${cohort} rows in report.rows (${actualUnfetchable})`,
+      }
+    }
+  }
+  return { ok: true }
+}
+
 export function loadSimulatorReport(
   path: string | undefined,
   label: string
@@ -290,6 +397,8 @@ export function loadSimulatorReport(
       counts: counts as Record<SimRowOutcome, number>,
       generated_at: generatedAt,
     }
+    const consistency = validateSimulatorReportConsistency(report)
+    if (!consistency.ok) return { ok: false, reason: consistency.reason }
     return { ok: true, value: report }
   })
 }

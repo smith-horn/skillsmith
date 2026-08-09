@@ -261,6 +261,21 @@ export interface StructuralClosureResult {
   /** Populated whenever `ran` is false — names the exact reason (spawn error, timeout,
    *  dirty tree, zero collected tests, unparseable output), never left implicit. */
   unavailable_reason: string | null
+  /**
+   * §8.3.1.2.4's THIRD corroboration bullet — "no non-AI RiskScoreBreakdown
+   * key changes over the fixture corpus" (finding #3, adversarial review of
+   * this file's first implementation). True IFF a fixture-corpus
+   * RiskScoreBreakdown-parity suite ran, as part of THIS SAME self-invoked
+   * vitest subprocess, and passed. §8.5's G-5 row requires "both halves"
+   * (the structural closure test AND this corroboration) to block merge
+   * uniformly — no producer for this corroboration exists anywhere in the
+   * repo yet (an item-2-shaped follow-up, out of scope for this
+   * gate-checker to author per its own module docs), so the production
+   * implementation (`smi5879-gate-check.closure.ts`) always sets this
+   * `false` until one is built and wired in. Only meaningful when `ran` is
+   * true — irrelevant otherwise, same as `passed`.
+   */
+  fixtureCorpusCorroborationVerified: boolean
 }
 
 /** Test-facing dependencies — injectable so the gate-check test suite never spawns real vitest. */

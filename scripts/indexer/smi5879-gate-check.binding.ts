@@ -109,3 +109,41 @@ export function checkArtifactRunIdBinding(
     reason: 'census report, simulator report, and --decision-run-id all carry the same run_id',
   }
 }
+
+/**
+ * Finding #2 (adversarial review): the reconciliation-mode WINDOW census
+ * report is loaded (its I-1..I-4 invariants get merged into the top-level
+ * precondition check) but was never itself bound to `--window-run-id` — the
+ * SAME artifact-binding check {@link checkArtifactRunIdBinding} already
+ * applies to the decision census/simulator reports, applied here to the
+ * window census report too: its own `run_id` must equal `--window-run-id`,
+ * and its own `purpose` must be `"window"`. Without this, an operator could
+ * pass an entirely unrelated (or stale) window census file and its
+ * invariants would be silently trusted — the ACTUAL DB-level binding of
+ * `--window-run-id` only happens much later, deep inside G-2R's
+ * `bindG2rPair`, which never re-reads this file at all.
+ */
+export function checkWindowCensusBinding(
+  windowRunId: string,
+  windowCensusRunId: string,
+  windowCensusPurpose: Smi5879Purpose
+): { bound: boolean; reason: string } {
+  if (windowCensusRunId !== windowRunId) {
+    return {
+      bound: false,
+      reason:
+        `window census report run_id="${windowCensusRunId}" does not match ` +
+        `--window-run-id=${windowRunId}`,
+    }
+  }
+  if (windowCensusPurpose !== 'window') {
+    return {
+      bound: false,
+      reason: `window census report purpose="${windowCensusPurpose}", expected "window"`,
+    }
+  }
+  return {
+    bound: true,
+    reason: 'window census report run_id and purpose match --window-run-id',
+  }
+}
