@@ -147,20 +147,37 @@ if [ ! -f "$CORE_DIST_ENTRY" ] || [ ! -f "$MCP_DIST_ENTRY" ]; then
     echo -e "${YELLOW}  ✗ dist/ not found (first container start) — building packages...${NC}"
     echo -e "${YELLOW}  This is a one-time cost per worktree (until dist/ is manually removed).${NC}"
 
-    # SMI-4689: in worktree containers, filter @skillsmith/website out of the
-    # entrypoint build. The Astro/Vite plugin canonicalizes paths in a way
-    # that virtiofs cannot round-trip ("/node_modules/astro/components/..."
-    # vs "/app/packages/website/node_modules/astro/..."), causing the build
-    # to fail with "No cached compile metadata found". Website is NOT in
-    # SMI-4689's explicit acceptance criteria; build it inside the main-repo
-    # container (skillsmith-dev-1) where the issue does not manifest.
-    # Tracked separately as SMI-4739.
-    BUILD_FILTER=""
-    if [ -f "/app/.git" ]; then
-        BUILD_FILTER='--filter=!@skillsmith/website'
-    fi
+    # SMI-5957: scope this build to what CORE_DIST_ENTRY/MCP_DIST_ENTRY
+    # actually check, plus the one package with a currently-live cold-start
+    # consumer (scripts/mcp-doc-retrieval-launcher.sh hard-requires
+    # packages/doc-retrieval-mcp/dist/src/server.js; .husky/post-commit
+    # silently skips the reindex hook when its dist/cli.js is absent).
+    # Applied unconditionally (worktree AND full checkout) — @skillsmith/website
+    # is excluded in both because neither this gate nor either live consumer
+    # needs it fresh, and (fresh-checkout case) its `astro` dependency is
+    # installed non-hoisted to packages/website/node_modules, which has no
+    # named-volume protection against docker-compose.yml's `.:/app` bind
+    # mount on a cold `docker compose up` — a website build failure there is
+    # FATAL to this script (see the exit 1 below), and combined with
+    # `restart: unless-stopped` produces an unrecoverable crash-restart loop
+    # (confirmed via live repro, SMI-5957).
+    #
+    # MUST invoke `turbo` directly, not route the filter through
+    # `npm run build --`: npm appends `--`-args to the END of the whole
+    # `&&`-chained root build script ("turbo run build && bash
+    # scripts/lib/check-dist-fresh.sh --write-sentinel", package.json), not
+    # to `turbo` specifically — the filter previously used here (worktree-only,
+    # `--filter=!@skillsmith/website`) was silently landing on
+    # check-dist-fresh.sh instead and has been dead code since the `&&` chain
+    # was introduced (commit 3c8655c18, SMI-5548). Worktree containers' actual
+    # immunity to a website-build failure has never come from that filter — it
+    # comes from docker-compose.override.yml separately bind-mounting the main
+    # checkout's already-populated packages/website/node_modules read-only.
+    # SMI-4739 (the virtiofs/Astro cache-path issue this filter was originally
+    # written for) remains genuinely untested, not superseded by this change.
+    BUILD_FILTER='--filter=@skillsmith/core --filter=@skillsmith/mcp-server --filter=@skillsmith/doc-retrieval-mcp'
 
-    if npm run build --prefix /app -- $BUILD_FILTER; then
+    if npx turbo run build $BUILD_FILTER && bash scripts/lib/check-dist-fresh.sh --write-sentinel; then
         echo -e "${GREEN}  ✓ Build complete.${NC}"
     else
         echo -e "${RED}  ✗ Build failed — run npm run build inside this container to see details.${NC}"

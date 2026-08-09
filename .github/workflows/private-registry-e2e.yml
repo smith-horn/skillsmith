@@ -66,6 +66,16 @@ on:
       - 'scripts/e2e-registry-roundtrip.mcp-live.ts'
       - 'scripts/e2e-registry-roundtrip.types.ts'
       - '.github/workflows/private-registry-e2e.yml'
+      # SMI-5957: this is the only workflow doing a cold `docker compose up`
+      # (no cached CI docker-build pipeline) -- a future change to any of
+      # these three files gets no pre-merge signal from this workflow
+      # without this. This gap is exactly how SMI-5957 itself went
+      # unnoticed for 5 days (10/10 executed runs failing, masked by
+      # continue-on-error) and how the underlying BUILD_FILTER regression
+      # (SMI-5548) shipped silently.
+      - 'docker-entrypoint.sh'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
 
 concurrency:
   group: private-registry-e2e-${{ github.ref }}
@@ -195,16 +205,28 @@ jobs:
       - name: Wait for dev container healthy
         run: |
           set -eu
-          for i in $(seq 1 30); do
+          # SMI-5957: 300s (60 x 5s), up from 150s -- defense-in-depth for a
+          # genuine slow cold build under CI resource contention. NOT a fix
+          # for a crash-restart loop (that's docker-entrypoint.sh's
+          # BUILD_FILTER scoping, SMI-5957) -- a deterministic crash loop
+          # never becomes healthy regardless of budget.
+          for i in $(seq 1 60); do
             STATUS="$(docker inspect --format='{{.State.Health.Status}}' skillsmith-dev-1 2>/dev/null || echo starting)"
             if [ "$STATUS" = "healthy" ]; then
               echo "Container healthy."
               exit 0
             fi
-            echo "Container status: ${STATUS} (attempt ${i}/30)"
+            echo "Container status: ${STATUS} (attempt ${i}/60)"
             sleep 5
           done
           echo "::error::skillsmith-dev-1 did not become healthy in time"
+          echo "--- Restart/exit diagnostics ---"
+          RESTARTS="$(docker inspect --format='{{.RestartCount}}' skillsmith-dev-1 2>/dev/null || echo unknown)"
+          EXITCODE="$(docker inspect --format='{{.State.ExitCode}}' skillsmith-dev-1 2>/dev/null || echo unknown)"
+          echo "RestartCount=${RESTARTS} ExitCode=${EXITCODE}"
+          if [ "${RESTARTS}" != "unknown" ] && [ "${RESTARTS}" -gt 2 ] 2>/dev/null; then
+            echo "::warning::RestartCount>2 -- likely a crash-restart loop (deterministic failure), not a slow start. See docker logs below."
+          fi
           docker logs skillsmith-dev-1 || true
           exit 1
 
@@ -212,11 +234,55 @@ jobs:
         run: |
           # docker-compose.yml's `.:/app` bind mount replaces the image's baked
           # /app at container start with this fresh checkout, which has no dist/
-          # (gitignored) -- only node_modules survives, via its own named volume.
-          # A stale/missing dist/ here would make the CLI subprocess step in the
-          # spec fail with a confusing "command not found" rather than a real
-          # test failure, so this build is required, not optional.
-          docker exec skillsmith-dev-1 npm run build
+          # (gitignored) -- only root node_modules survives, via its own named
+          # volume. A stale/missing dist/ here would make the CLI subprocess
+          # step in the spec fail with a confusing "command not found" rather
+          # than a real test failure, so this build is required, not optional.
+          #
+          # SMI-5957: build ONLY @skillsmith/cli here, directly via its own
+          # npm script -- deliberately bypassing `turbo run build`
+          # entirely, not just narrowing its --filter. Two independent
+          # reasons, both verified live:
+          #
+          # 1. @skillsmith/website and skillsmith-vscode (VS Code extension)
+          #    both have build-time tooling (astro; esbuild bundling
+          #    `marked`/`sanitize-html`) that directly requires a
+          #    non-hoisted package-local node_modules dependency to be
+          #    physically present, not just type-resolvable -- unlike
+          #    core/mcp-server/doc-retrieval-mcp's plain `tsc` builds. Both
+          #    fail identically on this cold checkout (empty package-local
+          #    node_modules, no named-volume protection). Neither is needed
+          #    here (scripts/e2e-registry-roundtrip.ts shells out to the
+          #    real `skillsmith registry install` CLI -- nothing touches
+          #    the VS Code extension).
+          #
+          # 2. A SEPARATE, genuinely pre-existing bug (unrelated to
+          #    node_modules wiping, filed as SMI-5960): mcp-server's tsconfig
+          #    is `composite`/`incremental` with a TS project reference to
+          #    core (`references: [{"path": "../core"}]`). Once the
+          #    entrypoint's own build (above) has already compiled
+          #    mcp-server ONCE and written its dist/.tsbuildinfo, a SECOND
+          #    `tsc` invocation against mcp-server in the SAME container --
+          #    via `turbo run build` (any filter that re-includes it,
+          #    directly or as cli's upstream dependency) OR even a bare
+          #    `npx tsc --noEmit` -- incorrectly reports
+          #    `tests/unit/apply-namespace-rename.test.ts(462,55): error
+          #    TS2339: Property 'innerType' does not exist on type
+          #    'ZodObject<...>'` (a real TS incremental-compile
+          #    misbehavior, reproduced with turbo entirely out of the
+          #    picture). This has never been exposed before because nothing
+          #    has ever invoked mcp-server's compiler twice within one
+          #    container's lifetime -- the entrypoint's own build was
+          #    always the ONLY build attempt prior to this fix (every prior
+          #    run failed before reaching this step at all).
+          #
+          # Bypassing turbo for cli's build avoids re-invoking mcp-server's
+          # (or core's) compiler a second time -- cli's own `tsc --noEmit`
+          # only READS their already-compiled .d.ts output via project
+          # references, it does not re-run their compilers. Verified: cli's
+          # own build succeeds standalone, and core/mcp-server/doc-retrieval-mcp's
+          # dist/ output is confirmed byte-unchanged afterward.
+          docker exec skillsmith-dev-1 sh -c 'cd packages/cli && npm run build'
 
       - name: Run private registry round-trip spec
         id: spec
