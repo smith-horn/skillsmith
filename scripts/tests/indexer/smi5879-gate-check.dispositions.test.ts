@@ -410,4 +410,79 @@ describe('smi5879-gate-check.closure.ts — §12.1 dirty-worktree hardening', ()
     // have reported this exact worktree state as clean.
     expect(checkGitTreeClean(CLOSURE_TEST_FILES, tmpRepo).clean).toBe(true)
   })
+
+  it('round-2 re-verification finding: the DEFAULT watch list also catches dirtiness in parity-utils.ts, not just fixtures.ts itself', () => {
+    const tmpRepo = makeFixtureTempDir('smi5879-gate-check-dirty-tree-parity-utils')
+    const env = makeFixtureEnv()
+    execFileSync('git', ['init', '-q'], { cwd: tmpRepo, env })
+    for (const relPath of CLOSURE_WATCHED_SOURCE_PATHS) {
+      const full = join(tmpRepo, relPath)
+      mkdirSync(dirname(full), { recursive: true })
+      writeFileSync(full, `// ${relPath}\n`)
+    }
+    execFileSync('git', ['add', '-A'], { cwd: tmpRepo, env })
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: tmpRepo, env })
+
+    expect(checkGitTreeClean(undefined, tmpRepo).clean).toBe(true)
+
+    // Dirty parity-utils.ts — the shared fixtures.ts imports `isGitCryptEncrypted`
+    // from it and calls it at module-load time, so an uncommitted edit here can
+    // change what the fixtures (and thus the closure suite) evaluate exactly
+    // like a dirty fixtures.ts would, yet a fixtures.ts-only watch list misses it.
+    const parityUtilsPath = join(tmpRepo, 'scripts/tests/indexer/parity-utils.ts')
+    writeFileSync(parityUtilsPath, '// dirty, uncommitted\n')
+    expect(checkGitTreeClean(undefined, tmpRepo).clean).toBe(false)
+
+    // Proof the gap existed before this fix: a watch list without parity-utils.ts
+    // would have reported this exact worktree state as clean.
+    const withoutParityUtils = CLOSURE_WATCHED_SOURCE_PATHS.filter(
+      (p) => p !== 'scripts/tests/indexer/parity-utils.ts'
+    )
+    expect(checkGitTreeClean(withoutParityUtils, tmpRepo).clean).toBe(true)
+  })
+
+  // round-3 re-verification finding: an exhaustive transitive-import trace of
+  // every already-watched file (not just the obvious scanner/fixture ones)
+  // surfaced 4 more runtime dependencies of the self-invoked vitest run that
+  // were still unwatched — each parameterized here the same way parity-utils.ts
+  // was above, one dedicated case per path so a future removal of any one of
+  // them from CLOSURE_WATCHED_SOURCE_PATHS fails exactly one named test.
+  const ROUND_3_NEW_WATCHED_PATHS = [
+    // patterns.scope.ts imports SSRF_INSTRUCTION_PATTERNS from here and runs
+    // assertScopeCoverage() against it at module load.
+    'packages/core/src/security/scanner/patterns.ts',
+    // vitest.config.ts imports sharedTestConfig/coverageDefaults/coverageThresholds from here.
+    'vitest.preset.ts',
+    // named in vitest.config.ts's setupFiles -- runs before every test, closure tests included.
+    'vitest.setup.ts',
+    // read by vitest.config.ts's gitCryptLocked() sentinel check, which decides
+    // whether supabase/functions/** test paths are excluded from the run.
+    'supabase/functions/_shared/cors.ts',
+  ] as const
+
+  it.each(ROUND_3_NEW_WATCHED_PATHS)(
+    'round-3 re-verification finding: the DEFAULT watch list also catches dirtiness in %s',
+    (dirtyPath) => {
+      const tmpRepo = makeFixtureTempDir('smi5879-gate-check-dirty-tree-round3')
+      const env = makeFixtureEnv()
+      execFileSync('git', ['init', '-q'], { cwd: tmpRepo, env })
+      for (const relPath of CLOSURE_WATCHED_SOURCE_PATHS) {
+        const full = join(tmpRepo, relPath)
+        mkdirSync(dirname(full), { recursive: true })
+        writeFileSync(full, `// ${relPath}\n`)
+      }
+      execFileSync('git', ['add', '-A'], { cwd: tmpRepo, env })
+      execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: tmpRepo, env })
+
+      expect(checkGitTreeClean(undefined, tmpRepo).clean).toBe(true)
+
+      writeFileSync(join(tmpRepo, dirtyPath), '// dirty, uncommitted\n')
+      expect(checkGitTreeClean(undefined, tmpRepo).clean).toBe(false)
+
+      // Proof the gap existed before this fix: a watch list without this exact
+      // path would have reported this exact worktree state as clean.
+      const withoutThisPath = CLOSURE_WATCHED_SOURCE_PATHS.filter((p) => p !== dirtyPath)
+      expect(checkGitTreeClean(withoutThisPath, tmpRepo).clean).toBe(true)
+    }
+  )
 })

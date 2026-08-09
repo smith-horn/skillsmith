@@ -59,10 +59,33 @@ export const CLOSURE_TEST_FILES = [
  *     itself — two of the three test files import it, so a dirty fixtures.ts
  *     changes what the vitest run exercises just as much as a dirty test file
  *     would, and the ORIGINAL 3-file list never watched it either.
+ *   - `scripts/tests/indexer/parity-utils.ts` — round-2 re-verification finding:
+ *     the shared fixtures.ts above imports `isGitCryptEncrypted` from this file
+ *     and calls it at module-load time to compute `supabaseScannerEncrypted`
+ *     et al., so a dirty parity-utils.ts changes what the fixtures — and thus
+ *     the closure suite — actually evaluate, exactly like a dirty fixtures.ts
+ *     itself would.
  *   - `vitest.config.ts` — the repository-pinned config the self-invoked run
  *     relies on staying unmodified (§12.1: "repository-pinned config... no
  *     `--config` override"); a dirty config could silently change what "ran"
  *     even means.
+ *   - `packages/core/src/security/scanner/patterns.ts` — round-3
+ *     re-verification finding: `patterns.scope.ts` above imports
+ *     `SSRF_INSTRUCTION_PATTERNS` from it and executes `assertScopeCoverage()`
+ *     against it at module load, so a dirty patterns.ts changes what the
+ *     watched patterns.scope.ts actually evaluates.
+ *   - `vitest.preset.ts` — round-3 re-verification finding: `vitest.config.ts`
+ *     imports `sharedTestConfig`/`coverageDefaults`/`coverageThresholds` from
+ *     it, so it is as much a part of "the repository-pinned config" as
+ *     vitest.config.ts itself.
+ *   - `vitest.setup.ts` — round-3 re-verification finding: named in
+ *     vitest.config.ts's `setupFiles`, so it runs before every test in the
+ *     self-invoked vitest process, closure tests included.
+ *   - `supabase/functions/_shared/cors.ts` — round-3 re-verification finding:
+ *     read by vitest.config.ts's `gitCryptLocked()` sentinel check, which
+ *     decides whether `supabase/functions/**` test paths are excluded from
+ *     the run; a dirty sentinel can silently change what "ran" means the
+ *     same way a dirty vitest.config.ts itself could.
  * Deliberately NOT used for the vitest invocation itself ({@link
  * CLOSURE_TEST_FILES} stays exactly the 3 real test files there — `vitest
  * run` takes test-file paths, not arbitrary source files).
@@ -70,10 +93,12 @@ export const CLOSURE_TEST_FILES = [
 export const CLOSURE_WATCHED_SOURCE_PATHS = [
   ...CLOSURE_TEST_FILES,
   'scripts/tests/indexer/security-scanner-edge.multiline-category-closure.fixtures.ts',
+  'scripts/tests/indexer/parity-utils.ts',
   'packages/core/src/security/scanner/SecurityScanner.ts',
   'packages/core/src/security/scanner/patterns.jailbreak.ts',
   'packages/core/src/security/scanner/patterns.jailbreak.evidence.ts',
   'packages/core/src/security/scanner/patterns.scope.ts',
+  'packages/core/src/security/scanner/patterns.ts',
   'scripts/indexer/_shared/security-scanner-edge.ts',
   'scripts/indexer/_shared/security-scanner-edge.exec.ts',
   'scripts/indexer/_shared/security-scanner-edge.context.ts',
@@ -82,7 +107,10 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'supabase/functions/_shared/security-scanner-edge.exec.ts',
   'supabase/functions/_shared/security-scanner-edge.context.ts',
   'supabase/functions/_shared/security-scanner-edge.patterns.ts',
+  'supabase/functions/_shared/cors.ts',
   'vitest.config.ts',
+  'vitest.preset.ts',
+  'vitest.setup.ts',
 ] as const
 
 const CLOSURE_TEST_TIMEOUT_MS = 120_000
