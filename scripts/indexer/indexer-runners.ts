@@ -26,6 +26,7 @@ import {
 import { minimalSkillPayload, repoUpdatedAtKey } from './skill-processor.helpers.ts'
 import { type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
+import { sanitizeForLog } from './_shared/validation.ts'
 import type { GitHubRepository } from './topic-search.ts'
 import { getHighTrustAuthor, type HighTrustAuthor } from './high-trust-authors.ts'
 import {
@@ -340,6 +341,27 @@ export async function runUpsertPhase(
         validationCache,
         repo.skillPath
       )
+      // SMI-5930 diagnostic: a repo discovered installable via subdirectory search
+      // whose validationCache lookup misses here means `repositoryToSkill` falls
+      // back to the repository's own name/description instead of SKILL.md's
+      // frontmatter (docs/internal/implementation/smi-5930-rca-progress.md).
+      // Static analysis + synthetic repro (subdirectory-search.validation-cache-
+      // roundtrip.test.ts) could not reproduce a miss for this write/read pairing,
+      // so this narrowly-scoped, high-signal log is the intended way to observe
+      // which real repos actually trigger it. Remove once the mechanism is
+      // confirmed and the corresponding fix lands.
+      if (
+        repo.installable &&
+        repo.discoveryPath?.startsWith('subdirectory_search') &&
+        (validation === undefined || !validation.metadata?.name)
+      ) {
+        console.log(
+          `[SMI-5930] validationCache miss at repositoryToSkill: ${repo.fullName} ` +
+            `skillPath=${sanitizeForLog(repo.skillPath ?? '')} branch=${repo.defaultBranch} ` +
+            `discoveryPath=${repo.discoveryPath} cacheSize=${validationCache.size} ` +
+            `validationPresent=${validation !== undefined} metadataPresent=${validation?.metadata !== undefined}`
+        )
+      }
       // SMI-4842: Exclude curated `awesome-*` link-list repos (e.g.
       // awesome-claude-skills) — README-only catalogs of links to other repos,
       // not skills. Conservative: requires the `awesome-` name prefix AND no
