@@ -122,11 +122,7 @@ export const pricingTiers: PricingTier[] = [
     description: 'The lifecycle layer for teams — publish, version, and deprecate together.',
     apiCalls: 10000,
     apiCallsFormatted: '10,000 API calls/month',
-    features: [
-      { name: 'Everything in Individual' },
-      { name: '10,000 API calls/month' },
-      { name: 'Priority support' },
-    ],
+    features: [{ name: 'Everything in Individual' }, { name: 'Priority support' }],
     cta: 'Start Trial',
     ctaHref: '/signup?tier=team',
     highlighted: true,
@@ -143,12 +139,12 @@ export const pricingTiers: PricingTier[] = [
     apiCallsFormatted: 'Unlimited API calls',
     features: [
       { name: 'Everything in Team' },
-      { name: 'Unlimited API calls' },
       { name: '99.9% SLA guarantee' },
       { name: 'Dedicated support' },
     ],
     cta: 'Contact Sales',
     ctaHref: '/contact?tier=enterprise',
+    pricePublished: false,
   },
 ]
 
