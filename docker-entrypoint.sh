@@ -123,10 +123,13 @@ seed_per_package_native_modules_boot
 # In fresh worktrees the host has no dist/ (gitignored). The .:/app bind
 # mount overlays /app at container start, leaving packages/*/dist/ absent.
 #
-# Two sentinels (core + mcp-server) catch both fresh-worktree (all dist/
-# absent) and partial-build scenarios (only core was previously built).
-# Turbo builds core first (dependsOn: ["^build"]), so a successful build
-# guarantees all packages are compiled.
+# Four sentinels (core, mcp-server, doc-retrieval-mcp, cli — SMI-5957 added
+# the latter two, matching BUILD_FILTER below exactly so the freshness
+# check and the build scope can never silently drift apart) catch both
+# fresh-worktree (all dist/ absent) and partial-build scenarios (some
+# packages were previously built, one wasn't). Turbo builds core first
+# (dependsOn: ["^build"]), so a successful build guarantees all four are
+# compiled.
 #
 # Note: set -e + explicit exit 1 below is intentional belt-and-suspenders —
 # set -e handles unexpected failures; exit 1 here provides a human-readable
@@ -134,6 +137,8 @@ seed_per_package_native_modules_boot
 # ---------------------------------------------------------------------------
 CORE_DIST_ENTRY="/app/packages/core/dist/src/index.js"
 MCP_DIST_ENTRY="/app/packages/mcp-server/dist/src/index.js"
+DOC_RETRIEVAL_DIST_ENTRY="/app/packages/doc-retrieval-mcp/dist/src/server.js"
+CLI_DIST_ENTRY="/app/packages/cli/dist/cli.js"
 
 echo -e "${YELLOW}[entrypoint] Checking dist/ outputs...${NC}"
 
@@ -143,17 +148,21 @@ if [ ! -f "/app/node_modules/.package-lock.json" ] || [ ! -x "/app/node_modules/
     exit 1
 fi
 
-if [ ! -f "$CORE_DIST_ENTRY" ] || [ ! -f "$MCP_DIST_ENTRY" ]; then
+if [ ! -f "$CORE_DIST_ENTRY" ] || [ ! -f "$MCP_DIST_ENTRY" ] || [ ! -f "$DOC_RETRIEVAL_DIST_ENTRY" ] || [ ! -f "$CLI_DIST_ENTRY" ]; then
     echo -e "${YELLOW}  ✗ dist/ not found (first container start) — building packages...${NC}"
     echo -e "${YELLOW}  This is a one-time cost per worktree (until dist/ is manually removed).${NC}"
 
     # SMI-5957: scope this build to what CORE_DIST_ENTRY/MCP_DIST_ENTRY
-    # actually check, plus the one package with a currently-live cold-start
-    # consumer (scripts/mcp-doc-retrieval-launcher.sh hard-requires
+    # actually check, plus every package with a currently-live cold-start
+    # consumer: scripts/mcp-doc-retrieval-launcher.sh hard-requires
     # packages/doc-retrieval-mcp/dist/src/server.js; .husky/post-commit
-    # silently skips the reindex hook when its dist/cli.js is absent).
+    # silently skips the reindex hook when its dist/cli.js is absent;
+    # private-registry-e2e.yml's spec shells out to the real `skillsmith
+    # registry install` CLI subprocess, so @skillsmith/cli must be fresh
+    # here too — deliberately in THIS single invocation, not a second,
+    # separate one (see below for why that matters).
     # Applied unconditionally (worktree AND full checkout) — @skillsmith/website
-    # is excluded in both because neither this gate nor either live consumer
+    # is excluded in both because neither this gate nor any live consumer
     # needs it fresh, and (fresh-checkout case) its `astro` dependency is
     # installed non-hoisted to packages/website/node_modules, which has no
     # named-volume protection against docker-compose.yml's `.:/app` bind
@@ -175,7 +184,28 @@ if [ ! -f "$CORE_DIST_ENTRY" ] || [ ! -f "$MCP_DIST_ENTRY" ]; then
     # checkout's already-populated packages/website/node_modules read-only.
     # SMI-4739 (the virtiofs/Astro cache-path issue this filter was originally
     # written for) remains genuinely untested, not superseded by this change.
-    BUILD_FILTER='--filter=@skillsmith/core --filter=@skillsmith/mcp-server --filter=@skillsmith/doc-retrieval-mcp'
+    #
+    # @skillsmith/cli is built HERE, in this one call, rather than via a
+    # second, separate `docker exec ... turbo run build` invocation later
+    # (private-registry-e2e.yml's original design) for two independently
+    # confirmed reasons (SMI-5957 live CI verification, not local repro
+    # alone — a genuine gap between this session's local Docker environment
+    # and a real GH-hosted Linux runner): (1) mcp-server's composite/
+    # incremental tsconfig with a TS project reference to core means a
+    # SECOND `tsc` invocation against mcp-server in the same container
+    # incorrectly reports a real-looking zod type error (SMI-5960, a
+    # genuinely pre-existing TS incremental-compile bug); (2) a separate
+    # `docker exec` invocation of cli's own build, run via `docker exec`
+    # AFTER this entrypoint's own build already completed, was observed to
+    # fail with "Cannot find module '@skillsmith/core'" against a real CI
+    # runner despite core's dist/ already being present and correct — the
+    # `@skillsmith/*` workspace symlinks a second, separately-invoked
+    # process needs for plain (non-project-reference) import resolution are
+    # not reliably visible in that scenario. Building cli in this SAME,
+    # SINGLE turbo call sidesteps both: mcp-server's compiler still runs
+    # only once overall, and cli resolves `@skillsmith/core` within the
+    # same process invocation that just built it.
+    BUILD_FILTER='--filter=@skillsmith/core --filter=@skillsmith/mcp-server --filter=@skillsmith/doc-retrieval-mcp --filter=@skillsmith/cli'
 
     if npx turbo run build $BUILD_FILTER && bash scripts/lib/check-dist-fresh.sh --write-sentinel; then
         echo -e "${GREEN}  ✓ Build complete.${NC}"
