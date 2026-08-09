@@ -31,6 +31,8 @@ export interface PricingTier {
   cta: string
   ctaHref: string
   highlighted?: boolean
+  /** False hides the price and renders "Custom" instead (e.g. Enterprise). Defaults to true. */
+  pricePublished?: boolean
 }
 
 /**
