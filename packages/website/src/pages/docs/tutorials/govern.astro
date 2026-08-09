@@ -10,9 +10,8 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
 
   <p class="lead">
     The Govern stage is where Skillsmith stops being a personal tool and becomes infrastructure. It
-    covers audit logs, SIEM export, and the team-scope view of the same namespace audit you ran in
-    <a href="/docs/tutorials/maintain">Maintain</a> — all backed by the owner/admin/member roles your
-    team already has. Most flows here are Team or Enterprise tier.
+    covers audit logs, SIEM export, security review, and compliance reporting — all backed by the
+    owner/admin/member roles your team already has. Most flows here are Team or Enterprise tier.
   </p>
 
   <p>
@@ -63,7 +62,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
         <td>MCP</td>
         <td><code>skill_pack_audit</code></td>
         <td>Audit a pack of skills (bulk advisory check)</td>
-        <td>Team+</td>
+        <td>Individual+</td>
       </tr>
       <tr>
         <td>MCP</td>
@@ -98,19 +97,23 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
       <tr>
         <td>CLI</td>
         <td><code>skillsmith audit collisions</code></td>
-        <td>Same namespace audit as Maintain, with team-scope reporting</td>
+        <td>Same as MCP <code>skill_inventory_audit</code>, formatted for the terminal</td>
         <td>All (deeper modes Team+)</td>
       </tr>
     </tbody>
   </table>
 
   <div class="callout warning">
-    <p class="callout-heading">Tier gating is enforced</p>
+    <p class="callout-heading">Tier gating varies by tool</p>
     <p>
-      Governance tools require a Team or Enterprise license. Free and Individual tiers see typed
-      errors when they invoke these tools — not stub data. Configure <code
-        >SKILLSMITH_LICENSE_KEY</code
-      > in your MCP env config; missing keys produce a "license required" error rather than a silent fallback.
+      <code>skill_audit</code>, <code>compliance_report</code>, and <code
+        >skillsmith audit advisories</code
+      > require a Team or Enterprise license — Free and Individual tiers see typed errors when they
+      invoke these, not stub data. <code>skill_pack_audit</code> only needs Individual+.
+      <code>audit_export</code>, <code>audit_query</code>, and <code>siem_export</code> are
+      Enterprise-only. Configure <code>SKILLSMITH_LICENSE_KEY</code> in your MCP env config; missing
+      keys produce a "license required" error rather than a silent fallback for whichever tools your
+      tier doesn't cover.
     </p>
   </div>
 
@@ -244,27 +247,28 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
     >.
   </p>
 
-  <h2>Step 7 — Roll up namespace audit findings across a team</h2>
+  <h2>Step 7 — Apply rename and edit suggestions from your audit</h2>
 
   <p>
     The <a href="/docs/tutorials/maintain">Maintain tutorial</a>'s namespace audit reports
-    collisions for a single user. At team scope, the same audit rolls up across every developer in
-    your workspace, surfacing drift between team members' installed inventories.
+    collisions and suggested fixes for your own <code>~/.claude/</code> inventory. There's no
+    cross-team rollup yet — each developer runs the audit against their own machine.
   </p>
 
   <p>
     Combine the audit output with <code>apply_recommended_edit</code>
-    (Team+) and <code>apply_namespace_rename</code> (Team+) to act on rename suggestions across the
-    team, not just your own machine. Renames apply via the namespace-overrides ledger so subsequent
-    audits respect them. This is per-suggestion remediation, not a configurable rules engine — each
-    rename or edit is applied individually, the same way it is in <a
+    and <code>apply_namespace_rename</code> to act on those suggestions. Renames apply via the
+    namespace-overrides ledger so subsequent audits respect them. This is per-suggestion
+    remediation, not a configurable rules engine — each rename or edit is applied individually, the
+    same way it is in <a
       href="/docs/tutorials/maintain#namespace-audit">Maintain</a
-    >, just rolled up across more installs.
+    >.
   </p>
 
   <p>
     Both apply tools return a non-mutating preview by default; pass
-    <code>confirmed: true</code> to actually write the change.
+    <code>confirmed: true</code> to actually write the change. Neither tool is currently
+    tier-restricted, and team-wide audit rollup across multiple developers doesn't exist yet.
   </p>
 
   <h2 id="cyclonedx-export">Step 8 — Export a CycloneDX AI-BOM for compliance evidence</h2>
