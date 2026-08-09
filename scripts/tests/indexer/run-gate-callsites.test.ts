@@ -11,20 +11,28 @@
  *     "executable-looking library" (today, only `recheck.ts`) that must be
  *     asserted to STAY that way, because the day it gains a `main()` call it
  *     becomes an ungated direct entry point to a production writer.
- *   - Shape 4 (SMI-5879 Wave 3 item 1, new): guarded direct entry that is
- *     deliberately NOT run-gated. `smi5879-census.ts` uses the identical
- *     Shape-1 guard (so `hasDirectEntryGuard` matches it too) but must NOT
- *     call `assertRunAllowed`/`assertFreezeMarkerClear` — it is a READER of
- *     `skills` (never a writer through the indexer's normal write path;
- *     its own `smi5879_snapshot_pre`/`smi5879_repo_branch` tables are
+ *   - Shape 4 (SMI-5879 Wave 3 item 1, new; extended item 3): guarded direct
+ *     entry that is deliberately NOT run-gated. `smi5879-census.ts` uses the
+ *     identical Shape-1 guard (so `hasDirectEntryGuard` matches it too) but
+ *     must NOT call `assertRunAllowed`/`assertFreezeMarkerClear` — it is a
+ *     READER of `skills` (never a writer through the indexer's normal write
+ *     path; its own `smi5879_snapshot_pre`/`smi5879_repo_branch` tables are
  *     independently guarded by `smi5879_snapshot_guard()`,
  *     `supabase/migrations/20260808000000_smi5879_snapshot_generations.sql`)
  *     and, more fundamentally, it is the tool the SMI-5879 change-window
  *     freeze exists to PROTECT, not one the freeze should block: design doc
  *     8.3.2.5.7's runbook runs it at T-3d/T-0 20:15 UTC while
  *     `INDEXER_RUN_ALLOWLIST=maintenance,recheck`/`none` is already engaged,
- *     so gating it on the same mechanism would be circular. Pinned as its own
- *     explicit single-file set (Shape 1's "exactly 3" assertion below is
+ *     so gating it on the same mechanism would be circular. Item 3's
+ *     `smi5879-simulate-full.ts`/`smi5879-simulate-preflight-estimate.ts` are
+ *     the identical shape for the identical reason: both are pure READERS
+ *     (they never write to `skills`, only to their own report/checkpoint
+ *     artifacts and their generation's own claim/heartbeat fields — see
+ *     `smi5879-simulate-full.ts`'s own module doc), and both are designed to
+ *     run concurrently with the live 00:00/03:00 crons over a multi-day
+ *     window (plan §3a), so gating them on the same freeze mechanism they are
+ *     explicitly meant to coexist with would be exactly as circular. Pinned
+ *     as its own explicit set (Shape 1's "exactly 3" assertion below is
  *     `PINNED_SHAPE1 ∪ PINNED_SHAPE4_UNGATED_GUARD`) rather than silently
  *     absorbed, so a FUTURE guard-shaped file that SHOULD be gated cannot
  *     hide behind this exclusion.
@@ -53,7 +61,11 @@ const PINNED_SHAPE1 = [
 
 const PINNED_SHAPE2 = ['run.ts']
 
-const PINNED_SHAPE4_UNGATED_GUARD = ['smi5879-census.ts']
+const PINNED_SHAPE4_UNGATED_GUARD = [
+  'smi5879-census.ts',
+  'smi5879-simulate-full.ts',
+  'smi5879-simulate-preflight-estimate.ts',
+].sort()
 
 const PINNED_SHEBANG_FILES = [
   'dequarantine-false-positives.ts',
@@ -88,7 +100,7 @@ describe('Shape 1 — guarded direct-entry census', () => {
 })
 
 describe('Shape 4 — guarded direct entry that is deliberately NOT an indexer writer', () => {
-  it('is EXACTLY the pinned single-file set {smi5879-census.ts}', () => {
+  it('is EXACTLY the pinned set {smi5879-census.ts, smi5879-simulate-full.ts, smi5879-simulate-preflight-estimate.ts}', () => {
     const files = listIndexerSourceFiles()
     const shape4Files = files
       .filter(
