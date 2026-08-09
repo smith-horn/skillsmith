@@ -1,9 +1,9 @@
-# Skillsmith - Agent Skill Discovery & Management
+# Skillsmith - Lifecycle Management for Agent Skills
 > For complete reference including full API docs, CLI commands, and FAQ, see: https://www.skillsmith.app/llms-full.txt
-> Skillsmith helps developers discover, install, and manage agent skills. Skills are reusable prompts and workflows that extend AI assistant capabilities.
+> Skills spread across teams faster than anyone can govern them. Skillsmith gives them a lifecycle: publish immutable versions to your team's registry, catch drift before it spreads, and deprecate what's gone stale. Skills are reusable prompts and workflows that extend AI assistant capabilities.
 
 ## Quick Start
-Install Skillsmith MCP server to enable natural language skill discovery:
+Install Skillsmith MCP server to publish, install, and manage agent skills using natural language:
 
 ```json
 // Add to ~/.claude/settings.json

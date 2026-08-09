@@ -46,7 +46,8 @@ const jsonLd = {
       '@id': 'https://www.skillsmith.app/#website',
       url: 'https://www.skillsmith.app',
       name: 'Skillsmith',
-      description: 'AI-powered agent skill discovery and management',
+      description:
+        "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
       publisher: {
         '@id': 'https://www.skillsmith.app/#organization',
       },
@@ -62,7 +63,7 @@ const jsonLd = {
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Cross-platform',
       description:
-        'Discover, install, and manage agent skills — thousands indexed by scanning SKILL.md files across GitHub, with semantic search, quality scores, and stack-aware recommendations.',
+        "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
       url: 'https://www.skillsmith.app',
       author: {
         '@id': 'https://www.skillsmith.app/#organization',
@@ -162,10 +163,10 @@ const jsonLd = {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Skillsmith - Agent Skill Discovery & Management</title>
+    <title>Skillsmith - Lifecycle Management for Agent Skills</title>
     <meta
       name="description"
-      content="Find the right agent skills for your stack. Thousands of skills indexed from GitHub with semantic search, quality scores, and stack-aware recommendations. Get started for free."
+      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
     />
     <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
@@ -228,10 +229,10 @@ const jsonLd = {
     </script>
 
     <!-- Open Graph -->
-    <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
+    <meta property="og:title" content="Skillsmith - Lifecycle Management for Agent Skills" />
     <meta
       property="og:description"
-      content="Find the right agent skills for your stack. Thousands of skills indexed from GitHub with semantic search, quality scores, and stack-aware recommendations. Get started for free."
+      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
@@ -275,16 +276,18 @@ const jsonLd = {
             class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up"
             style="animation-delay: 0.05s;"
           >
-            Create, Optimize, <br />and Secure Agent Skills.
+            Lifecycle management for agent skills.
           </h1>
 
-          <!-- Subheadline (SMI-4839: SDK-for-teams positioning, ≤20 words) -->
+          <!-- Subheadline (messaging lifecycle reframe: locked two-sentence copy —
+               see docs/internal/implementation/messaging-lifecycle-reframe.md) -->
           <p
             class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
             style="animation-delay: 0.08s;"
           >
-            The Agent Skills SDK for teams &mdash; author, version, govern, and retire skills across
-            your org.
+            Skills spread across teams faster than anyone can govern them. Skillsmith gives them a
+            lifecycle: publish immutable versions to your team's registry, catch drift before it
+            spreads, and deprecate what's gone stale.
           </p>
 
           <!-- CTA Buttons -->
@@ -303,7 +306,7 @@ const jsonLd = {
               href="/docs"
               class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
             >
-              Read the SDK docs
+              Read the docs
             </a>
           </div>
           <!-- SMI-4836: email-login parity — secondary text link beneath the GitHub-default CTA -->
@@ -328,10 +331,141 @@ const jsonLd = {
         </div>
       </section>
 
-      <!-- MCP Install Section -->
-      <section class="py-20 border-t border-white/[0.06]">
+      <!-- Problem/Solution Section (messaging lifecycle reframe: leads with the four
+           locked questions, see docs/internal/implementation/messaging-lifecycle-reframe.md) -->
+      <section class="py-24">
+        <div class="max-w-[1000px] mx-auto px-6">
+          <h2 class="text-3xl sm:text-4xl font-bold text-center mb-6">
+            The skill lifecycle problem
+          </h2>
+          <p class="text-[#A1A1AA] text-center max-w-[700px] mx-auto mb-12">
+            Skills spread across teams faster than anyone can govern them. Skillsmith gives them a
+            lifecycle: publish immutable versions to your team's registry, catch drift before it
+            spreads, and deprecate what's gone stale.
+          </p>
+
+          <!-- Four questions -->
+          <div class="grid md:grid-cols-2 gap-6 mb-12">
+            <div class="p-6 bg-[#18181B] border border-white/[0.06] rounded-2xl">
+              <p class="font-semibold text-white mb-2">Which team is this scoped to?</p>
+              <p class="text-sm text-[#A1A1AA]">
+                Every skill is published to a registry scoped to your team.
+              </p>
+            </div>
+            <div class="p-6 bg-[#18181B] border border-white/[0.06] rounded-2xl">
+              <p class="font-semibold text-white mb-2">Which version is installed here?</p>
+              <p class="text-sm text-[#A1A1AA]">
+                Versions are immutable once published, so drift across installs is visible instead
+                of silent.
+              </p>
+            </div>
+            <div class="p-6 bg-[#18181B] border border-white/[0.06] rounded-2xl">
+              <p class="font-semibold text-white mb-2">Has it been flagged by the security scan?</p>
+              <p class="text-sm text-[#A1A1AA]">
+                Skills pulled from the public index are scored automatically. Flagged or suspicious
+                ones are quarantined pending review.
+              </p>
+            </div>
+            <div class="p-6 bg-[#18181B] border border-white/[0.06] rounded-2xl">
+              <p class="font-semibold text-white mb-2">
+                What happens to the ones nobody maintains?
+              </p>
+              <p class="text-sm text-[#A1A1AA]">
+                Skills that go stale can be deprecated instead of quietly rotting in someone's repo.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-6">
+            <!-- Without Skillsmith -->
+            <div class="p-8 bg-[#18181B] border border-white/[0.06] rounded-2xl">
+              <p class="text-xs font-medium uppercase tracking-wider text-[#8E8E96] mb-6">
+                Without Skillsmith
+              </p>
+              <ul class="space-y-4">
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]"
+                    >Skills scattered across forks, gists, and shared drives</span
+                  >
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]">No way to tell which version is installed where</span
+                  >
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]"
+                    >No way to catch drift, or deprecate what's gone stale</span
+                  >
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]"
+                    >No shared registry &mdash; every team starts from scratch</span
+                  >
+                </li>
+              </ul>
+            </div>
+
+            <!-- With Skillsmith -->
+            <div class="p-8 bg-[#18181B] border border-[#E07A5F]/20 rounded-2xl shadow-glow">
+              <p class="text-xs font-medium uppercase tracking-wider text-[#E07A5F] mb-6">
+                With Skillsmith
+              </p>
+              <ul class="space-y-4">
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]"
+                    >One registry for your team &mdash; publish, version, deprecate</span
+                  >
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]"
+                    >Quality scores, integrity-checked publishes, audit logs you can trust</span
+                  >
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]"
+                    >MCP, CLI, and VS Code surfaces over the same registry</span
+                  >
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]"
+                    >Stack-aware recommendations from <span id="skill-count-feature"
+                      >hundreds of thousands of</span
+                    > indexed skills</span
+                  >
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scopes and permissions (messaging lifecycle reframe: locked copy) -->
+      <section class="py-16 border-t border-white/[0.06]">
+        <div class="max-w-[700px] mx-auto px-6 text-center">
+          <h2 class="text-2xl sm:text-3xl font-bold mb-4">Scopes and permissions</h2>
+          <p class="text-[#A1A1AA]">
+            Skills are scoped to your team's registry. Team owners and admins control who can
+            publish and manage skills; members install and search.
+          </p>
+        </div>
+      </section>
+
+      <!-- Start Solo Section (demoted from primary CTA position per messaging lifecycle
+           reframe — the individual/solo path, not the lead narrative) -->
+      <section class="py-20 border-t border-white/[0.06]" id="start-solo">
         <div class="max-w-[800px] mx-auto px-6">
           <div class="text-center mb-10">
+            <p class="text-xs font-semibold uppercase tracking-wider text-[#71717A] mb-3">
+              Start solo
+            </p>
             <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
             <p class="text-[#A1A1AA]">Copy this snippet to configure your MCP client</p>
           </div>
@@ -404,12 +538,12 @@ const jsonLd = {
                 ><span id="github-total-count-install">280,000+</span> scanned on GitHub</span
               >
               <span class="block text-[#E07A5F] font-bold text-lg mb-1" id="skill-count-install"
-                >7,900+</span
+                >Hundreds of thousands</span
               >
               <span class="text-[#A1A1AA]">Skills indexed</span>
             </div>
             <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
-              <span class="block text-[#E07A5F] font-bold text-lg mb-1">AI-Powered</span>
+              <span class="block text-[#E07A5F] font-bold text-lg mb-1">Smart</span>
               <span class="text-[#A1A1AA]">Recommendations</span>
             </div>
             <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
@@ -422,12 +556,11 @@ const jsonLd = {
             </div>
           </div>
         </div>
-      </section>
 
-      {abVariant === 'variant-b' && <HomepageCategoryGrid abVariant={abVariant} />}
-      <!-- Value Props Section -->
-      <section class="py-24 border-t border-white/[0.06]">
-        <div class="max-w-[1200px] mx-auto px-6">
+        <!-- Value props (feature highlights) — folded into Start Solo so the
+             individual-capability content isn't split across two sections
+             (messaging lifecycle reframe, spec §5) -->
+        <div class="max-w-[1200px] mx-auto px-6 mt-16">
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
             <!-- Semantic Search -->
             <div class="text-center">
@@ -448,9 +581,7 @@ const jsonLd = {
                 </svg>
               </div>
               <h3 class="text-lg font-bold mb-2">Semantic Search</h3>
-              <p class="text-sm text-[#A1A1AA]">
-                Search by intent, not keywords. AI-powered skill discovery.
-              </p>
+              <p class="text-sm text-[#A1A1AA]">Search by intent, not keywords.</p>
             </div>
 
             <!-- Quality Scores -->
@@ -525,84 +656,7 @@ const jsonLd = {
         </div>
       </section>
 
-      <!-- Problem/Solution Section (SMI-4839: lifecycle reframe) -->
-      <section class="py-24">
-        <div class="max-w-[1000px] mx-auto px-6">
-          <h2 class="text-3xl sm:text-4xl font-bold text-center mb-6">
-            The skill lifecycle problem
-          </h2>
-          <p class="text-[#A1A1AA] text-center max-w-[700px] mx-auto mb-12">
-            Skills sprawl across teams: no source-of-truth, no governance, no lifecycle. Skillsmith
-            gives your org a single SDK and registry to author, distribute, govern, and retire
-            skills.
-          </p>
-
-          <div class="grid md:grid-cols-2 gap-6">
-            <!-- Without Skillsmith -->
-            <div class="p-8 bg-[#18181B] border border-white/[0.06] rounded-2xl">
-              <p class="text-xs font-medium uppercase tracking-wider text-[#8E8E96] mb-6">
-                Without Skillsmith
-              </p>
-              <ul class="space-y-4">
-                <li class="flex items-start gap-3">
-                  <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]"
-                    >Skills scattered across forks, gists, and shared drives</span
-                  >
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]">No source-of-truth for which version teams run</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]">No governance, audit trail, or retirement path</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]"
-                    >Authoring is ad-hoc &mdash; every team reinvents the basics</span
-                  >
-                </li>
-              </ul>
-            </div>
-
-            <!-- With Skillsmith -->
-            <div class="p-8 bg-[#18181B] border border-[#E07A5F]/20 rounded-2xl shadow-glow">
-              <p class="text-xs font-medium uppercase tracking-wider text-[#E07A5F] mb-6">
-                With Skillsmith
-              </p>
-              <ul class="space-y-4">
-                <li class="flex items-start gap-3">
-                  <span class="text-[#81B29A] mt-0.5">✓</span>
-                  <span class="text-[#FAFAFA]"
-                    >One SDK and registry for your org &mdash; author, version, govern, retire</span
-                  >
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-[#81B29A] mt-0.5">✓</span>
-                  <span class="text-[#FAFAFA]"
-                    >Quality scores, signed publishes, audit logs you can trust</span
-                  >
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-[#81B29A] mt-0.5">✓</span>
-                  <span class="text-[#FAFAFA]"
-                    >MCP, CLI, and VS Code surfaces over the same registry</span
-                  >
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-[#81B29A] mt-0.5">✓</span>
-                  <span class="text-[#FAFAFA]"
-                    >Stack-aware recommendations from <span id="skill-count-feature">7,900+</span>
-                    indexed skills</span
-                  >
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
+      {abVariant === 'variant-b' && <HomepageCategoryGrid abVariant={abVariant} />}
 
       <!-- FAQ Section (SMI-2457) -->
       <section class="py-24 border-t border-white/[0.06]">
@@ -727,7 +781,7 @@ const jsonLd = {
         <div class="relative max-w-[600px] mx-auto px-6 text-center">
           <h2 class="text-3xl sm:text-4xl font-bold mb-4">Start building for free</h2>
           <p class="text-lg text-[#A1A1AA] mb-10">
-            Discover skills that fit your workflow. No credit card required.
+            Install your first skill in seconds. No credit card required.
           </p>
 
           <!-- CTA Buttons -->

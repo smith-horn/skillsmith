@@ -1,7 +1,7 @@
 {
   "name": "skillsmith-cli",
   "version": "0.5.3",
-  "description": "Convenience wrapper for @skillsmith/cli — Claude Code skill discovery and management",
+  "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "type": "module",
   "bin": {
     "skillsmith-cli": "./bin.js"
@@ -34,7 +34,6 @@
     "llm",
     "cli",
     "claude-code",
-    "skill-discovery",
     "skill-management"
   ],
   "engines": {

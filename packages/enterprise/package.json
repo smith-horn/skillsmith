@@ -1,7 +1,7 @@
 {
   "name": "@smith-horn/enterprise",
   "version": "0.3.4",
-  "description": "Enterprise features for Skillsmith including audit logging, SSO, and RBAC",
+  "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -82,18 +82,16 @@
     "url": "https://github.com/smith-horn/skillsmith.git",
     "directory": "packages/enterprise"
   },
-  "homepage": "https://skillsmith.dev/enterprise",
+  "homepage": "https://skillsmith.app/enterprise",
   "bugs": {
     "url": "https://github.com/smith-horn/skillsmith/issues",
-    "email": "enterprise@skillsmith.dev"
+    "email": "enterprise@skillsmith.app"
   },
   "keywords": [
     "ai",
     "skills",
     "mcp",
     "enterprise",
-    "sso",
-    "rbac",
     "audit"
   ],
   "engines": {

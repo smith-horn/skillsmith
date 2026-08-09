@@ -87,7 +87,9 @@ const commandName = process.argv[1]?.endsWith('sklx') ? 'sklx' : 'skillsmith'
 
 program
   .name(commandName)
-  .description('Agent Skill Discovery and Management CLI (alias: sklx)')
+  .description(
+    "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale. (alias: sklx)"
+  )
   .version(CLI_VERSION)
 
 // Display startup header with license status before parsing commands.

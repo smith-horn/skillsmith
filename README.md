@@ -1,54 +1,10 @@
 # Skillsmith
 
-**Craft your agent skill workflow.**
+**Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.**
 
-Skillsmith is a lifecycle manager for agent skills, handling discovery, recommendation, installation, and updates for MCP-compatible AI tools. Find the right skills for your projects, install them safely, and learn to use them effectively.
+Once more than one team is publishing agent skills, the problem stops being finding them and starts being managing them. Which team is this scoped to? Which version is installed where? Has it been flagged by a security scan? What happens to the ones nobody maintains anymore?
 
-## Features
-
-- **Discover** - Search skills from GitHub with semantic search
-- **Recommend** - Get personalized skill suggestions based on context
-- **Install** - One-command installation to `~/.claude/skills/`
-- **Validate** - Quality scores and structure validation
-- **Trust** - Four trust tiers from Official to Community ([Security Guide](docs/internal/security/skill-security-guide.md))
-- **Compare** - Side-by-side skill comparison
-
-### MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `search` | Search skills with filters (query, category, trust tier, min score) |
-| `get_skill` | Get detailed skill information including install command |
-| `install_skill` | Install a skill to your local environment |
-| `uninstall_skill` | Remove an installed skill |
-| `recommend` | Get contextual skill recommendations |
-| `validate` | Validate a skill's structure and quality |
-| `compare` | Compare multiple skills side-by-side |
-
-**Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
-
-## Architecture
-
-Skillsmith uses the Model Context Protocol (MCP):
-
-```text
-┌─────────────────────────────────────────────────────┐
-│  MCP Client (Claude Code, Cursor, etc.)               │
-│  ┌─────────────────────────────────────────────────┐│
-│  │  Skillsmith MCP Server                          ││
-│  │  └── @skillsmith/mcp-server                     ││
-│  │      ├── search, get_skill, compare             ││
-│  │      ├── install_skill, uninstall_skill         ││
-│  │      └── recommend, validate                    ││
-│  └─────────────────────────────────────────────────┘│
-│                          │                           │
-│                          ▼                           │
-│  ┌─────────────────────────────────────────────────┐│
-│  │  ~/.skillsmith/skills.db (SQLite + FTS5)        ││
-│  │  ~/.claude/skills/ (installed skills)           ││
-│  └─────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────┘
-```
+Skillsmith is a lifecycle layer for agent skills. Skills are published to a registry scoped to your team and versioned immutably, so drift across installs is visible instead of silent. Flagged or suspicious skills are quarantined pending security review. Skills that go stale can be deprecated instead of quietly rotting in someone's repo.
 
 ## Installation
 
@@ -220,6 +176,67 @@ The CLI is available for local development:
 # From the repository root
 npm run build
 node packages/cli/dist/index.js search "testing"
+```
+
+## The four questions
+
+Once more than one team is publishing skills, these are the questions that matter:
+
+1. **Which team is this scoped to?** Every skill in the registry is scoped to a team.
+2. **Which version is installed here?** Versions are immutable; `skill_diff` and `skill_outdated` report drift for what's installed on the machine you run them from.
+3. **Has it been flagged by the security scan?** Skills pulled from the public index are scored automatically; flagged or suspicious ones are quarantined pending review — unflagged means it wasn't flagged, not that it was formally approved. Skills carry one of five trust tiers, from Official to Unverified ([Security Guide](docs/internal/security/skill-security-guide.md)).
+4. **What happens to the ones nobody maintains?** Stale skills can be deprecated instead of quietly rotting in someone's repo.
+
+## How it works
+
+- **Publish** — skills are published to a registry scoped to your team, versioned immutably.
+- **Version** — every publish creates a new immutable version; nothing is overwritten in place.
+- **Drift detection** — `skill_diff` and `skill_outdated` show what's installed and where it has fallen behind, at the point you check.
+- **Deprecate** — skills that go stale can be deprecated instead of quietly rotting in someone's repo.
+
+## Scopes and permissions
+
+Skills are scoped to your team's registry. Team owners and admins control who can publish and manage skills; members install and search.
+
+## Start solo
+
+Search, install, and manage skills for yourself, free. When your team needs the same skill, the registry is already there.
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `search` | Search skills with filters (query, category, trust tier, min score) |
+| `get_skill` | Get detailed skill information including install command |
+| `install_skill` | Install a skill to your local environment |
+| `uninstall_skill` | Remove an installed skill |
+| `recommend` | Get contextual skill recommendations |
+| `validate` | Validate a skill's structure and quality |
+| `compare` | Compare multiple skills side-by-side |
+
+**Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
+
+## Architecture
+
+Skillsmith uses the Model Context Protocol (MCP):
+
+```text
+┌─────────────────────────────────────────────────────┐
+│  MCP Client (Claude Code, Cursor, etc.)               │
+│  ┌─────────────────────────────────────────────────┐│
+│  │  Skillsmith MCP Server                          ││
+│  │  └── @skillsmith/mcp-server                     ││
+│  │      ├── search, get_skill, compare             ││
+│  │      ├── install_skill, uninstall_skill         ││
+│  │      └── recommend, validate                    ││
+│  └─────────────────────────────────────────────────┘│
+│                          │                           │
+│                          ▼                           │
+│  ┌─────────────────────────────────────────────────┐│
+│  │  ~/.skillsmith/skills.db (SQLite + FTS5)        ││
+│  │  ~/.claude/skills/ (installed skills)           ││
+│  └─────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────┘
 ```
 
 ## Usage

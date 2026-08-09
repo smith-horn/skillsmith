@@ -4,15 +4,24 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
 
 <DocsLayout
   title="Tutorial: Govern at scale"
-  description="Skillsmith Govern stage — audit logs, RBAC, SIEM export, and team-scope namespace policy."
+  description="Skillsmith Govern stage — audit logs, SIEM export, namespace enforcement, and team roles."
 >
   <h1>Tutorial: Govern at scale</h1>
 
   <p class="lead">
     The Govern stage is where Skillsmith stops being a personal tool and becomes infrastructure. It
-    covers audit logs, role-based access control, SIEM export, and the team-scope view of the same
-    namespace audit you ran in <a href="/docs/tutorials/maintain">Maintain</a>. Most flows here are
-    Team or Enterprise tier.
+    covers audit logs, SIEM export, and the team-scope view of the same namespace audit you ran in
+    <a href="/docs/tutorials/maintain">Maintain</a> — all backed by the owner/admin/member roles your
+    team already has. Most flows here are Team or Enterprise tier.
+  </p>
+
+  <p>
+    This tutorial covers how you personally use Skillsmith at team scale, day to day — not the
+    org-level registry lifecycle (publish, version, deprecate) described on the
+    <a href="/">homepage</a> and in the <a href="https://github.com/smith-horn/skillsmith#readme"
+      >README</a
+    >. Those are two different things: this page is about auditing and monitoring skill usage across
+    a team; the homepage is about publishing and versioning skills into the team registry.
   </p>
 
   <p>
@@ -26,7 +35,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
   <ul>
     <li>Query audit logs for a time range and event type</li>
     <li>Export audit events for compliance reporting</li>
-    <li>Stream events to a SIEM (Splunk, Elastic, Datadog)</li>
+    <li>Export events for a SIEM (CloudWatch, Splunk, Datadog)</li>
     <li>Run skill-level and pack-level security audits</li>
     <li>Read the session-start governance summary at the start of every Claude Code session</li>
     <li>Export a CycloneDX AI-BOM for compliance evidence</li>
@@ -71,7 +80,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
       <tr>
         <td>MCP</td>
         <td><code>siem_export</code></td>
-        <td>Export audit events for SIEM ingestion (CEF / LEEF / JSON)</td>
+        <td>Export audit events for SIEM ingestion (JSON / syslog / CEF)</td>
         <td>Enterprise</td>
       </tr>
       <tr>
@@ -150,7 +159,7 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
     roll out a skill with a new CVE attached.
   </p>
 
-  <h2>Step 3 — Query the audit log</h2>
+  <h2 id="step-3-query-the-audit-log">Step 3 — Query the audit log</h2>
 
   <p>
     Every Skillsmith operation that mutates state (install, uninstall, update, pin, publish) writes
@@ -192,24 +201,27 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
     source control.
   </p>
 
-  <h2>Step 5 — Stream events to a SIEM</h2>
+  <h2>Step 5 — Export events for a SIEM</h2>
 
   <p>
-    For continuous monitoring rather than point-in-time export,
-    <code>siem_export</code> emits events in a format your SIEM can ingest: CEF (ArcSight), LEEF (QRadar),
-    or structured JSON (Splunk, Elastic, Datadog).
+    <code>siem_export</code> returns audit events for a time range in one of three formats: <code
+      >json</code
+    >, <code>syslog</code>, or <code>cef</code>. It targets SIEM tooling that ingests those formats
+    (CloudWatch, Splunk, Datadog).
   </p>
 
   <p><strong>Try this prompt:</strong></p>
 
   <ul>
-    <li>"Configure Skillsmith to stream audit events to our SIEM in CEF format"</li>
+    <li>"Export the last hour of Skillsmith audit events in CEF format"</li>
   </ul>
 
   <p>
-    The MCP returns the export endpoint and authentication token; wire those into your SIEM's HTTP
-    collector. Events stream within seconds of the underlying mutation. See the
-    <a href="/docs/api">API reference</a> for the wire format details.
+    The SIEM destination is configured via environment variables on the MCP server, not passed as a
+    tool argument — <code>siem_export</code> itself just returns the formatted events for that time
+    range; wiring the actual delivery to your collector is a deployment-time configuration step, not
+    something the tool call does for you. A separate CloudWatch exporter can stream directly to AWS
+    CloudWatch Logs. See the <a href="/docs/api">API reference</a> for the wire format details.
   </p>
 
   <h2>Step 6 — Read the session-start governance summary</h2>
@@ -232,7 +244,7 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
     >.
   </p>
 
-  <h2>Step 7 — Apply policy at team scope</h2>
+  <h2>Step 7 — Roll up namespace audit findings across a team</h2>
 
   <p>
     The <a href="/docs/tutorials/maintain">Maintain tutorial</a>'s namespace audit reports
@@ -242,8 +254,12 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
 
   <p>
     Combine the audit output with <code>apply_recommended_edit</code>
-    (Team+) and <code>apply_namespace_rename</code> (Team+) to centrally enforce naming policy. Renames
-    apply via the namespace-overrides ledger so subsequent audits respect them.
+    (Team+) and <code>apply_namespace_rename</code> (Team+) to act on rename suggestions across the
+    team, not just your own machine. Renames apply via the namespace-overrides ledger so subsequent
+    audits respect them. This is per-suggestion remediation, not a configurable rules engine — each
+    rename or edit is applied individually, the same way it is in <a
+      href="/docs/tutorials/maintain#namespace-audit">Maintain</a
+    >, just rolled up across more installs.
   </p>
 
   <p>
@@ -322,18 +338,20 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
   <h3>SIEM ingestion drops events</h3>
 
   <p>
-    The SIEM endpoint is HTTPS only and requires a bearer token in the
-    <code>Authorization</code> header. Most ingestion drops trace back to misconfigured authentication
-    — check your SIEM's HTTP collector logs first. The Skillsmith side will log the export attempts in
-    the audit log itself (recursive but useful).
+    <code>siem_export</code> only formats and returns events — it does not deliver them. Most
+    ingestion drops trace back to how your collector consumes that output: check the format
+    (<code>json</code>, <code>syslog</code>, or <code>cef</code>) matches what your collector expects,
+    and confirm whatever process forwards the export result to your SIEM is running and pointed at the
+    right destination.
   </p>
 
   <h2>Where to next</h2>
 
   <p>
-    The full lifecycle ends at <a href="/docs/tutorials/retire">Retire</a> — deliberately uninstalling
-    skills you no longer need. For ongoing day-to-day hygiene, Govern's signals feed back into
-    <a href="/docs/tutorials/maintain">Maintain</a>'s actions.
+    The full personal-usage sequence ends at <a href="/docs/tutorials/uninstall">Uninstall</a> —
+    deliberately removing skills you no longer need from your own machine. For ongoing day-to-day
+    hygiene, Govern's signals feed back into <a href="/docs/tutorials/maintain">Maintain</a>'s
+    actions.
   </p>
 
   <p>
@@ -345,8 +363,8 @@ skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
   </p>
 
   <p>
-    Previous: <a href="/docs/tutorials/author">Author</a> — Next: <a href="/docs/tutorials/retire"
-      >Retire</a
+    Previous: <a href="/docs/tutorials/author">Author</a> — Next: <a
+      href="/docs/tutorials/uninstall">Uninstall</a
     >
   </p>
 </DocsLayout>

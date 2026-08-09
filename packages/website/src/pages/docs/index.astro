@@ -6,7 +6,7 @@ const techArticleSchema = {
   '@type': 'TechArticle',
   headline: 'Skillsmith Documentation',
   description:
-    'Complete documentation for Skillsmith - AI-powered skill discovery and management for development environments',
+    "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   url: 'https://www.skillsmith.app/docs',
   author: {
     '@id': 'https://www.skillsmith.app/#organization',
@@ -91,15 +91,16 @@ const techArticleSchema = {
 };
 ---
 
-<DocsLayout title="Documentation" description="Learn how to use Skillsmith for agent skill discovery and management">
+<DocsLayout title="Documentation" description="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.">
   <!-- JSON-LD Schema -->
   <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(techArticleSchema)} />
 
   <h1>Skillsmith Documentation</h1>
 
   <p class="lead">
-    Skillsmith is an MCP server for agent skill discovery, installation, and management.
-    It helps you find, evaluate, and install skills for your development environment.
+    Skills spread across teams faster than anyone can govern them. Skillsmith gives them a
+    lifecycle: publish immutable versions to your team's registry, catch drift before it
+    spreads, and deprecate what's gone stale.
   </p>
 
   <h2>What is Skillsmith?</h2>

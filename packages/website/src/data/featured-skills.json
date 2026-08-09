@@ -1,5 +1,5 @@
 {
-  "_comment": "SMI-4838: Curated set of example skills demonstrating the Agent Skills SDK lifecycle (author -> test -> ship -> govern -> retire). All entries verified against the production indexer DB on 2026-05-09. Use 'author/name' format — `/skills/[id]` resolves either UUID or author/name.",
+  "_comment": "SMI-4838: Example skills demonstrating the skill lifecycle (author -> test -> ship -> deprecate). All entries verified against the production indexer DB on 2026-05-09. Use 'author/name' format — `/skills/[id]` resolves either UUID or author/name.",
   "_lifecycle_stages": ["author", "test", "ship", "govern", "secure", "review"],
   "skills": [
     {

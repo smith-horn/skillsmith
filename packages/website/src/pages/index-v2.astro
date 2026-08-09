@@ -26,10 +26,10 @@ const supabaseConfig = getSupabaseConfig()
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Skillsmith - Find Agent Skills Fast</title>
+    <title>Skillsmith - Lifecycle Management for Agent Skills</title>
     <meta
       name="description"
-      content="Search thousands of curated agent skills for any MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf). Install in seconds."
+      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
     />
     <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href={`${import.meta.env.SITE}/`} />
@@ -84,10 +84,10 @@ const supabaseConfig = getSupabaseConfig()
     </script>
 
     <!-- Open Graph -->
-    <meta property="og:title" content="Skillsmith - Find Agent Skills Fast" />
+    <meta property="og:title" content="Skillsmith - Lifecycle Management for Agent Skills" />
     <meta
       property="og:description"
-      content="Search thousands of curated agent skills for any MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf). Install in seconds."
+      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://www.skillsmith.app/" />
@@ -124,13 +124,15 @@ const supabaseConfig = getSupabaseConfig()
             class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-4 opacity-0 animate-fade-up"
             style="animation-delay: 0.05s;"
           >
-            Find the right skill<br />for your stack
+            Lifecycle management for agent skills.
           </h1>
           <p
             class="text-lg sm:text-xl text-dark-400 max-w-[560px] mx-auto mb-8 opacity-0 animate-fade-up"
             style="animation-delay: 0.08s;"
           >
-            Thousands of curated agent skills. Search, install, and supercharge Claude Code.
+            Skills spread across teams faster than anyone can govern them. Skillsmith gives them a
+            lifecycle: publish immutable versions to your team's registry, catch drift before it
+            spreads, and deprecate what's gone stale.
           </p>
 
           <!-- Inline Search (above fold) -->

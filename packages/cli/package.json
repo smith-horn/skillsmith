@@ -1,7 +1,7 @@
 {
   "name": "@skillsmith/cli",
   "version": "0.8.4",
-  "description": "CLI tools for Skillsmith skill discovery and authentication",
+  "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "type": "module",
   "bin": {
     "skillsmith": "dist/cli.js",
@@ -80,7 +80,6 @@
     "claude-code",
     "cursor",
     "copilot",
-    "skill-discovery",
     "skill-management"
   ],
   "engines": {
