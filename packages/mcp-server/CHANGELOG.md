@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.7
+
+- **Other**: Reposition public messaging to agent skill lifecycle management (#2221)
 - **Fix**: `mapTrustTierFromDb` (`utils/validation.ts`) gains cases for `'official'` and `'unverified'` — previously both silently collapsed to `'unknown'` via the `default` branch, even though the sibling `mapTrustTierToDb` already round-tripped both correctly. An asymmetric miss from SMI-5205, affecting all 5 MCP tools that call this mapper (`search`, `get_skill`, `skill_recommend`, `skill_compare`, `skill_suggest`) — every `TrustTier` enum value now round-trips through `mapTrustTierToDb` → `mapTrustTierFromDb` (SMI-5897)
 - **Refactor**: `mapTrustTierFromDb` (`utils/validation.ts`) rewritten from a hand-written `switch`/`default` to an exhaustive `Record<DBTrustTier, MCPTrustTier>` lookup (`DB_TO_MCP_TRUST_TIER`, exported) — a `switch`'s `default` branch silently swallows any unhandled case, which is exactly how the `'official'`/`'unverified'` miss above happened with no compiler error; a missing key in the Record literal is now a compile-time error instead. No behavior change for any currently-defined `TrustTier` value (SMI-5897)
 - **Refactor**: `deriveSecuritySummaryFromApiSkill` moved to `@skillsmith/core` (`api/security-summary.ts`) so `get_skill`/`search`/`skill_recommend`'s security-summary derivation and the CLI's `SkillsmithApiClient.toSkill()` share one implementation instead of two independently-maintained copies — no behavior change for MCP tool call sites, just the import path (was `../utils/security-summary.js`, now `@skillsmith/core`) (SMI-5897)
