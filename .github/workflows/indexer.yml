@@ -391,6 +391,12 @@ jobs:
           CRON_SLOT: ${{ steps.config.outputs.cron_slot }}
           # SMI-4870: empty = full sequential discovery; 1/2/3 = single phase.
           DISCOVERY_PHASE: ${{ steps.config.outputs.discovery_phase }}
+          # SMI-5926: wires reconcileStaleSkills()'s incident brake (staleQuarantineDisabled(),
+          # scripts/indexer/stale-reconciliation.ts:78-94) into the job env. Defaults OFF
+          # (empty string) — unlike the *_DRY_RUN gates above, this disables a wanted sweep,
+          # so an unset repo variable must resolve to "sweep runs normally," not "brake engaged."
+          # Registered in docs/internal/process/guards-and-opt-outs.md.
+          STALE_QUARANTINE_DISABLE: ${{ vars.STALE_QUARANTINE_DISABLE || '' }}
           CONCURRENCY: ${{ github.event.inputs.concurrency || '2' }}
           # CONCURRENCY_KILL_SWITCH inherited from the job-level env (kill-switch sources).
           # SMI-5166 recheck vars - sourced from optional repo variables with safe defaults.
