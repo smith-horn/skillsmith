@@ -1,0 +1,116 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Private Registry" description="How Skillsmith's Enterprise-tier private registry keeps your team's skills versioned, access-controlled, and namespaced to your organization">
+  <h1>Private Registry</h1>
+
+  <p class="lead">
+    A real, hosted registry your whole team shares — versioned and access-controlled. This is
+    where skills your organization owns actually live, not a folder someone forked. Available on
+    the Enterprise tier.
+  </p>
+
+  <h2>What It Is</h2>
+
+  <p>
+    The private registry is a shared, org-scoped skill store. Publish a skill once and every
+    teammate can find and install it — no copy-pasting, no "which version is the real one."
+    Every published version is retained; nothing is silently overwritten.
+  </p>
+
+  <p>
+    This is different from <a href="/docs/private-skills">Private Skills</a>, which is a
+    single-device, Team-tier setting with no sharing at all. If you need your whole org working
+    from the same source of truth, this is that.
+  </p>
+
+  <h2>Access Control</h2>
+
+  <p>
+    Every team's skills are scoped to that team, enforced two different ways depending on how
+    the registry is reached:
+  </p>
+
+  <ul>
+    <li>
+      <strong>Direct database access</strong> (an authenticated dashboard session) is filtered
+      by row-level security — a query literally cannot return another team's rows.
+    </li>
+    <li>
+      <strong>MCP tool calls</strong> run through a service-role connection that bypasses
+      row-level security by design, so team scoping is enforced in application code instead: every
+      registry method requires and applies an explicit team filter before it runs.
+    </li>
+  </ul>
+
+  <p>
+    Namespace ownership is enforced at the database layer regardless of which path is used — a
+    database-level check runs on every publish and rejects any skill ID that doesn't match your
+    team's assigned namespace prefix, so a team can't accidentally (or deliberately) publish
+    outside its own namespace.
+  </p>
+
+  <h2>Tools</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>What it does</th>
+        <th>Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>private_registry_publish</code></td>
+        <td>Publish a new skill version to your team's registry</td>
+        <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>private_registry_manage</code></td>
+        <td>
+          List, get, deprecate, undeprecate, look up your team's namespace, or install a skill
+          from the registry (the <code>action</code> parameter selects which)
+        </td>
+        <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith registry install &lt;skillId&gt;</code></td>
+        <td>Install a skill from your team's private registry</td>
+        <td>Enterprise</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Publishing and listing are MCP-only today — there's no CLI command for either yet, only for
+    install.
+  </p>
+
+  <h2>Versioning</h2>
+
+  <p>
+    Each skill ID and version pair can only be published once — republishing the same version is
+    rejected outright, so a version can never be silently overwritten. Published content is
+    capped at 2MB per version.
+  </p>
+
+  <p>
+    Deprecating a version (an admin-only action) marks it as no longer recommended without
+    deleting it or hiding it — it stays fully listable, retrievable, and installable. See
+    <a href="/docs/governance">Governance</a> for how deprecation fits into the broader lifecycle.
+  </p>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/private-skills">Private Skills</a> - the lighter, single-device alternative</li>
+    <li><a href="/docs/governance">Governance</a> - deprecation, audit trail, and compliance reporting</li>
+    <li><a href="/docs/trust-tiers">Trust Tiers</a> - how skill trust is evaluated</li>
+  </ul>
+</DocsLayout>

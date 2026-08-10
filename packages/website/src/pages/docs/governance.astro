@@ -1,0 +1,60 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Governance, End to End" description="How Skillsmith handles deprecation, audit trails, compliance reporting, and automatic quarantine across the skill lifecycle">
+  <h1>Governance, End to End</h1>
+
+  <p class="lead">
+    Skillsmith is a lifecycle-governance layer, not just a search index. Once a skill is
+    published, its story doesn't stop there — versions get deprecated instead of deleted, every
+    action is auditable, compliance reports are exportable on demand, and anything flagged by
+    security scanning is quarantined automatically.
+  </p>
+
+  <h2>Deprecation</h2>
+
+  <p>
+    An admin can deprecate a published version of a private-registry skill instead of deleting
+    it. Deprecation is a status flag, not a removal — a deprecated version stays fully listable,
+    retrievable, and installable. It's a signal to your team that a version is no longer
+    recommended, without breaking anyone currently depending on it.
+  </p>
+
+  <p>
+    Deprecating and undeprecating are both handled by the same tool that manages the rest of the
+    private registry — see <a href="/docs/private-registry">Private Registry</a> for the full
+    tool reference.
+  </p>
+
+  <h2>Audit Trail &amp; Compliance Reporting</h2>
+
+  <p>
+    Every governance-relevant action is logged and queryable. Query audit events for a specific
+    time range or event type, export them for a SIEM (CloudWatch, Splunk, Datadog), or generate a
+    compliance report — SOC 2, a CycloneDX AI-BOM, or plain JSON — for your own records.
+  </p>
+
+  <p>
+    This page covers the "what" and "why." For the full walkthrough — querying logs, exporting
+    for compliance, running security audits at the skill and pack level — see
+    <a href="/docs/tutorials/govern">Tutorial: Govern at scale</a>.
+  </p>
+
+  <h2>Automatic Quarantine</h2>
+
+  <p>
+    Every indexed skill is security-scanned, and anything flagged is quarantined automatically —
+    no manual step required to catch it. See <a href="/docs/quarantine">Quarantine</a> for the
+    full mechanism: what triggers it, what happens to a quarantined skill, and how it gets
+    reviewed.
+  </p>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/tutorials/govern">Tutorial: Govern at scale</a> - the full audit/SIEM/compliance walkthrough</li>
+    <li><a href="/docs/quarantine">Quarantine</a> - what happens when a skill is flagged</li>
+    <li><a href="/docs/private-registry">Private Registry</a> - where deprecation happens</li>
+  </ul>
+</DocsLayout>
