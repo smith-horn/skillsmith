@@ -24,6 +24,37 @@ services:
     volumes:
       - .:/app
       - node_modules:/app/node_modules
+      # SMI-5957 correction #5: per-package named volumes, mirroring the root
+      # node_modules volume above -- the `.:/app` bind mount replaces the
+      # image's baked /app with a fresh checkout at container start, which
+      # has NO packages/*/node_modules directories at all (gitignored build
+      # artifacts). Only /app/node_modules was previously protected, so any
+      # package whose dependency needs a NESTED copy (a version conflict
+      # with whatever's hoisted to root -- e.g. @skillsmith/mcp-server pins
+      # zod@3.25.76 while @skillsmith/core pins zod@4.2.1, so npm nests a
+      # separate zod@3.25.76 under packages/mcp-server/node_modules per
+      # package-lock.json) had that nested copy silently erased on every
+      # non-worktree container start, even though `npm ci` at image-build
+      # time installed it correctly. TypeScript/Node module resolution then
+      # fell through past the now-empty nested directory to the
+      # root-hoisted (wrong) version -- confirmed live in CI: a cold,
+      # cache-bypassed build of @skillsmith/mcp-server failed with a real
+      # TS2339 (`.innerType()` does not exist), because the resolved zod was
+      # v4, not v3 -- deterministic every restart, not a race or a broken
+      # test. All 8 workspace packages are covered, not just mcp-server:
+      # npm's hoisting choices can shift as the dependency graph evolves, so
+      # any package could need a nested copy in the future. Each volume
+      # auto-populates from the image's build-time `npm ci` output on first
+      # mount, exactly like the existing root node_modules volume already
+      # does.
+      - cli-node-modules:/app/packages/cli/node_modules
+      - core-node-modules:/app/packages/core/node_modules
+      - doc-retrieval-mcp-node-modules:/app/packages/doc-retrieval-mcp/node_modules
+      - enterprise-node-modules:/app/packages/enterprise/node_modules
+      - mcp-server-node-modules:/app/packages/mcp-server/node_modules
+      - skillsmith-cli-node-modules:/app/packages/skillsmith-cli/node_modules
+      - vscode-extension-node-modules:/app/packages/vscode-extension/node_modules
+      - website-node-modules:/app/packages/website/node_modules
       # SMI-4677: bind host Claude Code memory dir read-only for the
       # doc-retrieval-mcp memory-topic-files adapter. Source path uses
       # ${HOME} (resolved host-side at compose-parse time) +
@@ -75,6 +106,16 @@ services:
     volumes:
       - .:/app
       - node_modules:/app/node_modules
+      # SMI-5957 correction #5: see the `dev` service's volumes block above
+      # for the full rationale -- same fix, same reason, applied to `test`.
+      - cli-node-modules:/app/packages/cli/node_modules
+      - core-node-modules:/app/packages/core/node_modules
+      - doc-retrieval-mcp-node-modules:/app/packages/doc-retrieval-mcp/node_modules
+      - enterprise-node-modules:/app/packages/enterprise/node_modules
+      - mcp-server-node-modules:/app/packages/mcp-server/node_modules
+      - skillsmith-cli-node-modules:/app/packages/skillsmith-cli/node_modules
+      - vscode-extension-node-modules:/app/packages/vscode-extension/node_modules
+      - website-node-modules:/app/packages/website/node_modules
     environment:
       - NODE_ENV=test
     entrypoint: ['/app/docker-entrypoint.sh']
@@ -96,5 +137,32 @@ volumes:
     # Compose conventions. Applies at creation time only -- Compose does not
     # recreate an existing named volume when its label config changes, so this
     # does not disturb any currently-live worktree's volume.
+    labels:
+      app.skillsmith.owned: 'true'
+  # SMI-5957 correction #5: one named volume per workspace package, backing
+  # the per-package node_modules mounts declared on `dev` and `test` above.
+  # Same SMI-5750 ownership-label rationale as the root node_modules volume.
+  cli-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  core-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  doc-retrieval-mcp-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  enterprise-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  mcp-server-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  skillsmith-cli-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  vscode-extension-node-modules:
+    labels:
+      app.skillsmith.owned: 'true'
+  website-node-modules:
     labels:
       app.skillsmith.owned: 'true'
