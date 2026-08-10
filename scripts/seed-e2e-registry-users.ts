@@ -203,14 +203,20 @@ async function main(): Promise<void> {
   //    / dual-membership-403 fetch target). Immutable + idempotent: ignoreDuplicates on the
   //    natural UNIQUE(team_id, skill_id, version) key means a re-run silently no-ops instead
   //    of erroring on 23505. content_hash is trigger-derived (trg_prs_content_hash) — never
-  //    supplied. published_by is intentionally omitted: its DEFAULT auth.uid() resolves to
-  //    NULL on this service-role path (no session), matching the real MCP-publish provenance
-  //    semantics documented on the column itself (20260729000000_private_registry_privilege_hardening.sql).
+  //    supplied. published_by IS supplied explicitly (Team B's own owner, nonentId) rather
+  //    than left to its auth.uid() DEFAULT (which resolves to NULL on this service-role path,
+  //    per 20260729000000_private_registry_privilege_hardening.sql's documented service-role
+  //    provenance semantics) — a live staging-only validation (SMI-5965, 2026-08-10: not yet
+  //    present anywhere in `main`, encountered as schema drift from concurrent in-flight
+  //    SMI-5949 approval-gate work) now rejects a NULL published_by on this table. Supplying
+  //    the real owning user's id here is strictly more accurate fixture provenance regardless
+  //    of that validation's presence, so this is not a workaround specific to it.
   const { error: skillErr } = await admin.from('private_registry_skills').upsert(
     {
       team_id: teamBId,
       skill_id: durableSkillId,
       version: DURABLE_SKILL_VERSION,
+      published_by: nonentId,
       description:
         'SMI-5922 durable E2E fixture — cross-team 404 / non-Enterprise 403 / dual-membership 403 fetch target. Never installed.',
       content: {
