@@ -1,0 +1,117 @@
+# SMI-5964: Skill Indexer Backfill alert-gap watcher.
+#
+# PROBLEM: `indexer-backfill.yml`'s `Run backfill indexer` step has
+# `timeout-minutes: 330` at the JOB level. A job killed by that job-level
+# timeout concludes `cancelled`, not `failure` -- and both of the workflow's
+# existing alert steps (`Report Failure`, `Send Alert on Failure`) are gated
+# `if: failure()`. `cancelled()` and `failure()` are disjoint in GitHub
+# Actions, so a timeout-kill (the single most likely way this workflow dies)
+# produces NO step summary, NO alert-notify call, and NO email -- verified
+# against run `31287555575` (SMI-5964), which lost ~13,488 admitted-but-
+# unwritten skills silently.
+#
+# WHY OUT-OF-JOB, NOT AN IN-JOB `cancelled()` STEP: an in-job step still runs
+# inside the cancellation grace window of the job that just died, still needs
+# `$GITHUB_ENV` values and `Validate Secrets`' outputs to have survived
+# cancellation, and cannot alert at all if cancellation lands before
+# `Validate Secrets` completes. A `workflow_run`-triggered watcher is a
+# SEPARATE run with its OWN fresh `timeout-minutes` and reads secrets/context
+# directly -- its headroom is not a subset of the dying job's exhausted
+# budget. See docs/internal/implementation/smi-5964-backfill-checkpoint-timing.md
+# §3 for the full design + the alternatives this rejects.
+#
+# PRECEDENT: `workflow_run: {workflows: […], types: [completed],
+# branches: [main]}` is already used by smoke-prod.yml, billing-monitor.yml,
+# mirror-mcp-server.yml, e2e-usage-counter.yml -- not a novel mechanism here.
+#
+# SCOPE: `cancelled` only. The existing in-job `if: failure()` steps in
+# indexer-backfill.yml are untouched and keep handling genuine failures with
+# their richer context (http_code, response body). `cancelled` and `failure`
+# are disjoint conclusions, so there is no duplicate-alert path.
+#
+# NO THIRD-PARTY ACTIONS: this workflow needs neither `checkout` nor
+# `setup-node` -- audit-workflow-sha-pin (Check 42 / SMI-4758) has nothing to
+# pin here.
+#
+# ADR-109: this is an infra workflow -- SPARC + plan-review gated before
+# implementation. See the plan doc above for the reviewed design.
+# audit:carveout-pure-js -- no code execution, gh/curl/jq only (ubuntu-latest built-ins)
+
+name: Skill Indexer Backfill Watch
+
+on:
+  workflow_run:
+    workflows: ['Skill Indexer Backfill'] # must match indexer-backfill.yml:39's `name:` exactly
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read # for the /jobs API call that labels the alert (§3c)
+  contents: read
+
+jobs:
+  alert-on-cancelled:
+    name: Alert on cancelled backfill run
+    if: github.event.workflow_run.conclusion == 'cancelled'
+    runs-on: ubuntu-latest
+    # Independent of the dying job's own (330-min) budget -- a fresh run.
+    timeout-minutes: 5
+    steps:
+      - name: Classify and alert
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+          GH_REPOSITORY: ${{ github.repository }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL_PROD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
+        run: |
+          set -eo pipefail
+
+          # ── Classification is a LABEL, never a gate (review finding 5) ──
+          # The alert fires on conclusion=='cancelled', full stop (the `if:`
+          # above). Everything below only shapes the message.
+          NOW=$(date +%s)
+          STARTED=$(date -u -d "$RUN_STARTED_AT" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$RUN_STARTED_AT" +%s)
+          ELAPSED_MIN=$(( (NOW - STARTED) / 60 ))
+
+          # Fail-open: if the API call or the field is unavailable, KIND
+          # degrades to cancelled-unknown but the alert STILL fires -- the
+          # uncertainty is removed from the critical path, not "verified".
+          STEP_CONCLUSION=$(gh api "/repos/$GH_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[].steps[]? | select(.name == "Run backfill indexer") | .conclusion' 2>/dev/null || true)
+
+          if [ -z "$STEP_CONCLUSION" ]; then
+            KIND="cancelled-unknown"
+          elif [ "$STEP_CONCLUSION" != "cancelled" ] && [ "$STEP_CONCLUSION" != "in_progress" ]; then
+            KIND="cancelled-before-backfill" # nothing was in flight
+          elif [ "$ELAPSED_MIN" -ge 325 ]; then
+            KIND="likely-gha-timeout-kill"
+          else
+            KIND="cancelled-check-if-manual"
+          fi
+
+          BODY=$(jq -n \
+            --arg msg "Skill Indexer Backfill run $RUN_ID ended in 'cancelled' after ${ELAPSED_MIN}m (kind: $KIND). Any admitted-but-unwritten skills in the in-flight batch were discarded (Phase-4 upsert and checkpoint are both end-of-dispatch). Re-dispatch with resume_from=latest." \
+            --arg rid "$RUN_ID" --arg url "$RUN_URL" --arg kind "$KIND" \
+            '{type:"indexer_backfill_cancelled", message:$msg, workflow:"Skill Indexer Backfill", runId:$rid, runUrl:$url, kind:$kind}')
+
+          # ── No silent alert failures (§3d) ──
+          HTTP=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/alert-notify" || echo "000")
+
+          {
+            echo "### Backfill run cancelled"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Run | [$RUN_ID]($RUN_URL) |"
+            echo "| Elapsed | ${ELAPSED_MIN} min |"
+            echo "| Kind | $KIND |"
+            echo "| alert-notify HTTP | $HTTP |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          [ "$HTTP" = "200" ] || echo "::warning::alert-notify returned $HTTP -- email may not have been sent"

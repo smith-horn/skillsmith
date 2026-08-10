@@ -63,6 +63,19 @@ export interface BackfillCursor {
    * represent a partial bisection tree, C-2).
    */
   pending_subranges?: PersistedSubrange[]
+  /**
+   * SMI-5964 §1e: consecutive dispatches that stopped at THIS exact crawl
+   * position (`path` + `facet` + `last_page`) without moving the cursor. Reset
+   * to 0 by any dispatch that makes net progress. Purely advisory: absent/lost
+   * reads as 0 (one extra dispatch before escalation), spuriously high
+   * escalates one dispatch early on a unit that is already recorded truncated.
+   * Nothing skips, advances, or persists based on this value alone — it only
+   * chooses between "hold" and "escalate" in `runBackfillFacetCrawl`. Never
+   * enters {@link FacetCrawlState} or {@link cursorToFacetState}'s output — it
+   * is a cursor-only field, round-tripped exclusively through
+   * {@link facetStateToCursor}'s 4th parameter.
+   */
+  no_progress_stalls?: number
 }
 
 /** Map a runtime {@link SizeFacet} to its JSON-safe persisted form (`Infinity` → `null`). */
@@ -160,11 +173,20 @@ export function isFacetCrawlDone(
   return state.facetIndex >= facets.length && state.pendingSubranges.length === 0
 }
 
-/** Serialize the crawl frontier back into a persisted {@link BackfillCursor}. */
+/**
+ * Serialize the crawl frontier back into a persisted {@link BackfillCursor}.
+ *
+ * @param noProgressStalls - SMI-5964 §1e: the `no_progress_stalls` value to
+ *   persist on the returned cursor. Optional and defaults to 0 so the three
+ *   existing call sites in `backfill-checkpoint.statemachine.test.ts` (which
+ *   pass only the first 3 args) stay byte-stable. `runBackfillFacetCrawl` is
+ *   the one production caller that ever passes a non-zero value.
+ */
 export function facetStateToCursor(
   state: FacetCrawlState,
   pathPrefix: string,
-  facets: SizeFacet[] = buildSizeFacets()
+  facets: SizeFacet[] = buildSizeFacets(),
+  noProgressStalls = 0
 ): BackfillCursor {
   const range = currentFacetRange(state, facets)
   return {
@@ -173,6 +195,7 @@ export function facetStateToCursor(
     last_page: state.lastPage,
     facet_index: state.facetIndex,
     pending_subranges: state.pendingSubranges.map(serializeRange),
+    no_progress_stalls: noProgressStalls,
   }
 }
 

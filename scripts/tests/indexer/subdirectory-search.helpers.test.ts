@@ -26,10 +26,23 @@
  * Mock strategy: mirrors backfill-facet-crawl.test.ts / backfill-skill-cap.test.ts
  * -- every I/O boundary stubbed at the module level, SUT imported after the mocks,
  * driven through the public entry `runSubdirectorySearch(..., backfillPlan)`.
+ *
+ * SMI-5964: the intra-page/intra-leaf budget tests (Cases 4-9) and the
+ * no-progress-escalation tests (Cases 10, 15-17) split out to
+ * `subdirectory-search.budget.test.ts` / `subdirectory-search.escalation.test.ts`
+ * when this file grew past the 500-line convention. Pure fixture factories now
+ * live in `scripts/tests/_lib/subdirectory-search-fixtures.ts`, shared by all three.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { RateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
+import {
+  LADDER_SIZE,
+  resetRepoCounter,
+  fullPage,
+  shortPage,
+  makePlan,
+} from '../_lib/subdirectory-search-fixtures.js'
 
 // ---------------------------------------------------------------------------
 // Module-level mocks -- declared before any import of the SUT
@@ -85,62 +98,9 @@ vi.mock('../../indexer/trees-enumerate.ts', async (importOriginal) => {
 })
 
 // SUT imported AFTER mocks so it binds the stubs.
-import { runSubdirectorySearch, type BackfillFacetPlan } from '../../indexer/subdirectory-search.ts'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import { runSubdirectorySearch } from '../../indexer/subdirectory-search.ts'
 
 const noTelemetry: RateLimitTelemetry = {} as RateLimitTelemetry
-const LADDER_SIZE = 9
-const PER_PAGE = 100
-
-let repoCounter = 0
-function makeCodeSearchRepo(overrides: Record<string, unknown> = {}) {
-  repoCounter += 1
-  const owner = `elapsed-owner${repoCounter}`
-  return {
-    owner,
-    name: 'skills-repo',
-    fullName: `${owner}/skills-repo`,
-    description: 'test',
-    url: `https://github.com/${owner}/skills-repo/tree/main/skills/x`,
-    stars: 5,
-    forks: 0,
-    topics: ['claude-code-skill'],
-    updatedAt: new Date().toISOString(),
-    defaultBranch: 'main',
-    installable: false,
-    repoName: 'skills-repo',
-    skillPath: 'skills/x',
-    discoveryPath: 'subdirectory_search:broad',
-    ...overrides,
-  }
-}
-
-/** A FULL page (repos.length === perPage): total <= cap so no saturation/bisect,
- *  but the page is NOT short, so the range does NOT exhaust and keeps paginating. */
-function fullPage() {
-  const repos = Array.from({ length: PER_PAGE }, () => makeCodeSearchRepo())
-  return { repos, total: 500, retries: 0, incomplete_results: false }
-}
-
-/** A single-repo short page: total under the cap, repos.length < perPage, so the
- *  range exhausts in one page (clean advance). */
-function shortPage() {
-  return { repos: [makeCodeSearchRepo()], total: 5, retries: 0, incomplete_results: false }
-}
-
-function makePlan(overrides: Partial<BackfillFacetPlan> = {}): BackfillFacetPlan {
-  return {
-    startCursor: null,
-    pathPrefix: undefined,
-    perPage: PER_PAGE,
-    maxPagesPerRange: 20,
-    maxRangesPerDispatch: 100,
-    ...overrides,
-  }
-}
 
 beforeEach(() => {
   // F-3: fake timers make Date.now() deterministic. Established at a fixed epoch
@@ -148,7 +108,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-07-01T00:00:00Z'))
 
-  repoCounter = 0
+  resetRepoCounter()
   mockSearchCode.mockReset()
   mockFetchRepoLicense.mockReset()
   mockCheckSkillMdExists.mockReset()
@@ -178,10 +138,19 @@ describe('runSubdirectorySearch -- SMI-5448 elapsed-time budget guard', () => {
   it('Case 1: mid-range trip -- cursor holds at lastPage, facet not advanced, done=false', async () => {
     const budgetMs = 100
     // Facet 0 returns FULL pages (never short-exhausts). The code-search mock
-    // advances the fake clock past the budget as page 1 is fetched, so after
-    // page 1 is processed (state.lastPage = 1) the mid-range elapsed check trips:
-    // timedOut = true, break, NO advanceFacet. Every call advances 1000ms so the
-    // budget is already crossed on the first inter-page check.
+    // advances the fake clock past the budget as page 1 is FETCHED (before
+    // `processSearchResults` for that page is ever called), so by the time
+    // page 1's per-repo processing begins the budget is already exceeded.
+    //
+    // SMI-5964: `processSearchResults` now checks the deadline at the TOP of
+    // its own per-repo loop (§1b), which is reached BEFORE the pre-existing
+    // SMI-5448 mid-range check (positioned after `state.lastPage = page`). So
+    // this scenario is now caught by the FINER-grained intra-page check,
+    // before page 1 processes a single repo -- catching the crossing sooner
+    // than the pre-5964 per-page granularity did (the whole point of §1b).
+    // `state.lastPage` therefore holds at its PRIOR value (0, page 1 never
+    // completed) rather than 1. Every call advances 1000ms so the budget is
+    // already crossed on the very first check.
     mockSearchCode.mockImplementation(async () => {
       vi.advanceTimersByTime(1000) // push Date.now() well past the 100ms budget
       return fullPage()
@@ -205,9 +174,11 @@ describe('runSubdirectorySearch -- SMI-5448 elapsed-time budget guard', () => {
     // Cursor NOT advanced: still on the first facet (index 0, sentinel not 'done').
     expect(backfill.cursor.facet_index).toBe(0)
     expect(backfill.cursor.facet).not.toBe('done')
-    // Cursor holds at the last fully-processed page (page 1), so resume re-enters
-    // at lastPage+1 = page 2 -- no gap, no lost work.
-    expect(backfill.cursor.last_page).toBe(1)
+    // SMI-5964: cursor holds at page 0 (no page fully processed) -- the
+    // intra-page check caught the already-crossed budget before page 1's
+    // per-repo processing started. Resume re-enters at page 1 -- no gap, no
+    // lost work (page 1 was never partially admitted either).
+    expect(backfill.cursor.last_page).toBe(0)
     // The bisection frontier is untouched (range was not bisected).
     expect(backfill.cursor.pending_subranges).toEqual([])
   })
@@ -215,10 +186,21 @@ describe('runSubdirectorySearch -- SMI-5448 elapsed-time budget guard', () => {
   it('Case 2: range-boundary trip across multiple small ranges -> clean advanced cursor', async () => {
     const budgetMs = 100
     // Every facet exhausts in ONE short page (clean advance). The clock advances
-    // per page so the cumulative elapsed crosses the budget at a RANGE BOUNDARY
-    // (after advanceFacet), taking the range-boundary break, not the mid-range one.
+    // per page so the cumulative elapsed crosses the budget while FETCHING the
+    // next range's page 1.
+    //
+    // SMI-5964: because the crossing happens inside the code-search mock (i.e.
+    // before that range's `processSearchResults` call), the intra-page check
+    // (§1b) now intercepts it at the START of that range -- before it can
+    // reach the pre-existing range-boundary check (which sits even later,
+    // after that range's own post-page branch). So the range this trips on
+    // does NOT get a chance to advance; only the ranges BEFORE it do. This is
+    // the same "caught sooner" property as Case 1 -- the range-boundary check
+    // remains reachable in production for a genuine cumulative-but-no-single-
+    // page-slow crossing (real wall-clock time, not an atomic fake-timer jump
+    // inside one mock call).
     mockSearchCode.mockImplementation(async () => {
-      vi.advanceTimersByTime(60) // 60ms/range -> budget (100ms) crossed after range 2
+      vi.advanceTimersByTime(60) // 60ms/range -> budget (100ms) crossed fetching range 2
       return shortPage()
     })
 
@@ -236,9 +218,12 @@ describe('runSubdirectorySearch -- SMI-5448 elapsed-time budget guard', () => {
     expect(backfill.ranges_crawled).toBeLessThan(LADDER_SIZE)
     expect(backfill.ranges_crawled).toBeGreaterThanOrEqual(2)
     expect(backfill.done).toBe(false)
-    // Cursor is ADVANCED (clean boundary): facet_index equals the number of fully
-    // completed ranges, and last_page reset to 0 for the next (un-entered) facet.
-    expect(backfill.cursor.facet_index).toBe(backfill.ranges_crawled)
+    // SMI-5964: the LAST range attempted is the one whose page-1 fetch crossed
+    // the budget -- it is intercepted intra-page (§1b) and does NOT advance.
+    // Every range BEFORE it completed cleanly and did advance, so facet_index
+    // is one less than ranges_crawled (the attempted-but-stopped range still
+    // counts toward ranges_crawled). last_page reset to 0 for that stopped range.
+    expect(backfill.cursor.facet_index).toBe(backfill.ranges_crawled - 1)
     expect(backfill.cursor.facet).not.toBe('done')
     expect(backfill.cursor.last_page).toBe(0)
     expect(backfill.cursor.pending_subranges).toEqual([])
@@ -267,7 +252,7 @@ describe('runSubdirectorySearch -- SMI-5448 elapsed-time budget guard', () => {
     expect(zeroBackfill.cursor.facet).toBe('done')
 
     // Regression parity: a plan with the field OMITTED reaches the same terminal.
-    repoCounter = 0
+    resetRepoCounter()
     mockSearchCode.mockImplementation(async () => {
       vi.advanceTimersByTime(10_000)
       return shortPage()

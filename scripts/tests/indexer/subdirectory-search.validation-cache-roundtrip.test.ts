@@ -133,7 +133,11 @@ describe('SMI-5930: validationCache round-trip through processSearchResults (rea
 
     const validationCache = new Map<string, SkillMdValidation>()
     const repos: GitHubRepository[] = []
-    await processSearchResults(
+    // SMI-5964 Case 8: `budget` omitted entirely -- the exact shape the two
+    // cron call sites (subdirectory-search.ts:238, :292) use. Must return
+    // { stopped: false } and consume every input repo, proving the cron path
+    // is byte-identical to pre-5964 behavior.
+    const outcome = await processSearchResults(
       [makeResultRepo('GeoloeG-IsT', 'pitch', null)],
       new Set(),
       validationCache,
@@ -152,6 +156,7 @@ describe('SMI-5930: validationCache round-trip through processSearchResults (rea
       new Map()
     )
 
+    expect(outcome).toEqual({ stopped: false })
     expect(repos).toHaveLength(2)
     const names = repos.map((repo) => {
       const validation = getCachedValidation(
