@@ -1,12 +1,22 @@
 ---
 /**
- * Product / Surface Comparison Page
+ * Product Page — Lifecycle Governance Positioning
  *
- * SMI-4571: Public comparison of MCP server, CLI, and VS Code extension —
- * the three end-user surfaces that all share the same local skill database.
- * Wave 2 of SMI-4569 (parent epic).
+ * SMI-5966: rebuilt around the product's actual thesis — Skillsmith is the
+ * lifecycle-governance layer for agent skills (author, version, deprecate,
+ * govern), not a comparison of three unrelated client tools. CLI, MCP
+ * server, VS Code extension, and the website dashboard are four access
+ * surfaces onto one lifecycle; the private registry and governance
+ * features are what make that lifecycle real. Positioning source:
+ * docs/internal/product/02-positioning-messaging.md. Supersedes SMI-4571's
+ * surface-comparison-only framing; the comparison matrix below is retained
+ * and expanded, not removed.
  *
- * Marketing route. Uses BaseLayout to match /pricing, /index.
+ * Every capability below is verified shipped as of this page's authoring —
+ * see the governance retro in docs/internal/retros/ for the underlying
+ * code-level audit. Nothing here describes a stub or roadmap item as live.
+ *
+ * Marketing route. Uses BaseLayout to match /pricing, /docs, /index.
  */
 
 export const prerender = false
@@ -38,6 +48,14 @@ const surfaces = [
     cta: 'Get on the Marketplace',
     href: 'https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode',
     external: true,
+  },
+  {
+    id: 'website',
+    title: 'Website dashboard',
+    pkg: 'account.skillsmith.app',
+    pickIf: 'Managing billing, seats, team members, or reviewing your cross-device skill inventory',
+    cta: 'Go to your account',
+    href: '/account',
   },
 ]
 
@@ -98,12 +116,6 @@ const matrix: CapabilityRow[] = [
     vscode: 'no',
   },
   {
-    capability: 'Publish to registry (author publish)',
-    mcp: 'no',
-    cli: 'yes',
-    vscode: 'no',
-  },
-  {
     capability: 'CI-safe exit codes + JSON output',
     mcp: 'no',
     cli: 'yes',
@@ -122,16 +134,116 @@ const matrix: CapabilityRow[] = [
     vscode: 'no',
   },
   {
-    capability: 'Team workspaces / audit export / SIEM / RBAC',
-    mcp: 'yes',
-    cli: 'no',
-    vscode: 'no',
-  },
-  {
     capability: 'Single API key works across all three',
     mcp: 'yes',
     cli: 'yes',
     vscode: 'yes',
+  },
+]
+
+interface LifecycleRow {
+  capability: string
+  description: string
+  mcp: boolean
+  cli: boolean
+  website: boolean
+  tier: string
+}
+
+const lifecycleMatrix: LifecycleRow[] = [
+  {
+    capability: 'Private registry publish',
+    description: 'Publish a versioned skill to your team-scoped, RLS-enforced hosted registry.',
+    mcp: true,
+    cli: false,
+    website: false,
+    tier: 'Enterprise',
+  },
+  {
+    capability: 'Deprecate / restore a version',
+    description:
+      'Mark a registry version stale, or undo it — the version stays, it just stops being installed by default.',
+    mcp: true,
+    cli: false,
+    website: false,
+    tier: 'Enterprise',
+  },
+  {
+    capability: 'Namespace-collision audit + guided rename',
+    description:
+      'Find naming collisions across your local skills/commands/agents and apply suggested fixes, with undo.',
+    mcp: true,
+    cli: true,
+    website: false,
+    tier: 'Every tier',
+  },
+  {
+    capability: 'CycloneDX AI-BOM export',
+    description:
+      'Export a CycloneDX 1.5 AI/ML bill-of-materials of your installed skills, with dependency graph, for compliance evidence.',
+    mcp: true,
+    cli: false,
+    website: false,
+    tier: 'Team+',
+  },
+  {
+    capability: 'Compliance reports',
+    description:
+      'Generate SOC 2-oriented, JSON, or CycloneDX reports from your local skill inventory and audit trail.',
+    mcp: true,
+    cli: false,
+    website: false,
+    tier: 'Team+',
+  },
+  {
+    capability: 'Security scoring + quarantine',
+    description:
+      'Every indexed skill is scanned and scored; flagged skills are quarantined out of search automatically.',
+    mcp: true,
+    cli: true,
+    website: false,
+    tier: 'Every tier',
+  },
+  {
+    capability: 'Audit log query + export',
+    description: 'Query and export the persistent trail of security and registry-lifecycle events.',
+    mcp: true,
+    cli: false,
+    website: false,
+    tier: 'Enterprise',
+  },
+  {
+    capability: 'SIEM export',
+    description: 'Export audit events as JSON for ingestion into your SIEM pipeline.',
+    mcp: true,
+    cli: false,
+    website: false,
+    tier: 'Enterprise',
+  },
+  {
+    capability: 'Team workspaces',
+    description: 'Shared, RLS-secured spaces for your team to organize and share skills.',
+    mcp: true,
+    cli: false,
+    website: true,
+    tier: 'Team+',
+  },
+  {
+    capability: 'Team member roles + invites',
+    description: 'Invite teammates and manage owner/admin/member roles.',
+    mcp: false,
+    cli: false,
+    website: true,
+    tier: 'Team+',
+  },
+  {
+    capability: 'Cross-device skill inventory',
+    description:
+      'Opt-in, read-only view of which skills are installed across your machines and harnesses.',
+    mcp: false,
+    cli: false,
+    website: true,
+    tier: 'Every tier',
   },
 ]
 
@@ -147,24 +259,26 @@ function cellClass(value: string): string {
   if (value === 'partial') return 'cell-partial'
   return 'cell-conditional'
 }
+
+function boolCellClass(value: boolean): string {
+  return value ? 'cell-yes' : 'cell-no'
+}
 ---
 
 <BaseLayout
   title="Product | Skillsmith"
-  description="MCP for any agent. CLI for the terminal. VS Code for the editor. One Skillsmith registry under all three — pick the surface that fits your workflow."
+  description="Skillsmith is the lifecycle-governance layer for agent skills — author, version, deprecate, and govern skills your team owns, from the CLI, MCP, VS Code, or your dashboard."
   activePath="/product"
 >
   <section class="product-hero">
-    <!-- SMI-4839: SDK-for-teams reframe — surfaces are lifecycle access points, not discovery only. -->
-    <p class="product-eyebrow">Three surfaces for your team's skill lifecycle</p>
-    <h1>MCP for any agent. CLI for the terminal. VS Code for the editor.</h1>
+    <p class="product-eyebrow">The lifecycle layer for agent skills</p>
+    <h1>Author, version, deprecate, and govern the skills your team owns</h1>
     <p class="product-subtitle">
-      One local skill database. One API key. Three surfaces over the same registry — publish,
-      version, and deprecate skills from wherever your team already works. (Throughout this page, <em
-        >MCP</em
-      >
-      means the Model Context Protocol — the standard agents like Claude Code, Cursor, Copilot, Codex,
-      and Windsurf use to talk to external tools.)
+      Skills spread across teams faster than anyone can govern them — forked, copy-pasted, and
+      scattered across gists and shared drives with no source of truth, no audit trail, and no way
+      to retire what's gone stale. Skillsmith gives them a lifecycle instead: a private, versioned
+      registry your team actually owns, reachable from wherever your team already works — the CLI,
+      the MCP server, VS Code, or your account dashboard.
     </p>
     <div class="product-hero-ctas">
       {
@@ -177,12 +291,46 @@ function cellClass(value: string): string {
     </div>
   </section>
 
+  <section class="product-lifecycle">
+    <h2>What makes the lifecycle real</h2>
+    <p class="product-lifecycle-caption">
+      A registry is only as good as what backs it. Here's what's actually shipped today — nothing
+      below is a roadmap item.
+    </p>
+    <div class="product-lifecycle-grid">
+      <article class="product-lifecycle-card">
+        <h3>Private registry <span class="tier-badge">Enterprise</span></h3>
+        <p>
+          A real, hosted, team-scoped registry — versioned, RLS-enforced at the database level,
+          shared across every teammate. This is where skills your org owns actually live, not a
+          folder someone forked.
+        </p>
+      </article>
+      <article class="product-lifecycle-card">
+        <h3>Private skills <span class="tier-badge">Team</span></h3>
+        <p>
+          Mark a skill private on your own machine today, hidden from public search. Cross-teammate
+          sync into a shared team namespace is on the roadmap
+          <span class="roadmap-marker" title="Not yet shipped">🕐</span> — for a fully shared team registry
+          today, see Enterprise above.
+        </p>
+      </article>
+      <article class="product-lifecycle-card">
+        <h3>Governance, end to end</h3>
+        <p>
+          Deprecate a version without deleting it. Query and export an audit trail. Generate
+          compliance reports. Every indexed skill is security-scanned and quarantined automatically
+          if flagged. Full breakdown below.
+        </p>
+      </article>
+    </div>
+  </section>
+
   <section class="product-matrix">
-    <h2>Capability comparison</h2>
+    <h2>One lifecycle, four surfaces</h2>
     <p class="product-matrix-caption">
       Capabilities marked <em>via MCP</em> for VS Code mean the extension actively spawns the MCP server
-      to deliver them — not every tool the MCP server happens to expose. Team workspaces, audit export,
-      SIEM, and RBAC are MCP-only and have no VS Code UI affordance today.
+      to deliver them — not every tool the MCP server happens to expose.
     </p>
     <div class="product-matrix-scroll">
       <table class="product-matrix-table">
@@ -234,6 +382,52 @@ function cellClass(value: string): string {
     </p>
   </section>
 
+  <section class="product-matrix product-matrix-lifecycle">
+    <h2>Lifecycle &amp; governance capabilities</h2>
+    <p class="product-matrix-caption">
+      Registry, audit, and compliance capabilities, and which surface delivers each one today. Tier
+      column matches <a href="/pricing">pricing</a> exactly.
+    </p>
+    <div class="product-matrix-scroll">
+      <table class="product-matrix-table">
+        <thead>
+          <tr>
+            <th scope="col" class="capability-col">Capability</th>
+            <th scope="col">MCP</th>
+            <th scope="col">CLI</th>
+            <th scope="col">Website</th>
+            <th scope="col">Tier</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            lifecycleMatrix.map((row) => (
+              <tr>
+                <th scope="row" class="capability-col">
+                  {row.capability}
+                  <span class="lifecycle-row-desc">{row.description}</span>
+                </th>
+                <td class={boolCellClass(row.mcp)}>
+                  <span class="visually-hidden">{row.mcp ? 'yes' : 'Not supported'}</span>
+                  <span aria-hidden="true">{row.mcp ? '✓' : ''}</span>
+                </td>
+                <td class={boolCellClass(row.cli)}>
+                  <span class="visually-hidden">{row.cli ? 'yes' : 'Not supported'}</span>
+                  <span aria-hidden="true">{row.cli ? '✓' : ''}</span>
+                </td>
+                <td class={boolCellClass(row.website)}>
+                  <span class="visually-hidden">{row.website ? 'yes' : 'Not supported'}</span>
+                  <span aria-hidden="true">{row.website ? '✓' : ''}</span>
+                </td>
+                <td class="cell-tier">{row.tier}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="product-cards">
     {
       surfaces.map((s) => (
@@ -260,11 +454,12 @@ function cellClass(value: string): string {
   <section class="product-deep-dive">
     <blockquote>
       <p>
-        All three surfaces read the same local SQLite database at
+        All three client surfaces read the same local SQLite database at
         <code>~/.skillsmith/skills.db</code>. Search runs against an FTS5 full-text index (SQLite's
         built-in keyword search) by default; semantic search is opt-in and uses local ONNX
         embeddings (an open ML model format that runs on CPU, no API call) — your queries never
-        leave your machine.
+        leave your machine. The private registry is a separate, hosted layer above that: a
+        Supabase-backed store with row-level security, not a copy of the local database.
       </p>
     </blockquote>
     <a href="/blog/inside-the-local-skill-database" class="product-deep-dive-cta">
@@ -327,6 +522,61 @@ function cellClass(value: string): string {
     transform: translateY(-2px);
   }
 
+  .product-lifecycle {
+    max-width: 64rem;
+    margin: 3rem auto;
+    padding: 0 1.5rem;
+  }
+  .product-lifecycle h2 {
+    text-align: center;
+    margin-bottom: 0.5rem;
+  }
+  .product-lifecycle-caption {
+    text-align: center;
+    color: var(--color-text-muted, #b8bcc8);
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+  }
+  .product-lifecycle-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 1.5rem;
+  }
+  .product-lifecycle-card {
+    background: var(--color-surface-elevated, #1a1c22);
+    border: 1px solid var(--color-border, #2a2c33);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+  }
+  .product-lifecycle-card h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .product-lifecycle-card p {
+    margin: 0;
+    line-height: 1.6;
+    color: var(--color-text-muted, #b8bcc8);
+    font-size: 0.95rem;
+  }
+  .tier-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(255, 107, 91, 0.15);
+    color: var(--color-coral, #ff6b5b);
+  }
+  .roadmap-marker {
+    font-size: 0.85em;
+  }
+
   .product-matrix {
     max-width: 64rem;
     margin: 3rem auto;
@@ -341,6 +591,14 @@ function cellClass(value: string): string {
     color: var(--color-text-muted, #b8bcc8);
     margin-bottom: 1.5rem;
     font-size: 0.95rem;
+  }
+  .product-matrix-caption a {
+    color: var(--color-coral, #ff6b5b);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .product-matrix-caption a:hover {
+    text-decoration: underline;
   }
   .product-matrix-scroll {
     overflow-x: auto;
@@ -392,6 +650,21 @@ function cellClass(value: string): string {
     font-size: 0.85rem;
     font-weight: 500;
     font-style: italic;
+  }
+  .product-matrix-table .cell-tier {
+    text-align: center;
+    font-weight: 500;
+    font-size: 0.8rem;
+    color: var(--color-text-muted, #b8bcc8);
+    text-transform: none;
+  }
+  .lifecycle-row-desc {
+    display: block;
+    font-weight: 400;
+    font-size: 0.82rem;
+    color: var(--color-text-muted, #b8bcc8);
+    margin-top: 0.25rem;
+    line-height: 1.4;
   }
   .product-matrix-decision {
     text-align: center;
