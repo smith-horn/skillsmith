@@ -31,7 +31,14 @@
  *     `smi5879-simulate-full.ts`'s own module doc), and both are designed to
  *     run concurrently with the live 00:00/03:00 crons over a multi-day
  *     window (plan §3a), so gating them on the same freeze mechanism they are
- *     explicitly meant to coexist with would be exactly as circular. Pinned
+ *     explicitly meant to coexist with would be exactly as circular. Item 4's
+ *     `smi5879-gate-check.ts` is the same shape for the same reason again: a
+ *     pure READER of the census/simulator reports and the DB's own
+ *     `smi5879_run`/`smi5879_snapshot_pre` state (plus, transiently, its own
+ *     self-invoked structural-closure-test subprocess) — it never writes to
+ *     `skills`, and it is itself the final merge-gate evaluator the freeze
+ *     window's own runbook invokes at T-3d/T-0, so gating it on the same
+ *     freeze mechanism it evaluates would be circular in the same way. Pinned
  *     as its own explicit set (Shape 1's "exactly 3" assertion below is
  *     `PINNED_SHAPE1 ∪ PINNED_SHAPE4_UNGATED_GUARD`) rather than silently
  *     absorbed, so a FUTURE guard-shaped file that SHOULD be gated cannot
@@ -65,6 +72,7 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
   'smi5879-census.ts',
   'smi5879-simulate-full.ts',
   'smi5879-simulate-preflight-estimate.ts',
+  'smi5879-gate-check.ts',
 ].sort()
 
 const PINNED_SHEBANG_FILES = [
@@ -100,7 +108,7 @@ describe('Shape 1 — guarded direct-entry census', () => {
 })
 
 describe('Shape 4 — guarded direct entry that is deliberately NOT an indexer writer', () => {
-  it('is EXACTLY the pinned set {smi5879-census.ts, smi5879-simulate-full.ts, smi5879-simulate-preflight-estimate.ts}', () => {
+  it('is EXACTLY the pinned set {smi5879-census.ts, smi5879-simulate-full.ts, smi5879-simulate-preflight-estimate.ts, smi5879-gate-check.ts}', () => {
     const files = listIndexerSourceFiles()
     const shape4Files = files
       .filter(

@@ -2822,8 +2822,13 @@ console.log(`\n${BOLD}40. Fixture Git Env Sanitisation (SMI-4693)${RESET}`)
   // Match relative imports of `_lib/git-fixture-env` from any depth. The path
   // may include intermediate segments (e.g. `../../../../scripts/tests/_lib/…`
   // from packages/doc-retrieval-mcp/src/adapters/), so we accept any
-  // relative-prefixed string ending in `_lib/git-fixture-env(.js)?`.
-  const HAS_HELPER_IMPORT = /from ['"]\.\.?\/[^'"]*_lib\/git-fixture-env(?:\.js)?['"]/
+  // relative-prefixed string ending in `_lib/git-fixture-env(.js|.ts)?` — a
+  // bare specifier (no extension) is the historical norm, but an explicit
+  // `.ts` suffix is also an established repo-wide import style (86 files
+  // under scripts/tests/ alone), confirmed missing here when it produced a
+  // false positive on scripts/tests/indexer/smi5879-gate-check.dispositions.test.ts,
+  // SMI-5879 Wave 3 item 4.
+  const HAS_HELPER_IMPORT = /from ['"]\.\.?\/[^'"]*_lib\/git-fixture-env(?:\.(?:js|ts))?['"]/
 
   // SMI-4693-EXEMPT escape hatch: a `// SMI-4693-EXEMPT: <reason>` comment
   // anywhere in the file marks an intentional opt-out. Use sparingly; document
