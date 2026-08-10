@@ -14,8 +14,11 @@
  * below; keep in sync with scripts/seed-e2e-registry-users.ts if either changes).
  *
  * Round-trip assertions (plan doc "Round-trip assertions" table):
- *   1. Team A admin publishes (real user-JWT insert) -> row lands, content_hash
- *      server-derived.
+ *   1. Team A publishes via the real `private_registry_publish` handler (license-key
+ *      team resolution, service-role insert) -> row lands, content_hash server-derived.
+ *      A preceding sub-assertion (row1-publish-requires-license) confirms the same
+ *      handler refuses without a license key, rather than silently falling back to the
+ *      stub service (SMI-5969).
  *   2. Team A admin installs via the REAL `skillsmith registry install` CLI
  *      subprocess — the actual published bin entrypoint (`packages/cli/dist/cli.js`,
  *      esbuild bundle, NOT the parallel unbundled `dist/src/index.js` tsc output that
@@ -200,30 +203,111 @@ async function main(): Promise<void> {
   const nonentSession = await signIn(stagingUrl, anonKey, emailFor(nonentUserId), password)
   const dualSession = await signIn(stagingUrl, anonKey, emailFor(dualUserId), password)
 
-  // ---- Row 1: publish via admin's own user-JWT insert -----------------------
-  const adminJwtClient = createClient(stagingUrl, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${adminSession.accessToken}` } },
-  })
-  const insertResp = await adminJwtClient
-    .from('private_registry_skills')
-    .insert({
-      team_id: teamAId,
-      skill_id: publishedSkillId,
-      version: '1.0.0',
-      description: 'SMI-5922 round-trip fixture',
-      content: publishedContent,
-    })
-    .select('id, content_hash')
-    .single()
-  const contentHashOk =
-    typeof insertResp.data?.content_hash === 'string' &&
-    /^[0-9a-f]{64}$/.test(insertResp.data.content_hash)
-  record(
-    'row1-publish',
-    !insertResp.error && !!insertResp.data && contentHashOk,
-    insertResp.error?.message ?? `content_hash=${insertResp.data?.content_hash}`
-  )
+  // ---- Row 1: publish via the real private_registry_publish path ------------
+  // SMI-5969: previously did a raw insert via the admin actor's own user JWT,
+  // which the SMI-5949 approval-gate + privilege-hardening RLS now correctly
+  // rejects -- real customers never publish that way. This calls the exact
+  // handler `private_registry_publish` dispatches to
+  // (registry-tools.ts's executePrivateRegistryPublish), via the same dist/
+  // import pattern e2e-registry-roundtrip.mcp-live.ts already uses for its own
+  // MCP-internal coverage. This exercises the shipped handler, license-key
+  // team resolution, live service, service-role insert, trigger, and audit
+  // path -- it does NOT exercise the MCP protocol transport or the
+  // dispatcher's own input-schema/license/quota middleware (tool-dispatch.ts).
+  // Accepted gap for this row specifically: the input here is fixed and
+  // valid, and this suite already runs compiled internals in-process
+  // elsewhere. See docs/internal/implementation/smi-5969-e2e-real-publish-path.md.
+  let publishMod: {
+    executePrivateRegistryPublish: (
+      input: {
+        skillId: string
+        version: string
+        content: Record<string, string>
+        description?: string
+      },
+      context: unknown
+    ) => Promise<{ success: boolean; skill?: { skillId: string; version: string }; error?: string }>
+  }
+  let contextMod: {
+    createToolContext: (options?: { dbPath?: string }) => unknown
+    closeToolContext: (context: unknown) => Promise<void>
+  }
+  try {
+    publishMod =
+      (await import('../packages/mcp-server/dist/src/tools/registry-tools.js')) as typeof publishMod
+    contextMod = (await import('../packages/mcp-server/dist/src/context.js')) as typeof contextMod
+  } catch (err) {
+    console.error(
+      `[e2e-registry] FATAL: dist import for the real publish path failed: ${String(err)}`
+    )
+    record('row1-publish-requires-license', false, `dist import failed: ${String(err)}`)
+    record('row1-publish', false, `dist import failed: ${String(err)}`)
+    process.exit(1)
+  }
+
+  const publishInput = {
+    skillId: publishedSkillId,
+    version: '1.0.0',
+    description: 'SMI-5922 round-trip fixture',
+    content: publishedContent,
+  }
+  // SKILLSMITH_LICENSE_KEY is a process-global -- save/restore around both
+  // calls (in a finally) so it can never leak into a later row or a later run
+  // in this same process. Delete rather than reassign `undefined`: Node
+  // coerces `process.env.X = undefined` to the literal string "undefined",
+  // which readLicenseKey() would then treat as a non-empty (truthy) key.
+  const origLicenseKey = process.env.SKILLSMITH_LICENSE_KEY
+  const toolContext = contextMod.createToolContext({ dbPath: ':memory:' })
+  try {
+    // 1a. Without a license key, the real handler must refuse -- proves this
+    // run isn't silently falling back to the stub service if misconfigured.
+    delete process.env.SKILLSMITH_LICENSE_KEY
+    const noAuthResult = await publishMod.executePrivateRegistryPublish(publishInput, toolContext)
+    record(
+      'row1-publish-requires-license',
+      noAuthResult.success === false &&
+        (noAuthResult.error ?? '').includes('SKILLSMITH_LICENSE_KEY is required'),
+      noAuthResult.error ?? 'unexpectedly succeeded without a license key'
+    )
+
+    // 1b. The real publish, authenticated the way a real customer would be --
+    // via their team's license key, resolved server-side to a team_id.
+    process.env.SKILLSMITH_LICENSE_KEY = teamALicenseKey
+    const publishResult = await publishMod.executePrivateRegistryPublish(publishInput, toolContext)
+    const publishOk =
+      publishResult.success === true &&
+      publishResult.skill?.skillId === publishedSkillId &&
+      publishResult.skill?.version === '1.0.0'
+
+    // content_hash is deliberately not part of the tool's public return shape
+    // (RegistrySkill / mapRow() omit it) -- verify the server-side trigger
+    // computed a real hash with a read-only service-role check. Observation
+    // only, not part of the action under test.
+    let contentHashOk = false
+    let contentHashDetail: string = publishResult.error ?? 'publish did not succeed'
+    if (publishOk) {
+      const hashResp = await admin
+        .from('private_registry_skills')
+        .select('content_hash')
+        .eq('team_id', teamAId)
+        .eq('skill_id', publishedSkillId)
+        .eq('version', '1.0.0')
+        .single()
+      contentHashOk =
+        typeof hashResp.data?.content_hash === 'string' &&
+        /^[0-9a-f]{64}$/.test(hashResp.data.content_hash)
+      contentHashDetail =
+        hashResp.error?.message ?? `content_hash=${String(hashResp.data?.content_hash)}`
+    }
+    record('row1-publish', publishOk && contentHashOk, contentHashDetail)
+  } finally {
+    if (origLicenseKey === undefined) {
+      delete process.env.SKILLSMITH_LICENSE_KEY
+    } else {
+      process.env.SKILLSMITH_LICENSE_KEY = origLicenseKey
+    }
+    await contextMod.closeToolContext(toolContext)
+  }
 
   // ---- Row 2: real CLI install as admin --------------------------------------
   const cliAdmin = await runCliInstall('admin', adminSession, stagingUrl, publishedSkillId)
