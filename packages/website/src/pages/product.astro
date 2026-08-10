@@ -263,6 +263,17 @@ function cellClass(value: string): string {
 function boolCellClass(value: boolean): string {
   return value ? 'cell-yes' : 'cell-no'
 }
+
+// Heroicons-outline paths, matching the site's existing hand-copied-SVG convention
+// (FeatureCard.astro's defaultIcons, Badge.astro). The governance path is the exact
+// `security` glyph already defined in FeatureCard.astro:26-27 -- reused, not reinvented.
+const lifecycleIcons = {
+  registry:
+    'M4 7c0-1.1 3.6-2 8-2s8 .9 8 2-3.6 2-8 2-8-.9-8-2zm0 0v10c0 1.1 3.6 2 8 2s8-.9 8-2V7M4 12c0 1.1 3.6 2 8 2s8-.9 8-2',
+  lock: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
+  governance:
+    'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+}
 ---
 
 <BaseLayout
@@ -272,13 +283,11 @@ function boolCellClass(value: boolean): string {
 >
   <section class="product-hero">
     <p class="product-eyebrow">The lifecycle layer for agent skills</p>
-    <h1>Author, version, deprecate, and govern the skills your team owns</h1>
+    <h1>Author, version, deprecate, and govern <strong>the skills your team owns</strong></h1>
     <p class="product-subtitle">
       Skills spread across teams faster than anyone can govern them — forked, copy-pasted, and
-      scattered across gists and shared drives with no source of truth, no audit trail, and no way
-      to retire what's gone stale. Skillsmith gives them a lifecycle instead: a private, versioned
-      registry your team actually owns, reachable from wherever your team already works — the CLI,
-      the MCP server, VS Code, or your account dashboard.
+      scattered across gists with no source of truth and no audit trail. Skillsmith gives them a
+      lifecycle instead: a private, versioned registry your team actually owns.
     </p>
     <div class="product-hero-ctas">
       {
@@ -294,28 +303,57 @@ function boolCellClass(value: boolean): string {
   <section class="product-lifecycle">
     <h2>What makes the lifecycle real</h2>
     <p class="product-lifecycle-caption">
-      A registry is only as good as what backs it. Here's what's actually shipped today — nothing
-      below is a roadmap item.
+      You've felt this: someone forks a skill, tweaks it, and a month later nobody's sure which copy
+      is the real one. A registry is only as good as what backs it — here's what's actually shipped
+      today, not roadmap.
     </p>
     <div class="product-lifecycle-grid">
       <article class="product-lifecycle-card">
+        <svg
+          class="lifecycle-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" d={lifecycleIcons.registry}></path>
+        </svg>
         <h3>Private registry <span class="tier-badge">Enterprise</span></h3>
         <p>
-          A real, hosted, team-scoped registry — versioned, RLS-enforced at the database level,
-          shared across every teammate. This is where skills your org owns actually live, not a
-          folder someone forked.
+          A real, hosted registry your whole team shares — versioned and access-controlled. This is
+          where skills your org owns actually live, not a folder someone forked.
         </p>
       </article>
       <article class="product-lifecycle-card">
+        <svg
+          class="lifecycle-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" d={lifecycleIcons.lock}></path>
+        </svg>
         <h3>Private skills <span class="tier-badge">Team</span></h3>
         <p>
-          Mark a skill private on your own machine today, hidden from public search. Cross-teammate
-          sync into a shared team namespace is on the roadmap
-          <span class="roadmap-marker" title="Not yet shipped">🕐</span> — for a fully shared team registry
-          today, see Enterprise above.
+          Mark a skill private on your machine today, hidden from public search. Team-wide sync is
+          on the roadmap <span class="roadmap-marker" title="Not yet shipped">🕐</span> — for a fully
+          shared registry now, see Enterprise.
         </p>
       </article>
       <article class="product-lifecycle-card">
+        <svg
+          class="lifecycle-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" d={lifecycleIcons.governance}></path>
+        </svg>
         <h3>Governance, end to end</h3>
         <p>
           Deprecate a version without deleting it. Query and export an audit trail. Generate
@@ -385,8 +423,8 @@ function boolCellClass(value: boolean): string {
   <section class="product-matrix product-matrix-lifecycle">
     <h2>Lifecycle &amp; governance capabilities</h2>
     <p class="product-matrix-caption">
-      Registry, audit, and compliance capabilities, and which surface delivers each one today. Tier
-      column matches <a href="/pricing">pricing</a> exactly.
+      Registry, audit, and compliance capabilities, and which surface delivers each one today. See
+      <a href="/pricing">pricing</a> for full tier details.
     </p>
     <div class="product-matrix-scroll">
       <table class="product-matrix-table">
@@ -484,7 +522,7 @@ function boolCellClass(value: boolean): string {
     margin: 0 auto;
   }
   .product-eyebrow {
-    color: var(--color-coral, #ff6b5b);
+    color: var(--color-coral, #e07a5f);
     font-size: 0.95rem;
     font-weight: 600;
     letter-spacing: 0.05em;
@@ -495,6 +533,10 @@ function boolCellClass(value: boolean): string {
     font-size: clamp(1.75rem, 5vw, 2.75rem);
     line-height: 1.15;
     margin-bottom: 1.25rem;
+  }
+  .product-hero h1 strong {
+    color: var(--color-coral, #e07a5f);
+    font-weight: inherit;
   }
   .product-subtitle {
     font-size: 1.1rem;
@@ -512,7 +554,7 @@ function boolCellClass(value: boolean): string {
     display: inline-block;
     padding: 0.65rem 1.4rem;
     border-radius: 0.5rem;
-    background: var(--color-coral, #ff6b5b);
+    background: var(--color-coral, #e07a5f);
     color: #0d0d0f;
     font-weight: 600;
     text-decoration: none;
@@ -548,6 +590,12 @@ function boolCellClass(value: boolean): string {
     border-radius: 0.75rem;
     padding: 1.5rem;
   }
+  .lifecycle-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+    color: var(--color-coral, #e07a5f);
+    margin-bottom: 0.75rem;
+  }
   .product-lifecycle-card h3 {
     margin: 0 0 0.75rem;
     font-size: 1.1rem;
@@ -570,8 +618,8 @@ function boolCellClass(value: boolean): string {
     letter-spacing: 0.04em;
     padding: 0.15rem 0.5rem;
     border-radius: 999px;
-    background: rgba(255, 107, 91, 0.15);
-    color: var(--color-coral, #ff6b5b);
+    background: rgba(224, 122, 95, 0.15);
+    color: var(--color-coral, #e07a5f);
   }
   .roadmap-marker {
     font-size: 0.85em;
@@ -593,7 +641,7 @@ function boolCellClass(value: boolean): string {
     font-size: 0.95rem;
   }
   .product-matrix-caption a {
-    color: var(--color-coral, #ff6b5b);
+    color: var(--color-coral, #e07a5f);
     text-decoration: none;
     font-weight: 600;
   }
@@ -638,7 +686,7 @@ function boolCellClass(value: boolean): string {
     font-weight: 600;
   }
   .product-matrix-table .cell-yes {
-    color: var(--color-coral, #ff6b5b);
+    color: var(--color-coral, #e07a5f);
     font-size: 1.1rem;
   }
   .product-matrix-table .cell-no {
@@ -673,7 +721,7 @@ function boolCellClass(value: boolean): string {
     color: var(--color-text-muted, #b8bcc8);
   }
   .product-matrix-decision a {
-    color: var(--color-coral, #ff6b5b);
+    color: var(--color-coral, #e07a5f);
     text-decoration: none;
     font-weight: 600;
   }
@@ -716,7 +764,7 @@ function boolCellClass(value: boolean): string {
     line-height: 1.55;
   }
   .product-card-cta {
-    color: var(--color-coral, #ff6b5b);
+    color: var(--color-coral, #e07a5f);
     text-decoration: none;
     font-weight: 600;
   }
@@ -732,7 +780,7 @@ function boolCellClass(value: boolean): string {
   }
   .product-deep-dive blockquote {
     margin: 0 0 1.5rem;
-    border-left: 3px solid var(--color-coral, #ff6b5b);
+    border-left: 3px solid var(--color-coral, #e07a5f);
     padding-left: 1.5rem;
     text-align: left;
     font-size: 1.05rem;
@@ -747,7 +795,7 @@ function boolCellClass(value: boolean): string {
   }
   .product-deep-dive-cta {
     display: inline-block;
-    color: var(--color-coral, #ff6b5b);
+    color: var(--color-coral, #e07a5f);
     text-decoration: none;
     font-weight: 600;
     font-size: 1.05rem;
@@ -764,7 +812,7 @@ function boolCellClass(value: boolean): string {
     color: var(--color-text-muted, #b8bcc8);
   }
   .product-faq-teaser a {
-    color: var(--color-coral, #ff6b5b);
+    color: var(--color-coral, #e07a5f);
     text-decoration: none;
     font-weight: 600;
   }
