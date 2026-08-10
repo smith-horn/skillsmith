@@ -87,7 +87,7 @@ Skillsmith is a lifecycle manager for agent skills (discovery, installation, upd
 | Community | Free | 100 |
 | Individual | $9.99/mo | 1,000 |
 | Team | $25/user/mo | 10,000 |
-| Enterprise | $55/user/mo | Unlimited |
+| Enterprise | Custom (unpublished, "Contact Sales") | Unlimited |
 
 ---
 

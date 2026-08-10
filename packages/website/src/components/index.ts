@@ -10,7 +10,6 @@ export const components = {
   Card: './Card.astro',
   Badge: './Badge.astro',
   SkillCard: './SkillCard.astro',
-  PricingCard: './PricingCard.astro',
   FeatureCard: './FeatureCard.astro',
   // Auth components (SMI-1715)
   LoginButton: './auth/LoginButton.astro',

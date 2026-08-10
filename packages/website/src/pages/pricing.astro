@@ -45,22 +45,25 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
         offers: tiers.map((tier) => ({
           '@type': 'Offer',
           name: tier.name,
-          price: tier.monthlyPrice.toString(),
-          priceCurrency: 'USD',
-          priceValidUntil,
-          ...(tier.monthlyPrice > 0 && { billingDuration: 'P1M' }),
-          description: `${tier.apiCallsFormatted}. ${tier.features.map((f) => f.name).join(', ')}.`,
+          ...(tier.pricePublished !== false && {
+            price: tier.monthlyPrice.toString(),
+            priceCurrency: 'USD',
+            priceValidUntil,
+            ...(tier.monthlyPrice > 0 && { billingDuration: 'P1M' }),
+          }),
+          description: `${tier.features.map((f) => f.name).join(', ')}. ${tier.apiCallsFormatted}.`,
           availability: 'https://schema.org/InStock',
           url: `https://www.skillsmith.app${tier.ctaHref}`,
-          ...(tier.period?.includes('/user') && {
-            priceSpecification: {
-              '@type': 'UnitPriceSpecification',
-              price: tier.monthlyPrice.toString(),
-              priceCurrency: 'USD',
-              billingDuration: 'P1M',
-              unitText: 'user',
-            },
-          }),
+          ...(tier.pricePublished !== false &&
+            tier.period?.includes('/user') && {
+              priceSpecification: {
+                '@type': 'UnitPriceSpecification',
+                price: tier.monthlyPrice.toString(),
+                priceCurrency: 'USD',
+                billingDuration: 'P1M',
+                unitText: 'user',
+              },
+            }),
         })),
       },
       {
@@ -126,32 +129,22 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
           data-tier={tier.name.toLowerCase()}
           data-monthly-price={tier.monthlyPrice}
           data-annual-price={getAnnualPrice(tier.monthlyPrice)}
+          data-price-published={tier.pricePublished !== false}
         >
           {tier.highlighted && <div class="pricing-badge">Recommended</div>}
           <div class="card-header">
             <h2 class="tier-name">{tier.name}</h2>
             <div class="price-container">
               <span class="price" data-price-display>
-                {formatPrice(tier.monthlyPrice)}
+                {tier.pricePublished === false ? 'Custom' : formatPrice(tier.monthlyPrice)}
               </span>
               <span class="period" data-period-display>
-                {tier.monthlyPrice === 0 ? '' : tier.period || '/month'}
+                {tier.pricePublished === false || tier.monthlyPrice === 0
+                  ? ''
+                  : tier.period || '/month'}
               </span>
             </div>
             <p class="tier-description">{tier.description}</p>
-          </div>
-          <div class="api-calls">
-            <svg
-              class="icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              aria-hidden="true"
-            >
-              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-            </svg>
-            <span>{tier.apiCallsFormatted}</span>
           </div>
           <ul class="features-list">
             {tier.features.map((feature) => (
@@ -181,6 +174,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
           >
             {tier.cta}
           </a>
+          <p class="api-calls-fineprint">{tier.apiCallsFormatted}</p>
         </div>
       ))
     }
@@ -308,7 +302,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
     </div>
   </section>
 
-  <section class="pricing-roadmap">
+  <section class="pricing-roadmap" id="roadmap">
     <h2>On the roadmap</h2>
     <p class="roadmap-subtitle">
       We're actively building these features. Availability will be announced as each ships.
@@ -382,10 +376,17 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
         const tier = card.getAttribute('data-tier')
         const monthlyPrice = parseFloat(card.getAttribute('data-monthly-price') || '0')
         const annualPrice = parseFloat(card.getAttribute('data-annual-price') || '0')
+        const pricePublished = card.getAttribute('data-price-published') !== 'false'
 
         const priceDisplay = card.querySelector('[data-price-display]')
         const periodDisplay = card.querySelector('[data-period-display]')
         const ctaLink = card.querySelector('[data-cta-link]') as HTMLAnchorElement
+
+        // Unpublished-price tiers (e.g. Enterprise) always show "Custom" — never
+        // overwrite it with a computed dollar figure when the billing toggle changes.
+        if (!pricePublished) {
+          return
+        }
 
         if (priceDisplay) {
           if (monthlyPrice === 0) {

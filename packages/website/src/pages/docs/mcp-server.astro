@@ -151,7 +151,7 @@ EOF`}</code></pre>
       <tr>
         <td>Enterprise</td>
         <td>600/min</td>
-        <td>$55/user/mo</td>
+        <td>Custom</td>
         <td>Large organizations</td>
       </tr>
     </tbody>
@@ -350,11 +350,13 @@ EOF`}</code></pre>
     <li>"Ask Skillsmith to check if this skill structure is correct"</li>
   </ul>
 
-  <h2>Namespace Audit Tools (Team+)</h2>
+  <h2 id="namespace-audit-tools-team">Namespace Audit Tools</h2>
 
   <p>
     These tools detect and resolve namespace collisions across your local skills, commands, agents, and CLAUDE.md files.
-    Available on the Team and Enterprise tiers. Free and Individual receive a typed error if invoked.
+    <code>skill_inventory_audit</code>, <code>apply_namespace_rename</code>, and
+    <code>apply_recommended_edit</code> are all available on every tier today — Team/Enterprise
+    tier-gating for these tools is not yet enforced.
   </p>
 
   <h3>skill_inventory_audit</h3>
@@ -369,12 +371,12 @@ EOF`}</code></pre>
 }`}</code></pre>
 
   <p>
-    Three pass-modes control depth and ONNX cost:
+    Four pass-modes control depth and ONNX cost:
   </p>
   <ul>
-    <li><strong>preventative</strong> (default for community/individual once unlocked) — exact-name collisions + generic-token flags. No ONNX model load.</li>
+    <li><strong>preventative</strong> (default for Free/Individual) — exact-name collisions + generic-token flags. No ONNX model load.</li>
     <li><strong>power_user</strong> (default for Team) — adds semantic-overlap pass via <code>OverlapDetector</code>.</li>
-    <li><strong>governance</strong> (default for Enterprise) — same as power_user; deeper audit-history retention.</li>
+    <li><strong>governance</strong> (default for Enterprise) — same checks as power_user; reserved as the Enterprise default.</li>
     <li><strong>off</strong> — short-circuits to an empty result.</li>
   </ul>
 
@@ -505,7 +507,7 @@ Assistant: [Uses compare tool] Here's a comparison:
     <li><a href="/docs/tutorials/discover"><strong>Discover</strong></a> — <code>search</code>, <code>skill_recommend</code></li>
     <li><a href="/docs/tutorials/evaluate"><strong>Evaluate</strong></a> — <code>get_skill</code>, <code>skill_compare</code>, <code>skill_diff</code></li>
     <li><a href="/docs/tutorials/install-and-use"><strong>Install &amp; use</strong></a> — <code>install_skill</code>, <code>skill_validate</code></li>
-    <li><a href="/docs/tutorials/maintain"><strong>Maintain</strong></a> — <code>skill_updates</code>, <code>skill_outdated</code>, <code>skill_inventory_audit</code> (Team+)</li>
+    <li><a href="/docs/tutorials/maintain"><strong>Maintain</strong></a> — <code>skill_updates</code>, <code>skill_outdated</code>, <code>skill_inventory_audit</code></li>
     <li><a href="/docs/tutorials/govern"><strong>Govern</strong></a> — <code>skill_audit</code>, <code>compliance_report</code> (Team+), <code>audit_export</code>, <code>audit_query</code>, <code>siem_export</code> (Enterprise)</li>
     <li><a href="/docs/tutorials/uninstall"><strong>Uninstall</strong></a> — <code>uninstall_skill</code></li>
     <li><a href="/docs/inventory"><strong>Cross-machine skill inventory</strong></a> — view installed skills across devices</li>

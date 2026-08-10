@@ -46,7 +46,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
         <td>MCP</td>
         <td><code>skill_updates</code></td>
         <td>List installed skills with newer versions in the registry</td>
-        <td>All</td>
+        <td>Individual+</td>
       </tr>
       <tr>
         <td>MCP</td>
@@ -66,13 +66,13 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
         <td>MCP</td>
         <td><code>apply_namespace_rename</code></td>
         <td>Apply a rename suggestion (apply / custom / skip)</td>
-        <td>Team+</td>
+        <td>All (tier-gating on roadmap)</td>
       </tr>
       <tr>
         <td>MCP</td>
         <td><code>apply_recommended_edit</code></td>
         <td>Apply a recommended prose edit; gated on <code>APPLY_TEMPLATE_REGISTRY</code></td>
-        <td>Team+</td>
+        <td>All (tier-gating on roadmap)</td>
       </tr>
       <tr>
         <td>CLI</td>
@@ -219,7 +219,7 @@ skillsmith pin --list                     # See all currently pinned skills`}</c
       </tr>
       <tr>
         <td><code>governance</code></td>
-        <td>Same as <code>power_user</code> with deeper audit-history retention</td>
+        <td>Same checks as <code>power_user</code>; reserved as the Enterprise default</td>
         <td>Enterprise (default for Enterprise)</td>
       </tr>
       <tr>
@@ -257,12 +257,14 @@ skillsmith config set audit_mode power_user`}</code></pre>
   </ul>
 
   <div class="callout">
-    <p class="callout-heading">Team+ feature</p>
+    <p class="callout-heading">Not yet tier-restricted</p>
     <p>
       <code>apply_namespace_rename</code> and
-      <code>apply_recommended_edit</code> are gated to Team and Enterprise tiers. Free and Individual
-      tiers see the rename suggestions but cannot apply them via the MCP — the CLI fallback is also tier-gated.
-      See <a href="/pricing">pricing</a>.
+      <code>apply_recommended_edit</code> are available on every tier today. Team/Enterprise
+      tier-gating for these two tools is not yet enforced. <code>apply_namespace_rename</code> also
+      has a CLI fallback (<code>skillsmith audit collisions</code>, same apply / custom / skip
+      flow, plus a <code>--apply-all</code> batch mode) — <code>apply_recommended_edit</code> does
+      not, so use the MCP tool directly for prose edits.
     </p>
   </div>
 
@@ -327,9 +329,9 @@ skillsmith config set audit_mode power_user`}</code></pre>
   <h2>Where to next</h2>
 
   <p>
-    Maintain is for individual users. If you operate at team or enterprise scale, the same audit
-    signals roll up into the
-    <a href="/docs/tutorials/govern">Govern stage</a> — audit logs, SIEM export, team roles.
+    Maintain covers your own machine. At team or enterprise scale,
+    <a href="/docs/tutorials/govern">Govern</a> adds the org-wide controls — audit logs, SIEM
+    export, team roles.
   </p>
 
   <p>
