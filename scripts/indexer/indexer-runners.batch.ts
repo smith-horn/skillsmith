@@ -26,7 +26,13 @@
  * `returning: 'representation'`), SMI-4858/SMI-5491 (skinny/full column-union
  * NULL propagation tripped `skills.name NOT NULL`), SMI-5934 (unchunked
  * upsert silently discarded whole batches on an 8s statement timeout for
- * ~10 days, SMI-5334 rollout).
+ * ~10 days, SMI-5334 rollout), SMI-5968 (a fixed `chunkSize` bounds row
+ * COUNT, not query execution time -- a sub-threshold chunk with
+ * heavier-than-average per-row payloads (long descriptions, large
+ * `security_findings` JSONB) can still hit the 8s statement timeout and lose
+ * the whole chunk; confirmed live 2026-08-09, a 1977-row `.claude/skills`
+ * chunk under the 2000-row `UPSERT_CHUNK_SIZE` still timed out and was
+ * entirely discarded).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -74,6 +80,88 @@ export interface FlushResult {
  * behavior with a small `chunkSize` instead of a 2000+-row fixture.
  */
 export const UPSERT_CHUNK_SIZE = 2000
+
+/** Postgres SQLSTATE for `canceling statement due to statement timeout`. */
+const STATEMENT_TIMEOUT_CODE = '57014'
+
+/**
+ * SMI-5968: Cap on chunk-halving retries for a statement-timeout error.
+ * 2000 rows halved 8 times bottoms out at ~8 rows/leaf -- enough to isolate
+ * a small number of oversized rows from an otherwise-healthy chunk without
+ * letting a systemic outage (every row timing out) balloon into an
+ * unbounded number of sequential round trips.
+ */
+const MAX_TIMEOUT_SPLIT_DEPTH = 8
+
+/**
+ * SMI-5968: Upsert one chunk, retrying with a halved chunk on a statement
+ * timeout instead of discarding the whole chunk. A fixed row-count
+ * `chunkSize` only bounds row COUNT, not query execution time -- per-row
+ * payload weight (long descriptions, large `security_findings` JSONB,
+ * embeddings) varies enough that a sub-threshold chunk can still exceed
+ * PostgREST's 8s `statement_timeout`. Halving isolates the actually-heavy
+ * rows instead of losing the entire chunk to them. `startIndex`/`totalLen`
+ * are carried through purely for error-message row ranges -- they play no
+ * part in the retry logic itself.
+ */
+async function upsertChunkWithRetry(
+  supabase: SupabaseClient,
+  chunk: UpsertAccumulatorItem[],
+  startIndex: number,
+  totalLen: number,
+  upsertOkUrls: Set<string>,
+  chunkErrorUrls: Set<string>,
+  errors: string[],
+  depth = 0
+): Promise<void> {
+  const payload = chunk.map((a) => a.skillData)
+  const { data, error } = await supabase
+    .from('skills')
+    .upsert(payload, { onConflict: 'repo_url', ignoreDuplicates: false })
+    .select('repo_url')
+
+  if (error) {
+    const isTimeout =
+      error.code === STATEMENT_TIMEOUT_CODE || error.message?.includes('statement timeout')
+    if (isTimeout && chunk.length > 1 && depth < MAX_TIMEOUT_SPLIT_DEPTH) {
+      const mid = Math.ceil(chunk.length / 2)
+      await upsertChunkWithRetry(
+        supabase,
+        chunk.slice(0, mid),
+        startIndex,
+        totalLen,
+        upsertOkUrls,
+        chunkErrorUrls,
+        errors,
+        depth + 1
+      )
+      await upsertChunkWithRetry(
+        supabase,
+        chunk.slice(mid),
+        startIndex + mid,
+        totalLen,
+        upsertOkUrls,
+        chunkErrorUrls,
+        errors,
+        depth + 1
+      )
+      return
+    }
+    const endIndex = startIndex + chunk.length - 1
+    errors.push(
+      `Batch upsert failed (rows ${startIndex}-${endIndex} of ${totalLen}): ${error.message}`
+    )
+    for (const { skillData } of chunk) {
+      const url = skillData.repo_url as string | null
+      if (url) chunkErrorUrls.add(url)
+    }
+    return
+  }
+
+  for (const row of (data ?? []) as { repo_url: string | null }[]) {
+    if (row.repo_url) upsertOkUrls.add(row.repo_url)
+  }
+}
 
 /**
  * SMI-4846 + H-2 + C-3 + SMI-5934: Drain the upsert accumulator with a
@@ -168,12 +256,17 @@ export async function flushUpsertAccumulator(
     return { indexed, updated, failed, quarantined, errors, upsertOkUrls }
   }
 
-  // C-3 + SMI-5934: PostgREST batch upsert is NOT row-atomic, and (since
-  // SMI-5934) is issued in `chunkSize`-row chunks rather than one call for
-  // all of `fullItems`, so a statement timeout only costs one chunk instead
-  // of the whole dispatch. Per chunk:
-  //   • `error` non-null → that chunk failed (its rows go in `chunkErrorUrls`,
-  //     one summarized `errors[]` entry per failed chunk -- not one per row).
+  // C-3 + SMI-5934 + SMI-5968: PostgREST batch upsert is NOT row-atomic, and
+  // (since SMI-5934) is issued in `chunkSize`-row chunks rather than one call
+  // for all of `fullItems`, so a statement timeout only costs one chunk
+  // instead of the whole dispatch. Since SMI-5968, a chunk that itself times
+  // out is halved and retried (`upsertChunkWithRetry`) rather than discarded
+  // outright -- a fixed row count doesn't bound query execution time, so a
+  // sub-threshold chunk can still time out on heavy per-row payloads. Per
+  // (possibly split) chunk:
+  //   • `error` non-null, not a retryable timeout → that chunk failed (its
+  //     rows go in `chunkErrorUrls`, one summarized `errors[]` entry per
+  //     failed chunk -- not one per row).
   //   • `error` null + `data.length < chunk.length` → partial failure within
   //     an otherwise-successful chunk; the post-loop walk below diffs by
   //     repo_url and marks each missing row failed individually (rare C-3 case).
@@ -186,27 +279,15 @@ export async function flushUpsertAccumulator(
   const chunkErrorUrls = new Set<string>()
   for (let i = 0; i < fullItems.length; i += chunkSize) {
     const chunk = fullItems.slice(i, i + chunkSize)
-    const payload = chunk.map((a) => a.skillData)
-    const { data, error } = await supabase
-      .from('skills')
-      .upsert(payload, { onConflict: 'repo_url', ignoreDuplicates: false })
-      .select('repo_url')
-
-    if (error) {
-      const chunkNum = Math.floor(i / chunkSize) + 1
-      errors.push(
-        `Batch upsert failed (chunk ${chunkNum}, rows ${i}-${i + chunk.length - 1} of ${fullItems.length}): ${error.message}`
-      )
-      for (const { skillData } of chunk) {
-        const url = skillData.repo_url as string | null
-        if (url) chunkErrorUrls.add(url)
-      }
-      continue
-    }
-
-    for (const row of (data ?? []) as { repo_url: string | null }[]) {
-      if (row.repo_url) upsertOkUrls.add(row.repo_url)
-    }
+    await upsertChunkWithRetry(
+      supabase,
+      chunk,
+      i,
+      fullItems.length,
+      upsertOkUrls,
+      chunkErrorUrls,
+      errors
+    )
   }
 
   for (const { repo, skillData } of fullItems) {
