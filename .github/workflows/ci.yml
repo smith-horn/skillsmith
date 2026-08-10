@@ -1705,12 +1705,24 @@ jobs:
 
       - name: Build website in Docker
         if: steps.changes.outputs.website == 'true'
+        # SMI-5965: no pipe -- GitHub Actions' default run: shell (bash -e {0}) has no
+        # pipefail, so `docker run ... | tee log` would report tee's exit code (near-
+        # always 0) instead of docker run's, masking a crashed/partial Astro build the
+        # same way private-registry-e2e.yml's spec step masked its own failures. The
+        # downstream "0/0/0 baseline" check defaults ERRORS/WARNINGS/HINTS to 0 when
+        # Astro's summary line never printed (i.e. exactly the crash case this would
+        # hide), so this step must fail for real on its own exit code.
         run: |
+          set +e
           docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app/packages/website \
             skillsmith-ci:${{ github.sha }} \
-            npm run build 2>&1 | tee /tmp/astro-build.log
+            npm run build > /tmp/astro-build.log 2>&1
+          BUILD_EXIT=$?
+          set -e
+          cat /tmp/astro-build.log || true
+          exit "${BUILD_EXIT}"
 
       # SMI-2368: Enforce 0/0/0 baseline (zero errors, warnings, hints)
       # Parse the actual numbers from Astro's "- N errors/warnings/hints" summary

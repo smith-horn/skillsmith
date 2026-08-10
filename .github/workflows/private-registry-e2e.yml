@@ -5,16 +5,24 @@
 # GitHub Environment, alongside device-login-roundtrip.yml and
 # cross-harness-inventory-e2e.yml.
 #
-# Hard gate: "green" means the SPEC STEP conclusion = success (surfaced by the
-# "Surface real e2e result" guard below), NOT the job conclusion -- Phase-1
-# continue-on-error masks a spec failure to "success" at the job level.
+# Hard gate: "green" means the guard step's step-summary line reads
+# "spec PASSED (exit_code=0)" (and, equivalently, `steps.spec.outputs.exit_code
+# == '0'`) -- NOT the job conclusion, and NOT the spec step's color alone. The
+# spec step carries its OWN `continue-on-error: true` (SMI-5965 -- moved off the
+# job level, see below), so a spec failure never turns the job/run red during
+# Phase 1; the guard's step-summary + `::warning::` annotation are the only
+# trust anchors that can't be laundered by a masked step result.
 #
-# Phase 1 rollout: PR + dispatch (+ nightly post-merge) with continue-on-error:
-# true. Promotion (SMI-5922 Wave 4): remove continue-on-error, wire an
-# alert-notify failure step, add to required checks after 10 consecutive green
-# nightly runs. Unlike the inventory/device-login siblings there is no blocked
-# prod rollout waiting on this (the feature is already live) -- promotion is
-# purely so future regressions block merges.
+# Phase 1 rollout: PR + dispatch (+ nightly post-merge) run with the SPEC STEP
+# ONLY carrying `continue-on-error: true` (SMI-5965 -- previously job-level,
+# which also masked every infra step ahead of it; now only the spec is masked,
+# so a migration-drift/container-boot/dist-verify failure genuinely fails the
+# run). Promotion (SMI-5922 Wave 4): remove the spec step's continue-on-error,
+# wire an alert-notify failure step, add to required checks after 10
+# consecutive green nightly runs (cancelled runs don't count). Unlike the
+# inventory/device-login siblings there is no blocked prod rollout waiting on
+# this (the feature is already live) -- promotion is purely so future
+# regressions block merges.
 #
 # Docker (deliberate departure from the sibling workflows -- SMI-5922 plan
 # review finding #4): the spec now invokes the REAL `skillsmith registry
@@ -139,7 +147,6 @@ jobs:
     # a merged github-actions bump -- a bare check would silently skip the
     # nightly burn-in run. This form only excludes dependabot *PRs*.
     if: github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'
-    continue-on-error: true # audit:allow-continue-on-error
     env:
       STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
       STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
@@ -303,13 +310,16 @@ jobs:
 
       - name: Run private registry round-trip spec
         id: spec
-        # Teed to test-results/ (artifact-upload allowlist below) as well as the
-        # Actions log -- `run:`'s default bash shell has `pipefail` on
-        # (GitHub Actions default: `bash --noprofile --norc -eo pipefail`), so
-        # `docker exec`'s real exit code still propagates through the pipe and
-        # sets steps.spec.outcome correctly, not tee's own (near-always-zero) one.
+        # Exit-code capture is EXPLICIT -- no pipe, no pipefail reliance (SMI-5965).
+        # The prior form piped through `| tee` under the DEFAULT run: shell, which is
+        # `bash -e {0}` (see any step's own `shell:` line in a live job log) -- NOT the
+        # pipefail form `bash --noprofile --norc -eo pipefail {0}`, which GitHub applies
+        # ONLY when `shell: bash` is written explicitly. tee's exit 0 therefore became
+        # the step result while the spec had exited 2 (runs 31342225994/31343943821).
+        continue-on-error: true # audit:allow-continue-on-error -- Phase-1 spec-only masking (SMI-5965)
         run: |
           mkdir -p test-results
+          set +e
           docker exec \
             -e STAGING_SUPABASE_URL \
             -e STAGING_SUPABASE_ANON_KEY \
@@ -323,21 +333,37 @@ jobs:
             -e E2E_REG_TEAM_B_LICENSE_KEY \
             -e GITHUB_RUN_ID \
             skillsmith-dev-1 npx tsx scripts/e2e-registry-roundtrip.ts \
-            2>&1 | tee test-results/registry-roundtrip.log
+            > test-results/registry-roundtrip.log 2>&1
+          SPEC_EXIT=$?
+          printf 'exit_code=%s\n' "${SPEC_EXIT}" >> "$GITHUB_OUTPUT"
+          set -e
+          cat test-results/registry-roundtrip.log || true
+          echo "spec exit code: ${SPEC_EXIT}"
+          exit "${SPEC_EXIT}"
 
       - name: Surface real e2e result (Phase-1 invisible-success guard)
-        # The job is continue-on-error during Phase 1, so its conclusion is
-        # "success" even when the spec FAILS. This reads the spec step's raw
-        # outcome and emits a ::warning:: + a run-summary line so a masked
-        # failure is never silently green -- the true gate signal lives here,
-        # not in the job conclusion.
+        # Reads the spec step's EXPLICIT exit_code output (not just outcome) so the
+        # guard can never be fooled by a laundered pipe exit code the way the
+        # pre-SMI-5965 `| tee` form was (runs 31342225994/31343943821 -- both green
+        # at every level while the spec had actually exited 2). Advisory, not
+        # enforcing: a missing/non-zero exit_code or non-success outcome always
+        # renders as FAILED (fail-closed on absence), but this step itself still
+        # exits 0 and never turns the job/run red on its own -- that's the Phase-1
+        # contract, promoted away only in SMI-5922 Wave 4. Cancelled/timed-out runs
+        # correctly read as FAILED here (empty exit_code != "0") but are excluded
+        # from the Wave 4 ten-consecutive-green-nightlies promotion count; if the
+        # runner is killed outright, neither this step nor the spec's own output
+        # write can run at all -- an unavoidable limit of any in-job signal.
         if: always()
+        env:
+          SPEC_EXIT: ${{ steps.spec.outputs.exit_code }}
+          SPEC_OUTCOME: ${{ steps.spec.outcome }}
         run: |
-          if [ "${{ steps.spec.outcome }}" = "success" ]; then
-            echo "### Private Registry E2E -- spec PASSED" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${SPEC_EXIT}" = "0" ] && [ "${SPEC_OUTCOME}" = "success" ]; then
+            echo "### Private Registry E2E -- spec PASSED (exit_code=0)" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning title=Private Registry E2E spec FAILED::spec outcome=${{ steps.spec.outcome }}. The job is green ONLY due to Phase-1 continue-on-error -- do NOT treat this run as a passing gate. Inspect the spec step + uploaded artifacts."
-            echo "### Private Registry E2E -- spec FAILED (outcome=${{ steps.spec.outcome }}), masked by Phase-1 continue-on-error" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Private Registry E2E spec FAILED::spec exit_code='${SPEC_EXIT:-<missing>}' outcome=${SPEC_OUTCOME}. The spec step is continue-on-error during Phase 1 -- do NOT treat this run as a passing gate. Inspect the spec step + uploaded artifacts."
+            echo "### Private Registry E2E -- spec FAILED (exit_code='${SPEC_EXIT:-<missing>}', outcome=${SPEC_OUTCOME}), masked by Phase-1 continue-on-error" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload artifacts on spec failure (allowlisted paths only -- no secrets)

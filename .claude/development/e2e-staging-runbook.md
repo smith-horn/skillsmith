@@ -247,14 +247,16 @@ Third sibling harness in the **same** `e2e-staging` GitHub Environment. Workflow
    `E2E_REG_USER_PASSWORD='<pick>' varlock run -- npx tsx scripts/seed-e2e-registry-users.ts` → prints the four user IDs, plus each team's license key **the run that creates it only** (the key is stored as a one-way hash — a re-run cannot recover it).
 3. **Set the secrets**: `gh secret set <NAME> --env e2e-staging --body '<value>'` for each (read the password/keys from `.env` or the seed run's own captured output — never re-print a license key by re-running the seed script, which no-ops on an existing active key).
 
-### Reading the gate — invisible-success guard
+### Reading the gate — invisible-success guard (SMI-5965)
 
-During Phase 1 the `test` job is `continue-on-error: true`, so **the run conclusion is masked to "success" even when the spec fails.** The true signal is:
+During Phase 1 the **spec step alone** carries `continue-on-error: true` (moved off the job level by SMI-5965 — previously a job-level mask also hid infra-step failures ahead of the spec, e.g. the SMI-5957 crash-restart loop), so **the run conclusion is masked to "success" even when the spec fails.** The trust anchors are NOT the bare job/spec conclusion — they are:
 
-- the **`Run private registry round-trip spec`** step conclusion (`gh run view <id> --json jobs`), and
-- the **`Surface real e2e result`** guard step, which emits a `::warning::` annotation + a run-summary line on any non-pass.
+- the **spec step's own `exit_code` output** (`steps.spec.outputs.exit_code`), captured explicitly via `$?` under `set +e` and written to `$GITHUB_OUTPUT` before the step's shell restores `set -e` — never inferred from a piped command's exit code, and
+- the **`Surface real e2e result`** guard step, which reads that `exit_code` output (cross-checked against `steps.spec.outcome`, fail-closed on either being missing/non-passing) and emits a `::warning::` annotation + a `spec PASSED (exit_code=0)` / `spec FAILED (exit_code=…)` step-summary line on every run.
 
-Never treat a green run *conclusion* as a pass — confirm the spec step / the guard annotation.
+Never treat a green run *conclusion* as a pass — confirm the guard's step-summary line and the spec step's `exit_code` output.
+
+**A green run from before 2026-08-10 proves nothing.** The pre-fix spec step piped `docker exec ... | tee test-results/registry-roundtrip.log` under the default (non-pipefail) `run:` shell, which laundered the spec's real exit code to `tee`'s own (near-always-zero) result. Two real CI runs (job IDs `93317789935`, `93322277918`) were green at every level — job conclusion, spec step, guard ("spec PASSED"), artifact-upload correctly skipped — while all seven `E2E_REG_*` secrets were absent and the spec had actually exited `2` at `requireEnv('E2E_REG_USER_PASSWORD')` without running a single real assertion.
 
 ### Promotion gate (SMI-5922 Wave 4, post-merge, calendar-gated)
 
