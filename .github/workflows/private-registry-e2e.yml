@@ -66,6 +66,16 @@ on:
       - 'scripts/e2e-registry-roundtrip.mcp-live.ts'
       - 'scripts/e2e-registry-roundtrip.types.ts'
       - '.github/workflows/private-registry-e2e.yml'
+      # SMI-5957: this is the only workflow doing a cold `docker compose up`
+      # (no cached CI docker-build pipeline) -- a future change to any of
+      # these three files gets no pre-merge signal from this workflow
+      # without this. This gap is exactly how SMI-5957 itself went
+      # unnoticed for 5 days (10/10 executed runs failing, masked by
+      # continue-on-error) and how the underlying BUILD_FILTER regression
+      # (SMI-5548) shipped silently.
+      - 'docker-entrypoint.sh'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
 
 concurrency:
   group: private-registry-e2e-${{ github.ref }}
@@ -192,31 +202,104 @@ jobs:
       - name: Start dev container
         run: docker compose --profile dev up -d
 
-      - name: Wait for dev container healthy
+      - name: Wait for dev container ready (entrypoint build complete)
         run: |
           set -eu
-          for i in $(seq 1 30); do
-            STATUS="$(docker inspect --format='{{.State.Health.Status}}' skillsmith-dev-1 2>/dev/null || echo starting)"
-            if [ "$STATUS" = "healthy" ]; then
-              echo "Container healthy."
+          # SMI-5957 correction #4 (from live evidence -- the unconditional
+          # "Dump entrypoint build log" step below): docker-compose.yml's
+          # healthcheck is `node -e "console.log('healthy')"`, which the
+          # Docker daemon runs as an INDEPENDENT `docker exec` probe on its
+          # own interval -- it has never been coupled to whether the
+          # entrypoint script (the container's PID 1) has finished its own
+          # build. A live CI run's diagnostic dump captured the entrypoint's
+          # log cut off mid-`tsc` on the FIRST of 4 packages at the exact
+          # instant this step (in its prior Health.Status-polling form)
+          # already reported healthy and let the next step ("Verify
+          # workspace dist/") run -- i.e. every prior correction (#1-#3)
+          # fixed a real build-reliability bug, but none of them fixed this
+          # step trusting a health signal that was never actually gated on
+          # the build. Poll for the entrypoint's own "dist/ outputs ready"
+          # log line instead -- printed unconditionally after its dist/
+          # check succeeds, whether it just built (cold start) or found
+          # dist/ already present (skip-build path) -- which is the actual
+          # condition this step (and the next one) needs, not a proxy for
+          # it. 300s (60 x 5s) budget unchanged.
+          for i in $(seq 1 60); do
+            if docker logs skillsmith-dev-1 2>&1 | grep -q 'dist/ outputs ready'; then
+              echo "Entrypoint build complete (dist/ outputs ready)."
               exit 0
             fi
-            echo "Container status: ${STATUS} (attempt ${i}/30)"
+            STATUS="$(docker inspect --format='{{.State.Health.Status}}' skillsmith-dev-1 2>/dev/null || echo starting)"
+            echo "Entrypoint build not yet complete (container status: ${STATUS}, attempt ${i}/60)"
             sleep 5
           done
-          echo "::error::skillsmith-dev-1 did not become healthy in time"
+          echo "::error::skillsmith-dev-1's entrypoint did not finish its dist/ build in time"
+          echo "--- Restart/exit diagnostics ---"
+          RESTARTS="$(docker inspect --format='{{.RestartCount}}' skillsmith-dev-1 2>/dev/null || echo unknown)"
+          EXITCODE="$(docker inspect --format='{{.State.ExitCode}}' skillsmith-dev-1 2>/dev/null || echo unknown)"
+          echo "RestartCount=${RESTARTS} ExitCode=${EXITCODE}"
+          if [ "${RESTARTS}" != "unknown" ] && [ "${RESTARTS}" -gt 2 ] 2>/dev/null; then
+            echo "::warning::RestartCount>2 -- likely a crash-restart loop (deterministic failure), not a slow start. See docker logs below."
+          fi
           docker logs skillsmith-dev-1 || true
           exit 1
 
-      - name: Build workspace inside the container (dist/ is bind-mount-shadowed, not baked)
+      - name: Dump entrypoint build log (diagnostic, always runs -- SMI-5957)
+        # Unconditional (not just on healthcheck failure): correction #3's
+        # failure happened AFTER the container reported healthy, so the
+        # prior step's own conditional log dump never fires for it. This
+        # gives direct visibility into what the entrypoint's own
+        # `npx turbo run build --force ...` actually did/printed, instead
+        # of inferring it from dist/'s post-hoc file state.
+        if: always()
+        run: docker logs skillsmith-dev-1 2>&1 | sed -n '/Checking dist. outputs/,/dist. outputs ready/p' || true
+
+      - name: Verify workspace dist/ (built by the entrypoint, not rebuilt here)
         run: |
-          # docker-compose.yml's `.:/app` bind mount replaces the image's baked
-          # /app at container start with this fresh checkout, which has no dist/
-          # (gitignored) -- only node_modules survives, via its own named volume.
-          # A stale/missing dist/ here would make the CLI subprocess step in the
-          # spec fail with a confusing "command not found" rather than a real
-          # test failure, so this build is required, not optional.
-          docker exec skillsmith-dev-1 npm run build
+          # SMI-5957 (superseding this step's original design): docker-compose.yml's
+          # `.:/app` bind mount replaces the image's baked /app at container start
+          # with this fresh checkout, which has no dist/ (gitignored) -- only root
+          # node_modules survives, via its own named volume. The container's own
+          # entrypoint (docker-entrypoint.sh) now builds @skillsmith/core,
+          # @skillsmith/mcp-server, @skillsmith/doc-retrieval-mcp, AND
+          # @skillsmith/cli together in ONE turbo invocation before the container
+          # ever reports healthy -- this step no longer builds anything itself,
+          # it only verifies that happened, and fails loudly (not with a
+          # confusing downstream "command not found") if it somehow didn't.
+          #
+          # This step used to run a SECOND, separate build here (first an
+          # unscoped `npm run build`, later a scoped one) -- removed entirely
+          # after live CI verification (not local repro alone; a genuine gap
+          # between this session's local Docker environment and a real
+          # GH-hosted Linux runner) found a second, separate build invocation
+          # in the same container is unreliable two independent ways: (1)
+          # mcp-server's composite/incremental tsconfig with a TS project
+          # reference to core makes a SECOND `tsc` invocation against
+          # mcp-server incorrectly report a real-looking zod type error
+          # (SMI-5960, a genuinely pre-existing TS incremental-compile bug);
+          # (2) a separately-invoked `docker exec` process failed to resolve
+          # `@skillsmith/core` as a module even though its dist/ was already
+          # present and correct, on a real CI runner (never reproduced
+          # locally). Building everything in the entrypoint's own single
+          # invocation sidesteps both, rather than working around either.
+          docker exec skillsmith-dev-1 sh -c '
+            set -eu
+            missing=0
+            for f in packages/core/dist/src/index.js packages/mcp-server/dist/src/index.js packages/doc-retrieval-mcp/dist/src/server.js packages/cli/dist/cli.js; do
+              if [ ! -f "$f" ]; then
+                echo "::error::$f missing -- the entrypoint build did not produce it."
+                missing=1
+              fi
+            done
+            if [ "$missing" -eq 1 ]; then
+              echo "--- diagnostics: entrypoint build/turbo state ---"
+              echo "node_modules/.bin/turbo: $(ls -la node_modules/.bin/turbo 2>&1)"
+              echo "packages/core/dist/ contents:"; ls -la packages/core/dist/ 2>&1 || echo "  (dist/ dir itself absent)"
+              echo "packages/core/dist/.tsbuildinfo mtime: $(stat -c "%y" packages/core/dist/.tsbuildinfo 2>&1 || echo absent)"
+              exit 1
+            fi
+            echo "All required dist/ outputs present."
+          '
 
       - name: Run private registry round-trip spec
         id: spec
