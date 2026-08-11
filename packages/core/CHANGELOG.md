@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: companion-subagent files (the `-specialist.md` shim generated alongside an installed
+  skill) were always written to `~/.claude/agents/`, regardless of which client the skill itself
+  was installed for — a skill installed with `--client cursor` or `SKILLSMITH_CLIENT=cursor`
+  still got its companion subagent dropped into Claude Code's own agent directory instead of
+  Cursor's. New `COMPANION_AGENT_TARGETS` map (`@skillsmith/core/install/paths`) plus
+  `getCompanionAgentTarget()`/`resolveCompanionAgentDir()`/`resolveCompanionAgentPath()` give each
+  `ClientId` its own companion-agent directory and filename pattern, sourced from the same
+  evidence table already used for skill install paths; clients with no independently-verified
+  agents-dir convention default to today's existing `~/.claude/agents/` behavior rather than
+  guessing (GH #2161)
+
 ## v0.11.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.11.4).
