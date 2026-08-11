@@ -142,7 +142,12 @@ check_binary jq
 # cannot be bypassed by a relative path or a symlink.
 RESOLVED_WORKSPACE="$(cd "$WORKSPACE" 2>/dev/null && pwd -P || true)"
 if [[ -z "$RESOLVED_WORKSPACE" ]]; then
-    needle_error "--workspace does not exist or is not a directory: $WORKSPACE"
+    needle_error "--workspace does not exist or is not a directory: $WORKSPACE (resolved from cwd: $PWD)
+
+If \$WORKSPACE looks correct but this still fails, your shell's cwd has likely
+drifted (e.g. from an earlier 'cd' into a submodule for 'gh pr create') --
+'git -C' does not protect a relative --workspace argument from that. Pass an
+absolute path, or 'cd' back to a known-good directory first."
 fi
 WORKSPACE="$RESOLVED_WORKSPACE"
 
