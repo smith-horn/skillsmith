@@ -78,6 +78,39 @@ restore_filter_config() {
     success "  Git-crypt filters restored"
 }
 
+# SMI-5979: called from step_rebase_parent() right after it computes
+# conflict_count (unmerged-file count from `git diff --diff-filter=U`) for a
+# failed `git rebase`. conflict_count==0 alone is NOT proof the rebase never
+# started -- a sequencer failure mid-rebase (distinct from a merge conflict)
+# can leave zero unmerged files with rebase-merge/rebase-apply state still
+# on disk (NEEDLE plan review finding). Only treat this as "nothing to
+# resolve" when BOTH hold: no conflicted files AND no active rebase state
+# for this worktree (git-path resolution is worktree-scoped, so this stays
+# correct under concurrent rebases in other worktrees). When both hold,
+# restores filters and exits (via error(), exit 1) instead of falling
+# through to the caller's all_submodule/manual-conflict classification,
+# which previously misclassified this case and left filters disabled with
+# nothing to justify it (the SMI-5979 incident). Otherwise, a no-op —
+# the caller's existing logic runs unchanged.
+check_rebase_nothing_to_resolve() {
+    local conflict_count="$1"
+    [ "$conflict_count" -eq 0 ] || return 0
+
+    if [ -d "$(git -C "$WORKTREE_PATH" rev-parse --git-path rebase-merge 2>/dev/null || echo /nonexistent)" ] || \
+       [ -d "$(git -C "$WORKTREE_PATH" rev-parse --git-path rebase-apply 2>/dev/null || echo /nonexistent)" ]; then
+        return 0
+    fi
+
+    trap restore_filter_config EXIT
+    echo ""
+    warn "Rebase pre-flight rejected before starting (no conflicted files, no active rebase state)."
+    echo "  This usually means git's clean-tree check saw a residual difference"
+    echo "  despite Step 6's stash -- possibly the racy-mtime window described in"
+    echo "  docs/internal/implementation/smi-5781-rebase-worktree-stash-racy-mtime.md."
+    echo "  Git-crypt filters have been restored; re-run this script to retry."
+    error "Rebase did not start -- nothing to resolve, retry the command."
+}
+
 # SMI-5773: success-path only — NEVER called from the EXIT trap. Caller
 # (step_restore_filters) only invokes this once the parent rebase has been
 # confirmed to have completed without an active conflict, so the tree is
