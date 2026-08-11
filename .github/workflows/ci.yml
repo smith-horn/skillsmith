@@ -1430,7 +1430,18 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npx vitest run --config vitest.config.colocated.ts --passWithNoTests 2>&1 | tee /tmp/vitest-colocated.log
           DOCKER_EXIT=${PIPESTATUS[0]}
-          if grep -qE '❯.*\| [1-9][0-9]* failed' /tmp/vitest-colocated.log; then
+          # SMI-5987: vitest's own colored terminal output interleaves ANSI
+          # escape codes between the `|` and the failure-count digit (e.g.
+          # `❯ ... | <ESC>[22m<ESC>[31m2 failed`), so the failure-marker
+          # regex above never matched a real failure line — this job has
+          # been structurally unable to fail on a genuine test failure
+          # since 05a9bb632 (2026-05-03). Strip SGR color codes before matching
+          # so failure detection is robust to terminal coloring; the raw
+          # (colored) log is still what a human reads in the Actions UI.
+          # (Code-review nit, SMI-5987: this regex targets SGR/color codes
+          # specifically, not every ANSI/CSI sequence — vitest's stdout here
+          # is a pipe, not a TTY, so cursor/erase controls aren't expected.)
+          if sed -r 's/\x1b\[[0-9;]*m//g' /tmp/vitest-colocated.log | grep -qE '❯.*\| [1-9][0-9]* failed'; then
             echo "::error::vitest reported test failures (see ❯ lines above)"
             exit 1
           fi

@@ -189,6 +189,9 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `apply_namespace_rename` | Apply a rename suggestion from an audit (`apply` / `custom` / `skip`) (SMI-4590) |
 | `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (SMI-4590) |
 | `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s), restored from the apply tool's own backup (SMI-5456/SMI-5470) |
+| `publish_private` | Mark a skill private on this device, hidden from your own search results (Team+) |
+| `private_registry_publish` | Publish a skill version to your team's private registry as a pending submission (Enterprise) |
+| `private_registry_manage` | List/get/install/deprecate/undeprecate/review your team's private registry via the `action` parameter, including `submissions`/`approve`/`reject` (Enterprise) |
 | `audit_export` | Export audit log events for a time range (Enterprise) |
 | `audit_query` | Query audit logs with filters (Enterprise) |
 | `siem_export` | Export audit events for SIEM ingestion (Enterprise) |

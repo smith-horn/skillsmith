@@ -9,6 +9,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   `getToolContextAsync()` resolved and validated. Now logs the new
   `buildDbInitializedLogMessage()` (`context.helpers.ts`), which calls `getDefaultDbPath()`
   internally, so the logged path and the real DB path can never disagree (SMI-5981)
+- **Fix**: `skill_recommend`'s `project_context` keyword extraction (`tools/recommend.ts`) no longer
+  silently drops real short technical terms ("git", "ci", "aws", "sql", "k8s") via a bare
+  `.filter((w) => w.length > 3)` threshold — a context consisting only of such terms previously
+  derived an empty stack and tripped the SMI-5896 empty-stack guard even though usable context had
+  been supplied. Now uses the shared `extractContextWords()` (`@skillsmith/core`) also adopted by
+  the CLI's `recommend --context`, so the two can't independently drift on this again (SMI-5986)
 - **Feature**: `private_registry_publish` now requires a genuine two-party review before a version
   becomes installable — a submission lands `pending` and is invisible on every read surface
   (`list`/`get`/`install`) until a different team admin/owner approves it via three new

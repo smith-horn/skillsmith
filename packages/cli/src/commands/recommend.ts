@@ -13,6 +13,7 @@ import {
   createApiClient,
   loadStoredAccessToken,
   buildEmptyStackGuidance,
+  extractContextWords,
   type SkillRole,
   SKILL_ROLES,
 } from '@skillsmith/core'
@@ -70,12 +71,10 @@ async function runRecommend(targetPath: string, options: RecommendOptions): Prom
     const stack = buildStackFromAnalysis(codebaseContext)
 
     if (options.context) {
-      const contextWords = options.context
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((w) => w.length > 3)
-        .slice(0, 5)
-      stack.push(...contextWords)
+      // SMI-5986: shared helper keeps real short technical terms (git, ci,
+      // aws, sql, k8s) that a bare `.filter((w) => w.length > 3)` threshold
+      // used to silently drop, while still filtering out noise.
+      stack.push(...extractContextWords(options.context))
     }
 
     // SMI-5896 review: the guard below tells the caller to "supply project

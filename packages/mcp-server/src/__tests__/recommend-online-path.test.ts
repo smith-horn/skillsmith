@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } 
 import { executeRecommend } from '../tools/recommend.js'
 import { createTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
+import * as InstalledSkillsModule from '../utils/installed-skills.js'
 import * as CoreModule from '@skillsmith/core'
 import type { LocalSkill } from '../indexer/LocalIndexer.js'
 
@@ -60,6 +61,14 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
       calculateQualityScore: vi.fn().mockReturnValue(70),
       indexSkillDir: vi.fn(),
     } as unknown as ReturnType<typeof LocalSkillSearchModule.getLocalIndexer>)
+
+    // SMI-5986 (plan-review correction, SMI-5984 Wave 1): SMI-906
+    // auto-detection reads the real host ~/.claude/skills/ directory unless
+    // mocked — this is a pre-existing test-isolation gap (the suite passed
+    // on a dev host that happens to have skills installed but could fail on
+    // a clean CI runner for an unrelated reason). Stub it hermetically,
+    // mirroring recommend.empty-stack.test.ts.
+    vi.spyOn(InstalledSkillsModule, 'getInstalledSkills').mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -89,6 +98,59 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
     expect(result.recommendations).toBeDefined()
     expect(Array.isArray(result.recommendations)).toBe(true)
     expect(onlineContext.apiClient.getRecommendations).toHaveBeenCalledTimes(1)
+  })
+
+  // SMI-5986: `.filter((w) => w.length > 3)` used to drop real 2-3 character
+  // technical terms like "git" from the context-word stack. With
+  // getInstalledSkills stubbed to [] above, a `project_context: 'git'` input
+  // derives a stack from context words alone — asserting the outbound stack
+  // actually contains "git" (not just that no error is thrown) is what
+  // proves the fix works, per the plan-review correction on this file.
+  it('(SMI-5986) includes a short technical term from project_context in the outbound stack', async () => {
+    vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+    const getRecommendationsSpy = vi
+      .spyOn(onlineContext.apiClient, 'getRecommendations')
+      .mockResolvedValue({ data: [], meta: { total: 0 } })
+
+    await executeRecommend({ project_context: 'git', limit: 5 }, onlineContext)
+
+    // Being called at all proves the SMI-5896 empty-stack guard did NOT fire
+    // (that branch returns before ever reaching the API call) — and the
+    // arrayContaining assertion proves "git" specifically survived the
+    // context-word filter, not just some other non-empty stack.
+    expect(getRecommendationsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ stack: expect.arrayContaining(['git']) })
+    )
+  })
+
+  it('(SMI-5986) includes multiple short technical terms (ci, aws, sql, k8s) from project_context', async () => {
+    vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+    const getRecommendationsSpy = vi
+      .spyOn(onlineContext.apiClient, 'getRecommendations')
+      .mockResolvedValue({ data: [], meta: { total: 0 } })
+
+    await executeRecommend({ project_context: 'ci aws sql k8s', limit: 5 }, onlineContext)
+
+    expect(getRecommendationsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stack: expect.arrayContaining(['ci', 'aws', 'sql', 'k8s']),
+      })
+    )
+  })
+
+  it('(SMI-5986) handles punctuation and case variants in project_context ("Git", "git,")', async () => {
+    vi.spyOn(onlineContext.apiClient, 'isOffline').mockReturnValue(false)
+    const getRecommendationsSpy = vi
+      .spyOn(onlineContext.apiClient, 'getRecommendations')
+      .mockResolvedValue({ data: [], meta: { total: 0 } })
+
+    await executeRecommend({ project_context: 'Git, workflow', limit: 5 }, onlineContext)
+
+    const call = getRecommendationsSpy.mock.calls[0]?.[0] as { stack: string[] } | undefined
+    expect(call?.stack).toContain('git')
+    // The raw punctuated/mixed-case token must not leak into the stack.
+    expect(call?.stack).not.toContain('Git,')
+    expect(call?.stack).not.toContain('git,')
   })
 
   it('merges API results with local results and deduplicates by skill_id', async () => {

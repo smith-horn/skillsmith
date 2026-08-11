@@ -36,6 +36,8 @@ skillsmith list
 - [CLI Reference](https://www.skillsmith.app/docs/cli): Complete CLI command documentation
 - [MCP Server](https://www.skillsmith.app/docs/mcp-server): MCP integration configuration
 - [API Reference](https://www.skillsmith.app/docs/api): REST API documentation
+- [Private Registry](https://www.skillsmith.app/docs/private-registry): Enterprise-tier team registry — versioned, access-controlled, with a publish-and-approval workflow
+- [Governance](https://www.skillsmith.app/docs/governance): Publish review, deprecation, audit trails, compliance reporting, and automatic quarantine
 
 ## What Are Skills?
 
@@ -81,6 +83,9 @@ When using Skillsmith MCP server:
 - `recommend`: Get project-based skill recommendations
 - `validate`: Validate a skill's structure
 - `compare`: Compare multiple skills side-by-side
+- `publish_private` (Team+): Mark a skill private on this device, hiding it from your own search results
+- `private_registry_publish` (Enterprise): Publish a skill version to your team's private registry as a pending submission
+- `private_registry_manage` (Enterprise): List, get, install, deprecate, and review skills in your team's private registry — including approving/rejecting pending submissions
 
 ## Packages
 

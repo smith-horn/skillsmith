@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: new shared `extractContextWords()` (`services/context-words.ts`, exported from the package root) replaces a `.filter((w) => w.length > 3)` threshold both `@skillsmith/mcp-server`'s `skill_recommend` and `@skillsmith/cli`'s `recommend --context` used independently — it was silently dropping real short technical terms ("git", "ci", "aws", "sql", "k8s") from the recommendation stack, tripping the empty-stack guard even when usable context was supplied (SMI-5986)
+
 ## v0.11.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.11.4).
