@@ -25,28 +25,30 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@skillsmith/core', () => ({
-  CodebaseAnalyzer: class MockCodebaseAnalyzer {
-    analyze(...args: unknown[]) {
-      return mocks.analyze(...args)
-    }
-  },
-  createApiClient: () => ({
-    getRecommendations: (...args: unknown[]) => mocks.getRecommendations(...args),
-  }),
-  // SMI-4474: command imports loadStoredAccessToken for JWT auto-load. Tests
-  // don't exercise the JWT path, so a stub returning null is sufficient — the
-  // command falls through to the createApiClient mock above.
-  loadStoredAccessToken: () => Promise.resolve(null),
-  SKILL_ROLES: [
-    'code-quality',
-    'testing',
-    'documentation',
-    'workflow',
-    'security',
-    'development-partner',
-  ] as const,
-}))
+// SMI-5986: partial mock (spread of the REAL module, per the
+// recommend.empty-stack.test.ts / search-helpers.test.ts precedent) rather
+// than a hand-written stub object. `extractContextWords` must be the genuine
+// core implementation here — the tests below assert on ITS filtering
+// behavior (real short technical terms vs. noise), so a hand-copied stub
+// would test the fixture instead of the actual fix.
+vi.mock('@skillsmith/core', async () => {
+  const actual = await vi.importActual<typeof import('@skillsmith/core')>('@skillsmith/core')
+  return {
+    ...actual,
+    CodebaseAnalyzer: class MockCodebaseAnalyzer {
+      analyze(...args: unknown[]) {
+        return mocks.analyze(...args)
+      }
+    },
+    createApiClient: () => ({
+      getRecommendations: (...args: unknown[]) => mocks.getRecommendations(...args),
+    }),
+    // SMI-4474: command imports loadStoredAccessToken for JWT auto-load. Tests
+    // don't exercise the JWT path, so a stub returning null is sufficient — the
+    // command falls through to the createApiClient mock above.
+    loadStoredAccessToken: () => Promise.resolve(null),
+  }
+})
 vi.mock('ora', () => ({ default: () => mocks.spinner }))
 
 const mockAnalyze = mocks.analyze
@@ -301,7 +303,13 @@ describe('SMI-1353: CLI recommend command', () => {
       )
     })
 
-    it('should filter context words shorter than 4 characters', async () => {
+    // SMI-5986: a bare `.filter((w) => w.length > 3)` threshold used to
+    // silently drop real 2-3 character technical terms ("git", "ci", "aws",
+    // "sql", "k8s") along with actual noise ("a", "be"). The shared
+    // `extractContextWords` helper (`@skillsmith/core`) now distinguishes
+    // noise (single letters, short English stopwords) from real short
+    // technical vocabulary instead of using length as a proxy for either.
+    it('drops noise words but keeps real short technical terms from --context', async () => {
       const { createRecommendCommand } = await import('../src/commands/recommend.js')
       const cmd = createRecommendCommand()
 
@@ -310,7 +318,30 @@ describe('SMI-1353: CLI recommend command', () => {
       const call = mockGetRecommendations.mock.calls[0]![0]
       expect(call.stack).not.toContain('a')
       expect(call.stack).not.toContain('be')
+      expect(call.stack).toContain('api')
       expect(call.stack).toContain('testing')
+    })
+
+    it('(SMI-5986) keeps short technical terms git, ci, aws, sql, k8s from --context', async () => {
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--context', 'git ci aws sql k8s'])
+
+      const call = mockGetRecommendations.mock.calls[0]![0]
+      expect(call.stack).toEqual(expect.arrayContaining(['git', 'ci', 'aws', 'sql', 'k8s']))
+    })
+
+    it('(SMI-5986) normalizes punctuation and case in --context ("Git", "git,")', async () => {
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--context', 'Git, workflow'])
+
+      const call = mockGetRecommendations.mock.calls[0]![0]
+      expect(call.stack).toContain('git')
+      expect(call.stack).not.toContain('Git,')
+      expect(call.stack).not.toContain('git,')
     })
 
     it('should show spinner during recommendation fetch', async () => {
