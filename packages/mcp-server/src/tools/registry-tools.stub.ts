@@ -42,7 +42,11 @@
  *     - **RLS-based pending invisibility.** A real pending row has NO PostgREST read path at all —
  *       not even a query that tries; the policy itself is the enforcement. This stub only
  *       APPROXIMATES that with an application-level `approvalStatus === 'approved'` filter inside
- *       `list()`/`get()`/`submissions()` — a filter a future new stub method could simply omit, in
+ *       `list()`/`get()`/`getContent()`/`submissions()` (the `getContent()` filter was ITSELF a
+ *       missing-filter bug until an adversarial security review caught it, finding H-1: a pending
+ *       row's CONTENT installed successfully even though its metadata was already correctly
+ *       gated — the exact omission this paragraph warns a "future new stub method" could make,
+ *       except it was an existing one) — a filter a future new stub method could still simply omit, in
  *       exactly the shape `deprecated`'s unenforced read filter already demonstrates (Context §
  *       "precedent warning" in the plan doc). A real policy cannot be forgotten at a new call site;
  *       this filter can, and there is no compiler or test that would catch a stub-only omission of
@@ -253,9 +257,16 @@ export function createStubRegistryService(): StubRegistryService {
     // deprecated; it cannot fall back to an older version's own (untracked) approval/deprecation
     // state. A documented approximation, same shape as every other "one row per skill, not per
     // version" limitation this file's header already lists.
+    //
+    // SMI-5949 adversarial-review fix (H-1): also excludes a non-`'approved'` skill, same D-4
+    // predicate as list()/get() above. This was MISSING until this fix — `getContent()` had only
+    // the `deprecated` check, so a `pending` (unapproved) version's content installed successfully
+    // via this stub, which `registry-tools.cross-transport.test.ts` was asserting as a PASSING
+    // invariant before that test was also corrected — the exact inverse of what the approval gate
+    // exists to enforce. `list()`/`get()` never had this gap; only the content-read path did.
     async getContent(teamId, skillId, version): Promise<RegistrySkillContent | null> {
       const metadata = registry.get(key(teamId, skillId))
-      if (metadata?.deprecated) return null
+      if (!metadata || metadata.approvalStatus !== 'approved' || metadata.deprecated) return null
       const entry = version
         ? versions.get(versionKey(teamId, skillId, version))
         : latestVersion(teamId, skillId)
@@ -267,7 +278,7 @@ export function createStubRegistryService(): StubRegistryService {
         content: entry.content,
         // No content_hash trigger backs the stub; null is honest, a fabricated digest would not be.
         contentHash: null,
-        deprecated: metadata?.deprecated ?? false,
+        deprecated: metadata.deprecated,
         publishedAt: entry.publishedAt,
       }
     },

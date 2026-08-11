@@ -184,6 +184,16 @@ async function getClient(): Promise<MinimalSupabaseClient> {
  * probe below disambiguates: `_member_read` lets ANY team member SELECT the rows, while
  * `_admin_update` restricts the write, so rows-visible-but-not-writable means exactly "not an
  * admin".
+ *
+ * SMI-5949 adversarial-review correction (M-1): the above was written before Wave 2 and is now
+ * stale on its own — since Wave 2, `_member_read` ALSO requires `approval_status = 'approved'`
+ * (D-4), so a `pending`/`rejected` row is invisible to the probe too, for a reason that has
+ * nothing to do with admin status. The probe's "0 rows" therefore now has a THIRD possible cause
+ * alongside "no such skill" and "not an admin": "this skillId exists only as a pending/rejected
+ * row, so it is invisible to every team member (including this probe), not just to a non-admin".
+ * All three report `false` ("not found") below, which is the correct externally-visible answer in
+ * every case — there is nothing live to deprecate/undeprecate either way — but a future reader
+ * should not assume a `false` return here always means "this skillId was never published".
  */
 async function setDeprecated(teamId: string, skillId: string, value: boolean): Promise<boolean> {
   const operation = value ? 'deprecate' : 'undeprecate'
@@ -370,7 +380,32 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
       // D-4(c): the row just landed `pending` and is structurally invisible to a plain SELECT —
       // read it back through the metadata-only submissions RPC instead (D-5).
-      const submission = await readBackSubmission(client, teamId, skillId, version)
+      //
+      // SMI-5949 adversarial-review fix (M-5): the INSERT above already committed — the row
+      // genuinely exists in the database either way — so a failure HERE (RPC error, or a
+      // read-back miss) must still be audited, or a real, successful publish leaves ZERO audit
+      // trail: not a success row (the code never reaches the one below) and not an error row
+      // (nothing previously recorded one). Every other branch in this function audits both
+      // outcomes; this closes the one that did not. This does not roll back the already-committed
+      // insert — the fix is purely about not losing the audit trail for what already happened.
+      let submission
+      try {
+        submission = await readBackSubmission(client, teamId, skillId, version)
+      } catch (err) {
+        await recordRegistryAudit({
+          operation: 'publish',
+          teamId,
+          skillId,
+          version,
+          result: 'error',
+          authPath: 'user_jwt',
+          authRole: 'member',
+          actorUserId,
+          contentHash,
+          detail: 'readback_failed',
+        })
+        throw err
+      }
       await recordRegistryAudit({
         operation: 'publish',
         teamId,

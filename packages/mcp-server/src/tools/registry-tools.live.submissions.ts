@@ -66,14 +66,26 @@ export function mapSubmissionRow(teamId: string, row: PrivateRegistrySubmissionR
     skillId: row.skill_id,
     version: row.version,
     description: row.description,
-    // A row this call just inserted can never already be deprecated — deprecation is a distinct,
-    // later action (deprecate()/undeprecate()) that cannot have run yet. The RPC has no
-    // `deprecated` column to read (it is metadata-only, D-4(c)), so this is an honest default,
-    // not a guess standing in for a real value.
+    // KNOWN LIMITATION (adversarial-review finding L-1): always `false`, because
+    // `get_private_registry_submissions()`'s `RETURNS TABLE` has no `deprecated` column at all
+    // (D-4(c), metadata-only by construction — the RPC was never widened to carry it). Accurate
+    // for `readBackSubmission()`'s just-inserted row (a fresh row can never already be
+    // deprecated), but NOT accurate in general for `listSubmissions()`: an `approved` row that was
+    // LATER deprecated still reports `deprecated: false` here, because this function has no column
+    // to read the real value from. Fixing this needs a migration widening the RPC's `RETURNS
+    // TABLE` column list to add `deprecated` — out of scope for this app-layer change; tracked as
+    // a follow-up (Linear issue filed separately, not referenced by number here).
     deprecated: false,
     publishedAt: row.published_at,
     publishedBy: row.published_by ?? 'unknown',
-    registryUrl: `https://registry.skillsmith.app/private/${teamId}/${row.skill_id}@${row.version}`,
+    // Adversarial-review finding L-2: `null` for a non-`'approved'` row. A `pending`/`rejected`
+    // version is not actually live at this URL — presenting one anyway would leak exactly what the
+    // pending-branch MESSAGE in `registry-tools.ts` (`executePrivateRegistryPublishImpl`) already
+    // deliberately omits, just through the structured field instead of the prose.
+    registryUrl:
+      row.approval_status === 'approved'
+        ? `https://registry.skillsmith.app/private/${teamId}/${row.skill_id}@${row.version}`
+        : null,
     approvalStatus: row.approval_status,
     approvalMode: row.approval_mode,
   }

@@ -25,9 +25,20 @@
  * MCP transport's own already-proven real round trip (`executeRegistryInstall`), against the SAME
  * underlying published data, to prove the two transports never disagree about which version "no
  * version specified" resolves to, or about what actually lands on disk.
+ *
+ * @see SMI-5949 adversarial-review finding H-1: every fixture below now APPROVES a publish before
+ * asserting a successful install — before this fix, every test in this file published a skill and
+ * installed it while it was still `pending`, which meant this file was asserting "a pending,
+ * unapproved private-registry version installs successfully" as a PASSING invariant, the exact
+ * inverse of what the approval gate exists to enforce. A dedicated negative test below now also
+ * asserts the opposite: publish, do NOT approve, and confirm install fails on BOTH transports.
+ * `registry-tools.review-parity.test.ts` was split out of this file at the same time (the
+ * `approve()` helper this fix needed pushed the file over the 500-line audit:standards budget) —
+ * it covers a different concern (stub/live REVIEW-GATE ERROR parity, M7) and is unrelated to the
+ * install-round-trip parity this file still owns.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -49,26 +60,12 @@ import {
   type PrivateRegistryService,
   type StubRegistryService,
 } from './registry-tools.js'
-import { createLiveRegistryService } from './registry-tools.live.js'
-import { createFakeClient, mockBothClients } from './registry-tools.live.test-helpers.js'
 
-// SMI-5949 Wave 2 Step 5 (plan-review finding M7): the stub/live review-gate PARITY block below
-// needs both mocked — neither is touched by this file's pre-existing publish/install-round-trip
-// tests above, which drive the stub directly and never resolve a team via Supabase, so mocking
-// these here is safe for them.
-vi.mock('../supabase-client.js', () => ({
-  isSupabaseConfigured: vi.fn(() => true),
-  getSupabaseClient: vi.fn(),
-  getSupabaseAdminClient: vi.fn(),
-  getSupabaseUserClient: vi.fn(),
-  resetSupabaseClients: vi.fn(),
-}))
-
-vi.mock('./team-resolver.js', () => ({
-  readLicenseKey: vi.fn(() => 'sk_test_fake_license'),
-  resolveLicenseTeamId: vi.fn(async () => 'team-alpha'),
-  resolveUserAccessToken: vi.fn(async () => 'fake-user-access-token'),
-}))
+// No `vi.mock()` needed here (unlike registry-tools.review-parity.test.ts, split out at the same
+// time as the H-1 fix below): every test in this file drives a `createStubRegistryService()`
+// instance directly and passes it straight into `executeRegistryInstall()`/the CLI helpers below —
+// it never resolves a team via Supabase or touches `registry-tools.js`'s module-level live/stub
+// singleton, matching the established pattern in the sibling `registry-tools.install-action.test.ts`.
 
 const mockContext = {} as ToolContext
 const TEAM = 'team-alpha'
@@ -80,6 +77,11 @@ const SECRET_MARKER = 'a private team runbook line that must never leak into any
 const V2_MARKER = 'content-that-only-the-2-0-0-release-carries'
 /** Present only in the version published as `1.9.0` — the "most recently published" one below. */
 const V1_9_MARKER = 'content-that-only-the-1-9-0-release-carries'
+
+/** A distinct admin identity used to approve every fixture published in this file (SMI-5949 D-6
+ *  blocks self-approval, so the publisher's own default stub actor can never approve its own
+ *  work) — mirrors `registry-tools.test.ts`'s own `ADMIN_ACTOR` pattern. */
+const ADMIN_ACTOR = { id: 'cross-transport-admin-reviewer', isAdmin: true }
 
 function skillMd(marker: string): string {
   return (
@@ -190,9 +192,22 @@ async function installViaCli(
   return { fetchResult, installResult }
 }
 
-let service: PrivateRegistryService
+// `StubRegistryService`, not the plain `PrivateRegistryService` interface, because `approve()`
+// below needs `setActor()` — the stub-only identity seam (SMI-5949 Wave 2 Step 5). Every existing
+// call site that expects a `PrivateRegistryService` (installViaMcp/installViaCli's own params)
+// keeps working unchanged: `StubRegistryService extends PrivateRegistryService`.
+let service: StubRegistryService
 let mcpRig: Rig
 let cliRig: Rig
+
+/** Approves `skillId@version` as a distinct admin identity (never the publisher — D-6), so
+ *  `list()`/`get()`/`getContent()` (approved-only, SMI-5949 D-4) can see it afterward. Every
+ *  publish in this file must go through this before an install assertion — see this file's header
+ *  on why (adversarial-review finding H-1). */
+async function approve(skillId: string, version: string): Promise<void> {
+  service.setActor(ADMIN_ACTOR)
+  await service.review(TEAM, skillId, version, 'approved')
+}
 
 beforeEach(async () => {
   service = createStubRegistryService()
@@ -214,6 +229,7 @@ afterEach(async () => {
 describe('CLI transport — full publish -> install round trip (real client fn + real installer)', () => {
   it('installs published content to disk with private-registry provenance', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    await approve(SKILL_ID, '1.0.0')
 
     const { fetchResult, installResult } = await installViaCli(service, cliRig)
 
@@ -245,6 +261,7 @@ describe('CLI transport — full publish -> install round trip (real client fn +
   // `includeDeprecated:true`).
   it('a deprecated skill no longer installs via the CLI transport, not just the metadata fetch', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    await approve(SKILL_ID, '1.0.0')
     await service.deprecate(TEAM, SKILL_ID)
 
     const { fetchResult, installResult } = await installViaCli(service, cliRig)
@@ -256,11 +273,31 @@ describe('CLI transport — full publish -> install round trip (real client fn +
 
   it('a deprecated skill no longer installs via the MCP transport either', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    await approve(SKILL_ID, '1.0.0')
     await service.deprecate(TEAM, SKILL_ID)
 
     const result = await installViaMcp(service, mcpRig)
 
     expect(result.success).toBe(false)
+  })
+
+  // SMI-5949 adversarial-review finding H-1: the actual invariant the approval gate exists to
+  // enforce, stated directly — the inverse of every test above. Before the H-1 fix to
+  // `registry-tools.stub.ts`'s `getContent()`, this test would have FAILED: `getContent()` checked
+  // only `deprecated`, not `approvalStatus`, so a pending version's content installed successfully
+  // on both transports.
+  it('a pending, unapproved version installs on NEITHER transport', async () => {
+    await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    // Deliberately NOT approved.
+
+    const mcpResult = await installViaMcp(service, mcpRig)
+    const { fetchResult, installResult } = await installViaCli(service, cliRig)
+
+    expect(mcpResult.success).toBe(false)
+    expect(fetchResult.ok).toBe(false)
+    expect(installResult).toBeNull()
+    await expect(fs.access(path.join(mcpRig.skillsDir, 'acme-tool', 'SKILL.md'))).rejects.toThrow()
+    await expect(fs.access(path.join(cliRig.skillsDir, 'acme-tool', 'SKILL.md'))).rejects.toThrow()
   })
 })
 
@@ -276,6 +313,14 @@ describe('MCP and CLI transports agree on version selection, given the same publ
     // first-published) would install the WRONG marker string here.
     await service.publish(TEAM, SKILL_ID, '2.0.0', { 'SKILL.md': skillMd(V2_MARKER) })
     await service.publish(TEAM, SKILL_ID, '1.9.0', { 'SKILL.md': skillMd(V1_9_MARKER) })
+    // The stub tracks only ONE metadata row per (teamId, skillId) — "the most recently published
+    // version's metadata" (registry-tools.stub.ts's own header) — so publishing 1.9.0 second
+    // replaced 2.0.0's row entirely, including any approval state it had. One approve() call here,
+    // against the CURRENT (1.9.0) row, is therefore both necessary and sufficient: getContent()'s
+    // approval gate (H-1) checks that one shared row regardless of which version's CONTENT is
+    // being fetched, so this also unblocks the 2.0.0 content lookup the "explicit version pins"
+    // test below performs.
+    await approve(SKILL_ID, '1.9.0')
   })
 
   it('an omitted version resolves to the identical most-recently-published row on both transports', async () => {
@@ -321,165 +366,5 @@ describe('MCP and CLI transports agree on version selection, given the same publ
       'utf-8'
     )
     expect(cliSkillMd).toBe(mcpSkillMd)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// SMI-5949 Wave 2 Step 5 (plan-review finding M7) — stub/live review-gate PARITY
-// ---------------------------------------------------------------------------
-//
-// Exercises `PrivateRegistryService.review()` DIRECTLY on a stub instance and a live instance
-// (fake-client-backed), bypassing the tool dispatcher — a SERVICE-level parity proof, not a
-// message-format proof (registry-tools.live.review-decision.test.ts already owns verbatim-
-// passthrough of the live RPC's own text). The requirement (M7) is error TYPE and ORDER parity:
-// both transports must fail at the SAME conceptual D-5 check for the same scenario, not merely
-// "both throw". Each case below asserts the expected pattern matches AND that the other three
-// documented failure patterns do NOT — proving the right check fired, not an accidental one.
-const REVIEW_TEAM = 'team-parity'
-const REVIEW_SKILL = 'myteam/parity-skill'
-const REVIEW_VERSION = '1.0.0'
-const REVIEW_CONTENT = {
-  'SKILL.md': '# Parity Skill\n\nUsed only by the review-gate parity tests.',
-}
-
-const PARITY_PATTERNS = {
-  notAdmin: /not an admin|admins can/i,
-  selfApproval: /own submission/i,
-  terminal: /already been (approved|rejected)/i,
-  missingPublisher: /no recorded submitter|published_by.*NULL/i,
-}
-
-/** Asserts `err` matches exactly the ONE expected pattern among the four documented D-5 failure
- *  shapes — proving order, not just type: a hit on the wrong pattern means the wrong check fired. */
-function expectOnlyPattern(message: string, expected: keyof typeof PARITY_PATTERNS): void {
-  for (const [name, pattern] of Object.entries(PARITY_PATTERNS)) {
-    if (name === expected) {
-      expect(message).toMatch(pattern)
-    } else {
-      expect(message).not.toMatch(pattern)
-    }
-  }
-}
-
-/** Live-side RPC error fixture — same four scenarios registry-tools.live.review-decision.test.ts
- *  scripts, reused here so the live half of each parity case is driven by the exact shape the RPC
- *  itself returns, not a hand-rolled approximation. */
-function liveRpcError(error: { code: string; message: string }) {
-  return {
-    rpcResponder: (fn: string) =>
-      fn === 'review_private_registry_submission'
-        ? { data: null, error }
-        : { data: [], error: null },
-  }
-}
-
-describe('stub/live review-gate error parity (SMI-5949 Wave 2 Step 5, M7)', () => {
-  let stub: StubRegistryService
-
-  beforeEach(() => {
-    stub = createStubRegistryService()
-  })
-
-  it('not-admin: both transports fail at the admin-membership check (D-5 step 3)', async () => {
-    const { client } = createFakeClient(
-      liveRpcError({
-        code: '42501',
-        message:
-          'Only team admins can review private-registry submissions. This team has no other ' +
-          'admin/owner besides the submitter — promote a second admin/owner to unblock review.',
-      })
-    )
-    await mockBothClients(client)
-    const live = createLiveRegistryService()
-    const liveErr = await live
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((liveErr as Error).message, 'notAdmin')
-
-    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
-    stub.setActor({ id: 'a-different-non-admin', isAdmin: false })
-    const stubErr = await stub
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((stubErr as Error).message, 'notAdmin')
-  })
-
-  it('self-approval: both transports fail at self-approval, not the admin check (D-5 step 7 / D-6)', async () => {
-    const { client } = createFakeClient(
-      liveRpcError({
-        code: 'P0001',
-        message: 'You cannot approve your own submission. Ask another team admin to review it.',
-      })
-    )
-    await mockBothClients(client)
-    const live = createLiveRegistryService()
-    const liveErr = await live
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((liveErr as Error).message, 'selfApproval')
-
-    // The publisher must ALSO be admin here (mirrors the plan's smoke matrix, H3): otherwise the
-    // admin check (step 3) fires first and this would prove the wrong thing.
-    stub.setActor({ id: 'same-actor', isAdmin: true })
-    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
-    const stubErr = await stub
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((stubErr as Error).message, 'selfApproval')
-  })
-
-  it('already-decided: both transports fail at the terminal-state check (D-5 step 5 / D-8)', async () => {
-    const { client } = createFakeClient(
-      liveRpcError({
-        code: 'P0001',
-        message:
-          'This submission has already been approved and cannot be reviewed again — approved ' +
-          'and rejected are both terminal decisions.',
-      })
-    )
-    await mockBothClients(client)
-    const live = createLiveRegistryService()
-    const liveErr = await live
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((liveErr as Error).message, 'terminal')
-
-    stub.setActor({ id: 'publisher', isAdmin: false })
-    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
-    stub.setActor({ id: 'admin-1', isAdmin: true })
-    await stub.review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved') // succeeds once
-    const stubErr = await stub
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((stubErr as Error).message, 'terminal')
-  })
-
-  it('missing published_by: both transports fail at the legacy-client check (D-5 step 6, D-7)', async () => {
-    const { client } = createFakeClient(
-      liveRpcError({
-        code: '23514',
-        message:
-          'This submission has no recorded submitter (published_by is NULL) and cannot be ' +
-          'reviewed — it was published by a client older than the required version. Ask the ' +
-          'submitter to upgrade and re-publish.',
-      })
-    )
-    await mockBothClients(client)
-    const live = createLiveRegistryService()
-    const liveErr = await live
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((liveErr as Error).message, 'missingPublisher')
-
-    // Publish with a null identity — the only way a stub row can lack published_by (see
-    // registry-tools.stub.ts's header for why publish() does not itself reject this, unlike the
-    // real D-7 trigger).
-    stub.setActor({ id: null, isAdmin: false })
-    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
-    stub.setActor({ id: 'admin-1', isAdmin: true })
-    const stubErr = await stub
-      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
-      .catch((e: Error) => e)
-    expectOnlyPattern((stubErr as Error).message, 'missingPublisher')
   })
 })

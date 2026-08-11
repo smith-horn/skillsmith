@@ -18,6 +18,13 @@
  * it is asserted structurally — exact key sets on both the result and its `install` payload, plus
  * a scan of the serialized result for the published file bytes — rather than by grep alone
  * (Sol plan-review finding #10).
+ *
+ * @see SMI-5949 adversarial-review finding H-1 (extended here, same regression class): every
+ * round-trip fixture below now APPROVES a publish before asserting a successful install. This file
+ * was not named in H-1's original file list, but carried the identical gap — `getContent()`'s
+ * missing `approvalStatus === 'approved'` filter meant every test here installed a still-`pending`
+ * skill successfully. Fixing `registry-tools.stub.ts` alone (H-1's actual fix) turned that latent
+ * gap into a real regression in THIS file; fixed in the same pass, not deferred.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -39,8 +46,13 @@ import {
   executePrivateRegistryManage,
   privateRegistryManageInputSchema,
   setPrivateRegistryService,
-  type PrivateRegistryService,
+  type StubRegistryService,
 } from './registry-tools.js'
+
+/** Distinct admin identity used to approve every fixture published in this file (SMI-5949 D-6
+ *  blocks self-approval — see registry-tools.test.ts's own ADMIN_ACTOR for the established
+ *  pattern this reuses). */
+const ADMIN_ACTOR = { id: 'install-action-admin-reviewer', isAdmin: true }
 
 const mockContext = {} as ToolContext
 const TEAM = 'team-alpha'
@@ -66,7 +78,7 @@ const EXTRA_FILE = '# Examples\n\nMore private team content here.'
 const CONTENT = { 'SKILL.md': SKILL_MD, 'examples.md': EXTRA_FILE }
 
 let db: Database
-let service: PrivateRegistryService
+let service: StubRegistryService
 let tmpDir: string
 let skillsDir: string
 let manifestPath: string
@@ -79,6 +91,13 @@ function makeInstaller(): SkillInstallationService {
     skillsDir,
     manifestPath,
   })
+}
+
+/** Approves `skillId@version` as a distinct admin identity (never the publisher — D-6), so
+ *  `getContent()` (approved-only, SMI-5949 D-4/H-1) can see it afterward. */
+async function approve(skillId: string, version: string): Promise<void> {
+  service.setActor(ADMIN_ACTOR)
+  await service.review(TEAM, skillId, version, 'approved')
 }
 
 function runInstall(input: { skillId?: string; version?: string; force?: boolean } = {}) {
@@ -155,6 +174,7 @@ describe('private_registry_manage(action:"install") — dispatch', () => {
 describe('private_registry_manage(action:"install") — publish → install round-trip', () => {
   it('writes every published file to disk with private-registry provenance', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', CONTENT)
+    await approve(SKILL_ID, '1.0.0')
 
     const result = await runInstall()
 
@@ -186,6 +206,7 @@ describe('private_registry_manage(action:"install") — publish → install roun
 
   it('never carries raw content in the tool result — exact shape, not a grep', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', CONTENT)
+    await approve(SKILL_ID, '1.0.0')
     const result = await runInstall()
 
     // Structural: the result carries exactly these keys, so a future field cannot appear here
@@ -212,6 +233,7 @@ describe('private_registry_manage(action:"install") — publish → install roun
 
   it('refuses a second install without force, and succeeds with it', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', CONTENT)
+    await approve(SKILL_ID, '1.0.0')
     await runInstall()
 
     const blocked = await runInstall()
@@ -232,6 +254,7 @@ describe('private_registry_manage(action:"install") — publish → install roun
       'SKILL.md': SKILL_MD,
       '../../evil.md': 'pwned',
     })
+    await approve(SKILL_ID, '1.0.0')
 
     const result = await runInstall()
     expect(result.success).toBe(false)
@@ -248,6 +271,10 @@ describe('private_registry_manage(action:"install") — version selection', () =
   it('installs the most recently published version when none is given', async () => {
     await service.publish(TEAM, SKILL_ID, '2.0.0', CONTENT)
     await service.publish(TEAM, SKILL_ID, '1.9.0', CONTENT)
+    // The stub tracks one metadata row per skillId (the most recently published version's) — see
+    // registry-tools.stub.ts's header — so approving the CURRENT (1.9.0) row is what unblocks
+    // getContent() for both versions here.
+    await approve(SKILL_ID, '1.9.0')
 
     const result = await runInstall()
     // Most recently PUBLISHED, not the highest semver — the same rule `get()` and the
@@ -260,6 +287,7 @@ describe('private_registry_manage(action:"install") — version selection', () =
   it('pins an explicitly requested version', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', CONTENT)
     await service.publish(TEAM, SKILL_ID, '2.0.0', CONTENT)
+    await approve(SKILL_ID, '2.0.0')
 
     const result = await runInstall({ version: '1.0.0' })
     expect(result.install?.version).toBe('1.0.0')

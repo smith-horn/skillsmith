@@ -58,6 +58,30 @@ export interface UserClientBinding {
  * actually authorized the call. Without it, these rows were attributed to the license key, which
  * did not (cross-provider review finding #3).
  */
+/**
+ * The "Failed to X" clause for `bindUserClient`'s catch branch below.
+ *
+ * `Failed to ${operation} skill` reads naturally for `publish`/`deprecate`/`undeprecate`/`install`
+ * — each names a verb that takes "skill" as its object. It does NOT for the three SMI-5949 Wave 2
+ * review-gate operations (adversarial-review nit): `submissions` is a plural noun, not a verb
+ * ("Failed to submissions skill" does not parse), and `approve`/`reject` act on one specific
+ * pending submission (a skillId@version awaiting review), not "the skill" as a whole — "Failed to
+ * approve skill" misleadingly reads as approving the entire skill rather than one version's
+ * review. Special-cased here rather than accepting the ungrammatical/misleading default for these
+ * three known operation names.
+ */
+function describeClientBindFailure(operation: string): string {
+  switch (operation) {
+    case 'submissions':
+      return 'Failed to list private-registry submissions'
+    case 'approve':
+    case 'reject':
+      return `Failed to ${operation} submission`
+    default:
+      return `Failed to ${operation} skill`
+  }
+}
+
 async function bindUserClient(
   role: 'admin' | 'member',
   operation: string,
@@ -70,7 +94,7 @@ async function bindUserClient(
     return { client, actorUserId: accessTokenSubject(token), role }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'unknown error'
-    throw new Error(`Failed to ${operation} skill: ${message}`)
+    throw new Error(`${describeClientBindFailure(operation)}: ${message}`)
   }
 }
 

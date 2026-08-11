@@ -99,6 +99,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opt-in — a deprecated version is never returned there, even by an exact version pin. Also
   corrects the `deprecate`/`undeprecate` response messages, which previously claimed the skill
   would "no longer appear in search results" — the private registry has no search surface at all.
+- **Private registry: skill submissions now require admin approval before going live** (2026-08-09,
+  SMI-5949 Wave 2): `private_registry_publish` now lands every submission `pending` and invisible to
+  every read surface (`list`/`get`/`install`, the `private-registry-get` edge function, and CLI
+  installs) until a team admin or owner approves it. New `private_registry_manage` actions
+  `submissions` (list what is pending/approved/rejected, scoped to the caller's own submissions plus
+  everything an admin can see) and `approve`/`reject` (an admin's decision, with an optional note).
+  A submitter can never approve their own submission. **Breaking, unconditional from merge day**:
+  publishing now requires a signed-in user (`skillsmith login`) in addition to
+  `SKILLSMITH_LICENSE_KEY` — publish moved off the shared-license-key/service-role credential path so
+  the submitter can be recorded by name, which self-approval prevention requires. A publisher who has
+  not logged in — including a CI/tooling caller holding only a license key — gets a hard, actionable
+  publish failure rather than a silently-stuck queue; there is no opt-in or toggle to delay this.
+  Pre-existing rows are grandfathered as already-approved and remain installable, unaffected. New
+  `registry_approval` feature flag (Enterprise tier) tracks entitlement for the review workflow
+  independently of the underlying `private_registry` flag, so the two can be priced or unbundled
+  separately in the future.
 - **Repositioned public messaging from "skill discovery" to "agent skill lifecycle management"**
   (2026-08-08, SMI-5948): website (homepage and all three A/B variants, pricing
   page, docs pages, footer, legal-page metadata, RSS feed, `llms.txt`/`llms-full.txt`),
@@ -110,8 +126,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scoped to what's verified shipped today (team-scoped publish, immutable
   versioning with per-install drift detection, automated security scoring
   with quarantine for flagged skills, deprecation) — a submitter/approver
-  review-gate workflow and Enterprise RBAC are tracked separately as
-  unshipped (SMI-5949), not described as present.
+  review-gate workflow and Enterprise RBAC were tracked separately as
+  unshipped (SMI-5949) at the time of this entry. **Update**: the
+  submitter/approver review-gate workflow has since shipped (SMI-5949 Wave 2,
+  see the entry below); Enterprise RBAC remains unshipped (RBAC enforcement
+  is still a stub — see the plan's D-2).
 - **Reduced Community/Individual/Team monthly API-call quotas 10x** (2026-07-06,
   SMI-5558): Community was 1,000 requests/month, now 100/month. Individual was
   10,000 requests/month, now 1,000/month. Team was 100,000 requests/month, now

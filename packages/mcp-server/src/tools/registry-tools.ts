@@ -79,7 +79,16 @@ export interface RegistrySkill {
   deprecated: boolean
   publishedAt: string
   publishedBy: string
-  registryUrl: string
+  /**
+   * `null` for a non-`'approved'` row (SMI-5949 adversarial-review finding L-2): a pending or
+   * rejected version is not actually live at any URL, so presenting one would contradict the
+   * intent already honored in `executePrivateRegistryPublishImpl`'s pending-branch message (which
+   * omits a Registry URL entirely). Only `registry-tools.live.submissions.ts`'s `mapSubmissionRow()`
+   * (the submissions/publish-read-back path, which can return non-approved rows) actually nulls
+   * this; `list()`/`get()` only ever return `'approved'` rows by construction (D-4), so this is
+   * always non-null there.
+   */
+  registryUrl: string | null
   /**
    * SMI-5949 D-3. Every row has one (`NOT NULL` on the table). `list()`/`get()` only ever return
    * `'approved'` rows (D-4's `.eq('approval_status','approved')` predicate) — the field is still
@@ -386,7 +395,7 @@ async function executePrivateRegistryManageImpl(
           return {
             success: false,
             dataSource,
-            error: `Skill "${input.skillId}" not found in private registry.`,
+            error: registrySkillNotFoundMessage(input.skillId),
           }
         }
         return {
@@ -396,10 +405,20 @@ async function executePrivateRegistryManageImpl(
           // private registry has no search surface at all (Context § "precedent warning" in the
           // plan doc). This is the actual, now-enforced behavior: `list`/`get`/`install` (both the
           // MCP and Edge Function transports) all carry a `deprecated = FALSE` predicate with no
-          // per-call bypass, so a deprecated version is invisible everywhere, including to a
-          // caller who already knows its exact skillId+version. Only a team admin re-running
-          // `list` with `includeDeprecated:true` can still see it (metadata only).
-          message: `Skill "${input.skillId}" has been deprecated. It will no longer be returned by list, get, or install — even by an exact version — for any team member. A team admin can still see it via private_registry_manage {action:'list', includeDeprecated:true}.`,
+          // per-call bypass, so an approved-then-deprecated version is invisible everywhere,
+          // including to a caller who already knows its exact skillId+version.
+          //
+          // SMI-5949 adversarial-review corrections (M-1, M-3): this UPDATE has no `.eq('version',
+          // …)`, but PostgreSQL applies the SELECT policy to it too (migration
+          // 20260809000000_private_registry_approval_gate.sql:78-86), so it only ever actually
+          // affects this skillId's currently-APPROVED row(s) — a `pending`/`rejected` sibling
+          // version, if one exists, is untouched by this call and can still be independently
+          // approved and installed later, regardless of this deprecation. And the
+          // `includeDeprecated:true` opt-in is NOT admin-gated — `list()` runs on the
+          // service-role/license-key path with no `auth.uid()` at all (see
+          // `registry-tools.live.reads.ts`'s own doc comment on `listSkills()`), so any team member
+          // holding the shared license key can pass it, not only a team admin.
+          message: `Skill "${input.skillId}" has been deprecated. Its approved version(s) will no longer be returned by list, get, or install — even by an exact version — for any team member; a separate pending or rejected version of this skillId, if one exists, is unaffected. Anyone holding this team's license key can still see deprecated versions via private_registry_manage {action:'list', includeDeprecated:true} — this is not restricted to team admins.`,
         }
       }
 
@@ -416,7 +435,7 @@ async function executePrivateRegistryManageImpl(
           return {
             success: false,
             dataSource,
-            error: `Skill "${input.skillId}" not found in private registry.`,
+            error: registrySkillNotFoundMessage(input.skillId),
           }
         }
         return {
