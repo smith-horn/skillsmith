@@ -91,6 +91,9 @@ const CONTEXT_STOPWORDS = new Set<string>([
   // contradicted this list's own documented promise above.
 ])
 
+/** Characters that count as "keep" (not strippable edge punctuation) — see `stripEdgePunctuation`. */
+const KEEP_CHAR_RE = /[a-z0-9+#]/
+
 /**
  * Strip leading/trailing punctuation from an already-lowercased token
  * without touching interior characters — "k8s" is untouched, but "git," ->
@@ -99,22 +102,25 @@ const CONTEXT_STOPWORDS = new Set<string>([
  * and a stray comma would otherwise make "git," fail to match the real
  * "git" term downstream.
  *
- * `+` and `#` are excluded from the strippable set (code-review correction,
- * SMI-5986) — they're meaningful trailing characters in real technical terms
- * ("c++", "c#"), not punctuation noise; stripping them turned both into the
- * single character "c", which the length filter then discarded entirely.
+ * `+` and `#` count as "keep" characters (code-review correction, SMI-5986)
+ * — they're meaningful trailing characters in real technical terms ("c++",
+ * "c#"), not punctuation noise; stripping them turned both into the single
+ * character "c", which the length filter then discarded entirely.
  *
- * Implemented as two separate anchored regexes (leading, then trailing)
- * rather than one `/^X+|Y+$/g` alternation (CodeQL js/polynomial-redos,
- * SMI-5986 PR review): empirically both forms are linear-time here — a
- * 200k-character adversarial input runs in under 1ms either way, since a
- * single `+` on a plain negated character class doesn't backtrack — but
- * CodeQL's static heuristic flags the combined anchored-alternation shape
- * regardless. Splitting into two single-purpose regexes is the standard
- * defusing refactor and keeps the actual behavior identical.
+ * Implemented as a manual index-scan rather than a regex (CodeQL
+ * js/polynomial-redos, SMI-5986 PR review round 2): an anchored
+ * negated-character-class `+` is linear-time in practice — verified
+ * empirically, a 200k-character adversarial input runs in under 1ms — but
+ * CodeQL's static heuristic flags this shape regardless of how it's split
+ * or phrased. A manual scan is O(n), trivially auditable, and structurally
+ * cannot be classified as a regex-based ReDoS risk by any static analyzer.
  */
 function stripEdgePunctuation(word: string): string {
-  return word.replace(/^[^a-z0-9+#]+/, '').replace(/[^a-z0-9+#]+$/, '')
+  let start = 0
+  while (start < word.length && !KEEP_CHAR_RE.test(word[start])) start++
+  let end = word.length
+  while (end > start && !KEEP_CHAR_RE.test(word[end - 1])) end--
+  return word.slice(start, end)
 }
 
 /**
