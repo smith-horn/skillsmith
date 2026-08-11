@@ -13,6 +13,7 @@ import {
   OverlapDetector,
   trackEvent,
   buildEmptyStackGuidance,
+  extractContextWords,
 } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
@@ -120,13 +121,10 @@ async function executeRecommendImpl(
   // Build search query from installed skill names and project context keywords
   const stack = [...installed_skills.map((id) => id.split('/').pop() || id)]
   if (project_context) {
-    // Extract key terms from project context (simple word split)
-    const contextWords = project_context
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length > 3)
-      .slice(0, 5)
-    stack.push(...contextWords)
+    // SMI-5986: shared helper keeps real short technical terms (git, ci,
+    // aws, sql, k8s) that a bare `.filter((w) => w.length > 3)` threshold
+    // used to silently drop, while still filtering out noise.
+    stack.push(...extractContextWords(project_context))
   }
 
   // SMI-5896: an empty derived stack (no installed_skills and no usable

@@ -14,6 +14,7 @@ All notable changes to `@skillsmith/core` are documented here.
   evidence table already used for skill install paths; clients with no independently-verified
   agents-dir convention default to today's existing `~/.claude/agents/` behavior rather than
   guessing (GH #2161)
+- **Fix**: new shared `extractContextWords()` (`services/context-words.ts`, exported from the package root) replaces a `.filter((w) => w.length > 3)` threshold both `@skillsmith/mcp-server`'s `skill_recommend` and `@skillsmith/cli`'s `recommend --context` used independently — it was silently dropping real short technical terms ("git", "ci", "aws", "sql", "k8s") from the recommendation stack, tripping the empty-stack guard even when usable context was supplied (SMI-5986)
 
 ## v0.11.5
 
