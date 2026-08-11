@@ -1,0 +1,66 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Private Skills" description="Keep a skill out of public search on your own machine with Skillsmith's Team-tier private flag">
+  <h1>Private Skills</h1>
+
+  <p class="lead">
+    Mark a skill private on your machine today, hidden from public search. This is a
+    single-device, Team-tier setting — not a shared registry. If your whole team needs the same
+    source of truth, see <a href="/docs/private-registry">Private Registry</a> instead.
+  </p>
+
+  <h2>What It Does</h2>
+
+  <p>
+    The <code>publish_private</code> MCP tool (Team tier) marks a skill private in your own
+    local database. Once marked, it's hidden from your own community search results — it won't
+    surface in <code>search</code> results alongside public skills.
+  </p>
+
+  <p>
+    <strong>It doesn't sync or share with your teammates.</strong> The setting is local to the
+    device it was set on. If two teammates both mark the same skill private on their own
+    machines, neither one sees the other's copy — there's no team-wide list, no shared storage,
+    and no way to look up what a teammate has marked private.
+  </p>
+
+  <h2>Tool Reference</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool</th>
+        <th>Parameters</th>
+        <th>Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>publish_private</code></td>
+        <td><code>skillId</code> (author/name)</td>
+        <td>Team</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>When Team-wide Sharing Is What You Need</h2>
+
+  <p>
+    Private skills are a good fit for a personal proprietary workflow you don't want showing up
+    in your own search results, but they're not a substitute for a real shared registry. For
+    that — a store your whole organization publishes to and installs from, with versioning and
+    team-scoped access control — see <a href="/docs/private-registry">Private Registry</a>
+    (Enterprise tier).
+  </p>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/private-registry">Private Registry</a> - the shared, org-wide alternative</li>
+    <li><a href="/docs/faq#features-capabilities">FAQ</a> - more on tier differences</li>
+  </ul>
+</DocsLayout>

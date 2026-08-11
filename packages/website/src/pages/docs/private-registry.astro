@@ -1,0 +1,161 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Private Registry" description="How Skillsmith's Enterprise-tier private registry keeps your team's skills versioned, access-controlled, and namespaced to your organization">
+  <h1>Private Registry</h1>
+
+  <p class="lead">
+    A real, hosted registry your whole team shares — versioned and access-controlled. This is
+    where skills your organization owns actually live, not a folder someone forked. Available on
+    the Enterprise tier.
+  </p>
+
+  <h2>What It Is</h2>
+
+  <p>
+    The private registry is a shared, org-scoped skill store. Publish a skill once and every
+    teammate can find and install it — no copy-pasting, no "which version is the real one."
+    Every published version is retained; nothing is silently overwritten.
+  </p>
+
+  <p>
+    This is different from <a href="/docs/private-skills">Private Skills</a>, which is a
+    single-device, Team-tier setting with no sharing at all. If you need your whole org working
+    from the same source of truth, this is that.
+  </p>
+
+  <h2 id="publish-approval">Publish &amp; Approval</h2>
+
+  <p>
+    Publishing isn't instant-live. A version you publish sits as a <strong>pending
+    submission</strong> until a different team admin reviews it — it's invisible to search,
+    <code>get</code>, and install (even to you, the person who published it) until that happens.
+    Self-approval is blocked at the database level: an admin cannot approve or reject their own
+    submission, no matter how the request is made.
+  </p>
+
+  <p>
+    An admin reviewing a submission either approves it (making it immediately visible and
+    installable to the whole team) or rejects it. Both decisions are <strong>terminal</strong> —
+    once approved or rejected, that exact version can't be re-reviewed. A rejected version can
+    only be superseded by publishing a new version under a new version number.
+  </p>
+
+  <p>
+    Publishing requires being signed in personally (<code>skillsmith login</code>) — the team's
+    shared license key alone is no longer enough. This is what makes self-approval blocking and
+    a real submitter identity possible: every submission and every review decision is tied to the
+    actual person who made it, not just "the team."
+  </p>
+
+  <h2>Access Control</h2>
+
+  <p>
+    Every team's skills are scoped to that team, enforced differently depending on the operation:
+  </p>
+
+  <ul>
+    <li>
+      <strong>Direct database access</strong> (an authenticated dashboard session) is filtered
+      by row-level security — a query literally cannot return another team's rows, and a plain
+      table read never returns a pending or rejected submission to anyone, including the person
+      who submitted it. Seeing your own pending work goes through a separate, dedicated review
+      lookup instead (below), not a plain query.
+    </li>
+    <li>
+      <strong>Listing and metadata lookups</strong> (<code>list</code>, <code>get</code>,
+      looking up your namespace) run through a service-role connection that bypasses row-level
+      security by design, so team scoping — plus only ever surfacing approved versions — is
+      enforced explicitly in application code on every request.
+    </li>
+    <li>
+      <strong>Installing a skill's actual content</strong> runs as the signed-in member's own
+      account instead, so row-level security applies directly; a service-role check afterward
+      confirms the owning team still holds an Enterprise entitlement.
+    </li>
+    <li>
+      <strong>Publishing, reviewing, and admin actions</strong> (<code>publish</code>,
+      <code>submissions</code>, <code>approve</code>, <code>reject</code>, <code>deprecate</code>,
+      <code>undeprecate</code>) all run as the signed-in user's own account, so the database's
+      row-level security and admin-membership checks — not application code — decide what's
+      allowed. This is also what makes self-approval blocking real rather than merely convention:
+      the database can name who's asking.
+    </li>
+  </ul>
+
+  <p>
+    Namespace ownership is enforced at the database layer regardless of which path is used — a
+    database-level check runs on every publish and rejects any skill ID that doesn't match your
+    team's assigned namespace prefix, so a team can't accidentally (or deliberately) publish
+    outside its own namespace.
+  </p>
+
+  <h2>Tools</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>What it does</th>
+        <th>Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>private_registry_publish</code></td>
+        <td>Publish a new skill version to your team's registry as a pending submission</td>
+        <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>private_registry_manage</code></td>
+        <td>
+          List, get, deprecate, undeprecate, look up your team's namespace, install a skill, view
+          pending/approved/rejected submissions, or approve/reject a submission (the
+          <code>action</code> parameter selects which)
+        </td>
+        <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith registry install &lt;skillId&gt;</code></td>
+        <td>Install a skill from your team's private registry</td>
+        <td>Enterprise</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Publishing, listing, and review are MCP-only today — there's no CLI command for any of them
+    yet, only for install.
+  </p>
+
+  <h2>Versioning</h2>
+
+  <p>
+    Each skill ID and version pair can only be published once — republishing the same version is
+    rejected outright, so a version can never be silently overwritten. Published content is
+    capped at 2MB per version.
+  </p>
+
+  <p>
+    Deprecating a version (an admin-only action) marks it as no longer recommended without
+    deleting it. Unlike approval, deprecation does hide a version by default: a deprecated
+    version drops out of <code>list</code>, <code>get</code>, and install — any team member can
+    still see it via <code>list</code> with the <code>includeDeprecated</code> option (this
+    isn't restricted to admins), but <code>get</code> and install never surface a deprecated
+    version, even by exact version number. See
+    <a href="/docs/governance">Governance</a> for how deprecation fits into the broader lifecycle.
+  </p>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/private-skills">Private Skills</a> - the lighter, single-device alternative</li>
+    <li><a href="/docs/governance">Governance</a> - deprecation, audit trail, and compliance reporting</li>
+    <li><a href="/docs/trust-tiers">Trust Tiers</a> - how skill trust is evaluated</li>
+  </ul>
+</DocsLayout>
