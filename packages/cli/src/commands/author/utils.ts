@@ -7,9 +7,10 @@
 import chalk from 'chalk'
 import { access } from 'fs/promises'
 import { mkdir } from 'fs/promises'
-import { join, resolve } from 'path'
+import { resolve } from 'path'
 import { homedir } from 'os'
 import type { ValidationResult } from '@skillsmith/core'
+import { resolveCompanionAgentDir, type ClientId } from '@skillsmith/core/install'
 
 /**
  * Pretty print validation errors and warnings
@@ -53,12 +54,21 @@ export async function fileExists(path: string): Promise<boolean> {
 }
 
 /**
- * Ensure ~/.claude/agents directory exists
+ * Ensure the companion-subagent output directory exists and return it.
+ *
+ * `customPath` (`--output`) always wins when supplied — an explicit override
+ * stays supported. Otherwise resolves per `client` via
+ * `resolveCompanionAgentDir()` (SMI-5980 Wave 3) — for `client` omitted or
+ * `'claude-code'` this is `~/.claude/agents/`, unchanged from the prior
+ * hardcoded default.
  */
-export async function ensureAgentsDirectory(customPath?: string): Promise<string> {
+export async function ensureAgentsDirectory(
+  customPath?: string,
+  client?: ClientId
+): Promise<string> {
   const agentsDir = customPath
     ? resolve(customPath.replace(/^~/, homedir()))
-    : join(homedir(), '.claude', 'agents')
+    : resolveCompanionAgentDir(client)
 
   await mkdir(agentsDir, { recursive: true })
   return agentsDir

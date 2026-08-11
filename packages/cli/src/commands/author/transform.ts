@@ -11,8 +11,8 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 import ora from 'ora'
 import { readFile, readdir } from 'fs/promises'
 import { join, resolve } from 'path'
-import { homedir } from 'os'
 import { SkillParser } from '@skillsmith/core'
+import { resolveCompanionAgentDir } from '@skillsmith/core/install'
 
 const logger = getCliLogger()
 
@@ -102,8 +102,12 @@ export async function transformSkill(skillPath: string, options: TransformOption
       return
     }
 
-    // Check if subagent already exists
-    const agentsDir = join(homedir(), '.claude', 'agents')
+    // Check if subagent already exists. SMI-5980 (Wave 3): resolved via the
+    // same COMPANION_AGENT_TARGETS-backed resolver generateSubagent() below
+    // ultimately uses (through ensureAgentsDirectory()) — this command has no
+    // --output/--client of its own, so it stays the canonical (claude-code)
+    // default, same as before, but no longer duplicates the hardcoded literal.
+    const agentsDir = resolveCompanionAgentDir()
     const subagentPath = join(agentsDir, `${metadata.name}-specialist.md`)
 
     if (await fileExists(subagentPath)) {

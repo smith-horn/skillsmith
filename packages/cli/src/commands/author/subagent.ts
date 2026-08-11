@@ -205,12 +205,18 @@ export const subagentAction = withTelemetry(subagentActionImpl, {
 
 /**
  * Create subagent command
+ *
+ * SMI-5980 (Wave 3): `--output` has no static default value here anymore —
+ * when omitted, `ensureAgentsDirectory()` resolves the default via
+ * `resolveCompanionAgentDir()` (COMPANION_AGENT_TARGETS, `@skillsmith/core/install`)
+ * instead of a literal `'~/.claude/agents'` string duplicated at the command
+ * definition. An explicit `--output` still always wins.
  */
 export function createSubagentCommand(): Command {
   return new Command('subagent')
     .description('Generate a companion subagent for a skill')
     .argument('[path]', 'Path to skill directory', '.')
-    .option('-o, --output <path>', 'Output directory', '~/.claude/agents')
+    .option('-o, --output <path>', 'Output directory (default: ~/.claude/agents)')
     .option('--tools <tools>', 'Override detected tools (comma-separated)')
     .option('--model <model>', 'Model for subagent: sonnet|opus|haiku', 'sonnet')
     .option('--skip-claude-md', 'Skip CLAUDE.md snippet generation')
