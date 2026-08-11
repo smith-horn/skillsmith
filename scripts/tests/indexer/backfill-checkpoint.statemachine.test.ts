@@ -197,4 +197,40 @@ describe('facet driver state machine (SMI-5286 1c)', () => {
     expect(cursor.facet).toBe('done')
     expect(cursor.facet_index).toBe(FACETS.length)
   })
+
+  // SMI-5964 §1e Case 17: the `no_progress_stalls` cursor field round-trips
+  // exactly like every other cursor field, but is NEVER read back into
+  // FacetCrawlState -- it is a cursor-only, advisory field.
+  it('SMI-5964: facetStateToCursor accepts an optional 4th no_progress_stalls arg; cursorToFacetState ignores it entirely', () => {
+    const state: FacetCrawlState = { facetIndex: 2, pendingSubranges: [], lastPage: 3 }
+
+    const cursor = facetStateToCursor(state, '', FACETS, 2)
+    expect(cursor.no_progress_stalls).toBe(2)
+
+    // The counter never enters FacetCrawlState -- cursorToFacetState's output
+    // shape is UNCHANGED (the toEqual guard above stays exactly
+    // {facetIndex, pendingSubranges, lastPage}).
+    expect(cursorToFacetState(cursor)).toEqual({
+      facetIndex: 2,
+      pendingSubranges: [],
+      lastPage: 3,
+    })
+
+    // Omitting the 4th arg defaults to 0 -- byte-stable for the existing
+    // 3-arg call sites elsewhere in this suite.
+    expect(facetStateToCursor(state, '', FACETS).no_progress_stalls).toBe(0)
+
+    // Round-trips through JSON like every other cursor field (the
+    // audit_logs metadata path), and a legacy row missing the field entirely
+    // reads back as `undefined` on the cursor, not a throw.
+    const roundTripped = JSON.parse(JSON.stringify(cursor))
+    expect(roundTripped.no_progress_stalls).toBe(2)
+    expect(cursorToFacetState(roundTripped)).toEqual({
+      facetIndex: 2,
+      pendingSubranges: [],
+      lastPage: 3,
+    })
+    const legacyCursor = { path: '', facet: '0-127', last_page: 0 }
+    expect(() => cursorToFacetState(legacyCursor)).not.toThrow()
+  })
 })

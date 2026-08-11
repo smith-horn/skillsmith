@@ -75,6 +75,49 @@ export interface SubdirSearchStats {
 }
 
 /**
+ * SMI-5964: intra-page/intra-leaf budget threaded into
+ * {@link processSearchResults}. Omitted (`undefined`) is unbounded and
+ * byte-identical to pre-5964 behavior — the two cron call sites
+ * (`subdirectory-search.ts:238`, `:292`) pass nothing.
+ */
+export interface ProcessBudget {
+  /** Absolute epoch-ms deadline; stop before starting more work past it. */
+  deadlineAt?: number | null
+  /** Stop once `repos.length >= maxSkills` (0/undefined = no cap). */
+  maxSkills?: number
+}
+
+/** SMI-5964: the outcome of one {@link processSearchResults} call. */
+export interface ProcessOutcome {
+  /** True when the function returned before consuming every input result. */
+  stopped: boolean
+  reason?: 'deadline' | 'skill-cap'
+}
+
+/**
+ * SMI-5964: evaluate `budget` at a loop-top. Returns the {@link ProcessOutcome}
+ * to return immediately when tripped, or `null` when the caller should keep
+ * going. `repos` is the dispatch-wide accumulator already threaded through
+ * every caller, so this reads the SAME quantity the existing range-boundary
+ * cap measures (`subdirectory-search.helpers.ts`) — no new counter, no new
+ * key-shape. Checked skill-cap first, deadline second, matching the existing
+ * range-boundary checks' own ordering.
+ */
+function checkBudget(
+  budget: ProcessBudget | undefined,
+  repos: GitHubRepository[]
+): ProcessOutcome | null {
+  if (!budget) return null
+  if (budget.maxSkills && repos.length >= budget.maxSkills) {
+    return { stopped: true, reason: 'skill-cap' }
+  }
+  if (budget.deadlineAt != null && Date.now() >= budget.deadlineAt) {
+    return { stopped: true, reason: 'deadline' }
+  }
+  return null
+}
+
+/**
  * Process code search results: deduplicate, validate, resolve license, and collect repos.
  * Shared by both broad and fallback search paths.
  *
@@ -120,8 +163,9 @@ export async function processSearchResults(
   telemetry: RateLimitTelemetry,
   enumerateTelemetry: EnumerateTelemetry,
   enumeratedRepos: Set<string>,
-  repoMetaCache: Map<string, RepoMeta>
-): Promise<void> {
+  repoMetaCache: Map<string, RepoMeta>,
+  budget?: ProcessBudget
+): Promise<ProcessOutcome> {
   // SMI-5319 kill-switch: when set to the literal string 'true', restore the
   // legacy pre-validity license ADMISSION gate (exclude non-permissive repos)
   // so ops can re-enable the old behavior without a deploy. Default (unset /
@@ -129,6 +173,11 @@ export async function processSearchResults(
   const legacyLicenseGate = process.env.SKILLSMITH_INDEXER_LICENSE_GATE === 'true'
 
   for (const repo of resultRepos) {
+    // SMI-5964: top-of-loop budget check -- no work is started that is about
+    // to be discarded.
+    const repoLoopTripped = checkBudget(budget, repos)
+    if (repoLoopTripped) return repoLoopTripped
+
     // Deduplication key includes skillPath: one repo can have multiple skills
     const dedupKey = repo.skillPath ? `${repo.url}/${repo.skillPath}` : repo.url
     if (seenUrls.has(dedupKey)) continue
@@ -254,6 +303,11 @@ export async function processSearchResults(
     // Validate each enumerated SKILL.md independently (sec#4 strict gate) and emit
     // one per-skill GitHubRepository with a distinct tree URL (C-1) per valid path.
     for (const entry of entries) {
+      // SMI-5964: top-of-loop budget check -- no work is started that is about
+      // to be discarded.
+      const entryLoopTripped = checkBudget(budget, repos)
+      if (entryLoopTripped) return entryLoopTripped
+
       const skillPath = entry.path
       const installable = await checkSkillMdExists(
         repo.owner,
@@ -298,4 +352,8 @@ export async function processSearchResults(
       await delay(50)
     }
   }
+
+  // SMI-5964: every input result was consumed without tripping `budget`
+  // (or `budget` was never supplied — the cron call sites' byte-identical case).
+  return { stopped: false }
 }

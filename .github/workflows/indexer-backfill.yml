@@ -82,7 +82,7 @@ on:
         default: '0'
         type: string
       max_elapsed_minutes:
-        description: 'SMI-5448: per-dispatch wall-clock budget in MINUTES (default 280, safely below the 330-min GHA timeout). The crawl checkpoints and exits at a clean boundary before the GHA kill, turning a timeout rollback into forward progress. 0 = disabled. A single in-flight page can run ~10-15 min past the trip point before the page loop breaks.'
+        description: 'SMI-5448: per-dispatch wall-clock budget in MINUTES (default 280, safely below the 330-min GHA timeout). The crawl checkpoints and exits at a clean boundary before the GHA kill, turning a timeout rollback into forward progress. 0 = disabled. SMI-5964: a dense leaf can run ~54 min/page under the pre-fix per-page-only observation granularity; the intra-page budget check (default SKILLSMITH_INDEXER_FETCH_TIMEOUT_MS=30s per request) now bounds the overshoot to ~4-6 min instead.'
         required: false
         default: '280'
         type: string
@@ -371,12 +371,35 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ env.SELECTED_SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           BODY=$(jq -n \
-            --arg msg "The skill indexer backfill workflow failed. HTTP Code: $HTTP_CODE" \
+            --arg msg "The skill indexer backfill workflow failed. HTTP Code: ${HTTP_CODE:-n/a}" \
             --arg rid "$RUN_ID" \
             --arg url "$RUN_URL" \
             '{type:"indexer_backfill_failed", message:$msg, workflow:"Skill Indexer Backfill", runId:$rid, runUrl:$url}')
-          curl -s -X POST \
+          # SMI-5964: capture the alert-notify HTTP code instead of discarding
+          # it (the prior `|| true` made a failed alert POST silently
+          # invisible) -- surface it in the step summary and fail the step
+          # (not just annotate) on anything but 200, so a delivery failure
+          # is visibly recorded rather than leaving this step green (same
+          # code-review finding applied to the indexer-backfill-watch.yml
+          # sibling step -- HTTP defaults to "000" and is only overwritten on
+          # a completed curl call, avoiding a doubled "000\n000" value on some
+          # curl failure modes).
+          HTTP="000"
+          if RESPONSE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -d "$BODY" \
-            "$SUPABASE_URL/functions/v1/alert-notify" || true
+            "$SUPABASE_URL/functions/v1/alert-notify"); then
+            HTTP="$RESPONSE_CODE"
+          fi
+          {
+            echo "### Backfill Failure Alert"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| alert-notify HTTP | $HTTP |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::alert-notify returned $HTTP -- email was NOT sent."
+            exit 1
+          fi
