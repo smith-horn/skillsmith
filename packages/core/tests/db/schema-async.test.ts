@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, unlinkSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, unlinkSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -310,6 +310,53 @@ describe('Async Schema Functions (SMI-2206)', () => {
       testDatabases.push(db2)
 
       const version = getSchemaVersion(db2)
+      expect(version).toBe(SCHEMA_VERSION)
+    })
+  })
+
+  describe('openDatabaseAsync — empty/corrupt database detection (SMI-5997)', () => {
+    it('throws an actionable error for a 0-byte file (no tables, no schema_version)', async () => {
+      if (!isBetterSqlite3Available()) {
+        console.log('Skipping test: no SQLite driver available')
+        return
+      }
+
+      mkdirSync(TEST_DIR, { recursive: true })
+
+      const testPath = join(TEST_DIR, `test-empty-corrupt-${Date.now()}.db`)
+      testPaths.push(testPath)
+
+      // Reproduces the SMI-5997 incident: a 0-byte file left behind by an
+      // interrupted persist() (or any other truncation). SQLite treats a
+      // 0-byte file as a valid, openable, empty database, so this must be
+      // caught by schema.ts's zero-table check rather than SQLITE_CANTOPEN.
+      writeFileSync(testPath, Buffer.alloc(0))
+
+      await expect(openDatabaseAsync(testPath)).rejects.toThrow(/empty or corrupt/)
+    })
+
+    it('still treats a file with real tables but no schema_version as a legacy import', async () => {
+      if (!isBetterSqlite3Available()) {
+        console.log('Skipping test: no SQLite driver available')
+        return
+      }
+
+      mkdirSync(TEST_DIR, { recursive: true })
+
+      const testPath = join(TEST_DIR, `test-legacy-import-${Date.now()}.db`)
+      testPaths.push(testPath)
+
+      // Build a database with a table but no schema_version, without going
+      // through createDatabaseAsync (which would stamp schema_version itself).
+      const seedDb = await createDatabaseAsync(testPath)
+      seedDb.exec('DROP TABLE schema_version')
+      closeDatabase(seedDb)
+
+      const db = await openDatabaseAsync(testPath)
+      testDatabases.push(db)
+
+      expect(db.open).toBe(true)
+      const version = getSchemaVersion(db)
       expect(version).toBe(SCHEMA_VERSION)
     })
   })

@@ -17,7 +17,7 @@
 
 import { createRequire } from 'node:module'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { isCorruptionError, backupCorruptDbFile } from './corruption.js'
 
 // ESM-compatible require for dynamic module loading
@@ -320,12 +320,31 @@ export class SqlJsDatabaseAdapter implements Database {
 
   /**
    * Persist the in-memory database to file
+   *
+   * SMI-5997: writes atomically (temp file + rename) rather than a direct
+   * writeFileSync to filePath. A direct write truncates the target file
+   * before the new bytes land; a process kill/crash mid-write (OOM, SIGKILL,
+   * machine sleep) during that window leaves a 0-byte file on disk, which
+   * openDatabaseAsync() then silently misclassifies as a fresh/legacy import
+   * instead of a corrupt file — see schema.ts. rename() is atomic on the
+   * same filesystem, so the target is only ever fully-old or fully-new.
    */
   persist(): void {
     if (this._memory || !this.filePath) return
 
     const data = this.db.export()
-    writeFileSync(this.filePath, Buffer.from(data))
+    const tmpPath = `${this.filePath}.tmp`
+    try {
+      writeFileSync(tmpPath, Buffer.from(data))
+      renameSync(tmpPath, this.filePath)
+    } catch (error) {
+      try {
+        if (existsSync(tmpPath)) unlinkSync(tmpPath)
+      } catch {
+        // best-effort cleanup — surface the original error either way
+      }
+      throw error
+    }
   }
 
   /**
