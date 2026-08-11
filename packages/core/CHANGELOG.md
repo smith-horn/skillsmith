@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: new shared `extractContextWords()` (`services/context-words.ts`, exported from the package root) replaces a `.filter((w) => w.length > 3)` threshold both `@skillsmith/mcp-server`'s `skill_recommend` and `@skillsmith/cli`'s `recommend --context` used independently — it was silently dropping real short technical terms ("git", "ci", "aws", "sql", "k8s") from the recommendation stack, tripping the empty-stack guard even when usable context was supplied (SMI-5986)
+- **Fix**: `SqlJsDatabaseAdapter.persist()` (`db/drivers/sqljsDriver.ts`) now writes the exported database buffer atomically — to a temp file, then `renameSync` over the target — instead of a direct `writeFileSync` that truncates the file before the new bytes land. A process kill mid-write (OOM, SIGKILL, machine sleep) could previously leave a 0-byte `skills.db` on disk. `openDatabaseAsync()` (`db/schema.ts`) also now distinguishes a genuinely empty/corrupt database (zero tables) from a real legacy import (has tables, just missing `schema_version`), failing loudly with remediation for the former instead of silently stamping `schema_version=1` and running every migration against a schema that was never created — which previously crashed server startup with an opaque `no such table: skills`/`no such table: cache` error and no actionable diagnostic (SMI-5997)
+
 ## v0.11.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.11.4).

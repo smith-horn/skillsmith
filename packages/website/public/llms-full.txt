@@ -52,6 +52,9 @@ When using the MCP server, these tools are available:
 | `recommend` | context (optional) | Get project-based skill recommendations |
 | `validate` | path | Validate a skill's YAML structure |
 | `compare` | ids (2-5 skill IDs) | Compare skills side-by-side |
+| `publish_private` (Team+) | skillId | Mark a skill private on this device, hiding it from your own search results |
+| `private_registry_publish` (Enterprise) | skillId, version, content | Publish a skill version to your team's private registry as a pending submission requiring admin approval |
+| `private_registry_manage` (Enterprise) | action (list/get/install/deprecate/undeprecate/namespace/submissions/approve/reject), skillId | Manage your team's private registry, including reviewing pending submissions |
 
 ## CLI Commands
 
@@ -173,6 +176,9 @@ A: Open an issue at github.com/smith-horn/skillsmith/issues. Enterprise customer
 Q: Where are skills installed?
 A: Skills install to ~/.claude/skills/ by default and are automatically available in all sessions.
 
+Q: What is the private registry, and how does publishing get approved?
+A: The private registry (Enterprise tier) is a shared, org-scoped skill store — publish a skill once and every teammate can find and install it. A published version sits as a pending submission, invisible to search, get, and install (even to the person who published it) until a different team admin approves or rejects it. Self-approval is blocked at the database level. Both approve and reject are terminal — a rejected version can only be superseded by publishing a new version.
+
 ## Packages
 
 | Package | Install | Description |
@@ -194,6 +200,8 @@ Engineering and product articles covering Skillsmith development and AI-native w
 
 - Website: https://www.skillsmith.app
 - Documentation: https://www.skillsmith.app/docs
+- Private Registry: https://www.skillsmith.app/docs/private-registry
+- Governance: https://www.skillsmith.app/docs/governance
 - Skills Browser: https://www.skillsmith.app/skills
 - Pricing: https://www.skillsmith.app/pricing
 - GitHub: https://github.com/smith-horn/skillsmith

@@ -3,14 +3,19 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Database } from '../src/db/database-interface.js'
 import {
   createDatabase,
+  openDatabase,
   closeDatabase,
   getSchemaVersion,
   runMigrations,
   SCHEMA_VERSION,
 } from '../src/db/schema.js'
+import { isBetterSqlite3Available } from '../src/db/drivers/betterSqlite3Driver.js'
 
 describe('Database Schema', () => {
   let db: Database
@@ -231,6 +236,54 @@ describe('Database Schema', () => {
       expect(indexNames).toContain('idx_skills_author')
       expect(indexNames).toContain('idx_skills_trust_tier')
       expect(indexNames).toContain('idx_skills_quality_score')
+    })
+  })
+
+  describe('openDatabase — empty/corrupt database detection (SMI-5997)', () => {
+    let dir: string
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'schema-open-sync-'))
+    })
+
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('throws an actionable error for a 0-byte file (no tables, no schema_version)', () => {
+      if (!isBetterSqlite3Available()) {
+        console.log('Skipping test: no SQLite driver available')
+        return
+      }
+
+      const testPath = join(dir, 'empty-corrupt.db')
+      // Reproduces the SMI-5997 incident via the deprecated sync path
+      // (packages/cli/src/commands/merge.ts still calls openDatabase()
+      // directly) — SQLite treats a 0-byte file as a valid, openable, empty
+      // database, so this must be caught by the zero-table check rather
+      // than a native SQLITE_CANTOPEN/corruption error.
+      writeFileSync(testPath, Buffer.alloc(0))
+
+      expect(() => openDatabase(testPath)).toThrow(/empty or corrupt/)
+    })
+
+    it('still treats a file with real tables but no schema_version as a legacy import', () => {
+      if (!isBetterSqlite3Available()) {
+        console.log('Skipping test: no SQLite driver available')
+        return
+      }
+
+      const testPath = join(dir, 'legacy-import.db')
+
+      const seedDb = createDatabase(testPath)
+      seedDb.exec('DROP TABLE schema_version')
+      closeDatabase(seedDb)
+
+      const reopened = openDatabase(testPath)
+      expect(reopened.open).toBe(true)
+      const version = getSchemaVersion(reopened)
+      expect(version).toBe(SCHEMA_VERSION)
+      closeDatabase(reopened)
     })
   })
 
