@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.5
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.4).
 - **Chore**: bump sanitize-html from 2.17.4 to 2.17.5 (GHSA-vccv-cmxp-4j9h)
 
 ## v0.7.4
