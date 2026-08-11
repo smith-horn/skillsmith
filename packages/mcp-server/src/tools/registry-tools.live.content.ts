@@ -197,6 +197,13 @@ export async function getSkillContent(
     .select(REGISTRY_METADATA_COLUMNS)
     .eq('team_id', teamId)
     .eq('skill_id', skillId)
+    // SMI-5949 Wave 3 (deprecated read-filter closure): unlike approval_status, `deprecated` is
+    // NOT enforced by RLS (private_registry_skills_member_read only ever scoped team_id and, since
+    // Wave 2, approval_status), so this predicate must be explicit here too, even though this
+    // query already runs over the caller's own JWT. No opt-in — install must never resolve a
+    // deprecated version, including by an exact version pin; see registry-tools.live.reads.ts's
+    // getSkill() for the identical no-opt-in rule on the MCP metadata read.
+    .eq('deprecated', false)
   if (version) query = query.eq('version', version)
   const metadata = await query
 

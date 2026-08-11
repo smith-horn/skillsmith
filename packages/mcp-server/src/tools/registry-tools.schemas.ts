@@ -83,6 +83,17 @@ export const privateRegistryManageInputSchema = z.object({
     .optional()
     .describe('Version filter; required for approve/reject; "install" defaults to most recent'),
   force: z.boolean().optional().describe('SMI-5905: reinstall over an existing install'),
+  // SMI-5949 Wave 3: deprecated read-filter closure. Only affects action "list" — get/install
+  // always exclude deprecated versions, with no equivalent opt-in (see the plan doc's Wave 3
+  // section for why the asymmetry is deliberate). Ignored on every other action.
+  includeDeprecated: z
+    .boolean()
+    .optional()
+    .describe(
+      'Action "list" only: include deprecated versions (omit or false to hide them, the ' +
+        'default). No effect on other actions — "get"/"install" always exclude deprecated ' +
+        'versions, even by exact version.'
+    ),
   // SMI-5949 D-5. No separate "decision" input — action itself ('approve'/'reject') is the decision.
   status: z
     .enum(['pending', 'approved', 'rejected'])
@@ -175,6 +186,12 @@ export const privateRegistryManageToolSchema = {
           'recently published',
       },
       force: { type: 'boolean', description: 'Reinstall over an existing install' },
+      includeDeprecated: {
+        type: 'boolean',
+        description:
+          'Action "list" only: include deprecated versions (default hides them). No effect on ' +
+          '"get"/"install", which always exclude deprecated versions, even by exact version.',
+      },
       status: {
         type: 'string',
         enum: ['pending', 'approved', 'rejected'],

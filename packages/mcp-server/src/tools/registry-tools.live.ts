@@ -20,7 +20,10 @@
  *   `get` also carry a second mandatory in-query predicate, `approval_status = 'approved'`
  *   (SMI-5949 D-4 surfaces 3/4) — service-role bypasses the RLS policy that would otherwise
  *   enforce this, so it must be explicit here, under the same already-documented invariant as the
- *   `team_id` filter.
+ *   `team_id` filter. Since SMI-5949 Wave 3, both also carry a third predicate, `deprecated =
+ *   FALSE` — a gap the approval-gate work surfaced (`deprecated` was documented as hiding a skill
+ *   but no read path enforced it); `list` gains an explicit `includeDeprecated` opt-in, `get` does
+ *   not. The actual query logic for both lives in `registry-tools.live.reads.ts`.
  *
  * - **Admin-level writes** (`deprecate`, `undeprecate`) do NOT use service-role. They run through
  *   the signed-in user's own Supabase JWT (`skillsmith login`, SMI-4402), so PostgREST evaluates
@@ -74,6 +77,7 @@ import {
   type RegistrySkillContent,
 } from './registry-tools.content.types.js'
 import { getSkillContent } from './registry-tools.live.content.js'
+import { listSkills, getSkill } from './registry-tools.live.reads.js'
 import {
   mapSubmissionRow,
   readBackSubmission,
@@ -144,20 +148,6 @@ const METADATA_COLUMNS = REGISTRY_METADATA_COLUMNS
  *  silently mapped to null, or an outage would look identical to "not found". */
 function isNoRowsError(error: SupabaseError | null): boolean {
   return error?.code === 'PGRST116'
-}
-
-function mapRow(teamId: string, row: PrivateRegistrySkillRow): RegistrySkill {
-  return {
-    skillId: row.skill_id,
-    version: row.version,
-    description: row.description,
-    deprecated: row.deprecated,
-    publishedAt: row.published_at,
-    publishedBy: row.published_by ?? 'unknown',
-    registryUrl: `https://registry.skillsmith.app/private/${teamId}/${row.skill_id}@${row.version}`,
-    approvalStatus: row.approval_status,
-    approvalMode: row.approval_mode,
-  }
 }
 
 /** Postgres unique_violation (immutability breach) — code 23505, or a duplicate-key message. */
@@ -395,58 +385,18 @@ export function createLiveRegistryService(): PrivateRegistryService {
       return mapSubmissionRow(teamId, submission)
     },
 
-    async list(teamId, version): Promise<RegistrySkill[]> {
+    // D-4 surface 3 + SMI-5949 Wave 3 (deprecated read-filter closure). Query logic lives in
+    // registry-tools.live.reads.ts (this file's own 500-line audit:standards budget).
+    async list(teamId, version, includeDeprecated): Promise<RegistrySkill[]> {
       const client = await getClient()
-      let query = client
-        .from<PrivateRegistrySkillRow>(TABLE)
-        .select(METADATA_COLUMNS)
-        .eq('team_id', teamId)
-        // D-4 surface 3: service-role bypasses the RLS policy that would otherwise hide
-        // non-approved rows, so this predicate is the explicit, mandatory in-query equivalent —
-        // same invariant as the team_id filter above (ADR-116).
-        .eq('approval_status', 'approved')
-      if (version) query = query.eq('version', version)
-      const resp = await query
-      if (resp.error) {
-        throw new Error(`Failed to list registry skills: ${resp.error.message ?? 'unknown error'}`)
-      }
-      return (resp.data ?? []).map((row) => mapRow(teamId, row))
+      return listSkills(client, teamId, version, includeDeprecated)
     },
 
+    // D-4 surface 4 + SMI-5949 Wave 3 — see registry-tools.live.reads.ts's getSkill() for why this
+    // one carries no includeDeprecated opt-in, unlike list() above.
     async get(teamId, skillId, version): Promise<RegistrySkill | null> {
       const client = await getClient()
-      if (version) {
-        const resp = await client
-          .from<PrivateRegistrySkillRow>(TABLE)
-          .select(METADATA_COLUMNS)
-          .eq('team_id', teamId)
-          .eq('skill_id', skillId)
-          .eq('version', version)
-          // D-4 surface 4 (pinned-version branch) — see list()'s comment above.
-          .eq('approval_status', 'approved')
-          .single()
-        if (resp.error) {
-          if (isNoRowsError(resp.error)) return null
-          throw new Error(`Failed to get registry skill: ${resp.error.message ?? 'unknown error'}`)
-        }
-        if (!resp.data) return null
-        return mapRow(teamId, resp.data)
-      }
-      // No version specified — return the most recently published APPROVED version. A pending
-      // or rejected version must never resolve here even when it is the most recent by
-      // published_at — D-4 surface 4 (latest-version branch).
-      const resp = await client
-        .from<PrivateRegistrySkillRow>(TABLE)
-        .select(METADATA_COLUMNS)
-        .eq('team_id', teamId)
-        .eq('skill_id', skillId)
-        .eq('approval_status', 'approved')
-      if (resp.error) {
-        throw new Error(`Failed to get registry skill: ${resp.error.message ?? 'unknown error'}`)
-      }
-      if (!resp.data || resp.data.length === 0) return null
-      const latest = resp.data.reduce((a, b) => (a.published_at >= b.published_at ? a : b))
-      return mapRow(teamId, latest)
+      return getSkill(client, teamId, skillId, version)
     },
 
     // SMI-5905 Wave 3. MEMBER getter — never getAdminUserClient(): reading a skill you may
@@ -458,10 +408,14 @@ export function createLiveRegistryService(): PrivateRegistryService {
       return getSkillContent({ binding, teamId, skillId, version })
     },
 
-    // Deprecates every version of the skill within this team (hidden from search, remains
-    // installable). Admin-gated: runs as the signed-in user so RLS authorizes it (SMI-5822).
-    // The team_id filter is still load-bearing — never cross-team — and is now backed by
-    // `_admin_update`'s own USING clause rather than standing alone.
+    // Deprecates every version of the skill within this team. SMI-5949 Wave 3: no longer just
+    // "hidden from search, remains installable" — since the deprecated=false predicate below is
+    // now real (registry-tools.live.reads.ts, registry-tools.live.content.ts, the Edge Function),
+    // this makes every version genuinely unreachable through list/get/install, not just absent
+    // from a search surface the private registry never had. Admin-gated: runs as the signed-in
+    // user so RLS authorizes it (SMI-5822). The team_id filter is still load-bearing — never
+    // cross-team — and is now backed by `_admin_update`'s own USING clause rather than standing
+    // alone.
     async deprecate(teamId, skillId): Promise<boolean> {
       return setDeprecated(teamId, skillId, true)
     },

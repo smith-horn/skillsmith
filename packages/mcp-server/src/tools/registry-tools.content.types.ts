@@ -78,7 +78,12 @@ export interface RegistrySkillContent {
   content: SkillContent
   /** sha256 of `SKILL.md` as stored. A digest, not content. */
   contentHash: string | null
-  /** Deprecation hides a skill from `list`/search; it stays installable. */
+  /**
+   * Always `false` on any row this type is actually constructed from — `getSkillContent()`
+   * excludes deprecated versions entirely (SMI-5949 Wave 3), with no opt-in. Kept as a real field
+   * (not dropped) because it is echoed straight through from the row for display, same as
+   * `RegistrySkill.deprecated`.
+   */
   deprecated: boolean
   publishedAt: string
 }

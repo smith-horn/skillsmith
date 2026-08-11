@@ -6,6 +6,12 @@
  *      testable without live Supabase
  * @see SMI-5949 Wave 2 Step 5: the approval-gate state machine (D-5/D-6/D-7/D-8) is now modeled
  *      in memory, replicating the two RPCs' behavior — see `setActor()` below.
+ * @see SMI-5949 Wave 3: `deprecated` read-filter closure — `list()`/`get()`/`getContent()` now
+ *      also exclude deprecated rows, matching the live service's own D-4-adjacent predicate. Kept
+ *      in parity deliberately: `registry-tools.cross-transport.test.ts` already treats
+ *      "a deprecated skill still installs" as a cross-transport invariant driven through this
+ *      stub, so leaving the stub unfiltered would make that test silently assert behavior the two
+ *      live transports (registry-tools.live.content.ts, the Edge Function) no longer have.
  *
  * Local-dev / test fallback used when Supabase is NOT configured. The real, Postgres-backed
  * implementation lives in registry-tools.live.ts and is selected automatically once SUPABASE_URL +
@@ -213,20 +219,24 @@ export function createStubRegistryService(): StubRegistryService {
     },
 
     // D-4 surface 3 (list): only 'approved' rows — the stub's approximation of the RLS predicate
-    // (see this file's header on why it is an approximation, not the real thing).
-    async list(teamId, version) {
+    // (see this file's header on why it is an approximation, not the real thing). SMI-5949 Wave 3
+    // adds the same deprecated=false predicate the live service carries, with the same
+    // includeDeprecated opt-in — no equivalent opt-in on get()/getContent() below.
+    async list(teamId, version, includeDeprecated) {
       const all = [...registry.entries()]
         .filter(([k]) => k.startsWith(`${teamId}::`))
         .map(([, row]) => row)
         .filter((row) => row.approvalStatus === 'approved')
+        .filter((row) => includeDeprecated === true || !row.deprecated)
         .map((row) => toRegistrySkill(teamId, row))
       return version ? all.filter((s) => s.version === version) : all
     },
 
-    // D-4 surface 4 (get): same 'approved'-only predicate as list() above.
+    // D-4 surface 4 (get): same 'approved'-only predicate as list() above, plus SMI-5949 Wave 3's
+    // unconditional (no opt-in) deprecated exclusion.
     async get(teamId, skillId, version) {
       const row = registry.get(key(teamId, skillId))
-      if (!row || row.approvalStatus !== 'approved') return null
+      if (!row || row.approvalStatus !== 'approved' || row.deprecated) return null
       if (version && row.version !== version) return null
       return toRegistrySkill(teamId, row)
     },
@@ -235,15 +245,21 @@ export function createStubRegistryService(): StubRegistryService {
     // most recently published wins. Returns null (never throws) for an absent skill/version, so
     // the install handler's not-found branch behaves identically in stub and live mode.
     //
-    // Deliberately NOT approval-gated (unlike list()/get() above) — out of this step's scope; see
-    // this file's header. In live mode this path is gated structurally by RLS with no code change
-    // (D-4 surface 2), which this stub has no analogue of at all, gated or not.
+    // SMI-5949 Wave 3: now excludes a deprecated skill entirely, matching the live service's own
+    // getSkillContent() and the Edge Function — no opt-in, same as get() above. The stub only ever
+    // tracks ONE metadata row per (teamId, skillId) — "the most recently published version's
+    // metadata" (this file's header) — so unlike the live service's version-aware fallback to a
+    // previous non-deprecated publish, this can only return null once that one tracked row is
+    // deprecated; it cannot fall back to an older version's own (untracked) approval/deprecation
+    // state. A documented approximation, same shape as every other "one row per skill, not per
+    // version" limitation this file's header already lists.
     async getContent(teamId, skillId, version): Promise<RegistrySkillContent | null> {
+      const metadata = registry.get(key(teamId, skillId))
+      if (metadata?.deprecated) return null
       const entry = version
         ? versions.get(versionKey(teamId, skillId, version))
         : latestVersion(teamId, skillId)
       if (!entry) return null
-      const metadata = registry.get(key(teamId, skillId))
       return {
         skillId: entry.skillId,
         version: entry.version,

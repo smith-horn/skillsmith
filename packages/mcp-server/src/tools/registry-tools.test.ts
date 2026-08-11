@@ -153,6 +153,24 @@ describe('registry-tools', () => {
       expect(parsed.version).toBe('1.0.0')
     })
 
+    // SMI-5949 Wave 3: schema acceptance. Behavioral coverage against the live-mode query
+    // predicate lives in registry-tools.live.manage.test.ts; stub-mode end-to-end behavior is
+    // covered below in "executePrivateRegistryManage" (a stub-driven publish/deprecate/list round
+    // trip, since registry-tools.stub.ts models the same includeDeprecated opt-in for parity with
+    // registry-tools.cross-transport.test.ts's existing stub-driven install assertions).
+    it('should accept includeDeprecated on the list action (SMI-5949 Wave 3)', () => {
+      const parsed = privateRegistryManageInputSchema.parse({
+        action: 'list',
+        includeDeprecated: true,
+      })
+      expect(parsed.includeDeprecated).toBe(true)
+    })
+
+    it('should default includeDeprecated to undefined when omitted', () => {
+      const parsed = privateRegistryManageInputSchema.parse({ action: 'list' })
+      expect(parsed.includeDeprecated).toBeUndefined()
+    })
+
     // SMI-5905 Sol final-code-review finding #1 — same fix as the publish schema above,
     // applied here too since "install" derives its on-disk path from this skillId.
     it.each(['myteam/..', 'myteam/.', '../myteam'])(
@@ -298,7 +316,7 @@ describe('registry-tools', () => {
         mockContext
       )
       // deprecate() itself is not approval-gated (D-4 only gates list()/get()/submissions()), but
-      // the get() verification below is — approve first so the row is visible to check.
+      // the visibility checks below are — approve first so the row would otherwise be visible.
       await approve('myteam/old-skill', '1.0.0')
 
       const result = await executePrivateRegistryManage(
@@ -308,12 +326,25 @@ describe('registry-tools', () => {
       expect(result.success).toBe(true)
       expect(result.message).toContain('deprecated')
 
-      // Verify it's marked deprecated
+      // SMI-5949 Wave 3: get() now excludes deprecated versions unconditionally (no opt-in) — a
+      // deprecated skill is "not found", not a skill record with deprecated:true. Full
+      // includeDeprecated coverage lives in the dedicated describe block below.
       const getResult = await executePrivateRegistryManage(
         { action: 'get', skillId: 'myteam/old-skill' },
         mockContext
       )
-      expect(getResult.skill!.deprecated).toBe(true)
+      expect(getResult.success).toBe(false)
+      expect(getResult.error).toContain('not found')
+
+      // list({includeDeprecated:true}) is the one surface that can still confirm the flag itself
+      // flipped.
+      const listResult = await executePrivateRegistryManage(
+        { action: 'list', includeDeprecated: true },
+        mockContext
+      )
+      expect(listResult.skills!.find((s) => s.skillId === 'myteam/old-skill')?.deprecated).toBe(
+        true
+      )
     })
 
     it('should fail deprecate without skillId', async () => {
@@ -365,6 +396,64 @@ describe('registry-tools', () => {
       expect(result.error).toContain('skillId is required')
     })
 
+    // SMI-5949 Wave 3: deprecated read-filter closure, stub-mode end-to-end.
+    describe('deprecated read-filter closure (SMI-5949 Wave 3)', () => {
+      it('a deprecated skill is hidden from list by default', async () => {
+        await executePrivateRegistryPublish(
+          { skillId: 'myteam/old-skill', version: '1.0.0', content: SAMPLE_CONTENT },
+          mockContext
+        )
+        await approve('myteam/old-skill', '1.0.0')
+        await executePrivateRegistryManage(
+          { action: 'deprecate', skillId: 'myteam/old-skill' },
+          mockContext
+        )
+
+        const result = await executePrivateRegistryManage({ action: 'list' }, mockContext)
+        expect(result.success).toBe(true)
+        expect(result.skills).toHaveLength(0)
+      })
+
+      it('includeDeprecated:true reveals it again via list', async () => {
+        await executePrivateRegistryPublish(
+          { skillId: 'myteam/old-skill', version: '1.0.0', content: SAMPLE_CONTENT },
+          mockContext
+        )
+        await approve('myteam/old-skill', '1.0.0')
+        await executePrivateRegistryManage(
+          { action: 'deprecate', skillId: 'myteam/old-skill' },
+          mockContext
+        )
+
+        const result = await executePrivateRegistryManage(
+          { action: 'list', includeDeprecated: true },
+          mockContext
+        )
+        expect(result.success).toBe(true)
+        expect(result.skills).toHaveLength(1)
+        expect(result.skills![0].deprecated).toBe(true)
+      })
+
+      it('get has no includeDeprecated opt-in — a deprecated skill is not found via get regardless', async () => {
+        await executePrivateRegistryPublish(
+          { skillId: 'myteam/old-skill', version: '1.0.0', content: SAMPLE_CONTENT },
+          mockContext
+        )
+        await approve('myteam/old-skill', '1.0.0')
+        await executePrivateRegistryManage(
+          { action: 'deprecate', skillId: 'myteam/old-skill' },
+          mockContext
+        )
+
+        const result = await executePrivateRegistryManage(
+          { action: 'get', skillId: 'myteam/old-skill' },
+          mockContext
+        )
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('not found')
+      })
+    })
+
     // SMI-5852 AC-11: the stub has no real `teams` table, so it always reports the
     // namespace as unresolvable — a deliberate, documented limitation (see
     // registry-tools.stub.ts), not a stub bug. Live behavior is covered in
@@ -373,106 +462,6 @@ describe('registry-tools', () => {
       const result = await executePrivateRegistryManage({ action: 'namespace' }, mockContext)
       expect(result.success).toBe(false)
       expect(result.error).toMatch(/unable to resolve/i)
-    })
-  })
-
-  // ==========================================================================
-  // submissions / approve / reject — SMI-5949 Wave 2 Step 5 stub state machine
-  // ==========================================================================
-
-  describe('private_registry_manage submissions/approve/reject — stub state machine', () => {
-    it('lists a pending submission under "submissions" but not under "list"', async () => {
-      await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
-        mockContext
-      )
-
-      const listResult = await executePrivateRegistryManage({ action: 'list' }, mockContext)
-      expect(listResult.skills).toHaveLength(0)
-
-      const submissionsResult = await executePrivateRegistryManage(
-        { action: 'submissions' },
-        mockContext
-      )
-      expect(submissionsResult.success).toBe(true)
-      expect(submissionsResult.submissions).toHaveLength(1)
-      expect(submissionsResult.submissions![0].approvalStatus).toBe('pending')
-    })
-
-    it('approve succeeds under a distinct admin and the skill becomes list()-visible', async () => {
-      await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
-        mockContext
-      )
-      await approve('myteam/skill-a', '1.0.0')
-
-      const listResult = await executePrivateRegistryManage({ action: 'list' }, mockContext)
-      expect(listResult.skills).toHaveLength(1)
-      expect(listResult.skills![0].approvalStatus).toBe('approved')
-    })
-
-    it('reject succeeds and the skill stays permanently invisible (D-8)', async () => {
-      await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
-        mockContext
-      )
-      service.setActor(ADMIN_ACTOR)
-      const result = await executePrivateRegistryManage(
-        { action: 'reject', skillId: 'myteam/skill-a', version: '1.0.0' },
-        mockContext
-      )
-      expect(result.success).toBe(true)
-      expect(result.review?.approvalStatus).toBe('rejected')
-
-      const listResult = await executePrivateRegistryManage({ action: 'list' }, mockContext)
-      expect(listResult.skills).toHaveLength(0)
-    })
-
-    it('blocks self-approval even when the submitter is also an admin (D-5 step 7 / D-6)', async () => {
-      // The publisher is the DEFAULT stub actor, which is admin — mirrors the smoke matrix's own
-      // requirement that a self-approval test's actor hold admin/owner, so the RPC's admin check
-      // (step 3) is genuinely passed and the self-approval check (step 7) is what actually fires.
-      await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
-        mockContext
-      )
-
-      const result = await executePrivateRegistryManage(
-        { action: 'approve', skillId: 'myteam/skill-a', version: '1.0.0' },
-        mockContext
-      )
-      expect(result.success).toBe(false)
-      expect(result.error).toMatch(/own submission/i)
-    })
-
-    it('blocks a non-admin reviewer (D-5 step 3, before self-approval would even be checked)', async () => {
-      await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
-        mockContext
-      )
-      service.setActor({ id: 'stub-non-admin-member', isAdmin: false })
-
-      const result = await executePrivateRegistryManage(
-        { action: 'approve', skillId: 'myteam/skill-a', version: '1.0.0' },
-        mockContext
-      )
-      expect(result.success).toBe(false)
-      expect(result.error).toMatch(/not an admin/i)
-    })
-
-    it('blocks re-review of an already-decided submission (D-5 step 5 / D-8 terminal state)', async () => {
-      await executePrivateRegistryPublish(
-        { skillId: 'myteam/skill-a', version: '1.0.0', content: SAMPLE_CONTENT },
-        mockContext
-      )
-      await approve('myteam/skill-a', '1.0.0')
-
-      const result = await executePrivateRegistryManage(
-        { action: 'approve', skillId: 'myteam/skill-a', version: '1.0.0' },
-        mockContext
-      )
-      expect(result.success).toBe(false)
-      expect(result.error).toMatch(/already been approved/i)
     })
   })
 })

@@ -236,6 +236,88 @@ describe('private_registry_manage live mode — team scoping — SMI-5816', () =
     expect(result.error).not.toMatch(/not found/i)
   })
 
+  // ==========================================================================
+  // SMI-5949 Wave 3: `deprecated` read-filter closure
+  // ==========================================================================
+
+  it('list filters by deprecated=false by default (SMI-5949 Wave 3)', async () => {
+    const { client, calls } = createFakeClient({ thenResponder: () => ({ data: [], error: null }) })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage({ action: 'list' }, makeContext())
+
+    expect(result.success).toBe(true)
+    const q = calls.find((c) => c.table === 'private_registry_skills')
+    expect(q!.filters.some((f) => f.column === 'deprecated' && f.value === false)).toBe(true)
+  })
+
+  it('list with includeDeprecated:true skips the deprecated predicate (SMI-5949 Wave 3)', async () => {
+    const { client, calls } = createFakeClient({ thenResponder: () => ({ data: [], error: null }) })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage(
+      { action: 'list', includeDeprecated: true },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+    const q = calls.find((c) => c.table === 'private_registry_skills')
+    expect(q!.filters.some((f) => f.column === 'deprecated')).toBe(false)
+  })
+
+  it('list with includeDeprecated:false still filters deprecated=false (explicit false is the same as omitted)', async () => {
+    const { client, calls } = createFakeClient({ thenResponder: () => ({ data: [], error: null }) })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage(
+      { action: 'list', includeDeprecated: false },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+    const q = calls.find((c) => c.table === 'private_registry_skills')
+    expect(q!.filters.some((f) => f.column === 'deprecated' && f.value === false)).toBe(true)
+  })
+
+  it('get (pinned version) always filters deprecated=false, with no opt-in (SMI-5949 Wave 3)', async () => {
+    const { client, calls } = createFakeClient({
+      singleResponder: () => ({ data: publishedRow(), error: null }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    // `get` has no `includeDeprecated` field at all — passing extra input is not possible through
+    // the typed handler, so this asserts the predicate is present unconditionally.
+    const result = await executePrivateRegistryManage(
+      { action: 'get', skillId: 'myteam/skill-a', version: '1.0.0' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+    const q = calls.find((c) => c.table === 'private_registry_skills')
+    expect(q!.filters.some((f) => f.column === 'deprecated' && f.value === false)).toBe(true)
+  })
+
+  it('get (latest, no version) always filters deprecated=false, with no opt-in (SMI-5949 Wave 3)', async () => {
+    const { client, calls } = createFakeClient({
+      thenResponder: () => ({ data: [publishedRow()], error: null }),
+    })
+    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+
+    const result = await executePrivateRegistryManage(
+      { action: 'get', skillId: 'myteam/skill-a' },
+      makeContext()
+    )
+
+    expect(result.success).toBe(true)
+    const q = calls.find((c) => c.table === 'private_registry_skills')
+    expect(q!.filters.some((f) => f.column === 'deprecated' && f.value === false)).toBe(true)
+  })
+
   it('get returns null (not-found) for PostgREST’s genuine no-rows code', async () => {
     const { client } = createFakeClient({
       singleResponder: () => ({

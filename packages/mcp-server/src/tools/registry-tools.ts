@@ -151,7 +151,13 @@ export interface PrivateRegistryService extends PrivateRegistryReviewService {
     content: SkillContent,
     description?: string
   ): Promise<RegistrySkill>
-  list(teamId: string, version?: string): Promise<RegistrySkill[]>
+  /**
+   * SMI-5949 Wave 3: `includeDeprecated` skips the `deprecated = FALSE` predicate this method
+   * carries by default, so an admin can still see what they deprecated. No equivalent flag on
+   * `get()` below — see `registry-tools.live.reads.ts`'s `getSkill()` for why that asymmetry is
+   * deliberate.
+   */
+  list(teamId: string, version?: string, includeDeprecated?: boolean): Promise<RegistrySkill[]>
   get(teamId: string, skillId: string, version?: string): Promise<RegistrySkill | null>
   /** SMI-5905: one version's packaged `content`, for install. `null` when nothing visible
    *  matches (absent OR cross-team — deliberately indistinguishable). Throws when the row's OWN
@@ -331,7 +337,7 @@ async function executePrivateRegistryManageImpl(
   try {
     switch (input.action) {
       case 'list': {
-        const skills = await service.list(teamId, input.version)
+        const skills = await service.list(teamId, input.version, input.includeDeprecated)
         return {
           success: true,
           dataSource,
@@ -386,7 +392,14 @@ async function executePrivateRegistryManageImpl(
         return {
           success: true,
           dataSource,
-          message: `Skill "${input.skillId}" has been deprecated. It will no longer appear in search results.`,
+          // SMI-5949 Wave 3: corrected from "will no longer appear in search results" — the
+          // private registry has no search surface at all (Context § "precedent warning" in the
+          // plan doc). This is the actual, now-enforced behavior: `list`/`get`/`install` (both the
+          // MCP and Edge Function transports) all carry a `deprecated = FALSE` predicate with no
+          // per-call bypass, so a deprecated version is invisible everywhere, including to a
+          // caller who already knows its exact skillId+version. Only a team admin re-running
+          // `list` with `includeDeprecated:true` can still see it (metadata only).
+          message: `Skill "${input.skillId}" has been deprecated. It will no longer be returned by list, get, or install — even by an exact version — for any team member. A team admin can still see it via private_registry_manage {action:'list', includeDeprecated:true}.`,
         }
       }
 
@@ -409,7 +422,9 @@ async function executePrivateRegistryManageImpl(
         return {
           success: true,
           dataSource,
-          message: `Skill "${input.skillId}" has been undeprecated and is now visible in search results.`,
+          // SMI-5949 Wave 3: same correction as the deprecate message above — "search results" was
+          // never accurate for a private registry with no search surface.
+          message: `Skill "${input.skillId}" has been undeprecated and is visible again via list, get, and install.`,
         }
       }
 

@@ -237,20 +237,30 @@ describe('CLI transport — full publish -> install round trip (real client fn +
     expect(JSON.stringify(installResult)).not.toContain(SECRET_MARKER)
   })
 
-  it('a deprecated skill still installs via the install path itself, not just the metadata fetch', async () => {
-    // Wave 2/3 already prove `getContent()`/the Edge Function still RETURN a deprecated row
-    // (index.entitlement.test.ts, registry-tools.live.content.test.ts). This proves the
-    // INSTALL step specifically does not add its own deprecation gate on top of that.
+  // SMI-5949 Wave 3 (deprecated read-filter closure) supersedes the pre-Wave-3 version of this
+  // test, which asserted the opposite: that a deprecated skill still installed. It no longer does,
+  // on any transport — `getContent()` (live and stub, per registry-tools.stub.ts's own Wave 3
+  // parity note), the Edge Function, and the MCP `install` action all now exclude a deprecated
+  // skill unconditionally (no opt-in — only `list` has one, and this is neither `list` nor
+  // `includeDeprecated:true`).
+  it('a deprecated skill no longer installs via the CLI transport, not just the metadata fetch', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
     await service.deprecate(TEAM, SKILL_ID)
 
     const { fetchResult, installResult } = await installViaCli(service, cliRig)
 
-    expect(fetchResult.ok && fetchResult.data.deprecated).toBe(true)
-    expect(installResult?.success).toBe(true)
-    await expect(
-      fs.access(path.join(cliRig.skillsDir, 'acme-tool', 'SKILL.md'))
-    ).resolves.toBeUndefined()
+    expect(fetchResult.ok).toBe(false)
+    expect(installResult).toBeNull()
+    await expect(fs.access(path.join(cliRig.skillsDir, 'acme-tool', 'SKILL.md'))).rejects.toThrow()
+  })
+
+  it('a deprecated skill no longer installs via the MCP transport either', async () => {
+    await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    await service.deprecate(TEAM, SKILL_ID)
+
+    const result = await installViaMcp(service, mcpRig)
+
+    expect(result.success).toBe(false)
   })
 })
 

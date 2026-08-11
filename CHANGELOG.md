@@ -90,6 +90,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Private registry: deprecated versions are now hidden by default** (2026-08-11, SMI-5949 Wave 3):
+  `private_registry_manage` (`list`/`get`/`install`), the `private-registry-get` edge function, and
+  the MCP `getContent()` path now exclude `deprecated` versions from every read — previously the
+  `deprecated` flag was documented as hiding a skill but no read path actually enforced it, so a
+  deprecated version stayed fully visible and installable. `list` gains a new `includeDeprecated`
+  opt-in so a team admin can still see what they deprecated; `get`/`install` have no equivalent
+  opt-in — a deprecated version is never returned there, even by an exact version pin. Also
+  corrects the `deprecate`/`undeprecate` response messages, which previously claimed the skill
+  would "no longer appear in search results" — the private registry has no search surface at all.
 - **Repositioned public messaging from "skill discovery" to "agent skill lifecycle management"**
   (2026-08-08, SMI-5948): website (homepage and all three A/B variants, pricing
   page, docs pages, footer, legal-page metadata, RSS feed, `llms.txt`/`llms-full.txt`),
