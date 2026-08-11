@@ -31,55 +31,15 @@ import { fileURLToPath } from 'node:url'
 // SMI-4693: this file invokes `bash -n` (syntax check only) — no git
 // mutation. Use `makeFixtureTempDir` for symlink consistency.
 import { makeFixtureTempDir } from './_lib/git-fixture-env.js'
+// SMI-5964 Case 13: `extractStep` extracted to `_lib/workflow-yaml.ts` so
+// `indexer-backfill-alert-gap.test.ts` can share it instead of copy-pasting.
+import { extractStep } from './_lib/workflow-yaml.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '..', '..')
 const WORKFLOW_PATH = join(REPO_ROOT, '.github', 'workflows', 'indexer.yml')
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-interface WorkflowStep {
-  name: string
-  envBlock: Record<string, string>
-  runScript: string
-}
-
-/**
- * Extract a step's `env:` map and `run:` script body. Lightweight YAML walker —
- * we don't pull in a YAML parser because we only need three known steps.
- */
-function extractStep(yaml: string, stepName: string): WorkflowStep {
-  const startMarker = `- name: ${stepName}`
-  const startIdx = yaml.indexOf(startMarker)
-  if (startIdx === -1) {
-    throw new Error(`Step "${stepName}" not found in workflow`)
-  }
-  // Find next "- name: " or end of file.
-  const after = yaml.slice(startIdx + startMarker.length)
-  const nextStepIdx = after.search(/\n {6}- name: /)
-  const block = nextStepIdx === -1 ? after : after.slice(0, nextStepIdx)
-
-  // Parse env: block (lines before `run: |`).
-  const envBlock: Record<string, string> = {}
-  const envMatch = block.match(/\n {8}env:\n((?: {10}[^\n]+\n)+)/)
-  if (envMatch) {
-    for (const line of envMatch[1].split('\n')) {
-      const m = line.match(/^ {10}(\w+): (.+?)$/)
-      if (m) envBlock[m[1]] = m[2].trim()
-    }
-  }
-
-  // Extract run: | body (lines indented 10 spaces under run:).
-  const runMatch = block.match(/\n {8}run: \|\n((?: {10}[^\n]*\n?)+)/)
-  if (!runMatch) {
-    throw new Error(`Step "${stepName}" has no \`run: |\` block`)
-  }
-  const runScript = runMatch[1]
-    .split('\n')
-    .map((l) => l.replace(/^ {10}/, ''))
-    .join('\n')
-  return { name: stepName, envBlock, runScript }
-}
 
 /**
  * Run `bash -n` (syntax check only — does not execute) on a script string.

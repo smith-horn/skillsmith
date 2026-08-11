@@ -250,6 +250,28 @@ export function summarizeRateLimitTelemetry(t: RateLimitTelemetry): {
 }
 
 /**
+ * SMI-5964: default per-request wall-clock cap (ms) applied at the
+ * `withRateLimitTracking` chokepoint. Bounds BOTH the header phase and the
+ * body-read phase — aborting a fetch's signal errors the response body
+ * stream, so a pending `reader.read()` (e.g. `readResponseWithLimit`,
+ * `skill-processor.security.ts:80`) rejects rather than hanging.
+ * `0` disables the cap entirely (byte-identical to pre-SMI-5964 behavior).
+ * Override via `SKILLSMITH_INDEXER_FETCH_TIMEOUT_MS` (registered in
+ * docs/internal/process/guards-and-opt-outs.md).
+ */
+export const DEFAULT_FETCH_TIMEOUT_MS = 30_000
+
+/** SMI-5964: resolve the effective per-request timeout from env, falling back
+ * to {@link DEFAULT_FETCH_TIMEOUT_MS} on an absent/blank/non-numeric/negative
+ * override. */
+function resolveFetchTimeoutMs(): number {
+  const raw = process.env.SKILLSMITH_INDEXER_FETCH_TIMEOUT_MS
+  if (raw == null || raw === '') return DEFAULT_FETCH_TIMEOUT_MS
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_FETCH_TIMEOUT_MS
+}
+
+/**
  * SMI-4852: Wrap a GitHub `fetch` call so its rate-limit headers and
  * 403/429 incidents are recorded into a shared telemetry object.
  *
@@ -262,6 +284,13 @@ export function summarizeRateLimitTelemetry(t: RateLimitTelemetry): {
  * have received. On 403/429, ALSO throws a `RateLimitError` so `withBackoff`
  * can drive retry. Callers that don't want retry semantics can catch and
  * ignore the throw (the side-effect on telemetry is already recorded).
+ *
+ * SMI-5964: injects a default `AbortSignal.timeout(...)` when the caller did
+ * NOT already supply its own `init.signal` (e.g. `org-verification.ts:94`'s
+ * existing 1s SMI-4743 precedent is never overridden). No fetch on the
+ * indexer path had any timeout before this — a single stalled connection
+ * could block the crawl indefinitely, defeating every position-based budget
+ * check downstream (§1a of the SMI-5964 plan).
  */
 export async function withRateLimitTracking(
   telemetry: RateLimitTelemetry,
@@ -269,7 +298,12 @@ export async function withRateLimitTracking(
   init?: RequestInit & { _throwOnRateLimit?: boolean }
 ): Promise<Response> {
   const throwOnRateLimit = init?._throwOnRateLimit !== false
-  const response = await fetch(url, init)
+  const timeoutMs = resolveFetchTimeoutMs()
+  const effectiveInit: RequestInit | undefined =
+    timeoutMs > 0 && init?.signal == null
+      ? { ...init, signal: AbortSignal.timeout(timeoutMs) }
+      : init
+  const response = await fetch(url, effectiveInit)
 
   // SMI-4918: `raw.githubusercontent.com` is CDN-served and carries no
   // GitHub rate-limit headers — exclude it so its responses can't pollute

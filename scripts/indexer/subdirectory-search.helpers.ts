@@ -36,6 +36,13 @@ import {
 import type { GitHubRepository } from './topic-search.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
 import type { EnumerateTelemetry } from './trees-enumerate.ts'
+// SMI-5964 §1e: escalation policy, split into its own module to keep this
+// file under the 500-line convention (see subdirectory-search.escalation.ts's
+// module docstring for the full split rationale).
+import {
+  NO_PROGRESS_ESCALATION_THRESHOLD,
+  logEscalation,
+} from './subdirectory-search.escalation.ts'
 
 // Types and the result-processor used internally by runBackfillFacetCrawl.
 // Also re-exported so callers that import from this path continue to work.
@@ -49,7 +56,10 @@ export {
   processSearchResults,
   type RepoMeta,
   type SubdirSearchStats,
+  type ProcessBudget,
+  type ProcessOutcome,
 } from './subdirectory-search.process.ts'
+export { NO_PROGRESS_ESCALATION_THRESHOLD } from './subdirectory-search.escalation.ts'
 
 /**
  * SMI-5286 1c: a single dispatch's facet-crawl plan. The driver in `run.ts`
@@ -169,18 +179,59 @@ export async function runBackfillFacetCrawl(
   let rangesCrawled = 0
   // SMI-5448: per-dispatch wall-clock anchor for the elapsed-budget guard.
   const startedAt = Date.now()
+  // SMI-5964 §1a/§1b: absolute deadline threaded into `processSearchResults` so
+  // the budget is observed INSIDE a page/leaf, not just between them (the
+  // SMI-5448 mid-range/range-boundary checks below still observe it between
+  // pages/ranges -- both are required; see §1a Context in the plan). `null`
+  // when the budget is disabled (0/undefined), preserving the SMI-5448
+  // falsy-disabled convention.
+  const deadlineAt = plan.maxElapsedMs ? startedAt + plan.maxElapsedMs : null
+
+  // SMI-5964 §1e: consecutive zero-progress dispatches recorded at the crawl
+  // position the incoming cursor stopped at. Hoisted because the post-loop
+  // return reads `stallsAtThisPosition`.
+  const inheritedStalls = plan.startCursor?.no_progress_stalls ?? 0
+  let stallsAtThisPosition = 0
+  // SMI-5964 §1e: true only when this dispatch exits via one of the two
+  // partial-stop sites this section polices (the page-loop intra-page stop, or
+  // the acceptTruncation-leaf intra-leaf stop). Any OTHER exit (ladder
+  // exhausted, maxRangesPerDispatch reached) writes the counter back to 0.
+  let partialStop = false
 
   while (rangesCrawled < plan.maxRangesPerDispatch) {
     const range = currentFacetRange(state, facets)
     if (!range) break // ladder exhausted
+
+    // SMI-5964 §1e(ii): position-scoped read, immediately after `range` is
+    // resolved. The (path, facet, last_page) triple IS the crawl position; the
+    // C-1 retirement invariant in `bisectCurrentFacet` guarantees a facet is
+    // never revisited within a dispatch, so at most the FIRST range of a
+    // dispatch can match -- no later range accidentally inherits a stale count.
+    stallsAtThisPosition =
+      plan.startCursor != null &&
+      plan.startCursor.path === (plan.pathPrefix ?? '') &&
+      plan.startCursor.facet === facetId(range) &&
+      plan.startCursor.last_page === state.lastPage
+        ? inheritedStalls
+        : 0
+    // SMI-5964 §1e(iv): a second consecutive zero-progress dispatch at this
+    // exact position is unambiguous -- forces the stalled unit through (cap
+    // suppressed first; the deadline still applies).
+    const escalate = stallsAtThisPosition >= NO_PROGRESS_ESCALATION_THRESHOLD
+
     const qualifier = facetToQualifier(range)
 
     let saturated = false
     let errored = false
     // SMI-5448: write-once-true flag set only after `state.lastPage = page`
     // (never on the saturation/error path), so a timed-out range is not
-    // advanced/bisected -- resume re-enters this facet at lastPage+1.
+    // advanced/bisected -- resume re-enters this facet at lastPage+1. SMI-5964:
+    // now also set on the NEW intra-page stop (§1b), which has the identical
+    // "hold, don't advance" semantic -- see the escalated exception below.
     let timedOut = false
+    // SMI-5964: logging-only -- must never be tested for control flow (the
+    // four-branch post-page structure below is unchanged).
+    let stopReason: string | undefined
     // SMI-5321: capture page-1 repos during saturation detection so the
     // acceptTruncation floor can reuse them without a second code-search fetch.
     let saturatedPageRepos: GitHubRepository[] | null = null
@@ -205,7 +256,14 @@ export async function runBackfillFacetCrawl(
         saturatedPageRepos = result.repos
         break
       }
-      await processSearchResults(
+      // SMI-5964 §1b/§1e: intra-page budget -- observed INSIDE this page's
+      // per-repo/per-entry processing, not just at the range/page boundaries
+      // below. The skill cap is suppressed on an escalated dispatch; the
+      // deadline is never suppressed. Announce the escalation BEFORE the
+      // attempt (§1e(iv)) -- cap suppression alone often completes the page
+      // losslessly, with no further "forced past" event below.
+      if (escalate) logEscalation(state, range, pathLabel, stallsAtThisPosition)
+      const outcome = await processSearchResults(
         result.repos,
         seenUrls,
         validationCache,
@@ -215,8 +273,32 @@ export async function runBackfillFacetCrawl(
         telemetry,
         enumerateTelemetry,
         enumeratedRepos,
-        repoMetaCache
+        repoMetaCache,
+        { deadlineAt, maxSkills: escalate ? undefined : plan.maxSkillsPerDispatch }
       )
+      if (outcome.stopped) {
+        stopReason = outcome.reason === 'skill-cap' ? 'skill-cap-intra-page' : 'elapsed-intra-page'
+        if (escalate) {
+          // SMI-5964 §1e(iv) limb 2: the cap-suppressed attempt STILL stopped
+          // (necessarily on the deadline) -- force the cursor forward rather
+          // than repeat the same livelock a fourth time. `partialStop` is
+          // deliberately NOT set here: the escalated attempt DID move the
+          // cursor (the forced `state.lastPage` assignment below), so this is
+          // progress, not a stall -- the counter must reset to 0, not keep
+          // climbing. Only the un-escalated "hold" branch below counts as a
+          // stall against this position.
+          truncatedRanges++
+          errors.push(
+            `[backfill ${pathLabel} ${facetId(range)} p${page}] escalated past a ` +
+              `no-progress page after ${stallsAtThisPosition} stalled dispatches (${stopReason})`
+          )
+          state.lastPage = page // the ONLY guarded assignment on this limb -- forced progress
+        } else {
+          partialStop = true
+        }
+        timedOut = true
+        break // page is PARTIAL unless `escalate` moved the cursor above
+      }
       state.lastPage = page
       if (result.repos.length < plan.perPage) break // short page -> range exhausted
       if (plan.maxElapsedMs && Date.now() - startedAt >= plan.maxElapsedMs) {
@@ -246,6 +328,11 @@ export async function runBackfillFacetCrawl(
         // observability), then either fetch the first ≤1000 results (opt-in)
         // or skip (default, byte-identical to the prior behavior).
         truncatedRanges++
+        // SMI-5964 §1c: gates `advanceFacet` below on THIS branch only -- a
+        // dedicated flag (not `timedOut`) so the SMI-5448 F-1 mutual-exclusivity
+        // invariant (`timedOut` never set in the same iteration as `saturated`)
+        // stays true byte-for-byte.
+        let truncationStopped = false
         if (plan.acceptTruncation) {
           // SMI-5321: fetch-with-truncation floor. Reuses the page-1 result
           // already in memory from the saturation detection branch above —
@@ -258,7 +345,13 @@ export async function runBackfillFacetCrawl(
               `acceptTruncation=true, admitting page-1 results already in memory (up to ${plan.perPage}), recorded as truncated`
           )
           if (saturatedPageRepos !== null) {
-            await processSearchResults(
+            // SMI-5964 §1c: the SAME budget as the page loop -- this call site
+            // was previously unbounded (review blocker 2). Announce the
+            // escalation BEFORE the attempt (§1e(iv)) -- cap suppression
+            // alone often completes the leaf losslessly, with no further
+            // "forced past" event below.
+            if (escalate) logEscalation(state, range, pathLabel, stallsAtThisPosition)
+            const outcome = await processSearchResults(
               saturatedPageRepos,
               seenUrls,
               validationCache,
@@ -268,15 +361,48 @@ export async function runBackfillFacetCrawl(
               telemetry,
               enumerateTelemetry,
               enumeratedRepos,
-              repoMetaCache
+              repoMetaCache,
+              { deadlineAt, maxSkills: escalate ? undefined : plan.maxSkillsPerDispatch }
             )
+            if (outcome.stopped) {
+              stopReason =
+                outcome.reason === 'skill-cap'
+                  ? 'skill-cap-intra-truncation'
+                  : 'elapsed-intra-truncation'
+              // Normal path: hold the leaf (advanceFacet below is skipped) --
+              // this IS a stall against this position, so `partialStop` is
+              // set. Escalated path: leave `truncationStopped` false so the
+              // `advanceFacet(state)` below runs and the cursor moves (§1e) --
+              // `partialStop` is deliberately NOT set here, matching the
+              // page-loop limb above: a forced advance is progress, not a
+              // stall, so the counter must reset to 0 on the next write.
+              truncationStopped = !escalate
+              if (escalate) {
+                errors.push(
+                  `[backfill ${pathLabel} ${facetId(range)}] escalated past a no-progress ` +
+                    `acceptTruncation leaf after ${stallsAtThisPosition} stalled dispatches ` +
+                    `(${stopReason}) -- remaining page-1 results skipped, leaf recorded truncated`
+                )
+              } else {
+                partialStop = true
+              }
+            }
           }
         } else {
           console.warn(
             `[Backfill] facet ${facetId(range)} (${pathLabel}) saturated at the 1000-cap and cannot subdivide -- recorded as truncated, skipping`
           )
         }
-        advanceFacet(state)
+        // :279 (original) -- advance when the truncated leaf was fully
+        // consumed, OR when §1e escalated (truncationStopped left false).
+        if (!truncationStopped) advanceFacet(state)
+        if (truncationStopped) {
+          console.log(
+            `[Backfill] budget reached inside acceptTruncation leaf (facet ${facetId(range)}, ` +
+              `reason ${stopReason}) -- leaf NOT advanced, checkpointing and exiting`
+          )
+          break // outer while loop -- the leaf is NOT advanced (see above)
+        }
       }
     } else if (timedOut) {
       // SMI-5448: elapsed budget tripped mid-range -- the range is NOT exhausted.
@@ -287,6 +413,9 @@ export async function runBackfillFacetCrawl(
       // at lastPage+1 > maxPagesPerRange, its body never runs, no flags are set,
       // and the outer `else` advances the facet -- correct: this range is treated
       // as page-cap exhausted, identical to the pre-5448 exhaustion path.
+      // SMI-5964: on the ESCALATED page-loop limb, `state.lastPage` was already
+      // forced forward (above, before this branch runs) -- this comment's "hold"
+      // description applies to the unescalated case only.
     } else {
       // Range exhausted (short page, or page cap reached with total <= cap).
       advanceFacet(state)
@@ -329,7 +458,19 @@ export async function runBackfillFacetCrawl(
   }
 
   return {
-    cursor: facetStateToCursor(state, plan.pathPrefix ?? '', facets),
+    cursor: facetStateToCursor(
+      state,
+      plan.pathPrefix ?? '',
+      facets,
+      // SMI-5964 §1e(iii): position-scoped, not dispatch-scoped -- the ONLY
+      // write sites for this counter are the two partial-stop sites above.
+      // Any other exit (ladder exhausted, maxRangesPerDispatch reached) writes
+      // 0. Whether this dispatch made progress EARLIER at a different position
+      // is irrelevant: `stallsAtThisPosition` (read above) already resets to 0
+      // whenever the incoming cursor's position doesn't match the position now
+      // being crawled.
+      partialStop ? stallsAtThisPosition + 1 : 0
+    ),
     done: isFacetCrawlDone(state, facets),
     cap_saturated: capSaturated,
     truncated_repo_count: truncatedRanges,

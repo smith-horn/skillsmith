@@ -7,3 +7,17 @@
  * existing imports.
  */
 export { makeFixtureEnv, makeFixtureTempDir } from './git-fixture-env.js'
+export { extractStep, type WorkflowStep } from './workflow-yaml.js'
+export {
+  LADDER_SIZE,
+  PER_PAGE,
+  resetRepoCounter,
+  makeCodeSearchRepo,
+  fullPage,
+  shortPage,
+  saturatedPage,
+  makePlan,
+  omitStartCursor,
+  leafCursor,
+  pageCursor,
+} from './subdirectory-search-fixtures.js'
