@@ -61,6 +61,8 @@ export const FEATURE_TIERS: Readonly<Record<FeatureFlag, readonly LicenseTier[]>
   private_registry: ['enterprise'],
   custom_integrations: ['enterprise'],
   advanced_analytics: ['enterprise'],
+  // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11)
+  registry_approval: ['enterprise'],
 } as const
 
 /**

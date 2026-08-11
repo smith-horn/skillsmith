@@ -119,6 +119,11 @@ function resolve(kind: 'user' | 'admin', r: Recorded): { data: unknown[]; error:
       .filter((x) => r.filters.team_id === undefined || x.team_id === r.filters.team_id)
       .filter((x) => x.skill_id === r.filters.skill_id)
       .filter((x) => r.filters.version === undefined || x.version === r.filters.version)
+      // SMI-5949 Wave 3: the real query always sends `.eq('deprecated', false)` — honoring it
+      // here (rather than ignoring `state.filters.deprecated` the way this mock ignores columns
+      // it ~doesn't care about) is what makes the deprecated-exclusion tests below a genuine proof
+      // that the predicate is on the query, not just that the code compiles.
+      .filter((x) => r.filters.deprecated === undefined || x.deprecated === r.filters.deprecated)
       .map(({ content: _drop, ...metadata }) => metadata)
     return { data: matches, error: null }
   }
@@ -377,11 +382,40 @@ describe('getContent() visibility + version selection', () => {
     expect(fetched?.version).toBe('1.0.0')
   })
 
-  it('a deprecated skill still installs — deprecation only hides from list/search', async () => {
+  // SMI-5949 Wave 3 (deprecated read-filter closure): getSkillContent() now excludes deprecated
+  // versions unconditionally, matching list()/get()/the Edge Function — no opt-in, even by an
+  // exact version pin. Supersedes the pre-Wave-3 behavior this test used to assert (a deprecated
+  // skill "still installs").
+  it('a deprecated skill no longer installs — not found when it is the only version', async () => {
     visibleRows = [row({ deprecated: true })]
+    await expect(createLiveRegistryService().getContent(TEAM_A, SKILL)).resolves.toBeNull()
+    expect(contentQueries).toBe(0)
+  })
+
+  it('falls back to the previous non-deprecated version when the latest is deprecated', async () => {
+    visibleRows = [
+      row({
+        id: 'r-old',
+        version: '1.0.0',
+        published_at: '2026-01-01T00:00:00Z',
+        deprecated: false,
+      }),
+      row({
+        id: 'r-new',
+        version: '2.0.0',
+        published_at: '2026-07-20T00:00:00Z',
+        deprecated: true,
+      }),
+    ]
     const fetched = await createLiveRegistryService().getContent(TEAM_A, SKILL)
-    expect(fetched?.deprecated).toBe(true)
-    expect(fetched?.content).toEqual(CONTENT)
+    expect(fetched?.version).toBe('1.0.0')
+    expect(fetched?.deprecated).toBe(false)
+  })
+
+  it('an exact version pin on a deprecated row still resolves to not-found — no bypass', async () => {
+    visibleRows = [row({ version: '3.0.0', deprecated: true })]
+    await expect(createLiveRegistryService().getContent(TEAM_A, SKILL, '3.0.0')).resolves.toBeNull()
+    expect(contentQueries).toBe(0)
   })
 
   it('returns the row-derived teamId, and audits a count + digest but never the content', async () => {

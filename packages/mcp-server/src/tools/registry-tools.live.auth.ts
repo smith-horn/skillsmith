@@ -58,6 +58,30 @@ export interface UserClientBinding {
  * actually authorized the call. Without it, these rows were attributed to the license key, which
  * did not (cross-provider review finding #3).
  */
+/**
+ * The "Failed to X" clause for `bindUserClient`'s catch branch below.
+ *
+ * `Failed to ${operation} skill` reads naturally for `publish`/`deprecate`/`undeprecate`/`install`
+ * — each names a verb that takes "skill" as its object. It does NOT for the three SMI-5949 Wave 2
+ * review-gate operations (adversarial-review nit): `submissions` is a plural noun, not a verb
+ * ("Failed to submissions skill" does not parse), and `approve`/`reject` act on one specific
+ * pending submission (a skillId@version awaiting review), not "the skill" as a whole — "Failed to
+ * approve skill" misleadingly reads as approving the entire skill rather than one version's
+ * review. Special-cased here rather than accepting the ungrammatical/misleading default for these
+ * three known operation names.
+ */
+function describeClientBindFailure(operation: string): string {
+  switch (operation) {
+    case 'submissions':
+      return 'Failed to list private-registry submissions'
+    case 'approve':
+    case 'reject':
+      return `Failed to ${operation} submission`
+    default:
+      return `Failed to ${operation} skill`
+  }
+}
+
 async function bindUserClient(
   role: 'admin' | 'member',
   operation: string,
@@ -70,7 +94,7 @@ async function bindUserClient(
     return { client, actorUserId: accessTokenSubject(token), role }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'unknown error'
-    throw new Error(`Failed to ${operation} skill: ${message}`)
+    throw new Error(`${describeClientBindFailure(operation)}: ${message}`)
   }
 }
 
@@ -93,12 +117,18 @@ export async function getAdminUserClient(operation: string): Promise<UserClientB
 }
 
 /**
- * A user-bound client for MEMBER-level operations — today only `getContent()` (SMI-5905 Wave 3).
+ * A user-bound client for MEMBER-level operations — `getContent()` (SMI-5905 Wave 3) and
+ * `publish()` (SMI-5949 Wave 2 Step 2, D-7).
  *
- * `private_registry_skills_member_read` already grants any team member the row, so this is NOT an
- * admin gate and must not claim to be one. It exists because the read still has to run as a
- * *person*: the shared license key resolves a team, so a service-role read here would hand a
- * team's packaged content to anyone holding the key regardless of whether they are still a member.
+ * `private_registry_skills_member_read` / `_member_insert` already grant any team member the row
+ * / the insert, so this is NOT an admin gate and must not claim to be one — the error message
+ * below says so explicitly (plan-review finding H5), precisely because it would otherwise be easy
+ * to mistake for {@link getAdminUserClient}'s "only team admins" message, which is factually wrong
+ * for a member-level operation like publish. It exists because the operation still has to run as
+ * a *person*: the shared license key resolves a team, so a service-role call here would (for
+ * `getContent`) hand a team's packaged content to anyone holding the key regardless of whether
+ * they are still a member, and (for `publish`) leave `published_by` NULL — unrecoverable for D-6's
+ * self-approval check, which needs a real submitter to compare against.
  */
 export async function getMemberUserClient(operation: string): Promise<UserClientBinding> {
   return bindUserClient(
@@ -106,6 +136,7 @@ export async function getMemberUserClient(operation: string): Promise<UserClient
     operation,
     `A private-registry ${operation} runs as you, not as your team's shared license key — a ` +
       'license key identifies a team, not a person, so it cannot prove you are still a member. ' +
+      'Any team member can do this once signed in — it does not require a team admin. ' +
       'Run `skillsmith login` on this machine and retry.'
   )
 }

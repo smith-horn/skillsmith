@@ -32,6 +32,8 @@ export type EnterpriseFeatureFlag =
   | 'private_registry'
   | 'custom_integrations'
   | 'advanced_analytics'
+  // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11)
+  | 'registry_approval'
 
 /**
  * Available feature flags for the licensing system.
@@ -81,6 +83,8 @@ export const ENTERPRISE_ONLY_FEATURES: readonly EnterpriseFeatureFlag[] = [
   'private_registry',
   'custom_integrations',
   'advanced_analytics',
+  // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11)
+  'registry_approval',
 ] as const
 
 /**

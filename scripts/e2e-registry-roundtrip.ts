@@ -15,10 +15,14 @@
  *
  * Round-trip assertions (plan doc "Round-trip assertions" table):
  *   1. Team A publishes via the real `private_registry_publish` handler (license-key
- *      team resolution, service-role insert) -> row lands, content_hash server-derived.
- *      A preceding sub-assertion (row1-publish-requires-license) confirms the same
- *      handler refuses without a license key, rather than silently falling back to the
- *      stub service (SMI-5969).
+ *      team resolution, real signed-in-member credentials, service-role insert) -> row
+ *      lands `pending`, content_hash server-derived. A preceding sub-assertion
+ *      (row1-publish-requires-license) confirms the same handler refuses without a
+ *      license key, rather than silently falling back to the stub service (SMI-5969).
+ *   1c. SMI-5949 D-4/D-7: a fresh publish lands `pending`, invisible on every read
+ *      surface until a team admin/owner approves it -- Team A's admin (not the
+ *      publisher, D-6) approves it here via `private_registry_manage
+ *      {action:'approve'}` before rows 2/3/mcp-live-row3 below try to read/install it.
  *   2. Team A admin installs via the REAL `skillsmith registry install` CLI
  *      subprocess — the actual published bin entrypoint (`packages/cli/dist/cli.js`,
  *      esbuild bundle, NOT the parallel unbundled `dist/src/index.js` tsc output that
@@ -55,7 +59,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getPrivateRegistrySkillContent } from '@skillsmith/core'
 import { runMcpLiveCoverage } from './e2e-registry-roundtrip.mcp-live.js'
-import { signIn, rawPrivateRegistryGet, runCliInstall } from './e2e-registry-roundtrip.helpers.js'
+import {
+  signIn,
+  rawPrivateRegistryGet,
+  runCliInstall,
+  withUserCredentials,
+  approvePendingSubmission,
+} from './e2e-registry-roundtrip.helpers.js'
 
 const STAGING_REF = 'ovhcifugwqnzoebwfuku'
 const STAGING_HOST = `${STAGING_REF}.supabase.co`
@@ -217,6 +227,11 @@ async function main(): Promise<void> {
   // Accepted gap for this row specifically: the input here is fixed and
   // valid, and this suite already runs compiled internals in-process
   // elsewhere. See docs/internal/implementation/smi-5969-e2e-real-publish-path.md.
+  //
+  // SMI-5949 D-7 (plan finding H1): `publish` moved to `getMemberUserClient('publish')`,
+  // which requires a real signed-in user's stored credentials in addition to the license
+  // key -- 1b below seeds Team A member's real session via `withUserCredentials()` before
+  // calling the handler, matching D-7's "any team member, not just admins" publish grant.
   let publishMod: {
     executePrivateRegistryPublish: (
       input: {
@@ -271,9 +286,13 @@ async function main(): Promise<void> {
     )
 
     // 1b. The real publish, authenticated the way a real customer would be --
-    // via their team's license key, resolved server-side to a team_id.
+    // via their team's license key (resolved server-side to a team_id) AND a
+    // signed-in team member's own credentials (D-7 -- the license key alone no
+    // longer suffices; `published_by` must resolve to a real person).
     process.env.SKILLSMITH_LICENSE_KEY = teamALicenseKey
-    const publishResult = await publishMod.executePrivateRegistryPublish(publishInput, toolContext)
+    const publishResult = await withUserCredentials(memberSession, () =>
+      publishMod.executePrivateRegistryPublish(publishInput, toolContext)
+    )
     const publishOk =
       publishResult.success === true &&
       publishResult.skill?.skillId === publishedSkillId &&
@@ -308,6 +327,17 @@ async function main(): Promise<void> {
     }
     await contextMod.closeToolContext(toolContext)
   }
+
+  // ---- Row 1c: admin approves the just-published pending submission ---------
+  // See the header comment's "1c" entry -- without this, every read/install below
+  // targets a row that is still `pending` and structurally invisible (D-4).
+  const approveResult = await approvePendingSubmission(
+    adminSession,
+    teamALicenseKey,
+    publishedSkillId,
+    '1.0.0'
+  )
+  record('row1c-admin-approve', approveResult.success === true, approveResult.error ?? 'approved')
 
   // ---- Row 2: real CLI install as admin --------------------------------------
   const cliAdmin = await runCliInstall('admin', adminSession, stagingUrl, publishedSkillId)

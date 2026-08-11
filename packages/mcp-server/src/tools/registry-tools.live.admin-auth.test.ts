@@ -118,7 +118,40 @@ function createRecorder(
     }
     return chain
   }
-  return { client: { from: (table: string) => makeQuery(table) }, calls }
+  return {
+    client: {
+      from: (table: string) => makeQuery(table),
+      // SMI-5949 D-5: publish()'s read-back RPC. Derives the returned row from the most recent
+      // insert into private_registry_skills rather than a hardcoded fixture, so any test in this
+      // file that calls publish() gets a submission row that actually matches what it inserted.
+      rpc: async (fn: string, _params?: Record<string, unknown>) => {
+        if (fn !== 'get_private_registry_submissions') return { data: null, error: null }
+        const lastInsert = [...calls]
+          .reverse()
+          .find((c) => c.op === 'insert' && c.table === 'private_registry_skills')
+        if (!lastInsert?.payload) return { data: [], error: null }
+        return {
+          data: [
+            {
+              id: 'row-1',
+              skill_id: lastInsert.payload.skill_id,
+              version: lastInsert.payload.version,
+              description: (lastInsert.payload.description as string | null | undefined) ?? null,
+              approval_status: 'pending',
+              approval_mode: 'review',
+              published_by: FAKE_USER_ID,
+              published_at: '2026-07-24T00:00:00Z',
+              approved_by: null,
+              approved_at: null,
+              review_note: null,
+            },
+          ],
+          error: null,
+        }
+      },
+    },
+    calls,
+  }
 }
 
 async function setClients(userClient: unknown, adminClient: unknown): Promise<void> {
@@ -310,17 +343,84 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
     expect((audit!.payload?.metadata as Record<string, unknown>).actor_user_id).toBeNull()
   })
 
-  it('still attributes a publish to the license key — that path really is key-authorized', async () => {
+  // SMI-5949 Wave 2 Step 2 (D-7): publish() moved OFF the license-key path onto the signed-in
+  // user's own JWT — the mirror image of what this describe block already proves for
+  // deprecate/undeprecate. Renamed and rewritten from the pre-D-7 "publish really is
+  // key-authorized" test, which is now factually wrong: a shared license key can never
+  // authorize a publish, because it cannot name the submitter D-6's self-approval check needs.
+  it('attributes an authorized publish to the JWT user, not to the license key — SMI-5949 D-7', async () => {
+    const user = createRecorder()
     const admin = createRecorder()
-    await setClients(createRecorder().client, admin.client)
+    await setClients(user.client, admin.client)
 
     await createLiveRegistryService().publish(TEAM, SKILL, '1.0.0', {
       'SKILL.md': '# a skill',
     })
 
+    // The insert itself must land on the user client — never the service-role admin client,
+    // which is exactly the SMI-5822-shaped escalation this credential move exists to avoid.
+    const userInsert = user.calls.find(
+      (c) => c.op === 'insert' && c.table === 'private_registry_skills'
+    )
+    expect(userInsert).toBeDefined()
+    expect(
+      admin.calls.some((c) => c.op === 'insert' && c.table === 'private_registry_skills')
+    ).toBe(false)
+
     const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit!.payload?.actor).toMatch(/^license_key:[0-9a-f]{12}$/)
+    expect(audit).toBeDefined()
+    expect(audit!.payload?.event_type).toBe('private_registry:publish')
+    expect(audit!.payload?.result).toBe('success')
+    expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
+    // The license key did not authorize this, so it must not appear as the actor.
+    expect(String(audit!.payload?.actor)).not.toContain('license_key')
     expect(String(audit!.payload?.actor)).not.toContain('sk_test_fake_license')
-    expect((audit!.payload?.metadata as Record<string, unknown>).auth_path).toBe('license_key')
+
+    const metadata = audit!.payload?.metadata as Record<string, unknown>
+    expect(metadata.auth_path).toBe('user_jwt')
+    expect(metadata.auth_role).toBe('member')
+    expect(metadata.actor_user_id).toBe(FAKE_USER_ID)
+    // Still correlatable to the key the session was configured with — as a digest, never the key.
+    expect(metadata.license_key_fingerprint).toMatch(/^[0-9a-f]{12}$/)
+  })
+
+  it('publish refuses — and writes nothing — when no user is signed in (D-7)', async () => {
+    const { resolveUserAccessToken } = await import('./team-resolver.js')
+    vi.mocked(resolveUserAccessToken).mockResolvedValue(null)
+
+    const user = createRecorder()
+    const admin = createRecorder()
+    await setClients(user.client, admin.client)
+
+    await expect(
+      createLiveRegistryService().publish(TEAM, SKILL, '1.0.0', { 'SKILL.md': '# a skill' })
+    ).rejects.toThrow(/skillsmith login/i)
+
+    // No silent service-role fallback — that would restore the shared-license-key-as-credential
+    // escalation this move exists to close.
+    expect(user.calls).toHaveLength(0)
+    expect(admin.calls.some((c) => c.table === 'private_registry_skills')).toBe(false)
+  })
+
+  it("publish's login-required error names any team member, not just admins (plan-review finding H5)", async () => {
+    const { resolveUserAccessToken } = await import('./team-resolver.js')
+    vi.mocked(resolveUserAccessToken).mockResolvedValue(null)
+
+    const user = createRecorder()
+    const admin = createRecorder()
+    await setClients(user.client, admin.client)
+
+    let message = '<did not reject>'
+    try {
+      await createLiveRegistryService().publish(TEAM, SKILL, '1.0.0', { 'SKILL.md': '# a skill' })
+    } catch (e) {
+      message = (e as Error).message
+    }
+
+    expect(message).toMatch(/runs as you, not as your team's shared license key/i)
+    expect(message).toMatch(/any team member/i)
+    // Must not reuse deprecate's admin-only template — any member (not just an admin) can
+    // publish, so claiming otherwise would be factually wrong.
+    expect(message).not.toMatch(/only team admins/i)
   })
 })

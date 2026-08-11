@@ -25,6 +25,17 @@
  * MCP transport's own already-proven real round trip (`executeRegistryInstall`), against the SAME
  * underlying published data, to prove the two transports never disagree about which version "no
  * version specified" resolves to, or about what actually lands on disk.
+ *
+ * @see SMI-5949 adversarial-review finding H-1: every fixture below now APPROVES a publish before
+ * asserting a successful install — before this fix, every test in this file published a skill and
+ * installed it while it was still `pending`, which meant this file was asserting "a pending,
+ * unapproved private-registry version installs successfully" as a PASSING invariant, the exact
+ * inverse of what the approval gate exists to enforce. A dedicated negative test below now also
+ * asserts the opposite: publish, do NOT approve, and confirm install fails on BOTH transports.
+ * `registry-tools.review-parity.test.ts` was split out of this file at the same time (the
+ * `approve()` helper this fix needed pushed the file over the 500-line audit:standards budget) —
+ * it covers a different concern (stub/live REVIEW-GATE ERROR parity, M7) and is unrelated to the
+ * install-round-trip parity this file still owns.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -44,7 +55,17 @@ import {
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { executeRegistryInstall } from './registry-tools.install-action.js'
-import { createStubRegistryService, type PrivateRegistryService } from './registry-tools.js'
+import {
+  createStubRegistryService,
+  type PrivateRegistryService,
+  type StubRegistryService,
+} from './registry-tools.js'
+
+// No `vi.mock()` needed here (unlike registry-tools.review-parity.test.ts, split out at the same
+// time as the H-1 fix below): every test in this file drives a `createStubRegistryService()`
+// instance directly and passes it straight into `executeRegistryInstall()`/the CLI helpers below —
+// it never resolves a team via Supabase or touches `registry-tools.js`'s module-level live/stub
+// singleton, matching the established pattern in the sibling `registry-tools.install-action.test.ts`.
 
 const mockContext = {} as ToolContext
 const TEAM = 'team-alpha'
@@ -56,6 +77,11 @@ const SECRET_MARKER = 'a private team runbook line that must never leak into any
 const V2_MARKER = 'content-that-only-the-2-0-0-release-carries'
 /** Present only in the version published as `1.9.0` — the "most recently published" one below. */
 const V1_9_MARKER = 'content-that-only-the-1-9-0-release-carries'
+
+/** A distinct admin identity used to approve every fixture published in this file (SMI-5949 D-6
+ *  blocks self-approval, so the publisher's own default stub actor can never approve its own
+ *  work) — mirrors `registry-tools.test.ts`'s own `ADMIN_ACTOR` pattern. */
+const ADMIN_ACTOR = { id: 'cross-transport-admin-reviewer', isAdmin: true }
 
 function skillMd(marker: string): string {
   return (
@@ -166,9 +192,22 @@ async function installViaCli(
   return { fetchResult, installResult }
 }
 
-let service: PrivateRegistryService
+// `StubRegistryService`, not the plain `PrivateRegistryService` interface, because `approve()`
+// below needs `setActor()` — the stub-only identity seam (SMI-5949 Wave 2 Step 5). Every existing
+// call site that expects a `PrivateRegistryService` (installViaMcp/installViaCli's own params)
+// keeps working unchanged: `StubRegistryService extends PrivateRegistryService`.
+let service: StubRegistryService
 let mcpRig: Rig
 let cliRig: Rig
+
+/** Approves `skillId@version` as a distinct admin identity (never the publisher — D-6), so
+ *  `list()`/`get()`/`getContent()` (approved-only, SMI-5949 D-4) can see it afterward. Every
+ *  publish in this file must go through this before an install assertion — see this file's header
+ *  on why (adversarial-review finding H-1). */
+async function approve(skillId: string, version: string): Promise<void> {
+  service.setActor(ADMIN_ACTOR)
+  await service.review(TEAM, skillId, version, 'approved')
+}
 
 beforeEach(async () => {
   service = createStubRegistryService()
@@ -190,6 +229,7 @@ afterEach(async () => {
 describe('CLI transport — full publish -> install round trip (real client fn + real installer)', () => {
   it('installs published content to disk with private-registry provenance', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    await approve(SKILL_ID, '1.0.0')
 
     const { fetchResult, installResult } = await installViaCli(service, cliRig)
 
@@ -213,20 +253,51 @@ describe('CLI transport — full publish -> install round trip (real client fn +
     expect(JSON.stringify(installResult)).not.toContain(SECRET_MARKER)
   })
 
-  it('a deprecated skill still installs via the install path itself, not just the metadata fetch', async () => {
-    // Wave 2/3 already prove `getContent()`/the Edge Function still RETURN a deprecated row
-    // (index.entitlement.test.ts, registry-tools.live.content.test.ts). This proves the
-    // INSTALL step specifically does not add its own deprecation gate on top of that.
+  // SMI-5949 Wave 3 (deprecated read-filter closure) supersedes the pre-Wave-3 version of this
+  // test, which asserted the opposite: that a deprecated skill still installed. It no longer does,
+  // on any transport — `getContent()` (live and stub, per registry-tools.stub.ts's own Wave 3
+  // parity note), the Edge Function, and the MCP `install` action all now exclude a deprecated
+  // skill unconditionally (no opt-in — only `list` has one, and this is neither `list` nor
+  // `includeDeprecated:true`).
+  it('a deprecated skill no longer installs via the CLI transport, not just the metadata fetch', async () => {
     await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    await approve(SKILL_ID, '1.0.0')
     await service.deprecate(TEAM, SKILL_ID)
 
     const { fetchResult, installResult } = await installViaCli(service, cliRig)
 
-    expect(fetchResult.ok && fetchResult.data.deprecated).toBe(true)
-    expect(installResult?.success).toBe(true)
-    await expect(
-      fs.access(path.join(cliRig.skillsDir, 'acme-tool', 'SKILL.md'))
-    ).resolves.toBeUndefined()
+    expect(fetchResult.ok).toBe(false)
+    expect(installResult).toBeNull()
+    await expect(fs.access(path.join(cliRig.skillsDir, 'acme-tool', 'SKILL.md'))).rejects.toThrow()
+  })
+
+  it('a deprecated skill no longer installs via the MCP transport either', async () => {
+    await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    await approve(SKILL_ID, '1.0.0')
+    await service.deprecate(TEAM, SKILL_ID)
+
+    const result = await installViaMcp(service, mcpRig)
+
+    expect(result.success).toBe(false)
+  })
+
+  // SMI-5949 adversarial-review finding H-1: the actual invariant the approval gate exists to
+  // enforce, stated directly — the inverse of every test above. Before the H-1 fix to
+  // `registry-tools.stub.ts`'s `getContent()`, this test would have FAILED: `getContent()` checked
+  // only `deprecated`, not `approvalStatus`, so a pending version's content installed successfully
+  // on both transports.
+  it('a pending, unapproved version installs on NEITHER transport', async () => {
+    await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': skillMd(SECRET_MARKER) })
+    // Deliberately NOT approved.
+
+    const mcpResult = await installViaMcp(service, mcpRig)
+    const { fetchResult, installResult } = await installViaCli(service, cliRig)
+
+    expect(mcpResult.success).toBe(false)
+    expect(fetchResult.ok).toBe(false)
+    expect(installResult).toBeNull()
+    await expect(fs.access(path.join(mcpRig.skillsDir, 'acme-tool', 'SKILL.md'))).rejects.toThrow()
+    await expect(fs.access(path.join(cliRig.skillsDir, 'acme-tool', 'SKILL.md'))).rejects.toThrow()
   })
 })
 
@@ -242,6 +313,14 @@ describe('MCP and CLI transports agree on version selection, given the same publ
     // first-published) would install the WRONG marker string here.
     await service.publish(TEAM, SKILL_ID, '2.0.0', { 'SKILL.md': skillMd(V2_MARKER) })
     await service.publish(TEAM, SKILL_ID, '1.9.0', { 'SKILL.md': skillMd(V1_9_MARKER) })
+    // The stub tracks only ONE metadata row per (teamId, skillId) — "the most recently published
+    // version's metadata" (registry-tools.stub.ts's own header) — so publishing 1.9.0 second
+    // replaced 2.0.0's row entirely, including any approval state it had. One approve() call here,
+    // against the CURRENT (1.9.0) row, is therefore both necessary and sufficient: getContent()'s
+    // approval gate (H-1) checks that one shared row regardless of which version's CONTENT is
+    // being fetched, so this also unblocks the 2.0.0 content lookup the "explicit version pins"
+    // test below performs.
+    await approve(SKILL_ID, '1.9.0')
   })
 
   it('an omitted version resolves to the identical most-recently-published row on both transports', async () => {

@@ -17,7 +17,6 @@
  * Tier gate: Enterprise (private_registry feature flag — toolFeatureMapping.ts).
  */
 
-import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
 import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
@@ -25,128 +24,49 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubRegistryService } from './registry-tools.stub.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
 import { executeRegistryInstall } from './registry-tools.install-action.js'
-import type {
-  PrivateRegistryInstallSummary,
-  RegistrySkillContent,
+import {
+  executeRegistrySubmissions,
+  executeRegistryReview,
+} from './registry-tools.review-action.js'
+import {
+  registrySkillNotFoundMessage,
+  type PrivateRegistryInstallSummary,
+  type RegistrySkillContent,
 } from './registry-tools.content.types.js'
-import { hasSafeSkillIdSegments } from './registry-tools.skill-id.js'
+import type {
+  RegistryReviewDecision,
+  PrivateRegistryReviewService,
+} from './registry-tools.review.types.js'
+// Imported for LOCAL use (this file's own function signatures below) in addition to the
+// `export {...} from` re-export further down — `export {X} from 'y'` alone does not bring X into
+// this module's own scope.
+import type {
+  SkillContent,
+  PrivateRegistryPublishInput,
+  PrivateRegistryManageInput,
+} from './registry-tools.schemas.js'
 
-// Re-export stub factory for external consumers and tests
+// Re-export stub factory for external consumers and tests. `StubRegistryService`/`StubActor`
+// (SMI-5949 Wave 2 Step 5) are the stub-only identity-simulation seam — see registry-tools.stub.ts
+// — not part of `PrivateRegistryService` itself, so this module's own singleton stays typed as
+// plain `PrivateRegistryService` below.
 export { createStubRegistryService } from './registry-tools.stub.js'
+export type { StubRegistryService, StubActor } from './registry-tools.stub.js'
 
-// ============================================================================
-// Input schemas
-// ============================================================================
-
-/**
- * Packaged skill files as a flat { relativePath: fileText } map
- * (e.g. { "SKILL.md": "...", "scripts/foo.sh": "..." }). Stored JSONB-native
- * per ADR-129; a "SKILL.md" entry is required and total size is capped at 2 MB
- * (enforced in the live publish service).
- */
-export const skillContentSchema = z.record(z.string(), z.string())
-export type SkillContent = z.infer<typeof skillContentSchema>
-
-export const privateRegistryPublishInputSchema = z.object({
-  skillId: z
-    .string()
-    .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
-    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
-    .describe('Skill identifier in author/name format'),
-  version: z
-    .string()
-    .regex(
-      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
-      'Must be a valid semver version'
-    )
-    .describe('Semver version to publish'),
-  content: skillContentSchema.describe(
-    'Packaged skill files as a { path: text } map; must include a "SKILL.md" entry (max 2 MB total)'
-  ),
-  description: z.string().max(500).optional().describe('Optional skill description'),
-})
-
-export type PrivateRegistryPublishInput = z.infer<typeof privateRegistryPublishInputSchema>
-
-export const privateRegistryManageInputSchema = z.object({
-  action: z.enum(['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install']),
-  skillId: z
-    .string()
-    .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
-    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
-    .optional()
-    .describe('Skill identifier (required for get/deprecate/undeprecate/install)'),
-  version: z.string().optional().describe('Version filter; "install" defaults to most recent'),
-  force: z.boolean().optional().describe('SMI-5905: reinstall over an existing install'),
-})
-
-export type PrivateRegistryManageInput = z.infer<typeof privateRegistryManageInputSchema>
-
-// ============================================================================
-// Tool schemas for MCP registration
-// ============================================================================
-
-export const privateRegistryPublishToolSchema = {
-  name: 'private_registry_publish' as const,
-  description:
-    "Publish a skill to your organization's private registry. " +
-    'Requires Enterprise tier (private_registry feature). ' +
-    'Skills are scoped to your team namespace and published versions are immutable.',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      skillId: {
-        type: 'string',
-        description: 'Skill ID in author/name format',
-      },
-      version: {
-        type: 'string',
-        description: 'Semver version to publish',
-      },
-      content: {
-        type: 'object',
-        additionalProperties: { type: 'string' },
-        description:
-          'Packaged skill files as a { path: text } map; must include "SKILL.md" (max 2 MB total)',
-      },
-      description: {
-        type: 'string',
-        description: 'Optional skill description',
-      },
-    },
-    required: ['skillId', 'version', 'content'],
-  },
-}
-
-export const privateRegistryManageToolSchema = {
-  name: 'private_registry_manage' as const,
-  description:
-    'Manage skills in your private registry (list, get, install, deprecate, undeprecate, ' +
-    'namespace). Requires Enterprise tier (private_registry feature).',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install'],
-        description:
-          'Registry operation to perform. "namespace" returns your team\'s publish ' +
-          'namespace (the required skill_id prefix) without attempting a publish. ' +
-          '"install" downloads the skill and writes it to your skills directory.',
-      },
-      skillId: {
-        type: 'string',
-        description: 'Skill ID in author/name format (get/deprecate/undeprecate/install)',
-      },
-      version: {
-        type: 'string',
-        description: 'Version filter; "install" defaults to the most recently published',
-      },
-      force: { type: 'boolean', description: 'Reinstall over an existing install' },
-    },
-    required: ['action'],
-  },
-}
+// Both the Zod runtime-validation schemas and the MCP tool-registration schemas live in
+// registry-tools.schemas.ts (SMI-5949 D-12 Wave 2 Steps 1 + 4 — this file's own 500-line
+// audit:standards budget) and are re-exported here so every existing import site (index.ts,
+// tool-dispatch.ts, every test file) reaches them through this module unchanged.
+export {
+  privateRegistryPublishToolSchema,
+  privateRegistryManageToolSchema,
+  skillContentSchema,
+  privateRegistryPublishInputSchema,
+  privateRegistryManageInputSchema,
+  type SkillContent,
+  type PrivateRegistryPublishInput,
+  type PrivateRegistryManageInput,
+} from './registry-tools.schemas.js'
 
 // ============================================================================
 // Output types
@@ -159,7 +79,33 @@ export interface RegistrySkill {
   deprecated: boolean
   publishedAt: string
   publishedBy: string
-  registryUrl: string
+  /**
+   * `null` for a non-`'approved'` row (SMI-5949 adversarial-review finding L-2): a pending or
+   * rejected version is not actually live at any URL, so presenting one would contradict the
+   * intent already honored in `executePrivateRegistryPublishImpl`'s pending-branch message (which
+   * omits a Registry URL entirely). Only `registry-tools.live.submissions.ts`'s `mapSubmissionRow()`
+   * (the submissions/publish-read-back path, which can return non-approved rows) actually nulls
+   * this; `list()`/`get()` only ever return `'approved'` rows by construction (D-4), so this is
+   * always non-null there.
+   */
+  registryUrl: string | null
+  /**
+   * SMI-5949 D-3. Every row has one (`NOT NULL` on the table). `list()`/`get()` only ever return
+   * `'approved'` rows (D-4's `.eq('approval_status','approved')` predicate) — the field is still
+   * populated from the real column rather than hardcoded, so it stays accurate if that predicate
+   * is ever loosened for an admin-facing view. A freshly-`publish()`-ed skill is `'pending'` until
+   * an admin reviews it. Never print this bare field name unqualified in a user-facing message —
+   * pair it with a noun phrase (e.g. "review status") so it is not confused with `approvalMode`.
+   */
+  approvalStatus: 'pending' | 'approved' | 'rejected'
+  /**
+   * SMI-5949 D-3. `'auto'` for rows grandfathered in before the approval gate existed;
+   * `'review'` for everything published after. Disambiguates an `approved` row with no approver:
+   * legitimate iff `approvalMode === 'auto'`. Never print this bare field name unqualified in a
+   * user-facing message — pair it with a noun phrase (e.g. "approval workflow") so it is not
+   * confused with `approvalStatus`.
+   */
+  approvalMode: 'review' | 'auto'
 }
 
 export interface PrivateRegistryPublishResult {
@@ -182,6 +128,11 @@ export interface PrivateRegistryManageResult {
   namespace?: string
   /** Present for action:'install' (SMI-5905). An allowlist — never carries raw `content`. */
   install?: PrivateRegistryInstallSummary
+  /** action:'submissions' (SMI-5949 D-5). Metadata only, never `content` (C1) — separate from
+   *  `skills` since this can include pending/rejected items. */
+  submissions?: RegistrySkill[]
+  /** action:'approve'/'reject' (SMI-5949 D-5). */
+  review?: RegistryReviewDecision
   message?: string
   error?: string
 }
@@ -201,7 +152,7 @@ export interface PrivateRegistryManageResult {
  * @see packages/mcp-server/src/tools/registry-tools.live.ts
  * @see docs/internal/adr/129-private-skill-registry-real-implementation.md
  */
-export interface PrivateRegistryService {
+export interface PrivateRegistryService extends PrivateRegistryReviewService {
   publish(
     teamId: string,
     skillId: string,
@@ -209,7 +160,13 @@ export interface PrivateRegistryService {
     content: SkillContent,
     description?: string
   ): Promise<RegistrySkill>
-  list(teamId: string, version?: string): Promise<RegistrySkill[]>
+  /**
+   * SMI-5949 Wave 3: `includeDeprecated` skips the `deprecated = FALSE` predicate this method
+   * carries by default, so an admin can still see what they deprecated. No equivalent flag on
+   * `get()` below — see `registry-tools.live.reads.ts`'s `getSkill()` for why that asymmetry is
+   * deliberate.
+   */
+  list(teamId: string, version?: string, includeDeprecated?: boolean): Promise<RegistrySkill[]>
   get(teamId: string, skillId: string, version?: string): Promise<RegistrySkill | null>
   /** SMI-5905: one version's packaged `content`, for install. `null` when nothing visible
    *  matches (absent OR cross-team — deliberately indistinguishable). Throws when the row's OWN
@@ -335,14 +292,26 @@ async function executePrivateRegistryPublishImpl(
       input.content,
       input.description
     )
+    // SMI-5949 Wave 2 Step 2 (plan-review finding M9): a 'pending' result is not live yet — the
+    // message must say so and must NOT present a Registry URL, which would read as "installable
+    // now" when it structurally is not (D-4's RLS hides the row from every read surface until an
+    // admin approves it). Every other value ('approved' — pre-approval-gate rows and Enterprise
+    // teams without the gate; 'rejected' can never reach here, publish() always inserts pending)
+    // keeps the pre-existing "published, here is the URL" message.
+    const message =
+      skill.approvalStatus === 'pending'
+        ? `Submitted ${input.skillId}@${input.version} for review — an admin must approve it ` +
+          'before teammates can install it. Review confirms who published this and what ' +
+          'version/description was submitted; it does not include a full content read by the ' +
+          'approver.'
+        : `Published ${input.skillId}@${input.version} to private registry.\n` +
+          `Registry URL: ${skill.registryUrl}`
     return {
       success: true,
       dataSource,
       skill,
       skillNamespace,
-      message:
-        `Published ${input.skillId}@${input.version} to private registry.\n` +
-        `Registry URL: ${skill.registryUrl}`,
+      message,
     }
   } catch (err) {
     return {
@@ -377,7 +346,7 @@ async function executePrivateRegistryManageImpl(
   try {
     switch (input.action) {
       case 'list': {
-        const skills = await service.list(teamId, input.version)
+        const skills = await service.list(teamId, input.version, input.includeDeprecated)
         return {
           success: true,
           dataSource,
@@ -392,18 +361,26 @@ async function executePrivateRegistryManageImpl(
         }
         const skill = await service.get(teamId, input.skillId, input.version)
         if (!skill) {
+          // Non-leaking (plan-review finding M11): the same message covers "does not exist",
+          // "wrong team", and "exists but is pending/rejected and therefore RLS-invisible" — a
+          // caller must not be able to distinguish those from this response.
           return {
             success: false,
             dataSource,
-            error: `Skill "${input.skillId}" not found in private registry.`,
+            error: registrySkillNotFoundMessage(input.skillId),
           }
         }
         return { success: true, dataSource, skill }
       }
 
       // SMI-5905 Wave 3. Handler lives in a companion file (this one was 466/500 lines).
+      // `await` is load-bearing here (SMI-5949 Wave 2 Step 4 finding): `return promise` inside a
+      // try block does NOT let a rejection reach this function's own `catch` below — the promise
+      // adoption happens outside the try/catch's synchronous scope, so an unawaited rejection
+      // bypasses it and becomes an unhandled rejection at the caller instead of a typed
+      // {success:false} result. Confirmed empirically; applies to every delegating case below too.
       case 'install':
-        return executeRegistryInstall({ input, teamId, dataSource, service, context })
+        return await executeRegistryInstall({ input, teamId, dataSource, service, context })
 
       case 'deprecate': {
         if (!input.skillId) {
@@ -418,13 +395,30 @@ async function executePrivateRegistryManageImpl(
           return {
             success: false,
             dataSource,
-            error: `Skill "${input.skillId}" not found in private registry.`,
+            error: registrySkillNotFoundMessage(input.skillId),
           }
         }
         return {
           success: true,
           dataSource,
-          message: `Skill "${input.skillId}" has been deprecated. It will no longer appear in search results.`,
+          // SMI-5949 Wave 3: corrected from "will no longer appear in search results" — the
+          // private registry has no search surface at all (Context § "precedent warning" in the
+          // plan doc). This is the actual, now-enforced behavior: `list`/`get`/`install` (both the
+          // MCP and Edge Function transports) all carry a `deprecated = FALSE` predicate with no
+          // per-call bypass, so an approved-then-deprecated version is invisible everywhere,
+          // including to a caller who already knows its exact skillId+version.
+          //
+          // SMI-5949 adversarial-review corrections (M-1, M-3): this UPDATE has no `.eq('version',
+          // …)`, but PostgreSQL applies the SELECT policy to it too (migration
+          // 20260809000000_private_registry_approval_gate.sql:78-86), so it only ever actually
+          // affects this skillId's currently-APPROVED row(s) — a `pending`/`rejected` sibling
+          // version, if one exists, is untouched by this call and can still be independently
+          // approved and installed later, regardless of this deprecation. And the
+          // `includeDeprecated:true` opt-in is NOT admin-gated — `list()` runs on the
+          // service-role/license-key path with no `auth.uid()` at all (see
+          // `registry-tools.live.reads.ts`'s own doc comment on `listSkills()`), so any team member
+          // holding the shared license key can pass it, not only a team admin.
+          message: `Skill "${input.skillId}" has been deprecated. Its approved version(s) will no longer be returned by list, get, or install — even by an exact version — for any team member; a separate pending or rejected version of this skillId, if one exists, is unaffected. Anyone holding this team's license key can still see deprecated versions via private_registry_manage {action:'list', includeDeprecated:true} — this is not restricted to team admins.`,
         }
       }
 
@@ -441,13 +435,15 @@ async function executePrivateRegistryManageImpl(
           return {
             success: false,
             dataSource,
-            error: `Skill "${input.skillId}" not found in private registry.`,
+            error: registrySkillNotFoundMessage(input.skillId),
           }
         }
         return {
           success: true,
           dataSource,
-          message: `Skill "${input.skillId}" has been undeprecated and is now visible in search results.`,
+          // SMI-5949 Wave 3: same correction as the deprecate message above — "search results" was
+          // never accurate for a private registry with no search surface.
+          message: `Skill "${input.skillId}" has been undeprecated and is visible again via list, get, and install.`,
         }
       }
 
@@ -469,6 +465,15 @@ async function executePrivateRegistryManageImpl(
           message: `Your team's private registry namespace is "${namespace}".`,
         }
       }
+
+      // SMI-5949 D-5/D-12 — handlers in a companion file, same reason 'install' is. `await`
+      // is load-bearing — see the comment on 'install' above.
+      case 'submissions':
+        return await executeRegistrySubmissions({ input, teamId, dataSource, service })
+
+      case 'approve':
+      case 'reject':
+        return await executeRegistryReview({ input, teamId, dataSource, service })
     }
   } catch (err) {
     return {

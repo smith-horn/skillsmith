@@ -39,12 +39,27 @@ export type FeatureFlag =
   // Additional MCP-specific features
   | 'custom_integrations'
   | 'advanced_analytics'
+  // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11).
+  // Deliberately NOT wired into TOOL_FEATURES below — see that block's comment.
+  | 'registry_approval'
 
 /**
  * Mapping of tool names to their required feature flags
  *
  * null = community tool (no license required)
  * FeatureFlag = requires that feature to be enabled in license
+ *
+ * SMI-5949 D-11: private_registry_publish / private_registry_manage are
+ * deliberately kept mapped to 'private_registry' below, NOT the newer
+ * approval-gate flag. This map is tool-granular (one flag per tool) and
+ * private_registry_manage also serves list/get/deprecate/undeprecate/
+ * namespace/install, so remapping it would gate six unrelated actions
+ * behind the approval SKU. A live feature check against the new flag would
+ * also deny every already-issued Enterprise license, since license feature
+ * checks have no tier-default fallback and issued licenses' features array
+ * is frozen at generation time. Do not "fix" this by adding a row for the
+ * new flag below — see D-11 reasons 1-2 and the regression test in
+ * toolFeatureMapping.test.ts that guards this omission.
  */
 export const TOOL_FEATURES: Record<string, FeatureFlag | null> = {
   // Core tools - no feature required (null = community)
@@ -121,6 +136,8 @@ export const FEATURE_DISPLAY_NAMES: Record<FeatureFlag, string> = {
   // Additional features
   custom_integrations: 'Custom Integrations',
   advanced_analytics: 'Advanced Analytics',
+  // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11)
+  registry_approval: 'Registry Approval Workflow',
 }
 
 /**
@@ -148,4 +165,6 @@ export const FEATURE_TIERS: Record<FeatureFlag, 'individual' | 'team' | 'enterpr
   // Additional features
   custom_integrations: 'enterprise',
   advanced_analytics: 'enterprise',
+  // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11)
+  registry_approval: 'enterprise',
 }

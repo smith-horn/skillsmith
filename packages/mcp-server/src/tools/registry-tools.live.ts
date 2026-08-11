@@ -8,18 +8,25 @@
  * Backs `private_registry_publish` / `private_registry_manage` with the real
  * `private_registry_skills` table (migration 20260724000000).
  *
- * TWO CREDENTIALS, THREE PATHS (SMI-5822 fix, SMI-5882 Wave 3; third path added SMI-5905 Wave 3):
+ * THREE CREDENTIALS, FOUR PATHS (SMI-5822 fix, SMI-5882 Wave 3; `getContent` added SMI-5905
+ * Wave 3; `publish` moved off service-role SMI-5949 Wave 2 Step 2, D-7):
  *
- * - **Member-level reads and publishes** (`list`, `get`, `publish`, `getNamespace`) use the
- *   Supabase service-role client. Service-role bypasses RLS, so **tenant isolation is enforced
- *   here**, in-query, via an explicit `team_id = <resolved>` filter on every request (ADR-116).
- *   `teamId` always comes from `resolve_team_from_license` — never from tool input — so a caller
- *   can only ever touch their own team's rows. This is correct for these operations: the team's
- *   license key genuinely authorizes team-scoped reads and publishes, which RLS also grants to any
- *   member (`_member_read` / `_member_insert`).
+ * - **Team-scoped reads** (`list`, `get`, `getNamespace`) use the Supabase service-role client.
+ *   Service-role bypasses RLS, so **tenant isolation is enforced here**, in-query, via an explicit
+ *   `team_id = <resolved>` filter on every request (ADR-116). `teamId` always comes from
+ *   `resolve_team_from_license` — never from tool input — so a caller can only ever touch their
+ *   own team's rows. This is correct for these operations: the team's license key genuinely
+ *   authorizes team-scoped reads, which RLS also grants to any member (`_member_read`). `list`/
+ *   `get` also carry a second mandatory in-query predicate, `approval_status = 'approved'`
+ *   (SMI-5949 D-4 surfaces 3/4) — service-role bypasses the RLS policy that would otherwise
+ *   enforce this, so it must be explicit here, under the same already-documented invariant as the
+ *   `team_id` filter. Since SMI-5949 Wave 3, both also carry a third predicate, `deprecated =
+ *   FALSE` — a gap the approval-gate work surfaced (`deprecated` was documented as hiding a skill
+ *   but no read path enforced it); `list` gains an explicit `includeDeprecated` opt-in, `get` does
+ *   not. The actual query logic for both lives in `registry-tools.live.reads.ts`.
  *
- * - **Admin-level writes** (`deprecate`, `undeprecate`) do NOT. They run through the signed-in
- *   user's own Supabase JWT (`skillsmith login`, SMI-4402), so PostgREST evaluates
+ * - **Admin-level writes** (`deprecate`, `undeprecate`) do NOT use service-role. They run through
+ *   the signed-in user's own Supabase JWT (`skillsmith login`, SMI-4402), so PostgREST evaluates
  *   `private_registry_skills_admin_update` with a real `auth.uid()` and the database — not this
  *   file — decides whether the caller is a team admin.
  *
@@ -42,6 +49,19 @@
  *   a call site. What decides whether a content read is *entitled* is in
  *   `registry-tools.live.content.ts`, and is scoped to the row's own team, not the caller's tier.
  *
+ * - **`publish`** (SMI-5949 Wave 2 Step 2, D-7) is the fourth path, and MEMBER-level like
+ *   `getContent` — not admin: any team member may submit a version, not only admins.
+ *   `published_by` is `DEFAULT auth.uid()` (migration 20260729000000), which stays NULL on the
+ *   service-role path this method used before — and an unconditional BEFORE INSERT trigger (Wave
+ *   1) now hard-rejects a NULL `published_by`, so a service-role publish fails outright. Beyond
+ *   that trigger, a real submitter identity is also the prerequisite for D-6's self-approval
+ *   check: `review_private_registry_submission()` can only refuse a submitter approving their own
+ *   work if it can name the submitter, and a shared license key never can. Two consequences the
+ *   D-4 RLS gate forces on this method specifically (a `pending` row is invisible even to its own
+ *   submitter): the INSERT can no longer request a representation (`.select()`/`RETURNING`) — see
+ *   the empirically-confirmed D-4(a) note on `publish()` below — and the freshly-published row is
+ *   read back through the metadata-only `get_private_registry_submissions` RPC (D-5) instead.
+ *
  * Single-phase write: metadata + content land in one INSERT (ADR-129) — no two-phase
  * Supabase+S3 write/rollback. Published (team_id, skill_id, version) triples are
  * immutable; a re-publish raises a unique violation surfaced as a clear error.
@@ -57,7 +77,15 @@ import {
   type RegistrySkillContent,
 } from './registry-tools.content.types.js'
 import { getSkillContent } from './registry-tools.live.content.js'
+import { listSkills, getSkill } from './registry-tools.live.reads.js'
+import {
+  mapSubmissionRow,
+  readBackSubmission,
+  listSubmissions,
+  reviewSubmission,
+} from './registry-tools.live.submissions.js'
 import type { PrivateRegistryService, RegistrySkill, SkillContent } from './registry-tools.js'
+import type { RegistryReviewDecision } from './registry-tools.review.types.js'
 
 /** 2 MB raw-content cap (ADR-129 Risks). Primary user-facing guard; the migration's
  *  pg_column_size CHECK is a stored-size backstop. */
@@ -73,6 +101,10 @@ export interface PrivateRegistrySkillRow {
   deprecated: boolean
   published_by: string | null
   published_at: string
+  /** SMI-5949 D-3. NOT NULL on the table; every row has one. */
+  approval_status: 'pending' | 'approved' | 'rejected'
+  /** SMI-5949 D-3. NOT NULL on the table; every row has one. */
+  approval_mode: 'review' | 'auto'
 }
 
 export interface SupabaseError {
@@ -97,6 +129,12 @@ export interface SupabaseTableQuery<T> {
 
 export interface MinimalSupabaseClient {
   from: <T>(table: string) => SupabaseTableQuery<T>
+  /**
+   * PostgREST RPC call (`POST /rpc/<fn>`) — SMI-5949 D-5's two `SECURITY DEFINER` functions have
+   * no plain table representation. Used today only for `get_private_registry_submissions()`, the
+   * sole read path for a `pending` row (D-4(c)).
+   */
+  rpc: <T>(fn: string, params?: Record<string, unknown>) => Promise<SupabaseQueryResult<T>>
 }
 
 // Table name + metadata column list live in registry-tools.content.types.ts so the content module
@@ -110,18 +148,6 @@ const METADATA_COLUMNS = REGISTRY_METADATA_COLUMNS
  *  silently mapped to null, or an outage would look identical to "not found". */
 function isNoRowsError(error: SupabaseError | null): boolean {
   return error?.code === 'PGRST116'
-}
-
-function mapRow(teamId: string, row: PrivateRegistrySkillRow): RegistrySkill {
-  return {
-    skillId: row.skill_id,
-    version: row.version,
-    description: row.description,
-    deprecated: row.deprecated,
-    publishedAt: row.published_at,
-    publishedBy: row.published_by ?? 'unknown',
-    registryUrl: `https://registry.skillsmith.app/private/${teamId}/${row.skill_id}@${row.version}`,
-  }
 }
 
 /** Postgres unique_violation (immutability breach) — code 23505, or a duplicate-key message. */
@@ -158,6 +184,16 @@ async function getClient(): Promise<MinimalSupabaseClient> {
  * probe below disambiguates: `_member_read` lets ANY team member SELECT the rows, while
  * `_admin_update` restricts the write, so rows-visible-but-not-writable means exactly "not an
  * admin".
+ *
+ * SMI-5949 adversarial-review correction (M-1): the above was written before Wave 2 and is now
+ * stale on its own — since Wave 2, `_member_read` ALSO requires `approval_status = 'approved'`
+ * (D-4), so a `pending`/`rejected` row is invisible to the probe too, for a reason that has
+ * nothing to do with admin status. The probe's "0 rows" therefore now has a THIRD possible cause
+ * alongside "no such skill" and "not an admin": "this skillId exists only as a pending/rejected
+ * row, so it is invisible to every team member (including this probe), not just to a non-admin".
+ * All three report `false` ("not found") below, which is the correct externally-visible answer in
+ * every case — there is nothing live to deprecate/undeprecate either way — but a future reader
+ * should not assume a `false` return here always means "this skillId was never published".
  */
 async function setDeprecated(teamId: string, skillId: string, value: boolean): Promise<boolean> {
   const operation = value ? 'deprecate' : 'undeprecate'
@@ -288,45 +324,87 @@ export function createLiveRegistryService(): PrivateRegistryService {
   return {
     async publish(teamId, skillId, version, content, description): Promise<RegistrySkill> {
       const { contentHash } = prepareContent(content)
-      const client = await getClient()
-      const resp = await client
-        .from<PrivateRegistrySkillRow>(TABLE)
-        .insert({
-          team_id: teamId,
-          skill_id: skillId,
-          version,
-          description: description ?? null,
-          content,
-          // Still sent, but no longer authoritative: trg_prs_content_hash (migration
-          // 20260729000000) recomputes content_hash from content->>'SKILL.md' and discards client
-          // input. The two agree by construction — prepareContent() uses the same sha256 over the
-          // same UTF-8 bytes — so this value is now a consistency check rather than the source of
-          // truth. `published_by` is deliberately NOT sent: it defaults to auth.uid(), which is
-          // NULL on this service-role path. See registry-tools.live.audit.ts for why that NULL is
-          // preferred over a guess, and what is recorded instead.
-          content_hash: contentHash,
-        })
-        .select()
-        .single()
-      if (resp.error || !resp.data) {
+      // D-7: publish now runs as the signed-in user, not service-role — `published_by`
+      // (DEFAULT auth.uid()) needs a real person behind it, both because an unconditional
+      // BEFORE INSERT trigger (Wave 1) hard-rejects a NULL published_by, and because D-6's
+      // self-approval check can only refuse a submitter approving their own work if it can name
+      // the submitter. A shared team license key can do neither — see registry-tools.live.auth.ts
+      // for the actionable login-required error this throws when no user is signed in.
+      const { client, actorUserId } = await getMemberUserClient('publish')
+
+      // D-4(a): the approval-gate RLS policy hides a fresh `pending` row from a SELECT —
+      // including from its own submitter — so `INSERT … RETURNING` (the `.select().single()`
+      // this call used before the gate) cannot be used: empirically confirmed against staging
+      // (real `authenticated` INSERT, real RLS) that requesting a representation on this insert
+      // raises `"new row violates row-level security policy"` and rolls the write back entirely,
+      // while the identical insert WITHOUT `.select()` succeeds and the row lands. The insert is
+      // therefore representation-free.
+      //
+      // `content_hash` is deliberately NOT sent on this path (unlike the pre-D-7 service-role
+      // insert): `GRANT INSERT (team_id, skill_id, version, description, content) … TO
+      // authenticated` (20260729000000:268-269) does not include `content_hash` — sending it as
+      // `authenticated` raises a column-privilege 42501, empirically confirmed alongside the
+      // RETURNING check above. The BEFORE INSERT trigger derives it server-side from
+      // `content->>'SKILL.md'` regardless. `prepareContent()`'s own hash is still computed for
+      // validation and is attached to the audit row below for correlation with the server-derived
+      // value, not sent to the database.
+      const insertResp = await client.from<PrivateRegistrySkillRow>(TABLE).insert({
+        team_id: teamId,
+        skill_id: skillId,
+        version,
+        description: description ?? null,
+        content,
+      })
+      if (insertResp.error) {
         await recordRegistryAudit({
           operation: 'publish',
           teamId,
           skillId,
           version,
           result: 'error',
-          authPath: 'license_key',
-          detail: isUniqueViolation(resp.error)
+          authPath: 'user_jwt',
+          authRole: 'member',
+          actorUserId,
+          detail: isUniqueViolation(insertResp.error)
             ? 'version_immutable'
-            : (resp.error?.code ?? 'insert_error'),
+            : (insertResp.error.code ?? 'insert_error'),
         })
-        if (isUniqueViolation(resp.error)) {
+        if (isUniqueViolation(insertResp.error)) {
           throw new Error(
             `Version ${version} of "${skillId}" already exists in this team's private registry. ` +
               'Published versions are immutable — bump the version and publish a new one.'
           )
         }
-        throw new Error(`Failed to publish skill: ${resp.error?.message ?? 'unknown error'}`)
+        throw new Error(`Failed to publish skill: ${insertResp.error.message ?? 'unknown error'}`)
+      }
+
+      // D-4(c): the row just landed `pending` and is structurally invisible to a plain SELECT —
+      // read it back through the metadata-only submissions RPC instead (D-5).
+      //
+      // SMI-5949 adversarial-review fix (M-5): the INSERT above already committed — the row
+      // genuinely exists in the database either way — so a failure HERE (RPC error, or a
+      // read-back miss) must still be audited, or a real, successful publish leaves ZERO audit
+      // trail: not a success row (the code never reaches the one below) and not an error row
+      // (nothing previously recorded one). Every other branch in this function audits both
+      // outcomes; this closes the one that did not. This does not roll back the already-committed
+      // insert — the fix is purely about not losing the audit trail for what already happened.
+      let submission
+      try {
+        submission = await readBackSubmission(client, teamId, skillId, version)
+      } catch (err) {
+        await recordRegistryAudit({
+          operation: 'publish',
+          teamId,
+          skillId,
+          version,
+          result: 'error',
+          authPath: 'user_jwt',
+          authRole: 'member',
+          actorUserId,
+          contentHash,
+          detail: 'readback_failed',
+        })
+        throw err
       }
       await recordRegistryAudit({
         operation: 'publish',
@@ -334,54 +412,26 @@ export function createLiveRegistryService(): PrivateRegistryService {
         skillId,
         version,
         result: 'success',
-        authPath: 'license_key',
+        authPath: 'user_jwt',
+        authRole: 'member',
+        actorUserId,
+        contentHash,
       })
-      return mapRow(teamId, resp.data)
+      return mapSubmissionRow(teamId, submission)
     },
 
-    async list(teamId, version): Promise<RegistrySkill[]> {
+    // D-4 surface 3 + SMI-5949 Wave 3 (deprecated read-filter closure). Query logic lives in
+    // registry-tools.live.reads.ts (this file's own 500-line audit:standards budget).
+    async list(teamId, version, includeDeprecated): Promise<RegistrySkill[]> {
       const client = await getClient()
-      let query = client
-        .from<PrivateRegistrySkillRow>(TABLE)
-        .select(METADATA_COLUMNS)
-        .eq('team_id', teamId)
-      if (version) query = query.eq('version', version)
-      const resp = await query
-      if (resp.error) {
-        throw new Error(`Failed to list registry skills: ${resp.error.message ?? 'unknown error'}`)
-      }
-      return (resp.data ?? []).map((row) => mapRow(teamId, row))
+      return listSkills(client, teamId, version, includeDeprecated)
     },
 
+    // D-4 surface 4 + SMI-5949 Wave 3 — see registry-tools.live.reads.ts's getSkill() for why this
+    // one carries no includeDeprecated opt-in, unlike list() above.
     async get(teamId, skillId, version): Promise<RegistrySkill | null> {
       const client = await getClient()
-      if (version) {
-        const resp = await client
-          .from<PrivateRegistrySkillRow>(TABLE)
-          .select(METADATA_COLUMNS)
-          .eq('team_id', teamId)
-          .eq('skill_id', skillId)
-          .eq('version', version)
-          .single()
-        if (resp.error) {
-          if (isNoRowsError(resp.error)) return null
-          throw new Error(`Failed to get registry skill: ${resp.error.message ?? 'unknown error'}`)
-        }
-        if (!resp.data) return null
-        return mapRow(teamId, resp.data)
-      }
-      // No version specified — return the most recently published version.
-      const resp = await client
-        .from<PrivateRegistrySkillRow>(TABLE)
-        .select(METADATA_COLUMNS)
-        .eq('team_id', teamId)
-        .eq('skill_id', skillId)
-      if (resp.error) {
-        throw new Error(`Failed to get registry skill: ${resp.error.message ?? 'unknown error'}`)
-      }
-      if (!resp.data || resp.data.length === 0) return null
-      const latest = resp.data.reduce((a, b) => (a.published_at >= b.published_at ? a : b))
-      return mapRow(teamId, latest)
+      return getSkill(client, teamId, skillId, version)
     },
 
     // SMI-5905 Wave 3. MEMBER getter — never getAdminUserClient(): reading a skill you may
@@ -393,10 +443,14 @@ export function createLiveRegistryService(): PrivateRegistryService {
       return getSkillContent({ binding, teamId, skillId, version })
     },
 
-    // Deprecates every version of the skill within this team (hidden from search, remains
-    // installable). Admin-gated: runs as the signed-in user so RLS authorizes it (SMI-5822).
-    // The team_id filter is still load-bearing — never cross-team — and is now backed by
-    // `_admin_update`'s own USING clause rather than standing alone.
+    // Deprecates every version of the skill within this team. SMI-5949 Wave 3: no longer just
+    // "hidden from search, remains installable" — since the deprecated=false predicate below is
+    // now real (registry-tools.live.reads.ts, registry-tools.live.content.ts, the Edge Function),
+    // this makes every version genuinely unreachable through list/get/install, not just absent
+    // from a search surface the private registry never had. Admin-gated: runs as the signed-in
+    // user so RLS authorizes it (SMI-5822). The team_id filter is still load-bearing — never
+    // cross-team — and is now backed by `_admin_update`'s own USING clause rather than standing
+    // alone.
     async deprecate(teamId, skillId): Promise<boolean> {
       return setDeprecated(teamId, skillId, true)
     },
@@ -415,6 +469,20 @@ export function createLiveRegistryService(): PrivateRegistryService {
     // Admin-gated — see deprecate()'s comment above.
     async undeprecate(teamId, skillId): Promise<boolean> {
       return setDeprecated(teamId, skillId, false)
+    },
+
+    // SMI-5949 D-5. MEMBER getter, deliberately: the RPC's own auth.uid()-based checks are the
+    // real gate (steps 2-3) — see registry-tools.review-action.ts for why.
+    async submissions(teamId, status): Promise<RegistrySkill[]> {
+      const { client } = await getMemberUserClient('submissions')
+      return listSubmissions(client, teamId, status)
+    },
+
+    async review(teamId, skillId, version, decision, note): Promise<RegistryReviewDecision> {
+      const { client, actorUserId } = await getMemberUserClient(
+        decision === 'approved' ? 'approve' : 'reject'
+      )
+      return reviewSubmission({ client, teamId, skillId, version, decision, note, actorUserId })
     },
   }
 }

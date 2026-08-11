@@ -13,6 +13,43 @@ import { join } from 'node:path'
 import { storeCredentials } from '@skillsmith/core'
 import type { ActorSession } from './e2e-registry-roundtrip.types.js'
 
+/**
+ * Seeds an isolated $HOME with a real login session (storeCredentials()) for the
+ * duration of `fn`, then restores $HOME — the in-process-call sibling of
+ * {@link runCliInstall}'s isolated-HOME seeding, for callers that invoke a
+ * `dist/` import directly in THIS process rather than spawning a CLI subprocess.
+ *
+ * SMI-5949 D-7 (pr-reviewer PR-12 finding, plan finding H1): `private_registry_publish`
+ * now runs as `getMemberUserClient('publish')`, which resolves the caller's identity via
+ * `resolveUserAccessToken()` -> `loadCredentials()` -> `os.homedir()` -> `process.env.HOME`
+ * at CALL time — not merely at process start. `runCliInstall` restores `HOME` right after
+ * seeding because its subprocess gets `HOME` explicitly in its own `env`; an in-process
+ * call has no such subprocess boundary, so `HOME` must stay swapped for the full duration
+ * of `fn`, not just the write. `SKILLSMITH_LICENSE_KEY` no longer being sufficient on its
+ * own is exactly the plan's H1 finding ("audit internal tooling for license-key-only
+ * `private_registry_publish` usage and migrate it before Wave 2 merges") — this script was
+ * the one unmigrated hit.
+ */
+export async function withUserCredentials<T>(
+  session: ActorSession,
+  fn: () => Promise<T>
+): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'e2e-reg-inproc-'))
+  const origHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    await storeCredentials({
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      expiresAt: Date.now() + session.expiresIn * 1000,
+      version: 2,
+    })
+    return await fn()
+  } finally {
+    process.env.HOME = origHome
+  }
+}
+
 export async function signIn(
   url: string,
   anonKey: string,
@@ -134,4 +171,54 @@ export async function runCliInstall(
   }
 
   return { exitCode, json, stdout, stderr }
+}
+
+/**
+ * Approves a pending private-registry submission via the real
+ * `private_registry_manage {action:'approve'}` handler, authenticated as the given
+ * (admin/owner) session -- split out of the main script to stay under the 500-line
+ * file-length gate.
+ *
+ * SMI-5949 D-4/D-7 (pr-reviewer PR-12 finding): a fresh `publish` now lands `pending`
+ * and is invisible on every read surface until a team admin/owner approves it -- this
+ * is the missing step between the main script's row 1 (publish) and its rows
+ * 2/3/mcp-live-row3, which install/read the just-published skill immediately after
+ * publish with no approval step of their own. Uses the same dist/ import + isolated
+ * SKILLSMITH_LICENSE_KEY/HOME-credential pattern as row 1's own publish call
+ * (`withUserCredentials()` above) -- the approver must differ from the publisher
+ * (D-6 blocks self-approval), so callers pass an admin/owner session, never the
+ * publisher's own.
+ */
+export async function approvePendingSubmission(
+  adminSession: ActorSession,
+  licenseKey: string,
+  skillId: string,
+  version: string
+): Promise<{ success: boolean; error?: string }> {
+  const mod = (await import('../packages/mcp-server/dist/src/tools/registry-tools.js')) as {
+    executePrivateRegistryManage: (
+      input: { action: 'approve'; skillId: string; version: string },
+      context: unknown
+    ) => Promise<{ success: boolean; error?: string }>
+  }
+  const contextMod = (await import('../packages/mcp-server/dist/src/context.js')) as {
+    createToolContext: (options?: { dbPath?: string }) => unknown
+    closeToolContext: (context: unknown) => Promise<void>
+  }
+
+  const origLicenseKey = process.env.SKILLSMITH_LICENSE_KEY
+  const toolContext = contextMod.createToolContext({ dbPath: ':memory:' })
+  try {
+    process.env.SKILLSMITH_LICENSE_KEY = licenseKey
+    return await withUserCredentials(adminSession, () =>
+      mod.executePrivateRegistryManage({ action: 'approve', skillId, version }, toolContext)
+    )
+  } finally {
+    if (origLicenseKey === undefined) {
+      delete process.env.SKILLSMITH_LICENSE_KEY
+    } else {
+      process.env.SKILLSMITH_LICENSE_KEY = origLicenseKey
+    }
+    await contextMod.closeToolContext(toolContext)
+  }
 }

@@ -41,6 +41,37 @@ describe('TOOL_FEATURES mapping', () => {
   })
 })
 
+describe('registry_approval flag (SMI-5949 D-11)', () => {
+  it('keeps private_registry_publish and private_registry_manage mapped to private_registry, not registry_approval', () => {
+    // D-11: the approval gate is a separately-priced FeatureFlag, but wiring
+    // it into TOOL_FEATURES would be actively harmful — TOOL_FEATURES is
+    // tool-granular (one flag per tool), private_registry_manage also serves
+    // list/get/deprecate/undeprecate/namespace/install, and a live
+    // checkFeature('registry_approval') has no tier-default fallback so it
+    // would deny every already-issued Enterprise license until reissued.
+    expect(TOOL_FEATURES['private_registry_publish']).toBe('private_registry')
+    expect(TOOL_FEATURES['private_registry_manage']).toBe('private_registry')
+  })
+
+  it('never maps any TOOL_FEATURES row to registry_approval', () => {
+    // Enforced, not implicit (D-11): a future "helpful" one-line wiring of
+    // registry_approval into TOOL_FEATURES would deny every already-issued
+    // Enterprise license, because those licenses' features array is frozen
+    // at generation time and checkFeature() has no tier-default fallback.
+    // Re-issuing every Enterprise license is the prerequisite named in D-11's
+    // wiring point before this assertion may ever be relaxed.
+    const registryApprovalRows = Object.entries(TOOL_FEATURES).filter(
+      ([, feature]) => feature === 'registry_approval'
+    )
+    expect(registryApprovalRows).toEqual([])
+  })
+
+  it('still defines registry_approval in the catalog (display name + tier), just not in TOOL_FEATURES', () => {
+    expect(FEATURE_DISPLAY_NAMES['registry_approval']).toBeDefined()
+    expect(FEATURE_TIERS['registry_approval']).toBe('enterprise')
+  })
+})
+
 describe('FEATURE_DISPLAY_NAMES', () => {
   it('should have display names for all features', () => {
     const features: FeatureFlag[] = [
