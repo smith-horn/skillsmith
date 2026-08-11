@@ -51,6 +51,7 @@ import {
   buildFilesToAdd,
   regenerateLockfile,
 } from './lib/release-git.js'
+import { syncReadmeWhatsNew } from './lib/release-readme.js'
 
 // Re-export the helper surface so existing test imports continue to resolve
 // against `../prepare-release` (SMI-4783 keeps the public surface stable).
@@ -333,6 +334,19 @@ async function main(): Promise<void> {
     console.log(`  ✓ ${plan.spec.name}@${plan.newVersion}`)
   }
 
+  // Step 5.5: Sync each bumped package's README "What's New" heading (SMI-5663
+  // Wave 1) — Check 60 (SMI-5613) compares this heading against package.json
+  // and fails the release-cadence PR on drift. Throws (aborting this run) if
+  // a package's README has a "What's New" section that can't be resolved to
+  // exactly one heading; silently skips packages with no such section at all.
+  const { updated: updatedReadmeFiles } = syncReadmeWhatsNew(plans)
+  if (updatedReadmeFiles.length > 0) {
+    console.log(
+      `  ✓ Synced README "What's New" heading in ${updatedReadmeFiles.length} package(s):`
+    )
+    for (const path of updatedReadmeFiles) console.log(`    - ${path}`)
+  }
+
   // Step 6: Update workspace dep ranges in all sibling packages.
   //
   // SMI-5057: Replaces the older core-only updateCoreDependency. Walks every
@@ -345,6 +359,13 @@ async function main(): Promise<void> {
     console.log(`  ✓ Updated workspace dep ranges in ${updatedDepFiles.length} package(s):`)
     for (const path of updatedDepFiles) console.log(`    - ${path}`)
   }
+
+  // SMI-5663: combine every non-plan-derived file this run touched — README
+  // "What's New" syncs (Step 5.5) and workspace dep-range writes (Step 6) —
+  // into one extraFiles list, threaded through both the --no-commit preview
+  // (Step 10) and the real commit (Step 11) so neither can drift from what
+  // was actually written, matching SMI-5672's buildFilesToAdd contract.
+  const extraFiles = [...updatedReadmeFiles, ...updatedDepFiles]
 
   // Step 6.5: Regenerate package-lock.json so the lockfile matches the bumped
   // dep ranges (SMI-4775). Without this, the publish workflow ships a
@@ -405,7 +426,7 @@ async function main(): Promise<void> {
     // --no-changelog was passed.
     const modified = buildFilesToAdd(plans, {
       includeLockfile: !noLockfileRegen,
-      extraFiles: updatedDepFiles,
+      extraFiles,
       noChangelog,
     })
     for (const f of modified) console.log(`    - ${f}`)
@@ -414,9 +435,10 @@ async function main(): Promise<void> {
   }
 
   // Step 11: Commit (include package-lock.json when regen ran, plus the
-  // workspace dep-range files updateWorkspaceDependencies wrote — SMI-5672).
+  // workspace dep-range files updateWorkspaceDependencies wrote, plus any
+  // synced README "What's New" headings — SMI-5672, SMI-5663).
   const preBranch = getCurrentBranch()
-  createCommit(plans, !noLockfileRegen, updatedDepFiles)
+  createCommit(plans, !noLockfileRegen, extraFiles)
 
   // Step 12: Post-commit branch verification
   const postBranch = getCurrentBranch()
@@ -433,7 +455,7 @@ async function main(): Promise<void> {
   // closing the trust gap that let the original dep-range-drop bug ship silently.
   const staged = buildFilesToAdd(plans, {
     includeLockfile: !noLockfileRegen,
-    extraFiles: updatedDepFiles,
+    extraFiles,
   })
   console.log('  Staged files:')
   for (const f of staged) console.log(`    - ${f}`)

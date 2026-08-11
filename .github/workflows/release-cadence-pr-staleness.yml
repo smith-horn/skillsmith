@@ -5,17 +5,32 @@
 # A PR cut on Sun can sit open while main moves several PRs forward, leading
 # to a release that drains a `[Unreleased]` no longer representing main.
 #
-# This workflow runs daily, iterates open `release-cadence/*` PRs, and
-# auto-closes any that drift > N hours OR > M commits behind origin/main.
-# The cadence cron re-rolls cleanly the next Sunday tick (or via manual
-# `workflow_dispatch` on `release-cadence.yml`).
+# SMI-5663 recalibration (2026-08-11, GPT-5.6-Sol plan review):
+# the original design (immediate `gh pr close --delete-branch` at 24h old OR
+# 5 commits behind) auto-closed 6 of the last 8 weekly cadence PRs unmerged —
+# it was reaping PRs that were still legitimately awaiting merge, not
+# genuinely abandoned ones. Three changes:
 #
-# Action choice: close + comment + delete branch (NOT auto-rebase). Lockfile
-# / changelog / version-bump conflicts during rebase produce silent broken
-# PRs. Re-firing the deterministic cron from current main is cheaper than
-# reconciling a rebased PR.
+#   1. Age is measured from the PR's `createdAt` (not the head commit's own
+#      timestamp) — the semantically correct clock for "how long has this sat
+#      open", and immune to a follow-up commit resetting it.
+#   2. Commits-behind-main is no longer a close/nag trigger by itself — kept
+#      only as informational context in the comment body. GitHub's own
+#      `mergeable == "CONFLICTING"` status is the real staleness signal a
+#      PR that's simply old but still cleanly mergeable isn't broken, just
+#      waiting on a human. `mergeable == "UNKNOWN"` (a transient GitHub
+#      computation state) never counts as stale on its own.
+#   3. Two-stage nag-then-close instead of an immediate destructive close:
+#      a non-destructive "nag" comment (idempotent — marked with a hidden
+#      HTML comment so it never re-nags) posts once staleness is first
+#      detected; the PR is only closed if it is STILL open a full 7 days
+#      after that nag. The branch is preserved on close (no
+#      `--delete-branch`) — this is what produced SMI-5663's actual
+#      documented symptom (a later `git push` recreating a branch ref that
+#      GitHub won't resync commits against for an already-closed PR).
 #
 # See: docs/internal/implementation/smi-4779-cadence-cron-staleness-gate.md
+#      docs/internal/implementation/smi-5663-release-cadence-staleness-fix.md
 #      docs/internal/runbooks/release-cadence-stale-pr.md
 #      docs/internal/adr/114-release-cadence-and-gh-release-alignment.md
 
@@ -27,17 +42,17 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'List stale PRs without closing them'
+        description: 'List stale/nag-eligible/close-eligible PRs without acting on them'
         required: false
         default: 'false'
         type: boolean
       max_hours:
-        description: 'Max hours behind main before close (default 24)'
+        description: 'Max hours since PR creation before a nag (default 24)'
         required: false
         default: '24'
         type: string
       max_commits:
-        description: 'Max commits behind main before close (default 5)'
+        description: 'Commits behind main shown as informational context only (default 5) — no longer a stale/close trigger, SMI-5663'
         required: false
         default: '5'
         type: string
@@ -70,7 +85,7 @@ jobs:
           set -euo pipefail
           PRS=$(gh pr list --state open \
             --search 'head:release-cadence/' \
-            --json number,headRefName,headRefOid,createdAt,url)
+            --json number,headRefName,headRefOid,createdAt,url,mergeable)
           COUNT=$(echo "$PRS" | jq 'length')
           # Multiline-safe output via heredoc delimiter (GHA recommended).
           {
@@ -85,10 +100,25 @@ jobs:
             echo "Open release-cadence/* PRs: $COUNT"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # SMI-5663: staleness signal is (age-since-createdAt > MAX_HOURS) OR
+      # (mergeable == "CONFLICTING"). mergeable == "UNKNOWN" (GitHub hasn't
+      # finished computing it yet — transient) never counts. Commits-behind is
+      # still computed for the comment body, but no longer gates anything.
+      #
+      # Per stale PR, this step also determines which of the two stages
+      # applies by checking for a prior nag marker comment (idempotent via a
+      # hidden `<!-- release-cadence-staleness-nag -->` HTML comment):
+      #   - No prior nag found            -> NAG (non-destructive comment only)
+      #   - Nagged < 7 days ago           -> NONE (already nagged, waiting)
+      #   - Nagged >= 7 days ago,
+      #     current mergeable != UNKNOWN  -> CLOSE (branch preserved)
+      #   - Nagged >= 7 days ago,
+      #     current mergeable == UNKNOWN  -> NONE (defer — transient state)
       - name: Evaluate staleness
         if: steps.find.outputs.count != '0'
         id: evaluate
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRS_JSON: ${{ steps.find.outputs.prs }}
           MAX_HOURS: ${{ github.event.inputs.max_hours || '24' }}
           MAX_COMMITS: ${{ github.event.inputs.max_commits || '5' }}
@@ -96,81 +126,153 @@ jobs:
           set -euo pipefail
           git fetch origin main
 
-          : > /tmp/stale-prs.tsv
-          STALE_COUNT=0
+          NAG_MARKER='<!-- release-cadence-staleness-nag -->'
+          NAG_TO_CLOSE_DAYS=7
+
+          : > /tmp/nag-prs.tsv
+          : > /tmp/close-prs.tsv
+          NAG_COUNT=0
+          CLOSE_COUNT=0
+          NOW_TS=$(date -u +%s)
+
           while read -r pr; do
             NUMBER=$(echo "$pr" | jq -r '.number')
             HEAD_OID=$(echo "$pr" | jq -r '.headRefOid')
             HEAD_REF=$(echo "$pr" | jq -r '.headRefName')
             URL=$(echo "$pr" | jq -r '.url')
+            CREATED_AT=$(echo "$pr" | jq -r '.createdAt')
+            MERGEABLE=$(echo "$pr" | jq -r '.mergeable')
 
-            # Best-effort fetch of the PR head; comparison still works via OID
-            # if the branch is already gone or fetch fails.
+            # Best-effort fetch of the PR head; commits-behind (informational
+            # only, SMI-5663) still works via OID if the branch is gone or
+            # this fetch fails.
             git fetch origin "$HEAD_REF" 2>/dev/null || true
-
             COMMITS_BEHIND=$(git rev-list --count "$HEAD_OID..origin/main" 2>/dev/null || echo 0)
-            HEAD_TS=$(git log -1 --format=%ct "$HEAD_OID" 2>/dev/null || echo 0)
-            NOW_TS=$(date -u +%s)
-            if [ "$HEAD_TS" = "0" ]; then
-              AGE_HOURS=0
-            else
-              AGE_HOURS=$(( (NOW_TS - HEAD_TS) / 3600 ))
-            fi
+
+            CREATED_TS=$(date -u -d "$CREATED_AT" +%s)
+            AGE_HOURS=$(( (NOW_TS - CREATED_TS) / 3600 ))
 
             STALE=0
             REASONS=""
             if [ "$AGE_HOURS" -gt "$MAX_HOURS" ]; then
               STALE=1
-              REASONS="${AGE_HOURS}h old"
+              REASONS="${AGE_HOURS}h old (since createdAt)"
             fi
-            if [ "$COMMITS_BEHIND" -gt "$MAX_COMMITS" ]; then
+            if [ "$MERGEABLE" = "CONFLICTING" ]; then
               STALE=1
               if [ -n "$REASONS" ]; then
-                REASONS="${REASONS}, ${COMMITS_BEHIND} commits behind main"
+                REASONS="${REASONS}, mergeable=CONFLICTING"
               else
-                REASONS="${COMMITS_BEHIND} commits behind main"
+                REASONS="mergeable=CONFLICTING"
               fi
             fi
+            # Always-informational, never a stale trigger (SMI-5663 §3).
+            INFO="${COMMITS_BEHIND} commit(s) behind main (informational, threshold ${MAX_COMMITS} — no longer a trigger, SMI-5663)"
 
-            if [ "$STALE" -eq 1 ]; then
-              {
-                echo "- ❌ PR #${NUMBER} (\`$HEAD_REF\`): stale — $REASONS"
-                echo "    Recovery: \`gh workflow run release-cadence.yml -f dry_run=false\` to re-cut from current main."
-              } >> "$GITHUB_STEP_SUMMARY"
-              # TSV for downstream steps. URL retained for closure comment + email.
-              printf '%s\t%s\t%s\t%s\n' "$NUMBER" "$HEAD_REF" "$REASONS" "$URL" >> /tmp/stale-prs.tsv
-              STALE_COUNT=$((STALE_COUNT + 1))
-            else
-              echo "- ✓ PR #${NUMBER} (\`$HEAD_REF\`): fresh (${AGE_HOURS}h old, ${COMMITS_BEHIND} commits behind)" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$STALE" -eq 0 ]; then
+              echo "- ✓ PR #${NUMBER} (\`$HEAD_REF\`): fresh (${AGE_HOURS}h old, mergeable=${MERGEABLE}, ${INFO})" >> "$GITHUB_STEP_SUMMARY"
+              continue
             fi
+
+            # Stale — determine nag vs. close via prior-nag lookup.
+            #
+            # Code-review correction (SMI-5663): `gh pr view --json comments`
+            # does not reliably return every comment on a long thread (a
+            # documented gh CLI limitation) — on a busy PR the marker could be
+            # silently missed, causing this to duplicate-nag forever instead
+            # of ever advancing to close. `gh api --paginate` against the
+            # underlying REST comments endpoint walks every page explicitly.
+            PRIOR_NAG=$(gh api --paginate "repos/{owner}/{repo}/issues/${NUMBER}/comments" \
+              --jq --arg marker "$NAG_MARKER" \
+              '.[] | select((.body // "") | contains($marker)) | .created_at' \
+              | sort | head -1)
+
+            if [ -z "$PRIOR_NAG" ]; then
+              echo "- 🔔 PR #${NUMBER} (\`$HEAD_REF\`): stale — $REASONS. $INFO. No prior nag -> nagging." >> "$GITHUB_STEP_SUMMARY"
+              printf '%s\t%s\t%s\t%s\t%s\n' "$NUMBER" "$HEAD_REF" "$REASONS" "$URL" "$INFO" >> /tmp/nag-prs.tsv
+              NAG_COUNT=$((NAG_COUNT + 1))
+              continue
+            fi
+
+            NAG_TS=$(date -u -d "$PRIOR_NAG" +%s)
+            NAG_AGE_DAYS=$(( (NOW_TS - NAG_TS) / 86400 ))
+
+            if [ "$NAG_AGE_DAYS" -lt "$NAG_TO_CLOSE_DAYS" ]; then
+              echo "- ⏳ PR #${NUMBER} (\`$HEAD_REF\`): stale — $REASONS. Already nagged ${NAG_AGE_DAYS}d ago (< ${NAG_TO_CLOSE_DAYS}d) -> waiting." >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            if [ "$MERGEABLE" = "UNKNOWN" ]; then
+              echo "- ⏳ PR #${NUMBER} (\`$HEAD_REF\`): nagged ${NAG_AGE_DAYS}d ago (>= ${NAG_TO_CLOSE_DAYS}d) but mergeable=UNKNOWN (transient) -> deferring close." >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            echo "- ❌ PR #${NUMBER} (\`$HEAD_REF\`): nagged ${NAG_AGE_DAYS}d ago (>= ${NAG_TO_CLOSE_DAYS}d), still open -> closing (branch preserved)." >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\t%s\t%s\t%s\t%s\n' "$NUMBER" "$HEAD_REF" "$REASONS" "$URL" "$PRIOR_NAG" >> /tmp/close-prs.tsv
+            CLOSE_COUNT=$((CLOSE_COUNT + 1))
           done < <(echo "$PRS_JSON" | jq -c '.[]')
 
-          echo "stale_count=$STALE_COUNT" >> "$GITHUB_OUTPUT"
-          if [ "$STALE_COUNT" -gt 0 ]; then
+          echo "nag_count=$NAG_COUNT" >> "$GITHUB_OUTPUT"
+          echo "close_count=$CLOSE_COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$NAG_COUNT" -gt 0 ] || [ "$CLOSE_COUNT" -gt 0 ]; then
             {
               echo ""
-              echo "Override: \`gh workflow run release-cadence-pr-staleness.yml -f max_hours=48 -f max_commits=10\` to bypass thresholds."
+              echo "Override: \`gh workflow run release-cadence-pr-staleness.yml -f max_hours=48\` to bypass the age threshold (mergeable=CONFLICTING still applies)."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Close stale PRs
-        if: steps.evaluate.outputs.stale_count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
+      - name: Post nag comments
+        if: steps.evaluate.outputs.nag_count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          while IFS=$'\t' read -r NUMBER HEAD_REF REASON URL; do
+          while IFS=$'\t' read -r NUMBER HEAD_REF REASON URL INFO; do
             [ -z "$NUMBER" ] && continue
             BODY=$(cat <<EOF
-          ## Auto-closed by release-cadence PR staleness watcher (SMI-4779)
+          ## ⚠️ Release-cadence PR staleness nag (SMI-5663)
 
           This PR is stale: ${REASON}.
 
-          Auto-closing rather than auto-rebasing because lockfile/changelog/version conflicts during rebase create silent broken PRs.
+          ${INFO}
+
+          This is a **non-destructive nag** — no action has been taken. If this PR is still open **7 days from now**, it will be closed automatically (branch preserved, not deleted — SMI-5663) so a fresh cadence PR can be re-cut cleanly.
+
+          To resolve before then: merge it, or bring it up to date with \`gh pr update-branch ${NUMBER}\`.
+
+          See [docs/internal/runbooks/release-cadence-stale-pr.md](../blob/main/docs/internal/runbooks/release-cadence-stale-pr.md) for the full operator runbook.
+
+          Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          <!-- release-cadence-staleness-nag -->
+          EOF
+          )
+            gh pr comment "$NUMBER" --body "$BODY"
+            echo "  Nagged PR #$NUMBER (\`$HEAD_REF\`)" >> "$GITHUB_STEP_SUMMARY"
+          done < /tmp/nag-prs.tsv
+
+      - name: Close stale PRs (branch preserved)
+        if: steps.evaluate.outputs.close_count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r NUMBER HEAD_REF REASON URL NAGGED_AT; do
+            [ -z "$NUMBER" ] && continue
+            BODY=$(cat <<EOF
+          ## Auto-closed by release-cadence PR staleness watcher (SMI-5663)
+
+          This PR was nagged as stale on ${NAGGED_AT} and is still open 7+ days later (${REASON}).
+
+          **Branch preserved** (not deleted, SMI-5663) — a later \`git push\` to \`${HEAD_REF}\` will pick up cleanly; run \`gh pr reopen ${NUMBER}\` afterward if GitHub doesn't resync commits/checks against an already-closed PR automatically.
 
           ### Recovery
 
-          To re-cut a fresh release PR from current main:
+          \`\`\`
+          gh pr reopen ${NUMBER}
+          \`\`\`
+
+          Or re-cut a fresh release PR from current main:
 
           \`\`\`
           gh workflow run release-cadence.yml -f dry_run=false
@@ -182,12 +284,12 @@ jobs:
           EOF
           )
             gh pr comment "$NUMBER" --body "$BODY"
-            gh pr close "$NUMBER" --delete-branch
-            echo "  Closed PR #$NUMBER and deleted branch \`$HEAD_REF\`" >> "$GITHUB_STEP_SUMMARY"
-          done < /tmp/stale-prs.tsv
+            gh pr close "$NUMBER"
+            echo "  Closed PR #$NUMBER (branch \`$HEAD_REF\` preserved)" >> "$GITHUB_STEP_SUMMARY"
+          done < /tmp/close-prs.tsv
 
       - name: Notify support via alert-notify
-        if: steps.evaluate.outputs.stale_count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
+        if: steps.evaluate.outputs.close_count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -199,9 +301,9 @@ jobs:
           fi
 
           # Format the closure list as a plain-text message body.
-          STALE_LIST=$(awk -F'\t' '{ printf "  - PR #%s (%s): %s\n    %s\n", $1, $2, $3, $4 }' /tmp/stale-prs.tsv)
+          CLOSE_LIST=$(awk -F'\t' '{ printf "  - PR #%s (%s): %s\n    %s\n", $1, $2, $3, $4 }' /tmp/close-prs.tsv)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          BODY=$(printf 'The release-cadence PR-staleness watcher auto-closed the following stale PR(s):\n\n%s\nRunbook: docs/internal/runbooks/release-cadence-stale-pr.md\nWorkflow run: %s\n\nTo re-cut a fresh release PR: `gh workflow run release-cadence.yml -f dry_run=false`\n' "$STALE_LIST" "$RUN_URL")
+          BODY=$(printf 'The release-cadence PR-staleness watcher auto-closed the following PR(s) (branch preserved, nagged 7+ days prior — SMI-5663):\n\n%s\nRunbook: docs/internal/runbooks/release-cadence-stale-pr.md\nWorkflow run: %s\n\nTo resume: `git push` to the (preserved) branch, then `gh pr reopen <number>`. Or re-cut a fresh release PR: `gh workflow run release-cadence.yml -f dry_run=false`\n' "$CLOSE_LIST" "$RUN_URL")
 
           PAYLOAD=$(jq -nc \
             --arg msg "$BODY" \
