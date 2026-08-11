@@ -89,8 +89,13 @@ jobs:
           parse_ts() {
             date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
           }
-          STARTED=$(parse_ts "$RUN_STARTED_AT")
-          ENDED=$(parse_ts "$RUN_UPDATED_AT")
+          # NEEDLE code review: under `set -e`, a bare `VAR=$(parse_ts ...)`
+          # exits the whole step immediately when parse_ts's own two-attempt
+          # fallback both fail -- the "|| VAR=" here is required so a
+          # malformed timestamp reaches the fail-open check below instead of
+          # silently killing the step (which would itself skip the alert).
+          STARTED=$(parse_ts "$RUN_STARTED_AT") || STARTED=""
+          ENDED=$(parse_ts "$RUN_UPDATED_AT") || ENDED=""
 
           # Fail-open: an unparseable timestamp degrades to ELAPSED_MIN=0
           # (never classified as a likely timeout-kill) rather than aborting

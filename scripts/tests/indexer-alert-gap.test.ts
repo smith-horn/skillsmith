@@ -38,6 +38,32 @@ function bashSyntaxCheck(script: string): { ok: true } | { ok: false; stderr: st
   }
 }
 
+/**
+ * Extracts just the parse_ts()/STARTED/ENDED/ELAPSED_MIN computation out of
+ * the watcher's full run: script (up to and including the if/else block's
+ * closing `fi`) and runs it FOR REAL under `set -eo pipefail` -- matching
+ * the actual script's own settings -- so a `set -e`-vs-fail-open regression
+ * (NEEDLE code-review finding: a bare `VAR=$(parse_ts ...)` previously
+ * exited the whole step before the fail-open check could run) is caught by
+ * execution, not just `bash -n` syntax validity.
+ */
+function runElapsedCalc(runScript: string, startedAt: string, updatedAt: string): string {
+  const start = runScript.indexOf('parse_ts() {')
+  const anchor = 'ELAPSED_MIN=$(( (ENDED - STARTED) / 60 ))'
+  const anchorIdx = runScript.indexOf(anchor)
+  if (start === -1 || anchorIdx === -1) {
+    throw new Error('could not locate the elapsed-calc block in watcher runScript')
+  }
+  // The next `fi` after the ELAPSED_MIN assignment closes the if/else block.
+  const fiIdx = runScript.indexOf('fi', anchorIdx)
+  if (fiIdx === -1) {
+    throw new Error('could not locate the closing fi in watcher runScript')
+  }
+  const snippet = runScript.slice(start, fiIdx + 2)
+  const script = `set -eo pipefail\nRUN_STARTED_AT=${shellQuote(startedAt)}\nRUN_UPDATED_AT=${shellQuote(updatedAt)}\n${snippet}\necho "ELAPSED_MIN=$ELAPSED_MIN"\n`
+  return execFileSync('bash', ['-c', script], { encoding: 'utf8' })
+}
+
 function injectEnv(script: string, env: Record<string, string>): string {
   const assignments = Object.entries(env)
     .map(([k, v]) => `${k}=${shellQuote(v)}`)
@@ -95,9 +121,30 @@ describe('SMI-5974: indexer-watch.yml (the new alert-gap watcher)', () => {
     expect(step.runScript).toMatch(/STARTED=\$\(parse_ts "\$RUN_STARTED_AT"\)/)
   })
 
-  it('an unparseable or inverted timestamp pair fails open to ELAPSED_MIN=0, never crashing the step', () => {
+  it('an unparseable or inverted timestamp pair fails open to ELAPSED_MIN=0, never crashing the step (real execution, not just bash -n -- NEEDLE code-review regression test)', () => {
     const step = extractStep(watcher, 'Classify and alert')
     expect(step.runScript).toMatch(/ELAPSED_MIN=0/)
+
+    // Both attempts inside parse_ts() fail -- this is exactly the case
+    // where a bare `STARTED=$(parse_ts ...)` under set -e previously
+    // terminated the step before reaching the fail-open check.
+    const malformed = runElapsedCalc(step.runScript, 'not-a-timestamp', 'also-not-a-timestamp')
+    expect(malformed.trim()).toBe('ELAPSED_MIN=0')
+
+    // Missing values (empty string) -- same failure class.
+    const missing = runElapsedCalc(step.runScript, '', '')
+    expect(missing.trim()).toBe('ELAPSED_MIN=0')
+
+    // Inverted pair (end before start) -- valid timestamps, but the other
+    // fail-open condition ("$ENDED" -lt "$STARTED").
+    const inverted = runElapsedCalc(step.runScript, '2026-08-09T02:00:00Z', '2026-08-09T01:00:00Z')
+    expect(inverted.trim()).toBe('ELAPSED_MIN=0')
+
+    // Sanity: a real, valid, 30-minute-apart pair computes the real value,
+    // proving the fail-open branch isn't just always returning 0.
+    const real = runElapsedCalc(step.runScript, '2026-08-09T01:00:00Z', '2026-08-09T01:30:00Z')
+    expect(real.trim()).toBe('ELAPSED_MIN=30')
+
     const injected = injectEnv(step.runScript, {
       RUN_STARTED_AT: 'not-a-timestamp',
       RUN_UPDATED_AT: 'also-not-a-timestamp',
