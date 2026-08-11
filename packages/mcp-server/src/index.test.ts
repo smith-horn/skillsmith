@@ -1,6 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeAll } from 'vitest'
 import { homedir } from 'os'
 import { join } from 'path'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 // SMI-5981: safe to import — context.js has no top-level side effects, unlike
 // index.ts itself (which runs main() at module scope on import, see
 // index.ts's own SMI-5615 comment). buildDbInitializedLogMessage() is the
@@ -107,4 +111,83 @@ describe('Database Path Logging (SMI-5981)', () => {
     // and that the raw env value never leaks into the logged message.
     expect(message).not.toContain(rawInput)
   })
+})
+
+// PR-review finding (BLOCKING): the two tests above only assert on
+// buildDbInitializedLogMessage()'s OWN return value in isolation -- they'd
+// stay green even if index.ts's real startup line reverted to inlining the
+// raw env interpolation, since nothing here exercises the actual call site.
+// index.ts can't be imported directly (runs main() at module scope), so this
+// mirrors tests/startup-probe.test.ts's own spawn-the-real-binary pattern:
+// start the built dist/src/index.js, capture stderr, and assert it contains
+// the EXACT line buildDbInitializedLogMessage() itself produces. This fails
+// if the call site is ever reverted, because a raw-interpolation stderr line
+// would not match this string.
+describe('Database Path Logging (SMI-5981) — integration (spawn)', () => {
+  const __filename = fileURLToPath(import.meta.url)
+  const __dirname = path.dirname(__filename)
+  const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
+  const DIST_ENTRY = path.join(REPO_ROOT, 'packages', 'mcp-server', 'dist', 'src', 'index.js')
+  const skipInPrePush = process.env['SKILLSMITH_PREPUSH'] === '1' && !existsSync(DIST_ENTRY)
+
+  beforeAll(() => {
+    if (skipInPrePush) return
+    if (!existsSync(DIST_ENTRY)) {
+      const build = spawnSync('npm', ['run', 'build', '--workspace=@skillsmith/mcp-server'], {
+        stdio: 'inherit',
+        cwd: REPO_ROOT,
+      })
+      if (build.status !== 0) throw new Error('mcp-server build failed in beforeAll')
+    }
+    if (!existsSync(DIST_ENTRY)) throw new Error(`Expected ${DIST_ENTRY} to exist after build`)
+  }, 120_000)
+
+  it.skipIf(skipInPrePush)(
+    "the real startup stderr line matches buildDbInitializedLogMessage()'s exact output",
+    async () => {
+      delete process.env.SKILLSMITH_DB_PATH
+      const expectedLine = buildDbInitializedLogMessage()
+
+      const proc = spawn('node', [DIST_ENTRY], {
+        env: {
+          ...process.env,
+          SKILLSMITH_SKIP_SKILL_INSTALL: '1',
+          SKILLSMITH_AUTO_UPDATE_CHECK: 'false',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+
+      const stderrChunks: string[] = []
+      proc.stderr.on('data', (d: Buffer) => stderrChunks.push(d.toString()))
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error(`server boot timeout — stderr so far:\n${stderrChunks.join('')}`))
+          }, 60_000)
+          proc.stderr.on('data', (d: Buffer) => {
+            if (d.toString().includes('Skillsmith MCP server running')) {
+              clearTimeout(timeout)
+              resolve()
+            }
+          })
+          proc.on('error', (err) => {
+            clearTimeout(timeout)
+            reject(err)
+          })
+          proc.on('exit', (code) => {
+            if (code !== null && code !== 0) {
+              clearTimeout(timeout)
+              reject(new Error(`mcp-server exited ${code}; stderr:\n${stderrChunks.join('')}`))
+            }
+          })
+        })
+      } finally {
+        proc.kill('SIGTERM')
+      }
+
+      expect(stderrChunks.join('')).toContain(expectedLine)
+    },
+    75_000
+  )
 })
