@@ -584,8 +584,18 @@ acquire_git_crypt_filter_lock() {
             term_body="release_git_crypt_filter_lock"
             [ -n "$prev_term_cmd" ] && term_body="${term_body}; ${prev_term_cmd}"
             term_body="${term_body}; exit 143"
+            # Immediate (double-quote) expansion on the next 3 lines is
+            # intentional, not the SC2064 double-quote-vs-deferred-eval
+            # footgun shellcheck normally flags -- the comment block above
+            # explains why: baking exit_body/int_body/term_body's resolved
+            # TEXT in now, at registration time, is what avoids the
+            # self-reference recursion hazard a single-quoted (deferred,
+            # variable-reference) trap body had in this fix's first draft.
+            # shellcheck disable=SC2064
             trap "$exit_body" EXIT
+            # shellcheck disable=SC2064
             trap "$int_body" INT
+            # shellcheck disable=SC2064
             trap "$term_body" TERM
             GIT_CRYPT_FILTER_LOCK_MODE="held"
             return 0
