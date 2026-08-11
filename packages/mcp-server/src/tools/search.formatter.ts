@@ -104,15 +104,17 @@ export function formatSearchResults(response: SearchResponse): string {
     )
   }
 
-  // SMI-5178: surface how many results were hidden by the compatibility filter
-  // (the restrictive cross-tool default or an explicit compatible_with) so the
-  // model/user knows the view is scoped to their tool and can broaden it.
-  if (response.compatibilityHidden && response.compatibilityHidden > 0) {
+  // SMI-5929: surface how many of the ABOVE results are deprioritized by the
+  // compatibility filter (declared-compatible with other tools only). These
+  // rows are already included above, not additional/hidden ones — the
+  // compatibility filter is a ranking signal, not an exclusion (SMI-5178
+  // used to drop them; renamed compatibilityHidden -> compatibilityDeprioritized).
+  if (response.compatibilityDeprioritized && response.compatibilityDeprioritized > 0) {
     lines.push('')
     lines.push(
       '+ ' +
-        response.compatibilityHidden +
-        ' more skill(s) hidden — tagged for other tools. Pass compatible_with to change the filter.'
+        response.compatibilityDeprioritized +
+        ' of the above result(s) are tagged for other tools (ranked lower). Pass compatible_with to change the ranking.'
     )
   }
 

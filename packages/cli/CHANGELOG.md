@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: bumps `@skillsmith/core` for the SMI-5929 compatibility-ranking change —
+  `SearchResponse.compatibilityHidden` is renamed to `compatibilityDeprioritized` and
+  `SearchOptions` gains an optional `compatibility` field. `skillsmith search` does not currently
+  expose a compatibility filter of its own (no `--compatible-with` flag, and `searchRemoteOrLocal`
+  never read the old field), so this has no CLI-visible behavior change today — the entry is here
+  because both renamed/added members are part of `@skillsmith/core`'s public type surface this
+  package depends on (SMI-5929)
 - **Fix**: `license-types.ts`'s `TIER_FEATURES` was silently missing `version_tracking`
   (individual/team/enterprise) and `skill_security_audit` (team/enterprise) versus the canonical
   `@smith-horn/enterprise` package's own feature membership — this file has no compiler backstop

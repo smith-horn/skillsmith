@@ -349,6 +349,11 @@ export class SkillsmithApiClient {
     if (options.maxRiskScore !== undefined && options.maxRiskScore !== null) {
       params.set('max_risk', String(options.maxRiskScore))
     }
+    // SMI-5929: compatibility slugs forwarded so the edge fn can rank (and
+    // widen its own DB fetch) BEFORE LIMIT/OFFSET — see SearchOptions doc.
+    if (options.compatibility && options.compatibility.length > 0) {
+      params.set('compatibility', options.compatibility.join(','))
+    }
 
     const endpoint = `/skills-search?${params.toString()}`
     return withResponseCache(

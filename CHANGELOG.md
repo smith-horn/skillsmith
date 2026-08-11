@@ -90,6 +90,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Compatibility filter demoted from exclusion to ranking signal** (2026-08-11, SMI-5929,
+  **breaking response-contract change**): `search` (MCP tool, CLI, and the `skills-search` edge
+  function) no longer HARD-EXCLUDES a result whose declared `compatibility` doesn't include the
+  requested client — for a client like Cursor (~0.83% of the corpus tagged `cursor`), that exclusion
+  ran client-side *after* the API had already returned a fixed-size page, so a query could come back
+  nearly empty even when plenty of relevant results existed. Replaced with a 3-tier rank: rank 0 =
+  declared-compatible with a requested slug, rank 1 = `compatibility` empty/absent (unchanged
+  "unknown ≠ incompatible" semantics), rank 2 = declared-compatible with other tools only. Rank 2
+  rows are still returned, just sorted last. The rank is now computed as part of the **server-side**
+  query construction (`skills-search` widens its own DB fetch — `dbFetchLimit`, capped at 100 — before
+  ranking and slicing to the caller's requested `limit`, so a rank-0 row past a naive page boundary is
+  promoted onto the page instead of already being truncated away) — a client-side re-sort of an
+  already-paginated page cannot fix this, since there's nothing left to promote once the DB has
+  applied `LIMIT`/`OFFSET`. On the MCP/CLI side, the existing local-results-first merge order stays
+  the OUTER sort key — compat-rank only reorders WITHIN the local bucket and the API/registry bucket
+  separately, never promoting an API result above a local one. **Response field renamed**:
+  `compatibilityHidden` → `compatibilityDeprioritized` (MCP `search` response, `packages/core`
+  `SearchResponse` type) and `compatibility_hidden` → `compatibility_deprioritized` (`skills-search`
+  edge function `meta`, snake_case per that API's existing convention) — precisely defined as the
+  count of rank-2 rows present in the *final returned page*, not a corpus-wide or pre-slice count.
+  `SearchOptions.compatibility` (new, `packages/core`) now threads the wanted slugs from the MCP
+  tool's `compatible_with`/`SKILLSMITH_CLIENT` resolution to the API as a `compatibility` query
+  param, so the edge function can actually rank server-side (previously never forwarded at all — the
+  filter only ever ran client-side against an already-fetched, unranked page).
 - **Private registry: deprecated versions are now hidden by default** (2026-08-11, SMI-5949 Wave 3):
   `private_registry_manage` (`list`/`get`/`install`), the `private-registry-get` edge function, and
   the MCP `getContent()` path now exclude `deprecated` versions from every read — previously the
