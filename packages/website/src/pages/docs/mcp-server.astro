@@ -1,8 +1,43 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+
+const howToSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'HowTo',
+  name: 'How to Configure the Skillsmith MCP Server',
+  description:
+    'Add the Skillsmith MCP server to an MCP-compatible AI assistant to search, install, and manage agent skills using natural language.',
+  tool: [
+    { '@type': 'HowToTool', name: 'Node.js 18+' },
+    { '@type': 'HowToTool', name: 'MCP-compatible AI assistant' },
+  ],
+  step: [
+    {
+      '@type': 'HowToStep',
+      position: 1,
+      name: 'Add the server to your MCP client config',
+      text: 'Add an entry for "skillsmith" running "npx -y @skillsmith/mcp-server" to your MCP client configuration file, e.g. ~/.claude/settings.json.',
+    },
+    {
+      '@type': 'HowToStep',
+      position: 2,
+      name: 'Restart your MCP client',
+      text: 'Restart your AI coding agent to load the new server configuration.',
+    },
+    {
+      '@type': 'HowToStep',
+      position: 3,
+      name: 'Trigger it with a natural-language prompt',
+      text: 'Prefix requests with "Use Skillsmith to..." or "Ask Skillsmith for..." so your assistant invokes the Skillsmith tools instead of answering from training data.',
+    },
+  ],
+};
 ---
 
-<DocsLayout title="MCP Server" description="Configure and use the Skillsmith MCP server">
+<DocsLayout title="MCP Server" description="Configure the Skillsmith MCP server and use its tools to search, install, and manage skills — including publishing to your team's private registry">
+  <!-- JSON-LD HowTo Schema -->
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(howToSchema)} />
+
   <h1>MCP Server</h1>
 
   <p class="lead">
@@ -374,8 +409,8 @@ EOF`}</code></pre>
   <p>
     Publish a skill version to your organization's shared private registry as a pending
     submission — a team admin has to approve it before anyone (including you) can install it.
-    Enterprise tier. See <a href="/docs/private-registry">Private Registry</a> for the full
-    approval workflow and access-control model.
+    Enterprise tier. See <a href="/docs/private-registry#publish-approval">Private Registry</a> for
+    the full approval workflow and access-control model.
   </p>
 
   <pre><code>{`// Tool: private_registry_publish
