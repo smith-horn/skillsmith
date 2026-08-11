@@ -3,14 +3,11 @@
  * Updated for SMI-902: Use real database instead of hardcoded skills
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import {
-  executeRecommend,
-  formatRecommendations,
-  recommendInputSchema,
-} from '../src/tools/recommend.js'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
+import { executeRecommend, recommendInputSchema } from '../src/tools/recommend.js'
 import { createTestDatabase, type TestDatabaseContext } from './integration/setup.js'
 import type { ToolContext } from '../src/context.js'
+import * as InstalledSkillsModule from '../src/utils/installed-skills.js'
 
 // Test context with database
 let testDbContext: TestDatabaseContext
@@ -32,6 +29,30 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDbContext.cleanup()
+})
+
+// SMI-5991: this file's `installed_skills: []` cases rely on SMI-906
+// auto-detection to populate the context.stack — reading the real host
+// `~/.claude/skills/` directory made results depend on execution
+// environment (a dev host with skills installed vs. a clean Docker
+// container/CI runner with none), and an empty auto-detect result trips
+// the SMI-5896 empty-stack guard, silently degrading assertions written
+// against real recommendations. Stub to a fixed, non-empty, synthetic
+// skill ID that deliberately does NOT match any seeded fixture in
+// TEST_SKILLS (unlike a real fixture ID such as 'anthropic/commit', which
+// — with detect_overlap defaulted true — engages OverlapDetector and can
+// legitimately filter every candidate away): this keeps the stub's only
+// effect "make the derived stack non-empty," without perturbing the
+// installed-skill exclusion or overlap-detection filtering paths that
+// other tests in this file exercise deliberately via an explicit array.
+beforeEach(() => {
+  vi.spyOn(InstalledSkillsModule, 'getInstalledSkills').mockResolvedValue([
+    'local/smi-5991-autodetect-stub',
+  ])
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('Skill Recommend Tool', () => {
@@ -408,91 +429,7 @@ describe('Skill Recommend Tool', () => {
     })
   })
 
-  describe('formatRecommendations', () => {
-    it('should format recommendations for terminal display', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: ['anthropic/commit'],
-          detect_overlap: false, // Disable overlap detection for consistent testing
-          limit: 3,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      expect(formatted).toContain('Skill Recommendations')
-      expect(formatted).toContain('recommendation(s)')
-      expect(formatted).toContain('Score:')
-      expect(formatted).toContain('Relevance:')
-      expect(formatted).toContain('ID:')
-    })
-
-    it('should display trust badges', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          detect_overlap: false, // Disable overlap detection for consistent testing
-          limit: 5,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      // Should contain at least one trust badge
-      const hasBadge =
-        formatted.includes('[VERIFIED]') ||
-        formatted.includes('[COMMUNITY]') ||
-        formatted.includes('[STANDARD]') ||
-        formatted.includes('[UNVERIFIED]')
-      expect(hasBadge).toBe(true)
-    })
-
-    it('should show candidates considered and timing', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          detect_overlap: false, // Disable overlap detection for consistent testing
-          limit: 3,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      expect(formatted).toContain('Candidates considered:')
-      expect(formatted).toContain('ms')
-    })
-
-    // SMI-1631: Role display in formatted output
-    it('should show role filter in formatted output when applied', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          role: 'testing',
-          detect_overlap: false,
-          limit: 5,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      expect(formatted).toContain('Role filter: testing')
-    })
-
-    it('should show role filtered count when skills were filtered', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          role: 'testing',
-          detect_overlap: false,
-          limit: 10,
-        },
-        toolContext
-      )
-
-      if (result.role_filtered > 0) {
-        const formatted = formatRecommendations(result)
-        expect(formatted).toContain(`Filtered for role: ${result.role_filtered}`)
-      }
-    })
-  })
+  // SMI-5991: formatRecommendations tests split to recommend-format.test.ts
+  // to keep this file under the 500-line cap (same precedent as
+  // recommend-online-path.test.ts, SMI-2755 Wave 2).
 })
