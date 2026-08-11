@@ -13,6 +13,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   runRepair,
   MIN_BATCH_SIZE,
@@ -55,7 +58,18 @@ describe('parseLogPathArg (code-review finding, MEDIUM)', () => {
   })
 
   it('throws when --log-path is the last token with no value at all', () => {
-    expect(() => parseLogPathArg(['--log-path'])).toThrow(/requires a value/)
+    expect(() => parseLogPathArg(['--log-path'])).toThrow(/requires a non-empty value/)
+  })
+
+  it('throws on --log-path= (empty string via the attached form) — PR-review finding, BLOCKING', () => {
+    // The `=` form's empty-string case previously bypassed the
+    // missing/flag-like guard entirely (that guard only ran for the
+    // bare-next-token form), and runRepair's `opts.logPath ?? defaultLogPath()`
+    // does not substitute on an empty string (only null/undefined) -- so an
+    // empty log path used to survive all the way to appendBatchLog, which
+    // fails only AFTER that batch's UPDATE has already committed against prod.
+    expect(() => parseLogPathArg(['--log-path='])).toThrow(/requires a non-empty value/)
+    expect(() => parseLogPathArg(['--log-path='])).toThrow(/an empty string/)
   })
 })
 
@@ -129,5 +143,33 @@ describe('runRepair — reports errors for the CLI entrypoint to act on', () => 
 
     expect(result.errors).toEqual([])
     expect(result.updatedIds.sort()).toEqual([...ids].sort())
+  })
+
+  it('preflights the log path BEFORE any batch commits — PR-review finding, BLOCKING', async () => {
+    // A bad log path used to only fail at the first appendBatchLog call,
+    // AFTER that batch's nullContentHashForIds had already run against
+    // prod. Point logPath's directory at a path segment that is a plain
+    // FILE, not a directory -- mkdir(dirname(logPath), {recursive:true})
+    // must throw (ENOTDIR) before nullContentHashForIds is ever called.
+    const tmpDir = await mkdtemp(join(tmpdir(), 'smi5930-preflight-'))
+    const notADir = join(tmpDir, 'this-is-a-file')
+    await writeFile(notADir, 'x')
+    const badLogPath = join(notADir, 'subdir', 'log.jsonl')
+
+    const calls: string[][] = []
+    const db: RepairDbDeps = {
+      fetchCandidateIds: async () => makeIds(10),
+      nullContentHashForIds: async (ids) => {
+        calls.push([...ids])
+        return [...ids]
+      },
+    }
+
+    await expect(
+      runRepair(db, { apply: true, batchSize: MIN_BATCH_SIZE, logPath: badLogPath })
+    ).rejects.toThrow()
+    expect(calls).toEqual([])
+
+    await rm(tmpDir, { recursive: true, force: true })
   })
 })

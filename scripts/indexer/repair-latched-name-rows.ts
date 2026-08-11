@@ -6,11 +6,10 @@
  * via organic re-crawl.
  *
  * ── Why these rows are stuck ─────────────────────────────────────────────
- * The indexer's own skip-gate takes a skinny update path (never touches
- * `name`) whenever a row's `content_hash` already matches what a re-fetch
- * would compute AND `security_score` is non-NULL. For the affected rows that
- * condition is permanently true, so organic re-crawl can never reach the
- * code path that re-derives `name` from frontmatter.
+ * The indexer's own skip-gate skips writing `name` whenever `content_hash`
+ * already matches a re-fetch AND `security_score` is non-NULL -- for the
+ * affected rows that condition is permanently true, so organic re-crawl
+ * can never reach the path that re-derives `name` from frontmatter.
  *
  * ── The fix (data-only, no DDL) ──────────────────────────────────────────
  * NULL `content_hash` for exactly the rows matching {@link LATCHED_ROW_PREDICATE}.
@@ -403,6 +402,11 @@ export async function runRepair(
   }
 
   const logPath = opts.logPath ?? defaultLogPath()
+  // PR-review finding (BLOCKING): preflight the log dir before the first
+  // batch commits -- an unwritable path previously wasn't caught until the
+  // first appendBatchLog, by which point that batch's UPDATE had already
+  // committed (empty logPath is rejected earlier, at CLI parse time).
+  await mkdir(dirname(logPath), { recursive: true })
   const updatedIds: string[] = []
   const errors: string[] = []
 
