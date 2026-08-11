@@ -192,12 +192,14 @@ export interface CompanionAgentTarget {
  *   `author/utils.ts`'s prior `ensureAgentsDirectory()` default).
  * - `copilot`: `AGENT_SHIM_TARGETS.copilot` (agent-harness-targets.ts) has a
  *   real, non-null entry for the SAME underlying tool —
- *   `~/.copilot/agents/skillsmith-agent.agent.md`. Its DIRECTORY
- *   (`~/.copilot/agents/`) is cited here as independent evidence of
- *   Copilot's own agents-dir convention; the FILENAME is not reused —
- *   `skillsmith-agent.agent.md` is that table's own singular-shim naming for
- *   a different command, unrelated to this map's per-skill
- *   `<name>-specialist.md` naming.
+ *   `~/.copilot/agents/skillsmith-agent.agent.md`. Both its DIRECTORY
+ *   (`~/.copilot/agents/`) AND its `.agent.md` EXTENSION are cited here as
+ *   independent evidence (corroborated by shims.ts's own doc comment:
+ *   "Copilot `.agent.md` (Copilot cloud-agent + CLI surfaces, which do not
+ *   read `.claude/agents`)") — PR-review finding (BLOCKING): a plain
+ *   `-specialist.md` suffix here previously risked writing a companion file
+ *   Copilot's own surfaces don't discover at all. Per-skill naming is
+ *   `<name>.agent.md`, not `<name>-specialist.md`.
  * - `opencode`: `AGENT_SHIM_TARGETS.opencode` likewise has a real, non-null
  *   entry — `~/.config/opencode/agents/skillsmith-agent.md` (plural
  *   `agents/`, Step-6 verified against opencode.ai/docs/agents/ per that
@@ -232,12 +234,18 @@ export const COMPANION_AGENT_TARGETS: Record<ClientId, CompanionAgentTarget> = {
     filenamePattern: '{name}-specialist.md',
   },
   copilot: {
-    // Directory cited from AGENT_SHIM_TARGETS.copilot (agent-harness-targets.ts)
-    // as independent evidence of Copilot's own agents-dir convention.
-    // Filename pattern is this map's own naming, not copied from that table.
+    // PR-review finding (BLOCKING): both dir AND filename are now cited
+    // from AGENT_SHIM_TARGETS.copilot (agent-harness-targets.ts:156,
+    // `skillsmith-agent.agent.md`) and shims.ts's own doc comment ("Copilot
+    // `.agent.md` (Copilot cloud-agent + CLI surfaces, which do not read
+    // `.claude/agents`)") -- this codebase already has independently
+    // verified evidence that Copilot's real companion-agent format is
+    // `<name>.agent.md`, not the generic `-specialist.md` suffix every
+    // other client here defaults to. Writing plain `.md` risked producing
+    // an undiscoverable companion file.
     dir: join(homedir(), '.copilot', 'agents'),
     fileMode: 'flat',
-    filenamePattern: '{name}-specialist.md',
+    filenamePattern: '{name}.agent.md',
   },
   windsurf: {
     // No AGENT_SHIM_TARGETS entry exists for windsurf (not a HarnessId

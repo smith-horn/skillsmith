@@ -12,7 +12,7 @@ import ora from 'ora'
 import { readFile, readdir } from 'fs/promises'
 import { join, resolve } from 'path'
 import { SkillParser } from '@skillsmith/core'
-import { resolveCompanionAgentDir } from '@skillsmith/core/install'
+import { resolveCompanionAgentPath } from '@skillsmith/core/install'
 
 const logger = getCliLogger()
 
@@ -106,9 +106,11 @@ export async function transformSkill(skillPath: string, options: TransformOption
     // same COMPANION_AGENT_TARGETS-backed resolver generateSubagent() below
     // ultimately uses (through ensureAgentsDirectory()) — this command has no
     // --output/--client of its own, so it stays the canonical (claude-code)
-    // default, same as before, but no longer duplicates the hardcoded literal.
-    const agentsDir = resolveCompanionAgentDir()
-    const subagentPath = join(agentsDir, `${metadata.name}-specialist.md`)
+    // default, same as before. PR-review finding (NON-BLOCKING): now uses
+    // resolveCompanionAgentPath() for BOTH dir and filename (safe here,
+    // unlike subagent.ts, since there's no --output override to lose) so
+    // the two can't independently drift apart on filename policy.
+    const subagentPath = resolveCompanionAgentPath(metadata.name)
 
     if (await fileExists(subagentPath)) {
       if (!options.force) {
