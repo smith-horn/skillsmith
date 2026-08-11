@@ -355,6 +355,33 @@ export async function runSubdirectorySearch(
  * Phase-3b failure records a zeroed `subdirectory_search` and is swallowed
  * (one phase must not abort the cycle), matching the prior inline behavior.
  */
+/**
+ * SMI-5930 Wave 3: zeroed `subdirectory_search` marker distinguishing
+ * "disabled by env" / "not this phase-split sub-slot" / "genuinely failed" --
+ * same shape Phase 3a's own disabled marker uses (discovery-orchestrator.ts),
+ * extracted here since this module owns the `subdirectory_search` result
+ * shape. Exists because `SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH` is never set
+ * on the regular `indexer.yml` cron (only on the workflow_dispatch-only
+ * `indexer-backfill.yml`), so this phase silently never ran there until this
+ * marker made that visible in audit telemetry — see discovery-orchestrator.ts's
+ * Phase 3b else-branch for the full incident context.
+ */
+export function buildDisabledSubdirectorySearchMarker(
+  error: 'disabled_by_env' | 'skipped_phase_split' | 'phase_failed'
+): NonNullable<IndexerResult['subdirectory_search']> {
+  return {
+    repos_found: 0,
+    total_found: 0,
+    retries: 0,
+    license_filtered: 0,
+    license_fetch_failed: 0,
+    admitted: 0,
+    license_null: 0,
+    no_default_branch: 0,
+    error,
+  }
+}
+
 export async function runSubdirectorySearchPhase(args: {
   seenUrls: Set<string>
   validationCache: Map<string, SkillMdValidation>
@@ -395,16 +422,6 @@ export async function runSubdirectorySearchPhase(args: {
     }
   } catch (err) {
     console.warn(`[CodeSearch] Phase 3b failed: ${err instanceof Error ? err.message : 'Unknown'}`)
-    args.result.subdirectory_search = {
-      repos_found: 0,
-      total_found: 0,
-      retries: 0,
-      license_filtered: 0,
-      license_fetch_failed: 0,
-      admitted: 0,
-      license_null: 0,
-      no_default_branch: 0,
-      error: 'phase_failed',
-    }
+    args.result.subdirectory_search = buildDisabledSubdirectorySearchMarker('phase_failed')
   }
 }

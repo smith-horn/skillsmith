@@ -25,7 +25,11 @@ import {
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
 import { type SkillMdValidation } from './skill-processor.ts'
-import { runSubdirectorySearchPhase, type BackfillFacetPlan } from './subdirectory-search.ts'
+import {
+  runSubdirectorySearchPhase,
+  buildDisabledSubdirectorySearchMarker,
+  type BackfillFacetPlan,
+} from './subdirectory-search.ts'
 import { runCategorization, runCodeSearch, runUpsertPhase } from './indexer-runners.ts'
 import { applyTreeHashTouches, type TreeHashTouchEntry } from './tree-hash-touch.ts'
 import type { RotationSource } from './topic-rotation.ts'
@@ -345,6 +349,16 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       result,
       backfillFacetPlan,
     })
+  } else {
+    // SMI-5930 Wave 3: Phase 3b previously had NO else branch here, unlike
+    // Phase 3a above — `result.subdirectory_search` stayed `undefined` for
+    // every scheduled/dispatched indexer.yml run, hiding a real 5+ week
+    // coverage gap (`.claude/skills`) from audit telemetry. See
+    // buildDisabledSubdirectorySearchMarker's own doc comment for the
+    // incident context and subdirectory-search.ts for the marker shape.
+    result.subdirectory_search = buildDisabledSubdirectorySearchMarker(
+      runPhase3 ? 'disabled_by_env' : 'skipped_phase_split'
+    )
   }
 
   // Count total SKILL.md files on GitHub for homepage stats display.

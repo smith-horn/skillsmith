@@ -39,18 +39,23 @@ export function minimalSkillPayload(repo: GitHubRepository): {
 
 /**
  * SMI-4858: Guaranteed-non-empty skill name resolver. `skills.name NOT NULL`
- * must hold across every discovery path; falls back through `repoName`, the
- * second segment of `fullName`, and finally a sentinel. `sanitize` is the
- * call-site's sanitizer (kept injection-style to avoid an import cycle
- * between this helper module and skill-processor.ts).
+ * must hold across every discovery path; falls back through the skillPath leaf
+ * segment, `repoName`, the second segment of `fullName`, and finally a sentinel.
+ * `sanitize` is the call-site's sanitizer (kept injection-style to avoid an
+ * import cycle between this helper module and skill-processor.ts).
+ * SMI-5930 Wave 4: Added skillPath leaf-segment fallback between frontmatter
+ * candidate and repo.name to defend against future validation-cache-miss bugs.
  */
 export function resolveSkillName(
   candidate: string | undefined,
   repo: GitHubRepository,
-  sanitize: (name: string) => string
+  sanitize: (name: string) => string,
+  skillPath?: string
 ): string {
+  // Extract the leaf segment from skillPath (e.g., 'deploy' from 'plugins/deploy-on-aws/skills/deploy')
+  const leafSegment = skillPath ? skillPath.split('/').pop() : undefined
   const fb = repo.repoName || repo.fullName?.split('/')[1] || 'unnamed-skill'
-  return sanitize(candidate || repo.name || fb) || sanitize(fb) || 'unnamed-skill'
+  return sanitize(candidate || leafSegment || repo.name || fb) || sanitize(fb) || 'unnamed-skill'
 }
 
 /**

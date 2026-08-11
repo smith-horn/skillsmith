@@ -372,7 +372,8 @@ export function repositoryToSkill(
   }
 
   // SMI-4858: name fallback chain (see resolveSkillName).
-  const name = resolveSkillName(validationMetadata?.name, repo, sanitizeSkillName)
+  // SMI-5930 Wave 4: Pass skillPath for leaf-segment fallback defense-in-depth.
+  const name = resolveSkillName(validationMetadata?.name, repo, sanitizeSkillName, repo.skillPath)
   const description =
     validationMetadata?.description || repo.description || `${name} — a Claude Code skill`
 
