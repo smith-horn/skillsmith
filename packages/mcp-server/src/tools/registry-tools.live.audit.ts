@@ -62,8 +62,18 @@ import { readLicenseKey } from './team-resolver.js'
  * are byte-identical to what the `private-registry-get` Edge Function writes
  * (supabase/functions/private-registry-get/access.ts), so both transports land in one queryable
  * stream and neither can be audited without the other showing up in the same query.
+ *
+ * `approve`/`reject` (SMI-5949 Wave 2 Step 4, D-5) are the two terminal decisions
+ * `review_private_registry_submission()` can write. `submissions` (the read side, D-5's other RPC)
+ * is deliberately NOT here — it is a metadata read like `list`/`get`, not a mutation.
  */
-export type RegistryAuditOperation = 'publish' | 'deprecate' | 'undeprecate' | 'content_read'
+export type RegistryAuditOperation =
+  | 'publish'
+  | 'deprecate'
+  | 'undeprecate'
+  | 'content_read'
+  | 'approve'
+  | 'reject'
 
 /**
  * Which credential authorized the call.

@@ -41,9 +41,14 @@ type RpcResponder = (
 interface FakeClientOptions {
   singleResponder?: SingleResponder
   thenResponder?: ThenResponder
-  /** Override the default get_private_registry_submissions read-back (SMI-5949 D-5). Default
-   *  derives a matching submission row from the most recent insert — see rpcCalls/defaultRpc
-   *  below — so most tests never need to set this. */
+  /**
+   * Override the default RPC response for EITHER `get_private_registry_submissions` or
+   * `review_private_registry_submission` (SMI-5949 D-5) — the callback receives `fn` to
+   * distinguish them. Defaults (see `defaultRpc`/`defaultReviewRpc` below) cover the common
+   * success shape for both, so most tests never need to set this; a test simulating an RPC
+   * failure (not-admin `42501`, self-approval, terminal-state, missing `published_by` `23514`)
+   * scripts one here, checking `fn` if it only wants to fail one of the two.
+   */
   rpcResponder?: RpcResponder
 }
 
@@ -128,12 +133,38 @@ export function createFakeClient(opts: FakeClientOptions = {}): {
     }
   }
 
+  // SMI-5949 Wave 2 Step 4: review_private_registry_submission's default response echoes the
+  // RPC's own request params back as the "decision" row — a test asserting a success path
+  // (approve/reject) gets a row that actually reflects what it asked for, without scripting its
+  // own fixture. `rpcResponder` overrides this the same way it overrides `defaultRpc` above.
+  function defaultReviewRpc(params: Record<string, unknown>): {
+    data: unknown
+    error: { code?: string; message?: string } | null
+  } {
+    return {
+      data: [
+        {
+          id: 'row-1',
+          skill_id: params.p_skill_id,
+          version: params.p_version,
+          approval_status: params.p_decision,
+          approved_by: 'user-fake-sub',
+          approved_at: '2026-08-11T00:00:00Z',
+          review_note: (params.p_note as string | null | undefined) ?? null,
+        },
+      ],
+      error: null,
+    }
+  }
+
   const client = {
     from: (table: string) => makeQuery(table),
     rpc: async (fn: string, params: Record<string, unknown> = {}) => {
       rpcCalls.push({ fn, params })
-      if (fn !== 'get_private_registry_submissions') return { data: null, error: null }
-      return opts.rpcResponder?.(fn, params) ?? defaultRpc()
+      if (opts.rpcResponder) return opts.rpcResponder(fn, params)
+      if (fn === 'get_private_registry_submissions') return defaultRpc()
+      if (fn === 'review_private_registry_submission') return defaultReviewRpc(params)
+      return { data: null, error: null }
     },
   }
 

@@ -17,7 +17,6 @@
  * Tier gate: Enterprise (private_registry feature flag — toolFeatureMapping.ts).
  */
 
-import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
 import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
@@ -26,70 +25,44 @@ import { createStubRegistryService } from './registry-tools.stub.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
 import { executeRegistryInstall } from './registry-tools.install-action.js'
 import {
+  executeRegistrySubmissions,
+  executeRegistryReview,
+} from './registry-tools.review-action.js'
+import {
   registrySkillNotFoundMessage,
   type PrivateRegistryInstallSummary,
   type RegistrySkillContent,
 } from './registry-tools.content.types.js'
-import { hasSafeSkillIdSegments } from './registry-tools.skill-id.js'
+import type {
+  RegistryReviewDecision,
+  PrivateRegistryReviewService,
+} from './registry-tools.review.types.js'
+// Imported for LOCAL use (this file's own function signatures below) in addition to the
+// `export {...} from` re-export further down — `export {X} from 'y'` alone does not bring X into
+// this module's own scope.
+import type {
+  SkillContent,
+  PrivateRegistryPublishInput,
+  PrivateRegistryManageInput,
+} from './registry-tools.schemas.js'
 
 // Re-export stub factory for external consumers and tests
 export { createStubRegistryService } from './registry-tools.stub.js'
 
-// Re-export tool-registration schemas (extracted to registry-tools.schemas.ts, SMI-5949 D-12
-// Wave 2 Step 1 — keeps this file under the 500-line audit:standards gate ahead of the three
-// later Wave 2 steps that grow it). index.ts's import is unaffected by the move.
+// Both the Zod runtime-validation schemas and the MCP tool-registration schemas live in
+// registry-tools.schemas.ts (SMI-5949 D-12 Wave 2 Steps 1 + 4 — this file's own 500-line
+// audit:standards budget) and are re-exported here so every existing import site (index.ts,
+// tool-dispatch.ts, every test file) reaches them through this module unchanged.
 export {
   privateRegistryPublishToolSchema,
   privateRegistryManageToolSchema,
+  skillContentSchema,
+  privateRegistryPublishInputSchema,
+  privateRegistryManageInputSchema,
+  type SkillContent,
+  type PrivateRegistryPublishInput,
+  type PrivateRegistryManageInput,
 } from './registry-tools.schemas.js'
-
-// ============================================================================
-// Input schemas
-// ============================================================================
-
-/**
- * Packaged skill files as a flat { relativePath: fileText } map
- * (e.g. { "SKILL.md": "...", "scripts/foo.sh": "..." }). Stored JSONB-native
- * per ADR-129; a "SKILL.md" entry is required and total size is capped at 2 MB
- * (enforced in the live publish service).
- */
-export const skillContentSchema = z.record(z.string(), z.string())
-export type SkillContent = z.infer<typeof skillContentSchema>
-
-export const privateRegistryPublishInputSchema = z.object({
-  skillId: z
-    .string()
-    .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
-    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
-    .describe('Skill identifier in author/name format'),
-  version: z
-    .string()
-    .regex(
-      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
-      'Must be a valid semver version'
-    )
-    .describe('Semver version to publish'),
-  content: skillContentSchema.describe(
-    'Packaged skill files as a { path: text } map; must include a "SKILL.md" entry (max 2 MB total)'
-  ),
-  description: z.string().max(500).optional().describe('Optional skill description'),
-})
-
-export type PrivateRegistryPublishInput = z.infer<typeof privateRegistryPublishInputSchema>
-
-export const privateRegistryManageInputSchema = z.object({
-  action: z.enum(['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install']),
-  skillId: z
-    .string()
-    .regex(/^[^/]+\/[^/]+$/, 'Must be author/name format')
-    .refine(hasSafeSkillIdSegments, 'skillId segments must not be empty, ".", or ".."')
-    .optional()
-    .describe('Skill identifier (required for get/deprecate/undeprecate/install)'),
-  version: z.string().optional().describe('Version filter; "install" defaults to most recent'),
-  force: z.boolean().optional().describe('SMI-5905: reinstall over an existing install'),
-})
-
-export type PrivateRegistryManageInput = z.infer<typeof privateRegistryManageInputSchema>
 
 // ============================================================================
 // Output types
@@ -142,6 +115,11 @@ export interface PrivateRegistryManageResult {
   namespace?: string
   /** Present for action:'install' (SMI-5905). An allowlist — never carries raw `content`. */
   install?: PrivateRegistryInstallSummary
+  /** action:'submissions' (SMI-5949 D-5). Metadata only, never `content` (C1) — separate from
+   *  `skills` since this can include pending/rejected items. */
+  submissions?: RegistrySkill[]
+  /** action:'approve'/'reject' (SMI-5949 D-5). */
+  review?: RegistryReviewDecision
   message?: string
   error?: string
 }
@@ -161,7 +139,7 @@ export interface PrivateRegistryManageResult {
  * @see packages/mcp-server/src/tools/registry-tools.live.ts
  * @see docs/internal/adr/129-private-skill-registry-real-implementation.md
  */
-export interface PrivateRegistryService {
+export interface PrivateRegistryService extends PrivateRegistryReviewService {
   publish(
     teamId: string,
     skillId: string,
@@ -377,8 +355,13 @@ async function executePrivateRegistryManageImpl(
       }
 
       // SMI-5905 Wave 3. Handler lives in a companion file (this one was 466/500 lines).
+      // `await` is load-bearing here (SMI-5949 Wave 2 Step 4 finding): `return promise` inside a
+      // try block does NOT let a rejection reach this function's own `catch` below — the promise
+      // adoption happens outside the try/catch's synchronous scope, so an unawaited rejection
+      // bypasses it and becomes an unhandled rejection at the caller instead of a typed
+      // {success:false} result. Confirmed empirically; applies to every delegating case below too.
       case 'install':
-        return executeRegistryInstall({ input, teamId, dataSource, service, context })
+        return await executeRegistryInstall({ input, teamId, dataSource, service, context })
 
       case 'deprecate': {
         if (!input.skillId) {
@@ -444,6 +427,15 @@ async function executePrivateRegistryManageImpl(
           message: `Your team's private registry namespace is "${namespace}".`,
         }
       }
+
+      // SMI-5949 D-5/D-12 — handlers in a companion file, same reason 'install' is. `await`
+      // is load-bearing — see the comment on 'install' above.
+      case 'submissions':
+        return await executeRegistrySubmissions({ input, teamId, dataSource, service })
+
+      case 'approve':
+      case 'reject':
+        return await executeRegistryReview({ input, teamId, dataSource, service })
     }
   } catch (err) {
     return {

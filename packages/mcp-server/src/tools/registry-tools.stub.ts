@@ -23,13 +23,19 @@
  *     `approvalMode:'auto'` unconditionally — i.e. it always behaves like a pre-approval-gate
  *     publish, never like the `pending`/`review` state a real post-migration publish now lands in.
  *     This is the minimum edit needed for the stub to satisfy `RegistrySkill`'s two new fields
- *     (type safety only); it deliberately does NOT model `pending` invisibility, self-approval
- *     refusal, or the review/approve/reject RPCs — that is Wave 2 Step 5's job, tracked
- *     separately. A test that passes against this stub proves nothing about the approval gate.
+ *     (type safety only); it deliberately does NOT model `pending` invisibility. `submissions()`/
+ *     `review()` below are, likewise, interface-completeness stubs ONLY — no self-approval
+ *     refusal, no admin gating, no terminal-state enforcement, and `review()` never fails. Real
+ *     coverage of all of that lives against the LIVE service (`registry-tools.live.test.ts` /
+ *     `.review-action.test.ts`), which is what the D-5 RPCs actually enforce. Full stub state-
+ *     machine parity (so a stub-only test could exercise the same failure paths) is Wave 2 Step
+ *     5's job, tracked separately — a test that passes against this stub proves nothing about the
+ *     approval gate's enforcement.
  */
 
 import type { PrivateRegistryService, RegistrySkill, SkillContent } from './registry-tools.js'
 import type { RegistrySkillContent } from './registry-tools.content.types.js'
+import type { RegistryReviewDecision } from './registry-tools.review.types.js'
 
 /** One published version's payload. Metadata for `list`/`get` lives in the separate skills map. */
 interface StubVersion {
@@ -153,6 +159,35 @@ export function createStubRegistryService(): PrivateRegistryService {
       if (!skill) return false
       skill.deprecated = false
       return true
+    },
+
+    // Interface-completeness only — see this file's header. `publish()` above never lands
+    // anything but 'approved'/'auto' in stub mode, so this is `list()` with an optional status
+    // filter that (honestly) only ever matches 'approved'.
+    async submissions(teamId, status) {
+      const all = [...registry.entries()]
+        .filter(([k]) => k.startsWith(`${teamId}::`))
+        .map(([, v]) => v)
+      return status ? all.filter((s) => s.approvalStatus === status) : all
+    },
+
+    // Interface-completeness only — see this file's header. No self-approval refusal, no admin
+    // gating, no terminal-state check: this unconditionally applies the requested decision.
+    async review(teamId, skillId, version, decision, note): Promise<RegistryReviewDecision> {
+      const skill = registry.get(key(teamId, skillId))
+      if (!skill || skill.version !== version) {
+        throw new Error(`Skill "${skillId}@${version}" not found in private registry.`)
+      }
+      skill.approvalStatus = decision
+      skill.approvalMode = 'review'
+      return {
+        skillId,
+        version,
+        approvalStatus: decision,
+        approvedBy: 'current-user',
+        approvedAt: new Date().toISOString(),
+        reviewNote: note ?? null,
+      }
     },
 
     // No real `teams` table backs the stub, and existing stub-mode tests publish under

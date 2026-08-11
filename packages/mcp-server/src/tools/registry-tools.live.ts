@@ -74,8 +74,14 @@ import {
   type RegistrySkillContent,
 } from './registry-tools.content.types.js'
 import { getSkillContent } from './registry-tools.live.content.js'
-import { mapSubmissionRow, readBackSubmission } from './registry-tools.live.submissions.js'
+import {
+  mapSubmissionRow,
+  readBackSubmission,
+  listSubmissions,
+  reviewSubmission,
+} from './registry-tools.live.submissions.js'
 import type { PrivateRegistryService, RegistrySkill, SkillContent } from './registry-tools.js'
+import type { RegistryReviewDecision } from './registry-tools.review.types.js'
 
 /** 2 MB raw-content cap (ADR-129 Risks). Primary user-facing guard; the migration's
  *  pg_column_size CHECK is a stored-size backstop. */
@@ -474,6 +480,20 @@ export function createLiveRegistryService(): PrivateRegistryService {
     // Admin-gated — see deprecate()'s comment above.
     async undeprecate(teamId, skillId): Promise<boolean> {
       return setDeprecated(teamId, skillId, false)
+    },
+
+    // SMI-5949 D-5. MEMBER getter, deliberately: the RPC's own auth.uid()-based checks are the
+    // real gate (steps 2-3) — see registry-tools.review-action.ts for why.
+    async submissions(teamId, status): Promise<RegistrySkill[]> {
+      const { client } = await getMemberUserClient('submissions')
+      return listSubmissions(client, teamId, status)
+    },
+
+    async review(teamId, skillId, version, decision, note): Promise<RegistryReviewDecision> {
+      const { client, actorUserId } = await getMemberUserClient(
+        decision === 'approved' ? 'approve' : 'reject'
+      )
+      return reviewSubmission({ client, teamId, skillId, version, decision, note, actorUserId })
     },
   }
 }
