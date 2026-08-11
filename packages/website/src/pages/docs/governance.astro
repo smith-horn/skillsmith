@@ -6,19 +6,29 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <h1>Governance, End to End</h1>
 
   <p class="lead">
-    Skillsmith is a lifecycle-governance layer, not just a search index. Once a skill is
-    published, its story doesn't stop there — versions get deprecated instead of deleted, every
-    action is auditable, compliance reports are exportable on demand, and anything flagged by
-    security scanning is quarantined automatically.
+    Skillsmith is a lifecycle-governance layer, not just a search index. A published skill goes
+    through review before it's live, versions get deprecated instead of deleted, every action is
+    auditable, compliance reports are exportable on demand, and anything flagged by security
+    scanning is quarantined automatically.
+  </p>
+
+  <h2>Publish Review</h2>
+
+  <p>
+    A version published to the private registry doesn't go live automatically — it's a pending
+    submission until a different team admin approves it. Self-approval is blocked, and once a
+    submission is approved or rejected that decision is final for that version. See
+    <a href="/docs/private-registry#publish-approval">Private Registry</a> for the full workflow.
   </p>
 
   <h2>Deprecation</h2>
 
   <p>
-    An admin can deprecate a published version of a private-registry skill instead of deleting
-    it. Deprecation is a status flag, not a removal — a deprecated version stays fully listable,
-    retrievable, and installable. It's a signal to your team that a version is no longer
-    recommended, without breaking anyone currently depending on it.
+    An admin can deprecate an already-approved version of a private-registry skill instead of
+    deleting it. Deprecating is a status flag, not a removal — the content still exists and isn't
+    destroyed — but it does drop the version out of normal search, get, and install by default,
+    unlike a rejected submission's permanent invisibility. It's how your team signals "no longer
+    recommended" without breaking the audit trail for anyone who already installed it.
   </p>
 
   <p>

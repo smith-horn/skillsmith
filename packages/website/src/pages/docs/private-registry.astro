@@ -25,22 +25,55 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     from the same source of truth, this is that.
   </p>
 
+  <h2 id="publish-approval">Publish &amp; Approval</h2>
+
+  <p>
+    Publishing isn't instant-live. A version you publish sits as a <strong>pending
+    submission</strong> until a different team admin reviews it — it's invisible to search,
+    <code>get</code>, and install (even to you, the person who published it) until that happens.
+    Self-approval is blocked at the database level: an admin cannot approve or reject their own
+    submission, no matter how the request is made.
+  </p>
+
+  <p>
+    An admin reviewing a submission either approves it (making it immediately visible and
+    installable to the whole team) or rejects it. Both decisions are <strong>terminal</strong> —
+    once approved or rejected, that exact version can't be re-reviewed. A rejected version can
+    only be superseded by publishing a new version under a new version number.
+  </p>
+
+  <p>
+    Publishing requires being signed in personally (<code>skillsmith login</code>) — the team's
+    shared license key alone is no longer enough. This is what makes self-approval blocking and
+    a real submitter identity possible: every submission and every review decision is tied to the
+    actual person who made it, not just "the team."
+  </p>
+
   <h2>Access Control</h2>
 
   <p>
-    Every team's skills are scoped to that team, enforced two different ways depending on how
-    the registry is reached:
+    Every team's skills are scoped to that team, enforced differently depending on the operation:
   </p>
 
   <ul>
     <li>
       <strong>Direct database access</strong> (an authenticated dashboard session) is filtered
-      by row-level security — a query literally cannot return another team's rows.
+      by row-level security — a query literally cannot return another team's rows, or a pending
+      submission that isn't yours to see.
     </li>
     <li>
-      <strong>MCP tool calls</strong> run through a service-role connection that bypasses
-      row-level security by design, so team scoping is enforced in application code instead: every
-      registry method requires and applies an explicit team filter before it runs.
+      <strong>Reading published skills</strong> (<code>list</code>, <code>get</code>,
+      looking up your namespace) runs through a service-role connection that bypasses row-level
+      security by design, so team scoping — plus only ever surfacing approved, non-deprecated
+      versions — is enforced explicitly in application code on every request.
+    </li>
+    <li>
+      <strong>Publishing, reviewing, and admin actions</strong> (<code>publish</code>,
+      <code>submissions</code>, <code>approve</code>, <code>reject</code>, <code>deprecate</code>,
+      <code>undeprecate</code>) all run as the signed-in user's own account, so the database's
+      row-level security and admin-membership checks — not application code — decide what's
+      allowed. This is also what makes self-approval blocking real rather than merely convention:
+      the database can name who's asking.
     </li>
   </ul>
 
@@ -66,15 +99,16 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       <tr>
         <td>MCP</td>
         <td><code>private_registry_publish</code></td>
-        <td>Publish a new skill version to your team's registry</td>
+        <td>Publish a new skill version to your team's registry as a pending submission</td>
         <td>Enterprise</td>
       </tr>
       <tr>
         <td>MCP</td>
         <td><code>private_registry_manage</code></td>
         <td>
-          List, get, deprecate, undeprecate, look up your team's namespace, or install a skill
-          from the registry (the <code>action</code> parameter selects which)
+          List, get, deprecate, undeprecate, look up your team's namespace, install a skill, view
+          pending/approved/rejected submissions, or approve/reject a submission (the
+          <code>action</code> parameter selects which)
         </td>
         <td>Enterprise</td>
       </tr>
@@ -88,8 +122,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   </table>
 
   <p>
-    Publishing and listing are MCP-only today — there's no CLI command for either yet, only for
-    install.
+    Publishing, listing, and review are MCP-only today — there's no CLI command for any of them
+    yet, only for install.
   </p>
 
   <h2>Versioning</h2>
@@ -102,7 +136,10 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
   <p>
     Deprecating a version (an admin-only action) marks it as no longer recommended without
-    deleting it or hiding it — it stays fully listable, retrievable, and installable. See
+    deleting it. Unlike approval, deprecation does hide a version by default: a deprecated
+    version drops out of <code>list</code>, <code>get</code>, and install — an admin can still see
+    it via <code>list</code> with the <code>includeDeprecated</code> option, but <code>get</code>
+    and install never surface a deprecated version, even by exact version number. See
     <a href="/docs/governance">Governance</a> for how deprecation fits into the broader lifecycle.
   </p>
 

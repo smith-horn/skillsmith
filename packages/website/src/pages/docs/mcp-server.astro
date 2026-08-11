@@ -350,6 +350,70 @@ EOF`}</code></pre>
     <li>"Ask Skillsmith to check if this skill structure is correct"</li>
   </ul>
 
+  <h3 id="publish-private">publish_private</h3>
+
+  <p>
+    Mark a skill private on this device, hiding it from your own community search results. Team
+    tier. See <a href="/docs/private-skills">Private Skills</a> for the full picture — it's a
+    single-device setting, not shared with teammates.
+  </p>
+
+  <pre><code>{`// Tool: publish_private
+// Parameters:
+{
+  "skillId": "author/name"  // Skill ID to mark private (required)
+}`}</code></pre>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"Use Skillsmith to mark my-internal-skill private"</li>
+  </ul>
+
+  <h3 id="private-registry-publish">private_registry_publish</h3>
+
+  <p>
+    Publish a skill version to your organization's shared private registry as a pending
+    submission — a team admin has to approve it before anyone (including you) can install it.
+    Enterprise tier. See <a href="/docs/private-registry">Private Registry</a> for the full
+    approval workflow and access-control model.
+  </p>
+
+  <pre><code>{`// Tool: private_registry_publish
+// Parameters:
+{
+  "skillId": "author/name",       // Skill ID (required)
+  "version": "1.0.0",             // Semver version (required)
+  "content": { "SKILL.md": "..." } // Packaged skill files (required)
+}`}</code></pre>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"Use Skillsmith to publish version 1.0.0 of my-org/deploy-helper to the private registry"</li>
+  </ul>
+
+  <h3 id="private-registry-manage">private_registry_manage</h3>
+
+  <p>
+    List, get, install, deprecate, and review skills in your organization's private registry —
+    the <code>action</code> parameter selects the operation (including <code>submissions</code>,
+    <code>approve</code>, and <code>reject</code> for reviewing pending publishes). Enterprise
+    tier. Full tool reference: <a href="/docs/private-registry">Private Registry</a>.
+  </p>
+
+  <pre><code>{`// Tool: private_registry_manage
+// Parameters:
+{
+  "action": "list",  // list | get | install | deprecate | undeprecate |
+                      // namespace | submissions | approve | reject
+  "skillId": "author/name"  // required for most actions
+}`}</code></pre>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"Ask Skillsmith to list pending submissions in the private registry"</li>
+    <li>"Use Skillsmith to approve my-org/deploy-helper version 1.0.0"</li>
+  </ul>
+
   <h2 id="namespace-audit-tools-team">Namespace Audit Tools</h2>
 
   <p>
