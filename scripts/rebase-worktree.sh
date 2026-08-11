@@ -289,7 +289,7 @@ step_rebase_parent() {
             [ "$matched" = false ] && non_sub_count=$((non_sub_count + 1))
         done <<< "$conflicted"
         [ "$conflict_count" -gt 0 ] && [ "$non_sub_count" -eq 0 ] && all_submodule=true
-
+        check_rebase_nothing_to_resolve "$conflict_count" # SMI-5979, _rebase-git-crypt.sh
         if [ "$all_submodule" = true ]; then
             info "  Auto-resolving submodule-only conflict..."
             while IFS= read -r conflict_line; do
