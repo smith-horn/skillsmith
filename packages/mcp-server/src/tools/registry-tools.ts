@@ -34,6 +34,14 @@ import { hasSafeSkillIdSegments } from './registry-tools.skill-id.js'
 // Re-export stub factory for external consumers and tests
 export { createStubRegistryService } from './registry-tools.stub.js'
 
+// Re-export tool-registration schemas (extracted to registry-tools.schemas.ts, SMI-5949 D-12
+// Wave 2 Step 1 — keeps this file under the 500-line audit:standards gate ahead of the three
+// later Wave 2 steps that grow it). index.ts's import is unaffected by the move.
+export {
+  privateRegistryPublishToolSchema,
+  privateRegistryManageToolSchema,
+} from './registry-tools.schemas.js'
+
 // ============================================================================
 // Input schemas
 // ============================================================================
@@ -81,72 +89,6 @@ export const privateRegistryManageInputSchema = z.object({
 })
 
 export type PrivateRegistryManageInput = z.infer<typeof privateRegistryManageInputSchema>
-
-// ============================================================================
-// Tool schemas for MCP registration
-// ============================================================================
-
-export const privateRegistryPublishToolSchema = {
-  name: 'private_registry_publish' as const,
-  description:
-    "Publish a skill to your organization's private registry. " +
-    'Requires Enterprise tier (private_registry feature). ' +
-    'Skills are scoped to your team namespace and published versions are immutable.',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      skillId: {
-        type: 'string',
-        description: 'Skill ID in author/name format',
-      },
-      version: {
-        type: 'string',
-        description: 'Semver version to publish',
-      },
-      content: {
-        type: 'object',
-        additionalProperties: { type: 'string' },
-        description:
-          'Packaged skill files as a { path: text } map; must include "SKILL.md" (max 2 MB total)',
-      },
-      description: {
-        type: 'string',
-        description: 'Optional skill description',
-      },
-    },
-    required: ['skillId', 'version', 'content'],
-  },
-}
-
-export const privateRegistryManageToolSchema = {
-  name: 'private_registry_manage' as const,
-  description:
-    'Manage skills in your private registry (list, get, install, deprecate, undeprecate, ' +
-    'namespace). Requires Enterprise tier (private_registry feature).',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['list', 'get', 'deprecate', 'undeprecate', 'namespace', 'install'],
-        description:
-          'Registry operation to perform. "namespace" returns your team\'s publish ' +
-          'namespace (the required skill_id prefix) without attempting a publish. ' +
-          '"install" downloads the skill and writes it to your skills directory.',
-      },
-      skillId: {
-        type: 'string',
-        description: 'Skill ID in author/name format (get/deprecate/undeprecate/install)',
-      },
-      version: {
-        type: 'string',
-        description: 'Version filter; "install" defaults to the most recently published',
-      },
-      force: { type: 'boolean', description: 'Reinstall over an existing install' },
-    },
-    required: ['action'],
-  },
-}
 
 // ============================================================================
 // Output types
