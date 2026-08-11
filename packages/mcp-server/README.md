@@ -6,13 +6,14 @@ MCP (Model Context Protocol) server for agent skill publishing, installation, an
 
 Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
-## What's New in v0.7.6
+## What's New in v0.7.7
 
-- **Private registry hardened and made live**: `private_registry_manage`/`private_registry_publish` are now a real implementation backed by Supabase (previously a stub), with `deprecate`/`undeprecate` requiring proper team-admin authentication instead of falling back to an unrestricted service-role client.
-- **Crash resilience**: process-wide handlers now log any unhandled error or rejection to the structured logger (disk + stderr) before exiting, instead of only surfacing in the MCP host's live panel.
-- **Enterprise license validation fixed**: license checks now import `@smith-horn/enterprise` (the package's real name) instead of a name that never existed, which had silently broken Enterprise-tier license validation and audit tools for every install.
-- **Real CycloneDX export**: `compliance_report`'s `cyclonedx` format now emits a genuine CycloneDX 1.5 AI/ML-BOM instead of a hand-rolled document.
-- **Compliance reports expanded**: `compliance_reports` availability widened from Enterprise-only to Team + Enterprise.
+- **`search`'s `limit` parameter actually works now**: previously advertised in the tool description but silently dropped — no `limit` field existed in the input schema at all. Now threaded through both the API and local-fallback paths, clamped to `[1, 100]`.
+- **`skill_compare` and `skill_recommend` fixed**: compare now resolves any skill `search`/`get_skill` can find (was local-cache-only); recommend no longer 400s or silently zeroes on an empty derived stack — both return a structured, actionable result instead.
+- **`skill_updates` scoped to your installed skills**: was running an unfiltered registry-wide scan (`updatesAvailable: 2833` for a handful of installs); now bounded to the local manifest, sharing derivation with `skill_outdated` so the two can't drift apart again.
+- **Trust-tier vocabulary fixed**: `mapTrustTierFromDb` was silently collapsing `official` and `unverified` to `unknown`; all `TrustTier` values now round-trip correctly across `search`, `get_skill`, `skill_recommend`, `skill_compare`, and `skill_suggest`.
+- **New local security-acceptance allowlist**: mark a reviewed false-positive finding as accepted so it stops re-surfacing in future audits, without affecting rug-pull/hostile-update detection.
+- **`private_registry_manage` gains `install`**: installs a previously-published private-registry skill to disk, closing the publish→install gap.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 

@@ -6,19 +6,19 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## Contents
 
-- [What's New](#whats-new-in-v0114)
+- [What's New](#whats-new-in-v0115)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.11.4
+## What's New in v0.11.5
 
-- **Security scanner false-positive fix**: jailbreak/AI-defence findings now carry an evidence tier instead of a flat severity, so a skill that *documents* these patterns defensively (a security-checklist skill, Skillsmith's own bundled SKILL.md) no longer scores identically to a skill containing an actual attack payload.
-- **Denial-of-service fix**: a regex pattern used in security scanning had catastrophic-backtracking behavior reachable through the public `SecurityScanner.scan()` API with no crafted payload — fixed and verified against a 20,000-case fuzz suite with zero mismatches.
-- **Typosquat/impersonation detection**: new detector for skill names using confusable-character matching, edit-distance, and authority-claiming affixes (e.g. `-official`, `-verified`).
-- **Atomic config writes**: config saves now run under a cross-process exclusive lock with temp-file-then-rename, closing a lost-update race between concurrent writers.
-- **New harness support**: Grok Build (xAI's coding CLI) added to cross-machine skill inventory scanning.
+- **Security-status reporting unified**: CLI and MCP now derive security-scan status (pass/fail, risk score, findings count) from one shared `deriveSecuritySummaryFromApiSkill`/`deriveSecuritySummaryFromSkillRow`, instead of two independently-maintained copies that could disagree on the same skill.
+- **`skill_compare` reuses `get_skill`'s resolution**: new shared `resolveSkillApiFirst()` fixes compare only ever hitting the local SQLite cache (no longer kept in sync with the remote-first registry), which made real, searchable skills report "not found."
+- **New two-level owned-lock primitive** (`config/owned-lock`) replacing the single-level, age-based config lock — closes a case where two concurrent reclaimers could both treat a stale lock as safe to unlink.
+- **Private-registry install support**: `SkillInstallationService.installFromContent()` installs an already-resolved skill (e.g. from a private registry) through the same scan/write/manifest pipeline as a GitHub-fetched install.
+- **Quiet mode covers one more warning path**: `SKILLSMITH_QUIET` now also suppresses the WASM-SQLite-driver fallback notice, previously printed unconditionally.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
