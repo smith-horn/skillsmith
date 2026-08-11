@@ -596,8 +596,21 @@ jobs:
             --arg rid "$RUN_ID" \
             --arg url "$RUN_URL" \
             '{type:"indexer_failed", message:$msg, workflow:"Skill Indexer", runId:$rid, runUrl:$url}')
-          curl -s -X POST \
+          # SMI-5974: the prior `|| true` swallowed a failed alert delivery
+          # with zero signal -- worse than indexer-backfill.yml's pre-SMI-5964
+          # state (that one at least printed ::warning::). HTTP defaults to
+          # "000" and is only overwritten on a completed curl call; the step
+          # now fails on anything but 200 so a delivery failure is visible in
+          # the Actions UI, not silently discarded.
+          HTTP="000"
+          if RESPONSE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -d "$BODY" \
-            "$SUPABASE_URL/functions/v1/alert-notify" || true
+            "$SUPABASE_URL/functions/v1/alert-notify"); then
+            HTTP="$RESPONSE_CODE"
+          fi
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::alert-notify returned $HTTP -- email was NOT sent."
+            exit 1
+          fi

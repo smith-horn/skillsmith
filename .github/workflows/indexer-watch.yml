@@ -1,0 +1,154 @@
+# SMI-5974: Skill Indexer (cron/dispatch) alert-gap watcher.
+#
+# PROBLEM: `indexer.yml`'s `index` job has `timeout-minutes: 30`. A job killed
+# by that job-level timeout concludes `cancelled`, not `failure` -- and both
+# of the workflow's existing alert steps (`Report Failure`, `Send Alert on
+# Failure`) are gated `if: failure()`. `cancelled()` and `failure()` are
+# disjoint in GitHub Actions, so a timeout-kill produces NO step summary, NO
+# alert-notify call, and NO email -- confirmed via `gh run list` (not
+# theoretical): 2 genuine timeout-kills in the last ~800 runs (2026-07-10,
+# 2026-07-13, both the discovery Phase-1 cron slot, both ran the full 30
+# minutes), zero alerts on either.
+#
+# WHY OUT-OF-JOB, NOT AN IN-JOB `cancelled()` STEP: see indexer-backfill-watch.yml's
+# header (SMI-5964) -- the same reasoning applies verbatim: an in-job step
+# still runs inside the cancellation grace window of the job that just died,
+# and cannot alert at all if cancellation lands before `Validate Secrets`
+# completes. A `workflow_run`-triggered watcher is a SEPARATE run with its
+# OWN fresh `timeout-minutes` and reads secrets/context directly.
+#
+# PRECEDENT: `indexer-backfill-watch.yml` (SMI-5964) is the direct sibling
+# this workflow copies its structure from, with two adjustments (both from
+# NEEDLE plan review, see docs/internal/implementation/smi-5974-cron-alert-gap.md):
+#   1. Elapsed time uses `github.event.workflow_run.updated_at` (the watched
+#      run's own completion timestamp, in the event payload) minus
+#      `run_started_at` -- NOT watcher wall-clock (`date +%s` at watcher
+#      execution time), which includes GHA queue latency. That latency is
+#      negligible against backfill's 330-min budget but not against this
+#      workflow's 30-min one.
+#   2. The "step already resolved but wasn't itself cancelled" label is
+#      `cancelled-outside-indexer`, not `...-before-indexer` -- "before"
+#      would assert an ordering that can be false (the step could have
+#      succeeded, with cancellation landing at a later step).
+#
+# SCOPE: `cancelled` only. The existing in-job `if: failure()` steps in
+# indexer.yml are untouched and keep handling genuine failures with their
+# richer context (http_code, response body). `cancelled` and `failure` are
+# disjoint conclusions, so there is no duplicate-alert path.
+#
+# NO THIRD-PARTY ACTIONS: this workflow needs neither `checkout` nor
+# `setup-node` -- audit-workflow-sha-pin (Check 42 / SMI-4758) has nothing to
+# pin here.
+#
+# ADR-109: this is an infra workflow -- SPARC + plan-review gated before
+# implementation. See the plan doc above for the reviewed design.
+# audit:carveout-pure-js -- no code execution, gh/curl/jq only (ubuntu-latest built-ins)
+
+name: Skill Indexer Watch
+
+on:
+  workflow_run:
+    workflows: ['Skill Indexer'] # must match indexer.yml:17's `name:` exactly
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read # for the /jobs API call that labels the alert
+  contents: read
+
+jobs:
+  alert-on-cancelled:
+    name: Alert on cancelled indexer run
+    if: github.event.workflow_run.conclusion == 'cancelled'
+    runs-on: ubuntu-latest
+    # Independent of the dying job's own (30-min) budget -- a fresh run.
+    timeout-minutes: 5
+    steps:
+      - name: Classify and alert
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+          RUN_UPDATED_AT: ${{ github.event.workflow_run.updated_at }}
+          GH_REPOSITORY: ${{ github.repository }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL_PROD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
+        run: |
+          set -eo pipefail
+
+          # ── Classification is a LABEL, never a gate (mirrors SMI-5964) ──
+          # The alert fires on conclusion=='cancelled', full stop (the `if:`
+          # above). Everything below only shapes the message.
+          #
+          # SMI-5974 (NEEDLE plan review): elapsed time is computed from the
+          # watched run's OWN completion timestamp, not watcher wall-clock --
+          # queue latency between the watched run finishing and this watcher
+          # actually starting would otherwise distort a 30-min-budget
+          # classification far more than it did for backfill's 330-min one.
+          parse_ts() {
+            date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+          }
+          STARTED=$(parse_ts "$RUN_STARTED_AT")
+          ENDED=$(parse_ts "$RUN_UPDATED_AT")
+
+          # Fail-open: an unparseable timestamp degrades to ELAPSED_MIN=0
+          # (never classified as a likely timeout-kill) rather than aborting
+          # the alert -- the uncertainty is removed from the critical path.
+          if [ -z "$STARTED" ] || [ -z "$ENDED" ] || [ "$ENDED" -lt "$STARTED" ]; then
+            ELAPSED_MIN=0
+          else
+            ELAPSED_MIN=$(( (ENDED - STARTED) / 60 ))
+          fi
+
+          # Fail-open: if the API call or the field is unavailable, KIND
+          # degrades to cancelled-unknown but the alert STILL fires -- the
+          # uncertainty is removed from the critical path, not "verified".
+          STEP_CONCLUSION=$(gh api "/repos/$GH_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[].steps[]? | select(.name == "Run indexer") | .conclusion' 2>/dev/null || true)
+
+          if [ -z "$STEP_CONCLUSION" ]; then
+            KIND="cancelled-unknown"
+          elif [ "$STEP_CONCLUSION" != "cancelled" ] && [ "$STEP_CONCLUSION" != "in_progress" ]; then
+            KIND="cancelled-outside-indexer" # the "Run indexer" step itself wasn't the cancellation point
+          elif [ "$ELAPSED_MIN" -ge 29 ]; then
+            KIND="likely-gha-timeout-kill"
+          else
+            KIND="cancelled-check-if-manual"
+          fi
+
+          BODY=$(jq -n \
+            --arg msg "Skill Indexer run $RUN_ID ended in 'cancelled' after ${ELAPSED_MIN}m (kind: $KIND). Re-dispatch manually if this was a scheduled run and the next scheduled slot is more than a few hours away." \
+            --arg rid "$RUN_ID" --arg url "$RUN_URL" --arg kind "$KIND" \
+            '{type:"indexer_cancelled", message:$msg, workflow:"Skill Indexer", runId:$rid, runUrl:$url, kind:$kind}')
+
+          # ── No silent alert failures (SMI-5964 pattern) ──
+          # HTTP defaults to "000" and is only overwritten on a completed
+          # curl invocation (avoids the "000\n000" double-value some curl
+          # failure modes produced when -w and a `||` fallback both fired),
+          # and the step fails (non-zero exit) on anything but 200 so a
+          # delivery failure is visibly recorded as a job failure, not
+          # silently swallowed.
+          HTTP="000"
+          if RESPONSE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/alert-notify"); then
+            HTTP="$RESPONSE_CODE"
+          fi
+
+          {
+            echo "### Indexer run cancelled"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Run | [$RUN_ID]($RUN_URL) |"
+            echo "| Elapsed | ${ELAPSED_MIN} min |"
+            echo "| Kind | $KIND |"
+            echo "| alert-notify HTTP | $HTTP |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::alert-notify returned $HTTP -- email was NOT sent. Failing this job so the delivery failure is visible in the Actions UI, not just a step-summary annotation."
+            exit 1
+          fi
