@@ -1,8 +1,34 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+
+const techArticleSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'TechArticle',
+  headline: 'Governance, End to End',
+  description:
+    'How Skillsmith handles publish review, deprecation, audit trails, compliance reporting, and automatic quarantine across the skill lifecycle.',
+  url: 'https://www.skillsmith.app/docs/governance',
+  author: {
+    '@id': 'https://www.skillsmith.app/#organization',
+  },
+  publisher: {
+    '@type': 'Organization',
+    '@id': 'https://www.skillsmith.app/#organization',
+    name: 'Skillsmith',
+    url: 'https://www.skillsmith.app',
+  },
+  about: {
+    '@type': 'SoftwareApplication',
+    name: 'Skillsmith',
+    applicationCategory: 'DeveloperApplication',
+  },
+};
 ---
 
-<DocsLayout title="Governance, End to End" description="How Skillsmith handles deprecation, audit trails, compliance reporting, and automatic quarantine across the skill lifecycle">
+<DocsLayout title="Governance, End to End" description="How Skillsmith handles publish review, deprecation, audit trails, compliance reporting, and automatic quarantine across the skill lifecycle">
+  <!-- JSON-LD TechArticle Schema -->
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(techArticleSchema)} />
+
   <h1>Governance, End to End</h1>
 
   <p class="lead">

@@ -14,6 +14,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   registry API (previously never sent), so ranking can happen server-side, before the page is cut to
   `limit` — a client-side re-sort after the API had already paginated could never promote a
   compatible row back onto the page, which was the actual bug (SMI-5929)
+- **Fix**: `skill_recommend`'s `project_context` keyword extraction (`tools/recommend.ts`) no longer
+  silently drops real short technical terms ("git", "ci", "aws", "sql", "k8s") via a bare
+  `.filter((w) => w.length > 3)` threshold — a context consisting only of such terms previously
+  derived an empty stack and tripped the SMI-5896 empty-stack guard even though usable context had
+  been supplied. Now uses the shared `extractContextWords()` (`@skillsmith/core`) also adopted by
+  the CLI's `recommend --context`, so the two can't independently drift on this again (SMI-5986)
 - **Feature**: `private_registry_publish` now requires a genuine two-party review before a version
   becomes installable — a submission lands `pending` and is invisible on every read surface
   (`list`/`get`/`install`) until a different team admin/owner approves it via three new

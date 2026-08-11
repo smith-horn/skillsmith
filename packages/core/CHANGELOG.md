@@ -12,6 +12,7 @@ All notable changes to `@skillsmith/core` are documented here.
   `SkillsmithApiClient.search()` forwards it to the `skills-search` edge function as a
   `compatibility` CSV query param (previously never sent by any caller), letting the API rank
   results server-side, before the page is cut to the requested `limit`.
+- **Fix**: new shared `extractContextWords()` (`services/context-words.ts`, exported from the package root) replaces a `.filter((w) => w.length > 3)` threshold both `@skillsmith/mcp-server`'s `skill_recommend` and `@skillsmith/cli`'s `recommend --context` used independently — it was silently dropping real short technical terms ("git", "ci", "aws", "sql", "k8s") from the recommendation stack, tripping the empty-stack guard even when usable context was supplied (SMI-5986)
 
 ## v0.11.5
 

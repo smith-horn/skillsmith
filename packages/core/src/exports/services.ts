@@ -475,3 +475,9 @@ export {
 } from '../services/skill-resolution.js'
 
 export { buildEmptyStackGuidance } from '../services/recommend-guard.js'
+
+// SMI-5986: shared context-word extraction (CLI `recommend --context` / MCP
+// `skill_recommend`'s `project_context`) so the two twins can't
+// independently drift on what counts as noise vs. a real short technical
+// term.
+export { extractContextWords } from '../services/context-words.js'
