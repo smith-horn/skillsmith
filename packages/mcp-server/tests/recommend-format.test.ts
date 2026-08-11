@@ -126,9 +126,12 @@ describe('formatRecommendations', () => {
       toolContext
     )
 
-    if (result.role_filtered > 0) {
-      const formatted = formatRecommendations(result)
-      expect(formatted).toContain(`Filtered for role: ${result.role_filtered}`)
-    }
+    // SMI-5991 (code review): role_filtered counts across the whole
+    // candidate pool (58-skill fixture set spanning many categories), not
+    // just the returned limit — filtering to a single role deterministically
+    // excludes the majority of it, so this is no longer a conditional skip.
+    expect(result.role_filtered).toBeGreaterThan(0)
+    const formatted = formatRecommendations(result)
+    expect(formatted).toContain(`Filtered for role: ${result.role_filtered}`)
   })
 })

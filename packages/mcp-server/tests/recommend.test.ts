@@ -239,7 +239,11 @@ describe('Skill Recommend Tool', () => {
           name.toLowerCase().includes('jest') ||
           name.toLowerCase().includes('test')
       )
-      expect(hasRelevantSkill || result.recommendations.length > 0).toBe(true)
+      // SMI-5991 (code review): the original `hasRelevantSkill ||
+      // recommendations.length > 0` made this vacuously true whenever ANY
+      // recommendation existed, regardless of relevance. Assert relevance
+      // directly.
+      expect(hasRelevantSkill).toBe(true)
     })
 
     it('should return candidates_considered count', async () => {
@@ -369,46 +373,45 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should boost quality score by 30 for role matches', async () => {
-      // First, get recommendations without role filter
+      // SMI-5991 (code review): fetch the role-filtered set FIRST — role
+      // filtering deterministically selects only testing-role skills from
+      // the whole candidate pool, unlike the unfiltered call below, whose
+      // similarity ranking gives no guarantee a testing-role skill lands
+      // within any particular limit. The previous version's `if
+      // (testingSkill)` / `if (boostedSkill)` guards let this test pass
+      // with zero assertions executed whenever either lookup missed.
+      const withRole = await executeRecommend(
+        {
+          installed_skills: [],
+          role: 'testing',
+          detect_overlap: false,
+          limit: 20,
+        },
+        toolContext
+      )
+      const boostedSkill = withRole.recommendations[0]
+      expect(boostedSkill).toBeDefined()
+
+      // Fetch a wide unfiltered set (close to the full 58-skill fixture
+      // pool) so the same skill is virtually certain to appear, letting us
+      // read its pre-boost baseline score.
       const withoutRole = await executeRecommend(
         {
           installed_skills: [],
           detect_overlap: false,
-          limit: 10,
+          limit: 50,
         },
         toolContext
       )
-
-      // Find a skill that has the 'testing' role
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const testingSkill = withoutRole.recommendations.find((r: any) =>
-        r.roles?.includes('testing')
+      const testingSkill = withoutRole.recommendations.find(
+        (r) => r.skill_id === boostedSkill.skill_id
       )
+      expect(testingSkill).toBeDefined()
 
       if (testingSkill) {
-        const originalScore = testingSkill.quality_score
-
-        // Now get recommendations with testing role filter
-        const withRole = await executeRecommend(
-          {
-            installed_skills: [],
-            role: 'testing',
-            detect_overlap: false,
-            limit: 10,
-          },
-          toolContext
-        )
-
-        const boostedSkill = withRole.recommendations.find(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (r: any) => r.skill_id === testingSkill.skill_id
-        )
-
-        if (boostedSkill) {
-          // Score should be boosted by 30 (capped at 100)
-          const expectedScore = Math.min(100, originalScore + 30)
-          expect(boostedSkill.quality_score).toBe(expectedScore)
-        }
+        // Score should be boosted by 30 (capped at 100)
+        const expectedScore = Math.min(100, testingSkill.quality_score + 30)
+        expect(boostedSkill.quality_score).toBe(expectedScore)
       }
     })
 
