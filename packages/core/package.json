@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/core",
-  "version": "0.11.4",
+  "version": "0.11.5",
   "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "type": "module",
   "main": "./dist/src/index.js",

@@ -8,7 +8,7 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## Contents
 
-- [What's New](#whats-new-in-v084)
+- [What's New](#whats-new-in-v085)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -16,13 +16,14 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.4
+## What's New in v0.8.5
 
-- **`sklx logs --tail` covers doc-retrieval**: now watches the doc-retrieval reindex CLI's structured log surface alongside the other tail-able components.
-- **Enterprise license validation fixed**: license checks now import `@smith-horn/enterprise` (the package's real name) instead of a name that never existed, which had silently broken Enterprise-tier license validation for every install.
-- **Symlinked skill discovery fixed**: a skill installed via a symlinked directory (e.g. `ln -s ~/.claude/skills/foo ~/.cursor/skills/foo`) is now correctly discovered per-harness instead of being silently skipped.
-- **Compliance reports expanded**: `compliance_reports` availability widened from Enterprise-only to Team + Enterprise.
-- **New MCP client support**: Grok Build (`~/.grok/config.toml`) added to the per-client MCP config snippets.
+- **Multi-client targeting fixed across the board**: `install`, `list`, `remove`, `update`, `sync`, and `search -i`'s install action now all honor `SKILLSMITH_CLIENT`/`--client` consistently — previously several of these silently acted on the Claude Code directory regardless of the flag or env var.
+- **`update` no longer fails after a fresh install**: now resolves the installed skill's registry source from the manifest `install` already writes, instead of a dead-code path that could never find it.
+- **New `skillsmith registry install <skillId>`**: pulls a skill previously published to your team's Enterprise private registry and installs it locally.
+- **New security-acceptance workflow**: `sklx audit security --accept/--revoke/--candidates/--list-accepted` lets you mark a reviewed false-positive as accepted so it stops re-surfacing, without affecting rug-pull/hostile-update detection.
+- **`recommend --installed` actually used now**: an explicit `--installed` list is fed into the recommendation query instead of being silently ignored on an empty-derived-stack workspace.
+- **Security-status coloring corrected**: a borderline-safe scan result no longer renders identically bright-green to a comfortably-safe one.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
