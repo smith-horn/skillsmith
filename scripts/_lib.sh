@@ -341,6 +341,68 @@ classify_git_crypt_filter_state() {
 }
 
 #######################################
+# SMI-5983: tri-state check for an in-progress `git rebase` at a given
+# worktree path -- lives here (not scripts/_rebase-git-crypt.sh) because
+# that file SOURCES this one, not the reverse; a function only _lib.sh's own
+# callers (like the DISABLED-state heal decision below) need cannot live in
+# a file _lib.sh has no dependency edge to. check_rebase_nothing_to_resolve()
+# in _rebase-git-crypt.sh calls this shared predicate instead of duplicating
+# the underlying git-path checks (SMI-5979 originally introduced them there).
+#
+# Deliberately tri-state, not boolean: a lookup failure (nonexistent path,
+# inaccessible worktree, any git-path resolution error) is NOT the same as
+# "confirmed no rebase in progress" -- both existing and new callers must
+# treat "unknown" exactly like "active" (conservative), never like
+# "inactive". A prior version of this check used `|| echo /nonexistent` as
+# a fallback, which silently collapsed lookup failure into false evidence
+# of inactivity -- fixed here by keeping the failure visible as its own
+# state instead of paving over it.
+#
+# Arguments:
+#   $1 - worktree_path  Any path git can resolve as a worktree
+# Globals set:
+#   GIT_CRYPT_REBASE_STATE  - "active" | "inactive" | "unknown"
+#######################################
+has_active_rebase_state() {
+    local worktree_path="$1"
+    local rebase_merge rebase_apply
+    local rc_merge=0 rc_apply=0
+
+    # --path-format=absolute is required, not cosmetic: the default
+    # (relative) form is only meaningful when resolved relative to the -C
+    # target itself, NOT the caller's actual process cwd -- and this
+    # function is routinely called from a cwd that differs from
+    # worktree_path (e.g. rebase-worktree.sh usually runs from the main
+    # checkout while operating on a worktree path elsewhere). Confirmed via
+    # direct reproduction: `[ -d "$(git -C <dir> rev-parse --git-path X)" ]`
+    # silently reports false from an unrelated cwd even when the directory
+    # genuinely exists.
+    #
+    # The `|| rc_x=$?` form (not a bare `rc=$?` after the assignment) is
+    # required under `set -e` (every caller of this function runs under it,
+    # e.g. _lib.sh/rebase-worktree.sh's own `set -euo pipefail`) -- a plain
+    # `x="$(failing-cmd)"` assignment's own exit status IS the substituted
+    # command's, so without `||` absorbing it the whole calling script would
+    # exit right here, silently, before `rc_merge=$?` ever ran (found via
+    # direct reproduction while investigating a create-worktree-base.test.ts
+    # failure this same round -- see read_git_crypt_disabled_marker()'s
+    # identical fix below for the sibling instance of this bug).
+    rebase_merge="$(git -C "$worktree_path" rev-parse --path-format=absolute --git-path rebase-merge 2>/dev/null)" || rc_merge=$?
+    rebase_apply="$(git -C "$worktree_path" rev-parse --path-format=absolute --git-path rebase-apply 2>/dev/null)" || rc_apply=$?
+
+    if [ "$rc_merge" -ne 0 ] || [ "$rc_apply" -ne 0 ] || [ -z "$rebase_merge" ] || [ -z "$rebase_apply" ]; then
+        GIT_CRYPT_REBASE_STATE="unknown"
+        return 0
+    fi
+
+    if [ -d "$rebase_merge" ] || [ -d "$rebase_apply" ]; then
+        GIT_CRYPT_REBASE_STATE="active"
+    else
+        GIT_CRYPT_REBASE_STATE="inactive"
+    fi
+}
+
+#######################################
 # SMI-5702: print the single canonical one-line remediation for a broken or
 # intentionally-disabled git-crypt filter registration. Replaces the
 # multiple config-key-removal snippets previously printed at various call
@@ -362,6 +424,321 @@ print_git_crypt_filter_remediation() {
 }
 
 #######################################
+# SMI-5983: dedicated lock for the git-crypt filter config read-classify-
+# write sequence, replacing the semantically-mismatched
+# acquire_worktree_port_lock() (built for Docker dev-container port
+# allocation, SMI-5661) that ensure_git_crypt_filter_registered() previously
+# reused. `mkdir`-atomic, PID recorded inside. Deliberately has NO automatic
+# stale-lock reclaim (NEEDLE plan review, round 3->4: an `mv`-to-tombstone
+# reclaim is atomic on the PATH, not bound to the specific lock instance a
+# process inspected before deciding to reclaim, so a reclaimer can steal a
+# fresh, live holder's lock created in the gap between inspection and
+# reclaim -- a real ABA race with no cheap fix short of a monotonic
+# generation counter, disproportionate for a lock held only milliseconds).
+# Contention instead FAILS CLOSED with a manual-unstick message, mirroring
+# this codebase's own StuckLockError/acquireOwnedLock pattern -- never
+# proceeds unlocked against shared filter state, unlike the port lock's
+# `|| true` fallback.
+#
+# This lock protects only the brief classify->act->write sequence at each
+# call site (step_disable_filters(), restore_filter_config(),
+# ensure_git_crypt_filter_registered(), pre-commit's disable+restore) --
+# never the whole disabled window itself (which can span an entire rebase
+# or manual conflict resolution). The marker (below) plus the two-signal
+# heal check protect that longer window.
+#######################################
+GIT_CRYPT_FILTER_LOCK_MODE=""
+GIT_CRYPT_FILTER_LOCK_DIR=""
+GIT_CRYPT_FILTER_LOCK_PID_FILE=""
+GIT_CRYPT_FILTER_LOCK_WAIT="${SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT:-10}"
+
+#######################################
+# Returns (via stdout) the bare command currently registered for the given
+# trap signal, or an empty string if none is set. `trap -p SIG` prints
+# `trap -- 'CMD' SIGNAME` (single-quoted, embedded single quotes escaped as
+# '\''); every trap this codebase itself registers is a simple bare
+# function/command name or `;`-joined sequence with no embedded quoting, so
+# a straightforward strip of the `trap -- '...'` wrapper is sufficient here
+# -- not a general-purpose trap-string unescaper.
+#
+# The trailing suffix is stripped via `'*` (shortest match from the LAST
+# literal quote to end-of-string), NOT a literal `' $sig` match -- bash
+# normalizes the signal name in `trap -p`'s OWN output independent of what
+# was passed in (confirmed on both macOS bash 3.2 and the container's bash
+# 5.2: `trap -p INT` prints `... SIGINT`, `trap -p TERM` prints
+# `... SIGTERM`, but `trap -p EXIT` prints `... EXIT` with no SIG prefix --
+# EXIT isn't a real signal). Matching the literal input ("INT") against the
+# actual output ("SIGINT") silently failed to strip, leaving the raw
+# `' SIGINT` tail glued onto the captured command -- a malformed composed
+# trap body found only via direct reproduction (second-round NEEDLE review
+# investigation, SMI-5983 implementation round).
+#######################################
+_captured_trap_cmd() {
+    local sig="$1" line
+    line="$(trap -p "$sig")"
+    [ -z "$line" ] && return 0
+    line="${line#trap -- \'}"
+    line="${line%\'*}"
+    printf '%s' "$line"
+}
+
+#######################################
+# Acquire the git-crypt filter lock. See the block comment above.
+#
+# Arguments:
+#   $1 - git_context_dir  Any directory git can resolve (main checkout or
+#        any worktree) -- used only to find $GIT_COMMON_DIR, the lock's
+#        repo-shared home (same directory the filter config itself lives
+#        under, so every worktree and the main checkout contend on the
+#        same physical lock regardless of which one calls this).
+#
+# Returns:
+#   0 if acquired. 1 if the wait window expired -- a diagnostic has already
+#   been printed via error() before returning (error() exits the calling
+#   process; callers should treat this as unreachable-on-success only, not
+#   write any handling for a returned 1 -- matching this file's existing
+#   `error()`-exits convention elsewhere).
+#######################################
+acquire_git_crypt_filter_lock() {
+    local git_context_dir="$1"
+    local main_git_dir
+    main_git_dir="$(get_main_git_dir "$git_context_dir")"
+    if [[ -z "$main_git_dir" ]] || [[ ! -d "$main_git_dir" ]]; then
+        error "git-crypt filter lock: could not resolve \$GIT_COMMON_DIR for $git_context_dir"
+    fi
+    GIT_CRYPT_FILTER_LOCK_DIR="$main_git_dir/skillsmith-git-crypt-filter.lock"
+    GIT_CRYPT_FILTER_LOCK_PID_FILE="$GIT_CRYPT_FILTER_LOCK_DIR/pid"
+
+    local deadline hpid
+    deadline=$(( $(date +%s) + GIT_CRYPT_FILTER_LOCK_WAIT ))
+    while :; do
+        if mkdir "$GIT_CRYPT_FILTER_LOCK_DIR" 2>/dev/null; then
+            # Written AFTER mkdir succeeds -- a crash in this exact gap
+            # leaves a lock dir with no readable PID file, deliberately
+            # surfaced as its own "unknown owner" diagnostic below rather
+            # than silently treated as either live or reclaimable (there is
+            # no reclaim path at all).
+            printf '%s\n' "$$" > "$GIT_CRYPT_FILTER_LOCK_PID_FILE" 2>/dev/null || true
+            # Capture whatever EXIT/INT/TERM traps the caller already had
+            # BEFORE overwriting them, so release_git_crypt_filter_lock()
+            # can run them too instead of silently erasing them (NEEDLE
+            # review finding, SMI-5983 implementation round) -- a reusable
+            # lock must never clobber unrelated cleanup a caller already
+            # registered. Concretely: rebase-worktree.sh's
+            # `trap restore_filter_config EXIT` is itself what fires this
+            # lock (restore_filter_config() acquires it too) during a
+            # crash-path restore -- overwriting that trap here used to mean
+            # a crash while this lock was held would release the mutex but
+            # never actually restore the git-crypt filters.
+            local prev_exit_cmd prev_int_cmd prev_term_cmd
+            prev_exit_cmd="$(_captured_trap_cmd EXIT)"
+            prev_int_cmd="$(_captured_trap_cmd INT)"
+            prev_term_cmd="$(_captured_trap_cmd TERM)"
+            # Release FIRST, then the prior handler -- never the reverse:
+            # the prior handler may itself call acquire_git_crypt_filter_
+            # lock() again (restore_filter_config() does exactly that), and
+            # this lock is not reentrant, so running it while still held
+            # would deadlock/time out against ourselves.
+            #
+            # Double-quoted (not single-quoted): this expands
+            # ${prev_*_cmd} NOW, at registration time, baking the prior
+            # handler's resolved TEXT directly into the new trap body --
+            # deliberately NOT a `trap '...eval "$SOME_VAR"...' SIG`
+            # late-binding design (which was this fix's first draft). That
+            # design re-reads a global variable at FIRE time, and since
+            # repeated acquire/release cycles in the same process (e.g.
+            # ensure_git_crypt_filter_registered() called in a loop over
+            # several worktrees) would each overwrite that same global with
+            # a string that itself references the SAME variable name, the
+            # eventual eval could recurse into itself indefinitely. Baking
+            # the value in now means each new trap body is fully
+            # self-contained; a chain of prior handlers can only grow by
+            # one bounded, idempotent `release_git_crypt_filter_lock;`
+            # segment per cycle, never self-reference (NEEDLE review
+            # finding, SMI-5983 implementation round -- caught during this
+            # fix's own implementation, not by the review itself).
+            #
+            # Built conditionally (not via a fixed
+            # "release...; ${prev}; exit N" template): when there is NO
+            # prior handler for INT/TERM, ${prev_int_cmd}/${prev_term_cmd}
+            # is empty, and a fixed template collapses to
+            # `release_git_crypt_filter_lock; ; exit 130` -- a genuine bash
+            # syntax error (an empty statement between two semicolons,
+            # confirmed via direct reproduction: bash reports "syntax error
+            # near unexpected token ';'" and the WHOLE trap body silently
+            # fails to run, meaning the lock is never released and the
+            # process doesn't even exit on the signal). EXIT's template
+            # happened to dodge this by coincidence (nothing follows
+            # ${prev_exit_cmd}, so an empty value only leaves a harmless
+            # TRAILING semicolon, not a bare one sandwiched between two
+            # statements) -- caught only by re-review, not by the tests
+            # from this fix's first round (which covered EXIT only)
+            # (second-round NEEDLE review finding, SMI-5983 implementation
+            # round).
+            local exit_body int_body term_body
+            exit_body="release_git_crypt_filter_lock"
+            [ -n "$prev_exit_cmd" ] && exit_body="${exit_body}; ${prev_exit_cmd}"
+            int_body="release_git_crypt_filter_lock"
+            [ -n "$prev_int_cmd" ] && int_body="${int_body}; ${prev_int_cmd}"
+            int_body="${int_body}; exit 130"
+            term_body="release_git_crypt_filter_lock"
+            [ -n "$prev_term_cmd" ] && term_body="${term_body}; ${prev_term_cmd}"
+            term_body="${term_body}; exit 143"
+            trap "$exit_body" EXIT
+            trap "$int_body" INT
+            trap "$term_body" TERM
+            GIT_CRYPT_FILTER_LOCK_MODE="held"
+            return 0
+        fi
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            # `|| hpid=""`, not a bare assignment: under `set -e` (every
+            # caller runs under it), `cat` on the exact missing-PID-file
+            # case this branch exists to diagnose would otherwise kill the
+            # calling script right here, silently, before the diagnostic
+            # below ever printed (same bug class as
+            # read_git_crypt_disabled_marker()'s fix, found investigating a
+            # test failure this same round).
+            hpid="$(cat "$GIT_CRYPT_FILTER_LOCK_PID_FILE" 2>/dev/null)" || hpid=""
+            if [ -z "$hpid" ]; then
+                error "git-crypt filter lock busy after ${GIT_CRYPT_FILTER_LOCK_WAIT}s, holder PID unrecorded (owner unknown -- likely crashed between acquiring the lock and recording its PID). Confirm no relevant rebase-worktree.sh or git commit process is active on this machine, then run: rmdir \"$GIT_CRYPT_FILTER_LOCK_DIR\" and retry."
+            elif kill -0 "$hpid" 2>/dev/null; then
+                error "git-crypt filter lock busy after ${GIT_CRYPT_FILTER_LOCK_WAIT}s, held by live PID $hpid. Wait for it to finish, or investigate that process directly -- this lock never auto-reclaims a live holder."
+            else
+                error "git-crypt filter lock busy after ${GIT_CRYPT_FILTER_LOCK_WAIT}s, recorded holder PID $hpid is not running. Confirm via 'ps' that nothing relevant is active, then run: rmdir \"$GIT_CRYPT_FILTER_LOCK_DIR\" and retry. (This lock never auto-reclaims -- see the function's doc comment for why.)"
+            fi
+        fi
+        sleep 0.2
+    done
+}
+
+#######################################
+# Release the git-crypt filter lock. Ownership-checked: only removes the
+# lock directory if THIS process's PID is still the one recorded inside --
+# a process must never release (or, via that release, effectively hand
+# reclaim of) a lock it doesn't currently own.
+#######################################
+release_git_crypt_filter_lock() {
+    [ "$GIT_CRYPT_FILTER_LOCK_MODE" = "held" ] || return 0
+    local owner
+    # `|| owner=""` -- same set -e hazard as acquire's hpid read above.
+    owner="$(cat "$GIT_CRYPT_FILTER_LOCK_PID_FILE" 2>/dev/null)" || owner=""
+    [ "$owner" = "$$" ] && rm -rf "$GIT_CRYPT_FILTER_LOCK_DIR" 2>/dev/null
+    GIT_CRYPT_FILTER_LOCK_MODE=""
+    return 0
+}
+
+#######################################
+# SMI-5983: diagnostic marker for a DISABLED git-crypt filter state --
+# written by both existing DISABLED-state writers (rebase-worktree.sh Step
+# 7, .husky/pre-commit's branch-switch recovery) as the LAST write in their
+# disable sequence (strictly after both filter.git-crypt.{smudge,clean}
+# writes), cleared by both existing restore sites as the FIRST write in
+# their restore sequence. This ordering is deliberate -- see the plan doc's
+# §1 for the full crash-point-by-crash-point argument for why no
+# transaction log is needed: every partial-write crash resolves to either
+# the existing HALF-state auto-heal or the unchanged conservative
+# DISABLED-without-marker decline.
+#
+# No ownership nonce, no captured filter values, no transaction phase --
+# this marker only ever drives a heal-to-CANONICAL decision (never a
+# restore-to-captured-original one), so there is nothing it needs to
+# protect beyond answering "is this disable still legitimately in use".
+#######################################
+
+#######################################
+# Write the DISABLED-state marker. Caller must hold the git-crypt filter
+# lock. Worktree path is base64-encoded (paths can contain characters --
+# colons, in principle even newlines on some filesystems -- that would
+# break naive field-splitting).
+#
+# Arguments:
+#   $1 - git_context_dir  Same directory step_disable_filters() etc. operate on
+#   $2 - worktree_path    The worktree this disable belongs to (for the
+#        active-rebase-state check the heal decision performs later)
+#######################################
+write_git_crypt_disabled_marker() {
+    local git_context_dir="$1" worktree_path="$2"
+    local worktree_b64
+    worktree_b64="$(printf '%s' "$worktree_path" | base64 | tr -d '\n')"
+    git -C "$git_context_dir" config --local skillsmith.git-crypt-disabled-marker "$$ $(date +%s) $worktree_b64"
+}
+
+#######################################
+# Clear the DISABLED-state marker. Caller must hold the git-crypt filter
+# lock. Safe to call even if no marker is present.
+#######################################
+clear_git_crypt_disabled_marker() {
+    local git_context_dir="$1"
+    git -C "$git_context_dir" config --local --unset skillsmith.git-crypt-disabled-marker 2>/dev/null || true
+}
+
+#######################################
+# Read and parse the DISABLED-state marker. Caller must hold the git-crypt
+# filter lock (or otherwise be a context where the marker can't change
+# under it, e.g. tests).
+#
+# Any parse failure (missing key, non-numeric PID, invalid base64, empty
+# decoded path, wrong field count) is reported via GIT_CRYPT_MARKER_VALID=
+# false and MUST be treated identically to "marker absent" by every
+# consumer -- a marker that can't be confidently parsed carries no positive
+# evidence either way (SMI-5983 round-4 requirement).
+#
+# Arguments:
+#   $1 - git_context_dir
+# Globals set:
+#   GIT_CRYPT_MARKER_VALID     - "true" | "false"
+#   GIT_CRYPT_MARKER_PID       - only meaningful if VALID=true
+#   GIT_CRYPT_MARKER_WORKTREE  - only meaningful if VALID=true (decoded)
+#######################################
+read_git_crypt_disabled_marker() {
+    local git_context_dir="$1"
+    local raw pid ts worktree_b64 worktree_path
+    GIT_CRYPT_MARKER_VALID="false"
+    GIT_CRYPT_MARKER_PID=""
+    GIT_CRYPT_MARKER_WORKTREE=""
+
+    raw="$(git -C "$git_context_dir" config --local --get skillsmith.git-crypt-disabled-marker 2>/dev/null || echo "")"
+    [ -z "$raw" ] && return 0
+
+    # `set --` (intentional word-splitting on IFS whitespace), not
+    # awk '{print $N}', so a marker with the WRONG field count (extra
+    # trailing garbage, or fewer than 3 fields) is rejected outright via
+    # `$# -ne 3` -- awk's $1/$2/$3 would silently ignore any extra fields
+    # and still "successfully" extract the first three, contrary to this
+    # function's own "wrong field count fails closed" contract (NEEDLE
+    # review finding, SMI-5983 implementation round). Safe to reassign the
+    # function's positional params here: $1 (git_context_dir) was already
+    # captured into a local above.
+    set -- $raw
+    if [ "$#" -ne 3 ]; then
+        return 0
+    fi
+    pid="$1"
+    ts="$2"
+    worktree_b64="$3"
+    if [ -z "$pid" ] || [ -z "$ts" ] || [ -z "$worktree_b64" ]; then
+        return 0
+    fi
+    case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+    # Timestamp must be numeric too -- previously captured but never
+    # validated, so a marker with a corrupted (non-numeric) timestamp field
+    # was silently accepted as valid (same review finding as above).
+    case "$ts" in ''|*[!0-9]*) return 0 ;; esac
+    # `|| worktree_path=""`: base64 -d exits nonzero on malformed input
+    # (confirmed on both macOS and the Linux container) -- without this,
+    # `set -e` would kill the calling script on exactly the malformed-marker
+    # input this function exists to fail closed on, same bug class as the
+    # raw-read fix above.
+    worktree_path="$(printf '%s' "$worktree_b64" | base64 -d 2>/dev/null)" || worktree_path=""
+    [ -z "$worktree_path" ] && return 0
+
+    GIT_CRYPT_MARKER_VALID="true"
+    GIT_CRYPT_MARKER_PID="$pid"
+    GIT_CRYPT_MARKER_WORKTREE="$worktree_path"
+    return 0
+}
+
+#######################################
 # SMI-5702: idempotent self-heal for git-crypt filter registration. See
 # docs/internal/implementation/smi-5702-worktree-git-crypt-filter-deadlock.md
 # for the full root-cause writeup and design rationale -- summary: filter.
@@ -376,22 +753,26 @@ print_git_crypt_filter_remediation() {
 # Guarantees:
 #   - SKILLSMITH_GIT_CRYPT_FILTER_HEAL_DISABLE=1 -> full no-op, checked
 #     first, before the lock/classify/write sequence.
-#   - Never writes filter.git-crypt.{smudge,clean} when the classified
-#     state is DISABLED (another session's deliberate in-flight
-#     filter-disable window -- rebase-worktree.sh Step 7 /
-#     .husky/pre-commit's branch-switch recovery). The secondary axis
-#     (required/textconv) IS still repaired even in DISABLED: a missing
-#     `required` turns a loud checkout failure into a silent
-#     plaintext-commit path, and `required=true` alongside `cat`/`cat` is
-#     inert (`cat` always exits 0).
+#   - Only writes filter.git-crypt.{smudge,clean} for a classified DISABLED
+#     state when SMI-5983's two-signal check confirms the disable is dead
+#     (marker's PID not running AND no active rebase-merge/rebase-apply
+#     state at the marker's recorded worktree) -- otherwise, exactly as
+#     before SMI-5983, another session's deliberate in-flight
+#     filter-disable window (rebase-worktree.sh Step 7 / .husky/pre-commit's
+#     branch-switch recovery) is left untouched. The secondary axis
+#     (required/textconv) IS still repaired unconditionally in ALL cases
+#     including a non-healing DISABLED: a missing `required` turns a loud
+#     checkout failure into a silent plaintext-commit path, and
+#     `required=true` alongside `cat`/`cat` is inert (`cat` always exits 0).
 #   - `command -v git-crypt` gate before ANY write this call would make --
 #     never points config at a nonexistent binary (same pattern as
 #     scripts/pre-push-check.sh:64).
-#   - Narrow flock (acquire_worktree_port_lock/release_worktree_port_lock,
-#     SMI-5661) around the read-classify-write sequence only -- explicitly
-#     NOT around the DISABLED window itself, which is bounded by another
-#     session's human-time conflict resolution; a lock spanning it would
-#     deadlock every worktree operation repo-wide.
+#   - Narrow lock (acquire_git_crypt_filter_lock/release_git_crypt_filter_lock,
+#     SMI-5983 -- a dedicated lock, not the semantically-mismatched
+#     worktree-port lock this used to reuse) around the read-classify-write
+#     sequence only -- explicitly NOT around the DISABLED window itself,
+#     which is bounded by another session's human-time conflict resolution;
+#     a lock spanning it would deadlock every worktree operation repo-wide.
 #   - Read-back verification: re-classifies after writing and hard-fails on
 #     mismatch -- a silent partial write is worse than the original bug.
 #
@@ -415,18 +796,21 @@ ensure_git_crypt_filter_registered() {
         return 0
     fi
 
-    local main_git_dir repo_root
+    local main_git_dir
     main_git_dir="$(get_main_git_dir "$git_context_dir")"
     if [[ -z "$main_git_dir" ]] || [[ ! -d "$main_git_dir" ]]; then
         warn "  git-crypt filter self-heal: could not resolve main .git directory for $git_context_dir -- skipping"
         return 0
     fi
-    repo_root="$(dirname "$main_git_dir")"
 
-    acquire_worktree_port_lock "$repo_root" || true
+    # SMI-5983: dedicated lock, not the semantically-mismatched
+    # acquire_worktree_port_lock() this used to reuse -- see
+    # acquire_git_crypt_filter_lock()'s doc comment. Fails closed (via
+    # error()) rather than proceeding unlocked.
+    acquire_git_crypt_filter_lock "$git_context_dir"
     _ensure_git_crypt_filter_registered_locked "$git_context_dir"
     local rc=$?
-    release_worktree_port_lock
+    release_git_crypt_filter_lock
     return "$rc"
 }
 
@@ -443,9 +827,31 @@ _ensure_git_crypt_filter_registered_locked() {
     local pre_smudge="$GIT_CRYPT_FILTER_SMUDGE" pre_clean="$GIT_CRYPT_FILTER_CLEAN"
     local pre_required="$GIT_CRYPT_FILTER_REQUIRED" pre_textconv="$GIT_CRYPT_FILTER_TEXTCONV"
 
+    # SMI-5983: for DISABLED, decide up front whether this will heal, so the
+    # git-crypt-binary precondition check below covers this path too. Heals
+    # only when BOTH signals agree the disable is dead: the marker's PID is
+    # not running, AND that worktree has no active rebase-merge/rebase-apply
+    # state (a live manual conflict deliberately makes the disabling PID
+    # dead too -- step_rebase_parent() clears its own EXIT trap before
+    # exiting on one -- so PID-liveness alone is not a safe signal; see the
+    # plan doc's round-1 finding). A malformed or absent marker never heals.
+    local disabled_will_heal=false disabled_marker_pid="" disabled_marker_worktree=""
+    if [ "$state" = "DISABLED" ]; then
+        read_git_crypt_disabled_marker "$git_context_dir"
+        if [ "$GIT_CRYPT_MARKER_VALID" = "true" ]; then
+            disabled_marker_pid="$GIT_CRYPT_MARKER_PID"
+            disabled_marker_worktree="$GIT_CRYPT_MARKER_WORKTREE"
+            if ! kill -0 "$disabled_marker_pid" 2>/dev/null; then
+                has_active_rebase_state "$disabled_marker_worktree"
+                [ "$GIT_CRYPT_REBASE_STATE" = "inactive" ] && disabled_will_heal=true
+            fi
+        fi
+    fi
+
     local needs_primary_write=false
     case "$state" in
         MISSING|HALF|FOREIGN) needs_primary_write=true ;;
+        DISABLED) [ "$disabled_will_heal" = true ] && needs_primary_write=true ;;
     esac
     local needs_secondary_write=false
     [[ "$pre_required" != "true" ]] && needs_secondary_write=true
@@ -462,8 +868,18 @@ Install git-crypt (e.g. \`brew install git-crypt\` on macOS, \`apt-get install g
             : # no-op, silent
             ;;
         DISABLED)
-            warn "  git-crypt filters are deliberately disabled (smudge=clean=\"cat\") -- likely another session mid-conflict-resolution (rebase-worktree.sh Step 7 / pre-commit branch-switch recovery). NOT healing smudge/clean."
-            print_git_crypt_filter_remediation "$git_context_dir"
+            if [ "$disabled_will_heal" = true ]; then
+                git -C "$git_context_dir" config --local filter.git-crypt.smudge "$GIT_CRYPT_CANONICAL_SMUDGE"
+                git -C "$git_context_dir" config --local filter.git-crypt.clean "$GIT_CRYPT_CANONICAL_CLEAN"
+                clear_git_crypt_disabled_marker "$git_context_dir"
+                success "  git-crypt filters were disabled by dead PID $disabled_marker_pid (worktree: $disabled_marker_worktree, no active rebase) -- auto-healed to canonical (SMI-5983)"
+            else
+                warn "  git-crypt filters are deliberately disabled (smudge=clean=\"cat\") -- likely another session mid-conflict-resolution (rebase-worktree.sh Step 7 / pre-commit branch-switch recovery), or the disabling process's marker is absent/unparseable/still live/still mid-conflict. NOT healing smudge/clean."
+                if [ -n "$disabled_marker_pid" ]; then
+                    info "  Marker: PID $disabled_marker_pid, worktree $disabled_marker_worktree"
+                fi
+                print_git_crypt_filter_remediation "$git_context_dir"
+            fi
             ;;
         MISSING)
             git -C "$git_context_dir" config --local filter.git-crypt.smudge "$GIT_CRYPT_CANONICAL_SMUDGE"
@@ -501,10 +917,12 @@ Install git-crypt (e.g. \`brew install git-crypt\` on macOS, \`apt-get install g
 
     # Read-back verification: a silent partial write is worse than the
     # original bug. Skips the primary-axis check only when we deliberately
-    # did not touch smudge/clean (DISABLED) -- the secondary-axis checks
-    # below always run.
+    # did not touch smudge/clean this call (DISABLED-not-healing) -- the
+    # secondary-axis checks below always run. SMI-5983: gated on
+    # needs_primary_write (not a bare state != DISABLED check) since
+    # DISABLED can now sometimes write too.
     classify_git_crypt_filter_state "$git_context_dir"
-    if [[ "$state" != "DISABLED" ]] && [[ "$GIT_CRYPT_FILTER_STATE" != "CANONICAL" ]]; then
+    if [[ "$needs_primary_write" == true ]] && [[ "$GIT_CRYPT_FILTER_STATE" != "CANONICAL" ]]; then
         error "git-crypt filter self-heal read-back verification failed: expected CANONICAL after repair, got $GIT_CRYPT_FILTER_STATE (smudge=\"$GIT_CRYPT_FILTER_SMUDGE\" clean=\"$GIT_CRYPT_FILTER_CLEAN\"). A silent partial write is worse than the original bug -- inspect .git/config directly."
     fi
     if [[ "$GIT_CRYPT_FILTER_REQUIRED" != "true" ]]; then

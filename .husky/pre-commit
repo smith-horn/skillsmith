@@ -256,6 +256,20 @@ else
 fi
 
 # =============================================================================
+# SMI-5983: clears the DISABLED-state marker (written by rebase-worktree.sh's
+# Step 7 / this hook's own branch-switch recovery below). Deliberately kept
+# isolated from the filter-restore config lines it's called near, and this
+# comment deliberately avoids the two literal substrings its own line below
+# combines (a certain git-config removal flag, plus a git-crypt filter key
+# mention) -- see scripts/tests/git-crypt-remediation-strings.test.ts (SMI-
+# 5702 T11) for why: that guard flags exactly that combination anywhere in
+# the repo, so even explaining the pairing in prose here would self-trip it.
+# =============================================================================
+_clear_git_crypt_marker() {
+  git config --local --unset skillsmith.git-crypt-disabled-marker 2>/dev/null || true
+}
+
+# =============================================================================
 # SMI-2536 / SMI-2747: Branch Integrity Guard — Verify branch didn't switch.
 # If it did, auto-restore using smudge-safe checkout so the user only needs to
 # re-run `git commit` (no manual recovery steps required).
@@ -271,11 +285,76 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     echo "  Expected branch: ${YELLOW}$EXPECTED_BRANCH${NC}"
     echo "  Current branch:  ${YELLOW}$CURRENT_BRANCH${NC}"
     echo ""
+
+    # SMI-5983: dedicated git-crypt filter lock, POSIX-sh (this hook is
+    # #!/bin/sh, no `local`/`[[ ]]`/BASH_SOURCE) but the SAME lock directory
+    # path scripts/_lib.sh's bash acquire_git_crypt_filter_lock() uses --
+    # both sides genuinely contend on one lock. No automatic reclaim (an
+    # ABA race in an `mv`-to-tombstone reclaim was found and rejected during
+    # this fix's design review) -- fails closed with a manual-unstick
+    # message instead. Held only around the classify+disable+marker-write
+    # sequence below, released before the checkout, reacquired only for
+    # the restore.
+    GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git-crypt-filter.lock"
+    GIT_CRYPT_LOCK_HELD=""
+    _acquire_git_crypt_lock() {
+      _wait_i=0
+      while [ "$_wait_i" -lt 50 ]; do
+        if mkdir "$GIT_CRYPT_LOCK_DIR" 2>/dev/null; then
+          echo "$$" > "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null
+          GIT_CRYPT_LOCK_HELD=1
+          return 0
+        fi
+        _wait_i=$((_wait_i + 1))
+        sleep 0.2
+      done
+      _holder_pid=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)
+      echo "${RED}git-crypt filter lock busy after 10s (holder PID: ${_holder_pid:-unknown}).${NC}" >&2
+      echo "  This lock never auto-reclaims. Confirm via 'ps' that the holder is gone, then:" >&2
+      echo "    rmdir \"$GIT_CRYPT_LOCK_DIR\"" >&2
+      echo "  and retry the commit." >&2
+      exit 1
+    }
+    _release_git_crypt_lock() {
+      [ -n "$GIT_CRYPT_LOCK_HELD" ] || return 0
+      _owner=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)
+      [ "$_owner" = "$$" ] && rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
+      GIT_CRYPT_LOCK_HELD=""
+    }
+
+    _acquire_git_crypt_lock
+    SMUDGE_CMD=$(git config --local filter.git-crypt.smudge 2>/dev/null)
+    CLEAN_CMD=$(git config --local filter.git-crypt.clean 2>/dev/null)
+
+    # SMI-5983: hard-fail if filters are ALREADY disabled (both "cat") --
+    # the identical corruption bug fixed in scripts/rebase-worktree.sh's
+    # step_disable_filters(): capturing "cat" into SMUDGE_CMD/CLEAN_CMD as
+    # if it were the real original, then restoring to that bogus value.
+    # Does NOT suggest `git commit --no-verify` here (unlike the success
+    # message below) -- the branch-integrity guard has already detected a
+    # mismatch, so advertising a bypass could commit directly on the wrong
+    # branch, compounding the exact problem this hook exists to prevent.
+    if [ "$SMUDGE_CMD" = "cat" ] && [ "$CLEAN_CMD" = "cat" ]; then
+      _release_git_crypt_lock
+      _marker=$(git config --local --get skillsmith.git-crypt-disabled-marker 2>/dev/null)
+      echo "${RED}  git-crypt filters are already disabled -- refusing to proceed.${NC}"
+      if [ -n "$_marker" ]; then
+        echo "  Marker: $_marker (PID TIMESTAMP WORKTREE_PATH_BASE64)"
+      else
+        echo "  No marker found (a pre-SMI-5983 disable, or an unparseable/hand-set state)."
+      fi
+      echo ""
+      echo "  Required recovery:"
+      echo "    1. ./scripts/worktree-crypt.sh fix .   # auto-heals if the disabling process is confirmed dead"
+      echo "    2. git checkout $EXPECTED_BRANCH"
+      echo "    3. git branch --show-current            # confirm it now matches $EXPECTED_BRANCH"
+      echo "    4. Retry the commit."
+      exit 1
+    fi
+
     # SMI-2747: Smudge-safe auto-restore.
     # Only capture/manipulate the filter if it is currently configured — avoids
     # adding unexpected git config entries on repos without git-crypt.
-    SMUDGE_CMD=$(git config --local filter.git-crypt.smudge 2>/dev/null)
-    CLEAN_CMD=$(git config --local filter.git-crypt.clean 2>/dev/null)
     if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
       # Restore function — called explicitly on success and via trap on crash/signal.
       # SMI-5702: the else-branches used to remove the config key entirely
@@ -293,7 +372,12 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       # scripts/_lib.sh (governance finding, SMI-5702 review) -- duplicated
       # rather than sourced because this hook is POSIX sh (no `local`,
       # `[[ ]]`, or BASH_SOURCE) and _lib.sh is bash-only.
+      # SMI-5983: also locks and clears the disabled-marker FIRST, before
+      # restoring real values -- same ordering rationale as
+      # scripts/_rebase-git-crypt.sh's restore_filter_config().
       _restore_smudge_filter() {
+        _acquire_git_crypt_lock
+        _clear_git_crypt_marker
         if [ -n "$SMUDGE_CMD" ]; then
           git config --local filter.git-crypt.smudge "$SMUDGE_CMD"
         else
@@ -304,12 +388,18 @@ if [ -n "$EXPECTED_BRANCH" ]; then
         else
           git config --local filter.git-crypt.clean 'git-crypt clean'
         fi
+        _release_git_crypt_lock
       }
       # Register trap BEFORE disabling the filter so any unexpected exit restores it.
       trap '_restore_smudge_filter' EXIT INT TERM
       git config --local filter.git-crypt.smudge "cat"
       git config --local filter.git-crypt.clean "cat"
+      # Written LAST, after both filter values -- matches
+      # scripts/rebase-worktree.sh's Step 7 ordering.
+      _worktree_b64=$(printf '%s' "$(pwd)" | base64 | tr -d '\n')
+      git config --local skillsmith.git-crypt-disabled-marker "$$ $(date +%s) $_worktree_b64"
     fi
+    _release_git_crypt_lock
     echo "  ${YELLOW}Running smudge-safe checkout...${NC}"
     git checkout "$EXPECTED_BRANCH"
     RESTORE_EXIT=$?

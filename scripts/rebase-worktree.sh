@@ -20,6 +20,10 @@ source "$SCRIPT_DIR/_lib.sh"
 # step_rebase_submodule) — both split out per CLAUDE.md's 500-line file cap.
 # shellcheck source=_rebase-git-crypt.sh
 source "$SCRIPT_DIR/_rebase-git-crypt.sh"
+# SMI-5983: disable_git_crypt_filters_or_fail(), split out of
+# _rebase-git-crypt.sh once that file plus this addition exceeded 500 lines.
+# shellcheck source=_rebase-git-crypt-disable.sh
+source "$SCRIPT_DIR/_rebase-git-crypt-disable.sh"
 # shellcheck source=_rebase-submodule.sh
 source "$SCRIPT_DIR/_rebase-submodule.sh"
 
@@ -245,19 +249,14 @@ step_crossfetch_submodule() {
 }
 
 # Steps 6/6.5 (step_stash, step_ensure_filter_registered) live in _rebase-git-crypt.sh.
-# Step 7: Disable git-crypt filters (with EXIT trap for restore)
+# Step 7: Disable git-crypt filters (with EXIT trap for restore).
+# SMI-5983: the lock+classify+hard-fail-or-write sequence lives in
+# disable_git_crypt_filters_or_fail() (_rebase-git-crypt.sh, more headroom
+# under the 500-line cap) -- this stays a thin wrapper that only reacts to
+# its return code (0: filters actually disabled, register the trap; 1:
+# nothing to do -- MISSING or --dry-run, already logged, no trap needed).
 step_disable_filters() {
-    ORIG_SMUDGE=$(git -C "$WORKTREE_PATH" config --local --get filter.git-crypt.smudge 2>/dev/null || echo "")
-    ORIG_CLEAN=$(git -C "$WORKTREE_PATH" config --local --get filter.git-crypt.clean 2>/dev/null || echo "")
-    if [ -z "$ORIG_SMUDGE" ] && [ -z "$ORIG_CLEAN" ]; then
-        info "Step 7: Skipping filter disable (no git-crypt filters configured)"
-        HAS_GIT_CRYPT=false; return 0
-    fi
-    HAS_GIT_CRYPT=true
-    info "Step 7: Disabling git-crypt filters..."
-    if [ "$DRY_RUN" = true ]; then info "  [dry-run] Would disable git-crypt smudge/clean filters"; return 0; fi
-    git -C "$WORKTREE_PATH" config --local filter.git-crypt.smudge "cat"
-    git -C "$WORKTREE_PATH" config --local filter.git-crypt.clean "cat"
+    disable_git_crypt_filters_or_fail || return 0
     FILTERS_DISABLED=true; trap restore_filter_config EXIT
     success "  Git-crypt filters disabled (trap registered)"
 }
