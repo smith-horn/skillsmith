@@ -97,6 +97,13 @@ jobs:
           }
 
       - name: Root vitest config (SMI-3502 runner)
+        # PR-review correction (SMI-5984): scripts/tests/private-registry-rls.test.ts only
+        # accepts a git-crypt-locked checkout as legitimate when this env var is set — this
+        # is the one workflow genuinely expected to run locked by design (SMI-4221, no unlock
+        # step). Anywhere else, a detected lock now fails loudly instead of silently
+        # downgrading to an existence-only check.
+        env:
+          SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED: '1'
         run: npx vitest run --config vitest.config.root-tests.ts
 
       - name: File or update auto-issue on failure

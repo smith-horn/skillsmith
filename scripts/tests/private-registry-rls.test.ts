@@ -29,6 +29,16 @@
  * `backfill-migration-headers.test.ts` relies on (filenames stay plaintext under git-crypt;
  * only file contents don't). A genuinely missing or unreadable migration is NOT treated as
  * "locked" — it still throws and fails the test, same as before this change.
+ *
+ * PR-review correction (SMI-5984): a byte-header match alone is not sufficient proof this
+ * checkout is *intentionally* locked. This repo has a documented history of git-crypt filter
+ * fragility (SMI-5702/SMI-5861 filter-deadlock incidents) — if the "authoritative" unlocked
+ * PR-matrix CI lane ever failed to actually unlock for any infra reason, this test would
+ * previously have silently downgraded to an existence-only check instead of failing loudly,
+ * masking exactly the failure it should surface. Locked mode now additionally requires the
+ * `SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED=1` env var, set only by `post-merge-verify.yml` (the
+ * one workflow genuinely expected to run locked by design) — so a real lock detected anywhere
+ * else fails the test with a clear message instead of being silently accepted.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -43,6 +53,10 @@ const MIGRATIONS_DIR = 'supabase/migrations'
 // CORS sentinel. Buffer.equals() avoids a binary->string round-trip for the comparison.
 const GIT_CRYPT_MAGIC = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54]) // "\x00GITCRYPT"
 
+// PR-review correction (SMI-5984): set only by post-merge-verify.yml, the one workflow
+// genuinely expected to run on a locked checkout. See module doc comment above.
+const EXPECT_LOCKED_ENV_VAR = 'SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED'
+
 type LoadedMigration = { locked: true; path: string } | { locked: false; path: string; sql: string }
 
 /**
@@ -51,8 +65,11 @@ type LoadedMigration = { locked: true; path: string } | { locked: false; path: s
  * content, or — on a git-crypt-locked checkout — flag it as locked without reading content
  * (existence/header verification only; this does NOT establish migration content integrity,
  * which is the unlocked PR-matrix CI run's job). Throws (does not swallow) when no matching
- * file exists, or when an unlocked file's content doesn't actually CREATE the table — both
- * are genuine failures, not lock-related.
+ * file exists, when more than one file matches (ambiguous — fail closed rather than silently
+ * picking one), when an unlocked file's content doesn't actually CREATE the table, or when the
+ * file looks locked but `SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED` isn't set (a lock detected
+ * somewhere it isn't expected is itself a failure worth surfacing loudly, not swallowing) —
+ * none of these are lock-related in the legitimate sense.
  *
  * `dir` defaults to the real migrations directory; overridable for tests below.
  */
@@ -63,10 +80,23 @@ function loadPrivateRegistryMigration(dir: string = MIGRATIONS_DIR): LoadedMigra
   if (files.length === 0) {
     throw new Error('No migration found that CREATEs private_registry_skills')
   }
+  if (files.length > 1) {
+    throw new Error(
+      `Ambiguous — found ${files.length} migration files matching "private_registry_skills": ${files.join(', ')}`
+    )
+  }
   const path = join(dir, files[0])
   const raw = readFileSync(path)
 
   if (raw.subarray(0, GIT_CRYPT_MAGIC.length).equals(GIT_CRYPT_MAGIC)) {
+    if (process.env[EXPECT_LOCKED_ENV_VAR] !== '1') {
+      throw new Error(
+        `${path} appears git-crypt-locked, but ${EXPECT_LOCKED_ENV_VAR} isn't set — this ` +
+          'checkout is not expected to be locked here. If this is post-merge-verify.yml, set ' +
+          `${EXPECT_LOCKED_ENV_VAR}=1 on the job. Otherwise this may mean git-crypt failed to ` +
+          'unlock — treat as a real failure, not a lock-state edge case.'
+      )
+    }
     return { locked: true, path }
   }
 
@@ -79,24 +109,61 @@ function loadPrivateRegistryMigration(dir: string = MIGRATIONS_DIR): LoadedMigra
 
 describe('loadPrivateRegistryMigration (SMI-5984 git-crypt lock detection)', () => {
   let dir: string
+  let originalExpectLockedEnv: string | undefined
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'private-registry-migration-test-'))
+    originalExpectLockedEnv = process.env[EXPECT_LOCKED_ENV_VAR]
   })
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
+    if (originalExpectLockedEnv === undefined) {
+      delete process.env[EXPECT_LOCKED_ENV_VAR]
+    } else {
+      process.env[EXPECT_LOCKED_ENV_VAR] = originalExpectLockedEnv
+    }
   })
 
-  it('returns locked:true and skips content when the file starts with the git-crypt header', () => {
+  it('returns locked:true and skips content when the file starts with the git-crypt header and the expected-locked env var is set', () => {
+    process.env[EXPECT_LOCKED_ENV_VAR] = '1'
     const path = join(dir, '20260724000000_private_registry_skills.sql')
-    writeFileSync(path, Buffer.concat([GIT_CRYPT_MAGIC, Buffer.from('rest of encrypted payload')]))
+    // PR-review correction (SMI-5984): the literal magic bytes, independent of the
+    // implementation's own GIT_CRYPT_MAGIC constant — a self-referential fixture (one that
+    // reuses the same constant the detector checks against) couldn't catch a typo in that
+    // constant, since both sides would agree on the wrong value.
+    const gitCryptMagicLiteral = Buffer.from([0x00, 0x47, 0x49, 0x54, 0x43, 0x52, 0x59, 0x50, 0x54])
+    writeFileSync(
+      path,
+      Buffer.concat([gitCryptMagicLiteral, Buffer.from('rest of encrypted payload')])
+    )
 
     const result = loadPrivateRegistryMigration(dir)
 
     expect(result.locked).toBe(true)
     expect(result.path).toBe(path)
     expect('sql' in result).toBe(false)
+  })
+
+  it('throws when the file looks locked but SKILLSMITH_GIT_CRYPT_EXPECTED_LOCKED is not set (PR-review regression, SMI-5984)', () => {
+    delete process.env[EXPECT_LOCKED_ENV_VAR]
+    const path = join(dir, '20260724000000_private_registry_skills.sql')
+    writeFileSync(path, Buffer.concat([GIT_CRYPT_MAGIC, Buffer.from('rest of encrypted payload')]))
+
+    expect(() => loadPrivateRegistryMigration(dir)).toThrow(EXPECT_LOCKED_ENV_VAR)
+  })
+
+  it('throws (fails closed) when more than one file matches the private_registry_skills filename pattern (PR-review regression, SMI-5984)', () => {
+    writeFileSync(
+      join(dir, '20260724000000_private_registry_skills.sql'),
+      'CREATE TABLE private_registry_skills (id UUID);'
+    )
+    writeFileSync(
+      join(dir, '20260801000000_private_registry_skills_v2.sql'),
+      'CREATE TABLE private_registry_skills (id UUID);'
+    )
+
+    expect(() => loadPrivateRegistryMigration(dir)).toThrow(/Ambiguous/)
   })
 
   it('returns locked:false with normalized SQL for an unlocked, valid migration', () => {
