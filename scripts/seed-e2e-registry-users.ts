@@ -252,6 +252,44 @@ async function main(): Promise<void> {
     )
     process.exit(1)
   }
+
+  // 7c. Repair approval_status/approval_mode too, same rationale as 7b (SMI-5990). The
+  //     20260809000000_private_registry_approval_gate.sql migration installs an UNCONDITIONAL
+  //     `trg_prs_approval` BEFORE INSERT trigger with no service-role carve-out, so this row is
+  //     born approval_status='pending'/approval_mode='review' on first insert regardless of who
+  //     or what inserted it -- and ignoreDuplicates above means a re-run never touches an
+  //     already-existing row's columns, so it stays 'pending' forever. Because
+  //     private_registry_skills_member_read requires approval_status = 'approved', a pending row
+  //     has NO RLS read path at all (not just denied), so it silently 404s instead of 403ing for
+  //     e2e-registry-roundtrip.ts's row5/row6/mcp-live-row6 assertions -- this is the exact bug
+  //     SMI-5990 diagnosed against staging. Can't repair via review_private_registry_submission()
+  //     instead: it refuses a service-role caller AND refuses self-approval, and Team B's only
+  //     admin (nonentId) is this row's own publisher, so a direct service-role UPDATE is the only
+  //     path. approval_mode is set to 'auto' (not left as 'review') to preserve the invariant
+  //     documented on the column itself (20260809000000_private_registry_approval_gate.sql): "an
+  //     approved row with approved_by NULL is legitimate iff approval_mode = 'auto'" --
+  //     approved_by/approved_at are nulled here for the same reason. `.neq('approval_status',
+  //     'approved')` rather than `.eq(..., 'pending')` so a 'rejected' drift is repaired too, not
+  //     just 'pending'.
+  const { error: approvalRepairErr } = await admin
+    .from('private_registry_skills')
+    .update({
+      approval_status: 'approved',
+      approval_mode: 'auto',
+      approved_by: null,
+      approved_at: null,
+    })
+    .eq('team_id', teamBId)
+    .eq('skill_id', durableSkillId)
+    .eq('version', DURABLE_SKILL_VERSION)
+    .neq('approval_status', 'approved')
+  if (approvalRepairErr) {
+    console.error(
+      `[SMI-5922 seed] Durable skill approval-status repair failed (SMI-5990): ${approvalRepairErr.message}`
+    )
+    process.exit(1)
+  }
+
   console.error(`[SMI-5922 seed] Durable Team B skill ready: ${durableSkillId}`)
 
   // 8. Final-state assertion before printing IDs — a partial prior run must self-heal on
@@ -311,7 +349,7 @@ async function main(): Promise<void> {
 
   const { data: finalSkill, error: finalSkillErr } = await admin
     .from('private_registry_skills')
-    .select('team_id,deprecated')
+    .select('team_id,deprecated,approval_status,approval_mode')
     .eq('team_id', teamBId)
     .eq('skill_id', durableSkillId)
     .eq('version', DURABLE_SKILL_VERSION)
@@ -321,7 +359,17 @@ async function main(): Promise<void> {
     process.exit(1)
   }
   if (!finalSkill) missing.push('Team B durable skill row')
-  else if (finalSkill.deprecated) missing.push('Team B durable skill row (still deprecated)')
+  else {
+    if (finalSkill.deprecated) missing.push('Team B durable skill row (still deprecated)')
+    // SMI-5990: a non-'approved' row has NO RLS read path at all (private_registry_skills_member_
+    // read requires approval_status = 'approved'), so a silent pass here would mask a real
+    // production-shaped 404-vs-403 bug for every read transport, not just a test artifact.
+    if (finalSkill.approval_status !== 'approved')
+      missing.push(
+        `Team B durable skill row approval_status (got ${finalSkill.approval_status}, want ` +
+          'approved -- otherwise RLS hides the row from every read transport, SMI-5990)'
+      )
+  }
 
   const { data: finalSubs, error: finalSubsErr } = await admin
     .from('subscriptions')
