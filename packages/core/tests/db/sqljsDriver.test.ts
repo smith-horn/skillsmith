@@ -6,12 +6,35 @@
  * to prevent contaminating betterSqlite3Driver.test.ts.
  */
 
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   createSqlJsDatabase,
   SqlJsDatabaseAdapter,
   isSqlJsAvailable,
 } from '../../src/db/drivers/sqljsDriver.js'
+
+// SMI-5997: sqljsDriver.ts imports writeFileSync from 'node:fs' as a live ESM
+// binding, which vi.spyOn cannot redefine ("Module namespace is not
+// configurable in ESM"). vi.mock + importOriginal is the supported way to
+// intercept a single named export while passing everything else through.
+const failNextWrite = vi.hoisted(() => ({ value: false }))
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      if (failNextWrite.value) {
+        failNextWrite.value = false
+        throw new Error('simulated crash mid-write')
+      }
+      return actual.writeFileSync(...args)
+    },
+  }
+})
 
 describe('sqljsDriver — edge cases', () => {
   describe('isSqlJsAvailable', () => {
@@ -93,6 +116,60 @@ describe('sqljsDriver — edge cases', () => {
       await expect(createSqlJsDatabase(nonExistentPath, { fileMustExist: true })).rejects.toThrow(
         /SQLITE_CANTOPEN/
       )
+    })
+  })
+
+  describe('persist() — atomic write (SMI-5997)', () => {
+    let dir: string
+    let dbPath: string
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'sqljs-persist-'))
+      dbPath = join(dir, 'test.db')
+    })
+
+    afterEach(() => {
+      failNextWrite.value = false
+      rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('writes via temp file + rename, leaving no leftover .tmp file', async () => {
+      const db = await createSqlJsDatabase(dbPath)
+      db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)')
+      db.exec("INSERT INTO t (name) VALUES ('alpha')")
+      db.persist()
+
+      expect(existsSync(dbPath)).toBe(true)
+      expect(existsSync(`${dbPath}.tmp`)).toBe(false)
+      expect(readFileSync(dbPath).length).toBeGreaterThan(0)
+
+      db.close()
+    })
+
+    it('leaves the original file byte-for-byte untouched if the write is interrupted', async () => {
+      const db = await createSqlJsDatabase(dbPath)
+      db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)')
+      db.exec("INSERT INTO t (name) VALUES ('alpha')")
+      db.persist()
+
+      const originalContent = readFileSync(dbPath)
+      expect(originalContent.length).toBeGreaterThan(0)
+
+      db.exec("INSERT INTO t (name) VALUES ('beta')")
+
+      // Simulate a crash/kill mid-write: writeFileSync (to the temp file)
+      // throws before rename() ever runs.
+      failNextWrite.value = true
+
+      expect(() => db.persist()).toThrow('simulated crash mid-write')
+
+      // Reproduces the SMI-5997 incident check in reverse: the real file
+      // must never be truncated by a failed write, only ever replaced
+      // wholesale by a successful rename().
+      expect(readFileSync(dbPath)).toEqual(originalContent)
+      expect(existsSync(`${dbPath}.tmp`)).toBe(false)
+
+      db.close()
     })
   })
 })

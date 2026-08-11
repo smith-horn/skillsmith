@@ -162,7 +162,29 @@ export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
     .get()
 
   if (!hasSchemaVersion) {
-    // Database has no version tracking - assume it's a legacy import
+    // SMI-5997: a database with no schema_version table is only a legacy
+    // import if it has OTHER tables. A file with zero tables at all is an
+    // empty or corrupt database (e.g. truncated by an interrupted sql.js
+    // persist() — see sqljsDriver.ts) — silently stamping schema_version=1
+    // here used to run every migration against a database with no base
+    // tables, failing opaquely with "no such table: skills" and eventually
+    // crashing server startup entirely. Fail loudly with remediation instead.
+    const tableCount = db
+      .prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table'")
+      .get() as { count: number } | undefined
+
+    if (!tableCount || tableCount.count === 0) {
+      throw new Error(
+        `[Skillsmith] Database at ${path} has no tables and no version metadata — ` +
+          'it is empty or corrupt, not a legacy import.\n' +
+          '[skillsmith] Run this command in the repo root, then reconnect via /mcp:\n\n' +
+          `    mv "${path}" "${path}.corrupt-$(date +%s)"\n\n` +
+          '[skillsmith] (a fresh database will be created automatically on next start)'
+      )
+    }
+
+    // Database has no version tracking but has other tables - assume it's a
+    // legacy import. Create schema_version table and set to version 1.
     db.exec(`
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY,
