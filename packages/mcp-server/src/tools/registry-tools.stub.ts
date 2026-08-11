@@ -4,10 +4,12 @@
  * @see SMI-5816: Private skill registry — real implementation (ADR-129)
  * @see SMI-5905 Wave 3: the stub now persists `content`, so a publish→install round-trip is
  *      testable without live Supabase
+ * @see SMI-5949 Wave 2 Step 5: the approval-gate state machine (D-5/D-6/D-7/D-8) is now modeled
+ *      in memory, replicating the two RPCs' behavior — see `setActor()` below.
  *
  * Local-dev / test fallback used when Supabase is NOT configured. The real, Postgres-backed
  * implementation lives in registry-tools.live.ts and is selected automatically once SUPABASE_URL +
- * SUPABASE_ANON_KEY are present.
+ * SUPABASE_ANON_KEY are present (see `registry-tools.ts`'s `isSupabaseConfigured()` branch).
  *
  * WHAT THIS STUB DOES NOT DO, and must never be read as evidence about:
  *   - **Entitlement.** `getContent()` here has no Enterprise/subscription check at all. That gate
@@ -19,18 +21,42 @@
  *   - **RLS / cross-team isolation.** Approximated only: entries are keyed by (teamId, skillId) so
  *     list/get/deprecate/getContent never cross a team boundary, but there is no policy engine
  *     behind it.
- *   - **SMI-5949 approval-gate state machine.** `publish()` below sets `approvalStatus:'approved'`,
- *     `approvalMode:'auto'` unconditionally — i.e. it always behaves like a pre-approval-gate
- *     publish, never like the `pending`/`review` state a real post-migration publish now lands in.
- *     This is the minimum edit needed for the stub to satisfy `RegistrySkill`'s two new fields
- *     (type safety only); it deliberately does NOT model `pending` invisibility. `submissions()`/
- *     `review()` below are, likewise, interface-completeness stubs ONLY — no self-approval
- *     refusal, no admin gating, no terminal-state enforcement, and `review()` never fails. Real
- *     coverage of all of that lives against the LIVE service (`registry-tools.live.test.ts` /
- *     `.review-action.test.ts`), which is what the D-5 RPCs actually enforce. Full stub state-
- *     machine parity (so a stub-only test could exercise the same failure paths) is Wave 2 Step
- *     5's job, tracked separately — a test that passes against this stub proves nothing about the
- *     approval gate's enforcement.
+ *   - **SMI-5949 approval-gate state machine — now modeled (Wave 2 Step 5).** `publish()` lands
+ *     every row `approvalStatus:'pending'`, `approvalMode:'review'`, matching D-7's unconditional
+ *     gate (nothing here auto-approves). `list()`/`get()` only ever return `'approved'` rows,
+ *     matching D-4 surfaces 3/4's `.eq('approval_status','approved')` predicate. `submissions()`/
+ *     `review()` replicate `get_private_registry_submissions()`'s visibility rule and
+ *     `review_private_registry_submission()`'s D-5 check order EXACTLY: decision value -> caller
+ *     identity present -> admin-membership -> row-exists -> terminal-state -> `published_by`
+ *     non-null -> self-approval (D-6/D-8). `setActor()` (below, NOT part of `PrivateRegistryService`
+ *     — a stub-only test seam) simulates `auth.uid()` + team-admin membership, since the stub has
+ *     no real JWT or RLS to derive either from.
+ *
+ *     What is STILL not modeled, and cannot be without a real Postgres behind it:
+ *     - **RLS-based pending invisibility.** A real pending row has NO PostgREST read path at all —
+ *       not even a query that tries; the policy itself is the enforcement. This stub only
+ *       APPROXIMATES that with an application-level `approvalStatus === 'approved'` filter inside
+ *       `list()`/`get()`/`submissions()` — a filter a future new stub method could simply omit, in
+ *       exactly the shape `deprecated`'s unenforced read filter already demonstrates (Context §
+ *       "precedent warning" in the plan doc). A real policy cannot be forgotten at a new call site;
+ *       this filter can, and there is no compiler or test that would catch a stub-only omission of
+ *       it the way the live RLS policy is proven by the Wave 1 migration smoke suite + staging
+ *       harness (P-4).
+ *     - **D-7's BEFORE INSERT trigger.** `publish()` never rejects a null-identity `setActor()`
+ *       actor — a real post-migration INSERT with NULL `published_by` is hard-rejected `23514` at
+ *       write time, so in live Postgres no NEW row can ever reach review with a null submitter
+ *       (D-5 step 6 is pure defense-in-depth there). This stub deliberately does NOT replicate that
+ *       trigger in `publish()` — doing so would make step 6 unexercisable in a stub-only test, and
+ *       the trigger itself is proven by the Wave 1 smoke suite's `a5`, not by this file.
+ *     - **Per-version approval state.** `registry` (this file's metadata map) has always held one
+ *       row per `(teamId, skillId)` — the most recently published version's metadata — regardless
+ *       of how many versions exist (a pre-existing simplification, not introduced by Step 5;
+ *       `versions`, the separate content map, stays correctly per-version). Publishing a second
+ *       version of an already-pending skill overwrites the first version's approval state rather
+ *       than tracking each version independently.
+ *     - **Multi-admin/multi-member team shape.** One simulated actor per stub instance, not a
+ *       roster — there is no "this team has exactly one admin, who is also the submitter" concept
+ *       to check the D-9 single-admin-deadlock scenario against.
  */
 
 import type { PrivateRegistryService, RegistrySkill, SkillContent } from './registry-tools.js'
@@ -56,10 +82,81 @@ interface StubVersion {
   sequence: number
 }
 
+/**
+ * The raw, possibly-null metadata row — mirrors `PrivateRegistrySkillRow` (registry-tools.live.ts):
+ * a `publishedBy` that CAN be null, distinct from the always-display-ready `RegistrySkill` the
+ * public methods return (which coerces an absent publisher to `'unknown'`, same as live's own
+ * `mapRow()`). Kept as an internal type so `RegistrySkill.publishedBy`'s public shape (`string`,
+ * never `null`) does not have to change to support D-5 step 6's null-published_by check.
+ */
+interface StubSkillRow {
+  skillId: string
+  version: string
+  description: string | null
+  deprecated: boolean
+  publishedAt: string
+  publishedBy: string | null
+  approvalStatus: 'pending' | 'approved' | 'rejected'
+  approvalMode: 'review' | 'auto'
+}
+
+/** The simulated caller identity `setActor()` sets — the stub's substitute for a real `auth.uid()`
+ *  plus `user_admin_team_ids()` membership, since there is no JWT or RLS behind this stub. */
+export interface StubActor {
+  /** Simulated `auth.uid()`. `null` simulates "no signed-in user" (D-5 step 2) — used both to
+   *  exercise that check directly on `review()`, and, if set before `publish()`, to construct a
+   *  row with a null `published_by` for D-5 step 6 (see this file's header on why `publish()`
+   *  itself does not reject that, unlike the real D-7 trigger). */
+  id: string | null
+  /** Simulated `user_admin_team_ids()` membership (`role IN ('admin','owner')`) — D-5 step 3. */
+  isAdmin: boolean
+}
+
+/**
+ * `PrivateRegistryService` plus the stub-only `setActor()` identity seam. NOT part of the shared
+ * interface — `registry-tools.ts` still types its module-level singleton as plain
+ * `PrivateRegistryService`, so production code and every non-identity-aware test are unaffected.
+ */
+export interface StubRegistryService extends PrivateRegistryService {
+  /**
+   * Sets the identity behind every subsequent `publish()`/`review()`/`submissions()` call on this
+   * stub instance, until changed again — mirrors a real session, where `skillsmith login` picks
+   * one identity for every call that session makes. Defaults to a non-null, admin actor (see
+   * `DEFAULT_ACTOR` below), so a fresh stub's `publish()` alone behaves as it always has; a test
+   * exercising the review gate itself must call this explicitly before `review()`/`submissions()`,
+   * same as the real smoke matrix requires a distinct admin login to approve someone else's
+   * submission (D-6 blocks a reviewer approving their own).
+   */
+  setActor(actor: StubActor): void
+}
+
+/** A fresh stub's starting identity — admin, so `submissions()`/`review()` are usable without any
+ *  setup for a caller who does not care about the D-5 identity checks specifically. Any test
+ *  exercising self-approval, non-admin denial, or the missing-`published_by` case calls
+ *  `setActor()` explicitly (see the JSDoc above). */
+const DEFAULT_ACTOR: StubActor = { id: 'stub-actor-1', isAdmin: true }
+
+function toRegistrySkill(teamId: string, row: StubSkillRow): RegistrySkill {
+  return {
+    skillId: row.skillId,
+    version: row.version,
+    description: row.description,
+    deprecated: row.deprecated,
+    publishedAt: row.publishedAt,
+    // Same null-coalescing display convention as live's mapRow() — 'unknown' is a DISPLAY
+    // sentinel; the raw `null` (D-5 step 6's case) still lives on `row.publishedBy` for the
+    // review()/submissions() checks below, which must see the real null, not 'unknown'.
+    publishedBy: row.publishedBy ?? 'unknown',
+    registryUrl: `https://registry.skillsmith.app/private/${teamId}/${row.skillId}@${row.version}`,
+    approvalStatus: row.approvalStatus,
+    approvalMode: row.approvalMode,
+  }
+}
+
 /** @internal Exported for testing */
-export function createStubRegistryService(): PrivateRegistryService {
+export function createStubRegistryService(): StubRegistryService {
   // Keyed by `${teamId}::${skillId}` so the stub never leaks across teams.
-  const registry = new Map<string, RegistrySkill>()
+  const registry = new Map<string, StubSkillRow>()
   const key = (teamId: string, skillId: string): string => `${teamId}::${skillId}`
 
   // Every published version's content, keyed by `${teamId}::${skillId}::${version}`.
@@ -67,6 +164,9 @@ export function createStubRegistryService(): PrivateRegistryService {
   const versionKey = (teamId: string, skillId: string, version: string): string =>
     `${key(teamId, skillId)}::${version}`
   let publishSequence = 0
+
+  // SMI-5949 Wave 2 Step 5: the simulated caller — see StubActor/setActor() above.
+  let actor: StubActor = DEFAULT_ACTOR
 
   /** The most recently published version of a skill, or undefined when none exist. */
   function latestVersion(teamId: string, skillId: string): StubVersion | undefined {
@@ -86,20 +186,21 @@ export function createStubRegistryService(): PrivateRegistryService {
   return {
     async publish(teamId, skillId, version, content: SkillContent, description) {
       const publishedAt = new Date().toISOString()
-      const skill: RegistrySkill = {
+      const row: StubSkillRow = {
         skillId,
         version,
         description: description ?? null,
         deprecated: false,
         publishedAt,
-        publishedBy: 'current-user',
-        registryUrl: `https://registry.skillsmith.app/private/${teamId}/${skillId}@${version}`,
-        // SMI-5949 Wave 2 Step 2: unconditional, pre-approval-gate values — see the header's
-        // "does not do" list. Full state-machine modeling is Wave 2 Step 5, done separately.
-        approvalStatus: 'approved',
-        approvalMode: 'auto',
+        // D-7: a real submitter identity (or, deliberately, null — see this file's header on why
+        // publish() does not reject that the way the real trigger does).
+        publishedBy: actor.id,
+        // D-7/D-3: every publish lands pending/review, unconditionally — nothing here auto-
+        // approves. Matches what a post-migration live publish now does for every Enterprise team.
+        approvalStatus: 'pending',
+        approvalMode: 'review',
       }
-      registry.set(key(teamId, skillId), skill)
+      registry.set(key(teamId, skillId), row)
       versions.set(versionKey(teamId, skillId, version), {
         teamId,
         skillId,
@@ -108,27 +209,35 @@ export function createStubRegistryService(): PrivateRegistryService {
         publishedAt,
         sequence: ++publishSequence,
       })
-      return skill
+      return toRegistrySkill(teamId, row)
     },
 
+    // D-4 surface 3 (list): only 'approved' rows — the stub's approximation of the RLS predicate
+    // (see this file's header on why it is an approximation, not the real thing).
     async list(teamId, version) {
       const all = [...registry.entries()]
         .filter(([k]) => k.startsWith(`${teamId}::`))
-        .map(([, v]) => v)
-      if (version) return all.filter((s) => s.version === version)
-      return all
+        .map(([, row]) => row)
+        .filter((row) => row.approvalStatus === 'approved')
+        .map((row) => toRegistrySkill(teamId, row))
+      return version ? all.filter((s) => s.version === version) : all
     },
 
+    // D-4 surface 4 (get): same 'approved'-only predicate as list() above.
     async get(teamId, skillId, version) {
-      const skill = registry.get(key(teamId, skillId))
-      if (!skill) return null
-      if (version && skill.version !== version) return null
-      return skill
+      const row = registry.get(key(teamId, skillId))
+      if (!row || row.approvalStatus !== 'approved') return null
+      if (version && row.version !== version) return null
+      return toRegistrySkill(teamId, row)
     },
 
     // Same version semantics as the live service: an explicit `version` pins it, otherwise the
     // most recently published wins. Returns null (never throws) for an absent skill/version, so
     // the install handler's not-found branch behaves identically in stub and live mode.
+    //
+    // Deliberately NOT approval-gated (unlike list()/get() above) — out of this step's scope; see
+    // this file's header. In live mode this path is gated structurally by RLS with no code change
+    // (D-4 surface 2), which this stub has no analogue of at all, gated or not.
     async getContent(teamId, skillId, version): Promise<RegistrySkillContent | null> {
       const entry = version
         ? versions.get(versionKey(teamId, skillId, version))
@@ -148,44 +257,104 @@ export function createStubRegistryService(): PrivateRegistryService {
     },
 
     async deprecate(teamId, skillId) {
-      const skill = registry.get(key(teamId, skillId))
-      if (!skill) return false
-      skill.deprecated = true
+      const row = registry.get(key(teamId, skillId))
+      if (!row) return false
+      row.deprecated = true
       return true
     },
 
     async undeprecate(teamId, skillId) {
-      const skill = registry.get(key(teamId, skillId))
-      if (!skill) return false
-      skill.deprecated = false
+      const row = registry.get(key(teamId, skillId))
+      if (!row) return false
+      row.deprecated = false
       return true
     },
 
-    // Interface-completeness only — see this file's header. `publish()` above never lands
-    // anything but 'approved'/'auto' in stub mode, so this is `list()` with an optional status
-    // filter that (honestly) only ever matches 'approved'.
+    // D-5 (get_private_registry_submissions): 'approved' rows to anyone; non-approved rows only to
+    // their own submitter or the simulated admin actor — the stub's approximation of the RPC's own
+    // visibility rule (see this file's header: an approximation, not a real policy).
     async submissions(teamId, status) {
-      const all = [...registry.entries()]
+      const rows = [...registry.entries()]
         .filter(([k]) => k.startsWith(`${teamId}::`))
-        .map(([, v]) => v)
-      return status ? all.filter((s) => s.approvalStatus === status) : all
+        .map(([, row]) => row)
+        .filter(
+          (row) =>
+            row.approvalStatus === 'approved' ||
+            (actor.id !== null && row.publishedBy === actor.id) ||
+            actor.isAdmin
+        )
+        .map((row) => toRegistrySkill(teamId, row))
+      return status ? rows.filter((s) => s.approvalStatus === status) : rows
     },
 
-    // Interface-completeness only — see this file's header. No self-approval refusal, no admin
-    // gating, no terminal-state check: this unconditionally applies the requested decision.
+    // D-5 (review_private_registry_submission) / D-6 (self-approval) / D-8 (terminal state).
+    // Replicates the RPC's check ORDER exactly (plan-review finding M7) — not just the outcome:
+    //   1. decision value -> 2. caller identity present -> 3. admin-membership -> 4. row exists ->
+    //   5. terminal-state -> 6. published_by non-null -> 7. self-approval.
     async review(teamId, skillId, version, decision, note): Promise<RegistryReviewDecision> {
-      const skill = registry.get(key(teamId, skillId))
-      if (!skill || skill.version !== version) {
+      // Step 1: TS's own union type already stops a well-typed caller from passing anything else;
+      // replicated anyway so the check ORDER matches the RPC's, not just the eventual outcome.
+      if (decision !== 'approved' && decision !== 'rejected') {
+        throw new Error(
+          `Invalid decision "${String(decision)}" — must be "approved" or "rejected".`
+        )
+      }
+      // Step 2: `auth.uid()` must be non-NULL — a service-role (no-identity) caller can never
+      // approve. `actor.id === null` is this stub's simulation of that (see StubActor/setActor()).
+      if (actor.id === null) {
+        throw new Error(
+          'A private-registry review requires a signed-in user — no caller identity is set on ' +
+            'this stub. Call setActor() with a non-null id before review()/submissions().'
+        )
+      }
+      // Step 3: admin-membership (`user_admin_team_ids()`), else 42501.
+      if (!actor.isAdmin) {
+        throw new Error(
+          'Only team admins can review private-registry submissions. Your account is a member ' +
+            'of this team but not an admin — ask a team admin to run this, or have them ' +
+            'promote you.'
+        )
+      }
+      // Step 4: row must exist. (Checked AFTER the admin gate, deliberately — see D-5: existence
+      // is not leaked to a non-admin caller either.)
+      const row = registry.get(key(teamId, skillId))
+      if (!row || row.version !== version) {
         throw new Error(`Skill "${skillId}@${version}" not found in private registry.`)
       }
-      skill.approvalStatus = decision
-      skill.approvalMode = 'review'
+      // Step 5: terminal-state — approved/rejected can never be re-reviewed (D-8).
+      if (row.approvalStatus !== 'pending') {
+        throw new Error(
+          `This submission has already been ${row.approvalStatus} and cannot be reviewed again ` +
+            '— approved and rejected are both terminal decisions.'
+        )
+      }
+      // Step 6: published_by must be non-null. The stub's own rows always have one by
+      // construction (this file's header explains why publish() cannot land a null one through
+      // normal use) — this branch exists for check-order parity with the live RPC, not because a
+      // normal publish->review flow reaches it.
+      if (row.publishedBy === null) {
+        throw new Error(
+          'This submission has no recorded submitter (published_by is NULL) and cannot be ' +
+            'reviewed — it was published by a client older than the required version. Ask the ' +
+            'submitter to upgrade and re-publish.'
+        )
+      }
+      // Step 7: self-approval blocked (D-6) — the submitter may never review their own work, admin
+      // or not.
+      if (row.publishedBy === actor.id) {
+        throw new Error(
+          'You cannot approve your own submission. Ask another team admin to review it.'
+        )
+      }
+
+      row.approvalStatus = decision
+      const approvedAt = new Date().toISOString()
       return {
         skillId,
         version,
         approvalStatus: decision,
-        approvedBy: 'current-user',
-        approvedAt: new Date().toISOString(),
+        approvedBy: actor.id,
+        approvedAt,
         reviewNote: note ?? null,
       }
     },
@@ -198,6 +367,10 @@ export function createStubRegistryService(): PrivateRegistryService {
     // implementation.
     async getNamespace(_teamId) {
       return null
+    },
+
+    setActor(next: StubActor): void {
+      actor = next
     },
   }
 }

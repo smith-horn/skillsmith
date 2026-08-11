@@ -27,7 +27,7 @@
  * version specified" resolves to, or about what actually lands on disk.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -44,7 +44,31 @@ import {
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { executeRegistryInstall } from './registry-tools.install-action.js'
-import { createStubRegistryService, type PrivateRegistryService } from './registry-tools.js'
+import {
+  createStubRegistryService,
+  type PrivateRegistryService,
+  type StubRegistryService,
+} from './registry-tools.js'
+import { createLiveRegistryService } from './registry-tools.live.js'
+import { createFakeClient, mockBothClients } from './registry-tools.live.test-helpers.js'
+
+// SMI-5949 Wave 2 Step 5 (plan-review finding M7): the stub/live review-gate PARITY block below
+// needs both mocked — neither is touched by this file's pre-existing publish/install-round-trip
+// tests above, which drive the stub directly and never resolve a team via Supabase, so mocking
+// these here is safe for them.
+vi.mock('../supabase-client.js', () => ({
+  isSupabaseConfigured: vi.fn(() => true),
+  getSupabaseClient: vi.fn(),
+  getSupabaseAdminClient: vi.fn(),
+  getSupabaseUserClient: vi.fn(),
+  resetSupabaseClients: vi.fn(),
+}))
+
+vi.mock('./team-resolver.js', () => ({
+  readLicenseKey: vi.fn(() => 'sk_test_fake_license'),
+  resolveLicenseTeamId: vi.fn(async () => 'team-alpha'),
+  resolveUserAccessToken: vi.fn(async () => 'fake-user-access-token'),
+}))
 
 const mockContext = {} as ToolContext
 const TEAM = 'team-alpha'
@@ -287,5 +311,165 @@ describe('MCP and CLI transports agree on version selection, given the same publ
       'utf-8'
     )
     expect(cliSkillMd).toBe(mcpSkillMd)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5949 Wave 2 Step 5 (plan-review finding M7) — stub/live review-gate PARITY
+// ---------------------------------------------------------------------------
+//
+// Exercises `PrivateRegistryService.review()` DIRECTLY on a stub instance and a live instance
+// (fake-client-backed), bypassing the tool dispatcher — a SERVICE-level parity proof, not a
+// message-format proof (registry-tools.live.review-decision.test.ts already owns verbatim-
+// passthrough of the live RPC's own text). The requirement (M7) is error TYPE and ORDER parity:
+// both transports must fail at the SAME conceptual D-5 check for the same scenario, not merely
+// "both throw". Each case below asserts the expected pattern matches AND that the other three
+// documented failure patterns do NOT — proving the right check fired, not an accidental one.
+const REVIEW_TEAM = 'team-parity'
+const REVIEW_SKILL = 'myteam/parity-skill'
+const REVIEW_VERSION = '1.0.0'
+const REVIEW_CONTENT = {
+  'SKILL.md': '# Parity Skill\n\nUsed only by the review-gate parity tests.',
+}
+
+const PARITY_PATTERNS = {
+  notAdmin: /not an admin|admins can/i,
+  selfApproval: /own submission/i,
+  terminal: /already been (approved|rejected)/i,
+  missingPublisher: /no recorded submitter|published_by.*NULL/i,
+}
+
+/** Asserts `err` matches exactly the ONE expected pattern among the four documented D-5 failure
+ *  shapes — proving order, not just type: a hit on the wrong pattern means the wrong check fired. */
+function expectOnlyPattern(message: string, expected: keyof typeof PARITY_PATTERNS): void {
+  for (const [name, pattern] of Object.entries(PARITY_PATTERNS)) {
+    if (name === expected) {
+      expect(message).toMatch(pattern)
+    } else {
+      expect(message).not.toMatch(pattern)
+    }
+  }
+}
+
+/** Live-side RPC error fixture — same four scenarios registry-tools.live.review-decision.test.ts
+ *  scripts, reused here so the live half of each parity case is driven by the exact shape the RPC
+ *  itself returns, not a hand-rolled approximation. */
+function liveRpcError(error: { code: string; message: string }) {
+  return {
+    rpcResponder: (fn: string) =>
+      fn === 'review_private_registry_submission'
+        ? { data: null, error }
+        : { data: [], error: null },
+  }
+}
+
+describe('stub/live review-gate error parity (SMI-5949 Wave 2 Step 5, M7)', () => {
+  let stub: StubRegistryService
+
+  beforeEach(() => {
+    stub = createStubRegistryService()
+  })
+
+  it('not-admin: both transports fail at the admin-membership check (D-5 step 3)', async () => {
+    const { client } = createFakeClient(
+      liveRpcError({
+        code: '42501',
+        message:
+          'Only team admins can review private-registry submissions. This team has no other ' +
+          'admin/owner besides the submitter — promote a second admin/owner to unblock review.',
+      })
+    )
+    await mockBothClients(client)
+    const live = createLiveRegistryService()
+    const liveErr = await live
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((liveErr as Error).message, 'notAdmin')
+
+    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
+    stub.setActor({ id: 'a-different-non-admin', isAdmin: false })
+    const stubErr = await stub
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((stubErr as Error).message, 'notAdmin')
+  })
+
+  it('self-approval: both transports fail at self-approval, not the admin check (D-5 step 7 / D-6)', async () => {
+    const { client } = createFakeClient(
+      liveRpcError({
+        code: 'P0001',
+        message: 'You cannot approve your own submission. Ask another team admin to review it.',
+      })
+    )
+    await mockBothClients(client)
+    const live = createLiveRegistryService()
+    const liveErr = await live
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((liveErr as Error).message, 'selfApproval')
+
+    // The publisher must ALSO be admin here (mirrors the plan's smoke matrix, H3): otherwise the
+    // admin check (step 3) fires first and this would prove the wrong thing.
+    stub.setActor({ id: 'same-actor', isAdmin: true })
+    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
+    const stubErr = await stub
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((stubErr as Error).message, 'selfApproval')
+  })
+
+  it('already-decided: both transports fail at the terminal-state check (D-5 step 5 / D-8)', async () => {
+    const { client } = createFakeClient(
+      liveRpcError({
+        code: 'P0001',
+        message:
+          'This submission has already been approved and cannot be reviewed again — approved ' +
+          'and rejected are both terminal decisions.',
+      })
+    )
+    await mockBothClients(client)
+    const live = createLiveRegistryService()
+    const liveErr = await live
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((liveErr as Error).message, 'terminal')
+
+    stub.setActor({ id: 'publisher', isAdmin: false })
+    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
+    stub.setActor({ id: 'admin-1', isAdmin: true })
+    await stub.review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved') // succeeds once
+    const stubErr = await stub
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((stubErr as Error).message, 'terminal')
+  })
+
+  it('missing published_by: both transports fail at the legacy-client check (D-5 step 6, D-7)', async () => {
+    const { client } = createFakeClient(
+      liveRpcError({
+        code: '23514',
+        message:
+          'This submission has no recorded submitter (published_by is NULL) and cannot be ' +
+          'reviewed — it was published by a client older than the required version. Ask the ' +
+          'submitter to upgrade and re-publish.',
+      })
+    )
+    await mockBothClients(client)
+    const live = createLiveRegistryService()
+    const liveErr = await live
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((liveErr as Error).message, 'missingPublisher')
+
+    // Publish with a null identity — the only way a stub row can lack published_by (see
+    // registry-tools.stub.ts's header for why publish() does not itself reject this, unlike the
+    // real D-7 trigger).
+    stub.setActor({ id: null, isAdmin: false })
+    await stub.publish(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, REVIEW_CONTENT)
+    stub.setActor({ id: 'admin-1', isAdmin: true })
+    const stubErr = await stub
+      .review(REVIEW_TEAM, REVIEW_SKILL, REVIEW_VERSION, 'approved')
+      .catch((e: Error) => e)
+    expectOnlyPattern((stubErr as Error).message, 'missingPublisher')
   })
 })

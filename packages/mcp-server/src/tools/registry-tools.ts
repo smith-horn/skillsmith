@@ -46,8 +46,12 @@ import type {
   PrivateRegistryManageInput,
 } from './registry-tools.schemas.js'
 
-// Re-export stub factory for external consumers and tests
+// Re-export stub factory for external consumers and tests. `StubRegistryService`/`StubActor`
+// (SMI-5949 Wave 2 Step 5) are the stub-only identity-simulation seam — see registry-tools.stub.ts
+// — not part of `PrivateRegistryService` itself, so this module's own singleton stays typed as
+// plain `PrivateRegistryService` below.
 export { createStubRegistryService } from './registry-tools.stub.js'
+export type { StubRegistryService, StubActor } from './registry-tools.stub.js'
 
 // Both the Zod runtime-validation schemas and the MCP tool-registration schemas live in
 // registry-tools.schemas.ts (SMI-5949 D-12 Wave 2 Steps 1 + 4 — this file's own 500-line
