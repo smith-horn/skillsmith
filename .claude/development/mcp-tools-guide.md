@@ -15,6 +15,9 @@ Reference for Skillsmith MCP server tools, authentication, and CLI.
 | `compare` | Compare 2-5 skills side-by-side |
 | `skill_diff` | Diff two installed skill versions side-by-side |
 | `skill_audit` | Audit skill for security advisories (Team+) |
+| `publish_private` | Mark a skill private on this device, hidden from your own search results (Team+) |
+| `private_registry_publish` | Publish a skill version to your team's private registry as a pending submission (Enterprise) |
+| `private_registry_manage` | List/get/install/deprecate/undeprecate/review your team's private registry via the `action` parameter (Enterprise) |
 
 ## Authentication
 

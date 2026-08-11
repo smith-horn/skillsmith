@@ -1,8 +1,45 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+
+const howToSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'HowTo',
+  name: "How to Publish a Skill to Your Team's Private Registry",
+  description:
+    "Publish a versioned skill to your organization's Enterprise-tier private registry and get it approved by a team admin before it goes live.",
+  step: [
+    {
+      '@type': 'HowToStep',
+      position: 1,
+      name: 'Sign in personally',
+      text: "Run skillsmith login. Publishing requires a real signed-in identity, not just the team's shared license key, so approval decisions can be tied to the actual person who made them.",
+    },
+    {
+      '@type': 'HowToStep',
+      position: 2,
+      name: 'Publish a version',
+      text: 'Use the private_registry_publish MCP tool to submit a skill ID and version. This creates a pending submission, invisible to search, get, and install until reviewed.',
+    },
+    {
+      '@type': 'HowToStep',
+      position: 3,
+      name: 'A different admin reviews it',
+      text: 'A team admin other than the submitter approves or rejects the submission using private_registry_manage. Self-approval is blocked at the database level.',
+    },
+    {
+      '@type': 'HowToStep',
+      position: 4,
+      name: 'Approved versions go live',
+      text: 'Once approved, the version becomes immediately visible and installable to the whole team. Both approve and reject are terminal; a rejected version can only be superseded by publishing a new version.',
+    },
+  ],
+};
 ---
 
-<DocsLayout title="Private Registry" description="How Skillsmith's Enterprise-tier private registry keeps your team's skills versioned, access-controlled, and namespaced to your organization">
+<DocsLayout title="Private Registry" description="How Skillsmith's Enterprise-tier private registry keeps your team's skills versioned, review-approved, access-controlled, and namespaced to your organization">
+  <!-- JSON-LD HowTo Schema -->
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(howToSchema)} />
+
   <h1>Private Registry</h1>
 
   <p class="lead">
