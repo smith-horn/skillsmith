@@ -162,6 +162,11 @@ describe('registry-tools', () => {
       expect(result.skill!.deprecated).toBe(false)
       expect(result.skill!.registryUrl).toContain('myteam/my-skill@1.0.0')
       expect(result.message).toContain('Published')
+      expect(result.message).toContain('Registry URL')
+      // SMI-5949: the stub does not model the approval gate (Wave 2 Step 5, separate) — it
+      // always behaves like a pre-approval-gate publish.
+      expect(result.skill!.approvalStatus).toBe('approved')
+      expect(result.skill!.approvalMode).toBe('auto')
     })
 
     it('should publish a skill with description', async () => {
@@ -224,13 +229,16 @@ describe('registry-tools', () => {
       expect(result.error).toContain('skillId is required')
     })
 
-    it('should fail get for nonexistent skill', async () => {
+    it('should fail get for nonexistent skill, with a generic non-leaking hint (SMI-5949 M11)', async () => {
       const result = await executePrivateRegistryManage(
         { action: 'get', skillId: 'myteam/nonexistent' },
         mockContext
       )
       expect(result.success).toBe(false)
       expect(result.error).toContain('not found')
+      // The hint is always-shown and generic — it must never confirm or deny that an
+      // unapproved (pending/rejected) version specifically exists.
+      expect(result.error).toMatch(/check with a team admin/i)
     })
 
     it('should deprecate a skill', async () => {

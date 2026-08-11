@@ -25,9 +25,10 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubRegistryService } from './registry-tools.stub.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
 import { executeRegistryInstall } from './registry-tools.install-action.js'
-import type {
-  PrivateRegistryInstallSummary,
-  RegistrySkillContent,
+import {
+  registrySkillNotFoundMessage,
+  type PrivateRegistryInstallSummary,
+  type RegistrySkillContent,
 } from './registry-tools.content.types.js'
 import { hasSafeSkillIdSegments } from './registry-tools.skill-id.js'
 
@@ -102,6 +103,23 @@ export interface RegistrySkill {
   publishedAt: string
   publishedBy: string
   registryUrl: string
+  /**
+   * SMI-5949 D-3. Every row has one (`NOT NULL` on the table). `list()`/`get()` only ever return
+   * `'approved'` rows (D-4's `.eq('approval_status','approved')` predicate) — the field is still
+   * populated from the real column rather than hardcoded, so it stays accurate if that predicate
+   * is ever loosened for an admin-facing view. A freshly-`publish()`-ed skill is `'pending'` until
+   * an admin reviews it. Never print this bare field name unqualified in a user-facing message —
+   * pair it with a noun phrase (e.g. "review status") so it is not confused with `approvalMode`.
+   */
+  approvalStatus: 'pending' | 'approved' | 'rejected'
+  /**
+   * SMI-5949 D-3. `'auto'` for rows grandfathered in before the approval gate existed;
+   * `'review'` for everything published after. Disambiguates an `approved` row with no approver:
+   * legitimate iff `approvalMode === 'auto'`. Never print this bare field name unqualified in a
+   * user-facing message — pair it with a noun phrase (e.g. "approval workflow") so it is not
+   * confused with `approvalStatus`.
+   */
+  approvalMode: 'review' | 'auto'
 }
 
 export interface PrivateRegistryPublishResult {
@@ -277,14 +295,26 @@ async function executePrivateRegistryPublishImpl(
       input.content,
       input.description
     )
+    // SMI-5949 Wave 2 Step 2 (plan-review finding M9): a 'pending' result is not live yet — the
+    // message must say so and must NOT present a Registry URL, which would read as "installable
+    // now" when it structurally is not (D-4's RLS hides the row from every read surface until an
+    // admin approves it). Every other value ('approved' — pre-approval-gate rows and Enterprise
+    // teams without the gate; 'rejected' can never reach here, publish() always inserts pending)
+    // keeps the pre-existing "published, here is the URL" message.
+    const message =
+      skill.approvalStatus === 'pending'
+        ? `Submitted ${input.skillId}@${input.version} for review — an admin must approve it ` +
+          'before teammates can install it. Review confirms who published this and what ' +
+          'version/description was submitted; it does not include a full content read by the ' +
+          'approver.'
+        : `Published ${input.skillId}@${input.version} to private registry.\n` +
+          `Registry URL: ${skill.registryUrl}`
     return {
       success: true,
       dataSource,
       skill,
       skillNamespace,
-      message:
-        `Published ${input.skillId}@${input.version} to private registry.\n` +
-        `Registry URL: ${skill.registryUrl}`,
+      message,
     }
   } catch (err) {
     return {
@@ -334,10 +364,13 @@ async function executePrivateRegistryManageImpl(
         }
         const skill = await service.get(teamId, input.skillId, input.version)
         if (!skill) {
+          // Non-leaking (plan-review finding M11): the same message covers "does not exist",
+          // "wrong team", and "exists but is pending/rejected and therefore RLS-invisible" — a
+          // caller must not be able to distinguish those from this response.
           return {
             success: false,
             dataSource,
-            error: `Skill "${input.skillId}" not found in private registry.`,
+            error: registrySkillNotFoundMessage(input.skillId),
           }
         }
         return { success: true, dataSource, skill }

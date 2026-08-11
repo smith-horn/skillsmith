@@ -132,14 +132,20 @@ describe('private_registry_manage(action:"install") — dispatch', () => {
   })
 
   it('reports a never-published skill as not found, in action:"get"\'s exact words', async () => {
-    // Byte-identical to the `get` action's message: a cross-team skillId lands here too (RLS
-    // returns no rows), so this must not distinguish "absent" from "not your team".
+    // Byte-identical to the `get` action's message (registrySkillNotFoundMessage,
+    // registry-tools.content.types.ts): a cross-team skillId lands here too (RLS returns no
+    // rows), and so does a skillId whose only version is pending/rejected (SMI-5949 D-4) — this
+    // must not distinguish any of those from "absent". SMI-5949 Wave 2 Step 3 appended a
+    // generic, non-leaking hint to the shared message (plan-review finding M11).
     const result = await executePrivateRegistryManage(
       { action: 'install', skillId: 'myteam/nope' },
       mockContext
     )
     expect(result.success).toBe(false)
-    expect(result.error).toBe('Skill "myteam/nope" not found in private registry.')
+    expect(result.error).toBe(
+      'Skill "myteam/nope" not found in private registry. If you expect this to exist, check ' +
+        'with a team admin.'
+    )
   })
 })
 

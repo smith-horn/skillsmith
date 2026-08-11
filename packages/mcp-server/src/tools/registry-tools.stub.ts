@@ -19,6 +19,13 @@
  *   - **RLS / cross-team isolation.** Approximated only: entries are keyed by (teamId, skillId) so
  *     list/get/deprecate/getContent never cross a team boundary, but there is no policy engine
  *     behind it.
+ *   - **SMI-5949 approval-gate state machine.** `publish()` below sets `approvalStatus:'approved'`,
+ *     `approvalMode:'auto'` unconditionally — i.e. it always behaves like a pre-approval-gate
+ *     publish, never like the `pending`/`review` state a real post-migration publish now lands in.
+ *     This is the minimum edit needed for the stub to satisfy `RegistrySkill`'s two new fields
+ *     (type safety only); it deliberately does NOT model `pending` invisibility, self-approval
+ *     refusal, or the review/approve/reject RPCs — that is Wave 2 Step 5's job, tracked
+ *     separately. A test that passes against this stub proves nothing about the approval gate.
  */
 
 import type { PrivateRegistryService, RegistrySkill, SkillContent } from './registry-tools.js'
@@ -81,6 +88,10 @@ export function createStubRegistryService(): PrivateRegistryService {
         publishedAt,
         publishedBy: 'current-user',
         registryUrl: `https://registry.skillsmith.app/private/${teamId}/${skillId}@${version}`,
+        // SMI-5949 Wave 2 Step 2: unconditional, pre-approval-gate values — see the header's
+        // "does not do" list. Full state-machine modeling is Wave 2 Step 5, done separately.
+        approvalStatus: 'approved',
+        approvalMode: 'auto',
       }
       registry.set(key(teamId, skillId), skill)
       versions.set(versionKey(teamId, skillId, version), {
