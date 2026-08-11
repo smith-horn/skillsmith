@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `private_registry_publish` now requires a genuine two-party review before a version
+  becomes installable — a submission lands `pending` and is invisible on every read surface
+  (`list`/`get`/`install`) until a different team admin/owner approves it via three new
+  `private_registry_manage` actions (`submissions`, `approve`, `reject`); self-approval is refused.
+  `publish` now runs on the signed-in user's own credentials (`skillsmith login`, in addition to
+  `SKILLSMITH_LICENSE_KEY`) rather than the shared license key alone, so a submission can actually
+  name who submitted it (SMI-5949 Wave 2)
+- **Fix**: a deprecated private-registry skill is now genuinely excluded from `list`/`get`/`install`
+  and the content-read path — previously `deprecated` was documented and messaged as hiding a
+  skill, but no read path actually enforced it. `list` gains an `includeDeprecated` opt-in so a
+  team admin can still see what they deprecated; `get`/`install` have no equivalent opt-in (SMI-5949
+  Wave 2)
+
 ## v0.7.7
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.7.6).

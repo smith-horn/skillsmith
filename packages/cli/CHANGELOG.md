@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `license-types.ts`'s `TIER_FEATURES` was silently missing `version_tracking`
+  (individual/team/enterprise) and `skill_security_audit` (team/enterprise) versus the canonical
+  `@smith-horn/enterprise` package's own feature membership — this file has no compiler backstop
+  (`Record<LicenseTier, string[]>`, not `Record<FeatureFlag, ...>`), so the drift went undetected
+  until a new regression test comparing the two caught it. Also adds the new `registry_approval`
+  flag to the `enterprise` tier (SMI-5949 Wave 2)
+
 ## v0.8.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.8.4).

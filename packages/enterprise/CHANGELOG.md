@@ -4,6 +4,13 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: new `registry_approval` `FeatureFlag` (Enterprise tier) for the private-registry
+  approval-gate review workflow — catalog-only in this release (display name, description, tier
+  membership across `FeatureFlags.ts`/`types.ts`/`TierMapping.ts`/`degradation-types.ts`); no
+  runtime gate changes, since `TOOL_FEATURES` deliberately keeps `private_registry_publish`/
+  `private_registry_manage` mapped to the existing `private_registry` flag so no already-issued
+  Enterprise license is affected (SMI-5949 Wave 2)
+
 ## v0.3.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.3.4).
