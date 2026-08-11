@@ -91,8 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Compatibility filter demoted from exclusion to ranking signal** (2026-08-11, SMI-5929,
-  **breaking response-contract change**): `search` (MCP tool, CLI, and the `skills-search` edge
-  function) no longer HARD-EXCLUDES a result whose declared `compatibility` doesn't include the
+  **breaking response-contract change**): `search` (MCP tool and the `skills-search` edge
+  function — the CLI does not currently expose a compatibility filter of its own, see
+  `packages/cli/CHANGELOG.md`) no longer HARD-EXCLUDES a result whose declared `compatibility` doesn't include the
   requested client — for a client like Cursor (~0.83% of the corpus tagged `cursor`), that exclusion
   ran client-side *after* the API had already returned a fixed-size page, so a query could come back
   nearly empty even when plenty of relevant results existed. Replaced with a 3-tier rank: rank 0 =

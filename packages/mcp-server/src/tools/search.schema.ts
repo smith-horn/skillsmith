@@ -68,10 +68,11 @@ export const searchToolSchema = {
         minimum: 0,
         maximum: 100,
       },
-      // SMI-2760: Compatibility filter
+      // SMI-2760/SMI-5929: compatibility is a RANKING signal, not an exclusion
+      // filter — declared-incompatible skills rank lower but are still returned.
       compatible_with: {
         type: 'object',
-        description: 'Filter by IDE and/or LLM compatibility',
+        description: 'Rank by IDE and/or LLM compatibility (deprioritizes, never excludes)',
         properties: {
           ides: {
             type: 'array',
