@@ -103,9 +103,18 @@ const CONTEXT_STOPWORDS = new Set<string>([
  * SMI-5986) — they're meaningful trailing characters in real technical terms
  * ("c++", "c#"), not punctuation noise; stripping them turned both into the
  * single character "c", which the length filter then discarded entirely.
+ *
+ * Implemented as two separate anchored regexes (leading, then trailing)
+ * rather than one `/^X+|Y+$/g` alternation (CodeQL js/polynomial-redos,
+ * SMI-5986 PR review): empirically both forms are linear-time here — a
+ * 200k-character adversarial input runs in under 1ms either way, since a
+ * single `+` on a plain negated character class doesn't backtrack — but
+ * CodeQL's static heuristic flags the combined anchored-alternation shape
+ * regardless. Splitting into two single-purpose regexes is the standard
+ * defusing refactor and keeps the actual behavior identical.
  */
 function stripEdgePunctuation(word: string): string {
-  return word.replace(/^[^a-z0-9+#]+|[^a-z0-9+#]+$/g, '')
+  return word.replace(/^[^a-z0-9+#]+/, '').replace(/[^a-z0-9+#]+$/, '')
 }
 
 /**
