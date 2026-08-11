@@ -58,14 +58,21 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <ul>
     <li>
       <strong>Direct database access</strong> (an authenticated dashboard session) is filtered
-      by row-level security — a query literally cannot return another team's rows, or a pending
-      submission that isn't yours to see.
+      by row-level security — a query literally cannot return another team's rows, and a plain
+      table read never returns a pending or rejected submission to anyone, including the person
+      who submitted it. Seeing your own pending work goes through a separate, dedicated review
+      lookup instead (below), not a plain query.
     </li>
     <li>
-      <strong>Reading published skills</strong> (<code>list</code>, <code>get</code>,
-      looking up your namespace) runs through a service-role connection that bypasses row-level
-      security by design, so team scoping — plus only ever surfacing approved, non-deprecated
-      versions — is enforced explicitly in application code on every request.
+      <strong>Listing and metadata lookups</strong> (<code>list</code>, <code>get</code>,
+      looking up your namespace) run through a service-role connection that bypasses row-level
+      security by design, so team scoping — plus only ever surfacing approved versions — is
+      enforced explicitly in application code on every request.
+    </li>
+    <li>
+      <strong>Installing a skill's actual content</strong> runs as the signed-in member's own
+      account instead, so row-level security applies directly; a service-role check afterward
+      confirms the owning team still holds an Enterprise entitlement.
     </li>
     <li>
       <strong>Publishing, reviewing, and admin actions</strong> (<code>publish</code>,
@@ -137,9 +144,10 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <p>
     Deprecating a version (an admin-only action) marks it as no longer recommended without
     deleting it. Unlike approval, deprecation does hide a version by default: a deprecated
-    version drops out of <code>list</code>, <code>get</code>, and install — an admin can still see
-    it via <code>list</code> with the <code>includeDeprecated</code> option, but <code>get</code>
-    and install never surface a deprecated version, even by exact version number. See
+    version drops out of <code>list</code>, <code>get</code>, and install — any team member can
+    still see it via <code>list</code> with the <code>includeDeprecated</code> option (this
+    isn't restricted to admins), but <code>get</code> and install never surface a deprecated
+    version, even by exact version number. See
     <a href="/docs/governance">Governance</a> for how deprecation fits into the broader lifecycle.
   </p>
 
