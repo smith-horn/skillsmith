@@ -86,16 +86,30 @@ export interface EnterpriseLicenseValidator {
  */
 export const TIER_FEATURES: Record<LicenseTier, string[]> = {
   community: ['basic_search', 'skill_install', 'local_validation'],
-  individual: ['basic_analytics', 'email_support'],
+  individual: [
+    'basic_analytics',
+    'email_support',
+    // SMI-5949: pre-existing drift fix — version_tracking is part of
+    // INDIVIDUAL_FEATURES in the canonical @smith-horn/enterprise package
+    // (packages/enterprise/src/license/FeatureFlags.ts) and was silently
+    // missing here (this file has no compiler backstop, unlike the
+    // Record<FeatureFlag, ...> mirrors in toolFeatureMapping.ts). Caught by
+    // the new TIER_FEATURES.enterprise parity regression test.
+    'version_tracking',
+  ],
   team: [
     // Individual features (inherited)
     'basic_analytics',
     'email_support',
+    'version_tracking',
     // Team features
     'team_workspaces',
     'private_skills',
     'usage_analytics',
     'priority_support',
+    // SMI-5949: pre-existing drift fix — skill_security_audit is part of
+    // TEAM_FEATURES in the canonical package and was silently missing here.
+    'skill_security_audit',
     // SMI-3140: expanded to Team + Enterprise (2026-07-14)
     'compliance_reports',
   ],
@@ -103,11 +117,13 @@ export const TIER_FEATURES: Record<LicenseTier, string[]> = {
     // Individual features (inherited)
     'basic_analytics',
     'email_support',
+    'version_tracking',
     // Team features (inherited)
     'team_workspaces',
     'private_skills',
     'usage_analytics',
     'priority_support',
+    'skill_security_audit',
     'compliance_reports',
     // Enterprise-only features (canonical names from enterprise package)
     'sso_saml',
@@ -117,6 +133,8 @@ export const TIER_FEATURES: Record<LicenseTier, string[]> = {
     'private_registry',
     'custom_integrations',
     'advanced_analytics',
+    // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11)
+    'registry_approval',
   ],
 }
 

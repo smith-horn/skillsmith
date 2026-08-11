@@ -11,8 +11,8 @@ describe('TierMapping', () => {
   describe('FEATURE_TIERS', () => {
     it('should map all feature flags', () => {
       const mappedFeatures = Object.keys(FEATURE_TIERS)
-      // 3 individual + 6 team + 7 enterprise = 16 features
-      expect(mappedFeatures).toHaveLength(16)
+      // 3 individual + 6 team + 8 enterprise = 17 features
+      expect(mappedFeatures).toHaveLength(17)
 
       for (const flag of ALL_FEATURE_FLAGS) {
         expect(FEATURE_TIERS[flag]).toBeDefined()
@@ -147,10 +147,10 @@ describe('TierMapping', () => {
       expect(features).not.toContain('advanced_analytics')
     })
 
-    it('should return all 16 features for enterprise tier', () => {
+    it('should return all 17 features for enterprise tier', () => {
       const features = getFeaturesForTier('enterprise')
-      // 3 individual + 6 team + 7 enterprise = 16 features
-      expect(features).toHaveLength(16)
+      // 3 individual + 6 team + 8 enterprise = 17 features
+      expect(features).toHaveLength(17)
 
       // Should include all individual features
       expect(features).toContain('basic_analytics')
@@ -274,9 +274,9 @@ describe('TierMapping', () => {
       const teamFeatures = getFeaturesForTier('team')
       expect(teamFeatures).toHaveLength(9)
 
-      // Enterprise has all features = 16
+      // Enterprise has all features = 17
       const enterpriseFeatures = getFeaturesForTier('enterprise')
-      expect(enterpriseFeatures).toHaveLength(16)
+      expect(enterpriseFeatures).toHaveLength(17)
 
       // All individual features should be included in team
       for (const feature of individualFeatures) {

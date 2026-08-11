@@ -49,6 +49,7 @@ export const FEATURE_DISPLAY_NAMES: Readonly<Record<FeatureFlag, string>> = {
   private_registry: 'Private Registry',
   custom_integrations: 'Custom Integrations',
   advanced_analytics: 'Advanced Analytics',
+  registry_approval: 'Registry Approval Workflow',
 }
 
 /**
@@ -74,6 +75,7 @@ export const FEATURE_DESCRIPTIONS: Readonly<Record<FeatureFlag, string>> = {
   private_registry: 'Host your own private skill registry',
   custom_integrations: 'Build custom webhook and API integrations',
   advanced_analytics: 'Deep insights with advanced analytics dashboards',
+  registry_approval: 'Second-party admin review before private-registry versions go live',
 }
 
 /**

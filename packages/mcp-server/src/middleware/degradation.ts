@@ -65,6 +65,10 @@ const FEATURE_DESCRIPTIONS: Record<FeatureFlag, string> = {
   // Additional features
   custom_integrations: 'Build custom integrations with your tools',
   advanced_analytics: 'In-depth usage analytics and reporting',
+  // SMI-5949: separately-flagged approval gate for private_registry_publish (D-11).
+  // Wording matches packages/enterprise/src/license/degradation-types.ts's
+  // FEATURE_DESCRIPTIONS.registry_approval verbatim.
+  registry_approval: 'Second-party admin review before private-registry versions go live',
 }
 
 // ============================================================================
