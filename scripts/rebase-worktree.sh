@@ -251,10 +251,11 @@ step_crossfetch_submodule() {
 # Steps 6/6.5 (step_stash, step_ensure_filter_registered) live in _rebase-git-crypt.sh.
 # Step 7: Disable git-crypt filters (with EXIT trap for restore).
 # SMI-5983: the lock+classify+hard-fail-or-write sequence lives in
-# disable_git_crypt_filters_or_fail() (_rebase-git-crypt.sh, more headroom
-# under the 500-line cap) -- this stays a thin wrapper that only reacts to
-# its return code (0: filters actually disabled, register the trap; 1:
-# nothing to do -- MISSING or --dry-run, already logged, no trap needed).
+# disable_git_crypt_filters_or_fail() (_rebase-git-crypt-disable.sh, split
+# out for headroom under the 500-line cap) -- this stays a thin wrapper
+# that only reacts to its return code (0: filters actually disabled,
+# register the trap; 1: nothing to do -- MISSING or --dry-run, already
+# logged, no trap needed).
 step_disable_filters() {
     disable_git_crypt_filters_or_fail || return 0
     FILTERS_DISABLED=true; trap restore_filter_config EXIT

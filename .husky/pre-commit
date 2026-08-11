@@ -265,9 +265,14 @@ fi
 # 5702 T11) for why: that guard flags exactly that combination anywhere in
 # the repo, so even explaining the pairing in prose here would self-trip it.
 # =============================================================================
+# SMI-5983-TEST:BEGIN clear-marker -- scripts/tests/git-crypt-pre-commit-disable.test.ts
+# extracts this span too. Read at test-run time (not embedded as a literal
+# string in that .ts file's own source text), so this does not trip the
+# SMI-5702 T11 guard the comment above already explains.
 _clear_git_crypt_marker() {
   git config --local --unset skillsmith.git-crypt-disabled-marker 2>/dev/null || true
 }
+# SMI-5983-TEST:END clear-marker
 
 # =============================================================================
 # SMI-2536 / SMI-2747: Branch Integrity Guard — Verify branch didn't switch.
@@ -295,6 +300,11 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # message instead. Held only around the classify+disable+marker-write
     # sequence below, released before the checkout, reacquired only for
     # the restore.
+    # SMI-5983-TEST:BEGIN lock-helpers -- scripts/tests/git-crypt-pre-commit-disable.test.ts
+    # extracts this exact span verbatim (text between these two sentinel
+    # comments) to exercise the real lock helpers in isolation. Keep this
+    # span self-contained (no references to names defined outside it other
+    # than RED/NC, which the test harness stubs) if you edit it.
     GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git-crypt-filter.lock"
     GIT_CRYPT_LOCK_HELD=""
     _acquire_git_crypt_lock() {
@@ -321,7 +331,12 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       [ "$_owner" = "$$" ] && rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
       GIT_CRYPT_LOCK_HELD=""
     }
+    # SMI-5983-TEST:END lock-helpers
 
+    # SMI-5983-TEST:BEGIN disabled-precheck -- scripts/tests/git-crypt-pre-commit-disable.test.ts
+    # extracts this span too (run immediately after the lock-helpers span
+    # above, in the same sourced shell); depends on the lock-helpers span's
+    # functions plus EXPECTED_BRANCH being set by the caller.
     _acquire_git_crypt_lock
     SMUDGE_CMD=$(git config --local filter.git-crypt.smudge 2>/dev/null)
     CLEAN_CMD=$(git config --local filter.git-crypt.clean 2>/dev/null)
@@ -351,10 +366,15 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       echo "    4. Retry the commit."
       exit 1
     fi
+    # SMI-5983-TEST:END disabled-precheck
 
     # SMI-2747: Smudge-safe auto-restore.
     # Only capture/manipulate the filter if it is currently configured — avoids
     # adding unexpected git config entries on repos without git-crypt.
+    # SMI-5983-TEST:BEGIN restore-definition -- scripts/tests/git-crypt-pre-commit-disable.test.ts
+    # extracts this span too (run immediately after the disabled-precheck
+    # span above, in the same sourced shell); depends on SMUDGE_CMD/
+    # CLEAN_CMD from that span plus the lock-helpers span's functions.
     if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
       # Restore function — called explicitly on success and via trap on crash/signal.
       # SMI-5702: the else-branches used to remove the config key entirely
@@ -390,16 +410,40 @@ if [ -n "$EXPECTED_BRANCH" ]; then
         fi
         _release_git_crypt_lock
       }
-      # Register trap BEFORE disabling the filter so any unexpected exit restores it.
-      trap '_restore_smudge_filter' EXIT INT TERM
       git config --local filter.git-crypt.smudge "cat"
       git config --local filter.git-crypt.clean "cat"
       # Written LAST, after both filter values -- matches
       # scripts/rebase-worktree.sh's Step 7 ordering.
       _worktree_b64=$(printf '%s' "$(pwd)" | base64 | tr -d '\n')
       git config --local skillsmith.git-crypt-disabled-marker "$$ $(date +%s) $_worktree_b64"
+      # SMI-5983 (governance follow-up): release the disable sequence's lock
+      # BEFORE arming the restore trap, NOT before (the original SMI-2747
+      # ordering had "register trap, then disable+write, then release").
+      # _restore_smudge_filter() itself calls _acquire_git_crypt_lock(),
+      # which is not reentrant -- registering the trap while this lock
+      # instance was still held meant a signal/error landing between
+      # trap-registration and release (i.e. during the two `git config`
+      # writes or the marker write just above) made the trap spin against
+      # its OWN already-held lock for the full GIT_CRYPT_FILTER_LOCK_WAIT
+      # window, then hard-exit ("holder PID: $$") -- filters left disabled,
+      # restore never ran. Mirrors rebase-worktree.sh's own ordering, where
+      # disable_git_crypt_filters_or_fail() fully acquires+writes+releases
+      # its lock before step_disable_filters() arms the outer restore trap
+      # (found via direct trace of this file's ordering during governance
+      # review). Narrowing the trap's coverage to start only after this
+      # release does shrink -- but does not remove -- SMI-2747's original
+      # protection against a mid-write interrupt: an interrupt in that now-
+      # uncovered handful of `git config` calls still leaves the marker's
+      # PID (this process) to go dead, so the existing two-signal auto-heal
+      # (marker dead + no active rebase) is what recovers it instead of the
+      # trap -- exactly the "marker protects the window, lock protects the
+      # mutation" split the plan doc already describes.
+      _release_git_crypt_lock
+      trap '_restore_smudge_filter' EXIT INT TERM
+    else
+      _release_git_crypt_lock
     fi
-    _release_git_crypt_lock
+    # SMI-5983-TEST:END restore-definition
     echo "  ${YELLOW}Running smudge-safe checkout...${NC}"
     git checkout "$EXPECTED_BRANCH"
     RESTORE_EXIT=$?

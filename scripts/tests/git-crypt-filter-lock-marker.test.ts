@@ -65,9 +65,21 @@ describe('SMI-5983: acquire/release_git_crypt_filter_lock()', () => {
     mkdirSync(lockDir)
     writeFileSync(join(lockDir, 'pid'), String(process.pid))
 
-    const result = sourceAndRun(
-      `SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT=1 acquire_git_crypt_filter_lock ${JSON.stringify(dir)}`
-    )
+    // SMI-5983 (governance follow-up): GIT_CRYPT_FILTER_LOCK_WAIT is resolved
+    // from SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT ONCE at _lib.sh source time
+    // (scripts/_lib.sh's top-level GIT_CRYPT_FILTER_LOCK_WAIT="${SKILLSMITH_
+    // GIT_CRYPT_FILTER_LOCK_WAIT:-10}") -- setting the env var as an inline
+    // prefix to the function call AFTER `source` has already run (the
+    // original form of this test) is a no-op; the wait always fell back to
+    // the full 10s default regardless, which is why this test (and the two
+    // below it) measured ~10s despite the apparent 1s override. Passing it
+    // via extraEnv sets it in the spawned process's environment BEFORE the
+    // script (and therefore the `source` line) runs, so the override
+    // actually takes effect -- also the first real exercise of this env var
+    // actually working, not just its default.
+    const result = sourceAndRun(`acquire_git_crypt_filter_lock ${JSON.stringify(dir)}`, {
+      SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT: '1',
+    })
     expect(result.status).not.toBe(0)
     expect(result.combined).toContain(String(process.pid))
     expect(result.combined).toMatch(/live/i)
@@ -79,9 +91,12 @@ describe('SMI-5983: acquire/release_git_crypt_filter_lock()', () => {
     const lockDir = join(dir, '.git', 'skillsmith-git-crypt-filter.lock')
     mkdirSync(lockDir) // no pid file written -- simulates a crash between mkdir and the PID write
 
-    const result = sourceAndRun(
-      `SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT=1 acquire_git_crypt_filter_lock ${JSON.stringify(dir)}`
-    )
+    // SMI-5983 (governance follow-up): env var passed via extraEnv, not as
+    // an inline call-prefix -- see the sibling test above for why the
+    // prefix form is a no-op.
+    const result = sourceAndRun(`acquire_git_crypt_filter_lock ${JSON.stringify(dir)}`, {
+      SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT: '1',
+    })
     expect(result.status).not.toBe(0)
     expect(result.combined).toMatch(/unrecorded|unknown/i)
     expect(result.combined).toContain('rmdir')
@@ -93,9 +108,12 @@ describe('SMI-5983: acquire/release_git_crypt_filter_lock()', () => {
     mkdirSync(lockDir)
     writeFileSync(join(lockDir, 'pid'), String(deadPid()))
 
-    const result = sourceAndRun(
-      `SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT=1 acquire_git_crypt_filter_lock ${JSON.stringify(dir)}`
-    )
+    // SMI-5983 (governance follow-up): env var passed via extraEnv, not as
+    // an inline call-prefix -- see the first test in this describe block for
+    // why the prefix form is a no-op.
+    const result = sourceAndRun(`acquire_git_crypt_filter_lock ${JSON.stringify(dir)}`, {
+      SKILLSMITH_GIT_CRYPT_FILTER_LOCK_WAIT: '1',
+    })
     expect(result.status).not.toBe(0)
     expect(result.combined).toContain('rmdir')
     expect(result.combined).toMatch(/not running/i)
