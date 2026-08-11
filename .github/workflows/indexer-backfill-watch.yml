@@ -98,10 +98,24 @@ jobs:
             '{type:"indexer_backfill_cancelled", message:$msg, workflow:"Skill Indexer Backfill", runId:$rid, runUrl:$url, kind:$kind}')
 
           # ── No silent alert failures (§3d) ──
-          HTTP=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+          # SMI-5964 code-review finding: the original `|| echo "000"` fallback
+          # only guarded curl's own exit code, but the step still exited 0
+          # regardless of the alert's actual delivery outcome -- so a failed
+          # alert-notify call could leave THIS watcher job green, defeating
+          # the entire point of building a reliable out-of-job alert path.
+          # HTTP now defaults to "000" and is only overwritten on a completed
+          # curl invocation (avoids the "000\n000" double-value some curl
+          # failure modes produced when -w and the `||` fallback both fired),
+          # and the step now fails (non-zero exit) on anything but 200 so a
+          # delivery failure is visibly recorded as a job failure, not just a
+          # step-summary annotation nobody is watching.
+          HTTP="000"
+          if RESPONSE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" -d "$BODY" \
-            "$SUPABASE_URL/functions/v1/alert-notify" || echo "000")
+            "$SUPABASE_URL/functions/v1/alert-notify"); then
+            HTTP="$RESPONSE_CODE"
+          fi
 
           {
             echo "### Backfill run cancelled"
@@ -114,4 +128,7 @@ jobs:
             echo "| alert-notify HTTP | $HTTP |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          [ "$HTTP" = "200" ] || echo "::warning::alert-notify returned $HTTP -- email may not have been sent"
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::alert-notify returned $HTTP -- email was NOT sent. Failing this job so the delivery failure is visible in the Actions UI, not just a step-summary annotation."
+            exit 1
+          fi

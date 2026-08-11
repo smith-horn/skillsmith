@@ -377,13 +377,21 @@ jobs:
             '{type:"indexer_backfill_failed", message:$msg, workflow:"Skill Indexer Backfill", runId:$rid, runUrl:$url}')
           # SMI-5964: capture the alert-notify HTTP code instead of discarding
           # it (the prior `|| true` made a failed alert POST silently
-          # invisible) -- surface it in the step summary and annotate on
-          # anything but 200.
-          HTTP=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+          # invisible) -- surface it in the step summary and fail the step
+          # (not just annotate) on anything but 200, so a delivery failure
+          # is visibly recorded rather than leaving this step green (same
+          # code-review finding applied to the indexer-backfill-watch.yml
+          # sibling step -- HTTP defaults to "000" and is only overwritten on
+          # a completed curl call, avoiding a doubled "000\n000" value on some
+          # curl failure modes).
+          HTTP="000"
+          if RESPONSE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -d "$BODY" \
-            "$SUPABASE_URL/functions/v1/alert-notify" || echo "000")
+            "$SUPABASE_URL/functions/v1/alert-notify"); then
+            HTTP="$RESPONSE_CODE"
+          fi
           {
             echo "### Backfill Failure Alert"
             echo ""
@@ -391,4 +399,7 @@ jobs:
             echo "|-------|-------|"
             echo "| alert-notify HTTP | $HTTP |"
           } >> "$GITHUB_STEP_SUMMARY"
-          [ "$HTTP" = "200" ] || echo "::warning::alert-notify returned $HTTP -- email may not have been sent"
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::alert-notify returned $HTTP -- email was NOT sent."
+            exit 1
+          fi

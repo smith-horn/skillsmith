@@ -132,11 +132,14 @@ describe('SMI-5964 Case 13: indexer-backfill-watch.yml (the new alert-gap watche
     expect(step.runScript).toMatch(/KIND="cancelled-unknown"/)
   })
 
-  it('the alert-notify HTTP code is captured, written to the step summary, and a non-200 raises a workflow annotation', () => {
+  it('the alert-notify HTTP code is captured, written to the step summary, and a non-200 fails the job (code-review finding: a warning-only annotation left this watcher green on a failed delivery, defeating its purpose)', () => {
     const step = extractStep(watcher, 'Classify and alert')
-    expect(step.runScript).toMatch(/HTTP=\$\(curl -s -o \/dev\/null -w '%\{http_code\}'/)
+    expect(step.runScript).toMatch(
+      /if RESPONSE_CODE=\$\(curl -s -o \/dev\/null -w '%\{http_code\}'/
+    )
     expect(step.runScript).toMatch(/alert-notify HTTP \| \$HTTP/)
-    expect(step.runScript).toMatch(/::warning::alert-notify returned \$HTTP/)
+    expect(step.runScript).toMatch(/::error::alert-notify returned \$HTTP/)
+    expect(step.runScript).toMatch(/exit 1/)
   })
 
   it('posts the type: "indexer_backfill_cancelled" alert (a free-form string alert-notify only presence-validates)', () => {
@@ -159,11 +162,14 @@ describe('SMI-5964 Case 13: indexer-backfill.yml (§3e edits only -- no if:/time
     expect(matches).toHaveLength(2)
   })
 
-  it('Send Alert on Failure captures the alert-notify HTTP code and writes it to the step summary', () => {
+  it('Send Alert on Failure captures the alert-notify HTTP code, writes it to the step summary, and fails the step on non-200 (code-review finding: a warning-only annotation left this step green on a failed delivery)', () => {
     const step = extractStep(backfill, 'Send Alert on Failure')
-    expect(step.runScript).toMatch(/HTTP=\$\(curl -s -o \/dev\/null -w '%\{http_code\}'/)
+    expect(step.runScript).toMatch(
+      /if RESPONSE_CODE=\$\(curl -s -o \/dev\/null -w '%\{http_code\}'/
+    )
     expect(step.runScript).toMatch(/alert-notify HTTP \| \$HTTP/)
-    expect(step.runScript).toMatch(/::warning::alert-notify returned \$HTTP/)
+    expect(step.runScript).toMatch(/::error::alert-notify returned \$HTTP/)
+    expect(step.runScript).toMatch(/exit 1/)
   })
 
   it("Send Alert on Failure uses ${HTTP_CODE:-n/a}, matching Report Failure's existing convention", () => {
