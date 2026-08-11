@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: the startup stderr log printed either an unexpanded `~/.skillsmith/skills.db` literal
+  or the raw, unvalidated `SKILLSMITH_DB_PATH` env value — neither reflected the actual path
+  `getToolContextAsync()` resolved and validated. Now logs the new
+  `buildDbInitializedLogMessage()` (`context.helpers.ts`), which calls `getDefaultDbPath()`
+  internally, so the logged path and the real DB path can never disagree (SMI-5981)
 - **Feature**: `private_registry_publish` now requires a genuine two-party review before a version
   becomes installable — a submission lands `pending` and is invisible on every read surface
   (`list`/`get`/`install`) until a different team admin/owner approves it via three new
