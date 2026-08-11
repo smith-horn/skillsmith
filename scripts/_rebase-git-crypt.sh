@@ -66,40 +66,49 @@ _restore_filter_kind() {
     fi
 }
 
+# SMI-5983: disable_git_crypt_filters_or_fail() (Step 7's lock+classify+
+# capture+write sequence) now lives in the sibling _rebase-git-crypt-disable.sh
+# -- split out once this file plus that addition together exceeded the
+# 500-line file-length guidance.
+
 # SMI-5773: trap-safe config restore only. Safe to call from the EXIT trap on
 # ANY failure path (partial rebase, failed --continue) — never touches the
 # working tree, so it cannot destroy in-progress conflict-resolution state.
+# SMI-5983: locked; clears the DISABLED marker FIRST (before restoring real
+# values) -- paired with the marker being written LAST on disable, this
+# ordering is what makes every partial-write crash point safe with no
+# transaction log needed (plan doc §1 has the full argument).
 restore_filter_config() {
     [ "$FILTERS_DISABLED" = true ] || return 0
+    acquire_git_crypt_filter_lock "$WORKTREE_PATH"
     info "Restoring git-crypt filters..."
+    clear_git_crypt_disabled_marker "$WORKTREE_PATH"
     _restore_filter_kind smudge "$ORIG_SMUDGE"
     _restore_filter_kind clean  "$ORIG_CLEAN"
+    release_git_crypt_filter_lock
     FILTERS_DISABLED=false
     success "  Git-crypt filters restored"
 }
 
-# SMI-5979: called from step_rebase_parent() right after it computes
-# conflict_count (unmerged-file count from `git diff --diff-filter=U`) for a
-# failed `git rebase`. conflict_count==0 alone is NOT proof the rebase never
-# started -- a sequencer failure mid-rebase (distinct from a merge conflict)
-# can leave zero unmerged files with rebase-merge/rebase-apply state still
-# on disk (NEEDLE plan review finding). Only treat this as "nothing to
-# resolve" when BOTH hold: no conflicted files AND no active rebase state
-# for this worktree (git-path resolution is worktree-scoped, so this stays
-# correct under concurrent rebases in other worktrees). When both hold,
-# restores filters and exits (via error(), exit 1) instead of falling
-# through to the caller's all_submodule/manual-conflict classification,
-# which previously misclassified this case and left filters disabled with
-# nothing to justify it (the SMI-5979 incident). Otherwise, a no-op —
-# the caller's existing logic runs unchanged.
+# SMI-5979: called from step_rebase_parent() after it computes
+# conflict_count for a failed `git rebase`. conflict_count==0 alone is NOT
+# proof the rebase never started -- a sequencer failure mid-rebase can leave
+# zero unmerged files with rebase state still on disk. Only "nothing to
+# resolve" when BOTH hold: no conflicted files AND no active rebase state.
+# When both hold, restores filters and exits (error(), exit 1) instead of
+# falling through to the manual-conflict classification that previously
+# misclassified this and left filters disabled with nothing to justify it
+# (the SMI-5979 incident). Otherwise a no-op.
+# SMI-5983: the rebase-state check now lives in has_active_rebase_state()
+# (_lib.sh) — shared with the DISABLED-state heal decision. Tri-state; its
+# "unknown" is treated exactly like "active" here too (conservative),
+# preserving this function's existing behavior.
 check_rebase_nothing_to_resolve() {
     local conflict_count="$1"
     [ "$conflict_count" -eq 0 ] || return 0
 
-    if [ -d "$(git -C "$WORKTREE_PATH" rev-parse --git-path rebase-merge 2>/dev/null || echo /nonexistent)" ] || \
-       [ -d "$(git -C "$WORKTREE_PATH" rev-parse --git-path rebase-apply 2>/dev/null || echo /nonexistent)" ]; then
-        return 0
-    fi
+    has_active_rebase_state "$WORKTREE_PATH"
+    [ "$GIT_CRYPT_REBASE_STATE" = "inactive" ] || return 0
 
     trap restore_filter_config EXIT
     echo ""
