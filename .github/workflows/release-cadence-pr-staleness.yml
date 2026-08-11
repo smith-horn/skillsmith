@@ -182,8 +182,16 @@ jobs:
             # silently missed, causing this to duplicate-nag forever instead
             # of ever advancing to close. `gh api --paginate` against the
             # underlying REST comments endpoint walks every page explicitly.
+            #
+            # PR-review correction (SMI-5663): `gh api --jq` accepts exactly
+            # one jq expression string — it does not additionally accept jq's
+            # own `--arg` flag. The prior form here (`--jq --arg marker ...`)
+            # made gh see 4 positional args and fail every single evaluation
+            # under `set -euo pipefail`, silently breaking the entire
+            # nag/close mechanism at runtime. Pipe into a standalone `jq`
+            # invocation instead, which does support `--arg`.
             PRIOR_NAG=$(gh api --paginate "repos/{owner}/{repo}/issues/${NUMBER}/comments" \
-              --jq --arg marker "$NAG_MARKER" \
+              | jq -r --arg marker "$NAG_MARKER" \
               '.[] | select((.body // "") | contains($marker)) | .created_at' \
               | sort | head -1)
 
