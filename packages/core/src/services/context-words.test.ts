@@ -39,6 +39,21 @@ describe('extractContextWords (SMI-5986)', () => {
     expect(extractContextWords('... -- !!')).toEqual([])
   })
 
+  it('drops tokens made entirely of + and #, not just other punctuation', () => {
+    // PR review round 3 (SMI-5986): + and # count as "keep" characters for
+    // stripEdgePunctuation (so "c++"/"c#" survive), but a token with no
+    // alphanumeric content at all ("++", "##", "+#") must still be rejected
+    // as noise — it isn't a real technical term just because it contains a
+    // "keep" character.
+    expect(extractContextWords('++ ## +#')).toEqual([])
+    expect(extractContextWords('++')).toEqual([])
+  })
+
+  it('drops a token that is leading-punctuation-only after stripping ("+++x" keeps content, "+++" alone does not)', () => {
+    expect(extractContextWords('+++')).toEqual([])
+    expect(extractContextWords('+++git')).toEqual(['+++git'])
+  })
+
   it('strips edge punctuation without mangling the term ("git," -> "git")', () => {
     expect(extractContextWords('git,')).toEqual(['git'])
     expect(extractContextWords('(sql)')).toEqual(['sql'])

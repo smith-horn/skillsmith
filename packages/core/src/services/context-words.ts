@@ -91,8 +91,34 @@ const CONTEXT_STOPWORDS = new Set<string>([
   // contradicted this list's own documented promise above.
 ])
 
-/** Characters that count as "keep" (not strippable edge punctuation) — see `stripEdgePunctuation`. */
-const KEEP_CHAR_RE = /[a-z0-9+#]/
+/**
+ * Whether a single character counts as "keep" (not strippable edge
+ * punctuation) — see `stripEdgePunctuation`. Plain character-code range
+ * checks, not a regex — this is the actual "no regex" implementation (PR
+ * review round 3, SMI-5986): round 2's fix still called `.test()` against a
+ * single-character-class regex, which isn't the polynomial-backtracking
+ * shape CodeQL flags, but didn't match its own doc comment's "manual
+ * index-scan rather than a regex" claim either.
+ */
+function isKeepChar(ch: string): boolean {
+  return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch === '+' || ch === '#'
+}
+
+/**
+ * Whether a word contains at least one alphanumeric character — used to
+ * reject punctuation-only tokens ("++", "##", "+#") that `isKeepChar` alone
+ * would let through, since `+`/`#` count as "keep" but aren't themselves
+ * usable content (PR review round 3, SMI-5986: `extractContextWords('++ ##
+ * +#')` was returning `['++', '##', '+#']` — all three passed the length
+ * filter with no alphanumeric substance at all).
+ */
+function hasAlphaNumeric(word: string): boolean {
+  for (let i = 0; i < word.length; i++) {
+    const ch = word[i]
+    if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) return true
+  }
+  return false
+}
 
 /**
  * Strip leading/trailing punctuation from an already-lowercased token
@@ -105,21 +131,20 @@ const KEEP_CHAR_RE = /[a-z0-9+#]/
  * `+` and `#` count as "keep" characters (code-review correction, SMI-5986)
  * — they're meaningful trailing characters in real technical terms ("c++",
  * "c#"), not punctuation noise; stripping them turned both into the single
- * character "c", which the length filter then discarded entirely.
+ * character "c", which the length filter then discarded entirely. A
+ * punctuation-only token surviving this step (e.g. "++") is rejected
+ * downstream by `hasAlphaNumeric`, not here — this function only trims
+ * edges, it doesn't judge the result's usability.
  *
- * Implemented as a manual index-scan rather than a regex (CodeQL
- * js/polynomial-redos, SMI-5986 PR review round 2): an anchored
- * negated-character-class `+` is linear-time in practice — verified
- * empirically, a 200k-character adversarial input runs in under 1ms — but
- * CodeQL's static heuristic flags this shape regardless of how it's split
- * or phrased. A manual scan is O(n), trivially auditable, and structurally
- * cannot be classified as a regex-based ReDoS risk by any static analyzer.
+ * O(n), two linear index scans, no regex anywhere in the call chain
+ * (CodeQL js/polynomial-redos, SMI-5986 PR review round 2 — verified
+ * empirically, a 200k-character adversarial input runs in under 1ms).
  */
 function stripEdgePunctuation(word: string): string {
   let start = 0
-  while (start < word.length && !KEEP_CHAR_RE.test(word[start])) start++
+  while (start < word.length && !isKeepChar(word[start])) start++
   let end = word.length
-  while (end > start && !KEEP_CHAR_RE.test(word[end - 1])) end--
+  while (end > start && !isKeepChar(word[end - 1])) end--
   return word.slice(start, end)
 }
 
@@ -129,10 +154,12 @@ function stripEdgePunctuation(word: string): string {
  *
  * Replaces the old `.filter((w) => w.length > 3)` threshold: real technical
  * terms of 2-3 characters ("git", "ci", "aws", "sql") are now kept, while
- * single-character tokens, punctuation-only tokens, and short English
- * function words ("a", "the", "is", ...) are still dropped as noise. Words
- * of 4+ characters are unaffected — this only changes the outcome for the
- * short end of the spectrum the length threshold got wrong.
+ * single-character tokens, punctuation-only tokens (including one that
+ * survives edge-stripping because it's made entirely of `+`/`#`, e.g. "++"
+ * or "+#" — PR review round 3, SMI-5986), and short English function words
+ * ("a", "the", "is", ...) are still dropped as noise. Words of 4+
+ * characters are unaffected — this only changes the outcome for the short
+ * end of the spectrum the length threshold got wrong.
  *
  * @param projectContext - Free-text project/context description. `null`/
  *   `undefined`/empty returns `[]`, mirroring both callers' pre-existing
@@ -149,6 +176,11 @@ export function extractContextWords(
     .toLowerCase()
     .split(/\s+/)
     .map(stripEdgePunctuation)
-    .filter((word) => word.length >= 2 && !(word.length <= 3 && CONTEXT_STOPWORDS.has(word)))
+    .filter(
+      (word) =>
+        word.length >= 2 &&
+        hasAlphaNumeric(word) &&
+        !(word.length <= 3 && CONTEXT_STOPWORDS.has(word))
+    )
     .slice(0, maxWords)
 }
