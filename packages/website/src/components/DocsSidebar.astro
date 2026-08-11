@@ -48,6 +48,8 @@ const navSections: NavSection[] = [
       { href: '/docs/vscode-extension', label: 'VS Code Extension', icon: 'puzzle' },
       { href: '/docs/api', label: 'API Reference', icon: 'code' },
       { href: '/docs/dependencies', label: 'Dependencies', icon: 'git-branch' },
+      { href: '/docs/private-registry', label: 'Private Registry', icon: 'package' },
+      { href: '/docs/private-skills', label: 'Private Skills', icon: 'lock' },
     ],
   },
   {
@@ -56,6 +58,7 @@ const navSections: NavSection[] = [
       { href: '/docs/security', label: 'Security', icon: 'shield' },
       { href: '/docs/quarantine', label: 'Quarantine', icon: 'alert' },
       { href: '/docs/trust-tiers', label: 'Trust Tiers', icon: 'badge' },
+      { href: '/docs/governance', label: 'Governance', icon: 'shield-check' },
     ],
   },
   {
@@ -266,6 +269,10 @@ function isActive(href: string): boolean {
 
   .nav-icon[data-icon='archive']::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='21 8 21 21 3 21 3 8'/%3E%3Crect x='1' y='3' width='22' height='5'/%3E%3Cline x1='10' y1='12' x2='14' y2='12'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='lock']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Crect x='3' y='11' width='18' height='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E");
   }
 
   .nav-icon[data-icon='puzzle']::before {
