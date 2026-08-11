@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `recommend --context`'s keyword extraction (`commands/recommend.ts`) no longer silently
+  drops real short technical terms ("git", "ci", "aws", "sql", "k8s") via a bare
+  `.filter((w) => w.length > 3)` threshold — a context consisting only of such terms previously
+  derived an empty stack and tripped the SMI-5896 empty-stack guard even though usable context had
+  been supplied. Now uses the shared `extractContextWords()` (`@skillsmith/core`) also adopted by
+  the MCP server's `skill_recommend`, so the two can't independently drift on this again (SMI-5986)
 - **Fix**: `license-types.ts`'s `TIER_FEATURES` was silently missing `version_tracking`
   (individual/team/enterprise) and `skill_security_audit` (team/enterprise) versus the canonical
   `@smith-horn/enterprise` package's own feature membership — this file has no compiler backstop
