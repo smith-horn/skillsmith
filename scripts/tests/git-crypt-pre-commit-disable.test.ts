@@ -29,7 +29,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -248,6 +248,83 @@ describe('SMI-5983 (governance follow-up): full disable-then-restore cycle (rest
     expect(getConfig(dir, 'filter.git-crypt.smudge')).toBe('')
     expect(getConfig(dir, 'skillsmith.git-crypt-disabled-marker')).toBe('')
   })
+})
+
+describe('SMI-5983 (governance retro): lock-helpers span self-releases on signal, not just on explicit release', () => {
+  // Companion to git-crypt-filter-lock-trap-composition.test.ts's INT/TERM
+  // coverage of the BASH-side acquire_git_crypt_filter_lock() (_lib.sh),
+  // which self-arms an EXIT/INT/TERM release trap at acquire time. Before
+  // this fix, the POSIX-sh duplicate here had NO such self-protection: a
+  // signal landing between `_acquire_git_crypt_lock` returning and the
+  // caller's own explicit `_release_git_crypt_lock` call (i.e. anywhere in
+  // the disabled-precheck/restore-definition spans) left the repo-shared
+  // lock directory dangling forever (no auto-reclaim by design), hard-
+  // blocking every OTHER worktree's git-crypt filter operation until a
+  // human ran the printed `rmdir` -- confirmed via direct reproduction
+  // (a real `kill -TERM` delivered while the lock was held, below).
+  it('self-delivered SIGINT immediately after acquire still releases the lock (no dangling lock dir)', () => {
+    const dir = makeRepo()
+    const result = runShInRepo(
+      dir,
+      `${LOCK_HELPERS_SPAN}\n_acquire_git_crypt_lock\nkill -INT $$\necho AFTER_SIGNAL\n`
+    )
+    expect(result.combined).not.toMatch(/syntax error/i)
+    expect(existsSync(join(dir, '.git', 'skillsmith-git-crypt-filter.lock'))).toBe(false)
+  })
+
+  it('self-delivered SIGTERM immediately after acquire still releases the lock (no dangling lock dir)', () => {
+    const dir = makeRepo()
+    const result = runShInRepo(
+      dir,
+      `${LOCK_HELPERS_SPAN}\n_acquire_git_crypt_lock\nkill -TERM $$\necho AFTER_SIGNAL\n`
+    )
+    expect(result.combined).not.toMatch(/syntax error/i)
+    expect(existsSync(join(dir, '.git', 'skillsmith-git-crypt-filter.lock'))).toBe(false)
+  })
+
+  it(
+    'a real, externally-delivered SIGTERM landing while the lock is held (before the ' +
+      "caller's own explicit release) still releases it -- the exact scenario reproduced " +
+      'against the pre-fix hook (kill -TERM mid-lock-hold left the lock dir on disk)',
+    async () => {
+      const dir = makeRepo()
+      const script = `${LOCK_HELPERS_SPAN}\n_acquire_git_crypt_lock\necho LOCK_ACQUIRED\nsleep 5\necho SHOULD_NOT_REACH\n`
+      const child = spawn(REAL_SH, ['-c', script], { cwd: dir, env: GIT_ENV })
+      let stdout = ''
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString()
+      })
+
+      await new Promise<void>((resolvePromise, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('timed out waiting for LOCK_ACQUIRED')),
+          10_000
+        )
+        const check = setInterval(() => {
+          if (stdout.includes('LOCK_ACQUIRED')) {
+            clearInterval(check)
+            clearTimeout(timer)
+            child.kill('SIGTERM')
+            resolvePromise()
+          }
+        }, 20)
+      })
+
+      await new Promise<void>((resolvePromise) => child.once('exit', () => resolvePromise()))
+
+      // Not asserting the process terminated on SIGTERM: the fix's own trap
+      // (`trap '_release_git_crypt_lock' INT TERM`) deliberately does not
+      // call `exit` in its handler, matching this file's pre-existing
+      // `trap '_restore_smudge_filter' EXIT INT TERM` convention elsewhere
+      // in the real hook (also handler-only, no explicit exit) -- POSIX sh
+      // continues past the interrupted `sleep` once a signal is trapped
+      // (confirmed via direct reproduction), so "SHOULD_NOT_REACH" DOES
+      // print here; that is expected, not a regression. The only invariant
+      // this test guards is the lock's own cleanup.
+      expect(existsSync(join(dir, '.git', 'skillsmith-git-crypt-filter.lock'))).toBe(false)
+    },
+    15_000
+  )
 })
 
 describe('SMI-5983 (governance follow-up): regression guard for the trap/lock reentrancy fix', () => {

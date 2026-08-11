@@ -313,6 +313,46 @@ if [ -n "$EXPECTED_BRANCH" ]; then
         if mkdir "$GIT_CRYPT_LOCK_DIR" 2>/dev/null; then
           echo "$$" > "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null
           GIT_CRYPT_LOCK_HELD=1
+          # SMI-5983 (governance retro): self-release on a signal landing
+          # between acquire and the caller's own explicit release below --
+          # without this, unlike the bash-side
+          # acquire_git_crypt_filter_lock() (scripts/_lib.sh), which arms an
+          # equivalent trap at acquire time, an ordinary SIGINT/SIGTERM
+          # during the disabled-precheck/restore-definition spans left this
+          # repo-shared lock dangling forever (no auto-reclaim by design),
+          # hard-failing every OTHER worktree's git-crypt filter operation
+          # with the "never auto-reclaims" message below until a human ran
+          # the printed `rmdir` -- confirmed via direct reproduction
+          # (`kill -TERM` mid-lock-hold leaves the lock dir on disk).
+          # INT/TERM only, deliberately NOT EXIT: every code path between
+          # this acquire and the caller's own explicit release is
+          # deterministic, signal-free control flow (the disabled-precheck
+          # span always either hard-fails via an explicit release+exit, or
+          # falls straight through into the restore-definition span, which
+          # always releases explicitly on both its branches) -- there is no
+          # plain/error exit in that window for an EXIT trap to guard
+          # against, and arming one anyway would release the lock on ANY
+          # process exit reachable from inside this function, including a
+          # test harness or a future caller that intentionally checks
+          # intermediate lock state before the real hook continues past this
+          # point (confirmed by exactly this regression when EXIT was
+          # included in an earlier draft of this fix -- see
+          # scripts/tests/git-crypt-pre-commit-disable.test.ts's "proceeds
+          # past the precheck" test). Plain (non-composing) registration is
+          # correct here: this is the first `trap` call anywhere in this
+          # hook, so there is no prior handler to preserve.
+          # `_release_git_crypt_lock` is idempotent (a no-op once
+          # GIT_CRYPT_LOCK_HELD is cleared), so this trap firing again later
+          # -- after the caller's own explicit release (the hard-fail
+          # branch, or the disable sequence's release-before-bigger-trap-
+          # arm), after the bigger
+          # `trap '_restore_smudge_filter' EXIT INT TERM` below overwrites
+          # it outright, or from the re-acquire inside
+          # _restore_smudge_filter() itself -- is always harmless; it only
+          # ever protects the lock's own cleanup, never the filter VALUES
+          # (which the marker + two-signal heal mechanism protects
+          # regardless).
+          trap '_release_git_crypt_lock' INT TERM
           return 0
         fi
         _wait_i=$((_wait_i + 1))
