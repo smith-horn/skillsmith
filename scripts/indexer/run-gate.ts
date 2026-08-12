@@ -21,12 +21,24 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * The six run-type identifiers the gate understands. Five (`discovery`,
+ * The seven run-type identifiers the gate understands. Five (`discovery`,
  * `maintenance`, `recheck`, `dequarantine`, `purge`) mirror `parse-env.ts`'s
- * `RUN_TYPE` union exactly; `revalidate` exists only in the gate's own
- * vocabulary, for the host-only writer `revalidate-stale-quarantines.ts`,
+ * `RUN_TYPE` union exactly; `revalidate` and `repair` exist only in the
+ * gate's own vocabulary, for host-only writers
+ * (`revalidate-stale-quarantines.ts`, `repair-latched-name-rows.ts`),
  * deliberately kept out of `parse-env.ts`'s union so the workflow-facing
  * surface is unchanged.
+ *
+ * SMI-5930 (code-review finding): `repair` was added because
+ * `repair-latched-name-rows.ts` is a genuine one-time WRITER against the
+ * same `skills` table the freeze window protects (it nulls `content_hash`
+ * for a targeted row set), the same class of operation as `dequarantine`/
+ * `purge`/`revalidate` above — not a reader like `smi5879-census.ts` et al.
+ * (run-gate-callsites.test.ts's Shape 4), which are deliberately exempt
+ * because they ARE the freeze window's own verification tooling. Using a
+ * psql/session-pooler connection instead of PostgREST doesn't change
+ * whether a script needs this gate — what matters is read vs. write to
+ * `skills`, not the connection mechanism.
  */
 export const GATED_RUN_TYPES = [
   'discovery',
@@ -35,6 +47,7 @@ export const GATED_RUN_TYPES = [
   'dequarantine',
   'purge',
   'revalidate',
+  'repair',
 ] as const
 
 export type GatedRunType = (typeof GATED_RUN_TYPES)[number]

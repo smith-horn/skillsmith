@@ -14,14 +14,18 @@ export {
   CLIENT_DISPLAY_LABELS,
   CLIENT_IDS,
   CLIENT_NATIVE_PATHS,
+  COMPANION_AGENT_TARGETS,
   assertClientId,
   enumerateHarnessPresence,
   getCanonicalInstallPath,
+  getCompanionAgentTarget,
   getInstallPath,
   resolveClientId,
   resolveClientPath,
+  resolveCompanionAgentDir,
+  resolveCompanionAgentPath,
 } from './paths.js'
-export type { ClientId } from './paths.js'
+export type { ClientId, CompanionAgentTarget } from './paths.js'
 
 export {
   addLink,

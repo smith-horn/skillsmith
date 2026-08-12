@@ -17,13 +17,21 @@
  * passes absolute paths, so both sides are normalized to repo-relative
  * before matching. A grandfathered file split below the limit re-enters
  * enforcement and prints an "eligible to de-list" notice.
+ *
+ * SMI-5992: MAX_LINES and the test-file exemption predicate
+ * (isExemptFromLengthCheck) are shared with CI's Check 3 in
+ * scripts/audit-standards.mjs via scripts/file-length-policy.mjs. Only
+ * the threshold + exemption predicate are shared — this script's own
+ * directory scope (whatever's staged, not just packages/+apps/), its
+ * extensions (.ts + .sh), and its severity (hard-fail, vs. Check 3's
+ * warn-only) remain intentionally different. See SMI-5994 for the
+ * still-tracked scope/severity divergence.
  */
 
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-const MAX_LINES = 500
+import { MAX_LINES, isExemptFromLengthCheck } from './file-length-policy.mjs'
 
 /**
  * Resolve a path to its canonical, symlink-free absolute form.
@@ -110,11 +118,15 @@ export function loadIgnoreList(ignorePath) {
  * an exact comparison (SMI-4397 C1). A grandfathered path is only
  * exempt WHILE still over-limit (SMI-4397 H1).
  *
+ * SMI-5992: a `.test.`/`.spec.` file over the limit is also reported via
+ * `skipped` (shared `isExemptFromLengthCheck` predicate, same as CI's
+ * Check 3) rather than silently passing with no output.
+ *
  * @param {string[]} files - staged file paths (absolute or relative)
  * @param {Map<string, string|null>} ignoreList - grandfathered repo-relative paths -> SMI reference
  * @param {string} repoRoot - absolute repo root
  * @returns {{violations: {relPath: string, lineCount: number}[],
- *            skipped: {relPath: string, lineCount: number, smiRef: string|null}[],
+ *            skipped: {relPath: string, lineCount: number, smiRef: string|null, reason: string}[],
  *            delistable: {relPath: string, lineCount: number}[]}}
  */
 export function checkFiles(files, ignoreList, repoRoot) {
@@ -133,10 +145,30 @@ export function checkFiles(files, ignoreList, repoRoot) {
     const content = readFileSync(filePath, 'utf8')
     const lineCount = content.split('\n').length
     const grandfathered = ignoreList.has(relPath)
+    // SMI-5992: shared with CI's Check 3 — see scripts/file-length-policy.mjs.
+    const testExempt = isExemptFromLengthCheck(relPath)
 
     if (lineCount > MAX_LINES) {
-      if (grandfathered) {
-        skipped.push({ relPath, lineCount, smiRef: ignoreList.get(relPath) ?? null })
+      if (testExempt) {
+        // Test-file exemption takes precedence over (and makes redundant
+        // any pre-existing) grandfather-list entry for the same path.
+        skipped.push({
+          relPath,
+          lineCount,
+          smiRef: null,
+          reason:
+            'test file (.test./.spec.) — exempt per scripts/file-length-policy.mjs (SMI-5992)',
+        })
+      } else if (grandfathered) {
+        const smiRef = ignoreList.get(relPath) ?? null
+        skipped.push({
+          relPath,
+          lineCount,
+          smiRef,
+          reason: smiRef
+            ? `grandfathered — ${smiRef} split pending`
+            : 'grandfathered — see scripts/check-file-length.ignore for the tracking issue',
+        })
       } else {
         violations.push({ relPath, lineCount })
       }
@@ -160,10 +192,10 @@ function main() {
   const ignoreList = loadIgnoreList(join(repoRoot, 'scripts', 'check-file-length.ignore'))
   const { violations, skipped, delistable } = checkFiles(files, ignoreList, repoRoot)
 
-  for (const { relPath, smiRef } of skipped) {
-    const reason = smiRef
-      ? `grandfathered — ${smiRef} split pending`
-      : 'grandfathered — see scripts/check-file-length.ignore for the tracking issue'
+  // SMI-5992: `reason` is computed in checkFiles() itself (test-file
+  // exemption or grandfather-list, each with its own message) — main()
+  // just prints it, so the two skip reasons stay in one place.
+  for (const { relPath, reason } of skipped) {
     console.log(`  ${relPath}: skipped (${reason})`)
   }
 

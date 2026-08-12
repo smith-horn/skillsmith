@@ -7,6 +7,8 @@
  * pythonIncremental.hardening.test.ts (SMI-4315/4316).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 // vi.hoisted runs before vi.mock factories so we can share the spy instance.
 const { existsSyncSpy } = vi.hoisted(() => ({
@@ -18,7 +20,17 @@ vi.mock('node:fs', async () => {
   return { ...actual, existsSync: (p: string) => existsSyncSpy(p) }
 })
 
-import { CLIENT_IDS, CLIENT_NATIVE_PATHS, enumerateHarnessPresence } from './paths.js'
+import {
+  CANONICAL_CLIENT,
+  CLIENT_IDS,
+  CLIENT_NATIVE_PATHS,
+  COMPANION_AGENT_TARGETS,
+  enumerateHarnessPresence,
+  getCompanionAgentTarget,
+  resolveCompanionAgentDir,
+  resolveCompanionAgentPath,
+  type ClientId,
+} from './paths.js'
 
 describe('enumerateHarnessPresence (SMI-5390)', () => {
   beforeEach(() => {
@@ -99,5 +111,98 @@ describe('grok ClientId (SMI-5697)', () => {
 
   it('grok resolves to ~/.grok/skills', () => {
     expect(CLIENT_NATIVE_PATHS.grok.endsWith('/.grok/skills')).toBe(true)
+  })
+})
+
+/**
+ * SMI-5980 (Wave 3): COMPANION_AGENT_TARGETS is a regression guard by
+ * design — every existing ClientId's companion-subagent output path must be
+ * EXACTLY unchanged from the pre-Wave-3 hardcoded
+ * `path.join(os.homedir(), '.claude', 'agents')` default, except copilot and
+ * opencode, which get an independently-evidenced directory value cited from
+ * AGENT_SHIM_TARGETS (agent-harness-targets.ts) for the SAME underlying
+ * tool — not a new invented value.
+ */
+describe('COMPANION_AGENT_TARGETS (SMI-5980 Wave 3)', () => {
+  it('has exactly one entry per ClientId in CLIENT_IDS', () => {
+    for (const id of CLIENT_IDS) {
+      expect(COMPANION_AGENT_TARGETS[id]).toBeDefined()
+    }
+    expect(Object.keys(COMPANION_AGENT_TARGETS)).toHaveLength(CLIENT_IDS.length)
+  })
+
+  it('every entry uses flat file mode; every entry but copilot uses the shared {name}-specialist.md pattern', () => {
+    for (const id of CLIENT_IDS) {
+      expect(COMPANION_AGENT_TARGETS[id].fileMode).toBe('flat')
+      if (id === 'copilot') continue
+      expect(COMPANION_AGENT_TARGETS[id].filenamePattern).toBe('{name}-specialist.md')
+    }
+  })
+
+  it('copilot uses {name}.agent.md — its own independently-evidenced filename, not the shared -specialist.md suffix (PR-review finding, BLOCKING)', () => {
+    // AGENT_SHIM_TARGETS.copilot (agent-harness-targets.ts) and shims.ts's
+    // own doc comment both independently confirm Copilot's real
+    // companion-agent format is `.agent.md` -- a plain `-specialist.md`
+    // suffix risked producing a file Copilot's own surfaces never discover.
+    expect(COMPANION_AGENT_TARGETS.copilot.filenamePattern).toBe('{name}.agent.md')
+  })
+
+  it('claude-code matches the pre-Wave-3 hardcoded default exactly', () => {
+    // Pre-Wave-3: path.join(os.homedir(), '.claude', 'agents') — the exact
+    // literal skill-installation.io.ts and author/utils.ts both hardcoded.
+    expect(COMPANION_AGENT_TARGETS['claude-code'].dir).toBe(join(homedir(), '.claude', 'agents'))
+  })
+
+  it.each<ClientId>(['cursor', 'windsurf', 'agents', 'hermes', 'grok'])(
+    '%s has no independent AGENT_SHIM_TARGETS evidence — defaults to the claude-code value',
+    (client) => {
+      expect(COMPANION_AGENT_TARGETS[client].dir).toBe(COMPANION_AGENT_TARGETS['claude-code'].dir)
+    }
+  )
+
+  it('copilot uses its own independently-evidenced directory, not the claude-code default', () => {
+    expect(COMPANION_AGENT_TARGETS.copilot.dir.endsWith('/.copilot/agents')).toBe(true)
+    expect(COMPANION_AGENT_TARGETS.copilot.dir).not.toBe(COMPANION_AGENT_TARGETS['claude-code'].dir)
+  })
+
+  it('opencode uses its own independently-evidenced directory, not the claude-code default', () => {
+    expect(COMPANION_AGENT_TARGETS.opencode.dir.endsWith('/.config/opencode/agents')).toBe(true)
+    expect(COMPANION_AGENT_TARGETS.opencode.dir).not.toBe(
+      COMPANION_AGENT_TARGETS['claude-code'].dir
+    )
+  })
+})
+
+describe('getCompanionAgentTarget / resolveCompanionAgentDir / resolveCompanionAgentPath (SMI-5980 Wave 3)', () => {
+  it('getCompanionAgentTarget defaults to CANONICAL_CLIENT when no client is passed', () => {
+    expect(getCompanionAgentTarget()).toEqual(COMPANION_AGENT_TARGETS[CANONICAL_CLIENT])
+  })
+
+  it('getCompanionAgentTarget returns the exact per-client entry', () => {
+    for (const id of CLIENT_IDS) {
+      expect(getCompanionAgentTarget(id)).toEqual(COMPANION_AGENT_TARGETS[id])
+    }
+  })
+
+  it('resolveCompanionAgentDir defaults to the canonical (claude-code) dir', () => {
+    expect(resolveCompanionAgentDir()).toBe(COMPANION_AGENT_TARGETS['claude-code'].dir)
+  })
+
+  it.each<ClientId>(CLIENT_IDS.filter((id) => id !== 'copilot'))(
+    'resolveCompanionAgentPath(%s) matches dir + <skillName>-specialist.md for every client but copilot',
+    (client) => {
+      const result = resolveCompanionAgentPath('my-skill', client)
+      expect(result).toBe(join(COMPANION_AGENT_TARGETS[client].dir, 'my-skill-specialist.md'))
+    }
+  )
+
+  it('resolveCompanionAgentPath(copilot) matches dir + <skillName>.agent.md', () => {
+    const result = resolveCompanionAgentPath('my-skill', 'copilot')
+    expect(result).toBe(join(COMPANION_AGENT_TARGETS.copilot.dir, 'my-skill.agent.md'))
+  })
+
+  it('resolveCompanionAgentPath defaults to canonical client when omitted (regression: unchanged)', () => {
+    const result = resolveCompanionAgentPath('my-skill')
+    expect(result).toBe(join(COMPANION_AGENT_TARGETS['claude-code'].dir, 'my-skill-specialist.md'))
   })
 })

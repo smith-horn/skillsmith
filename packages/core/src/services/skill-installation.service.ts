@@ -361,7 +361,8 @@ export class SkillInstallationService {
         skillName,
         finalSkillContent,
         [...subSkillsNoCollision, ...optionalFiles.filesToWrite],
-        subagentContent
+        subagentContent,
+        this.client
       )
       if (writeResult.subagentPath) {
         optimizationInfo.subagentPath = writeResult.subagentPath

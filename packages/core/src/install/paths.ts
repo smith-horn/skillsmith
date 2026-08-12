@@ -153,3 +153,157 @@ export function enumerateHarnessPresence(): Array<{
     }
   })
 }
+
+/**
+ * SMI-5980 (Wave 3): where a per-skill companion-subagent file is written for
+ * a given `ClientId`.
+ *
+ * **Deliberately NOT derived from `AGENT_SHIM_TARGETS`** (agent-harness-targets.ts).
+ * That table encodes complete, singular shim-file targets (fixed filenames like
+ * `skillsmith-agent.md`, `null` entries for some tools) for a *different*
+ * command (`sklx agent install`'s one-time named-agent shim), keyed by the
+ * narrower `HarnessId` enum (5 members) rather than `ClientId` (8 members).
+ * This is a new, purpose-built map for the per-skill companion-subagent file
+ * that `SkillInstallationService.install()` / `sklx author subagent` can
+ * generate for ANY installed skill, one file per skill, not a single fixed
+ * shim.
+ *
+ * `fileMode: 'flat'` is the only mode today — one file directly inside `dir`,
+ * named by substituting `{name}` in `filenamePattern`. A later wave (SMI-5982
+ * / Antigravity) is expected to add a `'directory-package'` mode for a
+ * `<name>/agent.md` layout — extend the union then; don't widen it
+ * speculatively now.
+ */
+export interface CompanionAgentTarget {
+  dir: string
+  fileMode: 'flat'
+  filenamePattern: string
+}
+
+/**
+ * Populated conservatively per the SMI-5980 plan review, to fix the
+ * hardcoding/architecture bug (making this resolvable per client at all)
+ * WITHOUT inventing new, unverified per-client directory values:
+ *
+ * - `claude-code`: today's actual confirmed hardcoded value
+ *   (`~/.claude/agents/<skillName>-specialist.md`) — this must exactly match
+ *   pre-Wave-3 behavior (`skill-installation.io.ts`'s prior
+ *   `path.join(os.homedir(), '.claude', 'agents')` literal and
+ *   `author/utils.ts`'s prior `ensureAgentsDirectory()` default).
+ * - `copilot`: `AGENT_SHIM_TARGETS.copilot` (agent-harness-targets.ts) has a
+ *   real, non-null entry for the SAME underlying tool —
+ *   `~/.copilot/agents/skillsmith-agent.agent.md`. Both its DIRECTORY
+ *   (`~/.copilot/agents/`) AND its `.agent.md` EXTENSION are cited here as
+ *   independent evidence (corroborated by shims.ts's own doc comment:
+ *   "Copilot `.agent.md` (Copilot cloud-agent + CLI surfaces, which do not
+ *   read `.claude/agents`)") — PR-review finding (BLOCKING): a plain
+ *   `-specialist.md` suffix here previously risked writing a companion file
+ *   Copilot's own surfaces don't discover at all. Per-skill naming is
+ *   `<name>.agent.md`, not `<name>-specialist.md`.
+ * - `opencode`: `AGENT_SHIM_TARGETS.opencode` likewise has a real, non-null
+ *   entry — `~/.config/opencode/agents/skillsmith-agent.md` (plural
+ *   `agents/`, Step-6 verified against opencode.ai/docs/agents/ per that
+ *   table's own header comment). Its DIRECTORY
+ *   (`~/.config/opencode/agents/`) is cited here as independent evidence of
+ *   OpenCode's own agents-dir convention, filename likewise not reused.
+ * - `cursor`: `AGENT_SHIM_TARGETS.cursor` is `null` — NOT a directory value,
+ *   just documentation that Cursor 2.4+ reads `.claude/agents/` natively
+ *   (per that table's own comment). That happens to coincide with the
+ *   default below, but it is not being "cited as evidence" for a distinct
+ *   value — cursor defaults like any client with no independent evidence.
+ * - `windsurf`, `agents`, `hermes`, `grok`: none of these are even members
+ *   of the narrower `HarnessId` enum `AGENT_SHIM_TARGETS` is keyed on, so
+ *   there is no table entry to consult either way. Every one of these
+ *   defaults to today's actual behavior — the same `~/.claude/agents/`
+ *   value every client gets today.
+ *
+ * Exported for the next wave (SMI-5982, Antigravity) to import and extend
+ * with a real `antigravity` `ClientId` member once that `ClientId` exists.
+ */
+export const COMPANION_AGENT_TARGETS: Record<ClientId, CompanionAgentTarget> = {
+  'claude-code': {
+    dir: join(homedir(), '.claude', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}-specialist.md',
+  },
+  cursor: {
+    // AGENT_SHIM_TARGETS.cursor is null (no distinct value) — defaults like
+    // every client with no independent evidence. See doc comment above.
+    dir: join(homedir(), '.claude', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}-specialist.md',
+  },
+  copilot: {
+    // PR-review finding (BLOCKING): both dir AND filename are now cited
+    // from AGENT_SHIM_TARGETS.copilot (agent-harness-targets.ts:156,
+    // `skillsmith-agent.agent.md`) and shims.ts's own doc comment ("Copilot
+    // `.agent.md` (Copilot cloud-agent + CLI surfaces, which do not read
+    // `.claude/agents`)") -- this codebase already has independently
+    // verified evidence that Copilot's real companion-agent format is
+    // `<name>.agent.md`, not the generic `-specialist.md` suffix every
+    // other client here defaults to. Writing plain `.md` risked producing
+    // an undiscoverable companion file.
+    dir: join(homedir(), '.copilot', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}.agent.md',
+  },
+  windsurf: {
+    // No AGENT_SHIM_TARGETS entry exists for windsurf (not a HarnessId
+    // member) — defaults to today's actual behavior.
+    dir: join(homedir(), '.claude', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}-specialist.md',
+  },
+  agents: {
+    // No AGENT_SHIM_TARGETS entry exists for `agents` (not a HarnessId
+    // member) — defaults to today's actual behavior.
+    dir: join(homedir(), '.claude', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}-specialist.md',
+  },
+  opencode: {
+    // Directory cited from AGENT_SHIM_TARGETS.opencode (agent-harness-targets.ts)
+    // as independent evidence of OpenCode's own agents-dir convention.
+    // Filename pattern is this map's own naming, not copied from that table.
+    dir: join(homedir(), '.config', 'opencode', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}-specialist.md',
+  },
+  hermes: {
+    // No AGENT_SHIM_TARGETS entry exists for hermes (not a HarnessId
+    // member) — defaults to today's actual behavior.
+    dir: join(homedir(), '.claude', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}-specialist.md',
+  },
+  grok: {
+    // No AGENT_SHIM_TARGETS entry exists for grok (not a HarnessId member)
+    // — defaults to today's actual behavior.
+    dir: join(homedir(), '.claude', 'agents'),
+    fileMode: 'flat',
+    filenamePattern: '{name}-specialist.md',
+  },
+}
+
+/** Resolve the companion-agent target descriptor for `client` (default: canonical). */
+export function getCompanionAgentTarget(client: ClientId = CANONICAL_CLIENT): CompanionAgentTarget {
+  return COMPANION_AGENT_TARGETS[client]
+}
+
+/** Resolve just the companion-agent output directory for `client` (default: canonical). */
+export function resolveCompanionAgentDir(client: ClientId = CANONICAL_CLIENT): string {
+  return getCompanionAgentTarget(client).dir
+}
+
+/**
+ * Resolve the full on-disk companion-subagent file path for `client` +
+ * `skillName` (default client: canonical / `claude-code`).
+ */
+export function resolveCompanionAgentPath(
+  skillName: string,
+  client: ClientId = CANONICAL_CLIENT
+): string {
+  const target = getCompanionAgentTarget(client)
+  const filename = target.filenamePattern.replace('{name}', skillName)
+  return join(target.dir, filename)
+}
