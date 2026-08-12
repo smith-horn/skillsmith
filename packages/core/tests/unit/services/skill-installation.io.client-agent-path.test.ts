@@ -11,13 +11,20 @@
  * independently-hardcoded expectation. This also keeps the test from ever
  * writing to a real developer/CI machine's actual home directory.
  *
+ * SMI-5982 (Wave 6): antigravity's `COMPANION_AGENT_TARGETS` entry uses a
+ * RELATIVE `dir` (resolved against `process.cwd()`, not `homedir()`) — its
+ * own dedicated describe block below chdir's into an isolated tmp directory
+ * per test (never TEST_HOME, never the real repo checkout) rather than
+ * relying on the homedir() mock every other client's assertions use.
+ *
  * Split out of skill-installation.io.test.ts to stay under the 500-line
  * CI gate (same rationale as skill-installation.io.symlink.test.ts).
  */
 
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import * as os from 'node:os'
 
 const { TEST_HOME, homedirMock } = vi.hoisted(() => {
   const home = '/tmp/skillsmith-wif-client-agent-path-test-' + process.pid
@@ -53,7 +60,12 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
     homedirMock.mockReturnValue(TEST_HOME)
   })
 
-  it.each<ClientId>([...CLIENT_IDS])(
+  // SMI-5982 (Wave 6): antigravity is excluded from this generic 'flat'
+  // it.each — its dir is a RELATIVE path (resolved against process.cwd(),
+  // NOT the mocked homedir()), so writing it here would land outside
+  // TEST_HOME, pollute the real working tree, and never get cleaned up by
+  // this file's afterAll. It gets its own cwd-isolated describe block below.
+  it.each<ClientId>(CLIENT_IDS.filter((id) => id !== 'antigravity'))(
     'writes the companion subagent for client=%s at exactly COMPANION_AGENT_TARGETS[client]',
     async (client) => {
       const { skillsDir, installPath } = await freshInstallPath(client)
@@ -68,15 +80,13 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
         client
       )
 
-      // PR-review finding fallout (SMI-5980): copilot's filenamePattern is
-      // now '{name}.agent.md', not the shared '-specialist.md' suffix every
-      // other client uses — derive the expected filename from the actual
-      // per-client pattern instead of a universal hardcoded literal.
-      const expectedFilename = COMPANION_AGENT_TARGETS[client].filenamePattern.replace(
-        '{name}',
-        'my-skill'
+      // Every remaining client uses 'flat' mode (copilot's own
+      // '{name}.agent.md' pattern, SMI-5980 PR-review finding, included).
+      const target = COMPANION_AGENT_TARGETS[client]
+      const expectedPath = path.join(
+        target.dir,
+        target.filenamePattern.replace('{name}', 'my-skill')
       )
-      const expectedPath = path.join(COMPANION_AGENT_TARGETS[client].dir, expectedFilename)
       expect(result.subagentPath).toBe(expectedPath)
       expect(await fs.readFile(expectedPath, 'utf8')).toBe(
         '---\nname: my-skill-specialist\n---\nbody'
@@ -193,5 +203,99 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
     )
 
     expect(result.subagentPath).toBeUndefined()
+  })
+})
+
+/**
+ * SMI-5982 (Wave 6): antigravity's companion-agent dir is a RELATIVE path
+ * (`.agents/agents`, project-scoped per the plan's Step 1 — no existing
+ * global-vs-project distinction to hook into) resolved against
+ * `process.cwd()`, unlike every other client's `homedir()`-anchored
+ * absolute dir. This describe block is isolated from the rest of the file:
+ * each test chdir's into its own fresh tmp directory (never TEST_HOME, and
+ * never the real repo checkout) and restores the original cwd in
+ * `afterEach` even on assertion failure, so a broken assertion can never
+ * leave the whole test PROCESS's cwd corrupted for later tests/files.
+ */
+describe('writeInstallFiles companion-subagent path for antigravity (directory-package, SMI-5982 Wave 6)', () => {
+  let originalCwd: string
+  let projectDir: string
+
+  beforeEach(async () => {
+    originalCwd = process.cwd()
+    projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skillsmith-antigravity-cwd-'))
+    process.chdir(projectDir)
+  })
+
+  afterEach(async () => {
+    process.chdir(originalCwd)
+    await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
+  })
+
+  it('writes agent.md inside a skill-named subdirectory, relative to the invocation directory', async () => {
+    const { skillsDir, installPath } = await freshInstallPath('antigravity-write')
+
+    const result = await writeInstallFiles(
+      installPath,
+      skillsDir,
+      'my-skill',
+      '# hello',
+      [],
+      '---\nname: my-skill-specialist\n---\nbody',
+      'antigravity'
+    )
+
+    // resolveCompanionAgentPath() returns antigravity's dir AS-IS, i.e.
+    // RELATIVE (`.agents/agents/...`) — it does NOT resolve against cwd
+    // itself, Node's fs calls do that implicitly. Assert the returned value
+    // is the relative string, then independently verify the REAL file via
+    // an absolute path built from the known projectDir (not derived from
+    // result.subagentPath, so a bug that silently absolutized the value
+    // would still be caught).
+    const expectedRelativePath = path.join('.agents', 'agents', 'my-skill', 'agent.md')
+    const expectedAbsolutePath = path.join(projectDir, expectedRelativePath)
+    expect(result.subagentPath).toBe(expectedRelativePath)
+    expect(await fs.readFile(expectedAbsolutePath, 'utf8')).toBe(
+      '---\nname: my-skill-specialist\n---\nbody'
+    )
+    // Directory-package structure: agent.md lives INSIDE a subdirectory
+    // named after the skill, not directly inside the agents dir.
+    expect(path.basename(path.dirname(expectedAbsolutePath))).toBe('my-skill')
+  })
+
+  it('a safeWriteFile failure on the companion-agent path does not crash, and never force-removes a non-empty per-skill directory', async () => {
+    // Reachable, non-mocked failure mode for the LAST step in
+    // writeInstallFiles's try block (companion-agent write): a symlink
+    // already sitting at the exact target path. safeWriteFile's O_NOFOLLOW
+    // open() refuses it (SymlinkError), so the rollback branch added in
+    // SMI-5982 runs with subagentPath already assigned. The per-skill
+    // directory is NOT empty (the symlink itself is still inside it), so
+    // the rollback's rmdir() must be a safe no-op here, never a force-delete
+    // — this proves the fix degrades safely rather than that it always
+    // reclaims disk space (an EMPTY orphaned directory can only arise from a
+    // transient I/O failure between mkdir and the write, not reproducible
+    // deterministically without mocking fs internals).
+    const { skillsDir, installPath } = await freshInstallPath('antigravity-symlink')
+
+    const agentSkillDir = path.join(projectDir, '.agents', 'agents', 'my-skill')
+    await fs.mkdir(agentSkillDir, { recursive: true })
+    await fs.symlink('/nonexistent-target', path.join(agentSkillDir, 'agent.md'))
+
+    await expect(
+      writeInstallFiles(
+        installPath,
+        skillsDir,
+        'my-skill',
+        '# hello',
+        [],
+        '---\nname: my-skill-specialist\n---\nbody',
+        'antigravity'
+      )
+    ).rejects.toThrow(/symlink/i)
+
+    // The directory (and its symlink) must still exist — rollback did not
+    // blindly force-delete non-empty content.
+    const stats = await fs.lstat(agentSkillDir)
+    expect(stats.isDirectory()).toBe(true)
   })
 })

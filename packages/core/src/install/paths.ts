@@ -40,6 +40,16 @@ import { join } from 'node:path'
 //     also reads the shared ~/.agents/skills path for AGENTS.md-style
 //     cross-agent compatibility, but that's already covered by the existing
 //     `agents` ClientId, so no separate handling is needed for it here.
+//
+// Antigravity addition (SMI-5982 Wave 6), verified 2026-08-11:
+//   - Antigravity: ~/.gemini/config/skills — sourced from
+//     docs/internal/research/smi-5386-opencode-antigravity-skill-dirs.md
+//     (2026-06-26 spike, itself sourced from Google's own Antigravity docs),
+//     covering the Antigravity IDE, CLI, and 2.0 surfaces uniformly. This
+//     CORRECTS SMI-5179's own stale `~/.gemini/antigravity/skills`
+//     description (verified live against Linear 2026-08-11) — do not carry
+//     that older path forward. Antigravity was previously browse-only (see
+//     `compatibility/slugs.ts` `BROWSE_ONLY_SLUGS`, now un-deferred here).
 export type ClientId =
   | 'claude-code'
   | 'cursor'
@@ -49,6 +59,7 @@ export type ClientId =
   | 'opencode'
   | 'hermes'
   | 'grok'
+  | 'antigravity'
 
 export const CLIENT_NATIVE_PATHS: Record<ClientId, string> = {
   'claude-code': join(homedir(), '.claude', 'skills'),
@@ -59,6 +70,7 @@ export const CLIENT_NATIVE_PATHS: Record<ClientId, string> = {
   opencode: join(homedir(), '.config', 'opencode', 'skills'),
   hermes: join(homedir(), '.hermes', 'skills'),
   grok: join(homedir(), '.grok', 'skills'),
+  antigravity: join(homedir(), '.gemini', 'config', 'skills'),
 }
 
 export const CANONICAL_CLIENT: ClientId = 'claude-code'
@@ -81,6 +93,7 @@ export const CLIENT_DISPLAY_LABELS: Record<ClientId, string> = {
   opencode: 'OpenCode',
   hermes: 'Hermes',
   grok: 'Grok Build',
+  antigravity: 'Antigravity',
 }
 
 export const CLIENT_IDS: ReadonlyArray<ClientId> = Object.freeze([
@@ -92,6 +105,7 @@ export const CLIENT_IDS: ReadonlyArray<ClientId> = Object.freeze([
   'opencode',
   'hermes',
   'grok',
+  'antigravity',
 ])
 
 export function getCanonicalInstallPath(): string {
@@ -168,15 +182,18 @@ export function enumerateHarnessPresence(): Array<{
  * generate for ANY installed skill, one file per skill, not a single fixed
  * shim.
  *
- * `fileMode: 'flat'` is the only mode today — one file directly inside `dir`,
- * named by substituting `{name}` in `filenamePattern`. A later wave (SMI-5982
- * / Antigravity) is expected to add a `'directory-package'` mode for a
- * `<name>/agent.md` layout — extend the union then; don't widen it
- * speculatively now.
+ * `fileMode` has two values:
+ * - `'flat'` — one file directly inside `dir`, named by substituting `{name}`
+ *   in `filenamePattern`. Used by every client except Antigravity.
+ * - `'directory-package'` (SMI-5982 Wave 6, Antigravity) — a per-skill
+ *   subdirectory `<dir>/<name>/` containing a fixed-name file
+ *   (`filenamePattern`, always `'agent.md'` for this mode — no `{name}`
+ *   substitution, the name lives in the directory segment instead). See
+ *   {@link resolveCompanionAgentPath} for the resolution logic per mode.
  */
 export interface CompanionAgentTarget {
   dir: string
-  fileMode: 'flat'
+  fileMode: 'flat' | 'directory-package'
   filenamePattern: string
 }
 
@@ -216,9 +233,19 @@ export interface CompanionAgentTarget {
  *   there is no table entry to consult either way. Every one of these
  *   defaults to today's actual behavior — the same `~/.claude/agents/`
  *   value every client gets today.
- *
- * Exported for the next wave (SMI-5982, Antigravity) to import and extend
- * with a real `antigravity` `ClientId` member once that `ClientId` exists.
+ * - `antigravity` (SMI-5982 Wave 6): NOT a `HarnessId` member either, but
+ *   unlike the clients above, it does NOT default to the shared
+ *   `~/.claude/agents/` value — Antigravity has its own independently
+ *   web-verified convention (live search against
+ *   antigravity.google/docs/cli/commands/agents, 2026-08-11), and it is a
+ *   directory-package, not a flat file. No existing global-vs-project
+ *   install-mode distinction exists anywhere in this CLI (grepped
+ *   `--global`/`--project`/`isGlobal`/`globalScope`, zero hits) — this
+ *   entry therefore defaults to PROJECT-scoped (`.agents/agents/<name>/agent.md`,
+ *   relative to the invocation directory, i.e. `dir` here is a RELATIVE
+ *   path, unlike every other entry's `homedir()`-anchored absolute path).
+ *   Global scope (`~/.gemini/config/agents/<name>/agent.md`) is an explicit
+ *   fast-follow, not implemented here — see the SMI-5982 Linear comment.
  */
 export const COMPANION_AGENT_TARGETS: Record<ClientId, CompanionAgentTarget> = {
   'claude-code': {
@@ -283,6 +310,23 @@ export const COMPANION_AGENT_TARGETS: Record<ClientId, CompanionAgentTarget> = {
     fileMode: 'flat',
     filenamePattern: '{name}-specialist.md',
   },
+  antigravity: {
+    // SMI-5982 (Wave 6): directory-package mode, not flat — confirmed via a
+    // live web search against antigravity.google/docs/cli/commands/agents
+    // (2026-08-11): each agent is a directory `<name>/` containing a single
+    // `agent.md` (YAML frontmatter: `name`, `description` only — no
+    // `subagent:` field or equivalent exists in the real schema, confirming
+    // the plan's decision NOT to emit one). `dir` is intentionally a
+    // RELATIVE path (`.agents/agents`, resolved against the process's
+    // invocation directory by Node's fs calls) — project-scoped, per Step 1
+    // of the SMI-5982 plan: this CLI has no existing global-vs-project
+    // install-mode distinction to hook into, so this defaults to
+    // project-scoped rather than inventing scope-detection logic. Global
+    // scope (`~/.gemini/config/agents/`) is an explicit fast-follow.
+    dir: join('.agents', 'agents'),
+    fileMode: 'directory-package',
+    filenamePattern: 'agent.md',
+  },
 }
 
 /** Resolve the companion-agent target descriptor for `client` (default: canonical). */
@@ -290,7 +334,13 @@ export function getCompanionAgentTarget(client: ClientId = CANONICAL_CLIENT): Co
   return COMPANION_AGENT_TARGETS[client]
 }
 
-/** Resolve just the companion-agent output directory for `client` (default: canonical). */
+/**
+ * Resolve just the companion-agent output directory for `client` (default:
+ * canonical). For `fileMode: 'directory-package'` clients (Antigravity), this
+ * is the SHARED PARENT of every skill's own `<name>/` package, not the final
+ * per-skill directory — use {@link resolveCompanionAgentPath} (and its
+ * `path.dirname()`) to get the actual per-skill directory a file lands in.
+ */
 export function resolveCompanionAgentDir(client: ClientId = CANONICAL_CLIENT): string {
   return getCompanionAgentTarget(client).dir
 }
@@ -298,12 +348,23 @@ export function resolveCompanionAgentDir(client: ClientId = CANONICAL_CLIENT): s
 /**
  * Resolve the full on-disk companion-subagent file path for `client` +
  * `skillName` (default client: canonical / `claude-code`).
+ *
+ * Two `fileMode`s (SMI-5982 Wave 6):
+ * - `'flat'`: `<dir>/<filenamePattern with {name} substituted>` — one file
+ *   directly inside the shared client agents dir (all clients but Antigravity).
+ * - `'directory-package'`: `<dir>/<skillName>/<filenamePattern>` — a
+ *   per-skill subdirectory containing a fixed-name file (Antigravity only
+ *   today; `filenamePattern` carries no `{name}` token in this mode, since
+ *   the skill name is the directory segment instead).
  */
 export function resolveCompanionAgentPath(
   skillName: string,
   client: ClientId = CANONICAL_CLIENT
 ): string {
   const target = getCompanionAgentTarget(client)
+  if (target.fileMode === 'directory-package') {
+    return join(target.dir, skillName, target.filenamePattern)
+  }
   const filename = target.filenamePattern.replace('{name}', skillName)
   return join(target.dir, filename)
 }

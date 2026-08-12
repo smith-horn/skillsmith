@@ -7,8 +7,15 @@
  * from install.ts to keep that file within the 500-line limit.
  */
 
+import { CLIENT_IDS } from '@skillsmith/core/install'
+
 /**
  * MCP tool definition for install_skill
+ *
+ * SMI-5982 (Wave 6) audit finding: `client`/`alsoLink` `enum` below used to
+ * be a hand-duplicated 5-value literal, independently stale from the zod
+ * schema's own copy in install.types.ts (both predated opencode/hermes/grok)
+ * — now both derive from the same `CLIENT_IDS` source of truth.
  */
 export const installTool = {
   name: 'install_skill',
@@ -47,7 +54,7 @@ export const installTool = {
       // SMI-4578: multi-client install
       client: {
         type: 'string',
-        enum: ['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'],
+        enum: [...CLIENT_IDS],
         description:
           'Target agent (default: SKILLSMITH_CLIENT env or claude-code). Codex users pass agents.',
       },
@@ -55,7 +62,7 @@ export const installTool = {
         type: 'array',
         items: {
           type: 'string',
-          enum: ['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'],
+          enum: [...CLIENT_IDS],
         },
         description:
           'Additional clients to fan-out into (default: copy; pair with symlink for POSIX symlinks)',

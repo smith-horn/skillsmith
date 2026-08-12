@@ -61,6 +61,7 @@ describe('enumerateHarnessPresence (SMI-5390)', () => {
     expect(result.find((r) => r.harness === 'opencode')?.present).toBe(false)
     expect(result.find((r) => r.harness === 'hermes')?.present).toBe(false)
     expect(result.find((r) => r.harness === 'grok')?.present).toBe(false)
+    expect(result.find((r) => r.harness === 'antigravity')?.present).toBe(false)
   })
 
   it('reports all harnesses absent when existsSync returns false for every path', () => {
@@ -106,11 +107,21 @@ describe('opencode + hermes ClientIds (SMI-5456 Wave 1 Step 5)', () => {
 describe('grok ClientId (SMI-5697)', () => {
   it('CLIENT_IDS includes grok', () => {
     expect(CLIENT_IDS).toContain('grok')
-    expect(CLIENT_IDS).toHaveLength(8)
   })
 
   it('grok resolves to ~/.grok/skills', () => {
     expect(CLIENT_NATIVE_PATHS.grok.endsWith('/.grok/skills')).toBe(true)
+  })
+})
+
+describe('antigravity ClientId (SMI-5982 Wave 6)', () => {
+  it('CLIENT_IDS includes antigravity, 9 total', () => {
+    expect(CLIENT_IDS).toContain('antigravity')
+    expect(CLIENT_IDS).toHaveLength(9)
+  })
+
+  it('antigravity resolves to ~/.gemini/config/skills (corrects SMI-5179 stale ~/.gemini/antigravity/skills claim)', () => {
+    expect(CLIENT_NATIVE_PATHS.antigravity).toBe(join(homedir(), '.gemini', 'config', 'skills'))
   })
 })
 
@@ -131,8 +142,11 @@ describe('COMPANION_AGENT_TARGETS (SMI-5980 Wave 3)', () => {
     expect(Object.keys(COMPANION_AGENT_TARGETS)).toHaveLength(CLIENT_IDS.length)
   })
 
-  it('every entry uses flat file mode; every entry but copilot uses the shared {name}-specialist.md pattern', () => {
+  it('every entry but antigravity uses flat file mode; every flat entry but copilot uses the shared {name}-specialist.md pattern', () => {
+    // SMI-5982 (Wave 6): antigravity is the first 'directory-package' entry —
+    // see the dedicated 'antigravity directory-package entry' test below.
     for (const id of CLIENT_IDS) {
+      if (id === 'antigravity') continue
       expect(COMPANION_AGENT_TARGETS[id].fileMode).toBe('flat')
       if (id === 'copilot') continue
       expect(COMPANION_AGENT_TARGETS[id].filenamePattern).toBe('{name}-specialist.md')
@@ -171,6 +185,19 @@ describe('COMPANION_AGENT_TARGETS (SMI-5980 Wave 3)', () => {
       COMPANION_AGENT_TARGETS['claude-code'].dir
     )
   })
+
+  it('antigravity directory-package entry: its own dir, directory-package mode, fixed agent.md filename (SMI-5982 Wave 6)', () => {
+    // Project-scoped relative dir (Step 1 of the SMI-5982 plan: no existing
+    // global-vs-project distinction anywhere in this CLI to hook into) — NOT
+    // homedir()-anchored like every other client's dir.
+    expect(COMPANION_AGENT_TARGETS.antigravity.dir).toBe(join('.agents', 'agents'))
+    expect(COMPANION_AGENT_TARGETS.antigravity.dir).not.toBe(
+      COMPANION_AGENT_TARGETS['claude-code'].dir
+    )
+    expect(COMPANION_AGENT_TARGETS.antigravity.fileMode).toBe('directory-package')
+    // No {name} token — the skill name lives in the directory segment, not the filename.
+    expect(COMPANION_AGENT_TARGETS.antigravity.filenamePattern).toBe('agent.md')
+  })
 })
 
 describe('getCompanionAgentTarget / resolveCompanionAgentDir / resolveCompanionAgentPath (SMI-5980 Wave 3)', () => {
@@ -188,8 +215,8 @@ describe('getCompanionAgentTarget / resolveCompanionAgentDir / resolveCompanionA
     expect(resolveCompanionAgentDir()).toBe(COMPANION_AGENT_TARGETS['claude-code'].dir)
   })
 
-  it.each<ClientId>(CLIENT_IDS.filter((id) => id !== 'copilot'))(
-    'resolveCompanionAgentPath(%s) matches dir + <skillName>-specialist.md for every client but copilot',
+  it.each<ClientId>(CLIENT_IDS.filter((id) => id !== 'copilot' && id !== 'antigravity'))(
+    'resolveCompanionAgentPath(%s) matches dir + <skillName>-specialist.md for every flat client but copilot',
     (client) => {
       const result = resolveCompanionAgentPath('my-skill', client)
       expect(result).toBe(join(COMPANION_AGENT_TARGETS[client].dir, 'my-skill-specialist.md'))
@@ -199,6 +226,12 @@ describe('getCompanionAgentTarget / resolveCompanionAgentDir / resolveCompanionA
   it('resolveCompanionAgentPath(copilot) matches dir + <skillName>.agent.md', () => {
     const result = resolveCompanionAgentPath('my-skill', 'copilot')
     expect(result).toBe(join(COMPANION_AGENT_TARGETS.copilot.dir, 'my-skill.agent.md'))
+  })
+
+  it('resolveCompanionAgentPath(antigravity) matches dir/<skillName>/agent.md — directory-package mode (SMI-5982 Wave 6)', () => {
+    const result = resolveCompanionAgentPath('my-skill', 'antigravity')
+    expect(result).toBe(join(COMPANION_AGENT_TARGETS.antigravity.dir, 'my-skill', 'agent.md'))
+    expect(result).toBe(join('.agents', 'agents', 'my-skill', 'agent.md'))
   })
 
   it('resolveCompanionAgentPath defaults to canonical client when omitted (regression: unchanged)', () => {

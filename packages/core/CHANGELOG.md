@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `antigravity` is now a real `ClientId` (`install/paths.ts`) — `CLIENT_NATIVE_PATHS['antigravity'] = ~/.gemini/config/skills`, un-deferred from `compatibility/slugs.ts`'s `BROWSE_ONLY_SLUGS` (which now only contains `gemini`), and given its own `CLIENT_TO_COMPATIBILITY_SLUG` entry. `CompanionAgentTarget.fileMode` gains a second value, `'directory-package'` (Antigravity only today) — a per-skill subdirectory `<dir>/<skillName>/agent.md`, instead of every other client's flat `<dir>/<name>-suffix.md`; `resolveCompanionAgentPath()` is now mode-aware. Antigravity's companion-agent output is project-scoped (`.agents/agents/<name>/agent.md`, relative to the invocation directory) — this CLI has no existing global-vs-project install-mode distinction to hook into, confirmed by grep, so global scope (`~/.gemini/config/agents/`) is a fast-follow, not implemented here (SMI-5982)
+- **Fix**: `writeInstallFiles()`'s rollback path could leave behind an orphaned, empty per-skill companion-agent directory when a new `directory-package`-mode install (Antigravity) failed partway through — every other client's agents dir is shared and pre-existing, so this hazard never applied to them. Cleanup uses a non-recursive `rmdir`, a safe no-op when the directory was never created or holds unexpected surviving content (SMI-5982)
 - **Changed (breaking)**: `SearchResponse.compatibilityHidden` renamed to
   `compatibilityDeprioritized` — the compatibility filter is now a ranking signal, not a hard
   exclusion (SMI-5929), so results are never actually "hidden" by it anymore; the renamed field is

@@ -9,7 +9,12 @@ import * as path from 'path'
 import { safeWriteFile } from '../utils/safe-fs.js'
 import { SecurityScanner } from '../security/index.js'
 import type { ScannerOptions, ScanReport } from '../security/index.js'
-import { CANONICAL_CLIENT, resolveCompanionAgentPath, type ClientId } from '../install/paths.js'
+import {
+  CANONICAL_CLIENT,
+  getCompanionAgentTarget,
+  resolveCompanionAgentPath,
+  type ClientId,
+} from '../install/paths.js'
 import { validateOptionalConfig } from './skill-installation.validate.js'
 import {
   BUNDLED_SCAN_FILES,
@@ -265,6 +270,16 @@ export async function writeInstallFiles(
     // resolveCompanionAgentPath()/COMPANION_AGENT_TARGETS, install/paths.ts).
     for (const filePath of writtenFiles) {
       await fs.unlink(filePath).catch(() => {})
+    }
+    // SMI-5982 (Wave 6): 'directory-package' mode (Antigravity) creates a
+    // skill-named subdirectory OUTSIDE installPath (<agentsDir>/<skillName>/
+    // agent.md) that 'flat' mode never needed — every other client's agents
+    // dir is a shared, pre-existing directory, never created per-skill. A
+    // failed install must not leave that now-empty per-skill directory
+    // orphaned. rmdir is non-recursive: a safe no-op if the directory is
+    // missing (never created) or non-empty (unexpected content survives).
+    if (subagentPath && getCompanionAgentTarget(client).fileMode === 'directory-package') {
+      await fs.rmdir(path.dirname(subagentPath)).catch(() => {})
     }
     // Only recursively remove installPath once it has been PROVEN inside skillsDir
     // (pathValidated) — so an untracked orphan from a mid-batch Promise.all write can't

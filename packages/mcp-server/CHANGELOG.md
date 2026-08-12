@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `install_skill`'s `client`/`alsoLink` params — both the zod schema (`install.types.ts`) and the raw tool `enum` (`install.tool.ts`) hardcoded a stale 5-value literal (`claude-code | cursor | copilot | windsurf | agents`) that predated `opencode`/`hermes` (SMI-5456) and `grok` (SMI-5697). Because a hand-written `z.enum([...])`/JSON-schema `enum` isn't derived from the `ClientId` type, TypeScript never caught the drift — `install_skill` was silently rejecting `client: "opencode"`/`"hermes"`/`"grok"` over MCP even though the CLI fully supported all three. Both now derive from `CLIENT_IDS`, closing this class of drift permanently instead of re-appending a 4th literal (SMI-5982)
+- **Feature**: `search`'s compatibility resolution and the MCP-config setup snippets now cover `antigravity` as a real client, alongside the `@skillsmith/core` `ClientId` addition (SMI-5982)
 - **Changed (breaking)**: `search`'s compatibility filter is now a ranking signal, not a hard
   exclusion — a result whose declared `compatibility` doesn't include the requested client is no
   longer dropped, only sorted after declared-compatible and unscoped (`[]`/absent) results. Local

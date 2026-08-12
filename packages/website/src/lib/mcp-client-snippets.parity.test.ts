@@ -74,10 +74,16 @@ const EXPECTED: ReadonlyArray<{
     configPath: '~/.grok/config.toml',
     format: 'toml',
   },
+  {
+    id: 'antigravity',
+    label: 'Google Antigravity',
+    configPath: '~/.gemini/config/mcp_config.json',
+    format: 'json',
+  },
 ]
 
 describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', () => {
-  it('has exactly the 9-entry canonical id/label/configPath/format contract, in SNIPPET_DISPLAY_ORDER', () => {
+  it('has exactly the 10-entry canonical id/label/configPath/format contract, in SNIPPET_DISPLAY_ORDER', () => {
     const actual = MCP_CLIENT_SNIPPETS.map(({ id, label, configPath, format }) => ({
       id,
       label,
