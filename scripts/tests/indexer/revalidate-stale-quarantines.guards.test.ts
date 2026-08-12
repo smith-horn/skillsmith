@@ -208,7 +208,7 @@ describe('loadCandidates — pagination', () => {
 
   it('respects an explicit limit without over-fetching', async () => {
     const rows = Array.from({ length: 1074 }, (_, i) => makeRow({ id: `id-${i}` }))
-    const loaded = await loadCandidates(makeSelectDb(rows) as never, 10)
+    const loaded = await loadCandidates(makeSelectDb(rows) as never, { limit: 10 })
     expect(loaded).toHaveLength(10)
   })
 })

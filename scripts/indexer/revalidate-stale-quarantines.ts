@@ -7,7 +7,14 @@
  * Safety: `--dry-run` is DEFAULT (`--apply` writes); CAS guards prevent double-flip;
  * run OUTSIDE the 00/06/12/18 UTC indexer cron window.
  *
- * Usage: varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts [--apply] [--limit N]
+ * Usage: varlock run -- npx tsx scripts/indexer/revalidate-stale-quarantines.ts [--apply] [--limit N | --ids=<a,b,c> | --ids-file=<path>]
+ *
+ * `--ids`/`--ids-file` (SMI-5879 round-7): target the sweep at an explicit id
+ * set (e.g. a remediation report's excluded list), INTERSECTED with the fixed
+ * predicate below — never a bypass of it. Mutually exclusive with `--limit`
+ * and with each other. See `revalidate-stale-quarantines.cli.ts` and the
+ * design doc's §11 round-7 addendum for the full targeting/reconciliation
+ * contract.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -27,6 +34,7 @@ import {
   writeSiblingRequarantine,
   writeSiblingRecovery,
 } from './revalidate-stale-quarantines.sibling.ts'
+import { parseIdSelection, reportIdSelectionIfPresent } from './revalidate-stale-quarantines.cli.ts'
 
 // ---------------------------------------------------------------------------
 // Types (split into revalidate-stale-quarantines.types.ts, SMI-5866)
@@ -34,6 +42,14 @@ import {
 
 export type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
 import type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
+
+// ---------------------------------------------------------------------------
+// Candidate loading (split into revalidate-stale-quarantines.load.ts, SMI-5879 round-7)
+// ---------------------------------------------------------------------------
+
+export type { LoadCandidatesOptions } from './revalidate-stale-quarantines.load.ts'
+import { loadCandidates } from './revalidate-stale-quarantines.load.ts'
+export { loadCandidates }
 
 interface RowResult {
   row: StaleQuarantinedRow
@@ -298,60 +314,31 @@ export async function processRow(
 // Sweep orchestration
 // ---------------------------------------------------------------------------
 
-/** PostgREST caps a single response at 1000 rows; the candidate set is larger. */
-const PAGE_SIZE = 1000
-
-/**
- * Load all stale-quarantined candidates, paging past PostgREST's max-rows cap.
- *
- * Candidate set: `quarantined = true` AND `repo_url ILIKE 'https://github.com/%'`
- * AND (`quarantine_reason IS NULL` OR `quarantine_reason = 'stale'`).
- * `quarantine_reason IS NULL` covers legacy rows quarantined before the reason
- * column was populated; `'stale'` is what the stale-reconciliation path writes.
- *
- * Ordered by `id` (stable PK) so page boundaries are consistent. ALL rows are
- * collected before the caller processes them, so apply-mode mutations (which
- * drop rows out of the candidate set) cannot shift later page offsets.
- */
-export async function loadCandidates(
-  db: SupabaseClient,
-  limit?: number
-): Promise<StaleQuarantinedRow[]> {
-  const out: StaleQuarantinedRow[] = []
-  for (let page = 0; ; page++) {
-    const remaining = limit === undefined ? PAGE_SIZE : Math.min(PAGE_SIZE, limit - out.length)
-    if (remaining <= 0) break
-    const from = page * PAGE_SIZE
-    const { data, error } = await db
-      .from('skills')
-      .select('id, author, name, repo_url, skill_path, quarantine_reason, security_findings')
-      .eq('quarantined', true)
-      .ilike('repo_url', 'https://github.com/%')
-      .or('quarantine_reason.is.null,quarantine_reason.eq.stale')
-      .order('id', { ascending: true })
-      .range(from, from + remaining - 1)
-    if (error)
-      throw new Error(`Failed to load stale-quarantined rows (page ${page}): ${error.message}`)
-    const rows = (data ?? []) as StaleQuarantinedRow[]
-    out.push(...rows)
-    if (limit !== undefined && out.length >= limit) return out.slice(0, limit)
-    if (rows.length < remaining) break
-  }
-  return out
-}
-
 /**
  * Run the full stale-revalidation sweep. `db` is caller-constructed (SMI-Q,
  * design 11.2.7) so Gate C's client-construction ordering is observable in
  * `main()`, not hidden behind a second client built inside this function.
+ *
+ * `opts.ids` (round-7): when present, phase-2 reconciliation
+ * (`reconcileIdSelection`) runs between `loadCandidates` and the processing
+ * loop below — a refusal there (structural `loaded ⊆ requested` violation in
+ * either mode, or a non-empty `not-loaded` set under `--apply`) throws before
+ * any row is processed, so zero writes occur.
  */
 export async function runSweep(
   db: SupabaseClient,
-  opts: { apply: boolean; limit?: number }
+  opts: {
+    apply: boolean
+    limit?: number
+    ids?: readonly string[]
+    /** Count of ids before dedupe (design §11.2.3's "requested_raw"). Defaults to `ids.length` if omitted. */
+    requestedRawCount?: number
+  }
 ): Promise<SweepCounts> {
   const headers = await buildGitHubHeaders()
 
-  const rows = await loadCandidates(db, opts.limit)
+  const rows = await loadCandidates(db, { limit: opts.limit, ids: opts.ids })
+  reportIdSelectionIfPresent(opts.ids, opts.requestedRawCount, rows, opts.apply)
 
   const counts: SweepCounts = {
     total: rows.length,
@@ -471,20 +458,20 @@ export async function runSweep(
 /** Parse CLI arguments and run the sweep. Skipped when imported by tests. */
 async function main(): Promise<void> {
   // SMI-5879 Gate C: env-sourced check first (no dependency on a DB round
-  // trip), then the client is constructed ONCE (round-7 SMI-Q — the same
-  // client Gate C's freeze-marker check reads is the same client runSweep()
-  // writes with, so the "immediately after client construction" ordering is
-  // observable in one function, not hidden behind a second, independently
-  // constructed client inside runSweep() — see the design doc 11.2.7).
+  // trip). Phase-1 id-selection parsing (round-7, design 11.2.7) runs next —
+  // it is PURE plus one fs.readFileSync, and throws on any invalid input, so
+  // a malformed --ids/--ids-file/--limit selection is refused before the
+  // client is ever constructed. The client is then constructed ONCE
+  // (round-7 SMI-Q — the same client Gate C's freeze-marker check reads is
+  // the same client runSweep() writes with, so the "immediately after client
+  // construction" ordering is observable in one function, not hidden behind
+  // a second, independently constructed client inside runSweep()).
   assertRunAllowed('revalidate')
+  const sel = parseIdSelection(process.argv)
   const db = createSupabaseAdminClient()
   await assertFreezeMarkerClear(db, 'revalidate')
   const apply = process.argv.includes('--apply')
-  const limitArg = process.argv.find((a) => a.startsWith('--limit'))
-  const limit = limitArg
-    ? Number(limitArg.split('=')[1] ?? process.argv[process.argv.indexOf(limitArg) + 1])
-    : undefined
-  await runSweep(db, { apply, limit: Number.isFinite(limit) ? limit : undefined })
+  await runSweep(db, { apply, ...sel })
 }
 
 // Run only when invoked directly (not when imported by the test suite).
