@@ -31,6 +31,10 @@ on:
       - 'scripts/docker-health.sh'
       - 'scripts/session-start-mcp-command-guard.sh'
       - 'scripts/session-mcp-disconnect-guard.sh'
+      - 'scripts/lib/hook-docker-detect.sh'
+      - 'scripts/lib/check-container-deps-fresh.sh'
+      - 'scripts/lib/check-container-deps-fresh-inner.sh'
+      - 'scripts/tests/check-container-deps-fresh.test.sh'
       - 'scripts/tests/session-mcp-disconnect-guard.test.sh'
       - 'scripts/tests/create-worktree-hooks.test.sh'
       - 'scripts/tests/session-start-audit.test.sh'
@@ -67,6 +71,10 @@ jobs:
         # -S warning skips info-level findings (SC1091 can't-follow-source
         # is unavoidable for scripts that source _lib.sh; SC2016 single-quote
         # expansion is intentional in the git-crypt unlock invocation).
+        # scripts/lib/hook-docker-detect.sh (SMI-6006) is deliberately NOT in
+        # this list — shellcheck flags its color/RUN_PREFIX vars as SC2034
+        # "appears unused" because it can't see the files that source it and
+        # consume them; `sh -n` below still syntax-checks it.
         run: |
           shellcheck -S warning scripts/_lib.sh \
             scripts/create-worktree.sh \
@@ -83,6 +91,9 @@ jobs:
             scripts/docker-health.sh \
             scripts/session-start-mcp-command-guard.sh \
             scripts/session-mcp-disconnect-guard.sh \
+            scripts/lib/check-container-deps-fresh.sh \
+            scripts/lib/check-container-deps-fresh-inner.sh \
+            scripts/tests/check-container-deps-fresh.test.sh \
             scripts/tests/session-mcp-disconnect-guard.test.sh \
             scripts/tests/create-worktree-hooks.test.sh \
             scripts/tests/session-start-audit.test.sh \
@@ -117,6 +128,10 @@ jobs:
           bash -n scripts/docker-health.sh
           bash -n scripts/session-start-mcp-command-guard.sh
           bash -n scripts/session-mcp-disconnect-guard.sh
+          sh -n scripts/lib/hook-docker-detect.sh
+          sh -n scripts/lib/check-container-deps-fresh.sh
+          sh -n scripts/lib/check-container-deps-fresh-inner.sh
+          bash -n scripts/tests/check-container-deps-fresh.test.sh
           bash -n scripts/tests/session-mcp-disconnect-guard.test.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
           bash -n scripts/tests/session-start-audit.test.sh
@@ -134,6 +149,7 @@ jobs:
           bash -n scripts/tests/claude-hooks-log-wrapper.test.sh
           sh -n scripts/claude-hooks-log-wrapper.sh
           sh -n .husky/pre-commit
+          sh -n .husky/pre-push
           sh -n .husky/post-merge
 
       - name: Setup Node (for session-audit hook tsx invocations)
@@ -150,6 +166,7 @@ jobs:
 
       - name: Hooks unit tests
         run: |
+          bash scripts/tests/check-container-deps-fresh.test.sh
           bash scripts/tests/session-mcp-disconnect-guard.test.sh
           bash scripts/tests/create-worktree-hooks.test.sh
           bash scripts/tests/session-start-audit.test.sh

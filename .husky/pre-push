@@ -84,6 +84,25 @@ if [ -r "$DIST_LIB" ]; then
   fi
 fi
 
+# Container-internal node_modules freshness self-heal (SMI-6006) — BLOCK on
+# failure (lock timeout or npm install failure), but self-heals silently on
+# the common case (stale -> npm install -> fresh) rather than just warning.
+# skillsmith-dev-1's own node_modules is a Docker named volume, disconnected
+# from the host tree the freshness guard above measures — it can drift from
+# package-lock.json with no detection otherwise. Runs BEFORE the native
+# check below: a stale tree could make the native probe fail for the wrong
+# reason, and this ordering lets the native check validate bindings against
+# post-install state. No-op on worktree containers (:ro mount; already
+# covered by the host freshness guard above) and when
+# SKILLSMITH_SKIP_CONTAINER_DEPS_FRESHNESS=1. STDIN-SILENT like the guards
+# above.
+CONTAINER_DEPS_LIB="$(dirname "$0")/../scripts/lib/check-container-deps-fresh.sh"
+if [ -r "$CONTAINER_DEPS_LIB" ]; then
+  if ! sh "$CONTAINER_DEPS_LIB" </dev/null; then
+    exit 1
+  fi
+fi
+
 # Container native-binding health guard (SMI-5513) — BLOCK (exit 1).
 # A bare `npm install` in the dev container (with .npmrc ignore-scripts=true)
 # leaves better-sqlite3 unbuilt ("invalid ELF header"); catch it HERE with a
