@@ -83,9 +83,39 @@ When using Skillsmith MCP server:
 - `recommend`: Get project-based skill recommendations
 - `validate`: Validate a skill's structure
 - `compare`: Compare multiple skills side-by-side
+- `skill_suggest`: Proactively suggest skills based on your current project context (counts against monthly quota)
+- `skill_outdated`: Check installed skills for staleness and dependency status
+- `index_local`: Index skills from a local directory
+- `skill_publish`: Prepare a local skill for publishing (reference check, optional GitHub repo creation)
+- `skill_rescan`: Re-scan an installed skill's content for security/quality changes
+- `skill_recover_source`: Recover the canonical GitHub source of locally-installed skills (read-only report + candidates)
+- `inventory_push`: Push this machine's installed-skill inventory to your Skillsmith account for the web dashboard
+- `skill_updates` (Individual+): Check the registry for newer skill versions
+- `skill_diff` (Individual+): Section-level diff between two versions of a skill
+- `skill_pack_audit` (Individual+): Audit all skills in a directory
+- `skill_audit` (Team+): Check skills for known security advisories
+- `skill_inventory_audit` (Team+): Audit local ~/.claude/ inventory for namespace collisions; returns rename + edit suggestions
+- `apply_namespace_rename` (Team+): Apply a rename suggestion from an inventory audit (apply/custom/skip)
+- `apply_recommended_edit` (Team+): Apply a recommended prose edit from an inventory audit
+- `undo_apply` (Team+): Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s)
+- `team_workspace` (Team+): Manage team workspaces (create, list, get, delete)
+- `share_skill` (Team+): Add, remove, or list skills in a team workspace
 - `publish_private` (Team+): Mark a skill private on this device, hiding it from your own search results
+- `team_analytics_dashboard` (Team+): Per-user tool usage counts, top tools, and daily trend
+- `team_usage_report` (Team+): Weekly/monthly usage summary with period comparison
+- `audit_export` (Enterprise): Export audit log events for a time range
+- `audit_query` (Enterprise): Query audit logs with filters
+- `siem_export` (Enterprise): Export audit events for SIEM ingestion
+- `analytics_dashboard` (Enterprise): Recommendation accuracy, adoption curves, and team aggregation
+- `usage_report` (Enterprise): Comprehensive usage report with all metrics
+- `configure_sso` (Enterprise): Configure SSO/SAML integration (set, test, remove)
+- `sso_settings` (Enterprise): View current SSO/SAML configuration
 - `private_registry_publish` (Enterprise): Publish a skill version to your team's private registry as a pending submission
 - `private_registry_manage` (Enterprise): List, get, install, deprecate, and review skills in your team's private registry — including approving/rejecting pending submissions
+- `rbac_manage` (Enterprise): Manage RBAC roles (create, list, get, delete)
+- `rbac_assign_role` (Enterprise): Assign or revoke roles for users
+- `rbac_create_policy` (Enterprise): Create and manage RBAC access policies
+- `compliance_report` (Enterprise): Generate SOC2, CycloneDX SBOM, or JSON compliance reports
 
 ## Packages
 
