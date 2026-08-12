@@ -6,7 +6,7 @@ MCP (Model Context Protocol) server for agent skill publishing, installation, an
 
 Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
-## What's New in v0.7.7
+## What's New in v0.7.8
 
 - **`search`'s `limit` parameter actually works now**: previously advertised in the tool description but silently dropped — no `limit` field existed in the input schema at all. Now threaded through both the API and local-fallback paths, clamped to `[1, 100]`.
 - **`skill_compare` and `skill_recommend` fixed**: compare now resolves any skill `search`/`get_skill` can find (was local-cache-only); recommend no longer 400s or silently zeroes on an empty derived stack — both return a structured, actionable result instead.

@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/cli",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "type": "module",
   "bin": {
@@ -39,14 +39,14 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@skillsmith/core": "^0.11.5",
-    "@skillsmith/mcp-server": "^0.7.7",
+    "@skillsmith/core": "^0.11.6",
+    "@skillsmith/mcp-server": "^0.7.8",
     "@types/node": "^25.9.3",
     "esbuild": "0.28.1",
     "vitest": "4.1.10"
   },
   "peerDependencies": {
-    "@smith-horn/enterprise": "^0.3.5"
+    "@smith-horn/enterprise": "^0.3.6"
   },
   "peerDependenciesMeta": {
     "@smith-horn/enterprise": {
