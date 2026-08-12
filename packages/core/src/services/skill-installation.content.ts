@@ -346,7 +346,8 @@ export async function installFromContent(params: InstallFromContentParams): Prom
       skillName,
       finalSkillContent,
       [...generatedNoCollision, ...teamAuthoredSubFiles],
-      subagentContent
+      subagentContent,
+      client
     )
     if (writeResult.subagentPath) {
       optimizationInfo.subagentPath = writeResult.subagentPath

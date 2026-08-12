@@ -155,13 +155,17 @@ describe('SMI-746: Skill Authoring Commands', () => {
       expect(cmd.name()).toBe('subagent')
     })
 
-    it('has output option with default', async () => {
+    it('has output option, resolved dynamically (no static default value) (SMI-5980)', async () => {
       const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const outputOpt = cmd.options.find((o) => o.short === '-o')
       expect(outputOpt).toBeDefined()
-      expect(outputOpt?.defaultValue).toBe('~/.claude/agents')
+      // No static default value at the command-definition level anymore —
+      // an omitted --output resolves via ensureAgentsDirectory() ->
+      // resolveCompanionAgentDir() (COMPANION_AGENT_TARGETS), not a
+      // hardcoded '~/.claude/agents' literal duplicated here.
+      expect(outputOpt?.defaultValue).toBeUndefined()
     })
 
     it('has tools option', async () => {
@@ -252,13 +256,17 @@ describe('SMI-1389: Subagent Command', () => {
       expect(cmd.name()).toBe('subagent')
     })
 
-    it('has output option with default', async () => {
+    it('has output option, resolved dynamically (no static default value) (SMI-5980)', async () => {
       const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const outputOpt = cmd.options.find((o) => o.short === '-o')
       expect(outputOpt).toBeDefined()
-      expect(outputOpt?.defaultValue).toBe('~/.claude/agents')
+      // No static default value at the command-definition level anymore —
+      // an omitted --output resolves via ensureAgentsDirectory() ->
+      // resolveCompanionAgentDir() (COMPANION_AGENT_TARGETS), not a
+      // hardcoded '~/.claude/agents' literal duplicated here.
+      expect(outputOpt?.defaultValue).toBeUndefined()
     })
 
     it('has model option with default sonnet', async () => {

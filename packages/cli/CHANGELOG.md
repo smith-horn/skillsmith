@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skillsmith author subagent`/`transform` now write companion-subagent files to the
+  target client's own agent directory (via `@skillsmith/core`'s new `COMPANION_AGENT_TARGETS`)
+  instead of always hardcoding `~/.claude/agents/` — fixes generated subagents landing in the
+  wrong client's directory for `--client cursor`/`copilot`/etc (GH #2161)
 - **Fix**: `recommend --context`'s keyword extraction (`commands/recommend.ts`) no longer silently
   drops real short technical terms ("git", "ci", "aws", "sql", "k8s") via a bare
   `.filter((w) => w.length > 3)` threshold — a context consisting only of such terms previously
