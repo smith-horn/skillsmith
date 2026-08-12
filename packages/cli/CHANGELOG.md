@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `saveManifest()` (`utils/manifest.ts`) computed its temp filename from just the process
+  id, so two concurrent saves in the same process could collide on the same temp path and corrupt
+  one of them. The temp filename now includes a random UUID suffix, with best-effort cleanup of
+  only that invocation's own temp file on failure (mirrors the same fix in
+  `@skillsmith/core`'s `ManifestManager.save()`) (SMI-6007).
 - **Changed**: bumps `@skillsmith/core` for the SMI-5929 compatibility-ranking change —
   `SearchResponse.compatibilityHidden` is renamed to `compatibilityDeprioritized` and
   `SearchOptions` gains an optional `compatibility` field. `skillsmith search` does not currently
