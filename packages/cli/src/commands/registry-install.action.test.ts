@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
+import { SkillInstallationService } from '@skillsmith/core'
 
 const mocks = vi.hoisted(() => ({
   spinner: {
@@ -261,6 +262,21 @@ describe('SMI-5905: `skillsmith registry install` command — registration and h
       expect(mocks.spinner.succeed).toHaveBeenCalledWith('Skill installed')
       expect(mocks.dbClose).toHaveBeenCalled()
       expect(mockExit).not.toHaveBeenCalledWith(1)
+    })
+
+    // SMI-5982 PR-review follow-up: resolveCompanionAgentPath() no longer defaults a missing
+    // baseDir to process.cwd() itself (directory-package mode now requires it explicitly), so
+    // every SkillInstallationService construction site must pass companionBaseDir explicitly to
+    // preserve this CLI command's existing cwd-relative behavior.
+    it('constructs SkillInstallationService with companionBaseDir: process.cwd()', async () => {
+      const { createRegistryInstallCommand } = await import('./registry-install.js')
+      const cmd = createRegistryInstallCommand()
+
+      await cmd.parseAsync(['node', 'test', 'my-team/internal-helper'])
+
+      expect(SkillInstallationService).toHaveBeenCalledWith(
+        expect.objectContaining({ companionBaseDir: process.cwd() })
+      )
     })
 
     it('passes --force through to installFromContent()', async () => {

@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { join } from 'path'
 import { homedir } from 'os'
+import { SkillInstallationService } from '@skillsmith/core'
 
 // Mock file system
 vi.mock('fs/promises', () => ({
@@ -286,6 +287,26 @@ describe('SMI-5593: skillsmith update — real update path', () => {
 
       expect(success).toBe(true)
       expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', { force: true })
+    })
+
+    // SMI-5982 PR-review follow-up: resolveCompanionAgentPath() no longer defaults a missing
+    // baseDir to process.cwd() itself (directory-package mode now requires it explicitly), so
+    // every SkillInstallationService construction site must pass companionBaseDir explicitly to
+    // preserve this CLI command's existing cwd-relative behavior.
+    it('constructs SkillInstallationService with companionBaseDir: process.cwd()', async () => {
+      await mockInstalledSkill('astro', { version: '1.0.0' })
+      mockCache([
+        { id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
+      ])
+      const { confirm } = await import('@inquirer/prompts')
+      vi.mocked(confirm).mockResolvedValue(true)
+
+      const { updateSkill } = await import('../src/commands/manage.js')
+      await updateSkill('astro', '/fake/db.sqlite')
+
+      expect(SkillInstallationService).toHaveBeenCalledWith(
+        expect.objectContaining({ companionBaseDir: process.cwd() })
+      )
     })
 
     it('cancels without installing when the user declines the prompt', async () => {

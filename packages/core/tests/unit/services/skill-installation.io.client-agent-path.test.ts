@@ -242,7 +242,7 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
     await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
   })
 
-  it('writes agent.md inside a skill-named subdirectory, resolved against process.cwd() when companionBaseDir is omitted (SMI-5982 code-review fix #1)', async () => {
+  it('writes agent.md inside a skill-named subdirectory when companionBaseDir is passed explicitly (SMI-5982 code-review fix #1)', async () => {
     const { skillsDir, installPath } = await freshInstallPath('antigravity-write')
 
     const result = await writeInstallFiles(
@@ -252,18 +252,21 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
       '# hello',
       [],
       '---\nname: my-skill-specialist\n---\nbody',
-      'antigravity'
-      // companionBaseDir omitted — must fall back to process.cwd(), which
-      // this describe block's beforeEach has chdir'd to projectDir.
+      'antigravity',
+      // PR-review follow-up: writeInstallFiles() no longer falls back to
+      // process.cwd() itself when companionBaseDir is omitted — an explicit
+      // value (here, this describe block's chdir target) is required for
+      // directory-package clients. See the dedicated "omitted
+      // companionBaseDir" test below for the fail-closed case.
+      projectDir
     )
 
-    // SMI-5982 code-review fix #1: resolveCompanionAgentPath() now resolves
-    // antigravity's relative dir against an explicit baseDir (process.cwd()
-    // when omitted) BEFORE returning — so subagentPath is ABSOLUTE, not the
-    // raw relative string. Independently verify the REAL file via an
-    // absolute path built from the known projectDir (not derived from
-    // result.subagentPath, so a bug that silently mis-resolved the value
-    // would still be caught).
+    // SMI-5982 code-review fix #1: resolveCompanionAgentPath() resolves
+    // antigravity's relative dir against the explicit baseDir BEFORE
+    // returning — so subagentPath is ABSOLUTE, not the raw relative string.
+    // Independently verify the REAL file via an absolute path built from the
+    // known projectDir (not derived from result.subagentPath, so a bug that
+    // silently mis-resolved the value would still be caught).
     const expectedRelativePath = path.join('.agents', 'agents', 'my-skill', 'agent.md')
     const expectedAbsolutePath = path.join(projectDir, expectedRelativePath)
     expect(result.subagentPath).toBe(expectedAbsolutePath)
@@ -273,6 +276,29 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
     // Directory-package structure: agent.md lives INSIDE a subdirectory
     // named after the skill, not directly inside the agents dir.
     expect(path.basename(path.dirname(expectedAbsolutePath))).toBe('my-skill')
+  })
+
+  it('omitting companionBaseDir for antigravity now rejects the install instead of silently defaulting to process.cwd() (PR-review follow-up)', async () => {
+    const { skillsDir, installPath } = await freshInstallPath('antigravity-omitted-basedir')
+
+    await expect(
+      writeInstallFiles(
+        installPath,
+        skillsDir,
+        'my-skill',
+        '# hello',
+        [],
+        '---\nname: my-skill-specialist\n---\nbody',
+        'antigravity'
+        // companionBaseDir omitted — must now throw (fail closed), not
+        // resolve against process.cwd(). SKILL.md IS written before this
+        // point (the companion-agent step runs last), but writeInstallFiles'
+        // existing rollback-on-failure logic unwinds installPath entirely on
+        // any thrown error — so nothing survives on disk after the throw.
+      )
+    ).rejects.toThrow(/directory-package mode.*explicit baseDir is required/s)
+
+    await expect(fs.access(installPath)).rejects.toThrow()
   })
 
   it('writes agent.md resolved against an explicit companionBaseDir, not process.cwd() (SMI-5982 code-review fix #1)', async () => {
@@ -340,7 +366,13 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
         '# hello',
         [],
         '---\nname: my-skill-specialist\n---\nbody',
-        'antigravity'
+        'antigravity',
+        // PR-review follow-up: explicit now that writeInstallFiles() no
+        // longer defaults a missing companionBaseDir to process.cwd() —
+        // required so this test still reaches the symlink failure it is
+        // actually exercising, rather than the (also-now-thrown)
+        // required-baseDir guard.
+        projectDir
       )
     ).rejects.toThrow(/symlink/i)
 
@@ -366,7 +398,13 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
         '# hello',
         [],
         '---\nname: specialist\n---\nbody',
-        'antigravity'
+        'antigravity',
+        // PR-review follow-up: explicit now that writeInstallFiles() no
+        // longer defaults a missing companionBaseDir to process.cwd() —
+        // required so this test still reaches the skillName traversal
+        // guard it is actually exercising, rather than the
+        // (also-now-thrown) required-baseDir guard.
+        projectDir
       )
     ).rejects.toThrow(/Unsafe skill name for directory-package companion path/)
 

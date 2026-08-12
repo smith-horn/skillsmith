@@ -224,6 +224,8 @@ export const installInputSchema = z.object({
    */
   cwd: z
     .string()
+    .min(1, 'cwd must not be empty')
+    .refine((v) => path.isAbsolute(v), { message: 'cwd must be an absolute path' })
     .optional()
     .describe(
       "Absolute path to the calling client's actual project/workspace root, used to resolve " +

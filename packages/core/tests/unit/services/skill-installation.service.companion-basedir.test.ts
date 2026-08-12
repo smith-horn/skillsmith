@@ -119,14 +119,16 @@ describe('SkillInstallationService companionBaseDir wiring (SMI-5982 code-review
     }
   })
 
-  it('defaults companionBaseDir to process.cwd() when omitted (regression: unchanged)', async () => {
+  it('PR-review follow-up: omitting companionBaseDir now fails the install closed instead of silently defaulting to process.cwd()', async () => {
     const service = buildService() // companionBaseDir omitted
 
     const result = await service.install('https://github.com/owner/my-skill')
 
-    expect(result.success).toBe(true)
-    const expectedPath = path.join(projectDir, '.agents', 'agents', 'my-skill', 'agent.md')
-    expect(result.optimization?.subagentPath).toBe(expectedPath)
-    await expect(fs.access(expectedPath)).resolves.toBeUndefined()
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/directory-package mode.*explicit baseDir is required/s)
+    // Nothing must have been written anywhere under projectDir (this describe
+    // block's process.cwd()) — the whole point of the fix is that a missing
+    // companionBaseDir can no longer resolve here at all, not even by accident.
+    await expect(fs.access(path.join(projectDir, '.agents'))).rejects.toThrow()
   })
 })

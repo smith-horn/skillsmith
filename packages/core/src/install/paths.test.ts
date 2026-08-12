@@ -230,11 +230,12 @@ describe('getCompanionAgentTarget / resolveCompanionAgentDir / resolveCompanionA
 
   it('resolveCompanionAgentPath(antigravity) matches dir/<skillName>/agent.md — directory-package mode (SMI-5982 Wave 6)', () => {
     // SMI-5982 code-review fix #1: antigravity's `dir` is RELATIVE, so the
-    // 3rd `baseDir` param (defaulting to process.cwd()) is now resolved
-    // against it explicitly, producing an ABSOLUTE path — see the dedicated
-    // 'resolveCompanionAgentPath baseDir resolution' describe block below
-    // for the explicit-baseDir + traversal-guard coverage.
-    const result = resolveCompanionAgentPath('my-skill', 'antigravity')
+    // 3rd `baseDir` param is resolved against it explicitly, producing an
+    // ABSOLUTE path. PR-review follow-up: `baseDir` is now REQUIRED for
+    // directory-package mode (no `process.cwd()` default) — see the
+    // dedicated 'resolveCompanionAgentPath baseDir resolution' describe
+    // block below for the required-baseDir + traversal-guard coverage.
+    const result = resolveCompanionAgentPath('my-skill', 'antigravity', process.cwd())
     expect(result).toBe(
       join(process.cwd(), COMPANION_AGENT_TARGETS.antigravity.dir, 'my-skill', 'agent.md')
     )
@@ -254,20 +255,36 @@ describe('getCompanionAgentTarget / resolveCompanionAgentDir / resolveCompanionA
  * the returned path — critical for the long-running MCP server, whose cwd is
  * fixed at launch and generally does not track the calling editor/agent's
  * actual project.
+ *
+ * PR-review follow-up (BLOCKING): the original `baseDir: string =
+ * process.cwd()` default only closed the bug for callers whose own cwd
+ * happens to be the caller's real project — it silently did nothing for
+ * every OTHER production call site (e.g. the MCP private-registry install
+ * action, which has no per-call cwd input at all). `baseDir` is now
+ * **required** (no default) for every `directory-package`-mode client —
+ * omitting it throws instead of silently resolving against this process's
+ * ambient cwd, closing the bug class by construction for every current and
+ * future caller.
  */
 describe('resolveCompanionAgentPath baseDir resolution (SMI-5982 code-review fix #1)', () => {
-  it('resolves a directory-package (antigravity) relative dir against an explicit baseDir, not process.cwd()', () => {
+  it('resolves a directory-package (antigravity) relative dir against an explicit baseDir', () => {
     const result = resolveCompanionAgentPath('my-skill', 'antigravity', '/some/explicit/root')
     expect(result).toBe('/some/explicit/root/.agents/agents/my-skill/agent.md')
   })
 
-  it('omitting baseDir still falls back to process.cwd()-relative resolution (existing behavior preserved)', () => {
-    const withExplicitCwd = resolveCompanionAgentPath('my-skill', 'antigravity', process.cwd())
-    const withOmittedBaseDir = resolveCompanionAgentPath('my-skill', 'antigravity')
-    expect(withOmittedBaseDir).toBe(withExplicitCwd)
+  it('omitting baseDir for a directory-package client (antigravity) now throws instead of defaulting to process.cwd() (PR-review follow-up)', () => {
+    expect(() => resolveCompanionAgentPath('my-skill', 'antigravity')).toThrow(
+      /directory-package mode.*explicit baseDir is required/s
+    )
   })
 
-  it('flat-mode clients (absolute dir) ignore baseDir entirely — no-op resolution', () => {
+  it('explicit baseDir still succeeds for antigravity (regression guard)', () => {
+    expect(() => resolveCompanionAgentPath('my-skill', 'antigravity', process.cwd())).not.toThrow()
+    const result = resolveCompanionAgentPath('my-skill', 'antigravity', process.cwd())
+    expect(result).toBe(join(process.cwd(), '.agents', 'agents', 'my-skill', 'agent.md'))
+  })
+
+  it('flat-mode clients (e.g. claude-code) are unaffected by the required-baseDir guard — omitting baseDir still resolves correctly (regression guard)', () => {
     const withBaseDir = resolveCompanionAgentPath('my-skill', 'claude-code', '/some/explicit/root')
     const withoutBaseDir = resolveCompanionAgentPath('my-skill', 'claude-code')
     expect(withBaseDir).toBe(withoutBaseDir)
@@ -287,17 +304,20 @@ describe('resolveCompanionAgentPath baseDir resolution (SMI-5982 code-review fix
  * skill-installation.content.ts).
  */
 describe('resolveCompanionAgentPath directory-package skillName validation (SMI-5982 code-review fix #2)', () => {
+  // baseDir is passed explicitly throughout this block so these cases exercise the skillName
+  // validation specifically, not the required-baseDir guard (fix #1, PR-review follow-up) — that
+  // guard runs first and would otherwise mask the skillName check being tested here.
   it.each(['..', '.', '', 'foo/bar', 'foo\\bar'])(
     'throws for unsafe skillName %j in directory-package mode (antigravity)',
     (unsafeName) => {
-      expect(() => resolveCompanionAgentPath(unsafeName, 'antigravity')).toThrow(
+      expect(() => resolveCompanionAgentPath(unsafeName, 'antigravity', process.cwd())).toThrow(
         /Unsafe skill name for directory-package companion path/
       )
     }
   )
 
   it('still succeeds for a normal skillName (regression guard)', () => {
-    expect(() => resolveCompanionAgentPath('my-skill', 'antigravity')).not.toThrow()
+    expect(() => resolveCompanionAgentPath('my-skill', 'antigravity', process.cwd())).not.toThrow()
   })
 
   it.each(['..', '.', '', 'foo/bar', 'foo\\bar'])(

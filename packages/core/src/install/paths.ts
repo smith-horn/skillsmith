@@ -386,14 +386,44 @@ export function resolveCompanionAgentDir(client: ClientId = CANONICAL_CLIENT): s
  * comment, skill-installation.content.ts): the actual disk-write boundary is
  * the last line of defense regardless of what any upstream caller does, since
  * a future caller could bypass upstream sanitization entirely.
+ *
+ * PR-review fix (BLOCKING, SMI-5982 follow-up): the previous `baseDir: string =
+ * process.cwd()` default only closed the bug for callers that happened to run in
+ * a short-lived process whose cwd IS the caller's real project — the MCP
+ * `install_skill` tool fix (this same PR) proved that out. It did nothing for
+ * every OTHER production call site, including the long-running MCP server's
+ * `private_registry_manage(action:"install")` path, which never threaded a
+ * `companionBaseDir` through and would silently keep resolving against the
+ * server process's ambient `process.cwd()`. `baseDir` is now **required**
+ * (`string | undefined`, no default) whenever `target.fileMode ===
+ * 'directory-package'` — every current `directory-package` client
+ * (Antigravity, today the only one) has a relative `dir`, so this throws
+ * unless a caller explicitly opts in with a real base directory. Gated on
+ * `fileMode` alone (not also `isAbsolute(target.dir)`) so the requirement is
+ * structural for the whole mode, not conditional on today's particular
+ * client happening to have a relative `dir` — a future `directory-package`
+ * client added with an absolute `dir` still must not silently accept a
+ * missing `baseDir`. This closes the class of bug BY CONSTRUCTION for every
+ * current and future caller, instead of requiring every call site to be
+ * individually audited (the exact mistake the first fix commit made).
+ * `flat`-mode clients are entirely unaffected: the guard below can never
+ * fire for them regardless of whether `baseDir` is passed.
  */
 export function resolveCompanionAgentPath(
   skillName: string,
   client: ClientId = CANONICAL_CLIENT,
-  baseDir: string = process.cwd()
+  baseDir?: string
 ): string {
   const target = getCompanionAgentTarget(client)
-  const resolvedDir = isAbsolute(target.dir) ? target.dir : resolve(baseDir, target.dir)
+  if (target.fileMode === 'directory-package' && baseDir === undefined) {
+    throw new Error(
+      `resolveCompanionAgentPath: client "${client}" uses directory-package mode with a ` +
+        `relative companion-agent directory, so an explicit baseDir is required — it cannot ` +
+        `safely default to process.cwd() (a long-running MCP server's cwd does not track the ` +
+        `calling client's real project; see SMI-5982 PR review).`
+    )
+  }
+  const resolvedDir = isAbsolute(target.dir) ? target.dir : resolve(baseDir!, target.dir)
   if (target.fileMode === 'directory-package') {
     if (
       skillName === '' ||

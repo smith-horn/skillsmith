@@ -77,6 +77,22 @@ Use this skill by saying "Use the acme-tool skill to...".
 const EXTRA_FILE = '# Examples\n\nMore private team content here.'
 const CONTENT = { 'SKILL.md': SKILL_MD, 'examples.md': EXTRA_FILE }
 
+/**
+ * SMI-5982 PR-review follow-up: heavy tool-usage phrasing deterministically triggers
+ * companion-subagent generation (SkillAnalyzer.helpers.ts's `shouldSuggestSubagent` — 5+
+ * distinct bash-style command mentions clears `heavyToolUsageCount`; the same substrings
+ * also clear `quickTransformCheck`'s own 3-pattern heavy-tool gate) — needed so the
+ * fail-closed test below actually reaches `writeInstallFiles()`'s companion-agent step
+ * instead of skipping it because no subagent was generated for this fixture's content.
+ */
+const HEAVY_TOOL_SKILL_MD = `${SKILL_MD}
+## Usage
+
+Run \`npm install\` to install dependencies, then \`npx eslint .\` to lint, \`git status\`
+to check repo state, \`docker build .\` to build the image, and \`yarn install\` as an
+alternative package manager.
+`
+
 let db: Database
 let service: StubRegistryService
 let tmpDir: string
@@ -90,6 +106,23 @@ function makeInstaller(): SkillInstallationService {
     skillDependencyRepo: new SkillDependencyRepository(db),
     skillsDir,
     manifestPath,
+  })
+}
+
+/**
+ * SMI-5982 PR-review follow-up: mirrors `defaultInstaller()` in
+ * registry-tools.install-action.ts exactly — `client: 'antigravity'`, no `companionBaseDir` —
+ * to prove that handler's real production construction (not just this test's convenience
+ * `makeInstaller()`) fails closed instead of silently writing into this process's cwd.
+ */
+function makeInstallerAntigravity(): SkillInstallationService {
+  return new SkillInstallationService({
+    db,
+    skillRepo: new SkillRepository(db),
+    skillDependencyRepo: new SkillDependencyRepository(db),
+    skillsDir,
+    manifestPath,
+    client: 'antigravity',
   })
 }
 
@@ -298,5 +331,40 @@ describe('private_registry_manage(action:"install") — version selection', () =
     const result = await runInstall({ version: '9.9.9' })
     expect(result.success).toBe(false)
     expect(result.error).toContain('not found in private registry')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5982 PR-review follow-up (Finding 1, site 3): `defaultInstaller()` in
+// registry-tools.install-action.ts deliberately never passes `companionBaseDir` — this
+// handler has no per-call cwd/workspace input. Before this fix, an Antigravity install here
+// silently resolved the companion-agent write against this MCP server process's own
+// `process.cwd()` (never the caller's real project) — the exact bug the first SMI-5982 fix
+// commit claimed to have eliminated but only closed for the `install_skill` MCP tool.
+// `resolveCompanionAgentPath()`'s required-baseDir guard (install/paths.ts) now makes this
+// fail closed automatically: a graceful `{success:false, error}` result, never a thrown/
+// unhandled exception and never a silent write to the wrong directory.
+// ---------------------------------------------------------------------------
+describe('private_registry_manage(action:"install") — Antigravity fails closed without companionBaseDir (SMI-5982 PR-review follow-up)', () => {
+  it('returns success:false mentioning the directory-package/baseDir requirement, instead of throwing or writing anywhere', async () => {
+    await service.publish(TEAM, SKILL_ID, '1.0.0', { 'SKILL.md': HEAVY_TOOL_SKILL_MD })
+    await approve(SKILL_ID, '1.0.0')
+
+    const result = await executeRegistryInstall({
+      input: { action: 'install', skillId: SKILL_ID },
+      teamId: TEAM,
+      dataSource: 'stub',
+      service,
+      context: mockContext,
+      createInstaller: () => makeInstallerAntigravity(),
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/directory-package mode.*explicit baseDir is required/s)
+
+    // Nothing was written anywhere — writeInstallFiles' existing rollback-on-failure logic
+    // unwinds the whole install atomically (SKILL.md included) when the companion-agent step
+    // throws, so the skill's install directory must not exist on disk at all.
+    await expect(fs.access(path.join(skillsDir, 'acme-tool'))).rejects.toThrow()
   })
 })

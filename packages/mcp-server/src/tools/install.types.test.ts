@@ -97,3 +97,56 @@ describe('installInputSchema cwd field (SMI-5982 code-review fix #1)', () => {
     expect(properties.cwd.type).toBe('string')
   })
 })
+
+/**
+ * PR-review finding (BLOCKING): `cwd`'s own doc comment says "Absolute path
+ * to..." but the schema previously accepted any non-empty-or-empty string,
+ * including relative paths and the empty string — a caller could pass
+ * `cwd: '.'`, `cwd: 'my-app'`, or `cwd: ''` and none of it would be caught
+ * before reaching `resolveCompanionAgentPath()`. Validated at the schema
+ * layer now so a malformed `cwd` is rejected with a clear message before it
+ * ever reaches the install pipeline.
+ */
+describe('installInputSchema cwd field validation (SMI-5982 PR-review follow-up)', () => {
+  it('rejects a relative cwd with a clear message', () => {
+    const result = installInputSchema.safeParse({ skillId: 'author/name', cwd: 'my-app' })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.message === 'cwd must be an absolute path')).toBe(
+        true
+      )
+    }
+  })
+
+  it('rejects "." as a relative cwd', () => {
+    const result = installInputSchema.safeParse({ skillId: 'author/name', cwd: '.' })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an empty string cwd with a clear message', () => {
+    const result = installInputSchema.safeParse({ skillId: 'author/name', cwd: '' })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.message === 'cwd must not be empty')).toBe(true)
+    }
+  })
+
+  it('still accepts a valid absolute cwd', () => {
+    const result = installInputSchema.safeParse({
+      skillId: 'author/name',
+      cwd: '/Users/example/projects/my-app',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.cwd).toBe('/Users/example/projects/my-app')
+    }
+  })
+
+  it('remains optional — omitting cwd entirely still succeeds', () => {
+    const result = installInputSchema.safeParse({ skillId: 'author/name' })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.cwd).toBeUndefined()
+    }
+  })
+})
