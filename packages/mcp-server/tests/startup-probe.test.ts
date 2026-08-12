@@ -19,6 +19,7 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { createIsolatedHome } from './integration/agent-harness-sim.helpers.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -222,9 +223,20 @@ describe.skipIf(skipInPrePush)('SMI-5009 startup probe — integration (spawn)',
     // / commit), not the probe itself which still has its own internal 2s
     // Promise.race. If 60s also flakes, switch to Option B (poll-loop wait)
     // or skip the integration test on CI.
+    // SMI-6003: per-spawn isolated HOME, reusing agent-harness-sim.helpers.ts's
+    // createIsolatedHome() — same pattern as crash-handler-integration.test.ts
+    // (SMI-5999). Without it this spawn shares the real ~/.skillsmith/skills.db
+    // with any other concurrently-running spawn integration test in this
+    // package; two servers racing schema init on the same fresh DB can hit
+    // the migration-runner concurrent-migration race (loser exits 1 with
+    // "UNIQUE constraint failed: schema_version.version") before either ever
+    // prints "running".
+    const { homeDir, cleanup: cleanupHome } = createIsolatedHome('skillsmith-startup-probe-')
+
     const proc = spawn('node', [DIST_ENTRY], {
       env: {
         ...process.env,
+        HOME: homeDir,
         SKILLSMITH_SKIP_SKILL_INSTALL: '1',
         SKILLSMITH_AUTO_UPDATE_CHECK: 'false',
       },
@@ -268,6 +280,11 @@ describe.skipIf(skipInPrePush)('SMI-5009 startup probe — integration (spawn)',
       })
     } finally {
       proc.kill('SIGTERM')
+      // Best-effort isolated-HOME cleanup (createIsolatedHome's cleanup()
+      // uses force: true — removing files the just-signaled process may
+      // still have open is fine on POSIX, same rationale as
+      // crash-handler-integration.test.ts's identical cleanup call).
+      cleanupHome()
     }
 
     const stderr = stderrChunks.join('')
