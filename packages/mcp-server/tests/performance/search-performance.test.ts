@@ -200,21 +200,51 @@ describe('SMI-797: Performance Validation', () => {
   })
 
   describe('Combined Flow Performance', () => {
-    it('should complete search → get flow under 50ms', async () => {
-      const start = performance.now()
+    // SMI-6010: warm assertion — by the time this runs, the suite has already
+    // executed every other search/get test above against the same 500-skill
+    // context, so (unlike the cold-path test at the top of this file) there
+    // is no JIT/statement-prep cost left to pay. A real pre-push run under
+    // genuine heavy multi-session host load measured 69.77ms for a single
+    // sample against the old 50ms threshold (see the SMI-6002/6010
+    // implementation plan and the SMI-6004/6005/6007 retro doc for
+    // provenance). This repo's own reproduction (5 runs under real,
+    // non-synthetic contention — concurrent sibling worktree containers,
+    // this file alongside the other historically-heavy integration files,
+    // a full mcp-server package run, and a full 16k-test repo-wide run with
+    // concurrent builds) never exceeded ~3ms for this exact operation. That
+    // gap — a consistently tight typical range vs. one much larger historical
+    // outlier — is the signature of a rare scheduler/GC preemption pause on
+    // this specific worker thread, not a sustained regression, so this
+    // asserts a median across several warm samples (averages out one-time
+    // preemption noise) plus a generous single-sample ceiling as a
+    // hang/deadlock backstop only — matching the "contention allowance, not
+    // a performance target" framing used for the cold-path assertion above.
+    it('should maintain low median search → get flow latency under repeated sampling', async () => {
+      const SAMPLES = 5
+      const timings: number[] = []
 
-      // Search
-      const searchResult = await executeSearch({ query: 'test' }, context)
-      expect(searchResult.results.length).toBeGreaterThan(0)
+      for (let i = 0; i < SAMPLES; i++) {
+        const start = performance.now()
 
-      // Get first registry result (skip local skills — they aren't in the test DB)
-      const firstId =
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        searchResult.results.find((r: any) => r.source !== 'local')?.id ?? 'test-org/skill-0'
-      await executeGetSkill({ id: firstId }, context)
+        // Search
+        const searchResult = await executeSearch({ query: 'test' }, context)
+        expect(searchResult.results.length).toBeGreaterThan(0)
 
-      const elapsed = performance.now() - start
-      expect(elapsed).toBeLessThan(50)
+        // Get first registry result (skip local skills — they aren't in the test DB)
+        const firstId =
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          searchResult.results.find((r: any) => r.source !== 'local')?.id ?? 'test-org/skill-0'
+        await executeGetSkill({ id: firstId }, context)
+
+        timings.push(performance.now() - start)
+      }
+
+      const sorted = [...timings].sort((a, b) => a - b)
+      const median = sorted[Math.floor(sorted.length / 2)]
+      const maxTime = Math.max(...timings)
+
+      expect(median).toBeLessThan(30)
+      expect(maxTime).toBeLessThan(250)
     })
 
     it('should complete search → get all results flow under 200ms', async () => {
@@ -287,24 +317,39 @@ describe('SMI-797: Performance Validation', () => {
       metrics.concurrentSearches = performance.now() - start
 
       // Search + Get flow (use first registry result — local skills aren't in the test DB)
-      start = performance.now()
-      const result = await executeSearch({ query: 'test' }, context)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const flowId = result.results.find((r: any) => r.source !== 'local')?.id ?? 'test-org/skill-0'
-      await executeGetSkill({ id: flowId }, context)
-      metrics.searchGetFlow = performance.now() - start
+      // SMI-6010: this is the warmest occurrence of the "search → get flow"
+      // shape in the file (runs after the 100-iteration memory-leak test
+      // above too) — same robust-sampling rationale as the "Combined Flow
+      // Performance" test's identically-shaped assertion; see the comment
+      // there for the full reproduction-evidence writeup.
+      const searchGetFlowSamples = 5
+      const searchGetFlowTimings: number[] = []
+      for (let i = 0; i < searchGetFlowSamples; i++) {
+        const flowStart = performance.now()
+        const result = await executeSearch({ query: 'test' }, context)
+        const flowId =
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          result.results.find((r: any) => r.source !== 'local')?.id ?? 'test-org/skill-0'
+        await executeGetSkill({ id: flowId }, context)
+        searchGetFlowTimings.push(performance.now() - flowStart)
+      }
+      const sortedFlowTimings = [...searchGetFlowTimings].sort((a, b) => a - b)
+      metrics.searchGetFlow = sortedFlowTimings[Math.floor(sortedFlowTimings.length / 2)]
+      const searchGetFlowMax = Math.max(...searchGetFlowTimings)
 
       console.log('Performance Metrics (ms):')
       console.log(`  Single Search: ${metrics.singleSearch.toFixed(2)}`)
       console.log(`  Single Get: ${metrics.singleGet.toFixed(2)}`)
       console.log(`  10 Concurrent Searches: ${metrics.concurrentSearches.toFixed(2)}`)
-      console.log(`  Search + Get Flow: ${metrics.searchGetFlow.toFixed(2)}`)
+      console.log(`  Search + Get Flow (median): ${metrics.searchGetFlow.toFixed(2)}`)
+      console.log(`  Search + Get Flow (max): ${searchGetFlowMax.toFixed(2)}`)
 
       // Assertions
       expect(metrics.singleSearch).toBeLessThan(50)
       expect(metrics.singleGet).toBeLessThan(50)
       expect(metrics.concurrentSearches).toBeLessThan(200)
-      expect(metrics.searchGetFlow).toBeLessThan(50)
+      expect(metrics.searchGetFlow).toBeLessThan(30)
+      expect(searchGetFlowMax).toBeLessThan(250)
     })
   })
 })
