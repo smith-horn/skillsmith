@@ -423,21 +423,46 @@ export async function runPurge(db: SupabaseClient, opts: PurgeOptions): Promise<
 // CLI entrypoint
 // ---------------------------------------------------------------------------
 
-/** Parse `--export <path>` / `--export=<path>` from argv. */
-function parseExportArg(argv: string[]): string | undefined {
-  const idx = argv.findIndex((a) => a === '--export' || a.startsWith('--export='))
+/**
+ * Dual `--flag value` / `--flag=value` parse. Returns `undefined` only when
+ * `flag` is entirely ABSENT from argv. If `flag` IS present but supplies no
+ * value — a bare flag as the last token, or immediately followed by another
+ * `--flag` — this THROWS rather than returning `undefined` or silently
+ * consuming the next flag as this flag's value. Collapsing "present with no
+ * value" into "absent" would let `--apply --limit` (no number supplied)
+ * silently fall through to `limit: undefined` — an UNBOUNDED purge of every
+ * row matching the dead-set predicate under `--apply` (SMI-5879 round-7
+ * governance-retro sibling-implementation finding: this file has the same
+ * flaw the round-7 `--ids`/`--ids-file` fix in
+ * revalidate-stale-quarantines.cli.ts's `findFlagValue` was written to
+ * close).
+ */
+export function findFlagValue(argv: string[], flag: string): string | undefined {
+  const idx = argv.findIndex((a) => a === flag || a.startsWith(`${flag}=`))
   if (idx === -1) return undefined
   const eq = argv[idx].split('=')[1]
-  return eq ?? argv[idx + 1]
+  if (eq !== undefined) return eq
+  const next = argv[idx + 1]
+  if (next === undefined || next.startsWith('--')) {
+    throw new Error(`[purge-dead-quarantines] ${flag} was supplied with no value — refusing.`)
+  }
+  return next
 }
 
-/** Parse `--limit <n>` / `--limit=<n>` from argv. */
-function parseLimitArg(argv: string[]): number | undefined {
-  const idx = argv.findIndex((a) => a === '--limit' || a.startsWith('--limit='))
-  if (idx === -1) return undefined
-  const raw = argv[idx].split('=')[1] ?? argv[idx + 1]
+/** Parse `--export <path>` / `--export=<path>` from argv. */
+export function parseExportArg(argv: string[]): string | undefined {
+  return findFlagValue(argv, '--export')
+}
+
+/** Parse `--limit <n>` / `--limit=<n>` from argv. Throws if the value isn't a positive number. */
+export function parseLimitArg(argv: string[]): number | undefined {
+  const raw = findFlagValue(argv, '--limit')
+  if (raw === undefined) return undefined
   const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`[purge-dead-quarantines] --limit must be a positive number, got: "${raw}"`)
+  }
+  return Math.floor(n)
 }
 
 /** CLI entrypoint (skipped when imported by tests). */

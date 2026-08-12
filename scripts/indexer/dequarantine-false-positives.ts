@@ -288,6 +288,35 @@ export async function runSweep(
   return counts
 }
 
+/**
+ * Parse `--limit <n>` / `--limit=<n>` from argv. Returns `undefined` only
+ * when `--limit` is entirely ABSENT. If present but supplies no value — a
+ * bare flag as the last token, or immediately followed by another `--flag`
+ * — or the value isn't a positive number, this THROWS rather than silently
+ * falling through to `undefined` (unbounded run). SMI-5879 round-7
+ * governance-retro sibling-implementation finding: this file had the same
+ * flaw the round-7 `--ids`/`--ids-file` fix in
+ * revalidate-stale-quarantines.cli.ts's `findFlagValue` was written to
+ * close — `--apply --limit` (no number supplied) would silently dequarantine
+ * clear the ENTIRE candidate cohort instead of refusing.
+ */
+export function parseLimitArg(argv: string[]): number | undefined {
+  const idx = argv.findIndex((a) => a === '--limit' || a.startsWith('--limit='))
+  if (idx === -1) return undefined
+  const eq = argv[idx].split('=')[1]
+  const raw = eq !== undefined ? eq : argv[idx + 1]
+  if (raw === undefined || raw.startsWith('--')) {
+    throw new Error('[dequarantine-false-positives] --limit was supplied with no value — refusing.')
+  }
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      `[dequarantine-false-positives] --limit must be a positive number, got: "${raw}"`
+    )
+  }
+  return n
+}
+
 /** CLI entrypoint (skipped when imported by tests). */
 async function main(): Promise<void> {
   // SMI-5879 Gate C: env-sourced check first (no dependency on a DB round
@@ -297,11 +326,8 @@ async function main(): Promise<void> {
   const db = createSupabaseAdminClient()
   await assertFreezeMarkerClear(db, 'dequarantine')
   const apply = process.argv.includes('--apply')
-  const limitArg = process.argv.find((a) => a.startsWith('--limit'))
-  const limit = limitArg
-    ? Number(limitArg.split('=')[1] ?? process.argv[process.argv.indexOf(limitArg) + 1])
-    : undefined
-  await runSweep(db, { apply, limit: Number.isFinite(limit) ? limit : undefined })
+  const limit = parseLimitArg(process.argv)
+  await runSweep(db, { apply, limit })
 }
 
 // Run only when invoked directly (not when imported by the test suite).
