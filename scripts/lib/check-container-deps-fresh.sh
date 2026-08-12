@@ -177,8 +177,9 @@ case "$RC" in
         ;;
     *)
         # Any other code (docker itself failing, sh unable to start, an
-        # unexpected error inside the inline script) is NOT an npm failure —
-        # misreporting it as one would send someone chasing the wrong fix.
+        # unexpected error inside check-container-deps-fresh-inner.sh) is NOT
+        # an npm failure — misreporting it as one would send someone chasing
+        # the wrong fix.
         printf "${RED}  ✗ Container dependency guard failed unexpectedly (exit %s)${NC}\n" "$RC"
         printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         printf '\n'
