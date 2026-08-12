@@ -201,7 +201,17 @@ export async function writeInstallFiles(
    * (`claude-code`) so pre-existing callers/tests that never pass it keep
    * today's exact behavior unchanged.
    */
-  client: ClientId = CANONICAL_CLIENT
+  client: ClientId = CANONICAL_CLIENT,
+  /**
+   * SMI-5982 code-review fix #1: explicit base dir for resolving a RELATIVE
+   * `COMPANION_AGENT_TARGETS[client].dir` (Antigravity only — every other
+   * client's `dir` is absolute already). Threaded through to
+   * `resolveCompanionAgentPath()`'s own `baseDir` param instead of letting
+   * it fall back to `process.cwd()` at the exact moment of THIS call —
+   * defaulting here too, so pre-existing callers/tests keep today's
+   * cwd-relative behavior unchanged.
+   */
+  companionBaseDir?: string
 ): Promise<WriteInstallResult> {
   const writtenFiles: string[] = []
   let subagentPath: string | undefined
@@ -258,7 +268,7 @@ export async function writeInstallFiles(
     }
     // Write companion subagent if generated
     if (subagentContent) {
-      subagentPath = resolveCompanionAgentPath(skillName, client)
+      subagentPath = resolveCompanionAgentPath(skillName, client, companionBaseDir ?? process.cwd())
       const agentsDir = path.dirname(subagentPath)
       await fs.mkdir(agentsDir, { recursive: true })
       await safeWriteFile(subagentPath, subagentContent)

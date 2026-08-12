@@ -10,7 +10,7 @@
  */
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 // Verified 2026-04-30 against vendor docs:
 //   - Claude Code: code.claude.com/docs/en/skills
@@ -356,15 +356,58 @@ export function resolveCompanionAgentDir(client: ClientId = CANONICAL_CLIENT): s
  *   per-skill subdirectory containing a fixed-name file (Antigravity only
  *   today; `filenamePattern` carries no `{name}` token in this mode, since
  *   the skill name is the directory segment instead).
+ *
+ * SMI-5982 code-review fix #1 (BLOCKING, cwd-dependent resolution): Antigravity's
+ * `dir` is the only RELATIVE entry in `COMPANION_AGENT_TARGETS` — every other
+ * client's `dir` is `homedir()`-anchored absolute. A relative `dir` used to be
+ * resolved IMPLICITLY by whichever `fs` call eventually consumed the returned
+ * path, against that call's `process.cwd()` at THAT moment. For a short-lived
+ * CLI process cwd is genuinely the user's invocation directory, but for the
+ * long-running MCP server cwd is fixed at server launch and generally does
+ * NOT track the calling editor/agent's actual project — silently writing into
+ * an unrelated directory. `baseDir` makes the resolution root an explicit,
+ * caller-controlled parameter instead: every caller now decides what "cwd"
+ * means for its own lifecycle, rather than the process's ambient cwd deciding
+ * for it. Applied unconditionally via `isAbsolute()` (not gated to
+ * `directory-package` mode) so the function stays correct if a future client
+ * ever adds a relative `flat`-mode `dir` too — today's flat-mode clients are
+ * all absolute already, so this is a no-op for them.
+ *
+ * SMI-5982 code-review fix #2 (BLOCKING, path traversal): in `directory-package`
+ * mode, `skillName` becomes ITS OWN path segment (`<dir>/<skillName>/...`), so
+ * an unsanitized `skillName === '..'` would `path.join`-normalize to
+ * `<parent-of-dir>/agent.md` — escaping the intended companion-agent
+ * namespace entirely. `flat` mode never had this exact exposure (`skillName`
+ * there is embedded INSIDE a suffixed filename via `.replace()`, a literal
+ * filename component, not a traversal directive). Every current caller of
+ * `writeInstallFiles()` already sanitizes `skillName` upstream, but this is a
+ * general, exported, reusable function with no validation of its own — per
+ * this codebase's own stated principle (see `skillNameFromSkillId()`'s doc
+ * comment, skill-installation.content.ts): the actual disk-write boundary is
+ * the last line of defense regardless of what any upstream caller does, since
+ * a future caller could bypass upstream sanitization entirely.
  */
 export function resolveCompanionAgentPath(
   skillName: string,
-  client: ClientId = CANONICAL_CLIENT
+  client: ClientId = CANONICAL_CLIENT,
+  baseDir: string = process.cwd()
 ): string {
   const target = getCompanionAgentTarget(client)
+  const resolvedDir = isAbsolute(target.dir) ? target.dir : resolve(baseDir, target.dir)
   if (target.fileMode === 'directory-package') {
-    return join(target.dir, skillName, target.filenamePattern)
+    if (
+      skillName === '' ||
+      skillName === '.' ||
+      skillName === '..' ||
+      skillName.includes('/') ||
+      skillName.includes('\\')
+    ) {
+      throw new Error(
+        `Unsafe skill name for directory-package companion path: ${JSON.stringify(skillName)}`
+      )
+    }
+    return join(resolvedDir, skillName, target.filenamePattern)
   }
   const filename = target.filenamePattern.replace('{name}', skillName)
-  return join(target.dir, filename)
+  return join(resolvedDir, filename)
 }

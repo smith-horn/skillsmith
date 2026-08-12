@@ -229,13 +229,83 @@ describe('getCompanionAgentTarget / resolveCompanionAgentDir / resolveCompanionA
   })
 
   it('resolveCompanionAgentPath(antigravity) matches dir/<skillName>/agent.md — directory-package mode (SMI-5982 Wave 6)', () => {
+    // SMI-5982 code-review fix #1: antigravity's `dir` is RELATIVE, so the
+    // 3rd `baseDir` param (defaulting to process.cwd()) is now resolved
+    // against it explicitly, producing an ABSOLUTE path — see the dedicated
+    // 'resolveCompanionAgentPath baseDir resolution' describe block below
+    // for the explicit-baseDir + traversal-guard coverage.
     const result = resolveCompanionAgentPath('my-skill', 'antigravity')
-    expect(result).toBe(join(COMPANION_AGENT_TARGETS.antigravity.dir, 'my-skill', 'agent.md'))
-    expect(result).toBe(join('.agents', 'agents', 'my-skill', 'agent.md'))
+    expect(result).toBe(
+      join(process.cwd(), COMPANION_AGENT_TARGETS.antigravity.dir, 'my-skill', 'agent.md')
+    )
+    expect(result).toBe(join(process.cwd(), '.agents', 'agents', 'my-skill', 'agent.md'))
   })
 
   it('resolveCompanionAgentPath defaults to canonical client when omitted (regression: unchanged)', () => {
     const result = resolveCompanionAgentPath('my-skill')
     expect(result).toBe(join(COMPANION_AGENT_TARGETS['claude-code'].dir, 'my-skill-specialist.md'))
   })
+})
+
+/**
+ * SMI-5982 code-review fix #1 (BLOCKING, cwd-dependent resolution): the
+ * `baseDir` param makes the resolution root explicit instead of an implicit
+ * `process.cwd()` lookup at whatever moment an `fs` call eventually consumes
+ * the returned path — critical for the long-running MCP server, whose cwd is
+ * fixed at launch and generally does not track the calling editor/agent's
+ * actual project.
+ */
+describe('resolveCompanionAgentPath baseDir resolution (SMI-5982 code-review fix #1)', () => {
+  it('resolves a directory-package (antigravity) relative dir against an explicit baseDir, not process.cwd()', () => {
+    const result = resolveCompanionAgentPath('my-skill', 'antigravity', '/some/explicit/root')
+    expect(result).toBe('/some/explicit/root/.agents/agents/my-skill/agent.md')
+  })
+
+  it('omitting baseDir still falls back to process.cwd()-relative resolution (existing behavior preserved)', () => {
+    const withExplicitCwd = resolveCompanionAgentPath('my-skill', 'antigravity', process.cwd())
+    const withOmittedBaseDir = resolveCompanionAgentPath('my-skill', 'antigravity')
+    expect(withOmittedBaseDir).toBe(withExplicitCwd)
+  })
+
+  it('flat-mode clients (absolute dir) ignore baseDir entirely — no-op resolution', () => {
+    const withBaseDir = resolveCompanionAgentPath('my-skill', 'claude-code', '/some/explicit/root')
+    const withoutBaseDir = resolveCompanionAgentPath('my-skill', 'claude-code')
+    expect(withBaseDir).toBe(withoutBaseDir)
+    expect(withBaseDir).toBe(
+      join(COMPANION_AGENT_TARGETS['claude-code'].dir, 'my-skill-specialist.md')
+    )
+  })
+})
+
+/**
+ * SMI-5982 code-review fix #2 (BLOCKING, path traversal): `skillName` becomes
+ * its own path segment in directory-package mode, so an unsanitized value
+ * like '..' would escape the intended companion-agent namespace. Every
+ * current caller already sanitizes skillName upstream, but this function is
+ * exported and reusable, so it validates independently (same "last line of
+ * defense" principle as `skillNameFromSkillId()` in
+ * skill-installation.content.ts).
+ */
+describe('resolveCompanionAgentPath directory-package skillName validation (SMI-5982 code-review fix #2)', () => {
+  it.each(['..', '.', '', 'foo/bar', 'foo\\bar'])(
+    'throws for unsafe skillName %j in directory-package mode (antigravity)',
+    (unsafeName) => {
+      expect(() => resolveCompanionAgentPath(unsafeName, 'antigravity')).toThrow(
+        /Unsafe skill name for directory-package companion path/
+      )
+    }
+  )
+
+  it('still succeeds for a normal skillName (regression guard)', () => {
+    expect(() => resolveCompanionAgentPath('my-skill', 'antigravity')).not.toThrow()
+  })
+
+  it.each(['..', '.', '', 'foo/bar', 'foo\\bar'])(
+    'flat-mode clients are unaffected by the directory-package validation — %j still resolves for claude-code',
+    (name) => {
+      expect(() => resolveCompanionAgentPath(name, 'claude-code')).not.toThrow()
+      const result = resolveCompanionAgentPath(name, 'claude-code')
+      expect(result).toBe(join(COMPANION_AGENT_TARGETS['claude-code'].dir, `${name}-specialist.md`))
+    }
+  )
 })

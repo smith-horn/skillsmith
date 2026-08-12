@@ -58,3 +58,42 @@ describe('installInputSchema client/alsoLink enum (SMI-5982 Wave 6)', () => {
     expect(properties.alsoLink.items.enum).toEqual([...CLIENT_IDS])
   })
 })
+
+/**
+ * SMI-5982 code-review fix #1 (BLOCKING, cwd-dependent resolution): the MCP
+ * server is long-running, so its own `process.cwd()` does not reliably track
+ * the calling editor/agent's actual project. `cwd` lets a caller pass its
+ * real project root explicitly for correct companion-agent (Antigravity)
+ * output placement.
+ */
+describe('installInputSchema cwd field (SMI-5982 code-review fix #1)', () => {
+  it('accepts a request with no cwd (optional field)', () => {
+    const result = installInputSchema.safeParse({ skillId: 'author/name' })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.cwd).toBeUndefined()
+    }
+  })
+
+  it('accepts an absolute cwd string and round-trips it unchanged', () => {
+    const result = installInputSchema.safeParse({
+      skillId: 'author/name',
+      cwd: '/Users/example/projects/my-app',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.cwd).toBe('/Users/example/projects/my-app')
+    }
+  })
+
+  it('rejects a non-string cwd', () => {
+    const result = installInputSchema.safeParse({ skillId: 'author/name', cwd: 123 })
+    expect(result.success).toBe(false)
+  })
+
+  it('the advertised installTool JSON-schema exposes cwd as an optional string property', () => {
+    const properties = installTool.inputSchema.properties
+    expect(properties.cwd).toBeDefined()
+    expect(properties.cwd.type).toBe('string')
+  })
+})

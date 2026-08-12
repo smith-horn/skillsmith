@@ -17,6 +17,16 @@
  * per test (never TEST_HOME, never the real repo checkout) rather than
  * relying on the homedir() mock every other client's assertions use.
  *
+ * SMI-5982 code-review fix #1 (BLOCKING, cwd-dependent resolution):
+ * `writeInstallFiles()` now resolves antigravity's relative `dir` via
+ * `resolveCompanionAgentPath()`'s explicit `baseDir` param (defaulting to
+ * `process.cwd()` at the call site, not deferred to whatever `fs` call
+ * eventually consumes the path) — so `result.subagentPath` is now an
+ * ABSOLUTE path even for antigravity, not the raw relative string. The
+ * `it.each` below covers both the omitted-`companionBaseDir` (falls back to
+ * `process.cwd()`, which this describe block's chdir controls) and an
+ * explicit `companionBaseDir` override.
+ *
  * Split out of skill-installation.io.test.ts to stay under the 500-line
  * CI gate (same rationale as skill-installation.io.symlink.test.ts).
  */
@@ -232,7 +242,7 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
     await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
   })
 
-  it('writes agent.md inside a skill-named subdirectory, relative to the invocation directory', async () => {
+  it('writes agent.md inside a skill-named subdirectory, resolved against process.cwd() when companionBaseDir is omitted (SMI-5982 code-review fix #1)', async () => {
     const { skillsDir, installPath } = await freshInstallPath('antigravity-write')
 
     const result = await writeInstallFiles(
@@ -243,24 +253,65 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
       [],
       '---\nname: my-skill-specialist\n---\nbody',
       'antigravity'
+      // companionBaseDir omitted — must fall back to process.cwd(), which
+      // this describe block's beforeEach has chdir'd to projectDir.
     )
 
-    // resolveCompanionAgentPath() returns antigravity's dir AS-IS, i.e.
-    // RELATIVE (`.agents/agents/...`) — it does NOT resolve against cwd
-    // itself, Node's fs calls do that implicitly. Assert the returned value
-    // is the relative string, then independently verify the REAL file via
-    // an absolute path built from the known projectDir (not derived from
-    // result.subagentPath, so a bug that silently absolutized the value
+    // SMI-5982 code-review fix #1: resolveCompanionAgentPath() now resolves
+    // antigravity's relative dir against an explicit baseDir (process.cwd()
+    // when omitted) BEFORE returning — so subagentPath is ABSOLUTE, not the
+    // raw relative string. Independently verify the REAL file via an
+    // absolute path built from the known projectDir (not derived from
+    // result.subagentPath, so a bug that silently mis-resolved the value
     // would still be caught).
     const expectedRelativePath = path.join('.agents', 'agents', 'my-skill', 'agent.md')
     const expectedAbsolutePath = path.join(projectDir, expectedRelativePath)
-    expect(result.subagentPath).toBe(expectedRelativePath)
+    expect(result.subagentPath).toBe(expectedAbsolutePath)
     expect(await fs.readFile(expectedAbsolutePath, 'utf8')).toBe(
       '---\nname: my-skill-specialist\n---\nbody'
     )
     // Directory-package structure: agent.md lives INSIDE a subdirectory
     // named after the skill, not directly inside the agents dir.
     expect(path.basename(path.dirname(expectedAbsolutePath))).toBe('my-skill')
+  })
+
+  it('writes agent.md resolved against an explicit companionBaseDir, not process.cwd() (SMI-5982 code-review fix #1)', async () => {
+    // Deliberately DIFFERENT from projectDir (this block's chdir target) to
+    // prove companionBaseDir — not the ambient cwd — drives resolution. This
+    // is exactly the MCP-server scenario the fix targets: a long-running
+    // process whose own cwd does not track the caller's real project.
+    const explicitBaseDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'skillsmith-antigravity-explicit-basedir-')
+    )
+    try {
+      const { skillsDir, installPath } = await freshInstallPath('antigravity-explicit-basedir')
+
+      const result = await writeInstallFiles(
+        installPath,
+        skillsDir,
+        'my-skill',
+        '# hello',
+        [],
+        '---\nname: my-skill-specialist\n---\nbody',
+        'antigravity',
+        explicitBaseDir
+      )
+
+      const expectedAbsolutePath = path.join(
+        explicitBaseDir,
+        '.agents',
+        'agents',
+        'my-skill',
+        'agent.md'
+      )
+      expect(result.subagentPath).toBe(expectedAbsolutePath)
+      expect(result.subagentPath?.startsWith(projectDir)).toBe(false)
+      expect(await fs.readFile(expectedAbsolutePath, 'utf8')).toBe(
+        '---\nname: my-skill-specialist\n---\nbody'
+      )
+    } finally {
+      await fs.rm(explicitBaseDir, { recursive: true, force: true }).catch(() => {})
+    }
   })
 
   it('a safeWriteFile failure on the companion-agent path does not crash, and never force-removes a non-empty per-skill directory', async () => {
@@ -297,5 +348,35 @@ describe('writeInstallFiles companion-subagent path for antigravity (directory-p
     // blindly force-delete non-empty content.
     const stats = await fs.lstat(agentSkillDir)
     expect(stats.isDirectory()).toBe(true)
+  })
+
+  it('rejects a path-traversal skillName ("..") for the companion-agent path and rolls back the already-written SKILL.md (SMI-5982 code-review fix #2)', async () => {
+    // resolveCompanionAgentPath()'s own directory-package validation (fix #2)
+    // is the last line of defense here: this test passes a malicious
+    // skillName distinct from what installPath was built from, exactly the
+    // "a future caller bypasses upstream sanitization" scenario the fix's
+    // doc comment calls out.
+    const { skillsDir, installPath } = await freshInstallPath('antigravity-traversal')
+
+    await expect(
+      writeInstallFiles(
+        installPath,
+        skillsDir,
+        '..',
+        '# hello',
+        [],
+        '---\nname: specialist\n---\nbody',
+        'antigravity'
+      )
+    ).rejects.toThrow(/Unsafe skill name for directory-package companion path/)
+
+    // Rollback: the existing catch block in writeInstallFiles() already
+    // covers this — SKILL.md was written before the throw (subagentPath is
+    // resolved last), so it (and installPath itself) must be gone. Nothing
+    // was ever created under the companion-agent dir, since the throw
+    // happens BEFORE any fs.mkdir/write for that path.
+    await expect(fs.access(installPath)).rejects.toThrow()
+    const agentsParentDir = path.join(projectDir, '.agents')
+    await expect(fs.access(agentsParentDir)).rejects.toThrow()
   })
 })

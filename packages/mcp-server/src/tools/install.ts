@@ -186,6 +186,10 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
     sessionInstalledSkillIds: context.sessionInstalledSkillIds,
     skillsDir: effectiveSkillsDir,
     client: effectiveClient,
+    // SMI-5982 code-review fix #1: only Antigravity's directory-package mode
+    // actually consumes this today (its `dir` is the only relative one) —
+    // harmless for every other client since their `dir` is absolute.
+    companionBaseDir: validInput.cwd,
   })
 
   // SMI-1867: Pre-flight conflict check for reinstall with force

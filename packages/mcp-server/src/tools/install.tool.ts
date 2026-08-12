@@ -72,6 +72,15 @@ export const installTool = {
         description:
           'Use relative symlinks instead of file copies for alsoLink targets (POSIX only; falls back to copy on Windows EPERM)',
       },
+      // SMI-5982 code-review fix #1: long-running server, cwd is not the caller's project.
+      cwd: {
+        type: 'string',
+        description:
+          "Absolute path to the calling client's actual project/workspace root, used to " +
+          'resolve project-scoped companion-agent output (e.g. Antigravity) correctly. ' +
+          "Defaults to this MCP server process's own working directory, which may NOT match " +
+          'your real project for a long-running server — pass this explicitly for reliable placement.',
+      },
     },
     required: ['skillId'],
   },

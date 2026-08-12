@@ -215,6 +215,22 @@ export const installInputSchema = z.object({
     .boolean()
     .default(false)
     .describe('Use relative symlinks instead of copies for alsoLink (POSIX only)'),
+  /**
+   * SMI-5982 code-review fix #1: this MCP server is long-running, so its own
+   * `process.cwd()` is fixed at server launch and generally does NOT track
+   * the calling editor/agent's actual project — passing this explicitly is
+   * the only reliable way to place a project-scoped companion-agent output
+   * (currently only Antigravity's directory-package mode) correctly.
+   */
+  cwd: z
+    .string()
+    .optional()
+    .describe(
+      "Absolute path to the calling client's actual project/workspace root, used to resolve " +
+        'project-scoped companion-agent output (e.g. Antigravity) correctly. Defaults to this ' +
+        "MCP server process's own working directory, which may NOT match your real project for " +
+        'a long-running server — pass this explicitly for reliable placement.'
+    ),
 })
 
 export type InstallInput = z.infer<typeof installInputSchema>
