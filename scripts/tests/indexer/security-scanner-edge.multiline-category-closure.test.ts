@@ -7,112 +7,87 @@
  * @module scripts/tests/indexer/security-scanner-edge.multiline-category-closure
  *
  * ============================================================================
- * JUDGMENT CALL — flagged explicitly, not silently resolved (per task spec)
+ * TRIPWIRE TRIGGERED (SMI-5879 Wave 2, PR #2192) — rewritten to the literal
+ * design-doc assertions
  * ============================================================================
  *
- * Design doc §8.3.1.2.2 specifies THREE assertions and says to write "its
- * edge twin" implementing them "exactly as specified". Read literally, that
- * means: assert `scanPatternsWithMultilineSupport`-equivalent has exactly two
- * call sites on the edge side too, both AI-category.
+ * An earlier version of this file (see git history) asserted the port had
+ * NOT yet landed — "no full-content scan exists on the edge twin today" —
+ * and its own module doc named this exact moment as a deliberate TRIPWIRE:
+ * "the day someone ports a scanPatternsWithMultilineSupport-shaped
+ * full-content pass to the edge twin..., this file must be rewritten to
+ * assert the design doc's LITERAL three assertions..., mirroring the core
+ * twin file." Wave 2 (this PR) is that port landing
+ * (`security-scanner-edge.multiline.ts`). This version now mirrors
+ * `packages/core/src/security/scanner/multiline-category-closure.test.ts`'s
+ * structure directly:
  *
- * That is not what the CURRENT edge-twin source is. SMI-5879's own Problem
- * statement (design doc §1) is "port the evidence-tier severity model
- * [including the multiline pass] TO the edge scanner" — i.e. the port this
- * whole initiative exists to do has NOT landed yet. Verified directly against
- * source as of this test's authoring:
- *   - `scanPatternsWithMultilineSupport` (or any identifier resembling it)
- *     does not appear anywhere in `security-scanner-edge.ts` / `.exec.ts` /
- *     `.patterns.ts` / `.context.ts`.
- *   - EVERY `safeRegexTest(` call site in both scanner files (jailbreak,
- *     suspicious, data-exfiltration, privilege-escalation, chmod-compound,
- *     prompt-injection, code-execution, obfuscated-directive — 10 call sites
- *     total) passes a PER-LINE string (`line` / `raw` / `transformed`) as its
- *     second argument. None passes the full document. This machine-confirms
- *     design doc §8.3.1.2.1's own P3 characterization of the edge twin
- *     today: "every [edge] detector is a per-line loop" — which, on the edge
- *     side, is true of ALL detectors right now, not just the non-AI ones,
- *     because there is no multiline pass to be "untouched by" yet.
+ *   assertion 1 — `scanPatternsWithMultilineSupport` has exactly two call
+ *   sites in `security-scanner-edge.ts` (`scanJailbreakPatterns`,
+ *   `scanPromptInjection`), with `type:` values `{jailbreak,
+ *   prompt_injection}`. Edge has no separate `ai_defence` finding type —
+ *   core's `AI_DEFENCE_PATTERNS` subset maps onto edge's single
+ *   `PROMPT_INJECTION_PATTERNS` array (SMI-4960) — so edge's AI-category
+ *   type multiset is `{jailbreak, prompt_injection}`, not core's
+ *   `{jailbreak, ai_defence}`.
  *
- * Given that, this file does NOT assert "exactly two AI-category call
- * sites" (there are zero, not two — a materially different fact). Instead it
- * asserts the TRUE-TODAY structural fact that plays the identical role in the
- * closure proof: **no pattern array — AI-category or otherwise — is routed
- * through any full-content scan on the edge twin today**, so for the edge
- * twin as it stands, S' = S trivially (delta 0, a STRICTLY tighter bound
- * than core's +32) with respect to a multiline pass, because that pass does
- * not exist yet. This is the honest, currently-checkable analogue of the
- * three required assertions, re-expressed against what the edge source
- * actually is rather than what the design doc's prose (written against
- * core's already-ported implementation) assumed.
+ *   assertion 2 — every pattern the multiline pass's first pass actually
+ *   reads (`resolvePatternScope(p) !== 'line'`, the SMI-5881-adapted
+ *   equivalent of core's now-deleted `isMultilinePattern()` — see core's own
+ *   module doc for why) is non-empty. Unlike core, this file does NOT
+ *   separately re-assert "every pass-1 pattern has an explicit evidence-tier
+ *   entry": `security-scanner-edge.evidence.ts`'s own `assertEvidenceCoverage()`
+ *   already throws at MODULE LOAD if any `JAILBREAK_PATTERNS`/
+ *   `PROMPT_INJECTION_PATTERNS` entry lacks one — strictly stronger coverage
+ *   (100% of both arrays, not just the pass-1 subset) than a test-time check
+ *   would add.
  *
- * This test is a deliberate TRIPWIRE: the day someone ports a
- * `scanPatternsWithMultilineSupport`-shaped full-content pass to the edge
- * twin (the actual point of SMI-5879 sections 2-7), the "no full-content
- * scan exists" assertions below will start failing — which is correct and
- * intentional. At that point this file must be rewritten to assert the
- * design doc's LITERAL three assertions (exactly two call sites, both
- * AI-category = {jailbreak, prompt_injection} on the edge side — see the
- * `CATEGORY_COEFFICIENTS` grounding below for why `prompt_injection` is
- * edge's `ai_defence`), mirroring the core twin file. Do not "fix" a failure
- * here by loosening the assertion — a failure here means the port landed and
- * this file is now stale, not that the check is wrong.
+ *   assertion 3 — no non-AI pattern array (`SUSPICIOUS_PATTERNS`,
+ *   `DATA_EXFILTRATION_PATTERNS`, `PRIVILEGE_ESCALATION_PATTERNS`,
+ *   `CODE_EXECUTION_PATTERNS`) is routed through the multiline pass, checked
+ *   two ways: (a) directly from the call-site census — no `NON_AI_ARRAY_NAMES`
+ *   entry ever appears as a `patterns:` identifier at any call site, and (b)
+ *   per-function, as before — each non-AI array's own dedicated scan function
+ *   still only calls `safeRegexTest` with a per-line-scoped argument.
+ *
+ * The per-file introspection approach (Node mirror via AST here, live
+ * Supabase twin via the sibling `supabase-twin.test.ts` file) and the
+ * code-review remediations below are unchanged — only the assertions
+ * themselves flipped from "the port hasn't landed" to "the port landed
+ * correctly".
  *
  * The "AI category, edge-side" identity is grounded directly in currently
  * importable source rather than asserted from prose: `CATEGORY_COEFFICIENTS`
- * (`security-scanner-edge.context.ts`) already stages `jailbreak: 0.2` and
+ * (`security-scanner-edge.context.ts`) stages `jailbreak: 0.2` and
  * `prompt_injection: 0.12 // mapped to core ai_defence` — i.e. edge's own
- * coefficient table already agrees with core's {jailbreak: 0.20, ai_defence:
- * 0.12} AI-category coefficients (SMI-4960), even though the pattern-routing
- * port that would let a multiline pass exploit them has not landed. This is
- * checked below as a grounding fact, additional to (not a substitute for) the
- * three routing assertions.
+ * coefficient table agrees with core's {jailbreak: 0.20, ai_defence: 0.12}
+ * AI-category coefficients (SMI-4960). Checked below as a grounding fact,
+ * additional to (not a substitute for) the three routing assertions.
  *
  * Introspects the unencrypted Node mirror (`scripts/indexer/_shared/
  * security-scanner-edge*.ts`), matching the established precedent in this
  * directory (`security-scanner-edge.test.ts`, `security-scanner-edge.
- * tier-independence.test.ts`) — PLUS, as of the Finding 2 remediation, the
- * live `supabase/functions/_shared/` twin directly, in the sibling
+ * tier-independence.test.ts`) — PLUS the live `supabase/functions/_shared/`
+ * twin directly, in the sibling
  * `security-scanner-edge.multiline-category-closure.supabase-twin.test.ts`
  * file (split out to keep this file under the 500-line standard).
  *
- * FINDING 2 REMEDIATION (SMI-5879 Wave 3 item 2 code-review, NO-GO — fixed)
+ * CODE-REVIEW REMEDIATIONS CARRIED FORWARD FROM THE PRE-PORT VERSION
+ * (SMI-5879 Wave 3 item 2 code-review, NO-GO — fixed; still load-bearing)
  *
- * An earlier version of this file introspected ONLY the Node mirror and
- * claimed `quarantine-twin-parity.test.ts` covered the gap to the actual
- * DEPLOYED `supabase/functions/_shared/` twin. That citation was simply
- * wrong: `quarantine-twin-parity.test.ts` guards `quarantine.ts`, an
- * unrelated file — it says nothing about the scanner. (The real byte-identity
- * gate for these four files is `scripts/tests/indexer/parity.test.ts`'s
- * "Deno <-> Node security-scanner-edge parity (SMI-4960)" describe block, via
- * `parity-utils.ts`'s `extractScannerBody` — that file was never checked
- * before writing the original claim.) Rather than relying on citing ANOTHER
- * file's guarantee at all, the sibling `supabase-twin.test.ts` file now
- * inspects BOTH copies directly: every AST census this file runs against the
- * Node mirror is re-run there against the live `supabase/functions/_shared/`
- * copy (`it.skipIf` when git-crypt isn't unlocked, matching this directory's
- * established per-file skip-guard convention), and the two censuses are
- * asserted equal. This is deliberately independent of — not a replacement
- * for — `parity.test.ts`'s own byte-identity guarantee: even if that test
- * were ever weakened or removed, that file's own routing-relevant census
- * still directly gates the deployed source it exists to protect.
- *
- * FINDING 3 REMEDIATION (SMI-5879 Wave 3 item 2 code-review, NO-GO — fixed)
- *
- * An earlier version of this file enumerated `safeRegexTest(` call sites with
- * `/safeRegexTest\(\s*IDENT\s*,\s*IDENT\s*\)/g` — BOTH arguments had to be
- * bare identifiers for a call to match at all. The review flagged this as a
- * broader silent-omission hazard than Finding 1's: extra whitespace before
- * `(`, a property/alias call, OR a non-identifier ("expression") argument in
- * EITHER position made the whole call invisible — not merely
- * misclassified, entirely absent from the census with zero signal.
- * `extractSafeRegexTestSecondArgs` now walks the real TypeScript AST
+ * `extractMultilineCallSites` and `extractSafeRegexTestSecondArgs` (both in
+ * the shared fixtures file) walk the real TypeScript AST
  * (`ts.createSourceFile` + `CallExpression` traversal resolved through
- * `collectAliases`), which finds every call regardless of whitespace or
- * aliasing, and — critically — THROWS when a found call's second argument
- * isn't a bare identifier, rather than silently dropping it. Verified via
- * mutation testing: a temporarily-added `safeRegexTest(pattern, obj.line)`
- * call (a property-access second argument, invisible to the old regex) was
- * correctly caught (extraction threw) before being reverted.
+ * `collectAliases`, which resolves both import renames and local variable
+ * aliases) rather than a bounded text/regex scan — exhaustive by
+ * construction against extra whitespace before `(`, a locally-aliased or
+ * renamed-import identifier, or a non-identifier argument, which a regex
+ * scan could silently miss (the original Finding 1/Finding 3 defects, fixed
+ * before the pre-port version of this file was ever merged).
+ *
+ * Finding 2's remediation (the sibling `supabase-twin.test.ts` file
+ * inspecting the DEPLOYED twin directly rather than citing another test's
+ * coverage) is also unchanged — see that file for its own doc comment.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -125,32 +100,53 @@ import {
 } from '../../indexer/_shared/security-scanner-edge.patterns.ts'
 import { CODE_EXECUTION_PATTERNS } from '../../indexer/_shared/security-scanner-edge.exec.ts'
 import { CATEGORY_COEFFICIENTS } from '../../indexer/_shared/security-scanner-edge.context.ts'
+import { resolvePatternScope } from '../../indexer/_shared/security-scanner-edge.evidence.ts'
 import {
   SCANNER_SRC,
   EXEC_SRC,
   CONTEXT_SRC,
-  ALL_SOURCES,
+  PATTERNS_SRC,
+  MULTILINE_SRC,
   PER_LINE_SCOPED_IDENTIFIERS,
   extractSafeRegexTestSecondArgs,
   extractFunctionBody,
+  extractMultilineCallSites,
+  TARGET_MULTILINE_FUNCTION_NAME,
+  AI_CATEGORY_ARRAY_NAMES,
+  NON_AI_ARRAY_NAMES,
 } from './security-scanner-edge.multiline-category-closure.fixtures.ts'
 
-describe('SMI-5879 Wave 3 item 2 — multiline-pass category closure, EDGE TWIN (design doc §8.3.1.2.2, adapted — see module doc)', () => {
+describe('SMI-5879 Wave 3 item 2 — multiline-pass category closure, EDGE TWIN (design doc §8.3.1.2.2)', () => {
+  const callSites = extractMultilineCallSites('security-scanner-edge.ts', SCANNER_SRC)
+
   // --------------------------------------------------------------------
-  // Assertion 1 (edge-adapted) — the port has not landed, and NO pattern
-  // array is routed through any full-content scan today.
+  // Assertion 1 — the multiline pass has exactly two call sites, both AI-category
   // --------------------------------------------------------------------
-  describe('assertion 1 (edge-adapted) — zero call sites of a full-content (multiline) pattern scan', () => {
-    it('the identifier "scanPatternsWithMultilineSupport" appears nowhere in the edge twin (Node mirror)', () => {
-      for (const { name, src } of ALL_SOURCES) {
+  describe('assertion 1 — exactly two call sites, both AI-category (design doc P1/P2, edge-adapted)', () => {
+    it(`${TARGET_MULTILINE_FUNCTION_NAME} is called exactly twice in security-scanner-edge.ts`, () => {
+      expect(callSites).toHaveLength(2)
+    })
+
+    it('the extracted type: multiset equals exactly [jailbreak, prompt_injection] — no more, no fewer, no substitution', () => {
+      const types = callSites.map((s) => s.type).sort()
+      expect(types).toEqual(['jailbreak', 'prompt_injection'])
+    })
+
+    it(`${TARGET_MULTILINE_FUNCTION_NAME} appears nowhere outside its own definition and the two scanner call sites`, () => {
+      const filesThatMustNotReferenceIt: ReadonlyArray<{ name: string; src: string }> = [
+        { name: 'security-scanner-edge.exec.ts', src: EXEC_SRC },
+        { name: 'security-scanner-edge.context.ts', src: CONTEXT_SRC },
+        { name: 'security-scanner-edge.patterns.ts', src: PATTERNS_SRC },
+      ]
+      for (const { name, src } of filesThatMustNotReferenceIt) {
         expect(
           src,
-          `${name} unexpectedly references scanPatternsWithMultilineSupport`
-        ).not.toContain('scanPatternsWithMultilineSupport')
+          `${name} unexpectedly references ${TARGET_MULTILINE_FUNCTION_NAME}`
+        ).not.toContain(TARGET_MULTILINE_FUNCTION_NAME)
       }
     })
 
-    it('every safeRegexTest() call site in security-scanner-edge.ts passes a per-line-scoped second argument', () => {
+    it('every safeRegexTest() call site in security-scanner-edge.ts (the non-AI scanners) passes a per-line-scoped second argument', () => {
       const args = extractSafeRegexTestSecondArgs(SCANNER_SRC)
       expect(
         args.length,
@@ -161,9 +157,8 @@ describe('SMI-5879 Wave 3 item 2 — multiline-pass category closure, EDGE TWIN 
           PER_LINE_SCOPED_IDENTIFIERS.has(arg),
           `safeRegexTest() called with second argument "${arg}", which is not in the known ` +
             `per-line-scoped identifier set ${JSON.stringify([...PER_LINE_SCOPED_IDENTIFIERS])} — ` +
-            `either a new per-line variable name was introduced (add it to the allowlist) or a ` +
-            `full-content scan was introduced (this is the multiline-pass port landing — see the ` +
-            `module doc's TRIPWIRE note)`
+            `either a new per-line variable name was introduced (add it to the allowlist) or a new ` +
+            `full-content scan was introduced outside the multiline-pass engine`
         ).toBe(true)
       }
     })
@@ -179,55 +174,53 @@ describe('SMI-5879 Wave 3 item 2 — multiline-pass category closure, EDGE TWIN 
       }
     })
 
-    it('"content" (the full-document identifier) is never a safeRegexTest() second argument anywhere', () => {
+    it("every safeRegexTest() call site in the multiline pass's own pass-2 loop passes a per-line-scoped second argument", () => {
+      const args = extractSafeRegexTestSecondArgs(MULTILINE_SRC)
+      expect(args.length).toBeGreaterThan(0)
+      for (const arg of args) {
+        expect(
+          PER_LINE_SCOPED_IDENTIFIERS.has(arg),
+          `safeRegexTest() called with second argument "${arg}" in security-scanner-edge.multiline.ts`
+        ).toBe(true)
+      }
+    })
+
+    it('"content" / "scannedContent" (the full-document identifiers) are never a safeRegexTest() second argument anywhere', () => {
       const args = [
         ...extractSafeRegexTestSecondArgs(SCANNER_SRC),
         ...extractSafeRegexTestSecondArgs(EXEC_SRC),
+        ...extractSafeRegexTestSecondArgs(MULTILINE_SRC),
       ]
       expect(args).not.toContain('content')
+      expect(args).not.toContain('scannedContent')
     })
   })
 
   // --------------------------------------------------------------------
-  // Assertion 2 (edge-adapted) — the AI-category arrays' own dedicated
-  // scan functions are, specifically, also per-line-only.
+  // Assertion 2 — every pattern the multiline pass's first pass actually reads
   // --------------------------------------------------------------------
-  describe('assertion 2 (edge-adapted) — the AI-category arrays (jailbreak, prompt_injection) are scanned exclusively per-line', () => {
+  describe('assertion 2 — every pass-1 pattern is non-vacuous (SMI-5881-adapted)', () => {
+    // "Pass 1" = every pattern scanPatternsWithMultilineSupport's first pass
+    // actually reads: resolvePatternScope(pattern) !== 'line' — the
+    // SMI-5881-adapted equivalent of core's deleted isMultilinePattern()
+    // (see this file's module doc for why). Evidence-tier coverage for every
+    // JAILBREAK_PATTERNS/PROMPT_INJECTION_PATTERNS entry (not just this
+    // pass-1 subset) is already enforced at module load by
+    // security-scanner-edge.evidence.ts's own assertEvidenceCoverage() —
+    // not re-checked here, see module doc.
+    const routed = [...JAILBREAK_PATTERNS, ...PROMPT_INJECTION_PATTERNS]
+    const pass1 = routed.filter((p) => resolvePatternScope(p) !== 'line')
+
     it('JAILBREAK_PATTERNS and PROMPT_INJECTION_PATTERNS are non-empty (the arrays genuinely exist and are not vacuous)', () => {
       expect(JAILBREAK_PATTERNS.length).toBeGreaterThan(0)
       expect(PROMPT_INJECTION_PATTERNS.length).toBeGreaterThan(0)
     })
 
-    it('scanJailbreakPatterns iterates JAILBREAK_PATTERNS and every safeRegexTest call inside it is per-line-scoped', () => {
-      const body = extractFunctionBody(
-        SCANNER_SRC,
-        'security-scanner-edge.ts',
-        'scanJailbreakPatterns'
-      )
-      expect(body).toContain('JAILBREAK_PATTERNS')
-      const args = extractSafeRegexTestSecondArgs(body)
-      expect(args.length).toBeGreaterThan(0)
-      for (const arg of args) expect(PER_LINE_SCOPED_IDENTIFIERS.has(arg)).toBe(true)
-    })
-
-    it('scanPromptInjection iterates PROMPT_INJECTION_PATTERNS and every safeRegexTest call inside it is per-line-scoped', () => {
-      const body = extractFunctionBody(
-        SCANNER_SRC,
-        'security-scanner-edge.ts',
-        'scanPromptInjection'
-      )
-      expect(body).toContain('PROMPT_INJECTION_PATTERNS')
-      const args = extractSafeRegexTestSecondArgs(body)
-      expect(args.length).toBeGreaterThan(0)
-      for (const arg of args) expect(PER_LINE_SCOPED_IDENTIFIERS.has(arg)).toBe(true)
+    it('the pass-1 subset is non-empty — the pass is not vacuous', () => {
+      expect(pass1.length).toBeGreaterThan(0)
     })
 
     it('CATEGORY_COEFFICIENTS grounds the AI-category identity: jailbreak=0.2, prompt_injection=0.12 (mapped to core ai_defence, SMI-4960)', () => {
-      // Grounding fact, not a substitute for the routing assertions above:
-      // ties this file's "AI category" definition to the exact coefficients
-      // the design doc's +32 arithmetic depends on (100*0.20 + 100*0.12 =
-      // 32), confirming edge's own coefficient table already agrees with
-      // core's even though the routing port has not landed.
       expect(CATEGORY_COEFFICIENTS.jailbreak).toBe(0.2)
       expect(CATEGORY_COEFFICIENTS.prompt_injection).toBe(0.12)
       expect(CONTEXT_SRC).toMatch(/prompt_injection:\s*0\.12,?\s*\/\/\s*mapped to core ai_defence/)
@@ -235,10 +228,26 @@ describe('SMI-5879 Wave 3 item 2 — multiline-pass category closure, EDGE TWIN 
   })
 
   // --------------------------------------------------------------------
-  // Assertion 3 (edge-adapted) — the non-AI arrays are, specifically,
-  // ALSO per-line-only (not merely that the AI arrays happen to be).
+  // Assertion 3 — no non-AI pattern array is routed through the multiline pass
   // --------------------------------------------------------------------
-  describe('assertion 3 (edge-adapted) — no non-AI pattern array is routed through a full-content scan', () => {
+  describe('assertion 3 — no non-AI pattern array is routed through the multiline pass (design doc P3)', () => {
+    it('every call site patterns: identifier is one of the two AI-category arrays', () => {
+      for (const site of callSites) {
+        expect(
+          AI_CATEGORY_ARRAY_NAMES as readonly string[],
+          `call site at offset ${site.offset} routes ${site.patternsIdent}, not an AI-category array`
+        ).toContain(site.patternsIdent)
+      }
+    })
+
+    it.each(NON_AI_ARRAY_NAMES)(
+      '%s never appears as a patterns: identifier at any call site',
+      (arrayName) => {
+        const idents = callSites.map((s) => s.patternsIdent)
+        expect(idents).not.toContain(arrayName)
+      }
+    )
+
     const NON_AI_FUNCTION_MAP: ReadonlyArray<{
       arrayName: string
       array: readonly RegExp[]
