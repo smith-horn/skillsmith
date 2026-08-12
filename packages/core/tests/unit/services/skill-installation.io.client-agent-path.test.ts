@@ -68,7 +68,15 @@ describe('writeInstallFiles companion-subagent path per client (SMI-5980 regress
         client
       )
 
-      const expectedPath = path.join(COMPANION_AGENT_TARGETS[client].dir, 'my-skill-specialist.md')
+      // PR-review finding fallout (SMI-5980): copilot's filenamePattern is
+      // now '{name}.agent.md', not the shared '-specialist.md' suffix every
+      // other client uses — derive the expected filename from the actual
+      // per-client pattern instead of a universal hardcoded literal.
+      const expectedFilename = COMPANION_AGENT_TARGETS[client].filenamePattern.replace(
+        '{name}',
+        'my-skill'
+      )
+      const expectedPath = path.join(COMPANION_AGENT_TARGETS[client].dir, expectedFilename)
       expect(result.subagentPath).toBe(expectedPath)
       expect(await fs.readFile(expectedPath, 'utf8')).toBe(
         '---\nname: my-skill-specialist\n---\nbody'
