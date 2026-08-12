@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed (breaking)**: `SearchResponse.compatibilityHidden` renamed to
+  `compatibilityDeprioritized` — the compatibility filter is now a ranking signal, not a hard
+  exclusion (SMI-5929), so results are never actually "hidden" by it anymore; the renamed field is
+  precisely the count of other-tool-only results present on the *returned page*, not a corpus-wide
+  or pre-page count. `SearchOptions` gains a new optional `compatibility?: string[]` field —
+  `SkillsmithApiClient.search()` forwards it to the `skills-search` edge function as a
+  `compatibility` CSV query param (previously never sent by any caller), letting the API rank
+  results server-side, before the page is cut to the requested `limit`.
 - **Fix**: companion-subagent files (the `-specialist.md` shim generated alongside an installed
   skill) were always written to `~/.claude/agents/`, regardless of which client the skill itself
   was installed for — a skill installed with `--client cursor` or `SKILLSMITH_CLIENT=cursor`

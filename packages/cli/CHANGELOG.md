@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: bumps `@skillsmith/core` for the SMI-5929 compatibility-ranking change —
+  `SearchResponse.compatibilityHidden` is renamed to `compatibilityDeprioritized` and
+  `SearchOptions` gains an optional `compatibility` field. `skillsmith search` does not currently
+  expose a compatibility filter of its own (no `--compatible-with` flag, and `searchRemoteOrLocal`
+  never read the old field), so this has no CLI-visible behavior change today — the entry is here
+  because both renamed/added members are part of `@skillsmith/core`'s public type surface this
+  package depends on (SMI-5929)
 - **Fix**: `skillsmith author subagent`/`transform` now write companion-subagent files to the
   target client's own agent directory (via `@skillsmith/core`'s new `COMPANION_AGENT_TARGETS`)
   instead of always hardcoding `~/.claude/agents/` — fixes generated subagents landing in the
