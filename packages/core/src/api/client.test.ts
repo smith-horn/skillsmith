@@ -95,3 +95,49 @@ describe('SMI-5427: ApiClient.search() URL parameter forwarding', () => {
     expect(capturedUrl).toContain('max_risk=50')
   })
 })
+
+describe('SMI-5929: ApiClient.search() compatibility param forwarding', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let capturedUrl: string
+
+  beforeEach(() => {
+    capturedUrl = ''
+    fetchMock = vi.fn((url: string) => {
+      capturedUrl = url
+      return Promise.resolve(makeSearchResponse())
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch =
+      fetchMock as unknown as typeof globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = ORIGINAL_FETCH
+    ;(global as unknown as { fetch: typeof globalThis.fetch }).fetch = ORIGINAL_FETCH
+    vi.clearAllMocks()
+  })
+
+  it('omits compatibility when not set', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.search({ query: 'test' })
+    expect(capturedUrl).not.toContain('compatibility')
+  })
+
+  it('omits compatibility when the array is empty', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.search({ query: 'test', compatibility: [] })
+    expect(capturedUrl).not.toContain('compatibility')
+  })
+
+  it('sends a single slug', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.search({ query: 'test', compatibility: ['cursor'] })
+    expect(capturedUrl).toContain('compatibility=cursor')
+  })
+
+  it('sends multiple slugs as CSV', async () => {
+    const client = new SkillsmithApiClient({ offlineMode: false })
+    await client.search({ query: 'test', compatibility: ['cursor', 'claude-code'] })
+    expect(capturedUrl).toContain(encodeURIComponent('cursor,claude-code'))
+  })
+})

@@ -149,6 +149,16 @@ export interface SearchOptions {
   // SMI-825: Security filters
   safeOnly?: boolean // Only show skills that passed security scan
   maxRiskScore?: number // Maximum risk score (0-100)
+  /**
+   * SMI-5929: wanted compatibility slugs (e.g. ['cursor']), forwarded to the
+   * skills-search edge function as the `compatibility` CSV query param so it
+   * can rank (and widen its own DB fetch) BEFORE applying LIMIT/OFFSET —
+   * see packages/mcp-server/src/tools/search.helpers.ts's sortByCompatRank
+   * doc and supabase/functions/skills-search/compatibility.ts. Omitted /
+   * empty means no compat filter is active (identical to pre-SMI-5929
+   * behavior).
+   */
+  compatibility?: string[]
 }
 
 export interface SearchResult {
