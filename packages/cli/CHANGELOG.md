@@ -5,6 +5,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## [Unreleased]
 
 - **Feature**: `antigravity` (Google Antigravity) is now a supported `--client` value across install/list/remove/update/sync and the generated MCP-server config snippet (`skillsmith install --client antigravity` / `SKILLSMITH_CLIENT=antigravity`) — companion-subagent output uses Antigravity's own directory-package convention (`.agents/agents/<name>/agent.md`), not the flat file every other client gets. `VALID_CLIENT_HINT` also picks up `grok`, which was a pre-existing gap (SMI-5697 added the client but never updated this help text) (SMI-5982)
+- **Fix**: `saveManifest()` (`utils/manifest.ts`) computed its temp filename from just the process
+  id, so two concurrent saves in the same process could collide on the same temp path and corrupt
+  one of them. The temp filename now includes a random UUID suffix, with best-effort cleanup of
+  only that invocation's own temp file on failure (mirrors the same fix in
+  `@skillsmith/core`'s `ManifestManager.save()`) (SMI-6007).
 - **Changed**: bumps `@skillsmith/core` for the SMI-5929 compatibility-ranking change —
   `SearchResponse.compatibilityHidden` is renamed to `compatibilityDeprioritized` and
   `SearchOptions` gains an optional `compatibility` field. `skillsmith search` does not currently

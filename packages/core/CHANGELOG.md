@@ -8,6 +8,25 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Feature**: `antigravity` is now a real `ClientId` (`install/paths.ts`) — `CLIENT_NATIVE_PATHS['antigravity'] = ~/.gemini/config/skills`, un-deferred from `compatibility/slugs.ts`'s `BROWSE_ONLY_SLUGS` (which now only contains `gemini`), and given its own `CLIENT_TO_COMPATIBILITY_SLUG` entry. `CompanionAgentTarget.fileMode` gains a second value, `'directory-package'` (Antigravity only today) — a per-skill subdirectory `<dir>/<skillName>/agent.md`, instead of every other client's flat `<dir>/<name>-suffix.md`; `resolveCompanionAgentPath()` is now mode-aware. Antigravity's companion-agent output is project-scoped (`.agents/agents/<name>/agent.md`, relative to the invocation directory) — this CLI has no existing global-vs-project install-mode distinction to hook into, confirmed by grep, so global scope (`~/.gemini/config/agents/`) is a fast-follow, not implemented here (SMI-5982)
 - **Fix**: `writeInstallFiles()`'s rollback path could leave behind an orphaned, empty per-skill companion-agent directory when a new `directory-package`-mode install (Antigravity) failed partway through — every other client's agents dir is shared and pre-existing, so this hazard never applied to them. Cleanup uses a non-recursive `rmdir`, a safe no-op when the directory was never created or holds unexpected surviving content (SMI-5982)
 - **Fix (BLOCKING, PR-review follow-up)**: the prior `resolveCompanionAgentPath()` fix's `baseDir: string = process.cwd()` default only closed the cwd-dependence bug for the ONE call site that happened to pass it explicitly (the MCP `install_skill` tool) — every other production `SkillInstallationService`/`installFromContent()` call site (7 more, audited via `grep -rn "new SkillInstallationService(" packages/`) still silently fell back to `process.cwd()`, including the private-registry `install` MCP action, which has no per-call cwd input to source a correct value from at all. `baseDir` is now **structurally required** (no default) whenever the target client's `CompanionAgentTarget.fileMode === 'directory-package'` — closing the bug class by construction for every current and future caller rather than by chasing individual call sites. `writeInstallFiles()`'s `companionBaseDir` param, `SkillInstallationService`'s constructor param, and `installFromContent()`'s param all lost their own `?? process.cwd()` fallbacks to match — an omitted value now flows through as `undefined` and fails closed with a diagnosable error (`sanitizeInstallError()`'s allowlist extended to surface it) instead of resolving against the wrong directory. The 4 CLI call sites that relied on the implicit default (`install`, `registry-install`, interactive `search`, `update`) now pass `companionBaseDir: process.cwd()` explicitly, restoring their exact prior behavior (SMI-5982)
+- **Fix**: `ManifestManager` (`services/skill-manifest.ts`) had two concurrency gaps in the skill
+  manifest write path. `performUninstall()` (`skill-installation.helpers.ts`) loaded the manifest,
+  mutated an in-memory snapshot, and saved it back directly, bypassing the lock/`updateSafely()`
+  mechanism the install path uses — a concurrent update to an unrelated entry in that window could
+  be silently overwritten. `save()` also computed its temp filename from just the process id, so
+  two concurrent saves in the same process could collide on the same temp path. Uninstall now
+  routes its final mutation through `updateSafely()`, and both `save()` and the CLI's separate
+  manifest writer now suffix the temp filename with a random UUID, with best-effort cleanup on
+  failure. `load()` also now distinguishes a missing manifest file (returns empty, expected) from
+  one that exists but is corrupt/unreadable (throws, instead of silently returning empty and
+  risking a subsequent save erasing real state) (SMI-6007).
+- **Fix**: `runMigrations()`/`runMigrationsSafe()` (`db/migration-runner.ts`) had an unguarded
+  concurrent-migration race — two processes opening the same fresh DB at the same time could both
+  read the same `currentVersion`, both apply the same migration, and the loser's plain
+  `INSERT INTO schema_version` throw `UNIQUE constraint failed: schema_version.version`. Both now
+  use `INSERT OR IGNORE`, matching the existing v1-stamp hardening in `initializeSchema()`
+  (`schema.ts`, SMI-4486) that was never extended to per-migration inserts. Found via a flaky
+  `startup-probe.test.ts` failure traced to a real production race, not test-only flakiness
+  (SMI-6003).
 - **Changed (breaking)**: `SearchResponse.compatibilityHidden` renamed to
   `compatibilityDeprioritized` — the compatibility filter is now a ranking signal, not a hard
   exclusion (SMI-5929), so results are never actually "hidden" by it anymore; the renamed field is

@@ -3,10 +3,15 @@
  *   skill-installation.helpers.ts (`getRegisteredMcpServers`, and the
  *   resolution-aware warning filtering in `extractDepIntel`), plus the
  *   SMI-5894 Wave 1 multi-client manifest-keying + tips additions
- *   (`manifestKeyFor`, `generateTips`).
+ *   (`manifestKeyFor`, `generateTips`), plus the SMI-6007 `performUninstall`
+ *   manifest-concurrency hardening.
  * @module @skillsmith/core/services/skill-installation.helpers.test
  * @see SMI-5676: Wave 1 Step 3b — harden extractMcpReferences
  * @see SMI-5894: Wave 1 Steps 3/5 — multi-client manifest re-keying + tips
+ * @see SMI-6007: performUninstall now routes its final manifest mutation
+ *   through ManifestManager.updateSafely() instead of a direct load+save,
+ *   closing a lost-update hazard against concurrent operations on other
+ *   manifest entries.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
@@ -18,7 +23,11 @@ import {
   getRegisteredMcpServers,
   generateTips,
   manifestKeyFor,
+  performUninstall,
 } from './skill-installation.helpers.js'
+import { ManifestManager } from './skill-manifest.js'
+import type { SkillManifestEntry } from './skill-installation.types.js'
+import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 
 describe('getRegisteredMcpServers (SMI-5676)', () => {
   let tmpDir: string
@@ -144,5 +153,83 @@ describe('generateTips (SMI-5894 Wave 1 Step 5)', () => {
     expect(joined).toContain('mention it in Cursor')
     expect(joined).toContain('ls /home/user/.cursor/skills/')
     expect(joined).not.toContain('Claude Code')
+  })
+})
+
+describe('performUninstall manifest concurrency (SMI-6007)', () => {
+  let tmpDir: string
+  let manifest: ManifestManager
+  let skillDependencyRepo: SkillDependencyRepository
+
+  function makeEntry(overrides: Partial<SkillManifestEntry> = {}): SkillManifestEntry {
+    const now = new Date().toISOString()
+    return {
+      id: overrides.id ?? 'author/skill-to-remove',
+      name: overrides.name ?? 'skill-to-remove',
+      version: overrides.version ?? '1.0.0',
+      source: overrides.source ?? 'github:author/skill-to-remove',
+      installPath: overrides.installPath ?? path.join(tmpDir, 'skill-to-remove'),
+      installedAt: overrides.installedAt ?? now,
+      lastUpdated: overrides.lastUpdated ?? now,
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-uninstall-race-'))
+    manifest = new ManifestManager(path.join(tmpDir, 'manifest.json'))
+    // clearAll is best-effort (wrapped in try/catch by performUninstall) — a
+    // minimal stub is sufficient for these manifest-concurrency tests.
+    skillDependencyRepo = { clearAll: () => {} } as unknown as SkillDependencyRepository
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('an unrelated entry survives a concurrent update racing an uninstall (core SMI-6007 fix)', async () => {
+    await manifest.save({
+      version: '1.0.0',
+      installedSkills: {
+        'skill-to-remove': makeEntry(),
+        'unrelated-skill': makeEntry({
+          id: 'author/unrelated-skill',
+          name: 'unrelated-skill',
+          installPath: path.join(tmpDir, 'unrelated-skill'),
+        }),
+      },
+    })
+
+    const uninstall = performUninstall({
+      skillName: 'skill-to-remove',
+      force: true,
+      skillsDir: tmpDir,
+      manifest,
+      skillDependencyRepo,
+      onProgress: () => {},
+    })
+
+    // Simulates a second operation (e.g. a concurrent install) racing the
+    // uninstall above, touching a DIFFERENT manifest entry.
+    const concurrentUpdate = manifest.updateSafely((current) => ({
+      ...current,
+      installedSkills: {
+        ...current.installedSkills,
+        'concurrent-skill': makeEntry({
+          id: 'author/concurrent-skill',
+          name: 'concurrent-skill',
+          installPath: path.join(tmpDir, 'concurrent-skill'),
+        }),
+      },
+    }))
+
+    const [uninstallResult] = await Promise.all([uninstall, concurrentUpdate])
+
+    expect(uninstallResult.success).toBe(true)
+
+    const finalManifest = await manifest.load()
+    expect(finalManifest.installedSkills['skill-to-remove']).toBeUndefined()
+    expect(finalManifest.installedSkills['unrelated-skill']).toBeDefined()
+    expect(finalManifest.installedSkills['concurrent-skill']).toBeDefined()
   })
 })
