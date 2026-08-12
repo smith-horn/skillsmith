@@ -3,12 +3,20 @@
 # SMI-4681: Shared Docker-vs-host detection for pre-push hook chain.
 #
 # Sourced by:
+#   .husky/pre-commit
 #   .husky/pre-push
 #   scripts/pre-push-check.sh
 #   scripts/pre-push-coverage-check.sh
+#   scripts/lib/check-native-modules.sh
+#   scripts/lib/check-container-deps-fresh.sh (SMI-6006)
 #
-# Pre-commit (.husky/pre-commit:27-109) still has its own inline copy.
-# Migration tracked in SMI-4686.
+# CORRECTION (SMI-6006, found during review): this comment previously said
+# pre-commit "still has its own inline copy" (SMI-4686). That was stale —
+# .husky/pre-commit:33 sources this file directly. Any change here reaches
+# pre-commit too; pre-commit's OWN guards built on top of it (the
+# node_modules/dist freshness checks) are separately, explicitly WARN-only —
+# see .husky/pre-commit's own comments — never make this file itself do
+# anything mutating, since pre-commit sourcing it must stay read-only.
 #
 # CONTRACT (sets these vars in caller's scope):
 #   DOCKER_AVAILABLE 0|1     — whether Docker daemon + the resolved
