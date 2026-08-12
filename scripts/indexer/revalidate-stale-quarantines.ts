@@ -34,11 +34,7 @@ import {
   writeSiblingRequarantine,
   writeSiblingRecovery,
 } from './revalidate-stale-quarantines.sibling.ts'
-import {
-  parseIdSelection,
-  reconcileIdSelection,
-  formatIdSelectionReport,
-} from './revalidate-stale-quarantines.cli.ts'
+import { parseIdSelection, reportIdSelectionIfPresent } from './revalidate-stale-quarantines.cli.ts'
 
 // ---------------------------------------------------------------------------
 // Types (split into revalidate-stale-quarantines.types.ts, SMI-5866)
@@ -331,16 +327,18 @@ export async function processRow(
  */
 export async function runSweep(
   db: SupabaseClient,
-  opts: { apply: boolean; limit?: number; ids?: readonly string[] }
+  opts: {
+    apply: boolean
+    limit?: number
+    ids?: readonly string[]
+    /** Count of ids before dedupe (design §11.2.3's "requested_raw"). Defaults to `ids.length` if omitted. */
+    requestedRawCount?: number
+  }
 ): Promise<SweepCounts> {
   const headers = await buildGitHubHeaders()
 
   const rows = await loadCandidates(db, { limit: opts.limit, ids: opts.ids })
-
-  if (opts.ids !== undefined) {
-    const reconciliation = reconcileIdSelection(opts.ids, rows, opts.apply)
-    console.log(formatIdSelectionReport(reconciliation))
-  }
+  reportIdSelectionIfPresent(opts.ids, opts.requestedRawCount, rows, opts.apply)
 
   const counts: SweepCounts = {
     total: rows.length,

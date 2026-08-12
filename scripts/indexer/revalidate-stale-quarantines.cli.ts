@@ -25,8 +25,15 @@ import { readFileSync } from 'node:fs'
 export interface IdSelection {
   /** Cutoff over the discovered cohort in ascending-id page order. Mutually exclusive with `ids`. */
   limit?: number
-  /** Deduped, order-preserving explicit id allowlist. Mutually exclusive with `limit`. */
+  /** Deduped, order-preserving explicit id allowlist ("requested_unique"). Mutually exclusive with `limit`. */
   ids?: string[]
+  /**
+   * Count of validated tokens BEFORE dedup ("requested_raw", design §11.2.3:
+   * "duplicate ids → deduped, order-preserving; requested_raw and
+   * requested_unique both reported"). Deduping silently would hide genuine
+   * duplicate input from the operator. Present only when `ids` is present.
+   */
+  requestedRawCount?: number
 }
 
 /** Only letters, digits, `_`, `-` are permitted in an id token; length 1..64. */
@@ -174,7 +181,7 @@ export function parseIdSelection(argv: string[]): IdSelection {
   }
 
   const validated = rawTokens.map(validateToken)
-  return { ids: dedupeOrderPreserving(validated) }
+  return { ids: dedupeOrderPreserving(validated), requestedRawCount: validated.length }
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +193,10 @@ export const PREDICATE_CLAUSES_BANNER =
   "quarantined = true AND repo_url ILIKE 'https://github.com/%' AND (quarantine_reason IS NULL OR quarantine_reason = 'stale')"
 
 export interface IdReconciliation {
-  /** Parsed ids after dedupe (phase 1 output), unchanged. */
+  /** Parsed ids after dedupe (phase 1 output), unchanged — "requested_unique" (design §11.2.3). */
   requested: string[]
+  /** Count of validated tokens BEFORE dedupe — "requested_raw" (design §11.2.3). */
+  requestedRawCount: number
   /** requested ∩ predicate — the ids `loadCandidates` actually returned rows for. */
   loaded: string[]
   /** requested \ loaded — skipped and reported, never force-processed. */
@@ -214,6 +223,7 @@ export interface IdReconciliation {
  */
 export function reconcileIdSelection(
   requestedIds: readonly string[],
+  requestedRawCount: number,
   loadedRows: readonly { id: string }[],
   apply: boolean
 ): IdReconciliation {
@@ -241,13 +251,13 @@ export function reconcileIdSelection(
     )
   }
 
-  return { requested: [...requestedIds], loaded: loadedIds, notLoaded, status }
+  return { requested: [...requestedIds], requestedRawCount, loaded: loadedIds, notLoaded, status }
 }
 
 /** Format the id-selection summary + `not-loaded` section (design §11.2.5) for console output. */
 export function formatIdSelectionReport(reconciliation: IdReconciliation): string {
   const lines: string[] = [
-    `\nid-selection: requested=${reconciliation.requested.length} loaded=${reconciliation.loaded.length} not-loaded=${reconciliation.notLoaded.length} status=${reconciliation.status}`,
+    `\nid-selection: requested_raw=${reconciliation.requestedRawCount} requested_unique=${reconciliation.requested.length} loaded=${reconciliation.loaded.length} not-loaded=${reconciliation.notLoaded.length} status=${reconciliation.status}`,
   ]
   if (reconciliation.notLoaded.length > 0) {
     lines.push(
@@ -256,4 +266,27 @@ export function formatIdSelectionReport(reconciliation: IdReconciliation): strin
     for (const id of reconciliation.notLoaded) lines.push(`  - ${id}`)
   }
   return lines.join('\n') + '\n'
+}
+
+/**
+ * Reconcile + print the id-selection report, if an id selection was given.
+ * Wraps {@link reconcileIdSelection} + {@link formatIdSelectionReport} +
+ * `console.log` in one call so the main file's `runSweep` doesn't need to
+ * import either directly — keeps the id-selection/reconciliation logic
+ * fully inside this sibling (design §11.2.8's line-budget split).
+ */
+export function reportIdSelectionIfPresent(
+  ids: readonly string[] | undefined,
+  requestedRawCount: number | undefined,
+  loadedRows: readonly { id: string }[],
+  apply: boolean
+): void {
+  if (ids === undefined) return
+  const reconciliation = reconcileIdSelection(
+    ids,
+    requestedRawCount ?? ids.length,
+    loadedRows,
+    apply
+  )
+  console.log(formatIdSelectionReport(reconciliation))
 }

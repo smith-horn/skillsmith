@@ -444,6 +444,37 @@ describe('parseIdSelection — malformed and empty input rejected before any DB 
 })
 
 // ---------------------------------------------------------------------------
+// Duplicate ids: deduped, order-preserving, AND both requested_raw and
+// requested_unique are reported (design §11.2.3). Round-7-review finding
+// (GPT-5.6-Sol adversarial pass on PR #2332): the raw (pre-dedupe) count was
+// silently discarded, so an operator running --ids with duplicate entries
+// had no way to see that dedupe happened at all.
+// ---------------------------------------------------------------------------
+
+describe('parseIdSelection — duplicate ids are deduped, order-preserving, with both counts reported', () => {
+  it('parseIdSelection: ids is deduped order-preserving; requestedRawCount reflects the PRE-dedupe count', () => {
+    const sel = parseIdSelection(['node', 'script', '--ids=id-a,id-b,id-a,id-c,id-b'])
+    expect(sel.ids).toEqual(['id-a', 'id-b', 'id-c'])
+    expect(sel.requestedRawCount).toBe(5)
+  })
+
+  it('formatIdSelectionReport prints requested_raw and requested_unique as distinct values when duplicates were supplied', () => {
+    const sel = parseIdSelection(['node', 'script', '--ids=id-a,id-b,id-a'])
+    const reconciliation = reconcileIdSelection(
+      sel.ids as string[],
+      sel.requestedRawCount as number,
+      [{ id: 'id-a' }, { id: 'id-b' }],
+      false
+    )
+    expect(reconciliation.requestedRawCount).toBe(3)
+    expect(reconciliation.requested).toHaveLength(2)
+    const report = formatIdSelectionReport(reconciliation)
+    expect(report).toContain('requested_raw=3')
+    expect(report).toContain('requested_unique=2')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Row: no override flag exists in the source (part of the "skipped and
 // reported, never force-processed" row)
 // ---------------------------------------------------------------------------
@@ -471,8 +502,12 @@ describe('reconcileIdSelection — loaded ⊆ requested is enforced, not assumed
   it('refuses before the processing loop when a loaded id is not in the requested set, in BOTH modes', () => {
     const requested = ['id-a', 'id-b']
     const loadedRows = [{ id: 'id-a' }, { id: 'id-unexpected' }]
-    expect(() => reconcileIdSelection(requested, loadedRows, false)).toThrow(/id-unexpected/)
-    expect(() => reconcileIdSelection(requested, loadedRows, true)).toThrow(/id-unexpected/)
+    expect(() => reconcileIdSelection(requested, requested.length, loadedRows, false)).toThrow(
+      /id-unexpected/
+    )
+    expect(() => reconcileIdSelection(requested, requested.length, loadedRows, true)).toThrow(
+      /id-unexpected/
+    )
   })
 })
 
@@ -505,7 +540,7 @@ describe('a requested id that does not match the predicate is skipped and report
 
   it('reconcileIdSelection reports requested=10 loaded=7 not-loaded=3 (exactly the failing ids), status "partial"', () => {
     const loadedRows = passingIds.map((id) => ({ id }))
-    const reconciliation = reconcileIdSelection(requested, loadedRows, false)
+    const reconciliation = reconcileIdSelection(requested, requested.length, loadedRows, false)
     expect(reconciliation.requested).toHaveLength(10)
     expect(reconciliation.loaded).toHaveLength(7)
     expect(new Set(reconciliation.notLoaded)).toEqual(new Set(failingIds))
