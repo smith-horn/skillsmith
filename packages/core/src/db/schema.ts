@@ -60,6 +60,32 @@ export function initializeSchema(db: DatabaseType): void {
   runMigrations(db)
 }
 
+/**
+ * SMI-5997: shared by openDatabase() and openDatabaseAsync() — a database
+ * missing schema_version is only a legacy import if it has OTHER tables. A
+ * file with zero tables at all is empty or corrupt (e.g. truncated by an
+ * interrupted sql.js persist() — see sqljsDriver.ts), not a legacy import.
+ * Silently stamping schema_version=1 in that case used to run every
+ * migration against a database with no base tables, failing opaquely with
+ * "no such table: skills" and eventually crashing entirely. Fail loudly
+ * with remediation instead.
+ */
+function assertLegacyImportHasTables(db: DatabaseType, path: string): void {
+  const tableCount = db
+    .prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table'")
+    .get() as { count: number } | undefined
+
+  if (!tableCount || tableCount.count === 0) {
+    throw new Error(
+      `[Skillsmith] Database at ${path} has no tables and no version metadata — ` +
+        'it is empty or corrupt, not a legacy import.\n' +
+        '[skillsmith] Run this command in the repo root, then reconnect via /mcp:\n\n' +
+        `    mv "${path}" "${path}.corrupt-$(date +%s)"\n\n` +
+        '[skillsmith] (a fresh database will be created automatically on next start)'
+    )
+  }
+}
+
 /** @deprecated Use createDatabaseAsync() — requires better-sqlite3 native module. */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
   const db = createDatabaseSync(path)
@@ -89,8 +115,11 @@ export function openDatabase(path: string): DatabaseType {
     .get()
 
   if (!hasSchemaVersion) {
-    // Database has no version tracking - assume it's a Phase 5 import or similar
-    // Create schema_version table and set to version 1
+    assertLegacyImportHasTables(db, path)
+
+    // Database has no version tracking but has other tables - assume it's a
+    // legacy import (Phase 5 or similar). Create schema_version table and
+    // set to version 1.
     db.exec(`
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY,
@@ -162,7 +191,10 @@ export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
     .get()
 
   if (!hasSchemaVersion) {
-    // Database has no version tracking - assume it's a legacy import
+    assertLegacyImportHasTables(db, path)
+
+    // Database has no version tracking but has other tables - assume it's a
+    // legacy import. Create schema_version table and set to version 1.
     db.exec(`
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY,

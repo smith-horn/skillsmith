@@ -68,3 +68,8 @@ scripts/tests/create-worktree-hooks.test.sh
 # lines before this PR touched it to add the SMI-5866 skip-gate change; not
 # new debt introduced by this PR)
 scripts/indexer/indexer-runners.ts
+
+# SMI-5998 split follow-up (genuinely pre-existing: baseline was already 829
+# lines before this PR touched it to update two assertions for dynamic
+# companion-agent-path resolution; not new debt introduced by this PR)
+packages/cli/tests/author.test.ts

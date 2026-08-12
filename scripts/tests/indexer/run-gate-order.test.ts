@@ -29,9 +29,15 @@ const GATED_ENTRY_FILES = [
   'dequarantine-false-positives.ts',
   'purge-dead-quarantines.ts',
   'revalidate-stale-quarantines.ts',
+  // PR-review finding (NON-BLOCKING, SMI-5930): the structural
+  // gate-precedes-side-effects proof below didn't cover this new writer —
+  // run-gate.test.ts and run-gate-callsites.test.ts both confirm the gate
+  // calls EXIST, but neither asserts they run BEFORE the script's own
+  // side-effecting update() call the way this suite does for its siblings.
+  'repair-latched-name-rows.ts',
 ]
 
-describe('run-gate-order — the gate precedes every side effect, in each of the four main() bodies', () => {
+describe('run-gate-order — the gate precedes every side effect, in each of the five main() bodies', () => {
   it.each(GATED_ENTRY_FILES)(
     '%s: assertRunAllowed precedes every side-effect call inside main()',
     (file) => {

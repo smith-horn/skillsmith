@@ -12,6 +12,7 @@ import ora from 'ora'
 import { readFile, writeFile, stat } from 'fs/promises'
 import { basename, dirname, join, resolve } from 'path'
 import { SkillParser } from '@skillsmith/core'
+import { getCompanionAgentTarget } from '@skillsmith/core/install'
 
 const logger = getCliLogger()
 
@@ -126,7 +127,18 @@ export async function generateSubagent(skillPath: string, options: SubagentOptio
 
     // Ensure agents directory exists
     const agentsDir = await ensureAgentsDirectory(options.output)
-    const subagentPath = join(agentsDir, `${basename(metadata.name)}-specialist.md`)
+    // PR-review finding (NON-BLOCKING): the filename was a hand-assembled
+    // `${name}-specialist.md` literal, duplicating the pattern
+    // COMPANION_AGENT_TARGETS already owns per client (@skillsmith/core/install).
+    // Only the FILENAME comes from there -- `agentsDir` above still governs
+    // the directory (and must, since it's the one that honors --output's
+    // override; resolveCompanionAgentPath() always resolves the default
+    // per-client dir and would silently ignore --output).
+    const subagentFilename = getCompanionAgentTarget().filenamePattern.replace(
+      '{name}',
+      basename(metadata.name)
+    )
+    const subagentPath = join(agentsDir, subagentFilename)
 
     // Check if subagent already exists
     if (await fileExists(subagentPath)) {
@@ -205,12 +217,18 @@ export const subagentAction = withTelemetry(subagentActionImpl, {
 
 /**
  * Create subagent command
+ *
+ * SMI-5980 (Wave 3): `--output` has no static default value here anymore —
+ * when omitted, `ensureAgentsDirectory()` resolves the default via
+ * `resolveCompanionAgentDir()` (COMPANION_AGENT_TARGETS, `@skillsmith/core/install`)
+ * instead of a literal `'~/.claude/agents'` string duplicated at the command
+ * definition. An explicit `--output` still always wins.
  */
 export function createSubagentCommand(): Command {
   return new Command('subagent')
     .description('Generate a companion subagent for a skill')
     .argument('[path]', 'Path to skill directory', '.')
-    .option('-o, --output <path>', 'Output directory', '~/.claude/agents')
+    .option('-o, --output <path>', 'Output directory (default: ~/.claude/agents)')
     .option('--tools <tools>', 'Override detected tools (comma-separated)')
     .option('--model <model>', 'Model for subagent: sonnet|opus|haiku', 'sonnet')
     .option('--skip-claude-md', 'Skip CLAUDE.md snippet generation')

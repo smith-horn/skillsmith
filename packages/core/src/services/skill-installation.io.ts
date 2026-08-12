@@ -6,10 +6,10 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
 import { safeWriteFile } from '../utils/safe-fs.js'
 import { SecurityScanner } from '../security/index.js'
 import type { ScannerOptions, ScanReport } from '../security/index.js'
+import { CANONICAL_CLIENT, resolveCompanionAgentPath, type ClientId } from '../install/paths.js'
 import { validateOptionalConfig } from './skill-installation.validate.js'
 import {
   BUNDLED_SCAN_FILES,
@@ -187,7 +187,16 @@ export async function writeInstallFiles(
   skillName: string,
   finalSkillContent: string,
   subSkillFiles: Array<{ filename: string; content: string }>,
-  subagentContent: string | undefined
+  subagentContent: string | undefined,
+  /**
+   * SMI-5980 (Wave 3): the client this companion subagent (if any) is
+   * generated for — resolves its output path via
+   * `resolveCompanionAgentPath()` (install/paths.ts) instead of a hardcoded
+   * `~/.claude/agents/` literal. Optional, defaulting to `CANONICAL_CLIENT`
+   * (`claude-code`) so pre-existing callers/tests that never pass it keep
+   * today's exact behavior unchanged.
+   */
+  client: ClientId = CANONICAL_CLIENT
 ): Promise<WriteInstallResult> {
   const writtenFiles: string[] = []
   let subagentPath: string | undefined
@@ -244,15 +253,16 @@ export async function writeInstallFiles(
     }
     // Write companion subagent if generated
     if (subagentContent) {
-      const agentsDir = path.join(os.homedir(), '.claude', 'agents')
+      subagentPath = resolveCompanionAgentPath(skillName, client)
+      const agentsDir = path.dirname(subagentPath)
       await fs.mkdir(agentsDir, { recursive: true })
-      subagentPath = path.join(agentsDir, skillName + '-specialist.md')
       await safeWriteFile(subagentPath, subagentContent)
       writtenFiles.push(subagentPath)
     }
   } catch (writeError) {
     // Rollback on failure. Unlink tracked files first (subagentPath lives OUTSIDE
-    // installPath, under ~/.claude/agents).
+    // installPath, under the client's companion-agent dir — see
+    // resolveCompanionAgentPath()/COMPANION_AGENT_TARGETS, install/paths.ts).
     for (const filePath of writtenFiles) {
       await fs.unlink(filePath).catch(() => {})
     }

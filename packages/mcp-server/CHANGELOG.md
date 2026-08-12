@@ -14,6 +14,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   registry API (previously never sent), so ranking can happen server-side, before the page is cut to
   `limit` — a client-side re-sort after the API had already paginated could never promote a
   compatible row back onto the page, which was the actual bug (SMI-5929)
+- **Fix**: the startup stderr log printed either an unexpanded `~/.skillsmith/skills.db` literal
+  or the raw, unvalidated `SKILLSMITH_DB_PATH` env value — neither reflected the actual path
+  `getToolContextAsync()` resolved and validated. Now logs the new
+  `buildDbInitializedLogMessage()` (`context.helpers.ts`), which calls `getDefaultDbPath()`
+  internally, so the logged path and the real DB path can never disagree (SMI-5981)
 - **Fix**: `skill_recommend`'s `project_context` keyword extraction (`tools/recommend.ts`) no longer
   silently drops real short technical terms ("git", "ci", "aws", "sql", "k8s") via a bare
   `.filter((w) => w.length > 3)` threshold — a context consisting only of such terms previously
