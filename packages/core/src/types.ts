@@ -181,12 +181,16 @@ export interface SearchResponse {
   query: string
   filters: SearchFilters
   /**
-   * SMI-5178: results on this page hidden by the compatibility filter — the
-   * restrictive cross-tool default (explicit SKILLSMITH_CLIENT) or an explicit
-   * `compatible_with`. 0 / absent when no compat filter applied. `[]`/unknown
-   * rows are never hidden (they always surface).
+   * SMI-5929: count of rank-2 (declared-compatible with OTHER tools only)
+   * results present on THIS returned page — 0 / absent when no compat
+   * filter applied (the restrictive cross-tool default via SKILLSMITH_CLIENT,
+   * or an explicit `compatible_with`). Renamed from `compatibilityHidden`
+   * (SMI-5178): the compatibility filter is now a RANKING signal, not an
+   * exclusion — rank-2 rows are deprioritized (sorted after rank-0/rank-1)
+   * but never dropped, so "hidden" was no longer accurate. `[]`/unknown rows
+   * are always rank 1 and never counted here.
    */
-  compatibilityHidden?: number
+  compatibilityDeprioritized?: number
   /**
    * SMI-5178: results on this page hidden by the default-ON installable filter.
    * Present when discovery-only entries were filtered out. Pass

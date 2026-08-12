@@ -4,6 +4,21 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Changed (breaking)**: `search`'s compatibility filter is now a ranking signal, not a hard
+  exclusion — a result whose declared `compatibility` doesn't include the requested client is no
+  longer dropped, only sorted after declared-compatible and unscoped (`[]`/absent) results. Local
+  results still sort ahead of API/registry results (unchanged); compat-rank only reorders within
+  each bucket. Response field `compatibilityHidden` renamed to `compatibilityDeprioritized` —
+  precisely the count of other-tool-only results present on the returned page, not a corpus-wide or
+  pre-page count. `search`'s API-backed path now also forwards the wanted compatibility slugs to the
+  registry API (previously never sent), so ranking can happen server-side, before the page is cut to
+  `limit` — a client-side re-sort after the API had already paginated could never promote a
+  compatible row back onto the page, which was the actual bug (SMI-5929)
+- **Fix**: the startup stderr log printed either an unexpanded `~/.skillsmith/skills.db` literal
+  or the raw, unvalidated `SKILLSMITH_DB_PATH` env value — neither reflected the actual path
+  `getToolContextAsync()` resolved and validated. Now logs the new
+  `buildDbInitializedLogMessage()` (`context.helpers.ts`), which calls `getDefaultDbPath()`
+  internally, so the logged path and the real DB path can never disagree (SMI-5981)
 - **Fix**: `skill_recommend`'s `project_context` keyword extraction (`tools/recommend.ts`) no longer
   silently drops real short technical terms ("git", "ci", "aws", "sql", "k8s") via a bare
   `.filter((w) => w.length > 3)` threshold — a context consisting only of such terms previously

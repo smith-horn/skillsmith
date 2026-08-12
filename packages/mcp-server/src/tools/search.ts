@@ -24,108 +24,20 @@ import { searchLocalSkills } from './LocalSkillSearch.js'
 // governance limit (search.helpers.ts imports only from @skillsmith/core — no
 // circular dependency).
 import {
-  filterByCompatibility,
-  filterInstallable,
+  mergeRankAndPage,
+  compatibilityWantedSlugs,
+  computeLocalCompatFetchLimit,
   mapApiSkillToSearchResult,
   mapLocalSkillToSearchResult,
   resolveDefaultCompatibility,
   buildEmptySearchSuggestion,
   resolveSearchLimit,
-  MIN_SEARCH_LIMIT,
-  MAX_SEARCH_LIMIT,
-  DEFAULT_SEARCH_LIMIT,
 } from './search.helpers.js'
+// SMI-5929: DEFAULT_SEARCH_LIMIT/MIN_SEARCH_LIMIT/MAX_SEARCH_LIMIT moved with
+// the schema to search.schema.ts (only referenced in this file's own JSDoc).
 export { formatSearchResults } from './search.formatter.js'
-
-/**
- * Search tool schema for MCP
- */
-export const searchToolSchema = {
-  name: 'search',
-  description:
-    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM). Matching is keyword-based, not semantic — use a short single-topic query; on empty results, check the response suggestion field for what to try next.",
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      query: {
-        type: 'string',
-        description:
-          "Search query — matched literally/lexically (not semantically); use a short single-topic term (e.g. 'testing') rather than a multi-concept phrase for best results",
-      },
-      category: {
-        type: 'string',
-        description: 'Filter by skill category',
-        enum: [
-          'development',
-          'testing',
-          'documentation',
-          'devops',
-          'database',
-          'security',
-          'productivity',
-          'integration',
-          'ai-ml',
-          'other',
-        ],
-      },
-      trust_tier: {
-        type: 'string',
-        description:
-          'Filter by trust tier level (verified, curated, community, experimental, unknown)',
-        enum: ['verified', 'curated', 'community', 'experimental', 'unknown'],
-      },
-      min_score: {
-        type: 'number',
-        description: 'Minimum quality score (0-100)',
-        minimum: 0,
-        maximum: 100,
-      },
-      // SMI-825: Security filters
-      safe_only: {
-        type: 'boolean',
-        description: 'Only show skills that passed security scan',
-      },
-      // SMI-4954 / SMI-5178: Installability filter (default ON)
-      installable_only: {
-        type: 'boolean',
-        description:
-          'When true (default), return only installable skills — excludes discovery-only registry entries that install_skill cannot resolve. Pass false to opt back in to discovery-only entries.',
-      },
-      max_risk: {
-        type: 'number',
-        description: 'Maximum risk score (0-100, lower is safer)',
-        minimum: 0,
-        maximum: 100,
-      },
-      // SMI-2760: Compatibility filter
-      compatible_with: {
-        type: 'object',
-        description: 'Filter by IDE and/or LLM compatibility',
-        properties: {
-          ides: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'IDE slugs (e.g. ["cursor", "claude-code"])',
-          },
-          llms: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'LLM slugs (e.g. ["claude", "gpt-4o"])',
-          },
-        },
-      },
-      // SMI-5896: advertised in the description but absent here. Bounds are
-      // advisory to the client only — resolveSearchLimit() enforces them.
-      limit: {
-        type: 'number',
-        description: `Maximum results to return (default ${DEFAULT_SEARCH_LIMIT}). Out-of-range values are clamped, not rejected.`,
-        minimum: MIN_SEARCH_LIMIT,
-        maximum: MAX_SEARCH_LIMIT,
-      },
-    },
-    required: [], // Query is optional if filters are provided
-  },
-}
+// SMI-5929: schema split into search.schema.ts to stay under the 500-line gate.
+export { searchToolSchema } from './search.schema.js'
 
 /**
  * Input parameters for the search operation
@@ -149,9 +61,9 @@ export interface SearchInput {
   /** SMI-2760: Filter by IDE/LLM compatibility */
   compatible_with?: CompatibilityFilter
   /**
-   * SMI-5896: Maximum results to return. Defaults to
-   * {@link DEFAULT_SEARCH_LIMIT} (10) when omitted; clamped (not rejected)
-   * to [{@link MIN_SEARCH_LIMIT}, {@link MAX_SEARCH_LIMIT}] otherwise.
+   * SMI-5896: Maximum results to return. Defaults to `DEFAULT_SEARCH_LIMIT`
+   * (10, see search.helpers.ts) when omitted; clamped (not rejected) to
+   * [`MIN_SEARCH_LIMIT`, `MAX_SEARCH_LIMIT`] otherwise.
    */
   limit?: number
 }
@@ -286,6 +198,9 @@ async function executeSearchImpl(
   // SMI-1183: Try API first, fall back to local DB
   if (!context.apiClient.isOffline()) {
     try {
+      // SMI-5929: forward wanted compat slugs so the edge fn can rank+widen
+      // its DB fetch BEFORE its own LIMIT/OFFSET (see sortByCompatRank doc).
+      const wantedCompat = [...compatibilityWantedSlugs(filters.compatibleWith)]
       const apiResponse = await context.apiClient.search({
         query: hasQuery ? input.query!.trim() : '',
         limit,
@@ -293,18 +208,15 @@ async function executeSearchImpl(
         trustTier: filters.trustTier ? mapTrustTierToDb(filters.trustTier) : undefined,
         minQualityScore: filters.minScore,
         category: filters.category,
+        compatibility: wantedCompat.length > 0 ? wantedCompat : undefined,
       })
 
       const searchEnd = performance.now()
 
-      // Convert API results to SkillSearchResult format.
-      // SMI-5563: mapping extracted to mapApiSkillToSearchResult in
-      // search.helpers.ts (parity with mapLocalSkillToSearchResult and to add
-      // the `security` field, plus keep search.ts under the 500-line limit).
+      // SMI-5563: API row → SkillSearchResult (mapApiSkillToSearchResult, search.helpers.ts).
       const results: SkillSearchResult[] = apiResponse.data.map(mapApiSkillToSearchResult)
 
-      // SMI-1809: Search local skills and merge with API results
-      // Skip local search if trust_tier filter excludes local skills
+      // SMI-1809: merge with local skills; skip if trust_tier excludes them.
       let localResults: SkillSearchResult[] = []
       if (!filters.trustTier || filters.trustTier === ('local' as TrustTier)) {
         try {
@@ -318,35 +230,39 @@ async function executeSearchImpl(
         }
       }
 
-      // Merge results: local skills first (since they're user's own), then registry
-      // SMI-2760: Apply compatibility filter if requested
-      const merged = [...localResults, ...results]
-      const compatFiltered = filters.compatibleWith
-        ? filterByCompatibility(merged, filters.compatibleWith)
-        : merged
-      // SMI-5178: compat hidden; C1: effectiveInstallableOnly defaults ON.
-      const compatibilityHidden = merged.length - compatFiltered.length
+      // Merge local-first, then registry — mergeRankAndPage compat-ranks each
+      // bucket separately so local-first stays the OUTER key (an API result
+      // can never outrank a local one; see its doc in search.helpers.ts).
+      // SMI-5178/C1: effectiveInstallableOnly defaults ON.
       const effectiveInstallableOnly = input.installable_only ?? true
-      const mergedResults = filterInstallable(compatFiltered, effectiveInstallableOnly)
-      const discoveryOnlyHidden = compatFiltered.length - mergedResults.length
+      const { pageResults, mergedTotal, discoveryOnlyHidden, compatibilityDeprioritized } =
+        mergeRankAndPage({
+          localResults,
+          apiResults: results,
+          compatibleWith: filters.compatibleWith,
+          installableOnly: effectiveInstallableOnly,
+          limit, // SMI-5896: was hardcoded to 10
+        })
 
       const endTime = performance.now()
 
       const response: SearchResponse = {
-        results: mergedResults.slice(0, limit), // SMI-5896: was hardcoded to 10
+        results: pageResults,
         // SMI-4954/C1: key off effectiveInstallableOnly so default-ON also
-        // reports the filtered total (not the registry grand-total).
+        // reports the filtered total (not the registry grand-total). SMI-5929:
+        // mergedTotal now includes previously rank-2-excluded rows — an
+        // intentional correction (this under-reported availability before).
         total: effectiveInstallableOnly
-          ? mergedResults.length
+          ? mergedTotal
           : ((apiResponse.meta?.total as number) ?? results.length) + localResults.length,
         query: input.query || '', // May be empty for filter-only searches
         filters,
-        compatibilityHidden,
+        compatibilityDeprioritized,
         discoveryOnlyHidden,
         // SMI-5556: guidance for the calling agent when results are empty.
-        suggestion: mergedResults.length
+        suggestion: pageResults.length
           ? undefined
-          : buildEmptySearchSuggestion({ discoveryOnlyHidden, compatibilityHidden }),
+          : buildEmptySearchSuggestion({ discoveryOnlyHidden }),
         timing: {
           searchMs: Math.round(searchEnd - searchStart),
           totalMs: Math.round(endTime - startTime),
@@ -395,9 +311,15 @@ async function executeSearchImpl(
   // Local search fallback - pass empty string if no query
   const searchQuery = hasQuery ? input.query!.trim() : ''
 
+  // SMI-5929 code-review finding, MEDIUM: widen the local fetch when a
+  // compat filter is active — the MCP tool never exposes `offset`, so
+  // there's no cross-page consistency concern here, just a flat overfetch
+  // (computeLocalCompatFetchLimit). mergeRankAndPage below still slices to
+  // the true `limit`.
+  const localCompatFilterActive = compatibilityWantedSlugs(filters.compatibleWith).size > 0
   const searchResults = context.searchService.search({
     query: searchQuery,
-    limit,
+    limit: computeLocalCompatFetchLimit(limit, localCompatFilterActive),
     offset: 0,
     trustTier: dbTrustTier,
     minQualityScore: filters.minScore,
@@ -409,13 +331,10 @@ async function executeSearchImpl(
 
   const searchEnd = performance.now()
 
-  // Convert SearchResult to SkillSearchResult format.
-  // SMI-5337 retro: mapping extracted to mapLocalSkillToSearchResult in search.helpers.ts
-  // to keep search.ts under the 500-line governance limit and to add SMI-5327 license parity.
+  // SMI-5337 retro: local DB row → SkillSearchResult (mapLocalSkillToSearchResult, search.helpers.ts).
   const results: SkillSearchResult[] = searchResults.items.map(mapLocalSkillToSearchResult)
 
-  // SMI-1809: Search local skills and merge with local DB results
-  // Skip local search if trust_tier filter excludes local skills
+  // SMI-1809: merge with local skills; skip if trust_tier excludes them.
   let localResults: SkillSearchResult[] = []
   if (!filters.trustTier || filters.trustTier === ('local' as TrustTier)) {
     try {
@@ -425,34 +344,33 @@ async function executeSearchImpl(
     }
   }
 
-  // Merge results: local skills first (since they're user's own), then registry
-  // SMI-2760: Apply compatibility filter if requested
-  const merged = [...localResults, ...results]
-  const compatFiltered = filters.compatibleWith
-    ? filterByCompatibility(merged, filters.compatibleWith)
-    : merged
-  // SMI-5178: compat hidden; C1: effectiveInstallableOnly defaults ON.
-  const compatibilityHidden = merged.length - compatFiltered.length
+  // SMI-5929: offline branch never calls the edge fn — compat-rank runs
+  // entirely client-side here via the same mergeRankAndPage helper.
+  // SMI-5178/C1: effectiveInstallableOnly defaults ON.
   const effectiveInstallableOnly = input.installable_only ?? true
-  const mergedResults = filterInstallable(compatFiltered, effectiveInstallableOnly)
-  const discoveryOnlyHidden = compatFiltered.length - mergedResults.length
+  const { pageResults, mergedTotal, discoveryOnlyHidden, compatibilityDeprioritized } =
+    mergeRankAndPage({
+      localResults,
+      apiResults: results,
+      compatibleWith: filters.compatibleWith,
+      installableOnly: effectiveInstallableOnly,
+      limit, // SMI-5896: was hardcoded to 10
+    })
 
   const endTime = performance.now()
 
   const response: SearchResponse = {
-    results: mergedResults.slice(0, limit), // SMI-5896: was hardcoded to 10
-    // SMI-4954/C1: key off effectiveInstallableOnly so default-ON reports filtered total.
-    total: effectiveInstallableOnly
-      ? mergedResults.length
-      : searchResults.total + localResults.length,
+    results: pageResults,
+    // SMI-4954/C1/SMI-5929: see the API branch's identical comment above.
+    total: effectiveInstallableOnly ? mergedTotal : searchResults.total + localResults.length,
     query: input.query || '', // May be empty for filter-only searches
     filters,
-    compatibilityHidden,
+    compatibilityDeprioritized,
     discoveryOnlyHidden,
     // SMI-5556: guidance for the calling agent when results are empty.
-    suggestion: mergedResults.length
+    suggestion: pageResults.length
       ? undefined
-      : buildEmptySearchSuggestion({ discoveryOnlyHidden, compatibilityHidden }),
+      : buildEmptySearchSuggestion({ discoveryOnlyHidden }),
     timing: {
       searchMs: Math.round(searchEnd - searchStart),
       totalMs: Math.round(endTime - startTime),

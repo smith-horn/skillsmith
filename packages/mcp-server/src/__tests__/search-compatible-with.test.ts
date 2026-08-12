@@ -1,7 +1,9 @@
 /**
  * SMI-2760: Tests for compatible_with filter in executeSearch.
- * filterByCompatibility is permissive: skills without compatibility data
- * always pass.
+ * SMI-5929: the filter is now a ranking signal (sortByCompatRank /
+ * mergeRankAndPage, search.helpers.ts), not an exclusion — skills without
+ * compatibility data are still always permissively surfaced (rank 1,
+ * "unscoped"), they just no longer risk being dropped in the first place.
  *
  * Extracted from search.test.ts during SMI-4694 to keep search.test.ts
  * under the 500-line gate after disposeTestContext wiring.
@@ -63,9 +65,11 @@ describe('SMI-2760: compatible_with filter', () => {
   })
 
   it('compatible_with filter passes skills with no compatibility data (permissive)', () => {
-    // Import and test filterByCompatibility indirectly:
-    // skills without compatibility field must appear in results when filter is active.
-    // Since seeded skills have no compatibility set, they should all pass through.
+    // SMI-5929: the response-shape assertions below document the permissive
+    // ("unscoped ≠ incompatible") contract sortByCompatRank/mergeRankAndPage
+    // (search.helpers.ts) now implement as a rank, not an exclusion — see
+    // their dedicated unit tests in search.helpers.test.ts for coverage of
+    // the actual ranking function.
     const makeResponse = (results: SkillSearchResult[]) => ({
       results,
       total: results.length,

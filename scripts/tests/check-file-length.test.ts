@@ -30,6 +30,10 @@ import lintStagedConfig from '../../lint-staged.config.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SCRIPT_PATH = resolve(__dirname, '..', 'check-file-length.mjs')
+// SMI-5992: check-file-length.mjs now imports the shared policy module — the
+// end-to-end fixture repo below must carry a copy of it too, or the spawned
+// script fails to resolve './file-length-policy.mjs' at runtime.
+const POLICY_SCRIPT_PATH = resolve(__dirname, '..', 'file-length-policy.mjs')
 
 /** Create a unique temp directory for a fixture repo. */
 function makeTempDir(): string {
@@ -150,12 +154,16 @@ describe('checkFiles', () => {
   })
 
   it('skips an ignore-listed over-limit path instead of failing', () => {
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 977)
-    const ignoreList = new Map([['supabase/functions/indexer/index.test.ts', 'SMI-4948']])
+    // SMI-5992: non-test filename (not supabase/functions/indexer/index.test.ts)
+    // — deliberately so this exercises the grandfather-list branch, not the
+    // new .test./.spec. exemption branch (see the dedicated SMI-5992 tests
+    // below, which cover the test-file-exemption branch specifically).
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 977)
+    const ignoreList = new Map([['supabase/functions/indexer/index.ts', 'SMI-4948']])
     const { violations, skipped } = checkFiles([abs], ignoreList, root)
     expect(violations).toHaveLength(0)
     expect(skipped).toHaveLength(1)
-    expect(skipped[0].relPath).toBe('supabase/functions/indexer/index.test.ts')
+    expect(skipped[0].relPath).toBe('supabase/functions/indexer/index.ts')
     expect(skipped[0].smiRef).toBe('SMI-4948')
   })
 
@@ -163,29 +171,48 @@ describe('checkFiles', () => {
     // lint-staged v16 passes absolute paths; the ignore file stores
     // repo-relative. A naive string-equality impl would treat the
     // absolute path as unmatched and fail the commit.
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 977)
+    // SMI-5992: non-test filename — see note above.
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 977)
     expect(resolve(abs)).toBe(abs) // sanity: abs really is absolute
-    const ignoreList = new Map([['supabase/functions/indexer/index.test.ts', 'SMI-4948']])
+    const ignoreList = new Map([['supabase/functions/indexer/index.ts', 'SMI-4948']])
     const { violations, skipped } = checkFiles([abs], ignoreList, root)
     expect(violations).toHaveLength(0)
     expect(skipped).toHaveLength(1)
   })
 
   it('re-enforces a grandfathered file once it drops below the limit (H1)', () => {
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 420)
-    const ignoreList = new Map([['supabase/functions/indexer/index.test.ts', 'SMI-4948']])
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 420)
+    const ignoreList = new Map([['supabase/functions/indexer/index.ts', 'SMI-4948']])
     const { violations, skipped, delistable } = checkFiles([abs], ignoreList, root)
     expect(violations).toHaveLength(0)
     expect(skipped).toHaveLength(0)
     expect(delistable).toHaveLength(1)
-    expect(delistable[0].relPath).toBe('supabase/functions/indexer/index.test.ts')
+    expect(delistable[0].relPath).toBe('supabase/functions/indexer/index.ts')
     expect(delistable[0].lineCount).toBe(420)
   })
 
   it('checks every file when the ignore-list is empty', () => {
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 977)
+    // SMI-5992: non-test filename — see note above.
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 977)
     const { violations } = checkFiles([abs], new Map(), root)
     expect(violations).toHaveLength(1)
+  })
+
+  it('SMI-5992: reports a test file over the limit via skipped (test-exempt), not violations', () => {
+    const abs = writeTsFile(root, 'packages/core/src/foo.test.ts', 600)
+    const { violations, skipped } = checkFiles([abs], new Map(), root)
+    expect(violations).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].relPath).toBe('packages/core/src/foo.test.ts')
+    expect(skipped[0].reason).toContain('test file')
+  })
+
+  it('SMI-5992: reports a .spec.ts file over the limit via skipped (test-exempt), not violations', () => {
+    const abs = writeTsFile(root, 'packages/core/src/foo.spec.ts', 600)
+    const { violations, skipped } = checkFiles([abs], new Map(), root)
+    expect(violations).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].relPath).toBe('packages/core/src/foo.spec.ts')
   })
 })
 
@@ -202,6 +229,7 @@ describe('check-file-length.mjs (end-to-end)', () => {
     root = makeTempDir()
     mkdirSync(join(root, 'scripts'), { recursive: true })
     cpSync(SCRIPT_PATH, join(root, 'scripts', 'check-file-length.mjs'))
+    cpSync(POLICY_SCRIPT_PATH, join(root, 'scripts', 'file-length-policy.mjs'))
   })
 
   afterEach(() => {
@@ -249,16 +277,19 @@ describe('check-file-length.mjs (end-to-end)', () => {
     // SMI-5658 Step 6: the ignore file's own `# SMI-XXXX split follow-up`
     // comment must drive the message, not a hardcoded issue number. Uses
     // SMI-5211, one of the two live ignore-list entries.
+    // SMI-5992: non-test filename (not ...index.test.ts) — deliberately, so
+    // this exercises the grandfather-list branch specifically, not the new
+    // .test./.spec. exemption branch (covered by its own tests below).
     writeFileSync(
       join(root, 'scripts', 'check-file-length.ignore'),
-      '# SMI-5211 split follow-up\nsupabase/functions/indexer/index.test.ts\n',
+      '# SMI-5211 split follow-up\nsupabase/functions/indexer/index.ts\n',
       'utf8'
     )
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 977)
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 977)
     const { status, stdout } = runHook([abs])
     expect(status).toBe(0)
     expect(stdout).toContain(
-      'supabase/functions/indexer/index.test.ts: skipped (grandfathered — SMI-5211 split pending)'
+      'supabase/functions/indexer/index.ts: skipped (grandfathered — SMI-5211 split pending)'
     )
   })
 
@@ -267,35 +298,65 @@ describe('check-file-length.mjs (end-to-end)', () => {
     // without the ignore-list's own `# SMI-XXXX split follow-up`
     // convention still gets skipped, but the message degrades gracefully
     // instead of naming a wrong/hardcoded issue.
+    // SMI-5992: non-test filename — see note above.
     writeFileSync(
       join(root, 'scripts', 'check-file-length.ignore'),
-      'supabase/functions/indexer/index.test.ts\n',
+      'supabase/functions/indexer/index.ts\n',
       'utf8'
     )
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 977)
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 977)
     const { status, stdout } = runHook([abs])
     expect(status).toBe(0)
     expect(stdout).toContain(
-      'supabase/functions/indexer/index.test.ts: skipped (grandfathered — see scripts/check-file-length.ignore for the tracking issue)'
+      'supabase/functions/indexer/index.ts: skipped (grandfathered — see scripts/check-file-length.ignore for the tracking issue)'
     )
   })
 
   it('exits 0 and prints an eligible-to-de-list notice once a grandfathered file is under the limit (H1)', () => {
     writeFileSync(
       join(root, 'scripts', 'check-file-length.ignore'),
-      '# SMI-4948 split follow-up\nsupabase/functions/indexer/index.test.ts\n',
+      '# SMI-4948 split follow-up\nsupabase/functions/indexer/index.ts\n',
       'utf8'
     )
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 410)
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 410)
     const { status, stdout } = runHook([abs])
     expect(status).toBe(0)
     expect(stdout).toContain('eligible to de-list')
   })
 
   it('still fails an over-limit file when the ignore-list file is absent', () => {
-    const abs = writeTsFile(root, 'supabase/functions/indexer/index.test.ts', 977)
+    // SMI-5992: non-test filename — see note above; this test's whole point
+    // is that a non-exempt, non-grandfathered file still hard-fails.
+    const abs = writeTsFile(root, 'supabase/functions/indexer/index.ts', 977)
     const { status } = runHook([abs])
     expect(status).toBe(1)
+  })
+
+  // SMI-5992: the actual regression fix — a .test.ts or .spec.ts file over
+  // the limit now passes (previously it hard-failed; CI's Check 3 already
+  // exempted .test. files, so pre-commit rejecting one was surprising and
+  // is the pain SMI-5992 was filed for). A plain, non-test .ts file over the
+  // limit must still fail — guards against silently widening the exemption
+  // beyond .test./.spec.
+  it('SMI-5992: a .test.ts file over 500 lines now passes (regression fix)', () => {
+    const abs = writeTsFile(root, 'packages/core/src/big-module.test.ts', 600)
+    const { status, stdout } = runHook([abs])
+    expect(status).toBe(0)
+    expect(stdout).toContain('packages/core/src/big-module.test.ts: skipped')
+  })
+
+  it('SMI-5992: a .spec.ts file over 500 lines also passes', () => {
+    const abs = writeTsFile(root, 'packages/core/src/big-module.spec.ts', 600)
+    const { status, stdout } = runHook([abs])
+    expect(status).toBe(0)
+    expect(stdout).toContain('packages/core/src/big-module.spec.ts: skipped')
+  })
+
+  it('SMI-5992: a non-test .ts file over 500 lines still fails (exemption not widened)', () => {
+    const abs = writeTsFile(root, 'packages/core/src/big-module.ts', 600)
+    const { status, stderr } = runHook([abs])
+    expect(status).toBe(1)
+    expect(stderr).toContain('packages/core/src/big-module.ts')
   })
 })
 

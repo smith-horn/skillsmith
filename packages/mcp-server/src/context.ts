@@ -51,7 +51,11 @@ export type {
   BackgroundSyncConfig,
   ToolContextOptions,
 } from './context.types.js'
-export { getDefaultDbPath, ensureDbDirectory } from './context.helpers.js'
+export {
+  getDefaultDbPath,
+  ensureDbDirectory,
+  buildDbInitializedLogMessage,
+} from './context.helpers.js'
 export {
   createToolContextAsync,
   getToolContextAsync,

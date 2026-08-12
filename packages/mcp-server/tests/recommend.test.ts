@@ -3,14 +3,11 @@
  * Updated for SMI-902: Use real database instead of hardcoded skills
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import {
-  executeRecommend,
-  formatRecommendations,
-  recommendInputSchema,
-} from '../src/tools/recommend.js'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
+import { executeRecommend, recommendInputSchema } from '../src/tools/recommend.js'
 import { createTestDatabase, type TestDatabaseContext } from './integration/setup.js'
 import type { ToolContext } from '../src/context.js'
+import * as InstalledSkillsModule from '../src/utils/installed-skills.js'
 
 // Test context with database
 let testDbContext: TestDatabaseContext
@@ -32,6 +29,30 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDbContext.cleanup()
+})
+
+// SMI-5991: this file's `installed_skills: []` cases rely on SMI-906
+// auto-detection to populate the context.stack — reading the real host
+// `~/.claude/skills/` directory made results depend on execution
+// environment (a dev host with skills installed vs. a clean Docker
+// container/CI runner with none), and an empty auto-detect result trips
+// the SMI-5896 empty-stack guard, silently degrading assertions written
+// against real recommendations. Stub to a fixed, non-empty, synthetic
+// skill ID that deliberately does NOT match any seeded fixture in
+// TEST_SKILLS (unlike a real fixture ID such as 'anthropic/commit', which
+// — with detect_overlap defaulted true — engages OverlapDetector and can
+// legitimately filter every candidate away): this keeps the stub's only
+// effect "make the derived stack non-empty," without perturbing the
+// installed-skill exclusion or overlap-detection filtering paths that
+// other tests in this file exercise deliberately via an explicit array.
+beforeEach(() => {
+  vi.spyOn(InstalledSkillsModule, 'getInstalledSkills').mockResolvedValue([
+    'local/smi-5991-autodetect-stub',
+  ])
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('Skill Recommend Tool', () => {
@@ -218,7 +239,11 @@ describe('Skill Recommend Tool', () => {
           name.toLowerCase().includes('jest') ||
           name.toLowerCase().includes('test')
       )
-      expect(hasRelevantSkill || result.recommendations.length > 0).toBe(true)
+      // SMI-5991 (code review): the original `hasRelevantSkill ||
+      // recommendations.length > 0` made this vacuously true whenever ANY
+      // recommendation existed, regardless of relevance. Assert relevance
+      // directly.
+      expect(hasRelevantSkill).toBe(true)
     })
 
     it('should return candidates_considered count', async () => {
@@ -348,46 +373,45 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should boost quality score by 30 for role matches', async () => {
-      // First, get recommendations without role filter
+      // SMI-5991 (code review): fetch the role-filtered set FIRST — role
+      // filtering deterministically selects only testing-role skills from
+      // the whole candidate pool, unlike the unfiltered call below, whose
+      // similarity ranking gives no guarantee a testing-role skill lands
+      // within any particular limit. The previous version's `if
+      // (testingSkill)` / `if (boostedSkill)` guards let this test pass
+      // with zero assertions executed whenever either lookup missed.
+      const withRole = await executeRecommend(
+        {
+          installed_skills: [],
+          role: 'testing',
+          detect_overlap: false,
+          limit: 20,
+        },
+        toolContext
+      )
+      const boostedSkill = withRole.recommendations[0]
+      expect(boostedSkill).toBeDefined()
+
+      // Fetch a wide unfiltered set (close to the full 58-skill fixture
+      // pool) so the same skill is virtually certain to appear, letting us
+      // read its pre-boost baseline score.
       const withoutRole = await executeRecommend(
         {
           installed_skills: [],
           detect_overlap: false,
-          limit: 10,
+          limit: 50,
         },
         toolContext
       )
-
-      // Find a skill that has the 'testing' role
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const testingSkill = withoutRole.recommendations.find((r: any) =>
-        r.roles?.includes('testing')
+      const testingSkill = withoutRole.recommendations.find(
+        (r) => r.skill_id === boostedSkill.skill_id
       )
+      expect(testingSkill).toBeDefined()
 
       if (testingSkill) {
-        const originalScore = testingSkill.quality_score
-
-        // Now get recommendations with testing role filter
-        const withRole = await executeRecommend(
-          {
-            installed_skills: [],
-            role: 'testing',
-            detect_overlap: false,
-            limit: 10,
-          },
-          toolContext
-        )
-
-        const boostedSkill = withRole.recommendations.find(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (r: any) => r.skill_id === testingSkill.skill_id
-        )
-
-        if (boostedSkill) {
-          // Score should be boosted by 30 (capped at 100)
-          const expectedScore = Math.min(100, originalScore + 30)
-          expect(boostedSkill.quality_score).toBe(expectedScore)
-        }
+        // Score should be boosted by 30 (capped at 100)
+        const expectedScore = Math.min(100, testingSkill.quality_score + 30)
+        expect(boostedSkill.quality_score).toBe(expectedScore)
       }
     })
 
@@ -408,91 +432,7 @@ describe('Skill Recommend Tool', () => {
     })
   })
 
-  describe('formatRecommendations', () => {
-    it('should format recommendations for terminal display', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: ['anthropic/commit'],
-          detect_overlap: false, // Disable overlap detection for consistent testing
-          limit: 3,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      expect(formatted).toContain('Skill Recommendations')
-      expect(formatted).toContain('recommendation(s)')
-      expect(formatted).toContain('Score:')
-      expect(formatted).toContain('Relevance:')
-      expect(formatted).toContain('ID:')
-    })
-
-    it('should display trust badges', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          detect_overlap: false, // Disable overlap detection for consistent testing
-          limit: 5,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      // Should contain at least one trust badge
-      const hasBadge =
-        formatted.includes('[VERIFIED]') ||
-        formatted.includes('[COMMUNITY]') ||
-        formatted.includes('[STANDARD]') ||
-        formatted.includes('[UNVERIFIED]')
-      expect(hasBadge).toBe(true)
-    })
-
-    it('should show candidates considered and timing', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          detect_overlap: false, // Disable overlap detection for consistent testing
-          limit: 3,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      expect(formatted).toContain('Candidates considered:')
-      expect(formatted).toContain('ms')
-    })
-
-    // SMI-1631: Role display in formatted output
-    it('should show role filter in formatted output when applied', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          role: 'testing',
-          detect_overlap: false,
-          limit: 5,
-        },
-        toolContext
-      )
-      const formatted = formatRecommendations(result)
-
-      expect(formatted).toContain('Role filter: testing')
-    })
-
-    it('should show role filtered count when skills were filtered', async () => {
-      const result = await executeRecommend(
-        {
-          installed_skills: [],
-          role: 'testing',
-          detect_overlap: false,
-          limit: 10,
-        },
-        toolContext
-      )
-
-      if (result.role_filtered > 0) {
-        const formatted = formatRecommendations(result)
-        expect(formatted).toContain(`Filtered for role: ${result.role_filtered}`)
-      }
-    })
-  })
+  // SMI-5991: formatRecommendations tests split to recommend-format.test.ts
+  // to keep this file under the 500-line cap (same precedent as
+  // recommend-online-path.test.ts, SMI-2755 Wave 2).
 })

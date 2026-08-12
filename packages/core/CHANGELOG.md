@@ -4,6 +4,24 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed (breaking)**: `SearchResponse.compatibilityHidden` renamed to
+  `compatibilityDeprioritized` — the compatibility filter is now a ranking signal, not a hard
+  exclusion (SMI-5929), so results are never actually "hidden" by it anymore; the renamed field is
+  precisely the count of other-tool-only results present on the *returned page*, not a corpus-wide
+  or pre-page count. `SearchOptions` gains a new optional `compatibility?: string[]` field —
+  `SkillsmithApiClient.search()` forwards it to the `skills-search` edge function as a
+  `compatibility` CSV query param (previously never sent by any caller), letting the API rank
+  results server-side, before the page is cut to the requested `limit`.
+- **Fix**: companion-subagent files (the `-specialist.md` shim generated alongside an installed
+  skill) were always written to `~/.claude/agents/`, regardless of which client the skill itself
+  was installed for — a skill installed with `--client cursor` or `SKILLSMITH_CLIENT=cursor`
+  still got its companion subagent dropped into Claude Code's own agent directory instead of
+  Cursor's. New `COMPANION_AGENT_TARGETS` map (`@skillsmith/core/install/paths`) plus
+  `getCompanionAgentTarget()`/`resolveCompanionAgentDir()`/`resolveCompanionAgentPath()` give each
+  `ClientId` its own companion-agent directory and filename pattern, sourced from the same
+  evidence table already used for skill install paths; clients with no independently-verified
+  agents-dir convention default to today's existing `~/.claude/agents/` behavior rather than
+  guessing (GH #2161)
 - **Fix**: new shared `extractContextWords()` (`services/context-words.ts`, exported from the package root) replaces a `.filter((w) => w.length > 3)` threshold both `@skillsmith/mcp-server`'s `skill_recommend` and `@skillsmith/cli`'s `recommend --context` used independently — it was silently dropping real short technical terms ("git", "ci", "aws", "sql", "k8s") from the recommendation stack, tripping the empty-stack guard even when usable context was supplied (SMI-5986)
 - **Fix**: `SqlJsDatabaseAdapter.persist()` (`db/drivers/sqljsDriver.ts`) now writes the exported database buffer atomically — to a temp file, then `renameSync` over the target — instead of a direct `writeFileSync` that truncates the file before the new bytes land. A process kill mid-write (OOM, SIGKILL, machine sleep) could previously leave a 0-byte `skills.db` on disk. `openDatabaseAsync()` (`db/schema.ts`) also now distinguishes a genuinely empty/corrupt database (zero tables) from a real legacy import (has tables, just missing `schema_version`), failing loudly with remediation for the former instead of silently stamping `schema_version=1` and running every migration against a schema that was never created — which previously crashed server startup with an opaque `no such table: skills`/`no such table: cache` error and no actionable diagnostic (SMI-5997)
 

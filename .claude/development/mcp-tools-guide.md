@@ -13,11 +13,39 @@ Reference for Skillsmith MCP server tools, authentication, and CLI.
 | `recommend` | Contextual skill recommendations |
 | `validate` | Validate skill structure |
 | `compare` | Compare 2-5 skills side-by-side |
+| `skill_suggest` | Suggest skills based on current project context (counts against monthly quota) |
+| `skill_outdated` | Check installed skills for staleness and dependency status |
+| `index_local` | Index skills from a local directory |
+| `skill_publish` | Prepare a local skill for publishing |
+| `skill_rescan` | Re-scan an installed skill's content |
+| `skill_recover_source` | Recover the canonical GitHub source of locally-installed skills (read-only) |
+| `inventory_push` | Push this machine's installed-skill inventory to your Skillsmith account for the web dashboard |
+| `skill_updates` | Check registry for newer skill versions (Individual+) |
 | `skill_diff` | Diff two installed skill versions side-by-side |
+| `skill_pack_audit` | Audit all skills in a directory (Individual+) |
 | `skill_audit` | Audit skill for security advisories (Team+) |
+| `skill_inventory_audit` | Audit local `~/.claude/` inventory for namespace collisions; returns rename + edit suggestions (Team+) |
+| `apply_namespace_rename` | Apply a rename suggestion from an audit (`apply` / `custom` / `skip`) (Team+) |
+| `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (Team+) |
+| `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s) (Team+) |
+| `team_workspace` | Manage team workspaces: create, list, get, delete (Team+) |
+| `share_skill` | Add, remove, or list skills in a team workspace (Team+) |
 | `publish_private` | Mark a skill private on this device, hidden from your own search results (Team+) |
+| `team_analytics_dashboard` | Per-user tool usage counts, top tools, daily trend (Team+) |
+| `team_usage_report` | Weekly/monthly usage summary with period comparison (Team+) |
 | `private_registry_publish` | Publish a skill version to your team's private registry as a pending submission (Enterprise) |
 | `private_registry_manage` | List/get/install/deprecate/undeprecate/review your team's private registry via the `action` parameter (Enterprise) |
+| `audit_export` | Export audit log events for a time range (Enterprise) |
+| `audit_query` | Query audit logs with filters (Enterprise) |
+| `siem_export` | Export audit events for SIEM ingestion (Enterprise) |
+| `analytics_dashboard` | Recommendation accuracy, adoption curves, team aggregation (Enterprise) |
+| `usage_report` | Comprehensive usage report with all metrics (Enterprise) |
+| `configure_sso` | Configure SSO/SAML integration: set, test, remove (Enterprise) |
+| `sso_settings` | View current SSO/SAML configuration (Enterprise) |
+| `rbac_manage` | Manage RBAC roles: create, list, get, delete (Enterprise) |
+| `rbac_assign_role` | Assign or revoke roles for users (Enterprise) |
+| `rbac_create_policy` | Create and manage RBAC access policies (Enterprise) |
+| `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports (Enterprise) |
 
 ## Authentication
 
