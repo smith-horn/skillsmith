@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `runMigrations()`/`runMigrationsSafe()` (`db/migration-runner.ts`) had an unguarded
+  concurrent-migration race — two processes opening the same fresh DB at the same time could both
+  read the same `currentVersion`, both apply the same migration, and the loser's plain
+  `INSERT INTO schema_version` throw `UNIQUE constraint failed: schema_version.version`. Both now
+  use `INSERT OR IGNORE`, matching the existing v1-stamp hardening in `initializeSchema()`
+  (`schema.ts`, SMI-4486) that was never extended to per-migration inserts. Found via a flaky
+  `startup-probe.test.ts` failure traced to a real production race, not test-only flakiness
+  (SMI-6003).
 - **Changed (breaking)**: `SearchResponse.compatibilityHidden` renamed to
   `compatibilityDeprioritized` — the compatibility filter is now a ranking signal, not a hard
   exclusion (SMI-5929), so results are never actually "hidden" by it anymore; the renamed field is

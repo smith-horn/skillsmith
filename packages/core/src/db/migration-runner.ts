@@ -161,7 +161,18 @@ export function runMigrations(db: Database): number {
           throw error
         }
       }
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
+      // SMI-6003: OR IGNORE — two processes opening the same fresh DB
+      // concurrently can both read currentVersion above before either has
+      // stamped a row, so both reach this INSERT for the same version. The
+      // loser's plain INSERT used to throw "UNIQUE constraint failed:
+      // schema_version.version"; OR IGNORE makes the loser's insert a silent
+      // no-op instead (matches the existing v1-stamp pattern in
+      // initializeSchema(), schema.ts:59 — SMI-4486). `migrationsRun` is a
+      // best-effort diagnostic count only (see migration.ts's `ensureSchema
+      // Compatibility` log line) — nothing downstream branches on whether
+      // this specific INSERT actually affected a row, so incrementing it
+      // even on a lost-race no-op is safe.
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(migration.version)
       migrationsRun++
     }
   }
@@ -213,7 +224,19 @@ export function runMigrationsSafe(db: Database): number {
         // applyMigration threw a non-duplicate-column error we DO NOT advance
         // the version — the next run will retry. Guards against a v16 SQL
         // failure being silently masked.
-        db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
+        //
+        // SMI-6003: OR IGNORE — same concurrent-migration race as
+        // runMigrations() above (two processes both reading currentVersion
+        // before either stamps a row). Without OR IGNORE the loser's INSERT
+        // threw a UNIQUE constraint error that landed in the catch below and
+        // was merely console.warn'd — silently skipping migrationsRun++ for
+        // that iteration but NOT re-throwing, so this specific race was
+        // already non-fatal here (unlike runMigrations()); OR IGNORE removes
+        // the spurious warning entirely and lets migrationsRun++ run
+        // unconditionally, same best-effort-count reasoning as above.
+        db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(
+          migration.version
+        )
         migrationsRun++
       } catch (error) {
         // Log but don't fail on migration errors
