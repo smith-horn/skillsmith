@@ -229,9 +229,11 @@ export const installInputSchema = z.object({
     .optional()
     .describe(
       "Absolute path to the calling client's actual project/workspace root, used to resolve " +
-        'project-scoped companion-agent output (e.g. Antigravity) correctly. Defaults to this ' +
-        "MCP server process's own working directory, which may NOT match your real project for " +
-        'a long-running server — pass this explicitly for reliable placement.'
+        'project-scoped companion-agent output (e.g. Antigravity) correctly. Optional for flat, ' +
+        'absolute-path clients (unused). REQUIRED for directory-package clients (Antigravity) — ' +
+        "this MCP server's own process.cwd() is fixed at server launch and does not track the " +
+        "calling editor/agent's real project, so the install fails closed with a clear error " +
+        'if omitted rather than silently writing to the wrong directory.'
     ),
 })
 
