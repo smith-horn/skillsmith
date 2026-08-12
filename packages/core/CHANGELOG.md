@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `ManifestManager` (`services/skill-manifest.ts`) had two concurrency gaps in the skill
+  manifest write path. `performUninstall()` (`skill-installation.helpers.ts`) loaded the manifest,
+  mutated an in-memory snapshot, and saved it back directly, bypassing the lock/`updateSafely()`
+  mechanism the install path uses — a concurrent update to an unrelated entry in that window could
+  be silently overwritten. `save()` also computed its temp filename from just the process id, so
+  two concurrent saves in the same process could collide on the same temp path. Uninstall now
+  routes its final mutation through `updateSafely()`, and both `save()` and the CLI's separate
+  manifest writer now suffix the temp filename with a random UUID, with best-effort cleanup on
+  failure. `load()` also now distinguishes a missing manifest file (returns empty, expected) from
+  one that exists but is corrupt/unreadable (throws, instead of silently returning empty and
+  risking a subsequent save erasing real state) (SMI-6007).
 - **Fix**: `runMigrations()`/`runMigrationsSafe()` (`db/migration-runner.ts`) had an unguarded
   concurrent-migration race — two processes opening the same fresh DB at the same time could both
   read the same `currentVersion`, both apply the same migration, and the loser's plain
