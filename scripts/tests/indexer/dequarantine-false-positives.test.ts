@@ -42,6 +42,7 @@ import {
   isFalsePositive,
   countFindings,
   processRow,
+  parseLimitArg,
   type QuarantinedRow,
 } from '../../indexer/dequarantine-false-positives.ts'
 import { scanSkillContent } from '../../indexer/_shared/security-scanner-edge.ts'
@@ -214,5 +215,38 @@ describe('processRow — not-found vs transient split (SMI-5357)', () => {
     const result = await processRow(baseRow, headers, true, mockDb)
     expect(result.outcome).toBe('fetch-failed')
     expect(retagMock).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5879 round-7 governance-retro sibling-implementation finding:
+// parseLimitArg had the same bare-flag-collapses-to-absent flaw the round-7
+// --ids/--ids-file fix in revalidate-stale-quarantines.cli.ts was written to
+// close — --apply --limit (no number supplied) fell through to `undefined`,
+// silently clearing the ENTIRE candidate cohort instead of refusing.
+// ---------------------------------------------------------------------------
+
+describe('parseLimitArg — a supplied-but-valueless or malformed --limit refuses, never falls through to unbounded', () => {
+  it('--limit absent entirely returns undefined (legitimate unbounded run)', () => {
+    expect(parseLimitArg(['node', 'script', '--apply'])).toBeUndefined()
+  })
+
+  it('--limit=<n> and --limit <n> both parse correctly', () => {
+    expect(parseLimitArg(['node', 'script', '--limit=10'])).toBe(10)
+    expect(parseLimitArg(['node', 'script', '--limit', '10'])).toBe(10)
+  })
+
+  it('--limit as the last token with no value throws, not undefined', () => {
+    expect(() => parseLimitArg(['node', 'script', '--apply', '--limit'])).toThrow(/no value/)
+  })
+
+  it('--limit immediately followed by another flag throws, not undefined', () => {
+    expect(() => parseLimitArg(['node', 'script', '--limit', '--apply'])).toThrow(/no value/)
+  })
+
+  it('a non-numeric or non-positive --limit value throws, never silently returns undefined', () => {
+    expect(() => parseLimitArg(['node', 'script', '--limit=abc'])).toThrow(/positive number/)
+    expect(() => parseLimitArg(['node', 'script', '--limit=0'])).toThrow(/positive number/)
+    expect(() => parseLimitArg(['node', 'script', '--limit=-5'])).toThrow(/positive number/)
   })
 })

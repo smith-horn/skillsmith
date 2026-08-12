@@ -29,6 +29,8 @@ import {
   DELETE_BATCH,
   deleteInBatches,
   runPurge,
+  parseLimitArg,
+  parseExportArg,
   type DeadRow,
 } from '../../indexer/purge-dead-quarantines.ts'
 
@@ -398,4 +400,56 @@ describe('deleteInBatches — transient retry', () => {
       deleteInBatches(dbThrowsThenOk(99) as never, 'skills', 'id', ['a'], undefined, 1)
     ).rejects.toThrow(/after 2 attempts/)
   }, 10000)
+})
+
+// ---------------------------------------------------------------------------
+// SMI-5879 round-7 governance-retro sibling-implementation finding: this
+// tool's --limit/--export parsing had the same bare-flag-collapses-to-absent
+// flaw the round-7 --ids/--ids-file fix in
+// revalidate-stale-quarantines.cli.ts was written to close. Most severe here
+// specifically because this is a DESTRUCTIVE delete tool: --apply --limit
+// (no number supplied) fell through to `limit: undefined`, deleting the
+// ENTIRE dead-set cohort instead of refusing.
+// ---------------------------------------------------------------------------
+
+describe('parseLimitArg / parseExportArg — a supplied-but-valueless or malformed flag refuses, never falls through', () => {
+  it('--limit absent entirely returns undefined (legitimate unbounded run)', () => {
+    expect(parseLimitArg(['node', 'script', '--apply'])).toBeUndefined()
+  })
+
+  it('--limit=<n> and --limit <n> both parse correctly', () => {
+    expect(parseLimitArg(['node', 'script', '--limit=50'])).toBe(50)
+    expect(parseLimitArg(['node', 'script', '--limit', '50'])).toBe(50)
+  })
+
+  it('--limit as the last token with no value throws, not undefined (would otherwise delete the entire dead set)', () => {
+    expect(() => parseLimitArg(['node', 'script', '--apply', '--limit'])).toThrow(/no value/)
+  })
+
+  it('--limit immediately followed by another flag throws, not undefined', () => {
+    expect(() => parseLimitArg(['node', 'script', '--limit', '--apply'])).toThrow(/no value/)
+  })
+
+  it('a non-numeric or non-positive --limit value throws, never silently returns undefined', () => {
+    expect(() => parseLimitArg(['node', 'script', '--limit=abc'])).toThrow(/positive number/)
+    expect(() => parseLimitArg(['node', 'script', '--limit=0'])).toThrow(/positive number/)
+    expect(() => parseLimitArg(['node', 'script', '--limit=-5'])).toThrow(/positive number/)
+  })
+
+  it('--export absent entirely returns undefined (falls back to defaultExportPath)', () => {
+    expect(parseExportArg(['node', 'script', '--apply'])).toBeUndefined()
+  })
+
+  it('--export=<path> and --export <path> both parse correctly', () => {
+    expect(parseExportArg(['node', 'script', '--export=/tmp/dead.csv'])).toBe('/tmp/dead.csv')
+    expect(parseExportArg(['node', 'script', '--export', '/tmp/dead.csv'])).toBe('/tmp/dead.csv')
+  })
+
+  it('--export as the last token with no value throws (previously would have silently used undefined -> default path, or worse, consumed the next flag as a path)', () => {
+    expect(() => parseExportArg(['node', 'script', '--export'])).toThrow(/no value/)
+  })
+
+  it('--export immediately followed by another flag throws instead of treating the flag name as a path', () => {
+    expect(() => parseExportArg(['node', 'script', '--export', '--apply'])).toThrow(/no value/)
+  })
 })
