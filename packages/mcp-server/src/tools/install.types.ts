@@ -6,9 +6,23 @@
 import { z } from 'zod'
 import type { ScanReport, ScannerOptions } from '@skillsmith/core'
 import type { TrustTier } from '@skillsmith/core'
-import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { CLIENT_IDS, getCanonicalInstallPath, type ClientId } from '@skillsmith/core/install'
 import * as path from 'path'
 import * as os from 'os'
+
+/**
+ * SMI-5982 (Wave 6) audit finding: `client`/`alsoLink` below used to hardcode
+ * a 5-value literal enum (`claude-code | cursor | copilot | windsurf |
+ * agents`) that predates `opencode`/`hermes` (SMI-5456) and `grok`
+ * (SMI-5697) — since a `z.enum([...])` literal is NOT derived from the
+ * `ClientId` type, the TypeScript compiler never caught this drift, and
+ * `installInputSchema.safeParse()` (install.ts) was silently REJECTING
+ * `client: "opencode"` / `"hermes"` / `"grok"` over MCP even though the CLI
+ * fully supported them. Deriving the enum from `CLIENT_IDS` here (the same
+ * source of truth `assertClientId` validates against) closes this class of
+ * drift permanently instead of re-appending literals a 4th time.
+ */
+const CLIENT_ID_ENUM_VALUES = CLIENT_IDS as unknown as [ClientId, ...ClientId[]]
 
 // ============================================================================
 // Trust Tier Validation
@@ -188,12 +202,12 @@ export const installInputSchema = z.object({
     ),
   /** SMI-4578: target client (defaults to SKILLSMITH_CLIENT env or claude-code) */
   client: z
-    .enum(['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'])
+    .enum(CLIENT_ID_ENUM_VALUES)
     .optional()
     .describe('Target agent (defaults to SKILLSMITH_CLIENT env or claude-code)'),
   /** SMI-4578: additional clients to fan-out into via copy (or symlink with --symlink) */
   alsoLink: z
-    .array(z.enum(['claude-code', 'cursor', 'copilot', 'windsurf', 'agents']))
+    .array(z.enum(CLIENT_ID_ENUM_VALUES))
     .default([])
     .describe('Additional clients to fan-out into (default: copy)'),
   /** SMI-4578: use symlinks instead of copies for alsoLink targets */
@@ -201,6 +215,26 @@ export const installInputSchema = z.object({
     .boolean()
     .default(false)
     .describe('Use relative symlinks instead of copies for alsoLink (POSIX only)'),
+  /**
+   * SMI-5982 code-review fix #1: this MCP server is long-running, so its own
+   * `process.cwd()` is fixed at server launch and generally does NOT track
+   * the calling editor/agent's actual project — passing this explicitly is
+   * the only reliable way to place a project-scoped companion-agent output
+   * (currently only Antigravity's directory-package mode) correctly.
+   */
+  cwd: z
+    .string()
+    .min(1, 'cwd must not be empty')
+    .refine((v) => path.isAbsolute(v), { message: 'cwd must be an absolute path' })
+    .optional()
+    .describe(
+      "Absolute path to the calling client's actual project/workspace root, used to resolve " +
+        'project-scoped companion-agent output (e.g. Antigravity) correctly. Optional for flat, ' +
+        'absolute-path clients (unused). REQUIRED for directory-package clients (Antigravity) — ' +
+        "this MCP server's own process.cwd() is fixed at server launch and does not track the " +
+        "calling editor/agent's real project, so the install fails closed with a clear error " +
+        'if omitted rather than silently writing to the wrong directory.'
+    ),
 })
 
 export type InstallInput = z.infer<typeof installInputSchema>

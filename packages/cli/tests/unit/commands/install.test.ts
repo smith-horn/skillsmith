@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
 // SMI-5427: mocked at runtime via vi.mock('@skillsmith/core') below; the real
 // type is preserved for the GAP-07 regression block (no cast on the instance).
-import { SkillRepository, type DatabaseType } from '@skillsmith/core'
+import { SkillRepository, SkillInstallationService, type DatabaseType } from '@skillsmith/core'
 
 // ============================================================================
 // Mock Setup - Must be before imports
@@ -307,6 +307,21 @@ describe('SMI-3484: CLI Install Command', () => {
       await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
 
       expect(mocks.dbClose).toHaveBeenCalled()
+    })
+
+    // SMI-5982 PR-review follow-up: resolveCompanionAgentPath() no longer defaults a missing
+    // baseDir to process.cwd() itself (directory-package mode now requires it explicitly), so
+    // every SkillInstallationService construction site must pass companionBaseDir explicitly to
+    // preserve this CLI command's existing cwd-relative behavior.
+    it('should construct SkillInstallationService with companionBaseDir: process.cwd()', async () => {
+      const { createInstallCommand } = await import('../../../src/commands/install.js')
+      const cmd = createInstallCommand()
+
+      await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
+
+      expect(SkillInstallationService).toHaveBeenCalledWith(
+        expect.objectContaining({ companionBaseDir: process.cwd() })
+      )
     })
   })
 

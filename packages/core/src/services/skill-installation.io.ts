@@ -9,7 +9,12 @@ import * as path from 'path'
 import { safeWriteFile } from '../utils/safe-fs.js'
 import { SecurityScanner } from '../security/index.js'
 import type { ScannerOptions, ScanReport } from '../security/index.js'
-import { CANONICAL_CLIENT, resolveCompanionAgentPath, type ClientId } from '../install/paths.js'
+import {
+  CANONICAL_CLIENT,
+  getCompanionAgentTarget,
+  resolveCompanionAgentPath,
+  type ClientId,
+} from '../install/paths.js'
 import { validateOptionalConfig } from './skill-installation.validate.js'
 import {
   BUNDLED_SCAN_FILES,
@@ -196,7 +201,18 @@ export async function writeInstallFiles(
    * (`claude-code`) so pre-existing callers/tests that never pass it keep
    * today's exact behavior unchanged.
    */
-  client: ClientId = CANONICAL_CLIENT
+  client: ClientId = CANONICAL_CLIENT,
+  /**
+   * SMI-5982 code-review fix #1: explicit base dir for resolving a RELATIVE
+   * `COMPANION_AGENT_TARGETS[client].dir` (Antigravity only — every other
+   * client's `dir` is absolute already). Threaded through to
+   * `resolveCompanionAgentPath()`'s own `baseDir` param as-is (no
+   * `?? process.cwd()` fallback here) — `resolveCompanionAgentPath()` itself
+   * now requires an explicit `baseDir` for every `directory-package`-mode
+   * client (PR-review follow-up), so whether an omitted `companionBaseDir`
+   * is acceptable is that function's call to make, not this one's.
+   */
+  companionBaseDir?: string
 ): Promise<WriteInstallResult> {
   const writtenFiles: string[] = []
   let subagentPath: string | undefined
@@ -253,7 +269,7 @@ export async function writeInstallFiles(
     }
     // Write companion subagent if generated
     if (subagentContent) {
-      subagentPath = resolveCompanionAgentPath(skillName, client)
+      subagentPath = resolveCompanionAgentPath(skillName, client, companionBaseDir)
       const agentsDir = path.dirname(subagentPath)
       await fs.mkdir(agentsDir, { recursive: true })
       await safeWriteFile(subagentPath, subagentContent)
@@ -265,6 +281,16 @@ export async function writeInstallFiles(
     // resolveCompanionAgentPath()/COMPANION_AGENT_TARGETS, install/paths.ts).
     for (const filePath of writtenFiles) {
       await fs.unlink(filePath).catch(() => {})
+    }
+    // SMI-5982 (Wave 6): 'directory-package' mode (Antigravity) creates a
+    // skill-named subdirectory OUTSIDE installPath (<agentsDir>/<skillName>/
+    // agent.md) that 'flat' mode never needed — every other client's agents
+    // dir is a shared, pre-existing directory, never created per-skill. A
+    // failed install must not leave that now-empty per-skill directory
+    // orphaned. rmdir is non-recursive: a safe no-op if the directory is
+    // missing (never created) or non-empty (unexpected content survives).
+    if (subagentPath && getCompanionAgentTarget(client).fileMode === 'directory-package') {
+      await fs.rmdir(path.dirname(subagentPath)).catch(() => {})
     }
     // Only recursively remove installPath once it has been PROVEN inside skillsDir
     // (pathValidated) — so an untracked orphan from a mid-batch Promise.all write can't

@@ -29,6 +29,7 @@ export type McpClientId =
   | 'opencode'
   | 'hermes'
   | 'grok'
+  | 'antigravity'
 
 export interface McpClientSnippet {
   /** Canonical client id — matches SnippetClientId in the CLI package */
@@ -179,6 +180,15 @@ command = "npx"
 args = ["-y", "@skillsmith/mcp-server"]`,
     notes:
       'Grok Build uses TOML under a <code>[mcp_servers.NAME]</code> table, the same convention as Codex CLI above.',
+  },
+  {
+    id: 'antigravity',
+    label: 'Google Antigravity',
+    configPath: '~/.gemini/config/mcp_config.json',
+    format: 'json',
+    body: STANDARD_JSON_BODY,
+    notes:
+      'One config file is shared across the Antigravity CLI, IDE, and 2.0. A workspace-scoped alternative also exists at <code>.agents/mcp_config.json</code> (project root) if you prefer not to register the server globally.',
   },
 ]
 

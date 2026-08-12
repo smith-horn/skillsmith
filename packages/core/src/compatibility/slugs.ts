@@ -36,11 +36,15 @@ export const COMPATIBILITY_LABELS: Record<CompatibilitySlug, string> = {
 
 /**
  * Slugs that are filterable/browsable but have NO install target yet — the
- * install-client enum (`install/paths.ts` `ClientId`) lacks them. Adding
- * `antigravity`/`gemini` ClientIds + auto-detect is Phase 2c (SMI-5179). Until
- * then the UI labels these "browse-only" rather than implying installability.
+ * install-client enum (`install/paths.ts` `ClientId`) lacks them.
+ * `antigravity` was un-deferred (SMI-5982 Wave 6) — it now has a real
+ * `ClientId` + `CLIENT_NATIVE_PATHS` entry, so it moved out of this list.
+ * `gemini` has no install target (it names a model family, not a distinct
+ * install client) and remains browse-only; adding it (if ever justified) is
+ * still Phase 2c (SMI-5179). Until then the UI labels `gemini` "browse-only"
+ * rather than implying installability.
  */
-export const BROWSE_ONLY_SLUGS: readonly CompatibilitySlug[] = ['antigravity', 'gemini']
+export const BROWSE_ONLY_SLUGS: readonly CompatibilitySlug[] = ['gemini']
 
 /**
  * Map an install `ClientId` to the compatibility slug to restrict by when that
@@ -55,6 +59,9 @@ export const CLIENT_TO_COMPATIBILITY_SLUG: Record<string, CompatibilitySlug> = {
   copilot: 'copilot',
   windsurf: 'windsurf',
   agents: 'codex',
+  // SMI-5982 Wave 6: antigravity is now a real ClientId with its own 1:1
+  // compatibility slug (same pattern as claude-code/cursor/copilot/windsurf).
+  antigravity: 'antigravity',
 }
 
 /** Display label for a slug; falls back to the raw slug for unknown values. */

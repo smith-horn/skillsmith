@@ -204,6 +204,31 @@ SKILLSMITH_API_KEY = "sk_live_..."`,
     notes:
       'Grok Build uses TOML under the [mcp_servers.<name>] table, mirroring the Codex CLI convention above — confirmed against docs.x.ai for the command/args shape; the env sub-table follows the same pattern as the Codex entry.',
   },
+  // SMI-5982 Wave 6: antigravity added to ClientId (paths.ts); this
+  // Record<SnippetClientId, ClientSnippet> is exhaustive over ClientId, so
+  // this entry is required for the type to compile. Path + shape verified
+  // 2026-08-11 via live web search (antigravity.google/docs/mcp, corroborated
+  // by an independent third-party source): global config at
+  // ~/.gemini/config/mcp_config.json, standard `mcpServers` object shape
+  // (same command/args/env fields every non-Codex/non-OpenCode client uses).
+  antigravity: {
+    label: 'Google Antigravity',
+    configPath: '~/.gemini/config/mcp_config.json',
+    format: 'json',
+    body: `{
+  "mcpServers": {
+    "{{name}}": {
+      "command": "npx",
+      "args": ["-y", "{{name}}"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_..."
+      }
+    }
+  }
+}`,
+    notes:
+      'One config file is shared across Antigravity CLI, IDE, and 2.0. A workspace-scoped alternative also exists at .agents/mcp_config.json (project root) if you prefer not to register the server globally.',
+  },
 }
 
 /**
@@ -253,4 +278,5 @@ export const SNIPPET_DISPLAY_ORDER: ReadonlyArray<SnippetClientId> = Object.free
   'opencode',
   'hermes',
   'grok',
+  'antigravity',
 ])

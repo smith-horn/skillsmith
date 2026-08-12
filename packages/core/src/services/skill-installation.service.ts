@@ -72,6 +72,8 @@ export interface SkillInstallationServiceParams {
    * `getInstallPath`); this does not re-derive `skillsDir` from `client`.
    */
   client?: ClientId
+  // SMI-5982: base dir for a relative companion-agent target (Antigravity); never defaults to process.cwd() — omission fails closed via resolveCompanionAgentPath()'s required-baseDir guard.
+  companionBaseDir?: string
 }
 export class SkillInstallationService {
   private readonly db: Database
@@ -87,6 +89,7 @@ export class SkillInstallationService {
   private readonly riskHistoryRepo?: RiskScoreHistoryRepository
   private readonly aiDefenceFeedback?: AiDefenceFeedback
   private readonly client: ClientId
+  private readonly companionBaseDir: string | undefined
   constructor(params: SkillInstallationServiceParams) {
     this.db = params.db
     this.skillRepo = params.skillRepo
@@ -101,6 +104,7 @@ export class SkillInstallationService {
     this.aiDefenceFeedback = params.aiDefenceFeedback
     this.sessionInstalledSkillIds = params.sessionInstalledSkillIds ?? []
     this.client = params.client ?? CANONICAL_CLIENT
+    this.companionBaseDir = params.companionBaseDir // no `?? process.cwd()` — see doc above
   }
   async install(skillId: string, options: InstallOptions = {}): Promise<InstallResult> {
     let trustTier: TrustTier = 'unknown'
@@ -362,7 +366,8 @@ export class SkillInstallationService {
         finalSkillContent,
         [...subSkillsNoCollision, ...optionalFiles.filesToWrite],
         subagentContent,
-        this.client
+        this.client,
+        this.companionBaseDir
       )
       if (writeResult.subagentPath) {
         optimizationInfo.subagentPath = writeResult.subagentPath
@@ -475,6 +480,7 @@ export class SkillInstallationService {
       skillsDir: this.skillsDir,
       manifest: this.manifest,
       client: this.client,
+      companionBaseDir: this.companionBaseDir,
       onProgress: this.onProgress,
     })
   }

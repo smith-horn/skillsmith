@@ -407,6 +407,11 @@ const KNOWN_ERROR_PREFIXES = [
   'Refusing to write to hardlinked file',
   'Install path escapes skills directory',
   'Cannot skip security scan',
+  // SMI-5982 PR-review follow-up: resolveCompanionAgentPath()'s required-baseDir guard
+  // (install/paths.ts) — must surface verbatim so a directory-package-mode client (e.g.
+  // a private-registry install with no per-call cwd input) fails closed with a
+  // diagnosable message instead of the generic fallback below.
+  'uses directory-package mode',
 ]
 
 export function sanitizeInstallError(error: unknown): string {

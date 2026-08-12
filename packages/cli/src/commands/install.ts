@@ -43,10 +43,17 @@ const logger = getCliLogger()
  * SMI-5894 (Wave 1 Step 1/2/4): shared help-text fragment for every
  * `--client` flag across install/list/remove/update/sync — kept in one
  * place so the valid-IDs list can't drift between commands.
+ *
+ * SMI-5982 (Wave 6) audit finding: this literal had already drifted behind
+ * `CLIENT_IDS` before this wave — `grok` (SMI-5697) was missing from the
+ * hint text despite being a fully valid `--client` value (validated via
+ * `assertClientId`/`CLIENT_IDS`, unaffected by this hint being stale). Fixed
+ * here alongside adding `antigravity`, since actual runtime validation was
+ * never broken — only this documentation string had drifted.
  */
 export const VALID_CLIENT_HINT =
-  'Valid IDs: claude-code | cursor | copilot | windsurf | agents | opencode | hermes ' +
-  '(Codex users pass --client agents).'
+  'Valid IDs: claude-code | cursor | copilot | windsurf | agents | opencode | hermes | grok | ' +
+  'antigravity (Codex users pass --client agents).'
 
 /**
  * SMI-4578: parse and validate the comma-separated `--also-link` value.
@@ -331,6 +338,13 @@ async function installActionImpl(
         manifestPath: DEFAULT_MANIFEST_PATH,
         registryLookup,
         client,
+        // SMI-5982 PR-review follow-up: explicit now that
+        // resolveCompanionAgentPath() no longer defaults a missing baseDir to
+        // process.cwd() itself — this CLI command's real "cwd" IS the
+        // process's invocation directory, so this restores today's exact
+        // behavior explicitly instead of relying on a now-removed implicit
+        // default.
+        companionBaseDir: process.cwd(),
         onProgress: (_stage: string, detail: string) => {
           if (spinner) {
             spinner.text = detail

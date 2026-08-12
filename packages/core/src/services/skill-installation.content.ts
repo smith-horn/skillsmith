@@ -222,6 +222,14 @@ export interface InstallFromContentParams extends InstallFromContentOptions {
   manifest: ManifestManager
   client: ClientId
   onProgress: ProgressCallback
+  /**
+   * SMI-5982 code-review fix #1: base dir for resolving a relative companion-agent
+   * target (Antigravity only) — see writeInstallFiles()'s own doc comment.
+   * PR-review follow-up: optional (not required) — an omitted value must flow
+   * through to `resolveCompanionAgentPath()`'s own required-`baseDir` guard as
+   * `undefined`, not be silently defaulted anywhere in this chain.
+   */
+  companionBaseDir?: string
 }
 
 /**
@@ -240,6 +248,7 @@ export async function installFromContent(params: InstallFromContentParams): Prom
     version,
     content,
     force = false,
+    companionBaseDir,
   } = params
 
   const skillName = skillNameFromSkillId(skillId)
@@ -347,7 +356,8 @@ export async function installFromContent(params: InstallFromContentParams): Prom
       finalSkillContent,
       [...generatedNoCollision, ...teamAuthoredSubFiles],
       subagentContent,
-      client
+      client,
+      companionBaseDir
     )
     if (writeResult.subagentPath) {
       optimizationInfo.subagentPath = writeResult.subagentPath

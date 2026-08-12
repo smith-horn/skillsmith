@@ -235,6 +235,10 @@ describe('resolveDefaultCompatibility (SMI-5178)', () => {
     expect(resolveDefaultCompatibility('agents')).toEqual({ ides: ['codex'] })
   })
 
+  it('maps the antigravity client to its own slug (SMI-5982 Wave 6)', () => {
+    expect(resolveDefaultCompatibility('antigravity')).toEqual({ ides: ['antigravity'] })
+  })
+
   it('returns undefined for an unknown client (no silent mis-restriction)', () => {
     expect(resolveDefaultCompatibility('emacs')).toBeUndefined()
   })

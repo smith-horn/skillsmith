@@ -237,6 +237,13 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
                   registryLookup,
                   skillsDir: getInstallPath(client),
                   client,
+                  // SMI-5982 PR-review follow-up: explicit now that
+                  // resolveCompanionAgentPath() no longer defaults a missing
+                  // baseDir to process.cwd() itself — this CLI command's real
+                  // "cwd" IS the process's invocation directory, so this
+                  // restores today's exact behavior explicitly instead of
+                  // relying on a now-removed implicit default.
+                  companionBaseDir: process.cwd(),
                   onProgress: (_stage: string, detail: string) => {
                     installSpinner.text = detail
                   },

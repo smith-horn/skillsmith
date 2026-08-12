@@ -7,8 +7,15 @@
  * from install.ts to keep that file within the 500-line limit.
  */
 
+import { CLIENT_IDS } from '@skillsmith/core/install'
+
 /**
  * MCP tool definition for install_skill
+ *
+ * SMI-5982 (Wave 6) audit finding: `client`/`alsoLink` `enum` below used to
+ * be a hand-duplicated 5-value literal, independently stale from the zod
+ * schema's own copy in install.types.ts (both predated opencode/hermes/grok)
+ * — now both derive from the same `CLIENT_IDS` source of truth.
  */
 export const installTool = {
   name: 'install_skill',
@@ -47,7 +54,7 @@ export const installTool = {
       // SMI-4578: multi-client install
       client: {
         type: 'string',
-        enum: ['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'],
+        enum: [...CLIENT_IDS],
         description:
           'Target agent (default: SKILLSMITH_CLIENT env or claude-code). Codex users pass agents.',
       },
@@ -55,7 +62,7 @@ export const installTool = {
         type: 'array',
         items: {
           type: 'string',
-          enum: ['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'],
+          enum: [...CLIENT_IDS],
         },
         description:
           'Additional clients to fan-out into (default: copy; pair with symlink for POSIX symlinks)',
@@ -64,6 +71,17 @@ export const installTool = {
         type: 'boolean',
         description:
           'Use relative symlinks instead of file copies for alsoLink targets (POSIX only; falls back to copy on Windows EPERM)',
+      },
+      // SMI-5982 code-review fix #1: long-running server, cwd is not the caller's project.
+      cwd: {
+        type: 'string',
+        description:
+          "Absolute path to the calling client's actual project/workspace root, used to " +
+          'resolve project-scoped companion-agent output (e.g. Antigravity) correctly. Optional ' +
+          'for flat, absolute-path clients (unused). REQUIRED for directory-package clients ' +
+          "(Antigravity) — this MCP server's own process.cwd() is fixed at server launch and " +
+          "does not track the calling editor/agent's real project, so the install fails closed " +
+          'with a clear error if omitted rather than silently writing to the wrong directory.',
       },
     },
     required: ['skillId'],
