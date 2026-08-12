@@ -97,29 +97,84 @@ describe.skipIf(skipInPrePush)('SMI-5456 L2a — agent harness-simulation MCP cl
 
   describe.each(HARNESS_CASES)('harness: $id', ({ id, clientInfo }) => {
     let homeDir: string
-    let cleanupHome: () => void
-    let connection: HarnessConnection
+    // SMI-6002: `cleanupHome`/`connection` are only DEFINITELY assigned once
+    // their respective setup step completes. If `connectHarness()` rejects
+    // or exceeds its own liveness budget, `beforeAll` throws before
+    // `connection` is ever assigned — `afterAll` always runs regardless (it
+    // is not skipped just because `beforeAll` failed), so it must not assume
+    // either variable is set.
+    let cleanupHome: (() => void) | undefined
+    let connection: HarnessConnection | undefined
 
+    // SMI-6002: 30s -> 150s. Reproduction data (full packages/mcp-server
+    // suite, 75 files/1204 tests, running concurrently: 2.0-22.2s per
+    // harness; agent-harness-sim.test.ts bundled with the other two
+    // historically-heavy integration files under genuine concurrent host
+    // load, 3 runs/21 samples: min 10.0s, median 36.2s, max 60.3s) shows
+    // real per-harness connect time scales with host contention well past
+    // the old 30s budget — see connectHarness()'s own
+    // CONNECT_HARNESS_TIMEOUT_MS doc comment (agent-harness-sim.helpers.ts)
+    // for the full protocol and data. 150s gives this outer Vitest hook
+    // timeout ~30s of margin over connectHarness()'s own internal 120s
+    // liveness budget, so the internal race (which captures stderr/pid
+    // diagnostics and kills the spawned process) fires first in the normal
+    // case, rather than Vitest's own generic hook-timeout message —
+    // matching the "contention allowance, not a target" framing
+    // SMI-5999/SMI-6004/SMI-6005 used for their own timing budgets.
     beforeAll(async () => {
       const home = createIsolatedHome(`sklx-l2a-${id}-`)
       homeDir = home.homeDir
       cleanupHome = home.cleanup
       connection = await connectHarness(clientInfo, baseSpawnEnv(homeDir))
-    }, 30_000)
+    }, 150_000)
+
+    /**
+     * SMI-6002: narrows `connection` from `HarnessConnection | undefined` to
+     * `HarnessConnection` for the `it()` bodies below. Safe in practice —
+     * Vitest never runs a describe block's `it()`s once its `beforeAll` has
+     * thrown — but TypeScript can't see that hook-ordering guarantee, and a
+     * throwing accessor is more diagnosable than a bare `!` assertion if that
+     * invariant is ever violated by a future Vitest version or refactor.
+     */
+    function requireConnection(): HarnessConnection {
+      if (!connection) {
+        throw new Error(
+          `harness ${id}: connection was never established (beforeAll must have thrown or timed out)`
+        )
+      }
+      return connection
+    }
 
     afterAll(async () => {
-      await connection.close()
-      cleanupHome()
+      // SMI-6002: guarded against partial initialization — if
+      // `connectHarness()` rejected or timed out inside `beforeAll`,
+      // `connection` was never assigned, and dereferencing it here would
+      // throw a second, more confusing error on top of the real one.
+      // `connectHarness()` itself already terminates the spawned process on
+      // its own failure/timeout path, so there is no process to kill here
+      // even in that case — only the temp home may still need removing.
+      // `cleanupHome()` runs in `finally` (a cross-model code review caught
+      // this) so a rejecting `connection.close()` can never leak the temp
+      // home — `close()` failing is not a reason to skip removing it.
+      try {
+        if (connection) {
+          await connection.close()
+        }
+      } finally {
+        if (cleanupHome) {
+          cleanupHome()
+        }
+      }
     })
 
     it('ListTools returns exactly the curated agent-profile ∩ registered set', async () => {
-      const result = await connection.listTools()
+      const result = await requireConnection().listTools()
       const names = new Set(result.tools.map((tool) => tool.name))
       expect(names).toEqual(AGENT_PROFILE_SET)
     })
 
     it('includes the suggest -> apply -> undo trio', async () => {
-      const result = await connection.listTools()
+      const result = await requireConnection().listTools()
       const names = result.tools.map((tool) => tool.name)
       expect(names).toEqual(
         expect.arrayContaining(['skill_inventory_audit', 'apply_namespace_rename', 'undo_apply'])
@@ -128,7 +183,7 @@ describe.skipIf(skipInPrePush)('SMI-5456 L2a — agent harness-simulation MCP cl
 
     it('rounds-trips a CallTool through the `_meta` marker channel and completes fast with no telemetry configured (consent-off/no-network evidence)', async () => {
       const start = Date.now()
-      const result = await connection.callTool({
+      const result = await requireConnection().callTool({
         name: 'skill_outdated',
         arguments: { include_deps: false },
         _meta: { agent_session: true, nudge_origin: false, trigger_id: `eval-l2a-${id}` },
@@ -154,7 +209,7 @@ describe.skipIf(skipInPrePush)('SMI-5456 L2a — agent harness-simulation MCP cl
         triggerId: `nudge-${id}`,
       })
 
-      const result = await connection.callTool({
+      const result = await requireConnection().callTool({
         name: 'skill_outdated',
         arguments: { include_deps: false },
       })
