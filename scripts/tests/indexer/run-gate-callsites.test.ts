@@ -63,6 +63,7 @@ import {
 const PINNED_SHAPE1 = [
   'dequarantine-false-positives.ts',
   'purge-dead-quarantines.ts',
+  'repair-latched-name-rows.ts',
   'revalidate-stale-quarantines.ts',
 ].sort()
 
@@ -79,6 +80,7 @@ const PINNED_SHEBANG_FILES = [
   'dequarantine-false-positives.ts',
   'purge-dead-quarantines.ts',
   'recheck.ts',
+  'repair-latched-name-rows.ts',
   'revalidate-stale-quarantines.ts',
   'run.ts',
 ].sort()
