@@ -108,6 +108,22 @@ async function readManifest(): Promise<Record<string, unknown>> {
   return JSON.parse(raw) as Record<string, unknown>
 }
 
+// SMI-6004: suite-level timeout bumped 15s (default) -> 60s. Root cause is
+// pure test-suite timing budget, not a bug in the code under test: this
+// file exercises the REAL SkillInstallationService end-to-end (install x2 +
+// update) against a temp $HOME, and under full-suite CI load with other
+// packages' tests contending for CPU, that real work can still be in flight
+// when the vitest default 15s test timeout fires. Vitest's timeout wrapper
+// rejects the test promise but does NOT cancel the original async chain
+// (confirmed against Vitest 4.1.10 runner source) -- the abandoned chain's
+// manifest write then races the next test's afterEach() rm -rf of the temp
+// HOME, producing `ENOENT ... rename '.../manifest.json.tmp.NNNNN'`, and the
+// abandoned/poisoned install path calling process.exit(1) produces the
+// third observed flake symptom ("process.exit unexpectedly called with
+// '1'"). Mirrors SMI-5999's identical-class fix in
+// packages/mcp-server/tests/crash-handler-integration.test.ts (same 15s ->
+// 60s bump for the same suite-contention reason). Do NOT touch the shared
+// vitest.config.ts default timeout -- this is scoped to just this file.
 describe('SMI-5895 Wave 2: getSkillDiff manifest resolution — same skill name, two independently-sourced clients', () => {
   it("resolves the manifest id recorded for THIS client, not the other client's, when both installed the same skill name from different sources", async () => {
     // Two fully independent installs of the same skill NAME ("test-repo"),
@@ -160,4 +176,4 @@ describe('SMI-5895 Wave 2: getSkillDiff manifest resolution — same skill name,
     // ...and the Claude Code entry was never touched by this update.
     expect(installedSkills['test-repo']?.id).toBe('https://github.com/owner-a/test-repo')
   })
-})
+}, 60_000)
