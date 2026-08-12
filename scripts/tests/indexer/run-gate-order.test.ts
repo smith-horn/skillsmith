@@ -22,6 +22,11 @@ const SIDE_EFFECT_CALLEES = [
   'insert',
   'update',
   'delete',
+  // SMI-5879 round-7 (design 11.2.7): revalidate-stale-quarantines.ts's
+  // --ids-file read (parseIdSelection, revalidate-stale-quarantines.cli.ts)
+  // is also pinned to run after assertRunAllowed.
+  'readFileSync',
+  'readFile',
 ]
 
 const GATED_ENTRY_FILES = [
