@@ -301,8 +301,25 @@ export async function performUninstall(params: {
     }
 
     onProgress('manifest', 'Updating manifest')
-    delete manifestData.installedSkills[manifestKey]
-    await manifest.save(manifestData)
+    // SMI-6007: route the final mutation through updateSafely() (lock +
+    // fresh re-read + save) instead of saving the `manifestData` snapshot
+    // loaded above. That snapshot can be stale by the time we get here —
+    // filesystem cleanup and the dependency-repo clear happened in between —
+    // so saving it directly could clobber an *unrelated* manifest entry
+    // written by a concurrent install/uninstall in that window. This closes
+    // that lost-update hazard for entries other than this one.
+    //
+    // Scope: this does NOT make the full uninstall sequence (lookup ->
+    // filesystem cleanup -> manifest mutation) atomic. A concurrent
+    // operation racing on the SAME key (e.g. a reinstall of this exact
+    // skill while its uninstall is mid-flight) can still leave disk and
+    // manifest inconsistent — only the unrelated-entry data loss is fixed
+    // here, not full transactional safety across the whole method.
+    await manifest.updateSafely((current) => {
+      const next: typeof current = { ...current, installedSkills: { ...current.installedSkills } }
+      delete next.installedSkills[manifestKey]
+      return next
+    })
 
     onProgress('done', 'Uninstall complete')
     return {

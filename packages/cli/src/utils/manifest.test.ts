@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdir, writeFile, rename } from 'fs/promises'
+import { mkdir, writeFile, rename, unlink } from 'fs/promises'
 
 // ============================================================================
 // In-memory fs mock for isolation — covers save/load roundtrip tests
@@ -47,6 +47,12 @@ vi.mock('fs/promises', () => ({
     const content = memfs[path]
     if (content === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
     return content
+  }),
+  unlink: vi.fn(async (path: string) => {
+    if (memfs[path] === undefined) {
+      throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+    }
+    delete memfs[path]
   }),
 }))
 
@@ -395,6 +401,56 @@ describe('telemetry block', () => {
       expect(mkdir).toHaveBeenCalled()
       expect(writeFile).toHaveBeenCalledWith(expect.stringContaining('.tmp.'), expect.any(String))
       expect(rename).toHaveBeenCalledWith(expect.stringContaining('.tmp.'), MANIFEST_PATH)
+    })
+  })
+
+  // --------------------------------------------------------------------------
+  // Same-pid temp-file collision fix (SMI-6007)
+  //
+  // Two concurrent saveManifest() calls in the same process previously
+  // computed the identical `.tmp.<pid>` path with no per-call uniqueness.
+  // --------------------------------------------------------------------------
+
+  describe('temp-file collision resistance (SMI-6007)', () => {
+    it('two overlapping saveManifest() calls use distinct temp paths and neither throws', async () => {
+      const writeFileMock = vi.mocked(writeFile)
+      const first = saveManifest(makeManifest({ enabled: false }))
+      const second = saveManifest(makeManifest({ enabled: true, anonymousId: 'e'.repeat(64) }))
+
+      await expect(Promise.all([first, second])).resolves.toBeDefined()
+
+      const tmpPathsWritten = writeFileMock.mock.calls.map((call) => call[0] as string)
+      expect(new Set(tmpPathsWritten).size).toBe(tmpPathsWritten.length)
+    })
+
+    it('on a write failure, cleanup removes only this invocation temp file and rethrows the original error', async () => {
+      const writeFileMock = vi.mocked(writeFile)
+      const originalError = new Error('ENOSPC: no space left on device')
+      writeFileMock.mockImplementationOnce(async () => {
+        throw originalError
+      })
+
+      await expect(saveManifest(makeManifest({ enabled: false }))).rejects.toThrow(originalError)
+
+      // unlink was attempted for cleanup (best-effort — the temp file was
+      // never actually written, so it ENOENTs, but the call must happen).
+      expect(unlink).toHaveBeenCalledWith(expect.stringContaining('.tmp.'))
+      // No stray temp entries left behind in the backing store.
+      expect(Object.keys(memfs).some((k) => k.includes('.tmp.'))).toBe(false)
+    })
+
+    it('on a rename failure, cleanup removes the temp file and the manifest file is left untouched', async () => {
+      const renameMock = vi.mocked(rename)
+      const originalError = new Error('EPERM: operation not permitted')
+      renameMock.mockImplementationOnce(async () => {
+        throw originalError
+      })
+
+      const { MANIFEST_PATH } = await import('./manifest.js')
+      await expect(saveManifest(makeManifest({ enabled: false }))).rejects.toThrow(originalError)
+
+      expect(memfs[MANIFEST_PATH]).toBeUndefined()
+      expect(Object.keys(memfs).some((k) => k.includes('.tmp.'))).toBe(false)
     })
   })
 })

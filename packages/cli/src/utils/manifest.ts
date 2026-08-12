@@ -22,7 +22,7 @@
  */
 
 import { createHash, randomUUID } from 'crypto'
-import { readFile, writeFile, mkdir, rename } from 'fs/promises'
+import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 
@@ -116,12 +116,30 @@ export async function loadManifest(): Promise<SkillManifest> {
 
 /**
  * Save the manifest atomically (temp file → rename).
+ *
+ * SMI-6007: the temp filename includes a `randomUUID()` suffix (not just
+ * `process.pid`) — two concurrent `saveManifest()` calls in the same process
+ * previously collided on an identical `.tmp.<pid>` path. Each call now owns
+ * a uniquely-named temp file, and the write+rename is wrapped in try/catch
+ * so a failure best-effort removes only *this invocation's* temp file
+ * before rethrowing the original error (mirrors `ManifestManager.save()` in
+ * `@skillsmith/core`, and `sqljsDriver.ts`'s `persist()`, SMI-5997) — the
+ * error is never swallowed.
  */
 export async function saveManifest(manifest: SkillManifest): Promise<void> {
   await mkdir(dirname(MANIFEST_PATH), { recursive: true })
-  const tmpPath = `${MANIFEST_PATH}.tmp.${process.pid}`
-  await writeFile(tmpPath, JSON.stringify(manifest, null, 2))
-  await rename(tmpPath, MANIFEST_PATH)
+  const tmpPath = `${MANIFEST_PATH}.tmp.${process.pid}.${randomUUID()}`
+  try {
+    await writeFile(tmpPath, JSON.stringify(manifest, null, 2))
+    await rename(tmpPath, MANIFEST_PATH)
+  } catch (error) {
+    try {
+      await unlink(tmpPath)
+    } catch {
+      // best-effort cleanup — surface the original error either way
+    }
+    throw error
+  }
 }
 
 /**
