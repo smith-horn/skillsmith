@@ -5,7 +5,7 @@ Per-harness eval matrix for the Skillsmith Agent pack, implementing
 [`docs/internal/implementation/smi-5456-skillsmith-agent-wave1.md`](../../docs/internal/implementation/smi-5456-skillsmith-agent-wave1.md).
 Level 2a (harness-simulation over a real MCP `Client`, no harness binaries
 required) lives in
-[`packages/mcp-server/tests/integration/agent-harness-sim.test.ts`](../../packages/mcp-server/tests/integration/agent-harness-sim.test.ts)
+[`packages/mcp-server/tests/integration/agent-harness-sim.integration.test.ts`](../../packages/mcp-server/tests/integration/agent-harness-sim.integration.test.ts)
 and runs in CI. **Everything in this directory is maintainer-run only — none
 of it is wired into CI**, because the harness binaries below are not
 installable in a CI container (interactive login, per-seat licensing, or
