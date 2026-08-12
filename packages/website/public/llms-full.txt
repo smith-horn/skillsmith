@@ -52,9 +52,39 @@ When using the MCP server, these tools are available:
 | `recommend` | context (optional) | Get project-based skill recommendations |
 | `validate` | path | Validate a skill's YAML structure |
 | `compare` | ids (2-5 skill IDs) | Compare skills side-by-side |
+| `skill_suggest` | project_path, current_file, recent_commands, error_message, installed_skills, limit, session_id | Proactively suggest skills based on current project context (counts against monthly quota) |
+| `skill_outdated` | include_deps | Check installed skills for staleness and dependency satisfaction status |
+| `index_local` | force, skillsDir | Index skills from ~/.claude/skills/ or a custom directory |
+| `skill_publish` | skill_path, check_references, reference_patterns, create_repo, visibility, add_topic | Prepare a local skill for publishing |
+| `skill_rescan` | skillName (optional) | Re-scan an installed skill's content for security/quality changes |
+| `skill_recover_source` | homeDir, only, embedding | Recover the canonical GitHub source of locally-installed skills (read-only) |
+| `inventory_push` | (none) | Push this machine's installed-skill inventory to your Skillsmith account for the web dashboard |
+| `skill_updates` (Individual+) | skillIds (optional) | Check the registry for newer skill versions |
+| `skill_diff` (Individual+) | skillId, oldContent, newContent, oldRiskScore, newRiskScore, hasLocalModifications, trustTier | Section-level diff between two versions of a skill |
+| `skill_pack_audit` (Individual+) | pack_path, check_trigger_quality | Audit all skills in a directory |
+| `skill_audit` (Team+) | skillIds (optional) | Check skills for known security advisories |
+| `skill_inventory_audit` (Team+) | deep, homeDir, projectDir, applyExclusions | Audit local ~/.claude/ inventory for namespace collisions |
+| `apply_namespace_rename` (Team+) | auditId, collisionId, action (apply/custom/skip/revert), customName, confirmed | Apply a rename suggestion from an inventory audit |
+| `apply_recommended_edit` (Team+) | auditId, collisionId, confirmed | Apply a recommended prose edit from an inventory audit |
+| `undo_apply` (Team+) | count, suggestion_id | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s) |
+| `team_workspace` (Team+) | action (create/list/get/delete), name, description, workspaceId | Manage team workspaces |
+| `share_skill` (Team+) | action (add/remove/list), workspaceId, skillId | Add, remove, or list skills in a team workspace |
 | `publish_private` (Team+) | skillId | Mark a skill private on this device, hiding it from your own search results |
+| `team_analytics_dashboard` (Team+) | period | Per-user tool usage counts, top tools, daily trend |
+| `team_usage_report` (Team+) | period, format | Weekly/monthly usage summary with period comparison |
+| `audit_export` (Enterprise) | startDate, endDate, eventType, limit | Export audit log events for a time range |
+| `audit_query` (Enterprise) | actor, resource, eventType, result, startDate, endDate, limit | Query audit logs with filters |
+| `siem_export` (Enterprise) | startDate, endDate, format | Export audit events for SIEM ingestion |
+| `analytics_dashboard` (Enterprise) | period, includeRecommendations | Recommendation accuracy, adoption curves, team aggregation |
+| `usage_report` (Enterprise) | period, format | Comprehensive usage report with all metrics |
+| `configure_sso` (Enterprise) | action (set/test/remove), idpMetadataUrl, idpEntityId, protocol | Configure SSO/SAML integration |
+| `sso_settings` (Enterprise) | includeMetadata | View current SSO/SAML configuration |
 | `private_registry_publish` (Enterprise) | skillId, version, content | Publish a skill version to your team's private registry as a pending submission requiring admin approval |
 | `private_registry_manage` (Enterprise) | action (list/get/install/deprecate/undeprecate/namespace/submissions/approve/reject), skillId | Manage your team's private registry, including reviewing pending submissions |
+| `rbac_manage` (Enterprise) | action (create_role/list_roles/get_role/delete_role), name, roleId, permissions, description | Manage RBAC roles |
+| `rbac_assign_role` (Enterprise) | action (assign/revoke/list_assignments), userId, roleId | Assign or revoke roles for users |
+| `rbac_create_policy` (Enterprise) | action (create/list/get/delete), name, policyId, effect, resources, actions | Create and manage RBAC access policies |
+| `compliance_report` (Enterprise) | format (soc2/cyclonedx/json), period, includeUserActivity, backfillDependencies | Generate SOC2, CycloneDX SBOM, or JSON compliance reports |
 
 ## CLI Commands
 
