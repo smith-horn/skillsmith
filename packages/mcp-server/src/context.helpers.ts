@@ -47,6 +47,20 @@ export function getDefaultDbPath(): string {
 }
 
 /**
+ * Build the exact startup stderr message `index.ts` logs once the tool
+ * context is ready (SMI-5981). Extracted so it can be unit-tested directly —
+ * `index.ts` itself can't be imported in tests (it calls `main()` at module
+ * scope), so without this extraction a test can only assert on
+ * {@link getDefaultDbPath} in isolation, which stays green even if the log
+ * line in `index.ts` is reverted to interpolating the raw, unvalidated
+ * `SKILLSMITH_DB_PATH` env value again (code-review finding — the earlier
+ * test suite didn't actually cover the regression it was named for).
+ */
+export function buildDbInitializedLogMessage(): string {
+  return `Database initialized at: ${getDefaultDbPath()}`
+}
+
+/**
  * Ensure the database directory exists
  */
 export function ensureDbDirectory(dbPath: string): void {

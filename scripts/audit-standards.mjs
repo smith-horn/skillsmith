@@ -61,6 +61,17 @@ import {
 } from './audit-cli-pin-drift-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
 import { PACKAGE_SPECS } from './lib/version-utils.ts'
+// SMI-5992: MAX_LINES + isExemptFromLengthCheck are shared with pre-commit's
+// scripts/check-file-length.mjs via scripts/file-length-policy.mjs. Only the
+// threshold + test-file exemption predicate are shared — Check 3's own
+// directory scope (packages/+apps/ only), extensions (.ts+.tsx), and
+// severity (warn()-only, never fails the run) remain intentionally
+// different from the pre-commit check. See SMI-5994 for the still-tracked
+// scope/severity divergence.
+import {
+  MAX_LINES as FILE_LENGTH_MAX_LINES,
+  isExemptFromLengthCheck,
+} from './file-length-policy.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -227,25 +238,33 @@ try {
 }
 
 // 3. File Length
-console.log(`\n${BOLD}3. File Length (max 500 lines)${RESET}`)
+// SMI-5992: the exemption predicate (isExemptFromLengthCheck — matches both
+// .test. and .spec.) is shared with pre-commit's scripts/check-file-length.mjs
+// via scripts/file-length-policy.mjs. Scope (packages/+apps/ only) and
+// severity (warn(), never fails the run) are intentionally NOT shared — see
+// the import comment above and SMI-5994.
+console.log(`\n${BOLD}3. File Length (max ${FILE_LENGTH_MAX_LINES} lines)${RESET}`)
 try {
   const sourceFiles = TYPE_SAFETY_AND_LENGTH_ROOTS.flatMap((root) =>
     getFilesRecursive(root, ['.ts', '.tsx'])
-  ).filter((f) => !f.includes('.test.'))
+  ).filter((f) => !isExemptFromLengthCheck(f))
 
   const longFiles = []
   for (const file of sourceFiles) {
     const content = readFileSync(file, 'utf8')
     const lineCount = content.split('\n').length
-    if (lineCount > 500) {
+    if (lineCount > FILE_LENGTH_MAX_LINES) {
       longFiles.push({ file: relative(process.cwd(), file), lines: lineCount })
     }
   }
 
   if (longFiles.length === 0) {
-    pass('All source files under 500 lines')
+    pass(`All source files under ${FILE_LENGTH_MAX_LINES} lines`)
   } else {
-    warn(`${longFiles.length} files exceed 500 lines`, 'Split into smaller modules')
+    warn(
+      `${longFiles.length} files exceed ${FILE_LENGTH_MAX_LINES} lines`,
+      'Split into smaller modules'
+    )
     longFiles.forEach(({ file, lines }) => {
       console.log(`    ${file}: ${lines} lines`)
     })

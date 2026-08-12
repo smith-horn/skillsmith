@@ -18,6 +18,12 @@
  * `makeFixtureTempDir`. Keep the re-implementation in sync with
  * scripts/audit-standards.mjs (`getFilesRecursive`, `TYPE_SAFETY_AND_LENGTH_ROOTS`,
  * and the Check 2 / Check 3 bodies).
+ *
+ * SMI-5992: Check 3's exemption predicate is now the real, imported
+ * `isExemptFromLengthCheck` from scripts/file-length-policy.mjs (not a
+ * re-implemented `.filter((f) => !f.includes('.test.'))`) — that module has
+ * no top-level side effects, so it's safe to import directly here, unlike
+ * audit-standards.mjs itself.
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -32,6 +38,7 @@ import {
 import { join } from 'node:path'
 
 import { makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import { isExemptFromLengthCheck } from '../file-length-policy.mjs'
 
 // Verbatim mirror of getFilesRecursive() in scripts/audit-standards.mjs.
 function getFilesRecursive(dir: string, extensions: string[]): string[] {
@@ -76,11 +83,13 @@ function findAnyTypedFiles(repoRoot: string): string[] {
   return [...filesWithAny]
 }
 
-// Mirror of the Check 3 body (the file-length detector).
+// Mirror of the Check 3 body (the file-length detector). SMI-5992: uses the
+// real shared isExemptFromLengthCheck predicate (matches .test. and .spec.),
+// not a re-implemented .test.-only filter.
 function findLongFiles(repoRoot: string): string[] {
   const sourceFiles = TYPE_SAFETY_AND_LENGTH_ROOTS.flatMap((root) =>
     getFilesRecursive(join(repoRoot, root), ['.ts', '.tsx'])
-  ).filter((f) => !f.includes('.test.'))
+  ).filter((f) => !isExemptFromLengthCheck(f))
 
   const longFiles: string[] = []
   for (const file of sourceFiles) {
@@ -165,6 +174,21 @@ describe('audit-standards Check 2/3: apps/ root coverage (SMI-5603)', () => {
 
     expect(findAnyTypedFiles(tmpRoot)).toEqual([])
     expect(findLongFiles(tmpRoot)).toEqual([])
+  })
+
+  it('SMI-5992: does NOT flag an over-limit .spec.ts file (shared exemption predicate, code-review finding)', () => {
+    tmpRoot = makeFixtureTempDir('audit-standards-apps-root')
+    const pkgDir = join(tmpRoot, 'packages', 'core', 'src')
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'huge.spec.ts'), longFileBody())
+    // Non-test control in the same run — an over-limit file WITHOUT a
+    // .test./.spec. marker in its own filename must still be flagged, proving
+    // the exemption isn't accidentally swallowing everything.
+    writeFileSync(join(pkgDir, 'huge.ts'), longFileBody())
+
+    const flagged = findLongFiles(tmpRoot)
+    expect(flagged).not.toContain(join(pkgDir, 'huge.spec.ts'))
+    expect(flagged).toContain(join(pkgDir, 'huge.ts'))
   })
 
   it('combines findings from both roots in a single pass (mixed packages/ + apps/ tree)', () => {

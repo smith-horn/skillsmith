@@ -16,7 +16,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
 // SMI-2208: Use async context for WASM fallback support
-import { getToolContextAsync, type ToolContext } from './context.js'
+// SMI-5981: buildDbInitializedLogMessage prints the actually-resolved DB path.
+import { getToolContextAsync, buildDbInitializedLogMessage, type ToolContext } from './context.js'
 import { searchToolSchema } from './tools/search.js'
 import { getSkillToolSchema } from './tools/get-skill.js'
 import { installTool } from './tools/install.js'
@@ -380,10 +381,8 @@ async function main() {
   // CRITICAL: Must complete before any tool handlers access toolContext
   try {
     toolContext = await getToolContextAsync()
-    // SMI-5615: plain console.error — same rationale as runFirstTimeSetup above.
-    console.error(
-      `Database initialized at: ${process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'}`
-    )
+    // SMI-5615/SMI-5981: plain console.error of the resolved path (not raw env).
+    console.error(buildDbInitializedLogMessage())
     // SMI-5640: arm the periodic autosave timer now that toolContext exists.
     // No-op unless the db is WASM + file-backed (see shutdown.ts).
     startPeriodicFlush(() => toolContext?.db)
