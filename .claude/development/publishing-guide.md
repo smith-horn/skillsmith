@@ -16,9 +16,13 @@ The script updates all 6 version locations (package.json, VERSION constants, ser
 
 ## CI Workflow (the only supported publish path)
 
+**The release-prep PR must be merged to `main` before dispatching `publish.yml`.** `gh workflow run publish.yml` with no `--ref` always dispatches against the repository's default branch (`main`) — not your local checkout's branch, even if you're sitting on the release-prep branch when you run it. Push and merge the version-bump PR first; dispatching before merge silently republishes whatever was already on `main`, not your bump.
+
 ```bash
 git push
-gh workflow run publish.yml -f dry_run=false
+gh pr create --base main --head <release-prep-branch> --title "chore(release): ..." --body "..."
+gh pr merge <PR#> --squash --delete-branch       # merge to main FIRST
+gh workflow run publish.yml -f dry_run=false      # then dispatch — always targets main
 gh run watch <run-id> --exit-status              # Monitor progress
 ```
 
@@ -31,9 +35,10 @@ If CI fails, fix CI. Do not reach for a local publish — see [`publish-ci-recov
 1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
 2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
 3. Verify dependency versions are committed and pushed
-4. Trigger CI: `gh workflow run publish.yml -f dry_run=false`
-5. Watch the run: `gh run watch <run-id> --exit-status`
-6. Post-publish (CI smoke-tests automatically; manual fallback): `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
+4. Open a PR for the release-prep branch and **merge it to `main`** — `publish.yml` always dispatches against `main`, not the branch you're on
+5. Trigger CI: `gh workflow run publish.yml -f dry_run=false`
+6. Watch the run: `gh run watch <run-id> --exit-status`
+7. Post-publish (CI smoke-tests automatically; manual fallback): `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
 
 If CI fails, do NOT reach for a local publish. Fix the underlying issue. Genuine break-glass: see [Break-Glass](#break-glass) below (requires `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` and a Linear retro within 24h). For workspace-resolution version-pin pitfalls and the `packaging-test.yml` registry-resolution caveat, see [Critical Rules](#critical-rules) below.
 
