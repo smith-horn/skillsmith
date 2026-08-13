@@ -165,6 +165,17 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'scripts/indexer/smi5879-gate-check.types.ts',
   'scripts/indexer/smi5879-census.types.ts',
   'scripts/indexer/smi5879-simulate-full.types.ts',
+  // SMI-6020: found by re-running assertion 5 after rebasing PR #2192 onto
+  // main (the first time this closure test ran against main's own
+  // intervening scanner evolution since ADDITIONAL_CLOSURE_WATCHED_SOURCE_PATHS
+  // was curated) — three more genuine gaps, same mechanism as the four above.
+  'scripts/indexer/_shared/security-scanner-edge.multiline.ts', // imported by the already-watched security-scanner-edge.ts
+  'scripts/indexer/_shared/security-scanner-edge.regex-utils.ts', // imported by the already-watched security-scanner-edge.ts AND .multiline.ts
+  'scripts/indexer/_shared/constants.ts', // imported by security-scanner-edge.regex-utils.ts
+  // Deno twins of the three above — same import chain, verified directly.
+  'supabase/functions/_shared/security-scanner-edge.multiline.ts',
+  'supabase/functions/_shared/security-scanner-edge.regex-utils.ts',
+  'supabase/functions/_shared/constants.ts',
 ] as const
 
 // SMI-5879 Wave 1: the corpus adds ~60 scans per twin, including one ~300 KB
