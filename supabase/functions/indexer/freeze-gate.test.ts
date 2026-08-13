@@ -12,17 +12,33 @@
 
 import { describe, it, expect, vi } from 'vitest'
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.0'
-import { checkFreezeGate, recordFreezeGateRefusal } from './freeze-gate.ts'
+import {
+  checkFreezeGate,
+  recordFreezeGateRefusal,
+  parseIndexerFunctionRunType,
+  recordInvalidRunTypeRejection,
+  INDEXER_FUNCTION_RUN_TYPES,
+} from './freeze-gate.ts'
 
 interface FakeQueryResult {
   data: { metadata: unknown } | null
   error: { message: string } | null
 }
 
+/** SMI-6020: the resolved shape of a Supabase `.insert(...)` call — `{ data, error }`
+ * on success OR a DB-level failure (RLS denial, constraint violation). Configurable
+ * per-test via fakeSupabase's third parameter so tests can pin the resolved-error
+ * path distinctly from the thrown-exception path. */
+interface FakeInsertResult {
+  data: null
+  error: { message: string } | null
+}
+
 /** Records every `.eq(col, val)` call so tests can assert the exact filter shape. */
 function fakeSupabase(
   result: FakeQueryResult | (() => Promise<FakeQueryResult>),
-  insertSpy?: (row: unknown) => void
+  insertSpy?: (row: unknown) => void,
+  insertResult: FakeInsertResult = { data: null, error: null }
 ): {
   client: SupabaseClient
   eqCalls: Array<[string, unknown]>
@@ -43,7 +59,7 @@ function fakeSupabase(
       ...selectChain,
       insert: async (row: unknown) => {
         insertSpy?.(row)
-        return { data: null, error: null }
+        return insertResult
       },
     }),
   } as unknown as SupabaseClient
@@ -172,7 +188,7 @@ describe('recordFreezeGateRefusal', () => {
     expect(call.event_type).not.toBe('indexer:freeze')
   })
 
-  it('is best-effort — a write failure does not throw', async () => {
+  it('T3.4 — is best-effort — a thrown insert is still caught', async () => {
     const client = {
       from: () => ({
         insert: async () => {
@@ -183,5 +199,155 @@ describe('recordFreezeGateRefusal', () => {
     await expect(
       recordFreezeGateRefusal(client, 'discovery', 'reason', 'req-123')
     ).resolves.toBeUndefined()
+  })
+
+  it('T3.1 — a resolved insert error is logged, not silently swallowed', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { client } = fakeSupabase({ data: null, error: null }, undefined, {
+      data: null,
+      error: { message: 'new row violates row-level security policy' },
+    })
+    await recordFreezeGateRefusal(client, 'discovery', 'test reason', 'req-123')
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1)
+    const loggedArgs = consoleErrorSpy.mock.calls[0].map(String).join(' ')
+    expect(loggedArgs).toContain('row-level security')
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('T3.2 — a resolved insert error still resolves to undefined (stays best-effort)', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { client } = fakeSupabase({ data: null, error: null }, undefined, {
+      data: null,
+      error: { message: 'new row violates row-level security policy' },
+    })
+    await expect(
+      recordFreezeGateRefusal(client, 'discovery', 'test reason', 'req-123')
+    ).resolves.toBeUndefined()
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('T3.3 — a successful insert logs nothing', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { client } = fakeSupabase({ data: null, error: null }, undefined, {
+      data: null,
+      error: null,
+    })
+    await recordFreezeGateRefusal(client, 'discovery', 'test reason', 'req-123')
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    consoleErrorSpy.mockRestore()
+  })
+})
+
+describe('recordInvalidRunTypeRejection', () => {
+  it('T1.6 — writes an audit_logs row with a distinct event_type', async () => {
+    const insertSpy = vi.fn()
+    const { client } = fakeSupabase({ data: null, error: null }, insertSpy)
+    await recordInvalidRunTypeRejection(client, 'purge', 'req-123')
+    expect(insertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'indexer:invalid_run_type',
+        resource: 'skills',
+      })
+    )
+    const call = insertSpy.mock.calls[0][0] as { event_type: string }
+    // Must never collide with either existing event_type: the marker itself
+    // (permanent-DoS hazard) or the freeze-refusal event (would pollute
+    // freeze-refusal counts with what are actually client errors).
+    expect(call.event_type).not.toBe('indexer:freeze')
+    expect(call.event_type).not.toBe('indexer:freeze_refused')
+  })
+
+  it('T3.5 — a resolved insert error is logged, not silently swallowed', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { client } = fakeSupabase({ data: null, error: null }, undefined, {
+      data: null,
+      error: { message: 'new row violates row-level security policy' },
+    })
+    await recordInvalidRunTypeRejection(client, 'purge', 'req-123')
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1)
+    const loggedArgs = consoleErrorSpy.mock.calls[0].map(String).join(' ')
+    expect(loggedArgs).toContain('row-level security')
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('T3.5 — a resolved insert error still resolves to undefined (stays best-effort)', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { client } = fakeSupabase({ data: null, error: null }, undefined, {
+      data: null,
+      error: { message: 'new row violates row-level security policy' },
+    })
+    await expect(
+      recordInvalidRunTypeRejection(client, 'purge', 'req-123')
+    ).resolves.toBeUndefined()
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('T3.5 — a successful insert logs nothing', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { client } = fakeSupabase({ data: null, error: null }, undefined, {
+      data: null,
+      error: null,
+    })
+    await recordInvalidRunTypeRejection(client, 'purge', 'req-123')
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    consoleErrorSpy.mockRestore()
+  })
+})
+
+describe('parseIndexerFunctionRunType', () => {
+  it('T1.1 — accepts exactly discovery and maintenance', () => {
+    expect(parseIndexerFunctionRunType('discovery')).toEqual({ ok: true, runType: 'discovery' })
+    expect(parseIndexerFunctionRunType('maintenance')).toEqual({
+      ok: true,
+      runType: 'maintenance',
+    })
+    // Exhaustive over this function's own vocabulary — every member parses ok.
+    for (const runType of INDEXER_FUNCTION_RUN_TYPES) {
+      expect(parseIndexerFunctionRunType(runType)).toEqual({ ok: true, runType })
+    }
+  })
+
+  it('T1.2 — absent runType defaults to discovery', () => {
+    expect(parseIndexerFunctionRunType(undefined)).toEqual({ ok: true, runType: 'discovery' })
+    expect(parseIndexerFunctionRunType(null)).toEqual({ ok: true, runType: 'discovery' })
+  })
+
+  it('T1.3 — the purge exploit token is rejected, not gate-evaluated', () => {
+    // The exploit signature: a token that IS in Gate F's broader
+    // GATED_RUN_TYPES vocabulary but is NOT one this function implements.
+    // Direct regression pin for the reported SMI-6020 bypass.
+    const gatedButUnimplementedTokens = ['purge', 'recheck', 'dequarantine', 'revalidate']
+    for (const token of gatedButUnimplementedTokens) {
+      expect(parseIndexerFunctionRunType(token)).toEqual({
+        ok: false,
+        received: token,
+        gatedButUnimplemented: true,
+      })
+    }
+  })
+
+  it('T1.4 — arbitrary and non-string runType values are rejected without the gated flag', () => {
+    const invalidValues: unknown[] = ['DISCOVERY', ' discovery', '', 'all', 'none', 42, true, {}, []]
+    for (const value of invalidValues) {
+      const result = parseIndexerFunctionRunType(value)
+      expect(result.ok, `expected ok:false for ${JSON.stringify(value)}`).toBe(false)
+      if (!result.ok) {
+        expect(
+          result.gatedButUnimplemented,
+          `expected gatedButUnimplemented:false for ${JSON.stringify(value)}`
+        ).toBe(false)
+      }
+    }
+  })
+
+  it('T1.5 — received is sanitized and length-capped', () => {
+    const malicious = 'a\n\x00' + 'x'.repeat(500)
+    const result = parseIndexerFunctionRunType(malicious)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      // eslint-disable-next-line no-control-regex
+      expect(/[\x00-\x1f\x7f]/.test(result.received)).toBe(false)
+      expect(result.received.length).toBeLessThanOrEqual(80)
+    }
   })
 })

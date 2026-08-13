@@ -51,6 +51,14 @@ import type { IndexerRequest } from './indexer-types.ts'
 import { runDiscovery } from './discovery-orchestrator.ts'
 // SMI-5879 (design §8.3.2.5.3): Gate F — pre-writer freeze gate for W-11.
 import { checkFreezeGate, recordFreezeGateRefusal } from './freeze-gate.ts'
+// SMI-6020 (design §1.2-1.5): runtime validation of body.runType — closes
+// the Gate F bypass where a gated-but-unimplemented run type (e.g. 'purge')
+// sails past isRunTypePermitted's broader vocabulary check.
+import {
+  parseIndexerFunctionRunType,
+  recordInvalidRunTypeRejection,
+  INDEXER_FUNCTION_RUN_TYPES,
+} from './freeze-gate.ts'
 // SMI-6033 Wave 2 (Gap 8) fix: `skill-processor.security.tree.ts`'s Trees-API
 // memoization/budget state is module-level, but on this Deno edge function
 // (`Deno.serve`, a long-lived HTTP handler, NOT a fresh process per run —
@@ -108,12 +116,43 @@ Deno.serve(async (req: Request) => {
   let body: IndexerRequest = {}
   if (req.method === 'POST') {
     try {
-      body = await req.json()
+      const parsed: unknown = await req.json()
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as IndexerRequest
+      }
+      // A JSON scalar or array parses successfully but isn't a valid request
+      // body — fall through with the empty-object default rather than
+      // asserting a lie onto every downstream body.x read.
     } catch {
-      // Empty body is OK
+      // Empty / unparseable body is OK — defaults apply (documented behaviour).
     }
   }
-  const runType = body.runType ?? 'discovery'
+
+  // SMI-6020 (design §1.2-1.4): validate body.runType against this
+  // function's own two-token vocabulary BEFORE Gate F ever sees it.
+  // checkFreezeGate's runType parameter is typed IndexerFunctionRunType at
+  // compile time only — without this check, a gated-but-unimplemented token
+  // (e.g. 'purge') can pass isRunTypePermitted's broader GATED_RUN_TYPES
+  // check and fall through to a full discovery-class write.
+  const runTypeParse = parseIndexerFunctionRunType(body.runType)
+  if (!runTypeParse.ok) {
+    if (runTypeParse.gatedButUnimplemented) {
+      await recordInvalidRunTypeRejection(supabase, runTypeParse.received, requestId)
+    } else {
+      console.error(`[Indexer] invalid runType rejected: ${runTypeParse.received}`)
+    }
+    return errorResponse(
+      'Invalid runType',
+      400,
+      {
+        request_id: requestId,
+        received: runTypeParse.received,
+        allowed: [...INDEXER_FUNCTION_RUN_TYPES],
+      },
+      origin,
+    )
+  }
+  const runType = runTypeParse.runType
 
   // SMI-5879 (design §8.3.2.5.3): Gate F — pre-writer freeze gate, evaluated
   // on EVERY invocation, before the row-level lock RPC and before any
