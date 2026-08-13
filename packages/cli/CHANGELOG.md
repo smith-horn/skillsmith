@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.6
+
+- **Fix**: Harden manifest concurrency (uninstall lock, temp-file races) (#2331)
 - **Feature**: `antigravity` (Google Antigravity) is now a supported `--client` value across install/list/remove/update/sync and the generated MCP-server config snippet (`skillsmith install --client antigravity` / `SKILLSMITH_CLIENT=antigravity`) — companion-subagent output uses Antigravity's own directory-package convention (`.agents/agents/<name>/agent.md`), not the flat file every other client gets. `VALID_CLIENT_HINT` also picks up `grok`, which was a pre-existing gap (SMI-5697 added the client but never updated this help text) (SMI-5982)
 - **Fix**: `saveManifest()` (`utils/manifest.ts`) computed its temp filename from just the process
   id, so two concurrent saves in the same process could collide on the same temp path and corrupt

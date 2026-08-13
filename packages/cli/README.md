@@ -8,7 +8,7 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## Contents
 
-- [What's New](#whats-new-in-v085)
+- [What's New](#whats-new-in-v086)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -16,7 +16,7 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.5
+## What's New in v0.8.6
 
 - **Multi-client targeting fixed across the board**: `install`, `list`, `remove`, `update`, `sync`, and `search -i`'s install action now all honor `SKILLSMITH_CLIENT`/`--client` consistently — previously several of these silently acted on the Claude Code directory regardless of the flag or env var.
 - **`update` no longer fails after a fresh install**: now resolves the installed skill's registry source from the manifest `install` already writes, instead of a dead-code path that could never find it.

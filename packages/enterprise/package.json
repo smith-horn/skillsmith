@@ -1,6 +1,6 @@
 {
   "name": "@smith-horn/enterprise",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -44,13 +44,13 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "3.1090.0",
     "@opentelemetry/instrumentation-aws-sdk": "0.75.0",
-    "@skillsmith/core": "^0.11.5",
+    "@skillsmith/core": "^0.11.6",
     "jose": "^6.2.2",
     "stripe": "20.3.0",
     "zod": "4.2.1"
   },
   "devDependencies": {
-    "@skillsmith/mcp-server": "^0.7.7",
+    "@skillsmith/mcp-server": "^0.7.8",
     "@smithy/config-resolver": "4.6.10",
     "@smithy/core": "3.29.5",
     "@smithy/middleware-endpoint": "4.6.10",
@@ -62,7 +62,7 @@
     "vitest": "4.1.10"
   },
   "peerDependencies": {
-    "@skillsmith/mcp-server": "^0.7.7"
+    "@skillsmith/mcp-server": "^0.7.8"
   },
   "peerDependenciesMeta": {
     "@skillsmith/mcp-server": {

@@ -4,6 +4,9 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.6
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.3.5).
 - **Feature**: new `registry_approval` `FeatureFlag` (Enterprise tier) for the private-registry
   approval-gate review workflow — catalog-only in this release (display name, description, tier
   membership across `FeatureFlags.ts`/`types.ts`/`TierMapping.ts`/`degradation-types.ts`); no
