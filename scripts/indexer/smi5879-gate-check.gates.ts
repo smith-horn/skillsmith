@@ -145,19 +145,25 @@ export function evaluateG3(simReport: Smi5879SimulateFullReport): GateResult {
  * call" note below the fold): design doc §8.5's G-5 row is explicit —
  * "**Both halves block merge uniformly**" — the structural closure test AND
  * the fixture-corpus corroboration check (§8.3.1.2.4's THIRD bullet, "no
- * non-AI RiskScoreBreakdown key changes over the fixture corpus"). Grepped
- * directly against all three closure test files (item 2, `CLOSURE_TEST_FILES`
- * in `smi5879-gate-check.closure.ts`): every one is a pure AST/structural
- * routing census (call-site + pattern-array introspection), explicitly
- * documented as "fixture-free by design" in their own module docs — none of
- * them runs a fixture corpus through the scanner and diffs `RiskScoreBreakdown`
- * keys. That means this corroboration evidence is genuinely unavailable
- * today (confirmed by inspection, not assumed), so noting the gap in a PASS
- * reason string — the PRIOR behavior — violates the module's own governing
- * rule ("absence of evidence is INCONCLUSIVE, never PASS"). G-5 is therefore
- * INCONCLUSIVE whenever `!closure.fixtureCorpusCorroborationVerified` — see
- * that field's doc comment in `smi5879-gate-check.types.ts` for how a future
- * item-2-shaped producer flips it true.
+ * non-AI RiskScoreBreakdown key changes over the fixture corpus"). The three
+ * ORIGINAL closure test files (item 2, first three entries of
+ * `CLOSURE_TEST_FILES` in `smi5879-gate-check.closure.ts`) are each a pure
+ * AST/structural routing census, "fixture-free by design" per their own
+ * module docs — none of them runs a fixture corpus through the scanner and
+ * diffs `RiskScoreBreakdown` keys, which is why this corroboration evidence
+ * was genuinely unavailable when this comment was first written.
+ *
+ * SMI-5879 Wave 1 built the producer: two more `CLOSURE_TEST_FILES` entries
+ * (`packages/core/tests/security/smi5879-corroboration.core.test.ts`,
+ * `scripts/tests/indexer/smi5879-corroboration.edge.test.ts`) DO run the
+ * shared fixture corpus through both scanners and diff every non-AI
+ * `RiskScoreBreakdown`/category key against a pinned pre-port golden — see
+ * `docs/internal/implementation/smi-5879-g5-corroboration-spec.md`. G-5
+ * remains INCONCLUSIVE whenever `!closure.fixtureCorpusCorroborationVerified`
+ * — that boolean is now a real, computed result
+ * (`computeFixtureCorpusCorroborationVerified`,
+ * `smi5879-gate-check.closure.ts`), not a permanent stub; see that field's
+ * doc comment in `smi5879-gate-check.types.ts` for exactly what it verifies.
  */
 export function evaluateG5(
   skipClosureTests: boolean,
@@ -221,9 +227,14 @@ export function evaluateG5(
       outcome: 'INCONCLUSIVE',
       reason:
         'fixture-corpus RiskScoreBreakdown-key corroboration (design doc §8.3.1.2.4, third ' +
-        'bullet) evidence is unavailable — no producing artifact exists yet. §8.5 G-5 requires ' +
-        '"both halves" (structural closure test AND this corroboration) to block merge uniformly; ' +
-        'the structural closure test and the +32 bound alone are NOT sufficient for a PASS',
+        'bullet) did not verify' +
+        (closure.unavailable_reason ? `: ${closure.unavailable_reason}` : '') +
+        '. §8.5 G-5 requires "both halves" (structural closure test AND this corroboration) to ' +
+        'block merge uniformly; the structural closure test and the +32 bound alone are NOT ' +
+        'sufficient for a PASS',
+      ...(closure.unavailable_reason
+        ? { detail: { unavailable_reason: closure.unavailable_reason } }
+        : {}),
     }
   }
   return {

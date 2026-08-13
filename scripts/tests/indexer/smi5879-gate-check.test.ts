@@ -6,7 +6,12 @@
  * smi5879-gate-check.dispositions.test.ts (split — this file plus that one
  * together exceeded ~450 lines, matching item 3's precedent). G-2R's
  * three-phase reconciliation logic has its own sibling file,
- * smi5879-gate-check.g2r.test.ts.
+ * smi5879-gate-check.g2r.test.ts. SMI-5879 Wave 1's
+ * `computeFixtureCorpusCorroborationVerified` (the fixture-corpus
+ * corroboration collection-signal function) has its own sibling file too,
+ * smi5879-gate-check.closure-corroboration.test.ts — this file's own G-5
+ * tests below only exercise `evaluateG5` against FAKE `StructuralClosureResult`
+ * shapes, never that function directly.
  * @module scripts/tests/indexer/smi5879-gate-check
  *
  * Design: docs/internal/implementation/smi-5879-edge-twin-parity-design.md §8.5, §12
@@ -437,19 +442,27 @@ describe('smi5879-gate-check.ts — G-5 structural closure + delta bound', () =>
     expect(findGate(report.gates, 'G-5').detail?.['missingScoreIds']).toContain('r1')
   })
 
-  it('finding #3: is INCONCLUSIVE, not PASS, when fixture-corpus RiskScoreBreakdown corroboration evidence is unavailable — the exact shape production returns today', async () => {
+  it("finding #3: is INCONCLUSIVE, not PASS, when fixture-corpus RiskScoreBreakdown corroboration evidence is unavailable — a real failure mode of the SMI-5879 Wave 1 producer, not production's permanent state", async () => {
     const dir = makeScratchDir()
     const args = buildRequiredArgs(dir)
-    // This is what runStructuralClosureTestsViaVitest ACTUALLY returns
-    // today (fixtureCorpusCorroborationVerified always false — no producing
-    // artifact exists) — this scenario used to silently PASS.
+    // Before SMI-5879 Wave 1, `fixtureCorpusCorroborationVerified` was a
+    // permanent `false` literal (no producing artifact existed) and this
+    // scenario used to silently PASS. A producer now exists
+    // (`packages/core/tests/security/smi5879-corroboration.core.test.ts`,
+    // `scripts/tests/indexer/smi5879-corroboration.edge.test.ts`,
+    // collected via `computeFixtureCorpusCorroborationVerified` — see the
+    // `smi5879-corroboration.closure.test.ts`-equivalent coverage of THAT
+    // function directly, below) — this test now exercises one real way the
+    // flag can still come back `false` (a sentinel/file shortfall), not the
+    // only way it ever can.
     const test = makeFakeTestDeps({
       async runStructuralClosureTests() {
         return {
           ran: true,
           passed: true,
           baseline_commit: SAMPLE_COMMIT,
-          unavailable_reason: null,
+          unavailable_reason:
+            'corroboration sentinel assertion missing or not passed: some/file.test.ts :: some assertion',
           fixtureCorpusCorroborationVerified: false,
         }
       },
@@ -459,6 +472,11 @@ describe('smi5879-gate-check.ts — G-5 structural closure + delta bound', () =>
     expect(g5.outcome).toBe('INCONCLUSIVE')
     expect(g5.reason).toMatch(/RiskScoreBreakdown/)
     expect(g5.reason).toMatch(/both halves/i)
+    // The specific unavailable_reason must be threaded through, not dropped
+    // (§6 point 4: distinguishes "corroboration failed" from "corroboration
+    // never ran").
+    expect(g5.reason).toMatch(/sentinel assertion missing or not passed/)
+    expect(g5.detail?.['unavailable_reason']).toMatch(/sentinel assertion missing or not passed/)
     expect(report.overall).toBe('INCONCLUSIVE')
   })
 

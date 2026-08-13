@@ -258,22 +258,36 @@ export interface StructuralClosureResult {
   passed: boolean
   /** `git rev-parse HEAD`, captured at test-invocation time — null when it could not be derived. */
   baseline_commit: string | null
-  /** Populated whenever `ran` is false — names the exact reason (spawn error, timeout,
-   *  dirty tree, zero collected tests, unparseable output), never left implicit. */
+  /**
+   * Always populated whenever `ran` is false (spawn error, timeout, dirty
+   * tree, zero collected tests, unparseable output), never left implicit.
+   * SMI-5879 Wave 1: ALSO populated on a subset of `ran: true` outcomes — when
+   * {@link fixtureCorpusCorroborationVerified} is false despite the closure
+   * subprocess itself completing, this names which corroboration file or
+   * sentinel assertion was missing/failed, so a caller can distinguish
+   * "corroboration failed" from "corroboration never ran" (corroboration spec
+   * doc §6, point 4) without re-deriving it. `null` only when both the
+   * closure run succeeded AND corroboration verified.
+   */
   unavailable_reason: string | null
   /**
    * §8.3.1.2.4's THIRD corroboration bullet — "no non-AI RiskScoreBreakdown
    * key changes over the fixture corpus" (finding #3, adversarial review of
-   * this file's first implementation). True IFF a fixture-corpus
-   * RiskScoreBreakdown-parity suite ran, as part of THIS SAME self-invoked
-   * vitest subprocess, and passed. §8.5's G-5 row requires "both halves"
-   * (the structural closure test AND this corroboration) to block merge
-   * uniformly — no producer for this corroboration exists anywhere in the
-   * repo yet (an item-2-shaped follow-up, out of scope for this
-   * gate-checker to author per its own module docs), so the production
-   * implementation (`smi5879-gate-check.closure.ts`) always sets this
-   * `false` until one is built and wired in. Only meaningful when `ran` is
-   * true — irrelevant otherwise, same as `passed`.
+   * this file's first implementation). True IFF the fixture-corpus
+   * corroboration test files (`packages/core/tests/security/
+   * smi5879-corroboration.core.test.ts`,
+   * `scripts/tests/indexer/smi5879-corroboration.edge.test.ts`) ran, as part
+   * of THIS SAME self-invoked vitest subprocess, and every one of their
+   * pinned sentinel assertions passed (`CORROBORATION_COLLECTION`,
+   * `smi5879-corroboration.types.ts`) — computed by
+   * `computeFixtureCorpusCorroborationVerified` in
+   * `smi5879-gate-check.closure.ts`, never inferred from the vitest report's
+   * aggregate `success` boolean. §8.5's G-5 row requires "both halves" (the
+   * structural closure test AND this corroboration) to block merge uniformly.
+   * SMI-5879 Wave 1 built the producer this field always deferred to before;
+   * on a PRE-PORT branch (PR #2192 unmerged) this is vacuously true — see the
+   * two test files' own module docs. Only meaningful when `ran` is true —
+   * irrelevant otherwise, same as `passed`.
    */
   fixtureCorpusCorroborationVerified: boolean
 }

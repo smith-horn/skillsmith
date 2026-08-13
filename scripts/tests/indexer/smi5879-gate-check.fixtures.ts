@@ -319,10 +319,14 @@ export function makeFakeTestDeps(
       // subprocess succeeded" (matching the file's existing convention for
       // `ran`/`passed`) — including the fixture-corpus corroboration
       // evidence (finding #3), so tests focused on OTHER gates keep working
-      // unmodified. The PRODUCTION implementation
-      // (`runStructuralClosureTestsViaVitest`) always returns `false` for
-      // this field today (no producing artifact exists yet) — tests proving
-      // that specific gap set this to `false` explicitly at the call site.
+      // unmodified. SMI-5879 Wave 1 built the real producer
+      // (`computeFixtureCorpusCorroborationVerified` in
+      // `smi5879-gate-check.closure.ts`, fed by the two
+      // `smi5879-corroboration.{core,edge}.test.ts` files) — this fake still
+      // never calls it (this suite always injects `Smi5879GateCheckTestDeps`,
+      // never the real `runStructuralClosureTestsViaVitest`); tests proving a
+      // corroboration shortfall set this field to `false` explicitly at the
+      // call site instead.
       return {
         ran: true,
         passed: true,
