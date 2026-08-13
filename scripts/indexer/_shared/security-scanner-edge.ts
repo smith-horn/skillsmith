@@ -385,6 +385,22 @@ export function shouldQuarantine(scanResult: EdgeScanResult): boolean {
   return scanResult.riskScore >= QUARANTINE_THRESHOLD
 }
 
+/** SMI-6020 (design §3.3.6): the scan hit MAX_MULTILINE_ITERATIONS_PER_PATTERN,
+ *  so riskScore is a known under-count. Absent/undefined == not truncated. */
+export function isScanTruncated(scan: Pick<EdgeScanResult, 'multilineTruncated'>): boolean {
+  return scan.multilineTruncated === true
+}
+
+/** SMI-6020 (design §3.3.6): the quarantine gate hardened for scan integrity.
+ *  EVERY write path must call this; `shouldQuarantine` remains the pure score
+ *  predicate pinned by SMI-5358 and must not be called from a write path. */
+export function shouldQuarantineFailClosed(scan: EdgeScanResult): boolean {
+  return shouldQuarantine(scan) || isScanTruncated(scan)
+}
+
+/** SMI-6020: stable label for the primary (SKILL.md) scan in truncation provenance. */
+export const ROOT_SCAN_LABEL = 'SKILL.md'
+
 /**
  * SMI-2384: Create a concise human-readable summary of security findings.
  *

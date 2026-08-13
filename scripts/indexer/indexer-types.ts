@@ -56,6 +56,8 @@ export interface IndexerResult {
   quality_gate_filtered: number
   /** SMI-4842: Repos rejected as curated `awesome-*` link-lists (not skills). */
   meta_list_filtered: number
+  /** SMI-6020 (design §3.3.6): repos whose scan hit the multiline iteration ceiling this run. */
+  multiline_truncated: number
   unchanged: number
   github_skill_count: number
   github_skill_breakdown?: Record<string, number>

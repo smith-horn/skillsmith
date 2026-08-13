@@ -406,6 +406,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   result.unchanged = upsertResult.unchanged
   result.quality_gate_filtered = upsertResult.quality_gate_filtered
   result.meta_list_filtered = upsertResult.meta_list_filtered
+  result.multiline_truncated = upsertResult.multiline_truncated
   result.errors.push(...upsertResult.errors)
 
   let categorizedCount = 0
@@ -471,6 +472,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       staleVerification: result.staleVerification,
       quality_gate_filtered: result.quality_gate_filtered,
       meta_list_filtered: result.meta_list_filtered,
+      multiline_truncated: result.multiline_truncated,
       unchanged: result.unchanged,
       quarantined: result.quarantined,
       github_skill_count: result.github_skill_count,

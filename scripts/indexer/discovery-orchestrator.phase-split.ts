@@ -45,6 +45,7 @@ export function buildInitialDiscoveryResult(dryRun: boolean): IndexerResult {
     staleVerification: ZERO_STALE_VERIFICATION,
     quality_gate_filtered: 0,
     meta_list_filtered: 0,
+    multiline_truncated: 0,
     unchanged: 0,
     github_skill_count: 0,
     high_trust_wildcard: {
@@ -133,6 +134,8 @@ export interface DiscoveryAuditLogInput {
   quality_gate_filtered: number
   /** SMI-4842: Repos rejected as curated `awesome-*` link-lists (not skills). */
   meta_list_filtered: number
+  /** SMI-6020 (design §3.3.6): repos whose scan hit the multiline iteration ceiling this run. */
+  multiline_truncated: number
   unchanged: number
   quarantined: number
   github_skill_count: number
@@ -204,6 +207,7 @@ export async function writeDiscoveryAuditLog(
     staleVerification: input.staleVerification,
     quality_gate_filtered: input.quality_gate_filtered,
     meta_list_filtered: input.meta_list_filtered,
+    multiline_truncated: input.multiline_truncated,
     unchanged: input.unchanged,
     quarantined: input.quarantined,
     github_skill_count: input.github_skill_count,

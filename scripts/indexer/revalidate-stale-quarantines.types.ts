@@ -34,3 +34,6 @@ export type StaleOutcome =
   | 'sibling-requarantined' // SMI-5437 W2: additive with requarantined + sibling_requarantined
   | 'sibling-recovered' //     SMI-5437 W2: additive with cleared + sibling_recovered
   | 'deferred-cap' //          SMI-5445 C2: PASS-3 row that would have cleared but hit the per-run sibling-clear cap
+  | 'scan-incomplete' //       SMI-6020 (design §3.3.6): root or sibling scan hit the multiline
+//                           iteration ceiling — a scan-integrity gap, counted separately from
+//                           'fetch-error' so it can never inflate recheck.ts's fetch_error_rate.

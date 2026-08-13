@@ -38,6 +38,7 @@ import {
   stubFetchCleanAlways,
   stubFetchMaliciousAlways,
   stubFetchTransientAlways,
+  stubFetchCleanSkillMdTruncatingSibling,
   BASE_OPTS,
   CLEAN_CONTENT,
 } from './recheck.test-helpers.ts'
@@ -415,6 +416,64 @@ describe('runRecheck — killswitch (P3)', () => {
     ]
     expect(params.recheck.killswitch_engaged).toBe(true)
     expect(params.runType).toBe('recheck')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6020 (design §2.7 T2.21/T2.22) — scan-incomplete outcome
+// ---------------------------------------------------------------------------
+
+describe('runRecheck — SMI-6020 scan-incomplete', () => {
+  beforeEach(() => {
+    writeIndexerAuditLog.mockClear()
+    delete process.env.RECHECK_ENABLED
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('T2.21: is counted separately and never inflates fetch_error_rate', async () => {
+    stubFetchCleanSkillMdTruncatingSibling()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    // quarantined=true, reason 'stale' → pass-2 self-heal cohort → SKILL.md-clean
+    // reaches runSiblingRescan, whose sibling (README.md) truncates.
+    const row = makeRow({ id: 'sc-incomplete-1', quarantined: true, quarantine_reason: 'stale' })
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    const result = await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    expect(result.recheck.scan_incomplete).toBe(1)
+    expect(result.recheck.fetch_error).toBe(0)
+    expect(result.recheck.fetch_error_rate).toBe(0)
+    // No skills write for a scan-incomplete row (fail-closed, no state change).
+    expect(handle.updatePayloads).toHaveLength(0)
+    // The E3 throttle warning must NOT fire — scan-incomplete is not a fetch error.
+    const throttleWarns = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes('transient fetch errors')
+    )
+    expect(throttleWarns).toHaveLength(0)
+  })
+
+  it('T2.22: no processRow outcome reaches the default unhandled-outcome guard', async () => {
+    stubFetchCleanSkillMdTruncatingSibling()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const row = makeRow({ id: 'sc-incomplete-2', quarantined: true, quarantine_reason: 'stale' })
+    const handle = makeRunDb({
+      pass1: [],
+      pass2: [row],
+      casReturns: [{ id: row.id }],
+      casError: null,
+    })
+
+    await runRecheck({ supabase: handle.db, ...BASE_OPTS })
+
+    const unhandledWarns = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes('unhandled processRow outcome')
+    )
+    expect(unhandledWarns).toHaveLength(0)
   })
 })
 

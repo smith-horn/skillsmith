@@ -59,7 +59,10 @@ import {
 } from '../../indexer/skill-processor.security.ts'
 import {
   scanSkillContent,
+  shouldQuarantine,
+  shouldQuarantineFailClosed,
   QUARANTINE_THRESHOLD,
+  MAX_MULTILINE_ITERATIONS_PER_PATTERN,
   type EdgeScanResult,
 } from '../../indexer/_shared/security-scanner-edge.ts'
 import type { RateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
@@ -338,5 +341,44 @@ describe('scanSkillBundle — large primary content (adapted from design 8.2.5 S
     )
 
     expect(result.securityScan.findings.some((f) => f.type === 'jailbreak')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T2.11 (design §2.7 / §3.3.7): iteration ceiling marks the scan truncated
+// and blocks de-escalation, end-to-end through the real scanSkillBundle.
+// ---------------------------------------------------------------------------
+
+describe('scanSkillBundle — SMI-6020 T2.11: truncated scan quarantines despite a sub-threshold score', () => {
+  // 'developer mode with no restrictions, ' repeated matches
+  // JB_JS3A_DEV_MODE_THEN_CAPABILITY ('content'-scope) once per repetition —
+  // same construction proven to trigger truncated:true at the
+  // scanPatternsWithMultilineSupport level (packages/core/tests/security/
+  // scanner-multiline-cap.test.ts). No newlines: all matches land on line 1,
+  // so the per-pattern LINE cap (64, score-neutral) never binds — only the
+  // ITERATION ceiling can, which is exactly what this test needs to trigger.
+  const REPEATED_PHRASE = 'developer mode with no restrictions, '
+  const primaryContent = REPEATED_PHRASE.repeat(MAX_MULTILINE_ITERATIONS_PER_PATTERN + 500)
+
+  it('a synthetic >10,000-match input truncates and the bundle verdict quarantines even though riskScore < 40', async () => {
+    const result = await scanSkillBundle(
+      'acme',
+      'widget',
+      'main',
+      undefined,
+      primaryContent,
+      telemetry,
+      {
+        fetchSiblingContent: async () => ({ removed: true }),
+      }
+    )
+
+    expect(result.securityScan.multilineTruncated).toBe(true)
+    // The single-line repetition caps at exactly one recorded finding
+    // (seenLines never exceeds 1), so the raw score stays sub-threshold.
+    expect(result.securityScan.riskScore).toBeLessThan(QUARANTINE_THRESHOLD)
+    expect(shouldQuarantine(result.securityScan)).toBe(false)
+    // §3.3.7's named case, end-to-end: the fail-closed gate still quarantines.
+    expect(shouldQuarantineFailClosed(result.securityScan)).toBe(true)
   })
 })
