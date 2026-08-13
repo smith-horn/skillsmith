@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `multilineTruncated` (set when a scan hits its per-pattern iteration ceiling, so `riskScore` is a known under-count) was computed but never consumed at the quarantine decision — `trust-scorer.ts`'s `shouldQuarantine()` could clear or never apply a quarantine hold based on an incomplete scan. A truncated scan now forces `quarantine: true` before allowlist filtering runs, so an allowlist can no longer clear a scan-integrity hold (SMI-5879, SMI-6020)
+
 ## v0.12.2
 
 - **Feature**: SMI-6343 Wave 4 -- apply_manifest_reconcile tool (#2715)
