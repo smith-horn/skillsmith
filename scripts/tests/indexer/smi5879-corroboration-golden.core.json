@@ -1,0 +1,1019 @@
+{
+  "twin": "core",
+  "provenance": {
+    "sourceCommit": "a694a9f242197277fa69210e0241f84b883552e6",
+    "manifestDigest": "d2e2b51f4d35cf89fad2cf40982ddc230ab314d97a666782be3693608a98fe76",
+    "manifestVersion": 1,
+    "projectionSchemaVersion": 1,
+    "nodeVersion": "v22.22.2",
+    "generator": "scripts/indexer/smi5879-corroboration-generate.ts",
+    "generatedAt": "2026-08-12T23:56:14.185Z",
+    "determinismRepeats": 5
+  },
+  "projectedKeys": [
+    "codeExecution",
+    "dataExfiltration",
+    "externalUrls",
+    "obfuscatedDirective",
+    "pii",
+    "privilegeEscalation",
+    "promptLeaking",
+    "sensitivePaths",
+    "socialEngineering",
+    "ssrf",
+    "suspiciousCode",
+    "typosquat"
+  ],
+  "rows": [
+    {
+      "caseId": "CX-obfuscated-directive",
+      "contentSha256": "8dfb4964ad66462269554f6f3cc0456c27311e2648f356cd6ac0949c101403af",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 100,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "CX-pii",
+      "contentSha256": "af9a5fb59920225d6f60729507267deae08b5ce6ebdff1fe1ae4ca8c49eea966",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 54,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "CX-prompt-leaking",
+      "contentSha256": "cfa52b7e1b02206f8c5b8b696614a91c3e91696e9eba76b8b51a694265ac9850",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 90,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "CX-social-engineering",
+      "contentSha256": "99626c726b68546b05dd9676d97e31f93f75b656308f63b133a20957f813c820",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 45,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "CX-ssrf",
+      "contentSha256": "7f88b7ec71660ad4c61691e77224e412d999ad739d8f4b86e74c45c3070218a4",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 12,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 48,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-codeExamples-00",
+      "contentSha256": "7df4f54af9f4bceee45e86dc8e8fdf018718c804e3943372b4ab068b7373acd8",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 12,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-codeExamples-01",
+      "contentSha256": "273e29d6f9c5512f6a9e075293cf8032f567a6b70c1b8c3d59dc7eefb33b31ef",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-codeExamples-02",
+      "contentSha256": "34aeebe8414c0af971926555e4c33f2bd6273ae093fd91452a5c41625562d808",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-codeExamples-03",
+      "contentSha256": "2ce46342206a0a595333d0195402b3faaf51d3ee78519419ed74fe2984bd052f",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-containsUrls-00",
+      "contentSha256": "a34955496697b836f051f2db435cfa39317f1bf16fd5552e7907a6044d6e1bec",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-containsUrls-01",
+      "contentSha256": "6288cfcd729ffc428e1c4287da85073bcba6fd6adc3006c4085f670d71a89663",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-containsUrls-02",
+      "contentSha256": "913d2ff2f29315c76e4f5c3569983cb15f2cc40fe6d597fa3bb11b8f9c675e91",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-containsUrls-03",
+      "contentSha256": "1f1117c803eebddbdd8a655b6d39e7a167eb9aaddfbf9cff58643a0cffa95edd",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-educationalContent-00",
+      "contentSha256": "a426dd511d452683b281fd2f50a3dd16894109d368ac2857fe2a7e2e696575fb",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-educationalContent-01",
+      "contentSha256": "678d6a7be506883461b41dfdefa88c59e2572923d1e9e8a908cf4f50c872c8cc",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-educationalContent-02",
+      "contentSha256": "e66273bc3aa27f143c13098db545beffcaeddb2fbbe6ea5370065a080ef56f00",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-educationalContent-03",
+      "contentSha256": "36bf08bfffbe641cb750b549244d37e9b935d420223d115e9d1c2ff55969dcfa",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-longFormContent-00",
+      "contentSha256": "0e162c8a3baa5679573282c41d3e349587fc12aef3bf6b408a00554e7b902b6e",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-longFormContent-01",
+      "contentSha256": "ea4ebed789a6594f1a842ebda45946e2c967a16601ce1da7608a418593be54d9",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-markdownContent-00",
+      "contentSha256": "3c71d6b9a098191254f3fb955cce5e19aebda1515fc841d92c146fde65e72b0e",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-markdownContent-01",
+      "contentSha256": "2b118e1ab37c60feff030676ee010e3ef6d8e75a6f6be08759b160166b786c60",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-markdownContent-02",
+      "contentSha256": "734b64b6d17e01d546f2b8280ae9449f2888d5710defb5ff7242a8a2d917c76f",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-mentionsSimilarWords-00",
+      "contentSha256": "1d9ee7c754fea6bb1e59fe1f054ab9520569eb90a673b14506575f686dcc93af",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-mentionsSimilarWords-01",
+      "contentSha256": "c62cbdc594123245af5874ac85f02fae7712113759c405d4a1e5a61dcdb16a9e",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-mentionsSimilarWords-02",
+      "contentSha256": "070f20f19aedf234ea55ad5c4e5831d98771f6da937deb6a370b6f5497296e2c",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-mentionsSimilarWords-03",
+      "contentSha256": "ff90f11459f486cbeac92b62e04cb8bb4592f0ae8957e0a64342194fc3b6d1d7",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-mentionsSimilarWords-04",
+      "contentSha256": "c276430651a2fea34a8743fd3a09f326d6d12a48dbb18fec0d31396f3cd635af",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-normalSkillDescriptions-00",
+      "contentSha256": "d99a3ef7df5220ace0deb70bf8675e6ac6424b160e9b8fb83df40b9926f99ff2",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-normalSkillDescriptions-01",
+      "contentSha256": "3b7c3fc0f79fbb2b3d677e4a1e825605023a019b87314f95bfb31a2b8528976d",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-normalSkillDescriptions-02",
+      "contentSha256": "eb6f245c718d914db7f0863afb0ef5879474d45b0545a03c80c89449ba13c3e5",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-normalSkillDescriptions-03",
+      "contentSha256": "f0b6a737f2e7850a34461211fa8cac995917dfc9a1ececab88215f86e592a7df",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-normalSkillDescriptions-04",
+      "contentSha256": "66a9e47c5fcbb23ac0367d31043b78c7627daa1851035af7fb493af192daf347",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-pathFalsePositives-00",
+      "contentSha256": "41d20695a12c372c364ae91ac999ecb340ae6ff3e521b1a0368480c2f45159e2",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-pathFalsePositives-01",
+      "contentSha256": "1f344230f89889185c7874a27893b236fceb96c5f462a3a21ec9bc450a395cfb",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-pathFalsePositives-02",
+      "contentSha256": "c3d26cb9c0d709ad4e95b5398107ce1c969da19c1c794c95a1d0826041cb46d2",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-pathFalsePositives-03",
+      "contentSha256": "f9101a227e5b90f238939e402ab9628b498a9ea4e007857ef12e99f960cf625b",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-pathFalsePositives-04",
+      "contentSha256": "b79bbacf6f9469f6e1085d6fceeba58e3772b239a8de0fa87d3d7a2efd703aaa",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-technicalContent-00",
+      "contentSha256": "15c8407420265d16ee1a2093364cce7d5cda1892083e0106122dc66d6624babc",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-technicalContent-01",
+      "contentSha256": "99521ae871d69cbdac0cf41034000a5b6baba9cc35824edecf26eab31798da4f",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-technicalContent-02",
+      "contentSha256": "3c8963a5232a529d0a63e45ac8094377015a1a8fa4883a8791009c6ad73a930e",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-technicalContent-03",
+      "contentSha256": "b585f9cbbe8a3093b3cc017ce7ee2ce7a8d17f8a58e1423c9141c4bd39e53a63",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-technicalContent-04",
+      "contentSha256": "8b5c4a7adec683d8239a5e6668047501000ede35cff18b61beb9bbbe419e35b1",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-whitespaceEdgeCases-00",
+      "contentSha256": "91df8d948d7b6ab049a1b9425109a804a39fc80ffb9e15dec748ffead3293da0",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-whitespaceEdgeCases-01",
+      "contentSha256": "dde9d8252686c434764adf76855ca6f8bf1ddcadecbf5f46c97e1c249a8f957f",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "FP-whitespaceEdgeCases-02",
+      "contentSha256": "95975f920e8ad6d4737f6c8920f77f776f0da69d4f8088c211aa9b5dc419adc5",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SAT-1",
+      "contentSha256": "adfaf2188ce7e9ca61ab2d572e4e5a51272a3210521734e637f4e1901552c0dc",
+      "breakdown": {
+        "codeExecution": 100,
+        "dataExfiltration": 100,
+        "externalUrls": 12,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 100,
+        "promptLeaking": 0,
+        "sensitivePaths": 36,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 19.5,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SAT-2",
+      "contentSha256": "3ab09eca5daeaa55b2b018ccee36351426cbf9a40c994026490acab6a2d468dd",
+      "breakdown": {
+        "codeExecution": 100,
+        "dataExfiltration": 100,
+        "externalUrls": 12,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 100,
+        "promptLeaking": 0,
+        "sensitivePaths": 36,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 19.5,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SAT-3",
+      "contentSha256": "dcd23e1d5d0ffe987f304a67668097c2294ac04f88243c6191b2297d47e6a3bc",
+      "breakdown": {
+        "codeExecution": 30,
+        "dataExfiltration": 15.299999999999999,
+        "externalUrls": 12,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 51.3,
+        "promptLeaking": 0,
+        "sensitivePaths": 5.3999999999999995,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 1.95,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SB-1-primary",
+      "contentSha256": "af39c35710a5580e8d17f607a91064aae099350d851f53f46e4e1f36602e4983",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SB-1-sibling",
+      "contentSha256": "0fa7bf917a4b11a958a22acc04b3ec5c3dbf90b21f39dbe7d41bbe5b01c0e992",
+      "breakdown": {
+        "codeExecution": 30,
+        "dataExfiltration": 7.6499999999999995,
+        "externalUrls": 12,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 1.95,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SB-2-primary",
+      "contentSha256": "aa7d9fb116105f3057a70fad7c115cec905c404f4f724b790a9a9987093cf583",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SB-2-sibling",
+      "contentSha256": "e8d71c8d3c73e0e40efe26411d7fce6033f3a4ccdeae4d802cc5ed80dc5c480a",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 95,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SB-3-body",
+      "contentSha256": "2edc986847e209b4016e141a6dc8716d3207350f416969382d431539bf292e4a",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 0,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SB-4-primary",
+      "contentSha256": "15670ba7b32d73582dbf8394528cff3989a7949fc48bc609658a2c0565bf8662",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 0,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 0,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 6.5,
+        "typosquat": 0
+      }
+    },
+    {
+      "caseId": "SW-1",
+      "contentSha256": "ccb144b421418ff4d2d3b52d224c0b940884dac8e853f8448047be3c20f7756e",
+      "breakdown": {
+        "codeExecution": 0,
+        "dataExfiltration": 100,
+        "externalUrls": 0,
+        "obfuscatedDirective": 0,
+        "pii": 0,
+        "privilegeEscalation": 100,
+        "promptLeaking": 0,
+        "sensitivePaths": 0,
+        "socialEngineering": 0,
+        "ssrf": 0,
+        "suspiciousCode": 100,
+        "typosquat": 0
+      }
+    }
+  ]
+}
