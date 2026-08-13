@@ -83,6 +83,24 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-07-12",
       "expiresAt": "2026-10-10"
+    },
+    {
+      "skillId": "github/fitz2882/narthex",
+      "findingType": "jailbreak",
+      "messagePattern": "jailbreak",
+      "reason": "Prompt-injection defense tool for Claude Code — a PreToolUse Bash hook plus a sanitizing MCP server that strips invisible unicode and 'flags jailbreaks'. Repo has no SKILL.md at root (examples/hooks/mcp subdirs, install.py/uninstall.py — a defensive tool FOR Claude Code, not a skill itself), same shape as github/RobinGase/skill-protocol-rs. Bare /jailbreak/i pattern triggered on the repo description's own use of the word to describe what it detects — same class as github/RENJI04/prompt-injection-auditor (SMI-4765). Both findings trace to line 3 of the repo description; no actual code or behavior implicated. Triaged 2026-08-13.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-08-13",
+      "expiresAt": "2026-11-11"
+    },
+    {
+      "skillId": "github/fitz2882/narthex",
+      "findingType": "data_exfiltration",
+      "messagePattern": "exfil",
+      "reason": "Same tool and same false-positive line as the jailbreak entry above — the bare 'exfil' keyword pattern triggered on the repo description's own phrase 'blocks compositional credential-exfiltration shapes', describing what the tool defends against, not an exfiltration mechanism it contains. Corroboration between this and the co-occurring jailbreak finding (both line 3, both from the same description text) is exactly the same self-describing-security-tool pattern as the other allowlisted entries. Triaged 2026-08-13.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-08-13",
+      "expiresAt": "2026-11-11"
     }
   ]
 }

@@ -408,11 +408,17 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // as a threat it detects; same self-describing-security-tool FP class as
   // MalPromptSentinel-CC-Skill. Also renewed the 4 entries that were about to
   // expire 2026-07-21 (kcmadden, MalPromptSentinel, rhysha, mdium).
+  // SMI-6018 (2026-08-13): fitz2882/narthex added — defensive prompt-injection
+  // tool for Claude Code whose repo description says it 'flags jailbreaks'
+  // and 'blocks compositional credential-exfiltration shapes'; two entries
+  // (jailbreak, data_exfiltration findingTypes) since both bare-keyword
+  // patterns trip on the same description line — same self-describing-
+  // security-tool FP class as RENJI04/prompt-injection-auditor.
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(9)
+    expect(parsed.allowlist.length).toBe(11)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
@@ -421,6 +427,8 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
         'github/dokind/qpay-skills',
+        'github/fitz2882/narthex',
+        'github/fitz2882/narthex',
         'github/kcmadden/claude-code-1password-skill',
         'github/leksman/ai-security-guard',
         'github/rhysha/claude-security-research-skill',
