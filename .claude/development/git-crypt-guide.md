@@ -489,6 +489,30 @@ git -C /path/to/skillsmith diff --cached docs/internal
 git -C /path/to/skillsmith/docs/internal log --oneline -1
 ```
 
+### `git submodule update --init docs/internal` stalls indefinitely in a fresh worktree (SMI-6015 session, 2026-08-13)
+
+A brand-new worktree's `docs/internal` clone over HTTPS can stall for 20+ minutes with near-zero CPU (`ps -o etime,time` shows large elapsed time, near-zero accumulated CPU — genuinely blocked on network I/O, not just slow). Killing and retrying reproduces the same stall; running multiple retries without killing the prior attempt's orphaned `git index-pack`/`git-remote-https` processes makes it worse, since they all compete for the same connection. This is independent of repo size — `docs/internal`'s object store is only ~80MB.
+
+**Fix**: skip the network clone entirely. The main checkout already has a complete local copy of `docs/internal`'s object database at `.git/modules/docs/internal` — clone from that via `file://` instead, then re-point the remote at the real GitHub URL:
+
+```bash
+# From the new worktree's root, after killing any stalled clone processes
+# (ps aux | grep skillsmith-docs, kill -9 the git/index-pack/remote-https PIDs)
+rm -rf docs/internal/.git docs/internal/*
+mkdir -p docs/internal
+mkdir -p /path/to/skillsmith/.git/worktrees/<worktree-name>/modules/docs
+git clone --no-checkout \
+  --separate-git-dir=/path/to/skillsmith/.git/worktrees/<worktree-name>/modules/docs/internal \
+  file:///path/to/skillsmith/.git/modules/docs/internal \
+  docs/internal
+
+cd docs/internal
+git remote set-url origin https://github.com/smith-horn/skillsmith-docs.git
+git reset --hard HEAD   # --no-checkout leaves the working tree empty; this populates it
+```
+
+This is instant (local filesystem copy, no network) and produces a submodule checkout indistinguishable from what `git submodule update --init` would have made — `git submodule status` recognizes it normally afterward. The main checkout's `main` branch must already be fetched-current for this to hand the worktree a fully up-to-date object store.
+
 ## Host Native Bindings & SessionStart Instrumentation (SMI-4549)
 
 **One-time host setup required** (after fresh clone):
