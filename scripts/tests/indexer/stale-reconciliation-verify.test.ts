@@ -59,14 +59,26 @@ vi.mock('../../indexer/_shared/skill-md-fetch.ts', async (importOriginal) => {
       if (parsed.apiUrl.includes('/repos/acme/malicious/')) {
         return { kind: 'content' as const, content: 'MALICIOUS skill content' }
       }
+      if (parsed.apiUrl.includes('/repos/acme/truncated/')) {
+        return { kind: 'content' as const, content: 'TRUNCATED skill content' }
+      }
       return { kind: 'not-found' as const }
     }),
   }
 })
 
 vi.mock('../../indexer/_shared/security-scanner-edge.ts', () => ({
-  scanSkillContent: vi.fn(async (content: string) =>
-    content.includes('MALICIOUS')
+  scanSkillContent: vi.fn(async (content: string) => {
+    if (content.includes('TRUNCATED')) {
+      return {
+        findings: [],
+        riskScore: 0,
+        passed: true,
+        contentHash: 'hash-truncated',
+        multilineTruncated: true,
+      }
+    }
+    return content.includes('MALICIOUS')
       ? {
           findings: [{ type: 'code_execution', severity: 'critical' }],
           riskScore: 90,
@@ -74,8 +86,13 @@ vi.mock('../../indexer/_shared/security-scanner-edge.ts', () => ({
           contentHash: 'hash-bad',
         }
       : { findings: [], riskScore: 0, passed: true, contentHash: 'hash-clean' }
-  ),
-  shouldQuarantine: (scan: { riskScore: number }) => scan.riskScore >= 40,
+  }),
+  // SMI-6020: stale-reconciliation.ts now calls shouldQuarantineFailClosed +
+  // isScanTruncated (not shouldQuarantine directly) — the stub MUST carry the
+  // same fail-closed semantics or T2.24 would pass vacuously (design §2.7 note).
+  shouldQuarantineFailClosed: (scan: { riskScore: number; multilineTruncated?: boolean }) =>
+    scan.riskScore >= 40 || scan.multilineTruncated === true,
+  isScanTruncated: (scan: { multilineTruncated?: boolean }) => scan.multilineTruncated === true,
   summarizeFindings: (findings: Array<{ type: string }>) => findings.map((f) => f.type).join(', '),
 }))
 
@@ -334,6 +351,23 @@ describe('verifyAndReconcileStaleSkill — outcome routing (SMI-5551 item 2)', (
     )
     expect(outcome).toBe('error')
     expect(errSpy).toHaveBeenCalled()
+  })
+
+  // T2.24 (SMI-6020, design §2.7): a truncated (score 0, multilineTruncated:
+  // true) scan on a live row must quarantine — fail-closed — not live-refresh.
+  it('live + truncated scan → malicious-quarantined, no security_score key in the update', async () => {
+    const { db, updates } = makeDb({})
+    const outcome = await verifyAndReconcileStaleSkill(
+      db,
+      makeRow('x', 'https://github.com/acme/truncated'),
+      {}
+    )
+    expect(outcome).toBe('malicious-quarantined')
+    expect(updates).toHaveLength(1)
+    const q = updates[0]
+    expect(q.payload.quarantined).toBe(true)
+    expect(q.payload).not.toHaveProperty('security_score')
+    expect(q.payload).not.toHaveProperty('security_findings')
   })
 })
 

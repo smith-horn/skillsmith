@@ -33,7 +33,10 @@
  */
 
 import {
-  shouldQuarantine,
+  QUARANTINE_THRESHOLD,
+  shouldQuarantineFailClosed,
+  isScanTruncated,
+  ROOT_SCAN_LABEL,
   summarizeFindings,
   scanSkillContent,
   type EdgeScanResult,
@@ -86,14 +89,34 @@ export function buildQuarantineReason(
   owner: string,
   name: string
 ): string {
-  if (!shouldQuarantine(scanResult)) {
+  if (!shouldQuarantineFailClosed(scanResult)) {
     return ''
   }
 
-  const findingSummary = summarizeFindings(scanResult.findings)
   const appealUrl = `https://www.skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
 
-  return `Security scan detected ${scanResult.findings.length} finding${scanResult.findings.length === 1 ? '' : 's'} (risk score: ${scanResult.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
+  // SMI-6020 (design §3.3.6/§2.6): truncation is the SOLE trigger (sub-threshold
+  // score, but the multiline scan hit its per-pattern iteration ceiling). This is
+  // load-bearing, not cosmetic: without a dedicated non-empty message here,
+  // shouldQuarantineFailClosed's truncation-only quarantine above would pair with
+  // an EMPTY reason — the exact ADR-112 Contract 4 violation SMI-5357 fixed. The
+  // message must still start with "Security scan" — dequarantine-false-positives.ts
+  // loads its cohort via `.filter('quarantine_reason', 'ilike', 'security scan%')`,
+  // and a differently-prefixed reason would make the row permanently unclearable.
+  if (isScanTruncated(scanResult) && scanResult.riskScore < QUARANTINE_THRESHOLD) {
+    return `Security scan incomplete: the multiline pattern scan hit its per-pattern iteration ceiling in ${ROOT_SCAN_LABEL}, so the computed risk score (${scanResult.riskScore}/100) is a known under-count. This skill is held quarantined pending a complete scan. Appeal at ${appealUrl}`
+  }
+
+  const findingSummary = summarizeFindings(scanResult.findings)
+  const base = `Security scan detected ${scanResult.findings.length} finding${scanResult.findings.length === 1 ? '' : 's'} (risk score: ${scanResult.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
+
+  // SMI-6020: co-occurring truncation (a real trigger AND the scan truncated) —
+  // append a lower-bound clause without changing the existing prefix.
+  if (isScanTruncated(scanResult)) {
+    return `${base} Scan incomplete in ${ROOT_SCAN_LABEL} — the risk score is a lower bound.`
+  }
+
+  return base
 }
 
 /**

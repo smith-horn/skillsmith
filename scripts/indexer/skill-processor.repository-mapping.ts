@@ -15,7 +15,7 @@
  * erased at compile time).
  */
 
-import { shouldQuarantine, QUARANTINE_THRESHOLD } from './_shared/security-scanner-edge.ts'
+import { shouldQuarantineFailClosed, QUARANTINE_THRESHOLD } from './_shared/security-scanner-edge.ts'
 import { deriveCompatibility } from './compatibility-map.ts'
 import type { HighTrustAuthor } from './high-trust-authors.ts'
 import type { GitHubRepository } from './topic-search.ts'
@@ -99,9 +99,9 @@ export function repositoryToSkill(
 
   // SMI-5436 Wave 2: prefer merged scan (SKILL.md + siblings) when available
   const quarantined = mergedScan
-    ? mergedScan.quarantine
+    ? mergedScan.quarantine // already fail-closed via mergeSiblingScans
     : securityScan
-      ? shouldQuarantine(securityScan)
+      ? shouldQuarantineFailClosed(securityScan)
       : false
 
   const quarantineReason = mergedScan

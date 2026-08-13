@@ -22,7 +22,14 @@ import {
   BASE_OPTS,
   CLEAN_CONTENT,
 } from './recheck.test-helpers.ts'
-import { generateContentHash } from '../../indexer/_shared/security-scanner-edge.ts'
+import {
+  generateContentHash,
+  scanSkillContent,
+  MAX_MULTILINE_ITERATIONS_PER_PATTERN,
+  type EdgeScanResult,
+} from '../../indexer/_shared/security-scanner-edge.ts'
+import { newRateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
+import { runSiblingRescan } from '../../indexer/revalidate-stale-quarantines.sibling.ts'
 
 // writeIndexerAuditLog is mocked so we can assert the audit row shape directly
 // (eventResult + the recheck counters object + run_type) without a DB double.
@@ -30,6 +37,91 @@ const writeIndexerAuditLog = vi.fn(async () => undefined)
 vi.mock('../../indexer/indexer-audit-log.ts', () => ({
   writeIndexerAuditLog: (...args: unknown[]) => writeIndexerAuditLog(...args),
 }))
+
+// ---------------------------------------------------------------------------
+// SMI-6020 (design §2.7 T2.19-T2.20): runSiblingRescan truncation fail-closed
+// ---------------------------------------------------------------------------
+
+describe('runSiblingRescan — SMI-6020 truncation fail-closed', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // T2.19
+  it('returns unknown (not malicious, not clean) when the root scan truncated, and never fetches siblings', async () => {
+    const truncatedRoot: EdgeScanResult = {
+      passed: true,
+      riskScore: 0,
+      findings: [],
+      contentHash: '0'.repeat(64),
+      scannedAt: '2026-08-11T00:00:00.000Z',
+      scanDurationMs: 0,
+      multilineTruncated: true,
+    }
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await runSiblingRescan(
+      'acme',
+      'my-skill',
+      'main',
+      '',
+      newRateLimitTelemetry(),
+      truncatedRoot
+    )
+
+    expect(result).toEqual({ status: 'unknown', scanIncomplete: true })
+    // Budget guard: the CDN fetch loop must never start when the root itself truncated.
+    expect(fetchSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  // T2.20
+  it('returns unknown when a sibling scan truncated and nothing is rejectable', async () => {
+    // 'dev mode override ' repeated matches the same content-scope
+    // JB_JS3A_DEV_MODE_THEN_CAPABILITY pattern as scan-skill-bundle.test.ts's
+    // T2.11 (via CAPABILITY_SRC's bare `override` alternative — shorter than
+    // T2.11's phrase so 11,000 reps stays under MAX_SIBLING_CONTENT_BYTES,
+    // unlike a sibling fetch — which the primary-content path is not bound
+    // by). No code_execution/obfuscated_directive findings, so
+    // siblingRejectable stays false and the loop runs to completion.
+    const truncatingContent = 'dev mode override '.repeat(
+      MAX_MULTILINE_ITERATIONS_PER_PATTERN + 1000
+    )
+    const cleanRoot = await scanSkillContent(CLEAN_CONTENT)
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: unknown) => {
+      const urlStr = String(url)
+      if (urlStr.endsWith('/.mcp.json')) {
+        const bytes = new TextEncoder().encode(truncatingContent)
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes)
+              controller.close()
+            },
+          }),
+        } as unknown as Response)
+      }
+      // Every other sibling target: confirmed absent (404).
+      return Promise.resolve({ ok: false, status: 404, headers: { get: () => null } } as Response)
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await runSiblingRescan(
+      'acme',
+      'my-skill',
+      'main',
+      '',
+      newRateLimitTelemetry(),
+      cleanRoot
+    )
+
+    expect(result).toEqual({ status: 'unknown', scanIncomplete: true })
+    warnSpy.mockRestore()
+  })
+})
 
 // ---------------------------------------------------------------------------
 // SMI-5437 Wave 2 — sibling re-scan outcomes through runRecheck
