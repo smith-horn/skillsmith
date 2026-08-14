@@ -92,6 +92,89 @@ export async function pMapBounded<T, R>(
   return results
 }
 
+/** Returned from `onOutcome` to request an immediate, cooperative abort of a `runCancellablePool`. */
+export interface PoolAbortSignal {
+  reason: Error
+}
+
+export interface CancellablePoolResult {
+  /** Non-null iff the pool stopped early — either `processItem` threw or `onOutcome` signalled abort. */
+  abortedBy: Error | null
+  /**
+   * True iff the pool stopped because `deadlineAtMs` was reached — distinct
+   * from `abortedBy`: a deadline is an EXPECTED, non-fatal way to stop (the
+   * caller decides what to do next), never something to rethrow the way a
+   * fatal `abortedBy` condition is.
+   */
+  deadlineExceeded: boolean
+}
+
+/**
+ * Bounded-concurrency worker pool, calling `processItem` for each item and
+ * `onOutcome` synchronously after every completion. SMI-6015: deliberately
+ * NOT the same as `pMapBounded` above — that helper's worker loops have no
+ * shared cancellation check, so a caller that "aborts" by rejecting the
+ * awaited `Promise.all` does nothing to stop the OTHER concurrent workers —
+ * they keep pulling and processing items to the end of the list regardless,
+ * silently defeating the whole point of an abort. `pMapBounded` itself is
+ * intentionally left unchanged (many unrelated callers depend on its
+ * simpler, non-cancellable contract); this is a separate, additive
+ * primitive for callers that specifically need cooperative cancellation —
+ * originally built for SMI-5879's GitHub-App-token-expiry / 401-abort /
+ * circuit-breaker requirements (`smi5879-census.branches.ts`,
+ * `smi5879-simulate-full.ts`), generalized here so both share one
+ * correctness-reviewed implementation instead of two parallel copies.
+ *
+ * Workers check a shared `abortedBy` flag (and, if given, a `deadlineAtMs`)
+ * BEFORE pulling each new item AND again immediately AFTER `processItem`
+ * resolves, before calling `onOutcome` — the second check matters because a
+ * sibling worker (or the deadline) can flip the stop condition while this
+ * worker's own call was still in flight; without it, a result that raced
+ * past an abort would still get processed (GPT-5.6-Sol review, 2026-08-14).
+ */
+export async function runCancellablePool<TItem, TOutcome>(
+  items: readonly TItem[],
+  processItem: (item: TItem) => Promise<TOutcome>,
+  onOutcome: (outcome: TOutcome, completedCount: number) => PoolAbortSignal | void,
+  concurrency: number,
+  deadlineAtMs?: number
+): Promise<CancellablePoolResult> {
+  let cursor = 0
+  let completedCount = 0
+  let abortedBy: Error | null = null
+  let deadlineExceeded = false
+
+  function deadlineHit(): boolean {
+    if (deadlineAtMs === undefined) return false
+    if (Date.now() < deadlineAtMs) return false
+    deadlineExceeded = true
+    return true
+  }
+
+  async function worker(): Promise<void> {
+    while (!abortedBy && !deadlineHit()) {
+      const i = cursor++
+      const item = items[i]
+      if (item === undefined) return // i >= items.length
+      let outcome: TOutcome
+      try {
+        outcome = await processItem(item)
+      } catch (err) {
+        if (!abortedBy) abortedBy = err instanceof Error ? err : new Error(String(err))
+        return
+      }
+      if (abortedBy || deadlineHit()) return
+      completedCount++
+      const signal = onOutcome(outcome, completedCount)
+      if (signal && !abortedBy) abortedBy = signal.reason
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(concurrency, items.length))
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  return { abortedBy, deadlineExceeded }
+}
+
 /**
  * SMI-4852: Exponential-backoff wrapper for GitHub fetches that may hit
  * secondary rate limits. Honors `retry-after` header on 403/429; doubles up

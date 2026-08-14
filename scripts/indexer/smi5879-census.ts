@@ -48,8 +48,12 @@ import {
   nullable,
   type PgConnParams,
 } from './smi5879-census.pg.ts'
-import { resolveDefaultBranches } from './smi5879-census.branches.ts'
-import { runInvariantChecks } from './smi5879-census.invariants.ts'
+import {
+  resolveDefaultBranches,
+  sweepTransientRepos,
+  queryBranchResolutionCounts,
+} from './smi5879-census.branches.ts'
+import { runInvariantChecks, checkI6BranchResolutionQuality } from './smi5879-census.invariants.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import { newRateLimitTelemetry } from './_shared/rate-limit.ts'
 import type {
@@ -316,9 +320,42 @@ export async function runCensus(conn: PgConnParams, args: CliArgs): Promise<Smi5
 
     const isFetchingGeneration = args.purpose !== 'window'
     if (isFetchingGeneration) {
-      const headers = await buildGitHubHeaders('skillsmith-smi5879-census/1.0')
+      // SMI-6015: a callback, not a frozen headers object — buildGitHubHeaders()
+      // is invoked fresh on every retry attempt inside resolveOne, not once for
+      // the whole (potentially multi-hour) pass. getInstallationToken() caches
+      // and only re-mints near expiry, so this costs ~nil when still fresh.
+      const getHeaders = () => buildGitHubHeaders('skillsmith-smi5879-census/1.0')
       const telemetry = newRateLimitTelemetry()
-      branchSummary = await resolveDefaultBranches(conn, runId, headers, telemetry)
+      branchSummary = await resolveDefaultBranches(conn, runId, getHeaders, telemetry)
+
+      // Item 6: bounded re-resolution sweep over any still-transient rows,
+      // BEFORE seal (the guard permits UPDATE while status='open'). Reduces
+      // how often the I-6 gate immediately below actually fires.
+      const sweep = await sweepTransientRepos(conn, runId, getHeaders, telemetry)
+      if (sweep) {
+        const dbCounts = await queryBranchResolutionCounts(conn, runId)
+        branchSummary = {
+          ...branchSummary,
+          resolved: dbCounts.resolved,
+          not_found: dbCounts.not_found,
+          transient: dbCounts.transient,
+          reresolution_sweep: sweep,
+        }
+      }
+
+      // SMI-6015 (GPT-5.6-Sol review, 2026-08-14): I-6 MUST gate seal(), not
+      // just be reported alongside I-1..I-5 afterward — `runInvariantChecks`
+      // below runs post-seal for the REPORT, but a generation is immutable
+      // once sealed (smi5879_snapshot_guard), so checking I-6 only after
+      // seal() would let a still-bad generation get sealed and reported as
+      // "sealed" (implying success) even though its own invariant report
+      // says otherwise. Throwing here (same as a 401/circuit-breaker abort)
+      // skips seal() entirely and leaves the generation status='open' —
+      // diagnosable, never falsely "sealed".
+      const i6 = await checkI6BranchResolutionQuality(conn, runId)
+      if (!i6.passed) {
+        throw new Error(`SMI-5879: refusing to seal — I-6 (${i6.name}) failed: ${i6.detail}`)
+      }
     }
 
     await seal(conn, runId)
@@ -373,7 +410,13 @@ function printSummary(report: Smi5879CensusReport): void {
       (report.branch_resolution
         ? `  branch resolution:   ${report.branch_resolution.resolved} resolved, ` +
           `${report.branch_resolution.not_found} not-found, ${report.branch_resolution.transient} transient, ` +
-          `${report.branch_resolution.unparseable} unparseable-repo_url (of ${report.branch_resolution.distinct_repos} distinct repos)\n`
+          `${report.branch_resolution.unparseable} unparseable-repo_url (of ${report.branch_resolution.distinct_repos} distinct repos)\n` +
+          (report.branch_resolution.reresolution_sweep
+            ? `  re-resolution sweep: ${report.branch_resolution.reresolution_sweep.passes_run} pass(es) over ` +
+              `${report.branch_resolution.reresolution_sweep.repos_reattempted} repo(s), ` +
+              `${report.branch_resolution.reresolution_sweep.remaining_transient} still transient` +
+              `${report.branch_resolution.reresolution_sweep.wall_clock_stopped ? ' (wall-clock-capped)' : ''}\n`
+            : '')
         : '') +
       `  invariants:          ${report.invariants.filter((i) => i.passed).length}/${report.invariants.length} passed\n`
   )

@@ -12,6 +12,26 @@
 
 let cachedInstallationToken: { token: string; expiresAt: number } | null = null
 
+/**
+ * SMI-6015: base class for a GitHub API response indicating the current
+ * credential (GitHub App installation token or PAT) is no longer valid --
+ * HTTP 401. GitHub returns 404, not 401, for a resource the token
+ * legitimately cannot see, so a 401 is unambiguous evidence of a
+ * dead/expired/revoked credential -- a pass-level failure, never a per-repo
+ * or per-request condition to retry or reclassify as generic `transient`.
+ * Subclasses (`smi5879-census.branches.helpers.ts`'s `BranchResolutionAuthError`,
+ * `smi5879-simulate-full.helpers.ts`'s `PrimaryFetchAuthError`) add call-site
+ * context; callers that observe this should treat it as fatal to the whole
+ * run.
+ */
+export class GitHubAuthError extends Error {
+  readonly status = 401 as const
+  constructor(message: string) {
+    super(message)
+    this.name = 'GitHubAuthError'
+  }
+}
+
 export function normalizePemKey(key: string): string {
   let normalized = key
 
