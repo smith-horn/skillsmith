@@ -17,6 +17,10 @@ import {
   isWithinInlineCode,
 } from './SecurityScanner.helpers.js'
 import { safeRegexTest } from './regex-utils.js'
+import {
+  FETCH_COMMAND_PATTERN,
+  isCorrelatedWithFetchDestination,
+} from './SecurityScanner.fetch-correlation.js'
 
 /**
  * SMI-5424 PR2: owner-permission chmod is a COMPOUND signal, not standalone —
@@ -43,37 +47,11 @@ import { safeRegexTest } from './regex-utils.js'
 // in install scripts and malicious droppers) still matches.
 const OWNER_PERM_CHMOD =
   /\bchmod\s+(?:-[A-Za-z]+\s+)?(?:[0-7]{3,4}|[ugoa]*(?:[+\-=][rwxXstugo]+(?:,[ugoa]*[+\-=][rwxXstugo]*)*)+)/i
-// FIX-1: actual fetch COMMANDS only — bare prose tokens (`# downloaded`, `See https://…`,
-// `npx tool init`) false-fired next to a chmod. curl/wget/git-clone, and npx only with a URL.
-const CHMOD_FETCH_CONTEXT = /\b(?:curl|wget)\b|\bgit\s+clone\b|\bnpx\b[^\n]{0,80}https?:\/\//i
 // FIX-2: capture the chmod target path so a fetch command anywhere correlates by basename.
 // SMI-5433: prefix widened to match the same extended forms as OWNER_PERM_CHMOD; capture
 // group (\S+) (the target path) is unchanged.
 const CHMOD_TARGET =
   /\bchmod\s+(?:-[A-Za-z]+\s+)?(?:[0-7]{3,4}|[ugoa]*(?:[+\-=][rwxXstugo]+(?:,[ugoa]*[+\-=][rwxXstugo]*)*)+)\s+(\S+)/i
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-// SMI-5431: the IMPLICIT download destination of a fetch command — the file written with
-// NO explicit -o/-O/--output<space>/> redirect: `wget <url>` (no -O/-o) → URL last segment;
-// `git clone <url>` → repo dir (minus `.git`); `curl --output=<file>` (equals form, missed by
-// the explicit regex). A bare `curl <url>` GET writes to STDOUT → '' (never correlates). ReDoS-safe.
-function implicitDownloadBasename(line: string): string {
-  const lastSegment = (urlAfterScheme: string): string => {
-    const noFrag = urlAfterScheme.split(/[?#]/)[0]
-    const slash = noFrag.indexOf('/') // first slash = end of host
-    if (slash < 0) return '' // host only -> wget writes index.html
-    const path = noFrag.slice(slash + 1).replace(/\/+$/, '')
-    return path === '' ? '' : (path.split('/').pop() ?? '')
-  }
-  const wget = line.match(/\bwget\b(?![^\n]{0,200}\s-[oO]\b)[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
-  if (wget) return lastSegment(wget[1])
-  const clone = line.match(/\bgit\s+clone\b[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
-  if (clone) return lastSegment(clone[1]).replace(/\.git$/i, '')
-  const curlEq = line.match(/\bcurl\b[^\n]{0,200}?--output=['"]?(\S{1,400})/i)
-  if (curlEq) return curlEq[1].replace(/['"]/g, '').split('/').pop() ?? ''
-  return ''
-}
 
 export function scanChmodFetchCompound(
   content: string,
@@ -85,9 +63,9 @@ export function scanChmodFetchCompound(
   const contexts = lineContexts ?? analyzeMarkdownContext(content)
   // FIX-2: lines carrying a fetch command, for distance-independent correlation.
   // H-6 (SMI-5433): route through safeRegexTest so the 10,000-char cap applies uniformly
-  // to the per-line filter too (CHMOD_FETCH_CONTEXT is provably linear, so this is
+  // to the per-line filter too (FETCH_COMMAND_PATTERN is provably linear, so this is
   // defense-in-depth consistency, not a ReDoS fix).
-  const fetchLines = lines.filter((l) => safeRegexTest(CHMOD_FETCH_CONTEXT, l) !== null)
+  const fetchLines = lines.filter((l) => safeRegexTest(FETCH_COMMAND_PATTERN, l) !== null)
 
   lines.forEach((line, index) => {
     const lineNumber = index + 1
@@ -98,7 +76,7 @@ export function scanChmodFetchCompound(
     // Bounded ±1-line window for the download-then-chmod adjacency.
     const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
     // H-6 (SMI-5433): route through safeRegexTest for the 10,000-char cap.
-    const adjacentFetch = safeRegexTest(CHMOD_FETCH_CONTEXT, window) !== null
+    const adjacentFetch = safeRegexTest(FETCH_COMMAND_PATTERN, window) !== null
     // FIX-2 + SMI-5431: correlate the chmod target basename (≥3 chars) against a fetch
     // command's DOWNLOAD DESTINATION anywhere — explicit (-o/-O/--output<space>/>, with an
     // optional leading path) via regex, OR implicit (wget/git-clone/curl --output=) via
@@ -110,10 +88,7 @@ export function scanChmodFetchCompound(
     if (tm) {
       const base = tm[1].replace(/['"]/g, '').split('/').pop() ?? ''
       if (base.length >= 3) {
-        const re = new RegExp(
-          `(?:-o|-O|--output|>>?)\\s*['"]?(?:[^\\s'"]*/)?${escapeRegExp(base)}(?:[\\s'"?]|$)`
-        )
-        correlated = fetchLines.some((l) => re.test(l) || implicitDownloadBasename(l) === base)
+        correlated = isCorrelatedWithFetchDestination(base, fetchLines)
       }
     }
     if (!adjacentFetch && !correlated) return // benign standalone chmod — no finding
