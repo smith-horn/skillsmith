@@ -459,7 +459,7 @@ describe('apply_namespace_rename — action: revert', () => {
 
 describe('apply_namespace_rename — schema drift guardrail', () => {
   it('keeps the hand-written JSON Schema action enum in sync with the Zod schema', () => {
-    const zodValues = applyNamespaceRenameInputSchema.innerType().shape.action.options
+    const zodValues = applyNamespaceRenameInputSchema.shape.action.options
     const jsonSchemaValues = applyNamespaceRenameToolSchema.inputSchema.properties.action.enum
     expect(new Set(jsonSchemaValues)).toEqual(new Set(zodValues))
     expect(jsonSchemaValues).toHaveLength(zodValues.length)
