@@ -51,14 +51,14 @@
   },
   "devDependencies": {
     "@skillsmith/mcp-server": "^0.7.8",
-    "@smithy/config-resolver": "4.6.10",
-    "@smithy/core": "3.29.5",
-    "@smithy/middleware-endpoint": "4.6.10",
-    "@smithy/middleware-retry": "4.7.10",
-    "@smithy/protocol-http": "5.5.10",
-    "@smithy/smithy-client": "4.14.10",
+    "@smithy/config-resolver": "4.6.16",
+    "@smithy/core": "3.31.1",
+    "@smithy/middleware-endpoint": "4.6.16",
+    "@smithy/middleware-retry": "4.7.16",
+    "@smithy/protocol-http": "5.5.16",
+    "@smithy/smithy-client": "4.14.16",
     "@smithy/types": "4.16.1",
-    "@smithy/util-retry": "4.5.10",
+    "@smithy/util-retry": "4.5.16",
     "vitest": "4.1.10"
   },
   "peerDependencies": {
