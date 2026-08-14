@@ -6,9 +6,6 @@
  */
 
 import { homedir } from 'os'
-import { getCliLogger } from '../cli-logger.js'
-
-const logger = getCliLogger()
 
 /**
  * Sanitize error messages to remove user-specific paths
@@ -38,17 +35,4 @@ export function sanitizeError(error: unknown): string {
   sanitized = sanitized.replace(/C:\\Users\\[^\\]+\\/gi, '~\\')
 
   return sanitized
-}
-
-/**
- * Log error with sanitization
- *
- * Convenience function to log errors with automatic sanitization.
- * Useful for consistent error logging across the CLI.
- *
- * @param prefix - Prefix text before the error (e.g., "Import failed:")
- * @param error - The error to log
- */
-export function logSanitizedError(prefix: string, error: unknown): void {
-  logger.error(`${prefix} ${sanitizeError(error)}`)
 }

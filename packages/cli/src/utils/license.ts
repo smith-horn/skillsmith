@@ -29,7 +29,7 @@ export {
 } from './license-validation.js'
 
 // Import types for internal use
-import type { LicenseTier, QuotaInfo, LicenseStatus } from './license-types.js'
+import type { LicenseTier, LicenseStatus } from './license-types.js'
 import { getLicenseStatus } from './license-validation.js'
 
 // ============================================================================
@@ -53,77 +53,6 @@ export function formatTierBadge(tier: LicenseTier): string {
     case 'community':
     default:
       return chalk.yellow('Community')
-  }
-}
-
-/**
- * Display a progress bar for quota usage
- *
- * @param used - API calls used
- * @param limit - API call limit
- * @returns Formatted progress bar string
- */
-export function displayQuotaProgressBar(used: number, limit: number): string {
-  const width = 30
-  const percent = Math.min((used / limit) * 100, 100)
-  const filled = Math.round((percent / 100) * width)
-  const empty = width - filled
-
-  // Color based on usage level
-  let color = chalk.green
-  if (percent >= 90) color = chalk.red
-  else if (percent >= 80) color = chalk.yellow
-
-  const bar = color('█'.repeat(filled)) + chalk.gray('░'.repeat(empty))
-  return `[${bar}] ${percent.toFixed(0)}%`
-}
-
-/**
- * Display a quota warning box
- *
- * @param quota - Quota information
- * @param tier - Current tier for upgrade suggestions
- */
-export function displayQuotaWarning(quota: QuotaInfo, tier: LicenseTier): void {
-  const percentUsed = quota.percentUsed
-  const resetFormatted = quota.resetAt.toLocaleDateString()
-
-  console.log()
-  if (percentUsed >= 100) {
-    console.log(chalk.red('━'.repeat(50)))
-    console.log(chalk.red.bold('❌ API Quota Exceeded'))
-    console.log(chalk.red(`You've used all ${quota.limit.toLocaleString()} API calls this month`))
-    console.log(chalk.red(`Quota resets on ${resetFormatted}`))
-    if (tier !== 'enterprise') {
-      console.log(chalk.dim(`Upgrade at: https://skillsmith.app/upgrade`))
-    }
-    console.log(chalk.red('━'.repeat(50)))
-  } else if (percentUsed >= 90) {
-    console.log(chalk.yellow('━'.repeat(50)))
-    console.log(chalk.yellow.bold('⚠️  API Quota Warning'))
-    console.log(
-      chalk.yellow(
-        `You've used ${percentUsed.toFixed(0)}% of your monthly quota (${quota.used.toLocaleString()}/${quota.limit.toLocaleString()})`
-      )
-    )
-    console.log(
-      chalk.yellow(
-        `${(quota.limit - quota.used).toLocaleString()} calls remaining until ${resetFormatted}`
-      )
-    )
-    if (tier !== 'enterprise') {
-      console.log(chalk.dim(`Upgrade at: https://skillsmith.app/upgrade`))
-    }
-    console.log(chalk.yellow('━'.repeat(50)))
-  } else if (percentUsed >= 80) {
-    console.log(chalk.yellow('━'.repeat(50)))
-    console.log(chalk.yellow('⚠️  Approaching API Quota Limit'))
-    console.log(
-      chalk.yellow(
-        `${percentUsed.toFixed(0)}% used (${quota.used.toLocaleString()}/${quota.limit.toLocaleString()})`
-      )
-    )
-    console.log(chalk.yellow('━'.repeat(50)))
   }
 }
 

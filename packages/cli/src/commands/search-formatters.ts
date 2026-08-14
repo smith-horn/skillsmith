@@ -8,7 +8,7 @@
 
 import chalk from 'chalk'
 import Table from 'cli-table3'
-import { DEFAULT_RISK_THRESHOLD, type SearchResult, type TrustTier } from '@skillsmith/core'
+import { DEFAULT_RISK_THRESHOLD, type SearchResult } from '@skillsmith/core'
 import type { TrustTierColors } from './search-types.js'
 
 /**
@@ -176,11 +176,4 @@ export function displaySkillDetails(result: SearchResult): void {
   console.log('  Created: ' + skill.createdAt)
   console.log('  Updated: ' + skill.updatedAt)
   console.log()
-}
-
-/**
- * Get color function for a trust tier
- */
-export function getTrustTierColor(tier: TrustTier): (text: string) => string {
-  return TRUST_TIER_COLORS[tier]
 }
