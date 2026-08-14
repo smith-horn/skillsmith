@@ -159,10 +159,58 @@ export async function checkI5BranchCoverage(
 }
 
 /**
- * Run I-1 through I-5 (I-5 only for a fetching generation) and return every
- * result. Callers fail closed — any `passed === false` result means the census
- * tool must exit non-zero, naming which invariant failed and why (each result's
- * `detail` is written verbatim into the census report and echoed on stderr).
+ * I-6 branch-resolution quality (SMI-6015) — zero-tolerance for a `transient`
+ * `smi5879_repo_branch.resolution` row at seal time, for the same reason I-5
+ * is scoped to a fetching generation: only `rehearsal`/`decision`
+ * generations populate `smi5879_repo_branch` at all.
+ *
+ * Zero-tolerance (any count > 0 fails), matching the zero-tolerance posture
+ * already established for G-1 ("every row in R has a recorded disposition")
+ * and — the more directly analogous downstream gate — G-2 ("zero rows in
+ * C1-C4 report the `unevaluable` outcome"), rather than inventing a
+ * percentage threshold here. The rationale: every `transient`
+ * `smi5879_repo_branch` row resolves to `unevaluable` in the simulator
+ * (`smi5879-simulate-full.helpers.ts`'s `processRow`), which G-2
+ * zero-tolerates — so a census sealed with ANY transient row is already
+ * guaranteed to fail G-2 after a potentially multi-day simulate-full run.
+ * Catching it here, at the census's own invariant layer, immediately after
+ * sealing (matching I-1..I-5's own timing — see this module's header),
+ * makes that guaranteed-downstream-failure diagnosable in minutes instead of
+ * days. `smi5879-census.ts`'s `runCensus()` already runs a bounded
+ * re-resolution sweep (`sweepTransientRepos`) over transient rows before
+ * seal specifically to minimize how often this actually fires — but this
+ * check does not depend on that sweep having run; it only verifies the
+ * state that is actually in `smi5879_repo_branch` at invariant-check time.
+ */
+export async function checkI6BranchResolutionQuality(
+  conn: PgConnParams,
+  runId: string
+): Promise<InvariantResult> {
+  const raw = await queryScalar(
+    conn,
+    `SELECT count(*) FROM smi5879_repo_branch WHERE run_id = :'run_id' AND resolution = 'transient'`,
+    { run_id: runId }
+  )
+  const n = Number(raw ?? '0')
+  return {
+    id: 'I-6',
+    name: 'branch-resolution quality',
+    passed: n === 0,
+    detail:
+      n === 0
+        ? 'zero transient branch-resolution rows'
+        : `${n} smi5879_repo_branch row(s) still report resolution='transient' — every one of these ` +
+          "would resolve to 'unevaluable' in the simulator, which the G-2 coverage gate " +
+          'zero-tolerates; re-run the census or investigate GitHub API/credential health before proceeding',
+  }
+}
+
+/**
+ * Run I-1 through I-6 (I-5/I-6 only for a fetching generation) and return
+ * every result. Callers fail closed — any `passed === false` result means the
+ * census tool must exit non-zero, naming which invariant failed and why (each
+ * result's `detail` is written verbatim into the census report and echoed on
+ * stderr).
  */
 export async function runInvariantChecks(
   conn: PgConnParams,
@@ -177,6 +225,7 @@ export async function runInvariantChecks(
   ]
   if (isFetchingGeneration) {
     results.push(await checkI5BranchCoverage(conn, runId))
+    results.push(await checkI6BranchResolutionQuality(conn, runId))
   }
   return results
 }

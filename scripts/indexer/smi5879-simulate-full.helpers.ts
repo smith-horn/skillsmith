@@ -13,7 +13,8 @@
 import { shouldQuarantine, generateContentHash } from './_shared/security-scanner-edge.ts'
 import { parseSkillMdUrl, fetchSkillMd, type ParsedSkillUrl } from './_shared/skill-md-fetch.ts'
 import { fetchSiblingContent, type ScanSkillBundleResult } from './skill-processor.security.ts'
-import type { RateLimitTelemetry } from './_shared/rate-limit.ts'
+import { runCancellablePool, type RateLimitTelemetry } from './_shared/rate-limit.ts'
+import { GitHubAuthError } from './_shared/github-auth.ts'
 import { withFetchRetry, type FetchRetryOptions } from './smi5879-fetch-retry.ts'
 import { resolveTokenSource } from './backfill-checkpoint.ts'
 import type {
@@ -56,6 +57,37 @@ export function assertPatTokenSource(env: NodeJS.ProcessEnv = process.env): Toke
 
 const DEFAULT_FETCH_RETRY_OPTIONS: FetchRetryOptions = {}
 
+/**
+ * SMI-6015: thrown by `retryPrimaryFetch` on an HTTP 401 — a credential-level
+ * failure, not a per-row condition. `_shared/skill-md-fetch.ts`'s
+ * `fetchSkillMd` is a SHARED primitive (also used by
+ * `dequarantine-false-positives.ts`, `stale-reconciliation.ts`, and
+ * `revalidate-stale-quarantines.ts`, each with its own fail-open/fail-closed
+ * semantics for a `transient` result) — deliberately NOT changed to throw on
+ * 401 itself, which would alter behavior for all of those unrelated callers.
+ * Instead this simulator-local adapter inspects `fetchSkillMd`'s already-
+ * classified `{kind:'transient', status:401}` result and escalates ONLY
+ * here, where a multi-day unattended run makes silently burning retries (and
+ * ultimately classifying every subsequent row `unevaluable`) on a dead token
+ * far more costly than in any of `fetchSkillMd`'s other callers.
+ * `withFetchRetry` only retries a `RateLimitError`
+ * (`smi5879-fetch-retry.ts:106-115`) — any other thrown error, including
+ * this one, propagates immediately without consuming retry budget.
+ */
+export class PrimaryFetchAuthError extends GitHubAuthError {
+  constructor(
+    public readonly owner: string,
+    public readonly repo: string
+  ) {
+    super(
+      `SMI-5879/SMI-6015: GitHub returned 401 (Unauthorized) fetching SKILL.md for ${owner}/${repo} ` +
+        '— credential-level failure. Aborting the simulation run rather than classifying this (and ' +
+        "every subsequent row hitting the same dead token) as 'unevaluable'."
+    )
+    this.name = 'PrimaryFetchAuthError'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Retry-wrapped fetch adapters
 // ---------------------------------------------------------------------------
@@ -67,18 +99,27 @@ const DEFAULT_FETCH_RETRY_OPTIONS: FetchRetryOptions = {}
  * is passed to `fetchSkillMd` itself — `withFetchRetry` owns ALL retry
  * decisions uniformly; letting `fetchSkillMd`'s own internal retry loop also
  * fire would double-apply backoff with two independent schedules.
+ *
+ * `getHeaders` (SMI-6015) is invoked FRESH on every attempt, not once for
+ * the whole (potentially multi-day) run — see `runSimulateFull`'s own
+ * `getHeaders` callback and `_shared/github-auth.ts`'s `getInstallationToken()`
+ * caching, which makes this ~free when the token is still fresh.
  */
 export async function retryPrimaryFetch(
   parsed: ParsedSkillUrl,
-  headers: Record<string, string>,
+  getHeaders: () => Promise<Record<string, string>>,
   options: FetchRetryOptions = DEFAULT_FETCH_RETRY_OPTIONS
 ): Promise<ReturnType<typeof withFetchRetry>> {
   let lastStatus: number | null = null
   return withFetchRetry(
     async () => {
+      const headers = await getHeaders()
       const result = await fetchSkillMd(parsed, headers, 0)
       if (result.kind === 'content') return { content: result.content }
       if (result.kind === 'not-found') return { removed: true }
+      if (result.status === 401) {
+        throw new PrimaryFetchAuthError(parsed.owner, parsed.repo)
+      }
       lastStatus = result.status
       return null
     },
@@ -187,7 +228,8 @@ export interface ProcessRowDeps {
   scanPostPort: ScanSkillBundleFn
   scanPrePort: ScanSkillBundleFn
   telemetry: RateLimitTelemetry
-  headers: Record<string, string>
+  /** SMI-6015: a callback, not a frozen headers object — see `retryPrimaryFetch`'s doc comment. */
+  getHeaders: () => Promise<Record<string, string>>
   fetchRetryOptions?: FetchRetryOptions
 }
 
@@ -242,7 +284,7 @@ export async function processRow(
     branch = info.default_branch as string // resolution === 'resolved' — default_branch is NOT NULL (CHECK constraint)
   }
 
-  const primaryOutcome = await retryPrimaryFetch(parsed, deps.headers, retryOptions)
+  const primaryOutcome = await retryPrimaryFetch(parsed, deps.getHeaders, retryOptions)
   if ('exhausted' in primaryOutcome) {
     return {
       ...base,
@@ -332,5 +374,58 @@ export async function processRow(
     postPortQuarantine: postVerdict.quarantine,
     prePortRiskScore: preVerdict.riskScore,
     postPortRiskScore: postVerdict.riskScore,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main pass (moved from smi5879-simulate-full.ts — 500-line budget)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the main pass over every not-yet-attempted row (from the checkpoint, if
+ * resuming), in concurrency-bounded batches, checkpointing after each batch.
+ *
+ * SMI-6015 (GPT-5.6-Sol review, 2026-08-14): uses `runCancellablePool`, not
+ * the plain `pMapBounded` this originally shipped with — `pMapBounded` has no
+ * shared cancellation check between its concurrent workers, so a
+ * `PrimaryFetchAuthError` thrown by one worker rejects the outer await while
+ * sibling workers already in flight keep fetching from GitHub in the
+ * background regardless, silently defeating the point of aborting on a dead
+ * credential. `runCancellablePool`'s workers check a shared abort flag both
+ * before AND after each item, so an abort actually stops new work; whatever
+ * partial progress a batch made before the abort is checkpointed via
+ * `onBatchDone` BEFORE rethrowing (durable partial write, never data loss).
+ */
+export async function runMainPass(
+  rows: SimSnapshotRow[],
+  alreadyResults: Map<string, SimRowResult>,
+  branchMap: BranchMap,
+  scanDeps: {
+    scanPostPort: ScanSkillBundleFn
+    scanPrePort: ScanSkillBundleFn
+    telemetry: RateLimitTelemetry
+    // SMI-6015: a callback, not a frozen headers object — see ProcessRowDeps's
+    // doc comment above. This run is multi-day; a token built once at startup
+    // would go stale after GitHub's 1h App-token expiry, same root cause as
+    // the census's own frozen-header bug.
+    getHeaders: () => Promise<Record<string, string>>
+  },
+  onBatchDone: (results: Map<string, SimRowResult>) => Promise<void>
+): Promise<void> {
+  const pending = rows.filter((r) => !alreadyResults.has(r.id))
+  for (let i = 0; i < pending.length; i += CHECKPOINT_BATCH_SIZE) {
+    const batch = pending.slice(i, i + CHECKPOINT_BATCH_SIZE)
+    const outcomes: SimRowResult[] = []
+    const { abortedBy } = await runCancellablePool(
+      batch,
+      (row) => processRow(row, branchMap, scanDeps),
+      (outcome) => {
+        outcomes.push(outcome)
+      },
+      PROCESS_CONCURRENCY
+    )
+    for (const outcome of outcomes) alreadyResults.set(outcome.id, outcome)
+    await onBatchDone(alreadyResults)
+    if (abortedBy) throw abortedBy
   }
 }

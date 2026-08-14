@@ -1,0 +1,434 @@
+/**
+ * Worker-pool, batched-write, circuit-breaker, and progress-logging machinery
+ * for smi5879-census.branches.ts's default_branch resolution pass (SMI-6015).
+ * @module scripts/indexer/smi5879-census.branches.helpers
+ *
+ * Split out of smi5879-census.branches.ts to stay under CLAUDE.md's
+ * <500-line-per-file budget once Wave 3's first production-scale dry run
+ * (SMI-6015) root-caused two bugs in that pass:
+ *
+ * 1. `resolveOne` was called with a FROZEN headers object built once, ~8h
+ *    before the pass finished. GitHub App installation tokens expire after
+ *    1h, so every post-expiry call returned 401 — and `resolveOne` had no
+ *    branch for 401 specifically, falling through to its "unclassified
+ *    status, safe default is transient" catch-all. 25,014 of 28,601 repos
+ *    (87.5%) were recorded `transient`, which `smi5879-simulate-full.
+ *    helpers.ts` maps to `unevaluable`, which the G-2 gate zero-tolerates —
+ *    the generation was structurally guaranteed to fail downstream despite
+ *    the census's own I-1..I-5 invariants all reporting PASS (I-5 only
+ *    checks that every repo has *a* row, not that resolution succeeded).
+ * 2. The write loop spawned one `psql` subprocess per repo, sequentially,
+ *    AFTER every repo had already been resolved (a second full pass over the
+ *    population) — ~0.66s/spawn x 28,601 = ~5h14m of a ~13h run spent on
+ *    writes contributing zero resolution work, with zero visible progress
+ *    until the entire pass finished.
+ *
+ * This module fixes both: `resolveOne` takes a `getHeaders` callback invoked
+ * fresh on every retry attempt (not once for the whole pass — see
+ * `_shared/github-auth.ts`'s `getInstallationToken()`, which caches and only
+ * re-mints near expiry, so this costs ~nil when the token is still fresh);
+ * 401 is fatal and aborts the pass immediately rather than being classified
+ * `transient`; writes are batched via `json_to_recordset` (~500 rows/psql
+ * spawn) and flushed incrementally as outcomes arrive, not held until the
+ * whole pass completes; and a circuit breaker aborts a doomed pass early
+ * instead of continuing for hours.
+ */
+
+import {
+  createTokenBucket,
+  withRateLimitTracking,
+  runCancellablePool,
+  type RateLimitTelemetry,
+  type PoolAbortSignal,
+  type CancellablePoolResult,
+} from './_shared/rate-limit.ts'
+import { GitHubAuthError } from './_shared/github-auth.ts'
+import { runPsql, type PgConnParams } from './smi5879-census.pg.ts'
+import type {
+  BranchResolutionOutcome,
+  DistinctRepo,
+  ResolutionOutcome,
+} from './smi5879-census.types.ts'
+
+// ---------------------------------------------------------------------------
+// Constants (named, per CLAUDE.md — no magic numbers)
+// ---------------------------------------------------------------------------
+
+/** Conservative sustained rate for the repo-metadata GET pass — well under the PAT's 5,000/h ceiling. */
+export const REPO_RESOLUTION_RATE_PER_SEC = 1
+export const REPO_RESOLUTION_BURST = 3
+/** Bounded concurrency for the resolution pass (matches revalidate-stale-quarantines.ts's polite BATCH). */
+export const RESOLUTION_CONCURRENCY = 5
+/** Per-repo retry budget inside `resolveOne` (403/429/5xx/network only — 401 never retries). */
+export const MAX_RETRIES = 3
+/** Fixed backoff for a 403/429 that is NOT a primary rate-limit exhaustion (secondary/abuse detection). */
+export const SECONDARY_RATE_LIMIT_BACKOFF_MS = 1_000
+/** Backoff for a 5xx/network error, multiplied by the attempt number. */
+export const SERVER_ERROR_BACKOFF_MS = 500
+/** Small buffer added past `x-ratelimit-reset` to avoid retrying right on the reset boundary. */
+export const PRIMARY_RATE_LIMIT_RESET_BUFFER_MS = 2_000
+/** Fallback wait when a primary-rate-limit 403/429 carries no usable `x-ratelimit-reset`. */
+export const PRIMARY_RATE_LIMIT_FALLBACK_WAIT_MS = 60_000
+
+/** `smi5879_repo_branch` write batch size — one `json_to_recordset` INSERT/UPDATE per this many outcomes. */
+export const WRITE_BATCH_SIZE = 500
+/** Emit a progress/telemetry log line every this many completions. */
+export const PROGRESS_LOG_INTERVAL = 500
+/** Circuit breaker: don't evaluate the transient rate until at least this many repos have been attempted. */
+export const CIRCUIT_BREAKER_WARMUP_COUNT = 200
+/** Circuit breaker: abort the pass once the running transient rate exceeds this fraction past warm-up. */
+export const CIRCUIT_BREAKER_TRANSIENT_RATE_THRESHOLD = 0.5
+
+/** Bounded re-resolution sweep (item 6): at most this many extra passes over still-transient rows. */
+export const REEXOLUTION_SWEEP_MAX_PASSES = 3
+/** Bounded re-resolution sweep (item 6): hard wall-clock cap, independent of the pass cap. */
+export const REEXOLUTION_SWEEP_WALL_CLOCK_BUDGET_MS = 10 * 60 * 1000
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by `resolveOne` on an HTTP 401 — a credential-level failure, not a
+ * per-repo condition (GitHub returns 404, not 401, for a repo the token
+ * can't see). Propagates through `runResolutionPool` to abort the whole
+ * pass; callers must never catch-and-continue this as a `transient` outcome.
+ */
+export class BranchResolutionAuthError extends GitHubAuthError {
+  constructor(
+    public readonly repo: DistinctRepo,
+    public readonly httpStatus: number
+  ) {
+    super(
+      `SMI-5879/SMI-6015: GitHub returned ${httpStatus} (Unauthorized) resolving default_branch ` +
+        `for ${repo.owner}/${repo.repo} — credential-level failure (GitHub returns 404, not 401, ` +
+        'for a repo the token cannot see). Aborting the entire branch-resolution pass rather than ' +
+        "continuing to record every remaining repo as 'transient' under a dead token."
+    )
+    this.name = 'BranchResolutionAuthError'
+  }
+}
+
+/** Thrown when the running transient rate exceeds threshold past warm-up — see `checkCircuitBreaker`. */
+export class BranchResolutionCircuitBreakerError extends Error {
+  constructor(
+    public readonly completedCount: number,
+    public readonly transientCount: number,
+    public readonly transientRate: number
+  ) {
+    super(
+      `SMI-5879/SMI-6015: branch-resolution circuit breaker tripped after ${completedCount} ` +
+        `completions — ${transientCount} (${(transientRate * 100).toFixed(1)}%) came back ` +
+        `'transient', exceeding the ${(CIRCUIT_BREAKER_TRANSIENT_RATE_THRESHOLD * 100).toFixed(0)}% ` +
+        `threshold past the ${CIRCUIT_BREAKER_WARMUP_COUNT}-completion warm-up. Aborting rather than ` +
+        'continuing a pass that is already effectively guaranteed to fail I-6 (and, downstream, G-2).'
+    )
+    this.name = 'BranchResolutionCircuitBreakerError'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-repo resolution
+// ---------------------------------------------------------------------------
+
+/** Wait out a 403/429 — primary (bucket fully drained) vs secondary (abuse detection) rate limit. */
+export async function waitOutRateLimit(response: Response): Promise<void> {
+  const remainingHeader = response.headers.get('x-ratelimit-remaining')
+  if (remainingHeader === '0') {
+    // Primary exhaustion: a short fixed backoff cannot possibly succeed
+    // before the bucket refills — wait until GitHub's own reset time.
+    const resetHeader = Number(response.headers.get('x-ratelimit-reset') ?? '0')
+    const resetAtMs =
+      Number.isFinite(resetHeader) && resetHeader > 0
+        ? resetHeader * 1000
+        : Date.now() + PRIMARY_RATE_LIMIT_FALLBACK_WAIT_MS
+    const waitMs = Math.max(0, resetAtMs - Date.now()) + PRIMARY_RATE_LIMIT_RESET_BUFFER_MS
+    await new Promise((r) => setTimeout(r, waitMs))
+    return
+  }
+  // Secondary rate limit / abuse detection — honor retry-after if present, else a short fixed backoff.
+  const retryAfter = Number(response.headers.get('retry-after') ?? '0')
+  const waitMs =
+    Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : SECONDARY_RATE_LIMIT_BACKOFF_MS
+  await new Promise((r) => setTimeout(r, waitMs))
+}
+
+/**
+ * Resolve one repo's default branch, with bounded retry on 403/429/5xx/network.
+ * `getHeaders` is invoked FRESH on every attempt (SMI-6015) — never once for
+ * the whole pass — so a token that expires mid-pass is transparently
+ * refreshed on the next attempt rather than producing a silent 401 storm.
+ */
+export async function resolveOne(
+  repo: DistinctRepo,
+  getHeaders: () => Promise<Record<string, string>>,
+  telemetry: RateLimitTelemetry,
+  bucket: ReturnType<typeof createTokenBucket>
+): Promise<ResolutionOutcome> {
+  let attempts = 0
+  let lastStatus: number | null = null
+  while (attempts < MAX_RETRIES) {
+    attempts++
+    await bucket.acquire()
+    try {
+      const headers = await getHeaders()
+      const response = await withRateLimitTracking(
+        telemetry,
+        `https://api.github.com/repos/${repo.owner}/${repo.repo}`,
+        { headers, _throwOnRateLimit: false }
+      )
+      lastStatus = response.status
+
+      if (response.status === 401) {
+        throw new BranchResolutionAuthError(repo, response.status)
+      }
+      if (response.status === 404) {
+        return { repo, resolution: 'not-found', defaultBranch: null, httpStatus: 404, attempts }
+      }
+      if (response.status === 403 || response.status === 429) {
+        await waitOutRateLimit(response)
+        continue
+      }
+      if (response.status >= 500) {
+        await new Promise((r) => setTimeout(r, SERVER_ERROR_BACKOFF_MS * attempts))
+        continue
+      }
+      if (response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          default_branch?: unknown
+        } | null
+        const defaultBranch = typeof body?.default_branch === 'string' ? body.default_branch : null
+        if (defaultBranch) {
+          return {
+            repo,
+            resolution: 'resolved',
+            defaultBranch,
+            httpStatus: response.status,
+            attempts,
+          }
+        }
+        // 200 with no usable default_branch is a shape we've never seen from GitHub
+        // in practice — treat as transient (never fabricate a false 'resolved').
+        return {
+          repo,
+          resolution: 'transient',
+          defaultBranch: null,
+          httpStatus: response.status,
+          attempts,
+        }
+      }
+      // Unclassified status — safe default is transient, never a false not-found.
+      return {
+        repo,
+        resolution: 'transient',
+        defaultBranch: null,
+        httpStatus: response.status,
+        attempts,
+      }
+    } catch (err) {
+      // Fatal auth failure must never be swallowed into the network-error retry below.
+      if (err instanceof BranchResolutionAuthError) throw err
+      // Network error — retry within budget, then transient.
+      await new Promise((r) => setTimeout(r, SERVER_ERROR_BACKOFF_MS * attempts))
+      continue
+    }
+  }
+  return { repo, resolution: 'transient', defaultBranch: null, httpStatus: lastStatus, attempts }
+}
+
+// ---------------------------------------------------------------------------
+// Bounded-concurrency worker pool with cooperative cancellation
+// ---------------------------------------------------------------------------
+
+export type { PoolAbortSignal }
+/** Branch-resolution-shaped alias of the generic `_shared/rate-limit.ts` pool result. */
+export type ResolutionPoolResult = CancellablePoolResult
+
+/**
+ * Branch-resolution-shaped wrapper around `_shared/rate-limit.ts`'s generic
+ * `runCancellablePool` — see that function's own docstring for the full
+ * cooperative-cancellation rationale (built here first for SMI-5879's
+ * 401-fatal / circuit-breaker requirements, then generalized so
+ * `smi5879-simulate-full.ts` can share the same correctness-reviewed
+ * implementation rather than a second parallel copy).
+ *
+ * `deadlineAtMs` (optional): if given, no worker pulls a NEW item once
+ * `Date.now() >= deadlineAtMs` — used by `sweepTransientRepos` to bound a
+ * single pass's own wall-clock cost, since the sweep's own between-passes
+ * check (SMI-6015 GPT-5.6-Sol review, 2026-08-14) cannot interrupt a pass
+ * already in flight at the conservative 1 req/sec pace.
+ */
+export async function runResolutionPool(
+  repos: readonly DistinctRepo[],
+  getHeaders: () => Promise<Record<string, string>>,
+  telemetry: RateLimitTelemetry,
+  concurrency: number,
+  onOutcome: (outcome: ResolutionOutcome, completedCount: number) => PoolAbortSignal | void,
+  deadlineAtMs?: number
+): Promise<ResolutionPoolResult> {
+  const bucket = createTokenBucket(REPO_RESOLUTION_RATE_PER_SEC, REPO_RESOLUTION_BURST)
+  return runCancellablePool(
+    repos,
+    (repo) => resolveOne(repo, getHeaders, telemetry, bucket),
+    onOutcome,
+    concurrency,
+    deadlineAtMs
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Circuit breaker + progress logging
+// ---------------------------------------------------------------------------
+
+export interface ResolutionCounts {
+  resolved: number
+  'not-found': number
+  transient: number
+  unparseable: number
+}
+
+export function emptyResolutionCounts(): ResolutionCounts {
+  return { resolved: 0, 'not-found': 0, transient: 0, unparseable: 0 }
+}
+
+/** Evaluate the circuit breaker after a completion — see the two constants above for the exact rule. */
+export function checkCircuitBreaker(
+  completedCount: number,
+  transientCount: number
+): PoolAbortSignal | void {
+  if (completedCount < CIRCUIT_BREAKER_WARMUP_COUNT) return
+  const rate = transientCount / completedCount
+  if (rate > CIRCUIT_BREAKER_TRANSIENT_RATE_THRESHOLD) {
+    return { reason: new BranchResolutionCircuitBreakerError(completedCount, transientCount, rate) }
+  }
+}
+
+export function logResolutionProgress(
+  runId: string,
+  completedCount: number,
+  total: number,
+  counts: ResolutionCounts,
+  telemetry: RateLimitTelemetry
+): void {
+  const fmt = (n: number): string => (Number.isFinite(n) ? String(n) : 'n/a')
+  console.log(
+    `[smi5879-census.branches] run_id=${runId} progress ${completedCount}/${total} ` +
+      `resolved=${counts.resolved} not-found=${counts['not-found']} transient=${counts.transient} ` +
+      `core_remaining_min=${fmt(telemetry.core_remaining_min)} ` +
+      `secondary_rate_limit_hits=${telemetry.secondary_rate_limit_hits} ` +
+      `retry_after_max_seconds=${telemetry.retry_after_max_seconds}`
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Batched writes — json_to_recordset, real JSON null (no NULLIF sentinel)
+// ---------------------------------------------------------------------------
+
+interface RecordsetRow {
+  owner: string
+  repo: string
+  default_branch: string | null
+  resolution: BranchResolutionOutcome
+  http_status: number | null
+  attempts: number
+}
+
+/**
+ * Pick a `$tag$...$tag$` dollar-quote delimiter guaranteed not to occur
+ * inside `payload` — collision-checked, not merely assumed unlikely. The SQL
+ * text (including this literal) is piped to `psql` via STDIN
+ * (`smi5879-census.pg.ts`'s `spawnPsql` writes `sql` to `child.stdin`), so
+ * there is no `-v`/argv size limit to worry about for a large batch, unlike
+ * the old NULLIF-sentinel `-v` substitution this replaces.
+ */
+function pickDollarQuoteTag(payload: string): string {
+  let tag = '$smi5879b$'
+  let n = 0
+  while (payload.includes(tag)) {
+    n++
+    tag = `$smi5879b${n}$`
+  }
+  return tag
+}
+
+function toRecordsetRow(o: ResolutionOutcome): RecordsetRow {
+  return {
+    owner: o.repo.owner,
+    repo: o.repo.repo,
+    default_branch: o.defaultBranch,
+    resolution: o.resolution,
+    http_status: o.httpStatus,
+    attempts: o.attempts,
+  }
+}
+
+function jsonRecordsetLiteral(outcomes: readonly ResolutionOutcome[]): string {
+  const json = JSON.stringify(outcomes.map(toRecordsetRow))
+  const tag = pickDollarQuoteTag(json)
+  return `${tag}${json}${tag}`
+}
+
+const RECORDSET_COLUMNS =
+  'owner text, repo text, default_branch text, resolution text, http_status integer, attempts integer'
+
+/**
+ * Build the batched INSERT for a fresh set of outcomes (main pass). JSON
+ * `null` for `default_branch`/`http_status` maps straight to SQL NULL via
+ * `json_to_recordset`'s column typing — no NULLIF empty-string sentinel
+ * needed (the old one-repo-at-a-time `writeOutcome` needed it only because
+ * psql's `-v`/`:'var'` substitution cannot produce a bare SQL NULL; this
+ * batched form never goes through that substitution for the payload).
+ */
+export function buildBatchInsertSql(
+  runId: string,
+  outcomes: readonly ResolutionOutcome[]
+): { sql: string; vars: Record<string, string> } {
+  const literal = jsonRecordsetLiteral(outcomes)
+  const sql = `
+    INSERT INTO smi5879_repo_branch (run_id, owner, repo, default_branch, resolution, http_status, attempts)
+    SELECT :'run_id', owner, repo, default_branch, resolution, http_status, attempts
+    FROM json_to_recordset(${literal}::json) AS x(${RECORDSET_COLUMNS});
+  `
+  return { sql, vars: { run_id: runId } }
+}
+
+/** Build the batched UPDATE for a re-resolution sweep pass — `attempts` accumulates onto the existing row. */
+export function buildBatchUpdateSql(
+  runId: string,
+  outcomes: readonly ResolutionOutcome[]
+): { sql: string; vars: Record<string, string> } {
+  const literal = jsonRecordsetLiteral(outcomes)
+  const sql = `
+    UPDATE smi5879_repo_branch b
+       SET default_branch = x.default_branch,
+           resolution     = x.resolution,
+           http_status    = x.http_status,
+           attempts       = b.attempts + x.attempts,
+           resolved_at    = now()
+      FROM json_to_recordset(${literal}::json) AS x(${RECORDSET_COLUMNS})
+     WHERE b.run_id = :'run_id' AND b.owner = x.owner AND b.repo = x.repo;
+  `
+  return { sql, vars: { run_id: runId } }
+}
+
+export async function writeOutcomesBatch(
+  conn: PgConnParams,
+  runId: string,
+  outcomes: readonly ResolutionOutcome[]
+): Promise<void> {
+  if (outcomes.length === 0) return
+  const { sql, vars } = buildBatchInsertSql(runId, outcomes)
+  await runPsql(conn, sql, vars)
+}
+
+export async function updateOutcomesBatch(
+  conn: PgConnParams,
+  runId: string,
+  outcomes: readonly ResolutionOutcome[]
+): Promise<void> {
+  if (outcomes.length === 0) return
+  const { sql, vars } = buildBatchUpdateSql(runId, outcomes)
+  await runPsql(conn, sql, vars)
+}

@@ -38,7 +38,7 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
-import { newRateLimitTelemetry, pMapBounded } from './_shared/rate-limit.ts'
+import { newRateLimitTelemetry, runCancellablePool } from './_shared/rate-limit.ts'
 import { poolerSessionConnParams, runPsql } from './smi5879-census.pg.ts'
 import { createSmi5879SimulateFullDbDeps } from './smi5879-simulate-full.db.ts'
 import {
@@ -49,8 +49,8 @@ import {
 import { scanSkillBundle as headScanSkillBundle } from './skill-processor.security.ts'
 import {
   processRow,
+  runMainPass,
   assertPatTokenSource,
-  CHECKPOINT_BATCH_SIZE,
   PROCESS_CONCURRENCY,
   HEARTBEAT_INTERVAL_MS,
 } from './smi5879-simulate-full.helpers.ts'
@@ -131,34 +131,7 @@ function buildHolder(): string {
   return `${hostname()}:${process.pid}:${head}`
 }
 
-/**
- * Run the main pass over every not-yet-attempted row (from the checkpoint, if
- * resuming), in concurrency-bounded batches, checkpointing after each batch.
- */
-async function runMainPass(
-  rows: SimSnapshotRow[],
-  alreadyResults: Map<string, import('./smi5879-simulate-full.types.ts').SimRowResult>,
-  branchMap: import('./smi5879-simulate-full.types.ts').BranchMap,
-  scanDeps: {
-    scanPostPort: ScanSkillBundleFn
-    scanPrePort: ScanSkillBundleFn
-    telemetry: ReturnType<typeof newRateLimitTelemetry>
-    headers: Record<string, string>
-  },
-  onBatchDone: (
-    results: Map<string, import('./smi5879-simulate-full.types.ts').SimRowResult>
-  ) => Promise<void>
-): Promise<void> {
-  const pending = rows.filter((r) => !alreadyResults.has(r.id))
-  for (let i = 0; i < pending.length; i += CHECKPOINT_BATCH_SIZE) {
-    const batch = pending.slice(i, i + CHECKPOINT_BATCH_SIZE)
-    const outcomes = await pMapBounded(batch, (row) => processRow(row, branchMap, scanDeps), {
-      concurrency: PROCESS_CONCURRENCY,
-    })
-    for (const outcome of outcomes) alreadyResults.set(outcome.id, outcome)
-    await onBatchDone(alreadyResults)
-  }
-}
+// runMainPass lives in smi5879-simulate-full.helpers.ts (500-line budget)
 
 /**
  * Run the full generation lifecycle and return the assembled report.
@@ -311,8 +284,12 @@ export async function runSimulateFull(
     for (const row of rows) rowsByCohort[row.cohort].push(row)
 
     const telemetry = newRateLimitTelemetry()
-    const headers = await buildGitHubHeaders('skillsmith-smi5879-simulate/1.0')
-    const scanDeps = { scanPostPort, scanPrePort, telemetry, headers }
+    // SMI-6015: getHeaders is invoked fresh on every fetch attempt (inside
+    // retryPrimaryFetch), not built once here and frozen for the whole
+    // (potentially multi-day) run — buildGitHubHeaders()/getInstallationToken()
+    // already cache and only re-mint near expiry, so this costs ~nil when fresh.
+    const getHeaders = () => buildGitHubHeaders('skillsmith-smi5879-simulate/1.0')
+    const scanDeps = { scanPostPort, scanPrePort, telemetry, getHeaders }
 
     const results = new Map(Object.entries(checkpoint.row_results))
 
@@ -344,11 +321,38 @@ export async function runSimulateFull(
       async (residualIds) => {
         const idSet = new Set(residualIds)
         const targets = rows.filter((r) => idSet.has(r.id))
-        const outcomes = await pMapBounded(targets, (row) => processRow(row, branchMap, scanDeps), {
-          concurrency: PROCESS_CONCURRENCY,
-        })
+        const outcomes: import('./smi5879-simulate-full.types.ts').SimRowResult[] = []
+        // SMI-6015: same cooperative-cancellation fix as runMainPass above —
+        // see that call site's comment for the full rationale.
+        const { abortedBy } = await runCancellablePool(
+          targets,
+          (row) => processRow(row, branchMap, scanDeps),
+          (outcome) => {
+            outcomes.push(outcome)
+          },
+          PROCESS_CONCURRENCY
+        )
         const updated = new Map(outcomes.map((o) => [o.id, o]))
         for (const [id, result] of updated) results.set(id, result)
+        if (abortedBy) {
+          // SMI-6015 (GPT-5.6-Sol review round 2, 2026-08-14): throwing here
+          // rejects runTier3Sweep's own `await runPass(...)` before it ever
+          // reaches `options.onPass` — the ONLY place that normally writes a
+          // checkpoint after a pass. Without this, `results` above is
+          // updated in memory but the process is about to exit on this
+          // thrown error, so that partial progress would be lost on disk.
+          // Write it explicitly, matching onPass's shape but WITHOUT
+          // advancing pass/residual_history/non_decrease_streak — this pass
+          // never cleanly completed, so it must not be counted as if it had.
+          checkpoint = {
+            ...checkpoint,
+            clean_shutdown: false,
+            row_results: Object.fromEntries(results),
+            updated_at: new Date().toISOString(),
+          }
+          writeCheckpoint(checkpointPath, checkpoint)
+          throw abortedBy
+        }
         return updated
       },
       {

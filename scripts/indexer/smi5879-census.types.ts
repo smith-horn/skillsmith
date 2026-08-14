@@ -22,9 +22,9 @@ export interface CohortCounts {
   E: number
 }
 
-/** Result of one I-1..I-5 invariant check (design doc 8.3.1.4 / 8.3.5.2.6). */
+/** Result of one I-1..I-6 invariant check (design doc 8.3.1.4 / 8.3.5.2.6; I-6 added SMI-6015). */
 export interface InvariantResult {
-  id: 'I-1' | 'I-2' | 'I-3' | 'I-4' | 'I-5'
+  id: 'I-1' | 'I-2' | 'I-3' | 'I-4' | 'I-5' | 'I-6'
   name: string
   passed: boolean
   /** Human-readable detail — populated especially on failure, naming the exact violation. */
@@ -67,10 +67,34 @@ export interface BranchResolutionSummary {
   not_found: number
   transient: number
   unparseable: number
+  /**
+   * SMI-6015: bounded re-resolution sweep run over transient rows before
+   * seal (item 6) — `null` when the main pass finished with zero transient
+   * rows and no sweep was needed.
+   */
+  reresolution_sweep: ReresolutionSweepSummary | null
+}
+
+/** Outcome of the item-6 bounded re-resolution sweep over transient rows, before seal. */
+export interface ReresolutionSweepSummary {
+  passes_run: number
+  repos_reattempted: number
+  remaining_transient: number
+  /** True iff the sweep stopped because it hit `REEXOLUTION_SWEEP_WALL_CLOCK_BUDGET_MS`, not the pass cap. */
+  wall_clock_stopped: boolean
 }
 
 /** One distinct `(owner, repo)` pair derived from a generation's population. */
 export interface DistinctRepo {
   owner: string
   repo: string
+}
+
+/** One repo's default_branch resolution outcome, not yet written to `smi5879_repo_branch`. */
+export interface ResolutionOutcome {
+  repo: DistinctRepo
+  resolution: BranchResolutionOutcome
+  defaultBranch: string | null
+  httpStatus: number | null
+  attempts: number
 }
