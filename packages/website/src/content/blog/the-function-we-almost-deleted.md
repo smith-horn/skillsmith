@@ -48,11 +48,11 @@ We pointed the finished tool at one package (our CLI) and let it work. Six funct
 
 Then we did something a lot of automated cleanup tools skip: we didn't trust the "safe" label at face value. We had a second, more careful pass re-check every single candidate by hand, searching the *entire* codebase (not just the one package the scanner looked at) and confirming none of it was secretly part of a public interface other code depends on.
 
-Half the "safe to delete" list didn't survive that check. `compareCandidates` was one of the two false alarms. So was a validation function guarding our private registry install path, which would have quietly removed a security check if we'd trusted the scanner's first answer.
+Two of the six didn't survive that check. `compareCandidates` was one false alarm. A validation function guarding our private registry install path was the other, which would have quietly removed a security check if we'd trusted the scanner's first answer.
 
 Both false alarms failed for the *same* underlying reason, and it wasn't a coincidence. Our test-coverage check was reading results from the CLI package's official test command, and that command deliberately only counts one style of test file. Both of the functions in question were tested by the *other* style, the one that command doesn't count. The functions were fully tested. Our tool just wasn't looking in the right place to notice. We fixed the coverage check, added a regression test that reproduces exactly this trap, and wrote down why in the tool's own documentation so nobody rediscovers this the hard way.
 
-The three functions that survived every check really were dead: two quota-display helpers nothing had called in about seven months, superseded by a rewrite that inlined the same logic elsewhere, and a one-line color-lookup wrapper that every real caller had already learned to skip. Ninety-eight lines, gone, verified safe from three separate directions before a single line was deleted.
+The four functions that survived every check really were dead: two quota-display helpers nothing had called in about seven months, superseded by a rewrite that inlined the same logic elsewhere; a one-line color-lookup wrapper that every real caller had already learned to skip; and a logging helper whose own coverage data told the story on its own, a sibling function right next to it had seventeen real hits, this one had zero. Ninety-eight lines, gone, verified safe from three separate directions before a single line was deleted.
 
 ## What this actually proves
 
@@ -68,4 +68,4 @@ The Docker fix is still ahead of us, tracked as its own piece of work with its o
 - **A dead-code scanner needs a fourth answer besides "delete it" and "keep it."** Ours added "I can't tell yet" as an explicit, first-class category, after an adversarial design review found real cases where a confident answer would have been wrong.
 - **"Safe to delete" from a tool is a candidate, not a verdict.** A second, independent verification pass against the full codebase caught two false positives in this run's very first outing, one of them a security-relevant validation check.
 - **Both false positives traced back to one root cause**: a test-coverage check blind to half our test-file conventions. The tool now defends against it with a regression test.
-- **The real cleanup was small on purpose**: 3 functions, 98 lines, verified from three directions before deletion. Small and verifiably safe beats large and merely plausible.
+- **The real cleanup was small on purpose**: 4 functions, 98 lines, verified from three directions before deletion. Small and verifiably safe beats large and merely plausible.
