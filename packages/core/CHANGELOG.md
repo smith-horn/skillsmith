@@ -5,6 +5,12 @@ All notable changes to `@skillsmith/core` are documented here.
 ## [Unreleased]
 
 - **Fix**: PR #2375 post-merge review follow-up (three findings). `recommend`'s shared footer text no longer claims detection "across all clients" — each surface (CLI, MCP) scans exactly one client per call, never a union. Cursor `hooks.json` installation's `ensureTopLevelDefaults` now fails closed (`status: 'conflict'`, no write) instead of silently preserving an existing incompatible top-level value (e.g. a wrong `version`) while still merging hook entries in (SMI-5893)
+- **Fix**: Restored two verified drift points between the core and edge (production) security
+  scanners — the edge co-signal escalation set now includes `sensitive_path` (matching core), and
+  the edge `escalateCodeExecution` gained the SMI-5880 locality gate so a co-signal elsewhere in a
+  long document can no longer escalate a distant, unrelated `code_execution` finding. Exported
+  `AUTHORITY_CLAIMING_AFFIXES` from `typosquat.ts` (previously module-private) for reuse by a
+  planned decoy-URL detector (SMI-6033 Wave 1)
 
 ## v0.11.7
 
