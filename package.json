@@ -124,6 +124,7 @@
     "fast-uri": "^3.1.5",
     "ip-address": "^10.3.1",
     "tar": "^7.5.22",
+    "nanoid": "^3.3.18",
     "postcss": "^8.5.23",
     "astro": {
       "vite": {
