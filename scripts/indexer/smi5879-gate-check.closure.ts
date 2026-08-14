@@ -165,6 +165,22 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'scripts/indexer/smi5879-gate-check.types.ts',
   'scripts/indexer/smi5879-census.types.ts',
   'scripts/indexer/smi5879-simulate-full.types.ts',
+  // SMI-6033 Wave 1: two new siblings, imported by the already-watched
+  // security-scanner-edge.ts on both twins (chmod-compound extraction +
+  // sensitive_path port) — same closure-completeness reasoning as the four
+  // entries above.
+  'scripts/indexer/_shared/security-scanner-edge.compound.ts',
+  'scripts/indexer/_shared/security-scanner-edge.paths.ts',
+  'supabase/functions/_shared/security-scanner-edge.compound.ts',
+  'supabase/functions/_shared/security-scanner-edge.paths.ts',
+  // SMI-6033 Wave 1 (Gap 7): the Node twin's typosquat wiring imports
+  // detectTyposquat from packages/core's scanner barrel (index.js), which
+  // transitively pulls in these three — reachable from the already-watched
+  // scripts/indexer/skill-processor.security.ts, same closure-completeness
+  // reasoning as every other entry below the self-referential four above.
+  'packages/core/src/security/scanner/typosquat.ts',
+  'packages/core/src/security/scanner/typosquat-reference-list.ts',
+  'packages/core/src/security/scanner/SecurityScanner.hostile-update.ts',
 ] as const
 
 // SMI-5879 Wave 1: the corpus adds ~60 scans per twin, including one ~300 KB

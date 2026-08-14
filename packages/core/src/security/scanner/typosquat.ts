@@ -88,8 +88,12 @@ export const BRAND_ALIASES: Readonly<Record<string, string>> = {
  * A small, curated "claims official status" affix list. Deliberately narrow —
  * benign functional affixes (`mcp`, `tools`, `community`, `helper`, ...)
  * simply aren't in this list, so they never trigger this check.
+ *
+ * SMI-6033 Wave 1 (Gap 6): exported (was module-private) so the decoy/
+ * misdirection detector (`SecurityScanner.decoy.ts`, Wave 4) can reuse the
+ * same curated affix corpus rather than duplicating it.
  */
-const AUTHORITY_CLAIMING_AFFIXES: ReadonlySet<string> = new Set([
+export const AUTHORITY_CLAIMING_AFFIXES: ReadonlySet<string> = new Set([
   'official',
   'verified',
   'authentic',

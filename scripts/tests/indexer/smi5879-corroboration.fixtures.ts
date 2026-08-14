@@ -138,7 +138,16 @@ export const byCaseId = <T extends { caseId: string }>(a: T, b: T): number =>
 // Edge projection — reconstructed from findings (spec doc §2)
 // ---------------------------------------------------------------------------
 
-/** All seven `SecurityFindingType`s — the full accumulation, before the non-AI projection. */
+/**
+ * All nine `SecurityFindingType`s — the full accumulation, before the non-AI
+ * projection. SMI-6033 Wave 1 added `sensitive_path` and `typosquat` to edge's
+ * type union (previously seven); both are listed here so `reconstructEdgeBreakdown`
+ * doesn't silently drop their contribution to `reconstructedTotal` into `NaN`
+ * for any case whose content now trips the newly-wired sensitive_path detector
+ * (see `security-scanner-edge.paths.ts`) — `typosquat` has no edge call site
+ * yet (type-system registration only) so it stays structurally zero here, same
+ * as core's own `STRUCTURALLY_ZERO_CORE_KEYS` treatment of the same category.
+ */
 const ALL_EDGE_FINDING_TYPES: readonly SecurityFindingType[] = [
   'jailbreak',
   'suspicious_pattern',
@@ -147,10 +156,12 @@ const ALL_EDGE_FINDING_TYPES: readonly SecurityFindingType[] = [
   'prompt_injection',
   'code_execution',
   'obfuscated_directive',
+  'sensitive_path',
+  'typosquat',
 ]
 
 export interface EdgeReconstruction {
-  /** All 7 categories, capped at 100 each — NOT what gets projected into the golden row. */
+  /** All 9 categories, capped at 100 each — NOT what gets projected into the golden row. */
   fullBreakdown: Record<SecurityFindingType, number>
   /** The 5 non-AI keys picked out of {@link fullBreakdown} — what DOES get projected. */
   nonAiProjection: Record<EdgeNonAiKey, number>

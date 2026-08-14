@@ -116,6 +116,9 @@ export function sanitizeSkillName(name: string): string {
  * SMI-4852: `telemetry` is required so Hard Rule 1 (every GitHub fetch wrapped
  * by `withRateLimitTracking`) is mechanically verifiable via grep. Fetch uses
  * `_throwOnRateLimit:false` — 403/429 surface as `{valid:false}`, not throw.
+ * SMI-6033 Wave 1 (Gap 7): `typosquatReferenceNames` is optional and additive
+ * — build it ONCE per indexer batch run (`typosquat-reference.ts`) and pass
+ * it down; omitted, this function's behavior is unchanged.
  */
 export async function validateSkillMd(
   owner: string,
@@ -123,7 +126,8 @@ export async function validateSkillMd(
   branch: string,
   telemetry: RateLimitTelemetry,
   skillPath?: string,
-  options: { strictValidation?: boolean; minContentLength?: number } = {}
+  options: { strictValidation?: boolean; minContentLength?: number } = {},
+  typosquatReferenceNames?: ReadonlySet<string>
 ): Promise<SkillMdValidation> {
   const strictValidation = options.strictValidation ?? true
   const minContentLength = options.minContentLength ?? DEFAULT_MIN_CONTENT_LENGTH
@@ -256,13 +260,21 @@ export async function validateSkillMd(
     // SMI-5879 PR-2192a: primary scan + sibling enumerate -> fetch -> scan ->
     // merge moved into scanSkillBundle (skill-processor.security.ts) so the
     // pre-merge simulator (Wave 3) can call the SAME function production uses.
+    // SMI-6033 Wave 1 (Gap 7): candidate name for the typosquat check prefers
+    // the frontmatter-declared name (what actually ships as skills.name),
+    // falling back to the GitHub repo name when frontmatter has none.
+    const typosquatCandidateName = metadata?.name?.trim() || repo
     const { securityScan, mergedSecurityScan } = await scanSkillBundle(
       owner,
       repo,
       branch,
       skillPath,
       content,
-      telemetry
+      telemetry,
+      undefined,
+      typosquatReferenceNames
+        ? { candidateName: typosquatCandidateName, referenceNames: typosquatReferenceNames }
+        : undefined
     )
 
     return {
@@ -293,6 +305,8 @@ export async function validateSkillMd(
  * Uses the new validation system and caches results
  * SMI-2404: Accepts request-scoped cache to avoid shared state across concurrent requests
  * SMI-4852: `telemetry` threads through to `validateSkillMd` (Hard Rule 1).
+ * SMI-6033 Wave 1 (Gap 7): `typosquatReferenceNames` threads through to
+ * `validateSkillMd` — optional and additive, see that function's header.
  */
 export async function checkSkillMdExists(
   owner: string,
@@ -301,7 +315,8 @@ export async function checkSkillMdExists(
   cache: Map<string, SkillMdValidation>,
   telemetry: RateLimitTelemetry,
   skillPath?: string,
-  options: { strictValidation?: boolean; minContentLength?: number } = {}
+  options: { strictValidation?: boolean; minContentLength?: number } = {},
+  typosquatReferenceNames?: ReadonlySet<string>
 ): Promise<boolean> {
   // Build cache key
   const cacheKey = `${owner}/${repo}/${branch}${skillPath ? `/${skillPath}` : ''}`
@@ -313,7 +328,15 @@ export async function checkSkillMdExists(
   }
 
   // SMI-2388: Removed branch-splitting heuristic that corrupted branch names
-  const validation = await validateSkillMd(owner, repo, branch, telemetry, skillPath, options)
+  const validation = await validateSkillMd(
+    owner,
+    repo,
+    branch,
+    telemetry,
+    skillPath,
+    options,
+    typosquatReferenceNames
+  )
 
   // Cache the result
   cache.set(cacheKey, validation)

@@ -28,6 +28,7 @@ import { join } from 'path'
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { scanBundledSiblings } from './validate-bundled-scan.js'
+import { scanTyposquatName } from './validate-typosquat-scan.js'
 import type { ToolContext } from '../context.js'
 
 // Import types
@@ -158,6 +159,12 @@ async function executeValidateImpl(
   if (isDirectory) {
     errors.push(...(await scanBundledSiblings(skill_path)))
   }
+
+  // SMI-6033 Wave 1 (Gap 7): typosquat check against the bundled reference
+  // snapshot — fully offline (no network/DB call), warn-tier only. Runs
+  // regardless of isDirectory (a single SKILL.md file still has a declared
+  // name worth checking).
+  errors.push(...scanTyposquatName(typeof metadata?.name === 'string' ? metadata.name : undefined))
 
   // Determine validity
   const hasErrors = errors.some((e) => e.severity === 'error')

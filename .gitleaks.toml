@@ -74,9 +74,10 @@ regexes = [
 ]
 
 [[rules.allowlists]]
-description = "SMI-595: typosquat.ts legitimately mentions 'vercel' (a BRAND_ALIASES entry — one of the brand names the typosquat detector protects against impersonation of), which trips this rule's 'vercel' keyword gate. The generic 24-char alnum regex then matches ordinary camelCase TypeScript identifiers in the same file (e.g. TyposquatEnforcementMode, applyTyposquatEnforcementMode). Path-scoped rather than content-scoped, since new same-length identifiers will keep appearing here as the module evolves; this file is a security-scanner detector module and contains no deployment tokens by design."
+description = "SMI-595: typosquat.ts legitimately mentions 'vercel' (a BRAND_ALIASES entry — one of the brand names the typosquat detector protects against impersonation of), which trips this rule's 'vercel' keyword gate. The generic 24-char alnum regex then matches ordinary camelCase TypeScript identifiers in the same file (e.g. TyposquatEnforcementMode, applyTyposquatEnforcementMode). Path-scoped rather than content-scoped, since new same-length identifiers will keep appearing here as the module evolves; this file is a security-scanner detector module and contains no deployment tokens by design. SMI-6033 Wave 1 (Gap 7): extended to supabase/functions/indexer/typosquat.ts, the Deno-native port of this same detector (edge can't import packages/core) — it mirrors the identical API surface and identifier names, tripping the same false positive."
 paths = [
   '''packages/core/src/security/scanner/typosquat\.ts''',
+  '''supabase/functions/indexer/typosquat\.ts''',
 ]
 
 [[rules]]

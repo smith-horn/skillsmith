@@ -122,8 +122,11 @@ import {
   SUSPICIOUS_PATTERNS,
   DATA_EXFILTRATION_PATTERNS,
   PRIVILEGE_ESCALATION_PATTERNS,
+  // SMI-6033 Wave 1: CODE_EXECUTION_PATTERNS moved out of security-scanner-edge.exec.ts
+  // (which previously re-declared it inline) into this patterns sibling, its single
+  // source of truth — same as every other array imported here.
+  CODE_EXECUTION_PATTERNS,
 } from '../../indexer/_shared/security-scanner-edge.patterns.ts'
-import { CODE_EXECUTION_PATTERNS } from '../../indexer/_shared/security-scanner-edge.exec.ts'
 import { CATEGORY_COEFFICIENTS } from '../../indexer/_shared/security-scanner-edge.context.ts'
 import {
   SCANNER_SRC,
