@@ -61,6 +61,8 @@ import { scanArchiveEvasion } from './security-scanner-edge.archive.ts'
 import { scanPasteHostFetch } from './security-scanner-edge.paste-host.ts'
 // SMI-6033 Wave 2 (Gap 2): encoded (base64) payload detect-decode-recursively-rescan.
 import { scanEncodedPayload } from './security-scanner-edge.encoding.ts'
+// SMI-6033 Wave 4 (Gap 6): decoy/misdirection URL-target heuristic.
+import { scanDecoyMisdirection } from './security-scanner-edge.decoy.ts'
 
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
@@ -330,6 +332,12 @@ function runDetectors(
   // merely-linked paste-host URL produces no finding on edge (edge has no
   // url:medium detector to preserve — see security-scanner-edge.paste-host.ts).
   findings.push(...scanPasteHostFetch(lines, contexts))
+  // SMI-6033 Wave 4 (Gap 6): decoy/misdirection — a fetch target whose
+  // domain doesn't match a brand/authority claim made nearby in the skill's
+  // own prose. Advisory-only (medium, never high/critical); must run before
+  // escalateCodeExecution below since a later dispatch wires this finding
+  // type into that co-signal mechanism.
+  findings.push(...scanDecoyMisdirection(lines, contexts))
   findings.push(...scanPromptInjection(lines, contexts))
   // SMI-6033 Wave 1: sensitive_path (credential file/path/env-var references).
   findings.push(...scanSensitivePaths(lines, contexts))

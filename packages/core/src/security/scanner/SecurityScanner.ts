@@ -19,11 +19,12 @@ import {
   analyzeMarkdownContext,
   isDocumentationContext,
   isWithinInlineCode,
-  calculateRiskScore,
   scanPatternsWithMultilineSupport,
 } from './SecurityScanner.helpers.js'
 // SMI-6033 Wave 2 (Gap 4): promoted shared URL extraction (see module header).
 import { extractUrls } from './SecurityScanner.urls.js'
+// SMI-6033 Wave 4: extracted out of SecurityScanner.helpers.ts (500-line gate).
+import { calculateRiskScore } from './SecurityScanner.risk-score.js'
 
 // Import SSRF scanner
 import { scanSsrfPatterns } from './SecurityScanner.ssrf.js'
@@ -49,6 +50,8 @@ import { scanArchiveEvasion } from './SecurityScanner.archive.js'
 import { scanPasteHostFetch } from './SecurityScanner.paste-host.js'
 // SMI-6033 Wave 2 (Gap 2): encoded (base64) payload detect-decode-recursively-rescan.
 import { scanEncodedPayload } from './SecurityScanner.encoding.js'
+// SMI-6033 Wave 4 (Gap 6): decoy/misdirection URL-target heuristic.
+import { scanDecoyMisdirection } from './SecurityScanner.decoy.js'
 
 // Import code-execution & obfuscated-directive detectors (SMI-5359 Wave 4.2).
 import {
@@ -291,6 +294,12 @@ export class SecurityScanner {
     // merely-linked paste-host URL keeps only its existing scanUrls()
     // url:medium finding (this detector adds no finding for that case).
     findings.push(...scanPasteHostFetch(content, lineContexts))
+    // SMI-6033 Wave 4 (Gap 6): decoy/misdirection — a fetch target whose
+    // domain doesn't match a brand/authority claim made nearby in the
+    // skill's own prose. Advisory-only (medium, never high/critical); must
+    // run before escalateCodeExecution below since a later dispatch wires
+    // this finding type into that co-signal mechanism.
+    findings.push(...scanDecoyMisdirection(content, lineContexts))
     findings.push(
       ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
     )
@@ -310,7 +319,8 @@ export class SecurityScanner {
     // next to a real remote-fetch-to-interpreter is corroborating evidence,
     // not benign prose. MUST run after escalateCodeExecution so a
     // freshly-critical code_execution finding can itself serve as a
-    // corroborator (verified: CODE_EXECUTION_CO_OCCURRENCE never contains
+    // corroborator (verified: CO_SIGNAL_MIN_SEVERITY — SMI-6033 Wave 4's
+    // replacement for CODE_EXECUTION_CO_OCCURRENCE — never contains
     // 'jailbreak'/'ai_defence', so this can't create a feedback loop back
     // into escalateCodeExecution's own decision).
     escalateCorroboratedMentions(findings)

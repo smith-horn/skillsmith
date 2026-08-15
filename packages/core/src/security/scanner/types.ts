@@ -26,6 +26,7 @@ export type SecurityFindingType =
   | 'archive_evasion' // SMI-6033 Wave 2 (Gap 3): password-protected archive used to evade content scanning
   | 'paste_host_fetch' // SMI-6033 Wave 2 (Gap 4): anonymous paste/snippet-host URL is the target of a fetch command
   | 'encoded_payload' // SMI-6033 Wave 2 (Gap 2): base64-encoded blob decoded and recursively rescanned
+  | 'decoy_misdirection' // SMI-6033 Wave 4 (Gap 6): fetch target's domain doesn't match a brand/authority claim made nearby in the skill's own prose
 
 /**
  * Severity levels for security findings
@@ -131,6 +132,7 @@ export interface RiskScoreBreakdown {
   archiveEvasion: number // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion score
   pasteHostFetch: number // SMI-6033 Wave 2 (Gap 4): paste-host fetch-target score
   encodedPayload: number // SMI-6033 Wave 2 (Gap 2): base64 decode-and-rescan wrapper-finding score
+  decoyMisdirection: number // SMI-6033 Wave 4 (Gap 6): decoy/misdirection URL-target heuristic score
 }
 
 /**
