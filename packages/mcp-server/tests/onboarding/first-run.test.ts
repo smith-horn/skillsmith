@@ -323,6 +323,14 @@ describe('First Run Detection (SMI-911)', () => {
         formatWelcomeMessage([{ name: 'a' }, { name: 'b' }])
       )
     })
+
+    // SMI-5893 Wave 8b Step 3: names both auto-install opt-out env vars so a
+    // user who doesn't want this behavior knows how to turn it off.
+    it('should name both auto-install opt-out env vars', () => {
+      const message = formatWelcomeMessage([{ name: 'skillsmith' }])
+      expect(message).toContain('SKILLSMITH_SKIP_SKILL_INSTALL')
+      expect(message).toContain('SKILLSMITH_TIER1_AUTOINSTALL_DISABLE')
+    })
   })
 
   describe('Module exports', () => {
