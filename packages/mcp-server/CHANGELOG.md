@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: both bundled SKILL.md assets (`assets/agent-pack/SKILL.md`, `assets/skills/skillsmith/SKILL.md`) now include a "CLI Fallback" section, ported from `@skillsmith/cli`'s existing one, instead of instructing MCP tool calls with no fallback when the server isn't connected. A new parity regression test in `@skillsmith/core` guards against the three bundled copies drifting again (SMI-5893 Wave 6, GH#2368)
+- **Fix**: `recommend`'s footer no longer hardcodes `~/.claude/skills` — now uses a shared `recommend-guard.ts` helper (`@skillsmith/core`) so the CLI and MCP formatters can't drift, and describes multi-harness detection accurately since `recommend`'s auto-detection scans every installed client rather than one (SMI-5893 Wave 7, GH#2368)
+- **Fix**: first-run install messaging (`onboarding/first-run.ts`) now names both opt-out env vars (`SKILLSMITH_SKIP_SKILL_INSTALL`, `SKILLSMITH_TIER1_AUTOINSTALL_DISABLE`) so a silent first-connect skill install is at least explainable — still emitted via stderr only (this is a stdio MCP server; stdout is reserved for JSON-RPC) and only after the fire-and-forget Tier-1 registry install actually resolves (SMI-5893 Wave 8, GH#2368)
+
 ## v0.7.8
 
 - **Fix**: correct integration-test CI job classification (#2345)
