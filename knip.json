@@ -1,0 +1,55 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    "packages/cli": {
+      "entry": ["src/index.ts", "src/**/*.test.ts", "tests/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"],
+      "ignoreDependencies": [
+        "@opentelemetry/instrumentation-http",
+        "@opentelemetry/instrumentation-runtime-node",
+        "@opentelemetry/instrumentation-undici",
+        "@opentelemetry/resources",
+        "@opentelemetry/sdk-node",
+        "@opentelemetry/sdk-trace-base",
+        "@opentelemetry/semantic-conventions",
+        "fts5-sql-bundle",
+        "posthog-node",
+        "tree-sitter-wasms",
+        "web-tree-sitter",
+        "yaml"
+      ]
+    },
+    "packages/core": {
+      "entry": ["src/index.ts", "src/**/*.test.ts", "tests/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
+    },
+    "packages/mcp-server": {
+      "entry": ["src/index.ts", "src/**/*.test.ts", "tests/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
+    },
+    "packages/enterprise": {
+      "entry": ["src/index.ts", "src/**/*.test.ts", "tests/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
+    },
+    "packages/doc-retrieval-mcp": {
+      "entry": ["src/**/*.ts", "src/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/vscode-extension": {
+      "entry": ["src/extension.ts", "src/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/skillsmith-cli": {
+      "entry": ["src/**/*.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/billing-types": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/website": {
+      "entry": ["src/**/*.astro", "src/pages/**/*.ts", "astro.config.mjs"],
+      "project": ["src/**/*.{ts,astro}"]
+    }
+  }
+}
