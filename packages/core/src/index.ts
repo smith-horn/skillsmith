@@ -36,6 +36,12 @@ export { createLogger, type Logger } from './utils/logger.js'
 // private registry) shares one implementation instead of independent inline copies
 // that can silently drift (plan doc's Shared-State/Coordination Audit invariant).
 export { sha256Hex } from './journal/hash.js'
+// SMI-5893 (Wave 7 Step 4): exposed at the root so the CLI's root `--quiet`
+// preAction hook (packages/cli/src/index.ts) and per-command call sites
+// (search.action.ts et al.) share the exact SKILLSMITH_QUIET check already
+// used internally by probe.ts / createDatabase.ts / embeddings/index.ts,
+// instead of each maintaining its own narrower literal-'true' string check.
+export { isQuietModeEnabled } from './utils/quiet-mode.js'
 
 // Types - All type definitions
 export * from './exports/types.js'

@@ -5,6 +5,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## [Unreleased]
 
 - **Chore**: removed 3 confirmed-dead exports flagged by the new `code-health-auditor` skill's first real dogfooding run (SMI-6023) — `displayQuotaProgressBar`/`displayQuotaWarning` (`utils/license.ts`, superseded by inline rendering in `displayLicenseStatus`) and `getTrustTierColor` (`commands/search-formatters.ts`, a one-line wrapper — real call sites already index `TRUST_TIER_COLORS` directly), plus the now-dead re-export of `getTrustTierColor` from `commands/search.ts`. No public API surface change — `packages/cli` ships as a bin-only bundle with no `exports`/`main`/`types` field. 3 other candidates the scan flagged were verified as false positives (same-file callers the tool's coverage check missed) and kept.
+- **Fix**: `list --client cursor`'s footer no longer hardcodes `~/.claude/skills` — it now names the resolved client's actual install path, via `manage.action.ts` reusing the existing `getInstallPath(client)` pattern (SMI-5893 Wave 7, GH#2368)
+- **Fix**: `recommend`'s footer no longer hardcodes `~/.claude/skills` either — since `recommend`'s auto-detection scans across every installed client rather than one, the footer now describes multi-harness detection accurately instead of naming one client path. `recommend --context` also dedupes duplicate rows by `skill.id` (client-side mitigation; the schema-level root cause stays with the separately-tracked SMI-5898) (SMI-5893 Wave 7, GH#2368)
+- **Feature**: `skillsmith setup` (`install-skill.ts`) gains `--client <id>` support, installing to the resolved client's path instead of always `~/.claude/skills/skillsmith/` (SMI-5893 Wave 7, GH#2368)
+- **Fix**: `--quiet`/`SKILLSMITH_QUIET` is now wired once via a commander `preAction` hook at the CLI root instead of being duplicated per-command, and reuses the shared `isQuietModeEnabled()` check instead of a narrower literal-`'true'` comparison. Fixes a real bug where the new root `--quiet` flag was silently shadowing `install`/`registry-install`/`merge`'s own pre-existing local `--quiet` flags (SMI-5893 Wave 7, GH#2368)
 
 ## v0.8.6
 

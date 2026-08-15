@@ -38,6 +38,7 @@ import {
   getInstalledSkills,
   inferRolesFromTags,
   filterOverlappingSkills,
+  dedupeRecommendationsBySkillId,
 } from './recommend.helpers.js'
 
 // ============================================================================
@@ -143,15 +144,22 @@ async function runRecommend(targetPath: string, options: RecommendOptions): Prom
     })
 
     // Transform API response
-    let recommendations: SkillRecommendation[] = apiResponse.data.map((skill) => ({
-      skill_id: skill.id,
-      name: skill.name,
-      reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
-      similarity_score: -1,
-      trust_tier: validateTrustTier(skill.trust_tier),
-      quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
-      roles: inferRolesFromTags(skill.tags || []),
-    }))
+    // SMI-5893 (Wave 7 Step 2): dedupe by skill_id immediately after mapping
+    // — `skills-recommend` returns raw, undeduped RPC output, so the same
+    // skill can appear twice. `candidates_considered` below still reports
+    // `apiResponse.data.length` (the raw, pre-dedup count) per the plan's
+    // contract; only this displayed/returned row list is deduped.
+    let recommendations: SkillRecommendation[] = dedupeRecommendationsBySkillId(
+      apiResponse.data.map((skill) => ({
+        skill_id: skill.id,
+        name: skill.name,
+        reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
+        similarity_score: -1,
+        trust_tier: validateTrustTier(skill.trust_tier),
+        quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+        roles: inferRolesFromTags(skill.tags || []),
+      }))
+    )
 
     // Apply overlap filtering
     let overlapFiltered = 0

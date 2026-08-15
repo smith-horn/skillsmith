@@ -328,6 +328,15 @@ before you save. Use this entry:
 
 Tell me which file you changed when you're done.`}</code></pre>
 
+  <p>
+    <strong>Not using Claude Code?</strong> Skills install to your agent's own
+    directory by default (e.g. <code>~/.claude/skills/</code> for Claude Code). If your
+    agent isn't Claude Code, ask it to add an <code>env</code> block with
+    <code>SKILLSMITH_CLIENT</code> set to your client's name (e.g. <code>"cursor"</code>)
+    so installs land in the right place — see the client-specific snippets in Option C
+    below for exact examples.
+  </p>
+
   <h4>Option C — Edit the config file yourself</h4>
 
   <p>
@@ -395,7 +404,10 @@ Tell me which file you changed when you're done.`}</code></pre>
       You're all set!
     </h4>
     <p>
-      Skills are installed to <code>~/.claude/skills/</code> and automatically available in all your sessions.
+      Skills install to your MCP client's own directory — <code>~/.claude/skills/</code> for
+      Claude Code, <code>~/.cursor/skills/</code> for Cursor, or the equivalent path for
+      your agent (see the client-specific snippet above) — and are automatically available
+      in all your sessions.
     </p>
   </div>
 
@@ -522,7 +534,9 @@ skillsmith info jest-helper`}</code></pre>
       Skills Installed!
     </h4>
     <p>
-      Skills are installed to <code>~/.claude/skills/</code>. They'll be automatically available when you use your MCP client.
+      By default the CLI installs to <code>~/.claude/skills/</code>. Pass <code>--client cursor</code>
+      (or another client name) to target a different MCP client's directory instead —
+      they'll be automatically available when you use that client.
     </p>
   </div>
 

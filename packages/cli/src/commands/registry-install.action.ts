@@ -44,6 +44,7 @@ import {
   getPrivateRegistrySkillContent,
   resolveFreshAccessToken,
   emitInstallEvent,
+  isQuietModeEnabled,
   type PrivateRegistryGetResult,
   type InstallFromContentOptions,
 } from '@skillsmith/core'
@@ -146,7 +147,12 @@ async function registryInstallActionImpl(
   skillId: string,
   opts: RegistryInstallActionOptions
 ): Promise<void> {
-  const quiet = opts.quiet ?? false
+  // SMI-5893 (Wave 7 Step 4): falls back to the shared isQuietModeEnabled()
+  // gate for the same reason as install.ts's identical fallback — the new
+  // root-level `--quiet` (packages/cli/src/index.ts) claims the LONG-form
+  // token ahead of this command's own local `-q, --quiet`, leaving
+  // `opts.quiet` undefined for that spelling; `-q` still resolves locally.
+  const quiet = opts.quiet ?? isQuietModeEnabled()
   const jsonOutput = opts.json ?? false
 
   try {
