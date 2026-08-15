@@ -285,6 +285,9 @@ export async function runRecheck(opts: {
   let deferredCap = 0
   // SMI-5445 M3: PASS-3 sibling-recovered sub-counter.
   let pass3SiblingRecovered = 0
+  // SMI-6020 (design §3.3.6): scan-incomplete tally. NEVER folded into
+  // fetchErrors — see MAX_FETCH_ERROR_RATE's throttle guard below.
+  let scanIncomplete = 0
 
   // SMI-5445 C2: mutable clear budget threaded into processRow so the cap is
   // enforced BEFORE the DB write, not post-hoc in the switch below. processRow
@@ -358,6 +361,12 @@ export async function runRecheck(opts: {
         case 'cas-skipped':
           casSkipped++
           break
+        // SMI-6020 (design §3.3.6): a scan hit the multiline iteration ceiling —
+        // a scan-integrity gap, not a fetch failure. Counted separately so it can
+        // never inflate fetchErrorRate / trip the throttle guard below.
+        case 'scan-incomplete':
+          scanIncomplete++
+          break
         case 'error':
           errors++
           break
@@ -416,6 +425,8 @@ export async function runRecheck(opts: {
     pass3_sibling_recovered: pass3SiblingRecovered,
     // SMI-5445 C2: deferred-cap count (rows that hit the per-run sibling-clear cap).
     deferred_cap: deferredCap,
+    // SMI-6020 (design §3.3.6): rows whose scan hit the multiline iteration ceiling.
+    scan_incomplete: scanIncomplete,
   }
 
   // (h) Classify the audit result; a throttled recheck is a prevention OUTAGE.

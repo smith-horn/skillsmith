@@ -22,7 +22,11 @@ import {
   mergeSiblingScans,
   type SiblingEdgeScan,
 } from './skill-processor.security.ts'
-import { scanSkillContent, summarizeFindings } from './_shared/security-scanner-edge.ts'
+import {
+  scanSkillContent,
+  summarizeFindings,
+  isScanTruncated,
+} from './_shared/security-scanner-edge.ts'
 import type { EdgeScanResult, SecurityFinding } from './_shared/security-scanner-edge.ts'
 import type { RateLimitTelemetry } from './_shared/rate-limit.ts'
 import type { StaleQuarantinedRow } from './revalidate-stale-quarantines.ts'
@@ -39,6 +43,10 @@ export interface SiblingRescanResult {
   siblingPath?: string
   /** SMI-5445 C1: recomputed merged risk score (root + all siblings). Present when status is 'clean' or 'malicious'. */
   mergedScore?: number
+  /** SMI-6020 (design §3.3.6): true when this 'unknown' outcome was caused by a
+   *  truncated scan (root or sibling) rather than a fetch failure — lets the
+   *  caller count it separately from a genuine transient fetch error. */
+  scanIncomplete?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +107,18 @@ export async function runSiblingRescan(
     return { status: 'unknown' }
   }
 
+  // SMI-6020 (design §3.3.6/§2.5 item 5): a truncated root scan is a known
+  // under-count — it must never be treated as authoritative for de-escalation.
+  // 'unknown' (not 'malicious') is the correct fail-closed status: we cannot
+  // verify maliciousness, only that the scan is incomplete. Checked before the
+  // fetch loop so a truncated root also saves the CDN fetch budget.
+  if (isScanTruncated(rootScan)) {
+    console.warn(
+      `[recheck-sibling] root scan truncated for ${owner}/${repo} — failing closed (staying quarantined)`
+    )
+    return { status: 'unknown', scanIncomplete: true }
+  }
+
   for (const relPath of targets) {
     const sibResult = await fetchSiblingContent(owner, repo, branch, relPath, telemetry)
 
@@ -140,6 +160,17 @@ export async function runSiblingRescan(
         mergedScore: merged.riskScore,
       }
     }
+  }
+
+  // SMI-6020 (design §3.3.6/§2.5 item 5): a truncated sibling scan is likewise a
+  // known under-count. Checked after the loop (all siblings already fetched at
+  // this point) but before merging, so a truncated sibling can never feed a
+  // 'clean' or score-only-'malicious' verdict below. A sibling that ALSO
+  // triggered the early-abort rejectable branch above already returned
+  // 'malicious' before reaching here — that is a RAISE, which §3.3.6 permits.
+  if (fetchedSiblingScans.some(({ scan }) => isScanTruncated(scan))) {
+    console.warn(`[recheck-sibling] sibling scan truncated for ${owner}/${repo} — failing closed`)
+    return { status: 'unknown', scanIncomplete: true }
   }
 
   // SMI-5445 C1: no rejectable sibling was found — this is exactly the case C1
@@ -327,4 +358,59 @@ export async function writeSiblingRecovery(
     },
   })
   return 'ok'
+}
+
+// ---------------------------------------------------------------------------
+// DB write helper (repo/path unreachable re-tag)
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-tag a quarantined row whose upstream repo/path is unreachable. Exported
+ * (SMI-5357) for reuse by dequarantine-false-positives.ts; auditMeta defaults
+ * keep revalidate-stale-quarantines.ts's two call sites byte-stable.
+ *
+ * SMI-6020: moved here from revalidate-stale-quarantines.ts (round-7 485-line
+ * budget headroom) — re-exported from that file for existing importers.
+ */
+export async function retagUnreachable(
+  row: StaleQuarantinedRow,
+  reason: string,
+  eventType: 'quarantine:repo_gone',
+  db: SupabaseClient,
+  auditMeta: { smi: string; sweep: string; action: string } = {
+    smi: 'SMI-5165',
+    sweep: 'stale-revalidation',
+    action: 'revalidate_stale_quarantines',
+  }
+): Promise<void> {
+  const now = new Date().toISOString()
+  // SMI-5166 E9: CAS-gate on quarantined=true — a 404 on a live row must NOT retag
+  // it (maintenance ages it out). Audit insert gated on rows-affected.
+  const { data: retagged } = await db
+    .from('skills')
+    .update({ quarantine_reason: reason, last_seen_at: now })
+    .eq('id', row.id)
+    .eq('quarantined', true)
+    .select('id')
+
+  if (!retagged || retagged.length === 0) return
+
+  await db.from('audit_logs').insert({
+    event_type: eventType,
+    actor: 'system',
+    resource: row.id,
+    action: auditMeta.action,
+    result: 'success',
+    metadata: {
+      smi: auditMeta.smi,
+      sweep: auditMeta.sweep,
+      skill_id: row.id,
+      author: row.author,
+      name: row.name,
+      repo_url: row.repo_url,
+      prev_quarantine_reason: row.quarantine_reason,
+      prev_security_findings: row.security_findings,
+      new_reason: reason,
+    },
+  })
 }

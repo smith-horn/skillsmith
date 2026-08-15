@@ -13,25 +13,39 @@
 export const MAX_LINE_LENGTH_FOR_REGEX = 10000
 
 /**
- * SMI-5881: Cap for the FULL-CONTENT (multiline "pass 1") regex scan, in
- * UTF-16 code units (JavaScript `string.length` — NOT bytes/code points; see
- * SecurityScanner.ts's content-length finding message).
+ * SMI-5879 (design §3.4): Cap for the FULL-CONTENT (multiline "pass 1") regex
+ * scan, in UTF-16 code units (JavaScript `string.length` — NOT bytes/code
+ * points; see SecurityScanner.ts's content-length finding message).
  *
- * Equal to MAX_LINE_LENGTH_FOR_REGEX today (both 10_000) but declared
- * separately because the two caps protect different scan passes (per-line vs
- * whole-document) and may need to diverge later. This is a ReDoS budget
- * input, not a free parameter — raising it requires first proving
- * AD_CRLF_INJECTION-class patterns stay linear at the new size. Measured
- * (SMI-5881): the fixed AD_CRLF_INJECTION pattern is already ~4x slower per
- * doubling of input size on some adversarial inputs at sizes past this cap,
- * extrapolating to unacceptable latency well before 1,000,000 — so this cap
- * is NOT raised as part of SMI-5881 even though larger trust tiers allow a
- * much bigger `maxContentLength`. See SecurityScanner.ts's
- * `effectiveMultilineLimit` (`Math.min(MAX_CONTENT_LENGTH_FOR_REGEX,
- * maxContentLength)`) for how this interacts with the per-tier content-length
- * ceiling.
+ * SMI-5881 set this equal to MAX_LINE_LENGTH_FOR_REGEX (10,000) and declined
+ * to raise it, citing a doubling-based extrapolation from smaller inputs that
+ * projected "unacceptable latency well before 1,000,000" for
+ * AD_CRLF_INJECTION-class patterns. SMI-5879 independently re-measured
+ * directly at 1,000,000 (not extrapolated) across the 7 ported multiline
+ * patterns (AD_CRLF_INJECTION, AD_ROLE_MARKER_BARE, AD_HTML_COMMENT_VERB/NOUN,
+ * AD_DELIMITER_BARE, AD_AN2_ROLE_BODY_NEXT_LINE, JB_JS3A/JS3B) against
+ * per-pattern adversarial near-miss shapes (not just the CRLF-pair shape
+ * SMI-5881 used) and found linear scaling with a worst case of ~56ms at
+ * 1,000,000 chars (AD_HTML_COMMENT_NOUN, "repeated HTML-comment-open"
+ * near-miss) — confirmed still linear (not superlinear) up to 4,000,000
+ * chars (~145ms), comfortably under the section 7.3 250ms per-case budget.
+ * The prior extrapolation does not hold empirically at this exact size; the
+ * measured worst case has real headroom, just less than the ~78x this
+ * design doc's own (unverified) claim asserted. Raising this cap closes the
+ * 10 KB pass-1 truncation blind spot (design §3.4) — the edge's own
+ * MAX_SKILL_CONTENT_SIZE is 1,000,000 bytes, so pass 1 previously saw only
+ * the first 1% of a large SKILL.md.
+ *
+ * Still declared separately from MAX_LINE_LENGTH_FOR_REGEX because the two
+ * caps protect different scan passes (per-line vs whole-document) and may
+ * need to diverge again. See SecurityScanner.ts's `effectiveMultilineLimit`
+ * (`Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, maxContentLength)`) for how this
+ * interacts with the per-tier content-length ceiling — a trust tier with a
+ * SMALLER configured `maxContentLength` still tightens the effective limit
+ * below this cap; none currently need MORE than this cap for the multiline
+ * pass specifically.
  */
-export const MAX_CONTENT_LENGTH_FOR_REGEX = MAX_LINE_LENGTH_FOR_REGEX
+export const MAX_CONTENT_LENGTH_FOR_REGEX = 1_000_000
 
 /**
  * SMI-882: Safe regex test with length limit

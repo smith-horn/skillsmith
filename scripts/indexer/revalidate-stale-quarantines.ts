@@ -23,7 +23,8 @@ import { assertRunAllowed, assertFreezeMarkerClear } from './run-gate.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import {
   scanSkillContent,
-  shouldQuarantine,
+  shouldQuarantineFailClosed,
+  isScanTruncated,
   summarizeFindings,
 } from './_shared/security-scanner-edge.ts'
 import { newRateLimitTelemetry, type RateLimitTelemetry } from './_shared/rate-limit.ts'
@@ -33,7 +34,9 @@ import {
   buildSiblingQuarantineReason,
   writeSiblingRequarantine,
   writeSiblingRecovery,
+  retagUnreachable,
 } from './revalidate-stale-quarantines.sibling.ts'
+import { buildQuarantineReason } from './skill-processor.security.ts'
 import { parseIdSelection, reportIdSelectionIfPresent } from './revalidate-stale-quarantines.cli.ts'
 
 // ---------------------------------------------------------------------------
@@ -67,6 +70,8 @@ interface SweepCounts {
   fetchErrors: number
   casSkipped: number
   errors: number
+  /** SMI-6020: rows whose root or sibling scan hit the multiline iteration ceiling. */
+  scanIncomplete: number
 }
 /** Above this fraction of transient fetch errors the run is throttled; repo-gone counts unreliable. */
 const MAX_FETCH_ERROR_RATE = 0.1
@@ -75,53 +80,10 @@ const MAX_FETCH_ERROR_RATE = 0.1
 // Per-row logic
 // ---------------------------------------------------------------------------
 
-/**
- * Re-tag a quarantined row whose upstream repo/path is unreachable.
- * Exported (SMI-5357) for reuse by dequarantine-false-positives.ts;
- * auditMeta defaults keep the two existing callers in this file byte-stable.
- */
-export async function retagUnreachable(
-  row: StaleQuarantinedRow,
-  reason: string,
-  eventType: 'quarantine:repo_gone',
-  db: SupabaseClient,
-  auditMeta: { smi: string; sweep: string; action: string } = {
-    smi: 'SMI-5165',
-    sweep: 'stale-revalidation',
-    action: 'revalidate_stale_quarantines',
-  }
-): Promise<void> {
-  const now = new Date().toISOString()
-  // SMI-5166 E9: CAS-gate on quarantined=true — a 404 on a live row must NOT retag
-  // it (maintenance ages it out). Audit insert gated on rows-affected.
-  const { data: retagged } = await db
-    .from('skills')
-    .update({ quarantine_reason: reason, last_seen_at: now })
-    .eq('id', row.id)
-    .eq('quarantined', true)
-    .select('id')
-
-  if (!retagged || retagged.length === 0) return
-
-  await db.from('audit_logs').insert({
-    event_type: eventType,
-    actor: 'system',
-    resource: row.id,
-    action: auditMeta.action,
-    result: 'success',
-    metadata: {
-      smi: auditMeta.smi,
-      sweep: auditMeta.sweep,
-      skill_id: row.id,
-      author: row.author,
-      name: row.name,
-      repo_url: row.repo_url,
-      prev_quarantine_reason: row.quarantine_reason,
-      prev_security_findings: row.security_findings,
-      new_reason: reason,
-    },
-  })
-}
+// SMI-6020: retagUnreachable moved to revalidate-stale-quarantines.sibling.ts
+// (round-7 485-line budget headroom) — re-exported here so existing importers
+// (dequarantine-false-positives.ts) are unaffected.
+export { retagUnreachable }
 
 /**
  * Process a single stale-quarantined row (SMI-5437 Wave 2: extended with sibling rescan).
@@ -169,27 +131,42 @@ export async function processRow(
   // Step 3: run the fixed edge scanner.
   const scan = await scanSkillContent(fetched.content)
 
-  if (shouldQuarantine(scan)) {
+  if (shouldQuarantineFailClosed(scan)) {
     // Genuinely risky. Already-quarantined rows re-tag; a LIVE row (quarantined ===
     // false, routed via recheck.ts pass-1) is re-quarantined — SMI-5377 (the prior
     // code CAS-gated on quarantined=true and never set it, so live rows no-oped).
     const wasLive = row.quarantined === false
+    // SMI-6020 (design §3.3.6/§2.5 item 6): a truncated scan is a known
+    // under-count — never write it as the authoritative security_score /
+    // security_findings (Rule B). The reason string ALSO switches to the
+    // dedicated truncation template (buildQuarantineReason already handles
+    // both the truncation-only and co-occurring cases per design §2.6); a bare
+    // summarizeFindings() would be empty or misleadingly thin here.
+    const truncated = isScanTruncated(scan)
     if (apply) {
       const summary = summarizeFindings(scan.findings) || 'security scan'
+      const reason = truncated
+        ? buildQuarantineReason(scan, row.author ?? 'unknown', row.name)
+        : summary
       const now = new Date().toISOString()
       // Match by id only + set quarantined:true explicitly. Fail-closed/race-safe:
       // the demanded end-state is unconditionally quarantined; the rows-affected check
       // below only needs to guard a row deleted in the interim.
+      const updatePayload: Record<string, unknown> = {
+        quarantined: true,
+        quarantine_reason: reason,
+        last_scanned_at: now,
+        content_hash: scan.contentHash, // SMI-5849: backfill on requarantine too
+      }
+      if (!truncated) {
+        // Rule B (design §2.3): omit these two keys on a truncated scan so the
+        // single-row .update() leaves the prior, stricter values in place.
+        updatePayload.security_score = scan.riskScore
+        updatePayload.security_findings = scan.findings
+      }
       const { data: updated, error: updateErr } = await db
         .from('skills')
-        .update({
-          quarantined: true,
-          quarantine_reason: summary,
-          security_score: scan.riskScore,
-          security_findings: scan.findings,
-          last_scanned_at: now,
-          content_hash: scan.contentHash, // SMI-5849: backfill on requarantine too
-        })
+        .update(updatePayload)
         .eq('id', row.id)
         .select('id')
       if (updateErr) {
@@ -213,9 +190,11 @@ export async function processRow(
             name: row.name,
             repo_url: row.repo_url,
             new_score: scan.riskScore,
-            new_reason: summary,
+            new_reason: reason,
             prev_quarantine_reason: row.quarantine_reason,
             prev_quarantined: row.quarantined ?? null,
+            // SMI-6020 (design §3.3.6): literal skip_reason requirement.
+            ...(truncated ? { skip_reason: 'multiline-truncated' } : {}),
           },
         })
       }
@@ -264,6 +243,12 @@ export async function processRow(
     scan
   )
   if (sibRescan.status === 'unknown') {
+    // SMI-6020 (design §3.3.6/§2.5 item 6): a truncated scan (root or sibling)
+    // is a scan-integrity gap, not a fetch failure — counted separately so it
+    // can never inflate fetch_error_rate (see recheck.ts's throttle guard).
+    if (sibRescan.scanIncomplete) {
+      return { row, outcome: 'scan-incomplete' }
+    }
     // Transient: can't verify sibling state; don't change quarantine status.
     return { row, outcome: 'fetch-error' }
   }
@@ -350,6 +335,7 @@ export async function runSweep(
     fetchErrors: 0,
     casSkipped: 0,
     errors: 0,
+    scanIncomplete: 0,
   }
   const keptRows: RowResult[] = []
   const goneRows: RowResult[] = []
@@ -399,6 +385,12 @@ export async function runSweep(
         case 'cas-skipped':
           counts.casSkipped++
           break
+        case 'scan-incomplete':
+          // SMI-6020: root or sibling scan hit the multiline iteration ceiling —
+          // counted separately, never folded into fetchErrors (see MAX_FETCH_ERROR_RATE).
+          counts.scanIncomplete++
+          console.warn(`  WARN   ${tag} — scan incomplete (multiline iteration ceiling)`)
+          break
         case 'error':
           counts.errors++
           console.error(`  ERROR  ${tag} — left quarantined (DB update failed)`)
@@ -434,6 +426,7 @@ export async function runSweep(
       `  parse-failed:    ${counts.parseFailed}\n` +
       `  fetch-error:     ${counts.fetchErrors}\n` +
       `  cas-skipped:     ${counts.casSkipped}\n` +
+      `  scan-incomplete: ${counts.scanIncomplete}\n` +
       `  errors:          ${counts.errors}\n`
   )
 

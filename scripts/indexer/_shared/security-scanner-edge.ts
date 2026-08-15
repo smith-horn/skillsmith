@@ -48,6 +48,25 @@ import {
   PROMPT_INJECTION_PATTERNS,
 } from './security-scanner-edge.patterns.ts'
 
+// SMI-5879: evidence-tier classification + pattern scope + corroboration —
+// extracted to a sibling twin; byte-identical body across both _shared twins.
+import { classifyEvidence, escalateCorroboratedMentions } from './security-scanner-edge.evidence.ts'
+
+// SMI-5879: multiline-scan two-pass engine — extracted to a sibling twin
+// (500-line limit); byte-identical body across both _shared twins.
+import type { MultilineScanResult } from './security-scanner-edge.multiline.ts'
+import {
+  scanPatternsWithMultilineSupport,
+  MAX_MULTILINE_LINES_PER_PATTERN,
+  MAX_MULTILINE_ITERATIONS_PER_PATTERN,
+} from './security-scanner-edge.multiline.ts'
+
+import { safeRegexTest } from './security-scanner-edge.regex-utils.ts'
+
+// SMI-5424 PR2 / SMI-5879: owner-perm chmod compound signal — extracted to a
+// sibling twin; byte-identical body across both _shared twins.
+import { scanChmodFetchCompound } from './security-scanner-edge.chmod-compound.ts'
+
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
 export type {
@@ -56,6 +75,7 @@ export type {
   FindingConfidence,
   SecurityFinding,
   LineContext,
+  EvidenceType,
 } from './security-scanner-edge.context.ts'
 export {
   analyzeMarkdownContext,
@@ -63,15 +83,12 @@ export {
   isWithinInlineCode,
   isInsideCodeBlock,
 } from './security-scanner-edge.context.ts'
+export { MAX_CONTENT_SCAN_LENGTH } from './security-scanner-edge.regex-utils.ts'
+export { MAX_MULTILINE_LINES_PER_PATTERN, MAX_MULTILINE_ITERATIONS_PER_PATTERN }
 
 // ============================================================================
 // Constants + Result Type
 // ============================================================================
-
-/**
- * ReDoS protection: maximum line length for regex matching
- */
-const MAX_LINE_LENGTH = 10000
 
 /**
  * Risk score threshold for quarantine (skills >= this are flagged)
@@ -88,19 +105,19 @@ export interface EdgeScanResult {
   contentHash: string
   scannedAt: string
   scanDurationMs: number
+  /**
+   * SMI-5879 (design §3.3.6): true when the jailbreak or prompt_injection
+   * multiline pass hit its per-pattern iteration ceiling before exhausting
+   * matches on a pathological same-line-repetition input. NOT provably
+   * score-neutral — the write path must treat this scan as authoritative for
+   * RAISING a verdict only, never for lowering an existing quarantine.
+   */
+  multilineTruncated?: boolean
 }
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Safe regex test with length limit to prevent ReDoS
- */
-function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null {
-  const safeInput = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) : input
-  return safeInput.match(pattern)
-}
 
 /**
  * Generate SHA-256 hash of content for change detection
@@ -119,31 +136,21 @@ export async function generateContentHash(content: string): Promise<string> {
 
 /**
  * Scan content for jailbreak patterns
- * SMI-4960: documentation-context matches downgrade to low confidence.
+ *
+ * SMI-5879 (design §2/§3): now a two-pass evidence-tier scan (multiline
+ * 'content'/'both'-scope patterns against full content, 'line'/'both'-scope
+ * patterns per-line), replacing the flat first-match-per-line severity model.
  */
-function scanJailbreakPatterns(lines: string[], contexts: LineContext[]): SecurityFinding[] {
-  const findings: SecurityFinding[] = []
-
-  for (const [index, line] of lines.entries()) {
-    for (const pattern of JAILBREAK_PATTERNS) {
-      const match = safeRegexTest(pattern, line)
-      if (match) {
-        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
-        findings.push({
-          type: 'jailbreak',
-          severity: inDocContext ? 'high' : 'critical',
-          message: `Jailbreak pattern detected: "${match[0].slice(0, 50)}"`,
-          lineNumber: index + 1,
-          location: line.trim().slice(0, 100),
-          inDocumentationContext: inDocContext,
-          confidence,
-        })
-        break // One finding per line
-      }
-    }
-  }
-
-  return findings
+function scanJailbreakPatterns(
+  content: string,
+  lines: string[],
+  contexts: LineContext[]
+): MultilineScanResult {
+  return scanPatternsWithMultilineSupport(content, lines, contexts, {
+    type: 'jailbreak',
+    messagePrefix: 'Jailbreak pattern detected',
+    patterns: JAILBREAK_PATTERNS,
+  })
 }
 
 /**
@@ -233,135 +240,22 @@ function scanPrivilegeEscalation(lines: string[], contexts: LineContext[]): Secu
   return findings
 }
 
-// SMI-5424 PR2: owner-permission chmod is a COMPOUND signal, not standalone.
-// `chmod 755 ./bin/cli` / `chmod 600 .env` / `chmod +x build.sh` are benign idioms
-// that the broad owner-perm pattern previously false-fired as
-// privilege_escalation:critical. Owner-perm chmod now emits ONLY when either a fetch
-// COMMAND (curl/wget/git-clone/npx-to-URL) is within ±1 line of it, OR the file it
-// targets is the download DESTINATION (the `-o`/`-O`/`--output`/`>`/`>>` target) of a
-// fetch command anywhere in the content (distance-independent correlation, so filler
-// lines between the download and the chmod can't evade the ±1 window) — the "download
-// a payload, chmod it, run it" supply-chain
-// shape — which kills the standalone FP AND preserves the chmod co-signal that
-// escalateCodeExecution requires (it only accepts high/critical non-doc co-signals,
-// so chmod cannot simply be downgraded). World-writable and setuid/setgid chmod stay
-// standalone-critical in PRIVILEGE_ESCALATION_PATTERNS; `alreadyFlaggedLines` skips
-// those so we never double-emit on one line.
-const OWNER_PERM_CHMOD = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\b/i
-// FIX-1: actual fetch COMMANDS only. The prior weak tokens (bare `fetch`/`download`/
-// `downloaded`, a bare `https?://`, a bare `npx`) false-fired on benign prose next to
-// an owner-perm chmod. Keep curl/wget/git-clone, and `npx` only when followed by a URL.
-const CHMOD_FETCH_CONTEXT = /\b(?:curl|wget)\b|\bgit\s+clone\b|\bnpx\b[^\n]{0,80}https?:\/\//i
-// FIX-2: the file an owner-perm chmod targets (capture its path), so a download command
-// anywhere in the content that references the same file correlates with the chmod even
-// when filler lines space them outside the ±1 window.
-const CHMOD_TARGET = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\s+(\S+)/i
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-// SMI-5431: the IMPLICIT download destination of a fetch command — the file written with
-// NO explicit -o/-O/--output<space>/> redirect: `wget <url>` (no -O/-o) → URL last segment;
-// `git clone <url>` → repo dir (minus `.git`); `curl --output=<file>` (equals form, missed by
-// the explicit regex). A bare `curl <url>` GET writes to STDOUT → '' (never correlates). ReDoS-safe.
-function implicitDownloadBasename(line: string): string {
-  const lastSegment = (urlAfterScheme: string): string => {
-    const noFrag = urlAfterScheme.split(/[?#]/)[0]
-    const slash = noFrag.indexOf('/') // first slash = end of host
-    if (slash < 0) return '' // host only -> wget writes index.html
-    const path = noFrag.slice(slash + 1).replace(/\/+$/, '')
-    return path === '' ? '' : (path.split('/').pop() ?? '')
-  }
-  const wget = line.match(/\bwget\b(?![^\n]{0,200}\s-[oO]\b)[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
-  if (wget) return lastSegment(wget[1])
-  const clone = line.match(/\bgit\s+clone\b[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
-  if (clone) return lastSegment(clone[1]).replace(/\.git$/i, '')
-  const curlEq = line.match(/\bcurl\b[^\n]{0,200}?--output=['"]?(\S{1,400})/i)
-  if (curlEq) return curlEq[1].replace(/['"]/g, '').split('/').pop() ?? ''
-  return ''
-}
-
-/**
- * Owner-perm chmod compound signal — see comment above. Emits HIGH (non-doc) / low
- * (doc) privilege_escalation when an owner-perm chmod is within ±1 line of a fetch
- * command OR targets that command's DOWNLOAD DESTINATION anywhere — explicit
- * (-o/-O/--output<space>/>) or, per SMI-5431, implicit (wget no -O / git clone / curl
- * --output=). A bare `curl <url>` GET writes no file so it is never correlated. Lines
- * already flagged critical by the standalone patterns are skipped to avoid double-emit.
- * The ONLY uncaught residual: a spaced `curl … | bash` (no filename) + a non-adjacent chmod.
- */
-function scanChmodFetchCompound(
-  lines: string[],
-  contexts: LineContext[],
-  alreadyFlaggedLines: ReadonlySet<number>
-): SecurityFinding[] {
-  const findings: SecurityFinding[] = []
-  // FIX-2: lines carrying a fetch command, for distance-independent correlation.
-  const fetchLines = lines.filter((l) => CHMOD_FETCH_CONTEXT.test(l))
-  for (const [index, line] of lines.entries()) {
-    const lineNumber = index + 1
-    if (alreadyFlaggedLines.has(lineNumber)) continue
-    const match = safeRegexTest(OWNER_PERM_CHMOD, line)
-    if (!match) continue
-    const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
-    const adjacentFetch = CHMOD_FETCH_CONTEXT.test(window)
-    // FIX-2 + SMI-5431: correlate the chmod target basename (≥3 chars) against a fetch
-    // command's DOWNLOAD DESTINATION anywhere — explicit (-o/-O/--output<space>/>, with an
-    // optional leading path) via regex, OR implicit (wget/git-clone/curl --output=) via
-    // exact-token equality. Anchored on the destination, NOT basename-anywhere, so a URL
-    // path / query / header value (governance FP class) and a bare curl GET do not correlate.
-    let correlated = false
-    const tm = line.match(CHMOD_TARGET)
-    if (tm) {
-      const base = tm[1].replace(/['"]/g, '').split('/').pop() ?? ''
-      if (base.length >= 3) {
-        const re = new RegExp(
-          `(?:-o|-O|--output|>>?)\\s*['"]?(?:[^\\s'"]*/)?${escapeRegExp(base)}(?:[\\s'"?]|$)`
-        )
-        correlated = fetchLines.some((l) => re.test(l) || implicitDownloadBasename(l) === base)
-      }
-    }
-    if (!adjacentFetch && !correlated) continue
-    const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
-    findings.push({
-      type: 'privilege_escalation',
-      severity: inDocContext ? 'low' : 'high',
-      message: `chmod of a fetched/downloaded file (compound with a download verb): "${match[0].slice(0, 50)}"`,
-      lineNumber,
-      location: line.trim().slice(0, 100),
-      inDocumentationContext: inDocContext,
-      confidence,
-    })
-  }
-  return findings
-}
-
 /**
  * Scan content for prompt injection patterns
- * SMI-4960: documentation-context matches downgrade to low confidence.
+ *
+ * SMI-5879 (design §2/§3): now a two-pass evidence-tier scan, replacing the
+ * flat first-match-per-line severity model (see scanJailbreakPatterns above).
  */
-function scanPromptInjection(lines: string[], contexts: LineContext[]): SecurityFinding[] {
-  const findings: SecurityFinding[] = []
-
-  for (const [index, line] of lines.entries()) {
-    for (const pattern of PROMPT_INJECTION_PATTERNS) {
-      const match = safeRegexTest(pattern, line)
-      if (match) {
-        const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
-        findings.push({
-          type: 'prompt_injection',
-          severity: inDocContext ? 'high' : 'critical',
-          message: `Prompt injection pattern: "${match[0].slice(0, 50)}"`,
-          lineNumber: index + 1,
-          location: line.trim().slice(0, 100),
-          inDocumentationContext: inDocContext,
-          confidence,
-        })
-        break
-      }
-    }
-  }
-
-  return findings
+function scanPromptInjection(
+  content: string,
+  lines: string[],
+  contexts: LineContext[]
+): MultilineScanResult {
+  return scanPatternsWithMultilineSupport(content, lines, contexts, {
+    type: 'prompt_injection',
+    messagePrefix: 'Prompt injection pattern',
+    patterns: PROMPT_INJECTION_PATTERNS,
+  })
 }
 
 // ============================================================================
@@ -384,7 +278,8 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
   const contexts = analyzeMarkdownContext(content)
 
   // Run all scanners
-  findings.push(...scanJailbreakPatterns(lines, contexts))
+  const jailbreakResult = scanJailbreakPatterns(content, lines, contexts)
+  findings.push(...jailbreakResult.findings)
   findings.push(...scanSuspiciousPatterns(lines, contexts))
   findings.push(...scanDataExfiltration(lines, contexts))
   findings.push(...scanPrivilegeEscalation(lines, contexts))
@@ -398,13 +293,19 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
       .map((f) => f.lineNumber as number)
   )
   findings.push(...scanChmodFetchCompound(lines, contexts, privEscLines))
-  findings.push(...scanPromptInjection(lines, contexts))
+  const promptInjectionResult = scanPromptInjection(content, lines, contexts)
+  findings.push(...promptInjectionResult.findings)
   // SMI-5359 Wave 4.2c: remote-fetch-to-interpreter + Unicode-concealed directives.
   findings.push(...scanCodeExecution(lines, contexts))
   findings.push(...scanObfuscatedDirective(lines))
   // Promote code_execution to critical when it co-occurs with a non-doc
   // exfil/privilege/obfuscation signal (runs after every detector).
   escalateCodeExecution(findings)
+  // SMI-5879: lift a mention-tier jailbreak/prompt_injection finding when it
+  // co-occurs with a genuinely dangerous non-documentation signal. MUST run
+  // after escalateCodeExecution so a freshly-critical code_execution finding
+  // can itself serve as a corroborator.
+  escalateCorroboratedMentions(findings)
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)
@@ -431,8 +332,20 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
     contentHash,
     scannedAt: new Date().toISOString(),
     scanDurationMs: endTime - startTime,
+    multilineTruncated: jailbreakResult.truncated || promptInjectionResult.truncated,
   }
 }
+
+/**
+ * SMI-5879 (design §5): quickSecurityCheck is a fast pre-filter, not the full
+ * scan — a bare mention-tier match (a documentation page discussing
+ * "jailbreak" or "DAN") should not by itself fail the quick path. Derived
+ * ONCE at module load, not hand-maintained, so it can never silently drift
+ * from JAILBREAK_PATTERNS' own evidence-tier classification.
+ */
+export const DIRECTIVE_JAILBREAK_PATTERNS: readonly RegExp[] = JAILBREAK_PATTERNS.filter(
+  (p) => classifyEvidence(p) !== 'mention'
+)
 
 /**
  * Quick check for critical patterns only (fast path)
@@ -443,13 +356,17 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
  * (10KB). Content after 10KB was never scanned, allowing jailbreak patterns
  * placed after that offset to bypass detection.
  *
+ * SMI-5879 (design §5): tests only the directive-tier derived subset (a bare
+ * mention like "jailbreak" or "DAN" alone should not fail the quick path —
+ * see DIRECTIVE_JAILBREAK_PATTERNS above).
+ *
  * @param content - Content to check
  * @returns true if content appears safe, false if critical pattern found
  */
 export function quickSecurityCheck(content: string): boolean {
   const lines = content.split('\n')
   for (const line of lines) {
-    for (const pattern of JAILBREAK_PATTERNS) {
+    for (const pattern of DIRECTIVE_JAILBREAK_PATTERNS) {
       if (safeRegexTest(pattern, line)) {
         return false
       }
@@ -467,6 +384,22 @@ export function quickSecurityCheck(content: string): boolean {
 export function shouldQuarantine(scanResult: EdgeScanResult): boolean {
   return scanResult.riskScore >= QUARANTINE_THRESHOLD
 }
+
+/** SMI-6020 (design §3.3.6): the scan hit MAX_MULTILINE_ITERATIONS_PER_PATTERN,
+ *  so riskScore is a known under-count. Absent/undefined == not truncated. */
+export function isScanTruncated(scan: Pick<EdgeScanResult, 'multilineTruncated'>): boolean {
+  return scan.multilineTruncated === true
+}
+
+/** SMI-6020 (design §3.3.6): the quarantine gate hardened for scan integrity.
+ *  EVERY write path must call this; `shouldQuarantine` remains the pure score
+ *  predicate pinned by SMI-5358 and must not be called from a write path. */
+export function shouldQuarantineFailClosed(scan: EdgeScanResult): boolean {
+  return shouldQuarantine(scan) || isScanTruncated(scan)
+}
+
+/** SMI-6020: stable label for the primary (SKILL.md) scan in truncation provenance. */
+export const ROOT_SCAN_LABEL = 'SKILL.md'
 
 /**
  * SMI-2384: Create a concise human-readable summary of security findings.

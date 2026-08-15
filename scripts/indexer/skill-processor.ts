@@ -20,7 +20,7 @@ import {
 } from './_shared/validation.ts'
 
 import {
-  shouldQuarantine,
+  shouldQuarantineFailClosed,
   QUARANTINE_THRESHOLD,
   generateContentHash,
   type EdgeScanResult,
@@ -397,9 +397,9 @@ export function repositoryToSkill(
 
   // SMI-5436 Wave 2: prefer merged scan (SKILL.md + siblings) when available
   const quarantined = mergedScan
-    ? mergedScan.quarantine
+    ? mergedScan.quarantine // already fail-closed via mergeSiblingScans
     : securityScan
-      ? shouldQuarantine(securityScan)
+      ? shouldQuarantineFailClosed(securityScan)
       : false
 
   const quarantineReason = mergedScan

@@ -15,7 +15,9 @@
 
 import {
   QUARANTINE_THRESHOLD,
-  shouldQuarantine,
+  shouldQuarantineFailClosed,
+  isScanTruncated,
+  ROOT_SCAN_LABEL,
   summarizeFindings,
   scanSkillContent,
   type EdgeScanResult,
@@ -51,14 +53,34 @@ export function buildQuarantineReason(
   owner: string,
   name: string
 ): string {
-  if (!shouldQuarantine(scanResult)) {
+  if (!shouldQuarantineFailClosed(scanResult)) {
     return ''
   }
 
-  const findingSummary = summarizeFindings(scanResult.findings)
   const appealUrl = `https://www.skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
 
-  return `Security scan detected ${scanResult.findings.length} finding${scanResult.findings.length === 1 ? '' : 's'} (risk score: ${scanResult.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
+  // SMI-6020 (design §3.3.6/§2.6): truncation is the SOLE trigger (sub-threshold
+  // score, but the multiline scan hit its per-pattern iteration ceiling). This is
+  // load-bearing, not cosmetic: without a dedicated non-empty message here,
+  // shouldQuarantineFailClosed's truncation-only quarantine above would pair with
+  // an EMPTY reason — the exact ADR-112 Contract 4 violation SMI-5357 fixed. The
+  // message must still start with "Security scan" — dequarantine-false-positives.ts
+  // loads its cohort via `.filter('quarantine_reason', 'ilike', 'security scan%')`,
+  // and a differently-prefixed reason would make the row permanently unclearable.
+  if (isScanTruncated(scanResult) && scanResult.riskScore < QUARANTINE_THRESHOLD) {
+    return `Security scan incomplete: the multiline pattern scan hit its per-pattern iteration ceiling in ${ROOT_SCAN_LABEL}, so the computed risk score (${scanResult.riskScore}/100) is a known under-count. This skill is held quarantined pending a complete scan. Appeal at ${appealUrl}`
+  }
+
+  const findingSummary = summarizeFindings(scanResult.findings)
+  const base = `Security scan detected ${scanResult.findings.length} finding${scanResult.findings.length === 1 ? '' : 's'} (risk score: ${scanResult.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
+
+  // SMI-6020: co-occurring truncation (a real trigger AND the scan truncated) —
+  // append a lower-bound clause without changing the existing prefix.
+  if (isScanTruncated(scanResult)) {
+    return `${base} Scan incomplete in ${ROOT_SCAN_LABEL} — the risk score is a lower bound.`
+  }
+
+  return base
 }
 
 /**
@@ -122,6 +144,14 @@ export interface MergedEdgeScanResult {
   siblingRejectable: boolean
   /** Relative path of the first non-doc sibling that triggered rejection, or null. */
   primarySiblingPath: string | null
+  /** SMI-6020 (design §3.3.6): true when the root scan OR any sibling scan hit
+   *  the per-pattern iteration ceiling. `riskScore` is then a known under-count,
+   *  and this result is authoritative for RAISING a verdict only. */
+  multilineTruncated: boolean
+  /** SMI-6020: which scans truncated — root first (ROOT_SCAN_LABEL), then
+   *  siblings in fetch order. Provenance for the operator-facing reason string
+   *  ONLY; never an input to the verdict. */
+  truncatedScanPaths: string[]
 }
 
 /**
@@ -208,12 +238,24 @@ export function mergeSiblingScans(
 
   const siblingRejectable = rejectableSibling !== undefined
 
+  // SMI-6020 (design §3.3.6): any truncated scan feeding mergedScore makes that
+  // score a known under-count. Root first, then siblings in fetch order — the
+  // order is load-bearing for the simulator's deep-equality parity assertion.
+  const truncatedScanPaths: string[] = []
+  if (isScanTruncated(root)) truncatedScanPaths.push(ROOT_SCAN_LABEL)
+  for (const { relPath, scan } of siblings) {
+    if (isScanTruncated(scan)) truncatedScanPaths.push(relPath)
+  }
+  const multilineTruncated = truncatedScanPaths.length > 0
+
   return {
     findings: allFindings,
     riskScore: mergedScore,
-    quarantine: mergedScore >= QUARANTINE_THRESHOLD || siblingRejectable,
+    quarantine: mergedScore >= QUARANTINE_THRESHOLD || siblingRejectable || multilineTruncated,
     siblingRejectable,
     primarySiblingPath: rejectableSibling?.relPath ?? null,
+    multilineTruncated,
+    truncatedScanPaths,
   }
 }
 
@@ -230,11 +272,33 @@ export function buildMergedQuarantineReason(
 ): string {
   if (!merged.quarantine) return ''
 
-  const locationStr = merged.primarySiblingPath ? ` in ${merged.primarySiblingPath}` : ''
-  const findingSummary = summarizeFindings(merged.findings)
   const appealUrl = `https://www.skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
 
-  return `Security scan detected ${merged.findings.length} finding${merged.findings.length === 1 ? '' : 's'}${locationStr} (risk score: ${merged.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
+  // SMI-6020 (design §3.3.6/§2.6): truncation is the SOLE trigger (sub-threshold
+  // mergedScore, no rejectable sibling, but a scan hit the multiline iteration
+  // ceiling). Own template rather than a suffix: primarySiblingPath semantics are
+  // unchanged (still "first *rejectable* non-doc sibling"), so it stays null on
+  // this path and the ` in <path>` clause below never fires for it.
+  if (
+    merged.multilineTruncated &&
+    merged.riskScore < QUARANTINE_THRESHOLD &&
+    !merged.siblingRejectable
+  ) {
+    const paths = merged.truncatedScanPaths.join(', ')
+    return `Security scan incomplete: the multiline pattern scan hit its per-pattern iteration ceiling in ${paths}, so the computed risk score (${merged.riskScore}/100) is a known under-count. This skill is held quarantined pending a complete scan. Appeal at ${appealUrl}`
+  }
+
+  const locationStr = merged.primarySiblingPath ? ` in ${merged.primarySiblingPath}` : ''
+  const findingSummary = summarizeFindings(merged.findings)
+  const base = `Security scan detected ${merged.findings.length} finding${merged.findings.length === 1 ? '' : 's'}${locationStr} (risk score: ${merged.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
+
+  // SMI-6020: co-occurring truncation — append the lower-bound clause.
+  if (merged.multilineTruncated) {
+    const paths = merged.truncatedScanPaths.join(', ')
+    return `${base} Scan incomplete in ${paths} — the risk score is a lower bound.`
+  }
+
+  return base
 }
 
 // =============================================================================

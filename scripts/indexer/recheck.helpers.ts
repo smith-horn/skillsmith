@@ -94,6 +94,8 @@ export function zeroCounters(killswitchEngaged: boolean): RecheckAuditCounters {
     pass3_count: 0,
     pass3_sibling_recovered: 0,
     deferred_cap: 0,
+    // SMI-6020 (design §3.3.6): rows whose scan hit the multiline iteration ceiling.
+    scan_incomplete: 0,
   }
 }
 

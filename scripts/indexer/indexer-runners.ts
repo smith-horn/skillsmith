@@ -186,6 +186,9 @@ export async function runUpsertPhase(
   // the HIGH_TRUST_AUTHORS registry resolved the owner+repo. Load-bearing
   // signal for Phase-1/Phase-2 URL-scheme drift.
   high_trust_fallback_hits: number
+  // SMI-6020 (design §3.3.6, §2.5 item 12): count of repos whose scan hit the
+  // multiline iteration ceiling this run — the run-level telemetry counter.
+  multiline_truncated: number
 }> {
   const zeroResult = {
     indexed: dryRun ? repositories.length : 0,
@@ -199,6 +202,7 @@ export async function runUpsertPhase(
     errors: [] as string[],
     discoveryPathCounts: {} as Record<string, number>,
     high_trust_fallback_hits: 0,
+    multiline_truncated: 0,
   }
 
   if (dryRun || repositories.length === 0) {
@@ -213,6 +217,8 @@ export async function runUpsertPhase(
   let quality_gate_filtered = 0
   // SMI-4842: Counter of repos rejected as curated `awesome-*` link-lists.
   let meta_list_filtered = 0
+  // SMI-6020: Counter of repos whose scan hit the multiline iteration ceiling.
+  let multiline_truncated = 0
   const scoreDistribution: ScoreDistribution = { highTrust: 0, community: 0, scores: [] }
   const errors: string[] = []
   // SMI-4387: Counter of yield (indexed + updated) per discovery path. Excludes
@@ -399,6 +405,22 @@ export async function runUpsertPhase(
         : await isVerifiedGitHubOrg(repo.owner, orgVerifiedCache, githubHeaders, telemetry)
       const skillData = repositoryToSkill(repo, highTrustAuthor, validation, orgIsVerified)
 
+      // SMI-6020 (design §3.3.6): a truncated scan may raise but never lower the
+      // stored score. Bulk upsert requires uniform keys, so ratchet the value
+      // rather than omitting the column (omission would write NULL — SMI-5849's
+      // defect class).
+      const scanTruncated =
+        validation?.mergedSecurityScan?.multilineTruncated === true ||
+        validation?.securityScan?.multilineTruncated === true
+      if (scanTruncated) {
+        multiline_truncated++
+        const prior = existingSecurityScores.get(repo.url)
+        const next = skillData.security_score
+        if (typeof prior === 'number' && typeof next === 'number' && prior > next) {
+          skillData.security_score = prior
+        }
+      }
+
       if (!highTrustAuthor && validation && validation.errors.length > 0) {
         quality_gate_filtered++
         console.log(
@@ -558,6 +580,7 @@ export async function runUpsertPhase(
     errors,
     discoveryPathCounts,
     high_trust_fallback_hits,
+    multiline_truncated,
   }
 }
 

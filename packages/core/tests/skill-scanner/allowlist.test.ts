@@ -133,6 +133,48 @@ describe('shouldQuarantine + allowlist (SMI-4396)', () => {
     expect(shouldQuarantine(report, undefined, matcher)).toBe(true)
   })
 
+  // ------------------------ SMI-6020 (design §2.8 T2.28-T2.30) ------------------------
+
+  // T2.28
+  it('a truncated report quarantines even with zero findings', () => {
+    const report = makeReport('github/acme/truncated', [], { multilineTruncated: true })
+    expect(shouldQuarantine(report)).toBe(true)
+  })
+
+  // T2.29
+  it('an allowlist cannot clear a truncated report', () => {
+    const matcher = buildMatcher([VALID_ENTRY])
+    const report = makeReport(
+      VALID_ENTRY.skillId,
+      [
+        finding({
+          type: 'sensitive_path',
+          severity: 'high',
+          message: 'Reference to potentially sensitive path: password',
+        }),
+        finding({
+          type: 'sensitive_path',
+          severity: 'high',
+          message: 'Reference to potentially sensitive path: credentials',
+        }),
+      ],
+      { multilineTruncated: true }
+    )
+    // Without truncation, this exact finding set is the FP-pass-through case
+    // (see the first test above) — proving the allowlist alone would clear it.
+    expect(shouldQuarantine(report, undefined, matcher)).toBe(true)
+  })
+
+  // T2.30
+  it('an untruncated report is unaffected (explicit multilineTruncated:false)', () => {
+    const report = makeReport(
+      'skill/x',
+      [finding({ type: 'url', severity: 'low', message: 'http://example.com' })],
+      { passed: true, riskScore: 5, multilineTruncated: false }
+    )
+    expect(shouldQuarantine(report)).toBe(false)
+  })
+
   it('quarantines via post-filter risk score when no single finding is high/critical', () => {
     // Multi-category MEDIUM pile crosses the 40 threshold via weighted aggregation.
     // Categories with large aggregation weights (jailbreak 0.2, aiDefence 0.12,
