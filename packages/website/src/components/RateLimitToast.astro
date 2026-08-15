@@ -89,14 +89,14 @@
     const toast = document.getElementById('rate-limit-toast')
     const message = document.getElementById('rate-limit-message')
     const countdown = document.getElementById('rate-limit-countdown')
-    const progress = document.getElementById('rate-limit-progress')
+    const progress = document.getElementById('rate-limit-progress') as HTMLElement | null
     const closeBtn = document.getElementById('rate-limit-close')
 
-    let countdownInterval = null
-    let hideTimeout = null
+    let countdownInterval: ReturnType<typeof setInterval> | null = null
+    let hideTimeout: ReturnType<typeof setTimeout> | null = null
 
     // Show toast with retry-after countdown
-    window.showRateLimitToast = function (retryAfterSeconds, tierMessage) {
+    function showToast(retryAfterSeconds: number, tierMessage?: string | null) {
       if (!toast) return
 
       // Clear any existing timers
@@ -104,10 +104,8 @@
       if (hideTimeout) clearTimeout(hideTimeout)
 
       // Set message based on tier
-      if (tierMessage) {
-        message.textContent = tierMessage
-      } else {
-        message.textContent = 'Too many requests. Please wait before trying again.'
+      if (message) {
+        message.textContent = tierMessage || 'Too many requests. Please wait before trying again.'
       }
 
       // Show toast
@@ -125,12 +123,14 @@
 
         const minutes = Math.floor(remaining / 60)
         const seconds = remaining % 60
-        countdown.textContent =
-          minutes > 0 ? `Try again in ${minutes}m ${seconds}s` : `Try again in ${seconds}s`
+        if (countdown) {
+          countdown.textContent =
+            minutes > 0 ? `Try again in ${minutes}m ${seconds}s` : `Try again in ${seconds}s`
+        }
 
         // Update progress bar
         const percent = (remaining / total) * 100
-        progress.style.width = `${percent}%`
+        if (progress) progress.style.width = `${percent}%`
 
         remaining--
       }
@@ -141,6 +141,8 @@
       // Auto-hide after countdown + 2s buffer
       hideTimeout = setTimeout(hideToast, (remaining + 2) * 1000)
     }
+
+    window.showRateLimitToast = showToast
 
     // Hide toast
     function hideToast() {
@@ -178,12 +180,12 @@
         const retryAfter = Math.min(300, parseInt(response.headers.get('Retry-After') || '60', 10))
         const tierHeader = response.headers.get('X-Tier')
 
-        let tierMessage = null
+        let tierMessage: string | null = null
         if (tierHeader) {
           tierMessage = `Rate limit exceeded for ${tierHeader} tier. Upgrade for higher limits.`
         }
 
-        window.showRateLimitToast(retryAfter, tierMessage)
+        showToast(retryAfter, tierMessage)
       }
 
       return response
