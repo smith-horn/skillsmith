@@ -32,6 +32,10 @@ export type SecurityFindingType =
   // SMI-6033 Wave 1: type-system registration only — core already has this
   // finding type (typosquat.ts); the detector call site is wired separately.
   | 'typosquat'
+  // SMI-6033 Wave 2 (Gap 5): xattr strips the macOS Gatekeeper quarantine attribute.
+  | 'gatekeeper_bypass'
+  // SMI-6033 Wave 2 (Gap 3): password-protected archive used to evade content scanning.
+  | 'archive_evasion'
 
 /**
  * Severity levels for findings
@@ -120,6 +124,13 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // SMI-6033 Wave 1: byte-identical to core weights.ts CATEGORY_WEIGHTS.
   sensitive_path: 1.2,
   typosquat: 1.2,
+  // SMI-6033 Wave 2: top-tier weight matching code_execution/obfuscated_directive
+  // — byte-identical to core weights.ts CATEGORY_WEIGHTS.gatekeeper_bypass /
+  // .archive_evasion. The SAME weight is used for both the critical
+  // (standalone-quarantining) and medium (advisory) forms of each type;
+  // severity alone (SEVERITY_WEIGHTS 50 vs 15) does the two-tier split.
+  gatekeeper_bypass: 2.0,
+  archive_evasion: 2.0,
 }
 
 /**
@@ -142,6 +153,13 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   // (the same 0.04 core uses for sensitivePaths/externalUrls/ssrf/typosquat).
   sensitive_path: 0.04,
   typosquat: 0.04,
+  // SMI-6033 Wave 2: additive 0.40 each (mirror of core), matching
+  // code_execution/obfuscated_directive's top tier. A single CRITICAL
+  // gatekeeper_bypass/archive_evasion finding reaches exactly the 40
+  // quarantine threshold on its own (50 * 2.0 * 1.0 = 100 -> cap 100 -> * 0.40
+  // = 40); a single MEDIUM finding contributes 12 — well under threshold alone.
+  gatekeeper_bypass: 0.4,
+  archive_evasion: 0.4,
 }
 
 /**
@@ -355,6 +373,8 @@ export function calculateRiskScore(findings: SecurityFinding[]): number {
     obfuscated_directive: 0,
     sensitive_path: 0,
     typosquat: 0,
+    gatekeeper_bypass: 0,
+    archive_evasion: 0,
   }
 
   for (const finding of findings) {

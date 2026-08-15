@@ -181,6 +181,20 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'packages/core/src/security/scanner/typosquat.ts',
   'packages/core/src/security/scanner/typosquat-reference-list.ts',
   'packages/core/src/security/scanner/SecurityScanner.hostile-update.ts',
+  // SMI-6033 Wave 2 (Gap 5/Gap 3): the already-watched SecurityScanner.ts /
+  // security-scanner-edge.ts now import the new xattr Gatekeeper-bypass
+  // detector's shared correlation helper and the new archive-evasion
+  // detector — flagged by assertion 5 (the real import-graph tracer) as
+  // reachable-but-unwatched. The scripts/indexer/_shared two are what the
+  // tracer actually flagged (it only follows the Node-runnable import
+  // graph); the supabase/functions/_shared counterparts are added alongside
+  // for the same symmetry the Wave 1 compound.ts/paths.ts pair above used.
+  'packages/core/src/security/scanner/SecurityScanner.archive.ts',
+  'packages/core/src/security/scanner/SecurityScanner.fetch-correlation.ts',
+  'scripts/indexer/_shared/security-scanner-edge.archive.ts',
+  'scripts/indexer/_shared/security-scanner-edge.fetch-correlation.ts',
+  'supabase/functions/_shared/security-scanner-edge.archive.ts',
+  'supabase/functions/_shared/security-scanner-edge.fetch-correlation.ts',
 ] as const
 
 // SMI-5879 Wave 1: the corpus adds ~60 scans per twin, including one ~300 KB

@@ -28,6 +28,8 @@ function makeScanReport(overrides?: Partial<ScanReport>): ScanReport {
       codeExecution: 0,
       obfuscatedDirective: 0,
       typosquat: 0,
+      gatekeeperBypass: 0,
+      archiveEvasion: 0,
     },
     passed: true,
     scannedAt: new Date(),

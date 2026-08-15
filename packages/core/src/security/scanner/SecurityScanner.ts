@@ -38,6 +38,12 @@ import {
   scanPiiPatterns,
 } from './SecurityScanner.scanners.js'
 
+// SMI-6033 Wave 2: xattr Gatekeeper-bypass (Gap 5) — lives alongside
+// scanChmodFetchCompound in the same compound-signal module.
+import { scanGatekeeperBypass } from './SecurityScanner.compound.js'
+// SMI-6033 Wave 2: password-protected archive evasion (Gap 3).
+import { scanArchiveEvasion } from './SecurityScanner.archive.js'
+
 // Import code-execution & obfuscated-directive detectors (SMI-5359 Wave 4.2).
 import {
   scanCodeExecution,
@@ -276,6 +282,14 @@ export class SecurityScanner {
         .map((f) => f.lineNumber as number)
     )
     findings.push(...scanChmodFetchCompound(content, privEscLines, lineContexts))
+    // SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass — standalone-critical,
+    // no fetch-correlation co-signal required (unlike chmod above).
+    findings.push(...scanGatekeeperBypass(content, lineContexts))
+    // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion —
+    // correlated + inline-literal-password form is standalone-critical;
+    // every other shape (uncorrelated CLI usage, prose-only mention) is
+    // medium/advisory.
+    findings.push(...scanArchiveEvasion(content, lineContexts))
     findings.push(
       ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
     )

@@ -22,6 +22,8 @@ export type SecurityFindingType =
   | 'code_execution' // SMI-5359 Wave 4.2: remote-fetch piped to an interpreter
   | 'obfuscated_directive' // SMI-5359 Wave 4.2: security directive concealed via Unicode obfuscation
   | 'typosquat' // SMI-595: skill-name similarity to a popular/trusted reference name
+  | 'gatekeeper_bypass' // SMI-6033 Wave 2 (Gap 5): xattr strips the macOS Gatekeeper quarantine attribute
+  | 'archive_evasion' // SMI-6033 Wave 2 (Gap 3): password-protected archive used to evade content scanning
 
 /**
  * Severity levels for security findings
@@ -114,6 +116,8 @@ export interface RiskScoreBreakdown {
   codeExecution: number // SMI-5359 Wave 4.2: remote-fetch-to-interpreter score
   obfuscatedDirective: number // SMI-5359 Wave 4.2: concealed-directive score
   typosquat: number // SMI-595: typosquat/impersonation detection score
+  gatekeeperBypass: number // SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass score
+  archiveEvasion: number // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion score
 }
 
 /**

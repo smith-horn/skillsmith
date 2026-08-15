@@ -11,6 +11,22 @@ All notable changes to `@skillsmith/core` are documented here.
   long document can no longer escalate a distant, unrelated `code_execution` finding. Exported
   `AUTHORITY_CLAIMING_AFFIXES` from `typosquat.ts` (previously module-private) for reuse by a
   planned decoy-URL detector (SMI-6033 Wave 1)
+- **Feature**: two new security scanner detectors (SMI-6033 Wave 3). `gatekeeper_bypass`
+  (`SecurityScanner.compound.ts`) fires standalone-critical on an `xattr -c` (clear all extended
+  attributes) or `xattr -d com.apple.quarantine` command when the target basename correlates with
+  a fetch destination elsewhere in the content — uncorrelated usage stays medium; a later fix in
+  this wave also adds a trust-tier carve-out (see below). `archive_evasion` (new
+  `SecurityScanner.archive.ts`) detects password-protected archive usage via two sub-signals — CLI
+  invocation syntax (`unzip -P`, `unrar x -p<pw>`, `7z x -p<pw>`, `zip -P <pw> ... -e`) and prose
+  co-occurrence (an archive noun + a password noun within a bounded ±2-line window) — and reaches
+  standalone-critical only when the CLI form carries an inline literal (not `$VAR`, not a
+  placeholder) password AND the archive's target basename correlates with a fetch destination
+  elsewhere in the content; every other shape (out-of-band password, uncorrelated CLI usage, or
+  prose-only mention) stays medium/advisory. Both new finding types share the top-tier
+  weight/coefficient (2.0/0.40) already used by `code_execution`/`obfuscated_directive` — severity
+  alone (not a second weight tier) produces the two-outcome split. Both are wired into
+  `SecurityScanner.scan()` and mirrored byte-for-byte into the edge twins
+  (`supabase/functions/_shared/` and `scripts/indexer/_shared/`).
 
 ## v0.11.7
 

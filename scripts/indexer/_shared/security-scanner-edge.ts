@@ -49,11 +49,14 @@ import {
 } from './security-scanner-edge.patterns.ts'
 // SMI-6033 Wave 1: chmod+fetch compound signal, extracted to a sibling twin
 // (500-line limit); byte-identical body across both _shared twins (parity test).
-import { scanChmodFetchCompound } from './security-scanner-edge.compound.ts'
+// SMI-6033 Wave 2: xattr Gatekeeper-bypass (Gap 5) lives in the same module.
+import { scanChmodFetchCompound, scanGatekeeperBypass } from './security-scanner-edge.compound.ts'
 // SMI-6033 Wave 1: sensitive_path detector, ported from core's
 // SecurityScanner.scanners.ts (edge previously had no sensitive_path
 // type/detector/weight/coefficient at all).
 import { scanSensitivePaths } from './security-scanner-edge.paths.ts'
+// SMI-6033 Wave 2 (Gap 3): password-protected archive evasion.
+import { scanArchiveEvasion } from './security-scanner-edge.archive.ts'
 
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
@@ -303,6 +306,13 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
       .map((f) => f.lineNumber as number)
   )
   findings.push(...scanChmodFetchCompound(lines, contexts, privEscLines))
+  // SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass — standalone-critical, no
+  // fetch-correlation co-signal required (unlike chmod above).
+  findings.push(...scanGatekeeperBypass(lines, contexts))
+  // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion — correlated +
+  // inline-literal-password form is standalone-critical; every other shape
+  // (uncorrelated CLI usage, prose-only mention) is medium/advisory.
+  findings.push(...scanArchiveEvasion(lines, contexts))
   findings.push(...scanPromptInjection(lines, contexts))
   // SMI-6033 Wave 1: sensitive_path (credential file/path/env-var references).
   findings.push(...scanSensitivePaths(lines, contexts))

@@ -79,6 +79,8 @@ function makeReport(
       codeExecution: 0,
       obfuscatedDirective: 0,
       typosquat: 0,
+      gatekeeperBypass: 0,
+      archiveEvasion: 0,
     },
     ...overrides,
   }

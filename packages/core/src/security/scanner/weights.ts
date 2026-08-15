@@ -47,4 +47,17 @@ export const CATEGORY_WEIGHTS: Record<string, number> = {
   // comfortably under the riskThreshold: 40 quarantine cutoff on its own. See the
   // stacked-risk test in SecurityScanner.scoring.test.ts.
   typosquat: 1.2,
+  // SMI-6033 Wave 2 (Gap 5/Gap 3): top-tier weight matching code_execution/
+  // obfuscated_directive — the SAME single weight is used for both the
+  // critical (standalone-quarantining) and medium (advisory, co-signal-
+  // eligible) forms of each type; severity alone (SEVERITY_WEIGHTS 50 vs 15)
+  // does the two-tier split, exactly as scanChmodFetchCompound's own
+  // privilege_escalation compound signal already does with ONE weight
+  // (1.9/0.11) across its high/low severities. Paired with the 0.40
+  // coefficient in calculateRiskScore: a single CRITICAL finding reaches
+  // exactly the 40 quarantine threshold on its own (50 * 2.0 * 1.0 = 100 ->
+  // capped 100 -> * 0.40 = 40); a single MEDIUM finding contributes 12
+  // (15 * 2.0 * 1.0 = 30 -> * 0.40 = 12) — well under threshold alone.
+  gatekeeper_bypass: 2.0,
+  archive_evasion: 2.0,
 }

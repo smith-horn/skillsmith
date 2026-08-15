@@ -112,3 +112,66 @@ export function scanChmodFetchCompound(
 
   return findings
 }
+
+/**
+ * SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass detector.
+ *
+ * `xattr -c <file>` (clear ALL extended attributes) or
+ * `xattr -d com.apple.quarantine <file>` (delete just the quarantine
+ * attribute — with or without a combined `-r` recursive flag) strips
+ * macOS's "downloaded from the internet" Gatekeeper warning from an
+ * unsigned binary. Per the plan's §9 reconciliation policy, this signal has
+ * essentially no legitimate use case in a skill-install context — its only
+ * real purpose is defeating that warning. Unlike `chmod +x`
+ * (scanChmodFetchCompound above), it does NOT require a fetch-correlation
+ * co-signal to matter: it is standalone-critical, full stop (modulo the same
+ * documentation-context downgrade every other detector in this file applies).
+ *
+ * Two bounded, ReDoS-safe patterns rather than one combined alternation
+ * (mirrors CHMOD_TARGET's capture-then-inspect style): XATTR_CLEAR_ALL
+ * matches any `-c`-bearing flag cluster within 40 chars of `xattr` (`-c`,
+ * `-cr`, `-rc`, ...); XATTR_DELETE_QUARANTINE matches a `-d`-bearing flag
+ * cluster immediately followed by the literal `com.apple.quarantine`
+ * attribute name (covers both a combined `-dr`/`-rd` cluster and two
+ * separate `-r -d com.apple.quarantine` tokens, since the attribute name
+ * always immediately follows whichever token carries `-d`). Reading or
+ * writing a DIFFERENT attribute (`-l`, `-p <name>`, `-w <name> <value>`) is
+ * not a bypass and does not match either pattern.
+ */
+const XATTR_CLEAR_ALL = /\bxattr\b[^\n]{0,40}-[a-zA-Z]*c[a-zA-Z]*\b/i
+const XATTR_DELETE_QUARANTINE =
+  /\bxattr\b[^\n]{0,40}-[a-zA-Z]*d[a-zA-Z]*\s+['"]?com\.apple\.quarantine\b/i
+
+export function scanGatekeeperBypass(
+  content: string,
+  lineContexts?: LineContext[]
+): SecurityFinding[] {
+  const findings: SecurityFinding[] = []
+  const lines = content.split('\n')
+  const contexts = lineContexts ?? analyzeMarkdownContext(content)
+
+  lines.forEach((line, index) => {
+    const match =
+      safeRegexTest(XATTR_CLEAR_ALL, line) ?? safeRegexTest(XATTR_DELETE_QUARANTINE, line)
+    if (!match) return
+
+    const ctx = contexts[index]
+    const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+    const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+    findings.push({
+      type: 'gatekeeper_bypass',
+      // Standalone-critical (no correlation required) — doc-context is the
+      // only downgrade, matching every other detector's noise-reduction
+      // convention in this file.
+      severity: inDocContext ? 'low' : 'critical',
+      message: `xattr command strips the macOS Gatekeeper quarantine attribute: "${match[0].trim().slice(0, 100)}"`,
+      location: line.trim().slice(0, 100),
+      lineNumber: index + 1,
+      category: 'gatekeeper_bypass',
+      inDocumentationContext: inDocContext,
+      confidence: inDocContext ? 'low' : 'high',
+    })
+  })
+
+  return findings
+}

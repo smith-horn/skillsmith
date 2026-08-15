@@ -104,3 +104,48 @@ export function scanChmodFetchCompound(
   }
   return findings
 }
+
+// SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass detector. `xattr -c <file>`
+// (clear ALL extended attributes) or `xattr -d com.apple.quarantine <file>`
+// (delete just the quarantine attribute, with or without a combined `-r`
+// recursive flag) strips macOS's "downloaded from the internet" Gatekeeper
+// warning from an unsigned binary. Per the plan's §9 reconciliation policy
+// this signal has essentially no legitimate use case in a skill-install
+// context — unlike chmod's compound signal above, it does NOT require a
+// fetch-correlation co-signal: it is standalone-critical, full stop (modulo
+// the same documentation-context downgrade every other detector applies).
+// Two bounded, ReDoS-safe patterns (mirrors CHMOD_TARGET's capture-then-
+// inspect style): XATTR_CLEAR_ALL matches any `-c`-bearing flag cluster
+// within 40 chars of `xattr`; XATTR_DELETE_QUARANTINE matches a `-d`-bearing
+// flag cluster immediately followed by the literal `com.apple.quarantine`
+// attribute name (covers a combined `-dr`/`-rd` cluster AND two separate
+// `-r -d com.apple.quarantine` tokens). Reading/writing a DIFFERENT
+// attribute (`-l`, `-p <name>`, `-w <name> <value>`) matches neither.
+const XATTR_CLEAR_ALL = /\bxattr\b[^\n]{0,40}-[a-zA-Z]*c[a-zA-Z]*\b/i
+const XATTR_DELETE_QUARANTINE =
+  /\bxattr\b[^\n]{0,40}-[a-zA-Z]*d[a-zA-Z]*\s+['"]?com\.apple\.quarantine\b/i
+
+/**
+ * Owner-perm-independent, standalone-critical xattr Gatekeeper-bypass signal
+ * — see comment above. Doc-context is the only downgrade (matches every
+ * other detector's noise-reduction convention).
+ */
+export function scanGatekeeperBypass(lines: string[], contexts: LineContext[]): SecurityFinding[] {
+  const findings: SecurityFinding[] = []
+  for (const [index, line] of lines.entries()) {
+    const match =
+      safeRegexTest(XATTR_CLEAR_ALL, line) ?? safeRegexTest(XATTR_DELETE_QUARANTINE, line)
+    if (!match) continue
+    const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
+    findings.push({
+      type: 'gatekeeper_bypass',
+      severity: inDocContext ? 'low' : 'critical',
+      message: `xattr command strips the macOS Gatekeeper quarantine attribute: "${match[0].trim().slice(0, 100)}"`,
+      lineNumber: index + 1,
+      location: line.trim().slice(0, 100),
+      inDocumentationContext: inDocContext,
+      confidence,
+    })
+  }
+  return findings
+}
