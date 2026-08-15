@@ -113,6 +113,14 @@ export interface InstalledSkillInfo {
  * disclosed in the response the user actually sees; bundled first-party skills
  * render as a bare `name`.
  *
+ * SMI-5893 Wave 8b Step 3: names both auto-install opt-out env vars so a user
+ * who doesn't want this behavior knows how to turn it off — bundled assets
+ * (`SKILLSMITH_SKIP_SKILL_INSTALL`, checked in `index.ts`) and the Tier-1
+ * registry self-heal (`SKILLSMITH_TIER1_AUTOINSTALL_DISABLE`, checked in
+ * `tier1-self-heal.ts`'s `isTier1AutoInstallDisabled`) are two independent
+ * flags, named together here since one welcome message can report the
+ * outcome of both.
+ *
  * @param skills - Installed skills to list (bundled first, registry after).
  * @returns Formatted welcome message.
  */
@@ -128,6 +136,8 @@ Essential skills installed:
 ${skillList}
 
 Try: "Write a commit message" to see the commit skill in action.
+
+To skip auto-install next time: SKILLSMITH_SKIP_SKILL_INSTALL=1 (bundled skills) or SKILLSMITH_TIER1_AUTOINSTALL_DISABLE=1 (registry skills).
 `.trim()
 }
 

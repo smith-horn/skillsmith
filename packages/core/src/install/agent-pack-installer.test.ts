@@ -114,6 +114,10 @@ describe('installAgentPack — dual-path + shim + hook + MCP', () => {
     expect(existsSync(join(homeDir, '.cursor', 'hooks', 'session-start.sh'))).toBe(false)
   })
 
+  // Cursor hooks.json's native-shape regression coverage (SMI-5893 Wave 8a)
+  // lives in agent-pack-installer.cursor-hooks.test.ts — split out rather
+  // than appended here to stay clear of this file's own 500-line gate.
+
   it('merges the skillsmith MCP entry into claude-code settings.json with SKILLSMITH_TOOL_PROFILE=agent', () => {
     const result = installAgentPack({ homeDir })
     const settingsPath = join(homeDir, '.claude', 'settings.json')

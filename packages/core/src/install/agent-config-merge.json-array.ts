@@ -63,11 +63,27 @@ export interface JsonArrayMergeOptions {
   backupDir: string
   /** See `MergeOptions.alreadyBackedUpPaths` — claude-code merges hooks AND MCP registration into the same `settings.json` per install run. */
   alreadyBackedUpPaths?: Set<string>
+  /**
+   * Top-level document keys to set when absent, applied before the array
+   * merge and never overwriting an existing value. Used for a sibling
+   * requirement the array merge itself can't express — e.g. Cursor's
+   * `hooks.json` requires a top-level `"version": 1` alongside its `"hooks"`
+   * object (agent-pack-installer.harness.ts's `installCursorHooks`).
+   */
+  ensureTopLevelDefaults?: Readonly<Record<string, unknown>>
 }
 
 /** Add or update our entry in a JSON array at `keyPath`, leaving every other array item untouched. */
 export function mergeJsonArrayEntry(opts: JsonArrayMergeOptions): MergeResult {
-  const { path, keyPath, entry, isOurEntry, backupDir, alreadyBackedUpPaths } = opts
+  const {
+    path,
+    keyPath,
+    entry,
+    isOurEntry,
+    backupDir,
+    alreadyBackedUpPaths,
+    ensureTopLevelDefaults,
+  } = opts
 
   let doc: Record<string, unknown> = {}
   const existed = existsSync(path)
@@ -89,12 +105,22 @@ export function mergeJsonArrayEntry(opts: JsonArrayMergeOptions): MergeResult {
     }
   }
 
+  let missingDefaults = false
+  if (ensureTopLevelDefaults) {
+    for (const [key, value] of Object.entries(ensureTopLevelDefaults)) {
+      if (doc[key] === undefined) {
+        doc[key] = value
+        missingDefaults = true
+      }
+    }
+  }
+
   const rawArray = getAtPath(doc, keyPath)
   const array: unknown[] = Array.isArray(rawArray) ? [...rawArray] : []
   const existingIndex = array.findIndex(isOurEntry)
 
   if (existingIndex >= 0) {
-    if (deepEqualJson(array[existingIndex], entry)) {
+    if (deepEqualJson(array[existingIndex], entry) && !missingDefaults) {
       return { status: 'unchanged', path, backupPath: null }
     }
     const backupPath =

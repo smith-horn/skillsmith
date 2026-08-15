@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { processRow, assertPatTokenSource } from '../../indexer/smi5879-simulate-full.helpers.ts'
+import {
+  processRow,
+  assertPatTokenSource,
+  PrimaryFetchAuthError,
+} from '../../indexer/smi5879-simulate-full.helpers.ts'
 import {
   computeCoverage,
   summarizeCounts,
@@ -180,6 +184,59 @@ describe('processRow — tier-2 outcome classification', () => {
     const counts = summarizeCounts(results)
     expect(counts.newly_quarantined).toBe(1)
     expect(counts.newly_cleared).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6015: frozen-header fix + 401-fatal on the primary fetch path
+// ---------------------------------------------------------------------------
+
+describe('processRow — SMI-6015 auth/token-refresh behavior', () => {
+  const cleanScanner = makeVerdictScanner(new Map())
+
+  it('primary fetch 401 throws PrimaryFetchAuthError immediately — never classified unevaluable', async () => {
+    const row = makeRow()
+    registerPrimary(row, [new Response('Unauthorized', { status: 401 })])
+    await expect(processRow(row, new Map(), baseDeps(cleanScanner, cleanScanner))).rejects.toThrow(
+      PrimaryFetchAuthError
+    )
+  })
+
+  it('a 401 consumes no retry budget — exactly one fetch attempt, not maxRetries+1', async () => {
+    const row = makeRow()
+    // A single-element response queue always returns the same Response on every
+    // fetch to this URL (fetchHandlers never shifts a length-1 queue) — if the
+    // 401 were retried instead of thrown, this test would still "pass" the
+    // response shape but the assertion below on fetch call count would catch it.
+    registerPrimary(row, [new Response('Unauthorized', { status: 401 })])
+    let fetchCount = 0
+    const getHeaders = async () => {
+      fetchCount++
+      return {}
+    }
+    const deps = { ...baseDeps(cleanScanner, cleanScanner), getHeaders }
+    await expect(processRow(row, new Map(), deps)).rejects.toThrow(PrimaryFetchAuthError)
+    expect(fetchCount).toBe(1)
+  })
+
+  it('getHeaders is invoked fresh on every retry attempt, not once for the whole call', async () => {
+    const row = makeRow()
+    registerPrimary(row, [
+      new Response('rate limited', { status: 429 }),
+      new Response('rate limited', { status: 429 }),
+      contentsApiResponse('# SKILL'),
+    ])
+    let calls = 0
+    const getHeaders = async () => {
+      calls++
+      return { Authorization: `token-${calls}` }
+    }
+    const deps = { ...baseDeps(cleanScanner, cleanScanner), getHeaders }
+    const result = await processRow(row, new Map(), deps)
+    expect(result.outcome).not.toBe('unevaluable')
+    // FAST_RETRY (fixtures.ts) sets maxRetries=2 -> 3 total attempts (i=0,1,2),
+    // matching the 3 queued responses above (2 retryable + 1 success).
+    expect(calls).toBe(3)
   })
 })
 

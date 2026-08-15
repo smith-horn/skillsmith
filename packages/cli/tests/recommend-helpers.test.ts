@@ -295,6 +295,12 @@ describe('formatRecommendations', () => {
     expect(output).toContain('123ms')
   })
 
+  it('SMI-5893 (Wave 7 Step 2): describes multi-harness auto-detection instead of a hardcoded path when auto_detected', () => {
+    const output = formatRecommendations(makeResponse(), null)
+    expect(output).toContain('auto-detected from your installed skills across all clients')
+    expect(output).not.toContain('~/.claude/skills')
+  })
+
   it('displays N/A for negative similarity scores', () => {
     const response = makeResponse({
       recommendations: [

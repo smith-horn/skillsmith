@@ -80,6 +80,11 @@ vi.mock('@skillsmith/core', () => ({
   getPrivateRegistrySkillContent: (...args: unknown[]) =>
     mocks.getPrivateRegistrySkillContent(...args),
   resolveFreshAccessToken: () => mocks.resolveFreshAccessToken(),
+  // SMI-5893 (Wave 7 Step 4): real check against process.env — see the
+  // sibling registry-install.action.test.ts for the full rationale.
+  isQuietModeEnabled: () =>
+    process.env['SKILLSMITH_QUIET']?.toLowerCase() === 'true' ||
+    process.env['SKILLSMITH_QUIET'] === '1',
 }))
 
 vi.mock('@skillsmith/core/install', () => ({

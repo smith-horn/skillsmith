@@ -116,6 +116,28 @@ When usage is on track to exhaust the free 1,000-call monthly quota, you may not
 
 When an advisory or quarantine event touches an installed skill: disclose that it exists and its severity immediately and fully (never gated). The deeper advisory detail, continuous monitoring, and fleet-wide checks are the Team-tier value you can then mention.
 
+## CLI Fallback
+
+If the MCP server is unavailable, use the CLI directly for the same jobs above. The CLI applies each command immediately - it does not enforce the per-changeset diff-then-approve flow described above, so review what a command will do before running it.
+
+```bash
+# Keep skills current
+skillsmith diff <skill>       # what changed since your installed version
+skillsmith update <skill>     # or: skillsmith update --all
+
+# Audit and clean up inventory
+skillsmith audit collisions
+
+# Vet a skill before installing
+skillsmith search "testing" --tier verified
+skillsmith info community/jest-helper
+skillsmith audit advisories community/jest-helper
+skillsmith validate ./candidate-skill
+skillsmith install community/jest-helper
+```
+
+The CLI has no equivalent for skill_pack_audit, the apply_namespace_rename/apply_recommended_edit guided diff-and-approve flow, or undo_apply - those stay MCP-only until the server is back.
+
 ## Undo and recovery
 
 undo_apply reverses the most recent apply_namespace_rename / apply_recommended_edit changeset(s) made in this session, restoring each file from the backup the apply tool wrote before it changed anything. Pass a count to undo the N most-recent changesets, or a suggestion id to undo one specific changeset.

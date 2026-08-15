@@ -56,10 +56,17 @@ if ! docker inspect skillsmith-dev-1 --format '{{.State.Running}}' 2>/dev/null |
   exit 1
 fi
 
+# SMI-6015: PGPASSWORD is passed via bare `-e PGPASSWORD` (pulled from this
+# process's own environment) rather than `-e PGPASSWORD=value` — the latter
+# embeds the plaintext password in this process's argv, visible to any local
+# user via `ps -ax` for the life of the docker exec call. `export` here keeps
+# it out of argv entirely.
+export PGPASSWORD="${SUPABASE_DB_PASSWORD}"
+
 exec docker exec -i \
   -e PGHOST="aws-1-us-east-1.pooler.supabase.com" \
   -e PGPORT="5432" \
   -e PGUSER="postgres.${SUPABASE_PROJECT_REF}" \
-  -e PGPASSWORD="${SUPABASE_DB_PASSWORD}" \
+  -e PGPASSWORD \
   -e PGDATABASE="postgres" \
   skillsmith-dev-1 psql "$@"

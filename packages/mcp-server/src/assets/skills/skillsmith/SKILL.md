@@ -41,6 +41,34 @@ Every Skillsmith operation maps to one of 8 lifecycle stages. Use the stage name
 
 **Triggering tip**: prefix natural-language prompts with `Use Skillsmith to ...` or `Ask Skillsmith for ...`. The product-name anchor binds tool selection reliably across MCP-capable runtimes.
 
+## CLI Fallback
+
+If the MCP server is unavailable, use the CLI directly:
+
+```bash
+# Discover
+skillsmith search "testing" --tier verified
+skillsmith recommend
+
+# Evaluate
+skillsmith info community/jest-helper
+skillsmith diff jest-helper
+
+# Install
+skillsmith install community/jest-helper
+skillsmith validate ./my-skill
+
+# Maintain
+skillsmith update --all
+skillsmith audit collisions
+
+# Retire
+skillsmith remove jest-helper
+```
+
+See "Routing CLI-only Operations" below for operations that are CLI-only regardless of MCP
+server availability.
+
 ## Routing CLI-only Operations
 
 Some lifecycle operations live in the CLI and have no MCP equivalent (yet). When the user asks for these, surface the exact terminal command:

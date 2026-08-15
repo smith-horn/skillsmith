@@ -16,7 +16,7 @@ const howToSchema = {
       '@type': 'HowToStep',
       position: 1,
       name: 'Add the server to your MCP client config',
-      text: 'Add an entry for "skillsmith" running "npx -y @skillsmith/mcp-server" to your MCP client configuration file, e.g. ~/.claude/settings.json.',
+      text: 'Add an entry for "skillsmith" running "npx -y @skillsmith/mcp-server" to your MCP client configuration file, e.g. ~/.claude/settings.json for Claude Code, ~/.cursor/mcp.json for Cursor, or the equivalent config file for your MCP client.',
     },
     {
       '@type': 'HowToStep',
@@ -626,8 +626,11 @@ Assistant: [Uses compare tool] Here's a comparison:
   <div class="callout">
     <p class="callout-heading">Verify Configuration</p>
     <p>
-      Ensure your <code>~/.claude/settings.json</code> is valid JSON and the
-      MCP server configuration is correct. Restart your MCP client after changes.
+      Ensure your MCP client's config file (e.g. <code>~/.claude/settings.json</code> for
+      Claude Code, <code>~/.cursor/mcp.json</code> for Cursor — see the
+      <a href="/docs/quickstart#step-a2">Quickstart client picker</a> for the full list) is
+      valid JSON and the MCP server configuration is correct. Restart your MCP client after
+      changes.
     </p>
   </div>
 

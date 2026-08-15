@@ -11,11 +11,16 @@
  *     (claude-code always; copilot, opencode when detected; codex via its
  *     own TOML-merge "shim").
  *   - SessionStart/SessionEnd hooks (+x) for claude-code (always), cursor
- *     and codex when detected — hook CONFIG wiring ships for claude-code/
- *     cursor (JSON arrays) and codex (SessionStart ONLY, as a
- *     marker-delimited `[[hooks.SessionStart]]` TOML block; Codex has no
- *     SessionEnd event and its Stop event is per-turn — see
- *     `installCodexHooks` in `agent-pack-installer.harness.ts`).
+ *     and codex when detected — hook CONFIG wiring is per-harness-shaped:
+ *     claude-code's `{ matcher, hooks: [{ type, command }] }` JSON array
+ *     (`installJsonHooks`), Cursor's structurally different
+ *     `{ version: 1, hooks: { sessionStart: [{ command }], ... } }` JSON
+ *     shape (`installCursorHooks` in `agent-pack-installer.cursor-hooks.ts`
+ *     — SMI-5893 Wave 8a, corrected from a false Claude-compatible claim),
+ *     and codex (SessionStart ONLY, as a marker-delimited
+ *     `[[hooks.SessionStart]]` TOML block; Codex has no SessionEnd event and
+ *     its Stop event is per-turn — see `installCodexHooks` in
+ *     `agent-pack-installer.harness.ts`).
  *   - The `skillsmith` MCP server registration (`SKILLSMITH_TOOL_PROFILE=agent`)
  *     for every detected MCP-capable harness (all 7), backup-first,
  *     idempotent, preserve-and-prompt on a foreign entry.
@@ -53,6 +58,7 @@ import {
   installShim,
   type HarnessInstallCtx,
 } from './agent-pack-installer.harness.js'
+import { installCursorHooks } from './agent-pack-installer.cursor-hooks.js'
 import {
   HARNESS_SUPPORT_TIER,
   type AgentInstallOptions,
@@ -233,11 +239,19 @@ export function installAgentPack(opts: AgentInstallOptions = {}): AgentInstallRe
       if (harness === 'claude-code' || harness === 'copilot' || harness === 'opencode') {
         installShim(harness, shimByHarness.get(harness), ctx, report)
       }
-      if (harness === 'claude-code' || harness === 'cursor') {
+      if (harness === 'claude-code') {
         installJsonHooks(
           harness,
           hookStartByHarness.get(harness),
           hookEndByHarness.get(harness),
+          ctx,
+          report
+        )
+      }
+      if (harness === 'cursor') {
+        installCursorHooks(
+          hookStartByHarness.get('cursor'),
+          hookEndByHarness.get('cursor'),
           ctx,
           report
         )

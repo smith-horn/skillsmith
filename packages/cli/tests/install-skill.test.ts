@@ -30,12 +30,25 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('fs/promises', () => ({
-  mkdir: (...args: unknown[]) => mocks.mkdir(...args),
-  copyFile: (...args: unknown[]) => mocks.copyFile(...args),
-  stat: (...args: unknown[]) => mocks.stat(...args),
-  readdir: (...args: unknown[]) => mocks.readdir(...args),
-}))
+// SMI-5893 (Wave 7 Step 3): `install-skill.ts` now imports `VALID_CLIENT_HINT`
+// from `install.js` (same reuse pattern `manage.ts` already established) so
+// its --client help text can't drift from the canonical list. That pulls in
+// `install.js`'s full import graph — including, transitively,
+// `skill-installation.io.ts` -> `@skillsmith/core/utils/safe-fs.ts`, whose
+// top-level `O_NOFOLLOW` computation reads `constants`/`open`/`lstat` from
+// `fs/promises` at MODULE-LOAD time (not lazily inside a function). A bare
+// object mock — spread with importOriginal here — keeps those real exports
+// intact while still overriding the 4 functions this suite actually drives.
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>()
+  return {
+    ...actual,
+    mkdir: (...args: unknown[]) => mocks.mkdir(...args),
+    copyFile: (...args: unknown[]) => mocks.copyFile(...args),
+    stat: (...args: unknown[]) => mocks.stat(...args),
+    readdir: (...args: unknown[]) => mocks.readdir(...args),
+  }
+})
 
 vi.mock('ora', () => ({
   default: () => mocks.spinner,
@@ -165,6 +178,16 @@ describe('SMI-824: Install Skillsmith Skill Command', () => {
       const forceOpt = cmd.options.find((o) => o.short === '-f')
       expect(forceOpt).toBeDefined()
       expect(forceOpt?.long).toBe('--force')
+    })
+
+    // SMI-5893 (Wave 7 Step 3): `setup` gained --client awareness, reusing
+    // the resolveClientId/getInstallPath pattern install.ts already uses.
+    it('should have --client option', async () => {
+      const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
+      const cmd = createInstallSkillCommand()
+
+      const clientOpt = cmd.options.find((o) => o.long === '--client')
+      expect(clientOpt).toBeDefined()
     })
 
     it('should export as default', async () => {
@@ -547,6 +570,58 @@ describe('SMI-824: Install Skillsmith Skill Command', () => {
       expect(output).toContain('.claude')
       expect(output).toContain('skills')
       expect(output).toContain('skillsmith')
+    })
+  })
+
+  // ==========================================================================
+  // SMI-5893 (Wave 7 Step 3): --client targeting Tests
+  // ==========================================================================
+
+  describe('--client targeting', () => {
+    afterEach(() => {
+      delete process.env['SKILLSMITH_CLIENT']
+    })
+
+    it('installs to the resolved --client directory instead of the canonical default', async () => {
+      setupSuccessfulInstall()
+
+      const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
+      const cmd = createInstallSkillCommand()
+
+      await cmd.parseAsync(['node', 'test', '--client', 'cursor'])
+
+      expect(mockMkdir).toHaveBeenCalledWith(
+        expect.stringContaining(join('.cursor', 'skills', 'skillsmith')),
+        expect.any(Object)
+      )
+    })
+
+    it('falls back to SKILLSMITH_CLIENT when --client is not passed', async () => {
+      setupSuccessfulInstall()
+      process.env['SKILLSMITH_CLIENT'] = 'windsurf'
+
+      const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
+      const cmd = createInstallSkillCommand()
+
+      await cmd.parseAsync(['node', 'test'])
+
+      expect(mockMkdir).toHaveBeenCalledWith(
+        expect.stringContaining(join('windsurf', 'skills', 'skillsmith')),
+        expect.any(Object)
+      )
+    })
+
+    it('names the resolved client in the post-install session tip', async () => {
+      setupSuccessfulInstall()
+
+      const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
+      const cmd = createInstallSkillCommand()
+
+      await cmd.parseAsync(['node', 'test', '--client', 'cursor'])
+
+      const output = mockConsoleLog.mock.calls.map((c) => c[0]).join('\n')
+      expect(output).toContain('Cursor')
+      expect(output).not.toContain('Claude Code session')
     })
   })
 })

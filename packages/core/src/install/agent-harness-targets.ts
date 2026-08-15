@@ -15,6 +15,11 @@
  *   - claude-code, cursor, windsurf: HIGH — MCP config path/shape verified
  *     against `packages/cli/src/templates/mcp-server.template.snippets.ts`
  *     (SMI-4580, already shipped and used in docs/website).
+ *   - cursor HOOK config specifically: was WRONG (Claude-shaped keys/entry
+ *     values, contradicted by a live Cursor UAT report) until SMI-5893 Wave
+ *     8a; now HIGH — re-verified 2026-08 against three independent fetches
+ *     of cursor.com/docs/hooks. See {@link AGENT_HOOK_TARGETS}.cursor's own
+ *     comment for the confirmed shape.
  *   - hermes: HIGH for the skill path + YAML config shape (spike report §(b),
  *     3 independent official doc pages agree); hooks are spike-verified
  *     ABSENT (no SessionStart equivalent) — {@link AGENT_HOOK_TARGETS}
@@ -186,10 +191,20 @@ export const AGENT_HOOK_TARGETS: Readonly<
     scriptDir: join(home, '.cursor', 'hooks'),
     configPath: join(home, '.cursor', 'hooks.json'),
     configFormat: 'json',
-    // Cursor's hooks.json is Claude-compatible (PRD §3.1) but is itself the
-    // hooks map (no wrapping "hooks" key) — see module header confidence note.
-    sessionStartKeyPath: ['SessionStart'],
-    sessionEndKeyPath: ['SessionEnd'],
+    // Cursor's hooks.json is NOT Claude-compatible — an earlier code comment
+    // here claimed otherwise (PRD §3.1) and a live Cursor UAT report (GH#2368
+    // C-06/SMI-5893 Wave 8) contradicted it. Verified 2026-08 against three
+    // independent fetches of cursor.com/docs/hooks: the file is a top-level
+    // `{ "version": 1, "hooks": {...} }` envelope, with `hooks.sessionStart` /
+    // `hooks.sessionEnd` each an array of `{ "command": "<path>" }` entries —
+    // no Claude-style `matcher`/`type` wrapper. The key paths below point at
+    // the arrays WITHIN that `hooks` object (the merge helper creates the
+    // wrapper automatically); `installCursorHooks`
+    // (agent-pack-installer.harness.ts) separately ensures the top-level
+    // `version: 1` sibling and uses its own Cursor-specific entry-value
+    // builder — NOT the shared Claude-shaped `hookMatcherEntry`.
+    sessionStartKeyPath: ['hooks', 'sessionStart'],
+    sessionEndKeyPath: ['hooks', 'sessionEnd'],
   },
   codex: {
     harness: 'codex',

@@ -7,8 +7,9 @@ import chalk from 'chalk'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { TrustTier, CodebaseContext, FrameworkInfo, DependencyInfo } from '@skillsmith/core'
+import { getRecommendAutoDetectedFooterText } from '@skillsmith/core'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
-import type { RecommendResponse, InstalledSkill } from './recommend.types.js'
+import type { RecommendResponse, InstalledSkill, SkillRecommendation } from './recommend.types.js'
 import { VALID_TRUST_TIERS } from './recommend.types.js'
 
 // Re-export scoring helpers for backwards compatibility
@@ -168,7 +169,7 @@ export function formatRecommendations(
   if (response.context.auto_detected) {
     lines.push(
       chalk.dim(
-        `Installed skills: ${response.context.installed_count} (auto-detected from ~/.claude/skills/)`
+        `Installed skills: ${response.context.installed_count} (${getRecommendAutoDetectedFooterText()})`
       )
     )
   } else {
@@ -277,6 +278,41 @@ export function formatOfflineResults(context: CodebaseContext, json: boolean): s
   lines.push(chalk.cyan('To get skill recommendations, ensure network connectivity and retry.'))
 
   return lines.join('\n')
+}
+
+// ============================================================================
+// Deduplication
+// ============================================================================
+
+/**
+ * SMI-5893 (Wave 7 Step 2): dedupe recommendation rows by `skill_id`.
+ *
+ * `recommend.ts` maps `skills-recommend` API results 1:1 into rows with no
+ * dedup — the edge function (`skills-recommend/index.ts:174-197`) returns
+ * raw, undeduped RPC output, so the same `skill_id` can appear more than
+ * once in `apiResponse.data`. This is a client-side mitigation only (same
+ * root-cause family as Wave 5/SMI-5898's still-open duplicate-search-rows
+ * schema gap, not that fix) — no API type changes.
+ *
+ * Contract (specified per plan review):
+ * - Keeps the FIRST occurrence of a given `skill_id` (server ordering is
+ *   assumed meaningful/ranked); later duplicates are dropped.
+ * - Does not re-sort — server ordering is otherwise preserved.
+ * - Callers must keep `candidates_considered` reporting the raw,
+ *   pre-dedup server-side count; only the displayed/returned row list
+ *   becomes the deduped count.
+ */
+export function dedupeRecommendationsBySkillId(
+  recommendations: SkillRecommendation[]
+): SkillRecommendation[] {
+  const seen = new Set<string>()
+  const out: SkillRecommendation[] = []
+  for (const rec of recommendations) {
+    if (seen.has(rec.skill_id)) continue
+    seen.add(rec.skill_id)
+    out.push(rec)
+  }
+  return out
 }
 
 // ============================================================================
