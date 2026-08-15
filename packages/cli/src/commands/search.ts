@@ -20,7 +20,6 @@ export {
   formatSkillRow,
   displayResults,
   displaySkillDetails,
-  getTrustTierColor,
 } from './search-formatters.js'
 
 /**
