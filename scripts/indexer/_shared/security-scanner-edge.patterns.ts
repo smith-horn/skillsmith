@@ -75,6 +75,31 @@ export const TRANSIENT_TRANSFER_HOSTS: string[] = [
 export const URL_SHORTENER_DOMAINS: string[] = ['bit.ly', 'tinyurl.com', 't.co', 'is.gd']
 
 /**
+ * SMI-6033 Wave 4 (Gap 6): byte-identical to core patterns.ts
+ * DEFAULT_ALLOWED_DOMAINS. Edge has never had a general URL-allowlist
+ * detector of its own (no `url` finding type — edge's category set is
+ * narrower than core's by design, see this file's own ANON_PASTE_HOSTS
+ * comment), but the new decoy_misdirection detector
+ * (security-scanner-edge.decoy.ts) needs this SPECIFIC list for its own
+ * exclusion gate — a domain mismatch against the claimed vendor is not a
+ * decoy if the fetch target is generally trusted regardless of vendor.
+ */
+export const DEFAULT_ALLOWED_DOMAINS: string[] = [
+  'github.com',
+  'githubusercontent.com',
+  'raw.githubusercontent.com',
+  'npmjs.com',
+  'npmjs.org',
+  'docs.anthropic.com',
+  'anthropic.com',
+  'claude.ai',
+  'docs.github.com',
+  'developer.mozilla.org',
+  'nodejs.org',
+  'typescriptlang.org',
+]
+
+/**
  * Jailbreak attempt patterns - attempts to manipulate AI behavior
  *
  * SMI-4960: `/developer\s+mode/i` required an activation verb (enable / enter /
@@ -226,6 +251,43 @@ export const CODE_EXECUTION_PATTERNS: RegExp[] = [
   /\bnpx\s+(?:--yes\s+|-y\s+)?(?:https?:\/\/\S+|github:\S+)/i,
   // SMI-5424 FN-4: node/python/deno/bun inline-eval (-e/-c) with a dangerous payload
   /\b(?:node|python[23]?|deno|bun)\s+(?:-e|-c|--eval|--exec)\s+['"][^'"]{0,200}?(?:require\(|child_process|fetch\(|\bexec\b|eval\(|base64|urllib|os\.system|subprocess)/i,
+]
+
+/**
+ * SMI-6033 Wave 4 (Gap 1): natural-language fetch-and-execute imperatives —
+ * byte-identical to core's own IMPERATIVE_FETCH_EXEC_PROSE (patterns.exec.ts).
+ *
+ * CODE_EXECUTION_PATTERNS above only reads literal shell syntax, so free text
+ * ("download the installer from thisurl.com and run it") scored exactly 0 —
+ * the ClawHavoc brief's first gap. Each pattern requires ALL FOUR components,
+ * so no three-of-four near-miss fires: a FETCH VERB (download/fetch/grab/get),
+ * an EXECUTABLE NOUN (file/binary/executable/script/installer/setup), a REMOTE
+ * TARGET (an explicit http(s) URL, or a domain-shaped token introduced by a
+ * from/at/on/via source preposition), and an EXECUTION IMPERATIVE
+ * (run/execute/open/install + it/this/that/them or a `the <noun>` object).
+ *
+ * Two entries cover the two natural orderings of the noun relative to the
+ * imperative: P1 states the noun before the target and closes with the
+ * imperative; P2 leads with imperative-plus-noun and trails the fetch clause.
+ * P2's imperative object is REQUIRED to carry the executable noun (no bare
+ * "run it"), which keeps the noun component present in both entries.
+ *
+ * FP control: the bare-domain form requires a source preposition (so "get the
+ * file report.txt and open it" — a LOCAL file — does not match) and carries a
+ * negative lookahead excluding common FILE EXTENSIONS from the TLD position
+ * (so "download the installer from setup.sh and run it" does not match
+ * either). `[\w-]` never matches `.`, so the host-label alternation is
+ * unambiguous at every `.` boundary — ReDoS-safe, measured <1 ms at the
+ * 10,000-char scan cap. Emits at the SAME medium/advisory tier as a lone
+ * literal-syntax match: never standalone-critical.
+ */
+export const IMPERATIVE_FETCH_EXEC_PROSE: RegExp[] = [
+  // P1: <fetch verb> … <exec noun> … <remote target> … <execution imperative>
+  //     "Download the installer from thisurl.com and run it"
+  /\b(?:download|fetch|grab|get)\b[\s\S]{0,40}?\b(?:file|binary|executable|script|installer|setup)\b[\s\S]{0,60}?(?:https?:\/\/[^\s"'<>)\]]{1,200}|\b(?:from|at|on|via)\s+(?:the\s+)?[\w-]{2,63}(?:\.[\w-]{2,63}){0,3}\.(?!(?:sh|bash|zsh|exe|py|js|mjs|cjs|ts|md|txt|zip|tar|gz|tgz|json|ya?ml|toml|bin|dmg|pkg|msi|deb|rpm|jar|php|rb|pl|ps1|bat|cmd|app)\b)[a-z]{2,24}\b)[\s\S]{0,120}?\b(?:run|execute|open|install)\s+(?:it|this|that|them|(?:the|this|that|your)\s+(?:file|binary|executable|script|installer|setup))\b/i,
+  // P2: <execution imperative + exec noun> … <fetch verb> … <remote target>
+  //     "Run the installer you downloaded from thisurl.com"
+  /\b(?:run|execute|open|install)\s+(?:the|this|that|your)\s+(?:file|binary|executable|script|installer|setup)\b[\s\S]{0,80}?\b(?:download|fetch|grab|get)(?:ed|s|ing)?\b[\s\S]{0,60}?(?:https?:\/\/[^\s"'<>)\]]{1,200}|\b(?:from|at|on|via)\s+(?:the\s+)?[\w-]{2,63}(?:\.[\w-]{2,63}){0,3}\.(?!(?:sh|bash|zsh|exe|py|js|mjs|cjs|ts|md|txt|zip|tar|gz|tgz|json|ya?ml|toml|bin|dmg|pkg|msi|deb|rpm|jar|php|rb|pl|ps1|bat|cmd|app)\b)[a-z]{2,24}\b)/i,
 ]
 
 /**
