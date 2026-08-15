@@ -179,14 +179,17 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * this bump forces the local MCP audit baseline to re-scan rather than
  * silently reuse it.
  *
- * Bumped to `2026-08-15.1`: SMI-6033 Wave 4 added the
+ * Bumped to `2026-08-15.1`: SMI-6033 Wave 4 added a fifth standalone
+ * detector/finding-type category, `decoy_misdirection` (a fetch target
+ * whose domain doesn't match a vendor brand/authority claim made nearby in
+ * the skill's own prose, SecurityScanner.decoy.ts), plus the
  * `IMPERATIVE_FETCH_EXEC_PROSE` pattern set (patterns.exec.ts — free-text
  * "download the installer from thisurl.com and run it" now emits a
  * `code_execution` medium finding where it previously matched nothing) and
  * replaced `CODE_EXECUTION_CO_OCCURRENCE` with `CO_SIGNAL_MIN_SEVERITY`
  * (SecurityScanner.exec.ts), whose new two-distinct-medium-signal path can
  * escalate a `code_execution` finding to critical on content that only ever
- * produced advisory-tier findings before. Both are the
+ * produced advisory-tier findings before. All three are the
  * previously-clean-content-now-fires scenario this gate exists for. Scope
  * note (unchanged from Wave 3): this forces re-evaluation of the local MCP
  * audit baseline only (patterns.ts:100-125,
