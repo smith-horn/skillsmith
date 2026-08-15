@@ -156,10 +156,30 @@ describe('skillsmith logs', () => {
 
         writeRecord('cli', date, { ts: new Date().toISOString(), msg: 'live-line' })
 
+        // GH #2335: this races chokidar's real `usePolling`/`interval: 100`
+        // fs poll (see `startTail` in logs.ts) against a wall-clock deadline —
+        // there's no deterministic alternative to await here (no existing
+        // live-file-watch test pattern in this repo, per this file's header
+        // comment). This failed once in `post-merge-verify.yml` (one of
+        // ~9500 tests in a single `vitest run` on native `ubuntu-latest`,
+        // right after several CPU-heavy setup steps) with the original 8s
+        // budget. UNCONFIRMED HYPOTHESIS, not established fact: scheduler
+        // contention on that runner starved the 100ms poll past 8s — a
+        // dedicated repro (20+15 solo repeats, 4x-parallel contention, a
+        // full ~9500-test run under a matched 2-vCPU Docker constraint, and
+        // an extreme-stress run at 40-60x slowdown) never reproduced the
+        // failure, so this widening is a reasoned margin increase, not a
+        // confirmed fix — see SMI-6028 for the follow-up if it recurs.
+        // `vitest.preset.ts`'s `retry: { count: 1, condition: /timeout/i }`
+        // already re-runs this exact failure mode once as a second line of
+        // defense. Widened 8s -> 15s, outer 15s -> 22s, preserving the
+        // original 7s inner/outer buffer (do not shrink this gap — a
+        // smaller buffer risks a slow `handle.close()` masking this test's
+        // specific diagnostic error behind Vitest's generic timeout).
         await Promise.race([
           recordSeen,
           new Promise((_resolve, reject) =>
-            setTimeout(() => reject(new Error('timeout waiting for tailed line')), 8000)
+            setTimeout(() => reject(new Error('timeout waiting for tailed line')), 15000)
           ),
         ])
 
@@ -167,7 +187,7 @@ describe('skillsmith logs', () => {
       } finally {
         await handle.close()
       }
-    }, 15000)
+    }, 22000)
 
     it('prints "no logs found" then keeps watching when nothing exists for today yet', async () => {
       const lines = captureConsole()

@@ -227,7 +227,7 @@ export function baseDeps(
     scanPostPort,
     scanPrePort,
     telemetry: newRateLimitTelemetry(),
-    headers: {},
+    getHeaders: async () => ({}),
     fetchRetryOptions: FAST_RETRY,
   }
 }

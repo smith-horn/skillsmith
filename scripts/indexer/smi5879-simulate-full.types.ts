@@ -157,7 +157,8 @@ export interface Smi5879SimulateFullScanDeps {
   scanPostPort: ScanSkillBundleFn
   scanPrePort: ScanSkillBundleFn
   telemetry: RateLimitTelemetry
-  headers: Record<string, string>
+  /** SMI-6015: a callback, not a frozen headers object — see `ProcessRowDeps`'s doc comment. */
+  getHeaders: () => Promise<Record<string, string>>
 }
 
 /** `scanSkillBundle`'s exact signature — matched structurally so a baseline-materialized twin type-checks. */

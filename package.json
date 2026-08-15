@@ -79,11 +79,11 @@
   "license": "Elastic-2.0",
   "devDependencies": {
     "@eslint/js": "^9.17.0",
-    "@octokit/auth-app": "8.2.0",
+    "@octokit/auth-app": "8.3.0",
     "@types/node": "^25.9.3",
-    "@typescript-eslint/eslint-plugin": "8.65.0",
-    "@typescript-eslint/parser": "8.65.0",
-    "@vercel/node": "^5.8.26",
+    "@typescript-eslint/eslint-plugin": "8.66.0",
+    "@typescript-eslint/parser": "8.66.0",
+    "@vercel/node": "^5.9.8",
     "@vitest/coverage-v8": "4.1.10",
     "chalk": "5.6.2",
     "cloudinary": "2.10.0",
@@ -93,7 +93,6 @@
     "globals": "17.8.0",
     "husky": "9.1.7",
     "jose": "5.10.0",
-    "knip": "6.32.2",
     "lint-staged": "17.3.0",
     "posthog-node": "5.47.3",
     "prettier": "3.8.3",
@@ -103,14 +102,14 @@
     "tsx": "4.21.0",
     "turbo": "2.9.14",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.65.0",
+    "typescript-eslint": "8.66.0",
     "varlock": "0.1.4",
     "vercel": "52.2.0",
     "vitest": "4.1.10"
   },
   "dependencies": {
     "@claude-flow/aidefence": "3.0.2",
-    "@supabase/supabase-js": "2.111.0",
+    "@supabase/supabase-js": "2.112.2",
     "protobufjs": "^7.6.5"
   },
   "overrides": {
@@ -124,7 +123,6 @@
     "fast-uri": "^3.1.5",
     "ip-address": "^10.3.1",
     "tar": "^7.5.22",
-    "nanoid": "^3.3.18",
     "postcss": "^8.5.23",
     "astro": {
       "vite": {

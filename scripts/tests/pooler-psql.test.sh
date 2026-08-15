@@ -49,6 +49,16 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local name="$1" haystack="$2" needle="$3"
+  if echo "$haystack" | grep -qF -- "$needle"; then
+    echo "FAIL $name: expected NOT to contain '$needle' in: $haystack"
+    fail=1
+  else
+    echo "PASS $name"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Build a docker shim that simulates the container running.
 # `docker inspect ... --format ...` returns "true"; `docker exec` records args.
@@ -141,7 +151,16 @@ docker_args=$(cat "$case3_dir/docker_call" 2>/dev/null || echo "")
 assert_contains "pg_host_passed"     "$docker_args" "PGHOST=aws-1-us-east-1.pooler.supabase.com"
 assert_contains "pg_port_passed"     "$docker_args" "PGPORT=6543"
 assert_contains "pg_user_passed"     "$docker_args" "PGUSER=postgres.testref123"
-assert_contains "pg_password_passed" "$docker_args" "PGPASSWORD=p@ss!w0rd"
+# SMI-6015: PGPASSWORD is forwarded via docker exec's bare `-e PGPASSWORD` form
+# (pulled from this process's own environment) rather than `-e PGPASSWORD=value`
+# -- the latter would put the plaintext password directly in this process's
+# argv, visible to any local user via `ps -ax` for the life of the docker exec
+# call. Both assertions matter: the bare flag must be present (confirms the
+# pass-through mechanism is wired up), and the literal value must never appear
+# in argv (the actual security property -- a regression here would silently
+# reintroduce the leak even if the bare-flag assertion alone still passed).
+assert_contains     "pg_password_env_passthrough" "$docker_args" "PGPASSWORD"
+assert_not_contains "pg_password_not_in_argv"      "$docker_args" "PGPASSWORD=p@ss!w0rd"
 assert_contains "pg_database_passed" "$docker_args" "PGDATABASE=postgres"
 assert_contains "container_name"     "$docker_args" "skillsmith-dev-1"
 rm -rf "$case3_dir"

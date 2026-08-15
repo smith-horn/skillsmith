@@ -1,6 +1,7 @@
 /**
  * SMI-5879 Wave 3 item 1: I-1..I-5 partition invariants, CLI arg parsing, and
- * the `purpose` CHECK constraint — against a REAL local Postgres.
+ * the `purpose` CHECK constraint — against a REAL local Postgres. I-6
+ * (SMI-6015 — branch-resolution quality) added below.
  *
  * See smi5879-census.test-helpers.ts's header for the live-Postgres harness
  * this suite requires (env vars, standup command, and the CI-wiring gap this
@@ -27,6 +28,7 @@ import {
   checkI3Completeness,
   checkI4SingleInstant,
   checkI5BranchCoverage,
+  checkI6BranchResolutionQuality,
   runInvariantChecks,
 } from '../../indexer/smi5879-census.invariants.ts'
 import { parseArgs, runCensus } from '../../indexer/smi5879-census.ts'
@@ -243,7 +245,82 @@ describe.skipIf(prePushNoLiveTestPg)(
       expect(result.passed).toBe(true)
     })
 
-    it('a window generation skips I-5 entirely (no GitHub I/O by design)', async () => {
+    it('I-6 branch-resolution quality fails on a transient smi5879_repo_branch row (SMI-6015)', async () => {
+      const runId = `t-i6-transient-${randomUUID()}`
+      await createOpenRun(conn, runId, 'decision')
+      const id1 = await insertSkillFixture(conn, {
+        repo_url: 'https://github.com/acme/flaky-repo',
+      })
+      await runPsql(
+        conn,
+        `INSERT INTO smi5879_snapshot_pre (run_id, id, updated_at, row_xmin, snapshot_taken_at, repo_url)
+       VALUES (:'run_id', :'id', now(), '100', now(), 'https://github.com/acme/flaky-repo');
+       INSERT INTO smi5879_repo_branch (run_id, owner, repo, default_branch, resolution, http_status)
+       VALUES (:'run_id', 'acme', 'flaky-repo', NULL, 'transient', 503);`,
+        { run_id: runId, id: id1 }
+      )
+      await sealRun(conn, runId)
+
+      const result = await checkI6BranchResolutionQuality(conn, runId)
+      expect(result.passed).toBe(false)
+      expect(result.detail).toContain('1 smi5879_repo_branch row')
+      expect(result.detail).toContain("resolution='transient'")
+    })
+
+    it('I-6 passes when zero rows are transient (mix of resolved/not-found is fine)', async () => {
+      const runId = `t-i6-clean-${randomUUID()}`
+      await createOpenRun(conn, runId, 'decision')
+      const id1 = await insertSkillFixture(conn, {
+        repo_url: 'https://github.com/acme/covered-repo-2',
+      })
+      const id2 = await insertSkillFixture(conn, {
+        repo_url: 'https://github.com/acme/gone-repo',
+      })
+      await runPsql(
+        conn,
+        `INSERT INTO smi5879_snapshot_pre (run_id, id, updated_at, row_xmin, snapshot_taken_at, repo_url)
+       VALUES
+         (:'run_id', :'id1', now(), '100', now(), 'https://github.com/acme/covered-repo-2'),
+         (:'run_id', :'id2', now(), '101', now(), 'https://github.com/acme/gone-repo');
+       INSERT INTO smi5879_repo_branch (run_id, owner, repo, default_branch, resolution, http_status)
+       VALUES
+         (:'run_id', 'acme', 'covered-repo-2', 'main', 'resolved', 200),
+         (:'run_id', 'acme', 'gone-repo', NULL, 'not-found', 404);`,
+        { run_id: runId, id1, id2 }
+      )
+      await sealRun(conn, runId)
+
+      const result = await checkI6BranchResolutionQuality(conn, runId)
+      expect(result.passed).toBe(true)
+      expect(result.detail).toContain('zero transient')
+    })
+
+    it('runInvariantChecks includes I-6 (after I-5) for a fetching generation and fails closed on a transient row', async () => {
+      const runId = `t-i6-runInvariantChecks-${randomUUID()}`
+      await createOpenRun(conn, runId, 'decision')
+      const id1 = await insertSkillFixture(conn, {
+        repo_url: 'https://github.com/acme/still-flaky',
+      })
+      await runPsql(
+        conn,
+        `INSERT INTO smi5879_snapshot_pre (run_id, id, updated_at, row_xmin, snapshot_taken_at, repo_url)
+       VALUES (:'run_id', :'id', now(), '100', now(), 'https://github.com/acme/still-flaky');
+       INSERT INTO smi5879_repo_branch (run_id, owner, repo, default_branch, resolution, http_status)
+       VALUES (:'run_id', 'acme', 'still-flaky', NULL, 'transient', 500);`,
+        { run_id: runId, id: id1 }
+      )
+      await sealRun(conn, runId)
+
+      const results = await runInvariantChecks(conn, runId, true)
+      expect(results.map((r) => r.id)).toEqual(['I-1', 'I-2', 'I-3', 'I-4', 'I-5', 'I-6'])
+      const i6 = results.find((r) => r.id === 'I-6')
+      expect(i6?.passed).toBe(false)
+      // I-6 failing must not mask an otherwise-healthy I-1..I-5 (I-5 passes here — the
+      // repo DOES have a smi5879_repo_branch row, just a transient-outcome one).
+      expect(results.find((r) => r.id === 'I-5')?.passed).toBe(true)
+    })
+
+    it('a window generation skips I-5 AND I-6 entirely (no GitHub I/O by design)', async () => {
       const runId = `t-window-no-i5-${randomUUID()}`
       await createOpenRun(conn, runId, 'window')
       const id1 = await insertSkillFixture(conn, {
@@ -259,6 +336,7 @@ describe.skipIf(prePushNoLiveTestPg)(
 
       const results = await runInvariantChecks(conn, runId, false)
       expect(results.find((r) => r.id === 'I-5')).toBeUndefined()
+      expect(results.find((r) => r.id === 'I-6')).toBeUndefined()
       expect(results.every((r) => r.passed)).toBe(true)
     })
   }
