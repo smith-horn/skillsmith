@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: removed 3 confirmed-dead exports flagged by the new `code-health-auditor` skill's first real dogfooding run (SMI-6023) — `displayQuotaProgressBar`/`displayQuotaWarning` (`utils/license.ts`, superseded by inline rendering in `displayLicenseStatus`) and `getTrustTierColor` (`commands/search-formatters.ts`, a one-line wrapper — real call sites already index `TRUST_TIER_COLORS` directly), plus the now-dead re-export of `getTrustTierColor` from `commands/search.ts`. No public API surface change — `packages/cli` ships as a bin-only bundle with no `exports`/`main`/`types` field. 3 other candidates the scan flagged were verified as false positives (same-file callers the tool's coverage check missed) and kept.
+
 ## v0.8.6
 
 - **Fix**: Harden manifest concurrency (uninstall lock, temp-file races) (#2331)
