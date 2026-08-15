@@ -27,10 +27,13 @@ function buildMockSupabase(
 ): {
   supabase: SupabaseClient
   upsertCalls: Array<Array<{ skill_id: string; category_id: string }>>
+  upsertOptionCalls: Array<{ onConflict?: string; ignoreDuplicates?: boolean } | undefined>
   deleteCalls: Array<string[]>
 } {
   const skillsData = opts.skillsData ?? []
   const upsertCalls: Array<Array<{ skill_id: string; category_id: string }>> = []
+  const upsertOptionCalls: Array<{ onConflict?: string; ignoreDuplicates?: boolean } | undefined> =
+    []
   const deleteCalls: Array<string[]> = []
 
   const supabase = {
@@ -54,8 +57,16 @@ function buildMockSupabase(
               return Promise.resolve({ error: null })
             },
           }),
-          upsert: (rows: Array<{ skill_id: string; category_id: string }>) => {
+          // SMI-6047 review finding: capture the options arg too -- a mock
+          // that only records `rows` would still pass every test even if
+          // `ignoreDuplicates`/`onConflict` were silently dropped from the
+          // real call, defeating the point of this suite.
+          upsert: (
+            rows: Array<{ skill_id: string; category_id: string }>,
+            options?: { onConflict?: string; ignoreDuplicates?: boolean }
+          ) => {
             upsertCalls.push(rows)
+            upsertOptionCalls.push(options)
             return Promise.resolve({
               error: opts.upsertError || null,
             })
@@ -85,7 +96,7 @@ function buildMockSupabase(
       }),
   } as unknown as SupabaseClient
 
-  return { supabase, upsertCalls, deleteCalls }
+  return { supabase, upsertCalls, upsertOptionCalls, deleteCalls }
 }
 
 describe('SMI-6047: Batch Categorization (runCategorization, Node twin)', () => {
@@ -184,6 +195,31 @@ describe('SMI-6047: Batch Categorization (runCategorization, Node twin)', () => 
 
       expect(upsertCalls).toHaveLength(1)
       expect(result.errors).toEqual([])
+    })
+
+    it('should pass onConflict + ignoreDuplicates to upsert() -- the actual race-prevention mechanism', async () => {
+      // SMI-6047 review finding: the mock previously only recorded `rows`,
+      // so every test above would still pass even if ignoreDuplicates or
+      // onConflict were silently dropped from the real call. This asserts
+      // on the options object directly.
+      const { supabase, upsertOptionCalls } = buildMockSupabase({
+        skillsData: [
+          {
+            id: 'skill-opts',
+            repo_url: 'https://github.com/test/skill-opts',
+            tags: ['mcp-server'],
+            description: null as unknown as string,
+          },
+        ],
+      })
+
+      await runCategorization(supabase, ['https://github.com/test/skill-opts'])
+
+      expect(upsertOptionCalls).toHaveLength(1)
+      expect(upsertOptionCalls[0]).toEqual({
+        onConflict: 'skill_id,category_id',
+        ignoreDuplicates: true,
+      })
     })
 
     it('should reset counts to 0 on batch upsert failure', async () => {
