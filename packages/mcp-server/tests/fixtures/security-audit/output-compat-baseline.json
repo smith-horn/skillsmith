@@ -31,13 +31,13 @@
   },
   "candidates": [
     {
-      "key": "5997f0a4504f4b127a15ae982a7d63a1c8b6f447bf614cad1f5bf0397124e967",
-      "acceptKey": "5997f0a4504f4b127a15ae982a7d63a1c8b6f447bf614cad1f5bf0397124e967",
+      "key": "2e936f23a18275d56b8e72e79f6261da2cc3373bbd902ba5eaef9c9361c3eac3",
+      "acceptKey": "2e936f23a18275d56b8e72e79f6261da2cc3373bbd902ba5eaef9c9361c3eac3",
       "sourcePath": "/commands/some-command.md",
       "identifier": "some-command",
       "contentDigest": "c66306af18349092309de76d385bc21fb8901407fb7ebb5a5242bb467ee39b6c",
       "findingFingerprint": "97ab68d5426964d8c3071475e6377dc70b4ac2a2327bfb1264bbe68aa79f2e1b",
-      "rulesetVersion": "2026-07-29.1",
+      "rulesetVersion": "2026-08-14.1",
       "finding": {
         "type": "suspicious_pattern",
         "severity": "low",
@@ -57,13 +57,13 @@
       ]
     },
     {
-      "key": "6539cb4de7dc20b57392bea1bb88a4f9d2eb43ccc21ab87dac09205fb45a989c",
-      "acceptKey": "6539cb4de7dc20b57392bea1bb88a4f9d2eb43ccc21ab87dac09205fb45a989c",
+      "key": "dc975df7ff8655b99f9aa075bacb1b396f8d32f1955b162e87cf19020f46430f",
+      "acceptKey": "dc975df7ff8655b99f9aa075bacb1b396f8d32f1955b162e87cf19020f46430f",
       "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
       "identifier": "jailbreak-checklist",
       "contentDigest": "1c2a50029a9b0cbbd8910e94dd7fe624851171a8dcb6e4f937f8242c2d855ded",
       "findingFingerprint": "e88edf38adbff96a12d8f7edbce4ce9a0d394413081ae39685838050b67dc42d",
-      "rulesetVersion": "2026-07-29.1",
+      "rulesetVersion": "2026-08-14.1",
       "finding": {
         "type": "jailbreak",
         "severity": "medium",
@@ -83,13 +83,13 @@
       ]
     },
     {
-      "key": "bc3a14a3d8d7b101e0d0224c1ce08b5c01792aea8d8f8e677b99d327a213f810",
-      "acceptKey": "bc3a14a3d8d7b101e0d0224c1ce08b5c01792aea8d8f8e677b99d327a213f810",
+      "key": "f85e92d061a9d3d545eab3c58dfd3ff04b46d414fb0b7a8bc6938b394946eea0",
+      "acceptKey": "f85e92d061a9d3d545eab3c58dfd3ff04b46d414fb0b7a8bc6938b394946eea0",
       "sourcePath": "/skills/jailbreak-checklist/SKILL.md",
       "identifier": "jailbreak-checklist",
       "contentDigest": "1c2a50029a9b0cbbd8910e94dd7fe624851171a8dcb6e4f937f8242c2d855ded",
       "findingFingerprint": "524ee7779065e767dc81756b9f620e7e5c0ca99c7da7fa674941abad0dbd89dd",
-      "rulesetVersion": "2026-07-29.1",
+      "rulesetVersion": "2026-08-14.1",
       "finding": {
         "type": "jailbreak",
         "severity": "critical",
