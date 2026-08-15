@@ -71,8 +71,16 @@ const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
 
 /**
  * Display skills in a table format
+ *
+ * SMI-5893 (Wave 7 Step 1): `client` selects which resolved client's path is
+ * shown in the "global: ..." footer segment — the footer used to hardcode
+ * `~/.claude/skills` regardless of `--client`, even though `getInstallPath()`
+ * has been the source of truth for this same file's other commands since
+ * Wave 1. Defaults to `CANONICAL_CLIENT` (same value `resolveClientId(undefined)`
+ * returns) so the unfiltered `list` call — which still scans every client's
+ * directory, not just this one — keeps today's existing default text.
  */
-function displaySkillsTable(skills: InstalledSkill[]): void {
+function displaySkillsTable(skills: InstalledSkill[], client: ClientId = CANONICAL_CLIENT): void {
   if (skills.length === 0) {
     console.log(chalk.yellow('\nNo skills installed.\n'))
     console.log(chalk.dim('Install skills with: skillsmith install <author/skill-name>\n'))
@@ -105,7 +113,7 @@ function displaySkillsTable(skills: InstalledSkill[]): void {
   console.log(table.toString())
   console.log(
     chalk.dim(
-      `\n${skills.length} skill(s) found (global: ~/.claude/skills, local: ./.claude/skills)\n`
+      `\n${skills.length} skill(s) found (global: ${getInstallPath(client)}, local: ./.claude/skills)\n`
     )
   )
 }
@@ -249,9 +257,17 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     // NOT fall back to SKILLSMITH_CLIENT, since that would silently change
     // `list`'s existing "show everything" default for anyone who already
     // sets the env var for install/remove/update.
+    // SMI-5893 (Wave 7 Step 1): resolves the SAME value used to select the
+    // scan directory above — `resolveClientId(clientOpt)` returns
+    // CANONICAL_CLIENT when clientOpt is undefined, matching the unfiltered
+    // scan's existing default. This does not add an SKILLSMITH_CLIENT env
+    // fallback for `list` (see the doc comment above `clientOpt`'s
+    // declaration) — only the footer text's client resolution, not the scan
+    // filter, changes here.
+    const resolvedClient = resolveClientId(clientOpt)
     const skills =
       clientOpt !== undefined
-        ? await getInstalledSkillsForClient(resolveClientId(clientOpt), dbPath)
+        ? await getInstalledSkillsForClient(resolvedClient, dbPath)
         : await getInstalledSkills(dbPath)
     const filtered = outdated ? skills.filter((s) => s.hasUpdates) : skills
 
@@ -260,7 +276,7 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
       return
     }
 
-    displaySkillsTable(filtered)
+    displaySkillsTable(filtered, resolvedClient)
   } catch (error) {
     logger.error(`${chalk.red('Error listing skills:')} ${sanitizeError(error)}`)
     process.exit(1)

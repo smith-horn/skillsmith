@@ -1,8 +1,11 @@
 /**
  * SMI-824: Install Skillsmith Skill Command
  *
- * Installs the bundled skillsmith skill to ~/.claude/skills/skillsmith/
- * for enabling /skillsmith slash command in Claude Code sessions.
+ * Installs the bundled skillsmith skill to the target client's skills
+ * directory (defaults to `~/.claude/skills/skillsmith/` for Claude Code;
+ * SMI-5893 Wave 7 Step 3 added `--client <id>` to target another agent
+ * instead, reusing the `resolveClientId`/`getInstallPath` pattern already
+ * established by `install.ts`).
  */
 
 import { Command } from 'commander'
@@ -10,11 +13,17 @@ import chalk from 'chalk'
 import ora from 'ora'
 import { mkdir, copyFile, stat, readdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import {
+  CLIENT_DISPLAY_LABELS,
+  getInstallPath,
+  resolveClientId,
+  type ClientId,
+} from '@skillsmith/core/install'
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
 import { packageRoot } from '../utils/package-root.js'
+import { VALID_CLIENT_HINT } from './install.js'
 
 const logger = getCliLogger()
 
@@ -26,13 +35,16 @@ function getAssetsPath(): string {
 }
 
 /**
- * Get the target installation path.
+ * Get the target installation path for `client`.
  *
- * SMI-4578: routes through `@skillsmith/core/install` so the canonical
- * Claude Code directory is defined in exactly one place.
+ * SMI-4578 / SMI-5893 (Wave 7 Step 3): routes through
+ * `@skillsmith/core/install`'s `getInstallPath(client)` — the same
+ * `resolveClientId`/`getInstallPath` pattern `install.ts:299-301` already
+ * uses — so a resolved `--client`/`SKILLSMITH_CLIENT` value is honored
+ * instead of always hardcoding the canonical Claude Code directory.
  */
-function getTargetPath(): string {
-  return join(getCanonicalInstallPath(), 'skillsmith')
+function getTargetPath(client: ClientId): string {
+  return join(getInstallPath(client), 'skillsmith')
 }
 
 /**
@@ -77,11 +89,12 @@ async function copyDirectory(src: string, dest: string): Promise<number> {
 }
 
 /**
- * Install the skillsmith skill to ~/.claude/skills/skillsmith/
+ * Install the skillsmith skill to `client`'s skills directory
+ * (`<install-path>/skillsmith/`).
  */
-async function installSkillsmithSkill(force: boolean): Promise<void> {
+async function installSkillsmithSkill(force: boolean, client: ClientId): Promise<void> {
   const assetsPath = getAssetsPath()
-  const targetPath = getTargetPath()
+  const targetPath = getTargetPath(client)
 
   // Check if assets exist
   if (!(await directoryExists(assetsPath))) {
@@ -135,7 +148,11 @@ async function installSkillsmithSkill(force: boolean): Promise<void> {
     console.log(chalk.cyan('  /skillsmith list') + ' - List installed skills')
     console.log(chalk.cyan('  /skillsmith uninstall <id>') + ' - Remove a skill')
     console.log()
-    console.log(chalk.dim('Tip: Start a new Claude Code session to use the /skillsmith command.'))
+    console.log(
+      chalk.dim(
+        `Tip: Start a new ${CLIENT_DISPLAY_LABELS[client]} session to use the /skillsmith command.`
+      )
+    )
   } catch (error) {
     spinner.fail('Failed to install skillsmith skill')
     throw error
@@ -143,7 +160,7 @@ async function installSkillsmithSkill(force: boolean): Promise<void> {
 }
 
 // SMI-5040: extracted from inline .action() closure for withTelemetry wrap.
-async function setupActionImpl(opts: { force?: boolean }): Promise<void> {
+async function setupActionImpl(opts: { force?: boolean; client?: string }): Promise<void> {
   try {
     // SMI-3484: Deprecation warning when invoked via old name
     const invokedName = process.argv[2]
@@ -155,7 +172,11 @@ async function setupActionImpl(opts: { force?: boolean }): Promise<void> {
         )
       )
     }
-    await installSkillsmithSkill(opts.force ?? false)
+    // SMI-5893 (Wave 7 Step 3): same `resolveClientId`/`getInstallPath`
+    // pattern install.ts:299-301 already uses — an explicit --client wins,
+    // otherwise SKILLSMITH_CLIENT, otherwise the canonical client.
+    const client = resolveClientId(opts.client ?? process.env['SKILLSMITH_CLIENT'])
+    await installSkillsmithSkill(opts.force ?? false, client)
   } catch (error) {
     logger.error(`${chalk.red('Error:')} ${sanitizeError(error)}`)
     process.exit(1)
@@ -175,9 +196,14 @@ export function createInstallSkillCommand(): Command {
   return new Command('setup')
     .alias('install-skill')
     .description(
-      'Set up the skillsmith slash command skill (installs to ~/.claude/skills/skillsmith/)'
+      "Set up the skillsmith slash command skill (installs to the target client's skills " +
+        'directory, defaults to ~/.claude/skills/skillsmith/ for Claude Code)'
     )
     .option('-f, --force', 'Reinstall even if already installed')
+    .option(
+      '--client <id>',
+      `set up for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .action(setupAction)
 }
 

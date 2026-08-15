@@ -41,6 +41,11 @@ vi.mock('@skillsmith/core', () => ({
     'security',
     'development-partner',
   ] as const,
+  // SMI-5893 (Wave 7 Step 2): recommend.helpers.ts's formatRecommendations
+  // calls this whenever context.auto_detected is true (every test in this
+  // file — none pass --installed) for the non-JSON terminal output path.
+  getRecommendAutoDetectedFooterText: () =>
+    'auto-detected from your installed skills across all clients',
 }))
 vi.mock('ora', () => ({ default: () => mocks.spinner }))
 
@@ -184,6 +189,108 @@ describe('SMI-1353: CLI recommend command — stack / role filter / exports', ()
       const call = mockGetRecommendations.mock.calls[0]![0]
       const reactCount = call.stack.filter((s: string) => s === 'react').length
       expect(reactCount).toBe(1)
+    })
+  })
+
+  // ==========================================================================
+  // SMI-5893 (Wave 7 Step 2): Recommendation dedup-by-skill_id Tests
+  // ==========================================================================
+
+  describe('recommendation dedup by skill_id', () => {
+    it('drops later rows sharing a skill_id, keeping the first occurrence', async () => {
+      mockGetRecommendations.mockResolvedValue(
+        createMockApiResponse([
+          {
+            id: 'acme/linter',
+            name: 'Linter (first)',
+            description: 'first occurrence',
+            author: 'acme',
+            repo_url: null,
+            quality_score: 0.9,
+            trust_tier: 'verified',
+            tags: [],
+            stars: 10,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+          {
+            id: 'acme/linter',
+            name: 'Linter (duplicate)',
+            description: 'raw undeduped RPC duplicate',
+            author: 'acme',
+            repo_url: null,
+            quality_score: 0.5,
+            trust_tier: 'community',
+            tags: [],
+            stars: 1,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+        ])
+      )
+
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--no-overlap', '--json'])
+
+      const output = mockConsoleLog.mock.calls[0]![0]
+      const parsed = JSON.parse(output)
+
+      // Displayed/returned row list is deduped to one row...
+      expect(parsed.recommendations).toHaveLength(1)
+      expect(parsed.recommendations[0].skill_id).toBe('acme/linter')
+      // ...and the FIRST occurrence wins (server ordering is meaningful).
+      expect(parsed.recommendations[0].name).toBe('Linter (first)')
+      // candidates_considered keeps reporting the raw, pre-dedup server count
+      // — it must NOT be conflated with the deduped displayed-row count.
+      expect(parsed.meta.candidates_considered).toBe(2)
+    })
+
+    it('does not re-sort — preserves server ordering for non-duplicate rows', async () => {
+      mockGetRecommendations.mockResolvedValue(
+        createMockApiResponse([
+          {
+            id: 'acme/z-skill',
+            name: 'Z Skill',
+            description: 'z',
+            author: 'acme',
+            repo_url: null,
+            quality_score: 0.4,
+            trust_tier: 'community',
+            tags: [],
+            stars: 1,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+          {
+            id: 'acme/a-skill',
+            name: 'A Skill',
+            description: 'a',
+            author: 'acme',
+            repo_url: null,
+            quality_score: 0.9,
+            trust_tier: 'verified',
+            tags: [],
+            stars: 100,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+        ])
+      )
+
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--no-overlap', '--json'])
+
+      const output = mockConsoleLog.mock.calls[0]![0]
+      const parsed = JSON.parse(output)
+
+      expect(parsed.recommendations.map((r: { skill_id: string }) => r.skill_id)).toEqual([
+        'acme/z-skill',
+        'acme/a-skill',
+      ])
     })
   })
 

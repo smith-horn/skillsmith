@@ -47,6 +47,11 @@ vi.mock('@skillsmith/core', () => ({
   createApiClient: vi.fn(() => ({ isOffline: () => true, getSkill: vi.fn() })),
   isGitHubUrl: vi.fn((url: string) => url.startsWith('https://github.com/')),
   emitInstallEvent: vi.fn(async () => undefined),
+  // SMI-5893 (Wave 7 Step 4): install.ts's `opts.quiet ?? isQuietModeEnabled()`
+  // fallback calls this whenever --quiet/-q isn't passed (every test in this
+  // file) — a real, deterministic (env-unset by default) implementation
+  // keeps that fallback from throwing under this full-replacement mock.
+  isQuietModeEnabled: vi.fn(() => process.env['SKILLSMITH_QUIET'] === 'true'),
 }))
 
 const ORIGINAL_HOME = process.env['HOME']

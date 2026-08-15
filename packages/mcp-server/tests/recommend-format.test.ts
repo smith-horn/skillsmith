@@ -99,6 +99,25 @@ describe('formatRecommendations', () => {
     expect(formatted).toContain('ms')
   })
 
+  // SMI-5893 (Wave 7 Step 2): auto-detected footer describes multi-harness
+  // detection instead of naming one hardcoded client path.
+  it('describes multi-harness auto-detection instead of a hardcoded path when auto-detected', async () => {
+    const result = await executeRecommend(
+      {
+        installed_skills: [], // empty triggers auto-detection (autoDetected = true)
+        detect_overlap: false,
+        limit: 3,
+      },
+      toolContext
+    )
+    expect(result.context.auto_detected).toBe(true)
+
+    const formatted = formatRecommendations(result)
+
+    expect(formatted).toContain('auto-detected from your installed skills across all clients')
+    expect(formatted).not.toContain('~/.claude/skills')
+  })
+
   // SMI-1631: Role display in formatted output
   it('should show role filter in formatted output when applied', async () => {
     const result = await executeRecommend(

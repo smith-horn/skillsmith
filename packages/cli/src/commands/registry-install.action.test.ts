@@ -87,6 +87,13 @@ vi.mock('@skillsmith/core', () => ({
   getPrivateRegistrySkillContent: (...args: unknown[]) =>
     mocks.getPrivateRegistrySkillContent(...args),
   resolveFreshAccessToken: () => mocks.resolveFreshAccessToken(),
+  // SMI-5893 (Wave 7 Step 4): real check against process.env so the
+  // `opts.quiet ?? isQuietModeEnabled()` fallback (added alongside the CLI's
+  // new root-level --quiet, which claims the LONG-form `--quiet` token ahead
+  // of this command's own local `-q, --quiet`) is exercised faithfully.
+  isQuietModeEnabled: () =>
+    process.env['SKILLSMITH_QUIET']?.toLowerCase() === 'true' ||
+    process.env['SKILLSMITH_QUIET'] === '1',
 }))
 
 vi.mock('@skillsmith/core/install', () => ({
@@ -304,6 +311,52 @@ describe('SMI-5905: `skillsmith registry install` command — registration and h
           trustTier: 'community',
         })
       )
+    })
+  })
+
+  // ==========================================================================
+  // SMI-5893 (Wave 7 Step 4): isQuietModeEnabled() fallback
+  //
+  // The CLI's new root-level --quiet (packages/cli/src/index.ts) claims the
+  // LONG-form `--quiet` token ahead of this command's own local
+  // `-q, --quiet` whenever both are registered on the same composed
+  // program, leaving `opts.quiet` undefined here even though the user asked
+  // for quiet output. `opts.quiet ?? isQuietModeEnabled()` is the fallback
+  // that keeps this command quiet in that case, via the SKILLSMITH_QUIET
+  // env var root's preAction hook sets. This isolates that fallback
+  // directly (no --quiet/-q flag passed at all) rather than reproducing the
+  // full root-collision, since this suite runs createRegistryInstallCommand()
+  // standalone, outside the composed root program.
+  // ==========================================================================
+
+  describe('isQuietModeEnabled() fallback', () => {
+    const ORIGINAL_SKILLSMITH_QUIET = process.env['SKILLSMITH_QUIET']
+
+    afterEach(() => {
+      if (ORIGINAL_SKILLSMITH_QUIET === undefined) {
+        delete process.env['SKILLSMITH_QUIET']
+      } else {
+        process.env['SKILLSMITH_QUIET'] = ORIGINAL_SKILLSMITH_QUIET
+      }
+    })
+
+    it('suppresses advisory tips via SKILLSMITH_QUIET even without --quiet/-q', async () => {
+      process.env['SKILLSMITH_QUIET'] = 'true'
+      mocks.installFromContentFn.mockResolvedValue({
+        success: true,
+        skillId: 'my-team/internal-helper',
+        installPath: '/mock/skills-for-claude-code/internal-helper',
+        trustTier: 'community',
+        tips: ['Tip: Use the skill by invoking /internal-helper'],
+      })
+
+      const { createRegistryInstallCommand } = await import('./registry-install.js')
+      const cmd = createRegistryInstallCommand()
+
+      await cmd.parseAsync(['node', 'test', 'my-team/internal-helper'])
+
+      const allOutput = mockConsoleLog.mock.calls.map((c) => c.join(' ')).join('\n')
+      expect(allOutput).not.toContain('Tip:')
     })
   })
 

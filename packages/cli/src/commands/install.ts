@@ -19,6 +19,7 @@ import {
   isGitHubUrl,
   createApiClient,
   loadStoredAccessToken,
+  isQuietModeEnabled,
   type CoreInstallResult,
   type RegistryLookup,
   type RegistrySkillInfo,
@@ -279,7 +280,14 @@ async function installActionImpl(
     symlink?: boolean
   }
 ): Promise<void> {
-  const quiet = opts.quiet ?? false
+  // SMI-5893 (Wave 7 Step 4): falls back to the shared isQuietModeEnabled()
+  // gate — Commander routes an identically-spelled `--quiet` token to
+  // whichever Command instance registers it first (the new root-level
+  // `--quiet` added for Wave 7 Step 4), so `opts.quiet` is `undefined` (not
+  // `false`) whenever the LONG form is passed and root claims it first; the
+  // shorthand `-q` (which root deliberately doesn't register) still resolves
+  // to this command's own local option as before.
+  const quiet = opts.quiet ?? isQuietModeEnabled()
   const jsonOutput = opts.json ?? false
 
   try {
