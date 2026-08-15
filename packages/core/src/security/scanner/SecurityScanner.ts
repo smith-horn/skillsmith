@@ -244,7 +244,8 @@ export class SecurityScanner {
   private runDetectors(
     content: string,
     lineContexts: LineContext[],
-    skipEncodedPayload: boolean
+    skipEncodedPayload: boolean,
+    isHighTrustAuthor = false
   ): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     // SMI-5881: the multiline (full-content) regex pass has its OWN, much
@@ -275,9 +276,11 @@ export class SecurityScanner {
         .map((f) => f.lineNumber as number)
     )
     findings.push(...scanChmodFetchCompound(content, privEscLines, lineContexts))
-    // SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass — standalone-critical,
-    // no fetch-correlation co-signal required (unlike chmod above).
-    findings.push(...scanGatekeeperBypass(content, lineContexts))
+    // SMI-6033 Wave 2/3 (Gap 5): xattr Gatekeeper-bypass — critical only when
+    // correlated with a fetch destination AND the author isn't high-trust
+    // (indexer path only; skill_validate never passes isHighTrustAuthor, so
+    // it defaults closed and correlated xattr stays always-critical there).
+    findings.push(...scanGatekeeperBypass(content, lineContexts, isHighTrustAuthor))
     // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion —
     // correlated + inline-literal-password form is standalone-critical;
     // every other shape (uncorrelated CLI usage, prose-only mention) is
@@ -320,7 +323,12 @@ export class SecurityScanner {
     if (!skipEncodedPayload) {
       findings.push(
         ...scanEncodedPayload(content, lineContexts, (decodedContent) =>
-          this.runDetectors(decodedContent, analyzeMarkdownContext(decodedContent), true)
+          this.runDetectors(
+            decodedContent,
+            analyzeMarkdownContext(decodedContent),
+            true,
+            isHighTrustAuthor
+          )
         )
       )
     }
@@ -328,7 +336,18 @@ export class SecurityScanner {
     return findings
   }
 
-  scan(skillId: string, content: string): ScanReport {
+  /**
+   * SMI-6033 Wave 3 (Gap 5): `isHighTrustAuthor` (default `false`) is the
+   * Gatekeeper-bypass trust-tier carve-out — see `scanGatekeeperBypass`'s own
+   * header (`SecurityScanner.compound.ts`) for the full policy. No in-repo
+   * caller of this method currently has a verified author signal to pass
+   * here (the indexer scans via the edge twin, not this core class); the
+   * parameter exists so a future verified-author caller can opt in, and so
+   * every existing call site (skill_validate, skill_rescan,
+   * bundled-sibling-scan, skill-installation.*) defaults closed by
+   * construction, not by convention.
+   */
+  scan(skillId: string, content: string, isHighTrustAuthor = false): ScanReport {
     const startTime = performance.now()
     const findings: SecurityFinding[] = []
     const lineContexts = analyzeMarkdownContext(content)
@@ -355,7 +374,7 @@ export class SecurityScanner {
       })
     }
 
-    findings.push(...this.runDetectors(content, lineContexts, false))
+    findings.push(...this.runDetectors(content, lineContexts, false, isHighTrustAuthor))
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

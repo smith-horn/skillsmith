@@ -114,41 +114,90 @@ export function scanChmodFetchCompound(
 }
 
 /**
- * SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass detector.
+ * SMI-6033 Wave 2/3 (Gap 5, tiered per the plan's "Product decision:
+ * Gatekeeper-bypass carve-out", resolved 2026-08-14): xattr Gatekeeper-bypass
+ * detector.
  *
  * `xattr -c <file>` (clear ALL extended attributes) or
  * `xattr -d com.apple.quarantine <file>` (delete just the quarantine
  * attribute — with or without a combined `-r` recursive flag) strips
  * macOS's "downloaded from the internet" Gatekeeper warning from an
- * unsigned binary. Per the plan's §9 reconciliation policy, this signal has
- * essentially no legitimate use case in a skill-install context — its only
- * real purpose is defeating that warning. Unlike `chmod +x`
- * (scanChmodFetchCompound above), it does NOT require a fetch-correlation
- * co-signal to matter: it is standalone-critical, full stop (modulo the same
- * documentation-context downgrade every other detector in this file applies).
+ * unsigned binary.
  *
- * Two bounded, ReDoS-safe patterns rather than one combined alternation
- * (mirrors CHMOD_TARGET's capture-then-inspect style): XATTR_CLEAR_ALL
- * matches any `-c`-bearing flag cluster within 40 chars of `xattr` (`-c`,
- * `-cr`, `-rc`, ...); XATTR_DELETE_QUARANTINE matches a `-d`-bearing flag
- * cluster immediately followed by the literal `com.apple.quarantine`
- * attribute name (covers both a combined `-dr`/`-rd` cluster and two
- * separate `-r -d com.apple.quarantine` tokens, since the attribute name
- * always immediately follows whichever token carries `-d`). Reading or
- * writing a DIFFERENT attribute (`-l`, `-p <name>`, `-w <name> <value>`) is
- * not a bypass and does not match either pattern.
+ * NOT unconditionally standalone-critical: `critical` requires the xattr
+ * target's basename to be correlated with a fetch destination elsewhere in
+ * the content (the shared `isCorrelatedWithFetchDestination` utility, same
+ * as `scanChmodFetchCompound` above and `scanArchiveEvasion`'s inline-literal
+ * form) — the "download a payload, strip its quarantine bit" attack shape.
+ * Uncorrelated usage (e.g. a general macOS-troubleshooting doc mentioning
+ * `xattr -c` with no fetched file in scope) stays `medium`, regardless of
+ * `isHighTrustAuthor`.
+ *
+ * `isHighTrustAuthor` (default `false`) is the trust-tier carve-out: when the
+ * correlated (would-be-critical) form fires AND the caller has verified the
+ * skill's author is high-trust, severity downgrades to `medium` instead of
+ * `critical` — a downgrade, not a full exemption, since even a high-trust
+ * account can be compromised (a `medium` finding still counts toward the
+ * two-distinct-medium-signal escalation rule). This parameter must be sourced
+ * from a VERIFIED author signal — the indexer's own resolved GitHub repo
+ * owner, never a self-declared `SKILL.md` frontmatter field, which is
+ * trivially spoofable. `skill_validate`'s offline call site has no such
+ * verified signal (a network call to check it would break the tool's
+ * deliberately-offline design, per Gap 7) and so must never pass this
+ * parameter — it stays defaulted `false`, keeping correlated xattr
+ * always-critical there, full stop. Checksum/signature-verification prose
+ * near the command does NOT downgrade a non-high-trust correlated form: it's
+ * attacker-authored text and proves nothing about the artifact's safety, so
+ * no such logic exists here.
+ *
+ * Two bounded, ReDoS-safe TRIGGER patterns rather than one combined
+ * alternation (mirrors CHMOD_TARGET's capture-then-inspect style):
+ * XATTR_CLEAR_ALL matches any `-c`-bearing flag cluster within 40 chars of
+ * `xattr` (`-c`, `-cr`, `-rc`, ...); XATTR_DELETE_QUARANTINE matches a
+ * `-d`-bearing flag cluster immediately followed by the literal
+ * `com.apple.quarantine` attribute name (covers both a combined `-dr`/`-rd`
+ * cluster and two separate `-r -d com.apple.quarantine` tokens, since the
+ * attribute name always immediately follows whichever token carries `-d`).
+ * Reading or writing a DIFFERENT attribute (`-l`, `-p <name>`, `-w <name>
+ * <value>`) is not a bypass and does not match either pattern. A second,
+ * TARGET-capturing sibling of each pattern (below) exists ONLY to extract the
+ * xattr'd file's basename for the correlation check — it never changes
+ * whether a line trips the detector.
  */
 const XATTR_CLEAR_ALL = /\bxattr\b[^\n]{0,40}-[a-zA-Z]*c[a-zA-Z]*\b/i
 const XATTR_DELETE_QUARANTINE =
   /\bxattr\b[^\n]{0,40}-[a-zA-Z]*d[a-zA-Z]*\s+['"]?com\.apple\.quarantine\b/i
+const XATTR_CLEAR_ALL_TARGET = /\bxattr\b[^\n]{0,40}-[a-zA-Z]*c[a-zA-Z]*\b\s+['"]?(\S+)/i
+const XATTR_DELETE_QUARANTINE_TARGET =
+  /\bxattr\b[^\n]{0,40}-[a-zA-Z]*d[a-zA-Z]*\s+['"]?com\.apple\.quarantine\b['"]?\s+['"]?(\S+)/i
+
+/**
+ * The FILE target of an xattr Gatekeeper-bypass command (real xattr CLI
+ * syntax is `xattr [-flags] [attr_name] target...`, so the target always
+ * comes right after whichever trigger variant matched) — used only for the
+ * fetch-correlation trust-tier check. Extraction failure (no trailing token)
+ * simply yields '' (never correlates); it does not affect whether the line
+ * trips the underlying detector.
+ */
+function extractXattrTargetBasename(line: string): string {
+  const m =
+    safeRegexTest(XATTR_CLEAR_ALL_TARGET, line) ??
+    safeRegexTest(XATTR_DELETE_QUARANTINE_TARGET, line)
+  if (!m) return ''
+  return m[1].replace(/['"]/g, '').split('/').pop() ?? ''
+}
 
 export function scanGatekeeperBypass(
   content: string,
-  lineContexts?: LineContext[]
+  lineContexts?: LineContext[],
+  isHighTrustAuthor = false
 ): SecurityFinding[] {
   const findings: SecurityFinding[] = []
   const lines = content.split('\n')
   const contexts = lineContexts ?? analyzeMarkdownContext(content)
+  // Fetch-carrying lines, for the correlation precondition (mirrors
+  // scanChmodFetchCompound/scanArchiveEvasion's own fetchLines computation).
+  const fetchLines = lines.filter((l) => safeRegexTest(FETCH_COMMAND_PATTERN, l) !== null)
 
   lines.forEach((line, index) => {
     const match =
@@ -158,12 +207,19 @@ export function scanGatekeeperBypass(
     const ctx = contexts[index]
     const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
     const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+
+    const targetBasename = extractXattrTargetBasename(line)
+    const correlated =
+      targetBasename.length >= 3 && isCorrelatedWithFetchDestination(targetBasename, fetchLines)
+    // Product decision (2026-08-14): correlated form is standalone-critical
+    // UNLESS the caller has verified the author is high-trust (indexer path
+    // only — see this function's header). Uncorrelated usage never reaches
+    // 'critical' regardless of trust tier.
+    const critical = !inDocContext && correlated && !isHighTrustAuthor
+
     findings.push({
       type: 'gatekeeper_bypass',
-      // Standalone-critical (no correlation required) — doc-context is the
-      // only downgrade, matching every other detector's noise-reduction
-      // convention in this file.
-      severity: inDocContext ? 'low' : 'critical',
+      severity: inDocContext ? 'low' : critical ? 'critical' : 'medium',
       message: `xattr command strips the macOS Gatekeeper quarantine attribute: "${match[0].trim().slice(0, 100)}"`,
       location: line.trim().slice(0, 100),
       lineNumber: index + 1,

@@ -219,6 +219,21 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'packages/core/src/security/scanner/SecurityScanner.encoding.ts',
   'scripts/indexer/_shared/security-scanner-edge.encoding.ts',
   'supabase/functions/_shared/security-scanner-edge.encoding.ts',
+  // SMI-6033 Wave 3 (Gap 5): the already-watched
+  // scripts/indexer/skill-processor.security.ts now imports
+  // HIGH_TRUST_AUTHORS (the Gatekeeper-bypass trust-tier carve-out's
+  // author-allowlist lookup) from scripts/indexer/high-trust-authors.ts,
+  // which re-assembles CORE_HIGH_TRUST_AUTHORS/LEADERBOARD_HIGH_TRUST_AUTHORS
+  // from its own two sibling data files plus the shared type — flagged by
+  // assertion 5 (the real import-graph tracer) as reachable-but-unwatched,
+  // same closure-completeness reasoning as every entry above. Only the Node
+  // tree is added: unlike security-scanner-edge.ts, skill-processor.security.ts
+  // is watched for the Node twin only (the tracer follows the Node-runnable
+  // import graph, and the Deno twin has no entry in this list to begin with).
+  'scripts/indexer/high-trust-authors.ts',
+  'scripts/indexer/high-trust-authors.core.ts',
+  'scripts/indexer/high-trust-authors.leaderboard.ts',
+  'scripts/indexer/high-trust-authors.types.ts',
 ] as const
 
 // SMI-5879 Wave 1: the corpus adds ~60 scans per twin, including one ~300 KB

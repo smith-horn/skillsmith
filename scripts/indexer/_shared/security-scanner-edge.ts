@@ -298,7 +298,8 @@ function scanPromptInjection(lines: string[], contexts: LineContext[]): Security
 function runDetectors(
   lines: string[],
   contexts: LineContext[],
-  skipEncodedPayload: boolean
+  skipEncodedPayload: boolean,
+  isHighTrustAuthor = false
 ): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
@@ -317,9 +318,9 @@ function runDetectors(
       .map((f) => f.lineNumber as number)
   )
   findings.push(...scanChmodFetchCompound(lines, contexts, privEscLines))
-  // SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass — standalone-critical, no
-  // fetch-correlation co-signal required (unlike chmod above).
-  findings.push(...scanGatekeeperBypass(lines, contexts))
+  // SMI-6033 Wave 2/3 (Gap 5): xattr Gatekeeper-bypass — critical only when
+  // correlated with a fetch destination AND the author isn't high-trust.
+  findings.push(...scanGatekeeperBypass(lines, contexts, isHighTrustAuthor))
   // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion — correlated +
   // inline-literal-password form is standalone-critical; every other shape
   // (uncorrelated CLI usage, prose-only mention) is medium/advisory.
@@ -349,7 +350,7 @@ function runDetectors(
       ...scanEncodedPayload(lines, contexts, (decodedContent) => {
         const decodedLines = decodedContent.split('\n')
         const decodedContexts = analyzeMarkdownContext(decodedContent)
-        return runDetectors(decodedLines, decodedContexts, true)
+        return runDetectors(decodedLines, decodedContexts, true, isHighTrustAuthor)
       })
     )
   }
@@ -361,9 +362,18 @@ function runDetectors(
  * Scan SKILL.md content for security issues
  *
  * @param content - The SKILL.md content to scan
+ * @param isHighTrustAuthor - SMI-6033 Wave 3 (Gap 5): the Gatekeeper-bypass
+ *   trust-tier carve-out (see scanGatekeeperBypass's own header,
+ *   security-scanner-edge.compound.ts). Must be sourced from a VERIFIED
+ *   author signal (the indexer's own resolved GitHub repo owner) — never
+ *   omit this reasoning when threading a value in from a new call site.
+ *   Defaults `false` (closed).
  * @returns EdgeScanResult with findings, risk score, and content hash
  */
-export async function scanSkillContent(content: string): Promise<EdgeScanResult> {
+export async function scanSkillContent(
+  content: string,
+  isHighTrustAuthor = false
+): Promise<EdgeScanResult> {
   const startTime = performance.now()
 
   // SMI-2408: Split once, pass to all scanners to avoid 5x redundant splitting
@@ -371,7 +381,7 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
   // SMI-4960: compute markdown context once and thread it through all scanners.
   const contexts = analyzeMarkdownContext(content)
 
-  const findings = runDetectors(lines, contexts, false)
+  const findings = runDetectors(lines, contexts, false, isHighTrustAuthor)
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)
