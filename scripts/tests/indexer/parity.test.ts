@@ -817,6 +817,116 @@ describe('core <-> edge sensitive_path/typosquat weight, coefficient, and co-sig
   })
 })
 
+// SMI-6033 Wave 2 gap-closing pass: the equality block above (and each Wave 2
+// detector's own dedicated parity test file —
+// security-scanner-edge.archive-gatekeeper.test.ts,
+// security-scanner-edge.paste-host.test.ts,
+// security-scanner-edge.encoded-payload.test.ts) each hand-pin ONE OR TWO
+// specific type names. Nothing iterates core's FULL SecurityFindingType union
+// and asserts every non-core-only member has a matching edge entry — a future
+// new type could ship with a core weight/coefficient but no edge
+// registration (or a value that silently drifts from core) and nothing here
+// would catch it until someone remembered to hand-write a new per-type test.
+// This closes that gap generically, driven by the union declaration itself
+// rather than a second hardcoded list.
+describe('core <-> edge CATEGORY_WEIGHTS/CATEGORY_COEFFICIENTS structural coverage (SMI-6033 Wave 2)', () => {
+  // Per this file's own Context note above (SMI-6033 plan): edge deliberately
+  // has no url/pii/ssrf/social_engineering categories — SecurityFinding.category
+  // is core-only. prompt_leaking has no edge analog either. ai_defence is the
+  // one core type edge DOES cover in substance, but under a different literal
+  // name (`prompt_injection`) — security-scanner-edge.context.ts's own
+  // CATEGORY_WEIGHTS doc-comment: "the edge-only `prompt_injection` type has
+  // no core equivalent; it is mapped onto core's `ai_defence`" — so a direct
+  // key-name lookup for 'ai_defence' would never match and must be excluded
+  // here rather than reported as a false "missing" gap.
+  const CORE_ONLY_TYPES = new Set([
+    'url',
+    'pii',
+    'ssrf',
+    'social_engineering',
+    'prompt_leaking',
+    'ai_defence',
+  ])
+
+  function extractCoreFindingTypes(): string[] {
+    const source = readFileSync(CORE_TYPES, 'utf-8')
+    const unionMatch = source.match(/export type SecurityFindingType =\s*([\s\S]*?)\n\n/)
+    if (!unionMatch) {
+      throw new Error(
+        'SecurityFindingType union declaration not found in core types.ts — extraction regex has drifted from the real shape, fix the regex before trusting this test'
+      )
+    }
+    const types = Array.from(unionMatch[1].matchAll(/'([a-z_]+)'/g)).map((m) => m[1])
+    // Sanity floor, not a hardcoded ceiling: as of SMI-6033 Wave 2 there are
+    // 18 known members. A count BELOW this means the extraction itself broke
+    // (e.g. the union's trailing-blank-line shape changed), not that
+    // types.ts legitimately shrank — new types are expected to keep this
+    // number growing, never regressing.
+    expect(
+      types.length,
+      'SecurityFindingType union extraction sanity floor — if this legitimately drops, the regex above broke'
+    ).toBeGreaterThanOrEqual(18)
+    return types
+  }
+
+  it('every non-core-only SecurityFindingType has a matching edge CATEGORY_WEIGHTS entry with an identical value', async () => {
+    const allTypes = extractCoreFindingTypes()
+    const coreWeights = await import(CORE_WEIGHTS)
+    const edge = await import(NODE_SCANNER_CONTEXT)
+
+    const missing: string[] = []
+    const mismatched: string[] = []
+    for (const type of allTypes) {
+      if (CORE_ONLY_TYPES.has(type)) continue
+      if (!(type in edge.CATEGORY_WEIGHTS)) {
+        missing.push(type)
+        continue
+      }
+      if (edge.CATEGORY_WEIGHTS[type] !== coreWeights.CATEGORY_WEIGHTS[type]) {
+        mismatched.push(
+          `${type}: core=${coreWeights.CATEGORY_WEIGHTS[type]} edge=${edge.CATEGORY_WEIGHTS[type]}`
+        )
+      }
+    }
+    expect(
+      missing,
+      "core SecurityFindingType(s) with no edge CATEGORY_WEIGHTS entry — either port the type to edge or add it to this test's CORE_ONLY_TYPES allowlist if intentionally edge-absent"
+    ).toEqual([])
+    expect(mismatched, 'edge CATEGORY_WEIGHTS value(s) drifted from core').toEqual([])
+  })
+
+  // Core does not export its per-category coefficients as a lookup table —
+  // they're inlined literals in calculateRiskScore's weighted sum
+  // (SecurityScanner.helpers.ts), same as the Wave 1 comment above this block
+  // already notes for sensitive_path/typosquat. Following that same
+  // established precedent (pin edge's data-driven value directly; the
+  // per-detector BEHAVIORAL fixture suites are the real cross-check of the
+  // end-to-end riskScore, not a source-text diff against core's inlined
+  // literals) this is an EXISTENCE check, not a value-equality check —
+  // proving every non-core-only type has SOME edge coefficient registered at
+  // all, which is exactly the class of gap (a type added to CATEGORY_WEIGHTS
+  // but never to CATEGORY_COEFFICIENTS, or vice versa) a hand-written
+  // per-type test could silently miss for a type nobody thought to add a
+  // dedicated test for.
+  it('every non-core-only SecurityFindingType has an edge CATEGORY_COEFFICIENTS entry', async () => {
+    const allTypes = extractCoreFindingTypes()
+    const edge = await import(NODE_SCANNER_CONTEXT)
+
+    const missing: string[] = []
+    for (const type of allTypes) {
+      if (CORE_ONLY_TYPES.has(type)) continue
+      const coefficient = edge.CATEGORY_COEFFICIENTS[type]
+      if (typeof coefficient !== 'number' || Number.isNaN(coefficient)) {
+        missing.push(type)
+      }
+    }
+    expect(
+      missing,
+      'core SecurityFindingType(s) with no (or a non-numeric) edge CATEGORY_COEFFICIENTS entry'
+    ).toEqual([])
+  })
+})
+
 // SMI-6033 Wave 1 (Gap 7): core <-> edge BEHAVIORAL fixture parity for the newly
 // wired sensitive_path detector (MF-1 placeholder suppression, MF-2 .env-exfil
 // grading) and the ported SMI-5880 locality gate, plus a standalone core-side

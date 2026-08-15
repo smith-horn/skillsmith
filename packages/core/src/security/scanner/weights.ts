@@ -4,7 +4,7 @@
  * Weight constants for risk score calculation.
  */
 
-import type { SecuritySeverity } from './types.js'
+import type { SecurityFindingType, SecuritySeverity } from './types.js'
 
 /**
  * Severity weights for risk score calculation
@@ -17,9 +17,18 @@ export const SEVERITY_WEIGHTS: Record<SecuritySeverity, number> = {
 }
 
 /**
- * Category weights for risk score calculation
+ * Category weights for risk score calculation.
+ *
+ * SMI-6033 Wave 2 gap-closing pass: typed against `SecurityFindingType`
+ * (was `Record<string, number>`) so a future new finding type that ships
+ * without a weight entry here is a TypeScript compile error, not a silent
+ * runtime `?? 1.0` fallback in SecurityScanner.helpers.ts's
+ * `calculateRiskScore` — the exact class of gap
+ * scripts/tests/indexer/parity.test.ts's new consolidated core<->edge
+ * coverage test (SMI-6033 Wave 2) was added to catch on the edge side; this
+ * closes the equivalent hole on the core side, one layer earlier.
  */
-export const CATEGORY_WEIGHTS: Record<string, number> = {
+export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   jailbreak: 2.0,
   social_engineering: 1.5,
   prompt_leaking: 1.8,
