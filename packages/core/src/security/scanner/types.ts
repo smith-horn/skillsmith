@@ -24,6 +24,7 @@ export type SecurityFindingType =
   | 'typosquat' // SMI-595: skill-name similarity to a popular/trusted reference name
   | 'gatekeeper_bypass' // SMI-6033 Wave 2 (Gap 5): xattr strips the macOS Gatekeeper quarantine attribute
   | 'archive_evasion' // SMI-6033 Wave 2 (Gap 3): password-protected archive used to evade content scanning
+  | 'paste_host_fetch' // SMI-6033 Wave 2 (Gap 4): anonymous paste/snippet-host URL is the target of a fetch command
 
 /**
  * Severity levels for security findings
@@ -118,6 +119,7 @@ export interface RiskScoreBreakdown {
   typosquat: number // SMI-595: typosquat/impersonation detection score
   gatekeeperBypass: number // SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass score
   archiveEvasion: number // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion score
+  pasteHostFetch: number // SMI-6033 Wave 2 (Gap 4): paste-host fetch-target score
 }
 
 /**

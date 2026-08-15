@@ -36,6 +36,8 @@ export type SecurityFindingType =
   | 'gatekeeper_bypass'
   // SMI-6033 Wave 2 (Gap 3): password-protected archive used to evade content scanning.
   | 'archive_evasion'
+  // SMI-6033 Wave 2 (Gap 4): anonymous paste/snippet-host URL is the target of a fetch command.
+  | 'paste_host_fetch'
 
 /**
  * Severity levels for findings
@@ -131,6 +133,10 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // severity alone (SEVERITY_WEIGHTS 50 vs 15) does the two-tier split.
   gatekeeper_bypass: 2.0,
   archive_evasion: 2.0,
+  // SMI-6033 Wave 2 (Gap 4): byte-identical to core weights.ts
+  // CATEGORY_WEIGHTS.paste_host_fetch — same top-tier weight as
+  // gatekeeper_bypass/archive_evasion, for the same reason.
+  paste_host_fetch: 2.0,
 }
 
 /**
@@ -160,6 +166,9 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   // = 40); a single MEDIUM finding contributes 12 — well under threshold alone.
   gatekeeper_bypass: 0.4,
   archive_evasion: 0.4,
+  // SMI-6033 Wave 2 (Gap 4): additive 0.40, matching gatekeeper_bypass/
+  // archive_evasion — byte-identical to core weights.ts's paired coefficient.
+  paste_host_fetch: 0.4,
 }
 
 /**
@@ -375,6 +384,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): number {
     typosquat: 0,
     gatekeeper_bypass: 0,
     archive_evasion: 0,
+    paste_host_fetch: 0,
   }
 
   for (const finding of findings) {

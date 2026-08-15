@@ -20,6 +20,34 @@ export const DEFAULT_ALLOWED_DOMAINS = [
   'typescriptlang.org',
 ]
 
+// SMI-6033 Wave 2 (Gap 4): known paste/snippet-host domains. A URL to one of
+// these hosts that is the actual TARGET of a fetch/exec instruction elsewhere
+// in the content is standalone-critical (see SecurityScanner.paste-host.ts's
+// scanPasteHostFetch) — "no normal install flow fetches executable payload
+// from an anonymous host." A URL to one of these hosts that is merely
+// linked/mentioned (not fetched) is NOT flagged by that new detector at all —
+// it stays covered by the existing scanUrls() `url`:medium finding, same as
+// today, since these domains are (correctly) absent from
+// DEFAULT_ALLOWED_DOMAINS above.
+export const PASTE_HOST_DOMAINS = [
+  'glot.io',
+  'pastebin.com',
+  'paste.ee',
+  'hastebin.com',
+  'ix.io',
+  '0x0.st',
+  'transfer.sh',
+  'file.io',
+  'dpaste.org',
+  'dpaste.com',
+  'ghostbin.com',
+  'paste.rs',
+  'controlc.com',
+  'rentry.co',
+  'paste.gg',
+  'justpaste.it',
+]
+
 // Sensitive file path patterns
 // SMI-4396 Wave 2: bare-keyword variants (credentials, secrets?, password) tightened
 // to require assignment/path/file-extension context. Without this tuning,

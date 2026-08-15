@@ -400,6 +400,7 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
       typosquat: 0,
       gatekeeperBypass: 0,
       archiveEvasion: 0,
+      pasteHostFetch: 0,
     }
 
     function makeScanReport(

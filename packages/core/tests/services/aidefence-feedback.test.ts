@@ -30,6 +30,7 @@ function makeScanReport(overrides?: Partial<ScanReport>): ScanReport {
       typosquat: 0,
       gatekeeperBypass: 0,
       archiveEvasion: 0,
+      pasteHostFetch: 0,
     },
     passed: true,
     scannedAt: new Date(),

@@ -22,6 +22,8 @@ import {
   calculateRiskScore,
   scanPatternsWithMultilineSupport,
 } from './SecurityScanner.helpers.js'
+// SMI-6033 Wave 2 (Gap 4): promoted shared URL extraction (see module header).
+import { extractUrls } from './SecurityScanner.urls.js'
 
 // Import SSRF scanner
 import { scanSsrfPatterns } from './SecurityScanner.ssrf.js'
@@ -43,6 +45,8 @@ import {
 import { scanGatekeeperBypass } from './SecurityScanner.compound.js'
 // SMI-6033 Wave 2: password-protected archive evasion (Gap 3).
 import { scanArchiveEvasion } from './SecurityScanner.archive.js'
+// SMI-6033 Wave 2: paste/snippet-host reputation + fetch-context escalation (Gap 4).
+import { scanPasteHostFetch } from './SecurityScanner.paste-host.js'
 
 // Import code-execution & obfuscated-directive detectors (SMI-5359 Wave 4.2).
 import {
@@ -70,6 +74,7 @@ export {
   isDocumentationContext,
   isWithinInlineCode,
   calculateRiskScore,
+  extractUrls,
 }
 export { scanSsrfPatterns }
 export { toMinimalRefs, toSARIF, toGitHubAnnotations, toSummary }
@@ -87,21 +92,6 @@ export class SecurityScanner {
     this.riskThreshold = options.riskThreshold ?? 40
   }
 
-  private extractUrls(content: string): Array<{ url: string; line: number }> {
-    const urlPattern = /https?:\/\/[^\s<>"')\]]+/gi
-    const lines = content.split('\n')
-    const results: Array<{ url: string; line: number }> = []
-
-    lines.forEach((line, index) => {
-      let match
-      while ((match = urlPattern.exec(line)) !== null) {
-        results.push({ url: match[0], line: index + 1 })
-      }
-    })
-
-    return results
-  }
-
   private isAllowedDomain(url: string): boolean {
     try {
       const parsed = new URL(url)
@@ -116,7 +106,7 @@ export class SecurityScanner {
 
   private scanUrls(content: string): SecurityFinding[] {
     const findings: SecurityFinding[] = []
-    const urls = this.extractUrls(content)
+    const urls = extractUrls(content)
 
     for (const { url, line } of urls) {
       if (!this.isAllowedDomain(url)) {
@@ -290,6 +280,11 @@ export class SecurityScanner {
     // every other shape (uncorrelated CLI usage, prose-only mention) is
     // medium/advisory.
     findings.push(...scanArchiveEvasion(content, lineContexts))
+    // SMI-6033 Wave 2 (Gap 4): paste/snippet-host reputation — a paste-host
+    // URL that is the target of a fetch command is standalone-critical; a
+    // merely-linked paste-host URL keeps only its existing scanUrls()
+    // url:medium finding (this detector adds no finding for that case).
+    findings.push(...scanPasteHostFetch(content, lineContexts))
     findings.push(
       ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
     )

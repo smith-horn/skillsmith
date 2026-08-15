@@ -354,6 +354,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
     typosquat: 0,
     gatekeeperBypass: 0,
     archiveEvasion: 0,
+    pasteHostFetch: 0,
   }
 
   const confidenceWeights: Record<FindingConfidence, number> = {
@@ -421,6 +422,9 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
       case 'archive_evasion':
         breakdown.archiveEvasion += score
         break
+      case 'paste_host_fetch':
+        breakdown.pasteHostFetch += score
+        break
     }
   }
 
@@ -441,6 +445,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   breakdown.typosquat = Math.min(100, breakdown.typosquat)
   breakdown.gatekeeperBypass = Math.min(100, breakdown.gatekeeperBypass)
   breakdown.archiveEvasion = Math.min(100, breakdown.archiveEvasion)
+  breakdown.pasteHostFetch = Math.min(100, breakdown.pasteHostFetch)
 
   // SMI-5359 Wave 4.2: the two new categories use a 0.40 coefficient and are ADDITIVE
   // (the original eleven coefficients sum to 1.0; these add on top). No code assumes the
@@ -450,10 +455,11 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   // sensitivePaths/externalUrls/ssrf (the "advisory tier" of this second-stage formula) —
   // NOT folded into the eleven-category budget that sums to 1.0. See weights.ts's
   // CATEGORY_WEIGHTS.typosquat comment for the worked calculation this pairs with.
-  // SMI-6033 Wave 2: gatekeeperBypass/archiveEvasion are ADDITIVE at the 0.40
-  // coefficient (matching codeExecution/obfuscatedDirective's top tier) — see
-  // weights.ts's CATEGORY_WEIGHTS.gatekeeper_bypass comment for the worked
-  // calculation showing how ONE weight/coefficient pair produces both the
+  // SMI-6033 Wave 2: gatekeeperBypass/archiveEvasion/pasteHostFetch are
+  // ADDITIVE at the 0.40 coefficient (matching codeExecution/
+  // obfuscatedDirective's top tier) — see weights.ts's
+  // CATEGORY_WEIGHTS.gatekeeper_bypass comment for the worked calculation
+  // showing how ONE weight/coefficient pair produces both the
   // standalone-critical and advisory-medium outcomes via severity alone.
   const total = Math.min(
     100,
@@ -473,7 +479,8 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
         breakdown.obfuscatedDirective * 0.4 +
         breakdown.typosquat * 0.04 +
         breakdown.gatekeeperBypass * 0.4 +
-        breakdown.archiveEvasion * 0.4
+        breakdown.archiveEvasion * 0.4 +
+        breakdown.pasteHostFetch * 0.4
     )
   )
 

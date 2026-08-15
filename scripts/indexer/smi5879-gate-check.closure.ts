@@ -195,6 +195,19 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'scripts/indexer/_shared/security-scanner-edge.fetch-correlation.ts',
   'supabase/functions/_shared/security-scanner-edge.archive.ts',
   'supabase/functions/_shared/security-scanner-edge.fetch-correlation.ts',
+  // SMI-6033 Wave 2 (Gap 4): the already-watched SecurityScanner.ts /
+  // security-scanner-edge.ts now import the new paste-host reputation
+  // detector and (core only) the shared URL-extraction helper it promotes
+  // — flagged by assertion 5 (the real import-graph tracer) as
+  // reachable-but-unwatched. The scripts/indexer/_shared entry is what the
+  // tracer actually flagged (it only follows the Node-runnable import
+  // graph); the supabase/functions/_shared counterpart is added alongside
+  // for the same symmetry the archive.ts/fetch-correlation.ts pair above
+  // used.
+  'packages/core/src/security/scanner/SecurityScanner.paste-host.ts',
+  'packages/core/src/security/scanner/SecurityScanner.urls.ts',
+  'scripts/indexer/_shared/security-scanner-edge.paste-host.ts',
+  'supabase/functions/_shared/security-scanner-edge.paste-host.ts',
 ] as const
 
 // SMI-5879 Wave 1: the corpus adds ~60 scans per twin, including one ~300 KB

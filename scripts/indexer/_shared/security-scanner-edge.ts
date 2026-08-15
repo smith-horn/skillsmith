@@ -57,6 +57,8 @@ import { scanChmodFetchCompound, scanGatekeeperBypass } from './security-scanner
 import { scanSensitivePaths } from './security-scanner-edge.paths.ts'
 // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion.
 import { scanArchiveEvasion } from './security-scanner-edge.archive.ts'
+// SMI-6033 Wave 2 (Gap 4): paste/snippet-host reputation + fetch-context escalation.
+import { scanPasteHostFetch } from './security-scanner-edge.paste-host.ts'
 
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
@@ -313,6 +315,11 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
   // inline-literal-password form is standalone-critical; every other shape
   // (uncorrelated CLI usage, prose-only mention) is medium/advisory.
   findings.push(...scanArchiveEvasion(lines, contexts))
+  // SMI-6033 Wave 2 (Gap 4): paste/snippet-host reputation — a paste-host
+  // URL that is the target of a fetch command is standalone-critical; a
+  // merely-linked paste-host URL produces no finding on edge (edge has no
+  // url:medium detector to preserve — see security-scanner-edge.paste-host.ts).
+  findings.push(...scanPasteHostFetch(lines, contexts))
   findings.push(...scanPromptInjection(lines, contexts))
   // SMI-6033 Wave 1: sensitive_path (credential file/path/env-var references).
   findings.push(...scanSensitivePaths(lines, contexts))

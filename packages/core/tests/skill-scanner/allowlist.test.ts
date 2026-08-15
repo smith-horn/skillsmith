@@ -81,6 +81,7 @@ function makeReport(
       typosquat: 0,
       gatekeeperBypass: 0,
       archiveEvasion: 0,
+      pasteHostFetch: 0,
     },
     ...overrides,
   }

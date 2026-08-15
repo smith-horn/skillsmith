@@ -13,6 +13,39 @@
 // ============================================================================
 
 /**
+ * SMI-6033 Wave 2 (Gap 4): known paste/snippet-host domains — byte-identical
+ * to core patterns.ts PASTE_HOST_DOMAINS. A URL to one of these hosts that is
+ * the actual TARGET of a fetch/exec instruction elsewhere in the content is
+ * standalone-critical (see security-scanner-edge.paste-host.ts's
+ * scanPasteHostFetch) — "no normal install flow fetches executable payload
+ * from an anonymous host." A URL to one of these hosts that is merely
+ * linked/mentioned (not fetched) is NOT flagged by that new detector at all.
+ * Unlike core, edge has no `url`/allowlist detector at all — a merely-linked
+ * paste-host URL produces no finding of any kind on this side (a documented,
+ * edge-only divergence from core's `url`:medium residual; edge's category
+ * set has always been narrower than core's by design — see the plan's
+ * Context section).
+ */
+export const PASTE_HOST_DOMAINS: string[] = [
+  'glot.io',
+  'pastebin.com',
+  'paste.ee',
+  'hastebin.com',
+  'ix.io',
+  '0x0.st',
+  'transfer.sh',
+  'file.io',
+  'dpaste.org',
+  'dpaste.com',
+  'ghostbin.com',
+  'paste.rs',
+  'controlc.com',
+  'rentry.co',
+  'paste.gg',
+  'justpaste.it',
+]
+
+/**
  * Jailbreak attempt patterns - attempts to manipulate AI behavior
  *
  * SMI-4960: `/developer\s+mode/i` required an activation verb (enable / enter /

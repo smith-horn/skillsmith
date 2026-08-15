@@ -60,4 +60,12 @@ export const CATEGORY_WEIGHTS: Record<string, number> = {
   // (15 * 2.0 * 1.0 = 30 -> * 0.40 = 12) — well under threshold alone.
   gatekeeper_bypass: 2.0,
   archive_evasion: 2.0,
+  // SMI-6033 Wave 2 (Gap 4): same top-tier weight as gatekeeper_bypass/
+  // archive_evasion, for the same reason — a paste-host URL that is the
+  // TARGET of a fetch command reaches exactly the 40 quarantine threshold
+  // standalone (50 * 2.0 * 1.0 = 100 -> capped 100 -> * 0.40 = 40), while a
+  // paste-host URL that is merely linked never reaches this detector at all
+  // (see SecurityScanner.paste-host.ts) and stays covered by the existing
+  // url:medium finding instead.
+  paste_host_fetch: 2.0,
 }

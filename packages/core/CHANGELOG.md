@@ -27,6 +27,20 @@ All notable changes to `@skillsmith/core` are documented here.
   alone (not a second weight tier) produces the two-outcome split. Both are wired into
   `SecurityScanner.scan()` and mirrored byte-for-byte into the edge twins
   (`supabase/functions/_shared/` and `scripts/indexer/_shared/`).
+- **Feature**: paste/snippet-host reputation detector (SMI-6033 Wave 3, Gap 4). Two reputation
+  tiers (`patterns.ts`): `ANON_PASTE_HOSTS` + `URL_SHORTENER_DOMAINS` require real execution
+  evidence (direct pipe to an interpreter, npx direct-exec, or a later chmod/exec/source
+  correlation) to reach standalone-critical; `TRANSIENT_TRANSFER_HOSTS` (transfer.sh, file.io,
+  tmpfiles.org, temp.sh) is always medium, never critical — a deliberate exception for legitimate
+  debugging/incident-response fetches of ephemeral reproducers. `extractUrls` is promoted from a
+  private `SecurityScanner.ts` method to a shared `SecurityScanner.urls.ts` export so the existing
+  `scanUrls` detector and the new one (`SecurityScanner.paste-host.ts`, finding type
+  `paste_host_fetch`) share a single URL-extraction implementation. A paste-host URL that is merely
+  linked/mentioned, or fetched-but-not-executed, gets no new finding — it stays covered by the
+  existing `scanUrls` `url`:medium finding, unchanged. Shares the same top-tier weight/coefficient
+  (2.0/0.40) as `gatekeeper_bypass`/`archive_evasion`. Wired into `SecurityScanner.scan()` and
+  mirrored byte-for-byte into the edge twins (`supabase/functions/_shared/` and
+  `scripts/indexer/_shared/`).
 
 ## v0.11.7
 
