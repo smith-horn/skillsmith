@@ -91,26 +91,57 @@ export async function runCategorization(
       .delete()
       .in('skill_id', skillIds)
     if (deleteError) {
-      console.log(
-        `[Categorization] Warning: failed to clear stale categories: ${deleteError.message}`
-      )
+      // SMI-6047: this was previously log-only, never surfaced to the
+      // caller. A genuinely failed delete (not just a race) means a skill's
+      // categories can no longer be reliably replaced this pass -- fresh
+      // categories still get inserted below, but stale ones may survive
+      // alongside them. Now visible in the run's own error report, not
+      // just stderr.
+      const msg = `[Categorization] Warning: failed to clear stale categories: ${deleteError.message}`
+      console.log(msg)
+      errors.push(msg)
     }
 
+    // SMI-6047: collect all category rows across every skill, then issue ONE
+    // upsert instead of N per-skill inserts (this restores the "byte-near-
+    // identical" contract this file's own header claims against the Deno
+    // twin -- SMI-5209 Wave 2 already made this exact change there, but it
+    // was never ported back here). Phase 5 categorization has no scoping to
+    // "rows this specific run discovered" (selectCategorizationRepoUrls
+    // deliberately draws from the whole "never categorized / touched this
+    // cycle" pool -- see discovery-orchestrator.ts's own comment on why), so
+    // any two concurrent phase-3 runs (backfill+backfill, backfill+cron, or
+    // cron+cron) can independently select and categorize the same skill. A
+    // bare insert made that a hard 23505 duplicate-key error on
+    // skill_categories_pkey; ignoreDuplicates gives ON CONFLICT DO NOTHING
+    // semantics so concurrent runs don't error -- matches this repo's own
+    // precedent for this exact class of concurrent-write race (SMI-6003,
+    // INSERT OR IGNORE).
+    const allCategoryRows: Array<{ skill_id: string; category_id: string }> = []
     for (const skill of skillsToCheck) {
       const tags = Array.isArray(skill.tags) ? skill.tags : []
       const categories = categorizeSkill(tags as string[], skill.description)
       if (categories.length > 0) {
-        const categoryRows = categories.map((categoryId) => ({
-          skill_id: skill.id,
-          category_id: categoryId,
-        }))
-        const { error: catError } = await supabase.from('skill_categories').insert(categoryRows)
-        if (catError) {
-          console.log(`[Categorization] Error for ${skill.id}: ${catError.message}`)
-        } else {
-          categorizedCount++
-          categoryAssignments += categories.length
+        for (const categoryId of categories) {
+          allCategoryRows.push({ skill_id: skill.id, category_id: categoryId })
         }
+        categorizedCount++
+        categoryAssignments += categories.length
+      }
+    }
+
+    if (allCategoryRows.length > 0) {
+      const { error: catError } = await supabase
+        .from('skill_categories')
+        .upsert(allCategoryRows, { onConflict: 'skill_id,category_id', ignoreDuplicates: true })
+      if (catError) {
+        const failedSkillIds = [...new Set(allCategoryRows.map((r) => r.skill_id))]
+        console.log(`[Categorization] Batch insert error: ${catError.message}`)
+        errors.push(
+          `Category batch insert failed for ${failedSkillIds.length} skills: ${catError.message}`
+        )
+        categorizedCount = 0
+        categoryAssignments = 0
       }
     }
 
