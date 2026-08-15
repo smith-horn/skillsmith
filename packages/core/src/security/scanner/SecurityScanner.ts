@@ -47,6 +47,8 @@ import { scanGatekeeperBypass } from './SecurityScanner.compound.js'
 import { scanArchiveEvasion } from './SecurityScanner.archive.js'
 // SMI-6033 Wave 2: paste/snippet-host reputation + fetch-context escalation (Gap 4).
 import { scanPasteHostFetch } from './SecurityScanner.paste-host.js'
+// SMI-6033 Wave 2 (Gap 2): encoded (base64) payload detect-decode-recursively-rescan.
+import { scanEncodedPayload } from './SecurityScanner.encoding.js'
 
 // Import code-execution & obfuscated-directive detectors (SMI-5359 Wave 4.2).
 import {
@@ -223,35 +225,36 @@ export class SecurityScanner {
   /** @deprecated Use standalone calculateRiskScore function for new code */
   calculateRiskScore = calculateRiskScore
 
-  scan(skillId: string, content: string): ScanReport {
-    const startTime = performance.now()
+  /**
+   * Run every content-scanning detector against `content` and return the
+   * combined findings. Factored out of `scan()` (SMI-6033 Wave 2, Gap 2) so
+   * the encoded-payload detector's recursive rescan of DECODED content can
+   * reuse the exact same detector suite instead of a parallel, narrower
+   * reimplementation.
+   *
+   * `skipEncodedPayload` is the STRUCTURAL depth-1 recursion guarantee: the
+   * recursive callback passed to `scanEncodedPayload` below always calls this
+   * method with `skipEncodedPayload: true`, so a base64 blob discovered
+   * INSIDE already-decoded content can never itself be decoded — the inner
+   * call cannot reach `scanEncodedPayload` again no matter what the decoded
+   * text contains. This disables ONLY the encoded-payload detector on the
+   * inner call, not the rest of the suite — a decoded `curl|bash` still
+   * trips `code_execution`, decoded secrets still trip `sensitive_path`, etc.
+   */
+  private runDetectors(
+    content: string,
+    lineContexts: LineContext[],
+    skipEncodedPayload: boolean
+  ): SecurityFinding[] {
     const findings: SecurityFinding[] = []
-    const lineContexts = analyzeMarkdownContext(content)
-
-    if (content.length > this.maxContentLength) {
-      findings.push({
-        type: 'suspicious_pattern',
-        severity: 'low',
-        message: `Content exceeds maximum length (${this.maxContentLength} code units)`,
-      })
-    }
-
     // SMI-5881: the multiline (full-content) regex pass has its OWN, much
     // smaller cap than maxContentLength — a ReDoS budget input, not a free
     // parameter (see MAX_CONTENT_LENGTH_FOR_REGEX's own comment for why this
     // isn't simply raised to match maxContentLength). A lower configured
-    // maxContentLength tightens this further; it never widens it.
+    // maxContentLength tightens this further; it never widens it. Depends
+    // only on `this.maxContentLength` (a per-instance constant), so it is
+    // safe to recompute per call rather than threading it from `scan()`.
     const effectiveMultilineLimit = Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, this.maxContentLength)
-    if (content.length > effectiveMultilineLimit) {
-      findings.push({
-        type: 'suspicious_pattern',
-        severity: 'low',
-        message:
-          `Multiline regex scan truncated at ${effectiveMultilineLimit} code units ` +
-          `(content is ${content.length} code units; configured maxContentLength is ` +
-          `${this.maxContentLength} code units)`,
-      })
-    }
 
     findings.push(...this.scanUrls(content))
     findings.push(...scanSensitivePaths(content, lineContexts))
@@ -308,6 +311,51 @@ export class SecurityScanner {
     // 'jailbreak'/'ai_defence', so this can't create a feedback loop back
     // into escalateCodeExecution's own decision).
     escalateCorroboratedMentions(findings)
+
+    // SMI-6033 Wave 2 (Gap 2): decode-and-recursively-rescan base64 payloads.
+    // Appended AFTER this call's own escalation passes above, and the
+    // recursive rescan's OWN findings are already fully escalated by its own
+    // (inner) call to this same method — so no finding is ever run through
+    // escalateCodeExecution/escalateCorroboratedMentions twice.
+    if (!skipEncodedPayload) {
+      findings.push(
+        ...scanEncodedPayload(content, lineContexts, (decodedContent) =>
+          this.runDetectors(decodedContent, analyzeMarkdownContext(decodedContent), true)
+        )
+      )
+    }
+
+    return findings
+  }
+
+  scan(skillId: string, content: string): ScanReport {
+    const startTime = performance.now()
+    const findings: SecurityFinding[] = []
+    const lineContexts = analyzeMarkdownContext(content)
+
+    if (content.length > this.maxContentLength) {
+      findings.push({
+        type: 'suspicious_pattern',
+        severity: 'low',
+        message: `Content exceeds maximum length (${this.maxContentLength} code units)`,
+      })
+    }
+
+    // SMI-5881: see runDetectors()'s own comment on effectiveMultilineLimit
+    // for why this cap is separate from maxContentLength.
+    const effectiveMultilineLimit = Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, this.maxContentLength)
+    if (content.length > effectiveMultilineLimit) {
+      findings.push({
+        type: 'suspicious_pattern',
+        severity: 'low',
+        message:
+          `Multiline regex scan truncated at ${effectiveMultilineLimit} code units ` +
+          `(content is ${content.length} code units; configured maxContentLength is ` +
+          `${this.maxContentLength} code units)`,
+      })
+    }
+
+    findings.push(...this.runDetectors(content, lineContexts, false))
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

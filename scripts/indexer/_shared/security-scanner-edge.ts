@@ -59,6 +59,8 @@ import { scanSensitivePaths } from './security-scanner-edge.paths.ts'
 import { scanArchiveEvasion } from './security-scanner-edge.archive.ts'
 // SMI-6033 Wave 2 (Gap 4): paste/snippet-host reputation + fetch-context escalation.
 import { scanPasteHostFetch } from './security-scanner-edge.paste-host.ts'
+// SMI-6033 Wave 2 (Gap 2): encoded (base64) payload detect-decode-recursively-rescan.
+import { scanEncodedPayload } from './security-scanner-edge.encoding.ts'
 
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
@@ -279,19 +281,26 @@ function scanPromptInjection(lines: string[], contexts: LineContext[]): Security
 // ============================================================================
 
 /**
- * Scan SKILL.md content for security issues
+ * Run every content-scanning detector against `lines`/`contexts` and return
+ * the combined findings. Factored out of `scanSkillContent()` (SMI-6033 Wave
+ * 2, Gap 2) so the encoded-payload detector's recursive rescan of DECODED
+ * content can reuse the exact same detector suite instead of a parallel,
+ * narrower reimplementation.
  *
- * @param content - The SKILL.md content to scan
- * @returns EdgeScanResult with findings, risk score, and content hash
+ * `skipEncodedPayload` is the STRUCTURAL depth-1 recursion guarantee: the
+ * recursive callback passed to `scanEncodedPayload` below always calls this
+ * function with `skipEncodedPayload: true`, so a base64 blob discovered
+ * INSIDE already-decoded content can never itself be decoded — the inner
+ * call cannot reach `scanEncodedPayload` again no matter what the decoded
+ * text contains. This disables ONLY the encoded-payload detector on the
+ * inner call, not the rest of the suite.
  */
-export async function scanSkillContent(content: string): Promise<EdgeScanResult> {
-  const startTime = performance.now()
+function runDetectors(
+  lines: string[],
+  contexts: LineContext[],
+  skipEncodedPayload: boolean
+): SecurityFinding[] {
   const findings: SecurityFinding[] = []
-
-  // SMI-2408: Split once, pass to all scanners to avoid 5x redundant splitting
-  const lines = content.split('\n')
-  // SMI-4960: compute markdown context once and thread it through all scanners.
-  const contexts = analyzeMarkdownContext(content)
 
   // Run all scanners
   findings.push(...scanJailbreakPatterns(lines, contexts))
@@ -329,6 +338,40 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
   // Promote code_execution to critical when it co-occurs with a non-doc
   // exfil/privilege/obfuscation signal (runs after every detector).
   escalateCodeExecution(findings)
+
+  // SMI-6033 Wave 2 (Gap 2): decode-and-recursively-rescan base64 payloads.
+  // Appended AFTER escalateCodeExecution above, and the recursive rescan's
+  // OWN findings are already fully escalated by its own (inner) call to this
+  // same function — so no finding is ever run through escalateCodeExecution
+  // twice.
+  if (!skipEncodedPayload) {
+    findings.push(
+      ...scanEncodedPayload(lines, contexts, (decodedContent) => {
+        const decodedLines = decodedContent.split('\n')
+        const decodedContexts = analyzeMarkdownContext(decodedContent)
+        return runDetectors(decodedLines, decodedContexts, true)
+      })
+    )
+  }
+
+  return findings
+}
+
+/**
+ * Scan SKILL.md content for security issues
+ *
+ * @param content - The SKILL.md content to scan
+ * @returns EdgeScanResult with findings, risk score, and content hash
+ */
+export async function scanSkillContent(content: string): Promise<EdgeScanResult> {
+  const startTime = performance.now()
+
+  // SMI-2408: Split once, pass to all scanners to avoid 5x redundant splitting
+  const lines = content.split('\n')
+  // SMI-4960: compute markdown context once and thread it through all scanners.
+  const contexts = analyzeMarkdownContext(content)
+
+  const findings = runDetectors(lines, contexts, false)
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)

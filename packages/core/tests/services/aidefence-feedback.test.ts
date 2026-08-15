@@ -31,6 +31,7 @@ function makeScanReport(overrides?: Partial<ScanReport>): ScanReport {
       gatekeeperBypass: 0,
       archiveEvasion: 0,
       pasteHostFetch: 0,
+      encodedPayload: 0,
     },
     passed: true,
     scannedAt: new Date(),

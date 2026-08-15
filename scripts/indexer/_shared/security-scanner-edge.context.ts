@@ -38,6 +38,8 @@ export type SecurityFindingType =
   | 'archive_evasion'
   // SMI-6033 Wave 2 (Gap 4): anonymous paste/snippet-host URL is the target of a fetch command.
   | 'paste_host_fetch'
+  // SMI-6033 Wave 2 (Gap 2): base64-encoded blob decoded and recursively rescanned.
+  | 'encoded_payload'
 
 /**
  * Severity levels for findings
@@ -71,6 +73,12 @@ export interface SecurityFinding {
   confidence?: FindingConfidence
   /** SMI-5436: Path of the skill bundle file that triggered this finding, relative to the skill root. Absent for SKILL.md-only findings. */
   filePath?: string
+  /**
+   * SMI-6033 Wave 2 (Gap 2): the OUTER document line number of the base64
+   * blob whose decoded content produced this finding — set ONLY on findings
+   * folded in by `scanEncodedPayload`'s recursive rescan. Absent otherwise.
+   */
+  decodedFrom?: number
 }
 
 /**
@@ -137,6 +145,13 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // CATEGORY_WEIGHTS.paste_host_fetch — same top-tier weight as
   // gatekeeper_bypass/archive_evasion, for the same reason.
   paste_host_fetch: 2.0,
+  // SMI-6033 Wave 2 (Gap 2): byte-identical to core weights.ts
+  // CATEGORY_WEIGHTS.encoded_payload — the sensitive_path/typosquat tier
+  // (1.2), NOT the 2.0 tier every other Wave 2 category above uses. This
+  // wrapper finding is deliberately advisory-only; the escalation comes free
+  // from the decoded content's OWN findings (e.g. a decoded `curl|bash`
+  // natively trips code_execution at ITS OWN top-tier weight).
+  encoded_payload: 1.2,
 }
 
 /**
@@ -169,6 +184,10 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   // SMI-6033 Wave 2 (Gap 4): additive 0.40, matching gatekeeper_bypass/
   // archive_evasion — byte-identical to core weights.ts's paired coefficient.
   paste_host_fetch: 0.4,
+  // SMI-6033 Wave 2 (Gap 2): additive 0.04 — the sensitive_path/typosquat
+  // advisory-tier coefficient, byte-identical to core
+  // SecurityScanner.helpers.ts's paired coefficient for encoded_payload.
+  encoded_payload: 0.04,
 }
 
 /**
@@ -385,6 +404,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): number {
     gatekeeper_bypass: 0,
     archive_evasion: 0,
     paste_host_fetch: 0,
+    encoded_payload: 0,
   }
 
   for (const finding of findings) {

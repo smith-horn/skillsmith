@@ -68,4 +68,14 @@ export const CATEGORY_WEIGHTS: Record<string, number> = {
   // (see SecurityScanner.paste-host.ts) and stays covered by the existing
   // url:medium finding instead.
   paste_host_fetch: 2.0,
+  // SMI-6033 Wave 2 (Gap 2): the sensitive_path/typosquat tier (1.2/0.04 —
+  // NOT the 2.0/0.40 tier every other Wave 2 detector above uses). This
+  // detector's wrapper finding is deliberately advisory-only: the escalation
+  // Gap 2 achieves comes for free from the decoded content's OWN findings
+  // (e.g. a decoded `curl|bash` natively trips code_execution at ITS OWN
+  // top-tier weight), not from encoded_payload itself. A single medium,
+  // high-confidence finding scores 15 * 1.2 * 1.0 = 18 -> * 0.04 = 0.72
+  // (rounds to ~1); a saturated breakdown (capped at 100) contributes 4 —
+  // comfortably under the riskThreshold: 40 quarantine cutoff on its own.
+  encoded_payload: 1.2,
 }

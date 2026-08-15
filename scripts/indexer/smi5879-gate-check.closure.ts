@@ -208,6 +208,17 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'packages/core/src/security/scanner/SecurityScanner.urls.ts',
   'scripts/indexer/_shared/security-scanner-edge.paste-host.ts',
   'supabase/functions/_shared/security-scanner-edge.paste-host.ts',
+  // SMI-6033 Wave 2 (Gap 2): the already-watched SecurityScanner.ts /
+  // security-scanner-edge.ts now import the new encoded (base64) payload
+  // decode-and-recursively-rescan detector — flagged by assertion 5 (the
+  // real import-graph tracer) as reachable-but-unwatched. The
+  // scripts/indexer/_shared entry is what the tracer actually flagged (it
+  // only follows the Node-runnable import graph); the
+  // supabase/functions/_shared counterpart is added alongside for the same
+  // symmetry the archive.ts/paste-host.ts pairs above used.
+  'packages/core/src/security/scanner/SecurityScanner.encoding.ts',
+  'scripts/indexer/_shared/security-scanner-edge.encoding.ts',
+  'supabase/functions/_shared/security-scanner-edge.encoding.ts',
 ] as const
 
 // SMI-5879 Wave 1: the corpus adds ~60 scans per twin, including one ~300 KB

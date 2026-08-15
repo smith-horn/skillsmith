@@ -25,6 +25,7 @@ export type SecurityFindingType =
   | 'gatekeeper_bypass' // SMI-6033 Wave 2 (Gap 5): xattr strips the macOS Gatekeeper quarantine attribute
   | 'archive_evasion' // SMI-6033 Wave 2 (Gap 3): password-protected archive used to evade content scanning
   | 'paste_host_fetch' // SMI-6033 Wave 2 (Gap 4): anonymous paste/snippet-host URL is the target of a fetch command
+  | 'encoded_payload' // SMI-6033 Wave 2 (Gap 2): base64-encoded blob decoded and recursively rescanned
 
 /**
  * Severity levels for security findings
@@ -97,6 +98,15 @@ export interface SecurityFinding {
   evidenceType?: EvidenceType
   /** SMI-5876: a mention-tier finding lifted by a co-occurring non-documentation high/critical signal. */
   corroborated?: boolean
+  /**
+   * SMI-6033 Wave 2 (Gap 2): the OUTER document line number of the base64
+   * blob whose decoded content produced this finding — set ONLY on findings
+   * folded in by `scanEncodedPayload`'s recursive rescan. Same provenance-
+   * marker role `filePath` plays for a sibling-file finding, but for a
+   * decoded-blob origin within the SAME document rather than a different
+   * file. Absent for every other finding.
+   */
+  decodedFrom?: number
 }
 
 /**
@@ -120,6 +130,7 @@ export interface RiskScoreBreakdown {
   gatekeeperBypass: number // SMI-6033 Wave 2 (Gap 5): xattr Gatekeeper-bypass score
   archiveEvasion: number // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion score
   pasteHostFetch: number // SMI-6033 Wave 2 (Gap 4): paste-host fetch-target score
+  encodedPayload: number // SMI-6033 Wave 2 (Gap 2): base64 decode-and-rescan wrapper-finding score
 }
 
 /**

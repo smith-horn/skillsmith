@@ -41,6 +41,30 @@ All notable changes to `@skillsmith/core` are documented here.
   (2.0/0.40) as `gatekeeper_bypass`/`archive_evasion`. Wired into `SecurityScanner.scan()` and
   mirrored byte-for-byte into the edge twins (`supabase/functions/_shared/` and
   `scripts/indexer/_shared/`).
+- **Feature**: encoded-payload decode-and-recursively-rescan detector (SMI-6033 Wave 3, Gap 2).
+  Rather than a heuristic "this looks suspicious" flag, the new detector (`SecurityScanner.encoding.ts`,
+  finding type `encoded_payload`) finds a contiguous base64-alphabet run (`[A-Za-z0-9+/]{120,}={0,2}`
+  — the character class's deliberate exclusion of `-`/`_` is what keeps base64url-encoded JWTs out,
+  not a separate check), skips a candidate immediately preceded by a `data:image/`, `data:font/`, or
+  `data:audio/` prefix (benign data-URI blobs) or larger than ~200KB, attempts exactly one base64
+  decode, and — only when the result is valid UTF-8 with a plausible-text printable-character ratio —
+  recursively invokes the SAME scanner's full detector suite against the decoded text, folding its
+  findings into the outer `findings` array. This reuses the entire pattern arsenal instead of
+  duplicating it: a decoded `curl|bash` natively trips `code_execution` at its own top-tier severity,
+  exactly as if the attacker had shipped it undecoded. Recursion is bounded to depth 1 STRUCTURALLY,
+  not by convention — `SecurityScanner.ts`'s new private `runDetectors(content, lineContexts,
+  skipEncodedPayload)` method is what both the outer scan and the encoded-payload detector's own
+  recursive rescan call, and the rescan callback always passes `skipEncodedPayload: true`, so a base64
+  blob discovered inside already-decoded content can never itself be decoded. Two resource bounds cap
+  the cost of a single document scan: `MAX_BASE64_CANDIDATES = 8` per document and an aggregate
+  `MAX_DECODED_TOTAL_BYTES = 256_000` across all candidates. Each finding folded in from decoded
+  content carries a new `decodedFrom` field (`types.ts`) set to the OUTER document line the blob was
+  found on — the same provenance-marker role `filePath` already plays for a sibling-file finding. The
+  wrapper `encoded_payload` finding itself is deliberately advisory-tier only (weight 1.2 / coefficient
+  0.04 — the `sensitive_path`/`typosquat` tier, NOT the 2.0/0.40 tier the other three Wave 3 detectors
+  use), since the escalation this gap achieves comes for free from whatever the decoded content's own
+  findings already are. Wired into `SecurityScanner.scan()` and mirrored byte-for-byte into the edge
+  twins (`supabase/functions/_shared/` and `scripts/indexer/_shared/`).
 
 ## v0.11.7
 

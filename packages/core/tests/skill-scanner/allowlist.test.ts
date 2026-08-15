@@ -82,6 +82,7 @@ function makeReport(
       gatekeeperBypass: 0,
       archiveEvasion: 0,
       pasteHostFetch: 0,
+      encodedPayload: 0,
     },
     ...overrides,
   }
