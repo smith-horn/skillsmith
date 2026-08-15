@@ -107,6 +107,12 @@ const NON_AI_ARRAY_NAMES = [
   'DATA_EXFILTRATION_PATTERNS',
   'PRIVILEGE_ESCALATION_PATTERNS',
   'CODE_EXECUTION_PATTERNS',
+  // SMI-6033 Wave 4 (Gap 1): the second `code_execution` pattern set
+  // (patterns.exec.ts). Like CODE_EXECUTION_PATTERNS it is consumed only by
+  // scanCodeExecution's per-line loop, never routed through the multiline
+  // pass — added here so a future attempt to route it through
+  // scanPatternsWithMultilineSupport invalidates the closure proof loudly.
+  'IMPERATIVE_FETCH_EXEC_PROSE',
   'BLOCKED_PATTERNS',
 ] as const
 
