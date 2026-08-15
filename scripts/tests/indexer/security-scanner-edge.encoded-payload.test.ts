@@ -48,7 +48,16 @@ const INNOCUOUS_ENCODED_TEXT =
 const JWT_SHAPED_STRING =
   'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJzY29wZSI6ImFkbWluIn0.3LZwlzuBkoKhdOyVv6HQIt33jGuFZFIRLF7JDaI5-oW_9JMMBU3bN3-qtaZAOfTRSAsfPtHpJIjB2VZDOHp7KZZAwgfeHZDeXLOaMTYGzoJnLRzVzzwI-MfAGgGBqWyeFEMPmxYflVZ7-K8C3AzICwK19NphKsXun2VWDwQSUVBDwLH3tNWOsmrcDBYr5xr4txsnpHtx9Cip9h8Vy6XhGWB1wIlsCnXaky0H-aRmmhDG9VJN-6pJd9YsD2NcYx2SNu4xIpuoKvM'
 const NESTED_OUTER_CANDIDATE =
-  'V3JhcHBlciBwcm9zZSBiZWZvcmUuIGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIZz0gV3JhcHBlciBwcm9zZSBhZnRlciwgdGhpcyBpcyBmaWxsZXIgdGV4dCB0byBrZWVwIHRoaW5ncyByZWFkYWJsZSBhbmQgbG9uZyBlbm91Z2gu'
+  'V3JhcHBlciBwcm9zZSBiZWZvcmUuIGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIZz0gV3JhcHBlciBwcm9zZSBhZnRlciwgdGhpcyBpcyBmaWxsZXIgdGV4dCB0byBrZWVwIHRoaW5ncyByZWFkYWJsZSBhbmQgbG9uZyBlbm91Z2gu'
+
+// Same helper as packages/core/tests/security/encoded-payload.test.ts's
+// resource-bound tests — builds a fresh, unique >=120-char base64 candidate
+// that decodes to `byteLength` bytes of plausible innocuous text.
+function innocuousCandidate(index: number, byteLength = 150): string {
+  const unit = `Innocuous filler paragraph number ${index}. `
+  const text = unit.repeat(Math.ceil(byteLength / unit.length)).slice(0, byteLength)
+  return Buffer.from(text, 'utf-8').toString('base64')
+}
 
 describe('Deno <-> Node twin byte-identity (SMI-6033 Wave 2, Gap 2)', () => {
   const denoEncodingEncrypted = isGitCryptEncrypted(DENO_SCANNER_ENCODING)
@@ -209,5 +218,63 @@ describe('core <-> edge behavioral fixture parity — encoded_payload (SMI-6033 
       edgeEncoded,
       'edge: exactly one encoded_payload finding, never a second-level one'
     ).toHaveLength(1)
+  })
+})
+
+describe('core <-> edge resource-bound parity — MAX_BASE64_CANDIDATES + MAX_DECODED_TOTAL_BYTES (SMI-6033 Gap 2 follow-up)', () => {
+  it('a document with 12 qualifying base64 candidates only produces findings for the first 8, on both core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+
+    const lines = ['# Batch', '']
+    for (let i = 0; i < 12; i++) lines.push(innocuousCandidate(i))
+    const content = lines.join('\n')
+
+    const coreReport = scanner.scan('parity', content)
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const coreEncoded = coreReport.findings.filter(
+      (f: { type: string }) => f.type === 'encoded_payload'
+    )
+    const edgeEncoded = edgeRes.findings.filter(
+      (f: { type: string }) => f.type === 'encoded_payload'
+    )
+
+    expect(coreEncoded, 'core: only the first 8 candidates produce findings').toHaveLength(8)
+    expect(edgeEncoded, 'edge: only the first 8 candidates produce findings').toHaveLength(8)
+    expect(coreEncoded.map((f: { lineNumber: number }) => f.lineNumber)).toEqual([
+      3, 4, 5, 6, 7, 8, 9, 10,
+    ])
+    expect(edgeEncoded.map((f: { lineNumber: number }) => f.lineNumber)).toEqual(
+      coreEncoded.map((f: { lineNumber: number }) => f.lineNumber)
+    )
+  })
+
+  it('the base64 candidate that pushes MAX_DECODED_TOTAL_BYTES=256_000 over the limit (and any after it) is silently skipped, on both core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+
+    const big = Buffer.from('x'.repeat(90_000), 'utf-8').toString('base64')
+    const trailer = innocuousCandidate(99, 100)
+    const content = ['# Aggregate', '', big, big, big, trailer].join('\n')
+
+    const coreReport = scanner.scan('parity', content)
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const coreEncoded = coreReport.findings.filter(
+      (f: { type: string }) => f.type === 'encoded_payload'
+    )
+    const edgeEncoded = edgeRes.findings.filter(
+      (f: { type: string }) => f.type === 'encoded_payload'
+    )
+
+    expect(
+      coreEncoded.map((f: { lineNumber: number }) => f.lineNumber),
+      'core: only the 1st and 2nd candidates (lines 3, 4) stay under the aggregate cap'
+    ).toEqual([3, 4])
+    expect(
+      edgeEncoded.map((f: { lineNumber: number }) => f.lineNumber),
+      'edge must match core'
+    ).toEqual([3, 4])
   })
 })

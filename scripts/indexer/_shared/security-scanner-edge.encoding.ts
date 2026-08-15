@@ -59,6 +59,38 @@ import { classifyMatch } from './security-scanner-edge.context.ts'
 // order of magnitude; not required to match exactly.
 const MAX_ENCODED_CANDIDATE_BYTES = 200_000
 
+// Document-wide candidate-COUNT cap (SMI-6033 Gap 2 resource-bound
+// follow-up). Without a ceiling here, an attacker could pad a skill with
+// dozens/hundreds of individually-qualifying base64 blobs to force many
+// expensive decode-and-recursively-rescan passes — a cost/availability
+// concern, not a false-positive concern (each candidate under
+// MAX_ENCODED_CANDIDATE_BYTES is still legitimate-shaped on its own).
+// Checked in REGEX-MATCH order, before the decode attempt itself, so the
+// bound applies even to attempts that end up failing (invalid base64,
+// binary noise) — not just to successful decode-and-rescan passes. Once 8
+// candidates in one document have been attempted, every further candidate is
+// silently skipped: no decode attempt, no finding — the same "not processed
+// is silent" convention tryDecodeBase64ToPlausibleText's own failure path
+// already follows. Reset fresh on every scanEncodedPayload call; never
+// persisted across calls or across a scan session.
+const MAX_BASE64_CANDIDATES = 8
+
+// Aggregate DECODED-byte cap across ALL candidates in one document (SMI-6033
+// Gap 2 resource-bound follow-up). Mirrors MAX_SIBLING_CONTENT_BYTES's
+// 256_000 convention (scripts/indexer/skill-processor.security.ts) — this
+// detector's document-wide analogue of that per-fetch byte budget. IN
+// ADDITION TO the per-candidate MAX_ENCODED_CANDIDATE_BYTES cap above: that
+// one bounds a single blob's ENCODED size; this one bounds the running total
+// of DECODED bytes across every candidate successfully decoded so far in the
+// same document scan, so a run of many just-under-the-per-candidate-cap
+// blobs can't sum to an unbounded decode/rescan cost. Once exceeded, every
+// remaining candidate in the document is skipped — including the one whose
+// own decode pushed the running total over the limit — same silent-skip
+// convention as MAX_BASE64_CANDIDATES above. Reset fresh on every
+// scanEncodedPayload call; never persisted across calls or across a scan
+// session.
+const MAX_DECODED_TOTAL_BYTES = 256_000
+
 // Contiguous base64-alphabet run, >=120 chars, optional 0-2 padding chars.
 const BASE64_CANDIDATE = /[A-Za-z0-9+/]{120,}={0,2}/g
 
@@ -133,6 +165,13 @@ export function scanEncodedPayload(
 ): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
+  // Per-document resource bounds (see MAX_BASE64_CANDIDATES /
+  // MAX_DECODED_TOTAL_BYTES doc comments above) — fresh per call, never
+  // shared across calls or across a scan session.
+  let candidatesProcessed = 0
+  let decodedTotalBytes = 0
+  let aggregateBudgetExhausted = false
+
   for (const [index, line] of lines.entries()) {
     const lineNumber = index + 1
 
@@ -144,8 +183,26 @@ export function scanEncodedPayload(
       const before = line.slice(Math.max(0, start - DATA_URI_LOOKBACK), start)
       if (DATA_URI_PREFIX.test(before)) continue
 
+      // Document-wide candidate-count cap — checked before the decode
+      // attempt itself so the bound applies even to attempts that end up
+      // failing, not just successful ones. Once the aggregate decoded-byte
+      // budget below is exhausted, every remaining candidate is skipped too.
+      if (candidatesProcessed >= MAX_BASE64_CANDIDATES || aggregateBudgetExhausted) continue
+      candidatesProcessed++
+
       const decoded = tryDecodeBase64ToPlausibleText(candidate)
       if (decoded === null) continue // decode failure / binary noise -> not itself a finding
+
+      // Aggregate decoded-byte cap: if THIS candidate would push the
+      // document-wide running total over MAX_DECODED_TOTAL_BYTES, skip it
+      // (and, via aggregateBudgetExhausted, every candidate after it) rather
+      // than folding in its finding/rescan results.
+      const decodedByteLength = new TextEncoder().encode(decoded).length
+      if (decodedTotalBytes + decodedByteLength > MAX_DECODED_TOTAL_BYTES) {
+        aggregateBudgetExhausted = true
+        continue
+      }
+      decodedTotalBytes += decodedByteLength
 
       const { inDocContext, confidence } = classifyMatch(contexts[index], line, start)
 

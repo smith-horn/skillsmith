@@ -56,6 +56,17 @@ const NESTED_INNER_CANDIDATE =
 const NESTED_OUTER_CANDIDATE =
   'V3JhcHBlciBwcm9zZSBiZWZvcmUuIGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIZz0gV3JhcHBlciBwcm9zZSBhZnRlciwgdGhpcyBpcyBmaWxsZXIgdGV4dCB0byBrZWVwIHRoaW5ncyByZWFkYWJsZSBhbmQgbG9uZyBlbm91Z2gu'
 
+// Builds a fresh, unique >=120-char base64 candidate that decodes to
+// `byteLength` bytes of plausible innocuous text (no scanner-triggering
+// content) — for the resource-bound (MAX_BASE64_CANDIDATES /
+// MAX_DECODED_TOTAL_BYTES) boundary tests below, where each candidate needs
+// to be distinguishable and independently sized.
+function innocuousCandidate(index: number, byteLength = 150): string {
+  const unit = `Innocuous filler paragraph number ${index}. `
+  const text = unit.repeat(Math.ceil(byteLength / unit.length)).slice(0, byteLength)
+  return Buffer.from(text, 'utf-8').toString('base64')
+}
+
 describe('SMI-6033 Wave 2 encoded-payload decode-and-recursively-rescan (encoded_payload)', () => {
   let scanner: SecurityScanner
   beforeEach(() => {
@@ -132,5 +143,56 @@ describe('SMI-6033 Wave 2 encoded-payload decode-and-recursively-rescan (encoded
     // would produce a SECOND encoded_payload finding.
     expect(encoded).toHaveLength(1)
     expect(encoded[0].lineNumber).toBe(3)
+  })
+
+  describe('resource bounds: MAX_BASE64_CANDIDATES + MAX_DECODED_TOTAL_BYTES (SMI-6033 Gap 2 follow-up)', () => {
+    it('a document with exactly 8 qualifying base64 candidates produces an encoded_payload finding for all 8', () => {
+      const lines = ['# Batch', '']
+      for (let i = 0; i < 8; i++) lines.push(innocuousCandidate(i))
+      const content = lines.join('\n')
+
+      const report = scanner.scan('t', content)
+      const encoded = encodedPayloadFindings(report.findings)
+
+      expect(encoded).toHaveLength(8)
+      // Document/regex-match order: candidates start at line 3.
+      expect(encoded.map((f) => f.lineNumber)).toEqual([3, 4, 5, 6, 7, 8, 9, 10])
+    })
+
+    it('a document with 12 qualifying base64 candidates only produces findings for the first 8 (MAX_BASE64_CANDIDATES); the 9th+ are silently skipped', () => {
+      const lines = ['# Batch', '']
+      for (let i = 0; i < 12; i++) lines.push(innocuousCandidate(i))
+      const content = lines.join('\n')
+
+      const report = scanner.scan('t', content)
+      const encoded = encodedPayloadFindings(report.findings)
+
+      expect(encoded).toHaveLength(8)
+      expect(
+        encoded.map((f) => f.lineNumber),
+        'only the first 8, in document/regex-match order, produce findings'
+      ).toEqual([3, 4, 5, 6, 7, 8, 9, 10])
+    })
+
+    it('candidates before MAX_DECODED_TOTAL_BYTES=256_000 is exceeded still get processed normally; the candidate that pushes the running total over the limit (and any after it) are silently skipped', () => {
+      // Three 90_000-byte candidates: after the 1st (90_000) and 2nd
+      // (180_000) the running total is still under the 256_000 aggregate
+      // cap, but the 3rd would push it to 270_000 > 256_000 and must be
+      // skipped. A trailing small candidate (4th) must ALSO be skipped, even
+      // though its own decoded size alone would easily fit, because the
+      // aggregate budget is already exhausted once tripped.
+      const big = Buffer.from('x'.repeat(90_000), 'utf-8').toString('base64')
+      const trailer = innocuousCandidate(99, 100)
+      const content = ['# Aggregate', '', big, big, big, trailer].join('\n')
+
+      const report = scanner.scan('t', content)
+      const encoded = encodedPayloadFindings(report.findings)
+
+      expect(
+        encoded.map((f) => f.lineNumber),
+        'only the 1st and 2nd candidates (lines 3, 4) stay under the aggregate cap'
+      ).toEqual([3, 4])
+      expect(encoded).toHaveLength(2)
+    })
   })
 })
