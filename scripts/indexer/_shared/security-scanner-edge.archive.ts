@@ -116,10 +116,19 @@ const SHELL_VAR_REF = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/
 // Is `password` an inline LITERAL secret (not a shell-variable reference,
 // not a placeholder/low-entropy example value)? Reuses the same
 // looksLikePlaceholderSecret gate the sensitive_path/PII detectors use.
+//
+// SMI-6033 Wave 4 bugfix (byte-identical fix to core's SecurityScanner.archive.ts):
+// the CLI password-arg regexes capture RAW (quotes included), so
+// `unzip -P "$VAR" x.zip` arrived here as `"$VAR"` — SHELL_VAR_REF never
+// matched a leading quote, so this fell through to looksLikePlaceholderSecret
+// (which also doesn't recognize it) and was misclassified as an inline
+// LITERAL secret, reaching standalone-critical on a benign shell idiom when
+// correlated. Strip surrounding quotes first.
 function isInlineLiteralPassword(password: string): boolean {
   if (!password) return false
-  if (SHELL_VAR_REF.test(password)) return false
-  return !looksLikePlaceholderSecret(password)
+  const unquoted = password.replace(/^['"]|['"]$/g, '')
+  if (SHELL_VAR_REF.test(unquoted)) return false
+  return !looksLikePlaceholderSecret(unquoted)
 }
 
 // ============================================================================

@@ -124,11 +124,28 @@ const SHELL_VAR_REF = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/
  * argument), which looksLikePlaceholderSecret's internal extraction already
  * tolerates (no `:`/`=` present means the whole string passes through
  * unchanged).
+ *
+ * SMI-6033 Wave 4 bugfix (found during Wave 4's own verification, fixed here
+ * since PR #2371/Wave 3 — the file this bug shipped in — was still open):
+ * `\S{1,200}` in UNZIP_PASSWORD_ARG/ZIP_PASSWORD_ARG/UNRAR_SEVENZIP_PASSWORD_ARG
+ * captures the CLI argument RAW, quotes included, so a perfectly ordinary,
+ * shell-safe out-of-band reference like `unzip -P "$TOOLKIT_PASSWORD" x.zip`
+ * arrived here as `"$TOOLKIT_PASSWORD"` (with literal quote characters) —
+ * `SHELL_VAR_REF` never matched (it anchors on a bare `$`, not a leading
+ * quote), so this fell through to `looksLikePlaceholderSecret`, which also
+ * doesn't recognize it, and the whole thing was misclassified as an inline
+ * LITERAL secret. Combined with a correlated fetch target, that reached
+ * standalone-`critical` on a completely benign shell idiom — a real
+ * quarantine-level false positive, confirmed empirically. Strip surrounding
+ * quotes first (mirrors `extractArchiveTargetBasename`'s own
+ * `.replace(/['"]/g, '')` treatment of the same class of CLI capture) so
+ * `SHELL_VAR_REF` sees the actual `$VAR` shape underneath.
  */
 function isInlineLiteralPassword(password: string): boolean {
   if (!password) return false
-  if (SHELL_VAR_REF.test(password)) return false
-  return !looksLikePlaceholderSecret(password)
+  const unquoted = password.replace(/^['"]|['"]$/g, '')
+  if (SHELL_VAR_REF.test(unquoted)) return false
+  return !looksLikePlaceholderSecret(unquoted)
 }
 
 // ============================================================================

