@@ -8,6 +8,9 @@
  */
 
 import {
+  CLI_FALLBACK_COMMANDS,
+  CLI_FALLBACK_NOTE,
+  CLI_FALLBACK_PARAGRAPHS,
   INTRO_PARAGRAPHS,
   JOBS,
   OPERATING_PARAGRAPHS,
@@ -74,6 +77,15 @@ export function renderAgentSkillBody(): string {
     sections.push(`### ${trigger.title}`)
     sections.push(trigger.body)
   }
+
+  // SMI-5893 Wave 6 Step 5: ported from packages/cli/assets/skillsmith-skill/SKILL.md's
+  // "## CLI Fallback" pattern (same heading text + opening phrase), so the
+  // structural-parity test (skill-md-cli-fallback-parity.test.ts) can assert
+  // all three bundled SKILL.md assets stay in lockstep.
+  sections.push('## CLI Fallback')
+  sections.push(numberedOrProse(CLI_FALLBACK_PARAGRAPHS))
+  sections.push(`\`\`\`bash\n${CLI_FALLBACK_COMMANDS.join('\n')}\n\`\`\``)
+  sections.push(CLI_FALLBACK_NOTE)
 
   sections.push('## Undo and recovery')
   sections.push(numberedOrProse(UNDO_PARAGRAPHS))

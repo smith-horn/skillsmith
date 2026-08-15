@@ -17,6 +17,7 @@ import {
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
+  isQuietModeEnabled,
   type SearchOptions,
   type TrustTier,
 } from '@skillsmith/core'
@@ -299,7 +300,13 @@ async function runSearch(
 ): Promise<void> {
   const db = await openCliDatabase(options.db)
 
-  const suppress = options.quiet || options.noProgress || process.env['SKILLSMITH_QUIET'] === 'true'
+  // SMI-5893 (Wave 7 Step 4): shared canonical check (was a narrower
+  // literal-'true' string comparison) — command-local --quiet/--no-progress
+  // still win outright when Commander routes them to THIS command (e.g. via
+  // the -q short flag, which the root --quiet option deliberately doesn't
+  // claim); isQuietModeEnabled() covers the case where the root-level
+  // --quiet consumed the token before this command ever saw it.
+  const suppress = options.quiet || options.noProgress || isQuietModeEnabled()
   const spinner = suppress ? null : ora('Searching Skillsmith registry...').start()
 
   try {

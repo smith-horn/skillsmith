@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: Cursor's `hooks.json` is now written in Cursor's actual native schema (`{ version: 1, hooks: { sessionStart: [{ command }] } }`) instead of Claude Code's entry shape (`{ matcher, hooks: [{ type, command }] }`) — the prior shape was silently invalid, and Cursor drops all hooks when the required top-level `version` key is missing. New `install/agent-pack-installer.cursor-hooks.ts` builder, split out from the shared Claude/generic JSON-hooks installer since the two schemas are structurally different, not just differently-keyed (SMI-5893 Wave 8, GH#2368)
+- **Feature**: bundled agent-pack SKILL.md generation (`services/agent-pack/skill-md.ts`) now includes a "CLI Fallback" section, matching the pattern already shipped in `@skillsmith/cli`'s bundled skill, so an agent with a disconnected MCP server has a documented fallback instead of instructing dead tool calls (SMI-5893 Wave 6, GH#2368)
+- **Feature**: new `services/recommend-guard.ts` shared helper (footer-text + dedup-by-`skill.id`) used by both `@skillsmith/cli` and `@skillsmith/mcp-server`'s `recommend` implementations, replacing two independent hardcoded-footer implementations (SMI-5893 Wave 7, GH#2368)
+
 ## v0.11.6
 
 - **Fix**: Harden manifest concurrency (uninstall lock, temp-file races) (#2331)

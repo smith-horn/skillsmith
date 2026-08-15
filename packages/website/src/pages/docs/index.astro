@@ -1,5 +1,8 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+// SMI-5893 Wave 6 Step 2: same per-client snippet matrix quickstart.astro's
+// Option C already renders — replaces a hand-copied Claude-only snippet.
+import { MCP_CLIENT_SNIPPETS } from '../../lib/mcp-client-snippets';
 
 const techArticleSchema = {
   '@context': 'https://schema.org',
@@ -145,16 +148,19 @@ const techArticleSchema = {
 
   <h3>1. Configure the MCP Server</h3>
 
-  <p>Add Skillsmith to your Claude settings file (<code>~/.claude/settings.json</code>):</p>
+  <p>
+    Pick the snippet for your MCP client and add it to the matching config file. Every
+    snippet uses the same shape; only the config-file path (and, for Codex/Hermes, the
+    format) differs.
+  </p>
 
-  <pre><code>{`{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
+  {MCP_CLIENT_SNIPPETS.map((client) => (
+    <details open={client.openByDefault}>
+      <summary><strong>{client.label}</strong> — <code>{client.configPath}</code>{client.format !== 'json' ? ` (${client.format.toUpperCase()})` : ''}</summary>
+      <pre><code>{client.body}</code></pre>
+      {client.notes && <p set:html={client.notes} />}
+    </details>
+  ))}
 
   <h3>2. Configure Your API Key (Optional)</h3>
 

@@ -15,6 +15,9 @@ import Footer from '../components/Footer.astro'
 import { getSupabaseConfig } from '../lib/supabase-config'
 // SMI-5217: single source of truth for trust-tier pill colors (canonical 5-tier).
 import { TRUST_TIER_PILL_CLASSES, DEFAULT_TRUST_TIER } from '../constants/trust-tier-badges'
+// SMI-5893 Wave 6 Step 1: same per-client snippet matrix quickstart.astro's
+// Option C already renders — replaces a hand-copied Claude-only snippet.
+import { MCP_CLIENT_SNIPPETS } from '../lib/mcp-client-snippets'
 import '../styles/global.css'
 
 const supabaseConfig = getSupabaseConfig()
@@ -192,55 +195,30 @@ const supabaseConfig = getSupabaseConfig()
         <div class="max-w-[800px] mx-auto px-6">
           <div class="text-center mb-10">
             <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
-            <p class="text-dark-400">Copy this snippet to configure your MCP client</p>
+            <p class="text-dark-400">Pick your MCP client and add this to its config</p>
           </div>
 
-          <div class="relative group mb-8">
-            <pre
-              class="bg-[#0D0D0F] border border-white/10 rounded-xl p-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed"><code id="mcp-install-code">{`Add this MCP server to my settings.json:
-
-{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-            <button
-              type="button"
-              id="copy-mcp-config"
-              class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-dark-950 text-sm font-bold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-              aria-label="Copy to Clipboard"
-            >
-              <svg
-                id="copy-icon"
-                class="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                stroke-width="2"
-                aria-hidden="true"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                ></path>
-              </svg>
-              <svg
-                id="check-icon"
-                class="w-4 h-4 hidden"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                stroke-width="2"
-                aria-hidden="true"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-              </svg>
-              <span id="copy-text">Copy to Clipboard</span>
-            </button>
+          <!-- Per-client snippet picker (SMI-5893 Wave 6 Step 1) -->
+          <div class="mb-8 text-left">
+            {
+              MCP_CLIENT_SNIPPETS.map((client) => (
+                <details
+                  open={client.openByDefault}
+                  class="mb-3 bg-[#0D0D0F] border border-white/10 rounded-xl overflow-hidden"
+                >
+                  <summary class="cursor-pointer select-none px-6 py-4 font-mono text-sm text-[#E5E5E5]">
+                    <strong>{client.label}</strong> — <code>{client.configPath}</code>
+                    {client.format !== 'json' ? ` (${client.format.toUpperCase()})` : ''}
+                  </summary>
+                  <pre class="px-6 pb-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed">
+                    <code>{client.body}</code>
+                  </pre>
+                  {client.notes && (
+                    <p class="px-6 pb-5 text-xs text-dark-400" set:html={client.notes} />
+                  )}
+                </details>
+              ))
+            }
           </div>
 
           <p class="text-center text-dark-400 mb-8">
@@ -294,34 +272,6 @@ const supabaseConfig = getSupabaseConfig()
                 variant: 'variant-a',
               })
             }
-          })
-        })
-      })
-    </script>
-
-    <!-- MCP config copy button -->
-    <script is:inline>
-      document.addEventListener('astro:page-load', function () {
-        const btn = document.getElementById('copy-mcp-config')
-        if (!btn) return
-        btn.addEventListener('click', function () {
-          const code = document.getElementById('mcp-install-code')
-          if (!code) return
-          navigator.clipboard.writeText(code.textContent || '').then(function () {
-            const copyIcon = document.getElementById('copy-icon')
-            const checkIcon = document.getElementById('check-icon')
-            const copyText = document.getElementById('copy-text')
-            if (copyIcon) copyIcon.classList.add('hidden')
-            if (checkIcon) checkIcon.classList.remove('hidden')
-            if (copyText) copyText.textContent = 'Copied!'
-            if (typeof gtag === 'function') {
-              gtag('event', 'copy_config', { variant: 'variant-a' })
-            }
-            setTimeout(function () {
-              if (copyIcon) copyIcon.classList.remove('hidden')
-              if (checkIcon) checkIcon.classList.add('hidden')
-              if (copyText) copyText.textContent = 'Copy to Clipboard'
-            }, 2000)
           })
         })
       })

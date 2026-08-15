@@ -238,4 +238,44 @@ describe('SMI-744: Search Command', () => {
       expect(mocks.installFn).toHaveBeenCalledWith('community/jest-helper', {})
     })
   })
+
+  // ==========================================================================
+  // SMI-5893 (Wave 7 Step 4): `runSearch`'s spinner-suppression check now
+  // calls the shared `isQuietModeEnabled()` helper instead of a narrower
+  // literal `process.env['SKILLSMITH_QUIET'] === 'true'` string comparison —
+  // isolate/restore the env var around each case (process-level shared state).
+  // ==========================================================================
+  describe('SMI-5893 (Wave 7 Step 4): SKILLSMITH_QUIET env-var fallback', () => {
+    const ORIGINAL_SKILLSMITH_QUIET = process.env['SKILLSMITH_QUIET']
+
+    afterEach(() => {
+      if (ORIGINAL_SKILLSMITH_QUIET === undefined) {
+        delete process.env['SKILLSMITH_QUIET']
+      } else {
+        process.env['SKILLSMITH_QUIET'] = ORIGINAL_SKILLSMITH_QUIET
+      }
+    })
+
+    it('suppresses the search spinner via isQuietModeEnabled() even without --quiet/--no-progress', async () => {
+      process.env['SKILLSMITH_QUIET'] = 'true'
+
+      const { createSearchCommand } = await import('../src/commands/search.js')
+      const cmd = createSearchCommand()
+
+      await cmd.parseAsync(['node', 'test', 'jest', '--db', 'fake.db'])
+
+      expect(mocks.ora.start).not.toHaveBeenCalled()
+    })
+
+    it('shows the search spinner when SKILLSMITH_QUIET is unset and no local quiet flag is passed', async () => {
+      delete process.env['SKILLSMITH_QUIET']
+
+      const { createSearchCommand } = await import('../src/commands/search.js')
+      const cmd = createSearchCommand()
+
+      await cmd.parseAsync(['node', 'test', 'jest', '--db', 'fake.db'])
+
+      expect(mocks.ora.start).toHaveBeenCalled()
+    })
+  })
 })

@@ -58,6 +58,7 @@ import {
 import { getCliLogger } from './cli-logger.js'
 import { displayStartupHeader } from './utils/license.js'
 import { resolveCommandPath, shouldShowStartupHeader } from './utils/startup-header-gate.js'
+import { applyRootQuietOption } from './utils/quiet-mode-gate.js'
 import { checkNodeVersion } from './utils/node-version.js'
 import { readFileSync } from 'fs'
 import { join } from 'path'
@@ -91,6 +92,38 @@ program
     "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale. (alias: sklx)"
   )
   .version(CLI_VERSION)
+  // SMI-5893 (Wave 7 Step 4): a single root-level --quiet, wired once via
+  // the preAction hook below, instead of every command independently
+  // mapping its own `--quiet`/`--no-progress` into SKILLSMITH_QUIET (only
+  // `search.action.ts` did, and via a narrower literal-'true' string check
+  // rather than the shared `isQuietModeEnabled()` helper). Deliberately no
+  // `-q` short alias here: several subcommands (search, install, registry
+  // install) already declare their own local `-q, --quiet` — Commander
+  // resolves an identically-spelled flag to whichever Command instance
+  // registers it FIRST regardless of where in argv it appears, so a root
+  // `-q` would silently steal those subcommands' own short flag. The long
+  // `--quiet` form has the same collision for the LONG spelling specifically
+  // (root wins there too), which is why `search.action.ts`'s own
+  // `options.quiet` check below is OR'd with `isQuietModeEnabled()` rather
+  // than replaced by it — command-local wins when Commander actually routes
+  // the flag to the subcommand (e.g. via `-q`), and the shared env var
+  // still covers the case where root captured a bare `--quiet` instead.
+  .option(
+    '--quiet',
+    'Suppress advisory/progress output across all commands (sets SKILLSMITH_QUIET)'
+  )
+
+// SMI-5893 (Wave 7 Step 4): resolved before ANY subcommand's action runs,
+// regardless of where in the command tree --quiet was passed, so every
+// command that already honors SKILLSMITH_QUIET (probe.ts, createDatabase.ts,
+// embeddings/index.ts) — and any command updated to call
+// `isQuietModeEnabled()` — picks it up without each command re-deriving it.
+// Only SETS the env var when root's own --quiet was passed; never clears
+// it, so an externally-set SKILLSMITH_QUIET (shell/CI) is never clobbered
+// by an invocation that didn't pass --quiet at all.
+program.hook('preAction', (thisCommand) => {
+  applyRootQuietOption(thisCommand.opts()['quiet'] as boolean | undefined)
+})
 
 // Display startup header with license status before parsing commands.
 // SMI-5427: gated by startup-header-gate — suppressed for non-TTY / piped use,

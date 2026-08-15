@@ -17,6 +17,11 @@ import Footer from '../components/Footer.astro'
 import { getSupabaseConfig } from '../lib/supabase-config'
 import '../styles/global.css'
 import HomepageCategoryGrid from '../components/HomepageCategoryGrid.astro'
+// SMI-5893 Wave 6 Step 1: render the same per-client snippet matrix
+// quickstart.astro's Option C already uses, instead of a 5th hand-copied
+// Claude-only snippet (this file's own prior copy had no SKILLSMITH_CLIENT
+// and no other clients at all).
+import { MCP_CLIENT_SNIPPETS } from '../lib/mcp-client-snippets'
 const abVariant = Astro.locals.abVariant
 
 // Get Supabase config for auth-aware navigation
@@ -467,60 +472,30 @@ const jsonLd = {
               Start solo
             </p>
             <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
-            <p class="text-[#A1A1AA]">Copy this snippet to configure your MCP client</p>
+            <p class="text-[#A1A1AA]">Pick your MCP client and add this to its config</p>
           </div>
 
-          <!-- Copyable Code Block -->
-          <div class="relative group mb-8" id="mcp-install-block">
-            <pre
-              class="bg-[#0D0D0F] border border-white/10 rounded-xl p-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed"><code id="mcp-install-code">{`Add this MCP server to my settings.json:
-
-{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-
-            <!-- Copy button -->
-            <button
-              type="button"
-              id="copy-mcp-config"
-              class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-dark-950 text-sm font-bold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-              aria-label="Copy to Clipboard"
-            >
-              <!-- Copy icon -->
-              <svg
-                id="copy-icon"
-                class="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                stroke-width="2"
-                aria-hidden="true"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                ></path>
-              </svg>
-              <!-- Checkmark icon (hidden by default) -->
-              <svg
-                id="check-icon"
-                class="w-4 h-4 hidden"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                stroke-width="2"
-                aria-hidden="true"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-              </svg>
-              <span id="copy-text">Copy to Clipboard</span>
-            </button>
+          <!-- Per-client snippet picker (SMI-5893 Wave 6 Step 1) -->
+          <div class="mb-8 text-left" id="mcp-install-block">
+            {
+              MCP_CLIENT_SNIPPETS.map((client) => (
+                <details
+                  open={client.openByDefault}
+                  class="mb-3 bg-[#0D0D0F] border border-white/10 rounded-xl overflow-hidden"
+                >
+                  <summary class="cursor-pointer select-none px-6 py-4 font-mono text-sm text-[#E5E5E5]">
+                    <strong>{client.label}</strong> — <code>{client.configPath}</code>
+                    {client.format !== 'json' ? ` (${client.format.toUpperCase()})` : ''}
+                  </summary>
+                  <pre class="px-6 pb-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed">
+                    <code>{client.body}</code>
+                  </pre>
+                  {client.notes && (
+                    <p class="px-6 pb-5 text-xs text-[#A1A1AA]" set:html={client.notes} />
+                  )}
+                </details>
+              ))
+            }
           </div>
 
           <!-- Helper text -->
@@ -899,58 +874,6 @@ const jsonLd = {
         }
       }
     </style>
-
-    <!-- Copy to Clipboard Handler -->
-    <script is:inline>
-      ;(function () {
-        const copyButton = document.getElementById('copy-mcp-config')
-        const codeBlock = document.getElementById('mcp-install-code')
-        const copyIcon = document.getElementById('copy-icon')
-        const checkIcon = document.getElementById('check-icon')
-        const copyText = document.getElementById('copy-text')
-
-        if (!copyButton || !codeBlock) return
-
-        copyButton.addEventListener('click', async () => {
-          const code = codeBlock.textContent || ''
-
-          try {
-            await navigator.clipboard.writeText(code)
-
-            // Show success state
-            copyIcon.classList.add('hidden')
-            checkIcon.classList.remove('hidden')
-            copyText.textContent = 'Copied!'
-            copyButton.classList.remove('bg-[#E07A5F]', 'hover:bg-[#D4694E]')
-            copyButton.classList.add('bg-[#81B29A]', 'text-white')
-            copyButton.classList.remove('text-dark-950')
-
-            // Track in GA if available
-            if (typeof gtag === 'function') {
-              gtag('event', 'copy_config', {
-                event_category: 'engagement',
-                event_label: 'mcp_install_snippet',
-              })
-            }
-
-            // Reset after 2.5 seconds
-            setTimeout(() => {
-              copyIcon.classList.remove('hidden')
-              checkIcon.classList.add('hidden')
-              copyText.textContent = 'Copy to Clipboard'
-              copyButton.classList.add('bg-[#E07A5F]', 'hover:bg-[#D4694E]', 'text-dark-950')
-              copyButton.classList.remove('bg-[#81B29A]', 'text-white')
-            }, 2500)
-          } catch (err) {
-            console.error('Failed to copy:', err)
-            copyText.textContent = 'Failed to copy'
-            setTimeout(() => {
-              copyText.textContent = 'Copy to Clipboard'
-            }, 2000)
-          }
-        })
-      })()
-    </script>
 
     <!-- GA4: Track homepage FAQ expand (SMI-2453) -->
     <script is:inline>

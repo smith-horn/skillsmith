@@ -16,6 +16,7 @@ import {
   mergeSkillDatabases,
   checkSchemaCompatibility,
   openDatabase,
+  isQuietModeEnabled,
   type MergeStrategy,
   type MergeOptions,
   type MergeConflict,
@@ -67,7 +68,16 @@ async function mergeActionImpl(
     force: boolean
   }
 ): Promise<void> {
-  const { strategy, dryRun, verbose, quiet, force } = options
+  const { strategy, dryRun, verbose, force } = options
+  // SMI-5893 (Wave 7 Step 4): falls back to the shared isQuietModeEnabled()
+  // gate for the same reason as install.ts's identical fallback — the new
+  // root-level `--quiet` (packages/cli/src/index.ts) claims the LONG-form
+  // token ahead of this command's own local `-q, --quiet`. Unlike
+  // install.ts/registry-install.action.ts, this command's `--quiet` was
+  // declared with an explicit commander default of `false` (not left
+  // `undefined`), so `||` (not `??`) is required here — `false ?? x` would
+  // never fall through to `x`.
+  const quiet = options.quiet || isQuietModeEnabled()
 
   // Validate strategy
   const validStrategies: MergeStrategy[] = [

@@ -77,6 +77,13 @@ vi.mock('@skillsmith/core', () => ({
   })),
   isGitHubUrl: vi.fn((url: string) => url.startsWith('https://github.com/')),
   emitInstallEvent: (payload: unknown) => mocks.emitInstallEvent(payload),
+  // SMI-5893 (Wave 7 Step 4): real check against process.env so the
+  // `opts.quiet ?? isQuietModeEnabled()` fallback (added alongside the CLI's
+  // new root-level --quiet, which claims the LONG-form `--quiet` token ahead
+  // of this command's own local `-q, --quiet`) is exercised faithfully.
+  isQuietModeEnabled: () =>
+    process.env['SKILLSMITH_QUIET']?.toLowerCase() === 'true' ||
+    process.env['SKILLSMITH_QUIET'] === '1',
 }))
 
 // Mock console and process.exit
@@ -416,6 +423,52 @@ describe('SMI-3484: CLI Install Command', () => {
 
       const errorOutput = mockConsoleError.mock.calls.map((c) => c.join(' ')).join('\n')
       expect(errorOutput).toContain('Security scan failed')
+    })
+
+    // SMI-5893 (Wave 7 Step 4): the CLI's new root-level --quiet
+    // (packages/cli/src/index.ts) claims the LONG-form `--quiet` token ahead
+    // of this command's own local `-q, --quiet` whenever both are registered
+    // on the same composed program, leaving `opts.quiet` undefined here even
+    // though the user asked for quiet output. `opts.quiet ?? isQuietModeEnabled()`
+    // is the fallback that keeps this command quiet in that case, via the
+    // SKILLSMITH_QUIET env var root's preAction hook sets. This test isolates
+    // that fallback directly (no --quiet/-q flag passed at all) rather than
+    // reproducing the full root-collision, since this suite runs
+    // createInstallCommand() standalone, outside the composed root program.
+    describe('SMI-5893: isQuietModeEnabled() fallback', () => {
+      const ORIGINAL_SKILLSMITH_QUIET = process.env['SKILLSMITH_QUIET']
+
+      afterEach(() => {
+        if (ORIGINAL_SKILLSMITH_QUIET === undefined) {
+          delete process.env['SKILLSMITH_QUIET']
+        } else {
+          process.env['SKILLSMITH_QUIET'] = ORIGINAL_SKILLSMITH_QUIET
+        }
+      })
+
+      it('suppresses advisory output via SKILLSMITH_QUIET even without --quiet/-q', async () => {
+        process.env['SKILLSMITH_QUIET'] = 'true'
+        mocks.installFn.mockResolvedValue({
+          success: true,
+          skillId: 'community/jest-helper',
+          installPath: '/tmp/.claude/skills/jest-helper',
+          tips: ['Tip: Use the skill by invoking /jest-helper'],
+          optimization: {
+            optimized: true,
+            tokenReductionPercent: 30,
+            subSkills: ['sub1.md'],
+          },
+        })
+
+        const { createInstallCommand } = await import('../../../src/commands/install.js')
+        const cmd = createInstallCommand()
+
+        await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
+
+        const allOutput = mockConsoleLog.mock.calls.map((c) => c.join(' ')).join('\n')
+        expect(allOutput).not.toContain('Tip:')
+        expect(allOutput).not.toContain('reduction')
+      })
     })
   })
 

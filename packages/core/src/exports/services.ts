@@ -474,7 +474,10 @@ export {
   type ResolveSkillOptions,
 } from '../services/skill-resolution.js'
 
-export { buildEmptyStackGuidance } from '../services/recommend-guard.js'
+export {
+  buildEmptyStackGuidance,
+  getRecommendAutoDetectedFooterText,
+} from '../services/recommend-guard.js'
 
 // SMI-5986: shared context-word extraction (CLI `recommend --context` / MCP
 // `skill_recommend`'s `project_context`) so the two twins can't

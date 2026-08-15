@@ -97,9 +97,9 @@ export function installShim(
     report.notes.push(`shim: pre-existing content backed up to ${result.backupPath}`)
 }
 
-/** Install + wire SessionStart/SessionEnd hook scripts for claude-code/cursor (JSON hook config). */
+/** Install + wire SessionStart/SessionEnd hook scripts for claude-code (JSON hook config). */
 export function installJsonHooks(
-  harness: 'claude-code' | 'cursor',
+  harness: 'claude-code',
   startArtifact: AgentPackArtifact | undefined,
   endArtifact: AgentPackArtifact | undefined,
   ctx: HarnessInstallCtx,

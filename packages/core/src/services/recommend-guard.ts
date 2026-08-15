@@ -34,3 +34,25 @@ export function buildEmptyStackGuidance(): string {
     'explicit list of installed/currently-used skills, then try again.'
   )
 }
+
+/**
+ * SMI-5893 (Wave 7 Step 2): shared "auto-detected" footer fragment for CLI
+ * `recommend` (`recommend.helpers.ts`) and MCP `skill_recommend`
+ * (`recommend.format.ts`)'s formatted output — both previously hardcoded
+ * "(auto-detected from ~/.claude/skills/)" regardless of which client's
+ * directory was actually scanned.
+ *
+ * **Corrected per plan review — `getInstallPath(client)` is not directly
+ * usable here**, unlike the Wave 1 pattern `list`'s footer reuses (Wave 7
+ * Step 1): neither call site threads a resolved `ClientId` through to this
+ * text today (CLI's `getInstalledSkills()` always scans the canonical
+ * install path; MCP's resolves whatever `SKILLSMITH_CLIENT` happens to be
+ * set to at call time) — there is no single client value shared by both
+ * surfaces to plug into `getInstallPath()`. Rather than hardcode one path
+ * (wrong for any non-canonical/non-default client) or invent two divergent
+ * per-surface resolution rules, both surfaces describe the detection
+ * generically via this one shared helper instead.
+ */
+export function getRecommendAutoDetectedFooterText(): string {
+  return 'auto-detected from your installed skills across all clients'
+}
