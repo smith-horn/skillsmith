@@ -5,6 +5,15 @@
  *
  * Displays a toast notification when rate limit is exceeded.
  * Auto-hides after countdown based on retry-after header.
+ *
+ * SMI-5893 Wave 6 Step 4: the fetch() interceptor below used to fire on ANY
+ * 429 from ANY origin (including unrelated Supabase auth/session calls made
+ * by getSupabaseClient() from Nav.astro) — scoped to the Skillsmith API
+ * origins via lib/rate-limit-toast-origins.ts. The script tag was switched
+ * from `is:inline` to a bundled module (same migration skills/index.astro
+ * and skills/[id].astro already made, per their own SMI-4907/5365 comments)
+ * so it can `import` that shared, unit-tested logic instead of re-deriving
+ * it inline.
  */
 ---
 
@@ -69,8 +78,13 @@
   </div>
 </div>
 
-<script is:inline>
+<script>
   // Rate Limit Toast Controller
+  import {
+    extractRequestUrl,
+    getTrackedRateLimitOrigins,
+    isTrackedRateLimitRequest,
+  } from '../lib/rate-limit-toast-origins'
   ;(function () {
     const toast = document.getElementById('rate-limit-toast')
     const message = document.getElementById('rate-limit-message')
@@ -145,12 +159,22 @@
       closeBtn.addEventListener('click', hideToast)
     }
 
-    // Intercept 429 responses globally
+    // Intercept 429 responses — but ONLY from the Skillsmith API surfaces
+    // this site's own client code calls (prod/staging API origin + the
+    // same-origin /api/... proxy paths), not every fetch() on the page.
+    // Unrelated 429s (e.g. Supabase auth/session calls from Nav.astro) must
+    // not trigger this toast — see rate-limit-toast-origins.ts.
+    const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'
+    const trackedOrigins = getTrackedRateLimitOrigins(apiBaseUrl, window.location.origin)
+
     const originalFetch = window.fetch
     window.fetch = async function (...args) {
       const response = await originalFetch.apply(this, args)
 
-      if (response.status === 429) {
+      if (
+        response.status === 429 &&
+        isTrackedRateLimitRequest(extractRequestUrl(args[0]), trackedOrigins, window.location.href)
+      ) {
         const retryAfter = Math.min(300, parseInt(response.headers.get('Retry-After') || '60', 10))
         const tierHeader = response.headers.get('X-Tier')
 
