@@ -114,20 +114,31 @@ _anon_budget_seed() {
 # SET) -- see anon-budget.sh's module header + check_anon_budget_identity_derivation
 # for why: a fixed SET reset would erase a real concurrent increment that
 # landed in the seed-to-request window (plan's PR #2379 review finding).
+#
+# Deliberately NOT with_retry: adjust_anon_usage's relative delta is
+# non-idempotent (unlike seed_anon_usage's absolute SET, where a duplicate
+# retry harmlessly re-sets the same value) -- an ambiguous-failure retry here
+# would apply -1 TWICE against the live row, silently erasing a real
+# concurrent increment on top of this probe's own. Same class of bug the
+# governance pass already fixed at the three _anon_budget_search_request call
+# sites; this RPC helper was the one place it was missed on that pass.
 _anon_budget_adjust() {
   local ip_hash="$1" delta="$2"
   local url="${SMOKE_SUPABASE_URL}/rest/v1/rpc/adjust_anon_usage"
   local payload
   payload=$(printf '{"ip_hash_input":"%s","delta_input":%d}' "$ip_hash" "$delta")
-  with_retry http_body POST "$url" \
+  http_body POST "$url" \
     -H "apikey: ${SMOKE_SERVICE_ROLE_KEY}" \
     -H "Authorization: Bearer ${SMOKE_SERVICE_ROLE_KEY}" \
     -H "Content-Type: application/json" \
     -d "$payload"
 }
 
-# _anon_budget_reset IP_HASH -- best-effort cleanup, called from the RETURN
-# trap. Never fails the check itself -- only warns. seed_anon_usage /
+# _anon_budget_reset IP_HASH -- best-effort cleanup, called as an explicit
+# sequential statement right after the Layer 2 assertion returns (see
+# _anon_budget_layer2_shadow/_anon_budget_layer2_enforce -- NOT a `trap ...
+# RETURN`, which turned out to fire again on every enclosing caller's own
+# return). Never fails the check itself -- only warns. seed_anon_usage /
 # adjust_anon_usage are themselves idempotent (plan §P-5), so a reset that
 # fails to land here just leaves one probe cycle's worth of drift that the
 # NEXT run's seed step silently overwrites -- "a crash doesn't leave stale

@@ -34,8 +34,9 @@
 #     service-role-only seed_anon_usage RPC, issues one real anon-key
 #     request, and asserts the observed X-Anon-Budget-Used against the
 #     manifest mode. The reset step (adjust_anon_usage, delta=-1) always
-#     runs via a RETURN trap, even if an assertion above it fails or
-#     `return`s early.
+#     runs as an explicit call after the assertion, whether it passes or
+#     fails -- NOT via a `trap ... RETURN` (that looked idiomatic but isn't
+#     function-scoped in bash; see _anon_budget_layer2_shadow's comment).
 #
 # ANON_BUDGET_INTENDED_MODE is this script's own self-contained "manifest
 # mode" -- a plain shell constant, NOT a new scripts/smoke-prod/surfaces.json
@@ -235,6 +236,24 @@ check_anon_budget_identity_derivation() {
 # script computed is the SAME identity the edge middleware derived for that
 # request (a mismatched hash would seed a different row than the one the
 # real request increments, and the assertion would observe 1, not 3).
+#
+# Two accepted, narrow risks (raised again by GPT-5.6-Sol review, both
+# already covered by the plan's own risk acceptance -- not new gaps this
+# implementation introduces):
+#   - seed_anon_usage's absolute SET (below) can still overwrite a real
+#     pre-existing count for this exact ip_hash+day, before the delta-based
+#     reset even enters the picture -- the delta reset only protects the
+#     WINDOW after seeding, not the seed step itself. This is the plan's own
+#     accepted risk (P-5: "a real end-user sharing that exact egress IP +
+#     TRIAL_SALT hash on the same UTC day is not realistically possible"),
+#     not a gap this file's implementation added.
+#   - A probe run straddling UTC midnight can seed one usage_date row and
+#     have its real request land on the next day's row; the reset then
+#     leaves the OLD day's row at its seeded value until that day ages out
+#     via the 30-day cleanup cron or a coincidental next-day seed. Narrow
+#     (only affects runs spanning the literal midnight second), self-healing,
+#     and not worth re-touching the already-applied migration's RPC
+#     signature to add a usage_date parameter for.
 _anon_budget_layer2_shadow() {
   local ip_hash="$1" t0="$2" url="$3"
   local ms seed_count resp seed_status
@@ -252,13 +271,35 @@ _anon_budget_layer2_shadow() {
       ;;
   esac
 
-  # From here on, our seed landed -- the reset MUST run on every exit path
-  # (assertion pass, assertion fail, or an unexpected early return), per the
-  # plan's idempotency requirement ("implementer should still make the reset
-  # step idempotent ... so a crash doesn't leave stale test data lying
-  # around"). `trap ... RETURN` fires exactly once when THIS function
-  # returns, regardless of which `return` statement below fires it.
-  trap '_anon_budget_reset "$ip_hash"' RETURN
+  # From here on, our seed landed -- the reset MUST run exactly once,
+  # regardless of the assertion's outcome. This used to be `trap ...
+  # RETURN`, which looked idiomatic but is NOT function-scoped in bash: a
+  # RETURN trap set inside a function fires again on every ENCLOSING
+  # function's own return too, until something overwrites or explicitly
+  # clears it (`trap - RETURN` from inside the handler does not stop this --
+  # confirmed via direct empirical reproduction, not just documentation).
+  # Concretely, this fired the reset 2-3x per probe run -- once for this
+  # function's return, again for check_anon_budget_identity_derivation's
+  # return, and again for whatever calls that -- each one a REAL extra
+  # `adjust_anon_usage(ip_hash, -1)` against the live production row. Fixed
+  # by calling the assertion and the reset as two ordinary, sequential
+  # statements instead: no trap, no ambiguity, reset runs exactly once no
+  # matter which `return` inside the assertion fires.
+  local rc
+  _anon_budget_layer2_shadow_assert "$ip_hash" "$t0" "$url"
+  rc=$?
+  _anon_budget_reset "$ip_hash"
+  return "$rc"
+}
+
+# _anon_budget_layer2_shadow_assert -- the actual request + assertion,
+# split out of _anon_budget_layer2_shadow so the caller can run the reset
+# exactly once after this returns, regardless of which branch below exits
+# it. Not a check function in its own right -- always called from
+# _anon_budget_layer2_shadow, never registered in surfaces.json.
+_anon_budget_layer2_shadow_assert() {
+  local ip_hash="$1" t0="$2" url="$3"
+  local ms
 
   # Deliberately NOT with_retry -- same reasoning as
   # check_anon_budget_counter_increments: check_anon_usage increments
@@ -329,9 +370,24 @@ _anon_budget_layer2_enforce() {
       ;;
   esac
 
-  # See _anon_budget_layer2_shadow for why this trap must be armed
-  # immediately after a successful seed and before the real request.
-  trap '_anon_budget_reset "$ip_hash"' RETURN
+  # See _anon_budget_layer2_shadow for why this is two sequential statements
+  # (assert, then always reset) rather than a `trap ... RETURN` -- a RETURN
+  # trap set here would fire again on every enclosing caller's own return,
+  # each one a real extra adjust_anon_usage(ip_hash, -1) against prod.
+  local rc
+  _anon_budget_layer2_enforce_assert "$ip_hash" "$t0" "$url"
+  rc=$?
+  _anon_budget_reset "$ip_hash"
+  return "$rc"
+}
+
+# _anon_budget_layer2_enforce_assert -- the actual request + assertion, split
+# out of _anon_budget_layer2_enforce for the same reset-exactly-once reason
+# _anon_budget_layer2_shadow_assert is split out. Not a check function in its
+# own right -- never registered in surfaces.json.
+_anon_budget_layer2_enforce_assert() {
+  local ip_hash="$1" t0="$2" url="$3"
+  local ms
 
   # Deliberately NOT with_retry -- see _anon_budget_layer2_shadow's identical
   # note. A phantom second real request here would still land as a genuine
