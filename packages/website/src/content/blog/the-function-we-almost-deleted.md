@@ -1,6 +1,6 @@
 ---
 title: "The Function We Almost Deleted"
-description: "We built a dead-code scanner for our own codebase, ran it for real, and it flagged a function that was actually load-bearing. Here's the near-miss, the root cause, and why the tool is now open source."
+description: "We built a dead-code scanner for our own codebase, ran it for real, and it flagged a function that was actually load-bearing. Here's the near-miss, the root cause, and why we spun the tool out as its own MIT-licensed repo."
 author: "Ryan Smith"
 date: 2026-08-14
 updated: 2026-08-15
@@ -86,12 +86,12 @@ $ skillsmith publish --check-references \
 
   References in SKILL.md:
     L4: Skillsmith (Custom pattern)
-    L82: SMI-5447 (Custom pattern)
+    L82: SMI-XXXX (Custom pattern)
     L34: packages/cli (Custom pattern)
     ...
 
   References in patterns/README.md:
-    L24: SMI-5879 (Custom pattern)
+    L24: SMI-XXXX (Custom pattern)
     ...
 
   ⚠️  Found 30 project-specific reference(s) across 2 file(s)
@@ -115,4 +115,4 @@ After genericizing the package names, stripping the issue-tracker numbers, and r
 - **"Safe to delete" from a tool is a candidate, not a verdict.** A second, independent verification pass against the full codebase caught two false positives in this run's very first outing, one of them a security-relevant validation check.
 - **Both false positives traced back to one root cause**: a test-coverage check blind to half our test-file conventions. The tool now defends against it with a regression test.
 - **The real cleanup was small on purpose**: 4 functions, 98 lines, verified from three directions before deletion. Small and verifiably safe beats large and merely plausible.
-- **The tool is now open source.** [smith-horn/code-health-auditor](https://github.com/smith-horn/code-health-auditor) is public and installable. Preparing it surfaced 30 internal references across 2 files, all from custom patterns, so bring your own brand name and tracker prefix to `--check-references` before trusting a clean run.
+- **The tool now has its own MIT-licensed repo.** [smith-horn/code-health-auditor](https://github.com/smith-horn/code-health-auditor) is public and installable, separate from Skillsmith's own source-available license. Preparing it surfaced 30 internal references across 2 files, all from custom patterns, so bring your own brand name and tracker prefix to `--check-references` before trusting a clean run.
