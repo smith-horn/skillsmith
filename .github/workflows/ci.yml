@@ -584,7 +584,9 @@ jobs:
             scripts/smoke-prod/website.sh \
             scripts/smoke-prod/cli.sh \
             scripts/smoke-prod/mcp-server.sh \
-            scripts/smoke-prod/alert.sh
+            scripts/smoke-prod/alert.sh \
+            scripts/smoke-prod/anon-budget.sh \
+            scripts/smoke-prod/anon-budget.helpers.sh
 
       - name: Smoke - surfaces.json valid JSON
         run: |
