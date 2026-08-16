@@ -298,6 +298,14 @@
       ],
       "script": "scripts/smoke-prod/registry-health.sh",
       "checks": ["check_private_registry_get_requires_jwt"]
+    },
+    {
+      "id": "anon-key-budget",
+      "owner": "always-on-canary",
+      "trigger_globs": [],
+      "always_run": true,
+      "script": "scripts/smoke-prod/anon-budget.sh",
+      "checks": ["check_anon_budget_counter_increments", "check_anon_budget_identity_derivation"]
     }
   ]
 }
