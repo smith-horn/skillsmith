@@ -814,39 +814,68 @@ describe('core <-> edge sensitive_path/typosquat weight, coefficient, and co-sig
     expect(edge.CATEGORY_COEFFICIENTS.typosquat).toBe(0.04)
   })
 
-  // CODE_EXECUTION_CO_OCCURRENCE is a module-private `const Set` on both sides
-  // (not exported), so pull its literal contents directly out of source text
-  // rather than importing it. Deliberately an EQUALITY assertion, not the
+  // SMI-6033 Wave 4 (Gap 6): the flat `CODE_EXECUTION_CO_OCCURRENCE` Set this
+  // block used to pin was replaced by the per-type `CO_SIGNAL_MIN_SEVERITY`
+  // map. It is a module-private `const` on both sides (not exported), so pull
+  // its literal contents directly out of source text rather than importing it.
+  // Deliberately an EQUALITY assertion over BOTH keys and values, not the
   // superset pattern used above for PATTERNS arrays — the plan calls this out
-  // explicitly: an edge-only entry beyond core's set would silently widen the
-  // prod escalation gate beyond what core does, which is its own bug class.
-  function extractCoOccurrenceSet(filePath: string): Set<string> {
+  // explicitly ("equality (not superset) for the new CO_SIGNAL_MIN_SEVERITY
+  // map"): an edge-only entry, or a lower minimum severity on one side, would
+  // silently widen the prod escalation gate beyond what core does, which is
+  // its own bug class.
+  function extractCoSignalMinSeverity(filePath: string): Record<string, string> {
     const source = readFileSync(filePath, 'utf-8')
     const m = source.match(
-      /CODE_EXECUTION_CO_OCCURRENCE:\s*ReadonlySet<[^>]*>\s*=\s*new Set(?:<[^>]*>)?\(\s*\[([\s\S]*?)\]\s*\)/
+      /CO_SIGNAL_MIN_SEVERITY:\s*Partial<Record<[^>]*>>\s*=\s*\{([\s\S]*?)\n\}/
     )
-    if (!m) throw new Error(`CODE_EXECUTION_CO_OCCURRENCE literal not found in ${filePath}`)
-    const names = new Set<string>()
-    const strRe = /'([^']+)'/g
+    if (!m) throw new Error(`CO_SIGNAL_MIN_SEVERITY literal not found in ${filePath}`)
+    const entries: Record<string, string> = {}
+    const entryRe = /^\s*([a-z_]+):\s*'([a-z]+)',/gm
     let sm: RegExpExecArray | null
-    while ((sm = strRe.exec(m[1])) !== null) names.add(sm[1])
-    return names
+    while ((sm = entryRe.exec(m[1])) !== null) entries[sm[1]] = sm[2]
+    if (Object.keys(entries).length === 0) {
+      throw new Error(
+        `CO_SIGNAL_MIN_SEVERITY in ${filePath} parsed to zero entries — the entry-extraction regex has drifted from the real shape, fix it before trusting this test`
+      )
+    }
+    return entries
   }
 
-  it('edge CODE_EXECUTION_CO_OCCURRENCE equals core CODE_EXECUTION_CO_OCCURRENCE, including sensitive_path (SMI-5880/SMI-6033)', () => {
-    const coreSet = extractCoOccurrenceSet(CORE_SCANNER_EXEC)
-    const edgeSet = extractCoOccurrenceSet(NODE_SCANNER_EXEC)
-    expect(coreSet.has('sensitive_path'), 'core co-signal set must include sensitive_path').toBe(
-      true
-    )
+  it('edge CO_SIGNAL_MIN_SEVERITY equals core CO_SIGNAL_MIN_SEVERITY — same keys AND same minimum severities (SMI-5880/SMI-6033 Wave 4)', () => {
+    const coreMap = extractCoSignalMinSeverity(CORE_SCANNER_EXEC)
+    const edgeMap = extractCoSignalMinSeverity(NODE_SCANNER_EXEC)
+
+    // The four pre-existing high-tier co-signals must keep their 'high'
+    // minimum on both sides — this is what makes path (a) byte-identical to
+    // the pre-Wave-4 behavior (sensitive_path pinned explicitly: SMI-6033
+    // Wave 1 fixed it being absent from edge entirely — Context drift #1).
+    for (const t of [
+      'data_exfiltration',
+      'privilege_escalation',
+      'sensitive_path',
+      'obfuscated_directive',
+    ]) {
+      expect(coreMap[t], `core ${t} minimum severity`).toBe('high')
+      expect(edgeMap[t], `edge ${t} minimum severity has drifted from core`).toBe('high')
+    }
+    // The four Wave 2/4 advisory categories must be 'medium' on both sides —
+    // promoting any of them to 'high' would make a single fuzzy heuristic
+    // finding escalate on its own, which Gap 6 explicitly forbids.
+    for (const t of [
+      'decoy_misdirection',
+      'archive_evasion',
+      'paste_host_fetch',
+      'gatekeeper_bypass',
+    ]) {
+      expect(coreMap[t], `core ${t} minimum severity`).toBe('medium')
+      expect(edgeMap[t], `edge ${t} minimum severity has drifted from core`).toBe('medium')
+    }
+
     expect(
-      edgeSet.has('sensitive_path'),
-      'edge co-signal set must include sensitive_path (SMI-6033 Wave 1 fix — Context drift #1)'
-    ).toBe(true)
-    expect(
-      Array.from(edgeSet).sort(),
-      'edge CODE_EXECUTION_CO_OCCURRENCE must be EQUAL to core, not merely a superset — an edge-only extra entry would silently widen prod escalation beyond core'
-    ).toEqual(Array.from(coreSet).sort())
+      edgeMap,
+      'edge CO_SIGNAL_MIN_SEVERITY must be EQUAL to core (same keys, same values), not merely a superset — an edge-only extra entry or a lower minimum on one side would silently widen prod escalation beyond core'
+    ).toEqual(coreMap)
   })
 })
 

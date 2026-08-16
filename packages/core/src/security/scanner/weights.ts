@@ -87,4 +87,13 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // (rounds to ~1); a saturated breakdown (capped at 100) contributes 4 —
   // comfortably under the riskThreshold: 40 quarantine cutoff on its own.
   encoded_payload: 1.2,
+  // SMI-6033 Wave 4 (Gap 6): same advisory tier as typosquat/encoded_payload/
+  // sensitive_path (1.2/0.04) — NOT the 2.0/0.40 top tier gatekeeper_bypass/
+  // archive_evasion/paste_host_fetch use, since this finding type must never
+  // be standalone-critical (plan §9: "N/A — never standalone... Approximate
+  // NL heuristic by construction; co-signal required"). A single medium,
+  // high-confidence finding scores 15 * 1.2 * 1.0 = 18 -> * 0.04 = 0.72
+  // (rounds to ~1); a saturated breakdown (capped at 100) contributes 4 —
+  // comfortably under the riskThreshold: 40 quarantine cutoff on its own.
+  decoy_misdirection: 1.2,
 }

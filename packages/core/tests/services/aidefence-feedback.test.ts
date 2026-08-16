@@ -32,6 +32,7 @@ function makeScanReport(overrides?: Partial<ScanReport>): ScanReport {
       archiveEvasion: 0,
       pasteHostFetch: 0,
       encodedPayload: 0,
+      decoyMisdirection: 0,
     },
     passed: true,
     scannedAt: new Date(),

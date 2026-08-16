@@ -13,6 +13,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   (`gatekeeperBypass`, `archiveEvasion`, `pasteHostFetch`, `encodedPayload`) — a real,
   pre-existing typecheck gap only a genuinely full, cross-package `tsc --build` surfaces, not a
   scoped single-package run (SMI-6033 Wave 3)
+- **Fix**: `ZERO_BREAKDOWN` test fixtures in `src/audit` predated SMI-6033 Wave 4's new
+  `decoyMisdirection` `RiskScoreBreakdown` field — the same class of gap as above, only a
+  genuinely full cross-package `tsc --build` surfaces it (SMI-6033 Wave 4)
 
 ## v0.7.9
 

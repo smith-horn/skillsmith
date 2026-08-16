@@ -8,9 +8,14 @@
  * top-tier attack classes the core scanner now does (merged core 4.2, ac56767f):
  *
  *  • code_execution     — a skill instructing a remote fetch piped into an
- *    interpreter (curl|bash and friends). ONE medium finding on its own (score
- *    12, sub-threshold); escalated to critical (score 40, quarantines) only when
- *    it co-occurs with a NON-documentation exfil / privilege / obfuscation signal.
+ *    interpreter (curl|bash and friends), or — SMI-6033 Wave 4, Gap 1 — the
+ *    same instruction as free-text prose with no shell syntax
+ *    (IMPERATIVE_FETCH_EXEC_PROSE, security-scanner-edge.patterns.ts). ONE
+ *    medium finding on its own (score 12, sub-threshold); escalated to
+ *    critical (score 40, quarantines) only when it co-occurs with a
+ *    NON-documentation exfil / privilege / obfuscation signal, OR — SMI-6033
+ *    Wave 4, Gap 6 — with TWO DISTINCT high-confidence advisory-tier signals
+ *    (CO_SIGNAL_MIN_SEVERITY below).
  *  • obfuscated_directive — a verb+object directive concealed with zero-width /
  *    bidi / tag-block / combining chars or homoglyphs (Cyrillic, Greek,
  *    fullwidth-Latin, Mathematical-Alphanumeric) and revealed only after
@@ -25,13 +30,18 @@
 import type {
   SecurityFinding,
   SecurityFindingType,
+  SecuritySeverity,
   LineContext,
 } from './security-scanner-edge.context.ts'
 import { isDocumentationContext } from './security-scanner-edge.context.ts'
 // SMI-6033 Wave 1: CODE_EXECUTION_PATTERNS moved to the patterns sibling (single
 // source of truth — this file previously re-declared the identical array inline
 // instead of importing it, so an edit to one copy silently didn't apply to the other).
-import { CODE_EXECUTION_PATTERNS } from './security-scanner-edge.patterns.ts'
+// SMI-6033 Wave 4 (Gap 1): IMPERATIVE_FETCH_EXEC_PROSE joins it there.
+import {
+  CODE_EXECUTION_PATTERNS,
+  IMPERATIVE_FETCH_EXEC_PROSE,
+} from './security-scanner-edge.patterns.ts'
 
 // ReDoS protection: maximum line length for regex matching (mirrors scanner).
 const MAX_LINE_LENGTH = 10000
@@ -47,26 +57,55 @@ function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null 
 
 /**
  * code_execution: single-emission — at most one MEDIUM finding per skill (first
- * match). escalateCodeExecution() promotes it to CRITICAL on co-occurrence.
+ * match, in line order), from EITHER literal shell syntax
+ * (CODE_EXECUTION_PATTERNS) or — SMI-6033 Wave 4, Gap 1 — a natural-language
+ * fetch-and-execute imperative with no shell syntax at all
+ * (IMPERATIVE_FETCH_EXEC_PROSE). escalateCodeExecution() promotes it to
+ * CRITICAL on co-occurrence.
+ *
+ * Ordering is line-major (each line tested against the literal-syntax set
+ * first, then the prose set, before moving on), so a document containing only
+ * literal-syntax matches produces byte-identical output to the pre-Gap-1
+ * detector. The message names which set fired.
  */
 export function scanCodeExecution(lines: string[], contexts: LineContext[]): SecurityFinding[] {
+  const emit = (
+    index: number,
+    line: string,
+    matched: string,
+    prefix: string
+  ): SecurityFinding[] => {
+    const ctx = contexts[index]
+    const inDocContext = ctx ? isDocumentationContext(ctx) : false
+    return [
+      {
+        type: 'code_execution',
+        severity: 'medium',
+        message: `${prefix}: "${matched.slice(0, 60)}"`,
+        lineNumber: index + 1,
+        location: line.trim().slice(0, 100),
+        inDocumentationContext: inDocContext,
+        confidence: 'high',
+      },
+    ]
+  }
+
   for (const [index, line] of lines.entries()) {
     for (const pattern of CODE_EXECUTION_PATTERNS) {
       const match = safeRegexTest(pattern, line)
+      if (match) return emit(index, line, match[0], 'Remote fetch piped to an interpreter')
+    }
+    // SMI-6033 Wave 4 (Gap 1): same finding type, same medium/advisory tier —
+    // only the evidence shape differs (free-text imperative, no shell syntax).
+    for (const pattern of IMPERATIVE_FETCH_EXEC_PROSE) {
+      const match = safeRegexTest(pattern, line)
       if (match) {
-        const ctx = contexts[index]
-        const inDocContext = ctx ? isDocumentationContext(ctx) : false
-        return [
-          {
-            type: 'code_execution',
-            severity: 'medium',
-            message: `Remote fetch piped to an interpreter: "${match[0].slice(0, 60)}"`,
-            lineNumber: index + 1,
-            location: line.trim().slice(0, 100),
-            inDocumentationContext: inDocContext,
-            confidence: 'high',
-          },
-        ]
+        return emit(
+          index,
+          line,
+          match[0],
+          'Natural-language instruction to fetch a remote file and execute it'
+        )
       }
     }
   }
@@ -207,9 +246,34 @@ export function scanObfuscatedDirective(lines: string[]): SecurityFinding[] {
 // Co-occurrence escalation
 // ============================================================================
 
-const CODE_EXECUTION_CO_OCCURRENCE: ReadonlySet<SecurityFindingType> = new Set<SecurityFindingType>(
-  ['data_exfiltration', 'privilege_escalation', 'sensitive_path', 'obfuscated_directive']
-)
+/**
+ * SMI-6033 Wave 4 (Gap 6): per-type MINIMUM co-signal severity, replacing the
+ * flat `CODE_EXECUTION_CO_OCCURRENCE` set. Equality-parity-pinned against
+ * core's own map (packages/core/src/security/scanner/SecurityScanner.exec.ts)
+ * — identical keys AND identical values, not a superset; see
+ * scripts/tests/indexer/security-scanner-edge.co-signal-escalation.test.ts.
+ *
+ * A `'high'` minimum means "one such co-signal escalates on its own" (path a
+ * below — byte-identical to today for the original four types). A `'medium'`
+ * minimum means "advisory tier: never sufficient alone, but two DISTINCT such
+ * types together escalate" (path b). A type absent from this map is not a
+ * co-signal at all.
+ */
+const CO_SIGNAL_MIN_SEVERITY: Partial<Record<SecurityFindingType, SecuritySeverity>> = {
+  // Existing four — behavior byte-identical to today, min 'high'.
+  data_exfiltration: 'high',
+  privilege_escalation: 'high',
+  sensitive_path: 'high',
+  obfuscated_directive: 'high',
+  // New ClawHavoc advisory-tier categories — eligible at 'medium'.
+  decoy_misdirection: 'medium',
+  archive_evasion: 'medium',
+  paste_host_fetch: 'medium',
+  gatekeeper_bypass: 'medium', // its correlated/critical form already quarantines on its own
+}
+
+/** Ordinal ranking so "at or above its type's minimum" is a single comparison. */
+const SEVERITY_RANK: Record<SecuritySeverity, number> = { low: 0, medium: 1, high: 2, critical: 3 }
 
 /**
  * Maximum line distance between the `code_execution` finding and the co-signal
@@ -225,7 +289,7 @@ const MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE = 40
  * Locality gate for `escalateCodeExecution`. Fail-CLOSED on missing metadata:
  * when either side has no `lineNumber` the distance is unknowable, and this
  * subsystem's convention is that missing metadata must never SILENTLY weaken
- * detection. Every emitter of the four CODE_EXECUTION_CO_OCCURRENCE types sets
+ * detection. Every emitter of the eight CO_SIGNAL_MIN_SEVERITY types sets
  * `lineNumber` unconditionally, so this branch is unreachable through
  * scanSkillContent today — kept explicit so a future detector that forgets
  * `lineNumber` degrades safe instead of silently ceasing to escalate.
@@ -236,27 +300,111 @@ function isWithinCoSignalWindow(codeExecLine?: number, coSignalLine?: number): b
 }
 
 /**
- * Escalate the code_execution finding to CRITICAL when a NON-documentation
- * high/critical exfil / privilege / credential-path / obfuscation signal is
- * also present WITHIN MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE lines. Mutates
- * in place. The non-doc gate keeps legitimate security-research skills (examples
- * in fenced blocks) at MEDIUM.
+ * Escalate the code_execution finding (literal `curl|bash` syntax OR a Gap-1
+ * IMPERATIVE_FETCH_EXEC_PROSE match — same finding type either way) to
+ * CRITICAL, on either of two paths. Both require: the code_execution finding
+ * ITSELF to be non-documentation (see the adversarial-review fix note
+ * below), the co-signal to be NON-documentation, and the co-signal to be
+ * WITHIN MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE lines. Mutates in place.
+ *
+ * Path (a) — ONE co-signal whose type's CO_SIGNAL_MIN_SEVERITY minimum is
+ * `'high'`, at `high` or `critical`. Byte-identical to the pre-SMI-6033
+ * behavior for the original four types EXCEPT for the codeExec-own-doc-context
+ * fix below (the pre-existing behavior there was a real gap, not an
+ * intentional design): same co-signal membership test, same severity test,
+ * same locality gate, same message. Deliberately NO confidence requirement on
+ * the CO-SIGNAL here — adding one would change existing behavior, which the
+ * Gap 6 design explicitly forbids.
+ *
+ * Path (b) — SMI-6033 Wave 4 (Gap 6), only evaluated when path (a) did not
+ * fire: at least TWO DISTINCT `'medium'`-minimum types (two findings of the
+ * SAME type do not count), each at or above its own minimum. A single fuzzy
+ * medium signal (one decoy mismatch alone, one transfer.sh link alone) can
+ * therefore never flip a legitimate vendor `curl|bash` to critical.
+ *
+ * Confidence requirement (revised after adversarial review, 2026-08-16 — see
+ * docs/internal/code_review/2026-08-15-smi6033-wave4-escalation-model.md for
+ * the full account): the plan's literal text requires confidence:'high' on
+ * both path-(b) co-signals. An earlier revision of this file relaxed that to
+ * `confidence !== 'low'` GLOBALLY, reasoning that scanPasteHostFetch's
+ * ANON/TRANSIENT medium form is ALWAYS confidence:'medium' by construction
+ * and would otherwise be permanently unable to satisfy path (b) despite
+ * being a registered-eligible type. That reasoning was correct for
+ * paste_host_fetch specifically, but the GLOBAL relaxation was wrong: it
+ * also admitted scanArchiveEvasion's prose-only co-occurrence sub-signal
+ * (explicitly documented as "the fuzzy, FP-prone case" and capped at
+ * confidence:'medium' for exactly that reason) and scanDecoyMisdirection's
+ * no-authority-affix form (also confidence:'medium') — an adversarial review
+ * constructed a working false-positive example combining exactly those two
+ * fuzzy medium-confidence signals with a real vendor curl|bash, and it
+ * escalated to a hard quarantine. Fixed by narrowing the confidence
+ * carve-out to ONLY paste_host_fetch (CO_SIGNAL_MEDIUM_CONFIDENCE_EXCEPTION
+ * below) — every other medium-minimum type reverts to requiring
+ * confidence:'high', matching the plan's literal text. gatekeeper_bypass
+ * loses nothing by this (its own detector always emits confidence:'high'
+ * regardless of severity); archive_evasion and decoy_misdirection now only
+ * participate via their own higher-confidence forms, which is exactly the
+ * "not noise" signal path (b) was meant to require. Byte-identical to core's
+ * SecurityScanner.exec.ts — see that file for the same rationale.
+ *
+ * codeExec-own-doc-context fix (same adversarial review): neither path
+ * previously checked codeExec.inDocumentationContext itself — only the
+ * CO-SIGNAL's doc-context was checked. A code_execution finding inside a
+ * fenced security-research example could therefore still be escalated by two
+ * genuine (non-doc) co-signals elsewhere in the document. This gap predates
+ * Wave 4 (path (a) had it too) but Wave 4's new path (b) co-signal types
+ * meaningfully widen how often it's reachable, so it's fixed here for both
+ * paths.
  */
+const CO_SIGNAL_MEDIUM_CONFIDENCE_EXCEPTION: ReadonlySet<SecurityFindingType> = new Set([
+  'paste_host_fetch',
+])
+
 export function escalateCodeExecution(findings: SecurityFinding[]): void {
   const codeExec = findings.find((f) => f.type === 'code_execution')
   if (!codeExec) return
+  if (codeExec.inDocumentationContext === true) return
 
-  const hasDangerousCoSignal = findings.some(
+  const eligible = findings.filter(
     (f) =>
       f !== codeExec &&
-      CODE_EXECUTION_CO_OCCURRENCE.has(f.type) &&
+      CO_SIGNAL_MIN_SEVERITY[f.type] !== undefined &&
       f.inDocumentationContext !== true &&
-      (f.severity === 'high' || f.severity === 'critical') &&
       isWithinCoSignalWindow(codeExec.lineNumber, f.lineNumber)
   )
 
+  // Path (a): one high-minimum co-signal at high/critical.
+  const hasDangerousCoSignal = eligible.some(
+    (f) =>
+      CO_SIGNAL_MIN_SEVERITY[f.type] === 'high' &&
+      (f.severity === 'high' || f.severity === 'critical')
+  )
   if (hasDangerousCoSignal) {
     codeExec.severity = 'critical'
     codeExec.message = `Remote fetch piped to an interpreter, co-occurring with exfiltration/privilege/credential signals — likely supply-chain execution. ${codeExec.message}`
+    return
+  }
+
+  // Path (b): two DISTINCT medium-minimum types, each confidence 'high' —
+  // except paste_host_fetch, whose medium form is always confidence:'medium'
+  // by construction (see this function's doc comment for the full rationale).
+  const advisoryTypes = new Set(
+    eligible
+      .filter((f) => {
+        const min = CO_SIGNAL_MIN_SEVERITY[f.type]
+        const confidenceOk = CO_SIGNAL_MEDIUM_CONFIDENCE_EXCEPTION.has(f.type)
+          ? f.confidence !== 'low'
+          : f.confidence === 'high'
+        return min === 'medium' && SEVERITY_RANK[f.severity] >= SEVERITY_RANK[min] && confidenceOk
+      })
+      .map((f) => f.type)
+  )
+  if (advisoryTypes.size >= 2) {
+    codeExec.severity = 'critical'
+    codeExec.message = `Remote fetch/execute instruction corroborated by two independent advisory-tier signals (${[
+      ...advisoryTypes,
+    ]
+      .sort()
+      .join(', ')}) — likely supply-chain execution. ${codeExec.message}`
   }
 }

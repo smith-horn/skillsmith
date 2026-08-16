@@ -6,7 +6,7 @@
  */
 
 import type { ScanReport } from '../../security/index.js'
-import { calculateRiskScore } from '../../security/scanner/SecurityScanner.helpers.js'
+import { calculateRiskScore } from '../../security/scanner/SecurityScanner.risk-score.js'
 import type { AllowlistMatcher } from './types.js'
 
 /**

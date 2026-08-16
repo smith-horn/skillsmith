@@ -40,6 +40,8 @@ export type SecurityFindingType =
   | 'paste_host_fetch'
   // SMI-6033 Wave 2 (Gap 2): base64-encoded blob decoded and recursively rescanned.
   | 'encoded_payload'
+  // SMI-6033 Wave 4 (Gap 6): fetch target's domain doesn't match a brand/authority claim made nearby in the skill's own prose.
+  | 'decoy_misdirection'
 
 /**
  * Severity levels for findings
@@ -152,6 +154,12 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // from the decoded content's OWN findings (e.g. a decoded `curl|bash`
   // natively trips code_execution at ITS OWN top-tier weight).
   encoded_payload: 1.2,
+  // SMI-6033 Wave 4 (Gap 6): byte-identical to core weights.ts
+  // CATEGORY_WEIGHTS.decoy_misdirection — same advisory tier as
+  // sensitive_path/typosquat/encoded_payload (1.2), NOT the 2.0 tier every
+  // other Wave 2/3 category above uses, since this finding type must never
+  // be standalone-critical.
+  decoy_misdirection: 1.2,
 }
 
 /**
@@ -188,6 +196,10 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   // advisory-tier coefficient, byte-identical to core
   // SecurityScanner.helpers.ts's paired coefficient for encoded_payload.
   encoded_payload: 0.04,
+  // SMI-6033 Wave 4 (Gap 6): additive 0.04 — the sensitive_path/typosquat/
+  // encoded_payload advisory-tier coefficient, byte-identical to core
+  // SecurityScanner.helpers.ts's paired coefficient for decoy_misdirection.
+  decoy_misdirection: 0.04,
 }
 
 /**
@@ -405,6 +417,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): number {
     archive_evasion: 0,
     paste_host_fetch: 0,
     encoded_payload: 0,
+    decoy_misdirection: 0,
   }
 
   for (const finding of findings) {

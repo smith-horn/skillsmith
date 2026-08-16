@@ -39,6 +39,7 @@ export const ZERO_BREAKDOWN: ScanReport['riskBreakdown'] = {
   archiveEvasion: 0,
   pasteHostFetch: 0,
   encodedPayload: 0,
+  decoyMisdirection: 0,
 }
 
 export function report(
