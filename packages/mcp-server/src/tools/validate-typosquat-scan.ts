@@ -13,11 +13,20 @@
  * enforcement mode, surfacing any finding as a `warning`-severity
  * `ValidationError` (never `error` — warn-tier, non-blocking, matching the
  * indexer-side wiring's enforcement mode).
+ *
+ * SMI-6033 Wave 1 (cross-model review follow-up): `skill_rescan` is the OTHER
+ * offline local-scan surface and had no typosquat check at all. Rather than
+ * duplicate the snapshot load + detector call there, this module now exports
+ * `detectTyposquatInName()` (raw `SecurityFinding[]`, the scanner-native shape
+ * `skill_rescan` already works in) alongside `scanTyposquatName()` (the
+ * `ValidationError` shape `skill_validate` needs). One snapshot, one cache,
+ * one detector invocation policy for both tools.
  */
 import { readFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { detectTyposquat, resolveTyposquatEnforcementMode } from '@skillsmith/core/security/scanner'
+import type { SecurityFinding } from '@skillsmith/core'
 import type { ValidationError } from './validate.types.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -40,7 +49,23 @@ function getAssetsDir(): string {
   return fromDistPath
 }
 
-const SNAPSHOT_PATH = join(getAssetsDir(), 'typosquat-reference-snapshot.json')
+/**
+ * Snapshot location. `SKILLSMITH_TYPOSQUAT_SNAPSHOT_PATH` is a TEST-ONLY
+ * override seam (the repo's `SKILLSMITH_*` test-seam convention).
+ *
+ * It exists because the alternative — a test that backs up, overwrites, and
+ * restores the real checked-in asset in place — is genuinely unsafe: any
+ * parallel reader (e.g. `typosquat-reference-snapshot.test.ts`, running in a
+ * sibling vitest worker) can observe a half-written file, and a run killed
+ * mid-test leaves the repo holding a truncated or EMPTY snapshot. An empty
+ * snapshot silently disables both offline typosquat checks, which is the exact
+ * SMI-6033 bug — so a test harness must never be able to create one.
+ *
+ * Unset in production; `getAssetsDir()` resolves the bundled asset as before.
+ */
+const SNAPSHOT_PATH =
+  process.env.SKILLSMITH_TYPOSQUAT_SNAPSHOT_PATH ||
+  join(getAssetsDir(), 'typosquat-reference-snapshot.json')
 
 interface TyposquatReferenceSnapshot {
   generatedAt: string | null
@@ -74,6 +99,27 @@ function loadReferenceNames(): ReadonlySet<string> {
 }
 
 /**
+ * Scan a skill's declared name against the bundled reference snapshot and
+ * return the RAW scanner findings (warn mode — severity capped at medium, so
+ * these are advisory and never on their own scan-failing / install-blocking).
+ *
+ * This is the shape `skill_rescan` consumes (it already works in
+ * `SecurityFinding[]`); `scanTyposquatName()` below adapts the same findings
+ * into `skill_validate`'s `ValidationError` shape. Returns `[]` when the name
+ * is blank or the snapshot has no names — never throws.
+ *
+ * @param skillName the skill's own declared name (SKILL.md frontmatter `name`)
+ */
+export function detectTyposquatInName(skillName: string | undefined): SecurityFinding[] {
+  if (!skillName || !skillName.trim()) return []
+
+  const referenceNames = loadReferenceNames()
+  if (referenceNames.size === 0) return []
+
+  return detectTyposquat(skillName, referenceNames, resolveTyposquatEnforcementMode('warn'))
+}
+
+/**
  * Scan a skill's declared name (from its SKILL.md frontmatter) against the
  * bundled typosquat reference snapshot, returning a `warning`-severity
  * ValidationError per finding. No-op (returns []) when the snapshot has no
@@ -82,18 +128,7 @@ function loadReferenceNames(): ReadonlySet<string> {
  * @param skillName the skill's own declared name (SKILL.md frontmatter `name`)
  */
 export function scanTyposquatName(skillName: string | undefined): ValidationError[] {
-  if (!skillName || !skillName.trim()) return []
-
-  const referenceNames = loadReferenceNames()
-  if (referenceNames.size === 0) return []
-
-  const findings = detectTyposquat(
-    skillName,
-    referenceNames,
-    resolveTyposquatEnforcementMode('warn')
-  )
-
-  return findings.map((finding) => ({
+  return detectTyposquatInName(skillName).map((finding) => ({
     field: 'name',
     message:
       `Possible typosquat: ${finding.message} ` +

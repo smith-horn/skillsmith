@@ -34,6 +34,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { HIGH_TRUST_AUTHORS } from './high-trust-authors.ts'
+import type { SkillMdValidationOptions } from './skill-processor.helpers.ts'
 import { batchedIn } from './batch-utils.ts'
 import {
   buildTyposquatReferenceList,
@@ -109,4 +110,53 @@ export async function fetchTyposquatReferenceSet(
     installedSkills,
     topInstalledLimit: TOP_STARRED_REFERENCE_LIMIT,
   })
+}
+
+/**
+ * Fail-soft wrapper around `fetchTyposquatReferenceSet` for run entrypoints.
+ * Call ONCE per run; returns `undefined` (⇒ no typosquat check) instead of
+ * throwing.
+ *
+ * Deliberately fail-soft: typosquat is warn-tier/advisory (SMI-595 `warn` mode
+ * caps severity at medium and it can never quarantine alone — see the plan's
+ * §9 reconciliation table), so a reference-list query failure must degrade to
+ * "no typosquat findings" rather than abort an otherwise-healthy indexer run
+ * whose primary job is discovery and quarantine of real threats.
+ */
+export async function fetchTyposquatReferenceSetSafe(
+  supabase: SupabaseClient,
+  label = 'run'
+): Promise<ReadonlySet<string> | undefined> {
+  try {
+    const names = await fetchTyposquatReferenceSet(supabase)
+    console.log(`[Typosquat] reference set built: ${names.size} names (once per ${label})`)
+    return names
+  } catch (err) {
+    console.warn(
+      `[Typosquat] reference-set build failed — continuing without the typosquat check: ${
+        err instanceof Error ? err.message : 'Unknown'
+      }`
+    )
+    return undefined
+  }
+}
+
+/**
+ * Merge a run-scoped typosquat reference set into the discovery
+ * `validationOptions` bag, in ONE call at the top of a run.
+ *
+ * This is the single seam that makes the detector actually execute: the scan
+ * happens inside `validateSkillMd` -> `scanSkillBundle`, reached from every
+ * discovery phase via `checkSkillMdExists`, and all of them forward this same
+ * options object. (`runUpsertPhase` only reads the already-populated
+ * `validationCache`, so wiring typosquat there would never have run it.)
+ *
+ * Fail-soft via `fetchTyposquatReferenceSetSafe` — a failed reference-list
+ * query yields `undefined` (⇒ no typosquat check), never a thrown run.
+ */
+export async function withTyposquatReferenceNames(
+  supabase: SupabaseClient,
+  base: SkillMdValidationOptions
+): Promise<SkillMdValidationOptions> {
+  return { ...base, typosquatReferenceNames: await fetchTyposquatReferenceSetSafe(supabase) }
 }

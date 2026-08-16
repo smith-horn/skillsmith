@@ -24,13 +24,14 @@ import {
   type TokenBucket,
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
-import { type SkillMdValidation } from './skill-processor.ts'
+import { type SkillMdValidation, type SkillMdValidationOptions } from './skill-processor.ts'
 import {
   runSubdirectorySearchPhase,
   buildDisabledSubdirectorySearchMarker,
   type BackfillFacetPlan,
 } from './subdirectory-search.ts'
 import { runCategorization, runCodeSearch, runUpsertPhase } from './indexer-runners.ts'
+import { withTyposquatReferenceNames } from './typosquat-reference.ts'
 import { applyTreeHashTouches, type TreeHashTouchEntry } from './tree-hash-touch.ts'
 import type { RotationSource } from './topic-rotation.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
@@ -65,7 +66,7 @@ export interface RunDiscoveryParams {
   maxTopicRepos: number
   codeSearchMaxPages: number
   dryRun: boolean
-  validationOptions: { strictValidation: boolean; minContentLength: number }
+  validationOptions: SkillMdValidationOptions
   validationCache: Map<string, SkillMdValidation>
   /**
    * SMI-4846: Singleton token bucket pacing GitHub Search API (30 rpm).
@@ -155,7 +156,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     maxTopicRepos,
     codeSearchMaxPages,
     dryRun,
-    validationOptions,
+    validationOptions: baseValidationOptions,
     validationCache,
     searchApiTokenBucket,
     existingRepoUpdatedAt,
@@ -189,6 +190,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   void params.codeSearchTokenBucket
 
   const result: IndexerResult = buildInitialDiscoveryResult(dryRun)
+  const validationOptions = await withTyposquatReferenceNames(supabase, baseValidationOptions)
 
   const seenUrls = new Set<string>()
   const repositories: GitHubRepository[] = []

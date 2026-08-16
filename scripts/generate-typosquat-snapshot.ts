@@ -7,12 +7,15 @@
  * `skill_validate` is fully offline by design (no network/DB import — see
  * `validate.ts`'s header) and stays that way; an edge-function cron can't
  * write into an already-published npm package, so this is a release-time
- * generator instead of a live query. Regeneration is intended to become a
- * step in the release-prep checklist (`scripts/prepare-release.ts`, weekly
- * per ADR-114) — days-to-weeks staleness is acceptable for a warn-tier,
- * medium-capped detector whose reference set churns slowly. That checklist
- * wiring is NOT done by this script — see the plan doc's Wave 1 step 8 and
- * this repo's `docs/internal/process/` conventions for where that belongs.
+ * generator instead of a live query. Regeneration is a step in the release-prep
+ * flow: `scripts/prepare-release.ts` Step 5.6 calls
+ * `ensureTyposquatSnapshot()` (`scripts/lib/release-typosquat-snapshot.ts`),
+ * which invokes `generateTyposquatSnapshot()` below when Supabase credentials
+ * are present and otherwise HARD-FAILS the release if the checked-in snapshot
+ * is empty or stale. Days-to-weeks staleness is acceptable for a warn-tier,
+ * medium-capped detector whose reference set churns slowly; a permanently
+ * EMPTY snapshot is not — that silently disabled the whole `skill_validate`
+ * typosquat check, which is exactly the failure this wiring exists to prevent.
  *
  * Runs the SAME query as the indexer's live reference-list builder
  * (`scripts/indexer/typosquat-reference.ts`) by calling that module's
@@ -65,16 +68,35 @@ export interface TyposquatReferenceSnapshot {
   names: string[]
 }
 
-async function main(): Promise<void> {
+/** Env var names the generator requires (surfaced in error messages/callers). */
+export const REQUIRED_ENV_VARS = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'] as const
+
+/** The canonical way to run this generator, quoted verbatim in error messages. */
+export const GENERATE_COMMAND = 'varlock run -- npx tsx scripts/generate-typosquat-snapshot.ts'
+
+/**
+ * Query the live reference set and write the checked-in snapshot.
+ *
+ * Exported (rather than living only in `main()`) so `prepare-release.ts` can
+ * regenerate in-process via `ensureTyposquatSnapshot()` instead of shelling
+ * out — see `scripts/lib/release-typosquat-snapshot.ts`.
+ *
+ * @throws when SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are absent, or the
+ *   query fails. Callers decide whether that is fatal.
+ */
+export async function generateTyposquatSnapshot(): Promise<{
+  path: string
+  count: number
+  generatedAt: string
+}> {
   const supabaseUrl = process.env.SUPABASE_URL
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
   if (!supabaseUrl || !serviceRoleKey) {
-    console.error(
-      'Missing required environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. ' +
-        'Run via: varlock run -- npx tsx scripts/generate-typosquat-snapshot.ts'
+    throw new Error(
+      `Missing required environment variables: ${REQUIRED_ENV_VARS.join(' and ')}. ` +
+        `Run via: ${GENERATE_COMMAND}`
     )
-    process.exit(1)
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -87,19 +109,39 @@ async function main(): Promise<void> {
   const referenceSet = await fetchTyposquatReferenceSet(supabase)
   const names = [...referenceSet].sort()
 
+  // Never overwrite a populated snapshot with an empty one: an empty `names`
+  // array makes `scanTyposquatName()` a permanent no-op, which is precisely
+  // the silent-disable bug this asset shipped with before SMI-6033. A query
+  // that legitimately returns nothing is indistinguishable here from one that
+  // silently degraded, so fail loudly rather than write the no-op.
+  if (names.length === 0) {
+    throw new Error(
+      'Reference-set query returned ZERO names — refusing to write an empty snapshot ' +
+        '(an empty snapshot silently disables the skill_validate typosquat check). ' +
+        'Check SUPABASE_URL points at prod and that `skills` has installable, non-quarantined rows.'
+    )
+  }
+
+  const generatedAt = new Date().toISOString()
   const snapshot: TyposquatReferenceSnapshot = {
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     source: 'skills.stars+high-trust',
     names,
   }
 
   writeFileSync(SNAPSHOT_PATH, JSON.stringify(snapshot, null, 2) + '\n', 'utf-8')
-  console.log(
-    `[generate-typosquat-snapshot] wrote ${names.length} reference names to ${SNAPSHOT_PATH}`
-  )
+  return { path: SNAPSHOT_PATH, count: names.length, generatedAt }
 }
 
-main().catch((error) => {
-  console.error('[generate-typosquat-snapshot] failed:', error)
-  process.exit(1)
-})
+async function main(): Promise<void> {
+  const { path, count } = await generateTyposquatSnapshot()
+  console.log(`[generate-typosquat-snapshot] wrote ${count} reference names to ${path}`)
+}
+
+// Run only when invoked directly (not when imported by prepare-release/tests).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error('[generate-typosquat-snapshot] failed:', error)
+    process.exit(1)
+  })
+}

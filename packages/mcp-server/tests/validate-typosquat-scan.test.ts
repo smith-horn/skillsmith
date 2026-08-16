@@ -11,16 +11,23 @@
  * vi.resetModules() + a fresh dynamic import to get an uncached module
  * instance, so tests can exercise different snapshot contents without
  * fighting that cache.
+ *
+ * SMI-6033 Wave 1 (cross-model review follow-up): these tests write their
+ * fixtures to a per-run TEMP DIRECTORY and point the module at it via the
+ * `SKILLSMITH_TYPOSQUAT_SNAPSHOT_PATH` test seam. They previously backed up,
+ * overwrote, and restored the REAL checked-in asset in place — which raced any
+ * parallel reader in a sibling vitest worker (observed: an "Unexpected end of
+ * JSON input" in typosquat-reference-snapshot.test.ts) and, worse, would leave
+ * a truncated or EMPTY snapshot in the repo if a run were killed mid-test. An
+ * empty snapshot silently disables the very check this suite covers.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { writeFileSync, existsSync, copyFileSync, unlinkSync } from 'fs'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { writeFileSync, existsSync, mkdtempSync, rmSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-const SNAPSHOT_PATH = join(__dirname, '..', 'src', 'assets', 'typosquat-reference-snapshot.json')
-const BACKUP_PATH = `${SNAPSHOT_PATH}.smi6033-test-backup`
+let tempDir: string
+let SNAPSHOT_PATH: string
 
 async function importFresh() {
   vi.resetModules()
@@ -29,17 +36,15 @@ async function importFresh() {
 }
 
 describe('scanTyposquatName (SMI-6033 Wave 1, Gap 7)', () => {
-  const hadOriginal = existsSync(SNAPSHOT_PATH)
-
   beforeEach(() => {
-    if (hadOriginal) copyFileSync(SNAPSHOT_PATH, BACKUP_PATH)
+    tempDir = mkdtempSync(join(tmpdir(), 'smi6033-typosquat-'))
+    SNAPSHOT_PATH = join(tempDir, 'typosquat-reference-snapshot.json')
+    process.env.SKILLSMITH_TYPOSQUAT_SNAPSHOT_PATH = SNAPSHOT_PATH
   })
 
   afterEach(() => {
-    if (hadOriginal) {
-      copyFileSync(BACKUP_PATH, SNAPSHOT_PATH)
-      unlinkSync(BACKUP_PATH)
-    }
+    delete process.env.SKILLSMITH_TYPOSQUAT_SNAPSHOT_PATH
+    rmSync(tempDir, { recursive: true, force: true })
   })
 
   function writeSnapshot(names: string[]): void {

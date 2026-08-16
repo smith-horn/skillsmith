@@ -52,7 +52,7 @@ import {
 } from './subdirectory-search.helpers.ts'
 import type { BackfillCrawlOutcome } from './backfill-checkpoint.ts'
 import type { GitHubRepository } from './topic-search.ts'
-import type { SkillMdValidation } from './skill-processor.ts'
+import type { SkillMdValidation, SkillMdValidationOptions } from './skill-processor.ts'
 import type { IndexerResult } from './indexer-types.ts'
 
 export type { BackfillFacetPlan } from './subdirectory-search.helpers.ts'
@@ -121,7 +121,7 @@ export const FALLBACK_PATH_PREFIXES = [
 export async function runSubdirectorySearch(
   seenUrls: Set<string>,
   validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
+  validationOptions: SkillMdValidationOptions,
   maxPages: number,
   telemetry: RateLimitTelemetry,
   backfillPlan?: BackfillFacetPlan
@@ -385,7 +385,7 @@ export function buildDisabledSubdirectorySearchMarker(
 export async function runSubdirectorySearchPhase(args: {
   seenUrls: Set<string>
   validationCache: Map<string, SkillMdValidation>
-  validationOptions: { strictValidation?: boolean; minContentLength?: number }
+  validationOptions: SkillMdValidationOptions
   codeSearchMaxPages: number
   telemetry: RateLimitTelemetry
   repositories: GitHubRepository[]

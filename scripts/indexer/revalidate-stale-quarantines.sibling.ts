@@ -71,6 +71,18 @@ export interface SiblingRescanResult {
  *
  * Fetches are sequential (BUNDLED_SCAN_FILES order). A transient error on an
  * early file aborts the entire rescan — intentionally fail-closed.
+ *
+ * SMI-6033 Wave 1 (Gap 7, cross-model review follow-up): `typosquatFindings`
+ * closes the recovery-side half of the quarantine/recovery symmetry SMI-5445
+ * C1 established. `mergeSiblingScans` is the SAME function that applied the
+ * original quarantine, and on the discovery path it now receives typosquat
+ * findings as `extraFindings` — so omitting them here would let a skill be
+ * scored on MORE evidence when quarantining than when recovering, i.e. a
+ * borderline skill could be cleared by a recheck against a strictly weaker
+ * signal set than the one that quarantined it. Callers build the array ONCE
+ * per sweep run (`buildTyposquatFindings`, `typosquat-findings.ts`, fed by a
+ * single `fetchTyposquatReferenceSet()` query) and pass it per row. Defaults
+ * to `[]`, so an omitted argument is byte-identical to the prior behaviour.
  */
 export async function runSiblingRescan(
   owner: string,
@@ -78,7 +90,8 @@ export async function runSiblingRescan(
   branch: string,
   skillPath: string,
   telemetry: RateLimitTelemetry,
-  rootScan?: EdgeScanResult
+  rootScan?: EdgeScanResult,
+  typosquatFindings: SecurityFinding[] = []
 ): Promise<SiblingRescanResult> {
   const targets = enumerateSiblingTargets(skillPath ?? '')
 
@@ -131,7 +144,7 @@ export async function runSiblingRescan(
       // score, so there is no reason to scan further. Break immediately to stop
       // fetching remaining siblings (protects the GitHub fetch budget). Report the
       // PARTIAL merged score over root + siblings fetched so far.
-      const merged = mergeSiblingScans(rootScan, fetchedSiblingScans)
+      const merged = mergeSiblingScans(rootScan, fetchedSiblingScans, typosquatFindings)
       console.warn(`[recheck-sibling] malicious sibling ${relPath} for ${owner}/${repo}`)
       return {
         status: 'malicious',
@@ -145,7 +158,9 @@ export async function runSiblingRescan(
   // SMI-5445 C1: no rejectable sibling was found — this is exactly the case C1
   // protects. Compute the collective merged score over root + ALL siblings using
   // the same mergeSiblingScans function that applied the original quarantine.
-  const merged = mergeSiblingScans(rootScan, fetchedSiblingScans)
+  // SMI-6033 Wave 1: including the same typosquat findings the quarantine-side
+  // merge sees — see this function's doc comment for the symmetry rationale.
+  const merged = mergeSiblingScans(rootScan, fetchedSiblingScans, typosquatFindings)
 
   // SMI-5445 C1: Gate (b) — collective merged score >= QUARANTINE_THRESHOLD (40).
   // merged.quarantine encodes (mergedScore >= QUARANTINE_THRESHOLD || siblingRejectable);

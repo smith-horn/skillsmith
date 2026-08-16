@@ -16,6 +16,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
 
 // ---------------------------------------------------------------------------
 // Phase 1 — pure argv/file parsing
@@ -289,4 +290,84 @@ export function reportIdSelectionIfPresent(
     apply
   )
   console.log(formatIdSelectionReport(reconciliation))
+}
+
+// ---------------------------------------------------------------------------
+// Sweep result types + end-of-run reporting
+// ---------------------------------------------------------------------------
+//
+// Extracted from revalidate-stale-quarantines.ts (SMI-6033 Wave 1) to keep that
+// file inside the 485-line round-7 budget asserted by
+// revalidate-stale-quarantines.ids.test.ts — exactly the "split more of the
+// id-selection/reconciliation logic into .cli.ts" remedy that test names. Pure
+// console output plus the transient-error throttle warning; no I/O, no writes.
+
+export interface RowResult {
+  row: StaleQuarantinedRow
+  outcome: StaleOutcome
+  score?: number
+}
+
+export interface SweepCounts {
+  total: number
+  cleared: number
+  liveTouched: number
+  keptSecurity: number
+  repoGone: number
+  parseFailed: number
+  fetchErrors: number
+  casSkipped: number
+  errors: number
+}
+
+/** Above this fraction of transient fetch errors the run is throttled; repo-gone counts unreliable. */
+export const MAX_FETCH_ERROR_RATE = 0.1
+
+/**
+ * Print the per-row KEEP/gone listings, the summary block, the transient-error
+ * throttle warning, and the dry-run reminder. Output text is byte-identical to
+ * the pre-extraction inline version.
+ */
+export function reportSweepSummary(
+  counts: SweepCounts,
+  keptRows: RowResult[],
+  goneRows: RowResult[],
+  apply: boolean
+): void {
+  if (keptRows.length > 0)
+    for (const r of keptRows)
+      console.log(`  KEEP   ${r.row.author}/${r.row.name} (score ${r.score})`)
+
+  if (goneRows.length > 0) {
+    console.log(`\nLeft quarantined — repo/SKILL.md unreachable:`)
+    for (const r of goneRows)
+      console.log(
+        `  * ${r.row.author}/${r.row.name} [${r.outcome}] ${r.row.repo_url ?? '(no url)'}`
+      )
+  }
+
+  const clearedLabel = apply ? 'cleared' : 'would-clear'
+  console.log(
+    `\n── Summary ──\n` +
+      `  total:           ${counts.total}\n` +
+      `  ${clearedLabel}:       ${counts.cleared}\n` +
+      `  live-touched:    ${counts.liveTouched}\n` +
+      `  kept-security:   ${counts.keptSecurity}\n` +
+      `  repo-gone:       ${counts.repoGone}\n` +
+      `  parse-failed:    ${counts.parseFailed}\n` +
+      `  fetch-error:     ${counts.fetchErrors}\n` +
+      `  cas-skipped:     ${counts.casSkipped}\n` +
+      `  errors:          ${counts.errors}\n`
+  )
+
+  // Throttle guard: transient errors never re-tag (safe), but a high rate means
+  // many rows were skipped and the repo-gone tally is incomplete — re-run later.
+  if (counts.total > 0 && counts.fetchErrors / counts.total > MAX_FETCH_ERROR_RATE) {
+    console.warn(
+      `\n⚠️  ${counts.fetchErrors}/${counts.total} rows hit transient fetch errors ` +
+        `(> ${MAX_FETCH_ERROR_RATE * 100}%). The run was likely throttled; ` +
+        `those rows were left untouched. Re-run when GitHub is not rate-limiting.`
+    )
+  }
+  if (!apply) console.log('Dry-run only — re-run with --apply to perform writes.\n')
 }

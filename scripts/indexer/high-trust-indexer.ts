@@ -39,6 +39,7 @@ import { type HighTrustAuthor, shouldExcludeSkill } from './high-trust-authors.t
 import type { GitHubRepository } from './topic-search.ts'
 import {
   type SkillMdValidation,
+  type SkillMdValidationOptions,
   checkSkillMdExists,
   getCachedValidation,
   sanitizeSkillName,
@@ -68,7 +69,7 @@ export type { TreeHashCache, TreeHashCacheCounters, TreeHashCacheEntry } from '.
 export async function indexHighTrustRepository(
   author: HighTrustAuthor,
   validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number } = {},
+  validationOptions: SkillMdValidationOptions = {},
   telemetry: RateLimitTelemetry,
   // SMI-4861 Wave 1: cross-run tree-hash cache. Omitted = behavior unchanged.
   treeHashCache?: TreeHashCache,

@@ -35,7 +35,7 @@ import {
 } from '../high-trust-indexer.ts'
 import type { TreeHashTouchEntry } from '../tree-hash-touch.ts'
 import type { GitHubRepository } from '../topic-search.ts'
-import type { SkillMdValidation } from '../skill-processor.ts'
+import type { SkillMdValidation, SkillMdValidationOptions } from '../skill-processor.ts'
 
 export interface HighTrustPhaseResult {
   /** Repositories surfaced this phase, in HIGH_TRUST_AUTHORS deterministic order. */
@@ -53,7 +53,7 @@ export interface HighTrustPhaseResult {
 
 export interface HighTrustPhaseParams {
   validationCache: Map<string, SkillMdValidation>
-  validationOptions: { strictValidation: boolean; minContentLength: number }
+  validationOptions: SkillMdValidationOptions
   /** SMI-4852 Hard Rule 1: rate-limit telemetry threaded into the indexer. */
   telemetry: RateLimitTelemetry
   /**

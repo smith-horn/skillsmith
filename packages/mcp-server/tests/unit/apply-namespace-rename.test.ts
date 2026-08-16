@@ -457,9 +457,38 @@ describe('apply_namespace_rename — action: revert', () => {
 // SMI-5671: schema-drift guardrail
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve the underlying ZodObject shape regardless of how the INSTALLED Zod
+ * models `z.object(...).strict().superRefine(...)`.
+ *
+ * zod 3.x (what `packages/mcp-server` pins today — `zod@3.25.76`, and what
+ * `npm ci` therefore resolves in CI) wraps it in a `ZodEffects`, so the shape
+ * is reachable only via `.innerType()`. zod 4.x returns the `ZodObject`
+ * directly, where `.innerType()` does not exist and `.shape` does. The root
+ * workspace hoists `zod@4.2.1` while this package nests `3.25.76`, so which
+ * one a given tool resolves depends on the requiring file's directory (see
+ * CLAUDE.md's SMI-6006 note) — pinning this guardrail to either internal has
+ * now broken the build once in each direction. Probing for both keeps
+ * SMI-5671's actual invariant (JSON Schema enum === Zod enum) enforced across
+ * either resolution instead of turning a Zod bump into a build break.
+ */
+function resolveObjectShape(schema: unknown): { action: { options: readonly string[] } } {
+  const candidate = schema as {
+    shape?: { action: { options: readonly string[] } }
+    innerType?: () => { shape: { action: { options: readonly string[] } } }
+  }
+  if (candidate.shape) return candidate.shape
+  if (typeof candidate.innerType === 'function') return candidate.innerType().shape
+  throw new Error(
+    'Could not resolve the Zod object shape for applyNamespaceRenameInputSchema — ' +
+      'neither `.shape` nor `.innerType()` is present. Zod internals changed again; ' +
+      'update resolveObjectShape rather than deleting this guardrail.'
+  )
+}
+
 describe('apply_namespace_rename — schema drift guardrail', () => {
   it('keeps the hand-written JSON Schema action enum in sync with the Zod schema', () => {
-    const zodValues = applyNamespaceRenameInputSchema.shape.action.options
+    const zodValues = resolveObjectShape(applyNamespaceRenameInputSchema).action.options
     const jsonSchemaValues = applyNamespaceRenameToolSchema.inputSchema.properties.action.enum
     expect(new Set(jsonSchemaValues)).toEqual(new Set(zodValues))
     expect(jsonSchemaValues).toHaveLength(zodValues.length)
