@@ -115,12 +115,22 @@ check_anon_budget_counter_increments() {
   local url="${SMOKE_SUPABASE_URL}/functions/v1/skills-search"
   local t0 t1 ms resp1 resp2 status1 status2 used1 used2
 
+  # Deliberately NOT with_retry (same reasoning repeated at
+  # _anon_budget_layer2_shadow/_anon_budget_layer2_enforce's own
+  # _anon_budget_search_request call sites below): check_anon_usage
+  # increments non-idempotently on every call this makes, and this check's
+  # own assertion is an EXACT used2 == used1+1 delta -- a
+  # phantom retry (whether from a genuinely ambiguous "000" status or from
+  # with_retry's substring match false-firing on a "000" appearing anywhere
+  # in the response BODY, e.g. a `.000Z` millisecond-precision timestamp in
+  # a real skill row) would silently add an extra real increment neither
+  # side of the delta accounts for.
   t0=$(now_ms)
-  resp1=$(with_retry _anon_budget_search_request "$anon") || true
+  resp1=$(_anon_budget_search_request "$anon") || true
   status1=$(printf '%s' "$resp1" | sed -n '1p')
   used1=$(printf '%s' "$resp1" | sed -n '2p')
 
-  resp2=$(with_retry _anon_budget_search_request "$anon") || true
+  resp2=$(_anon_budget_search_request "$anon") || true
   t1=$(now_ms)
   ms=$((t1 - t0))
   status2=$(printf '%s' "$resp2" | sed -n '1p')
@@ -250,8 +260,14 @@ _anon_budget_layer2_shadow() {
   # returns, regardless of which `return` statement below fires it.
   trap '_anon_budget_reset "$ip_hash"' RETURN
 
+  # Deliberately NOT with_retry -- same reasoning as
+  # check_anon_budget_counter_increments: check_anon_usage increments
+  # non-idempotently on every call, and this branch asserts an EXACT seeded
+  # target, so a phantom with_retry-triggered second call (ambiguous "000"
+  # status, or a "000" substring anywhere in the real skills-search response
+  # body) would silently push `used` one past ANON_BUDGET_SHADOW_TARGET_USED.
   local anon_resp status used
-  anon_resp=$(with_retry _anon_budget_search_request "$SMOKE_ANON_KEY_VALUE") || true
+  anon_resp=$(_anon_budget_search_request "$SMOKE_ANON_KEY_VALUE") || true
   ms=$(( $(now_ms) - t0 ))
   status=$(printf '%s' "$anon_resp" | sed -n '1p')
   used=$(printf '%s' "$anon_resp" | sed -n '2p')
@@ -317,8 +333,14 @@ _anon_budget_layer2_enforce() {
   # immediately after a successful seed and before the real request.
   trap '_anon_budget_reset "$ip_hash"' RETURN
 
+  # Deliberately NOT with_retry -- see _anon_budget_layer2_shadow's identical
+  # note. A phantom second real request here would still land as a genuine
+  # extra increment against this probe's synthetic identity (harmless
+  # long-term -- the next run's seed_anon_usage absolute SET erases the
+  # drift -- but wrong for exactly the same reason: this is a non-idempotent
+  # write, not a fetch, so ambiguous-failure retry is unsound here too).
   local anon_resp status body code
-  anon_resp=$(with_retry _anon_budget_search_request "$SMOKE_ANON_KEY_VALUE") || true
+  anon_resp=$(_anon_budget_search_request "$SMOKE_ANON_KEY_VALUE") || true
   ms=$(( $(now_ms) - t0 ))
   status=$(printf '%s' "$anon_resp" | sed -n '1p')
   body=$(printf '%s' "$anon_resp" | tail -n +3)
