@@ -59,8 +59,32 @@ import {
  * single decode-and-recursively-rescan pass can do so an attacker can't
  * weaponize an oversized base64 blob into a decode/rescan cost blowup. Same
  * order of magnitude; not required to match exactly.
+ *
+ * SMI-6033 Wave 3 (adversarial-review fix): exceeding this cap used to
+ * `continue` with ZERO trace — no decode, no finding, nothing — which handed
+ * an attacker a one-line bypass of the entire detector: pad the malicious
+ * blob past 200 KB with base64-valid filler and it becomes invisible. The cap
+ * itself is a deliberate, correct resource bound and is UNCHANGED (an
+ * oversized candidate is still never decoded or rescanned — decoding it is
+ * exactly what the cap exists to prevent); what changed is that its
+ * existence is now SURFACED as a low/low advisory finding instead of being
+ * silently dropped. Same "caps surfaced, not silent" principle as Gap 8's
+ * `scan_coverage_incomplete` flag.
  */
 const MAX_ENCODED_CANDIDATE_BYTES = 200_000
+
+/**
+ * Ceiling on how many oversized-candidate advisories one document can emit
+ * (SMI-6033 Wave 3). Deliberately a SEPARATE counter from
+ * `MAX_BASE64_CANDIDATES` below, not a share of that budget: an oversized
+ * candidate costs no decode work, so charging it to the decode budget would
+ * let an attacker spend the real budget on cheap oversized filler and
+ * suppress decoding of the genuine candidates that follow. Beyond this
+ * ceiling further oversized candidates are dropped, but — unlike before the
+ * fix — the pattern is no longer invisible: the first `MAX_OVERSIZED_ADVISORIES`
+ * already surface it. Reset fresh on every `scanEncodedPayload` call.
+ */
+const MAX_OVERSIZED_ADVISORIES = 8
 
 /**
  * Document-wide candidate-COUNT cap (SMI-6033 Gap 2 resource-bound
@@ -183,6 +207,7 @@ export function scanEncodedPayload(
   let candidatesProcessed = 0
   let decodedTotalBytes = 0
   let aggregateBudgetExhausted = false
+  let oversizedAdvisories = 0
 
   lines.forEach((line, index) => {
     const lineNumber = index + 1
@@ -190,10 +215,39 @@ export function scanEncodedPayload(
     for (const match of line.matchAll(BASE64_CANDIDATE)) {
       const candidate = match[0]
       const start = match.index ?? 0
-      if (candidate.length > MAX_ENCODED_CANDIDATE_BYTES) continue
 
+      // Data-URI exclusion runs FIRST (SMI-6033 Wave 3 — it used to run after
+      // the size check). An embedded image/font/audio data URI routinely runs
+      // past MAX_ENCODED_CANDIDATE_BYTES, and it is a known-benign shape, so
+      // it must be excluded BEFORE the oversized advisory below can fire on
+      // it. Behaviorally identical for every candidate under the cap.
       const before = line.slice(Math.max(0, start - DATA_URI_LOOKBACK), start)
       if (DATA_URI_PREFIX.test(before)) continue
+
+      // Oversized candidate: never decoded/rescanned (that is precisely what
+      // the cap buys), but no longer silently dropped either — see
+      // MAX_ENCODED_CANDIDATE_BYTES's doc comment for the evasion this
+      // closes. Emitted at low/low: it is a coverage caveat, not evidence.
+      if (candidate.length > MAX_ENCODED_CANDIDATE_BYTES) {
+        if (oversizedAdvisories >= MAX_OVERSIZED_ADVISORIES) continue
+        oversizedAdvisories++
+        const oversizeCtx = contexts[index]
+        const oversizeInInlineCode = oversizeCtx?.isInlineCode && isWithinInlineCode(line, start)
+        const oversizeInDocContext = oversizeCtx
+          ? isDocumentationContext(oversizeCtx) || oversizeInInlineCode
+          : false
+        findings.push({
+          type: 'encoded_payload',
+          severity: 'low',
+          message: `Base64-encoded payload exceeds the ${MAX_ENCODED_CANDIDATE_BYTES}-byte per-candidate cap — oversized candidate, not decoded/rescanned (${candidate.length} chars)`,
+          location: line.trim().slice(0, 100),
+          lineNumber,
+          category: 'encoded_payload',
+          inDocumentationContext: oversizeInDocContext,
+          confidence: 'low',
+        })
+        continue
+      }
 
       // Document-wide candidate-count cap — checked before the decode
       // attempt itself so the bound applies even to attempts that end up

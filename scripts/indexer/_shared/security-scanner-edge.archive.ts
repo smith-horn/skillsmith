@@ -33,6 +33,7 @@ import { isDocumentationContext, classifyMatch } from './security-scanner-edge.c
 import { looksLikePlaceholderSecret } from './security-scanner-edge.paths.ts'
 import {
   FETCH_COMMAND_PATTERN,
+  correlationTargetBasename,
   isCorrelatedWithFetchDestination,
 } from './security-scanner-edge.fetch-correlation.ts'
 
@@ -104,10 +105,13 @@ function findArchiveCliPassword(line: string): ArchiveCliMatch | null {
   return null
 }
 
-function extractArchiveTargetBasename(line: string): string {
+// SMI-6033 Wave 3: returns the FULL captured path (quotes stripped), not a
+// bare basename — the shared correlation utility is now directory-aware and
+// must not be handed a path-stripped target.
+function extractArchiveTargetPath(line: string): string {
   const m = line.match(ARCHIVE_FILENAME)
   if (!m) return ''
-  return m[1].replace(/['"]/g, '').split('/').pop() ?? ''
+  return m[1].replace(/['"]/g, '')
 }
 
 // `$VAR` / `${VAR}` bare shell-variable reference — an out-of-band password.
@@ -174,9 +178,10 @@ export function scanArchiveEvasion(lines: string[], contexts: LineContext[]): Se
     const { inDocContext, confidence } = classifyMatch(contexts[index], line, cli.index)
 
     const inlineLiteral = isInlineLiteralPassword(cli.password)
-    const targetBasename = extractArchiveTargetBasename(line)
+    const targetPath = extractArchiveTargetPath(line)
     const correlated =
-      targetBasename.length >= 3 && isCorrelatedWithFetchDestination(targetBasename, fetchLines)
+      correlationTargetBasename(targetPath).length >= 3 &&
+      isCorrelatedWithFetchDestination(targetPath, fetchLines)
     const critical = !inDocContext && inlineLiteral && correlated
 
     findings.push({

@@ -10,9 +10,9 @@
  * both _shared twins (parity test enforces); only the @module header line
  * above differs.
  *
- * SMI-6033 Wave 2: `escapeRegExp`, `implicitDownloadBasename`, the fetch-verb
- * regex (renamed from `CHMOD_FETCH_CONTEXT` to the generic
- * `FETCH_COMMAND_PATTERN`), and the distance-independent basename-matching
+ * SMI-6033 Wave 2: `escapeRegExp`, `implicitDownloadDestination`, the
+ * fetch-verb regex (renamed from `CHMOD_FETCH_CONTEXT` to the generic
+ * `FETCH_COMMAND_PATTERN`), and the distance-independent destination-matching
  * logic were extracted further, into the sibling
  * security-scanner-edge.fetch-correlation.ts — the xattr/gatekeeper_bypass,
  * archive_evasion, and paste_host_fetch detectors reuse them from there.
@@ -22,6 +22,7 @@ import type { SecurityFinding, LineContext } from './security-scanner-edge.conte
 import { classifyMatch } from './security-scanner-edge.context.ts'
 import {
   FETCH_COMMAND_PATTERN,
+  correlationTargetBasename,
   isCorrelatedWithFetchDestination,
 } from './security-scanner-edge.fetch-correlation.ts'
 
@@ -77,17 +78,19 @@ export function scanChmodFetchCompound(
     if (!match) continue
     const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
     const adjacentFetch = FETCH_COMMAND_PATTERN.test(window)
-    // FIX-2 + SMI-5431: correlate the chmod target basename (≥3 chars) against a fetch
+    // FIX-2 + SMI-5431: correlate the chmod target (final segment ≥3 chars) against a fetch
     // command's DOWNLOAD DESTINATION anywhere — explicit (-o/-O/--output<space>/>, with an
     // optional leading path) via regex, OR implicit (wget/git-clone/curl --output=) via
     // exact-token equality. Anchored on the destination, NOT basename-anywhere, so a URL
     // path / query / header value (governance FP class) and a bare curl GET do not correlate.
+    // SMI-6033 Wave 3: the FULL captured path is handed to the shared utility (it used to be
+    // reduced to a bare basename here, discarding the directory the utility now compares).
     let correlated = false
     const tm = line.match(CHMOD_TARGET)
     if (tm) {
-      const base = tm[1].replace(/['"]/g, '').split('/').pop() ?? ''
-      if (base.length >= 3) {
-        correlated = isCorrelatedWithFetchDestination(base, fetchLines)
+      const targetPath = tm[1].replace(/['"]/g, '')
+      if (correlationTargetBasename(targetPath).length >= 3) {
+        correlated = isCorrelatedWithFetchDestination(targetPath, fetchLines)
       }
     }
     if (!adjacentFetch && !correlated) continue
@@ -113,7 +116,7 @@ export function scanChmodFetchCompound(
 // "downloaded from the internet" Gatekeeper warning from an unsigned binary.
 //
 // NOT unconditionally standalone-critical: `critical` requires the xattr
-// target's basename to be correlated with a fetch destination elsewhere in
+// target's path to be correlated with a fetch destination elsewhere in
 // the content (the shared isCorrelatedWithFetchDestination utility, same as
 // scanChmodFetchCompound above). Uncorrelated usage stays `medium`,
 // regardless of `isHighTrustAuthor`.
@@ -140,7 +143,7 @@ export function scanChmodFetchCompound(
 // cluster AND two separate `-r -d com.apple.quarantine` tokens).
 // Reading/writing a DIFFERENT attribute (`-l`, `-p <name>`, `-w <name>
 // <value>`) matches neither. A second, TARGET-capturing sibling of each
-// pattern (below) exists ONLY to extract the xattr'd file's basename for the
+// pattern (below) exists ONLY to extract the xattr'd file's path for the
 // correlation check — it never changes whether a line trips the detector.
 const XATTR_CLEAR_ALL = /\bxattr\b[^\n]{0,40}-[a-zA-Z]*c[a-zA-Z]*\b/i
 const XATTR_DELETE_QUARANTINE =
@@ -153,13 +156,16 @@ const XATTR_DELETE_QUARANTINE_TARGET =
  * The FILE target of an xattr Gatekeeper-bypass command — used only for the
  * fetch-correlation trust-tier check. Extraction failure yields '' (never
  * correlates); it does not affect whether the line trips the detector.
+ * SMI-6033 Wave 3: returns the FULL path (quotes stripped), not a bare
+ * basename — the shared correlation utility is now directory-aware and must
+ * not be handed a path-stripped target.
  */
-function extractXattrTargetBasename(line: string): string {
+function extractXattrTargetPath(line: string): string {
   const m =
     safeRegexTest(XATTR_CLEAR_ALL_TARGET, line) ??
     safeRegexTest(XATTR_DELETE_QUARANTINE_TARGET, line)
   if (!m) return ''
-  return m[1].replace(/['"]/g, '').split('/').pop() ?? ''
+  return m[1].replace(/['"]/g, '')
 }
 
 /**
@@ -179,9 +185,10 @@ export function scanGatekeeperBypass(
       safeRegexTest(XATTR_CLEAR_ALL, line) ?? safeRegexTest(XATTR_DELETE_QUARANTINE, line)
     if (!match) continue
     const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
-    const targetBasename = extractXattrTargetBasename(line)
+    const targetPath = extractXattrTargetPath(line)
     const correlated =
-      targetBasename.length >= 3 && isCorrelatedWithFetchDestination(targetBasename, fetchLines)
+      correlationTargetBasename(targetPath).length >= 3 &&
+      isCorrelatedWithFetchDestination(targetPath, fetchLines)
     const critical = !inDocContext && correlated && !isHighTrustAuthor
     findings.push({
       type: 'gatekeeper_bypass',

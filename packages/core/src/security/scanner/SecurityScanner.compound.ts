@@ -19,6 +19,7 @@ import {
 import { safeRegexTest } from './regex-utils.js'
 import {
   FETCH_COMMAND_PATTERN,
+  correlationTargetBasename,
   isCorrelatedWithFetchDestination,
 } from './SecurityScanner.fetch-correlation.js'
 
@@ -77,18 +78,20 @@ export function scanChmodFetchCompound(
     const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
     // H-6 (SMI-5433): route through safeRegexTest for the 10,000-char cap.
     const adjacentFetch = safeRegexTest(FETCH_COMMAND_PATTERN, window) !== null
-    // FIX-2 + SMI-5431: correlate the chmod target basename (≥3 chars) against a fetch
+    // FIX-2 + SMI-5431: correlate the chmod target (final segment ≥3 chars) against a fetch
     // command's DOWNLOAD DESTINATION anywhere — explicit (-o/-O/--output<space>/>, with an
     // optional leading path) via regex, OR implicit (wget/git-clone/curl --output=) via
     // exact-token equality. Anchored on the destination, NOT basename-anywhere, so a URL
     // path / query / header value (governance FP class) and a bare curl GET do not correlate.
+    // SMI-6033 Wave 3: the FULL captured path is handed to the shared utility (it used to be
+    // reduced to a bare basename here, discarding the directory the utility now compares).
     let correlated = false
     // H-6 (SMI-5433): route through safeRegexTest for the 10,000-char cap.
     const tm = safeRegexTest(CHMOD_TARGET, line)
     if (tm) {
-      const base = tm[1].replace(/['"]/g, '').split('/').pop() ?? ''
-      if (base.length >= 3) {
-        correlated = isCorrelatedWithFetchDestination(base, fetchLines)
+      const targetPath = tm[1].replace(/['"]/g, '')
+      if (correlationTargetBasename(targetPath).length >= 3) {
+        correlated = isCorrelatedWithFetchDestination(targetPath, fetchLines)
       }
     }
     if (!adjacentFetch && !correlated) return // benign standalone chmod — no finding
@@ -125,7 +128,7 @@ export function scanChmodFetchCompound(
  * unsigned binary.
  *
  * NOT unconditionally standalone-critical: `critical` requires the xattr
- * target's basename to be correlated with a fetch destination elsewhere in
+ * target's path to be correlated with a fetch destination elsewhere in
  * the content (the shared `isCorrelatedWithFetchDestination` utility, same
  * as `scanChmodFetchCompound` above and `scanArchiveEvasion`'s inline-literal
  * form) — the "download a payload, strip its quarantine bit" attack shape.
@@ -177,14 +180,16 @@ const XATTR_DELETE_QUARANTINE_TARGET =
  * comes right after whichever trigger variant matched) — used only for the
  * fetch-correlation trust-tier check. Extraction failure (no trailing token)
  * simply yields '' (never correlates); it does not affect whether the line
- * trips the underlying detector.
+ * trips the underlying detector. SMI-6033 Wave 3: returns the FULL path
+ * (quotes stripped), not a bare basename — the shared correlation utility is
+ * now directory-aware and must not be handed a path-stripped target.
  */
-function extractXattrTargetBasename(line: string): string {
+function extractXattrTargetPath(line: string): string {
   const m =
     safeRegexTest(XATTR_CLEAR_ALL_TARGET, line) ??
     safeRegexTest(XATTR_DELETE_QUARANTINE_TARGET, line)
   if (!m) return ''
-  return m[1].replace(/['"]/g, '').split('/').pop() ?? ''
+  return m[1].replace(/['"]/g, '')
 }
 
 export function scanGatekeeperBypass(
@@ -208,9 +213,10 @@ export function scanGatekeeperBypass(
     const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
     const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
 
-    const targetBasename = extractXattrTargetBasename(line)
+    const targetPath = extractXattrTargetPath(line)
     const correlated =
-      targetBasename.length >= 3 && isCorrelatedWithFetchDestination(targetBasename, fetchLines)
+      correlationTargetBasename(targetPath).length >= 3 &&
+      isCorrelatedWithFetchDestination(targetPath, fetchLines)
     // Product decision (2026-08-14): correlated form is standalone-critical
     // UNLESS the caller has verified the author is high-trust (indexer path
     // only — see this function's header). Uncorrelated usage never reaches

