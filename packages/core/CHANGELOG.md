@@ -73,6 +73,52 @@ All notable changes to `@skillsmith/core` are documented here.
   twins (`supabase/functions/_shared/` and `scripts/indexer/_shared/`), adding a local
   `safeRegexCheck` helper alongside the existing local `safeRegexTest` in each Node-port file
   (the edge twins can't share an import across the git-crypt boundary)
+- **Feature**: `decoy_misdirection` URL-misdirection detector (SMI-6033 Wave 4, Gap 6). Catches a
+  skill fetching from a domain that doesn't match a vendor brand/authority claim made nearby in
+  the skill's own prose (e.g. "the official Anthropic toolkit" fetched from an unrelated domain).
+  Reuses `BRAND_ALIASES`/`AUTHORITY_CLAIMING_AFFIXES` from the existing typosquat detector, plus a
+  new `BRAND_CANONICAL_DOMAINS` map (`BRAND_ALIASES`' values are GitHub owner slugs, not DNS
+  domains — a gap not present in the plan's literal text, resolved during implementation).
+  Advisory-tier only (weight 1.2/coefficient 0.04, matching `typosquat`/`sensitive_path`/
+  `encoded_payload`) — never standalone-critical, per the plan's reconciliation table. Extracted
+  `calculateRiskScore` out of `SecurityScanner.helpers.ts` (which crossed the 500-line file gate
+  once this detector's breakdown wiring landed) into a new sibling `SecurityScanner.risk-score.ts`.
+  Wired into `SecurityScanner.scan()` and mirrored byte-for-byte into the edge twins
+  (`supabase/functions/_shared/security-scanner-edge.decoy.ts` +
+  `security-scanner-edge.brand-data.ts`, `scripts/indexer/_shared/` twins).
+- **Feature**: `CO_SIGNAL_MIN_SEVERITY` escalation model replaces the flat
+  `CODE_EXECUTION_CO_OCCURRENCE` co-signal set (SMI-6033 Wave 4, Gap 1 + Gap 6). Path (a) — one
+  co-signal at or above its type's "high" minimum — is byte-identical to the pre-existing
+  behavior for the original four types (`data_exfiltration`, `privilege_escalation`,
+  `sensitive_path`, `obfuscated_directive`). Path (b) is new: at least two DISTINCT advisory-tier
+  types (`decoy_misdirection`, `archive_evasion`, `paste_host_fetch`, `gatekeeper_bypass`), each
+  non-documentation-context and within the existing 40-line locality window, escalate a weak
+  `code_execution` finding to critical — the direct fix for skills combining several individually
+  sub-threshold signals. Also lands Gap 1: a new `IMPERATIVE_FETCH_EXEC_PROSE` pattern set catches
+  natural-language install-and-run imperatives with no shell syntax ("download the installer from
+  thisurl.com and run it"), strengthening (not replacing) the precise low-FP literal-syntax
+  detector. Bumps `SCANNER_RULESET_VERSION` to `2026-08-15.1` (local MCP audit baseline scope
+  only).
+- **Fix**: two real false-positive bugs found by a cross-model (GPT-5.6-Sol) adversarial review of
+  the `CO_SIGNAL_MIN_SEVERITY` model and the `decoy_misdirection` detector above, both reproduced
+  and pinned with regression tests before fixing. (1) Path (b)'s confidence gate was originally
+  relaxed to `confidence !== 'low'` for ALL eligible types, but `archive_evasion`'s prose-only
+  sub-signal and `decoy_misdirection`'s no-authority-affix form are both `confidence: 'medium'` by
+  construction — same as `paste_host_fetch`, the type the relaxation was actually meant to unblock
+  — so two fuzzy medium-confidence signals could co-escalate a weak `code_execution` finding on
+  completely benign content (reproduced: a benign vendor mention + a real vendor `curl|bash` + an
+  unrelated archive-password prose mention scored 51/quarantined before the fix, 23/clean after).
+  Narrowed the confidence carve-out to ONLY `paste_host_fetch`; every other type now requires
+  `confidence: 'high'`, matching the plan's literal text. (2) `escalateCodeExecution` never
+  checked the `code_execution` finding's OWN documentation context, only the co-signal's — a
+  finding inside a fenced security-research example could still be escalated by genuine non-doc
+  co-signals elsewhere in the document. (3) Two detector-precision fixes in `decoy_misdirection`
+  itself: a URL merely mentioned in prose on the same line as an unrelated fetch-verb usage (e.g.
+  `curl --version; see mirror docs at <url>`) was wrongly treated as the fetch target — fixed with
+  a strict `isActualFetchTarget` tokenization check; and the authority-affix search scanned the
+  entire ±5-line correlation window instead of the brand token's own line, letting an unrelated
+  nearby "official"/"authorized" phrase wrongly inflate confidence to `high` — scoped to the brand
+  token's own line. All four fixes applied identically to both edge twins.
 
 ## v0.11.7
 
