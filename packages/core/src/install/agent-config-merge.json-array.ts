@@ -108,9 +108,21 @@ export function mergeJsonArrayEntry(opts: JsonArrayMergeOptions): MergeResult {
   let missingDefaults = false
   if (ensureTopLevelDefaults) {
     for (const [key, value] of Object.entries(ensureTopLevelDefaults)) {
-      if (doc[key] === undefined) {
+      const existingValue = doc[key]
+      if (existingValue === undefined) {
         doc[key] = value
         missingDefaults = true
+      } else if (!deepEqualJson(existingValue, value)) {
+        // PR #2375 review follow-up: a pre-existing top-level default (e.g.
+        // Cursor's required `"version": 1`) with an INCOMPATIBLE value was
+        // previously silently left as-is while we merged our hook entries
+        // in anyway — producing a file that still failed the schema check
+        // this default exists to satisfy. Fail closed instead: report a
+        // conflict and write nothing, matching this module's existing
+        // array-entry conflict contract rather than the array-merge
+        // header comment's "no foreign-entry conflict" claim, which only
+        // ever applied to array entries, not top-level sibling keys.
+        return { status: 'conflict', path, backupPath: null }
       }
     }
   }
