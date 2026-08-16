@@ -222,7 +222,7 @@ function isFetchVerbArgument(prefix: string): boolean {
   if (afterVerb < 0) return false
   for (let i = afterVerb; i < tokens.length; i++) {
     const token = tokens[i]
-    if (!FLAG_TOKEN.test(token)) return false
+    if (!safeRegexCheck(FLAG_TOKEN, token)) return false
     if (VALUE_TAKING_FLAGS.has(token) && i + 1 < tokens.length) i++ // consume the flag's value
   }
   return true

@@ -65,6 +65,14 @@ All notable changes to `@skillsmith/core` are documented here.
   use), since the escalation this gap achieves comes for free from whatever the decoded content's own
   findings already are. Wired into `SecurityScanner.scan()` and mirrored byte-for-byte into the edge
   twins (`supabase/functions/_shared/` and `scripts/indexer/_shared/`).
+- **Fix**: `SecurityScanner.archive.ts` and `SecurityScanner.paste-host.ts` (SMI-6033 Wave 3) each
+  had a direct `.match(...)`/`.test(...)` call that bypassed this scanner's established
+  `safeRegexTest`/`safeRegexCheck` ReDoS-safe wrappers, flagged by CodeQL as a polynomial regular
+  expression on uncontrolled data. Routed all 8 call sites through the wrappers, matching the
+  convention already used everywhere else in the scanner, and mirrored the same fix into both edge
+  twins (`supabase/functions/_shared/` and `scripts/indexer/_shared/`), adding a local
+  `safeRegexCheck` helper alongside the existing local `safeRegexTest` in each Node-port file
+  (the edge twins can't share an import across the git-crypt boundary)
 
 ## v0.11.7
 

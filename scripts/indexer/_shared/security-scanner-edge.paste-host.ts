@@ -94,6 +94,11 @@ function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null 
   return safeInput.match(pattern)
 }
 
+function safeRegexCheck(pattern: RegExp, input: string): boolean {
+  const safeInput = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) : input
+  return pattern.test(safeInput)
+}
+
 // URL_SHORTENER_DOMAINS folds into the SAME critical-eligibility set as
 // ANON_PASTE_HOSTS (both require execution evidence to reach critical) —
 // they are exported separately from patterns.ts purely for documentation
@@ -258,7 +263,7 @@ function isFetchVerbArgument(prefix: string): boolean {
   if (afterVerb < 0) return false
   for (let i = afterVerb; i < tokens.length; i++) {
     const token = tokens[i]
-    if (!FLAG_TOKEN.test(token)) return false
+    if (!safeRegexCheck(FLAG_TOKEN, token)) return false
     if (VALUE_TAKING_FLAGS.has(token) && i + 1 < tokens.length) i++ // consume the flag's value
   }
   return true

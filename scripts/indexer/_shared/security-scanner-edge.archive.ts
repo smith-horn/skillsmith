@@ -45,6 +45,11 @@ function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null 
   return safeInput.match(pattern)
 }
 
+function safeRegexCheck(pattern: RegExp, input: string): boolean {
+  const safeInput = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) : input
+  return pattern.test(safeInput)
+}
+
 // ============================================================================
 // Sub-signal A: CLI invocation syntax
 // ============================================================================
@@ -82,23 +87,23 @@ interface ArchiveCliMatch {
 function findArchiveCliPassword(line: string): ArchiveCliMatch | null {
   const unzip = safeRegexTest(UNZIP_INVOCATION, line)
   if (unzip) {
-    const pw = unzip[0].match(UNZIP_PASSWORD_ARG)
+    const pw = safeRegexTest(UNZIP_PASSWORD_ARG, unzip[0])
     if (pw) return { tool: 'unzip', password: pw[1], index: unzip.index ?? 0 }
   }
   const unrar = safeRegexTest(UNRAR_INVOCATION, line)
   if (unrar) {
-    const pw = unrar[0].match(UNRAR_SEVENZIP_PASSWORD_ARG)
+    const pw = safeRegexTest(UNRAR_SEVENZIP_PASSWORD_ARG, unrar[0])
     if (pw) return { tool: 'unrar', password: pw[1], index: unrar.index ?? 0 }
   }
   const sevenZip = safeRegexTest(SEVENZIP_INVOCATION, line)
   if (sevenZip) {
-    const pw = sevenZip[0].match(UNRAR_SEVENZIP_PASSWORD_ARG)
+    const pw = safeRegexTest(UNRAR_SEVENZIP_PASSWORD_ARG, sevenZip[0])
     if (pw) return { tool: '7z', password: pw[1], index: sevenZip.index ?? 0 }
   }
   const zip = safeRegexTest(ZIP_INVOCATION, line)
   if (zip) {
-    const pw = zip[0].match(ZIP_PASSWORD_ARG)
-    if (pw && ZIP_ENCRYPT_FLAG.test(zip[0])) {
+    const pw = safeRegexTest(ZIP_PASSWORD_ARG, zip[0])
+    if (pw && safeRegexCheck(ZIP_ENCRYPT_FLAG, zip[0])) {
       return { tool: 'zip', password: pw[1], index: zip.index ?? 0 }
     }
   }
@@ -109,7 +114,7 @@ function findArchiveCliPassword(line: string): ArchiveCliMatch | null {
 // bare basename — the shared correlation utility is now directory-aware and
 // must not be handed a path-stripped target.
 function extractArchiveTargetPath(line: string): string {
-  const m = line.match(ARCHIVE_FILENAME)
+  const m = safeRegexTest(ARCHIVE_FILENAME, line)
   if (!m) return ''
   return m[1].replace(/['"]/g, '')
 }
@@ -131,7 +136,7 @@ const SHELL_VAR_REF = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/
 function isInlineLiteralPassword(password: string): boolean {
   if (!password) return false
   const unquoted = password.replace(/^['"]|['"]$/g, '')
-  if (SHELL_VAR_REF.test(unquoted)) return false
+  if (safeRegexCheck(SHELL_VAR_REF, unquoted)) return false
   return !looksLikePlaceholderSecret(unquoted)
 }
 
@@ -147,11 +152,11 @@ const PASSWORD_NOUN = /\bpassword\b|\bpasscode\b|\bpassphrase\b/i
 function findArchivePasswordProseLines(lines: string[]): number[] {
   const flagged = new Set<number>()
   lines.forEach((line, index) => {
-    if (!ARCHIVE_NOUN.test(line)) return
+    if (!safeRegexCheck(ARCHIVE_NOUN, line)) return
     const start = Math.max(0, index - 2)
     const end = Math.min(lines.length - 1, index + 2)
     for (let i = start; i <= end; i++) {
-      if (PASSWORD_NOUN.test(lines[i])) {
+      if (safeRegexCheck(PASSWORD_NOUN, lines[i])) {
         flagged.add(index + 1)
         break
       }
@@ -166,7 +171,7 @@ function findArchivePasswordProseLines(lines: string[]): number[] {
 
 export function scanArchiveEvasion(lines: string[], contexts: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
-  const fetchLines = lines.filter((l) => FETCH_COMMAND_PATTERN.test(l))
+  const fetchLines = lines.filter((l) => safeRegexTest(FETCH_COMMAND_PATTERN, l) !== null)
   const emittedLines = new Set<number>()
 
   // Sub-signal A: CLI invocation syntax.
