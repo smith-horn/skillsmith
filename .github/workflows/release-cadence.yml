@@ -12,7 +12,16 @@ name: Release Cadence
 
 on:
   schedule:
-    - cron: '0 3 * * 0' # Sunday 03:00 UTC
+    # SMI-6052: shifted from '0 3 * * 0' off the exact top of the hour — GitHub's own
+    # docs flag :00 as the highest-contention minute for scheduled workflows, and this
+    # repo also clusters ~12 scheduled jobs across 00:00-06:00 UTC on Sundays. This is a
+    # bounded mitigation attempt, NOT a claimed fix — GitHub Actions' schedule trigger
+    # remains best-effort and can still delay regardless of minute (confirmed: even
+    # detect-release-drift.yml at :15 delayed 35-58min on 2026-08-16). The real defenses
+    # against the delay are the collision guard below (Change 1) and the
+    # release-cadence-heartbeat-monitor backstop (Supabase pg_cron, decoupled from
+    # GitHub Actions' own scheduler). See docs/internal/implementation/smi-6052-*.md.
+    - cron: '17 3 * * 0' # Sunday 03:17 UTC
   workflow_dispatch:
     inputs:
       dry_run:
@@ -79,12 +88,64 @@ jobs:
           echo "[Unreleased] is empty — nothing to release. Exiting." >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-      - name: Install dependencies (prepare-release needs them)
+      # SMI-6052: branch/PR-collision guard. Two independent triggers landing on the
+      # same UTC calendar day (a manual workflow_dispatch recovery run + a subsequently
+      # late-arriving schedule run, or two manual dispatches) race on the shared
+      # release-cadence/<date> branch name. Whichever run's push lands second gets a
+      # non-fast-forward rejection and the job fails, firing a confusing SMI-4938
+      # failure email even though the release goal was already met by the first run.
+      # This step positively confirms today's state before doing any work:
+      #   - an open OR merged PR for today already exists -> the goal is met, skip
+      #     cleanly (exit 0, not a failure)
+      #   - a closed-but-NOT-merged PR (e.g. a human explicitly rejected it) does NOT
+      #     count as satisfied -> fall through and proceed normally
+      #   - the branch exists on origin with NO qualifying PR behind it -> a prior run
+      #     pushed but died before opening a PR; retrying the push would hit the exact
+      #     same failure this guard exists to prevent, so fail loud with an actionable
+      #     diagnostic instead of a silent duplicate failure
+      - name: Check for an existing PR/branch today
         if: steps.check.outputs.count != '0'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          BRANCH="release-cadence/${DATE}"
+          EXISTING=$(gh pr list --state all --search "head:${BRANCH}" --json number,url,state,mergedAt,headRefOid --limit 5)
+
+          # Exact head-ref match only (GitHub's --search head: can be fuzzy); then
+          # classify: open or merged -> today's cadence goal is satisfied, skip
+          # cleanly. Closed-and-NOT-merged -> does NOT count as satisfied; fall
+          # through and let this run proceed normally (it will open a fresh PR).
+          QUALIFYING=$(echo "$EXISTING" | jq \
+            '[.[] | select((.state == "OPEN") or (.state == "MERGED"))] | length')
+
+          if [ "$QUALIFYING" != "0" ]; then
+            URL=$(echo "$EXISTING" | jq -r '[.[] | select(.state == "OPEN" or .state == "MERGED")][0].url')
+            echo "count=1" >> "$GITHUB_OUTPUT"
+            echo "A release-cadence PR for ${DATE} already exists (open or merged): $URL — skipping this run (branch-collision guard, SMI-6052)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # No qualifying PR. If the branch itself already exists on the remote
+          # with no PR behind it, a prior run got as far as the push but died
+          # before opening a PR — retrying the push would hit the SAME
+          # non-fast-forward failure this guard exists to prevent.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            echo "::error::Branch ${BRANCH} exists on origin but no open/merged PR was found for it — a prior run likely pushed but failed before opening a PR. Investigate manually (gh pr list --state all --search \"head:${BRANCH}\"); do not silently retry the push." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "count=0" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies (prepare-release needs them)
+        if: steps.check.outputs.count != '0' && steps.existing.outputs.count == '0'
         run: npm ci --ignore-scripts
 
       - name: Create cadence branch
-        if: steps.check.outputs.count != '0'
+        if: steps.check.outputs.count != '0' && steps.existing.outputs.count == '0'
         id: branch
         run: |
           DATE=$(date -u +%Y-%m-%d)
@@ -96,15 +157,15 @@ jobs:
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
       - name: Run prepare-release.ts
-        if: steps.check.outputs.count != '0'
+        if: steps.check.outputs.count != '0' && steps.existing.outputs.count == '0'
         run: npx tsx scripts/prepare-release.ts --all=patch
 
       - name: Push branch
-        if: steps.check.outputs.count != '0' && github.event.inputs.dry_run != 'true'
+        if: steps.check.outputs.count != '0' && steps.existing.outputs.count == '0' && github.event.inputs.dry_run != 'true'
         run: git push origin "${{ steps.branch.outputs.branch }}"
 
       - name: Open PR
-        if: steps.check.outputs.count != '0' && github.event.inputs.dry_run != 'true'
+        if: steps.check.outputs.count != '0' && steps.existing.outputs.count == '0' && github.event.inputs.dry_run != 'true'
         env:
           # SMI-5047: GITHUB_TOKEN cannot create PRs because the repo-level
           # "Allow GitHub Actions to create and approve pull requests" setting

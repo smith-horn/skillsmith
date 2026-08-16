@@ -496,6 +496,12 @@ verify_jwt = false
 [functions.scan-coverage-monitor]
 verify_jwt = false
 
+# release-cadence-heartbeat-monitor: pg_cron-invoked, service-role internal
+# (SMI-6052 — positive liveness backstop for release-cadence.yml). Deploy
+# WITH --no-verify-jwt; mirrors scan-coverage-monitor / webhook-heartbeat-monitor.
+[functions.release-cadence-heartbeat-monitor]
+verify_jwt = false
+
 # status-check: pg_cron-invoked, service-role internal (SMI-5752, public
 # status page Wave 2). Deploy WITH --no-verify-jwt; mirrors
 # webhook-heartbeat-monitor / quota-monitor.
