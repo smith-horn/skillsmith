@@ -73,10 +73,12 @@ function runShadowCheck(opts: { searchStatus: string; searchUsed?: string }): {
     now_ms() { printf '0'; }
     _anon_budget_search_request() { printf '${opts.searchStatus}\\n${opts.searchUsed ?? ''}\\n{}'; }
 
-    # Real call depth: an intermediate caller between the check and the
-    # top level, matching how smoke-prod.sh's own dispatch loop calls each
-    # check function — this is exactly the shape that exposed TRAP-1 (the
-    # trap fired again on THIS function's return too, not just the check's).
+    # Deliberately MORE sensitive than production's own call depth, not an
+    # exact match of it: smoke-prod.sh:271 calls check functions directly
+    # from its dispatch loop ("$fn" || true), with no intermediate wrapper
+    # function. This extra run_check layer adds one more RETURN-trap firing
+    # point on top of that -- so if TRAP-1 ever reappears, this harness
+    # catches it at least as reliably as production would, never less.
     run_check() {
       check_anon_budget_identity_derivation
       return $?
