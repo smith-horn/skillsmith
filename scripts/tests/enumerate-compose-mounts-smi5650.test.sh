@@ -55,6 +55,34 @@
 #       native module, with the same @esbuild -> esbuild-scope sanitization.
 #   20. enumerate_native_module_volumes SKIPS a missing or symlinked
 #       module dir, same real-directory guard as the per-service lines.
+#
+# SMI-6050 (Wave 3) additions — Tier-B (build-tool / compiler platform
+# binaries: turbo, Rollup/Rolldown, Astro's compiler, Lightning CSS,
+# Tailwind Oxide, ruvector, workerd, ...). UNLIKE every Tier-A test above,
+# these gate on a FIXTURE package-lock.json's `os` field via
+# scripts/lib/linux-optional-packages.mjs — never on
+# `[[ -d "$repo_root/node_modules/<x>" ]]` — because npm never creates a
+# Tier-B package's directory at all on a non-matching host platform. Every
+# fixture below deliberately has ZERO matching node_modules/ directories on
+# disk, proving these lines are emitted from the lockfile-derived list, not
+# from host directory existence (the exact regression this wave must avoid
+# reintroducing — see the plan doc's "Why the SMI-5650 mechanism can't just
+# be extended with more names" section).
+#   21. Tier-B volume-reference lines (enumerate_compose_node_modules_mounts)
+#       and top-level volume declarations (enumerate_native_module_volumes)
+#       are emitted for a root-level and a nested-under-a-dependency
+#       fixture entry, with ZERO corresponding host directories present.
+#   22. The root-level and nested-under-a-dependency entries for the SAME
+#       package family (@rolldown/binding-linux-arm64-gnu, at two different
+#       nesting depths) sanitize to two DISTINCT volume names — proving no
+#       collision (plan doc "What Changes" #3).
+#   23. A non-linux (darwin) fixture entry is NOT emitted (mirrors the
+#       derivation script's own `os` filter).
+#   24. Tier-B lines disappear entirely under SKILLSMITH_TIER_B_SEED_DISABLE=1,
+#       in BOTH enumerate_compose_node_modules_mounts and
+#       enumerate_native_module_volumes — the rollback control.
+#   25. Tier-B volume declarations use the same driver: local / no
+#       driver_opts / SMI-5750 ownership-label shape as Tier-A (no tmpfs).
 
 set -euo pipefail
 
@@ -399,6 +427,136 @@ assert_not_contains "test20: no esbuild volume declared when dir is a symlink" "
 assert_contains "test20: hnswlib-node volume still declared (real dir, control case)" "native-seed-hnswlib-node:" "$VOLGUARDOUT"
 assert_eq "test20: exactly 1 declared native-seed volume" 1 "$(printf '%s\n' "$VOLGUARDOUT" | grep -c '^  native-seed-' || true)"
 rm -rf "$VOLGUARDROOT"
+
+# -----------------------------------------------------------------------
+# SMI-6050 Wave 3: Tier-B fixture builder. Writes a minimal synthetic
+# package-lock.json into $root with:
+#   - a root-level linux-only entry (@turbo/linux-arm64)
+#   - a nested-under-a-dependency linux-only entry, SAME family as a root
+#     sibling at a different nesting depth (@rolldown/binding-linux-arm64-gnu,
+#     both root and astro-vendored)
+#   - a non-linux (darwin) sibling entry that must NOT be emitted
+# Deliberately creates NO corresponding node_modules/ directories anywhere
+# under $root — this is the whole point of these tests (see header note
+# above).
+# -----------------------------------------------------------------------
+make_tier_b_lockfile() {
+  local root="$1"
+  mkdir -p "$root"
+  cat > "$root/package-lock.json" <<'EOF'
+{
+  "name": "fixture",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "fixture", "version": "0.0.0" },
+    "node_modules/@turbo/linux-arm64": {
+      "version": "1.2.3",
+      "os": ["linux"],
+      "cpu": ["arm64"]
+    },
+    "node_modules/@rolldown/binding-linux-arm64-gnu": {
+      "version": "9.9.9",
+      "os": ["linux"],
+      "cpu": ["arm64"]
+    },
+    "node_modules/astro/node_modules/@rolldown/binding-linux-arm64-gnu": {
+      "version": "8.8.8",
+      "os": ["linux"],
+      "cpu": ["arm64"]
+    },
+    "node_modules/@turbo/darwin-arm64": {
+      "version": "1.2.3",
+      "os": ["darwin"],
+      "cpu": ["arm64"]
+    }
+  }
+}
+EOF
+}
+
+# -----------------------------------------------------------------------
+# Test 21 (SMI-6050 Wave 3): Tier-B volume-reference lines and top-level
+# volume declarations are emitted for a root-level AND a
+# nested-under-a-dependency fixture entry, with ZERO corresponding host
+# node_modules/ directories present anywhere under the fixture root — this
+# is the specific regression this wave must prove it avoids (a host `-d`
+# gate would emit nothing here at all).
+# -----------------------------------------------------------------------
+TIERBROOT=$(mktemp -d)
+make_repo "$TIERBROOT" core
+make_pkg_json "$TIERBROOT" core "@skillsmith/core"
+make_tier_b_lockfile "$TIERBROOT"
+mkdir -p "$TIERBROOT/node_modules"   # root node_modules exists, but NONE of the tier-b package dirs do
+OUT21MOUNTS=$(enumerate_compose_node_modules_mounts "$TIERBROOT")
+OUT21VOLS=$(enumerate_native_module_volumes "$TIERBROOT")
+assert_contains "test21: root-level turbo mount emitted despite missing host dir" \
+  "      - native-seed-turbo-linux-arm64:/app/node_modules/@turbo/linux-arm64" "$OUT21MOUNTS"
+assert_contains "test21: nested rolldown (astro-vendored) mount emitted despite missing host dir" \
+  "      - native-seed-astro-node_modules-rolldown-binding-linux-arm64-gnu:/app/node_modules/astro/node_modules/@rolldown/binding-linux-arm64-gnu" "$OUT21MOUNTS"
+assert_contains "test21: root-level turbo volume declared despite missing host dir" \
+  "  native-seed-turbo-linux-arm64:" "$OUT21VOLS"
+assert_contains "test21: nested rolldown volume declared despite missing host dir" \
+  "  native-seed-astro-node_modules-rolldown-binding-linux-arm64-gnu:" "$OUT21VOLS"
+
+# -----------------------------------------------------------------------
+# Test 22 (SMI-6050 Wave 3, plan doc "What Changes" #3): the root-level and
+# nested-under-a-dependency entries for the SAME package family
+# (@rolldown/binding-linux-arm64-gnu at two independently-versioned nesting
+# depths) sanitize to two DISTINCT volume names — no collision.
+# -----------------------------------------------------------------------
+assert_contains "test22: root-level rolldown mount emitted with its OWN distinct name" \
+  "      - native-seed-rolldown-binding-linux-arm64-gnu:/app/node_modules/@rolldown/binding-linux-arm64-gnu" "$OUT21MOUNTS"
+ROOT_ROLLDOWN_LINES=$(printf '%s\n' "$OUT21MOUNTS" | grep -c '^      - native-seed-rolldown-binding-linux-arm64-gnu:' || true)
+NESTED_ROLLDOWN_LINES=$(printf '%s\n' "$OUT21MOUNTS" | grep -c '^      - native-seed-astro-node_modules-rolldown-binding-linux-arm64-gnu:' || true)
+assert_eq "test22: exactly 1 root-level rolldown mount line" 1 "$ROOT_ROLLDOWN_LINES"
+assert_eq "test22: exactly 1 nested rolldown mount line (distinct from root)" 1 "$NESTED_ROLLDOWN_LINES"
+
+# -----------------------------------------------------------------------
+# Test 23 (SMI-6050 Wave 3): a non-linux (darwin) fixture entry is NOT
+# emitted — mirrors the derivation script's own `os` filter (Wave 1).
+# -----------------------------------------------------------------------
+assert_not_contains "test23: darwin-only @turbo variant is NOT emitted" \
+  "darwin" "$OUT21MOUNTS"
+assert_eq "test23: exactly 3 tier-b (native-seed) mount lines total (turbo + root-rolldown + nested-rolldown, darwin excluded)" \
+  3 "$(printf '%s\n' "$OUT21MOUNTS" | grep -c '^      - native-seed-' || true)"
+rm -rf "$TIERBROOT"
+
+# -----------------------------------------------------------------------
+# Test 24 (SMI-6050 Wave 3, rollback control): Tier-B lines disappear
+# entirely under SKILLSMITH_TIER_B_SEED_DISABLE=1, in BOTH
+# enumerate_compose_node_modules_mounts and enumerate_native_module_volumes.
+# -----------------------------------------------------------------------
+TIERBDISABLEROOT=$(mktemp -d)
+make_repo "$TIERBDISABLEROOT" core
+make_pkg_json "$TIERBDISABLEROOT" core "@skillsmith/core"
+make_tier_b_lockfile "$TIERBDISABLEROOT"
+OUT24MOUNTS=$(SKILLSMITH_TIER_B_SEED_DISABLE=1 enumerate_compose_node_modules_mounts "$TIERBDISABLEROOT")
+OUT24VOLS=$(SKILLSMITH_TIER_B_SEED_DISABLE=1 enumerate_native_module_volumes "$TIERBDISABLEROOT")
+assert_eq "test24: zero tier-b mount lines under SKILLSMITH_TIER_B_SEED_DISABLE=1" \
+  0 "$(printf '%s\n' "$OUT24MOUNTS" | grep -c '^      - native-seed-' || true)"
+assert_eq "test24: zero tier-b volume declarations under SKILLSMITH_TIER_B_SEED_DISABLE=1" \
+  0 "$(printf '%s\n' "$OUT24VOLS" | grep -c '^  native-seed-' || true)"
+rm -rf "$TIERBDISABLEROOT"
+
+# -----------------------------------------------------------------------
+# Test 25 (SMI-6050 Wave 3): Tier-B volume declarations use the same
+# driver: local / no driver_opts / SMI-5750 ownership-label shape as Tier-A
+# (never `type: tmpfs` — same noexec-breaks-dlopen()/execve() rationale).
+# -----------------------------------------------------------------------
+TIERBSHAPEROOT=$(mktemp -d)
+make_repo "$TIERBSHAPEROOT" core
+make_pkg_json "$TIERBSHAPEROOT" core "@skillsmith/core"
+make_tier_b_lockfile "$TIERBSHAPEROOT"
+OUT25VOLS=$(enumerate_native_module_volumes "$TIERBSHAPEROOT")
+TURBO_VOL_BLOCK=$(printf '%s\n' "$OUT25VOLS" | grep -A3 -F "  native-seed-turbo-linux-arm64:")
+assert_eq "test25: turbo volume block is driver: local + SMI-5750 ownership label, no driver_opts" \
+  "  native-seed-turbo-linux-arm64:
+    driver: local
+    labels:
+      app.skillsmith.owned: \"true\"" "$TURBO_VOL_BLOCK"
+assert_not_contains "test25: no driver_opts in tier-b volumes" "driver_opts" "$OUT25VOLS"
+assert_not_contains "test25: no tmpfs annotation in tier-b volumes" "tmpfs" "$OUT25VOLS"
+rm -rf "$TIERBSHAPEROOT"
 
 # -----------------------------------------------------------------------
 # Summary

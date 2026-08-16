@@ -16,6 +16,20 @@ if [[ -n "${_LIB_SH_LOADED:-}" ]]; then
 fi
 _LIB_SH_LOADED=1
 
+# SMI-6050 Wave 3: this file's OWN directory, resolved via BASH_SOURCE (not
+# any $repo_root argument a caller passes to a function below). Used to
+# locate scripts/lib/linux-optional-packages.mjs -- a real, always-present
+# sibling of this file in whichever checkout _lib.sh physically lives (main
+# repo or worktree) -- independently of $repo_root, which in production call
+# sites is "the main repo, NOT worktree path" (see enumerate_compose_node_modules_mounts's
+# own docstring) but in tests is a throwaway mktemp fixture with no scripts/
+# tree of its own at all. Resolving the derivation script's own PATH this way
+# (vs. "$repo_root/scripts/lib/...") keeps Tier-B tests fixture-driven the
+# same way the Tier-A tests already are (see scripts/tests/enumerate-compose-mounts-smi5650.test.sh) --
+# the fixture only ever needs to supply its own package-lock.json, not a full
+# scripts/ tree.
+_LIB_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -45,18 +59,45 @@ NC='\033[0m' # No Color
 NATIVE_MODULES_FOR_OVERLAY=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node" "@esbuild")
 
 #######################################
-# Docker volume names cannot contain `@` — sanitize a NATIVE_MODULES_FOR_OVERLAY
-# entry into a valid `local` volume name. Flat module names pass through
-# unchanged; the sole scope entry (@esbuild) maps to a distinct, readable name
-# that can't collide with the flat `esbuild` package's own volume.
+# Docker volume names cannot contain `@` or `/` — sanitize a
+# NATIVE_MODULES_FOR_OVERLAY entry (Tier A, e.g. "better-sqlite3",
+# "@esbuild") OR a linux-optional-packages.mjs-derived Tier-B path (SMI-6050
+# Wave 3, e.g. "node_modules/@turbo/linux-arm64" or
+# "node_modules/astro/node_modules/@rolldown/binding-linux-arm64-gnu") into a
+# valid `local` volume name.
+#
+# Tier A (no `/` in the input) is UNCHANGED from the original implementation
+# — flat module names pass through unchanged; the sole scope entry
+# (@esbuild) maps to "esbuild-scope", a distinct, readable name that can't
+# collide with the flat `esbuild` package's own volume.
+#
+# Tier B (input contains `/`) strips exactly one LEADING "node_modules/"
+# prefix (every Tier-B path from linux-optional-packages.mjs starts with
+# this), drops every remaining `@` character (scope markers), then flattens
+# every remaining `/` to `-`. Stripping only the LEADING "node_modules/" —
+# not every occurrence — is what keeps a root-level package and the SAME
+# package family vendored at a NESTED position distinct: it leaves the
+# nested entry's own intermediate "astro/node_modules/" segment intact, so
+#   node_modules/@rolldown/binding-linux-arm64-gnu
+#     -> rolldown-binding-linux-arm64-gnu
+#   node_modules/astro/node_modules/@rolldown/binding-linux-arm64-gnu
+#     -> astro-node_modules-rolldown-binding-linux-arm64-gnu
+# never collide even though both are the same package at two independently-
+# versioned nesting depths (SMI-6050 plan doc "What Changes" #3).
 #
 # Arguments:
-#   $1 - Entry from NATIVE_MODULES_FOR_OVERLAY (e.g. "better-sqlite3", "@esbuild")
+#   $1 - Entry from NATIVE_MODULES_FOR_OVERLAY, OR a Tier-B
+#        node_modules/...-relative path from linux-optional-packages.mjs
 # Outputs:
 #   Sanitized volume-name-safe string to stdout
 #######################################
 native_module_volume_name() {
     case "$1" in
+    */*)
+        local stripped="${1#node_modules/}"
+        stripped="${stripped//@/}"
+        printf '%s' "${stripped//\//-}"
+        ;;
     @*) printf '%s-scope' "${1#@}" ;;
     *) printf '%s' "$1" ;;
     esac
@@ -1574,6 +1615,58 @@ enumerate_compose_node_modules_mounts() {
         fi
     done
 
+    # SMI-6050 Wave 3: Tier-B (build-tool / compiler platform binaries --
+    # turbo, Rollup/Rolldown, Astro's compiler, Lightning CSS, Tailwind
+    # Oxide, ruvector, workerd, ...) volume-reference lines. UNLIKE every
+    # loop above, this CANNOT be gated on `[[ -d "$repo_root/node_modules/<x>" ]]` --
+    # npm never creates a Tier-B package's directory at all on a
+    # non-matching host platform (e.g. macOS never gets
+    # node_modules/@rolldown/binding-linux-arm64-gnu), so a host-existence
+    # gate would silently emit ZERO Tier-B volumes on every macOS worktree
+    # container — reintroducing, through the fix itself, the exact bug this
+    # plan exists to fix. See the plan doc's "Why the SMI-5650 mechanism
+    # can't just be extended with more names" section
+    # (docs/internal/implementation/smi-6050-worktree-linux-optional-platform-binaries.md).
+    # Gated instead on scripts/lib/linux-optional-packages.mjs's own output,
+    # derived from $repo_root/package-lock.json — present and readable on
+    # the host regardless of platform, unlike a linux-only binary's own
+    # node_modules directory. The script itself is resolved via
+    # $_LIB_SH_DIR (this file's own location), NOT "$repo_root/scripts/..."
+    # — see $_LIB_SH_DIR's own definition near the top of this file for why.
+    #
+    # Mount destination is the REAL (unsanitized) node_modules-relative path
+    # exactly as linux-optional-packages.mjs printed it (which already
+    # includes the "node_modules/" prefix) — only the Docker VOLUME NAME
+    # needs sanitizing (native_module_volume_name, extended above for this).
+    # This exact "/app/<path>" shape matches, byte for byte, what
+    # docker-entrypoint.sh's Wave 2 restore loop computes as ITS OWN restore
+    # target (`target="/app/${rel_path}"`, docker-entrypoint.sh ~line 433),
+    # so no separate path-translation table is needed between this
+    # compose-generation step and that restore step.
+    #
+    # Ordering: unlike the alias-scope tmpfs loop above (whose ordering
+    # relative to the root :ro mount IS load-bearing — see that loop's own
+    # "MOUNT ORDER IS LOAD-BEARING" comment), this loop has no such
+    # constraint: Tier-B volume references are independent named-volume
+    # references resolved by Docker directly, never destinations resolved
+    # through the root mount's own symlink-clamping — identical reasoning to
+    # the Tier-A native-module loop immediately above, which has the same
+    # property and is (deliberately) not constrained by that comment either.
+    #
+    # Rollback control (plan doc "What Changes" #3): SKILLSMITH_TIER_B_SEED_DISABLE=1
+    # suppresses this entire block, reverting to today's read-only
+    # host-bind-mount-only behavior with zero Tier-B masking — a one-flag
+    # rollback that doesn't require reverting this wave's commit. Registered
+    # in docs/internal/process/guards-and-opt-outs.md.
+    if [[ "${SKILLSMITH_TIER_B_SEED_DISABLE:-}" != "1" && -f "$repo_root/package-lock.json" ]]; then
+        local tier_b_path
+        while IFS= read -r tier_b_path; do
+            [[ -z "$tier_b_path" ]] && continue
+            printf '      - native-seed-%s:/app/%s\n' \
+                "$(native_module_volume_name "$tier_b_path")" "$tier_b_path"
+        done < <(node "$_LIB_SH_DIR/lib/linux-optional-packages.mjs" "$repo_root/package-lock.json" 2>/dev/null)
+    fi
+
     # Per-package node_modules mounts, READ-ONLY (SMI-5560). Same gate as
     # link_worktree_package_node_modules:358.
     for pkg_dir in "$repo_root"/packages/*/; do
@@ -1669,6 +1762,63 @@ ensure_build_cache_mount_sources() {
 }
 
 #######################################
+# SMI-6050 Wave 3: ensure the host-side directory for EVERY Tier-B named
+# volume's mount TARGET pre-exists BEFORE a container that mounts it is
+# created. Same underlying Docker mechanic as ensure_build_cache_mount_sources
+# above (SMI-5705), discovered live during this wave's own verification, not
+# called out in the plan doc: a named volume mounted at a path nested under
+# the already-:ro-mounted root node_modules bind (e.g.
+# /app/node_modules/lightningcss-linux-arm64-gnu, nested under the
+# /app/node_modules:ro bind from enumerate_compose_node_modules_mounts's
+# root mount) needs that exact path to ALREADY exist as a directory in the
+# bind mount's SOURCE ($repo_root/node_modules/...) — otherwise runc has to
+# mkdir the mountpoint AFTER the parent is already mounted read-only, which
+# fails outright at container-CREATE time:
+#   "OCI runtime create failed: ... mkdirat .../node_modules/<pkg>:
+#    read-only file system"
+# (confirmed live via `docker compose up -d --force-recreate dev` against a
+# Wave-3-generated override, before this function existed).
+#
+# Tier-A's existing native-module volumes never hit this because their
+# target directories already exist on host BY DEFINITION (that is the exact
+# `-d` gate their own emission loops use — see enumerate_native_module_volumes
+# and enumerate_compose_node_modules_mounts's Tier-A loops). Tier-B packages
+# routinely do NOT exist at all on a non-matching host platform — the whole
+# reason this plan exists — so nothing else in this codebase ever creates
+# their mountpoint directories; this function is what does.
+#
+# Creates each Tier-B path (and any missing intermediate node_modules/...
+# segments a nested entry needs, e.g.
+# node_modules/astro/node_modules/@rolldown/binding-linux-arm64-gnu's own
+# node_modules/astro/node_modules/ parent) as a plain EMPTY directory via
+# `mkdir -p`. Safe: these paths are already covered by the repo's blanket
+# `node_modules` .gitignore rule, contain no package.json of their own, and
+# `npm ci` (the only install path any container in this repo triggers a
+# rebuild through) deletes node_modules wholesale before reinstalling — a
+# leftover empty placeholder from a prior Tier-B mkdir is never mistaken for
+# an actually-installed package by npm's own integrity checks.
+#
+# Same gating as the Tier-B emission loops (SKILLSMITH_TIER_B_SEED_DISABLE,
+# missing package-lock.json) so this never creates directories the compose
+# file itself won't reference.
+#
+# Arguments:
+#   $1 - Repository root path (main repo, NOT worktree path)
+#######################################
+ensure_tier_b_mount_sources() {
+    local repo_root="$1"
+
+    [[ "${SKILLSMITH_TIER_B_SEED_DISABLE:-}" == "1" ]] && return 0
+    [[ -f "$repo_root/package-lock.json" ]] || return 0
+
+    local tier_b_path
+    while IFS= read -r tier_b_path; do
+        [[ -z "$tier_b_path" ]] && continue
+        mkdir -p "$repo_root/$tier_b_path"
+    done < <(node "$_LIB_SH_DIR/lib/linux-optional-packages.mjs" "$repo_root/package-lock.json" 2>/dev/null)
+}
+
+#######################################
 # Emit the top-level `volumes:` section declaring the exec-capable named
 # volumes native modules mount into (SMI-5650). Called ONCE per generated
 # override (not per-service, unlike enumerate_compose_node_modules_mounts's
@@ -1735,6 +1885,35 @@ enumerate_native_module_volumes() {
             fi
         done
     done
+
+    # SMI-6050 Wave 3: Tier-B top-level volume declarations, one per
+    # scripts/lib/linux-optional-packages.mjs-derived path. See the matching
+    # block in enumerate_compose_node_modules_mounts() for the full "why not
+    # -d", "$_LIB_SH_DIR vs $repo_root/scripts", and rollback-control
+    # rationale (kept in one place there to avoid drift between the two
+    # emission sites, same convention the Tier-A comments above already
+    # follow). Every Tier-B path is already rooted at this repo's OWN
+    # top-level node_modules/ (never packages/*/node_modules/ — confirmed
+    # against the plan doc's full "Full scope" table, both the root-level
+    # and nested-under-a-dependency positions are node_modules/...-relative
+    # to $repo_root), so — unlike NATIVE_MODULES_FOR_OVERLAY above — this
+    # needs only ONE pass, not a root + per-package pair.
+    #
+    # Same driver: local (not tmpfs) pattern and SMI-5750 ownership-label
+    # rationale as every volume declared above: every Tier-B package is
+    # itself a native binary its parent tool invokes via dlopen()/execve(),
+    # so Compose's tmpfs noexec default would break it identically to a
+    # Tier-A native module.
+    if [[ "${SKILLSMITH_TIER_B_SEED_DISABLE:-}" != "1" && -f "$repo_root/package-lock.json" ]]; then
+        local tier_b_path
+        while IFS= read -r tier_b_path; do
+            [[ -z "$tier_b_path" ]] && continue
+            printf '  native-seed-%s:\n' "$(native_module_volume_name "$tier_b_path")"
+            printf '    driver: local\n'
+            printf '    labels:\n'
+            printf '      app.skillsmith.owned: "true"\n'
+        done < <(node "$_LIB_SH_DIR/lib/linux-optional-packages.mjs" "$repo_root/package-lock.json" 2>/dev/null)
+    fi
 }
 
 #######################################
@@ -2434,6 +2613,12 @@ repair_worktrees_compose_override() {
     # npm install (which triggers this via postinstall) is exactly the kind
     # of event that can coincide with that.
     ensure_build_cache_mount_sources "$repo_root"
+
+    # SMI-6050 Wave 3: same rationale, for Tier-B named-volume mount targets
+    # — see ensure_tier_b_mount_sources's own doc comment for why this is
+    # required (not merely a nice-to-have) for container CREATE to succeed
+    # at all, discovered live during this wave's verification.
+    ensure_tier_b_mount_sources "$repo_root"
 
     # SMI-5661: acquire the port-bucket lock ONCE for the whole regen pass
     # (not per-iteration) since the loop below calls
