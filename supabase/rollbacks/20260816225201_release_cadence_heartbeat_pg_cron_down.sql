@@ -1,4 +1,4 @@
--- Rollback for 20260816000002_release_cadence_heartbeat_pg_cron.sql
+-- Rollback for 20260816225201_release_cadence_heartbeat_pg_cron.sql
 -- SMI-6052
 --
 -- Unschedules the release-cadence-heartbeat-monitor cron and drops the
