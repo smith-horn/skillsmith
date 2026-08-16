@@ -112,17 +112,23 @@ jobs:
           set -euo pipefail
           DATE=$(date -u +%Y-%m-%d)
           BRANCH="release-cadence/${DATE}"
-          EXISTING=$(gh pr list --state all --search "head:${BRANCH}" --json number,url,state,mergedAt,headRefOid --limit 5)
+          # `-H/--head` is an EXACT branch filter ("<owner>:<branch>" syntax not
+          # supported per --help, so pass the bare branch name) — deliberately NOT
+          # `--search "head:${BRANCH}"`, which is a fuzzy full-text search that can
+          # match unrelated PRs whose body/title happens to contain the branch
+          # string (PR-review finding, SMI-6052: the prior version requested this
+          # exact match in its own comment but never actually enforced it).
+          EXISTING=$(gh pr list --state all --head "$BRANCH" --json number,url,state,headRefName --limit 5)
 
-          # Exact head-ref match only (GitHub's --search head: can be fuzzy); then
-          # classify: open or merged -> today's cadence goal is satisfied, skip
-          # cleanly. Closed-and-NOT-merged -> does NOT count as satisfied; fall
-          # through and let this run proceed normally (it will open a fresh PR).
-          QUALIFYING=$(echo "$EXISTING" | jq \
-            '[.[] | select((.state == "OPEN") or (.state == "MERGED"))] | length')
+          # Belt-and-suspenders: --head is already exact, but re-verify
+          # headRefName in jq too so a future flag/behavior change in `gh` can't
+          # silently reopen the fuzzy-match gap without a visible diff here.
+          QUALIFYING=$(echo "$EXISTING" | jq --arg branch "$BRANCH" \
+            '[.[] | select(.headRefName == $branch and ((.state == "OPEN") or (.state == "MERGED")))] | length')
 
           if [ "$QUALIFYING" != "0" ]; then
-            URL=$(echo "$EXISTING" | jq -r '[.[] | select(.state == "OPEN" or .state == "MERGED")][0].url')
+            URL=$(echo "$EXISTING" | jq -r --arg branch "$BRANCH" \
+              '[.[] | select(.headRefName == $branch and (.state == "OPEN" or .state == "MERGED"))][0].url')
             echo "count=1" >> "$GITHUB_OUTPUT"
             echo "A release-cadence PR for ${DATE} already exists (open or merged): $URL — skipping this run (branch-collision guard, SMI-6052)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -134,7 +140,7 @@ jobs:
           # non-fast-forward failure this guard exists to prevent.
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "count=0" >> "$GITHUB_OUTPUT"
-            echo "::error::Branch ${BRANCH} exists on origin but no open/merged PR was found for it — a prior run likely pushed but failed before opening a PR. Investigate manually (gh pr list --state all --search \"head:${BRANCH}\"); do not silently retry the push." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Branch ${BRANCH} exists on origin but no open/merged PR was found for it — a prior run likely pushed but failed before opening a PR. Investigate manually (gh pr list --state all --head \"${BRANCH}\"); do not silently retry the push." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
