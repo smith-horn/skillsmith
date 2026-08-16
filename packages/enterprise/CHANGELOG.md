@@ -4,6 +4,12 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.7
+
+- **Chore**: bump the smithy group across 1 directory with 7 updates (#2254)
+- **Chore**: bump the opentelemetry group across 1 directory with 7 updates (#2257)
+- **Chore**: bump @aws-sdk/client-cloudwatch-logs (#2251)
+
 ## v0.3.6
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.3.5).

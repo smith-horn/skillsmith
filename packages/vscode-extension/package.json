@@ -2,7 +2,7 @@
   "name": "skillsmith-vscode",
   "displayName": "Skillsmith",
   "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "publisher": "skillsmith",
   "engines": {
     "vscode": "^1.110.0"
