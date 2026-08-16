@@ -21,7 +21,11 @@
  */
 
 import { searchCodeForSkillMd } from './code-search.ts'
-import { checkSkillMdExists, type SkillMdValidation } from './skill-processor.ts'
+import {
+  checkSkillMdExists,
+  type SkillMdValidation,
+  type SkillMdValidationOptions,
+} from './skill-processor.ts'
 import { repoUpdatedAtKey } from './skill-processor.helpers.ts'
 import { delay, type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import type { GitHubRepository } from './topic-search.ts'
@@ -51,7 +55,7 @@ import type { GitHubRepository } from './topic-search.ts'
 export async function runCodeSearch(
   seenUrls: Set<string>,
   validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
+  validationOptions: SkillMdValidationOptions,
   maxPages: number,
   telemetry: RateLimitTelemetry,
   existingRepoUpdatedAt?: Map<string, string | null>

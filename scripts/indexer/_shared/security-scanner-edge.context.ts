@@ -26,6 +26,12 @@ export type SecurityFindingType =
   | 'prompt_injection'
   | 'code_execution'
   | 'obfuscated_directive'
+  // SMI-6033 Wave 1: ported core's sensitive-path detector to edge (previously
+  // no type/detector/weight/coefficient existed for this category at all).
+  | 'sensitive_path'
+  // SMI-6033 Wave 1: type-system registration only — core already has this
+  // finding type (typosquat.ts); the detector call site is wired separately.
+  | 'typosquat'
 
 /**
  * Severity levels for findings
@@ -111,6 +117,9 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // SMI-5359 Wave 4.2c: mirror of core's two new top-tier categories.
   code_execution: 2.0,
   obfuscated_directive: 2.0,
+  // SMI-6033 Wave 1: byte-identical to core weights.ts CATEGORY_WEIGHTS.
+  sensitive_path: 1.2,
+  typosquat: 1.2,
 }
 
 /**
@@ -128,6 +137,11 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   // exactly the 40 quarantine threshold: 50 * 2.0 * 1.0 = 100 -> cap 100 -> * 0.40 = 40.
   code_execution: 0.4,
   obfuscated_directive: 0.4,
+  // SMI-6033 Wave 1: byte-identical to core SecurityScanner.helpers.ts
+  // calculateRiskScore's per-category coefficients — core's "advisory tier"
+  // (the same 0.04 core uses for sensitivePaths/externalUrls/ssrf/typosquat).
+  sensitive_path: 0.04,
+  typosquat: 0.04,
 }
 
 /**
@@ -339,6 +353,8 @@ export function calculateRiskScore(findings: SecurityFinding[]): number {
     prompt_injection: 0,
     code_execution: 0,
     obfuscated_directive: 0,
+    sensitive_path: 0,
+    typosquat: 0,
   }
 
   for (const finding of findings) {

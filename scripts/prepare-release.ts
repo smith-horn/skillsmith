@@ -52,6 +52,8 @@ import {
   regenerateLockfile,
 } from './lib/release-git.js'
 import { syncReadmeWhatsNew } from './lib/release-readme.js'
+import { ensureTyposquatSnapshot } from './lib/release-typosquat-snapshot.js'
+import { parseArgs } from './lib/release-args.js'
 
 // Re-export the helper surface so existing test imports continue to resolve
 // against `../prepare-release` (SMI-4783 keeps the public surface stable).
@@ -65,103 +67,7 @@ export {
 }
 export type { BumpPlan, CollisionCheckResult, NpmLookup }
 
-// --- Types ---
-
-interface Options {
-  bumps: Map<string, string>
-  dryRun: boolean
-  noChangelog: boolean
-  noCommit: boolean
-  noLockfileRegen: boolean
-  allowDowngrade: boolean
-  check: boolean
-}
-
-// --- Arg Parsing ---
-
-function parseArgs(): Options {
-  const args = process.argv.slice(2)
-  const bumps = new Map<string, string>()
-  let dryRun = false
-  let noChangelog = false
-  let noCommit = false
-  let noLockfileRegen = false
-  let allowDowngrade = false
-  let check = false
-
-  for (const arg of args) {
-    if (arg === '--dry-run') {
-      dryRun = true
-    } else if (arg === '--no-changelog') {
-      noChangelog = true
-    } else if (arg === '--no-commit') {
-      noCommit = true
-    } else if (arg === '--no-lockfile-regen') {
-      noLockfileRegen = true
-    } else if (arg === '--allow-downgrade') {
-      allowDowngrade = true
-    } else if (arg === '--check') {
-      check = true
-    } else if (arg.startsWith('--all=')) {
-      const type = arg.split('=')[1]
-      for (const spec of PACKAGE_SPECS) {
-        bumps.set(spec.shortName, type)
-      }
-    } else if (arg.startsWith('--core=')) {
-      bumps.set('core', arg.split('=')[1])
-    } else if (arg.startsWith('--mcp-server=')) {
-      bumps.set('mcp-server', arg.split('=')[1])
-    } else if (arg.startsWith('--cli=')) {
-      bumps.set('cli', arg.split('=')[1])
-    } else if (arg.startsWith('--vscode=')) {
-      bumps.set('vscode', arg.split('=')[1])
-    } else if (arg === '--help' || arg === '-h') {
-      printUsage()
-      process.exit(0)
-    } else {
-      console.error(`Unknown argument: ${arg}`)
-      printUsage()
-      process.exit(1)
-    }
-  }
-
-  if (bumps.size === 0 && !check) {
-    console.error('Error: No packages specified. Use --all=patch or --core=patch etc.')
-    printUsage()
-    process.exit(1)
-  }
-
-  // --check with no explicit bumps audits a patch bump for all packages
-  if (check && bumps.size === 0) {
-    for (const spec of PACKAGE_SPECS) {
-      bumps.set(spec.shortName, 'patch')
-    }
-  }
-
-  return { bumps, dryRun, noChangelog, noCommit, noLockfileRegen, allowDowngrade, check }
-}
-
-function printUsage(): void {
-  console.log(`
-Usage: npx tsx scripts/prepare-release.ts [options]
-
-Package bumps:
-  --all=<type>          Bump all packages (patch|minor|major)
-  --core=<type|ver>     Bump core (patch|minor|major|X.Y.Z)
-  --mcp-server=<type>   Bump mcp-server
-  --cli=<type|ver>      Bump cli
-  --vscode=<type|ver>   Bump vscode-extension
-
-Options:
-  --dry-run             Preview changes without writing
-  --no-changelog        Skip changelog generation
-  --no-commit           Write files but don't create git commit
-  --no-lockfile-regen   Skip 'npm install --package-lock-only' after dep-range bumps (SMI-4775)
-  --check               Audit-only: run npm collision check, no writes, exit non-zero on conflict
-  --allow-downgrade     Permit bumping to a semver <= highest published (rare; never overrides equals-published)
-  --help                Show this help
-`)
-}
+// --- Types & Arg Parsing (extracted to ./lib/release-args.ts, SMI-6033) ---
 
 // --- Version Resolution ---
 
@@ -257,7 +163,16 @@ function updateServerJson(relPath: string, newVersion: string): void {
 
 async function main(): Promise<void> {
   const options = parseArgs()
-  const { bumps, dryRun, noChangelog, noCommit, noLockfileRegen, allowDowngrade, check } = options
+  const {
+    bumps,
+    dryRun,
+    noChangelog,
+    noCommit,
+    noLockfileRegen,
+    allowDowngrade,
+    check,
+    noTyposquatSnapshot,
+  } = options
 
   // Step 0: Branch guard (skip in --check mode — audit is safe on any branch)
   if (!check) {
@@ -360,12 +275,22 @@ async function main(): Promise<void> {
     for (const path of updatedDepFiles) console.log(`    - ${path}`)
   }
 
+  // Step 6.4: refresh (or gate on) the bundled typosquat reference snapshot —
+  // SMI-6033 Wave 1 Gap 7. See scripts/lib/release-typosquat-snapshot.ts: this
+  // regenerates in-process when Supabase credentials are present, and otherwise
+  // HARD-FAILS the release if the checked-in asset is empty/missing/stale
+  // (shipping an empty snapshot silently disables skill_validate's and
+  // skill_rescan's typosquat checks, which is how it originally shipped).
+  const snapshot = await ensureTyposquatSnapshot({ skip: noTyposquatSnapshot })
+  for (const line of snapshot.log) console.log(line)
+
   // SMI-5663: combine every non-plan-derived file this run touched — README
-  // "What's New" syncs (Step 5.5) and workspace dep-range writes (Step 6) —
-  // into one extraFiles list, threaded through both the --no-commit preview
-  // (Step 10) and the real commit (Step 11) so neither can drift from what
-  // was actually written, matching SMI-5672's buildFilesToAdd contract.
-  const extraFiles = [...updatedReadmeFiles, ...updatedDepFiles]
+  // "What's New" syncs (Step 5.5), workspace dep-range writes (Step 6), and the
+  // typosquat snapshot (Step 6.4) — into one extraFiles list, threaded through
+  // both the --no-commit preview (Step 10) and the real commit (Step 11) so
+  // neither can drift from what was actually written, matching SMI-5672's
+  // buildFilesToAdd contract.
+  const extraFiles = [...updatedReadmeFiles, ...updatedDepFiles, ...snapshot.filesToStage]
 
   // Step 6.5: Regenerate package-lock.json so the lockfile matches the bumped
   // dep ranges (SMI-4775). Without this, the publish workflow ships a

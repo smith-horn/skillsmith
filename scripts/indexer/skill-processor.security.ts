@@ -8,6 +8,12 @@
  * SMI-5879 PR-2192a: adds scanSkillBundle — the enumerate -> fetch -> scan ->
  * merge loop extracted verbatim out of validateSkillMd (skill-processor.ts),
  * so the pre-merge simulator can call the same function production uses.
+ * SMI-6033 Wave 1 (Gap 7): scanSkillBundle grows an optional trailing
+ * `typosquat` param (candidate name + reference set) folded into the same
+ * mergeSiblingScans() merge pattern as sibling findings — additive-only, so
+ * the SMI-5879 dual-scan simulator's ScanSkillBundleFn structural pin
+ * (smi5879-simulate-full.types.ts) still matches (extra OPTIONAL trailing
+ * parameters preserve function-type assignability).
  *
  * Parity with supabase/functions/indexer/skill-processor.security.ts is
  * enforced by parity.test.ts.
@@ -24,6 +30,13 @@ import {
 import { calculateRiskScore } from './_shared/security-scanner-edge.context.ts'
 import { withRateLimitTracking, type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
+// SMI-6033 Wave 1 (Gap 7): the already-built typosquat detector (SMI-595) —
+// scripts/indexer/ is a Node tree so it can import packages/core directly
+// (see typosquat-reference.ts's header for why the Deno twin cannot).
+import {
+  detectTyposquat,
+  resolveTyposquatEnforcementMode,
+} from '../../packages/core/src/security/scanner/index.js'
 
 // sync: packages/core/src/services/skill-installation.policy.ts BUNDLED_SCAN_FILES
 export const BUNDLED_SCAN_FILES = [
@@ -187,15 +200,21 @@ export async function fetchSiblingContent(
  * `chmod 755 ./bin/cli` fire privilege_escalation:critical in non-doc context,
  * so we restrict to the explicit exec/obfuscation categories. Doc-class files
  * (README.md, examples.md) are scanned but never trigger sibling rejection.
+ *
+ * SMI-6033 Wave 1 (Gap 7): `extraFindings` folds in typosquat findings (or
+ * any other skill-level, non-sibling-scoped findings) using the exact same
+ * allFindings + calculateRiskScore merge as sibling findings. Optional and
+ * additive — omitted, this is byte-identical to the pre-SMI-6033 behavior.
  */
 export function mergeSiblingScans(
   root: EdgeScanResult,
-  siblings: SiblingEdgeScan[]
+  siblings: SiblingEdgeScan[],
+  extraFindings: SecurityFinding[] = []
 ): MergedEdgeScanResult {
   const siblingFindings = siblings.flatMap(({ relPath, scan }) =>
     scan.findings.map((f) => ({ ...f, filePath: relPath }))
   )
-  const allFindings = [...root.findings, ...siblingFindings]
+  const allFindings = [...root.findings, ...siblingFindings, ...extraFindings]
   const mergedScore = calculateRiskScore(allFindings)
 
   const rejectableSibling = siblings.find(({ relPath, scan }) => {
@@ -270,6 +289,16 @@ export interface ScanSkillBundleResult {
 }
 
 /**
+ * SMI-6033 Wave 1 (Gap 7): optional typosquat scan input for scanSkillBundle.
+ * `referenceNames` should be built ONCE per indexer batch run (see
+ * `typosquat-reference.ts`) and passed down — never rebuilt per skill.
+ */
+export interface TyposquatScanInput {
+  candidateName: string
+  referenceNames: ReadonlySet<string>
+}
+
+/**
  * SMI-5879 PR-2192a: the single scan-surface entry point (design 8.2.1 /
  * 8.2.1.1). Body is the pre-existing inline enumerate -> fetch -> scan ->
  * merge loop from validateSkillMd (skill-processor.ts, both twins), moved
@@ -295,7 +324,11 @@ export async function scanSkillBundle(
   skillPath: string | undefined,
   primaryContent: string,
   telemetry: RateLimitTelemetry,
-  deps?: ScanSkillBundleDeps
+  deps?: ScanSkillBundleDeps,
+  // SMI-6033 Wave 1 (Gap 7): optional, additive-only trailing param — see
+  // this file's header for why the SMI-5879 simulator's structural pin on
+  // this function's signature stays satisfied.
+  typosquat?: TyposquatScanInput
 ): Promise<ScanSkillBundleResult> {
   const doFetchSiblingContent = deps?.fetchSiblingContent ?? fetchSiblingContent
   const doScanSkillContent = deps?.scanSkillContent ?? scanSkillContent
@@ -327,8 +360,35 @@ export async function scanSkillBundle(
       siblingFailures.push({ relPath, kind: 'removed' })
     }
   }
+  // SMI-6033 Wave 1 (Gap 7): typosquat findings for this skill's candidate
+  // name, in warn mode (SMI-595 default) — merged the SAME way sibling
+  // findings are (mergeSiblingScans's allFindings + calculateRiskScore).
+  // core's SecurityFinding.type union is a strict superset of this file's
+  // local (edge-twin) union, and core's finding carries a `category` field
+  // this file's SecurityFinding doesn't declare — mapped explicitly into the
+  // local shape (category folded into the message) rather than passed
+  // through, so this stays a real structural match, not an unsafe cast.
+  const typosquatFindings: SecurityFinding[] =
+    typosquat && typosquat.referenceNames.size > 0
+      ? detectTyposquat(
+          typosquat.candidateName,
+          typosquat.referenceNames,
+          resolveTyposquatEnforcementMode('warn')
+        ).map(
+          (f): SecurityFinding => ({
+            type: 'typosquat',
+            severity: f.severity,
+            confidence: f.confidence,
+            message: f.category ? `[${f.category}] ${f.message}` : f.message,
+            location: f.location,
+          })
+        )
+      : []
+
   const mergedSecurityScan =
-    siblingScans.length > 0 ? mergeSiblingScans(securityScan, siblingScans) : undefined
+    siblingScans.length > 0 || typosquatFindings.length > 0
+      ? mergeSiblingScans(securityScan, siblingScans, typosquatFindings)
+      : undefined
 
   if (mergedSecurityScan?.quarantine && !securityScan.findings.length) {
     console.log(

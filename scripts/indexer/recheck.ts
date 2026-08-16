@@ -69,6 +69,7 @@ import {
 import { writeIndexerAuditLog } from './indexer-audit-log.ts'
 import type { RecheckAuditCounters } from './indexer-audit-log.ts'
 import { processRow, type StaleQuarantinedRow } from './revalidate-stale-quarantines.ts'
+import { fetchTyposquatReferenceSetSafe } from './typosquat-reference.ts'
 import {
   getRecheckMaxSiblingClears,
   loadPass3Candidates,
@@ -247,6 +248,12 @@ export async function runRecheck(opts: {
   const headers = await buildGitHubHeaders()
   const rows = await loadRecheckCandidates(supabase, { thresholdDays, cap })
 
+  // SMI-6033 Wave 1 (Gap 7): ONE reference-set query for the whole recheck run
+  // (it is a DB query — never per row), threaded into processRow so the sibling
+  // rescan's merged score is computed over the same evidence set the discovery
+  // path's quarantine merge uses. Fail-soft — see the helper's doc comment.
+  const typosquatReferenceNames = await fetchTyposquatReferenceSetSafe(supabase, 'recheck run')
+
   // SMI-5445 M3: per-pass candidate counts. PASS 1 = quarantined=false rows;
   // PASS 2 = quarantined=true, reason null/'stale'; PASS 3 = sibling-quarantined.
   // We infer counts from the row shape because loadRecheckCandidates returns a flat
@@ -307,7 +314,8 @@ export async function runRecheck(opts: {
           apply,
           supabase,
           opts.telemetry ?? newRateLimitTelemetry(),
-          clearBudget
+          clearBudget,
+          typosquatReferenceNames
         )
       )
     )

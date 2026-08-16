@@ -34,14 +34,22 @@ import {
   writeSiblingRequarantine,
   writeSiblingRecovery,
 } from './revalidate-stale-quarantines.sibling.ts'
-import { parseIdSelection, reportIdSelectionIfPresent } from './revalidate-stale-quarantines.cli.ts'
+import {
+  parseIdSelection,
+  reportIdSelectionIfPresent,
+  reportSweepSummary,
+  type RowResult,
+  type SweepCounts,
+} from './revalidate-stale-quarantines.cli.ts'
+import { buildTyposquatFindings } from './typosquat-findings.ts'
+import { fetchTyposquatReferenceSetSafe } from './typosquat-reference.ts'
 
 // ---------------------------------------------------------------------------
 // Types (split into revalidate-stale-quarantines.types.ts, SMI-5866)
 // ---------------------------------------------------------------------------
 
 export type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
-import type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quarantines.types.ts'
+import type { StaleQuarantinedRow } from './revalidate-stale-quarantines.types.ts'
 
 // ---------------------------------------------------------------------------
 // Candidate loading (split into revalidate-stale-quarantines.load.ts, SMI-5879 round-7)
@@ -50,26 +58,6 @@ import type { StaleQuarantinedRow, StaleOutcome } from './revalidate-stale-quara
 export type { LoadCandidatesOptions } from './revalidate-stale-quarantines.load.ts'
 import { loadCandidates } from './revalidate-stale-quarantines.load.ts'
 export { loadCandidates }
-
-interface RowResult {
-  row: StaleQuarantinedRow
-  outcome: StaleOutcome
-  score?: number
-}
-
-interface SweepCounts {
-  total: number
-  cleared: number
-  liveTouched: number
-  keptSecurity: number
-  repoGone: number
-  parseFailed: number
-  fetchErrors: number
-  casSkipped: number
-  errors: number
-}
-/** Above this fraction of transient fetch errors the run is throttled; repo-gone counts unreliable. */
-const MAX_FETCH_ERROR_RATE = 0.1
 
 // ---------------------------------------------------------------------------
 // Per-row logic
@@ -135,6 +123,10 @@ export async function retagUnreachable(
  * quarantined, retried next run). The synchronous check-then-decrement is race-free
  * in Node.js even under Promise.all batching — all checks run before the first async
  * I/O resumes, so two rows can't both claim the last slot.
+ *
+ * SMI-6033 Wave 1 (Gap 7): `typosquatReferenceNames` is the run-scoped reference set, built
+ * ONCE per sweep by the caller (a DB query, never per-row); it feeds the sibling rescan's
+ * merged score so recovery is judged on the same evidence as the quarantine that caused it.
  */
 export async function processRow(
   row: StaleQuarantinedRow,
@@ -142,7 +134,8 @@ export async function processRow(
   apply: boolean,
   db: SupabaseClient,
   telemetry: RateLimitTelemetry = newRateLimitTelemetry(),
-  clearBudget?: { remaining: number }
+  clearBudget?: { remaining: number },
+  typosquatReferenceNames?: ReadonlySet<string>
 ): Promise<RowResult> {
   // Step 1: parse the repo URL into a GitHub Contents API URL.
   const parsed = parseSkillMdUrl(row.repo_url, row.skill_path)
@@ -255,13 +248,16 @@ export async function processRow(
   // SMI-5445 C1: pass the fresh SKILL.md scan so runSiblingRescan can compute the
   // collective merged score (root + siblings) and apply the symmetric recovery gate.
   // Fail-closed: transient fetch → 'fetch-error' (quarantine stays, retry next cycle).
+  // SMI-6033 Wave 1 (Gap 7): fold in the same warn-tier typosquat findings the
+  // discovery merge sees, so recovery never uses a weaker evidence set.
   const sibRescan = await runSiblingRescan(
     parsed.owner,
     parsed.repo,
     parsed.ref ?? 'main',
     parsed.dir,
     telemetry,
-    scan
+    scan,
+    buildTyposquatFindings(row.name, typosquatReferenceNames)
   )
   if (sibRescan.status === 'unknown') {
     // Transient: can't verify sibling state; don't change quarantine status.
@@ -339,6 +335,8 @@ export async function runSweep(
 
   const rows = await loadCandidates(db, { limit: opts.limit, ids: opts.ids })
   reportIdSelectionIfPresent(opts.ids, opts.requestedRawCount, rows, opts.apply)
+  // SMI-6033 Wave 1 (Gap 7): ONE reference-set query per sweep (never per row).
+  const typosquatReferenceNames = await fetchTyposquatReferenceSetSafe(db, 'sweep')
 
   const counts: SweepCounts = {
     total: rows.length,
@@ -362,7 +360,11 @@ export async function runSweep(
   const BATCH = 5
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH)
-    const results = await Promise.all(batch.map((r) => processRow(r, headers, opts.apply, db)))
+    const results = await Promise.all(
+      batch.map((r) =>
+        processRow(r, headers, opts.apply, db, undefined, undefined, typosquatReferenceNames)
+      )
+    )
     for (const r of results) {
       const tag = `${r.row.author}/${r.row.name}`
       switch (r.outcome) {
@@ -411,42 +413,7 @@ export async function runSweep(
     }
   }
 
-  if (keptRows.length > 0)
-    for (const r of keptRows)
-      console.log(`  KEEP   ${r.row.author}/${r.row.name} (score ${r.score})`)
-
-  if (goneRows.length > 0) {
-    console.log(`\nLeft quarantined — repo/SKILL.md unreachable:`)
-    for (const r of goneRows)
-      console.log(
-        `  * ${r.row.author}/${r.row.name} [${r.outcome}] ${r.row.repo_url ?? '(no url)'}`
-      )
-  }
-
-  const clearedLabel = opts.apply ? 'cleared' : 'would-clear'
-  console.log(
-    `\n── Summary ──\n` +
-      `  total:           ${counts.total}\n` +
-      `  ${clearedLabel}:       ${counts.cleared}\n` +
-      `  live-touched:    ${counts.liveTouched}\n` +
-      `  kept-security:   ${counts.keptSecurity}\n` +
-      `  repo-gone:       ${counts.repoGone}\n` +
-      `  parse-failed:    ${counts.parseFailed}\n` +
-      `  fetch-error:     ${counts.fetchErrors}\n` +
-      `  cas-skipped:     ${counts.casSkipped}\n` +
-      `  errors:          ${counts.errors}\n`
-  )
-
-  // Throttle guard: transient errors never re-tag (safe), but a high rate means
-  // many rows were skipped and the repo-gone tally is incomplete — re-run later.
-  if (counts.total > 0 && counts.fetchErrors / counts.total > MAX_FETCH_ERROR_RATE) {
-    console.warn(
-      `\n⚠️  ${counts.fetchErrors}/${counts.total} rows hit transient fetch errors ` +
-        `(> ${MAX_FETCH_ERROR_RATE * 100}%). The run was likely throttled; ` +
-        `those rows were left untouched. Re-run when GitHub is not rate-limiting.`
-    )
-  }
-  if (!opts.apply) console.log('Dry-run only — re-run with --apply to perform writes.\n')
+  reportSweepSummary(counts, keptRows, goneRows, opts.apply)
 
   return counts
 }

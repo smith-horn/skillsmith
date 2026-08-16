@@ -246,3 +246,25 @@ export function selectTrustTier(
   if (stars >= 5) return 'experimental'
   return 'unknown'
 }
+
+/**
+ * Options threaded from the indexer entrypoint through every discovery phase
+ * into `validateSkillMd` — the single place a SKILL.md is actually scanned.
+ *
+ * SMI-6033 Wave 1 (Gap 7): `typosquatReferenceNames` rides on THIS object, not
+ * a positional param — every discovery call site (Phase 1/2/3a/3b + helpers)
+ * already forwards this exact object, so it cannot be silently dropped by a
+ * site that forgot an argument. `runUpsertPhase` is NOT a scan site (it only
+ * reads `validationCache` via `getCachedValidation`), so wiring typosquat
+ * there would never have run the detector.
+ */
+export interface SkillMdValidationOptions {
+  strictValidation?: boolean
+  minContentLength?: number
+  /**
+   * Run-scoped typosquat reference set, built ONCE per run by
+   * `fetchTyposquatReferenceSetSafe()` and threaded down — never rebuilt per
+   * skill. Omitted ⇒ no typosquat check (pre-SMI-6033 behaviour).
+   */
+  typosquatReferenceNames?: ReadonlySet<string>
+}

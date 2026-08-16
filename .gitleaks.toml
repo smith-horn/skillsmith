@@ -74,9 +74,11 @@ regexes = [
 ]
 
 [[rules.allowlists]]
-description = "SMI-595: typosquat.ts legitimately mentions 'vercel' (a BRAND_ALIASES entry — one of the brand names the typosquat detector protects against impersonation of), which trips this rule's 'vercel' keyword gate. The generic 24-char alnum regex then matches ordinary camelCase TypeScript identifiers in the same file (e.g. TyposquatEnforcementMode, applyTyposquatEnforcementMode). Path-scoped rather than content-scoped, since new same-length identifiers will keep appearing here as the module evolves; this file is a security-scanner detector module and contains no deployment tokens by design."
+description = "SMI-595: typosquat.ts legitimately mentions 'vercel' (a BRAND_ALIASES entry — one of the brand names the typosquat detector protects against impersonation of), which trips this rule's 'vercel' keyword gate. The generic 24-char alnum regex then matches ordinary camelCase TypeScript identifiers in the same file (e.g. TyposquatEnforcementMode, applyTyposquatEnforcementMode). Path-scoped rather than content-scoped, since new same-length identifiers will keep appearing here as the module evolves; this file is a security-scanner detector module and contains no deployment tokens by design. SMI-6033 Wave 1 (Gap 7): extended to supabase/functions/indexer/typosquat.ts, the Deno-native port of this same detector (edge can't import packages/core) — it mirrors the identical API surface and identifier names, tripping the same false positive. Also extended to the live reference-name DATA file (typosquat-reference-snapshot.json) once populated with real skill names: a real GitHub-derived skill name (e.g. \"azure-mgmt-arizeaiobservabilityeval-dotnet\") can coincidentally contain a 24-char alnum substring, same mechanism as the code-identifier case above — path-scoped for the same reason (arbitrary skill names appear/disappear every time the snapshot is regenerated from live data, so a content-scoped allowlist would need constant upkeep)."
 paths = [
   '''packages/core/src/security/scanner/typosquat\.ts''',
+  '''supabase/functions/indexer/typosquat\.ts''',
+  '''packages/mcp-server/src/assets/typosquat-reference-snapshot\.json''',
 ]
 
 [[rules]]

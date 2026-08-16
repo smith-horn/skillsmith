@@ -21,7 +21,7 @@ import { fetchRepoLicense, isPermissiveLicense } from './license-filter.ts'
 import { enumerateRepoSkillPaths, type EnumerateTelemetry } from './trees-enumerate.ts'
 import { buildSkillTreeUrl } from './skill-url.ts'
 import type { GitHubRepository } from './topic-search.ts'
-import type { SkillMdValidation } from './skill-processor.ts'
+import type { SkillMdValidation, SkillMdValidationOptions } from './skill-processor.ts'
 
 /**
  * SMI-5319: The single shared derivation of a per-run repo cache key.
@@ -157,7 +157,7 @@ export async function processSearchResults(
   resultRepos: GitHubRepository[],
   seenUrls: Set<string>,
   validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
+  validationOptions: SkillMdValidationOptions,
   repos: GitHubRepository[],
   stats: SubdirSearchStats,
   telemetry: RateLimitTelemetry,

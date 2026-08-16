@@ -65,6 +65,7 @@ export {
 // Typosquat detector (SMI-595)
 export {
   BRAND_ALIASES,
+  AUTHORITY_CLAIMING_AFFIXES,
   levenshteinDistance,
   scanTyposquat,
   detectTyposquat,

@@ -17,7 +17,12 @@
 
 import { type GitHubRepository, searchRepositories } from '../topic-search.ts'
 import { pMapBounded, type TokenBucket, type RateLimitTelemetry } from '../_shared/rate-limit.ts'
-import { type SkillMdValidation, checkSkillMdExists, repoUpdatedAtKey } from '../skill-processor.ts'
+import {
+  type SkillMdValidation,
+  type SkillMdValidationOptions,
+  checkSkillMdExists,
+  repoUpdatedAtKey,
+} from '../skill-processor.ts'
 
 export interface TopicSearchPhaseParams {
   topics: string[]
@@ -32,7 +37,7 @@ export interface TopicSearchPhaseParams {
   seenUrls: Set<string>
   repositories: GitHubRepository[]
   validationCache: Map<string, SkillMdValidation>
-  validationOptions: { strictValidation: boolean; minContentLength: number }
+  validationOptions: SkillMdValidationOptions
   searchApiTokenBucket: TokenBucket
   existingRepoUpdatedAt: Map<string, string | null>
   telemetry: RateLimitTelemetry

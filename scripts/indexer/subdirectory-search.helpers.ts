@@ -34,7 +34,7 @@ import {
   isFacetCrawlDone,
 } from './backfill-checkpoint.ts'
 import type { GitHubRepository } from './topic-search.ts'
-import type { SkillMdValidation } from './skill-processor.ts'
+import type { SkillMdValidation, SkillMdValidationOptions } from './skill-processor.ts'
 import type { EnumerateTelemetry } from './trees-enumerate.ts'
 // SMI-5964 §1e: escalation policy, split into its own module to keep this
 // file under the 500-line convention (see subdirectory-search.escalation.ts's
@@ -144,7 +144,7 @@ export async function runBackfillFacetCrawl(
   plan: BackfillFacetPlan,
   seenUrls: Set<string>,
   validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
+  validationOptions: SkillMdValidationOptions,
   repos: GitHubRepository[],
   stats: SubdirSearchStats,
   telemetry: RateLimitTelemetry,

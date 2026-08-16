@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `skill_validate` now runs the existing (previously unwired) typosquat-name
+  detector, checking a candidate skill's name against a bundled, periodically-regenerated
+  reference-list snapshot of high-trust authors and top-starred skills. Warn-tier only — this
+  check cannot block validation on its own (SMI-6033 Wave 1)
+
 ## v0.7.9
 
 - **Fix**: Cursor UAT follow-up — website onboarding, CLI/MCP parity, hooks schema (#2375)
