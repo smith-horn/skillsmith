@@ -181,6 +181,59 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'packages/core/src/security/scanner/typosquat.ts',
   'packages/core/src/security/scanner/typosquat-reference-list.ts',
   'packages/core/src/security/scanner/SecurityScanner.hostile-update.ts',
+  // SMI-6033 Wave 2 (Gap 5/Gap 3): the already-watched SecurityScanner.ts /
+  // security-scanner-edge.ts now import the new xattr Gatekeeper-bypass
+  // detector's shared correlation helper and the new archive-evasion
+  // detector — flagged by assertion 5 (the real import-graph tracer) as
+  // reachable-but-unwatched. The scripts/indexer/_shared two are what the
+  // tracer actually flagged (it only follows the Node-runnable import
+  // graph); the supabase/functions/_shared counterparts are added alongside
+  // for the same symmetry the Wave 1 compound.ts/paths.ts pair above used.
+  'packages/core/src/security/scanner/SecurityScanner.archive.ts',
+  'packages/core/src/security/scanner/SecurityScanner.fetch-correlation.ts',
+  'scripts/indexer/_shared/security-scanner-edge.archive.ts',
+  'scripts/indexer/_shared/security-scanner-edge.fetch-correlation.ts',
+  'supabase/functions/_shared/security-scanner-edge.archive.ts',
+  'supabase/functions/_shared/security-scanner-edge.fetch-correlation.ts',
+  // SMI-6033 Wave 2 (Gap 4): the already-watched SecurityScanner.ts /
+  // security-scanner-edge.ts now import the new paste-host reputation
+  // detector and (core only) the shared URL-extraction helper it promotes
+  // — flagged by assertion 5 (the real import-graph tracer) as
+  // reachable-but-unwatched. The scripts/indexer/_shared entry is what the
+  // tracer actually flagged (it only follows the Node-runnable import
+  // graph); the supabase/functions/_shared counterpart is added alongside
+  // for the same symmetry the archive.ts/fetch-correlation.ts pair above
+  // used.
+  'packages/core/src/security/scanner/SecurityScanner.paste-host.ts',
+  'packages/core/src/security/scanner/SecurityScanner.urls.ts',
+  'scripts/indexer/_shared/security-scanner-edge.paste-host.ts',
+  'supabase/functions/_shared/security-scanner-edge.paste-host.ts',
+  // SMI-6033 Wave 2 (Gap 2): the already-watched SecurityScanner.ts /
+  // security-scanner-edge.ts now import the new encoded (base64) payload
+  // decode-and-recursively-rescan detector — flagged by assertion 5 (the
+  // real import-graph tracer) as reachable-but-unwatched. The
+  // scripts/indexer/_shared entry is what the tracer actually flagged (it
+  // only follows the Node-runnable import graph); the
+  // supabase/functions/_shared counterpart is added alongside for the same
+  // symmetry the archive.ts/paste-host.ts pairs above used.
+  'packages/core/src/security/scanner/SecurityScanner.encoding.ts',
+  'scripts/indexer/_shared/security-scanner-edge.encoding.ts',
+  'supabase/functions/_shared/security-scanner-edge.encoding.ts',
+  // SMI-6033 Wave 3 (Gap 5): the already-watched
+  // scripts/indexer/skill-processor.security.ts now imports
+  // HIGH_TRUST_AUTHORS (the Gatekeeper-bypass trust-tier carve-out's
+  // author-allowlist lookup) from scripts/indexer/high-trust-authors.ts,
+  // which re-assembles CORE_HIGH_TRUST_AUTHORS/LEADERBOARD_HIGH_TRUST_AUTHORS
+  // from its own two sibling data files plus the shared type — flagged by
+  // assertion 5 (the real import-graph tracer) as reachable-but-unwatched,
+  // same closure-completeness reasoning as every entry above. Only the Node
+  // tree is added: unlike security-scanner-edge.ts, skill-processor.security.ts
+  // is watched for the Node twin only (the tracer follows the Node-runnable
+  // import graph, and the Deno twin has no entry in this list to begin with).
+  'scripts/indexer/high-trust-authors.ts',
+  'scripts/indexer/high-trust-authors.core.ts',
+  'scripts/indexer/high-trust-authors.leaderboard.ts',
+  'scripts/indexer/high-trust-authors.types.ts',
 ] as const
 
 // SMI-5879 Wave 1: the corpus adds ~60 scans per twin, including one ~300 KB

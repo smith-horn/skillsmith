@@ -9,10 +9,22 @@
  * SMI-5434) — pure extraction, no behavior change. Byte-identical body across
  * both _shared twins (parity test enforces); only the @module header line
  * above differs.
+ *
+ * SMI-6033 Wave 2: `escapeRegExp`, `implicitDownloadDestination`, the
+ * fetch-verb regex (renamed from `CHMOD_FETCH_CONTEXT` to the generic
+ * `FETCH_COMMAND_PATTERN`), and the distance-independent destination-matching
+ * logic were extracted further, into the sibling
+ * security-scanner-edge.fetch-correlation.ts — the xattr/gatekeeper_bypass,
+ * archive_evasion, and paste_host_fetch detectors reuse them from there.
  */
 
 import type { SecurityFinding, LineContext } from './security-scanner-edge.context.ts'
 import { classifyMatch } from './security-scanner-edge.context.ts'
+import {
+  FETCH_COMMAND_PATTERN,
+  correlationTargetBasename,
+  isCorrelatedWithFetchDestination,
+} from './security-scanner-edge.fetch-correlation.ts'
 
 // ReDoS protection: maximum line length for regex matching (mirrors scanner).
 const MAX_LINE_LENGTH = 10000
@@ -37,37 +49,10 @@ function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null 
 // standalone-critical in PRIVILEGE_ESCALATION_PATTERNS; `alreadyFlaggedLines` skips
 // those so we never double-emit on one line.
 const OWNER_PERM_CHMOD = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\b/i
-// FIX-1: actual fetch COMMANDS only. The prior weak tokens (bare `fetch`/`download`/
-// `downloaded`, a bare `https?://`, a bare `npx`) false-fired on benign prose next to
-// an owner-perm chmod. Keep curl/wget/git-clone, and `npx` only when followed by a URL.
-const CHMOD_FETCH_CONTEXT = /\b(?:curl|wget)\b|\bgit\s+clone\b|\bnpx\b[^\n]{0,80}https?:\/\//i
 // FIX-2: the file an owner-perm chmod targets (capture its path), so a download command
 // anywhere in the content that references the same file correlates with the chmod even
 // when filler lines space them outside the ±1 window.
 const CHMOD_TARGET = /\bchmod\s+(?:[0-7]{3,4}|[ugoa]*\+x)\s+(\S+)/i
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-// SMI-5431: the IMPLICIT download destination of a fetch command — the file written with
-// NO explicit -o/-O/--output<space>/> redirect: `wget <url>` (no -O/-o) → URL last segment;
-// `git clone <url>` → repo dir (minus `.git`); `curl --output=<file>` (equals form, missed by
-// the explicit regex). A bare `curl <url>` GET writes to STDOUT → '' (never correlates). ReDoS-safe.
-function implicitDownloadBasename(line: string): string {
-  const lastSegment = (urlAfterScheme: string): string => {
-    const noFrag = urlAfterScheme.split(/[?#]/)[0]
-    const slash = noFrag.indexOf('/') // first slash = end of host
-    if (slash < 0) return '' // host only -> wget writes index.html
-    const path = noFrag.slice(slash + 1).replace(/\/+$/, '')
-    return path === '' ? '' : (path.split('/').pop() ?? '')
-  }
-  const wget = line.match(/\bwget\b(?![^\n]{0,200}\s-[oO]\b)[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
-  if (wget) return lastSegment(wget[1])
-  const clone = line.match(/\bgit\s+clone\b[^\n]{0,200}?https?:\/\/(\S{1,400})/i)
-  if (clone) return lastSegment(clone[1]).replace(/\.git$/i, '')
-  const curlEq = line.match(/\bcurl\b[^\n]{0,200}?--output=['"]?(\S{1,400})/i)
-  if (curlEq) return curlEq[1].replace(/['"]/g, '').split('/').pop() ?? ''
-  return ''
-}
 
 /**
  * Owner-perm chmod compound signal — see comment above. Emits HIGH (non-doc) / low
@@ -85,28 +70,27 @@ export function scanChmodFetchCompound(
 ): SecurityFinding[] {
   const findings: SecurityFinding[] = []
   // FIX-2: lines carrying a fetch command, for distance-independent correlation.
-  const fetchLines = lines.filter((l) => CHMOD_FETCH_CONTEXT.test(l))
+  const fetchLines = lines.filter((l) => FETCH_COMMAND_PATTERN.test(l))
   for (const [index, line] of lines.entries()) {
     const lineNumber = index + 1
     if (alreadyFlaggedLines.has(lineNumber)) continue
     const match = safeRegexTest(OWNER_PERM_CHMOD, line)
     if (!match) continue
     const window = [lines[index - 1] ?? '', line, lines[index + 1] ?? ''].join('\n')
-    const adjacentFetch = CHMOD_FETCH_CONTEXT.test(window)
-    // FIX-2 + SMI-5431: correlate the chmod target basename (≥3 chars) against a fetch
+    const adjacentFetch = FETCH_COMMAND_PATTERN.test(window)
+    // FIX-2 + SMI-5431: correlate the chmod target (final segment ≥3 chars) against a fetch
     // command's DOWNLOAD DESTINATION anywhere — explicit (-o/-O/--output<space>/>, with an
     // optional leading path) via regex, OR implicit (wget/git-clone/curl --output=) via
     // exact-token equality. Anchored on the destination, NOT basename-anywhere, so a URL
     // path / query / header value (governance FP class) and a bare curl GET do not correlate.
+    // SMI-6033 Wave 3: the FULL captured path is handed to the shared utility (it used to be
+    // reduced to a bare basename here, discarding the directory the utility now compares).
     let correlated = false
     const tm = line.match(CHMOD_TARGET)
     if (tm) {
-      const base = tm[1].replace(/['"]/g, '').split('/').pop() ?? ''
-      if (base.length >= 3) {
-        const re = new RegExp(
-          `(?:-o|-O|--output|>>?)\\s*['"]?(?:[^\\s'"]*/)?${escapeRegExp(base)}(?:[\\s'"?]|$)`
-        )
-        correlated = fetchLines.some((l) => re.test(l) || implicitDownloadBasename(l) === base)
+      const targetPath = tm[1].replace(/['"]/g, '')
+      if (correlationTargetBasename(targetPath).length >= 3) {
+        correlated = isCorrelatedWithFetchDestination(targetPath, fetchLines)
       }
     }
     if (!adjacentFetch && !correlated) continue
@@ -116,6 +100,101 @@ export function scanChmodFetchCompound(
       severity: inDocContext ? 'low' : 'high',
       message: `chmod of a fetched/downloaded file (compound with a download verb): "${match[0].slice(0, 50)}"`,
       lineNumber,
+      location: line.trim().slice(0, 100),
+      inDocumentationContext: inDocContext,
+      confidence,
+    })
+  }
+  return findings
+}
+
+// SMI-6033 Wave 2/3 (Gap 5, tiered per the plan's "Product decision:
+// Gatekeeper-bypass carve-out", resolved 2026-08-14): xattr Gatekeeper-bypass
+// detector. `xattr -c <file>` (clear ALL extended attributes) or
+// `xattr -d com.apple.quarantine <file>` (delete just the quarantine
+// attribute, with or without a combined `-r` recursive flag) strips macOS's
+// "downloaded from the internet" Gatekeeper warning from an unsigned binary.
+//
+// NOT unconditionally standalone-critical: `critical` requires the xattr
+// target's path to be correlated with a fetch destination elsewhere in
+// the content (the shared isCorrelatedWithFetchDestination utility, same as
+// scanChmodFetchCompound above). Uncorrelated usage stays `medium`,
+// regardless of `isHighTrustAuthor`.
+//
+// `isHighTrustAuthor` (default `false`) is the trust-tier carve-out: when the
+// correlated (would-be-critical) form fires AND the caller has verified the
+// skill's author is high-trust, severity downgrades to `medium` instead of
+// `critical` — a downgrade, not a full exemption (even a high-trust account
+// can be compromised; a `medium` finding still counts toward the
+// two-distinct-medium-signal escalation rule). This parameter must be
+// sourced from a VERIFIED author signal (the indexer's own resolved GitHub
+// repo owner), never a self-declared SKILL.md frontmatter field. There is no
+// offline caller of this edge module in this codebase (skill_validate uses
+// core's SecurityScanner instead), but the same default-closed contract
+// applies: omitted, this stays always-critical for the correlated form.
+// Checksum/signature-verification prose near the command does NOT downgrade
+// a non-high-trust correlated form — no such logic exists here.
+//
+// Two bounded, ReDoS-safe TRIGGER patterns (mirrors CHMOD_TARGET's
+// capture-then-inspect style): XATTR_CLEAR_ALL matches any `-c`-bearing flag
+// cluster within 40 chars of `xattr`; XATTR_DELETE_QUARANTINE matches a
+// `-d`-bearing flag cluster immediately followed by the literal
+// `com.apple.quarantine` attribute name (covers a combined `-dr`/`-rd`
+// cluster AND two separate `-r -d com.apple.quarantine` tokens).
+// Reading/writing a DIFFERENT attribute (`-l`, `-p <name>`, `-w <name>
+// <value>`) matches neither. A second, TARGET-capturing sibling of each
+// pattern (below) exists ONLY to extract the xattr'd file's path for the
+// correlation check — it never changes whether a line trips the detector.
+const XATTR_CLEAR_ALL = /\bxattr\b[^\n]{0,40}-[a-zA-Z]*c[a-zA-Z]*\b/i
+const XATTR_DELETE_QUARANTINE =
+  /\bxattr\b[^\n]{0,40}-[a-zA-Z]*d[a-zA-Z]*\s+['"]?com\.apple\.quarantine\b/i
+const XATTR_CLEAR_ALL_TARGET = /\bxattr\b[^\n]{0,40}-[a-zA-Z]*c[a-zA-Z]*\b\s+['"]?(\S+)/i
+const XATTR_DELETE_QUARANTINE_TARGET =
+  /\bxattr\b[^\n]{0,40}-[a-zA-Z]*d[a-zA-Z]*\s+['"]?com\.apple\.quarantine\b['"]?\s+['"]?(\S+)/i
+
+/**
+ * The FILE target of an xattr Gatekeeper-bypass command — used only for the
+ * fetch-correlation trust-tier check. Extraction failure yields '' (never
+ * correlates); it does not affect whether the line trips the detector.
+ * SMI-6033 Wave 3: returns the FULL path (quotes stripped), not a bare
+ * basename — the shared correlation utility is now directory-aware and must
+ * not be handed a path-stripped target.
+ */
+function extractXattrTargetPath(line: string): string {
+  const m =
+    safeRegexTest(XATTR_CLEAR_ALL_TARGET, line) ??
+    safeRegexTest(XATTR_DELETE_QUARANTINE_TARGET, line)
+  if (!m) return ''
+  return m[1].replace(/['"]/g, '')
+}
+
+/**
+ * Xattr Gatekeeper-bypass signal — see comment above. Doc-context downgrades
+ * to low; otherwise correlated-and-not-high-trust is critical, everything
+ * else (uncorrelated, or correlated-but-high-trust) is medium.
+ */
+export function scanGatekeeperBypass(
+  lines: string[],
+  contexts: LineContext[],
+  isHighTrustAuthor = false
+): SecurityFinding[] {
+  const findings: SecurityFinding[] = []
+  const fetchLines = lines.filter((l) => FETCH_COMMAND_PATTERN.test(l))
+  for (const [index, line] of lines.entries()) {
+    const match =
+      safeRegexTest(XATTR_CLEAR_ALL, line) ?? safeRegexTest(XATTR_DELETE_QUARANTINE, line)
+    if (!match) continue
+    const { inDocContext, confidence } = classifyMatch(contexts[index], line, match.index ?? 0)
+    const targetPath = extractXattrTargetPath(line)
+    const correlated =
+      correlationTargetBasename(targetPath).length >= 3 &&
+      isCorrelatedWithFetchDestination(targetPath, fetchLines)
+    const critical = !inDocContext && correlated && !isHighTrustAuthor
+    findings.push({
+      type: 'gatekeeper_bypass',
+      severity: inDocContext ? 'low' : critical ? 'critical' : 'medium',
+      message: `xattr command strips the macOS Gatekeeper quarantine attribute: "${match[0].trim().slice(0, 100)}"`,
+      lineNumber: index + 1,
       location: line.trim().slice(0, 100),
       inDocumentationContext: inDocContext,
       confidence,

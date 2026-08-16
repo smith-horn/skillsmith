@@ -22,6 +22,8 @@ import {
   calculateRiskScore,
   scanPatternsWithMultilineSupport,
 } from './SecurityScanner.helpers.js'
+// SMI-6033 Wave 2 (Gap 4): promoted shared URL extraction (see module header).
+import { extractUrls } from './SecurityScanner.urls.js'
 
 // Import SSRF scanner
 import { scanSsrfPatterns } from './SecurityScanner.ssrf.js'
@@ -37,6 +39,16 @@ import {
   scanChmodFetchCompound,
   scanPiiPatterns,
 } from './SecurityScanner.scanners.js'
+
+// SMI-6033 Wave 2: xattr Gatekeeper-bypass (Gap 5) — lives alongside
+// scanChmodFetchCompound in the same compound-signal module.
+import { scanGatekeeperBypass } from './SecurityScanner.compound.js'
+// SMI-6033 Wave 2: password-protected archive evasion (Gap 3).
+import { scanArchiveEvasion } from './SecurityScanner.archive.js'
+// SMI-6033 Wave 2: paste/snippet-host reputation + fetch-context escalation (Gap 4).
+import { scanPasteHostFetch } from './SecurityScanner.paste-host.js'
+// SMI-6033 Wave 2 (Gap 2): encoded (base64) payload detect-decode-recursively-rescan.
+import { scanEncodedPayload } from './SecurityScanner.encoding.js'
 
 // Import code-execution & obfuscated-directive detectors (SMI-5359 Wave 4.2).
 import {
@@ -64,6 +76,7 @@ export {
   isDocumentationContext,
   isWithinInlineCode,
   calculateRiskScore,
+  extractUrls,
 }
 export { scanSsrfPatterns }
 export { toMinimalRefs, toSARIF, toGitHubAnnotations, toSummary }
@@ -81,21 +94,6 @@ export class SecurityScanner {
     this.riskThreshold = options.riskThreshold ?? 40
   }
 
-  private extractUrls(content: string): Array<{ url: string; line: number }> {
-    const urlPattern = /https?:\/\/[^\s<>"')\]]+/gi
-    const lines = content.split('\n')
-    const results: Array<{ url: string; line: number }> = []
-
-    lines.forEach((line, index) => {
-      let match
-      while ((match = urlPattern.exec(line)) !== null) {
-        results.push({ url: match[0], line: index + 1 })
-      }
-    })
-
-    return results
-  }
-
   private isAllowedDomain(url: string): boolean {
     try {
       const parsed = new URL(url)
@@ -110,7 +108,7 @@ export class SecurityScanner {
 
   private scanUrls(content: string): SecurityFinding[] {
     const findings: SecurityFinding[] = []
-    const urls = this.extractUrls(content)
+    const urls = extractUrls(content)
 
     for (const { url, line } of urls) {
       if (!this.isAllowedDomain(url)) {
@@ -227,35 +225,37 @@ export class SecurityScanner {
   /** @deprecated Use standalone calculateRiskScore function for new code */
   calculateRiskScore = calculateRiskScore
 
-  scan(skillId: string, content: string): ScanReport {
-    const startTime = performance.now()
+  /**
+   * Run every content-scanning detector against `content` and return the
+   * combined findings. Factored out of `scan()` (SMI-6033 Wave 2, Gap 2) so
+   * the encoded-payload detector's recursive rescan of DECODED content can
+   * reuse the exact same detector suite instead of a parallel, narrower
+   * reimplementation.
+   *
+   * `skipEncodedPayload` is the STRUCTURAL depth-1 recursion guarantee: the
+   * recursive callback passed to `scanEncodedPayload` below always calls this
+   * method with `skipEncodedPayload: true`, so a base64 blob discovered
+   * INSIDE already-decoded content can never itself be decoded — the inner
+   * call cannot reach `scanEncodedPayload` again no matter what the decoded
+   * text contains. This disables ONLY the encoded-payload detector on the
+   * inner call, not the rest of the suite — a decoded `curl|bash` still
+   * trips `code_execution`, decoded secrets still trip `sensitive_path`, etc.
+   */
+  private runDetectors(
+    content: string,
+    lineContexts: LineContext[],
+    skipEncodedPayload: boolean,
+    isHighTrustAuthor = false
+  ): SecurityFinding[] {
     const findings: SecurityFinding[] = []
-    const lineContexts = analyzeMarkdownContext(content)
-
-    if (content.length > this.maxContentLength) {
-      findings.push({
-        type: 'suspicious_pattern',
-        severity: 'low',
-        message: `Content exceeds maximum length (${this.maxContentLength} code units)`,
-      })
-    }
-
     // SMI-5881: the multiline (full-content) regex pass has its OWN, much
     // smaller cap than maxContentLength — a ReDoS budget input, not a free
     // parameter (see MAX_CONTENT_LENGTH_FOR_REGEX's own comment for why this
     // isn't simply raised to match maxContentLength). A lower configured
-    // maxContentLength tightens this further; it never widens it.
+    // maxContentLength tightens this further; it never widens it. Depends
+    // only on `this.maxContentLength` (a per-instance constant), so it is
+    // safe to recompute per call rather than threading it from `scan()`.
     const effectiveMultilineLimit = Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, this.maxContentLength)
-    if (content.length > effectiveMultilineLimit) {
-      findings.push({
-        type: 'suspicious_pattern',
-        severity: 'low',
-        message:
-          `Multiline regex scan truncated at ${effectiveMultilineLimit} code units ` +
-          `(content is ${content.length} code units; configured maxContentLength is ` +
-          `${this.maxContentLength} code units)`,
-      })
-    }
 
     findings.push(...this.scanUrls(content))
     findings.push(...scanSensitivePaths(content, lineContexts))
@@ -276,6 +276,21 @@ export class SecurityScanner {
         .map((f) => f.lineNumber as number)
     )
     findings.push(...scanChmodFetchCompound(content, privEscLines, lineContexts))
+    // SMI-6033 Wave 2/3 (Gap 5): xattr Gatekeeper-bypass — critical only when
+    // correlated with a fetch destination AND the author isn't high-trust
+    // (indexer path only; skill_validate never passes isHighTrustAuthor, so
+    // it defaults closed and correlated xattr stays always-critical there).
+    findings.push(...scanGatekeeperBypass(content, lineContexts, isHighTrustAuthor))
+    // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion —
+    // correlated + inline-literal-password form is standalone-critical;
+    // every other shape (uncorrelated CLI usage, prose-only mention) is
+    // medium/advisory.
+    findings.push(...scanArchiveEvasion(content, lineContexts))
+    // SMI-6033 Wave 2 (Gap 4): paste/snippet-host reputation — a paste-host
+    // URL that is the target of a fetch command is standalone-critical; a
+    // merely-linked paste-host URL keeps only its existing scanUrls()
+    // url:medium finding (this detector adds no finding for that case).
+    findings.push(...scanPasteHostFetch(content, lineContexts))
     findings.push(
       ...this.scanAIDefenceVulnerabilities(content, lineContexts, effectiveMultilineLimit)
     )
@@ -299,6 +314,67 @@ export class SecurityScanner {
     // 'jailbreak'/'ai_defence', so this can't create a feedback loop back
     // into escalateCodeExecution's own decision).
     escalateCorroboratedMentions(findings)
+
+    // SMI-6033 Wave 2 (Gap 2): decode-and-recursively-rescan base64 payloads.
+    // Appended AFTER this call's own escalation passes above, and the
+    // recursive rescan's OWN findings are already fully escalated by its own
+    // (inner) call to this same method — so no finding is ever run through
+    // escalateCodeExecution/escalateCorroboratedMentions twice.
+    if (!skipEncodedPayload) {
+      findings.push(
+        ...scanEncodedPayload(content, lineContexts, (decodedContent) =>
+          this.runDetectors(
+            decodedContent,
+            analyzeMarkdownContext(decodedContent),
+            true,
+            isHighTrustAuthor
+          )
+        )
+      )
+    }
+
+    return findings
+  }
+
+  /**
+   * SMI-6033 Wave 3 (Gap 5): `isHighTrustAuthor` (default `false`) is the
+   * Gatekeeper-bypass trust-tier carve-out — see `scanGatekeeperBypass`'s own
+   * header (`SecurityScanner.compound.ts`) for the full policy. No in-repo
+   * caller of this method currently has a verified author signal to pass
+   * here (the indexer scans via the edge twin, not this core class); the
+   * parameter exists so a future verified-author caller can opt in, and so
+   * every existing call site (skill_validate, skill_rescan,
+   * bundled-sibling-scan, skill-installation.*) defaults closed by
+   * construction, not by convention.
+   */
+  scan(skillId: string, content: string, isHighTrustAuthor = false): ScanReport {
+    const startTime = performance.now()
+    const findings: SecurityFinding[] = []
+    const lineContexts = analyzeMarkdownContext(content)
+
+    if (content.length > this.maxContentLength) {
+      findings.push({
+        type: 'suspicious_pattern',
+        severity: 'low',
+        message: `Content exceeds maximum length (${this.maxContentLength} code units)`,
+      })
+    }
+
+    // SMI-5881: see runDetectors()'s own comment on effectiveMultilineLimit
+    // for why this cap is separate from maxContentLength.
+    const effectiveMultilineLimit = Math.min(MAX_CONTENT_LENGTH_FOR_REGEX, this.maxContentLength)
+    if (content.length > effectiveMultilineLimit) {
+      findings.push({
+        type: 'suspicious_pattern',
+        severity: 'low',
+        message:
+          `Multiline regex scan truncated at ${effectiveMultilineLimit} code units ` +
+          `(content is ${content.length} code units; configured maxContentLength is ` +
+          `${this.maxContentLength} code units)`,
+      })
+    }
+
+    findings.push(...this.runDetectors(content, lineContexts, false, isHighTrustAuthor))
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

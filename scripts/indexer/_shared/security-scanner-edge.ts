@@ -49,11 +49,18 @@ import {
 } from './security-scanner-edge.patterns.ts'
 // SMI-6033 Wave 1: chmod+fetch compound signal, extracted to a sibling twin
 // (500-line limit); byte-identical body across both _shared twins (parity test).
-import { scanChmodFetchCompound } from './security-scanner-edge.compound.ts'
+// SMI-6033 Wave 2: xattr Gatekeeper-bypass (Gap 5) lives in the same module.
+import { scanChmodFetchCompound, scanGatekeeperBypass } from './security-scanner-edge.compound.ts'
 // SMI-6033 Wave 1: sensitive_path detector, ported from core's
 // SecurityScanner.scanners.ts (edge previously had no sensitive_path
 // type/detector/weight/coefficient at all).
 import { scanSensitivePaths } from './security-scanner-edge.paths.ts'
+// SMI-6033 Wave 2 (Gap 3): password-protected archive evasion.
+import { scanArchiveEvasion } from './security-scanner-edge.archive.ts'
+// SMI-6033 Wave 2 (Gap 4): paste/snippet-host reputation + fetch-context escalation.
+import { scanPasteHostFetch } from './security-scanner-edge.paste-host.ts'
+// SMI-6033 Wave 2 (Gap 2): encoded (base64) payload detect-decode-recursively-rescan.
+import { scanEncodedPayload } from './security-scanner-edge.encoding.ts'
 
 // SMI-4960: re-export the context model + finding types so existing consumers
 // and the parity tests keep importing them from this module.
@@ -274,19 +281,27 @@ function scanPromptInjection(lines: string[], contexts: LineContext[]): Security
 // ============================================================================
 
 /**
- * Scan SKILL.md content for security issues
+ * Run every content-scanning detector against `lines`/`contexts` and return
+ * the combined findings. Factored out of `scanSkillContent()` (SMI-6033 Wave
+ * 2, Gap 2) so the encoded-payload detector's recursive rescan of DECODED
+ * content can reuse the exact same detector suite instead of a parallel,
+ * narrower reimplementation.
  *
- * @param content - The SKILL.md content to scan
- * @returns EdgeScanResult with findings, risk score, and content hash
+ * `skipEncodedPayload` is the STRUCTURAL depth-1 recursion guarantee: the
+ * recursive callback passed to `scanEncodedPayload` below always calls this
+ * function with `skipEncodedPayload: true`, so a base64 blob discovered
+ * INSIDE already-decoded content can never itself be decoded — the inner
+ * call cannot reach `scanEncodedPayload` again no matter what the decoded
+ * text contains. This disables ONLY the encoded-payload detector on the
+ * inner call, not the rest of the suite.
  */
-export async function scanSkillContent(content: string): Promise<EdgeScanResult> {
-  const startTime = performance.now()
+function runDetectors(
+  lines: string[],
+  contexts: LineContext[],
+  skipEncodedPayload: boolean,
+  isHighTrustAuthor = false
+): SecurityFinding[] {
   const findings: SecurityFinding[] = []
-
-  // SMI-2408: Split once, pass to all scanners to avoid 5x redundant splitting
-  const lines = content.split('\n')
-  // SMI-4960: compute markdown context once and thread it through all scanners.
-  const contexts = analyzeMarkdownContext(content)
 
   // Run all scanners
   findings.push(...scanJailbreakPatterns(lines, contexts))
@@ -303,6 +318,18 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
       .map((f) => f.lineNumber as number)
   )
   findings.push(...scanChmodFetchCompound(lines, contexts, privEscLines))
+  // SMI-6033 Wave 2/3 (Gap 5): xattr Gatekeeper-bypass — critical only when
+  // correlated with a fetch destination AND the author isn't high-trust.
+  findings.push(...scanGatekeeperBypass(lines, contexts, isHighTrustAuthor))
+  // SMI-6033 Wave 2 (Gap 3): password-protected archive evasion — correlated +
+  // inline-literal-password form is standalone-critical; every other shape
+  // (uncorrelated CLI usage, prose-only mention) is medium/advisory.
+  findings.push(...scanArchiveEvasion(lines, contexts))
+  // SMI-6033 Wave 2 (Gap 4): paste/snippet-host reputation — a paste-host
+  // URL that is the target of a fetch command is standalone-critical; a
+  // merely-linked paste-host URL produces no finding on edge (edge has no
+  // url:medium detector to preserve — see security-scanner-edge.paste-host.ts).
+  findings.push(...scanPasteHostFetch(lines, contexts))
   findings.push(...scanPromptInjection(lines, contexts))
   // SMI-6033 Wave 1: sensitive_path (credential file/path/env-var references).
   findings.push(...scanSensitivePaths(lines, contexts))
@@ -312,6 +339,49 @@ export async function scanSkillContent(content: string): Promise<EdgeScanResult>
   // Promote code_execution to critical when it co-occurs with a non-doc
   // exfil/privilege/obfuscation signal (runs after every detector).
   escalateCodeExecution(findings)
+
+  // SMI-6033 Wave 2 (Gap 2): decode-and-recursively-rescan base64 payloads.
+  // Appended AFTER escalateCodeExecution above, and the recursive rescan's
+  // OWN findings are already fully escalated by its own (inner) call to this
+  // same function — so no finding is ever run through escalateCodeExecution
+  // twice.
+  if (!skipEncodedPayload) {
+    findings.push(
+      ...scanEncodedPayload(lines, contexts, (decodedContent) => {
+        const decodedLines = decodedContent.split('\n')
+        const decodedContexts = analyzeMarkdownContext(decodedContent)
+        return runDetectors(decodedLines, decodedContexts, true, isHighTrustAuthor)
+      })
+    )
+  }
+
+  return findings
+}
+
+/**
+ * Scan SKILL.md content for security issues
+ *
+ * @param content - The SKILL.md content to scan
+ * @param isHighTrustAuthor - SMI-6033 Wave 3 (Gap 5): the Gatekeeper-bypass
+ *   trust-tier carve-out (see scanGatekeeperBypass's own header,
+ *   security-scanner-edge.compound.ts). Must be sourced from a VERIFIED
+ *   author signal (the indexer's own resolved GitHub repo owner) — never
+ *   omit this reasoning when threading a value in from a new call site.
+ *   Defaults `false` (closed).
+ * @returns EdgeScanResult with findings, risk score, and content hash
+ */
+export async function scanSkillContent(
+  content: string,
+  isHighTrustAuthor = false
+): Promise<EdgeScanResult> {
+  const startTime = performance.now()
+
+  // SMI-2408: Split once, pass to all scanners to avoid 5x redundant splitting
+  const lines = content.split('\n')
+  // SMI-4960: compute markdown context once and thread it through all scanners.
+  const contexts = analyzeMarkdownContext(content)
+
+  const findings = runDetectors(lines, contexts, false, isHighTrustAuthor)
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)

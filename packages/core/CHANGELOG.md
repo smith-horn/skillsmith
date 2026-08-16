@@ -11,6 +11,68 @@ All notable changes to `@skillsmith/core` are documented here.
   long document can no longer escalate a distant, unrelated `code_execution` finding. Exported
   `AUTHORITY_CLAIMING_AFFIXES` from `typosquat.ts` (previously module-private) for reuse by a
   planned decoy-URL detector (SMI-6033 Wave 1)
+- **Feature**: two new security scanner detectors (SMI-6033 Wave 3). `gatekeeper_bypass`
+  (`SecurityScanner.compound.ts`) fires standalone-critical on an `xattr -c` (clear all extended
+  attributes) or `xattr -d com.apple.quarantine` command when the target basename correlates with
+  a fetch destination elsewhere in the content — uncorrelated usage stays medium; a later fix in
+  this wave also adds a trust-tier carve-out (see below). `archive_evasion` (new
+  `SecurityScanner.archive.ts`) detects password-protected archive usage via two sub-signals — CLI
+  invocation syntax (`unzip -P`, `unrar x -p<pw>`, `7z x -p<pw>`, `zip -P <pw> ... -e`) and prose
+  co-occurrence (an archive noun + a password noun within a bounded ±2-line window) — and reaches
+  standalone-critical only when the CLI form carries an inline literal (not `$VAR`, not a
+  placeholder) password AND the archive's target basename correlates with a fetch destination
+  elsewhere in the content; every other shape (out-of-band password, uncorrelated CLI usage, or
+  prose-only mention) stays medium/advisory. Both new finding types share the top-tier
+  weight/coefficient (2.0/0.40) already used by `code_execution`/`obfuscated_directive` — severity
+  alone (not a second weight tier) produces the two-outcome split. Both are wired into
+  `SecurityScanner.scan()` and mirrored byte-for-byte into the edge twins
+  (`supabase/functions/_shared/` and `scripts/indexer/_shared/`).
+- **Feature**: paste/snippet-host reputation detector (SMI-6033 Wave 3, Gap 4). Two reputation
+  tiers (`patterns.ts`): `ANON_PASTE_HOSTS` + `URL_SHORTENER_DOMAINS` require real execution
+  evidence (direct pipe to an interpreter, npx direct-exec, or a later chmod/exec/source
+  correlation) to reach standalone-critical; `TRANSIENT_TRANSFER_HOSTS` (transfer.sh, file.io,
+  tmpfiles.org, temp.sh) is always medium, never critical — a deliberate exception for legitimate
+  debugging/incident-response fetches of ephemeral reproducers. `extractUrls` is promoted from a
+  private `SecurityScanner.ts` method to a shared `SecurityScanner.urls.ts` export so the existing
+  `scanUrls` detector and the new one (`SecurityScanner.paste-host.ts`, finding type
+  `paste_host_fetch`) share a single URL-extraction implementation. A paste-host URL that is merely
+  linked/mentioned, or fetched-but-not-executed, gets no new finding — it stays covered by the
+  existing `scanUrls` `url`:medium finding, unchanged. Shares the same top-tier weight/coefficient
+  (2.0/0.40) as `gatekeeper_bypass`/`archive_evasion`. Wired into `SecurityScanner.scan()` and
+  mirrored byte-for-byte into the edge twins (`supabase/functions/_shared/` and
+  `scripts/indexer/_shared/`).
+- **Feature**: encoded-payload decode-and-recursively-rescan detector (SMI-6033 Wave 3, Gap 2).
+  Rather than a heuristic "this looks suspicious" flag, the new detector (`SecurityScanner.encoding.ts`,
+  finding type `encoded_payload`) finds a contiguous base64-alphabet run (`[A-Za-z0-9+/]{120,}={0,2}`
+  — the character class's deliberate exclusion of `-`/`_` is what keeps base64url-encoded JWTs out,
+  not a separate check), skips a candidate immediately preceded by a `data:image/`, `data:font/`, or
+  `data:audio/` prefix (benign data-URI blobs) or larger than ~200KB, attempts exactly one base64
+  decode, and — only when the result is valid UTF-8 with a plausible-text printable-character ratio —
+  recursively invokes the SAME scanner's full detector suite against the decoded text, folding its
+  findings into the outer `findings` array. This reuses the entire pattern arsenal instead of
+  duplicating it: a decoded `curl|bash` natively trips `code_execution` at its own top-tier severity,
+  exactly as if the attacker had shipped it undecoded. Recursion is bounded to depth 1 STRUCTURALLY,
+  not by convention — `SecurityScanner.ts`'s new private `runDetectors(content, lineContexts,
+  skipEncodedPayload)` method is what both the outer scan and the encoded-payload detector's own
+  recursive rescan call, and the rescan callback always passes `skipEncodedPayload: true`, so a base64
+  blob discovered inside already-decoded content can never itself be decoded. Two resource bounds cap
+  the cost of a single document scan: `MAX_BASE64_CANDIDATES = 8` per document and an aggregate
+  `MAX_DECODED_TOTAL_BYTES = 256_000` across all candidates. Each finding folded in from decoded
+  content carries a new `decodedFrom` field (`types.ts`) set to the OUTER document line the blob was
+  found on — the same provenance-marker role `filePath` already plays for a sibling-file finding. The
+  wrapper `encoded_payload` finding itself is deliberately advisory-tier only (weight 1.2 / coefficient
+  0.04 — the `sensitive_path`/`typosquat` tier, NOT the 2.0/0.40 tier the other three Wave 3 detectors
+  use), since the escalation this gap achieves comes for free from whatever the decoded content's own
+  findings already are. Wired into `SecurityScanner.scan()` and mirrored byte-for-byte into the edge
+  twins (`supabase/functions/_shared/` and `scripts/indexer/_shared/`).
+- **Fix**: `SecurityScanner.archive.ts` and `SecurityScanner.paste-host.ts` (SMI-6033 Wave 3) each
+  had a direct `.match(...)`/`.test(...)` call that bypassed this scanner's established
+  `safeRegexTest`/`safeRegexCheck` ReDoS-safe wrappers, flagged by CodeQL as a polynomial regular
+  expression on uncontrolled data. Routed all 8 call sites through the wrappers, matching the
+  convention already used everywhere else in the scanner, and mirrored the same fix into both edge
+  twins (`supabase/functions/_shared/` and `scripts/indexer/_shared/`), adding a local
+  `safeRegexCheck` helper alongside the existing local `safeRegexTest` in each Node-port file
+  (the edge twins can't share an import across the git-crypt boundary)
 
 ## v0.11.7
 

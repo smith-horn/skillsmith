@@ -8,6 +8,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   detector, checking a candidate skill's name against a bundled, periodically-regenerated
   reference-list snapshot of high-trust authors and top-starred skills. Warn-tier only — this
   check cannot block validation on its own (SMI-6033 Wave 1)
+- **Fix**: `ZERO_BREAKDOWN` test fixtures in `src/audit` (and the mirrored copy in
+  `@skillsmith/cli`) predated SMI-6033 Wave 3's four new `RiskScoreBreakdown` fields
+  (`gatekeeperBypass`, `archiveEvasion`, `pasteHostFetch`, `encodedPayload`) — a real,
+  pre-existing typecheck gap only a genuinely full, cross-package `tsc --build` surfaces, not a
+  scoped single-package run (SMI-6033 Wave 3)
 
 ## v0.7.9
 

@@ -352,6 +352,10 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
     codeExecution: 0,
     obfuscatedDirective: 0,
     typosquat: 0,
+    gatekeeperBypass: 0,
+    archiveEvasion: 0,
+    pasteHostFetch: 0,
+    encodedPayload: 0,
   }
 
   const confidenceWeights: Record<FindingConfidence, number> = {
@@ -413,6 +417,18 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
         // SecurityScanner.scoring.test.ts, added specifically to guard this.
         breakdown.typosquat += score
         break
+      case 'gatekeeper_bypass':
+        breakdown.gatekeeperBypass += score
+        break
+      case 'archive_evasion':
+        breakdown.archiveEvasion += score
+        break
+      case 'paste_host_fetch':
+        breakdown.pasteHostFetch += score
+        break
+      case 'encoded_payload':
+        breakdown.encodedPayload += score
+        break
     }
   }
 
@@ -431,6 +447,10 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   breakdown.codeExecution = Math.min(100, breakdown.codeExecution)
   breakdown.obfuscatedDirective = Math.min(100, breakdown.obfuscatedDirective)
   breakdown.typosquat = Math.min(100, breakdown.typosquat)
+  breakdown.gatekeeperBypass = Math.min(100, breakdown.gatekeeperBypass)
+  breakdown.archiveEvasion = Math.min(100, breakdown.archiveEvasion)
+  breakdown.pasteHostFetch = Math.min(100, breakdown.pasteHostFetch)
+  breakdown.encodedPayload = Math.min(100, breakdown.encodedPayload)
 
   // SMI-5359 Wave 4.2: the two new categories use a 0.40 coefficient and are ADDITIVE
   // (the original eleven coefficients sum to 1.0; these add on top). No code assumes the
@@ -440,6 +460,15 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   // sensitivePaths/externalUrls/ssrf (the "advisory tier" of this second-stage formula) —
   // NOT folded into the eleven-category budget that sums to 1.0. See weights.ts's
   // CATEGORY_WEIGHTS.typosquat comment for the worked calculation this pairs with.
+  // SMI-6033 Wave 2: gatekeeperBypass/archiveEvasion/pasteHostFetch are
+  // ADDITIVE at the 0.40 coefficient (matching codeExecution/
+  // obfuscatedDirective's top tier) — see weights.ts's
+  // CATEGORY_WEIGHTS.gatekeeper_bypass comment for the worked calculation
+  // showing how ONE weight/coefficient pair produces both the
+  // standalone-critical and advisory-medium outcomes via severity alone.
+  // encodedPayload is likewise ADDITIVE, at the 0.04 coefficient (the same
+  // advisory tier as sensitivePaths/externalUrls/ssrf/typosquat) — see
+  // weights.ts's CATEGORY_WEIGHTS.encoded_payload comment.
   const total = Math.min(
     100,
     Math.round(
@@ -456,7 +485,11 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
         breakdown.pii * 0.08 +
         breakdown.codeExecution * 0.4 +
         breakdown.obfuscatedDirective * 0.4 +
-        breakdown.typosquat * 0.04
+        breakdown.typosquat * 0.04 +
+        breakdown.gatekeeperBypass * 0.4 +
+        breakdown.archiveEvasion * 0.4 +
+        breakdown.pasteHostFetch * 0.4 +
+        breakdown.encodedPayload * 0.04
     )
   )
 
