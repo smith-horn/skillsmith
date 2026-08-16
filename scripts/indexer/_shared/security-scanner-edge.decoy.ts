@@ -37,6 +37,22 @@
  * utility... reusable by any future edge detector that needs URL
  * extraction" — exactly this reuse).
  *
+ * Two fixes from adversarial review (2026-08-16 — see
+ * docs/internal/code_review/2026-08-15-smi6033-wave4-escalation-model.md
+ * for the full account; byte-identical to core's own SecurityScanner.decoy.ts):
+ *
+ *  1. Fetch-target correlation. The original version treated ANY URL on a
+ *     line that ALSO matched the generic FETCH_COMMAND_PATTERN as the fetch
+ *     target — including a URL merely mentioned in prose alongside an
+ *     unrelated fetch-verb usage on the same line. Replaced with
+ *     isActualFetchTarget, which tokenizes the line's prefix before the URL
+ *     and requires it to be exactly the fetch verb plus flags (and their
+ *     value arguments) — no prose, no command separator.
+ *
+ *  2. Authority-affix proximity. hasAuthorityAffix used to scan the ENTIRE
+ *     ±5-line window independently of where the brand token itself was
+ *     found. Now scoped to the brand token's OWN line only.
+ *
  * Byte-identical body across both _shared twins (parity test enforces); only
  * the @module header line above differs. Pure Deno/Web APIs, no Node deps.
  */
@@ -46,18 +62,76 @@ import { isDocumentationContext } from './security-scanner-edge.context.ts'
 import { extractUrls } from './security-scanner-edge.paste-host.ts'
 import { DEFAULT_ALLOWED_DOMAINS } from './security-scanner-edge.patterns.ts'
 import { BRAND_ALIASES, AUTHORITY_CLAIMING_AFFIXES } from './security-scanner-edge.brand-data.ts'
-import { FETCH_COMMAND_PATTERN } from './security-scanner-edge.fetch-correlation.ts'
-
-// ReDoS protection: maximum line length for regex matching (mirrors scanner).
-const MAX_LINE_LENGTH = 10000
-
-function safeRegexTest(pattern: RegExp, input: string): RegExpMatchArray | null {
-  const safeInput = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) : input
-  return safeInput.match(pattern)
-}
 
 // Bounded prose window (±N lines) around a fetch/exec instruction, per the plan's Gap 6 text.
 const DECOY_WINDOW_LINES = 5
+
+// Same-line-only (adversarial-review fix, 2026-08-16) — the authority affix
+// and the brand claim must plausibly be part of the SAME sentence/claim.
+const DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES = 0
+
+const FETCH_VERBS = new Set(['curl', 'wget', 'npx'])
+// A bare flag token, e.g. -o, -fsSL, --output, --data=x.
+const FLAG_TOKEN = /^-{1,2}[A-Za-z][\w-]*$/
+// Common curl/wget/npx flags that take a SEPARATE value token (e.g.
+// -o setup.sh, -X POST) — that value token must be consumed as part of the
+// flag, not mistaken for prose.
+const VALUE_TAKING_FLAGS = new Set([
+  '-o',
+  '-x',
+  '-h',
+  '-d',
+  '-a',
+  '-e',
+  '-u',
+  '-b',
+  '--output',
+  '--request',
+  '--header',
+  '--data',
+  '--data-raw',
+  '--data-binary',
+  '--data-urlencode',
+  '--user-agent',
+  '--referer',
+  '--proxy',
+  '--cookie',
+])
+
+// True when `url` (verbatim substring of `lineContent`) is actually the
+// argument to a fetch verb (curl/wget/npx, or `git clone`) on that line —
+// not merely co-located with one. See this module's header for the fixed
+// false-positive example.
+function isActualFetchTarget(lineContent: string, url: string): boolean {
+  const urlIndex = lineContent.indexOf(url)
+  if (urlIndex < 0) return false
+  const prefix = lineContent.slice(0, urlIndex)
+  if (/[;|&]/.test(prefix)) return false
+
+  const tokens = prefix
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+  if (tokens.length === 0) return false
+
+  let i: number
+  if (tokens[0]?.toLowerCase() === 'git' && tokens[1]?.toLowerCase() === 'clone') {
+    i = 2
+  } else if (FETCH_VERBS.has(tokens[0]?.toLowerCase() ?? '')) {
+    i = 1
+  } else {
+    return false
+  }
+
+  for (; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (!FLAG_TOKEN.test(token)) return false
+    if (VALUE_TAKING_FLAGS.has(token.toLowerCase()) && i + 1 < tokens.length) {
+      i++ // consume the flag's own value token too
+    }
+  }
+  return true
+}
 
 // Curated canonical domain(s) per BRAND_ALIASES brand token — see this
 // file's own header for why this cannot simply reuse BRAND_ALIASES' values
@@ -90,25 +164,37 @@ interface VendorClaim {
 }
 
 // Scan a bounded ±DECOY_WINDOW_LINES window around lineIndex for a brand
-// token (required) and an authority-claiming affix (optional, boosts
-// confidence). Returns null when no brand token is present.
+// token (required). Returns null when no brand token is present.
+// hasAuthorityAffix is resolved separately, scoped tightly to the brand
+// token's OWN line (adversarial-review fix, 2026-08-16) — NOT the wider
+// fetch-correlation window.
 function findVendorClaimInWindow(lines: string[], lineIndex: number): VendorClaim | null {
   const start = Math.max(0, lineIndex - DECOY_WINDOW_LINES)
   const end = Math.min(lines.length - 1, lineIndex + DECOY_WINDOW_LINES)
-  const windowTokens = tokenize(lines.slice(start, end + 1).join(' '))
 
   let brandToken: string | null = null
-  let hasAuthorityAffix = false
-  for (const token of windowTokens) {
-    if (!brandToken && Object.prototype.hasOwnProperty.call(BRAND_ALIASES, token)) {
-      brandToken = token
-    }
-    if (AUTHORITY_CLAIMING_AFFIXES.has(token)) {
-      hasAuthorityAffix = true
+  let brandLineIndex = -1
+  for (let i = start; i <= end && !brandToken; i++) {
+    for (const token of tokenize(lines[i] ?? '')) {
+      if (Object.prototype.hasOwnProperty.call(BRAND_ALIASES, token)) {
+        brandToken = token
+        brandLineIndex = i
+        break
+      }
     }
   }
+  if (!brandToken) return null
 
-  return brandToken ? { brandToken, hasAuthorityAffix } : null
+  const affixStart = Math.max(0, brandLineIndex - DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES)
+  const affixEnd = Math.min(
+    lines.length - 1,
+    brandLineIndex + DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES
+  )
+  const hasAuthorityAffix = tokenize(lines.slice(affixStart, affixEnd + 1).join(' ')).some((t) =>
+    AUTHORITY_CLAIMING_AFFIXES.has(t)
+  )
+
+  return { brandToken, hasAuthorityAffix }
 }
 
 export function scanDecoyMisdirection(lines: string[], contexts: LineContext[]): SecurityFinding[] {
@@ -118,9 +204,11 @@ export function scanDecoyMisdirection(lines: string[], contexts: LineContext[]):
   for (const { url, line } of urls) {
     const lineIndex = line - 1
     const lineContent = lines[lineIndex] ?? ''
-    // Only a fetch/exec instruction with a concrete URL target is in scope —
-    // a bare linked URL ("see https://docs.example.com") is not.
-    if (safeRegexTest(FETCH_COMMAND_PATTERN, lineContent) === null) continue
+    // Only a URL that is ACTUALLY the argument to a fetch verb is in scope —
+    // a bare linked URL ("see https://docs.example.com") is not, and neither
+    // is a URL merely co-located on a line with an unrelated fetch-verb
+    // usage (adversarial-review fix, 2026-08-16).
+    if (!isActualFetchTarget(lineContent, url)) continue
 
     let hostname: string
     try {

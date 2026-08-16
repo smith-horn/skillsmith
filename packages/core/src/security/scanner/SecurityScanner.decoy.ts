@@ -42,6 +42,29 @@
  * (medium -> high), not an alternate, independently-sufficient trigger. This
  * mirrors typosquat.ts's own rule 3 (`hasBrandToken && hasAuthorityAffix`),
  * which also requires both signals together.
+ *
+ * Two fixes from adversarial review (2026-08-16 — see
+ * docs/internal/code_review/2026-08-15-smi6033-wave4-escalation-model.md
+ * for the full account):
+ *
+ *  1. Fetch-target correlation. The original version treated ANY URL on a
+ *     line that ALSO matched the generic FETCH_COMMAND_PATTERN as the fetch
+ *     target — including a URL that was merely mentioned in prose alongside
+ *     an unrelated fetch-verb usage on the same line (e.g.
+ *     "curl --version; see mirror documentation at <url>", where curl is
+ *     checking its own version, not fetching that URL). Replaced with
+ *     `isActualFetchTarget`, which requires the fetch verb to be
+ *     IMMEDIATELY followed (only flag-like tokens and whitespace, no
+ *     command separator, no prose) by the URL — i.e. the URL must actually
+ *     be the verb's argument.
+ *
+ *  2. Authority-affix proximity. `hasAuthorityAffix` used to scan the ENTIRE
+ *     ±5-line window independently of where the brand token itself was
+ *     found, so an unrelated authority phrase elsewhere in the window (e.g.
+ *     "for official documentation on Python packaging, see PEP 517") could
+ *     wrongly boost confidence to 'high' for a brand claim it has nothing to
+ *     do with. Now scoped to a tight window around the brand token's OWN
+ *     line (`DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES`).
  */
 
 import type { SecurityFinding } from './types.js'
@@ -50,11 +73,96 @@ import { analyzeMarkdownContext, isDocumentationContext } from './SecurityScanne
 import { extractUrls } from './SecurityScanner.urls.js'
 import { DEFAULT_ALLOWED_DOMAINS } from './patterns.js'
 import { BRAND_ALIASES, AUTHORITY_CLAIMING_AFFIXES } from './typosquat.js'
-import { FETCH_COMMAND_PATTERN } from './SecurityScanner.fetch-correlation.js'
-import { safeRegexTest } from './regex-utils.js'
 
 /** Bounded prose window (±N lines) around a fetch/exec instruction, per the plan's Gap 6 text. */
 const DECOY_WINDOW_LINES = 5
+
+/**
+ * How close an authority-claiming affix ("official", "verified", ...) must
+ * be to the brand token's OWN line for it to count as a confidence booster.
+ * Same-line-only (adversarial-review fix, 2026-08-16) — the affix and the
+ * brand claim must plausibly be part of the SAME sentence/claim, not merely
+ * co-located somewhere in the wider fetch-correlation window OR on an
+ * adjacent line carrying an unrelated sentence (a real adversarial-review
+ * example: "For official documentation on Python packaging, see PEP 517."
+ * on the line right after a genuine, affix-free "Claude API" brand mention —
+ * a ±1-line window still wrongly pairs the two).
+ */
+const DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES = 0
+
+const FETCH_VERBS = new Set(['curl', 'wget', 'npx'])
+/** A bare flag token, e.g. `-o`, `-fsSL`, `--output`, `--data=x`. */
+const FLAG_TOKEN = /^-{1,2}[A-Za-z][\w-]*$/
+/**
+ * Common curl/wget/npx flags that take a SEPARATE value token (e.g.
+ * `-o setup.sh`, `-X POST`) — that value token must be consumed as part of
+ * the flag, not mistaken for prose.
+ */
+const VALUE_TAKING_FLAGS = new Set([
+  '-o',
+  '-x',
+  '-h',
+  '-d',
+  '-a',
+  '-e',
+  '-u',
+  '-b',
+  '--output',
+  '--request',
+  '--header',
+  '--data',
+  '--data-raw',
+  '--data-binary',
+  '--data-urlencode',
+  '--user-agent',
+  '--referer',
+  '--proxy',
+  '--cookie',
+])
+
+/**
+ * True when `url` (verbatim substring of `lineContent`) is actually the
+ * argument to a fetch verb (curl/wget/npx, or `git clone`) on that line —
+ * not merely co-located with one. Tokenizes the prefix before the URL:
+ * rejects outright on any command separator (`;`, `|`, `&`), requires the
+ * prefix to start with the fetch verb, and requires every remaining token to
+ * be either a flag or the value argument of a value-taking flag (e.g.
+ * `curl -o setup.sh <url>`) — any other token (prose) fails the match.
+ * Rejects "curl --version; see mirror documentation at <url>" (the URL is
+ * not curl's argument, and the `;` alone already disqualifies it); accepts
+ * "curl -fsSL <url>", "curl -o setup.sh <url>", "wget <url>",
+ * "git clone <url>", "npx --yes <url>".
+ */
+function isActualFetchTarget(lineContent: string, url: string): boolean {
+  const urlIndex = lineContent.indexOf(url)
+  if (urlIndex < 0) return false
+  const prefix = lineContent.slice(0, urlIndex)
+  if (/[;|&]/.test(prefix)) return false
+
+  const tokens = prefix
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+  if (tokens.length === 0) return false
+
+  let i: number
+  if (tokens[0]?.toLowerCase() === 'git' && tokens[1]?.toLowerCase() === 'clone') {
+    i = 2
+  } else if (FETCH_VERBS.has(tokens[0]?.toLowerCase() ?? '')) {
+    i = 1
+  } else {
+    return false
+  }
+
+  for (; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (!FLAG_TOKEN.test(token)) return false
+    if (VALUE_TAKING_FLAGS.has(token.toLowerCase()) && i + 1 < tokens.length) {
+      i++ // consume the flag's own value token too
+    }
+  }
+  return true
+}
 
 /**
  * Curated canonical domain(s) per `BRAND_ALIASES` brand token — see this
@@ -90,27 +198,41 @@ interface VendorClaim {
 
 /**
  * Scan a bounded ±`DECOY_WINDOW_LINES` window around `lineIndex` for a brand
- * token (required) and an authority-claiming affix (optional, boosts
- * confidence). Returns `null` when no brand token is present — nothing to
- * compare a fetch target's domain against.
+ * token (required). Returns `null` when no brand token is present — nothing
+ * to compare a fetch target's domain against. `hasAuthorityAffix` is then
+ * resolved separately, scoped tightly to the brand token's OWN line (see
+ * `DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES` and this file's header note on the
+ * adversarial-review fix) — NOT the wider fetch-correlation window, so an
+ * authority phrase unrelated to this specific brand claim can't wrongly
+ * boost confidence.
  */
 function findVendorClaimInWindow(lines: string[], lineIndex: number): VendorClaim | null {
   const start = Math.max(0, lineIndex - DECOY_WINDOW_LINES)
   const end = Math.min(lines.length - 1, lineIndex + DECOY_WINDOW_LINES)
-  const windowTokens = tokenize(lines.slice(start, end + 1).join(' '))
 
   let brandToken: string | null = null
-  let hasAuthorityAffix = false
-  for (const token of windowTokens) {
-    if (!brandToken && Object.prototype.hasOwnProperty.call(BRAND_ALIASES, token)) {
-      brandToken = token
-    }
-    if (AUTHORITY_CLAIMING_AFFIXES.has(token)) {
-      hasAuthorityAffix = true
+  let brandLineIndex = -1
+  for (let i = start; i <= end && !brandToken; i++) {
+    for (const token of tokenize(lines[i] ?? '')) {
+      if (Object.prototype.hasOwnProperty.call(BRAND_ALIASES, token)) {
+        brandToken = token
+        brandLineIndex = i
+        break
+      }
     }
   }
+  if (!brandToken) return null
 
-  return brandToken ? { brandToken, hasAuthorityAffix } : null
+  const affixStart = Math.max(0, brandLineIndex - DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES)
+  const affixEnd = Math.min(
+    lines.length - 1,
+    brandLineIndex + DECOY_AUTHORITY_AFFIX_PROXIMITY_LINES
+  )
+  const hasAuthorityAffix = tokenize(lines.slice(affixStart, affixEnd + 1).join(' ')).some((t) =>
+    AUTHORITY_CLAIMING_AFFIXES.has(t)
+  )
+
+  return { brandToken, hasAuthorityAffix }
 }
 
 export function scanDecoyMisdirection(
@@ -125,10 +247,12 @@ export function scanDecoyMisdirection(
   for (const { url, line } of urls) {
     const lineIndex = line - 1
     const lineContent = lines[lineIndex] ?? ''
-    // Only a fetch/exec instruction with a concrete URL target is in scope —
-    // a bare linked URL ("see https://docs.example.com") is not (mirrors
-    // scanPasteHostFetch's/scanArchiveEvasion's own same-line-fetch-verb gate).
-    if (safeRegexTest(FETCH_COMMAND_PATTERN, lineContent) === null) continue
+    // Only a URL that is ACTUALLY the argument to a fetch verb is in scope —
+    // a bare linked URL ("see https://docs.example.com") is not, and neither
+    // is a URL merely co-located on a line with an unrelated fetch-verb
+    // usage (adversarial-review fix, 2026-08-16 — see isActualFetchTarget's
+    // own doc comment).
+    if (!isActualFetchTarget(lineContent, url)) continue
 
     let hostname: string
     try {
