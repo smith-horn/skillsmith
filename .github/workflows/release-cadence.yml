@@ -134,13 +134,28 @@ jobs:
             exit 0
           fi
 
-          # No qualifying PR. If the branch itself already exists on the remote
-          # with no PR behind it, a prior run got as far as the push but died
-          # before opening a PR — retrying the push would hit the SAME
-          # non-fast-forward failure this guard exists to prevent.
+          # No qualifying PR. If the branch itself already exists on the remote,
+          # fail loud rather than retry the push — but the DIAGNOSTIC must
+          # distinguish two different causes (PR-review finding, SMI-6052 round
+          # 3): (a) a closed-but-NOT-merged PR exists for this branch (a human
+          # explicitly rejected it; the branch was deliberately preserved, not
+          # left behind by a crash — SMI-5663's own "branch preserved"
+          # convention) vs. (b) truly no PR of any kind exists (a prior run got
+          # as far as the push but died before `gh pr create`). Retrying the
+          # push would conflict with the old branch's diverged history either
+          # way, so both cases still fail loud — but (a)'s message must say "a
+          # closed PR exists" instead of the misleading "a prior run likely
+          # pushed but failed before opening a PR", which is simply false when
+          # a PR clearly exists.
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "count=0" >> "$GITHUB_OUTPUT"
-            echo "::error::Branch ${BRANCH} exists on origin but no open/merged PR was found for it — a prior run likely pushed but failed before opening a PR. Investigate manually (gh pr list --state all --head \"${BRANCH}\"); do not silently retry the push." >> "$GITHUB_STEP_SUMMARY"
+            ANY_PR_COUNT=$(echo "$EXISTING" | jq --arg branch "$BRANCH" '[.[] | select(.headRefName == $branch)] | length')
+            if [ "$ANY_PR_COUNT" != "0" ]; then
+              CLOSED_URL=$(echo "$EXISTING" | jq -r --arg branch "$BRANCH" '[.[] | select(.headRefName == $branch)][0].url')
+              echo "::error::Branch ${BRANCH} exists on origin with a CLOSED (not merged) PR: ${CLOSED_URL} — a fresh push would conflict with that PR's history. Investigate manually before retrying; do not delete/force-push without confirming with whoever closed it." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::Branch ${BRANCH} exists on origin but no PR of any kind was found for it — a prior run likely pushed but failed before opening a PR. Investigate manually (gh pr list --state all --head \"${BRANCH}\"); do not silently retry the push." >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 1
           fi
 
