@@ -44,8 +44,7 @@ vi.mock('@skillsmith/core', () => ({
   // SMI-5893 (Wave 7 Step 2): recommend.helpers.ts's formatRecommendations
   // calls this whenever context.auto_detected is true (every test in this
   // file — none pass --installed) for the non-JSON terminal output path.
-  getRecommendAutoDetectedFooterText: () =>
-    'auto-detected from your installed skills across all clients',
+  getRecommendAutoDetectedFooterText: () => 'auto-detected from your installed skills',
 }))
 vi.mock('ora', () => ({ default: () => mocks.spinner }))
 

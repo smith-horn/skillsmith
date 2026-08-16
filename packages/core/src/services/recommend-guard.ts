@@ -54,5 +54,12 @@ export function buildEmptyStackGuidance(): string {
  * generically via this one shared helper instead.
  */
 export function getRecommendAutoDetectedFooterText(): string {
-  return 'auto-detected from your installed skills across all clients'
+  // PR #2375 review follow-up: "across all clients" overclaimed scope —
+  // each surface actually scans exactly one client (CLI: the canonical
+  // install path; MCP: whatever SKILLSMITH_CLIENT resolves to at call
+  // time), never a union across clients. Wording stays generic (no single
+  // client value is available here to name specifically — see the
+  // function-level doc comment above) without asserting a scope neither
+  // surface implements.
+  return 'auto-detected from your installed skills'
 }

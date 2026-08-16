@@ -39,10 +39,14 @@ describe('getRecommendAutoDetectedFooterText (SMI-5893 Wave 7 Step 2)', () => {
     expect(text.length).toBeGreaterThan(0)
   })
 
-  it('describes multi-harness detection instead of naming a single hardcoded path', () => {
+  it('describes detection generically instead of naming a single hardcoded path or overclaiming multi-client scope', () => {
+    // PR #2375 review follow-up: this text must not name one hardcoded
+    // client path (the original bug), but must also not claim "all
+    // clients" — each surface (CLI, MCP) actually scans exactly one
+    // client per call, never a union across clients.
     const text = getRecommendAutoDetectedFooterText()
     expect(text.toLowerCase()).not.toContain('~/.claude/skills')
-    expect(text.toLowerCase()).toContain('all clients')
+    expect(text.toLowerCase()).not.toContain('all clients')
   })
 
   it('is deterministic (identical wording every call) so CLI and MCP never drift apart', () => {

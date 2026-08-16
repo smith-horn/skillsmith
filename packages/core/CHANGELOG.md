@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: PR #2375 post-merge review follow-up (three findings). `recommend`'s shared footer text no longer claims detection "across all clients" — each surface (CLI, MCP) scans exactly one client per call, never a union. Cursor `hooks.json` installation's `ensureTopLevelDefaults` now fails closed (`status: 'conflict'`, no write) instead of silently preserving an existing incompatible top-level value (e.g. a wrong `version`) while still merging hook entries in (SMI-5893)
+
 ## v0.11.7
 
 - **Fix**: Cursor UAT follow-up — website onboarding, CLI/MCP parity, hooks schema (#2375)

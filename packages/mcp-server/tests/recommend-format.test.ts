@@ -114,7 +114,7 @@ describe('formatRecommendations', () => {
 
     const formatted = formatRecommendations(result)
 
-    expect(formatted).toContain('auto-detected from your installed skills across all clients')
+    expect(formatted).toContain('auto-detected from your installed skills')
     expect(formatted).not.toContain('~/.claude/skills')
   })
 
