@@ -1,10 +1,10 @@
 {
   "prior": 0.6545454545454545,
   "current": 0.6545454545454545,
-  "generated": "2026-08-09",
+  "generated": "2026-08-16",
   "corpus": {
-    "filesScanned": 2734,
-    "chunksUpserted": 53605
+    "filesScanned": 2898,
+    "chunksUpserted": 56644
   },
   "knobs": {
     "boost": 1.5,
@@ -15,9 +15,9 @@
   "bootstrapped": false,
   "metrics": {
     "recallAt5": 0.6545454545454545,
-    "recallAt10": 0.7454545454545455,
-    "mrr": 0.4582034632034631,
-    "ndcgAt10": 0.5272010031204676
+    "recallAt10": 0.7272727272727273,
+    "mrr": 0.4563852813852813,
+    "ndcgAt10": 0.521945279005597
   },
   "byCategory": {
     "recallAt5": {
