@@ -91,6 +91,11 @@ describe('SMI-864: Scan Imported Skills', () => {
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
           typosquat: 0, // SMI-595
+          gatekeeperBypass: 0, // SMI-6033 Wave 2
+          archiveEvasion: 0, // SMI-6033 Wave 2
+          pasteHostFetch: 0, // SMI-6033 Wave 2
+          encodedPayload: 0, // SMI-6033 Wave 2
+          decoyMisdirection: 0, // SMI-6033 Wave 4
         },
       }
 
@@ -145,6 +150,11 @@ describe('SMI-864: Scan Imported Skills', () => {
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
           typosquat: 0, // SMI-595
+          gatekeeperBypass: 0, // SMI-6033 Wave 2
+          archiveEvasion: 0, // SMI-6033 Wave 2
+          pasteHostFetch: 0, // SMI-6033 Wave 2
+          encodedPayload: 0, // SMI-6033 Wave 2
+          decoyMisdirection: 0, // SMI-6033 Wave 4
         },
       }
 
@@ -174,6 +184,11 @@ describe('SMI-864: Scan Imported Skills', () => {
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
           typosquat: 0, // SMI-595
+          gatekeeperBypass: 0, // SMI-6033 Wave 2
+          archiveEvasion: 0, // SMI-6033 Wave 2
+          pasteHostFetch: 0, // SMI-6033 Wave 2
+          encodedPayload: 0, // SMI-6033 Wave 2
+          decoyMisdirection: 0, // SMI-6033 Wave 4
         },
       }
 
@@ -203,6 +218,11 @@ describe('SMI-864: Scan Imported Skills', () => {
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
           typosquat: 0, // SMI-595
+          gatekeeperBypass: 0, // SMI-6033 Wave 2
+          archiveEvasion: 0, // SMI-6033 Wave 2
+          pasteHostFetch: 0, // SMI-6033 Wave 2
+          encodedPayload: 0, // SMI-6033 Wave 2
+          decoyMisdirection: 0, // SMI-6033 Wave 4
         },
       }
 
@@ -232,6 +252,11 @@ describe('SMI-864: Scan Imported Skills', () => {
           codeExecution: 0, // SMI-5359 Wave 4.2
           obfuscatedDirective: 0, // SMI-5359 Wave 4.2
           typosquat: 0, // SMI-595
+          gatekeeperBypass: 0, // SMI-6033 Wave 2
+          archiveEvasion: 0, // SMI-6033 Wave 2
+          pasteHostFetch: 0, // SMI-6033 Wave 2
+          encodedPayload: 0, // SMI-6033 Wave 2
+          decoyMisdirection: 0, // SMI-6033 Wave 4
         },
       }
 

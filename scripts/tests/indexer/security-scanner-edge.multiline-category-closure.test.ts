@@ -126,6 +126,9 @@ import {
   // (which previously re-declared it inline) into this patterns sibling, its single
   // source of truth — same as every other array imported here.
   CODE_EXECUTION_PATTERNS,
+  // SMI-6033 Wave 4 (Gap 1): the prose-imperative sibling of the array above,
+  // scanned by the same per-line scanCodeExecution loop.
+  IMPERATIVE_FETCH_EXEC_PROSE,
 } from '../../indexer/_shared/security-scanner-edge.patterns.ts'
 import { CATEGORY_COEFFICIENTS } from '../../indexer/_shared/security-scanner-edge.context.ts'
 import {
@@ -273,6 +276,15 @@ describe('SMI-5879 Wave 3 item 2 — multiline-pass category closure, EDGE TWIN 
       {
         arrayName: 'CODE_EXECUTION_PATTERNS',
         array: CODE_EXECUTION_PATTERNS,
+        functionName: 'scanCodeExecution',
+        src: EXEC_SRC,
+        fileLabel: 'security-scanner-edge.exec.ts',
+      },
+      // SMI-6033 Wave 4 (Gap 1): the second `code_execution` pattern set,
+      // consumed by the SAME per-line scanCodeExecution loop.
+      {
+        arrayName: 'IMPERATIVE_FETCH_EXEC_PROSE',
+        array: IMPERATIVE_FETCH_EXEC_PROSE,
         functionName: 'scanCodeExecution',
         src: EXEC_SRC,
         fileLabel: 'security-scanner-edge.exec.ts',

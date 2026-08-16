@@ -6,7 +6,13 @@
 # runbook.
 #
 # Two-job split for secret scoping:
-#   - smoke: SUPABASE_URL + SUPABASE_ANON_KEY only (read-only).
+#   - smoke: SUPABASE_URL + SUPABASE_ANON_KEY, plus (SMI-6040) TRIAL_SALT and
+#            SUPABASE_SERVICE_ROLE_KEY -- the anon-budget probe
+#            (scripts/smoke-prod/anon-budget.sh) is no longer pure read-only:
+#            its Layer 2 identity-derivation check calls the service-role-only
+#            seed_anon_usage / adjust_anon_usage RPCs to set and then reset a
+#            known count on ITS OWN synthetic probe identity row in
+#            anon_usage. Nothing outside that one row is ever written.
 #   - alert: SUPABASE_SERVICE_ROLE_KEY only (alert-notify POST). Runs on
 #            failure of smoke and only sees the report artifact, not the
 #            harness internals.
@@ -119,6 +125,17 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # SMI-6040 (Wave 1, Step 4): the anon-key daily-budget smoke probe
+          # (scripts/smoke-prod/anon-budget.sh, "anon-key-budget" surface)
+          # hard-fails -- not soft-skips -- when either of these is unset, so
+          # a missing value here breaks every smoke run, not just that one
+          # surface. TRIAL_SALT lets the probe reproduce hashIP()'s
+          # sha256(egress-IP + salt) identity the same way the edge
+          # middleware does; SUPABASE_SERVICE_ROLE_KEY is required to call
+          # the service-role-only seed_anon_usage / adjust_anon_usage RPCs
+          # against the probe's own synthetic identity row.
+          TRIAL_SALT: ${{ secrets.TRIAL_SALT }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           # SMI-4755: staging credentials for skills-search/get/recommend usage-counter smoke.
           # SMOKE_SKILLS_API_KEY: sk_live_* key for the dedicated staging smoke account.
           # SMOKE_SKILLS_EMAIL / SMOKE_SKILLS_PASSWORD: same account, used to sign in

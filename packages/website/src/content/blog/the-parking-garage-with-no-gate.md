@@ -3,7 +3,7 @@ title: "The Parking Garage With No Gate"
 description: "We run a dedicated Docker container for every parallel coding-agent session. It worked great until the host machine started drowning. Here are the six things we had to build to make many concurrent containers survivable."
 author: "Ryan Smith"
 date: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 category: "Engineering"
 tags: ["docker", "developer-tooling", "engineering-culture", "infrastructure", "agentic-engineering"]
 featured: false
@@ -74,11 +74,11 @@ The fix is an explicit freshness check: hash the lockfile's content, compare it 
 
 ## What changed when the gate went up
 
-The mechanical wins showed up first. The host stopped thrashing under load, because a container hitting its ceiling slows itself down instead of slowing everyone down. Port failures went to zero. The "invalid ELF header" class of corruption stopped happening, because no container can write into a sibling's dependencies anymore. Restarts and rebinding repairs happen without a human in the loop.
+Some of the mechanical wins showed up already. Port failures went to zero. The "invalid ELF header" class of corruption stopped happening, because no container can write into a sibling's dependencies anymore. Restarts and rebinding repairs happen without a human in the loop.
 
-But the bigger win was the one the analogy predicts. A garage with a gate and a ticket system doesn't only control entry. It tells you who's inside, and it lets you reason about capacity instead of discovering it through failure. When the machine slows down now, we can say which containers hold which resources and decide, deliberately, whether to admit another session. Before, the only signal was the whole building groaning.
+The capacity number is the piece we haven't built yet. Right now, when the machine slows down, the only signal is the whole building groaning, exactly the failure mode principle #1 describes, because nothing on the host can tell you which container is over its limit until the limit is written down somewhere. That's next, and it's deliberately not a hardcoded value: it needs the same per-machine formula and Decision Log treatment as every other threshold in this post.
 
-If your agent tooling is heading toward many concurrent sessions in Docker, the isolation-per-task pattern is worth keeping. Just don't do what we did and build the garage first, then wait for the traffic jam to design the gate. Docker gives you the walls and the spots. The ceiling, the ticket system, and the tow truck are yours to build.
+If your agent tooling is heading toward many concurrent sessions in Docker, the isolation-per-task pattern is worth keeping. Just don't do what we did and build the garage before the gate. Docker gives you the walls and the spots. The ceiling, the ticket system, and the tow truck are yours to build, and building them together beats waiting for the first traffic jam to force the order.
 
 ## Key Takeaways
 

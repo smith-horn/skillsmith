@@ -32,6 +32,10 @@ export {
   SSRF_INSTRUCTION_PATTERNS,
   PII_PATTERNS,
   CODE_EXECUTION_PATTERNS,
+  // SMI-6033 Wave 4 (Gap 1): natural-language fetch-and-execute imperatives —
+  // the same `code_execution` finding type, matched from prose instead of
+  // shell syntax. Declared in patterns.exec.ts, re-exported by patterns.ts.
+  IMPERATIVE_FETCH_EXEC_PROSE,
   // SMI-5876: ruleset version stamp, consumed by the security-audit baseline
   // to force a re-scan when the pattern/evidence-tier definitions change.
   SCANNER_RULESET_VERSION,

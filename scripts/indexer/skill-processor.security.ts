@@ -17,6 +17,14 @@
  *
  * Parity with supabase/functions/indexer/skill-processor.security.ts is
  * enforced by parity.test.ts.
+ *
+ * SMI-6033 Wave 3 (Gap 5): scanSkillBundle now also computes
+ * `isHighTrustAuthor` from `owner` (the indexer's own resolved GitHub repo
+ * owner — a verified fact, not a spoofable SKILL.md frontmatter field) and
+ * threads it into every scanSkillContent call (primary + siblings), enabling
+ * the Gatekeeper-bypass trust-tier carve-out on THIS (indexer) path only.
+ * Reuses the exact same HIGH_TRUST_AUTHORS owner-set lookup Gap 7's
+ * typosquat-reference.ts already sources from — not a second mechanism.
  */
 
 import {
@@ -37,6 +45,9 @@ import {
   detectTyposquat,
   resolveTyposquatEnforcementMode,
 } from '../../packages/core/src/security/scanner/index.js'
+// SMI-6033 Wave 3 (Gap 5): the same high-trust-author allowlist Gap 7's
+// typosquat-reference.ts already sources from.
+import { HIGH_TRUST_AUTHORS } from './high-trust-authors.ts'
 
 // sync: packages/core/src/services/skill-installation.policy.ts BUNDLED_SCAN_FILES
 export const BUNDLED_SCAN_FILES = [
@@ -299,6 +310,21 @@ export interface TyposquatScanInput {
 }
 
 /**
+ * SMI-6033 Wave 3 (Gap 5 Product decision, 2026-08-14): is `owner` one of
+ * this indexer's own high-trust author owners? Reuses the exact same
+ * HIGH_TRUST_AUTHORS-owner-set lookup Gap 7's typosquat-reference.ts already
+ * builds (`HIGH_TRUST_AUTHORS.map((a) => a.owner)`) — not a second
+ * mechanism. `owner` here is expected to be the GitHub repo owner the
+ * indexer itself resolved this skill under (a verified fact), never a
+ * spoofable SKILL.md frontmatter field — see the plan's "Product decision:
+ * Gatekeeper-bypass carve-out" section for why that distinction is
+ * load-bearing.
+ */
+function isHighTrustOwner(owner: string): boolean {
+  return HIGH_TRUST_AUTHORS.some((a) => a.owner.toLowerCase() === owner.toLowerCase())
+}
+
+/**
  * SMI-5879 PR-2192a: the single scan-surface entry point (design 8.2.1 /
  * 8.2.1.1). Body is the pre-existing inline enumerate -> fetch -> scan ->
  * merge loop from validateSkillMd (skill-processor.ts, both twins), moved
@@ -333,8 +359,14 @@ export async function scanSkillBundle(
   const doFetchSiblingContent = deps?.fetchSiblingContent ?? fetchSiblingContent
   const doScanSkillContent = deps?.scanSkillContent ?? scanSkillContent
 
+  // SMI-6033 Wave 3 (Gap 5): the Gatekeeper-bypass trust-tier carve-out's
+  // precondition — see isHighTrustOwner's own header and
+  // scanGatekeeperBypass's header (security-scanner-edge.compound.ts) for
+  // the full policy. `owner` is a verified fact on this (indexer) path.
+  const isHighTrustAuthor = isHighTrustOwner(owner)
+
   // SMI-2272: Run security scan on SKILL.md content
-  const securityScan = await doScanSkillContent(primaryContent)
+  const securityScan = await doScanSkillContent(primaryContent, isHighTrustAuthor)
   if (!securityScan.passed) {
     console.log(
       `[SecurityScan] ${owner}/${repo}: riskScore=${securityScan.riskScore}, findings=${securityScan.findings.length}`
@@ -350,7 +382,7 @@ export async function scanSkillBundle(
     const sibResult = await doFetchSiblingContent(owner, repo, branch, relPath, telemetry)
     if (sibResult !== null && !('removed' in sibResult)) {
       const sibContent = sibResult.content
-      const sibScan = await doScanSkillContent(sibContent)
+      const sibScan = await doScanSkillContent(sibContent, isHighTrustAuthor)
       siblingScans.push({ relPath, scan: sibScan })
     } else if (sibResult === null) {
       // Transient: network error, 429, or oversized — same fail-open behavior as before.

@@ -32,6 +32,16 @@ export type SecurityFindingType =
   // SMI-6033 Wave 1: type-system registration only — core already has this
   // finding type (typosquat.ts); the detector call site is wired separately.
   | 'typosquat'
+  // SMI-6033 Wave 2 (Gap 5): xattr strips the macOS Gatekeeper quarantine attribute.
+  | 'gatekeeper_bypass'
+  // SMI-6033 Wave 2 (Gap 3): password-protected archive used to evade content scanning.
+  | 'archive_evasion'
+  // SMI-6033 Wave 2 (Gap 4): anonymous paste/snippet-host URL is the target of a fetch command.
+  | 'paste_host_fetch'
+  // SMI-6033 Wave 2 (Gap 2): base64-encoded blob decoded and recursively rescanned.
+  | 'encoded_payload'
+  // SMI-6033 Wave 4 (Gap 6): fetch target's domain doesn't match a brand/authority claim made nearby in the skill's own prose.
+  | 'decoy_misdirection'
 
 /**
  * Severity levels for findings
@@ -65,6 +75,12 @@ export interface SecurityFinding {
   confidence?: FindingConfidence
   /** SMI-5436: Path of the skill bundle file that triggered this finding, relative to the skill root. Absent for SKILL.md-only findings. */
   filePath?: string
+  /**
+   * SMI-6033 Wave 2 (Gap 2): the OUTER document line number of the base64
+   * blob whose decoded content produced this finding — set ONLY on findings
+   * folded in by `scanEncodedPayload`'s recursive rescan. Absent otherwise.
+   */
+  decodedFrom?: number
 }
 
 /**
@@ -120,6 +136,30 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // SMI-6033 Wave 1: byte-identical to core weights.ts CATEGORY_WEIGHTS.
   sensitive_path: 1.2,
   typosquat: 1.2,
+  // SMI-6033 Wave 2: top-tier weight matching code_execution/obfuscated_directive
+  // — byte-identical to core weights.ts CATEGORY_WEIGHTS.gatekeeper_bypass /
+  // .archive_evasion. The SAME weight is used for both the critical
+  // (standalone-quarantining) and medium (advisory) forms of each type;
+  // severity alone (SEVERITY_WEIGHTS 50 vs 15) does the two-tier split.
+  gatekeeper_bypass: 2.0,
+  archive_evasion: 2.0,
+  // SMI-6033 Wave 2 (Gap 4): byte-identical to core weights.ts
+  // CATEGORY_WEIGHTS.paste_host_fetch — same top-tier weight as
+  // gatekeeper_bypass/archive_evasion, for the same reason.
+  paste_host_fetch: 2.0,
+  // SMI-6033 Wave 2 (Gap 2): byte-identical to core weights.ts
+  // CATEGORY_WEIGHTS.encoded_payload — the sensitive_path/typosquat tier
+  // (1.2), NOT the 2.0 tier every other Wave 2 category above uses. This
+  // wrapper finding is deliberately advisory-only; the escalation comes free
+  // from the decoded content's OWN findings (e.g. a decoded `curl|bash`
+  // natively trips code_execution at ITS OWN top-tier weight).
+  encoded_payload: 1.2,
+  // SMI-6033 Wave 4 (Gap 6): byte-identical to core weights.ts
+  // CATEGORY_WEIGHTS.decoy_misdirection — same advisory tier as
+  // sensitive_path/typosquat/encoded_payload (1.2), NOT the 2.0 tier every
+  // other Wave 2/3 category above uses, since this finding type must never
+  // be standalone-critical.
+  decoy_misdirection: 1.2,
 }
 
 /**
@@ -142,6 +182,24 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   // (the same 0.04 core uses for sensitivePaths/externalUrls/ssrf/typosquat).
   sensitive_path: 0.04,
   typosquat: 0.04,
+  // SMI-6033 Wave 2: additive 0.40 each (mirror of core), matching
+  // code_execution/obfuscated_directive's top tier. A single CRITICAL
+  // gatekeeper_bypass/archive_evasion finding reaches exactly the 40
+  // quarantine threshold on its own (50 * 2.0 * 1.0 = 100 -> cap 100 -> * 0.40
+  // = 40); a single MEDIUM finding contributes 12 — well under threshold alone.
+  gatekeeper_bypass: 0.4,
+  archive_evasion: 0.4,
+  // SMI-6033 Wave 2 (Gap 4): additive 0.40, matching gatekeeper_bypass/
+  // archive_evasion — byte-identical to core weights.ts's paired coefficient.
+  paste_host_fetch: 0.4,
+  // SMI-6033 Wave 2 (Gap 2): additive 0.04 — the sensitive_path/typosquat
+  // advisory-tier coefficient, byte-identical to core
+  // SecurityScanner.helpers.ts's paired coefficient for encoded_payload.
+  encoded_payload: 0.04,
+  // SMI-6033 Wave 4 (Gap 6): additive 0.04 — the sensitive_path/typosquat/
+  // encoded_payload advisory-tier coefficient, byte-identical to core
+  // SecurityScanner.helpers.ts's paired coefficient for decoy_misdirection.
+  decoy_misdirection: 0.04,
 }
 
 /**
@@ -355,6 +413,11 @@ export function calculateRiskScore(findings: SecurityFinding[]): number {
     obfuscated_directive: 0,
     sensitive_path: 0,
     typosquat: 0,
+    gatekeeper_bypass: 0,
+    archive_evasion: 0,
+    paste_host_fetch: 0,
+    encoded_payload: 0,
+    decoy_misdirection: 0,
   }
 
   for (const finding of findings) {
