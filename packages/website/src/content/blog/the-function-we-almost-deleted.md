@@ -1,11 +1,11 @@
 ---
 title: "The Function We Almost Deleted"
-description: "We built a dead-code scanner for our own codebase, ran it for real, and it flagged a function that was actually load-bearing. Here's the near-miss, the fix, and what was really slowing down our Docker containers."
+description: "We built a dead-code scanner for our own codebase, ran it for real, and it flagged a function that was actually load-bearing. Here's the near-miss, the root cause, and why we spun the tool out as its own MIT-licensed repo."
 author: "Ryan Smith"
 date: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-15
 category: "Engineering"
-tags: ["dead-code", "code-health", "developer-tooling", "docker", "engineering-culture", "monorepo", "code-quality"]
+tags: ["dead-code", "code-health", "developer-tooling", "open-source", "engineering-culture", "monorepo", "code-quality"]
 featured: false
 draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/the-function-we-almost-deleted/01-hero"
@@ -28,11 +28,9 @@ Our scanner's report had one line that would have broken a working command: `com
 
 ## Why we went looking for dead code in the first place
 
-We'd noticed our Docker containers running hotter than they used to, and the easy explanation was sitting right there: our codebase has grown fast (over 2,700 commits in about seven months), so of course every build and test run costs more compute than it did six months ago. More code, more work. Obvious.
+Our codebase has grown fast: over 2,700 commits in about seven months. At that pace, dead code piles up quietly. Helpers get superseded by rewrites, wrappers get bypassed, and nobody circles back to delete the leftovers, because deleting code you didn't write feels riskier than ignoring it. We'd been eyeballing candidates ad hoc and wanted something principled instead.
 
-It's also only part of the story.
-
-We dug into `docker-compose.yml` and found the real bottleneck: our dev containers have no CPU or memory limit set. Picture a parking garage with no posted capacity. Cars keep pulling in, and nobody ever gets turned away at the gate. Every container we spin up, for every parallel task, competes for the exact same slice of the host machine's CPU and memory, with no ceiling on how many can pile in at once. We work in a style that spins up a fresh container per task by design, so as the number of things happening in parallel grows, the squeeze grows with it. That's an infrastructure fix, riskier and slower to review, and we've filed it separately. This post isn't about that fix. It's about the smaller, complementary thing we could actually ship this week: making sure every build only pays for code that's actually doing something.
+We're also not the first to take this seriously. Farhan Thawar, VP and Head of Engineering at Shopify, runs an internal program called the [Dead Code Club](https://x.com/fnthawar/status/2085713494838526424): 5 million lines of code deleted in one push last summer, then another 15 million at the company's Summit event in July. That's the precedent. Our version needed to be smaller and a lot more paranoid.
 
 ## Building a scanner that's allowed to say "I don't know"
 
@@ -46,7 +44,7 @@ So we added a fourth category most tools skip: *needs runtime verification, insu
 
 We pointed the finished tool at one package (our CLI) and let it work. Six functions came back tagged "safe to delete." Four more got flagged as possible duplicates worth a second look.
 
-Then we did something a lot of automated cleanup tools skip: we didn't trust the "safe" label at face value. We had a second, more careful pass re-check every single candidate by hand, searching the *entire* codebase (not just the one package the scanner looked at) and confirming none of it was secretly part of a public interface other code depends on.
+Then we did something a lot of automated cleanup tools skip: we didn't trust the "safe" label at face value. We had a second, more careful pass re-check every single candidate by hand, searching the *entire* codebase rather than only the one package the scanner looked at, and confirming none of it was secretly part of a public interface other code depends on.
 
 Two of the six didn't survive that check. `compareCandidates` was one false alarm. A validation function guarding our private registry install path was the other, which would have quietly removed a security check if we'd trusted the scanner's first answer.
 
@@ -56,16 +54,65 @@ The four functions that survived every check really were dead: two quota-display
 
 ## What this actually proves
 
-This first pass was small on purpose. Ninety-eight lines out of a codebase with a couple thousand test files isn't going to show up in a build-time chart, and pretending otherwise would be the kind of overclaiming we'd rather not do. What it *does* prove is that the safety net holds under a real test, not just a hypothetical one. The tool caught genuinely dead code. It also almost shipped two false positives, and the verification pass caught both before they became a real regression. That's why we built a scanner that proposes and a separate pass that verifies, instead of one script that just deletes: the interesting failures don't show up until you run it against a real, messy codebase with conventions the tool has never seen before.
+This first pass was small on purpose. Ninety-eight lines out of a codebase with a couple thousand test files isn't a headline number, and pretending otherwise would be the kind of overclaiming we'd rather not do. What it *does* prove is that the safety net holds under a real test instead of a hypothetical one. The tool caught genuinely dead code. It also almost shipped two false positives, and the verification pass caught both before they became a real regression. That's why we built a scanner that proposes and a separate pass that verifies, instead of one script that just deletes: the interesting failures don't show up until you run it against a real, messy codebase with conventions the tool has never seen before.
 
-The Docker fix is still ahead of us, tracked as its own piece of work with its own review. The dead-code tool keeps running, one package at a time, each pass teaching it more about our own codebase's quirks. Put the two together and you get a more honest answer than "the codebase got bigger" ever was.
+The tool keeps running here, one package at a time, each pass teaching it more about our own codebase's quirks. And now it can run on yours too.
+
+## The tool is public now
+
+The scanner started life as an internal skill for our own coding agents. As of this week the whole thing is public at [smith-horn/code-health-auditor](https://github.com/smith-horn/code-health-auditor). This post describes the tool; the repo lets you install it and point your own coding agent at your own codebase.
+
+Getting it from "works for us" to "honest to publish" took its own cleanup pass, and we used our own CLI to do it.
+
+### Commands we ran
+
+First, structure validation:
+
+```
+$ skillsmith validate .claude/skills/code-health-auditor
+VALID
+Warnings:
+  - Consider adding tags for better searchability
+```
+
+Sound structure, one warning about missing tags. We added the tags.
+
+Then the reference check. `skillsmith publish --check-references` ships with default patterns for structural leaks: Docker container names, npm scopes, project URLs, GitHub repo references, suspicious line counts. On top of those we supplied three custom patterns for this repo's own fingerprints: our brand name, our issue-tracker prefix, and our internal package paths.
+
+```
+$ skillsmith publish --check-references \
+    --reference-patterns 'Skillsmith,SMI-[0-9]+,packages/(cli|mcp-server|core)' \
+    .claude/skills/code-health-auditor
+
+  References in SKILL.md:
+    L4: Skillsmith (Custom pattern)
+    L82: SMI-XXXX (Custom pattern)
+    L34: packages/cli (Custom pattern)
+    ...
+
+  References in patterns/README.md:
+    L24: SMI-XXXX (Custom pattern)
+    ...
+
+  ⚠️  Found 30 project-specific reference(s) across 2 file(s)
+  These may leak internal project details. Review before publishing.
+
+✔ Skill prepared for publishing
+```
+
+Thirty real internal references across two files, and every one of them would have made the "reusable" claim a lie: package names from our monorepo, issue numbers from our tracker, our own product name woven through the prose.
+
+One honest note for anyone else preparing a skill for release: every hit above says "Custom pattern." The default patterns alone found zero of the thirty, because a plain-English mention of your own product name isn't a URL, a container name, or an npm scope. The defaults catch structural leaks; they can't know your brand. A clean default run is not the same as a clean skill, so pass your own name, tracker prefix, and internal paths as custom patterns before you trust the result.
+
+After genericizing the package names, stripping the issue-tracker numbers, and replacing brand mentions with generic language, a second `skillsmith publish --check-references` run came back clean: zero references found.
 
 ---
 
 ## Key Takeaways
 
-- **The obvious explanation was only part of the story.** Rising Docker compute looked like a codebase-growth problem; the bigger driver turned out to be containers with no resource ceiling competing for the same host machine, tracked as a separate fix.
+- **Dead-code deletion is a real engineering discipline, with real precedent.** Shopify's internal Dead Code Club deleted 5 million lines of code in one push, then 15 million more at its Summit event in July. Our version is smaller and adds a verification pass.
 - **A dead-code scanner needs a fourth answer besides "delete it" and "keep it."** Ours added "I can't tell yet" as an explicit, first-class category, after an adversarial design review found real cases where a confident answer would have been wrong.
 - **"Safe to delete" from a tool is a candidate, not a verdict.** A second, independent verification pass against the full codebase caught two false positives in this run's very first outing, one of them a security-relevant validation check.
 - **Both false positives traced back to one root cause**: a test-coverage check blind to half our test-file conventions. The tool now defends against it with a regression test.
 - **The real cleanup was small on purpose**: 4 functions, 98 lines, verified from three directions before deletion. Small and verifiably safe beats large and merely plausible.
+- **The tool now has its own MIT-licensed repo.** [smith-horn/code-health-auditor](https://github.com/smith-horn/code-health-auditor) is public and installable, separate from Skillsmith's own source-available license. Preparing it surfaced 30 internal references across 2 files, all from custom patterns, so bring your own brand name and tracker prefix to `--check-references` before trusting a clean run.
