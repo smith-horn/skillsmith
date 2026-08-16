@@ -166,19 +166,29 @@ export function resolveVersionMarker(lockfilePath, pkgPath) {
 }
 
 // CLI entrypoint — only runs when invoked directly via
-// `node scripts/lib/linux-optional-packages.mjs [lockfilePath]`. Prints one
-// path per line to stdout and exits 0, even when there are zero matches.
-// Follows this repo's existing import.meta.url-based CLI-detection idiom
-// (see scripts/lib/forbid-local-publish.mjs).
+// `node scripts/lib/linux-optional-packages.mjs [lockfilePath] [--with-versions]`.
+// Prints one path per line to stdout and exits 0, even when there are zero
+// matches. Follows this repo's existing import.meta.url-based CLI-detection
+// idiom (see scripts/lib/forbid-local-publish.mjs).
+//
+// SMI-6050 Wave 2: `--with-versions` prints `<path>\t<version>` instead of a
+// bare path — used by the Dockerfile's Tier-B seed RUN block to write a
+// `.version` marker alongside each seeded package (see "What Changes" #2's
+// staleness-detection design) without spawning a separate `node` process per
+// package. This is a CLI-only addition — deriveLinuxOptionalPackagePaths()
+// and resolveVersionMarker()'s own signatures are unchanged, since Wave 3
+// depends on both being stable.
 const isMain =
   import.meta.url === `file://${process.argv[1]}` ||
   process.argv[1]?.endsWith('linux-optional-packages.mjs')
 
 if (isMain) {
-  const lockfilePath = process.argv[2] ?? DEFAULT_LOCKFILE_PATH
+  const args = process.argv.slice(2)
+  const withVersions = args.includes('--with-versions')
+  const lockfilePath = args.find((a) => !a.startsWith('--')) ?? DEFAULT_LOCKFILE_PATH
   const paths = deriveLinuxOptionalPackagePaths(lockfilePath)
   for (const p of paths) {
-    console.log(p)
+    console.log(withVersions ? `${p}\t${resolveVersionMarker(lockfilePath, p)}` : p)
   }
   process.exit(0)
 }
