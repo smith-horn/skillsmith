@@ -302,49 +302,68 @@ function isWithinCoSignalWindow(codeExecLine?: number, coSignalLine?: number): b
 /**
  * Escalate the code_execution finding (literal `curl|bash` syntax OR a Gap-1
  * IMPERATIVE_FETCH_EXEC_PROSE match — same finding type either way) to
- * CRITICAL, on either of two paths. Both require the co-signal to be
- * NON-documentation and WITHIN MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE
- * lines. Mutates in place. The non-doc gate keeps legitimate
- * security-research skills (examples in fenced blocks) at MEDIUM.
+ * CRITICAL, on either of two paths. Both require: the code_execution finding
+ * ITSELF to be non-documentation (see the adversarial-review fix note
+ * below), the co-signal to be NON-documentation, and the co-signal to be
+ * WITHIN MAX_CODE_EXECUTION_CO_SIGNAL_LINE_DISTANCE lines. Mutates in place.
  *
  * Path (a) — ONE co-signal whose type's CO_SIGNAL_MIN_SEVERITY minimum is
  * `'high'`, at `high` or `critical`. Byte-identical to the pre-SMI-6033
- * behavior for the original four types: same membership test, same severity
- * test, same locality gate, same message. Deliberately NO confidence
- * requirement here — adding one would change existing behavior, which the Gap
- * 6 design explicitly forbids.
+ * behavior for the original four types EXCEPT for the codeExec-own-doc-context
+ * fix below (the pre-existing behavior there was a real gap, not an
+ * intentional design): same co-signal membership test, same severity test,
+ * same locality gate, same message. Deliberately NO confidence requirement on
+ * the CO-SIGNAL here — adding one would change existing behavior, which the
+ * Gap 6 design explicitly forbids.
  *
  * Path (b) — SMI-6033 Wave 4 (Gap 6), only evaluated when path (a) did not
  * fire: at least TWO DISTINCT `'medium'`-minimum types (two findings of the
- * SAME type do not count), each at or above its own minimum and each carrying
- * `confidence !== 'low'` (i.e. `'high'` or `'medium'` — only the doc-context/
- * inline-code downgrade marker, `'low'`, is excluded). A single fuzzy medium
- * signal (one decoy mismatch alone, one transfer.sh link alone) can therefore
- * never flip a legitimate vendor `curl|bash` to critical.
+ * SAME type do not count), each at or above its own minimum. A single fuzzy
+ * medium signal (one decoy mismatch alone, one transfer.sh link alone) can
+ * therefore never flip a legitimate vendor `curl|bash` to critical.
  *
- * Judgment call, made explicit rather than left implicit (the plan's own
- * literal text specified `confidence: 'high'` here, not `!== 'low'`): a
- * strict `'high'`-only gate makes scanPasteHostFetch's ANON/TRANSIENT medium
- * form — which is ALWAYS `confidence: 'medium'`, by construction — structurally
- * unable to ever satisfy path (b), even though it is registered in
- * `CO_SIGNAL_MIN_SEVERITY` as a medium-eligible type and the plan's own Wave 4
- * illustrative fixture ("weak curl|bash + paste-host mention + decoy
- * vendor-URL mismatch") uses exactly that combination. Relaxed to `!== 'low'`
- * so a registered medium-eligible type can actually participate: `'medium'`
- * confidence in this codebase already means "a real detector match, moderate
- * certainty" (not noise) — every one of the four eligible types
- * (`decoy_misdirection`, `archive_evasion`, `paste_host_fetch`,
- * `gatekeeper_bypass`) already caps its own SEVERITY at `medium` (never
- * `high`) for exactly this reason, so confidence doesn't need to additionally
- * gate to `'high'` on top of that. `'low'` confidence remains excluded
- * because every one of these detectors uses it uniformly as the
- * doc-context/inline-code downgrade marker — the same noise this function's
- * non-documentation-context filter already targets. Byte-identical to core's
+ * Confidence requirement (revised after adversarial review, 2026-08-16 — see
+ * docs/internal/code_review/2026-08-15-smi6033-wave4-escalation-model.md for
+ * the full account): the plan's literal text requires confidence:'high' on
+ * both path-(b) co-signals. An earlier revision of this file relaxed that to
+ * `confidence !== 'low'` GLOBALLY, reasoning that scanPasteHostFetch's
+ * ANON/TRANSIENT medium form is ALWAYS confidence:'medium' by construction
+ * and would otherwise be permanently unable to satisfy path (b) despite
+ * being a registered-eligible type. That reasoning was correct for
+ * paste_host_fetch specifically, but the GLOBAL relaxation was wrong: it
+ * also admitted scanArchiveEvasion's prose-only co-occurrence sub-signal
+ * (explicitly documented as "the fuzzy, FP-prone case" and capped at
+ * confidence:'medium' for exactly that reason) and scanDecoyMisdirection's
+ * no-authority-affix form (also confidence:'medium') — an adversarial review
+ * constructed a working false-positive example combining exactly those two
+ * fuzzy medium-confidence signals with a real vendor curl|bash, and it
+ * escalated to a hard quarantine. Fixed by narrowing the confidence
+ * carve-out to ONLY paste_host_fetch (CO_SIGNAL_MEDIUM_CONFIDENCE_EXCEPTION
+ * below) — every other medium-minimum type reverts to requiring
+ * confidence:'high', matching the plan's literal text. gatekeeper_bypass
+ * loses nothing by this (its own detector always emits confidence:'high'
+ * regardless of severity); archive_evasion and decoy_misdirection now only
+ * participate via their own higher-confidence forms, which is exactly the
+ * "not noise" signal path (b) was meant to require. Byte-identical to core's
  * SecurityScanner.exec.ts — see that file for the same rationale.
+ *
+ * codeExec-own-doc-context fix (same adversarial review): neither path
+ * previously checked codeExec.inDocumentationContext itself — only the
+ * CO-SIGNAL's doc-context was checked. A code_execution finding inside a
+ * fenced security-research example could therefore still be escalated by two
+ * genuine (non-doc) co-signals elsewhere in the document. This gap predates
+ * Wave 4 (path (a) had it too) but Wave 4's new path (b) co-signal types
+ * meaningfully widen how often it's reachable, so it's fixed here for both
+ * paths.
  */
+const CO_SIGNAL_MEDIUM_CONFIDENCE_EXCEPTION: ReadonlySet<SecurityFindingType> = new Set([
+  'paste_host_fetch',
+])
+
 export function escalateCodeExecution(findings: SecurityFinding[]): void {
   const codeExec = findings.find((f) => f.type === 'code_execution')
   if (!codeExec) return
+  if (codeExec.inDocumentationContext === true) return
 
   const eligible = findings.filter(
     (f) =>
@@ -366,18 +385,17 @@ export function escalateCodeExecution(findings: SecurityFinding[]): void {
     return
   }
 
-  // Path (b): two DISTINCT medium-minimum types, each confidence !== 'low'
-  // (see this function's doc comment for why 'medium' confidence counts here,
-  // not just 'high').
+  // Path (b): two DISTINCT medium-minimum types, each confidence 'high' —
+  // except paste_host_fetch, whose medium form is always confidence:'medium'
+  // by construction (see this function's doc comment for the full rationale).
   const advisoryTypes = new Set(
     eligible
       .filter((f) => {
         const min = CO_SIGNAL_MIN_SEVERITY[f.type]
-        return (
-          min === 'medium' &&
-          SEVERITY_RANK[f.severity] >= SEVERITY_RANK[min] &&
-          f.confidence !== 'low'
-        )
+        const confidenceOk = CO_SIGNAL_MEDIUM_CONFIDENCE_EXCEPTION.has(f.type)
+          ? f.confidence !== 'low'
+          : f.confidence === 'high'
+        return min === 'medium' && SEVERITY_RANK[f.severity] >= SEVERITY_RANK[min] && confidenceOk
       })
       .map((f) => f.type)
   )
