@@ -40,6 +40,18 @@ Thumbs.db
 .gitattributes
 
 # -----------------------------------------------------------------------------
+# Nested worktrees (SMI-6064)
+# -----------------------------------------------------------------------------
+# .worktrees/ holds nested git worktrees (each a full checkout + node_modules),
+# 3.1GB on a typical dev machine. Never needed in the build context -- the
+# image build's own COPY instructions (see Dockerfile: `COPY packages/
+# ./packages/`, `COPY scripts/ ./scripts/`, etc.) never reference `.worktrees`,
+# and the running dev/test containers reach source via the `.:/app` bind
+# mount, not a build-time COPY. Each worktree also has its own independent
+# container/checkout.
+.worktrees
+
+# -----------------------------------------------------------------------------
 # Docker (prevent recursive inclusion)
 # -----------------------------------------------------------------------------
 Dockerfile*

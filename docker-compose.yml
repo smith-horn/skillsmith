@@ -19,6 +19,21 @@ services:
     # down` so the CLAUDE.md recovery flows that rely on `down` staying down still
     # work. dev-only — `test` runs one-shot commands and must not loop.
     restart: unless-stopped
+    # SMI-6064: explicit per-container resource ceiling. Docker Desktop's VM
+    # pool (10 CPUs / 7.75GiB on the calibration machine, `docker info`) is
+    # shared uncapped across every worktree's dev container -- `docker stats`
+    # showed all 15 concurrently-running containers reporting the SAME
+    # 7.75GiB "LIMIT" (the whole-VM allocation, not a per-container cap),
+    # meaning one hot container can starve every sibling. Override per
+    # developer machine via SKILLSMITH_DOCKER_CPUS / SKILLSMITH_DOCKER_MEM
+    # env vars -- same pattern as DEV_PORT below. See docs/internal/
+    # implementation/docker-resource-ceiling.md's Decision Log for the
+    # calibration formula, the empirical `npm run lint` memory measurement
+    # behind the 6g default, and how to compute your own values.
+    # Deliberately NOT applied to the `test` service below -- it's
+    # one-shot/CI and never multiplied across worktrees the way `dev` is.
+    cpus: '${SKILLSMITH_DOCKER_CPUS:-4}'
+    mem_limit: ${SKILLSMITH_DOCKER_MEM:-6g}
     ports:
       - '${DEV_PORT:-3001}:3001'
     volumes:
