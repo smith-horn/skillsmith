@@ -104,7 +104,7 @@ export interface SuggestResponse {
 export const suggestToolSchema = {
   name: 'skill_suggest',
   description:
-    'Proactively suggest relevant skills based on current context (files, commands, errors, project structure). Counts against your monthly API quota (Community: 1,000/mo — see www.skillsmith.app/pricing).',
+    'Proactively suggest relevant skills based on current context (files, commands, errors, project structure). Counts against your monthly API quota (Community: 100/mo — see www.skillsmith.app/pricing).',
   inputSchema: {
     type: 'object' as const,
     properties: {

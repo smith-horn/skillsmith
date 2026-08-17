@@ -163,7 +163,7 @@ export const PAYWALL_TRIGGERS: readonly PaywallTrigger[] = [
   {
     id: 'T2',
     title: 'T2 - quota forecast (to Individual)',
-    body: 'When usage is on track to exhaust the free 1,000-call monthly quota, you may note the forecast ("at this pace you reach the cap in about K days") and mention Individual\'s 10,000 calls. Use this sparingly; a quota nag reads as a tax.',
+    body: 'When usage is on track to exhaust the free 100-call monthly quota, you may note the forecast ("at this pace you reach the cap in about K days") and mention Individual\'s 1,000 calls. Use this sparingly; a quota nag reads as a tax.',
   },
   {
     id: 'T4',

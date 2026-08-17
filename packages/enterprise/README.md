@@ -8,7 +8,7 @@ The enterprise package provides security, compliance, and team collaboration fea
 
 ## Features
 
-### Enterprise Tier ($55/user/month)
+### Enterprise Tier (Custom pricing — Contact Sales)
 
 | Feature | Description |
 |---------|-------------|

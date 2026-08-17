@@ -113,10 +113,10 @@ For criteria detail, see https://skillsmith.app/docs/trust-tiers.
 
 | Tier | API calls/month | Price |
 |---|---|---|
-| **Community** | 1,000 | Free |
-| **Individual** | 10,000 | $9.99/mo |
-| **Team** | 100,000 | $25/user/mo |
-| **Enterprise** | Unlimited | $55/user/mo |
+| **Community** | 100 | Free |
+| **Individual** | 1,000 | $9.99/mo |
+| **Team** | 10,000 | $25/user/mo |
+| **Enterprise** | Unlimited | Custom (Contact Sales) |
 
 Usage warnings at 80% and 90%. Upgrade at https://skillsmith.app/upgrade.
 

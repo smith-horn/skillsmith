@@ -336,6 +336,9 @@ describe('license utilities', () => {
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Community'))
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('free tier'))
+      // SMI-5893 Wave 11 (GH#2368 C-19): was wrong by 10x ('1,000 API calls/month');
+      // regression guard for the corrected quota number.
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('100 API calls/month'))
     })
 
     it('displays team tier with expiration date', () => {

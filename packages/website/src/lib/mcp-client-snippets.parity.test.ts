@@ -95,6 +95,10 @@ describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', (
 
   it('every body contains the expected npx launch shape for its client', () => {
     for (const snippet of MCP_CLIENT_SNIPPETS) {
+      // SMI-5893 Wave 11 (GH#2368 C-01): cursor is the one client whose
+      // primary `command` is a resolved-path placeholder, not `npx` — see
+      // the CURSOR_JSON_BODY comment in mcp-client-snippets.ts for why.
+      if (snippet.id === 'cursor') continue
       if (snippet.format === 'json') {
         const parsed = JSON.parse(snippet.body) as Record<string, unknown>
         if (snippet.id === 'opencode') {
@@ -122,6 +126,24 @@ describe('MCP_CLIENT_SNIPPETS — parity with CLI CLIENT_SNIPPETS (SMI-5554)', (
         expect(snippet.body).toContain('args: ["-y", "@skillsmith/mcp-server"]')
       }
     }
+  })
+
+  it('cursor body is a resolved-path placeholder (never a guessed or npx path), with npx documented as an explicit fallback in notes', () => {
+    const cursor = MCP_CLIENT_SNIPPETS.find((s) => s.id === 'cursor')
+    expect(cursor).toBeDefined()
+    const parsed = JSON.parse(cursor!.body) as {
+      mcpServers: Record<string, { command: unknown; args?: unknown }>
+    }
+    const entry = parsed.mcpServers['@skillsmith/mcp-server']
+    expect(entry.command).not.toBe('npx')
+    // The placeholder must be unmistakably a placeholder — not a real,
+    // plausible-looking path someone could copy-paste without noticing.
+    expect(entry.command).toContain('which skillsmith-mcp')
+    expect(entry.command).toContain('where skillsmith-mcp')
+    expect(entry.args).toBeUndefined()
+    // npx must still be documented as a real, working fallback.
+    expect(cursor!.notes).toContain('npx')
+    expect(cursor!.notes).toContain('@skillsmith/mcp-server')
   })
 
   it('withApiKey() injects a valid env block for every format without disturbing the launch shape', () => {

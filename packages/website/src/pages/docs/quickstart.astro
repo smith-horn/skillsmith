@@ -326,15 +326,28 @@ before you save. Use this entry:
   }
 }
 
+If you are NOT Claude Code, also add an "env" block to that entry with
+SKILLSMITH_CLIENT set to your own client name (e.g. "windsurf" for Windsurf,
+"copilot" for GitHub Copilot) so skills install to your own skills directory
+instead of Claude Code's default. If you're not sure of the right value,
+ask me before saving.
+
 Tell me which file you changed when you're done.`}</code></pre>
 
   <p>
     <strong>Not using Claude Code?</strong> Skills install to your agent's own
-    directory by default (e.g. <code>~/.claude/skills/</code> for Claude Code). If your
-    agent isn't Claude Code, ask it to add an <code>env</code> block with
-    <code>SKILLSMITH_CLIENT</code> set to your client's name (e.g. <code>"cursor"</code>)
-    so installs land in the right place — see the client-specific snippets in Option C
-    below for exact examples.
+    directory by default (e.g. <code>~/.claude/skills/</code> for Claude Code). The
+    prompt above already asks your agent to set <code>SKILLSMITH_CLIENT</code> for
+    itself when it isn't Claude Code — see the client-specific snippets in Option C
+    below for exact examples if you'd rather edit the file yourself.
+  </p>
+
+  <p>
+    <strong>Using Cursor?</strong> Skip the prompt above and use Option C's Cursor
+    snippet instead — Cursor's bundled Node cannot resolve packages via
+    <code>npx</code> (a real <code>ENOENT</code>), so the <code>"command": "npx"</code>
+    entry above will not connect. Option C's Cursor section gives you the
+    resolved-path form that's confirmed to work.
   </p>
 
   <h4>Option C — Edit the config file yourself</h4>

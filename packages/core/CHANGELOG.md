@@ -50,6 +50,12 @@ All notable changes to `@skillsmith/core` are documented here.
   that each invocation is a fresh process, are now actually reset at the top of every
   `Deno.serve` invocation (`index.ts`) — left unreset, a warm isolate could silently report a stale
   scan as fully covered.
+- **Fix**: `prompt-source.ts`'s `agent-pack` T2 quota-forecast job body still had the stale
+  `1,000-call`/`10,000 calls` quota numbers, while the committed `packages/mcp-server` bundled
+  SKILL.md output was hand-corrected to `100-call`/`1,000 calls` — generator and committed
+  artifact had drifted, which `agent-pack.assets.test.ts`'s byte-identical drift-gate test would
+  have failed on merge. Fixed at the actual generator source so the two stay in sync
+  (SMI-5893 Wave 11, GH#2368 C-19)
 - **Fix**: PR #2375 post-merge review follow-up (three findings). `recommend`'s shared footer text no longer claims detection "across all clients" — each surface (CLI, MCP) scans exactly one client per call, never a union. Cursor `hooks.json` installation's `ensureTopLevelDefaults` now fails closed (`status: 'conflict'`, no write) instead of silently preserving an existing incompatible top-level value (e.g. a wrong `version`) while still merging hook entries in (SMI-5893)
 - **Fix**: Restored two verified drift points between the core and edge (production) security
   scanners — the edge co-signal escalation set now includes `sensitive_path` (matching core), and
