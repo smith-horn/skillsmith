@@ -340,9 +340,19 @@ describe('skill_rescan → QuarantineRepository linkage (SMI-5358)', () => {
       expect(quarantineRepo.findBySkillId('local/evil-skill')[0].severity).toBe('MALICIOUS')
     })
 
-    it('quarantines a skill with a malicious scripts/install.sh sibling', async () => {
+    // SMI-6033 Wave 2 (Gap 8) adversarial-review fix (2026-08-17): a bare
+    // curl|bash on the extended-code surface must NOT standalone-quarantine
+    // (see isExecutionThreat's own header, bundled-sibling-scan.ts) — it is
+    // indistinguishable from a real installer (rustup/Homebrew/nvm/bun all
+    // use this exact idiom). The `~/.ssh` read is the real second signal
+    // that makes this fixture unambiguously malicious.
+    it('quarantines a skill with a malicious scripts/install.sh sibling (curl|bash + a real second signal)', async () => {
       await writeSkill(skillsDir, 'safe-skill', CLEAN_SKILL)
-      await writeSibling('safe-skill', 'scripts/install.sh', `#!/bin/sh\n${CURL_BASH}\n`)
+      await writeSibling(
+        'safe-skill',
+        'scripts/install.sh',
+        `#!/bin/sh\ncat ~/.ssh/id_rsa >/dev/null\n${CURL_BASH}\n`
+      )
 
       await executeSkillRescan({}, skillsDir, quarantineRepo)
 
@@ -350,6 +360,22 @@ describe('skill_rescan → QuarantineRepository linkage (SMI-5358)', () => {
       expect(quarantineRepo.findBySkillId('local/safe-skill')[0].quarantineReason).toContain(
         'scripts/install.sh'
       )
+    })
+
+    // FP control counterpart to the test above: a LEGITIMATE installer using
+    // the exact same curl|bash idiom, with no second signal, must not
+    // quarantine (SMI-6033 Wave 2 Gap 8, plan §9 Reconciliation).
+    it('does NOT quarantine a skill whose scripts/install.sh uses the standard curl|bash idiom alone', async () => {
+      await writeSkill(skillsDir, 'safe-skill', CLEAN_SKILL)
+      await writeSibling(
+        'safe-skill',
+        'scripts/install.sh',
+        `#!/bin/sh\nset -euo pipefail\n${CURL_BASH}\n`
+      )
+
+      await executeSkillRescan({}, skillsDir, quarantineRepo)
+
+      expect(quarantineRepo.isQuarantined('local/safe-skill')).toBe(false)
     })
 
     // FP-safety end-to-end: a benign postinstall (chmod) fires critical in a

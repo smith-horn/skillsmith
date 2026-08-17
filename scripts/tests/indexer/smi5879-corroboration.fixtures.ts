@@ -53,6 +53,9 @@ import {
   type ScanSkillBundleResult,
 } from '../../indexer/skill-processor.security.ts'
 import { newRateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
+// SMI-6033 Wave 2 (Gap 8): keeps the extended (Trees API) scan surface out of
+// this test — see the fixture's own comment.
+import { emptyRepoTree } from './scan-skill-bundle.fixtures.ts'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -276,7 +279,7 @@ export async function scanBundleCase(
     undefined,
     primaryContent,
     newRateLimitTelemetry(),
-    { fetchSiblingContent: fetchStub }
+    { fetchSiblingContent: fetchStub, fetchRepoTreeEntries: emptyRepoTree }
   )
 
   const merged = result.mergedSecurityScan !== undefined

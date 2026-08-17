@@ -59,6 +59,15 @@ export interface ApiSearchResult {
   stars?: number | null
   installable?: boolean | null
   quarantined?: boolean
+  /**
+   * SMI-6033 Wave 2 (Gap 8): true when the most recent scan could not cover
+   * every candidate file (count/size cap, transient fetch failure, tree-fetch
+   * failure, tree truncation, or tree-budget exhaustion). Informational only
+   * — never blocks installability.
+   */
+  scan_coverage_incomplete?: boolean
+  /** SMI-6033 Wave 2 (Gap 8): '; '-joined machine-readable cause token(s), or null when complete. */
+  scan_coverage_note?: string | null
   /** SHA-256 hash of SKILL.md content at index time */
   content_hash?: string | null
   /** SMI-3672: Raw SKILL.md content (only when include_content=true) */

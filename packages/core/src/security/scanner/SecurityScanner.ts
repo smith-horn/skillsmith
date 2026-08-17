@@ -248,7 +248,8 @@ export class SecurityScanner {
     content: string,
     lineContexts: LineContext[],
     skipEncodedPayload: boolean,
-    isHighTrustAuthor = false
+    isHighTrustAuthor = false,
+    isMarkdown = true
   ): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     // SMI-5881: the multiline (full-content) regex pass has its OWN, much
@@ -335,9 +336,10 @@ export class SecurityScanner {
         ...scanEncodedPayload(content, lineContexts, (decodedContent) =>
           this.runDetectors(
             decodedContent,
-            analyzeMarkdownContext(decodedContent),
+            analyzeMarkdownContext(decodedContent, isMarkdown),
             true,
-            isHighTrustAuthor
+            isHighTrustAuthor,
+            isMarkdown
           )
         )
       )
@@ -356,11 +358,19 @@ export class SecurityScanner {
    * every existing call site (skill_validate, skill_rescan,
    * bundled-sibling-scan, skill-installation.*) defaults closed by
    * construction, not by convention.
+   *
+   * SMI-6033 Wave 2 (Gap 8) fix (2026-08-17): `isMarkdown` defaults `true`,
+   * preserving byte-identical behavior for every existing caller. Pass
+   * `false` when `content` is a real source file, not markdown — see
+   * `analyzeMarkdownContext`'s own header (SecurityScanner.helpers.ts) for
+   * why the markdown-only indented-code-block heuristic must never apply to
+   * non-markdown content. `bundled-sibling-scan.ts`'s
+   * `collectExecutableCodeFiles` candidates are the first real caller.
    */
-  scan(skillId: string, content: string, isHighTrustAuthor = false): ScanReport {
+  scan(skillId: string, content: string, isHighTrustAuthor = false, isMarkdown = true): ScanReport {
     const startTime = performance.now()
     const findings: SecurityFinding[] = []
-    const lineContexts = analyzeMarkdownContext(content)
+    const lineContexts = analyzeMarkdownContext(content, isMarkdown)
 
     if (content.length > this.maxContentLength) {
       findings.push({
@@ -384,7 +394,7 @@ export class SecurityScanner {
       })
     }
 
-    findings.push(...this.runDetectors(content, lineContexts, false, isHighTrustAuthor))
+    findings.push(...this.runDetectors(content, lineContexts, false, isHighTrustAuthor, isMarkdown))
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

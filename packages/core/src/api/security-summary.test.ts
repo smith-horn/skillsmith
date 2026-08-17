@@ -7,7 +7,10 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { deriveSecuritySummaryFromApiSkill } from './security-summary.js'
+import {
+  deriveSecuritySummaryFromApiSkill,
+  deriveSecuritySummaryFromSkillRow,
+} from './security-summary.js'
 
 describe('deriveSecuritySummaryFromApiSkill', () => {
   it('returns undefined when the skill has never been scanned (last_scanned_at null)', () => {
@@ -69,6 +72,8 @@ describe('deriveSecuritySummaryFromApiSkill', () => {
       riskScore: 0,
       findingsCount: 0,
       scannedAt: '2026-06-01T00:00:00.000Z',
+      scanCoverageIncomplete: false,
+      scanCoverageNote: null,
     })
   })
 
@@ -106,5 +111,93 @@ describe('deriveSecuritySummaryFromApiSkill', () => {
 
     expect(result?.riskScore).toBeNull()
     expect(result?.findingsCount).toBe(1)
+  })
+
+  // SMI-6033 Wave 2 (Gap 8): scan-coverage columns.
+  it('defaults scanCoverageIncomplete to false and scanCoverageNote to null when absent (older cached data)', () => {
+    const result = deriveSecuritySummaryFromApiSkill({
+      last_scanned_at: '2026-06-01T00:00:00.000Z',
+      quarantined: false,
+      security_score: 0,
+      security_findings: [],
+      // scan_coverage_incomplete / scan_coverage_note deliberately omitted —
+      // must not throw or fabricate an incomplete-scan caveat.
+    })
+
+    expect(result?.scanCoverageIncomplete).toBe(false)
+    expect(result?.scanCoverageNote).toBeNull()
+  })
+
+  it('passes scanCoverageIncomplete/scanCoverageNote through when present', () => {
+    const result = deriveSecuritySummaryFromApiSkill({
+      last_scanned_at: '2026-06-01T00:00:00.000Z',
+      quarantined: false,
+      security_score: 5,
+      security_findings: [],
+      scan_coverage_incomplete: true,
+      scan_coverage_note: 'tree_budget_exhausted',
+    })
+
+    expect(result?.scanCoverageIncomplete).toBe(true)
+    expect(result?.scanCoverageNote).toBe('tree_budget_exhausted')
+  })
+})
+
+describe('deriveSecuritySummaryFromSkillRow', () => {
+  it('returns undefined when the skill has never been scanned (securityScannedAt null)', () => {
+    const result = deriveSecuritySummaryFromSkillRow({
+      securityPassed: null,
+      riskScore: null,
+      securityFindingsCount: 0,
+      securityScannedAt: null,
+    })
+
+    expect(result).toBeUndefined()
+  })
+
+  it('passes passed/riskScore/findingsCount/scannedAt through raw for a scanned row', () => {
+    const result = deriveSecuritySummaryFromSkillRow({
+      securityPassed: true,
+      riskScore: 12,
+      securityFindingsCount: 2,
+      securityScannedAt: '2026-06-01T00:00:00.000Z',
+    })
+
+    expect(result).toEqual({
+      passed: true,
+      riskScore: 12,
+      findingsCount: 2,
+      scannedAt: '2026-06-01T00:00:00.000Z',
+      scanCoverageIncomplete: false,
+      scanCoverageNote: null,
+    })
+  })
+
+  // SMI-6033 Wave 2 (Gap 8): the local-DB path doesn't persist scan-coverage
+  // columns yet — must default safely, never throw or fabricate a caveat.
+  it('defaults scanCoverageIncomplete to false and scanCoverageNote to null when absent', () => {
+    const result = deriveSecuritySummaryFromSkillRow({
+      securityPassed: false,
+      riskScore: 60,
+      securityFindingsCount: 3,
+      securityScannedAt: '2026-06-01T00:00:00.000Z',
+    })
+
+    expect(result?.scanCoverageIncomplete).toBe(false)
+    expect(result?.scanCoverageNote).toBeNull()
+  })
+
+  it('passes scanCoverageIncomplete/scanCoverageNote through when present', () => {
+    const result = deriveSecuritySummaryFromSkillRow({
+      securityPassed: true,
+      riskScore: 8,
+      securityFindingsCount: 0,
+      securityScannedAt: '2026-06-01T00:00:00.000Z',
+      scanCoverageIncomplete: true,
+      scanCoverageNote: 'count_cap_exceeded',
+    })
+
+    expect(result?.scanCoverageIncomplete).toBe(true)
+    expect(result?.scanCoverageNote).toBe('count_cap_exceeded')
   })
 })

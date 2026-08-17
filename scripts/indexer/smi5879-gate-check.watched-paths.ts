@@ -230,4 +230,26 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   // reachable-but-unwatched. Core-only: the edge twins keep both arrays in
   // the already-watched security-scanner-edge.patterns.ts.
   'packages/core/src/security/scanner/patterns.exec.ts',
+  // SMI-6033 Wave 2 (Gap 8): the already-watched
+  // scripts/indexer/skill-processor.security.ts now imports the extended
+  // scan-surface module (Trees API budget/memoization, ranked+capped
+  // operational-code selection, scan-coverage causes), which in turn imports
+  // trees-search.ts for the full-tree projection; and the corroboration
+  // fixtures now import scan-skill-bundle.fixtures.ts for the empty-tree stub
+  // that keeps the corroboration corpus offline. All three were flagged by
+  // assertion 5 (the real import-graph tracer) as reachable-but-unwatched —
+  // same closure-completeness reasoning as every entry above. Node tree only,
+  // for the same reason the Wave 3 high-trust-authors entries are.
+  'scripts/indexer/skill-processor.security.tree.ts',
+  'scripts/indexer/trees-search.ts',
+  'scripts/tests/indexer/scan-skill-bundle.fixtures.ts',
+  // SMI-6033 Wave 2 (Gap 8) adversarial-review fix (2026-08-17): the
+  // isExtended severity-gating fix pushed skill-processor.security.ts past
+  // the 500-line gate a second time; its sibling-scan plumbing
+  // (enumerateSiblingTargets, fetchSiblingContent, mergeSiblingScans,
+  // buildMergedQuarantineReason) was extracted to this new sibling module,
+  // re-exported so the import graph reaches it the same way it reached
+  // skill-processor.security.tree.ts above. Same closure-completeness
+  // reasoning; Node tree only.
+  'scripts/indexer/skill-processor.security.sibling.ts',
 ] as const

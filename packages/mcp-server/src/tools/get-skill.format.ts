@@ -11,6 +11,7 @@ import {
   type MCPTrustTier as TrustTier,
   TrustTierDescriptions,
 } from '@skillsmith/core'
+import { formatScanCoverageCaveat } from './scan-coverage.format.js'
 
 /**
  * Format skill details for terminal/CLI display.
@@ -117,6 +118,15 @@ export function formatSkillDetails(response: GetSkillResponse): string {
     }
     if (skill.security.scannedAt) {
       lines.push('  Scanned: ' + skill.security.scannedAt)
+    }
+    // SMI-6033 Wave 2 (Gap 8): informational only — unlike quarantine, this
+    // never blocks installability, so it's a plain note, not a warning line.
+    const scanCoverageCaveat = formatScanCoverageCaveat(
+      skill.security.scanCoverageIncomplete,
+      skill.security.scanCoverageNote
+    )
+    if (scanCoverageCaveat) {
+      lines.push('  ' + scanCoverageCaveat)
     }
   } else {
     lines.push('  Status: Not scanned')

@@ -4,6 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: `get_skill`, `search`, and `skill_recommend` now surface a partial-scan caveat
+  ("Note: partial scan — some files could not be analyzed (...)") when the registry's extended
+  operational-code scan (SMI-6033 Wave 2, Gap 8) couldn't cover every candidate file for a skill.
+  Informational only — never affects installability or the `Security:`/`Installable:` verdict
+  lines above it. Shared rendering (`scan-coverage.format.ts`) translates the machine-readable
+  cause token(s) persisted on the row (`scan_coverage_note`) into a human-readable phrase, so the
+  three surfaces cannot drift in wording.
 - **Feature**: `skill_validate` now runs the existing (previously unwired) typosquat-name
   detector, checking a candidate skill's name against a bundled, periodically-regenerated
   reference-list snapshot of high-trust authors and top-starred skills. Warn-tier only — this

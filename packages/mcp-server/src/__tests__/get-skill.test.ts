@@ -83,6 +83,8 @@ describe('Get Skill Tool', () => {
         riskScore: 5,
         findingsCount: 0,
         scannedAt: '2026-06-01T00:00:00.000Z',
+        scanCoverageIncomplete: false,
+        scanCoverageNote: null,
       })
     })
 

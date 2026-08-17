@@ -252,8 +252,26 @@ export function isInsideCodeBlock(lines: string[], lineIndex: number): boolean {
  * leading blank lines); closing `---` ends the block. Lines within are
  * marked inFrontmatter=true so their keyword matches downgrade to
  * documentation severity.
+ *
+ * SMI-6033 Wave 2 (Gap 8) fix (2026-08-17): `isMarkdown` defaults `true`,
+ * preserving byte-identical behavior for every existing caller (SKILL.md,
+ * the original 7 `BUNDLED_SCAN_FILES`). Pass `false` when scanning content
+ * that is NOT markdown — the new Gap 8 extended siblings (`.py .sh .js .ts
+ * .rb .php .ps1 .pl` under `scripts/`/`src/`/`bin/`). The indented-code-block
+ * heuristic below (4+ spaces / tab = "documentation example", a real
+ * markdown convention) otherwise silently misclassifies essentially ALL
+ * indented Python/Ruby/etc. control-flow bodies as documentation, dropping
+ * `sensitive_path` from `high`->`medium` and blocking `escalateCodeExecution`
+ * path (a) (which requires a non-doc co-signal at `high`+) — verified via a
+ * direct repro: a real multi-signal backdoor (`~/.ssh` read next to a
+ * `curl|bash`) failed to escalate to `critical` purely because the whole
+ * function body was 4-space indented. Fenced-code-block/table/frontmatter
+ * detection is left unconditional — those markdown-specific token sequences
+ * essentially never occur in real, non-markdown source files, so leaving
+ * them active is a negligible residual risk, not worth the extra surface
+ * this fix would otherwise touch.
  */
-export function analyzeMarkdownContext(content: string): LineContext[] {
+export function analyzeMarkdownContext(content: string, isMarkdown = true): LineContext[] {
   const lines = content.split('\n')
   const contexts: LineContext[] = []
   let inFencedCodeBlock = false
@@ -296,8 +314,12 @@ export function analyzeMarkdownContext(content: string): LineContext[] {
     // Check for table row (starts with |)
     const inTable = !lineInFrontmatter && trimmedLine.startsWith('|')
 
-    // Check for indented code block (4+ spaces or tab at start, not in list)
+    // Check for indented code block (4+ spaces or tab at start, not in list).
+    // SMI-6033 Wave 2 (Gap 8) fix: this is a markdown-only convention — see
+    // this function's own header for why it must never fire on non-markdown
+    // (real source file) content.
     const isIndentedCode =
+      isMarkdown &&
       !lineInFrontmatter &&
       /^( {4,}|\t)/.test(line) &&
       !inFencedCodeBlock &&

@@ -48,8 +48,20 @@ export interface LineContext {
  * leading blank lines); closing `---` ends the block. Lines within are
  * marked inFrontmatter=true so their keyword matches downgrade to
  * documentation severity.
+ *
+ * SMI-6033 Wave 2 (Gap 8) fix (2026-08-17): `isMarkdown` defaults `true`,
+ * preserving byte-identical behavior for every existing caller. Pass `false`
+ * when scanning content that is NOT markdown — real source files (the Gap 8
+ * extended siblings scanned via `bundled-sibling-scan.ts`'s
+ * `collectExecutableCodeFiles`). The indented-code-block heuristic below
+ * (4+ spaces / tab = "documentation example", a real markdown convention)
+ * otherwise silently misclassifies essentially ALL indented Python/Ruby/etc.
+ * control-flow bodies as documentation — verified via the edge-twin repro
+ * (scripts/indexer/_shared/security-scanner-edge.context.ts's identical
+ * fix): a real multi-signal backdoor failed to escalate to critical purely
+ * because the whole function body was 4-space indented.
  */
-export function analyzeMarkdownContext(content: string): LineContext[] {
+export function analyzeMarkdownContext(content: string, isMarkdown = true): LineContext[] {
   const lines = content.split('\n')
   const contexts: LineContext[] = []
   let inFencedCodeBlock = false
@@ -92,8 +104,12 @@ export function analyzeMarkdownContext(content: string): LineContext[] {
     // Check for table row (starts with |)
     const inTable = !lineInFrontmatter && trimmedLine.startsWith('|')
 
-    // Check for indented code block (4+ spaces or tab at start, not in list)
+    // Check for indented code block (4+ spaces or tab at start, not in list).
+    // SMI-6033 Wave 2 (Gap 8) fix: this is a markdown-only convention — see
+    // this function's own header for why it must never fire on non-markdown
+    // (real source file) content.
     const isIndentedCode =
+      isMarkdown &&
       !lineInFrontmatter &&
       /^( {4,}|\t)/.test(line) &&
       !inFencedCodeBlock &&

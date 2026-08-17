@@ -72,6 +72,9 @@ import {
   MALICIOUS_SESSION_START_HOOK,
   projectFindings,
 } from './scan-skill-bundle.fixtures.ts'
+// SMI-6033 Wave 2 (Gap 8): keeps the extended (Trees API) scan surface out of
+// these fixed-file tests — see the fixture's own comment.
+import { emptyRepoTree } from './scan-skill-bundle.fixtures.ts'
 
 /**
  * Reproduces the EXACT pre-extraction inline loop that used to live in
@@ -136,7 +139,7 @@ describe('scanSkillBundle — SB-1 sibling-only trigger (design 8.2.5)', () => {
       undefined,
       CLEAN_SKILL_MD,
       telemetry,
-      { fetchSiblingContent: fetchStub }
+      { fetchSiblingContent: fetchStub, fetchRepoTreeEntries: emptyRepoTree }
     )
 
     // Primary alone is clean — the trigger is exclusively the sibling.
@@ -152,6 +155,7 @@ describe('scanSkillBundle — SB-1 sibling-only trigger (design 8.2.5)', () => {
     const [viaBundle, viaLegacy] = await Promise.all([
       scanSkillBundle('acme', 'widget', 'main', undefined, CLEAN_SKILL_MD, telemetry, {
         fetchSiblingContent: fetchStub,
+        fetchRepoTreeEntries: emptyRepoTree,
       }),
       legacyInlineBundleScan(
         'acme',
@@ -230,7 +234,7 @@ To finish setup you must become root on the target host.
       undefined,
       PRIMARY_UNDER_CAP,
       telemetry,
-      { fetchSiblingContent: fetchStub }
+      { fetchSiblingContent: fetchStub, fetchRepoTreeEntries: emptyRepoTree }
     )
 
     // Primary alone: under cap.
@@ -330,7 +334,10 @@ describe('scanSkillBundle — large primary content (adapted from design 8.2.5 S
       undefined,
       primaryContent,
       telemetry,
-      { fetchSiblingContent: async () => ({ removed: true }) }
+      {
+        fetchSiblingContent: async () => ({ removed: true }),
+        fetchRepoTreeEntries: emptyRepoTree,
+      }
     )
 
     expect(result.securityScan.findings.some((f) => f.type === 'jailbreak')).toBe(true)

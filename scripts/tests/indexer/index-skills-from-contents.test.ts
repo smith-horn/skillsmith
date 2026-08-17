@@ -30,6 +30,10 @@ import {
 // SMI-5436 Wave 2: each SKILL.md validation now also fires one CDN fetch per BUNDLED_SCAN_FILES
 // entry (sibling scan). All return null from the undefined mock — fail-open, skill not quarantined.
 import { BUNDLED_SCAN_FILES } from '../../indexer/skill-processor.security.ts'
+// SMI-6033 Wave 2: the extended scan surface memoizes its Trees API call per
+// (owner, repo, branch) at module scope — reset between tests so each one's
+// fetch-call count is its own.
+import { resetRepoTreeFetchState } from '../../indexer/skill-processor.security.tree.ts'
 
 const AUTHOR: HighTrustAuthor = {
   owner: 'anthropics',
@@ -93,12 +97,26 @@ describe('indexSkillsFromContents — tree-hash cache round-trip (SMI-4878)', ()
   beforeEach(() => {
     originalFetch = global.fetch
     fetchMock = vi.fn()
+    // SMI-6033 Wave 2 (Gap 8): scanSkillBundle now also issues one recursive
+    // Trees API call per (owner, repo, branch) for its extended
+    // operational-code scan surface. Left to the bare vi.fn(), that call
+    // resolves to `undefined`, which throws inside the Trees fetch and burns
+    // the full 1s+2s+4s retry backoff. A default 404 for the Trees URL keeps
+    // that path fast and deterministic while leaving every OTHER unmatched
+    // call resolving to `undefined` exactly as before (mockResolvedValueOnce
+    // queues still take precedence over a default implementation).
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = typeof input === 'string' ? input : String(input)
+      if (url.includes('/git/trees/')) return new Response('', { status: 404 })
+      return undefined as unknown as Response
+    })
     // @ts-expect-error overriding global for test
     global.fetch = fetchMock
   })
 
   afterEach(() => {
     global.fetch = originalFetch
+    resetRepoTreeFetchState()
     vi.unstubAllEnvs()
   })
 
@@ -200,8 +218,10 @@ describe('indexSkillsFromContents — tree-hash cache round-trip (SMI-4878)', ()
     // SHA was present + cache wired → the fall-through increments misses.
     expect(counters.misses).toBe(1)
     // Fetches: Contents listing + SKILL.md + BUNDLED_SCAN_FILES.length sibling CDN
-    // probes (SMI-5436 Wave 2; all return null from the exhausted mock — fail-open).
-    expect(fetchMock).toHaveBeenCalledTimes(2 + BUNDLED_SCAN_FILES.length)
+    // probes (SMI-5436 Wave 2; all return null from the exhausted mock — fail-open)
+    // + 1 recursive Trees API call for the extended operational-code scan
+    // surface (SMI-6033 Wave 2; 404 here, so no extended targets, no retry).
+    expect(fetchMock).toHaveBeenCalledTimes(2 + BUNDLED_SCAN_FILES.length + 1)
     expect(fetchMock.mock.calls[1][0]).toContain(
       'raw.githubusercontent.com/anthropics/skills/main/skills/web-search/SKILL.md'
     )
@@ -227,8 +247,10 @@ describe('indexSkillsFromContents — tree-hash cache round-trip (SMI-4878)', ()
     )
 
     // Fetches: Contents listing + SKILL.md + BUNDLED_SCAN_FILES.length sibling CDN
-    // probes (SMI-5436 Wave 2; all return null from the exhausted mock — fail-open).
-    expect(fetchMock).toHaveBeenCalledTimes(2 + BUNDLED_SCAN_FILES.length)
+    // probes (SMI-5436 Wave 2; all return null from the exhausted mock — fail-open)
+    // + 1 recursive Trees API call for the extended operational-code scan
+    // surface (SMI-6033 Wave 2; 404 here, so no extended targets, no retry).
+    expect(fetchMock).toHaveBeenCalledTimes(2 + BUNDLED_SCAN_FILES.length + 1)
     expect(result.skills).toHaveLength(1)
     expect(result.skills[0].skillPath).toBe(SKILL_PATH)
   })
@@ -241,12 +263,26 @@ describe('fetchPlainPathTreeMap — Trees API response parsing (SMI-4878)', () =
   beforeEach(() => {
     originalFetch = global.fetch
     fetchMock = vi.fn()
+    // SMI-6033 Wave 2 (Gap 8): scanSkillBundle now also issues one recursive
+    // Trees API call per (owner, repo, branch) for its extended
+    // operational-code scan surface. Left to the bare vi.fn(), that call
+    // resolves to `undefined`, which throws inside the Trees fetch and burns
+    // the full 1s+2s+4s retry backoff. A default 404 for the Trees URL keeps
+    // that path fast and deterministic while leaving every OTHER unmatched
+    // call resolving to `undefined` exactly as before (mockResolvedValueOnce
+    // queues still take precedence over a default implementation).
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = typeof input === 'string' ? input : String(input)
+      if (url.includes('/git/trees/')) return new Response('', { status: 404 })
+      return undefined as unknown as Response
+    })
     // @ts-expect-error overriding global for test
     global.fetch = fetchMock
   })
 
   afterEach(() => {
     global.fetch = originalFetch
+    resetRepoTreeFetchState()
   })
 
   it('parses a Trees API response into a (skillPath → blobSha) map', async () => {

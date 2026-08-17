@@ -301,7 +301,8 @@ function runDetectors(
   lines: string[],
   contexts: LineContext[],
   skipEncodedPayload: boolean,
-  isHighTrustAuthor = false
+  isHighTrustAuthor = false,
+  isMarkdown = true
 ): SecurityFinding[] {
   const findings: SecurityFinding[] = []
 
@@ -357,8 +358,8 @@ function runDetectors(
     findings.push(
       ...scanEncodedPayload(lines, contexts, (decodedContent) => {
         const decodedLines = decodedContent.split('\n')
-        const decodedContexts = analyzeMarkdownContext(decodedContent)
-        return runDetectors(decodedLines, decodedContexts, true, isHighTrustAuthor)
+        const decodedContexts = analyzeMarkdownContext(decodedContent, isMarkdown)
+        return runDetectors(decodedLines, decodedContexts, true, isHighTrustAuthor, isMarkdown)
       })
     )
   }
@@ -376,20 +377,27 @@ function runDetectors(
  *   author signal (the indexer's own resolved GitHub repo owner) — never
  *   omit this reasoning when threading a value in from a new call site.
  *   Defaults `false` (closed).
+ * @param isMarkdown - SMI-6033 Wave 2 (Gap 8) fix: defaults `true`,
+ *   preserving existing behavior for SKILL.md and the original 7
+ *   `BUNDLED_SCAN_FILES`. Pass `false` when `content` is a real source file
+ *   (the new Gap 8 extended siblings) — see `analyzeMarkdownContext`'s own
+ *   header for why the markdown-only indented-code-block heuristic must
+ *   never apply to non-markdown content.
  * @returns EdgeScanResult with findings, risk score, and content hash
  */
 export async function scanSkillContent(
   content: string,
-  isHighTrustAuthor = false
+  isHighTrustAuthor = false,
+  isMarkdown = true
 ): Promise<EdgeScanResult> {
   const startTime = performance.now()
 
   // SMI-2408: Split once, pass to all scanners to avoid 5x redundant splitting
   const lines = content.split('\n')
   // SMI-4960: compute markdown context once and thread it through all scanners.
-  const contexts = analyzeMarkdownContext(content)
+  const contexts = analyzeMarkdownContext(content, isMarkdown)
 
-  const findings = runDetectors(lines, contexts, false, isHighTrustAuthor)
+  const findings = runDetectors(lines, contexts, false, isHighTrustAuthor, isMarkdown)
 
   // Calculate risk score
   const riskScore = calculateRiskScore(findings)
