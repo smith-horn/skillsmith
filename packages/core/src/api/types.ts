@@ -105,6 +105,15 @@ export interface ApiSkill {
   /** True when the skill is quarantined due to security score threshold */
   quarantined?: boolean
   /**
+   * SMI-6033 Wave 2 (Gap 8): true when the most recent scan could not cover
+   * every candidate file (count/size cap, transient fetch failure, tree-fetch
+   * failure, tree truncation, or tree-budget exhaustion). Informational only
+   * — never blocks installability.
+   */
+  scan_coverage_incomplete?: boolean
+  /** SMI-6033 Wave 2 (Gap 8): '; '-joined machine-readable cause token(s), or null when complete. */
+  scan_coverage_note?: string | null
+  /**
    * SMI-5327: SPDX license identifier returned by skills-get / skills-search
    * (e.g. "MIT", "Apache-2.0"). Null means "unknown / not detected" — NOT
    * "no restrictions" or "freely usable".

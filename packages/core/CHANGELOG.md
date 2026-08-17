@@ -4,6 +4,41 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: scoped bundled-file scan expansion to operational code (SMI-6033 Wave 2, Gap 8) —
+  the final wave of the ClawHavoc scanner-gap remediation initiative. The indexer previously only
+  ever read `SKILL.md` plus 7 fixed sibling filenames, never `scripts/`, `src/`, or `bin/`, so a
+  backdoor buried mid-function in otherwise-working operational code was structurally invisible to
+  the scanner. New `fetchRepoTreeEntries` (run-scoped memoized, budgeted via
+  `MAX_TREE_FETCHES_PER_RUN`/`SKILLSMITH_MAX_TREE_FETCHES_PER_RUN`, default 300) fetches the
+  repo's git tree once per repo per run; `enumerateExtendedSiblingTargets` deterministically ranks
+  and caps (`MAX_EXTENDED_SIBLING_FILES = 20`) executable-code candidates (`.sh .py .js .mjs .cjs
+  .ts .rb .php .ps1 .pl`) by SKILL.md-reference, entry-point naming, path depth, then lexicographic
+  order. Two new `skills` columns (`scan_coverage_incomplete`/`scan_coverage_note`) record — never
+  silently — when the extended selection couldn't cover everything (count cap, size cap, a
+  transient sibling-fetch failure, a Trees API fetch failure, a truncated tree response, or a
+  spent per-run fetch budget); a clean 404 does not count. Surfaced in `get_skill`, `search`, and
+  `skill_recommend` output as a plain informational caveat (never a rejection signal). Local
+  `skill_rescan`/`skill_validate` gets the same ranked, capped selection via
+  `bundled-sibling-scan.ts`'s `collectExecutableCodeFiles` (replacing the narrower `.sh`-only
+  `collectShFiles`), closing that module's own documented Phase-3 follow-up — this narrows its
+  existing local scan-file cap from 50 to 20 to match the registry-side cap, an intentional
+  behavior change, not a pure addition.
+- **Fix**: adversarial review of the above (2026-08-16) found that applying the existing
+  sibling-rejection rule (any `code_execution`/`obfuscated_directive` finding on a non-doc sibling
+  standalone-quarantines) unchanged to the new extended surface would have quarantined ordinary
+  installer scripts — a `scripts/install.sh` using the industry-standard `curl | bash` idiom
+  (rustup, Homebrew, nvm, bun) scores the SAME `code_execution:medium` finding as an actual
+  backdoor, and the plan's own policy is explicit that a bare `curl | bash` must never
+  standalone-quarantine. `mergeSiblingScans`/`isExecutionThreat` now require `critical` severity
+  for a `code_execution` finding to drive rejection specifically on an extended-surface sibling
+  (reached only via the existing co-signal escalation model, i.e. a real secondary signal like a
+  `~/.ssh` read nearby) — the original 7 fixed siblings' rejection rule is completely unchanged.
+  `obfuscated_directive` remains rejectable at any severity on both surfaces (delta-gated against a
+  real decode step, no legitimate-installer shape). The Deno edge indexer's Trees-API memoization
+  and per-run fetch budget, previously documented as "run-scoped" on the (incorrect) assumption
+  that each invocation is a fresh process, are now actually reset at the top of every
+  `Deno.serve` invocation (`index.ts`) — left unreset, a warm isolate could silently report a stale
+  scan as fully covered.
 - **Fix**: PR #2375 post-merge review follow-up (three findings). `recommend`'s shared footer text no longer claims detection "across all clients" — each surface (CLI, MCP) scans exactly one client per call, never a union. Cursor `hooks.json` installation's `ensureTopLevelDefaults` now fails closed (`status: 'conflict'`, no write) instead of silently preserving an existing incompatible top-level value (e.g. a wrong `version`) while still merging hook entries in (SMI-5893)
 - **Fix**: Restored two verified drift points between the core and edge (production) security
   scanners — the edge co-signal escalation set now includes `sensitive_path` (matching core), and

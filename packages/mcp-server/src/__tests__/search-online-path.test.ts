@@ -209,6 +209,8 @@ describe('Search Tool - Online API Path (SMI-2755)', () => {
         riskScore: 0,
         findingsCount: 0,
         scannedAt: '2026-06-01T00:00:00.000Z',
+        scanCoverageIncomplete: false,
+        scanCoverageNote: null,
       })
     })
 

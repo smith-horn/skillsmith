@@ -115,6 +115,149 @@ describe('formatSkillDetails branch coverage', () => {
     expect(formatted).toContain('Scanned:')
   })
 
+  // SMI-6033 Wave 2 (Gap 8): partial-scan coverage caveat — informational
+  // only, must NOT read as a rejection/blocked-install signal like quarantine.
+  it('should surface a partial-scan caveat with the coverage note when scanCoverageIncomplete is true', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        installable: true,
+        security: {
+          passed: true,
+          riskScore: 15,
+          findingsCount: 0,
+          scannedAt: '2024-01-15T12:00:00.000Z',
+          scanCoverageIncomplete: true,
+          scanCoverageNote: 'tree_budget_exhausted',
+        },
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain('Installable: yes')
+    // scanCoverageNote on the wire is a machine-readable cause TOKEN (see
+    // skill-processor.security.tree.ts's ScanCoverageCause) — formatSkillDetails
+    // must translate it to prose, not echo the raw token.
+    expect(formatted).toContain(
+      'Note: partial scan — some files could not be analyzed (the scan budget for this run was exhausted)'
+    )
+    expect(formatted).not.toContain('tree_budget_exhausted')
+  })
+
+  it('should translate multiple `; `-joined coverage-cause tokens to a joined prose phrase', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        installable: true,
+        security: {
+          passed: true,
+          riskScore: 15,
+          findingsCount: 0,
+          scannedAt: '2024-01-15T12:00:00.000Z',
+          scanCoverageIncomplete: true,
+          scanCoverageNote: 'count_cap; tree_truncated',
+        },
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain(
+      'Note: partial scan — some files could not be analyzed ' +
+        '(too many candidate files; the file listing was truncated)'
+    )
+  })
+
+  it('falls back to the raw token for an unrecognized coverage-cause token (drift guard)', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        installable: true,
+        security: {
+          passed: true,
+          riskScore: 15,
+          findingsCount: 0,
+          scannedAt: '2024-01-15T12:00:00.000Z',
+          scanCoverageIncomplete: true,
+          scanCoverageNote: 'some_future_cause_not_yet_mapped',
+        },
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain('some_future_cause_not_yet_mapped')
+  })
+
+  it('should not surface a partial-scan caveat when scanCoverageIncomplete is false', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        security: {
+          passed: true,
+          riskScore: 15,
+          findingsCount: 0,
+          scannedAt: '2024-01-15T12:00:00.000Z',
+          scanCoverageIncomplete: false,
+          scanCoverageNote: null,
+        },
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).not.toContain('partial scan')
+  })
+
   it('should format skill with security passed=false', () => {
     const response = {
       skill: {

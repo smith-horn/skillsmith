@@ -23,6 +23,7 @@ import {
   scanSkillContent,
   type EdgeScanResult,
 } from '../../indexer/_shared/security-scanner-edge.ts'
+import { MAX_EXTENDED_SIBLING_FILES } from '../../indexer/skill-processor.security.tree.ts'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -63,8 +64,12 @@ describe('enumerateSiblingTargets', () => {
     expect(paths).toContain('my-skill/.mcp.json')
   })
 
-  it('cap equals BUNDLED_SCAN_FILES.length', () => {
-    expect(MAX_SIBLING_BLOB_FETCHES_PER_SKILL).toBe(BUNDLED_SCAN_FILES.length)
+  // SMI-6033 Wave 2 (Gap 8): the declared budget now covers the 7 fixed
+  // bundled files plus the extended operational-code cap.
+  it('cap equals BUNDLED_SCAN_FILES.length + MAX_EXTENDED_SIBLING_FILES', () => {
+    expect(MAX_SIBLING_BLOB_FETCHES_PER_SKILL).toBe(
+      BUNDLED_SCAN_FILES.length + MAX_EXTENDED_SIBLING_FILES
+    )
   })
 })
 

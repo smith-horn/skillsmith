@@ -159,6 +159,29 @@ const DENO_TYPOSQUAT_REFERENCE = resolve(
   'supabase/functions/indexer/typosquat-reference.ts'
 )
 const NODE_TYPOSQUAT_REFERENCE = resolve(REPO_ROOT, 'scripts/indexer/typosquat-reference.ts')
+// SMI-6033 Wave 2 (Gap 8): the extended scan-surface twins (Trees API budget +
+// memoization, ranked/capped operational-code selection, coverage causes).
+// Split out of skill-processor.security.ts for the 500-line gate.
+const DENO_SKILL_PROC_SECURITY_TREE = resolve(
+  REPO_ROOT,
+  'supabase/functions/indexer/skill-processor.security.tree.ts'
+)
+const NODE_SKILL_PROC_SECURITY_TREE = resolve(
+  REPO_ROOT,
+  'scripts/indexer/skill-processor.security.tree.ts'
+)
+// SMI-6033 Wave 2 (Gap 8): the trees-search twins. NOT a byte-identity pair
+// (they diverged long before this wave: the Node twin threads RateLimitTelemetry
+// and returns `entries: TreeSkillEntry[]`, the Deno twin takes `_token?` and
+// returns `paths: string[]`) — only the newly-added `fetchFullRepoTree` is
+// expected to be identical, and that is what the assertion below pins.
+const DENO_TREES_SEARCH = resolve(REPO_ROOT, 'supabase/functions/indexer/trees-search.ts')
+const NODE_TREES_SEARCH = resolve(REPO_ROOT, 'scripts/indexer/trees-search.ts')
+// SMI-6033 Wave 2 (Gap 8): the local-path twin of the executable-code glob.
+const CORE_BUNDLED_SIBLING_SCAN = resolve(
+  REPO_ROOT,
+  'packages/core/src/services/bundled-sibling-scan.ts'
+)
 
 describe('Deno <-> Node helper parity', () => {
   const denoEncrypted = isGitCryptEncrypted(DENO_HELPERS)
@@ -1368,10 +1391,15 @@ describe('core <-> edge SecurityFinding interface parity (SMI-5436)', () => {
  * Deno==Node, so behavioral parity follows automatically.
  */
 describe('sibling-scan behavioral parity (SMI-5436 Wave 2)', () => {
-  it('BUNDLED_SCAN_FILES.length == MAX_SIBLING_BLOB_FETCHES_PER_SKILL (cap == file count)', async () => {
+  // SMI-6033 Wave 2 (Gap 8): the declared fetch budget is now the 7 fixed
+  // bundled files PLUS the extended operational-code cap. Still a
+  // declared-vs-real cross-check — nothing enforces the constant itself.
+  it('MAX_SIBLING_BLOB_FETCHES_PER_SKILL == BUNDLED_SCAN_FILES.length + MAX_EXTENDED_SIBLING_FILES', async () => {
     const secMod = await import(NODE_SKILL_PROC_SECURITY)
+    const treeMod = await import(NODE_SKILL_PROC_SECURITY_TREE)
     expect(secMod.MAX_SIBLING_BLOB_FETCHES_PER_SKILL).toBe(
-      (secMod.BUNDLED_SCAN_FILES as readonly string[]).length
+      (secMod.BUNDLED_SCAN_FILES as readonly string[]).length +
+        (treeMod.MAX_EXTENDED_SIBLING_FILES as number)
     )
   })
 
@@ -1526,5 +1554,154 @@ describe('core query-shape parity: typosquat-reference top-starred query (SMI-60
     const node = readFileSync(NODE_TYPOSQUAT_REFERENCE, 'utf-8')
     expect(deno).toMatch(/export const TOP_STARRED_REFERENCE_LIMIT = 200/)
     expect(node).toMatch(/export const TOP_STARRED_REFERENCE_LIMIT = 200/)
+  })
+})
+
+/**
+ * SMI-6033 Wave 2 (Gap 8): the extended scan-surface twins.
+ *
+ * Layer 1 (twin byte-identity) for the new `skill-processor.security.tree.ts`
+ * pair, the same whole-file comparison the Wave 0 block applies to
+ * `skill-processor.security.ts` — with the same discipline: every permitted
+ * difference is a NAMED, exact substring substitution, never a loosened
+ * comparator, so any OTHER change in either twin still fails.
+ *
+ * Permitted differences, all four mechanical:
+ *   1. import-path prefix (Deno `../_shared/` -> Node `./_shared/`)
+ *   2. the doc-comment runtime marker ("Deno indexer" vs "Node indexer")
+ *   3. the twin cross-reference path in the header
+ *   4. env access — `Deno.env.get('X')` vs `process.env.X`, the same swap
+ *      `_shared/github-auth.ts`'s twins already carry (its own header says so)
+ */
+describe('Deno <-> Node skill-processor.security.tree parity (SMI-6033 Wave 2)', () => {
+  const denoTreeEncrypted = isGitCryptEncrypted(DENO_SKILL_PROC_SECURITY_TREE)
+
+  it.skipIf(denoTreeEncrypted)(
+    'security.tree.ts twins are byte-identical modulo import path, runtime marker, and env access',
+    () => {
+      const node = readFileSync(NODE_SKILL_PROC_SECURITY_TREE, 'utf-8')
+      const deno = readFileSync(DENO_SKILL_PROC_SECURITY_TREE, 'utf-8')
+      const normalizedDeno = deno
+        .replaceAll("from '../_shared/", "from './_shared/")
+        .replace(
+          'extended scan-surface helpers for the Deno indexer',
+          'extended scan-surface helpers for the Node indexer'
+        )
+        .replace(
+          'Parity with scripts/indexer/skill-processor.security.tree.ts',
+          'Parity with supabase/functions/indexer/skill-processor.security.tree.ts'
+        )
+        .replace(
+          "const raw = Deno.env.get('SKILLSMITH_MAX_TREE_FETCHES_PER_RUN')",
+          'const raw = process.env.SKILLSMITH_MAX_TREE_FETCHES_PER_RUN'
+        )
+      expect(
+        normalizeWs(node),
+        'security.tree.ts twins have drifted beyond the permitted import-path, runtime-marker and env-access differences'
+      ).toBe(normalizeWs(normalizedDeno))
+    }
+  )
+
+  // trees-search.ts's twins are NOT a byte-identity pair (see the constant's
+  // comment above), so only the newly-added function is pinned. Bounded regex
+  // rather than extractBody, which matches `export function` only.
+  const extractFetchFullRepoTree = (path: string): string => {
+    const source = readFileSync(path, 'utf-8')
+    const match = source.match(/export async function fetchFullRepoTree\([\s\S]*?\n\}/)
+    if (!match) throw new Error(`fetchFullRepoTree not found in ${path}`)
+    return match[0]
+  }
+
+  it.skipIf(isGitCryptEncrypted(DENO_TREES_SEARCH))(
+    'fetchFullRepoTree is byte-identical across the trees-search twins',
+    () => {
+      expect(normalizeWs(extractFetchFullRepoTree(NODE_TREES_SEARCH))).toBe(
+        normalizeWs(extractFetchFullRepoTree(DENO_TREES_SEARCH))
+      )
+    }
+  )
+
+  it.skipIf(isGitCryptEncrypted(DENO_TREES_SEARCH))(
+    'both trees-search twins export the TreeEntry interface the extended scan needs',
+    () => {
+      for (const path of [NODE_TREES_SEARCH, DENO_TREES_SEARCH]) {
+        const body = extractInterface(path, 'TreeEntry')
+        expect(body, `TreeEntry not exported from ${path}`).toContain('size?: number')
+        expect(readFileSync(path, 'utf-8')).toContain('export interface TreeEntry')
+      }
+    }
+  )
+
+  // The local (skill_rescan) path duplicates the extension list because the
+  // indexer trees cannot import @skillsmith/core. bundled-sibling-scan.ts's
+  // own header claims this test pins them equal — this is that test.
+  it('EXECUTABLE_CODE_EXTENSIONS is identical in the indexer twin and packages/core', () => {
+    const indexer = normalizeWs(
+      extractArrayBody(NODE_SKILL_PROC_SECURITY_TREE, 'EXECUTABLE_CODE_EXTENSIONS')
+    )
+    const core = normalizeWs(
+      extractArrayBody(CORE_BUNDLED_SIBLING_SCAN, 'EXECUTABLE_CODE_EXTENSIONS')
+    )
+    expect(indexer).not.toBe('')
+    expect(core, 'executable-code extension list drifted between core and the indexer').toBe(
+      indexer
+    )
+  })
+
+  it('EXTENDED_SCAN_DIRS is identical in the indexer twin and packages/core', () => {
+    const indexer = normalizeWs(
+      extractArrayBody(NODE_SKILL_PROC_SECURITY_TREE, 'EXTENDED_SCAN_DIRS')
+    )
+    const core = normalizeWs(extractArrayBody(CORE_BUNDLED_SIBLING_SCAN, 'EXTENDED_SCAN_DIRS'))
+    expect(indexer).not.toBe('')
+    expect(core, 'extended scan directories drifted between core and the indexer').toBe(indexer)
+  })
+
+  it('both surfaces cap the extended glob at the same 20 files', async () => {
+    const treeMod = await import(NODE_SKILL_PROC_SECURITY_TREE)
+    expect(treeMod.MAX_EXTENDED_SIBLING_FILES).toBe(20)
+    expect(readFileSync(CORE_BUNDLED_SIBLING_SCAN, 'utf-8')).toMatch(
+      /export const MAX_EXTENDED_SIBLING_FILES = 20/
+    )
+  })
+
+  it('exports the ScanCoverageCause wire format the persistence layer consumes', async () => {
+    const treeMod = await import(NODE_SKILL_PROC_SECURITY_TREE)
+    expect(Array.from(treeMod.SCAN_COVERAGE_CAUSE_ORDER as readonly string[])).toEqual([
+      'count_cap',
+      'size_cap',
+      'sibling_fetch_transient',
+      'tree_fetch_failed',
+      'tree_truncated',
+      'tree_budget_exhausted',
+    ])
+    // Each cause's note token equals its own name — the note column is a
+    // machine-readable token list, not prose (prose is built at the API layer).
+    for (const cause of treeMod.SCAN_COVERAGE_CAUSE_ORDER as readonly string[]) {
+      expect((treeMod.SCAN_COVERAGE_CAUSE_LABELS as Record<string, string>)[cause]).toBe(cause)
+    }
+  })
+
+  it('enumerateExtendedSiblingTargets ranking is deterministic on the Node twin', async () => {
+    const treeMod = await import(NODE_SKILL_PROC_SECURITY_TREE)
+    const entries = ['b.sh', 'a.sh', 'scripts/install.sh', 'scripts/z.sh', 'src/index.ts'].map(
+      (p) => ({
+        path: `sk/${p}`,
+        mode: '100644',
+        type: 'blob' as const,
+        sha: `sha-${p}`,
+        size: 10,
+        url: 'x',
+      })
+    )
+    const first = treeMod.enumerateExtendedSiblingTargets('sk', entries, '', 256_000)
+    const second = treeMod.enumerateExtendedSiblingTargets(
+      'sk',
+      [...entries].reverse(),
+      '',
+      256_000
+    )
+    expect(second.targets).toEqual(first.targets)
+    expect(first.targets[0]).toBe('sk/scripts/install.sh')
   })
 })

@@ -73,6 +73,19 @@ export interface SecuritySummary {
   findingsCount: number
   /** When the skill was last scanned */
   scannedAt: string | null
+  /**
+   * SMI-6033 Wave 2 (Gap 8): true when the most recent scan could not cover
+   * every candidate file (count/size cap, transient fetch failure, tree-fetch
+   * failure, tree truncation, or tree-budget exhaustion). Informational only —
+   * does NOT affect installability the way quarantine does. Defaults to
+   * `false` when absent from older cached data.
+   */
+  scanCoverageIncomplete?: boolean
+  /**
+   * SMI-6033 Wave 2 (Gap 8): '; '-joined machine-readable cause token(s) for a
+   * `scanCoverageIncomplete: true` result, or `null`/absent when complete.
+   */
+  scanCoverageNote?: string | null
 }
 
 /**

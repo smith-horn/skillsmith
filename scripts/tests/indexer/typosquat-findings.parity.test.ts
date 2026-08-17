@@ -20,6 +20,9 @@ import { scanSkillBundle } from '../../indexer/skill-processor.security.ts'
 import { buildTyposquatFindings } from '../../indexer/typosquat-findings.ts'
 import { newRateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
 import { scanSkillContent } from '../../indexer/_shared/security-scanner-edge.ts'
+// SMI-6033 Wave 2 (Gap 8): keeps the extended (Trees API) scan surface out of
+// this test — see the fixture's own comment.
+import { emptyRepoTree } from './scan-skill-bundle.fixtures.ts'
 
 /** Reference set with a well-known brand so an edit-distance-1 candidate fires. */
 const REFERENCE_NAMES: ReadonlySet<string> = new Set(['anthropic', 'skillsmith'])
@@ -44,6 +47,8 @@ async function typosquatFindingsViaScanSkillBundle(
       // merged result's findings are exactly the typosquat findings.
       fetchSiblingContent: async () => ({ removed: true }),
       scanSkillContent,
+      // SMI-6033 Wave 2 (Gap 8): keep the Trees API surface out of this test.
+      fetchRepoTreeEntries: emptyRepoTree,
     },
     { candidateName, referenceNames: REFERENCE_NAMES }
   )

@@ -25,19 +25,21 @@
  * the Gatekeeper-bypass trust-tier carve-out on THIS (indexer) path only.
  * Reuses the exact same HIGH_TRUST_AUTHORS owner-set lookup Gap 7's
  * typosquat-reference.ts already sources from — not a second mechanism.
+ *
+ * SMI-6033 Wave 2 (Gap 8): scanSkillBundle also reads a bounded set of
+ * OPERATIONAL CODE files (scripts/, src/, bin/) picked from the repo's git
+ * tree, appended to the same sibling list the existing fetch/scan/merge loop
+ * walks. Selection, budget and coverage: ./skill-processor.security.tree.ts.
  */
 
 import {
-  QUARANTINE_THRESHOLD,
   shouldQuarantine,
   summarizeFindings,
   scanSkillContent,
   type EdgeScanResult,
   type SecurityFinding,
 } from './_shared/security-scanner-edge.ts'
-import { calculateRiskScore } from './_shared/security-scanner-edge.context.ts'
-import { withRateLimitTracking, type RateLimitTelemetry } from './_shared/rate-limit.ts'
-import { buildGitHubHeaders } from './_shared/github-auth.ts'
+import { type RateLimitTelemetry } from './_shared/rate-limit.ts'
 // SMI-6033 Wave 1 (Gap 7): the already-built typosquat detector (SMI-595) —
 // scripts/indexer/ is a Node tree so it can import packages/core directly
 // (see typosquat-reference.ts's header for why the Deno twin cannot).
@@ -48,6 +50,15 @@ import {
 // SMI-6033 Wave 3 (Gap 5): the same high-trust-author allowlist Gap 7's
 // typosquat-reference.ts already sources from.
 import { HIGH_TRUST_AUTHORS } from './high-trust-authors.ts'
+// SMI-6033 Wave 2 (Gap 8): extended scan-surface helpers, split into a sibling
+// module to keep this file under the 500-line gate.
+import {
+  MAX_EXTENDED_SIBLING_FILES,
+  computeScanCoverage,
+  enumerateExtendedSiblingTargets,
+  fetchRepoTreeEntries,
+  type ScanCoverage,
+} from './skill-processor.security.tree.ts'
 
 // sync: packages/core/src/services/skill-installation.policy.ts BUNDLED_SCAN_FILES
 export const BUNDLED_SCAN_FILES = [
@@ -120,152 +131,41 @@ export async function readResponseWithLimit(response: Response, maxBytes: number
 }
 
 // =============================================================================
-// SMI-5436 Wave 2: Sibling-scan plumbing
-// =============================================================================
-
-/** Max CDN fetches per skill (latency cap, not a rate-budget guard — CDN costs zero core quota). */
-export const MAX_SIBLING_BLOB_FETCHES_PER_SKILL = BUNDLED_SCAN_FILES.length
-
-/** Max content bytes per sibling (same as MAX_SKILL_CONTENT_SIZE). */
-export const MAX_SIBLING_CONTENT_BYTES = 256_000
-
-/** Files that are doc-class: we scan them but do NOT reject on findings (consistent with Phase 2 B1). */
-export const DOC_CLASS_BASENAMES = new Set(['README.md', 'examples.md'])
-
-export interface SiblingEdgeScan {
-  relPath: string
-  scan: EdgeScanResult
-}
-
-export interface MergedEdgeScanResult {
-  findings: SecurityFinding[]
-  riskScore: number
-  /** True if the merged scan triggers the quarantine gate. */
-  quarantine: boolean
-  /** True if a non-doc sibling has code_execution or obfuscated_directive findings. */
-  siblingRejectable: boolean
-  /** Relative path of the first non-doc sibling that triggered rejection, or null. */
-  primarySiblingPath: string | null
-}
+// SMI-6033 Wave 2 (Gap 8) adversarial-review fix: sibling-scan plumbing
+// (enumerateSiblingTargets, fetchSiblingContent, mergeSiblingScans,
+// buildMergedQuarantineReason + supporting types) extracted to
+// skill-processor.security.sibling.ts to keep this file under the 500-line
+// gate. Re-exported below so the public API is unchanged.
+import {
+  MAX_SIBLING_CONTENT_BYTES,
+  enumerateSiblingTargets,
+  fetchSiblingContent,
+  mergeSiblingScans,
+  type SiblingEdgeScan,
+  type MergedEdgeScanResult,
+} from './skill-processor.security.sibling.ts'
+export {
+  MAX_SIBLING_CONTENT_BYTES,
+  DOC_CLASS_BASENAMES,
+  enumerateSiblingTargets,
+  fetchSiblingContent,
+  mergeSiblingScans,
+  buildMergedQuarantineReason,
+  type SiblingEdgeScan,
+  type MergedEdgeScanResult,
+  type FetchSiblingResult,
+} from './skill-processor.security.sibling.ts'
 
 /**
- * Return the sibling paths to fetch for a given skill directory.
- * Each entry is a repo-relative path (e.g. "my-skill/.mcp.json" or ".mcp.json" for root skills).
+ * Max CDN fetches per skill (latency cap, not a rate-budget guard — CDN costs
+ * zero core quota). SMI-6033 Wave 2 (Gap 8): widened to the 7 fixed bundled
+ * files PLUS up to MAX_EXTENDED_SIBLING_FILES operational-code ones.
+ * Documentation only — nothing enforces it; the two enumerate* functions are
+ * what bound the real count. Kept accurate because parity.test.ts and
+ * skill-processor.security.test.ts both pin it as a declared-vs-real check.
  */
-export function enumerateSiblingTargets(skillDir: string): readonly string[] {
-  const prefix = skillDir ? `${skillDir}/` : ''
-  return BUNDLED_SCAN_FILES.map((f) => `${prefix}${f}`)
-}
-
-/**
- * SMI-5437 Wave 1: Discriminated return type for fetchSiblingContent.
- * Distinguishes confirmed removal (404) from transient failures (429 / network error / oversized).
- * The recheck unquarantine path requires this distinction: 404 is a positive removal signal,
- * while a network error must not release a quarantine (fail-closed).
- */
-export type FetchSiblingResult = { content: string } | { removed: true } | null
-
-/**
- * SMI-5436 Wave 2: Fetch a sibling file via raw.githubusercontent.com CDN (zero core quota).
- * SMI-5437 Wave 1: Returns a discriminated result (FetchSiblingResult) to distinguish
- * confirmed removal (404) from transient failures (429 / network error / oversized).
- *
- * Returns:
- *   - `{ content: string }` — successful fetch
- *   - `{ removed: true }` — HTTP 404 (file confirmed absent; positive signal for recheck path)
- *   - `null` — HTTP 429, oversized, or network error (unknown state; fail-open / fail-closed
- *     semantics differ by caller: quarantine path is fail-open, unquarantine path is fail-closed)
- */
-export async function fetchSiblingContent(
-  owner: string,
-  repo: string,
-  branch: string,
-  relPath: string,
-  telemetry: RateLimitTelemetry
-): Promise<FetchSiblingResult> {
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${relPath}`
-  try {
-    const response = await withRateLimitTracking(telemetry, url, {
-      headers: await buildGitHubHeaders(),
-      _throwOnRateLimit: false,
-    })
-    // 429 = transient; silently skip (same as validateSkillMd transient handling)
-    if (response.status === 429) return null
-    // 404 = file confirmed absent from repo (positive removal signal for recheck path)
-    if (response.status === 404) return { removed: true }
-    if (!response.ok) return null
-    const contentLength = response.headers.get('content-length')
-    if (contentLength && parseInt(contentLength, 10) > MAX_SIBLING_CONTENT_BYTES) return null
-    const text = await readResponseWithLimit(response, MAX_SIBLING_CONTENT_BYTES)
-    return { content: text }
-  } catch {
-    return null
-  }
-}
-
-/**
- * SMI-5436 Wave 2: Merge SKILL.md scan with sibling scans.
- *
- * Rejection criterion for siblings: code_execution or obfuscated_directive only
- * (not full shouldQuarantine) — consistent with Phase 2 B1. Benign idioms like
- * `chmod 755 ./bin/cli` fire privilege_escalation:critical in non-doc context,
- * so we restrict to the explicit exec/obfuscation categories. Doc-class files
- * (README.md, examples.md) are scanned but never trigger sibling rejection.
- *
- * SMI-6033 Wave 1 (Gap 7): `extraFindings` folds in typosquat findings (or
- * any other skill-level, non-sibling-scoped findings) using the exact same
- * allFindings + calculateRiskScore merge as sibling findings. Optional and
- * additive — omitted, this is byte-identical to the pre-SMI-6033 behavior.
- */
-export function mergeSiblingScans(
-  root: EdgeScanResult,
-  siblings: SiblingEdgeScan[],
-  extraFindings: SecurityFinding[] = []
-): MergedEdgeScanResult {
-  const siblingFindings = siblings.flatMap(({ relPath, scan }) =>
-    scan.findings.map((f) => ({ ...f, filePath: relPath }))
-  )
-  const allFindings = [...root.findings, ...siblingFindings, ...extraFindings]
-  const mergedScore = calculateRiskScore(allFindings)
-
-  const rejectableSibling = siblings.find(({ relPath, scan }) => {
-    const basename = relPath.split('/').pop() ?? relPath
-    return (
-      !DOC_CLASS_BASENAMES.has(basename) &&
-      scan.findings.some((f) => f.type === 'code_execution' || f.type === 'obfuscated_directive')
-    )
-  })
-
-  const siblingRejectable = rejectableSibling !== undefined
-
-  return {
-    findings: allFindings,
-    riskScore: mergedScore,
-    quarantine: mergedScore >= QUARANTINE_THRESHOLD || siblingRejectable,
-    siblingRejectable,
-    primarySiblingPath: rejectableSibling?.relPath ?? null,
-  }
-}
-
-/**
- * SMI-5436 Wave 2: Build quarantine reason for merged (SKILL.md + sibling) scans.
- *
- * When the primary trigger is a sibling file, the reason names it so authors
- * can identify which file triggered the quarantine.
- */
-export function buildMergedQuarantineReason(
-  merged: MergedEdgeScanResult,
-  owner: string,
-  name: string
-): string {
-  if (!merged.quarantine) return ''
-
-  const locationStr = merged.primarySiblingPath ? ` in ${merged.primarySiblingPath}` : ''
-  const findingSummary = summarizeFindings(merged.findings)
-  const appealUrl = `https://www.skillsmith.app/contact?topic=quarantine&skill=${encodeURIComponent(`${owner}/${name}`)}`
-
-  return `Security scan detected ${merged.findings.length} finding${merged.findings.length === 1 ? '' : 's'}${locationStr} (risk score: ${merged.riskScore}/100). ${findingSummary}. Appeal at ${appealUrl}`
-}
+export const MAX_SIBLING_BLOB_FETCHES_PER_SKILL =
+  BUNDLED_SCAN_FILES.length + MAX_EXTENDED_SIBLING_FILES
 
 // =============================================================================
 // SMI-5879 PR-2192a: scanSkillBundle extraction (design 8.2.1 / 8.2.1.1)
@@ -280,6 +180,9 @@ export function buildMergedQuarantineReason(
 export interface ScanSkillBundleDeps {
   fetchSiblingContent?: typeof fetchSiblingContent
   scanSkillContent?: typeof scanSkillContent
+  // SMI-6033 Wave 2 (Gap 8): swappable so tests can drive the extended
+  // scan surface from a synthetic tree without a Trees API round-trip.
+  fetchRepoTreeEntries?: typeof fetchRepoTreeEntries
 }
 
 /**
@@ -297,6 +200,13 @@ export interface ScanSkillBundleResult {
   /** Present when at least one sibling was successfully fetched and scanned. */
   mergedSecurityScan?: MergedEdgeScanResult
   siblingFailures: SiblingFailure[]
+  /**
+   * SMI-6033 Wave 2 (Gap 8): was this skill's scan surface complete, and why
+   * not when it wasn't — persisted as `scan_coverage_incomplete` /
+   * `scan_coverage_note` so a partially scanned skill is never recorded as
+   * fully scanned. Never affects the verdict: an honesty flag, not an input.
+   */
+  scanCoverage: ScanCoverage
 }
 
 /**
@@ -358,6 +268,7 @@ export async function scanSkillBundle(
 ): Promise<ScanSkillBundleResult> {
   const doFetchSiblingContent = deps?.fetchSiblingContent ?? fetchSiblingContent
   const doScanSkillContent = deps?.scanSkillContent ?? scanSkillContent
+  const doFetchRepoTreeEntries = deps?.fetchRepoTreeEntries ?? fetchRepoTreeEntries
 
   // SMI-6033 Wave 3 (Gap 5): the Gatekeeper-bypass trust-tier carve-out's
   // precondition — see isHighTrustOwner's own header and
@@ -374,7 +285,25 @@ export async function scanSkillBundle(
   }
 
   // SMI-5436 Wave 2: scan sibling files (CDN fetch, zero core quota)
-  const siblingPaths = enumerateSiblingTargets(skillPath ?? '')
+  // SMI-6033 Wave 2 (Gap 8): plus a ranked, capped set of operational-code
+  // files (scripts/, src/, bin/, and skill-dir top level) from the repo's git
+  // tree, APPENDED to the same array the existing fetch -> scan -> merge loop
+  // below walks — so there is no parallel merge path to drift. Each entry is
+  // tagged `isExtended` below so mergeSiblingScans can apply its (narrower,
+  // see that function's own header) rejection rule to this new surface.
+  const treeResult = await doFetchRepoTreeEntries(owner, repo, branch, telemetry)
+  const extended = enumerateExtendedSiblingTargets(
+    skillPath ?? '',
+    treeResult.entries,
+    primaryContent,
+    MAX_SIBLING_CONTENT_BYTES
+  )
+  const siblingPaths = [...enumerateSiblingTargets(skillPath ?? ''), ...extended.targets]
+  // SMI-6033 Wave 2 (Gap 8) fix: which paths came from the new extended
+  // surface, so mergeSiblingScans can apply its narrower rejection rule to
+  // them (see that function's own header) without touching the original 7
+  // fixed siblings' behavior at all.
+  const extendedPathSet = new Set(extended.targets)
   const siblingScans: SiblingEdgeScan[] = []
   // SMI-5879 (8.2.2): observability only — never consulted by the merge below.
   const siblingFailures: SiblingFailure[] = []
@@ -383,7 +312,7 @@ export async function scanSkillBundle(
     if (sibResult !== null && !('removed' in sibResult)) {
       const sibContent = sibResult.content
       const sibScan = await doScanSkillContent(sibContent, isHighTrustAuthor)
-      siblingScans.push({ relPath, scan: sibScan })
+      siblingScans.push({ relPath, scan: sibScan, isExtended: extendedPathSet.has(relPath) })
     } else if (sibResult === null) {
       // Transient: network error, 429, or oversized — same fail-open behavior as before.
       siblingFailures.push({ relPath, kind: 'transient' })
@@ -428,5 +357,17 @@ export async function scanSkillBundle(
     )
   }
 
-  return { securityScan, siblingScans, mergedSecurityScan, siblingFailures }
+  // SMI-6033 Wave 2 (Gap 8): a clean 404 ('removed') is NOT incomplete
+  // coverage — a confirmed-absent file is complete coverage of a smaller
+  // surface. Only 'transient' failures mean we do not know what was in it.
+  const scanCoverage = computeScanCoverage({
+    droppedForCount: extended.droppedForCount,
+    droppedForSize: extended.droppedForSize,
+    hasTransientSiblingFailure: siblingFailures.some((f) => f.kind === 'transient'),
+    treeFetchFailed: treeResult.fetchFailed,
+    treeTruncated: treeResult.truncated,
+    treeBudgetExhausted: treeResult.budgetExhausted,
+  })
+
+  return { securityScan, siblingScans, mergedSecurityScan, siblingFailures, scanCoverage }
 }

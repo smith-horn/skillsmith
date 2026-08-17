@@ -15,6 +15,9 @@ import {
   type FetchSiblingResult,
 } from '../../indexer/skill-processor.security.ts'
 import { scanSkillContent } from '../../indexer/_shared/security-scanner-edge.ts'
+// SMI-6033 Wave 2 (Gap 8): keeps the extended (Trees API) scan surface out of
+// this test — see the fixture's own comment.
+import { emptyRepoTree } from './scan-skill-bundle.fixtures.ts'
 import {
   telemetry,
   CLEAN_SKILL_MD,
@@ -95,7 +98,11 @@ describe('scanSkillBundle — trustworthiness: validateSkillMd (production path)
       SKILL_PATH,
       CLEAN_SKILL_MD,
       telemetry,
-      { fetchSiblingContent: explicitFetchStub, scanSkillContent }
+      {
+        fetchSiblingContent: explicitFetchStub,
+        scanSkillContent,
+        fetchRepoTreeEntries: emptyRepoTree,
+      }
     )
 
     // Sanity: the primary content really did reach validateSkillMd's scan
@@ -174,7 +181,7 @@ describe('scanSkillBundle — siblingFailures addition changes no verdict (desig
       undefined,
       CLEAN_SKILL_MD,
       telemetry,
-      { fetchSiblingContent: fetchStub }
+      { fetchSiblingContent: fetchStub, fetchRepoTreeEntries: emptyRepoTree }
     )
 
     expect(result.mergedSecurityScan?.quarantine).toBe(true)
@@ -203,7 +210,7 @@ describe('scanSkillBundle — siblingFailures addition changes no verdict (desig
       undefined,
       CLEAN_SKILL_MD,
       telemetry,
-      { fetchSiblingContent: fetchStub }
+      { fetchSiblingContent: fetchStub, fetchRepoTreeEntries: emptyRepoTree }
     )
 
     expect(result.mergedSecurityScan?.siblingRejectable).toBe(false)

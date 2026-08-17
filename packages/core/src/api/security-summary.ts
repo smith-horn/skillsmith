@@ -49,7 +49,12 @@ import type { SecuritySummary } from '../types.js'
 export function deriveSecuritySummaryFromApiSkill(
   apiSkill: Pick<
     ApiSkill,
-    'last_scanned_at' | 'quarantined' | 'security_score' | 'security_findings'
+    | 'last_scanned_at'
+    | 'quarantined'
+    | 'security_score'
+    | 'security_findings'
+    | 'scan_coverage_incomplete'
+    | 'scan_coverage_note'
   >
 ): SecuritySummary | undefined {
   if (apiSkill.last_scanned_at == null) {
@@ -63,6 +68,11 @@ export function deriveSecuritySummaryFromApiSkill(
       ? apiSkill.security_findings.length
       : 0,
     scannedAt: apiSkill.last_scanned_at,
+    // SMI-6033 Wave 2 (Gap 8): default to complete coverage when the column
+    // is absent (older cached rows / pre-Wave-2 API responses) — never
+    // fabricate an incomplete-scan caveat for data that predates this field.
+    scanCoverageIncomplete: apiSkill.scan_coverage_incomplete ?? false,
+    scanCoverageNote: apiSkill.scan_coverage_note ?? null,
   }
 }
 
@@ -90,6 +100,15 @@ export function deriveSecuritySummaryFromSkillRow(skill: {
   riskScore: number | null
   securityFindingsCount: number
   securityScannedAt: string | null
+  /**
+   * SMI-6033 Wave 2 (Gap 8): optional — the local-DB path (SQLite) does not
+   * currently persist scan-coverage columns (Supabase/registry only), so
+   * this is absent for every local-DB-shaped row today. Declared here (not
+   * wired to a column yet) so a future local-DB persist can pass it through
+   * without changing this function's contract.
+   */
+  scanCoverageIncomplete?: boolean
+  scanCoverageNote?: string | null
 }): SecuritySummary | undefined {
   if (skill.securityScannedAt == null) {
     return undefined
@@ -100,5 +119,9 @@ export function deriveSecuritySummaryFromSkillRow(skill: {
     riskScore: skill.riskScore,
     findingsCount: skill.securityFindingsCount,
     scannedAt: skill.securityScannedAt,
+    // Defaults to complete coverage when absent — never fabricate an
+    // incomplete-scan caveat for a row that doesn't carry the column.
+    scanCoverageIncomplete: skill.scanCoverageIncomplete ?? false,
+    scanCoverageNote: skill.scanCoverageNote ?? null,
   }
 }

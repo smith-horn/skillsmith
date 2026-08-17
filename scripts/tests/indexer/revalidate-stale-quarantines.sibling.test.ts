@@ -21,6 +21,9 @@ import { scanSkillBundle } from '../../indexer/skill-processor.security.ts'
 import type { EdgeScanResult } from '../../indexer/_shared/security-scanner-edge.ts'
 import { runSiblingRescan } from '../../indexer/revalidate-stale-quarantines.sibling.ts'
 import { newRateLimitTelemetry } from '../../indexer/_shared/rate-limit.ts'
+// SMI-6033 Wave 2 (Gap 8): keeps the extended (Trees API) scan surface out of
+// this test — see the fixture's own comment.
+import { emptyRepoTree } from './scan-skill-bundle.fixtures.ts'
 
 // ---------------------------------------------------------------------------
 // Module mock: fetchSiblingContent + enumerateSiblingTargets
@@ -422,7 +425,7 @@ describe('scanSkillBundle vs runSiblingRescan — fail-open vs fail-closed asymm
       '',
       '---\nname: clean\ndescription: A benign fixture with no risky content at all.\n---\n# Clean\n',
       telemetry,
-      { fetchSiblingContent: mockFetchSiblingContent }
+      { fetchSiblingContent: mockFetchSiblingContent, fetchRepoTreeEntries: emptyRepoTree }
     )
     expect(mockFetchSiblingContent).toHaveBeenCalledTimes(7) // completes — does not abort
     expect(bundleResult.siblingScans).toHaveLength(0) // every sibling skipped

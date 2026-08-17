@@ -36,9 +36,15 @@ import { delay, withRateLimitTracking, type RateLimitTelemetry } from './_shared
 const RETRY_DELAYS = [1000, 2000, 4000]
 
 /**
- * A single entry in the GitHub Trees API response
+ * A single entry in the GitHub Trees API response.
+ *
+ * SMI-6033 Wave 2 (Gap 8): exported. The extended sibling-scan surface
+ * (`skill-processor.security.tree.ts`) needs the FULL blob list, not just the
+ * SKILL.md projection `fetchSkillPathsFromTree` returns — `size` in particular
+ * is what lets an oversized operational-code file be dropped before any fetch
+ * is attempted, rather than paying a CDN round-trip to discover it.
  */
-interface TreeEntry {
+export interface TreeEntry {
   path: string
   mode: string
   type: 'blob' | 'tree' | 'commit'
@@ -68,28 +74,24 @@ export interface TreeSkillEntry {
 }
 
 /**
- * Fetch all SKILL.md entries from a repository's git tree using the recursive
- * Trees API. Returns the parent directory path AND blob SHA for each match.
+ * SMI-6033 Wave 2 (Gap 8): the shared Trees API round-trip — retry/backoff on
+ * 403/429, non-retryable HTTP handling, network-error retries, and the
+ * truncation warning — extracted VERBATIM out of `fetchSkillPathsFromTree` so
+ * both projections over the same response body (the SKILL.md-only one below
+ * and `fetchFullRepoTree`'s full blob list) share one copy of the retry loop
+ * instead of carrying two that can drift.
  *
- * SMI-4852: Threads `telemetry` and wraps each fetch in
- * `withRateLimitTracking(_throwOnRateLimit: false)` to record telemetry
- * without disrupting the existing retry-count contract.
- *
- * SMI-4861 Wave 1: Return shape changed from `{paths: string[], ...}` to
- * `{entries: TreeSkillEntry[], ...}` to thread the blob SHA through to the
- * tree-hash cache gate. Callers that only need paths read `entry.path`.
- *
- * @param owner - GitHub repository owner (org or user)
- * @param repo - Repository name
- * @param treeRef - Branch name or commit SHA (e.g. 'main').
- * @param telemetry - Shared rate-limit telemetry collector.
+ * Returns `data: null` for every failure mode, with the same `errors` strings
+ * the pre-extraction implementation produced, so `fetchSkillPathsFromTree`'s
+ * observable behaviour (return shape, error text, log lines, log ordering) is
+ * unchanged by the extraction.
  */
-export async function fetchSkillPathsFromTree(
+async function fetchTreesApiResponse(
   owner: string,
   repo: string,
   treeRef: string,
   telemetry: RateLimitTelemetry
-): Promise<{ entries: TreeSkillEntry[]; truncated: boolean; errors: string[] }> {
+): Promise<{ data: TreesApiResponse | null; errors: string[] }> {
   const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeRef}?recursive=1`
   const fetchErrors: string[] = []
 
@@ -103,28 +105,13 @@ export async function fetchSkillPathsFromTree(
       if (response.ok) {
         const data = (await response.json()) as TreesApiResponse
 
-        // Collect parent directories + blob SHAs of all SKILL.md blob entries
-        const skillEntries: TreeSkillEntry[] = []
-        for (const entry of data.tree) {
-          if (entry.type !== 'blob') continue
-          // Match SKILL.md case-insensitively at any depth
-          if (!entry.path.endsWith('/SKILL.md') && entry.path.toUpperCase() !== 'SKILL.MD') continue
-          const slashIdx = entry.path.lastIndexOf('/')
-          // SMI-5286 1c (C-4): a root-level SKILL.md has no parent dir → emit path:''
-          // (buildSkillTreeUrl maps '' → …/tree/<branch>). Previously dropped, which
-          // silently lost repos whose only skill is a root SKILL.md once Phase 3a (the
-          // only other root-skill emitter) was disabled.
-          const skillPath = slashIdx < 0 ? '' : entry.path.slice(0, slashIdx)
-          skillEntries.push({ path: skillPath, blobSha: entry.sha })
-        }
-
         if (data.truncated) {
           const truncMsg = `Tree truncated for ${owner}/${repo} — some skill paths may be missing`
           console.warn(`[Trees] WARNING: ${truncMsg}`)
           fetchErrors.push(truncMsg)
         }
 
-        return { entries: skillEntries, truncated: data.truncated, errors: fetchErrors }
+        return { data, errors: fetchErrors }
       }
 
       // Rate limit — retry with backoff
@@ -140,8 +127,7 @@ export async function fetchSkillPathsFromTree(
         const remaining = response.headers.get('X-RateLimit-Remaining')
         console.log(`[Trees] Rate limit exhausted for ${owner}/${repo}. Remaining: ${remaining}`)
         return {
-          entries: [],
-          truncated: false,
+          data: null,
           errors: [`Rate limit exhausted fetching tree for ${owner}/${repo}`],
         }
       }
@@ -149,8 +135,7 @@ export async function fetchSkillPathsFromTree(
       // Non-retryable HTTP error (404, 5xx, etc.)
       console.log(`[Trees] HTTP ${response.status} for ${owner}/${repo}`)
       return {
-        entries: [],
-        truncated: false,
+        data: null,
         errors: [`HTTP ${response.status} fetching tree for ${owner}/${repo}`],
       }
     } catch (err) {
@@ -166,18 +151,100 @@ export async function fetchSkillPathsFromTree(
         `[Trees] Network error exhausted retries for ${owner}/${repo}: ${err instanceof Error ? err.message : 'Unknown'}`
       )
       return {
-        entries: [],
-        truncated: false,
+        data: null,
         errors: [`Network error fetching tree for ${owner}/${repo}`],
       }
     }
   }
 
   return {
-    entries: [],
-    truncated: false,
+    data: null,
     errors: [`Failed to fetch tree for ${owner}/${repo} after all retries`],
   }
+}
+
+/**
+ * Fetch all SKILL.md entries from a repository's git tree using the recursive
+ * Trees API. Returns the parent directory path AND blob SHA for each match.
+ *
+ * SMI-4852: Threads `telemetry` and wraps each fetch in
+ * `withRateLimitTracking(_throwOnRateLimit: false)` to record telemetry
+ * without disrupting the existing retry-count contract.
+ *
+ * SMI-4861 Wave 1: Return shape changed from `{paths: string[], ...}` to
+ * `{entries: TreeSkillEntry[], ...}` to thread the blob SHA through to the
+ * tree-hash cache gate. Callers that only need paths read `entry.path`.
+ *
+ * SMI-6033 Wave 2 (Gap 8): the HTTP round-trip moved to
+ * `fetchTreesApiResponse` (shared with `fetchFullRepoTree`). This function's
+ * signature, return shape, error strings and behaviour are unchanged.
+ *
+ * @param owner - GitHub repository owner (org or user)
+ * @param repo - Repository name
+ * @param treeRef - Branch name or commit SHA (e.g. 'main').
+ * @param telemetry - Shared rate-limit telemetry collector.
+ */
+export async function fetchSkillPathsFromTree(
+  owner: string,
+  repo: string,
+  treeRef: string,
+  telemetry: RateLimitTelemetry
+): Promise<{ entries: TreeSkillEntry[]; truncated: boolean; errors: string[] }> {
+  const { data, errors } = await fetchTreesApiResponse(owner, repo, treeRef, telemetry)
+  if (data === null) {
+    return { entries: [], truncated: false, errors }
+  }
+
+  // Collect parent directories + blob SHAs of all SKILL.md blob entries
+  const skillEntries: TreeSkillEntry[] = []
+  for (const entry of data.tree) {
+    if (entry.type !== 'blob') continue
+    // Match SKILL.md case-insensitively at any depth
+    if (!entry.path.endsWith('/SKILL.md') && entry.path.toUpperCase() !== 'SKILL.MD') continue
+    const slashIdx = entry.path.lastIndexOf('/')
+    // SMI-5286 1c (C-4): a root-level SKILL.md has no parent dir → emit path:''
+    // (buildSkillTreeUrl maps '' → …/tree/<branch>). Previously dropped, which
+    // silently lost repos whose only skill is a root SKILL.md once Phase 3a (the
+    // only other root-skill emitter) was disabled.
+    const skillPath = slashIdx < 0 ? '' : entry.path.slice(0, slashIdx)
+    skillEntries.push({ path: skillPath, blobSha: entry.sha })
+  }
+
+  return { entries: skillEntries, truncated: data.truncated, errors }
+}
+
+/**
+ * SMI-6033 Wave 2 (Gap 8): the FULL blob-list projection over the same
+ * recursive Trees API response `fetchSkillPathsFromTree` reads — every entry
+ * with its `path`, `type`, `sha` and `size`, not just SKILL.md parent dirs.
+ *
+ * This is a second projection, NOT a replacement: `fetchSkillPathsFromTree`
+ * has its own callers (`expandGlobSkillsPaths`, `fetchPlainPathTreeMap`) whose
+ * behaviour must not change. Both share `fetchTreesApiResponse`'s single retry
+ * loop, so neither carries a duplicate copy of the backoff logic.
+ *
+ * Quota note (correcting the original plan's "zero incremental quota" claim):
+ * this IS a real, metered `api.github.com` call. The per-run budget and the
+ * `(owner, repo, branch)` memoization that keep it affordable live one layer
+ * up, in `skill-processor.security.tree.ts`'s `fetchRepoTreeEntries` — this
+ * function is deliberately unbudgeted and unmemoized so the two concerns stay
+ * separable and independently testable.
+ *
+ * `truncated: true` means GitHub cut the response short (repos > ~100k
+ * objects) — the entries returned are still usable, but coverage is partial
+ * and the caller is expected to surface that (see `ScanCoverageCause`).
+ */
+export async function fetchFullRepoTree(
+  owner: string,
+  repo: string,
+  treeRef: string,
+  telemetry: RateLimitTelemetry
+): Promise<{ entries: TreeEntry[]; truncated: boolean; fetchFailed: boolean }> {
+  const { data } = await fetchTreesApiResponse(owner, repo, treeRef, telemetry)
+  if (data === null) {
+    return { entries: [], truncated: false, fetchFailed: true }
+  }
+  return { entries: data.tree, truncated: data.truncated, fetchFailed: false }
 }
 
 // Convert a glob pattern to a RegExp that matches SKILL.md paths in a repository tree.

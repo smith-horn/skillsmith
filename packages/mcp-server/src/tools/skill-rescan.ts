@@ -307,7 +307,12 @@ async function executeSkillRescanImpl(
     // not the SKILL.md — quarantines the skill so local search hides it. The
     // sibling rejection is FP-safe: driven only by code_execution/
     // obfuscated_directive (see scanLocalBundleSiblings module header).
-    const siblingScan = await scanLocalBundleSiblings(dirname(skill.skillMdPath), scanner)
+    // SMI-6033 Wave 2 (Gap 8): `primaryContent` feeds the tier-1 ranking check
+    // ("is this operational-code file referenced by path from SKILL.md?"), so
+    // a referenced payload outranks unreferenced decoys under the count cap.
+    const siblingScan = await scanLocalBundleSiblings(dirname(skill.skillMdPath), scanner, {
+      primaryContent: content,
+    })
 
     const siblingRejected = siblingScan.rejectable
 

@@ -251,6 +251,8 @@ describe('recommend.helpers', () => {
         riskScore: 15,
         findingsCount: 2,
         scannedAt: '2026-07-01T00:00:00Z',
+        scanCoverageIncomplete: false,
+        scanCoverageNote: null,
       })
     })
 

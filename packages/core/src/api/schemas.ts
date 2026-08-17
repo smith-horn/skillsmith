@@ -59,6 +59,11 @@ export const ApiSearchResultSchema = z.object({
   last_scanned_at: z.string().nullable().optional(),
   security_findings: z.array(z.unknown()).nullable().optional(),
   quarantined: z.boolean().optional(),
+  // SMI-6033 Wave 2 (Gap 8): partial-scan coverage columns. Declared here so
+  // Zod does not strip them before get-skill.ts / search.ts read them (same
+  // reason as compatibility/license below).
+  scan_coverage_incomplete: z.boolean().optional(),
+  scan_coverage_note: z.string().nullable().optional(),
   // SMI-5327: SPDX license surfaced by skills-get / skills-search. Declared here
   // so Zod does not strip the field before get-skill.ts / search.ts read it
   // (same reason as compatibility above). skills-search may omit it → optional.
