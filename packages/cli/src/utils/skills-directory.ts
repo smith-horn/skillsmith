@@ -20,6 +20,12 @@ import {
   type ClientId,
 } from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH } from '../config.js'
+import { getLocalSkillsDir, getLocalSkillsDirDisplay } from './local-skills-dir.js'
+
+// SMI-6060: re-exported for existing call sites (manage.action.ts, tests) —
+// the implementation itself lives in local-skills-dir.ts (extracted from
+// this file to stay under the 500-line standard).
+export { getLocalSkillsDir, getLocalSkillsDirDisplay }
 
 export interface InstalledSkill {
   name: string
@@ -42,14 +48,6 @@ export interface InstalledSkill {
  * skills take precedence over global; canonical (`claude-code`) takes
  * precedence over secondary clients. See `getInstalledSkills` below.
  */
-
-/**
- * Returns the local skills directory path.
- * Computed at call time to handle working directory changes.
- */
-export function getLocalSkillsDir(): string {
-  return join(process.cwd(), '.claude', 'skills')
-}
 
 /**
  * Return `true` when a directory entry resolves to a directory, following
