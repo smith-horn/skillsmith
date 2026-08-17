@@ -549,6 +549,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // SMI-5866: scan-coverage-monitor — pg_cron-invoked indexer self-check,
   // service-role internal. Mirrors webhook-heartbeat-monitor / quota-monitor.
   'scan-coverage-monitor',
+  // SMI-6052: release-cadence-heartbeat-monitor — pg_cron-invoked positive
+  // liveness backstop for release-cadence.yml, service-role internal.
+  // Mirrors scan-coverage-monitor / webhook-heartbeat-monitor.
+  'release-cadence-heartbeat-monitor',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'

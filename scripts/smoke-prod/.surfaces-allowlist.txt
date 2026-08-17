@@ -36,6 +36,11 @@ supabase/functions/quota-monitor/**
 # cron (pg_cron via 20260703000005) — service-role internal, no user-facing HTTP
 # surface; results land in audit_logs.
 supabase/functions/webhook-heartbeat-monitor/**
+# SMI-6052: release-cadence-heartbeat-monitor is the daily positive-liveness
+# cron (pg_cron via 20260816000002) — service-role internal, no user-facing
+# HTTP surface; results land in audit_logs, and the whole point of this
+# function is to alert independently of the GitHub Actions surface it checks.
+supabase/functions/release-cadence-heartbeat-monitor/**
 # SMI-4995: coverage-report is the weekly cross-ecosystem coverage cron
 # (SMI-4963) — invoked only by .github/workflows/coverage-report.yml via
 # service-role auth. No user-facing HTTP surface; results land in

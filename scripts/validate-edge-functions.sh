@@ -86,6 +86,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "status-check"
   "status-public"
   "scan-coverage-monitor"
+  "release-cadence-heartbeat-monitor"
 )
 
 echo ""
