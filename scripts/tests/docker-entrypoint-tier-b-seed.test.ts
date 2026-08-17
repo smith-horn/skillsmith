@@ -181,4 +181,67 @@ describe('docker-entrypoint.sh Tier-B platform-binary restore loop (SMI-6050 Wav
     expect(existsSync(join(target, 'binary.node'))).toBe(false)
     expect(existsSync(fixture.targetVersionMarker(relPath))).toBe(false)
   })
+
+  // -------------------------------------------------------------------------
+  // 5. Post-merge review finding: an empty seed directory must NOT be
+  //    falsely blessed as a successful restore. `cp -a seed/. target/`
+  //    copying zero files is not an error, so without an explicit guard the
+  //    loop would stamp the target "current" despite restoring nothing.
+  // -------------------------------------------------------------------------
+
+  it('skips (does not falsely restore) an empty seed directory, even with a valid version marker', () => {
+    const fixture = newFixture()
+    const relPath = 'node_modules/widget-tier-b'
+    const seed = fixture.seedPackageDir(relPath)
+    const target = fixture.targetDir(relPath)
+
+    mkdirSync(seed, { recursive: true }) // seed dir exists but is EMPTY — corrupted/partial build
+    writeFileSync(fixture.seedVersionMarker(relPath), '1.2.3', 'utf8')
+    mkdirSync(target, { recursive: true }) // empty target — would normally trigger a restore
+
+    const { status, output } = runTierBBlock(fixture, blockRaw)
+
+    expect(status).toBe(0)
+    expect(output).toContain(`Skipping tier-b ${relPath}`)
+    expect(output).toContain('seed directory is missing or empty')
+    expect(output).not.toContain('Restored tier-b')
+    // No marker written — a genuinely-empty target stays genuinely empty,
+    // not falsely marked "current" at a version that was never really
+    // restored.
+    expect(existsSync(fixture.targetVersionMarker(relPath))).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // 6. Post-merge review finding: restoring a version bump must clear stale
+  //    files the OLD version had that the NEW version no longer ships —
+  //    `cp -a` only adds/overwrites, it never deletes on its own.
+  // -------------------------------------------------------------------------
+
+  it('removes a stale file left over from an old version when restoring a version bump', () => {
+    const fixture = newFixture()
+    const relPath = 'node_modules/widget-tier-b'
+    const seed = fixture.seedPackageDir(relPath)
+    const target = fixture.targetDir(relPath)
+
+    // New seed (v2.0.0) ships only binary.node — removed old-file.txt.
+    mkdirSync(seed, { recursive: true })
+    writeFileSync(join(seed, 'binary.node'), 'fake-elf-binary-v2\n', 'utf8')
+    writeFileSync(fixture.seedVersionMarker(relPath), '2.0.0', 'utf8')
+
+    // Existing target has the old version's content, including a file the
+    // new version no longer ships.
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'binary.node'), 'stale-v1-content\n', 'utf8')
+    writeFileSync(join(target, 'old-file.txt'), 'this file was removed in v2\n', 'utf8')
+    writeFileSync(fixture.targetVersionMarker(relPath), '1.2.3', 'utf8') // stale marker
+
+    const { status, output } = runTierBBlock(fixture, blockRaw)
+
+    expect(status).toBe(0)
+    expect(output).toContain(`Restored tier-b ${relPath}@2.0.0 (SMI-6050)`)
+    expect(readFileSync(join(target, 'binary.node'), 'utf8')).toBe('fake-elf-binary-v2\n')
+    // The obsolete file must be gone, not merely overlaid-and-ignored.
+    expect(existsSync(join(target, 'old-file.txt'))).toBe(false)
+    expect(readFileSync(fixture.targetVersionMarker(relPath), 'utf8')).toBe('2.0.0')
+  })
 })

@@ -433,6 +433,19 @@ elif [ -f "/app/.git" ] && [ -d "/opt/native-seed/tier-b" ]; then
         target="/app/${rel_path}"
         target_marker="${target}/.smi6050-seed-version"
 
+        # Corrupted/partial seed guard (post-merge review finding): an empty
+        # seed directory would otherwise make `cp -a seed/. target/` succeed
+        # trivially (copying zero files is not an error) and then stamp the
+        # target "current" without restoring any real content — a silent
+        # false-success indistinguishable from a healthy restore. Treat an
+        # empty seed exactly like a missing one: skip and count as failed,
+        # never as restored or current.
+        if [ ! -d "$seed_dir" ] || [ -z "$(ls -A "$seed_dir" 2>/dev/null)" ]; then
+            echo -e "${YELLOW}  ↳ Skipping tier-b ${rel_path} — seed directory is missing or empty (corrupted/partial image build, SMI-6050). Rebuild the image (docker compose build).${NC}"
+            tier_b_failed=$((tier_b_failed + 1))
+            continue
+        fi
+
         seed_version="$(cat "$version_file" 2>/dev/null || echo "")"
         current_version=""
         [ -f "$target_marker" ] && current_version="$(cat "$target_marker" 2>/dev/null || echo "")"
@@ -445,7 +458,17 @@ elif [ -f "/app/.git" ] && [ -d "/opt/native-seed/tier-b" ]; then
         fi
 
         if [ "$needs_restore" -eq 1 ]; then
+            # Clear the target's CONTENTS (not the directory itself — it may
+            # be an active Docker named-volume mountpoint, which can't be
+            # rmdir'd while mounted) before restoring. Post-merge review
+            # finding: `cp -a` only adds/overwrites, it never deletes — a
+            # version bump that REMOVES a file would otherwise leave that
+            # stale file behind in the target forever. `find -delete`
+            # failing (e.g. still the read-only host bind-mount, matching
+            # the existing fail-soft case) correctly breaks this `&&` chain
+            # into the same non-fatal warning path below.
             if mkdir -p "$target" 2>/dev/null \
+                && find "$target" -mindepth 1 -delete 2>/dev/null \
                 && cp -a "$seed_dir/." "$target/" 2>/dev/null \
                 && printf '%s' "$seed_version" >"$target_marker" 2>/dev/null; then
                 echo -e "${GREEN}  ✓ Restored tier-b ${rel_path}@${seed_version} (SMI-6050)${NC}"

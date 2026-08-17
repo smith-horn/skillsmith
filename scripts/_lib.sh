@@ -104,6 +104,44 @@ native_module_volume_name() {
 }
 
 #######################################
+# Runs scripts/lib/linux-optional-packages.mjs against $1/package-lock.json
+# and prints one derived Tier-B path per line to stdout on success.
+#
+# Post-merge review finding (SMI-6050): the three original call sites each
+# piped the node invocation straight into `while read ... done < <(node ...
+# 2>/dev/null)`. If node itself failed (broken install, corrupted lockfile,
+# a bug in the derivation script), that pattern silently produced zero
+# lines — indistinguishable from "this repo genuinely has zero Tier-B
+# packages" — reintroducing, through a different root cause, the exact
+# class of silent-gap bug this whole mechanism exists to eliminate. This
+# helper is the single place that now enforces: a derivation failure is
+# ALWAYS loud (a message on stderr) and ALWAYS propagates as a non-zero
+# return, never as a quietly-empty success.
+#
+# Arguments:
+#   $1 - Repository root path
+# Outputs:
+#   One node_modules/...-relative path per line to stdout on success; an
+#   explicit error message to stderr on failure.
+# Returns:
+#   0 on success. Non-zero on failure — callers MUST check this and skip
+#   Tier-B emission entirely rather than treating empty stdout as "zero
+#   packages."
+#######################################
+derive_tier_b_paths() {
+    local repo_root="$1"
+    local output status
+    output="$(node "$_LIB_SH_DIR/lib/linux-optional-packages.mjs" "$repo_root/package-lock.json" 2>&1)"
+    status=$?
+    if [[ $status -ne 0 ]]; then
+        echo "ERROR: scripts/lib/linux-optional-packages.mjs failed (exit $status) -- Tier-B compose mounts/volumes will NOT be emitted this run. This means derivation itself is broken, NOT that this repo has zero Tier-B packages -- investigate before assuming an empty result is correct (SMI-6050). Output: $output" >&2
+        return 1
+    fi
+    printf '%s\n' "$output"
+    return 0
+}
+
+#######################################
 # Sanitize an arbitrary name (worktree directory basename, branch name) into
 # a Docker Compose v2 project name: lowercase, then strip any character
 # outside [a-z0-9_-]. This is the single canonical implementation --
@@ -1659,12 +1697,15 @@ enumerate_compose_node_modules_mounts() {
     # rollback that doesn't require reverting this wave's commit. Registered
     # in docs/internal/process/guards-and-opt-outs.md.
     if [[ "${SKILLSMITH_TIER_B_SEED_DISABLE:-}" != "1" && -f "$repo_root/package-lock.json" ]]; then
-        local tier_b_path
-        while IFS= read -r tier_b_path; do
-            [[ -z "$tier_b_path" ]] && continue
-            printf '      - native-seed-%s:/app/%s\n' \
-                "$(native_module_volume_name "$tier_b_path")" "$tier_b_path"
-        done < <(node "$_LIB_SH_DIR/lib/linux-optional-packages.mjs" "$repo_root/package-lock.json" 2>/dev/null)
+        local tier_b_paths
+        if tier_b_paths="$(derive_tier_b_paths "$repo_root")"; then
+            local tier_b_path
+            while IFS= read -r tier_b_path; do
+                [[ -z "$tier_b_path" ]] && continue
+                printf '      - native-seed-%s:/app/%s\n' \
+                    "$(native_module_volume_name "$tier_b_path")" "$tier_b_path"
+            done <<<"$tier_b_paths"
+        fi
     fi
 
     # Per-package node_modules mounts, READ-ONLY (SMI-5560). Same gate as
@@ -1811,11 +1852,14 @@ ensure_tier_b_mount_sources() {
     [[ "${SKILLSMITH_TIER_B_SEED_DISABLE:-}" == "1" ]] && return 0
     [[ -f "$repo_root/package-lock.json" ]] || return 0
 
+    local tier_b_paths
+    tier_b_paths="$(derive_tier_b_paths "$repo_root")" || return 1
+
     local tier_b_path
     while IFS= read -r tier_b_path; do
         [[ -z "$tier_b_path" ]] && continue
         mkdir -p "$repo_root/$tier_b_path"
-    done < <(node "$_LIB_SH_DIR/lib/linux-optional-packages.mjs" "$repo_root/package-lock.json" 2>/dev/null)
+    done <<<"$tier_b_paths"
 }
 
 #######################################
@@ -1905,14 +1949,17 @@ enumerate_native_module_volumes() {
     # so Compose's tmpfs noexec default would break it identically to a
     # Tier-A native module.
     if [[ "${SKILLSMITH_TIER_B_SEED_DISABLE:-}" != "1" && -f "$repo_root/package-lock.json" ]]; then
-        local tier_b_path
-        while IFS= read -r tier_b_path; do
-            [[ -z "$tier_b_path" ]] && continue
-            printf '  native-seed-%s:\n' "$(native_module_volume_name "$tier_b_path")"
-            printf '    driver: local\n'
-            printf '    labels:\n'
-            printf '      app.skillsmith.owned: "true"\n'
-        done < <(node "$_LIB_SH_DIR/lib/linux-optional-packages.mjs" "$repo_root/package-lock.json" 2>/dev/null)
+        local tier_b_paths
+        if tier_b_paths="$(derive_tier_b_paths "$repo_root")"; then
+            local tier_b_path
+            while IFS= read -r tier_b_path; do
+                [[ -z "$tier_b_path" ]] && continue
+                printf '  native-seed-%s:\n' "$(native_module_volume_name "$tier_b_path")"
+                printf '    driver: local\n'
+                printf '    labels:\n'
+                printf '      app.skillsmith.owned: "true"\n'
+            done <<<"$tier_b_paths"
+        fi
     fi
 }
 
