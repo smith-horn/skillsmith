@@ -29,8 +29,14 @@
 #      that column exists and repositoryToSkill writes it.
 #   3. Read the operator runbook: docs/internal/runbooks/indexer-backfill.md
 #
+# SMI-6061: the token_source input (backfill/fallback) is a MANUAL escape
+# hatch, not automatic failover -- select `fallback` to run through GH_PAT
+# instead of BACKFILL_GITHUB_TOKEN (e.g. to isolate a token-specific issue).
+# Both are validated by the same live GET /user probe in Validate Secrets.
+#
 # ADR-109: this is an infra workflow -- SPARC + plan-review gated before
-# implementation (see docs/internal/implementation/smi-5286-wave1-backfill-engine-sparc.md).
+# implementation (see docs/internal/implementation/smi-5286-wave1-backfill-engine-sparc.md
+# and docs/internal/implementation/2026-08-16-smi-6061-backfill-token-redundancy.md).
 #
 # EXECUTION MODEL: host runner (ubuntu-latest), pure-TS indexer path, no native
 # modules. Mirrors indexer.yml's npm ci + npx tsx invocation exactly.
@@ -99,6 +105,14 @@ on:
         options:
           - prod
           - staging
+      token_source:
+        description: 'Which GitHub token to use (SMI-6061 manual fallback): backfill = BACKFILL_GITHUB_TOKEN (default), fallback = GH_PAT'
+        required: true
+        default: 'backfill'
+        type: choice
+        options:
+          - backfill
+          - fallback
 
 env:
   NODE_VERSION: '22'
@@ -147,7 +161,15 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          BACKFILL_GITHUB_TOKEN_CHECK: ${{ secrets.BACKFILL_GITHUB_TOKEN }}
+          # SMI-6061: selected once here (not re-evaluated in the crawl step) so
+          # there is exactly one place the token_source -> secret mapping lives.
+          # Fail-closed by construction: neither branch of the OR can select the
+          # OTHER token, so an unset selected secret resolves to an empty string,
+          # never a silent cross-substitution (GitHub Actions treats an unset
+          # secret as falsy empty-string, which would otherwise fall through the
+          # WRONG side of a naive `token_source == 'fallback' && X || Y` chain).
+          SELECTED_TOKEN: ${{ (inputs.token_source == 'fallback' && secrets.GH_PAT) || (inputs.token_source == 'backfill' && secrets.BACKFILL_GITHUB_TOKEN) }}
+          TOKEN_SOURCE: ${{ inputs.token_source }}
         run: |
           # Fail fast with clear error if secrets not configured.
           # Mirrors the Validate Secrets step in indexer.yml.
@@ -162,14 +184,27 @@ jobs:
             echo "::error::Required Supabase secrets not configured for env=$SUPABASE_ENV."
             exit 1
           fi
-          if [ -z "$BACKFILL_GITHUB_TOKEN_CHECK" ]; then
-            echo "::error::BACKFILL_GITHUB_TOKEN secret not provisioned. See docs/internal/runbooks/indexer-backfill.md for provisioning steps."
+          if [ -z "$SELECTED_TOKEN" ]; then
+            echo "::error::token_source='$TOKEN_SOURCE' selected but its secret (BACKFILL_GITHUB_TOKEN or GH_PAT) is not provisioned. See docs/internal/runbooks/indexer-backfill.md for provisioning steps."
             exit 1
           fi
+          echo "::add-mask::$SELECTED_TOKEN"
+          # SMI-6061: live probe, not just presence -- a revoked/expired/malformed
+          # token does NOT fall back to anonymous access (buildGitHubHeaders
+          # attaches Authorization for any non-empty token), it fails deep inside
+          # the crawl step instead. Catch that here, pre-flight, and capture the
+          # token owner as diagnostic evidence for the fallback-token investigation.
+          PROBE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $SELECTED_TOKEN" https://api.github.com/user)
+          if [ "$PROBE_CODE" != "200" ]; then
+            echo "::error::token_source='$TOKEN_SOURCE' failed a live GET /user probe (HTTP $PROBE_CODE) -- token is revoked, expired, or malformed. Aborting before the crawl step."
+            exit 1
+          fi
+          echo "token_source='$TOKEN_SOURCE' passed the live /user probe."
           echo "::add-mask::$KEY_VAL"
           echo "SELECTED_SUPABASE_URL=$URL_VAL" >> "$GITHUB_ENV"
           echo "SELECTED_SUPABASE_SERVICE_ROLE_KEY=$KEY_VAL" >> "$GITHUB_ENV"
-          echo "Secrets validated for env=$SUPABASE_ENV"
+          echo "SELECTED_GITHUB_TOKEN=$SELECTED_TOKEN" >> "$GITHUB_ENV"
+          echo "Secrets validated for env=$SUPABASE_ENV, token_source=$TOKEN_SOURCE"
 
       - name: Checkout
         # SHA-pinned per audit-workflow-sha-pin (Check 42 / SMI-4758). Tag = v6.
@@ -196,7 +231,10 @@ jobs:
           # three env vars absent, getInstallationToken() (github-auth.ts:128-130)
           # returns null and buildGitHubHeaders (github-auth.ts:184) falls back to
           # process.env.GITHUB_TOKEN -- the PAT path, separate from the cron's App bucket.
-          GITHUB_TOKEN: ${{ secrets.BACKFILL_GITHUB_TOKEN }}
+          # SMI-6061: sourced from the token Validate Secrets already selected +
+          # live-probed (env.SELECTED_GITHUB_TOKEN), not re-evaluated here -- one
+          # place owns the token_source -> secret mapping.
+          GITHUB_TOKEN: ${{ env.SELECTED_GITHUB_TOKEN }}
           # Backfill-specific env. BACKFILL_MODE=true disables the 7-day freshness
           # window (discovery-orchestrator.ts:247) and subsumes the Phase-6 stale-pause
           # (no separate flag needed -- see SPARC section #2 and #5).
