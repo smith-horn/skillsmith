@@ -20,12 +20,15 @@ import {
   type ClientId,
 } from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH } from '../config.js'
-import { getLocalSkillsDir, getLocalSkillsDirDisplay } from './local-skills-dir.js'
+import { getLocalSkillsDir } from './local-skills-dir.js'
 
 // SMI-6060: re-exported for existing call sites (manage.action.ts, tests) —
 // the implementation itself lives in local-skills-dir.ts (extracted from
-// this file to stay under the 500-line standard).
-export { getLocalSkillsDir, getLocalSkillsDirDisplay }
+// this file to stay under the 500-line standard). getLocalSkillsDirDisplay
+// isn't called locally in this file, so it's re-exported directly rather
+// than imported into an unused local binding (GPT-5.6-Sol review follow-up).
+export { getLocalSkillsDir }
+export { getLocalSkillsDirDisplay } from './local-skills-dir.js'
 
 export interface InstalledSkill {
   name: string

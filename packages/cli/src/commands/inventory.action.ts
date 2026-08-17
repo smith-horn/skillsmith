@@ -38,6 +38,7 @@ import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { sanitizeError } from '../utils/sanitize.js'
 import { getInstalledSkillsPerHarness } from '../utils/skills-directory.js'
+import { getLocalSkillsDirDisplay } from '../utils/local-skills-dir.js'
 import { VERSION } from '../version.js'
 
 const logger = getCliLogger()
@@ -159,11 +160,12 @@ export async function runStatus(opts?: { verbose?: boolean }): Promise<void> {
     }`
   )
 
-  // Local (./.claude/skills) skills count.
+  // Local repo-local skills count (SMI-1630, path shown via getLocalSkillsDirDisplay()
+  // so it can't independently drift from `list`/`manage`'s footer — SMI-6060).
   const localCount = countByHarness.get('local') ?? 0
   if (localCount > 0) {
     console.log(
-      `  Local skills:   ${chalk.dim(`${localCount} skill${localCount === 1 ? '' : 's'} in ./.claude/skills (repo-local — not synced to your account)`)}`
+      `  Local skills:   ${chalk.dim(`${localCount} skill${localCount === 1 ? '' : 's'} in ${getLocalSkillsDirDisplay()} (repo-local — not synced to your account)`)}`
     )
     if (opts?.verbose) {
       for (const s of allSkills.filter((e) => e.harness === 'local')) {

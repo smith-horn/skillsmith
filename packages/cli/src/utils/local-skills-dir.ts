@@ -4,15 +4,11 @@
  * its terminal-display counterpart, split out as their own small module.
  */
 
-import { join } from 'path'
+import { join, relative, sep } from 'path'
 
 /**
  * Path segments for the repo-local skills directory (SMI-1630 — always
- * `.claude/skills`, regardless of `--client`). Single source of truth for
- * both the absolute-path resolver below and the relative-display string
- * `getLocalSkillsDirDisplay()` — previously `manage.action.ts`'s footer
- * hand-typed the literal `./.claude/skills` independently of this
- * function, so the two could silently drift if this path ever changed.
+ * `.claude/skills`, regardless of `--client`).
  */
 const LOCAL_SKILLS_DIR_SEGMENTS = ['.claude', 'skills'] as const
 
@@ -26,13 +22,20 @@ export function getLocalSkillsDir(): string {
 
 /**
  * Relative-display form of the repo-local skills directory, for terminal
- * output (a `list`/`manage` footer, etc.) — `getLocalSkillsDir()` returns
- * an *absolute* path (joined with `process.cwd()`), correct for filesystem
- * operations but a poor fit for display (nobody wants their own
- * home-directory prefix printed in a footer). Derives from the same
- * `LOCAL_SKILLS_DIR_SEGMENTS` as `getLocalSkillsDir()` so this text can't
- * independently drift from the real resolved path.
+ * output (a `list`/`manage`/`inventory status` line, etc.) — `getLocalSkillsDir()`
+ * returns an *absolute* path (joined with `process.cwd()`), correct for
+ * filesystem operations but a poor fit for display (nobody wants their own
+ * home-directory prefix printed in a footer).
+ *
+ * Derived from `getLocalSkillsDir()`'s own return value via `path.relative()`
+ * (GPT-5.6-Sol review follow-up, SMI-6060) rather than independently
+ * reconstructed from `LOCAL_SKILLS_DIR_SEGMENTS` — the earlier version shared
+ * only the segments constant, so a future change to `getLocalSkillsDir()`'s
+ * own `join()` call (not just the segments array) wouldn't have propagated
+ * here, reintroducing a narrower version of the same drift class this module
+ * exists to close off. `split(sep).join('/')` normalizes to forward slashes
+ * for display regardless of host OS path separator.
  */
 export function getLocalSkillsDirDisplay(): string {
-  return `./${LOCAL_SKILLS_DIR_SEGMENTS.join('/')}`
+  return `./${relative(process.cwd(), getLocalSkillsDir()).split(sep).join('/')}`
 }

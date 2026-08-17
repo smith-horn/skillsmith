@@ -6,12 +6,19 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 - **Fix**: The Cursor MCP snippet (root README, `@skillsmith/mcp-server`'s README, and the website) no longer defaults to `npx`, which failed inside Cursor on two separate live UAT passes (a real Cursor-bundled-Node ENOENT). The copied `command` is now a resolved-path placeholder (`which`/`where skillsmith-mcp`) that can never point at a wrong path; `npx` stays documented as an explicit, clearly-labeled fallback. Also fixed in the canonical CLI snippet matrix (`templates/mcp-server.template.snippets.ts`, used to scaffold non-Skillsmith MCP servers via `skillsmith author mcp-init`): its Cursor placeholder was hardcoding the literal binary name `skillsmith-mcp` instead of deriving it from the scaffolded server's own package name, and `{{name}}` was never interpolated in a snippet's `notes` text at all — either bug would leak Skillsmith-specific text into a scaffolded (non-Skillsmith) server's generated README (SMI-5893 Wave 11, GH#2368 C-01)
 - **Fix**: Community-tier quota corrected from a stale `1,000` to the actual `100` API calls/month in `displayLicenseStatus` (SMI-5893 Wave 11, GH#2368 C-19)
-- **Fix**: `list`/`manage`'s footer "local: ..." segment was a hand-typed literal
-  (`./.claude/skills`) independent of `getLocalSkillsDir()`'s own path segments —
-  now sourced from a new `getLocalSkillsDirDisplay()` (`utils/local-skills-dir.ts`,
-  extracted from `utils/skills-directory.ts` to stay under the 500-line standard)
-  so the two can't silently drift apart. Displayed text is unchanged — SMI-1630's
-  repo-local convention still applies regardless of `--client` (SMI-6060)
+- **Fix**: `list`/`manage`'s footer "local: ..." segment, and `inventory status`'s
+  "Local skills: ..." line, both hand-typed the literal `./.claude/skills`
+  independent of `getLocalSkillsDir()`'s own path segments — now sourced from a
+  new `getLocalSkillsDirDisplay()` (`utils/local-skills-dir.ts`), which derives
+  from `getLocalSkillsDir()`'s actual return value via `path.relative()` rather
+  than reconstructing it from a separately-shared constant, so the two genuinely
+  can't drift apart (the `inventory status` instance was found as a sibling gap
+  during review — same bug class, second call site this wave hadn't touched
+  yet). Displayed text is unchanged in both places — SMI-1630's repo-local
+  convention still applies regardless of `--client`. `local-skills-dir.ts` is a
+  small new module split out of `utils/skills-directory.ts`, which was
+  approaching (not over — corrected from an earlier miswritten changelog entry)
+  the 500-line standard (SMI-6060)
 
 ## v0.8.7
 
