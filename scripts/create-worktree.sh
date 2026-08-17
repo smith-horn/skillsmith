@@ -568,6 +568,10 @@ The worktree has been left intact. Fix with:
     if [[ -f "$worktree_path/docker-compose.yml" ]]; then
         info "Step 5: Generating Docker override file..."
         ensure_build_cache_mount_sources "$REPO_ROOT"
+        # SMI-6050 Wave 3: pre-create Tier-B named-volume mount targets on
+        # host — required for container CREATE to succeed (see
+        # ensure_tier_b_mount_sources's own doc comment in scripts/_lib.sh).
+        ensure_tier_b_mount_sources "$REPO_ROOT"
         generate_docker_override "$worktree_path" "$branch_name" "$REPO_ROOT"
         success "  Docker override file created"
     else

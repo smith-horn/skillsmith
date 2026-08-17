@@ -184,6 +184,81 @@ RUN for pkg_dir in packages/*/; do \
       fi; \
     done
 
+# SMI-6050 Wave 2: Tier-B (build-tool / compiler platform binaries — turbo,
+# Rollup/Rolldown, Astro's compiler, Lightning CSS, Tailwind Oxide, ruvector,
+# workerd, etc.) build-time seeding. Unlike Tier A above, npm never even
+# CREATES these packages' directories on a non-matching host platform (their
+# `optionalDependencies` entry is skipped outright when its `os` field
+# doesn't match) — there is no host-side "-d" existence check the compose
+# layer can lean on, the way it does for Tier A. The derivation is
+# programmatic, from package-lock.json's own `os` field, via
+# scripts/lib/linux-optional-packages.mjs (Wave 1) — this image's own `npm
+# ci` above (real Linux, native) already produced every correct binary for
+# this build's target platform; this block just captures that output. See
+# the plan doc's "What Changes" #2 for the full design, including why the
+# seed path preserves the real node_modules-relative hierarchy (not a
+# flattened/sanitized name, unlike the original draft this plan corrected)
+# and why a `.version` marker is written alongside each seeded package.
+#
+# This wave is INERT: nothing in scripts/_lib.sh references
+# /opt/native-seed/tier-b yet (that lands in Wave 3), so this seeding has
+# zero effect on any container's compose-generated mounts — and therefore
+# zero effect on any container's actual behavior — until Wave 3 lands.
+#
+# Narrow COPY — only this one script, not the whole scripts/ tree, so
+# unrelated script changes don't invalidate this deps-stage layer's build
+# cache (the dev stage's own later `COPY scripts/ ./scripts/`, below,
+# already covers everything else scripts/ needs at runtime, including this
+# same script's re-use by docker-entrypoint.sh's restore loop).
+COPY scripts/lib/linux-optional-packages.mjs ./scripts/lib/linux-optional-packages.mjs
+
+# Seed each Tier-B path that actually exists in this build's node_modules
+# (only the platform-correct variants will — a missing path is the COMMON
+# case, since most Tier-B families are mutually-exclusive per-arch/per-libc
+# variants, and must never fail the build) into
+# /opt/native-seed/tier-b/<the same node_modules-relative path>, plus a
+# sibling `<path>.version` marker file (the package's resolved version, from
+# linux-optional-packages.mjs's own `--with-versions` CLI mode) that
+# docker-entrypoint.sh's restore loop compares against to detect a stale
+# seed. Validation tier is existence + non-empty only (deliberate tradeoff,
+# see plan doc "What Changes" #2's Validation tier note) — not the
+# functional require()/transformSync() tier Tier A gets above.
+RUN node scripts/lib/linux-optional-packages.mjs --with-versions > /tmp/tier-b-manifest.tsv \
+    && seeded_count=0 \
+    && while read -r pkg_path pkg_version; do \
+         [ -z "$pkg_path" ] && continue; \
+         if [ -d "$pkg_path" ]; then \
+           dest="/opt/native-seed/tier-b/${pkg_path}"; \
+           mkdir -p "$(dirname "$dest")" \
+             && cp -a "$pkg_path" "$dest" \
+             && [ -n "$(ls -A "$dest" 2>/dev/null)" ] \
+             && printf '%s' "$pkg_version" > "${dest}.version" \
+             && seeded_count=$((seeded_count + 1)) \
+             && echo "[deps] Seeded tier-b ${pkg_path}@${pkg_version} into /opt/native-seed/tier-b (validated: exists, non-empty)" \
+             || echo "WARNING: tier-b ${pkg_path} seed failed after copy — worktree containers will not get this package restored"; \
+         fi; \
+       done < /tmp/tier-b-manifest.tsv \
+    && rm -f /tmp/tier-b-manifest.tsv \
+    && echo "[deps] Tier-B seed complete: ${seeded_count} package(s) seeded into /opt/native-seed/tier-b (SMI-6050 Wave 2)"
+
+# SMI-6050 Wave 2 belt-and-suspenders audit (warn-only — must NEVER fail the
+# build): diffs the derivation script's predicted paths against what `find`
+# actually sees on disk in THIS build's real Linux node_modules tree. This is
+# the concrete mitigation for the acknowledged blind spot that a package
+# shipping a Linux-specific binary WITHOUT a matching `os` field in its own
+# package-lock.json metadata is invisible to the derivation script — see plan
+# doc "What Changes" #2's "Belt-and-suspenders audit" paragraph.
+RUN node scripts/lib/linux-optional-packages.mjs | sort > /tmp/tier-b-predicted.txt \
+    && (find node_modules -type d -iname '*linux*' 2>/dev/null | sort -u > /tmp/tier-b-actual.txt || true) \
+    && (comm -13 /tmp/tier-b-predicted.txt /tmp/tier-b-actual.txt > /tmp/tier-b-unpredicted.txt || true) \
+    && if [ -s /tmp/tier-b-unpredicted.txt ]; then \
+         echo "WARNING: found on-disk -linux- directories NOT predicted by scripts/lib/linux-optional-packages.mjs (possibly missing 'os' metadata in package-lock.json — see SMI-6050 plan doc 'Belt-and-suspenders audit'):"; \
+         cat /tmp/tier-b-unpredicted.txt; \
+       else \
+         echo "[deps] Tier-B audit: no unpredicted -linux- directories found on disk"; \
+       fi \
+    && rm -f /tmp/tier-b-predicted.txt /tmp/tier-b-actual.txt /tmp/tier-b-unpredicted.txt
+
 # -----------------------------------------------------------------------------
 # Stage 3: Builder - Compile TypeScript and build all packages
 # -----------------------------------------------------------------------------

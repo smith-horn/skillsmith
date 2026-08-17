@@ -369,5 +369,100 @@ validate_and_rebuild_per_package_native_modules
 
 echo -e "${GREEN}[entrypoint] All native modules validated.${NC}"
 
+# ---------------------------------------------------------------------------
+# SMI-6050 Wave 2: restore Tier-B (build-tool / compiler platform binaries —
+# turbo, Rollup/Rolldown, Astro's compiler, Lightning CSS, Tailwind Oxide,
+# ruvector, workerd, etc.) binaries from the image's /opt/native-seed/tier-b
+# stash (built at image-build time, see the Dockerfile's Wave 2 seed block)
+# into their identical-relative-path mount targets under /app/, mirroring
+# the SMI-5650 self-heal semantics above.
+#
+# Worktree-gated via /app/.git being a FILE (same test as the SMI-5650 seed
+# block above): the main-repo container's /app/node_modules is a real,
+# container-internal named volume populated by its OWN Linux `npm ci` (see
+# docker-compose.yml — no host bind-mount for the main checkout), so it
+# already gets correct Tier-B binaries from that install and needs no
+# restore here.
+#
+# The seed layout mirrors the real node_modules-relative hierarchy exactly
+# (Dockerfile Wave 2 fix — no flattened/sanitized names), so no path
+# translation or lookup table is needed: each seed directory's path relative
+# to /opt/native-seed/tier-b IS its /app/ mount target. Enumerated via the
+# `.version` marker files the seed step writes (one per seeded package,
+# sibling to the seeded directory) rather than a raw directory walk — this
+# is what "skip .version files as data, not restore targets" means: each
+# marker anchors exactly one real package directory and supplies its
+# staleness-detection version, so intermediate directories (e.g. a nested
+# `node_modules/astro/node_modules`, which is itself a real directory but
+# not a package to restore) are never misidentified as restore targets.
+#
+# Version-marker-aware (the plan-review fix, "What Changes" #2/#4): a plain
+# "copy only if the target is empty" is NOT sufficient — a named volume
+# persists across restarts and even a `docker compose build` of a newer
+# image, so a Tier-B package's version bump in package-lock.json would
+# silently keep serving the OLD binary forever under an empty-only check.
+# This loop compares the seed's `.version` marker against a marker it writes
+# into the target itself after every successful restore
+# (`<target>/.smi6050-seed-version`) and re-seeds whenever they differ
+# (including the very first boot, when no target marker exists yet) or the
+# target is otherwise empty/missing.
+#
+# Fails SOFT: in THIS wave's world (Wave 3 not yet landed), nothing in
+# scripts/_lib.sh has declared a writable named volume at any of these
+# targets yet — /app/<tier-b path> currently resolves through the ordinary
+# read-only host bind-mount, so the restore-copy below will very likely be a
+# no-op or fail outright (EROFS). That is EXPECTED and correct for this
+# wave (ships the mechanism inert) — log a warning and move on, never treat
+# it as fatal.
+#
+# Disable: SKILLSMITH_TIER_B_SEED_DISABLE=1 (registered in
+# docs/internal/process/guards-and-opt-outs.md in a later wave).
+# ---------------------------------------------------------------------------
+if [ "${SKILLSMITH_TIER_B_SEED_DISABLE:-}" = "1" ]; then
+    echo -e "${YELLOW}[entrypoint] Tier-B restore disabled via SKILLSMITH_TIER_B_SEED_DISABLE=1 (SMI-6050)${NC}"
+elif [ -f "/app/.git" ] && [ -d "/opt/native-seed/tier-b" ]; then
+    echo -e "${YELLOW}[entrypoint] Restoring Tier-B platform binaries (SMI-6050)...${NC}"
+    tier_b_restored=0
+    tier_b_current=0
+    tier_b_failed=0
+
+    while IFS= read -r version_file; do
+        [ -z "$version_file" ] && continue
+        seed_dir="${version_file%.version}"
+        rel_path="${seed_dir#/opt/native-seed/tier-b/}"
+        target="/app/${rel_path}"
+        target_marker="${target}/.smi6050-seed-version"
+
+        seed_version="$(cat "$version_file" 2>/dev/null || echo "")"
+        current_version=""
+        [ -f "$target_marker" ] && current_version="$(cat "$target_marker" 2>/dev/null || echo "")"
+
+        needs_restore=0
+        if [ ! -d "$target" ] || [ -z "$(ls -A "$target" 2>/dev/null)" ]; then
+            needs_restore=1
+        elif [ "$current_version" != "$seed_version" ]; then
+            needs_restore=1
+        fi
+
+        if [ "$needs_restore" -eq 1 ]; then
+            if mkdir -p "$target" 2>/dev/null \
+                && cp -a "$seed_dir/." "$target/" 2>/dev/null \
+                && printf '%s' "$seed_version" >"$target_marker" 2>/dev/null; then
+                echo -e "${GREEN}  ✓ Restored tier-b ${rel_path}@${seed_version} (SMI-6050)${NC}"
+                tier_b_restored=$((tier_b_restored + 1))
+            else
+                echo -e "${YELLOW}  ↳ Could not restore tier-b ${rel_path} — target is likely still the read-only host bind-mount (expected until Wave 3's named-volume mount lands, SMI-6050). Non-fatal.${NC}"
+                tier_b_failed=$((tier_b_failed + 1))
+            fi
+        else
+            tier_b_current=$((tier_b_current + 1))
+        fi
+    done < <(find /opt/native-seed/tier-b -type f -name '*.version' 2>/dev/null | sort)
+
+    echo -e "${GREEN}[entrypoint] Tier-B restore: ${tier_b_restored} restored, ${tier_b_current} already current, ${tier_b_failed} skipped (read-only target, non-fatal) (SMI-6050)${NC}"
+elif [ -f "/app/.git" ]; then
+    echo -e "${YELLOW}[entrypoint] No Tier-B seed found at /opt/native-seed/tier-b — image predates SMI-6050 Wave 2; rebuild the image (docker compose build) to pick up the seed.${NC}"
+fi
+
 # Execute the main command
 exec "$@"
