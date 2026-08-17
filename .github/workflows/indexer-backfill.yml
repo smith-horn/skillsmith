@@ -30,7 +30,7 @@
 #   3. Read the operator runbook: docs/internal/runbooks/indexer-backfill.md
 #
 # SMI-6061: the token_source input (backfill/fallback) is a MANUAL escape
-# hatch, not automatic failover -- select `fallback` to run through GH_PAT
+# hatch, not automatic failover -- select `fallback` to run through GH_PAT_SKILLSMITH
 # instead of BACKFILL_GITHUB_TOKEN (e.g. to isolate a token-specific issue).
 # Both are validated by the same live GET /user probe in Validate Secrets.
 #
@@ -106,7 +106,7 @@ on:
           - prod
           - staging
       token_source:
-        description: 'Which GitHub token to use (SMI-6061 manual fallback): backfill = BACKFILL_GITHUB_TOKEN (default), fallback = GH_PAT'
+        description: 'Which GitHub token to use (SMI-6061 manual fallback): backfill = BACKFILL_GITHUB_TOKEN (default), fallback = GH_PAT_SKILLSMITH'
         required: true
         default: 'backfill'
         type: choice
@@ -168,7 +168,7 @@ jobs:
           # never a silent cross-substitution (GitHub Actions treats an unset
           # secret as falsy empty-string, which would otherwise fall through the
           # WRONG side of a naive `token_source == 'fallback' && X || Y` chain).
-          SELECTED_TOKEN: ${{ (inputs.token_source == 'fallback' && secrets.GH_PAT) || (inputs.token_source == 'backfill' && secrets.BACKFILL_GITHUB_TOKEN) }}
+          SELECTED_TOKEN: ${{ (inputs.token_source == 'fallback' && secrets.GH_PAT_SKILLSMITH) || (inputs.token_source == 'backfill' && secrets.BACKFILL_GITHUB_TOKEN) }}
           TOKEN_SOURCE: ${{ inputs.token_source }}
         run: |
           # Fail fast with clear error if secrets not configured.
@@ -185,7 +185,7 @@ jobs:
             exit 1
           fi
           if [ -z "$SELECTED_TOKEN" ]; then
-            echo "::error::token_source='$TOKEN_SOURCE' selected but its secret (BACKFILL_GITHUB_TOKEN or GH_PAT) is not provisioned. See docs/internal/runbooks/indexer-backfill.md for provisioning steps."
+            echo "::error::token_source='$TOKEN_SOURCE' selected but its secret (BACKFILL_GITHUB_TOKEN or GH_PAT_SKILLSMITH) is not provisioned. See docs/internal/runbooks/indexer-backfill.md for provisioning steps."
             exit 1
           fi
           echo "::add-mask::$SELECTED_TOKEN"
