@@ -243,4 +243,13 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'scripts/indexer/skill-processor.security.tree.ts',
   'scripts/indexer/trees-search.ts',
   'scripts/tests/indexer/scan-skill-bundle.fixtures.ts',
+  // SMI-6033 Wave 2 (Gap 8) adversarial-review fix (2026-08-17): the
+  // isExtended severity-gating fix pushed skill-processor.security.ts past
+  // the 500-line gate a second time; its sibling-scan plumbing
+  // (enumerateSiblingTargets, fetchSiblingContent, mergeSiblingScans,
+  // buildMergedQuarantineReason) was extracted to this new sibling module,
+  // re-exported so the import graph reaches it the same way it reached
+  // skill-processor.security.tree.ts above. Same closure-completeness
+  // reasoning; Node tree only.
+  'scripts/indexer/skill-processor.security.sibling.ts',
 ] as const

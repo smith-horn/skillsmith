@@ -130,7 +130,6 @@ export async function readResponseWithLimit(response: Response, maxBytes: number
   return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join('') + decoder.decode()
 }
 
-// =============================================================================
 // SMI-6033 Wave 2 (Gap 8) adversarial-review fix: sibling-scan plumbing
 // (enumerateSiblingTargets, fetchSiblingContent, mergeSiblingScans,
 // buildMergedQuarantineReason + supporting types) extracted to
@@ -311,8 +310,15 @@ export async function scanSkillBundle(
     const sibResult = await doFetchSiblingContent(owner, repo, branch, relPath, telemetry)
     if (sibResult !== null && !('removed' in sibResult)) {
       const sibContent = sibResult.content
-      const sibScan = await doScanSkillContent(sibContent, isHighTrustAuthor)
-      siblingScans.push({ relPath, scan: sibScan, isExtended: extendedPathSet.has(relPath) })
+      const isExtendedSibling = extendedPathSet.has(relPath)
+      // SMI-6033 Wave 2 (Gap 8) fix: extended siblings are real source files,
+      // not markdown — see scanSkillContent's own header for why the
+      // markdown-only indented-code-block heuristic must be disabled for
+      // them (it otherwise silently downgrades severity on nearly all
+      // indented Python/Ruby/etc. control-flow bodies). The original 7
+      // fixed siblings keep the default (markdown=true) unchanged.
+      const sibScan = await doScanSkillContent(sibContent, isHighTrustAuthor, !isExtendedSibling)
+      siblingScans.push({ relPath, scan: sibScan, isExtended: isExtendedSibling })
     } else if (sibResult === null) {
       // Transient: network error, 429, or oversized — same fail-open behavior as before.
       siblingFailures.push({ relPath, kind: 'transient' })

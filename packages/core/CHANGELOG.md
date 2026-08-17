@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `analyzeMarkdownContext`'s indented-code-block heuristic (4+ spaces or a tab = a
+  markdown documentation example) was being applied unconditionally to every scanned file,
+  including the new Gap 8 extended siblings — real, non-markdown source files. Since virtually all
+  indented Python/Ruby/Perl/etc. control-flow bodies match this pattern, it silently downgraded
+  `sensitive_path` findings from `high` to `medium` and blocked `escalateCodeExecution`'s
+  co-signal escalation path in those files, discovered via a genuine multi-signal backdoor fixture
+  (a `~/.ssh` read next to a `curl|bash`) that failed to escalate to `critical` purely because its
+  containing function body was indented. `analyzeMarkdownContext`/`scanSkillContent` (both edge
+  twins) and core's `SecurityScanner.scan()` now take an `isMarkdown` parameter (default `true`,
+  byte-identical behavior for every existing caller) that the indexer's extended-sibling scan path
+  and `bundled-sibling-scan.ts`'s executable-code candidates now pass `false` for.
 - **Feature**: scoped bundled-file scan expansion to operational code (SMI-6033 Wave 2, Gap 8) —
   the final wave of the ClawHavoc scanner-gap remediation initiative. The indexer previously only
   ever read `SKILL.md` plus 7 fixed sibling filenames, never `scripts/`, `src/`, or `bin/`, so a

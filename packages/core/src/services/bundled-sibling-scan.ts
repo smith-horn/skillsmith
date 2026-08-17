@@ -359,7 +359,16 @@ export async function scanLocalBundleSiblings(
       textToScan = lifecycle
     }
 
-    const report: ScanReport = scanner.scan(`${skillDir}/${rel}`, textToScan)
+    // SMI-6033 Wave 2 (Gap 8) fix: extended candidates are real source files,
+    // not markdown — see SecurityScanner.scan()'s own header for why the
+    // markdown-only indented-code-block heuristic must be disabled for them.
+    // BUNDLED_SCAN_FILES keep the default (isMarkdown=true) unchanged.
+    const report: ScanReport = scanner.scan(
+      `${skillDir}/${rel}`,
+      textToScan,
+      false,
+      !extendedCandidateSet.has(rel)
+    )
     result.scannedFiles.push(rel)
 
     // Fresh objects (no mutation of the report's findings array) tagged with the file.

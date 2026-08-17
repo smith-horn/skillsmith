@@ -1566,18 +1566,26 @@ describe('core query-shape parity: typosquat-reference top-starred query (SMI-60
  * difference is a NAMED, exact substring substitution, never a loosened
  * comparator, so any OTHER change in either twin still fails.
  *
- * Permitted differences, all four mechanical:
+ * Permitted differences, all mechanical:
  *   1. import-path prefix (Deno `../_shared/` -> Node `./_shared/`)
  *   2. the doc-comment runtime marker ("Deno indexer" vs "Node indexer")
  *   3. the twin cross-reference path in the header
  *   4. env access — `Deno.env.get('X')` vs `process.env.X`, the same swap
  *      `_shared/github-auth.ts`'s twins already carry (its own header says so)
+ *   5. SMI-6033 Wave 2 (Gap 8) adversarial-review fix (2026-08-17): the
+ *      SHARED-STATE NOTE doc comment — intended, not a bug. Only the Deno
+ *      twin runs inside `Deno.serve` (a long-lived HTTP handler whose
+ *      isolate can be reused warm across invocations); the Node twin is a
+ *      genuinely fresh process per batch run. Deno's note documents the
+ *      real isolate-reuse hazard and the `resetRepoTreeFetchState()` call
+ *      `index.ts` makes to close it; Node's note correctly has no such
+ *      hazard to document, since it doesn't apply there.
  */
 describe('Deno <-> Node skill-processor.security.tree parity (SMI-6033 Wave 2)', () => {
   const denoTreeEncrypted = isGitCryptEncrypted(DENO_SKILL_PROC_SECURITY_TREE)
 
   it.skipIf(denoTreeEncrypted)(
-    'security.tree.ts twins are byte-identical modulo import path, runtime marker, and env access',
+    'security.tree.ts twins are byte-identical modulo import path, runtime marker, env access, and the SHARED-STATE NOTE isolate-reuse divergence',
     () => {
       const node = readFileSync(NODE_SKILL_PROC_SECURITY_TREE, 'utf-8')
       const deno = readFileSync(DENO_SKILL_PROC_SECURITY_TREE, 'utf-8')
@@ -1595,10 +1603,16 @@ describe('Deno <-> Node skill-processor.security.tree parity (SMI-6033 Wave 2)',
           "const raw = Deno.env.get('SKILLSMITH_MAX_TREE_FETCHES_PER_RUN')",
           'const raw = process.env.SKILLSMITH_MAX_TREE_FETCHES_PER_RUN'
         )
+      const normalizedDenoWs = normalizeWs(normalizedDeno)
+        // Group 5: SHARED-STATE NOTE — see this describe block's own header.
+        .replace(
+          'are meant to be RUN-scoped, not persisted and not shared across workers — * but unlike the Node twin (a plain script process, genuinely fresh per * batch run), THIS file runs inside `Deno.serve` (supabase/functions/indexer/ * index.ts), a long-lived HTTP handler whose isolate can be reused warm * across invocations (the same isolate-reuse hazard documented in * supabase/functions/status-public/index.ts). Left unreset, a warm isolate\'s * second invocation would hit a STALE positive memo for a repo already * scanned in the first — enumerating against an outdated blob list while * reporting `scanCoverage.incomplete: false`, exactly the silent-gap this * column exists to prevent. `index.ts`\'s `Deno.serve` handler calls * `resetRepoTreeFetchState()` at the top of every invocation for this reason * — do not remove that call without re-reading this note. Tests call it too, * for the same "fresh state per test" reason.',
+          'are RUN-scoped, not persisted and not shared across workers — the indexer * process is a single event loop and each batch run is a fresh process, so * there is no cross-run staleness class of bug here. `resetRepoTreeFetchState` * exists so tests (and any future long-lived host) can restore the initial * state explicitly rather than relying on module reload.'
+        )
       expect(
         normalizeWs(node),
-        'security.tree.ts twins have drifted beyond the permitted import-path, runtime-marker and env-access differences'
-      ).toBe(normalizeWs(normalizedDeno))
+        'security.tree.ts twins have drifted beyond the permitted import-path, runtime-marker, env-access, and SHARED-STATE-NOTE differences'
+      ).toBe(normalizedDenoWs)
     }
   )
 
