@@ -154,10 +154,14 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
   <h3>The /skillsmith slash command — most reliable trigger</h3>
 
   <p>
-    Claude Code installs a bundled <code>/skillsmith</code> slash command when you run <code
-      >skillsmith setup</code
-    >. It gives you an unambiguous way to route any lifecycle action to the right Skillsmith tool,
-    regardless of how natural-language tool selection might drift.
+    Running <code>skillsmith setup</code> (add <code
+      >--client &lt;id&gt;</code
+    > for a non-Claude-Code agent) installs a bundled <code>/skillsmith</code> slash
+    command. It gives you an unambiguous way to route any lifecycle action to the right
+    Skillsmith tool, regardless of how natural-language tool selection might drift.
+    Slash-command triggering is most reliably confirmed on Claude Code; other clients
+    that support skill-driven slash commands should pick it up the same way once
+    installed to their own skills directory.
   </p>
 
   <pre><code>{`/skillsmith discover testing

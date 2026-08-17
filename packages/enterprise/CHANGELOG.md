@@ -4,6 +4,10 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: README's Enterprise Tier heading exposed a specific unpublished price
+  (`$55/user/month`) contradicting the "Custom (Contact Sales)" pricing policy — now
+  `Custom pricing — Contact Sales` (SMI-5893 Wave 11, GH#2368 C-19)
+
 ## v0.3.7
 
 - **Chore**: bump the smithy group across 1 directory with 7 updates (#2254)

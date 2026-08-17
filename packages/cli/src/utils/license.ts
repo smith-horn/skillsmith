@@ -72,7 +72,7 @@ export function displayLicenseStatus(status: LicenseStatus): void {
   const tierBadge = formatTierBadge(status.tier)
 
   if (status.tier === 'community') {
-    console.error(`License: ${tierBadge} ${chalk.dim('(free tier - 1,000 API calls/month)')}`)
+    console.error(`License: ${tierBadge} ${chalk.dim('(free tier - 100 API calls/month)')}`)
   } else if (status.tier === 'individual') {
     const expiresInfo = status.expiresAt
       ? chalk.green(`(expires: ${status.expiresAt.toISOString().split('T')[0]})`)

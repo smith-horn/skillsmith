@@ -72,11 +72,17 @@ const STANDARD_JSON_BODY = `{
 // the OpenCode branch) to merge SKILLSMITH_API_KEY into the EXISTING env
 // block rather than creating a new one via the generic STANDARD_ARGS_LINE
 // path, which assumes no env block is present yet.
+//
+// SMI-5893 Wave 11 (GH#2368 C-01): `command` is a resolved-path placeholder,
+// not `npx` — mirrors packages/cli/src/templates/mcp-server.template.snippets.ts's
+// cursor entry (parity required, see that file's own comment for the full
+// rationale: Cursor's bundled Node can't resolve `npx` packages, confirmed
+// on two separate live UAT passes; a guessed default path can be wrong too,
+// just silently differently, so this never guesses at all).
 const CURSOR_JSON_BODY = `{
   "mcpServers": {
     "@skillsmith/mcp-server": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
+      "command": "<paste output of: which skillsmith-mcp (macOS/Linux) or where skillsmith-mcp (Windows)>",
       "env": {
         "SKILLSMITH_CLIENT": "cursor"
       }
@@ -101,7 +107,7 @@ export const MCP_CLIENT_SNIPPETS: ReadonlyArray<McpClientSnippet> = [
     format: 'json',
     body: CURSOR_JSON_BODY,
     notes:
-      'Cursor 2.4+ required. Reload the window after saving. <code>SKILLSMITH_CLIENT</code> routes installs to <code>~/.cursor/skills</code> instead of the default <code>~/.claude/skills</code>. Recommended: <code>npm install -g @skillsmith/mcp-server</code> first, then point <code>command</code> at the installed <code>skillsmith-mcp</code> binary (run <code>which skillsmith-mcp</code> to get the exact path — it is platform/npm-prefix specific, e.g. <code>/opt/homebrew/bin/skillsmith-mcp</code> on macOS/Homebrew; Linux and Windows paths differ). The <code>npx</code> form above still works as a fallback, but re-resolves the package on every launch and may hit <code>EBADENGINE</code> (Cursor bundles its own Node, sometimes older than the <code>&gt;=22.22</code> this package requires) or <code>ENOTEMPTY</code> on repeated installs.',
+      'Cursor 2.4+ required, Node &gt;=22.22 (Cursor\'s own bundled Node meets this). Setup: run <code>npm install -g @skillsmith/mcp-server</code>, then run <code>which skillsmith-mcp</code> (macOS/Linux) or <code>where skillsmith-mcp</code> (Windows) and paste that path into <code>command</code> above — Cursor\'s bundled Node cannot resolve packages via <code>npx</code> (a real <code>ENOENT</code> on a missing <code>Resources/app/resources/lib</code> directory), so pointing directly at the installed binary is the only form confirmed to work inside Cursor. <code>SKILLSMITH_CLIENT</code> routes installs to <code>~/.cursor/skills</code> instead of the default <code>~/.claude/skills</code>. Prefer to try <code>npx</code> first anyway? Replace <code>command</code> with <code>"npx"</code> and add <code>"args": ["-y", "@skillsmith/mcp-server"]</code> — simpler, but may hit the same <code>ENOENT</code>, plus <code>EBADENGINE</code> or <code>ENOTEMPTY</code> on repeated installs. After saving: enable the server in Cursor\'s Settings → MCP panel and start a new chat — a correctly-configured entry still shows disconnected until toggled on there — then reload the window.',
   },
   {
     id: 'copilot',

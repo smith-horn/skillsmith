@@ -60,11 +60,22 @@ export const CLIENT_SNIPPETS: Record<SnippetClientId, ClientSnippet> = {
     // SMI-5894 Wave 1 Step 7: SKILLSMITH_CLIENT tells the server to install
     // to ~/.cursor/skills instead of the default ~/.claude/skills — without
     // it, Cursor users silently get Claude Code's install path.
+    //
+    // SMI-5893 Wave 11 (GH#2368 C-01): `command` is a resolved-path
+    // placeholder, not `npx` — Cursor's bundled Node cannot resolve `npx`
+    // packages (a real ENOENT on a missing Resources/app/resources/lib
+    // directory), confirmed by an external tester hitting this on two
+    // separate live UAT passes even after `npx` carried strong caveat text.
+    // A guessed default path (e.g. a Homebrew-style tab) can *also* be
+    // wrong for an nvm/asdf/custom-prefix install, which fails silently
+    // differently instead of predictably — so this deliberately never
+    // guesses a path at all; the primary copied snippet can never be wrong,
+    // only require one resolve-and-paste step. `npx` stays available as an
+    // explicit, clearly-labeled fallback in `notes` below, not removed.
     body: `{
   "mcpServers": {
     "{{name}}": {
-      "command": "npx",
-      "args": ["-y", "{{name}}"],
+      "command": "<paste output of: which {{name}} (macOS/Linux) or where {{name}} (Windows)>",
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_...",
         "SKILLSMITH_CLIENT": "cursor"
@@ -72,16 +83,26 @@ export const CLIENT_SNIPPETS: Record<SnippetClientId, ClientSnippet> = {
     }
   }
 }`,
+    // Assumes the package's `bin` name matches its npm package name — true for
+    // every server scaffolded by mcp-server.template.ts (PACKAGE_JSON_TEMPLATE's
+    // `bin` field is literally `{{name}}`), the only production caller of this
+    // matrix today. The real @skillsmith/mcp-server package is the one exception
+    // (bin is the shorter `skillsmith-mcp`, not the scoped package name) — its
+    // docs are hand-maintained separately (root README, packages/mcp-server/README.md,
+    // website's mcp-client-snippets.ts) rather than rendered through this file.
     notes:
-      'Cursor 2.4+ required. Reload the window after saving. ' +
-      'Recommended: `npm install -g {{name}}` first, then point `command` at the ' +
-      'installed `skillsmith-mcp` binary (run `which skillsmith-mcp` after installing ' +
-      'to get the exact path — it varies by platform/npm prefix, e.g. ' +
-      '`/opt/homebrew/bin/skillsmith-mcp` on macOS/Homebrew, a different path on Linux/Windows). ' +
-      'The `npx -y {{name}}` form above still works as a fallback, but re-resolves the ' +
-      'package on every launch — expect a slower cold start, and watch for EBADENGINE ' +
-      '(Cursor bundles its own Node, sometimes older than the >=22.22 this package requires) ' +
-      'or ENOTEMPTY errors on repeated installs.',
+      "Cursor 2.4+ required, Node >=22.22 (Cursor's own bundled Node meets this). " +
+      'Setup: run `npm install -g {{name}}`, then run `which {{name}}` ' +
+      '(macOS/Linux) or `where {{name}}` (Windows) and paste that path into ' +
+      "`command` above — Cursor's bundled Node cannot resolve packages via `npx` " +
+      '(a real ENOENT on a missing Resources/app/resources/lib directory), so ' +
+      'pointing directly at the installed binary is the only form confirmed to work ' +
+      'inside Cursor. Prefer to try `npx` first anyway? Replace `command` with ' +
+      '`"npx"` and add `"args": ["-y", "{{name}}"]` — simpler, but may hit the same ' +
+      'ENOENT, plus EBADENGINE or ENOTEMPTY on repeated installs. After saving: ' +
+      "enable the server in Cursor's Settings -> MCP panel and start a new chat " +
+      '— a correctly-configured entry still shows disconnected until toggled on ' +
+      'there — then reload the window.',
   },
   copilot: {
     label: 'GitHub Copilot (VS Code)',
@@ -249,7 +270,14 @@ export function renderAllSnippetsAsMarkdown(packageName: string): string {
   const sections = (Object.keys(CLIENT_SNIPPETS) as SnippetClientId[]).map((id) => {
     const snippet = CLIENT_SNIPPETS[id]
     const body = renderSnippet(id, packageName)
-    const notes = snippet.notes ? `\n\n${snippet.notes}` : ''
+    // Found while touching this file for SMI-5893 Wave 11: `notes` was
+    // never interpolated even though the cursor entry's notes text contains
+    // literal `{{name}}` placeholders — a scaffolded server with a
+    // non-Skillsmith packageName (this function's real generic use, per
+    // mcp-server.template.ts:471) would show that placeholder unsubstituted
+    // in its own README.
+    const renderedNotes = snippet.notes?.replace(/\{\{name\}\}/g, packageName)
+    const notes = renderedNotes ? `\n\n${renderedNotes}` : ''
     return [
       `<details>`,
       `<summary><strong>${snippet.label}</strong> — \`${snippet.configPath}\`</summary>`,

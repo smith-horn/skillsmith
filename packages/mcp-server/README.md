@@ -73,8 +73,7 @@ Restart Claude Code after editing settings.json.
 {
   "mcpServers": {
     "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"],
+      "command": "<paste output of: which skillsmith-mcp (macOS/Linux) or where skillsmith-mcp (Windows)>",
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_...",
         "SKILLSMITH_CLIENT": "cursor"
@@ -84,9 +83,9 @@ Restart Claude Code after editing settings.json.
 }
 ```
 
-Cursor 2.4+ required. Reload the window after saving. `SKILLSMITH_CLIENT` routes installs to `~/.cursor/skills` instead of the default `~/.claude/skills`.
+Cursor 2.4+ required, Node >=22.22 (Cursor's own bundled Node meets this). `SKILLSMITH_CLIENT` routes installs to `~/.cursor/skills` instead of the default `~/.claude/skills`.
 
-**Recommended**: `npm install -g @skillsmith/mcp-server` first, then point `command` at the installed `skillsmith-mcp` binary — run `which skillsmith-mcp` after installing to get the exact path (it's platform/npm-prefix specific, e.g. `/opt/homebrew/bin/skillsmith-mcp` on macOS/Homebrew; Linux and Windows paths differ). The `npx` form above still works as a fallback, but re-resolves the package on every launch — expect a slower cold start, and watch for `EBADENGINE` (Cursor bundles its own Node, sometimes older than the `>=22.22` this package requires) or `ENOTEMPTY` errors on repeated installs.
+**Setup**: run `npm install -g @skillsmith/mcp-server`, then run `which skillsmith-mcp` (macOS/Linux) or `where skillsmith-mcp` (Windows) and paste that path into `command` above — Cursor's bundled Node cannot resolve packages via `npx` (a real `ENOENT` on a missing `Resources/app/resources/lib` directory), so pointing directly at the installed binary is the only form confirmed to work inside Cursor. Prefer to try `npx` first anyway? Replace `command` with `"npx"` and add `"args": ["-y", "-p", "@skillsmith/mcp-server", "skillsmith-mcp"]` — simpler, but may hit the same `ENOENT`, plus `EBADENGINE` or `ENOTEMPTY` on repeated installs. After saving: enable the server in Cursor's Settings → MCP panel and start a new chat — a correctly-configured entry still shows disconnected until toggled on there — then reload the window.
 
 </details>
 
@@ -243,7 +242,7 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
 | Community | 30/min | Free | Personal projects |
 | Individual | 60/min | $9.99/mo | Active developers |
 | Team | 120/min | $25/user/mo | Development teams |
-| Enterprise | 300/min | $55/user/mo | Large organizations |
+| Enterprise | 300/min | Custom (Contact Sales) | Large organizations |
 
 All tiers include:
 - Full access to skill search, details, and recommendations

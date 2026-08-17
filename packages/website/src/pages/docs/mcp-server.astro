@@ -1,5 +1,6 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+import { MCP_CLIENT_SNIPPETS } from '../../lib/mcp-client-snippets';
 
 const howToSchema = {
   '@context': 'https://schema.org',
@@ -8,7 +9,7 @@ const howToSchema = {
   description:
     'Add the Skillsmith MCP server to an MCP-compatible AI assistant to search, install, and manage agent skills using natural language.',
   tool: [
-    { '@type': 'HowToTool', name: 'Node.js 18+' },
+    { '@type': 'HowToTool', name: 'Node.js >=22.22.0' },
     { '@type': 'HowToTool', name: 'MCP-compatible AI assistant' },
   ],
   step: [
@@ -16,7 +17,7 @@ const howToSchema = {
       '@type': 'HowToStep',
       position: 1,
       name: 'Add the server to your MCP client config',
-      text: 'Add an entry for "skillsmith" running "npx -y @skillsmith/mcp-server" to your MCP client configuration file, e.g. ~/.claude/settings.json for Claude Code, ~/.cursor/mcp.json for Cursor, or the equivalent config file for your MCP client.',
+      text: 'Add an entry for "skillsmith" to your MCP client configuration file, e.g. ~/.claude/settings.json for Claude Code or the equivalent config file for your MCP client. Most clients launch it via "npx -y @skillsmith/mcp-server"; Cursor is an exception and needs the installed binary\'s resolved path instead (see the Cursor-specific setup notes on this page).',
     },
     {
       '@type': 'HowToStep',
@@ -57,20 +58,28 @@ const howToSchema = {
 
   <h3>Basic Setup</h3>
 
-  <p>Add Skillsmith to your Claude settings at <code>~/.claude/settings.json</code>:</p>
+  <p>
+    Pick the snippet for your MCP client and add it to the matching config file. Every
+    snippet uses the same shape — only the config-file path (and, for Codex/Hermes, the
+    format) differs.
+  </p>
 
-  <pre><code>{`{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
+  {MCP_CLIENT_SNIPPETS.map((client) => (
+    <details open={client.openByDefault}>
+      <summary><strong>{client.label}</strong> — <code>{client.configPath}</code>{client.format !== 'json' ? ` (${client.format.toUpperCase()})` : ''}</summary>
+      <pre><code>{client.body}</code></pre>
+      {client.notes && <p set:html={client.notes} />}
+    </details>
+  ))}
 
   <h3>Advanced Configuration</h3>
 
-  <p>For more control, you can specify additional options:</p>
+  <p>
+    For more control, add extra options to the <code>env</code> block of whichever
+    client snippet you used above — keep that snippet's own <code>command</code> and
+    <code>args</code> (or, for Cursor, its resolved-path <code>command</code>) and
+    just add to its <code>env</code>. Example (Claude Code shape shown):
+  </p>
 
   <pre><code>{`{
   "mcpServers": {
@@ -84,6 +93,14 @@ const howToSchema = {
     }
   }
 }`}</code></pre>
+
+  <p>
+    This <code>env</code>-block pattern applies as shown to every JSON-shaped client
+    (Claude Code, Cursor, Copilot, Windsurf, Antigravity, cross-agent). OpenCode uses
+    an <code>environment</code> key instead of <code>env</code> (with <code>command</code>
+    as an array); Codex, Grok, and Hermes use TOML/YAML, not JSON — add the same
+    variables under each format's own env table/mapping instead.
+  </p>
 
   <h3>API Key Configuration</h3>
 
@@ -118,9 +135,14 @@ const howToSchema = {
 }
 EOF`}</code></pre>
 
-  <p><strong>Method B: Claude Settings</strong></p>
+  <p><strong>Method B: MCP Client Config</strong></p>
 
-  <p>Add to your <code>~/.claude/settings.json</code>:</p>
+  <p>
+    Add <code>SKILLSMITH_API_KEY</code> to the <code>env</code> block of whichever
+    client snippet you used above — keep that snippet's own <code>command</code> and
+    <code>args</code> (or, for Cursor, its resolved-path <code>command</code>) and
+    just add the key. Example (Claude Code shape shown):
+  </p>
 
   <pre><code>{`{
   "mcpServers": {
@@ -133,6 +155,14 @@ EOF`}</code></pre>
     }
   }
 }`}</code></pre>
+
+  <p>
+    This <code>env</code>-block pattern applies as shown to every JSON-shaped client
+    (Claude Code, Cursor, Copilot, Windsurf, Antigravity, cross-agent). OpenCode uses
+    an <code>environment</code> key instead of <code>env</code> (with <code>command</code>
+    as an array); Codex, Grok, and Hermes use TOML/YAML, not JSON — add the same
+    variable under each format's own env table/mapping instead.
+  </p>
 
   <p><strong>Step 3:</strong> Restart your MCP client to load the updated configuration.</p>
 
@@ -618,7 +648,7 @@ Assistant: [Uses compare tool] Here's a comparison:
 
   <div class="callout">
     <p class="callout-heading">Check Node.js Version</p>
-    <p>Ensure you have Node.js 18+ installed. Run <code>node --version</code> to verify.</p>
+    <p>Ensure you have Node.js &gt;=22.22.0 installed. Run <code>node --version</code> to verify.</p>
   </div>
 
   <h3>Tools Not Available</h3>

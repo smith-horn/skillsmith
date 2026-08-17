@@ -203,10 +203,10 @@ export function formatAuthenticationError(details: ApiAuthErrorDetails = {}): MC
 
 ${details.reason || 'API key required for this request.'}
 
-**Get Started (Free - 1,000 requests/month):**
+**Get Started (Free - 100 requests/month):**
 1. Create account: ${signupUrl}
 2. Your API key will be generated automatically
-3. Add to your Claude settings:
+3. Add to your MCP client's config (see ${docsUrl} for the client-specific path/format):
 
 \`\`\`json
 {

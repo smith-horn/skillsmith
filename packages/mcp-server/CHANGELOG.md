@@ -11,6 +11,22 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   lines above it. Shared rendering (`scan-coverage.format.ts`) translates the machine-readable
   cause token(s) persisted on the row (`scan_coverage_note`) into a human-readable phrase, so the
   three surfaces cannot drift in wording.
+- **Fix**: `formatAuthenticationError`'s 401 message corrected a stale `1,000 requests/month`
+  to the actual `100`, and replaced a Claude-Code-specific "Add to your Claude settings"
+  instruction with a client-neutral pointer at the docs URL already passed to the formatter
+  (SMI-5893 Wave 11, GH#2368 C-19)
+- **Fix**: two bundled SKILL.md pricing/quota tables corrected — the `skills/skillsmith`
+  copy's whole pricing table was off by 10x (Community showed 1,000 instead of 100,
+  Individual 10,000 instead of 1,000, Team 100,000 instead of 10,000) and its Enterprise
+  row exposed a specific price (`$55/user/mo`) that's deliberately unpublished
+  (Contact Sales) — now `Custom (Contact Sales)`. The `agent-pack` copy's quota-forecast
+  guidance had the same Community/Individual numbers swapped-and-scaled — also fixed at
+  its actual source (`@skillsmith/core`'s `prompt-source.ts`, which generates this copy
+  and had drifted from it), so the byte-identical drift-gate test stays green. Also
+  corrected: `skill_suggest`'s tool description (`Community: 1,000/mo` → `100/mo`), the
+  `LicenseTier` TSDoc in `middleware/license.ts` (same 10x error plus the same unpublished
+  Enterprise price), and the equivalent Cursor `npx`/pricing text in both this package's
+  and the root repo's README.md (SMI-5893 Wave 11, GH#2368 C-19)
 - **Feature**: `skill_validate` now runs the existing (previously unwired) typosquat-name
   detector, checking a candidate skill's name against a bundled, periodically-regenerated
   reference-list snapshot of high-trust authors and top-starred skills. Warn-tier only — this
