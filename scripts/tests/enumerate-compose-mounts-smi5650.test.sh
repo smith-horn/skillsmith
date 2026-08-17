@@ -559,6 +559,46 @@ assert_not_contains "test25: no tmpfs annotation in tier-b volumes" "tmpfs" "$OU
 rm -rf "$TIERBSHAPEROOT"
 
 # -----------------------------------------------------------------------
+# Test 26 (SMI-6050 post-merge review finding): a derivation-script FAILURE
+# (malformed package-lock.json, here — same effect as a broken Node install
+# or a bug in the script itself) must be LOUD (a stderr message identifying
+# the real cause) and must emit ZERO tier-b lines — never silently succeed
+# with an empty result indistinguishable from "this repo has zero tier-b
+# packages". Covers all three call sites (both enumerate_* emission
+# functions plus ensure_tier_b_mount_sources).
+# -----------------------------------------------------------------------
+TIERBBROKENROOT=$(mktemp -d)
+make_repo "$TIERBBROKENROOT" core
+make_pkg_json "$TIERBBROKENROOT" core "@skillsmith/core"
+mkdir -p "$TIERBBROKENROOT"
+echo '{ this is not valid json' >"$TIERBBROKENROOT/package-lock.json"
+
+OUT26MOUNTS_ALL=$(enumerate_compose_node_modules_mounts "$TIERBBROKENROOT" 2>&1)
+OUT26MOUNTS_STDOUT=$(enumerate_compose_node_modules_mounts "$TIERBBROKENROOT" 2>/dev/null)
+assert_contains "test26: enumerate_compose_node_modules_mounts surfaces a loud ERROR on derivation failure" \
+  "ERROR: scripts/lib/linux-optional-packages.mjs failed" "$OUT26MOUNTS_ALL"
+assert_eq "test26: enumerate_compose_node_modules_mounts emits zero tier-b mount lines on derivation failure" \
+  0 "$(printf '%s\n' "$OUT26MOUNTS_STDOUT" | grep -c '^      - native-seed-' || true)"
+
+OUT26VOLS_ALL=$(enumerate_native_module_volumes "$TIERBBROKENROOT" 2>&1)
+OUT26VOLS_STDOUT=$(enumerate_native_module_volumes "$TIERBBROKENROOT" 2>/dev/null)
+assert_contains "test26: enumerate_native_module_volumes surfaces a loud ERROR on derivation failure" \
+  "ERROR: scripts/lib/linux-optional-packages.mjs failed" "$OUT26VOLS_ALL"
+assert_eq "test26: enumerate_native_module_volumes emits zero tier-b volume declarations on derivation failure" \
+  0 "$(printf '%s\n' "$OUT26VOLS_STDOUT" | grep -c '^  native-seed-' || true)"
+
+# ensure_tier_b_mount_sources returns non-zero BY DESIGN on derivation
+# failure — guarded with `if`/`||` throughout so that non-zero return never
+# trips this file's own `set -e`.
+OUT26MKDIR_STATUS=0
+OUT26MKDIR_ERR=$(ensure_tier_b_mount_sources "$TIERBBROKENROOT" 2>&1 1>/dev/null) || OUT26MKDIR_STATUS=$?
+assert_contains "test26: ensure_tier_b_mount_sources surfaces a loud ERROR on derivation failure" \
+  "ERROR: scripts/lib/linux-optional-packages.mjs failed" "$OUT26MKDIR_ERR"
+assert_eq "test26: ensure_tier_b_mount_sources returns non-zero on derivation failure" \
+  1 "$OUT26MKDIR_STATUS"
+rm -rf "$TIERBBROKENROOT"
+
+# -----------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------
 echo ""
