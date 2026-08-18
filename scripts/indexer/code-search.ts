@@ -67,6 +67,30 @@ interface CodeSearchResponse {
 const RETRY_DELAYS = [1000, 2000, 4000]
 
 /**
+ * GitHub code-search retrievable-results ceiling per query (any query caps
+ * here, regardless of `total_count`). SMI-5286 1c originally defined this
+ * locally in `subdirectory-search.helpers.ts` for bisection triggering;
+ * exported from here (SMI-6073) and re-imported there so both the bisection
+ * trigger and the degraded-response pagination-bounds check below share one
+ * source of truth instead of two independently-maintained copies.
+ */
+export const CODE_SEARCH_RESULT_CAP = 1000
+
+/**
+ * SMI-6073: retry delay (ms) for a SINGLE degraded-response retry —
+ * deliberately distinct from `RETRY_DELAYS` (the 403/429 exponential-backoff
+ * ladder, 1s/2s/4s). That ladder's cadence is tuned for a RATE-LIMIT signal;
+ * retrying a CONTENT anomaly (200 + `total_count > 0` + `items: []`) on the
+ * same aggressive cadence risks tripping the very 10-req/min code-search
+ * bucket this is trying to avoid. Matches the bucket's own established
+ * inter-page cadence instead (10 code-search req/min -> 6s between pages,
+ * `subdirectory-search.helpers.ts`). Exported so tests can derive a
+ * deadline-imminent scenario from the real value instead of a guessed magic
+ * number (see `code-search.test.ts`).
+ */
+export const DEGRADED_RESPONSE_RETRY_DELAY_MS = 6000
+
+/**
  * Search GitHub Code Search API for repositories containing SKILL.md files.
  *
  * SMI-4852: Threads `telemetry` and wraps each fetch in
@@ -225,7 +249,15 @@ export async function searchCodeForSkillMdInSubdirectory(
   // `size:0..127`) appended to the query so the broad backfill can partition the
   // 1000-result-capped query by file size. The caller (the facet driver) formats
   // it via code-search.facets.ts; this file stays free of the facet dependency.
-  sizeQualifier?: string
+  sizeQualifier?: string,
+  // SMI-6073: absolute wall-clock deadline (ms, `Date.now()`-comparable) for
+  // the SMI-5964 per-dispatch elapsed budget. When supplied, the degraded-
+  // response retry below is skipped (falls straight to the error return)
+  // once fewer than one retry-delay's worth of budget remains — a wasted
+  // retry this close to a hard timeout would only shrink the window left to
+  // checkpoint cleanly. `undefined` = no deadline (byte-identical to the
+  // pre-SMI-6073 unbounded case).
+  deadlineAtMs?: number
 ): Promise<{
   repos: GitHubRepository[]
   total: number
@@ -256,8 +288,18 @@ export async function searchCodeForSkillMdInSubdirectory(
   const url = `https://api.github.com/search/code?q=${query}&per_page=${perPage}&page=${page}`
 
   let retries = 0
+  // SMI-6073: the degraded retry's ENTIRE budget (at most one use), tracked
+  // fully independently of `rateLimitAttempt` below. GPT-5.6-Sol review
+  // (2026-08-17): an earlier version shared one `for`-loop counter between
+  // the two, so a degraded retry could silently steal one of the 403/429
+  // ladder's 3 retries (and its "after N retries" message would then lie
+  // about what actually happened) — neither counter reads or writes the other.
+  let degradedRetryUsed = false
+  // SMI-6073: the 403/429 (+ network-error, pre-existing shared semantics —
+  // unchanged here) retry ladder's own counter, independent of the above.
+  let rateLimitAttempt = 0
 
-  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+  while (true) {
     try {
       const response = await withRateLimitTracking(telemetry, url, {
         headers: await buildGitHubHeaders(),
@@ -268,6 +310,51 @@ export async function searchCodeForSkillMdInSubdirectory(
         const data = (await response.json()) as CodeSearchResponse
 
         const pathLabel = pathPrefix ? `path:${sanitizeForLog(pathPrefix)}` : 'broad'
+
+        // SMI-6073: degraded-response detection. GitHub's code-search endpoint
+        // can return HTTP 200 with a nonzero `total_count` but empty `items`
+        // (the documented query-timeout-degrades-to-partial-results behavior —
+        // see the SMI-6073 plan's Context section). Checked against the RAW
+        // `data.items` array, NEVER the post-filter `repos` built below — a
+        // page where GitHub returned real items but every one was a
+        // fork/duplicate/invalid entry is a legitimate empty result, not
+        // degradation. Also requires the requested page to be within GitHub's
+        // retrievable range (`(page-1)*perPage` under `min(total_count, cap)`)
+        // — a page requested past the actual result count is legitimately
+        // empty too, not degraded.
+        const pageWithinRetrievableRange =
+          (page - 1) * perPage < Math.min(data.total_count, CODE_SEARCH_RESULT_CAP)
+        const isDegradedResponse =
+          data.items.length === 0 && data.total_count > 0 && pageWithinRetrievableRange
+
+        if (isDegradedResponse) {
+          const deadlineImminent =
+            deadlineAtMs !== undefined &&
+            Date.now() + DEGRADED_RESPONSE_RETRY_DELAY_MS >= deadlineAtMs
+          if (!degradedRetryUsed && !deadlineImminent) {
+            degradedRetryUsed = true
+            console.warn(
+              `[CodeSearch] Degraded response for ${pathLabel} p${page} (total_count=${data.total_count}, items=0) -- retrying once in ${DEGRADED_RESPONSE_RETRY_DELAY_MS}ms`
+            )
+            await delay(DEGRADED_RESPONSE_RETRY_DELAY_MS)
+            retries++
+            continue
+          }
+          const requestId = response.headers.get('x-github-request-id')
+          const reason = deadlineImminent
+            ? 'elapsed-budget deadline imminent, retry skipped'
+            : 'retried once, still degraded'
+          console.warn(
+            `[CodeSearch] Degraded response persisted for ${pathLabel} p${page} (${reason}) (x-github-request-id: ${requestId ?? 'unknown'})`
+          )
+          return {
+            repos: [],
+            total: 0,
+            retries,
+            incomplete_results: false,
+            error: `Code search degraded response for ${pathLabel} p${page}: total_count=${data.total_count} but items=0 (${reason}) (x-github-request-id: ${requestId ?? 'unknown'})`,
+          }
+        }
 
         if (data.incomplete_results) {
           console.warn(
@@ -346,39 +433,55 @@ export async function searchCodeForSkillMdInSubdirectory(
 
       // Rate limit or secondary rate limit
       if (response.status === 403 || response.status === 429) {
-        if (attempt < RETRY_DELAYS.length) {
-          const delayMs = RETRY_DELAYS[attempt]
+        if (rateLimitAttempt < RETRY_DELAYS.length) {
+          const delayMs = RETRY_DELAYS[rateLimitAttempt]
           console.log(
-            `[CodeSearch] Rate limited (${response.status}) for ${pathLabel}, retrying in ${delayMs}ms (attempt ${attempt + 1}/${RETRY_DELAYS.length})`
+            `[CodeSearch] Rate limited (${response.status}) for ${pathLabel}, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RETRY_DELAYS.length})`
           )
           await delay(delayMs)
           retries++
+          rateLimitAttempt++
           continue
         }
         const remaining = response.headers.get('X-RateLimit-Remaining')
+        // SMI-6073: capture x-github-request-id at the point of the outcome —
+        // read directly off THIS Response, not threaded through shared
+        // telemetry, so it can't be misattributed under concurrent calls.
+        const requestId = response.headers.get('x-github-request-id')
+        console.warn(
+          `[CodeSearch] Rate limit exhausted for ${pathLabel} (x-github-request-id: ${requestId ?? 'unknown'})`
+        )
         return {
           repos: [],
           total: 0,
           retries,
           incomplete_results: false,
-          error: `Code search rate limit exhausted for ${pathLabel} after ${RETRY_DELAYS.length} retries. Remaining: ${remaining}`,
+          error: `Code search rate limit exhausted for ${pathLabel} after ${RETRY_DELAYS.length} retries. Remaining: ${remaining} (x-github-request-id: ${requestId ?? 'unknown'})`,
         }
       }
 
-      return {
-        repos: [],
-        total: 0,
-        retries,
-        incomplete_results: false,
-        error: `Code search error for ${pathLabel}: ${response.status}`,
+      {
+        // SMI-6073: same request-id capture for any other non-ok status.
+        const requestId = response.headers.get('x-github-request-id')
+        console.warn(
+          `[CodeSearch] Error for ${pathLabel}: ${response.status} (x-github-request-id: ${requestId ?? 'unknown'})`
+        )
+        return {
+          repos: [],
+          total: 0,
+          retries,
+          incomplete_results: false,
+          error: `Code search error for ${pathLabel}: ${response.status} (x-github-request-id: ${requestId ?? 'unknown'})`,
+        }
       }
     } catch (error) {
       const pathLabel = pathPrefix ? `path:${sanitizeForLog(pathPrefix)}` : 'broad'
-      if (attempt < RETRY_DELAYS.length) {
-        const delayMs = RETRY_DELAYS[attempt]
+      if (rateLimitAttempt < RETRY_DELAYS.length) {
+        const delayMs = RETRY_DELAYS[rateLimitAttempt]
         console.log(`[CodeSearch] Network error for ${pathLabel}, retrying in ${delayMs}ms`)
         await delay(delayMs)
         retries++
+        rateLimitAttempt++
         continue
       }
       return {
@@ -390,6 +493,4 @@ export async function searchCodeForSkillMdInSubdirectory(
       }
     }
   }
-
-  return { repos: [], total: 0, retries, incomplete_results: false, error: 'Unexpected code path' }
 }

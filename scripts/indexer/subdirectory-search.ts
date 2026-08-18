@@ -186,7 +186,7 @@ export async function runSubdirectorySearch(
     )
     console.log(
       `[Backfill] Facet crawl: ${repos.length} skills added, ${backfill.facets_completed}/${backfill.facets_total} facets, ${backfill.ranges_crawled} ranges this dispatch, ` +
-        `admitted=${stats.admitted}, licenseNull=${stats.licenseNull}, noDefaultBranch=${stats.noDefaultBranch}, ${stats.licenseFiltered} license-filtered, cap_saturated=${backfill.cap_saturated}, truncated=${backfill.truncated_repo_count}, done=${backfill.done}`
+        `admitted=${stats.admitted}, licenseNull=${stats.licenseNull}, noDefaultBranch=${stats.noDefaultBranch}, ${stats.licenseFiltered} license-filtered, cap_saturated=${backfill.cap_saturated}, truncated=${backfill.truncated_repo_count}, incomplete_results_ranges=${backfill.incomplete_results_ranges}, done=${backfill.done}`
     )
     console.log(
       `[Backfill] Per-skill extraction: ${enumeratedRepos.size} repos enumerated, ${enumerateTelemetry.denylistSkipped ?? 0} denylist-skipped, ${enumerateTelemetry.cappedRepoCount ?? 0} capped, ${enumerateTelemetry.truncatedRepoCount ?? 0} api-truncated`

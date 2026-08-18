@@ -213,6 +213,14 @@ export interface BackfillCrawlOutcome {
   facets_completed: number
   facets_total: number
   ranges_crawled: number
+  /**
+   * SMI-6073: count of ranges this dispatch where at least one page carried
+   * `incomplete_results: true` (GitHub's own documented query-timeout signal
+   * — see `docs.github.com/en/rest/search/search`). Aggregated per range (not
+   * per page) to avoid per-page log noise; surfaced in the
+   * `[Backfill] Facet crawl:` summary line (`subdirectory-search.ts`).
+   */
+  incomplete_results_ranges: number
 }
 
 /**

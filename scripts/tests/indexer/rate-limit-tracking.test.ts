@@ -163,6 +163,83 @@ describe('withRateLimitTracking', () => {
     expect(summary.code_search_remaining_min).toBe(0)
   })
 
+  it('SMI-6073: newRateLimitTelemetry starts every bucket unobserved', () => {
+    const telemetry = newRateLimitTelemetry()
+    expect(telemetry.core_observed).toBe(false)
+    expect(telemetry.search_observed).toBe(false)
+    expect(telemetry.code_search_observed).toBe(false)
+  })
+
+  it('SMI-6073: marks only the metered bucket observed -- mixed case (one bucket observed, another not)', async () => {
+    const telemetry = newRateLimitTelemetry()
+    // Only a `core`-bucket response is ever seen this run.
+    fetchMock.mockResolvedValueOnce(
+      new Response('ok', {
+        status: 200,
+        headers: { 'x-ratelimit-remaining': '4500', 'x-ratelimit-resource': 'core' },
+      })
+    )
+
+    await withRateLimitTracking(telemetry, 'https://api.github.com/repos/o/r/git/trees/main')
+
+    expect(telemetry.core_observed).toBe(true)
+    // Mixed case: search/code_search were never metered this run -- they must
+    // stay false, not be misread as "observed" just because SOME bucket was.
+    expect(telemetry.search_observed).toBe(false)
+    expect(telemetry.code_search_observed).toBe(false)
+  })
+
+  it('SMI-6073: the observed flag is set even when the observed remaining does NOT beat the running minimum', async () => {
+    const telemetry = newRateLimitTelemetry()
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('ok', {
+          status: 200,
+          headers: { 'x-ratelimit-remaining': '10', 'x-ratelimit-resource': 'code_search' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response('ok', {
+          status: 200,
+          headers: { 'x-ratelimit-remaining': '20', 'x-ratelimit-resource': 'code_search' },
+        })
+      )
+
+    await withRateLimitTracking(telemetry, 'https://api.github.com/search/code')
+    await withRateLimitTracking(telemetry, 'https://api.github.com/search/code')
+
+    // The second call's remaining (20) doesn't beat the running min (10), but
+    // the bucket WAS observed on both calls.
+    expect(telemetry.code_search_remaining_min).toBe(10)
+    expect(telemetry.code_search_observed).toBe(true)
+  })
+
+  it('SMI-6073: summarizeRateLimitTelemetry distinguishes never-observed from observed-and-genuinely-zero, per bucket', () => {
+    // "Never observed": the POSITIVE_INFINITY sentinel resolves to 0, but the
+    // observed flag stays false for every bucket.
+    const neverObserved = newRateLimitTelemetry()
+    const neverSummary = summarizeRateLimitTelemetry(neverObserved)
+    expect(neverSummary.core_remaining_min).toBe(0)
+    expect(neverSummary.core_observed).toBe(false)
+    expect(neverSummary.search_remaining_min).toBe(0)
+    expect(neverSummary.search_observed).toBe(false)
+    expect(neverSummary.code_search_remaining_min).toBe(0)
+    expect(neverSummary.code_search_observed).toBe(false)
+
+    // "Observed and genuinely 0": same numeric summary (0), but the observed
+    // flag disambiguates it from the never-observed case above. Mixed across
+    // buckets -- only `core` was actually metered this run.
+    const genuinelyZero = newRateLimitTelemetry()
+    genuinelyZero.core_remaining_min = 0
+    genuinelyZero.core_observed = true
+    const zeroSummary = summarizeRateLimitTelemetry(genuinelyZero)
+    expect(zeroSummary.core_remaining_min).toBe(0)
+    expect(zeroSummary.core_observed).toBe(true)
+    // code_search: never metered this run -- must still read as unobserved.
+    expect(zeroSummary.code_search_remaining_min).toBe(0)
+    expect(zeroSummary.code_search_observed).toBe(false)
+  })
+
   it('withBackoff retries on RateLimitError up to maxRetries', async () => {
     let attempts = 0
     const fn = async (): Promise<string> => {

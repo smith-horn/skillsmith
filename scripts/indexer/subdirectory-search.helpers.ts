@@ -16,7 +16,7 @@
  */
 
 import { delay, type RateLimitTelemetry } from './_shared/rate-limit.ts'
-import { searchCodeForSkillMdInSubdirectory } from './code-search.ts'
+import { searchCodeForSkillMdInSubdirectory, CODE_SEARCH_RESULT_CAP } from './code-search.ts'
 import {
   buildSizeFacets,
   facetId,
@@ -124,9 +124,6 @@ export interface BackfillFacetPlan {
   acceptTruncation?: boolean
 }
 
-/** GitHub code-search retrievable-results ceiling per query (any query caps here). */
-const CODE_SEARCH_RESULT_CAP = 1000
-
 /**
  * SMI-5286 1c: depth-first size-faceted crawl of the broad `filename:SKILL.md`
  * query (or a single `path:` prefix). Pages each size (sub)range to the 1000-cap;
@@ -177,6 +174,10 @@ export async function runBackfillFacetCrawl(
   let capSaturated = false
   let truncatedRanges = 0
   let rangesCrawled = 0
+  // SMI-6073: ranges where any page had `incomplete_results: true` (GitHub's
+  // timeout-degraded-read signal); aggregated per range, logged in
+  // subdirectory-search.ts's `[Backfill] Facet crawl:` summary line.
+  let incompleteResultRanges = 0
   // SMI-5448: per-dispatch wall-clock anchor for the elapsed-budget guard.
   const startedAt = Date.now()
   // SMI-5964 §1a/§1b: absolute deadline threaded into `processSearchResults` so
@@ -235,18 +236,26 @@ export async function runBackfillFacetCrawl(
     // SMI-5321: capture page-1 repos during saturation detection so the
     // acceptTruncation floor can reuse them without a second code-search fetch.
     let saturatedPageRepos: GitHubRepository[] | null = null
+    // SMI-6073: reset per range; aggregated once at the range boundary below.
+    let rangeHadIncompleteResults = false
     for (let page = state.lastPage + 1; page <= plan.maxPagesPerRange; page++) {
       const result = await searchCodeForSkillMdInSubdirectory(
         plan.pathPrefix,
         page,
         plan.perPage,
         telemetry,
-        qualifier
+        qualifier,
+        // SMI-6073: thread the SMI-5964 deadline so the degraded-response
+        // retry can skip itself when the budget is nearly exhausted.
+        deadlineAt ?? undefined
       )
       if (result.error) {
         errors.push(`[backfill ${pathLabel} ${facetId(range)} p${page}] ${result.error}`)
         errored = true
         break
+      }
+      if (result.incomplete_results) {
+        rangeHadIncompleteResults = true
       }
       // The 1000-cap is detected from total_count on the first page: rather than
       // waste pages on the unreachable tail, bisect immediately -- the sub-ranges
@@ -309,6 +318,9 @@ export async function runBackfillFacetCrawl(
     }
 
     rangesCrawled++
+    if (rangeHadIncompleteResults) {
+      incompleteResultRanges++
+    }
 
     if (errored) {
       // M-1: a page error (rate-limiter already retried transient 403/429, so a
@@ -477,5 +489,6 @@ export async function runBackfillFacetCrawl(
     facets_completed: state.facetIndex,
     facets_total: facets.length,
     ranges_crawled: rangesCrawled,
+    incomplete_results_ranges: incompleteResultRanges,
   }
 }
