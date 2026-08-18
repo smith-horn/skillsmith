@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: the CLI's tier-gating messages (`require-tier.ts`) and `ab-test`'s upgrade prompt
+  (console and JSON `price` field) hardcoded the literal unpublished Enterprise price
+  (`$55/user/month`) — now `Custom pricing — Contact Sales`, matching the documented "unpublished"
+  pricing policy (SMI-6069, GH#2368-adjacent follow-up from SMI-5893)
+
 - **Fix**: The Cursor MCP snippet (root README, `@skillsmith/mcp-server`'s README, and the website) no longer defaults to `npx`, which failed inside Cursor on two separate live UAT passes (a real Cursor-bundled-Node ENOENT). The copied `command` is now a resolved-path placeholder (`which`/`where skillsmith-mcp`) that can never point at a wrong path; `npx` stays documented as an explicit, clearly-labeled fallback. Also fixed in the canonical CLI snippet matrix (`templates/mcp-server.template.snippets.ts`, used to scaffold non-Skillsmith MCP servers via `skillsmith author mcp-init`): its Cursor placeholder was hardcoding the literal binary name `skillsmith-mcp` instead of deriving it from the scaffolded server's own package name, and `{{name}}` was never interpolated in a snippet's `notes` text at all — either bug would leak Skillsmith-specific text into a scaffolded (non-Skillsmith) server's generated README (SMI-5893 Wave 11, GH#2368 C-01)
 - **Fix**: Community-tier quota corrected from a stale `1,000` to the actual `100` API calls/month in `displayLicenseStatus` (SMI-5893 Wave 11, GH#2368 C-19)
 - **Fix**: `list`/`manage`'s footer "local: ..." segment, and `inventory status`'s

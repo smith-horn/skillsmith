@@ -38,7 +38,7 @@ const TIER_PRICING: Record<DegradationLicenseTier, string> = {
   community: '$0/month',
   individual: '$9.99/month',
   team: '$25/user/month',
-  enterprise: '$55/user/month',
+  enterprise: 'Custom pricing — Contact Sales',
 }
 
 /**
@@ -217,7 +217,7 @@ export function getTierComparisonMessage(): string {
     '  - Team Workspaces',
     '  - Priority Support',
     '',
-    'Enterprise ($55/user/month)',
+    'Enterprise (Custom pricing — Contact Sales)',
     '----------------------------------------',
     '  - SSO/SAML Integration',
     '  - Role-Based Access Control',

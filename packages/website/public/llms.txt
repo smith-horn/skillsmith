@@ -32,7 +32,7 @@ skillsmith list
 - [Home](https://www.skillsmith.app/): Product overview and features
 - [Quickstart](https://www.skillsmith.app/docs/quickstart): First-time setup guide with two paths (MCP client recommended, CLI alternative)
 - [Skills Browser](https://www.skillsmith.app/skills): Browse and search available skills
-- [Pricing](https://www.skillsmith.app/pricing): Four tiers - Community (free, 100 API calls), Individual ($9.99, 1k), Team ($25/user, 10k), Enterprise ($55/user, unlimited)
+- [Pricing](https://www.skillsmith.app/pricing): Four tiers - Community (free, 100 API calls), Individual ($9.99, 1k), Team ($25/user, 10k), Enterprise (custom pricing, unlimited)
 - [CLI Reference](https://www.skillsmith.app/docs/cli): Complete CLI command documentation
 - [MCP Server](https://www.skillsmith.app/docs/mcp-server): MCP integration configuration
 - [API Reference](https://www.skillsmith.app/docs/api): REST API documentation

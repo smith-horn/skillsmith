@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: the upgrade-nudge message shown to a non-Enterprise user hitting a gated feature
+  (`getTierComparisonMessage`, `middleware/degradation.ts`) hardcoded the literal unpublished
+  Enterprise price (`$55/user/month`) — told a prospect the number before they ever talk to
+  sales, contradicting CLAUDE.md's "Custom (unpublished, 'Contact Sales')" pricing policy. Now
+  `Custom pricing — Contact Sales` (SMI-6069, GH#2368-adjacent follow-up from SMI-5893)
+
 - **Feature**: `get_skill`, `search`, and `skill_recommend` now surface a partial-scan caveat
   ("Note: partial scan — some files could not be analyzed (...)") when the registry's extended
   operational-code scan (SMI-6033 Wave 2, Gap 8) couldn't cover every candidate file for a skill.
