@@ -245,6 +245,19 @@ describe('Deno <-> Node helper parity', () => {
     const node = normalizeWs(extractBody(NODE_HELPERS, 'selectTrustTier'))
     expect(node).toBe(deno)
   })
+
+  // SMI-5898 Wave 2 Step 0: the Deno twin's resolveSkillName previously lacked
+  // the SMI-5930 Wave 4 skillPath leaf-segment fallback, meaning every skill
+  // indexed via the Deno path still collapsed onto the repo name. This
+  // assertion pins the fix so the gap can't silently reopen.
+  it.skipIf(denoEncrypted)(
+    'resolveSkillName body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractBody(DENO_HELPERS, 'resolveSkillName'))
+      const node = normalizeWs(extractBody(NODE_HELPERS, 'resolveSkillName'))
+      expect(node).toBe(deno)
+    }
+  )
 })
 
 describe('Deno <-> Node HIGH_TRUST_AUTHORS parity (SMI-4843 Phase 5 / SMI-4941)', () => {
