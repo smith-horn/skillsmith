@@ -281,6 +281,20 @@ export interface RateLimitTelemetry {
   secondary_rate_limit_hits: number
   /** Max `retry-after` header value observed, in seconds. */
   retry_after_max_seconds: number
+  /**
+   * SMI-6073: true once ANY metered response for the `core` bucket carried an
+   * `x-ratelimit-remaining` header this run. Distinguishes "never observed"
+   * (this stays false, `core_remaining_min` resolves to 0 via the
+   * POSITIVE_INFINITY sentinel below) from "observed and genuinely 0" (this
+   * is true AND `core_remaining_min` is 0) — a single global flag would read
+   * true as soon as ANY of the three buckets was metered, misleadingly
+   * implying every bucket's `0` is genuine.
+   */
+  core_observed: boolean
+  /** SMI-6073: same disambiguation as {@link core_observed}, for `search`. */
+  search_observed: boolean
+  /** SMI-6073: same disambiguation as {@link core_observed}, for `code_search`. */
+  code_search_observed: boolean
 }
 
 export function newRateLimitTelemetry(): RateLimitTelemetry {
@@ -291,6 +305,9 @@ export function newRateLimitTelemetry(): RateLimitTelemetry {
     code_search_remaining_min: Number.POSITIVE_INFINITY,
     secondary_rate_limit_hits: 0,
     retry_after_max_seconds: 0,
+    core_observed: false,
+    search_observed: false,
+    code_search_observed: false,
   }
 }
 
@@ -306,12 +323,24 @@ const BUCKET_FIELD: Record<RateLimitBucket, BucketRemainingField> = {
   code_search: 'code_search_remaining_min',
 }
 
+/** SMI-6073: the telemetry field holding the observation flag for a bucket. */
+type BucketObservedField = 'core_observed' | 'search_observed' | 'code_search_observed'
+
+const BUCKET_OBSERVED_FIELD: Record<RateLimitBucket, BucketObservedField> = {
+  core: 'core_observed',
+  search: 'search_observed',
+  code_search: 'code_search_observed',
+}
+
 /**
  * Convert telemetry into the shape stored in `audit_logs.metadata`.
  * Resolves the POSITIVE_INFINITY sentinel to 0 (the "no calls observed" case
  * means we never saw any remaining, which we surface as 0 — the
  * `v_indexer_health` view casts to int). SMI-4918: the per-bucket minimums
- * are resolved the same way.
+ * are resolved the same way. SMI-6073: the per-bucket `*_observed` flags are
+ * passed through unresolved (they're already booleans) so a stored `0` for
+ * e.g. `code_search_remaining_min` can be read together with
+ * `code_search_observed` to disambiguate "never observed" from "genuinely 0".
  */
 export function summarizeRateLimitTelemetry(t: RateLimitTelemetry): {
   rate_limit_remaining_min: number
@@ -320,6 +349,9 @@ export function summarizeRateLimitTelemetry(t: RateLimitTelemetry): {
   code_search_remaining_min: number
   secondary_rate_limit_hits: number
   retry_after_max_seconds: number
+  core_observed: boolean
+  search_observed: boolean
+  code_search_observed: boolean
 } {
   const resolve = (v: number): number => (Number.isFinite(v) ? v : 0)
   return {
@@ -329,6 +361,9 @@ export function summarizeRateLimitTelemetry(t: RateLimitTelemetry): {
     code_search_remaining_min: resolve(t.code_search_remaining_min),
     secondary_rate_limit_hits: t.secondary_rate_limit_hits,
     retry_after_max_seconds: t.retry_after_max_seconds,
+    core_observed: t.core_observed,
+    search_observed: t.search_observed,
+    code_search_observed: t.code_search_observed,
   }
 }
 
@@ -400,11 +435,16 @@ export async function withRateLimitTracking(
         if (remaining < telemetry.rate_limit_remaining_min) {
           telemetry.rate_limit_remaining_min = remaining
         }
-        const bucketField =
-          BUCKET_FIELD[classifyRateLimitBucket(response.headers.get('x-ratelimit-resource'))]
+        const bucket = classifyRateLimitBucket(response.headers.get('x-ratelimit-resource'))
+        const bucketField = BUCKET_FIELD[bucket]
         if (remaining < telemetry[bucketField]) {
           telemetry[bucketField] = remaining
         }
+        // SMI-6073: mark this bucket observed UNCONDITIONALLY (not gated on
+        // beating the running minimum) — the whole point is to record that a
+        // metered response for this bucket was seen at all this run, so a
+        // later `0` minimum can be disambiguated from "never observed".
+        telemetry[BUCKET_OBSERVED_FIELD[bucket]] = true
       }
     }
   }

@@ -438,4 +438,108 @@ describe('runSubdirectorySearch — size-faceted backfill crawl (SMI-5286 1c)', 
     expect(backfill.done).toBe(true)
     expect(result.errors.some((e) => e.includes('rate limited'))).toBe(true)
   })
+
+  it('SMI-6073: a degraded-and-exhausted first-page response is handled via the errored branch, never bisected', async () => {
+    // searchCodeForSkillMdInSubdirectory runs its own degraded-response retry
+    // INTERNALLY (SMI-6073) -- once exhausted, the caller only ever sees the
+    // terminal `error` shape, never an intermediate degraded 200. This proves
+    // the ordering requirement: a degraded first page (with `total: 5000` --
+    // NOT just embedded in the error string, see GPT-5.6-Sol review below --
+    // which would otherwise exceed CODE_SEARCH_RESULT_CAP) must be routed
+    // through the pre-existing `errored` branch (truncate + advance), and
+    // must NEVER reach the `page === 1 && total > CODE_SEARCH_RESULT_CAP`
+    // bisection check.
+    //
+    // GPT-5.6-Sol review (2026-08-17): the original fixture set `total: 0`
+    // here (only the error STRING mentioned 5000), which meant this test
+    // would have passed even if the caller's ordering were WRONG (checking
+    // saturation before `result.error`) -- `page === 1 && 0 > CAP` is false
+    // either way, so it never actually exercised the ordering guard. `total`
+    // must genuinely exceed CODE_SEARCH_RESULT_CAP so an ordering regression
+    // (checking `result.total` before `result.error`) would incorrectly
+    // bisect and this test would catch it.
+    let firstCall = true
+    mockSearchCode.mockImplementation(async (_pathPrefix: unknown, page: number) => {
+      if (firstCall) {
+        firstCall = false
+        return {
+          repos: [],
+          total: 5000,
+          retries: 1,
+          incomplete_results: false,
+          error:
+            'Code search degraded response for broad p1: total_count=5000 but items=0 ' +
+            '(retried once, still degraded) (x-github-request-id: req-degraded)',
+        }
+      }
+      return nonSaturatingPage(page)
+    })
+
+    const result = await runSubdirectorySearch(
+      new Set<string>(),
+      new Map(),
+      {},
+      1,
+      noTelemetry,
+      makePlan({ maxRangesPerDispatch: 100 })
+    )
+    const backfill = result.backfill!
+
+    // Bisection did NOT occur for the degraded facet -- cap_saturated is only
+    // ever set by the `saturated` branch, never the `errored` branch.
+    expect(backfill.cap_saturated).toBe(false)
+    // The errored branch always ADVANCES (never bisects) -- exactly one range
+    // per top-level facet, same as Case 1's clean run. If the degraded
+    // response had incorrectly reached the bisection check instead, this
+    // would be LADDER_SIZE + 1 (the split facet contributing 2 ranges).
+    expect(backfill.ranges_crawled).toBe(LADDER_SIZE)
+    expect(backfill.done).toBe(true)
+    expect(backfill.facets_completed).toBe(LADDER_SIZE)
+    expect(backfill.cursor.facet).toBe('done')
+    expect(backfill.cursor.pending_subranges).toEqual([])
+    // Surfaced (counted + in errors[]), not silently dropped.
+    expect(backfill.truncated_repo_count).toBeGreaterThanOrEqual(1)
+    expect(result.errors.some((e) => e.includes('degraded response'))).toBe(true)
+  })
+
+  it('SMI-6073: incomplete_results_ranges aggregates per RANGE (not per page) into the crawl outcome', async () => {
+    // Facet 0 spans TWO pages, BOTH carrying incomplete_results: true -- must
+    // be counted as ONE range, not two. Every other facet is a clean
+    // single-page range with incomplete_results: false (via nonSaturatingPage).
+    const perPage = 2
+    let callCount = 0
+    mockSearchCode.mockImplementation(async (_pathPrefix: unknown, page: number) => {
+      callCount++
+      if (callCount === 1) {
+        // Facet 0, page 1: a FULL page (repos.length === perPage) -> the range
+        // keeps paginating instead of exhausting.
+        return {
+          repos: [makeCodeSearchRepo(), makeCodeSearchRepo()],
+          total: 3,
+          retries: 0,
+          incomplete_results: true,
+        }
+      }
+      if (callCount === 2) {
+        // Facet 0, page 2: short page -> range exhausts. Also incomplete.
+        return { repos: [makeCodeSearchRepo()], total: 3, retries: 0, incomplete_results: true }
+      }
+      return nonSaturatingPage(page)
+    })
+
+    const result = await runSubdirectorySearch(
+      new Set<string>(),
+      new Map(),
+      {},
+      1,
+      noTelemetry,
+      makePlan({ maxRangesPerDispatch: 100, perPage })
+    )
+    const backfill = result.backfill!
+    expect(backfill.done).toBe(true)
+    expect(backfill.ranges_crawled).toBe(LADDER_SIZE)
+    // Exactly ONE range (facet 0) had incomplete_results, despite TWO pages
+    // each reporting it -- proves per-range aggregation, not per-page.
+    expect(backfill.incomplete_results_ranges).toBe(1)
+  })
 })

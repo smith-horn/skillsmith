@@ -295,5 +295,34 @@ describe('SMI-745: Skill Management Commands', () => {
 
       consoleSpy.mockRestore()
     })
+
+    it("SMI-6060: footer's local: segment prints the relative display path, not an absolute one", async () => {
+      // Regression guard: the footer used to hand-type the literal
+      // './.claude/skills' independently of getLocalSkillsDir()'s own path
+      // segments — asserting the actual printed text here (not an
+      // internal-call spy on getLocalSkillsDirDisplay) is what would have
+      // caught a drift between the two.
+      const { displaySkillsTable } = await import('../src/commands/manage.js')
+      const consoleSpy = vi.spyOn(console, 'log')
+
+      displaySkillsTable([
+        {
+          name: 'test-skill',
+          path: '/some/path/test-skill',
+          version: '1.0.0',
+          trustTier: 'verified',
+          installDate: '2026-01-01',
+          hasUpdates: false,
+          installedVia: 'claude-code',
+        },
+      ])
+
+      const allOutput = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n')
+      expect(allOutput).toContain('local: ./.claude/skills')
+      // The relative form only — never process.cwd()'s absolute prefix.
+      expect(allOutput).not.toContain(process.cwd() + '/.claude/skills')
+
+      consoleSpy.mockRestore()
+    })
   })
 })

@@ -36,6 +36,7 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 import {
   getInstalledSkills,
   getInstalledSkillsForClient,
+  getLocalSkillsDirDisplay,
   type InstalledSkill,
 } from '../utils/skills-directory.js'
 import { getSkillDiff, updateSkill, updateSkills } from './manage.update.js'
@@ -79,6 +80,12 @@ const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
  * Wave 1. Defaults to `CANONICAL_CLIENT` (same value `resolveClientId(undefined)`
  * returns) so the unfiltered `list` call — which still scans every client's
  * directory, not just this one — keeps today's existing default text.
+ *
+ * SMI-6060: the footer's "local: ..." segment likewise now sources
+ * `getLocalSkillsDirDisplay()` instead of hand-typing the literal
+ * `./.claude/skills` — same displayed text (SMI-1630's repo-local
+ * convention is unchanged and applies regardless of `--client`), just no
+ * longer able to drift from `getLocalSkillsDir()`'s own path segments.
  */
 function displaySkillsTable(skills: InstalledSkill[], client: ClientId = CANONICAL_CLIENT): void {
   if (skills.length === 0) {
@@ -113,7 +120,7 @@ function displaySkillsTable(skills: InstalledSkill[], client: ClientId = CANONIC
   console.log(table.toString())
   console.log(
     chalk.dim(
-      `\n${skills.length} skill(s) found (global: ${getInstallPath(client)}, local: ./.claude/skills)\n`
+      `\n${skills.length} skill(s) found (global: ${getInstallPath(client)}, local: ${getLocalSkillsDirDisplay()})\n`
     )
   )
 }
