@@ -3,6 +3,8 @@
  * Covers: repository URL fallback, inferred label, description rendering, trust badges
  */
 import { describe, it, expect } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
 import {
   getSkillDetailHtml,
   getTrustBadgeColor,
@@ -361,6 +363,38 @@ describe('getTrustBadgeText', () => {
   it('returns Unverified for unrecognized tier', () => {
     expect(getTrustBadgeText('something')).toBe('Unverified')
   })
+})
+
+// ---------------------------------------------------------------------------
+// views/trust-badge.ts's inline mapping vs. the canonical shared fixture (SMI-6076)
+// ---------------------------------------------------------------------------
+
+/**
+ * SMI-6076: views/trust-badge.ts's normalizeTierForBadge (private, re-exported
+ * here via getTrustBadgeColor) independently duplicates the same 2-entry
+ * experimental/unknown mapping that supabase/functions/_shared/trust-tier.ts's
+ * TIER_TRANSLATE and sidebar/trustTier.ts's LEGACY_MAP also hardcode. ADR-113
+ * forbids importing the edge function module (or any other in-repo package)
+ * into the extension at runtime, so this copy stays hand-maintained by design
+ * — but that leaves no automated check that it still agrees with the
+ * canonical mapping. fixtures/trust-tier-legacy-map.json is the single
+ * version-controlled source of truth for the 2-entry mapping all three copies
+ * must agree on. getTrustBadgeColor's return value IS the mapped tier code
+ * (e.g. 'community'), so it's the correct observable to assert the fixture
+ * against — getTrustBadgeText maps tier code -> display label, a different
+ * transformation not part of TIER_TRANSLATE's contract, so it's intentionally
+ * not checked here.
+ */
+describe('trust-badge.ts vs. the canonical shared fixture (SMI-6076)', () => {
+  const fixturePath = path.resolve(__dirname, '../../../../fixtures/trust-tier-legacy-map.json')
+  const fixture: Record<string, string> = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'))
+
+  it.each(Object.entries(fixture))(
+    'getTrustBadgeColor(%s) matches the fixture value %s',
+    (legacyTier, canonicalTier) => {
+      expect(getTrustBadgeColor(legacyTier)).toBe(canonicalTier)
+    }
+  )
 })
 
 // Security scan tests live in skill-panel-security.test.ts (SMI-4240 file-size split).

@@ -4,6 +4,8 @@
  * behavior for local/installed skills that carry no API tier.
  */
 import { describe, it, expect, vi } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
 
 vi.mock('vscode', () => ({
   ThemeIcon: class {
@@ -228,4 +230,38 @@ describe('getTrustTierCodicon', () => {
     expect(getTrustTierCodicon(undefined)).toBe('$(symbol-function)')
     expect(getTrustTierCodicon('')).toBe('$(symbol-function)')
   })
+})
+
+// ---------------------------------------------------------------------------
+// LEGACY_MAP vs. the canonical shared fixture (SMI-6076)
+// ---------------------------------------------------------------------------
+
+/**
+ * SMI-6076: LEGACY_MAP (private, above) independently duplicates the same
+ * 2-entry experimental/unknown mapping that supabase/functions/_shared/
+ * trust-tier.ts's TIER_TRANSLATE and views/trust-badge.ts's
+ * normalizeTierForBadge also hardcode. ADR-113 forbids importing the edge
+ * function module (or any other in-repo package) into the extension at
+ * runtime, so LEGACY_MAP stays a hand-maintained copy by design — but that
+ * leaves no automated check that it still agrees with the canonical mapping.
+ * fixtures/trust-tier-legacy-map.json is the single version-controlled
+ * source of truth for the 2-entry mapping all three copies must agree on.
+ * LEGACY_MAP itself isn't exported (by design — it's an implementation
+ * detail of normalizeTrustTier), so this asserts via the public API instead:
+ * for every key the fixture defines, normalizeTrustTier(key) must resolve to
+ * the fixture's value. LEGACY_MAP also carries two extra vscode-only legacy
+ * entries (standard, default) that predate the canonical mapping and have no
+ * edge-function counterpart — this test intentionally covers only the keys
+ * the fixture defines, not LEGACY_MAP's full entry set.
+ */
+describe('LEGACY_MAP vs. the canonical shared fixture (SMI-6076)', () => {
+  const fixturePath = path.resolve(__dirname, '../../../../fixtures/trust-tier-legacy-map.json')
+  const fixture: Record<string, string> = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'))
+
+  it.each(Object.entries(fixture))(
+    'normalizeTrustTier(%s) matches the fixture value %s',
+    (legacyTier, canonicalTier) => {
+      expect(normalizeTrustTier(legacyTier)).toBe(canonicalTier)
+    }
+  )
 })
