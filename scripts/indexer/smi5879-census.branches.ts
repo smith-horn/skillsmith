@@ -48,14 +48,13 @@ import {
   REEXOLUTION_SWEEP_MAX_PASSES,
   REEXOLUTION_SWEEP_WALL_CLOCK_BUDGET_MS,
   runResolutionPool,
-  writeOutcomesBatch,
-  updateOutcomesBatch,
   logResolutionProgress,
   checkCircuitBreaker,
   emptyResolutionCounts,
   BranchResolutionAuthError,
   BranchResolutionCircuitBreakerError,
 } from './smi5879-census.branches.helpers.ts'
+import { writeOutcomesBatch, updateOutcomesBatch } from './smi5879-census.branches.writes.ts'
 import type {
   BranchResolutionSummary,
   DistinctRepo,

@@ -1,6 +1,9 @@
 /**
- * Worker-pool, batched-write, circuit-breaker, and progress-logging machinery
- * for smi5879-census.branches.ts's default_branch resolution pass (SMI-6015).
+ * Per-repo resolution, worker-pool, circuit-breaker, and progress-logging
+ * machinery for smi5879-census.branches.ts's default_branch resolution pass
+ * (SMI-6015). Batched-write / SQL-builder machinery lives in the sibling
+ * ./smi5879-census.branches.writes.ts (split out 2026-08-18, this file's own
+ * post-merge retro, to stay under the 500-line-per-file budget).
  * @module scripts/indexer/smi5879-census.branches.helpers
  *
  * Split out of smi5879-census.branches.ts to stay under CLAUDE.md's
@@ -53,12 +56,7 @@ import {
   type CancellablePoolResult,
 } from './_shared/rate-limit.ts'
 import { GitHubAuthError, clearTokenCache } from './_shared/github-auth.ts'
-import { runPsql, type PgConnParams } from './smi5879-census.pg.ts'
-import type {
-  BranchResolutionOutcome,
-  DistinctRepo,
-  ResolutionOutcome,
-} from './smi5879-census.types.ts'
+import type { DistinctRepo, ResolutionOutcome } from './smi5879-census.types.ts'
 
 // ---------------------------------------------------------------------------
 // Constants (named, per CLAUDE.md — no magic numbers)
@@ -211,13 +209,25 @@ export async function resolveOne(
   telemetry: RateLimitTelemetry,
   bucket: ReturnType<typeof createTokenBucket>
 ): Promise<ResolutionOutcome> {
+  // `attempts` is PURELY the outer loop's own retry-BUDGET counter (gates
+  // `while` below) -- it must stay untouched by the 401 branch, or the
+  // dedicated 401 retry silently consumes one of the outer loop's own
+  // attempts, truncating the general 403/429/5xx retry budget below what
+  // this function's own docs promise (GPT-5.6-Sol round-2 review,
+  // 2026-08-18: walked a 401 -> 403 -> 5xx sequence that loses its 4th,
+  // otherwise-available attempt if the two counters are conflated).
+  // `totalRequests` is the separate, purely additive count of real HTTP
+  // requests made -- what `ResolutionOutcome.attempts` actually reports
+  // downstream, so it DOES include the 401 retry's own request.
   let attempts = 0
+  let totalRequests = 0
   let lastStatus: number | null = null
   while (attempts < MAX_RETRIES) {
     attempts++
     await bucket.acquire()
     try {
       const headers = await getHeaders()
+      totalRequests++
       let response = await withRateLimitTracking(
         telemetry,
         `https://api.github.com/repos/${repo.owner}/${repo.repo}`,
@@ -228,13 +238,7 @@ export async function resolveOne(
         clearTokenCache()
         await new Promise((r) => setTimeout(r, AUTH_RETRY_BACKOFF_MS))
         await bucket.acquire()
-        // GPT-5.6-Sol review: count this dedicated retry's own HTTP request
-        // in the reported `attempts` too -- it's independent of the outer
-        // loop's counter above but is still a real request against the
-        // repo, and `attempts` is persisted/accumulated across re-resolution
-        // sweep passes downstream, so undercounting it understates real
-        // request volume.
-        attempts++
+        totalRequests++
         const retryHeaders = await getHeaders()
         response = await withRateLimitTracking(
           telemetry,
@@ -248,7 +252,13 @@ export async function resolveOne(
       lastStatus = response.status
 
       if (response.status === 404) {
-        return { repo, resolution: 'not-found', defaultBranch: null, httpStatus: 404, attempts }
+        return {
+          repo,
+          resolution: 'not-found',
+          defaultBranch: null,
+          httpStatus: 404,
+          attempts: totalRequests,
+        }
       }
       if (response.status === 403 || response.status === 429) {
         await waitOutRateLimit(response)
@@ -269,7 +279,7 @@ export async function resolveOne(
             resolution: 'resolved',
             defaultBranch,
             httpStatus: response.status,
-            attempts,
+            attempts: totalRequests,
           }
         }
         // 200 with no usable default_branch is a shape we've never seen from GitHub
@@ -279,7 +289,7 @@ export async function resolveOne(
           resolution: 'transient',
           defaultBranch: null,
           httpStatus: response.status,
-          attempts,
+          attempts: totalRequests,
         }
       }
       // Unclassified status — safe default is transient, never a false not-found.
@@ -288,7 +298,7 @@ export async function resolveOne(
         resolution: 'transient',
         defaultBranch: null,
         httpStatus: response.status,
-        attempts,
+        attempts: totalRequests,
       }
     } catch (err) {
       // Fatal auth failure must never be swallowed into the network-error retry below.
@@ -298,7 +308,13 @@ export async function resolveOne(
       continue
     }
   }
-  return { repo, resolution: 'transient', defaultBranch: null, httpStatus: lastStatus, attempts }
+  return {
+    repo,
+    resolution: 'transient',
+    defaultBranch: null,
+    httpStatus: lastStatus,
+    attempts: totalRequests,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -385,113 +401,8 @@ export function logResolutionProgress(
   )
 }
 
-// ---------------------------------------------------------------------------
-// Batched writes — json_to_recordset, real JSON null (no NULLIF sentinel)
-// ---------------------------------------------------------------------------
-
-interface RecordsetRow {
-  owner: string
-  repo: string
-  default_branch: string | null
-  resolution: BranchResolutionOutcome
-  http_status: number | null
-  attempts: number
-}
-
-/**
- * Pick a `$tag$...$tag$` dollar-quote delimiter guaranteed not to occur
- * inside `payload` — collision-checked, not merely assumed unlikely. The SQL
- * text (including this literal) is piped to `psql` via STDIN
- * (`smi5879-census.pg.ts`'s `spawnPsql` writes `sql` to `child.stdin`), so
- * there is no `-v`/argv size limit to worry about for a large batch, unlike
- * the old NULLIF-sentinel `-v` substitution this replaces.
- */
-function pickDollarQuoteTag(payload: string): string {
-  let tag = '$smi5879b$'
-  let n = 0
-  while (payload.includes(tag)) {
-    n++
-    tag = `$smi5879b${n}$`
-  }
-  return tag
-}
-
-function toRecordsetRow(o: ResolutionOutcome): RecordsetRow {
-  return {
-    owner: o.repo.owner,
-    repo: o.repo.repo,
-    default_branch: o.defaultBranch,
-    resolution: o.resolution,
-    http_status: o.httpStatus,
-    attempts: o.attempts,
-  }
-}
-
-function jsonRecordsetLiteral(outcomes: readonly ResolutionOutcome[]): string {
-  const json = JSON.stringify(outcomes.map(toRecordsetRow))
-  const tag = pickDollarQuoteTag(json)
-  return `${tag}${json}${tag}`
-}
-
-const RECORDSET_COLUMNS =
-  'owner text, repo text, default_branch text, resolution text, http_status integer, attempts integer'
-
-/**
- * Build the batched INSERT for a fresh set of outcomes (main pass). JSON
- * `null` for `default_branch`/`http_status` maps straight to SQL NULL via
- * `json_to_recordset`'s column typing — no NULLIF empty-string sentinel
- * needed (the old one-repo-at-a-time `writeOutcome` needed it only because
- * psql's `-v`/`:'var'` substitution cannot produce a bare SQL NULL; this
- * batched form never goes through that substitution for the payload).
- */
-export function buildBatchInsertSql(
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): { sql: string; vars: Record<string, string> } {
-  const literal = jsonRecordsetLiteral(outcomes)
-  const sql = `
-    INSERT INTO smi5879_repo_branch (run_id, owner, repo, default_branch, resolution, http_status, attempts)
-    SELECT :'run_id', owner, repo, default_branch, resolution, http_status, attempts
-    FROM json_to_recordset(${literal}::json) AS x(${RECORDSET_COLUMNS});
-  `
-  return { sql, vars: { run_id: runId } }
-}
-
-/** Build the batched UPDATE for a re-resolution sweep pass — `attempts` accumulates onto the existing row. */
-export function buildBatchUpdateSql(
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): { sql: string; vars: Record<string, string> } {
-  const literal = jsonRecordsetLiteral(outcomes)
-  const sql = `
-    UPDATE smi5879_repo_branch b
-       SET default_branch = x.default_branch,
-           resolution     = x.resolution,
-           http_status    = x.http_status,
-           attempts       = b.attempts + x.attempts,
-           resolved_at    = now()
-      FROM json_to_recordset(${literal}::json) AS x(${RECORDSET_COLUMNS})
-     WHERE b.run_id = :'run_id' AND b.owner = x.owner AND b.repo = x.repo;
-  `
-  return { sql, vars: { run_id: runId } }
-}
-
-export async function writeOutcomesBatch(
-  conn: PgConnParams,
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): Promise<void> {
-  if (outcomes.length === 0) return
-  const { sql, vars } = buildBatchInsertSql(runId, outcomes)
-  await runPsql(conn, sql, vars)
-}
-
-export async function updateOutcomesBatch(
-  conn: PgConnParams,
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): Promise<void> {
-  if (outcomes.length === 0) return
-  const { sql, vars } = buildBatchUpdateSql(runId, outcomes)
-  await runPsql(conn, sql, vars)
-}
+// Batched-write / SQL-builder machinery (buildBatchInsertSql,
+// buildBatchUpdateSql, writeOutcomesBatch, updateOutcomesBatch) moved to
+// ./smi5879-census.branches.writes.ts (SMI-6015 post-merge retro,
+// 2026-08-18) to stay under the 500-line-per-file budget — no logical
+// boundary change, same code, different file.

@@ -21,8 +21,6 @@ import {
   waitOutRateLimit,
   runResolutionPool,
   checkCircuitBreaker,
-  buildBatchInsertSql,
-  buildBatchUpdateSql,
   BranchResolutionAuthError,
   BranchResolutionCircuitBreakerError,
   MAX_RETRIES,
@@ -141,6 +139,25 @@ describe('resolveOne', () => {
     // Two real HTTP requests were made (the 401, then the retry) -- attempts
     // must reflect that, not the outer loop's own attempts=1.
     expect(outcome.attempts).toBe(2)
+  })
+
+  it("GPT-5.6-Sol round-2 finding: a 401-then-recovered-to-a-retryable-status sequence still gets the FULL outer retry budget -- the reporting counter must not consume the outer loop's own attempts", async () => {
+    // Reviewer's exact walkthrough: 401 -> 403 -> 5xx should still permit a
+    // 4th request (the outer loop's own 3rd attempt) -- if the 401 retry's
+    // HTTP request were still (incorrectly) shared with the outer `attempts`
+    // budget, the loop would exhaust after only 3 fetch calls and this 4th
+    // response would never even be consumed, returning 'transient' instead.
+    const fetchMock = queueFetch([
+      new Response('', { status: 401 }),
+      new Response('', { status: 403 }), // the 401's dedicated retry recovers to a DIFFERENT retryable status
+      new Response('', { status: 500 }), // outer attempt 2
+      repoResponse('develop'), // outer attempt 3 -- only reachable if the outer budget is truly untouched
+    ])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(outcome.resolution).toBe('resolved')
+    expect(outcome.defaultBranch).toBe('develop')
+    expect(outcome.attempts).toBe(4)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 
   it("GPT-5.6-Sol Low finding (post-merge retro): clearTokenCache() fires BEFORE the retry's getHeaders() call, and the retry's fetch actually carries whatever getHeaders returns next -- proves real remint wiring, not just that clearTokenCache was called", async () => {
@@ -483,103 +500,6 @@ describe('checkCircuitBreaker', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// buildBatchInsertSql / buildBatchUpdateSql — json_to_recordset NULL semantics
-// ---------------------------------------------------------------------------
-
-/** Locate the `$tag$...$tag$` literal following `json_to_recordset(` and parse it, tag-suffix-agnostic. */
-function extractRecordsetJson(sql: string): unknown {
-  const marker = 'json_to_recordset('
-  const startIdx = sql.indexOf(marker)
-  if (startIdx === -1) throw new Error('json_to_recordset( not found in SQL')
-  const rest = sql.slice(startIdx + marker.length)
-  const tagMatch = rest.match(/^\$smi5879b\d*\$/)
-  if (!tagMatch) throw new Error('no dollar-quote tag found immediately after json_to_recordset(')
-  const tag = tagMatch[0]
-  const afterTag = rest.slice(tag.length)
-  const endIdx = afterTag.indexOf(tag)
-  if (endIdx === -1) throw new Error('closing dollar-quote tag not found')
-  return JSON.parse(afterTag.slice(0, endIdx))
-}
-
-describe('buildBatchInsertSql / buildBatchUpdateSql', () => {
-  const outcomes: ResolutionOutcome[] = [
-    {
-      repo: { owner: 'acme', repo: 'resolved-repo' },
-      resolution: 'resolved',
-      defaultBranch: 'main',
-      httpStatus: 200,
-      attempts: 1,
-    },
-    {
-      repo: { owner: 'acme', repo: 'transient-repo' },
-      resolution: 'transient',
-      defaultBranch: null,
-      httpStatus: null,
-      attempts: 3,
-    },
-    {
-      repo: { owner: 'acme', repo: 'notfound-repo' },
-      resolution: 'not-found',
-      defaultBranch: null,
-      httpStatus: 404,
-      attempts: 1,
-    },
-  ]
-
-  it('INSERT: embeds real JSON null for default_branch/http_status — no NULLIF sentinel hack', () => {
-    const { sql, vars } = buildBatchInsertSql('run-1', outcomes)
-    expect(vars).toEqual({ run_id: 'run-1' })
-    expect(sql).toContain('INSERT INTO smi5879_repo_branch')
-    expect(sql).not.toContain('NULLIF')
-
-    const parsed = extractRecordsetJson(sql) as Array<Record<string, unknown>>
-    expect(parsed).toHaveLength(3)
-    expect(parsed[0]).toEqual({
-      owner: 'acme',
-      repo: 'resolved-repo',
-      default_branch: 'main',
-      resolution: 'resolved',
-      http_status: 200,
-      attempts: 1,
-    })
-    // The exact case the old NULLIF-sentinel existed for — confirm it's a
-    // real JSON null, not an empty string.
-    expect(parsed[1]?.['default_branch']).toBeNull()
-    expect(parsed[1]?.['http_status']).toBeNull()
-    expect(parsed[2]?.['default_branch']).toBeNull()
-    expect(parsed[2]?.['http_status']).toBe(404)
-  })
-
-  it('UPDATE: same JSON-null preservation, plus the additive `attempts = b.attempts + x.attempts` clause', () => {
-    const { sql, vars } = buildBatchUpdateSql('run-1', outcomes)
-    expect(vars).toEqual({ run_id: 'run-1' })
-    expect(sql).toContain('UPDATE smi5879_repo_branch')
-    expect(sql).toContain('attempts       = b.attempts + x.attempts')
-    expect(sql).toContain("WHERE b.run_id = :'run_id' AND b.owner = x.owner AND b.repo = x.repo")
-    expect(sql).not.toContain('NULLIF')
-
-    const parsed = extractRecordsetJson(sql) as Array<Record<string, unknown>>
-    expect(parsed[1]?.['default_branch']).toBeNull()
-  })
-
-  it('picks a collision-free dollar-quote tag even when the payload literally contains the default tag text', () => {
-    const trickyOutcomes: ResolutionOutcome[] = [
-      {
-        repo: { owner: 'acme', repo: 'weird' },
-        resolution: 'resolved',
-        defaultBranch: 'contains-$smi5879b$-literally',
-        httpStatus: 200,
-        attempts: 1,
-      },
-    ]
-    const { sql } = buildBatchInsertSql('run-1', trickyOutcomes)
-    const parsed = extractRecordsetJson(sql) as Array<Record<string, unknown>>
-    expect(parsed[0]?.['default_branch']).toBe('contains-$smi5879b$-literally')
-  })
-
-  it('an empty outcomes array still builds valid (if pointless) SQL — callers skip the psql call entirely, not this builder', () => {
-    const { sql } = buildBatchInsertSql('run-1', [])
-    expect(extractRecordsetJson(sql)).toEqual([])
-  })
-})
+// buildBatchInsertSql / buildBatchUpdateSql tests moved to
+// smi5879-census.branches.writes.test.ts (SMI-6015 post-merge retro,
+// 2026-08-18) alongside the source split — see that file's own header.
