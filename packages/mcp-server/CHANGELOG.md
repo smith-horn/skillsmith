@@ -16,7 +16,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   installed clients (matching `inventory_push`'s existing `collectDeviceSkills()` precedent).
   Commands/agents/CLAUDE.md trigger-phrase scanning stays Claude Code-only — no other client has
   an equivalent construct. Tool description updated to match (GH#2368 C-12, SMI-6077)
-
+- **Fix**: `private_registry_publish`/`private_registry_manage` couldn't resolve a team from a
+  complimentary-granted (`admin-grant-subscription`) `SKILLSMITH_API_KEY` — team resolution now
+  falls back to it when `SKILLSMITH_LICENSE_KEY` is unset (`SKILLSMITH_LICENSE_KEY` still wins
+  when both are set). Both credentials hash into the identical `license_keys.key_hash` lookup, so
+  this isn't a broadened attack surface — just a missing fallback. (SMI-6080)
 - **Feature**: `get_skill`, `search`, and `skill_recommend` now surface a partial-scan caveat
   ("Note: partial scan — some files could not be analyzed (...)") when the registry's extended
   operational-code scan (SMI-6033 Wave 2, Gap 8) couldn't cover every candidate file for a skill.

@@ -49,7 +49,7 @@
  * one. Failures are logged to stderr (the MCP transport's log channel) and swallowed.
  */
 
-import { sha256Hex } from '@skillsmith/core'
+import { createHash } from 'node:crypto'
 import { getSupabaseAdminClient } from '../supabase-client.js'
 import { readLicenseKey } from './team-resolver.js'
 
@@ -140,8 +140,13 @@ export function licenseKeyFingerprint(licenseKey?: string): string | null {
   // which is why this line is newly flagged; the same rationale that already
   // applies to the SKILLSMITH_LICENSE_KEY path applies unchanged to it too —
   // both hash into the identical license_keys.key_hash lookup, and neither
-  // is ever compared against a stored hash to authenticate anything.
-  return sha256Hex(key).slice(0, FINGERPRINT_LENGTH)
+  // is ever compared against a stored hash to authenticate anything. Calls
+  // node:crypto directly (not the shared sha256Hex() journal-chain helper)
+  // so this inline suppression sits at CodeQL's actual flagged sink — going
+  // through the shared wrapper reports the alert inside journal/hash.ts
+  // instead, a generic multi-purpose utility where a blanket suppression
+  // would be both wrong (too broad) and ineffective (wrong file).
+  return createHash('sha256').update(key).digest('hex').slice(0, FINGERPRINT_LENGTH)
 }
 
 /**
