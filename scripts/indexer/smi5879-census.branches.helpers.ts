@@ -27,11 +27,21 @@
  * fresh on every retry attempt (not once for the whole pass — see
  * `_shared/github-auth.ts`'s `getInstallationToken()`, which caches and only
  * re-mints near expiry, so this costs ~nil when the token is still fresh);
- * 401 is fatal and aborts the pass immediately rather than being classified
- * `transient`; writes are batched via `json_to_recordset` (~500 rows/psql
- * spawn) and flushed incrementally as outcomes arrive, not held until the
- * whole pass completes; and a circuit breaker aborts a doomed pass early
- * instead of continuing for hours.
+ * 401 gets one dedicated cache-busted retry and is otherwise fatal, aborting
+ * the pass rather than being classified `transient`; writes are batched via
+ * `json_to_recordset` (~500 rows/psql spawn) and flushed incrementally as
+ * outcomes arrive, not held until the whole pass completes; and a circuit
+ * breaker aborts a doomed pass early instead of continuing for hours.
+ *
+ * SMI-6015 follow-up (2026-08-18): a production run hit a single 401 after
+ * ~1h54m and 2,298/30,471 repos resolved, aborted per (1) above exactly as
+ * designed — but a live re-check immediately after showed a freshly-minted
+ * installation token succeeding cleanly against the SAME repo, with no
+ * correlating GitHub-status incident in the window. A lone 401 is therefore
+ * not by itself proof of a dead credential. `resolveOne` now gives a 401
+ * exactly one retry (`clearTokenCache()` + fresh mint) before treating it as
+ * fatal — a second 401 straight after a guaranteed-fresh token remains
+ * unambiguous and still aborts the whole pass.
  */
 
 import {
@@ -42,7 +52,7 @@ import {
   type PoolAbortSignal,
   type CancellablePoolResult,
 } from './_shared/rate-limit.ts'
-import { GitHubAuthError } from './_shared/github-auth.ts'
+import { GitHubAuthError, clearTokenCache } from './_shared/github-auth.ts'
 import { runPsql, type PgConnParams } from './smi5879-census.pg.ts'
 import type {
   BranchResolutionOutcome,
@@ -59,12 +69,21 @@ export const REPO_RESOLUTION_RATE_PER_SEC = 1
 export const REPO_RESOLUTION_BURST = 3
 /** Bounded concurrency for the resolution pass (matches revalidate-stale-quarantines.ts's polite BATCH). */
 export const RESOLUTION_CONCURRENCY = 5
-/** Per-repo retry budget inside `resolveOne` (403/429/5xx/network only — 401 never retries). */
+/** Per-repo retry budget inside `resolveOne` (403/429/5xx/network — separate from the dedicated 401 retry below). */
 export const MAX_RETRIES = 3
 /** Fixed backoff for a 403/429 that is NOT a primary rate-limit exhaustion (secondary/abuse detection). */
 export const SECONDARY_RATE_LIMIT_BACKOFF_MS = 1_000
 /** Backoff for a 5xx/network error, multiplied by the attempt number. */
 export const SERVER_ERROR_BACKOFF_MS = 500
+/**
+ * SMI-6015 follow-up (2026-08-18 production incident): a single 401 does not
+ * by itself prove a dead credential — observed live, a freshly re-minted
+ * installation token succeeded immediately after an in-pass 401 with no
+ * correlating GitHub-status incident. Fixed backoff before the ONE dedicated
+ * retry `resolveOne` gives a 401 (via `clearTokenCache()` + a fresh mint),
+ * independent of the general `attempts` budget above.
+ */
+export const AUTH_RETRY_BACKOFF_MS = 500
 /** Small buffer added past `x-ratelimit-reset` to avoid retrying right on the reset boundary. */
 export const PRIMARY_RATE_LIMIT_RESET_BUFFER_MS = 2_000
 /** Fallback wait when a primary-rate-limit 403/429 carries no usable `x-ratelimit-reset`. */
@@ -89,10 +108,12 @@ export const REEXOLUTION_SWEEP_WALL_CLOCK_BUDGET_MS = 10 * 60 * 1000
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown by `resolveOne` on an HTTP 401 — a credential-level failure, not a
- * per-repo condition (GitHub returns 404, not 401, for a repo the token
- * can't see). Propagates through `runResolutionPool` to abort the whole
- * pass; callers must never catch-and-continue this as a `transient` outcome.
+ * Thrown by `resolveOne` on a SECOND consecutive HTTP 401 — after its one
+ * dedicated cache-busted retry also came back 401 — a credential-level
+ * failure, not a per-repo condition (GitHub returns 404, not 401, for a repo
+ * the token can't see). Propagates through `runResolutionPool` to abort the
+ * whole pass; callers must never catch-and-continue this as a `transient`
+ * outcome.
  */
 export class BranchResolutionAuthError extends GitHubAuthError {
   constructor(
@@ -160,6 +181,18 @@ export async function waitOutRateLimit(response: Response): Promise<void> {
  * `getHeaders` is invoked FRESH on every attempt (SMI-6015) — never once for
  * the whole pass — so a token that expires mid-pass is transparently
  * refreshed on the next attempt rather than producing a silent 401 storm.
+ *
+ * A 401 gets exactly ONE dedicated retry (SMI-6015 follow-up, 2026-08-18)
+ * before being treated as fatal: `clearTokenCache()` forces a genuinely
+ * fresh mint (not just another read of a possibly-still-"valid"-by-the-clock
+ * cached token), then the SAME request is retried. This retry is deliberately
+ * independent of the general `attempts` loop below — inlined into the 401
+ * branch itself, not a `continue` back through the outer `while` — so a 401
+ * arriving on the loop's OWN final attempt still gets its one chance rather
+ * than silently falling through to this function's "unclassified status,
+ * safe default is transient" catch-all, which would misclassify a
+ * genuinely-dead credential exactly as `BranchResolutionAuthError` exists to
+ * prevent. A SECOND 401 (after a guaranteed-fresh token) is unambiguous.
  */
 export async function resolveOne(
   repo: DistinctRepo,
@@ -174,16 +207,28 @@ export async function resolveOne(
     await bucket.acquire()
     try {
       const headers = await getHeaders()
-      const response = await withRateLimitTracking(
+      let response = await withRateLimitTracking(
         telemetry,
         `https://api.github.com/repos/${repo.owner}/${repo.repo}`,
         { headers, _throwOnRateLimit: false }
       )
-      lastStatus = response.status
 
       if (response.status === 401) {
-        throw new BranchResolutionAuthError(repo, response.status)
+        clearTokenCache()
+        await new Promise((r) => setTimeout(r, AUTH_RETRY_BACKOFF_MS))
+        await bucket.acquire()
+        const retryHeaders = await getHeaders()
+        response = await withRateLimitTracking(
+          telemetry,
+          `https://api.github.com/repos/${repo.owner}/${repo.repo}`,
+          { headers: retryHeaders, _throwOnRateLimit: false }
+        )
+        if (response.status === 401) {
+          throw new BranchResolutionAuthError(repo, response.status)
+        }
       }
+      lastStatus = response.status
+
       if (response.status === 404) {
         return { repo, resolution: 'not-found', defaultBranch: null, httpStatus: 404, attempts }
       }

@@ -109,19 +109,66 @@ describe('resolveOne', () => {
     expect(outcome.attempts).toBe(MAX_RETRIES)
   })
 
-  it('401 throws BranchResolutionAuthError immediately — one attempt, never retried, never transient', async () => {
-    const fetchMock = queueFetch([new Response('', { status: 401 })])
+  it('SMI-6015 follow-up: 401 gets exactly one cache-busted retry before throwing — a second 401 is fatal, never transient', async () => {
+    const fetchMock = queueFetch([
+      new Response('', { status: 401 }),
+      new Response('', { status: 401 }),
+    ])
     await expect(
       resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
     ).rejects.toThrow(BranchResolutionAuthError)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('401 error names the offending repo', async () => {
-    queueFetch([new Response('', { status: 401 })])
+    queueFetch([new Response('', { status: 401 }), new Response('', { status: 401 })])
     await expect(
       resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
     ).rejects.toThrow(/acme\/widget/)
+  })
+
+  it('SMI-6015 follow-up: a 401 followed by a successful retry recovers — does not throw, does not lose the pass', async () => {
+    const fetchMock = queueFetch([new Response('', { status: 401 }), repoResponse('develop')])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(outcome.resolution).toBe('resolved')
+    expect(outcome.defaultBranch).toBe('develop')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('SMI-6015 follow-up: clearTokenCache() is actually invoked on a 401 before the retry', async () => {
+    const authModule = await import('../../indexer/_shared/github-auth.ts')
+    const clearSpy = vi.spyOn(authModule, 'clearTokenCache')
+    queueFetch([new Response('', { status: 401 }), repoResponse('main')])
+    await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(clearSpy).toHaveBeenCalledTimes(1)
+    clearSpy.mockRestore()
+  })
+
+  it("SMI-6015 follow-up EDGE CASE: a 401 on the outer loop's own FINAL attempt still gets its dedicated retry and recovers — never silently falls through to transient", async () => {
+    // MAX_RETRIES-1 5xx responses burn every attempt except the last, so the
+    // 401 below lands exactly on attempts===MAX_RETRIES (the while loop's
+    // own final iteration) — the case that would silently fall through to
+    // "unclassified -> transient" if the 401 retry were implemented as a
+    // `continue` back through the outer loop instead of an inline retry.
+    queueFetch([
+      ...Array.from({ length: MAX_RETRIES - 1 }, () => new Response('', { status: 500 })),
+      new Response('', { status: 401 }),
+      repoResponse('develop'),
+    ])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(outcome.resolution).toBe('resolved')
+    expect(outcome.defaultBranch).toBe('develop')
+  })
+
+  it('SMI-6015 follow-up EDGE CASE: a 401 on the final attempt whose retry ALSO 401s still throws — never silently returns transient', async () => {
+    queueFetch([
+      ...Array.from({ length: MAX_RETRIES - 1 }, () => new Response('', { status: 500 })),
+      new Response('', { status: 401 }),
+      new Response('', { status: 401 }),
+    ])
+    await expect(
+      resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    ).rejects.toThrow(BranchResolutionAuthError)
   })
 
   it('getHeaders is invoked fresh on every retry attempt — the SMI-6015 fix — not once for the whole call', async () => {
@@ -295,9 +342,14 @@ describe('runResolutionPool', () => {
       owner: 'acme',
       repo: `r${i}`,
     }))
-    queueFetch(
-      repos.map((_, i) => (i === 3 ? new Response('', { status: 401 }) : repoResponse('main')))
-    )
+    // SMI-6015 follow-up: index 3 now needs TWO queued 401s — resolveOne's
+    // dedicated retry consumes one extra fetch call before it gives up and
+    // aborts the pool, same as a genuinely dead credential would.
+    queueFetch([
+      ...Array.from({ length: 3 }, () => repoResponse('main')),
+      new Response('', { status: 401 }),
+      new Response('', { status: 401 }),
+    ])
     const outcomes: ResolutionOutcome[] = []
     const { abortedBy } = await runResolutionPool(
       repos,
