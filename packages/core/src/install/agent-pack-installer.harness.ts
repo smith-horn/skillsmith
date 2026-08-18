@@ -271,7 +271,14 @@ function hookMatcherEntry(scriptPath: string): Record<string, unknown> {
   return { matcher: '', hooks: [{ type: 'command', command: scriptPath }] }
 }
 
-function hookEntryCommand(item: unknown): string | undefined {
+/**
+ * Exported for reuse by the Cursor legacy-key cleanup step
+ * (`agent-pack-installer.cursor-hooks.ts`, SMI-5893 Wave 10, code-review
+ * finding) — same Claude-shaped `{ matcher, hooks: [{ command }] }` entry
+ * extraction, needed outside this module to identify our own entries under
+ * a stale legacy key without a second, drift-prone duplicate implementation.
+ */
+export function hookEntryCommand(item: unknown): string | undefined {
   if (!item || typeof item !== 'object') return undefined
   const hooks = (item as Record<string, unknown>).hooks
   if (!Array.isArray(hooks) || hooks.length === 0) return undefined

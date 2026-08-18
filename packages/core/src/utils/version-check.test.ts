@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   checkForUpdates,
   formatUpdateNotification,
+  resolveUpdateNotificationClient,
   type VersionCheckResult,
 } from './version-check.js'
 
@@ -131,21 +132,72 @@ describe('version-check', () => {
     })
   })
 
-  describe('formatUpdateNotification', () => {
-    it('formats notification message correctly', () => {
-      const result: VersionCheckResult = {
-        currentVersion: '0.3.0',
-        latestVersion: '0.4.0',
-        updateAvailable: true,
-        updateCommand: 'npx @skillsmith/mcp-server@latest',
-      }
+  describe('formatUpdateNotification (SMI-5893 Wave 10)', () => {
+    const result: VersionCheckResult = {
+      currentVersion: '0.3.0',
+      latestVersion: '0.4.0',
+      updateAvailable: true,
+      updateCommand: 'npx @skillsmith/mcp-server@latest',
+    }
 
+    // Exact-match, not toContain(): pins line ordering/newline placement so
+    // a future edit that drops or reorders a line still fails a test
+    // (code-review finding on the prior toContain()-only assertions).
+    it('names the version bump, the actual upgrade command, and both artifact-refresh commands — exact message, no client', () => {
       const message = formatUpdateNotification(result)
 
       expect(message).toBe(
         '[skillsmith] Update available: 0.3.0 → 0.4.0\n' +
-          'Restart Claude Code to use the latest version.'
+          'Run `npx @skillsmith/mcp-server@latest` to use the new version.\n' +
+          'Note: upgrading does not refresh onboarding artifacts already on disk —\n' +
+          'run `skillsmith setup --force` to refresh the bundled skill, and\n' +
+          '`skillsmith agent install` to refresh hooks/MCP registration.'
       )
+      expect(message).not.toContain('Claude Code')
+      expect(message).not.toContain('Restart')
+    })
+
+    it('threads a resolved client into the setup command, not the agent-install command (which has no --client flag) — exact message', () => {
+      const message = formatUpdateNotification(result, 'cursor')
+
+      expect(message).toBe(
+        '[skillsmith] Update available: 0.3.0 → 0.4.0\n' +
+          'Run `npx @skillsmith/mcp-server@latest` to use the new version.\n' +
+          'Note: upgrading does not refresh onboarding artifacts already on disk —\n' +
+          'run `skillsmith setup --force --client cursor` to refresh the bundled skill, and\n' +
+          '`skillsmith agent install` to refresh hooks/MCP registration.'
+      )
+    })
+
+    it('uses whatever updateCommand the caller passes in, not a hardcoded npx string', () => {
+      const message = formatUpdateNotification({
+        ...result,
+        updateCommand: 'npm install -g @skillsmith/mcp-server',
+      })
+
+      expect(message).toContain(
+        'Run `npm install -g @skillsmith/mcp-server` to use the new version.'
+      )
+    })
+  })
+
+  describe('resolveUpdateNotificationClient (SMI-5893 Wave 10, code-review finding)', () => {
+    it('returns undefined when the env var is unset — does not default to claude-code', () => {
+      expect(resolveUpdateNotificationClient(undefined)).toBeUndefined()
+    })
+
+    it('returns undefined for an empty string', () => {
+      expect(resolveUpdateNotificationClient('')).toBeUndefined()
+    })
+
+    it('resolves a valid client id', () => {
+      expect(resolveUpdateNotificationClient('cursor')).toBe('cursor')
+      expect(resolveUpdateNotificationClient('claude-code')).toBe('claude-code')
+    })
+
+    it('returns undefined (never throws) for an invalid client value', () => {
+      expect(() => resolveUpdateNotificationClient('totally-bogus-client')).not.toThrow()
+      expect(resolveUpdateNotificationClient('totally-bogus-client')).toBeUndefined()
     })
   })
 })

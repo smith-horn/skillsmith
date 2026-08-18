@@ -27,6 +27,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   `LicenseTier` TSDoc in `middleware/license.ts` (same 10x error plus the same unpublished
   Enterprise price), and the equivalent Cursor `npx`/pricing text in both this package's
   and the root repo's README.md (SMI-5893 Wave 11, GH#2368 C-19)
+- **Fix**: the auto-update-available notification now resolves `SKILLSMITH_CLIENT` via
+  `@skillsmith/core`'s new `resolveUpdateNotificationClient()` instead of the throwing
+  `resolveClientId` — the notification is built inside a `.then()` whose trailing `.catch()` is
+  empty, so an invalid env value previously threw and silently dropped the entire notification
+  rather than degrading to the generic message (SMI-5893 Wave 10, GH#2368 C-06/C-07/C-22)
 - **Feature**: `skill_validate` now runs the existing (previously unwired) typosquat-name
   detector, checking a candidate skill's name against a bundled, periodically-regenerated
   reference-list snapshot of high-trust authors and top-starred skills. Warn-tier only — this

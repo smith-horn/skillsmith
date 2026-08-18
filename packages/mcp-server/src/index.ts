@@ -76,7 +76,11 @@ import { isFirstRun, markFirstRunComplete } from './onboarding/first-run.js'
 // composition) lives in this sibling to keep index.ts under the 500-LOC gate.
 // Re-exported below for integration testability (plan G).
 import { maybeInstallMissingTier1Skills } from './onboarding/tier1-self-heal.js'
-import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
+import {
+  checkForUpdates,
+  formatUpdateNotification,
+  resolveUpdateNotificationClient,
+} from '@skillsmith/core'
 // SMI-5456: agent-mediation marker channel — resolution + AsyncLocalStorage
 // scoping now live in call-tool-handler.js (SMI-5479 extraction).
 // SMI-5479: flush-on-shutdown wiring lives in shutdown.js (own module — no
@@ -433,7 +437,14 @@ async function main() {
     checkForUpdates(PACKAGE_NAME, PACKAGE_VERSION)
       .then((result) => {
         if (result?.updateAvailable) {
-          console.error(formatUpdateNotification(result)) // SMI-5615: plain console.error, not disk-only logger.info
+          // SMI-5893 Wave 10: resolveUpdateNotificationClient never throws
+          // (code-review finding — an uncaught throw here would be silently
+          // swallowed by the .catch() below, dropping this entire
+          // notification) and stays undefined when SKILLSMITH_CLIENT is
+          // unset rather than guessing claude-code.
+          const client = resolveUpdateNotificationClient(process.env.SKILLSMITH_CLIENT)
+          // SMI-5615: plain console.error, not disk-only logger.info
+          console.error(formatUpdateNotification(result, client))
         }
       })
       .catch(() => {

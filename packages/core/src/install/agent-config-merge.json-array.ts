@@ -43,7 +43,14 @@ function setAtPath(
   if (lastKey !== undefined) cur[lastKey] = value
 }
 
-function writeBackup(sourcePath: string, backupDir: string): string {
+/**
+ * Exported for reuse by the Cursor legacy-key cleanup step
+ * (`agent-pack-installer.cursor-hooks.ts`, SMI-5893 Wave 10) — same backup
+ * convention (timestamped `.bak` file in the run's backup dir), needed
+ * outside the normal merge-entry path when mutating a config file for a
+ * reason other than adding/updating our own array entry.
+ */
+export function writeBackup(sourcePath: string, backupDir: string): string {
   mkdirSync(backupDir, { recursive: true, mode: 0o700 })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const baseName = sourcePath.split('/').pop() ?? 'config'

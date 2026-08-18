@@ -324,6 +324,7 @@ export {
 export {
   checkForUpdates,
   formatUpdateNotification,
+  resolveUpdateNotificationClient,
   type VersionCheckResult,
 } from './utils/version-check.js'
 
