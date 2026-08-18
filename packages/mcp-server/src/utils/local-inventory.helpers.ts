@@ -11,6 +11,8 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 
+import { CANONICAL_CLIENT } from '@skillsmith/core/install'
+
 import { parseYamlFrontmatter } from '../tools/validate.helpers.js'
 import type { InventoryEntry, ScanWarning } from './local-inventory.types.js'
 
@@ -228,6 +230,9 @@ function makeClaudeMdEntry(
     identifier: hashClaudeMdLine(claudeMdPath, phrase),
     triggerSurface: [phrase],
     mtime,
+    // CLAUDE.md rules are Claude Code-only (SMI-6077) — no other supported
+    // client reads this file today.
+    client: CANONICAL_CLIENT,
     meta: { description: phrase },
   }
 }

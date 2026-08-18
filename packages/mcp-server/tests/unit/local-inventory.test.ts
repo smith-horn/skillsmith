@@ -3,6 +3,12 @@
  * Covers all 4 sources (skills / commands / agents / CLAUDE.md) plus
  * fresh-install latency bound (P-ANTI-2 carryover) and CLAUDE.md
  * tolerance for malformed / missing files.
+ *
+ * SMI-6077: the skills source now scans EVERY supported client's native
+ * directory (CLIENT_IDS), not just Claude Code — see the `client` field
+ * coverage below, which uses Cursor as the representative non-Claude
+ * client fixture (same choice `inventory-collector.test.ts` makes for its
+ * own cross-harness coverage).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -58,7 +64,65 @@ describe('scanLocalInventory', () => {
     expect(skill?.triggerSurface).toContain('docker')
   })
 
-  it('SMI-5456: also scans ~/.agents/skills (Source 1b, dual-path agent pack)', async () => {
+  it('SMI-6077: tags a Claude Code skill entry with client "claude-code"', async () => {
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'skills', 'docker', 'SKILL.md'),
+      `---\nname: docker\n---\nbody\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const skill = result.entries.find((e) => e.identifier === 'docker')
+    expect(skill?.client).toBe('claude-code')
+  })
+
+  it('SMI-6077: scans ~/.cursor/skills (a non-Claude client native directory)', async () => {
+    writeFile(
+      path.join(TEST_HOME, '.cursor', 'skills', 'lint-helper', 'SKILL.md'),
+      `---\nname: lint-helper\ndescription: Cursor-only lint helper\n---\nbody\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const skill = result.entries.find((e) => e.identifier === 'lint-helper')
+    expect(skill).toBeDefined()
+    expect(skill?.kind).toBe('skill')
+    expect(skill?.client).toBe('cursor')
+    expect(skill?.source_path).toBe(
+      path.join(TEST_HOME, '.cursor', 'skills', 'lint-helper', 'SKILL.md')
+    )
+    expect(skill?.meta?.description).toBe('Cursor-only lint helper')
+  })
+
+  it('SMI-6077: scans every CLIENT_IDS client in the same pass, not just Claude Code + agents', async () => {
+    writeFile(
+      path.join(TEST_HOME, '.claude', 'skills', 'a', 'SKILL.md'),
+      `---\nname: a\n---\nbody\n`
+    )
+    writeFile(
+      path.join(TEST_HOME, '.cursor', 'skills', 'b', 'SKILL.md'),
+      `---\nname: b\n---\nbody\n`
+    )
+    writeFile(
+      path.join(TEST_HOME, '.copilot', 'skills', 'c', 'SKILL.md'),
+      `---\nname: c\n---\nbody\n`
+    )
+    writeFile(
+      path.join(TEST_HOME, '.codeium', 'windsurf', 'skills', 'd', 'SKILL.md'),
+      `---\nname: d\n---\nbody\n`
+    )
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const byIdentifier = new Map(result.entries.map((e) => [e.identifier, e]))
+    expect(byIdentifier.get('a')?.client).toBe('claude-code')
+    expect(byIdentifier.get('b')?.client).toBe('cursor')
+    expect(byIdentifier.get('c')?.client).toBe('copilot')
+    expect(byIdentifier.get('d')?.client).toBe('windsurf')
+  })
+
+  it('SMI-6077: tags command entries with client "claude-code" (no other client has an equivalent directory)', async () => {
+    writeFile(path.join(TEST_HOME, '.claude', 'commands', 'ship.md'), `Ship code.\n`)
+    const result = await scanLocalInventory({ homeDir: TEST_HOME })
+    const cmd = result.entries.find((e) => e.kind === 'command')
+    expect(cmd?.client).toBe('claude-code')
+  })
+
+  it('SMI-5456: also scans ~/.agents/skills (the "agents" client, dual-path agent pack)', async () => {
     writeFile(
       path.join(TEST_HOME, '.agents', 'skills', 'skillsmith-agent', 'SKILL.md'),
       `---\nname: skillsmith-agent\ndescription: The Skillsmith Agent\n---\nbody\n`
@@ -68,6 +132,7 @@ describe('scanLocalInventory', () => {
       (e) => e.kind === 'skill' && e.identifier === 'skillsmith-agent'
     )
     expect(skill).toBeDefined()
+    expect(skill?.client).toBe('agents')
     expect(skill?.source_path).toBe(
       path.join(TEST_HOME, '.agents', 'skills', 'skillsmith-agent', 'SKILL.md')
     )

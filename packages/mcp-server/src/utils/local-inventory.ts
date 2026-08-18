@@ -3,6 +3,10 @@
  * @module @skillsmith/mcp-server/utils/local-inventory
  * @see SMI-4587 Wave 1 Step 2 — scan ~/.claude/{skills,commands,agents} +
  *      CLAUDE.md trigger phrases into a unified InventoryEntry[].
+ * @see SMI-6077 — skills scanning extended from Claude Code only to every
+ *      supported client's native skills directory (CLIENT_IDS). commands /
+ *      agents / CLAUDE.md rules remain Claude Code-only — no other
+ *      supported client has an equivalent construct today.
  *
  * Each source is independent — failure in one does not fail the others.
  * The scanner is read-only; bootstrapping unmanaged skills via `index_local`
@@ -12,6 +16,13 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+
+import {
+  CANONICAL_CLIENT,
+  CLIENT_IDS,
+  CLIENT_NATIVE_PATHS,
+  type ClientId,
+} from '@skillsmith/core/install'
 
 import type { InventoryEntry, ScanResult, ScanWarning } from './local-inventory.types.js'
 import {
@@ -27,8 +38,43 @@ import {
   splitDescriptionToPhrases,
 } from './local-inventory.helpers.js'
 
-const DEFAULT_HOME_CLAUDE_DIR = path.join(os.homedir(), '.claude')
-const DEFAULT_MANIFEST_PATH = path.join(os.homedir(), '.skillsmith', 'manifest.json')
+// Captured ONCE at module-load time (mirrors `CLIENT_NATIVE_PATHS` itself,
+// which freezes against `os.homedir()` at ITS module-load time in
+// `@skillsmith/core/install/paths.ts`). Both modules are statically
+// imported — and therefore both evaluate their top-level `homedir()` calls
+// — before any test body runs, so this is guaranteed to observe the SAME
+// real home directory `CLIENT_NATIVE_PATHS` baked in. Deliberately NOT a
+// live `os.homedir()` call inside `resolveClientSkillsDir` below: several
+// existing tests (e.g. `skill-inventory-audit.test.ts`) mutate
+// `process.env.HOME` to the test fixture INSIDE a test body (Node's
+// `os.homedir()` reads `$HOME` on POSIX) — a live call there would resolve
+// against the MUTATED value instead of the real one `CLIENT_NATIVE_PATHS`
+// was frozen against, silently making the "rebase under homeDir" math
+// below a no-op that reads the REAL host's client directories instead of
+// the test fixture.
+const REAL_HOME_DIR = os.homedir()
+
+const DEFAULT_HOME_CLAUDE_DIR = path.join(REAL_HOME_DIR, '.claude')
+const DEFAULT_MANIFEST_PATH = path.join(REAL_HOME_DIR, '.skillsmith', 'manifest.json')
+
+/**
+ * Resolve `client`'s native skills directory, rebased under `homeDir`
+ * (SMI-6077).
+ *
+ * `CLIENT_NATIVE_PATHS` (the single source of truth every client-aware
+ * command uses — `install_skill --client`, `inventory-collector.ts`, etc.)
+ * is frozen at module-load time against the real home directory, so it
+ * can't respect this scanner's `homeDir` test-fixture override directly.
+ * Rebasing by relative-path substitution — instead of hand-duplicating each
+ * client's directory suffix here — keeps `CLIENT_NATIVE_PATHS` the only
+ * place per-client path shape is defined. When `homeDir === REAL_HOME_DIR`
+ * (the non-test-fixture case) this returns exactly `CLIENT_NATIVE_PATHS[client]`.
+ */
+function resolveClientSkillsDir(client: ClientId, homeDir: string): string {
+  const nativePath = CLIENT_NATIVE_PATHS[client]
+  const relativeToRealHome = path.relative(REAL_HOME_DIR, nativePath)
+  return path.join(homeDir, relativeToRealHome)
+}
 
 export interface ScanLocalInventoryOptions {
   /** Defaults to `os.homedir()`. */
@@ -40,7 +86,8 @@ export interface ScanLocalInventoryOptions {
 }
 
 /**
- * Scan `~/.claude/{skills,commands,agents}` and CLAUDE.md trigger phrases.
+ * Scan every supported AI coding client's skills directory, plus Claude
+ * Code's own `{commands,agents}` and CLAUDE.md trigger phrases (SMI-6077).
  *
  * Returns `entries[]` sorted by `kind` then `identifier`, plus any soft
  * `warnings[]` raised during scanning. `durationMs` measures wall-clock
@@ -61,31 +108,44 @@ export async function scanLocalInventory(
 
   const manifest = loadManifest(manifestPath)
 
-  // Source 1: ~/.claude/skills/*/SKILL.md
-  entries.push(...scanSkills(path.join(claudeDir, 'skills'), manifest, warnings))
+  // Source 1 (SMI-6077): every supported client's native skills directory —
+  // Claude Code (~/.claude/skills), Cursor, Copilot, Windsurf, the shared
+  // ~/.agents/skills cross-agent convention (Codex reads ONLY this path,
+  // never .claude/skills), OpenCode, Hermes, Grok Build, and Antigravity —
+  // via `CLIENT_NATIVE_PATHS` (`@skillsmith/core/install`), the same
+  // per-client-path source of truth `install_skill --client` and every
+  // other client-aware command already uses. Scanned unconditionally for
+  // every client on every call rather than pre-detecting which clients are
+  // actually installed first: `scanSkills` already no-ops in ~microseconds
+  // on an absent directory (existsSync gate below), matching the precedent
+  // set by `collectDeviceSkills()` (`@skillsmith/core/sync/inventory-collector.ts`,
+  // the `inventory_push` tool's scanner) — it loops every `CLIENT_IDS` entry
+  // unconditionally and lets a missing directory's ENOENT short-circuit
+  // each iteration, rather than gating the loop on a separate presence
+  // check. `enumerateHarnessPresence()` exists in the same module but is
+  // used ONLY for display purposes (`sklx inventory status`'s "Harness
+  // presence" section), never as a scan gate — that precedent is followed
+  // here too. A directory-name collision between two DIFFERENT skills that
+  // happen to share an identifier across two clients' directories is
+  // exactly the kind of finding the exact-collision pass already looks
+  // for (unchanged semantics — see `collision-detector.helpers.ts`'s
+  // `detectExactCollisions`, which has always matched by identifier across
+  // every scanned source, not scoped per-directory); this is intentionally
+  // additive, not a filtered subset.
+  for (const client of CLIENT_IDS) {
+    const skillsDir = resolveClientSkillsDir(client, homeDir)
+    entries.push(...scanSkills(skillsDir, manifest, warnings, client))
+  }
 
-  // Source 1b (SMI-5456 Wave 1 Step 5): ~/.agents/skills/*/SKILL.md — the
-  // second leg of the dual-path Skillsmith Agent pack install (Codex reads
-  // ONLY this path, never .claude/skills). Scanning it here is what makes
-  // `skill_inventory_audit`'s dual-path dedup + self-exemption (Scope 6 of
-  // the SMI-5456 plan) actually reachable — without this, the audit never
-  // sees the second copy and there is nothing to dedupe. `scanSkills` is
-  // reused verbatim; a directory-name collision between two DIFFERENT skills
-  // that both happen to live under `.claude/skills` and `.agents/skills` is
-  // exactly the kind of finding the exact-collision pass is supposed to
-  // catch, so this is intentionally additive, not a filtered subset.
-  const agentsSkillsDir = opts.homeDir
-    ? path.join(opts.homeDir, '.agents', 'skills')
-    : path.join(os.homedir(), '.agents', 'skills')
-  entries.push(...scanSkills(agentsSkillsDir, manifest, warnings))
-
-  // Source 2: ~/.claude/commands/*.md
+  // Source 2: ~/.claude/commands/*.md — Claude Code only; no other
+  // supported client has an equivalent slash-command directory.
   entries.push(...scanCommands(path.join(claudeDir, 'commands'), warnings))
 
-  // Source 3: ~/.claude/agents/*.md
+  // Source 3: ~/.claude/agents/*.md — Claude Code only, same rationale.
   entries.push(...scanAgents(path.join(claudeDir, 'agents'), warnings))
 
-  // Source 4: ~/.claude/CLAUDE.md and (optional) project CLAUDE.md
+  // Source 4: ~/.claude/CLAUDE.md and (optional) project CLAUDE.md —
+  // Claude Code only, same rationale.
   const userClaudeMd = path.join(claudeDir, 'CLAUDE.md')
   if (fs.existsSync(userClaudeMd)) {
     entries.push(...extractClaudeMdTriggers(userClaudeMd, warnings))
@@ -106,22 +166,20 @@ export async function scanLocalInventory(
   const elapsedNs = process.hrtime.bigint() - startedAt
   const durationMs = Number(elapsedNs) / 1_000_000
 
-  // Suppress unused-variable warning while keeping the homeDir resolution
-  // visible in opts handling above. Reserved for future per-OS path logic.
-  void homeDir
-
   return { entries, warnings, durationMs }
 }
 
 /**
- * Scan `~/.claude/skills/*` for SKILL.md frontmatter. Returns one entry
- * per directory; entries without SKILL.md are still recorded (with
+ * Scan a single client's native skills directory (e.g. `~/.claude/skills/*`,
+ * `~/.cursor/skills/*`) for SKILL.md frontmatter. Returns one entry per
+ * directory; entries without SKILL.md are still recorded (with
  * directory-name fallback) so the collision detector still sees them.
  */
 function scanSkills(
   skillsDir: string,
   manifest: Record<string, unknown> | null,
-  warnings: ScanWarning[]
+  warnings: ScanWarning[],
+  client: ClientId
 ): InventoryEntry[] {
   if (!fs.existsSync(skillsDir)) return []
 
@@ -172,6 +230,7 @@ function scanSkills(
       identifier,
       triggerSurface: phrases,
       mtime,
+      client,
       meta: {
         description,
         author: author.author,
@@ -246,6 +305,7 @@ function scanMdDir(
       identifier,
       triggerSurface: phrases,
       mtime: readMtime(filePath),
+      client: CANONICAL_CLIENT,
       meta: {
         description: triggerLine || undefined,
       },
