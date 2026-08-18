@@ -222,11 +222,9 @@ async function runDiscoveryBranch(
   })
 
   // SMI-5286 1c (§#5): persist the advanced facet cursor so the next dispatch
-  // (resume_from=latest) continues mid-facet. Written even in DRY_RUN so the
-  // operator can verify the resume loop before flipping to a live write
-  // (audit_logs is append-only telemetry, not the skills registry).
-  // SMI-5319 (W3): stamp dry_run so a subsequent live resume_from=latest can
-  // skip these rows via readLatestCheckpoint's excludeDryRun: true option.
+  // continues mid-facet; written even in DRY_RUN so the resume loop is
+  // verifiable pre-live. SMI-5319 (W3): dry_run tag lets resume_from=latest
+  // skip these via readLatestCheckpoint's excludeDryRun option.
   if (env.BACKFILL_MODE && result.backfill_crawl) {
     const bc = result.backfill_crawl
     const wrote = await writeCheckpoint(supabase, {
@@ -236,6 +234,7 @@ async function runDiscoveryBranch(
       facets_total: bc.facets_total,
       cap_saturated: bc.cap_saturated,
       truncated_repo_count: bc.truncated_repo_count,
+      incomplete_results_ranges: bc.incomplete_results_ranges, // SMI-6073
       dry_run: env.DRY_RUN,
     })
     if (wrote) checkpointId = backfillRunId

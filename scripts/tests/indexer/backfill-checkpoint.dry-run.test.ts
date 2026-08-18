@@ -33,6 +33,7 @@ function makePayload(
     facets_total: 8,
     cap_saturated: false,
     truncated_repo_count: 0,
+    incomplete_results_ranges: 0,
     dry_run: false,
     ...overrides,
   }

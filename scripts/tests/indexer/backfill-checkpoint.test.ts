@@ -34,6 +34,7 @@ function makePayload(
     facets_total: 10,
     cap_saturated: false,
     truncated_repo_count: 2,
+    incomplete_results_ranges: 0,
     dry_run: false,
     ...overrides,
   }
@@ -205,6 +206,7 @@ describe('writeCheckpoint', () => {
       facets_total: 15,
       cap_saturated: true,
       truncated_repo_count: 5,
+      incomplete_results_ranges: 4,
       dry_run: false,
     })
 
@@ -217,6 +219,12 @@ describe('writeCheckpoint', () => {
     expect(metadata.facets_total).toBe(15)
     expect(metadata.cap_saturated).toBe(true)
     expect(metadata.truncated_repo_count).toBe(5)
+    // SMI-6073: regression guard for the gap found validating the first live
+    // .github/skills cold-start dispatch -- this field was computed and
+    // logged but silently never reached the persisted checkpoint. A non-zero
+    // value here (not just the makePayload default of 0) proves the field is
+    // genuinely threaded through, not just present-but-always-0.
+    expect(metadata.incomplete_results_ranges).toBe(4)
     expect(metadata.dry_run).toBe(false)
   })
 
@@ -419,6 +427,7 @@ describe('backfill checkpoint round-trip (SPARC AC §#5)', () => {
       facets_total: 20,
       cap_saturated: true,
       truncated_repo_count: 3,
+      incomplete_results_ranges: 2,
       dry_run: false,
     }
 
@@ -445,6 +454,8 @@ describe('backfill checkpoint round-trip (SPARC AC §#5)', () => {
     expect(readBack?.facets_total).toBe(20)
     expect(readBack?.cap_saturated).toBe(true)
     expect(readBack?.truncated_repo_count).toBe(3)
+    // SMI-6073: survives the round-trip too, not just the direct-write assertion
+    expect(readBack?.incomplete_results_ranges).toBe(2)
     expect(readBack?.run_id).toBe('roundtrip-run-001')
     // SMI-5319 W3: dry_run tag survives the round-trip
     expect(readBack?.dry_run).toBe(false)
