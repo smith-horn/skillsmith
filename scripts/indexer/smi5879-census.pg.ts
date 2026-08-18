@@ -141,26 +141,40 @@ export interface PsqlOutcome {
  * retry/circuit-breaker logic), every `psql`-backed DB call in this module
  * had zero tolerance for a purely transient connection failure.
  *
- * These patterns match libpq/psql's own connection-establishment error text
- * (never a SQL-level `ERROR:` from `ON_ERROR_STOP=1` triggering on a real
- * constraint violation or syntax error, which must still fail immediately —
- * retrying a bad SQL statement can't help and would mask a real bug).
- * Verified against the exact production message from this incident
- * (`could not translate host name`) plus libpq's other well-known
- * connection-establishment failure strings.
+ * GPT-5.6-Sol review finding (High, pre-merge): the original pattern list
+ * also matched `server closed the connection unexpectedly` and the two
+ * timeout strings — but those can occur AFTER the server already executed
+ * (even committed) a statement, with only the client-side ack lost. A blind
+ * retry of a non-idempotent write (e.g. `INSERT INTO smi5879_run`, a
+ * branch-resolution batch INSERT) after an ambiguous-execution failure could
+ * replay it. Narrowed to ONLY failures that are provably PRE-connection —
+ * the connection was never successfully established, so no SQL could
+ * possibly have reached the server yet. `could not translate host name`
+ * (DNS resolution, this incident's exact message) and `connection refused`
+ * (TCP-level rejection) are both pre-connection by construction; the same
+ * reasoning applies to the other patterns below. A SQL-level `ERROR:` from
+ * `ON_ERROR_STOP=1` (a real constraint violation or syntax error) must still
+ * fail immediately — retrying a bad statement can't help and would mask a
+ * real bug — so patterns are anchored to psql's own client-side connection
+ * error prefix (`psql: error: `), not a bare substring search, so a SQL
+ * error message that happens to *contain* one of these words (GPT-5.6-Sol
+ * review finding, Medium) cannot be misclassified as transient.
  */
 const TRANSIENT_CONNECTION_ERROR_PATTERNS: RegExp[] = [
-  /could not translate host name/i,
-  /temporary failure in name resolution/i,
-  /connection refused/i,
-  /could not connect to server/i,
-  /server closed the connection unexpectedly/i,
-  /timeout expired/i,
-  /operation timed out/i,
-  /network is unreachable/i,
+  /^psql: error: .*could not translate host name/im,
+  /^psql: error: .*temporary failure in name resolution/im,
+  /^psql: error: .*connection refused/im,
+  /^psql: error: .*could not connect to server/im,
+  /^psql: error: .*network is unreachable/im,
 ]
 
-/** True when `stderr` looks like a transient connection failure, not a real SQL error. */
+/**
+ * True when `stderr` looks like a transient, PRE-connection-establishment
+ * failure (safe to retry — no SQL could have reached the server yet), not a
+ * real SQL error and not an ambiguous post-execution connection loss (see
+ * the pattern list's own doc comment for why those are deliberately
+ * excluded).
+ */
 export function isTransientConnectionError(stderr: string): boolean {
   return TRANSIENT_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(stderr))
 }
@@ -169,6 +183,23 @@ export function isTransientConnectionError(stderr: string): boolean {
 export const TRANSIENT_RETRY_MAX_ATTEMPTS = 3
 /** Backoff between retry attempts (ms) — short, since this recovers from a blip, not a rate limit. */
 const TRANSIENT_RETRY_BACKOFF_MS = [1000, 2000]
+
+/**
+ * Thrown by {@link spawnPsqlOnce} on a non-zero exit. Carries the RAW stderr
+ * separately from the formatted `message` (which prefixes it with
+ * `SMI-5879: psql exited N: `) so {@link isTransientConnectionError} can
+ * classify the actual psql output — anchored to psql's own client-side
+ * error-line prefix — without needing to parse it back out of the formatted
+ * message text.
+ */
+class PsqlExitError extends Error {
+  readonly rawStderr: string
+  constructor(code: number | null, rawStderr: string) {
+    super(`SMI-5879: psql exited ${code}: ${rawStderr.trim() || '(no stderr)'}`)
+    this.name = 'PsqlExitError'
+    this.rawStderr = rawStderr
+  }
+}
 
 /**
  * Spawn `psql` against `conn`, feed `sql` via stdin, and resolve with
@@ -201,7 +232,7 @@ function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Pr
     child.on('error', (err) => reject(new Error(`SMI-5879: failed to spawn psql: ${err.message}`)))
     child.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`SMI-5879: psql exited ${code}: ${stderr.trim() || '(no stderr)'}`))
+        reject(new PsqlExitError(code, stderr))
         return
       }
       resolve({ stdout, stderr })
@@ -212,11 +243,12 @@ function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Pr
 }
 
 /**
- * Retry wrapper around {@link spawnPsqlOnce}: on a transient connection
+ * Retry wrapper around {@link spawnPsqlOnce}: on a transient, PRE-connection
  * failure (see {@link isTransientConnectionError}), retries up to
  * {@link TRANSIENT_RETRY_MAX_ATTEMPTS} attempts total with a short backoff
- * between them. Any other failure (a real SQL error, a spawn failure) is NOT
- * retried and rejects on the first attempt, same as before this fix.
+ * between them. Any other failure (a real SQL error, an ambiguous
+ * post-execution connection loss, a spawn failure) is NOT retried and
+ * rejects on the first attempt, same as before this fix.
  */
 async function spawnPsql(
   conn: PgConnParams,
@@ -229,7 +261,8 @@ async function spawnPsql(
       return await spawnPsqlOnce(conn, extraArgs, sql)
     } catch (err) {
       const error = err as Error
-      if (!isTransientConnectionError(error.message) || attempt === TRANSIENT_RETRY_MAX_ATTEMPTS) {
+      const rawStderr = error instanceof PsqlExitError ? error.rawStderr : error.message
+      if (!isTransientConnectionError(rawStderr) || attempt === TRANSIENT_RETRY_MAX_ATTEMPTS) {
         throw error
       }
       lastError = error
