@@ -247,6 +247,14 @@ export interface BackfillCheckpointPayload {
   /** Repos skipped because their Trees response truncated (cap or API). */
   truncated_repo_count: number
   /**
+   * SMI-6073: count of ranges this dispatch where at least one page carried
+   * `incomplete_results: true` — GitHub's own query-timeout signal. Mirrors
+   * {@link BackfillCrawlOutcome.incomplete_results_ranges}; persisted here (not
+   * just logged) so `audit_logs`-based monitoring queries (runbook §3.1) can
+   * surface it, not only the GHA run log.
+   */
+  incomplete_results_ranges: number
+  /**
    * Whether this checkpoint was written by a DRY_RUN dispatch. Tagged so live
    * resumes can skip dry-run checkpoints via {@link readLatestCheckpoint}
    * `excludeDryRun: true`.
@@ -285,6 +293,7 @@ export async function writeCheckpoint(
         facets_total: payload.facets_total,
         cap_saturated: payload.cap_saturated,
         truncated_repo_count: payload.truncated_repo_count,
+        incomplete_results_ranges: payload.incomplete_results_ranges,
         dry_run: payload.dry_run,
       },
     })
