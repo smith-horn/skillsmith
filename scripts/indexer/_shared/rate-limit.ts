@@ -379,10 +379,17 @@ export function summarizeRateLimitTelemetry(t: RateLimitTelemetry): {
  */
 export const DEFAULT_FETCH_TIMEOUT_MS = 30_000
 
-/** SMI-5964: resolve the effective per-request timeout from env, falling back
+/**
+ * SMI-5964: resolve the effective per-request timeout from env, falling back
  * to {@link DEFAULT_FETCH_TIMEOUT_MS} on an absent/blank/non-numeric/negative
- * override. */
-function resolveFetchTimeoutMs(): number {
+ * override. Exported (SMI-6015 follow-up) so other direct-fetch call sites
+ * that intentionally sit outside `withRateLimitTracking` — e.g.
+ * `_shared/github-auth.ts`'s `getInstallationToken()`, a JWT-based
+ * App-token mint rather than a rate-limited resource fetch — can still share
+ * this single source of truth for the timeout value/override, rather than
+ * inventing a second one.
+ */
+export function resolveFetchTimeoutMs(): number {
   const raw = process.env.SKILLSMITH_INDEXER_FETCH_TIMEOUT_MS
   if (raw == null || raw === '') return DEFAULT_FETCH_TIMEOUT_MS
   const parsed = Number(raw)
