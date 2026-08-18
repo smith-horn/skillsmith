@@ -85,6 +85,26 @@ describe('detectExactCollisions (pure pass)', () => {
     expect(flags[0]?.entries).toHaveLength(3)
   })
 
+  it('SMI-6077: flags same-identifier skills across DIFFERENT clients — collision scope stays global, not per-client', () => {
+    const auditId = newAuditId()
+    const inv = [
+      entry({
+        identifier: 'docker',
+        source_path: '/home/user/.claude/skills/docker/SKILL.md',
+        client: 'claude-code',
+      }),
+      entry({
+        identifier: 'docker',
+        source_path: '/home/user/.cursor/skills/docker/SKILL.md',
+        client: 'cursor',
+      }),
+    ]
+    const flags = detectExactCollisions(inv, auditId)
+    expect(flags).toHaveLength(1)
+    expect(flags[0]?.severity).toBe('error')
+    expect(flags[0]?.entries.map((e) => e.client).sort()).toEqual(['claude-code', 'cursor'])
+  })
+
   it('skips empty / whitespace identifiers silently', () => {
     const auditId = newAuditId()
     const inv = [

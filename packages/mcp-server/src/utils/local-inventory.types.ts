@@ -6,6 +6,8 @@
  * Wave 2/3/4 import these types — keep stable and additive.
  */
 
+import type { ClientId } from '@skillsmith/core/install'
+
 /**
  * The four sources scanned by `scanLocalInventory`. Each kind carries different
  * `triggerSurface` semantics; the collision detector handles them uniformly.
@@ -35,6 +37,19 @@ export interface InventoryEntry {
    * sort (most-recent first within each severity group).
    */
   mtime?: number
+  /**
+   * Which supported AI coding client this entry was scanned from (SMI-6077).
+   * `skill` entries carry whichever client's native skills directory
+   * (`CLIENT_NATIVE_PATHS` / `getInstallPath`, `@skillsmith/core/install` —
+   * the same source of truth `install_skill --client` and every other
+   * client-aware command use) produced them. `command` / `agent` /
+   * `claude_md_rule` entries are always `'claude-code'` — those constructs
+   * have no equivalent directory for other clients today. Optional: not
+   * every `InventoryEntry` literal in this codebase sets it (e.g.
+   * `install-preflight.ts`'s synthesized install-candidate entry), so this
+   * is a strictly additive field.
+   */
+  client?: ClientId
   meta?: {
     /** From `~/.skillsmith/manifest.json` if registered; else undefined. */
     author?: string

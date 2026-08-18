@@ -9,6 +9,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   Enterprise price (`$55/user/month`) — told a prospect the number before they ever talk to
   sales, contradicting CLAUDE.md's "Custom (unpublished, 'Contact Sales')" pricing policy. Now
   `Custom pricing — Contact Sales` (SMI-6069, GH#2368-adjacent follow-up from SMI-5893)
+- **Fix**: `skill_inventory_audit` scanned only `~/.claude/` — its description said so accurately,
+  but the underlying scope was too narrow. Now loops every supported client's native skills
+  directory (`CLIENT_NATIVE_PATHS`, the same source of truth `install_skill --client` already
+  uses) via `local-inventory.ts`'s `scanSkills`, unconditionally per call rather than pre-detecting
+  installed clients (matching `inventory_push`'s existing `collectDeviceSkills()` precedent).
+  Commands/agents/CLAUDE.md trigger-phrase scanning stays Claude Code-only — no other client has
+  an equivalent construct. Tool description updated to match (GH#2368 C-12, SMI-6077)
 
 - **Feature**: `get_skill`, `search`, and `skill_recommend` now surface a partial-scan caveat
   ("Note: partial scan — some files could not be analyzed (...)") when the registry's extended
