@@ -53,6 +53,27 @@ async function plantSkill(
   return dir
 }
 
+describe('getLocalSkillsDir / getLocalSkillsDirDisplay (SMI-6060)', () => {
+  it('getLocalSkillsDir resolves to an absolute path under the mocked cwd', async () => {
+    const { getLocalSkillsDir } = await import('../src/utils/skills-directory.js')
+    expect(getLocalSkillsDir()).toBe(path.join(cwdDir, '.claude', 'skills'))
+  })
+
+  it('getLocalSkillsDirDisplay returns the relative form, independent of cwd', async () => {
+    const { getLocalSkillsDirDisplay } = await import('../src/utils/skills-directory.js')
+    expect(getLocalSkillsDirDisplay()).toBe('./.claude/skills')
+  })
+
+  it('both derive from the same path segments — cannot silently drift apart', async () => {
+    const { getLocalSkillsDir, getLocalSkillsDirDisplay } =
+      await import('../src/utils/skills-directory.js')
+    const absolute = getLocalSkillsDir()
+    const display = getLocalSkillsDirDisplay()
+    // Strip the leading './' and confirm it's the tail of the absolute path.
+    expect(absolute.endsWith(display.slice(2))).toBe(true)
+  })
+})
+
 describe('getInstalledSkills (SMI-4578)', () => {
   it('returns empty when no client directories exist', async () => {
     const { getInstalledSkills } = await import('../src/utils/skills-directory.js')
