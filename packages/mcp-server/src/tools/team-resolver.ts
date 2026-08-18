@@ -3,15 +3,36 @@
  * @module @skillsmith/mcp-server/tools/team-resolver
  * @see SMI-4292: Wave 5A — Team workspaces foundation (finding C3)
  * @see SMI-5822 / SMI-5882: admin operations need a user-bound credential, not a team one
+ * @see SMI-6080: `SKILLSMITH_API_KEY` fallback for admin-granted (non-JWT) Enterprise access
  *
  * Two distinct credentials, for two distinct questions:
  *
  * 1. `resolveLicenseTeamId` — **which team** is this call for? Unified team resolution for MCP
  *    tools; both team-workspace.ts and registry-tools.ts call it so there is one auth path.
- *    License key source, in order: explicit `licenseKey` argument (from `ToolContext` or tool
- *    input), then `process.env.SKILLSMITH_LICENSE_KEY`. Calls the `resolve_team_from_license` RPC
- *    (migration 071) using an anon-key Supabase client (the RPC is SECURITY DEFINER). Returns null
- *    if the key is missing, invalid, expired, or not attached to a team.
+ *    Credential source, in order: explicit `licenseKey` argument (from `ToolContext` or tool
+ *    input), then `process.env.SKILLSMITH_LICENSE_KEY`, then `process.env.SKILLSMITH_API_KEY`.
+ *    Calls the `resolve_team_from_license` RPC (migration 071) using an anon-key Supabase client
+ *    (the RPC is SECURITY DEFINER). Returns null if the credential is missing, invalid, expired,
+ *    or not attached to a team.
+ *
+ *    Why `SKILLSMITH_API_KEY` is a legitimate source here, and not a security downgrade (SMI-6080):
+ *    `resolve_team_from_license(p_license_key TEXT)` SHA-256-hashes whatever string it is handed
+ *    and matches it against `license_keys.key_hash`. It has no JWT-specific requirement, so a plain
+ *    `sk_live_*` personal API key resolves through the *identical* lookup a signed license blob
+ *    does — same table, same hash, same team, same failure modes. Reading it here therefore widens
+ *    nothing: any key that resolves via this fallback would have resolved just as well had the
+ *    operator copied it into `SKILLSMITH_LICENSE_KEY`.
+ *
+ *    Why the fallback is *needed*: an account whose Enterprise access came from
+ *    `admin-grant-subscription` holds a plain API key and never a signed JWT license blob. The
+ *    separate tier feature-gate (`middleware/license.ts`) requires `SKILLSMITH_LICENSE_KEY` to be
+ *    *unset* so it falls back to live tier resolution via `SKILLSMITH_API_KEY` → `/license-status`;
+ *    setting `SKILLSMITH_LICENSE_KEY` to a non-JWT string instead makes that gate attempt real
+ *    `@smith-horn/enterprise` JWT validation and fail closed. Before this fallback there was no
+ *    single env configuration that satisfied both gates for such an account.
+ *
+ *    Precedence is preserved: `SKILLSMITH_LICENSE_KEY` still wins whenever both are set, so an
+ *    account that does hold a real license blob keeps resolving exactly as it did before.
  *
  * 2. `resolveUserAccessToken` — **who** is making this call? A license key cannot answer that.
  *    `resolve_team_from_license` is `(p_license_key TEXT) RETURNS TEXT`: it resolves a *team*,
@@ -40,18 +61,32 @@ interface MinimalSupabaseClient {
 }
 
 /**
- * Extract the license key from an optional explicit value or the environment.
+ * Extract the team-resolution credential from an optional explicit value or the environment.
+ *
+ * Order: explicit argument, then `SKILLSMITH_LICENSE_KEY`, then `SKILLSMITH_API_KEY` (SMI-6080 —
+ * see the fallback rationale in this file's header; both hash into `license_keys.key_hash`
+ * identically, and the license key still wins when both env vars are set).
+ *
+ * An env var set to the empty string counts as unset for the env half of the chain, so a config
+ * carrying `SKILLSMITH_LICENSE_KEY=""` still reaches the API-key fallback rather than resolving to
+ * "no credential". An explicit empty-string *argument* still short-circuits to null, unchanged —
+ * call sites pass `licenseKey ?? ''` and rely on that.
  */
 export function readLicenseKey(explicit?: string): string | null {
-  const raw = explicit ?? process.env.SKILLSMITH_LICENSE_KEY ?? ''
+  const licenseEnv = process.env.SKILLSMITH_LICENSE_KEY
+  const fromEnv =
+    licenseEnv !== undefined && licenseEnv.length > 0
+      ? licenseEnv
+      : (process.env.SKILLSMITH_API_KEY ?? '')
+  const raw = explicit ?? fromEnv
   return raw.length > 0 ? raw : null
 }
 
 /**
- * Resolve a license key to a team_id via `resolve_team_from_license` RPC.
+ * Resolve a license key (or API key — SMI-6080) to a team_id via `resolve_team_from_license` RPC.
  *
- * @param licenseKey - optional explicit license key; falls back to env
- * @returns resolved team_id, or null if Supabase is not configured / key invalid
+ * @param licenseKey - optional explicit credential; falls back to env per {@link readLicenseKey}
+ * @returns resolved team_id, or null if Supabase is not configured / credential invalid
  */
 export async function resolveLicenseTeamId(licenseKey?: string): Promise<string | null> {
   if (!isSupabaseConfigured()) return null

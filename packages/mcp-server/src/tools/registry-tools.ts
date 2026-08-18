@@ -213,28 +213,30 @@ export function getPrivateRegistryService(): PrivateRegistryService {
 // ============================================================================
 
 /**
- * Resolve team ID from license key.
+ * Resolve team ID from the team credential (license key, or API key — SMI-6080).
  *
- * SMI-4292 (finding C3): unified resolution — calls the same
- * `resolve_team_from_license` RPC as team-workspace.ts. When Supabase is
- * configured but the license key is missing/invalid, the caller receives
- * a typed error (bubbled up via thrown Error).
+ * SMI-4292 (finding C3): unified resolution — calls the same `resolve_team_from_license` RPC as
+ * team-workspace.ts. A missing/invalid credential surfaces as a typed error (thrown) when Supabase
+ * is configured; falls back to a static stub id when it is not (local dev).
  *
- * Falls back to a static stub id when Supabase is not configured (local dev).
+ * SMI-6080: `readLicenseKey()` also accepts `SKILLSMITH_API_KEY`, so an admin-granted account
+ * (which holds no signed JWT license blob) can resolve its team. Team resolution ONLY — the
+ * publish/install/submissions/approve/deprecate actions also require `skillsmith login`.
  */
 async function resolveTeamId(): Promise<string> {
   if (!isSupabaseConfigured()) return 'team_stub_00000000-0000-0000-0000-000000000000'
   const licenseKey = readLicenseKey()
   if (!licenseKey) {
     throw new Error(
-      'SKILLSMITH_LICENSE_KEY is required for private registry operations. ' +
-        'Set it in your MCP server config — shell exports do not reach MCP subprocesses.'
+      'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for private registry operations. ' +
+        'Set one in your MCP server config — shell exports do not reach MCP subprocesses. ' +
+        'Publishing, installing, and reviewing submissions additionally require `skillsmith login`.'
     )
   }
   const teamId = await resolveLicenseTeamId(licenseKey)
   if (!teamId) {
     throw new Error(
-      'Unable to resolve team from license key. Ensure the key is active and attached to an Enterprise-tier subscription.'
+      'Unable to resolve team from the configured key. Ensure SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is active and attached to an Enterprise-tier subscription.'
     )
   }
   return teamId

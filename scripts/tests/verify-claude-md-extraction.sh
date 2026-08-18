@@ -81,7 +81,9 @@ echo
 echo -e "${BOLD}2. Extracted blocks must be in destination sub-docs${NC}"
 assert_moved "If branch switched during pre-commit" "$DEV_DIR/branch-management.md" "auto-restore prose"
 assert_moved "Direct-to-main commits (SMI-2598)" "$DEV_DIR/branch-management.md" "direct-to-main SQL rule"
-assert_moved "Resolution path: \`SKILLSMITH_LICENSE_KEY\` env" "$DEV_DIR/mcp-tools-guide.md" "team-tool resolution chain"
+# SMI-6080 reworded the resolution-chain prose (SKILLSMITH_API_KEY is now also a valid team
+# credential), so the sentinel is the RPC + migration it names rather than one env var's name.
+assert_moved "via the \`resolve_team_from_license\` RPC (migration 071" "$DEV_DIR/mcp-tools-guide.md" "team-tool resolution chain"
 assert_moved "scoped overrides only" "$DEV_DIR/ci-reference.md" "ajv override caveat"
 assert_moved "scripts/verify-publish-deps.mjs --ci" "$DEV_DIR/ci-reference.md" "release-PR Package Validation carve-out"
 assert_moved "SMI-3502 split rationale" "$DEV_DIR/ci-reference.md" "vitest split rationale"

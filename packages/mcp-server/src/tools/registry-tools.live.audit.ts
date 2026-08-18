@@ -120,11 +120,16 @@ const FINGERPRINT_LENGTH = 12
 const MAX_JWT_PAYLOAD_BYTES = 8192
 
 /**
- * One-way fingerprint of the presented license key.
+ * One-way fingerprint of the presented team credential.
  *
  * Correlates rows written by the same key (and matches nothing else) without storing the key or
  * anything that could be replayed. Returns null when no key is readable, so an absent credential
  * is recorded as absent rather than as some default bucket.
+ *
+ * SMI-6080: "the presented credential" is whatever `readLicenseKey()` resolved — a license key, or
+ * `SKILLSMITH_API_KEY` when that fallback applied. Both hash into the same `license_keys.key_hash`
+ * row, so a fingerprint stays a stable per-key correlator either way; it just no longer implies the
+ * caller configured `SKILLSMITH_LICENSE_KEY` specifically.
  */
 export function licenseKeyFingerprint(licenseKey?: string): string | null {
   const key = readLicenseKey(licenseKey)
