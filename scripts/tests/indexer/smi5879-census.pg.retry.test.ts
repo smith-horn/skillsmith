@@ -18,6 +18,16 @@
  * client-side `psql: error: ` prefix. (2) unrestricted substring matching
  * could misclassify a real SQL error whose message happens to contain one of
  * these words -- the prefix anchor also fixes this.
+ *
+ * SMI-6015 post-merge retro (2026-08-18): the census pipeline spawns tens of
+ * thousands of `psql` subprocesses over a multi-hour run -- an OS-level
+ * resource ceiling on `spawn()` itself (EMFILE/ENFILE/EAGAIN/ENOMEM) is a
+ * realistic failure mode at that volume, not just a hypothetical one, and
+ * the original fix left it entirely unretried. Covered below:
+ * `isTransientSpawnErrorCode()` classifies transient-resource spawn codes
+ * (never a permanent misconfiguration like ENOENT/EACCES), and
+ * `runPsql`/`queryRows` retry a transient spawn failure the same way they
+ * already retry a transient connection failure.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -29,8 +39,13 @@ vi.mock('node:child_process', () => ({
 }))
 
 // Imported AFTER the mock so the module under test picks up the mocked spawn.
-const { runPsql, queryRows, isTransientConnectionError, TRANSIENT_RETRY_MAX_ATTEMPTS } =
-  await import('../../indexer/smi5879-census.pg.ts')
+const {
+  runPsql,
+  queryRows,
+  isTransientConnectionError,
+  isTransientSpawnErrorCode,
+  TRANSIENT_RETRY_MAX_ATTEMPTS,
+} = await import('../../indexer/smi5879-census.pg.ts')
 
 /** Minimal fake ChildProcess: EventEmitter + stdout/stderr/stdin the module actually uses. */
 function makeFakeChild() {
@@ -53,6 +68,19 @@ function queueSpawnOutcome(exitCode: number, stderr = '', stdout = ''): void {
       if (stdout) child.stdout.emit('data', Buffer.from(stdout))
       if (stderr) child.stderr.emit('data', Buffer.from(stderr))
       child.emit('close', exitCode)
+    })
+    return child
+  })
+}
+
+/** Queue one spawn() call that fails at the OS level: emits ChildProcess `'error'`, never `'close'`. */
+function queueSpawnErrorOutcome(code: string, message = 'spawn psql ' + code): void {
+  spawnMock.mockImplementationOnce(() => {
+    const child = makeFakeChild()
+    queueMicrotask(() => {
+      const err = new Error(message) as NodeJS.ErrnoException
+      err.code = code
+      child.emit('error', err)
     })
     return child
   })
@@ -120,6 +148,27 @@ describe('SMI-6015: isTransientConnectionError', () => {
   })
 })
 
+describe('SMI-6015 post-merge retro: isTransientSpawnErrorCode', () => {
+  it.each(['EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM'])(
+    'classifies %s as a transient OS-resource-ceiling spawn error',
+    (code) => {
+      expect(isTransientSpawnErrorCode(code)).toBe(true)
+    }
+  )
+
+  it('does NOT classify ENOENT (missing binary) as transient -- permanent misconfiguration', () => {
+    expect(isTransientSpawnErrorCode('ENOENT')).toBe(false)
+  })
+
+  it('does NOT classify EACCES (permission denied) as transient -- permanent misconfiguration', () => {
+    expect(isTransientSpawnErrorCode('EACCES')).toBe(false)
+  })
+
+  it('does NOT classify an undefined code as transient', () => {
+    expect(isTransientSpawnErrorCode(undefined)).toBe(false)
+  })
+})
+
 describe('SMI-6015: transient-connection retry (runPsql/queryRows)', () => {
   it('retries a transient pre-connection failure and succeeds within budget', async () => {
     queueSpawnOutcome(
@@ -179,5 +228,37 @@ describe('SMI-6015: transient-connection retry (runPsql/queryRows)', () => {
     await vi.runAllTimersAsync()
     await expect(promise).resolves.toEqual([['value1', 'value2']])
     expect(spawnMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('SMI-6015 post-merge retro: retries a transient spawn-level failure (EMFILE) and succeeds within budget', async () => {
+    queueSpawnErrorOutcome('EMFILE')
+    queueSpawnOutcome(0, '', '')
+
+    const promise = runPsql(CONN, 'SELECT 1;')
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ stdout: '', stderr: '' })
+    expect(spawnMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('SMI-6015 post-merge retro: fails after exhausting the retry budget on a persistent transient spawn failure', async () => {
+    for (let i = 0; i < TRANSIENT_RETRY_MAX_ATTEMPTS; i++) {
+      queueSpawnErrorOutcome('EAGAIN')
+    }
+
+    const promise = runPsql(CONN, 'SELECT 1;')
+    const assertion = expect(promise).rejects.toThrow(/EAGAIN/)
+    await vi.runAllTimersAsync()
+    await assertion
+    expect(spawnMock).toHaveBeenCalledTimes(TRANSIENT_RETRY_MAX_ATTEMPTS)
+  })
+
+  it('SMI-6015 post-merge retro: does NOT retry a permanent spawn failure (ENOENT, missing binary) -- fails on the first attempt', async () => {
+    queueSpawnErrorOutcome('ENOENT')
+
+    const promise = runPsql(CONN, 'SELECT 1;')
+    const assertion = expect(promise).rejects.toThrow(/ENOENT/)
+    await vi.runAllTimersAsync()
+    await assertion
+    expect(spawnMock).toHaveBeenCalledTimes(1)
   })
 })

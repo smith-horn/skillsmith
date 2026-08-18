@@ -135,12 +135,43 @@ describe('resolveOne', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('SMI-6015 follow-up: clearTokenCache() is actually invoked on a 401 before the retry', async () => {
+  it('GPT-5.6-Sol Medium finding (post-merge retro): the dedicated 401 retry counts its own HTTP request in `attempts` -- previously undercounted, and `attempts` is persisted/accumulated downstream', async () => {
+    queueFetch([new Response('', { status: 401 }), repoResponse('develop')])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    // Two real HTTP requests were made (the 401, then the retry) -- attempts
+    // must reflect that, not the outer loop's own attempts=1.
+    expect(outcome.attempts).toBe(2)
+  })
+
+  it("GPT-5.6-Sol Low finding (post-merge retro): clearTokenCache() fires BEFORE the retry's getHeaders() call, and the retry's fetch actually carries whatever getHeaders returns next -- proves real remint wiring, not just that clearTokenCache was called", async () => {
     const authModule = await import('../../indexer/_shared/github-auth.ts')
-    const clearSpy = vi.spyOn(authModule, 'clearTokenCache')
+    const callOrder: string[] = []
+    const clearSpy = vi.spyOn(authModule, 'clearTokenCache').mockImplementation(() => {
+      callOrder.push('clearTokenCache')
+    })
     queueFetch([new Response('', { status: 401 }), repoResponse('main')])
-    await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    let headerCalls = 0
+    const seenAuthHeaders: (string | undefined)[] = []
+    const originalMock = global.fetch as unknown as ReturnType<typeof vi.fn>
+    global.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined
+      seenAuthHeaders.push(headers?.['Authorization'])
+      return originalMock()
+    }) as unknown as typeof global.fetch
+    const getHeaders = async () => {
+      headerCalls++
+      callOrder.push(`getHeaders-${headerCalls}`)
+      return { Authorization: `token-${headerCalls}` }
+    }
+    await resolveOne(REPO, getHeaders, newRateLimitTelemetry(), fastBucket())
     expect(clearSpy).toHaveBeenCalledTimes(1)
+    // clearTokenCache must fire BEFORE the retry's getHeaders call -- firing
+    // after would let the retry read a stale cached token.
+    expect(callOrder).toEqual(['getHeaders-1', 'clearTokenCache', 'getHeaders-2'])
+    // The retry's fetch actually carried the SECOND token -- proves the
+    // fresh value from getHeaders flowed all the way to the real request,
+    // not just that the exported function was invoked.
+    expect(seenAuthHeaders).toEqual(['token-1', 'token-2'])
     clearSpy.mockRestore()
   })
 

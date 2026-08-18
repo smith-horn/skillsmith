@@ -183,16 +183,27 @@ export async function waitOutRateLimit(response: Response): Promise<void> {
  * refreshed on the next attempt rather than producing a silent 401 storm.
  *
  * A 401 gets exactly ONE dedicated retry (SMI-6015 follow-up, 2026-08-18)
- * before being treated as fatal: `clearTokenCache()` forces a genuinely
- * fresh mint (not just another read of a possibly-still-"valid"-by-the-clock
- * cached token), then the SAME request is retried. This retry is deliberately
+ * before being treated as fatal: `clearTokenCache()` forces the next
+ * `getHeaders()` call to re-mint rather than read a possibly-still-cached
+ * token, then the SAME request is retried. This retry is deliberately
  * independent of the general `attempts` loop below — inlined into the 401
  * branch itself, not a `continue` back through the outer `while` — so a 401
  * arriving on the loop's OWN final attempt still gets its one chance rather
  * than silently falling through to this function's "unclassified status,
  * safe default is transient" catch-all, which would misclassify a
  * genuinely-dead credential exactly as `BranchResolutionAuthError` exists to
- * prevent. A SECOND 401 (after a guaranteed-fresh token) is unambiguous.
+ * prevent.
+ *
+ * GPT-5.6-Sol review note: `clearTokenCache()` only produces a genuinely
+ * FRESH credential when GitHub App installation-token auth is configured
+ * (`_shared/github-auth.ts`'s `getInstallationToken()` shares the same
+ * module-singleton cache this clears). Under the static-PAT fallback
+ * (`GITHUB_TOKEN`, no App credentials), clearing is a no-op and the retry
+ * reuses the identical token — still able to recover from an endpoint-side
+ * transient 401, just not from a genuinely revoked/expired PAT. Either way,
+ * a SECOND 401 — after either a guaranteed-fresh App token or an identical
+ * retried PAT — is unambiguous: continuing to fail with the best credential
+ * available (fresh or not) means the pass cannot proceed.
  */
 export async function resolveOne(
   repo: DistinctRepo,
@@ -217,6 +228,13 @@ export async function resolveOne(
         clearTokenCache()
         await new Promise((r) => setTimeout(r, AUTH_RETRY_BACKOFF_MS))
         await bucket.acquire()
+        // GPT-5.6-Sol review: count this dedicated retry's own HTTP request
+        // in the reported `attempts` too -- it's independent of the outer
+        // loop's counter above but is still a real request against the
+        // repo, and `attempts` is persisted/accumulated across re-resolution
+        // sweep passes downstream, so undercounting it understates real
+        // request volume.
+        attempts++
         const retryHeaders = await getHeaders()
         response = await withRateLimitTracking(
           telemetry,
