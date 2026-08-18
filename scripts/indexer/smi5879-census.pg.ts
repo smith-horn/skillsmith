@@ -202,6 +202,47 @@ class PsqlExitError extends Error {
 }
 
 /**
+ * SMI-6015 post-merge retro (2026-08-18): the census pipeline spawns tens of
+ * thousands of `psql` subprocesses over a multi-hour run (population load,
+ * branch resolution, batched writes). Node's `ChildProcess` `'error'` event
+ * — distinct from a non-zero exit, {@link PsqlExitError}'s job — fires when
+ * `spawn()` itself fails, and at this volume a transient OS-level resource
+ * ceiling (`EMFILE`/`ENFILE`: too many open file descriptors; `EAGAIN`:
+ * `fork()` temporarily refused; `ENOMEM`: temporary memory pressure) is a
+ * realistic failure mode, not just a hypothetical one — nothing here retries
+ * it. `ENOENT` (missing binary) and `EACCES` (permission denied) are
+ * deliberately excluded: both are permanent misconfiguration, not transient,
+ * and retrying either can only delay a failure that will not resolve itself.
+ */
+const TRANSIENT_SPAWN_ERROR_CODES: ReadonlySet<string> = new Set([
+  'EAGAIN',
+  'EMFILE',
+  'ENFILE',
+  'ENOMEM',
+])
+
+/**
+ * Thrown by {@link spawnPsqlOnce} when `spawn()` itself fails (the process
+ * never started at all) — distinct from {@link PsqlExitError}, which is a
+ * process that started and exited non-zero. Carries the underlying
+ * `NodeJS.ErrnoException.code` (e.g. `EMFILE`) separately from `message` so
+ * the retry wrapper can classify it without re-parsing free text.
+ */
+class PsqlSpawnError extends Error {
+  readonly code: string | undefined
+  constructor(message: string, code: string | undefined) {
+    super(message)
+    this.name = 'PsqlSpawnError'
+    this.code = code
+  }
+}
+
+/** True when a {@link PsqlSpawnError}'s code is a transient OS-resource ceiling — see that class's doc comment. */
+export function isTransientSpawnErrorCode(code: string | undefined): boolean {
+  return code !== undefined && TRANSIENT_SPAWN_ERROR_CODES.has(code)
+}
+
+/**
  * Spawn `psql` against `conn`, feed `sql` via stdin, and resolve with
  * stdout/stderr. Rejects (with stderr — which carries any `RAISE EXCEPTION`
  * message the SQL triggered) on a non-zero exit. Credentials go via the child's
@@ -229,7 +270,9 @@ function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Pr
     let stderr = ''
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
     child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')))
-    child.on('error', (err) => reject(new Error(`SMI-5879: failed to spawn psql: ${err.message}`)))
+    child.on('error', (err: NodeJS.ErrnoException) =>
+      reject(new PsqlSpawnError(`SMI-5879: failed to spawn psql: ${err.message}`, err.code))
+    )
     child.on('close', (code) => {
       if (code !== 0) {
         reject(new PsqlExitError(code, stderr))
@@ -243,11 +286,13 @@ function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Pr
 }
 
 /**
- * Retry wrapper around {@link spawnPsqlOnce}: on a transient, PRE-connection
- * failure (see {@link isTransientConnectionError}), retries up to
- * {@link TRANSIENT_RETRY_MAX_ATTEMPTS} attempts total with a short backoff
- * between them. Any other failure (a real SQL error, an ambiguous
- * post-execution connection loss, a spawn failure) is NOT retried and
+ * Retry wrapper around {@link spawnPsqlOnce}: retries up to
+ * {@link TRANSIENT_RETRY_MAX_ATTEMPTS} attempts total, with a short backoff
+ * between them, for two distinct transient conditions — a PRE-connection
+ * failure (see {@link isTransientConnectionError}) or an OS-level resource
+ * ceiling on `spawn()` itself (see {@link isTransientSpawnErrorCode}). Any
+ * other failure (a real SQL error, an ambiguous post-execution connection
+ * loss, a permanent spawn failure like a missing binary) is NOT retried and
  * rejects on the first attempt, same as before this fix.
  */
 async function spawnPsql(
@@ -261,13 +306,19 @@ async function spawnPsql(
       return await spawnPsqlOnce(conn, extraArgs, sql)
     } catch (err) {
       const error = err as Error
-      const rawStderr = error instanceof PsqlExitError ? error.rawStderr : error.message
-      if (!isTransientConnectionError(rawStderr) || attempt === TRANSIENT_RETRY_MAX_ATTEMPTS) {
+      const isTransient =
+        error instanceof PsqlExitError
+          ? isTransientConnectionError(error.rawStderr)
+          : error instanceof PsqlSpawnError
+            ? isTransientSpawnErrorCode(error.code)
+            : false
+      if (!isTransient || attempt === TRANSIENT_RETRY_MAX_ATTEMPTS) {
         throw error
       }
       lastError = error
       console.error(
-        `[smi5879-census.pg] transient connection error (attempt ${attempt}/${TRANSIENT_RETRY_MAX_ATTEMPTS}), retrying: ${error.message}`
+        `[smi5879-census.pg] transient ${error instanceof PsqlSpawnError ? 'spawn' : 'connection'} error ` +
+          `(attempt ${attempt}/${TRANSIENT_RETRY_MAX_ATTEMPTS}), retrying: ${error.message}`
       )
       await delay(TRANSIENT_RETRY_BACKOFF_MS[attempt - 1] ?? TRANSIENT_RETRY_BACKOFF_MS.at(-1))
     }

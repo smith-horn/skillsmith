@@ -21,8 +21,6 @@ import {
   waitOutRateLimit,
   runResolutionPool,
   checkCircuitBreaker,
-  buildBatchInsertSql,
-  buildBatchUpdateSql,
   BranchResolutionAuthError,
   BranchResolutionCircuitBreakerError,
   MAX_RETRIES,
@@ -109,19 +107,116 @@ describe('resolveOne', () => {
     expect(outcome.attempts).toBe(MAX_RETRIES)
   })
 
-  it('401 throws BranchResolutionAuthError immediately — one attempt, never retried, never transient', async () => {
-    const fetchMock = queueFetch([new Response('', { status: 401 })])
+  it('SMI-6015 follow-up: 401 gets exactly one cache-busted retry before throwing — a second 401 is fatal, never transient', async () => {
+    const fetchMock = queueFetch([
+      new Response('', { status: 401 }),
+      new Response('', { status: 401 }),
+    ])
     await expect(
       resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
     ).rejects.toThrow(BranchResolutionAuthError)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('401 error names the offending repo', async () => {
-    queueFetch([new Response('', { status: 401 })])
+    queueFetch([new Response('', { status: 401 }), new Response('', { status: 401 })])
     await expect(
       resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
     ).rejects.toThrow(/acme\/widget/)
+  })
+
+  it('SMI-6015 follow-up: a 401 followed by a successful retry recovers — does not throw, does not lose the pass', async () => {
+    const fetchMock = queueFetch([new Response('', { status: 401 }), repoResponse('develop')])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(outcome.resolution).toBe('resolved')
+    expect(outcome.defaultBranch).toBe('develop')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('GPT-5.6-Sol Medium finding (post-merge retro): the dedicated 401 retry counts its own HTTP request in `attempts` -- previously undercounted, and `attempts` is persisted/accumulated downstream', async () => {
+    queueFetch([new Response('', { status: 401 }), repoResponse('develop')])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    // Two real HTTP requests were made (the 401, then the retry) -- attempts
+    // must reflect that, not the outer loop's own attempts=1.
+    expect(outcome.attempts).toBe(2)
+  })
+
+  it("GPT-5.6-Sol round-2 finding: a 401-then-recovered-to-a-retryable-status sequence still gets the FULL outer retry budget -- the reporting counter must not consume the outer loop's own attempts", async () => {
+    // Reviewer's exact walkthrough: 401 -> 403 -> 5xx should still permit a
+    // 4th request (the outer loop's own 3rd attempt) -- if the 401 retry's
+    // HTTP request were still (incorrectly) shared with the outer `attempts`
+    // budget, the loop would exhaust after only 3 fetch calls and this 4th
+    // response would never even be consumed, returning 'transient' instead.
+    const fetchMock = queueFetch([
+      new Response('', { status: 401 }),
+      new Response('', { status: 403 }), // the 401's dedicated retry recovers to a DIFFERENT retryable status
+      new Response('', { status: 500 }), // outer attempt 2
+      repoResponse('develop'), // outer attempt 3 -- only reachable if the outer budget is truly untouched
+    ])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(outcome.resolution).toBe('resolved')
+    expect(outcome.defaultBranch).toBe('develop')
+    expect(outcome.attempts).toBe(4)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it("GPT-5.6-Sol Low finding (post-merge retro): clearTokenCache() fires BEFORE the retry's getHeaders() call, and the retry's fetch actually carries whatever getHeaders returns next -- proves real remint wiring, not just that clearTokenCache was called", async () => {
+    const authModule = await import('../../indexer/_shared/github-auth.ts')
+    const callOrder: string[] = []
+    const clearSpy = vi.spyOn(authModule, 'clearTokenCache').mockImplementation(() => {
+      callOrder.push('clearTokenCache')
+    })
+    queueFetch([new Response('', { status: 401 }), repoResponse('main')])
+    let headerCalls = 0
+    const seenAuthHeaders: (string | undefined)[] = []
+    const originalMock = global.fetch as unknown as ReturnType<typeof vi.fn>
+    global.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined
+      seenAuthHeaders.push(headers?.['Authorization'])
+      return originalMock()
+    }) as unknown as typeof global.fetch
+    const getHeaders = async () => {
+      headerCalls++
+      callOrder.push(`getHeaders-${headerCalls}`)
+      return { Authorization: `token-${headerCalls}` }
+    }
+    await resolveOne(REPO, getHeaders, newRateLimitTelemetry(), fastBucket())
+    expect(clearSpy).toHaveBeenCalledTimes(1)
+    // clearTokenCache must fire BEFORE the retry's getHeaders call -- firing
+    // after would let the retry read a stale cached token.
+    expect(callOrder).toEqual(['getHeaders-1', 'clearTokenCache', 'getHeaders-2'])
+    // The retry's fetch actually carried the SECOND token -- proves the
+    // fresh value from getHeaders flowed all the way to the real request,
+    // not just that the exported function was invoked.
+    expect(seenAuthHeaders).toEqual(['token-1', 'token-2'])
+    clearSpy.mockRestore()
+  })
+
+  it("SMI-6015 follow-up EDGE CASE: a 401 on the outer loop's own FINAL attempt still gets its dedicated retry and recovers — never silently falls through to transient", async () => {
+    // MAX_RETRIES-1 5xx responses burn every attempt except the last, so the
+    // 401 below lands exactly on attempts===MAX_RETRIES (the while loop's
+    // own final iteration) — the case that would silently fall through to
+    // "unclassified -> transient" if the 401 retry were implemented as a
+    // `continue` back through the outer loop instead of an inline retry.
+    queueFetch([
+      ...Array.from({ length: MAX_RETRIES - 1 }, () => new Response('', { status: 500 })),
+      new Response('', { status: 401 }),
+      repoResponse('develop'),
+    ])
+    const outcome = await resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    expect(outcome.resolution).toBe('resolved')
+    expect(outcome.defaultBranch).toBe('develop')
+  })
+
+  it('SMI-6015 follow-up EDGE CASE: a 401 on the final attempt whose retry ALSO 401s still throws — never silently returns transient', async () => {
+    queueFetch([
+      ...Array.from({ length: MAX_RETRIES - 1 }, () => new Response('', { status: 500 })),
+      new Response('', { status: 401 }),
+      new Response('', { status: 401 }),
+    ])
+    await expect(
+      resolveOne(REPO, async () => ({}), newRateLimitTelemetry(), fastBucket())
+    ).rejects.toThrow(BranchResolutionAuthError)
   })
 
   it('getHeaders is invoked fresh on every retry attempt — the SMI-6015 fix — not once for the whole call', async () => {
@@ -295,9 +390,14 @@ describe('runResolutionPool', () => {
       owner: 'acme',
       repo: `r${i}`,
     }))
-    queueFetch(
-      repos.map((_, i) => (i === 3 ? new Response('', { status: 401 }) : repoResponse('main')))
-    )
+    // SMI-6015 follow-up: index 3 now needs TWO queued 401s — resolveOne's
+    // dedicated retry consumes one extra fetch call before it gives up and
+    // aborts the pool, same as a genuinely dead credential would.
+    queueFetch([
+      ...Array.from({ length: 3 }, () => repoResponse('main')),
+      new Response('', { status: 401 }),
+      new Response('', { status: 401 }),
+    ])
     const outcomes: ResolutionOutcome[] = []
     const { abortedBy } = await runResolutionPool(
       repos,
@@ -400,103 +500,6 @@ describe('checkCircuitBreaker', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// buildBatchInsertSql / buildBatchUpdateSql — json_to_recordset NULL semantics
-// ---------------------------------------------------------------------------
-
-/** Locate the `$tag$...$tag$` literal following `json_to_recordset(` and parse it, tag-suffix-agnostic. */
-function extractRecordsetJson(sql: string): unknown {
-  const marker = 'json_to_recordset('
-  const startIdx = sql.indexOf(marker)
-  if (startIdx === -1) throw new Error('json_to_recordset( not found in SQL')
-  const rest = sql.slice(startIdx + marker.length)
-  const tagMatch = rest.match(/^\$smi5879b\d*\$/)
-  if (!tagMatch) throw new Error('no dollar-quote tag found immediately after json_to_recordset(')
-  const tag = tagMatch[0]
-  const afterTag = rest.slice(tag.length)
-  const endIdx = afterTag.indexOf(tag)
-  if (endIdx === -1) throw new Error('closing dollar-quote tag not found')
-  return JSON.parse(afterTag.slice(0, endIdx))
-}
-
-describe('buildBatchInsertSql / buildBatchUpdateSql', () => {
-  const outcomes: ResolutionOutcome[] = [
-    {
-      repo: { owner: 'acme', repo: 'resolved-repo' },
-      resolution: 'resolved',
-      defaultBranch: 'main',
-      httpStatus: 200,
-      attempts: 1,
-    },
-    {
-      repo: { owner: 'acme', repo: 'transient-repo' },
-      resolution: 'transient',
-      defaultBranch: null,
-      httpStatus: null,
-      attempts: 3,
-    },
-    {
-      repo: { owner: 'acme', repo: 'notfound-repo' },
-      resolution: 'not-found',
-      defaultBranch: null,
-      httpStatus: 404,
-      attempts: 1,
-    },
-  ]
-
-  it('INSERT: embeds real JSON null for default_branch/http_status — no NULLIF sentinel hack', () => {
-    const { sql, vars } = buildBatchInsertSql('run-1', outcomes)
-    expect(vars).toEqual({ run_id: 'run-1' })
-    expect(sql).toContain('INSERT INTO smi5879_repo_branch')
-    expect(sql).not.toContain('NULLIF')
-
-    const parsed = extractRecordsetJson(sql) as Array<Record<string, unknown>>
-    expect(parsed).toHaveLength(3)
-    expect(parsed[0]).toEqual({
-      owner: 'acme',
-      repo: 'resolved-repo',
-      default_branch: 'main',
-      resolution: 'resolved',
-      http_status: 200,
-      attempts: 1,
-    })
-    // The exact case the old NULLIF-sentinel existed for — confirm it's a
-    // real JSON null, not an empty string.
-    expect(parsed[1]?.['default_branch']).toBeNull()
-    expect(parsed[1]?.['http_status']).toBeNull()
-    expect(parsed[2]?.['default_branch']).toBeNull()
-    expect(parsed[2]?.['http_status']).toBe(404)
-  })
-
-  it('UPDATE: same JSON-null preservation, plus the additive `attempts = b.attempts + x.attempts` clause', () => {
-    const { sql, vars } = buildBatchUpdateSql('run-1', outcomes)
-    expect(vars).toEqual({ run_id: 'run-1' })
-    expect(sql).toContain('UPDATE smi5879_repo_branch')
-    expect(sql).toContain('attempts       = b.attempts + x.attempts')
-    expect(sql).toContain("WHERE b.run_id = :'run_id' AND b.owner = x.owner AND b.repo = x.repo")
-    expect(sql).not.toContain('NULLIF')
-
-    const parsed = extractRecordsetJson(sql) as Array<Record<string, unknown>>
-    expect(parsed[1]?.['default_branch']).toBeNull()
-  })
-
-  it('picks a collision-free dollar-quote tag even when the payload literally contains the default tag text', () => {
-    const trickyOutcomes: ResolutionOutcome[] = [
-      {
-        repo: { owner: 'acme', repo: 'weird' },
-        resolution: 'resolved',
-        defaultBranch: 'contains-$smi5879b$-literally',
-        httpStatus: 200,
-        attempts: 1,
-      },
-    ]
-    const { sql } = buildBatchInsertSql('run-1', trickyOutcomes)
-    const parsed = extractRecordsetJson(sql) as Array<Record<string, unknown>>
-    expect(parsed[0]?.['default_branch']).toBe('contains-$smi5879b$-literally')
-  })
-
-  it('an empty outcomes array still builds valid (if pointless) SQL — callers skip the psql call entirely, not this builder', () => {
-    const { sql } = buildBatchInsertSql('run-1', [])
-    expect(extractRecordsetJson(sql)).toEqual([])
-  })
-})
+// buildBatchInsertSql / buildBatchUpdateSql tests moved to
+// smi5879-census.branches.writes.test.ts (SMI-6015 post-merge retro,
+// 2026-08-18) alongside the source split — see that file's own header.

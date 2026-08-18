@@ -1,6 +1,9 @@
 /**
- * Worker-pool, batched-write, circuit-breaker, and progress-logging machinery
- * for smi5879-census.branches.ts's default_branch resolution pass (SMI-6015).
+ * Per-repo resolution, worker-pool, circuit-breaker, and progress-logging
+ * machinery for smi5879-census.branches.ts's default_branch resolution pass
+ * (SMI-6015). Batched-write / SQL-builder machinery lives in the sibling
+ * ./smi5879-census.branches.writes.ts (split out 2026-08-18, this file's own
+ * post-merge retro, to stay under the 500-line-per-file budget).
  * @module scripts/indexer/smi5879-census.branches.helpers
  *
  * Split out of smi5879-census.branches.ts to stay under CLAUDE.md's
@@ -27,11 +30,21 @@
  * fresh on every retry attempt (not once for the whole pass — see
  * `_shared/github-auth.ts`'s `getInstallationToken()`, which caches and only
  * re-mints near expiry, so this costs ~nil when the token is still fresh);
- * 401 is fatal and aborts the pass immediately rather than being classified
- * `transient`; writes are batched via `json_to_recordset` (~500 rows/psql
- * spawn) and flushed incrementally as outcomes arrive, not held until the
- * whole pass completes; and a circuit breaker aborts a doomed pass early
- * instead of continuing for hours.
+ * 401 gets one dedicated cache-busted retry and is otherwise fatal, aborting
+ * the pass rather than being classified `transient`; writes are batched via
+ * `json_to_recordset` (~500 rows/psql spawn) and flushed incrementally as
+ * outcomes arrive, not held until the whole pass completes; and a circuit
+ * breaker aborts a doomed pass early instead of continuing for hours.
+ *
+ * SMI-6015 follow-up (2026-08-18): a production run hit a single 401 after
+ * ~1h54m and 2,298/30,471 repos resolved, aborted per (1) above exactly as
+ * designed — but a live re-check immediately after showed a freshly-minted
+ * installation token succeeding cleanly against the SAME repo, with no
+ * correlating GitHub-status incident in the window. A lone 401 is therefore
+ * not by itself proof of a dead credential. `resolveOne` now gives a 401
+ * exactly one retry (`clearTokenCache()` + fresh mint) before treating it as
+ * fatal — a second 401 straight after a guaranteed-fresh token remains
+ * unambiguous and still aborts the whole pass.
  */
 
 import {
@@ -42,13 +55,8 @@ import {
   type PoolAbortSignal,
   type CancellablePoolResult,
 } from './_shared/rate-limit.ts'
-import { GitHubAuthError } from './_shared/github-auth.ts'
-import { runPsql, type PgConnParams } from './smi5879-census.pg.ts'
-import type {
-  BranchResolutionOutcome,
-  DistinctRepo,
-  ResolutionOutcome,
-} from './smi5879-census.types.ts'
+import { GitHubAuthError, clearTokenCache } from './_shared/github-auth.ts'
+import type { DistinctRepo, ResolutionOutcome } from './smi5879-census.types.ts'
 
 // ---------------------------------------------------------------------------
 // Constants (named, per CLAUDE.md — no magic numbers)
@@ -59,12 +67,21 @@ export const REPO_RESOLUTION_RATE_PER_SEC = 1
 export const REPO_RESOLUTION_BURST = 3
 /** Bounded concurrency for the resolution pass (matches revalidate-stale-quarantines.ts's polite BATCH). */
 export const RESOLUTION_CONCURRENCY = 5
-/** Per-repo retry budget inside `resolveOne` (403/429/5xx/network only — 401 never retries). */
+/** Per-repo retry budget inside `resolveOne` (403/429/5xx/network — separate from the dedicated 401 retry below). */
 export const MAX_RETRIES = 3
 /** Fixed backoff for a 403/429 that is NOT a primary rate-limit exhaustion (secondary/abuse detection). */
 export const SECONDARY_RATE_LIMIT_BACKOFF_MS = 1_000
 /** Backoff for a 5xx/network error, multiplied by the attempt number. */
 export const SERVER_ERROR_BACKOFF_MS = 500
+/**
+ * SMI-6015 follow-up (2026-08-18 production incident): a single 401 does not
+ * by itself prove a dead credential — observed live, a freshly re-minted
+ * installation token succeeded immediately after an in-pass 401 with no
+ * correlating GitHub-status incident. Fixed backoff before the ONE dedicated
+ * retry `resolveOne` gives a 401 (via `clearTokenCache()` + a fresh mint),
+ * independent of the general `attempts` budget above.
+ */
+export const AUTH_RETRY_BACKOFF_MS = 500
 /** Small buffer added past `x-ratelimit-reset` to avoid retrying right on the reset boundary. */
 export const PRIMARY_RATE_LIMIT_RESET_BUFFER_MS = 2_000
 /** Fallback wait when a primary-rate-limit 403/429 carries no usable `x-ratelimit-reset`. */
@@ -89,10 +106,12 @@ export const REEXOLUTION_SWEEP_WALL_CLOCK_BUDGET_MS = 10 * 60 * 1000
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown by `resolveOne` on an HTTP 401 — a credential-level failure, not a
- * per-repo condition (GitHub returns 404, not 401, for a repo the token
- * can't see). Propagates through `runResolutionPool` to abort the whole
- * pass; callers must never catch-and-continue this as a `transient` outcome.
+ * Thrown by `resolveOne` on a SECOND consecutive HTTP 401 — after its one
+ * dedicated cache-busted retry also came back 401 — a credential-level
+ * failure, not a per-repo condition (GitHub returns 404, not 401, for a repo
+ * the token can't see). Propagates through `runResolutionPool` to abort the
+ * whole pass; callers must never catch-and-continue this as a `transient`
+ * outcome.
  */
 export class BranchResolutionAuthError extends GitHubAuthError {
   constructor(
@@ -160,6 +179,29 @@ export async function waitOutRateLimit(response: Response): Promise<void> {
  * `getHeaders` is invoked FRESH on every attempt (SMI-6015) — never once for
  * the whole pass — so a token that expires mid-pass is transparently
  * refreshed on the next attempt rather than producing a silent 401 storm.
+ *
+ * A 401 gets exactly ONE dedicated retry (SMI-6015 follow-up, 2026-08-18)
+ * before being treated as fatal: `clearTokenCache()` forces the next
+ * `getHeaders()` call to re-mint rather than read a possibly-still-cached
+ * token, then the SAME request is retried. This retry is deliberately
+ * independent of the general `attempts` loop below — inlined into the 401
+ * branch itself, not a `continue` back through the outer `while` — so a 401
+ * arriving on the loop's OWN final attempt still gets its one chance rather
+ * than silently falling through to this function's "unclassified status,
+ * safe default is transient" catch-all, which would misclassify a
+ * genuinely-dead credential exactly as `BranchResolutionAuthError` exists to
+ * prevent.
+ *
+ * GPT-5.6-Sol review note: `clearTokenCache()` only produces a genuinely
+ * FRESH credential when GitHub App installation-token auth is configured
+ * (`_shared/github-auth.ts`'s `getInstallationToken()` shares the same
+ * module-singleton cache this clears). Under the static-PAT fallback
+ * (`GITHUB_TOKEN`, no App credentials), clearing is a no-op and the retry
+ * reuses the identical token — still able to recover from an endpoint-side
+ * transient 401, just not from a genuinely revoked/expired PAT. Either way,
+ * a SECOND 401 — after either a guaranteed-fresh App token or an identical
+ * retried PAT — is unambiguous: continuing to fail with the best credential
+ * available (fresh or not) means the pass cannot proceed.
  */
 export async function resolveOne(
   repo: DistinctRepo,
@@ -167,25 +209,56 @@ export async function resolveOne(
   telemetry: RateLimitTelemetry,
   bucket: ReturnType<typeof createTokenBucket>
 ): Promise<ResolutionOutcome> {
+  // `attempts` is PURELY the outer loop's own retry-BUDGET counter (gates
+  // `while` below) -- it must stay untouched by the 401 branch, or the
+  // dedicated 401 retry silently consumes one of the outer loop's own
+  // attempts, truncating the general 403/429/5xx retry budget below what
+  // this function's own docs promise (GPT-5.6-Sol round-2 review,
+  // 2026-08-18: walked a 401 -> 403 -> 5xx sequence that loses its 4th,
+  // otherwise-available attempt if the two counters are conflated).
+  // `totalRequests` is the separate, purely additive count of real HTTP
+  // requests made -- what `ResolutionOutcome.attempts` actually reports
+  // downstream, so it DOES include the 401 retry's own request.
   let attempts = 0
+  let totalRequests = 0
   let lastStatus: number | null = null
   while (attempts < MAX_RETRIES) {
     attempts++
     await bucket.acquire()
     try {
       const headers = await getHeaders()
-      const response = await withRateLimitTracking(
+      totalRequests++
+      let response = await withRateLimitTracking(
         telemetry,
         `https://api.github.com/repos/${repo.owner}/${repo.repo}`,
         { headers, _throwOnRateLimit: false }
       )
-      lastStatus = response.status
 
       if (response.status === 401) {
-        throw new BranchResolutionAuthError(repo, response.status)
+        clearTokenCache()
+        await new Promise((r) => setTimeout(r, AUTH_RETRY_BACKOFF_MS))
+        await bucket.acquire()
+        totalRequests++
+        const retryHeaders = await getHeaders()
+        response = await withRateLimitTracking(
+          telemetry,
+          `https://api.github.com/repos/${repo.owner}/${repo.repo}`,
+          { headers: retryHeaders, _throwOnRateLimit: false }
+        )
+        if (response.status === 401) {
+          throw new BranchResolutionAuthError(repo, response.status)
+        }
       }
+      lastStatus = response.status
+
       if (response.status === 404) {
-        return { repo, resolution: 'not-found', defaultBranch: null, httpStatus: 404, attempts }
+        return {
+          repo,
+          resolution: 'not-found',
+          defaultBranch: null,
+          httpStatus: 404,
+          attempts: totalRequests,
+        }
       }
       if (response.status === 403 || response.status === 429) {
         await waitOutRateLimit(response)
@@ -206,7 +279,7 @@ export async function resolveOne(
             resolution: 'resolved',
             defaultBranch,
             httpStatus: response.status,
-            attempts,
+            attempts: totalRequests,
           }
         }
         // 200 with no usable default_branch is a shape we've never seen from GitHub
@@ -216,7 +289,7 @@ export async function resolveOne(
           resolution: 'transient',
           defaultBranch: null,
           httpStatus: response.status,
-          attempts,
+          attempts: totalRequests,
         }
       }
       // Unclassified status — safe default is transient, never a false not-found.
@@ -225,7 +298,7 @@ export async function resolveOne(
         resolution: 'transient',
         defaultBranch: null,
         httpStatus: response.status,
-        attempts,
+        attempts: totalRequests,
       }
     } catch (err) {
       // Fatal auth failure must never be swallowed into the network-error retry below.
@@ -235,7 +308,13 @@ export async function resolveOne(
       continue
     }
   }
-  return { repo, resolution: 'transient', defaultBranch: null, httpStatus: lastStatus, attempts }
+  return {
+    repo,
+    resolution: 'transient',
+    defaultBranch: null,
+    httpStatus: lastStatus,
+    attempts: totalRequests,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -322,113 +401,8 @@ export function logResolutionProgress(
   )
 }
 
-// ---------------------------------------------------------------------------
-// Batched writes — json_to_recordset, real JSON null (no NULLIF sentinel)
-// ---------------------------------------------------------------------------
-
-interface RecordsetRow {
-  owner: string
-  repo: string
-  default_branch: string | null
-  resolution: BranchResolutionOutcome
-  http_status: number | null
-  attempts: number
-}
-
-/**
- * Pick a `$tag$...$tag$` dollar-quote delimiter guaranteed not to occur
- * inside `payload` — collision-checked, not merely assumed unlikely. The SQL
- * text (including this literal) is piped to `psql` via STDIN
- * (`smi5879-census.pg.ts`'s `spawnPsql` writes `sql` to `child.stdin`), so
- * there is no `-v`/argv size limit to worry about for a large batch, unlike
- * the old NULLIF-sentinel `-v` substitution this replaces.
- */
-function pickDollarQuoteTag(payload: string): string {
-  let tag = '$smi5879b$'
-  let n = 0
-  while (payload.includes(tag)) {
-    n++
-    tag = `$smi5879b${n}$`
-  }
-  return tag
-}
-
-function toRecordsetRow(o: ResolutionOutcome): RecordsetRow {
-  return {
-    owner: o.repo.owner,
-    repo: o.repo.repo,
-    default_branch: o.defaultBranch,
-    resolution: o.resolution,
-    http_status: o.httpStatus,
-    attempts: o.attempts,
-  }
-}
-
-function jsonRecordsetLiteral(outcomes: readonly ResolutionOutcome[]): string {
-  const json = JSON.stringify(outcomes.map(toRecordsetRow))
-  const tag = pickDollarQuoteTag(json)
-  return `${tag}${json}${tag}`
-}
-
-const RECORDSET_COLUMNS =
-  'owner text, repo text, default_branch text, resolution text, http_status integer, attempts integer'
-
-/**
- * Build the batched INSERT for a fresh set of outcomes (main pass). JSON
- * `null` for `default_branch`/`http_status` maps straight to SQL NULL via
- * `json_to_recordset`'s column typing — no NULLIF empty-string sentinel
- * needed (the old one-repo-at-a-time `writeOutcome` needed it only because
- * psql's `-v`/`:'var'` substitution cannot produce a bare SQL NULL; this
- * batched form never goes through that substitution for the payload).
- */
-export function buildBatchInsertSql(
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): { sql: string; vars: Record<string, string> } {
-  const literal = jsonRecordsetLiteral(outcomes)
-  const sql = `
-    INSERT INTO smi5879_repo_branch (run_id, owner, repo, default_branch, resolution, http_status, attempts)
-    SELECT :'run_id', owner, repo, default_branch, resolution, http_status, attempts
-    FROM json_to_recordset(${literal}::json) AS x(${RECORDSET_COLUMNS});
-  `
-  return { sql, vars: { run_id: runId } }
-}
-
-/** Build the batched UPDATE for a re-resolution sweep pass — `attempts` accumulates onto the existing row. */
-export function buildBatchUpdateSql(
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): { sql: string; vars: Record<string, string> } {
-  const literal = jsonRecordsetLiteral(outcomes)
-  const sql = `
-    UPDATE smi5879_repo_branch b
-       SET default_branch = x.default_branch,
-           resolution     = x.resolution,
-           http_status    = x.http_status,
-           attempts       = b.attempts + x.attempts,
-           resolved_at    = now()
-      FROM json_to_recordset(${literal}::json) AS x(${RECORDSET_COLUMNS})
-     WHERE b.run_id = :'run_id' AND b.owner = x.owner AND b.repo = x.repo;
-  `
-  return { sql, vars: { run_id: runId } }
-}
-
-export async function writeOutcomesBatch(
-  conn: PgConnParams,
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): Promise<void> {
-  if (outcomes.length === 0) return
-  const { sql, vars } = buildBatchInsertSql(runId, outcomes)
-  await runPsql(conn, sql, vars)
-}
-
-export async function updateOutcomesBatch(
-  conn: PgConnParams,
-  runId: string,
-  outcomes: readonly ResolutionOutcome[]
-): Promise<void> {
-  if (outcomes.length === 0) return
-  const { sql, vars } = buildBatchUpdateSql(runId, outcomes)
-  await runPsql(conn, sql, vars)
-}
+// Batched-write / SQL-builder machinery (buildBatchInsertSql,
+// buildBatchUpdateSql, writeOutcomesBatch, updateOutcomesBatch) moved to
+// ./smi5879-census.branches.writes.ts (SMI-6015 post-merge retro,
+// 2026-08-18) to stay under the 500-line-per-file budget — no logical
+// boundary change, same code, different file.
