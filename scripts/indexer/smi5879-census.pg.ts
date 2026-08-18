@@ -43,6 +43,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { delay } from './_shared/rate-limit.ts'
 
 /** Connection parameters for a `psql` subprocess (never logged — passed via env only). */
 export interface PgConnParams {
@@ -130,12 +131,52 @@ export interface PsqlOutcome {
 }
 
 /**
+ * SMI-6015 Wave 3 incident (2026-08-17): a transient DNS/connection blip
+ * (`could not translate host name "..." to address`, an intermittent wifi
+ * drop mid-multi-hour census run) hit an UNGUARDED `spawnPsql` call inside
+ * `resolveDefaultBranches`'s batched write-back (`writeOutcomesBatch` via
+ * `flush()`'s `pendingFlushes`) and crashed the whole process with an
+ * uncaught rejection — discarding all in-memory progress since the last
+ * successful flush. Unlike the GitHub API call path (`resolveOne`'s own
+ * retry/circuit-breaker logic), every `psql`-backed DB call in this module
+ * had zero tolerance for a purely transient connection failure.
+ *
+ * These patterns match libpq/psql's own connection-establishment error text
+ * (never a SQL-level `ERROR:` from `ON_ERROR_STOP=1` triggering on a real
+ * constraint violation or syntax error, which must still fail immediately —
+ * retrying a bad SQL statement can't help and would mask a real bug).
+ * Verified against the exact production message from this incident
+ * (`could not translate host name`) plus libpq's other well-known
+ * connection-establishment failure strings.
+ */
+const TRANSIENT_CONNECTION_ERROR_PATTERNS: RegExp[] = [
+  /could not translate host name/i,
+  /temporary failure in name resolution/i,
+  /connection refused/i,
+  /could not connect to server/i,
+  /server closed the connection unexpectedly/i,
+  /timeout expired/i,
+  /operation timed out/i,
+  /network is unreachable/i,
+]
+
+/** True when `stderr` looks like a transient connection failure, not a real SQL error. */
+export function isTransientConnectionError(stderr: string): boolean {
+  return TRANSIENT_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(stderr))
+}
+
+/** Bounded retry budget for a transient connection failure (initial attempt + this many retries). */
+export const TRANSIENT_RETRY_MAX_ATTEMPTS = 3
+/** Backoff between retry attempts (ms) — short, since this recovers from a blip, not a rate limit. */
+const TRANSIENT_RETRY_BACKOFF_MS = [1000, 2000]
+
+/**
  * Spawn `psql` against `conn`, feed `sql` via stdin, and resolve with
  * stdout/stderr. Rejects (with stderr — which carries any `RAISE EXCEPTION`
  * message the SQL triggered) on a non-zero exit. Credentials go via the child's
  * environment only, never argv, never logged.
  */
-function spawnPsql(conn: PgConnParams, extraArgs: string[], sql: string): Promise<PsqlOutcome> {
+function spawnPsqlOnce(conn: PgConnParams, extraArgs: string[], sql: string): Promise<PsqlOutcome> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       'psql',
@@ -168,6 +209,39 @@ function spawnPsql(conn: PgConnParams, extraArgs: string[], sql: string): Promis
     child.stdin.write(sql)
     child.stdin.end()
   })
+}
+
+/**
+ * Retry wrapper around {@link spawnPsqlOnce}: on a transient connection
+ * failure (see {@link isTransientConnectionError}), retries up to
+ * {@link TRANSIENT_RETRY_MAX_ATTEMPTS} attempts total with a short backoff
+ * between them. Any other failure (a real SQL error, a spawn failure) is NOT
+ * retried and rejects on the first attempt, same as before this fix.
+ */
+async function spawnPsql(
+  conn: PgConnParams,
+  extraArgs: string[],
+  sql: string
+): Promise<PsqlOutcome> {
+  let lastError: Error | undefined
+  for (let attempt = 1; attempt <= TRANSIENT_RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await spawnPsqlOnce(conn, extraArgs, sql)
+    } catch (err) {
+      const error = err as Error
+      if (!isTransientConnectionError(error.message) || attempt === TRANSIENT_RETRY_MAX_ATTEMPTS) {
+        throw error
+      }
+      lastError = error
+      console.error(
+        `[smi5879-census.pg] transient connection error (attempt ${attempt}/${TRANSIENT_RETRY_MAX_ATTEMPTS}), retrying: ${error.message}`
+      )
+      await delay(TRANSIENT_RETRY_BACKOFF_MS[attempt - 1] ?? TRANSIENT_RETRY_BACKOFF_MS.at(-1))
+    }
+  }
+  // Unreachable — the loop above always either returns or throws — but keeps
+  // the function's return type honest without a non-null assertion.
+  throw lastError ?? new Error('SMI-5879: spawnPsql retry loop exited without a result')
 }
 
 /** Build `-v key=value` argv pairs for psql's `:'key'` quoted-literal substitution. */
