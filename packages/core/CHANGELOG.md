@@ -56,6 +56,28 @@ All notable changes to `@skillsmith/core` are documented here.
   artifact had drifted, which `agent-pack.assets.test.ts`'s byte-identical drift-gate test would
   have failed on merge. Fixed at the actual generator source so the two stay in sync
   (SMI-5893 Wave 11, GH#2368 C-19)
+- **Fix**: `formatUpdateNotification` (`utils/version-check.ts`) now includes `result.updateCommand`
+  again — an earlier draft dropped the "how do I get the new npm version" instruction entirely
+  in favor of on-disk-artifact-refresh commands, which run against the still-old installed
+  binary and never upgrade anything; both instructions are necessary and neither substitutes the
+  other. The message also now names the artifact-refresh commands (`setup --force[--client]`,
+  `agent install`) needed to pick up hooks/SKILL.md/agent-pack changes, since upgrading the npm
+  package alone never rewrites those. New `resolveUpdateNotificationClient()` resolves
+  `SKILLSMITH_CLIENT` for this message without ever throwing (the only call site awaits it inside
+  a `.then()` with an empty `.catch()`, so an uncaught throw on an invalid env value silently
+  dropped the entire notification) and without guessing `'claude-code'` when unset (only Cursor's
+  generated config sets this env var; defaulting would point every other client at the wrong
+  install path) (SMI-5893 Wave 10, GH#2368 C-06/C-07/C-22)
+- **Fix**: Cursor `hooks.json` installation (`agent-pack-installer.cursor-hooks.ts`) now cleans up
+  dead legacy `hooks.SessionStart`/`hooks.SessionEnd` keys a pre-Wave-8a install wrote before this
+  file's key-casing was corrected — those never got removed once the correct keys started being
+  written, so a re-merge left both the correct entries and the orphaned legacy ones in the same
+  file. Skips the cleanup entirely when either wire call reports a top-level-default conflict
+  (`ensureTopLevelDefaults`), since the real installer deliberately wrote nothing in that case and
+  running cleanup regardless would still silently delete the user's legacy hooks with nothing
+  installed to replace them. `hookEntryCommand` (`agent-pack-installer.harness.ts`) and
+  `writeBackup` (`agent-config-merge.json-array.ts`) are now exported for reuse by this cleanup
+  instead of being duplicated (SMI-5893 Wave 10, GH#2368 C-07)
 - **Fix**: PR #2375 post-merge review follow-up (three findings). `recommend`'s shared footer text no longer claims detection "across all clients" — each surface (CLI, MCP) scans exactly one client per call, never a union. Cursor `hooks.json` installation's `ensureTopLevelDefaults` now fails closed (`status: 'conflict'`, no write) instead of silently preserving an existing incompatible top-level value (e.g. a wrong `version`) while still merging hook entries in (SMI-5893)
 - **Fix**: Restored two verified drift points between the core and edge (production) security
   scanners — the edge co-signal escalation set now includes `sensitive_path` (matching core), and
