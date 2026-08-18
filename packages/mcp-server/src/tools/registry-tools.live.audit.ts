@@ -134,6 +134,13 @@ const MAX_JWT_PAYLOAD_BYTES = 8192
 export function licenseKeyFingerprint(licenseKey?: string): string | null {
   const key = readLicenseKey(licenseKey)
   if (!key) return null
+  // codeql[js/insufficient-password-hash] Not password storage — a truncated,
+  // one-way correlation fingerprint for audit rows (see doc comment above).
+  // SMI-6080 added SKILLSMITH_API_KEY as a second possible source for `key`,
+  // which is why this line is newly flagged; the same rationale that already
+  // applies to the SKILLSMITH_LICENSE_KEY path applies unchanged to it too —
+  // both hash into the identical license_keys.key_hash lookup, and neither
+  // is ever compared against a stored hash to authenticate anything.
   return sha256Hex(key).slice(0, FINGERPRINT_LENGTH)
 }
 
