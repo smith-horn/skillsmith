@@ -230,7 +230,7 @@ describe('undo_apply — refusal: content changed since apply', () => {
 
 describe('undo_apply — scope fence (SMI-4287 reuse)', () => {
   it('refuses to restore a target that escapes the confined skill root via a symlink', async () => {
-    const outsideDir = fs.mkdtempSync('/var/skillsmith-undo-escape-')
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-undo-escape-'))
     try {
       const secretPath = path.join(outsideDir, 'secret.md')
       fs.writeFileSync(secretPath, 'top secret content', 'utf-8')
