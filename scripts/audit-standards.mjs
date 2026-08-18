@@ -3908,13 +3908,14 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
     // SMI-5866: alert-notify's index.test.ts landed (HTML-escaping regression
     // coverage) — removed per this allowlist's own "entries are removed only
     // after the test file lands" convention.
+    // SMI-6079: expire-complimentary's index.test.ts already existed (from
+    // an earlier SMI) — this entry was stale and has been removed.
     'checkout',
     'contact-submit',
     'coverage-report',
     'create-portal-session',
     'early-access-signup',
     'email-inbound',
-    'expire-complimentary',
     'generate-license',
     'health',
     'list-invoices',

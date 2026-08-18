@@ -264,6 +264,8 @@ async function executeTeamWorkspaceImpl(
 ): Promise<TeamWorkspaceResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   // SMI-4292: License key resolution order — explicit env, then anon fallback.
+  // SMI-6080: `readLicenseKey()` also accepts SKILLSMITH_API_KEY (same
+  // `license_keys.key_hash` lookup), so an admin-granted account can resolve its team.
   // In live mode, missing/invalid keys surface as typed errors (not stub data).
   const licenseKey = readLicenseKey()
   if (dataSource === 'live' && !licenseKey) {
@@ -271,8 +273,8 @@ async function executeTeamWorkspaceImpl(
       success: false,
       dataSource,
       error:
-        'SKILLSMITH_LICENSE_KEY is required for team workspace operations. ' +
-        'Set it in your MCP server config — shell exports do not reach MCP subprocesses.',
+        'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for team workspace operations. ' +
+        'Set one in your MCP server config — shell exports do not reach MCP subprocesses.',
     }
   }
   let teamId: string
@@ -353,14 +355,15 @@ async function executeShareSkillImpl(
   _context: ToolContext
 ): Promise<ShareSkillResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  // SMI-6080: SKILLSMITH_API_KEY is an accepted fallback here too (see readLicenseKey()).
   const licenseKey = readLicenseKey()
   if (dataSource === 'live' && !licenseKey) {
     return {
       success: false,
       dataSource,
       error:
-        'SKILLSMITH_LICENSE_KEY is required for skill-sharing operations. ' +
-        'Set it in your MCP server config — shell exports do not reach MCP subprocesses.',
+        'SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY is required for skill-sharing operations. ' +
+        'Set one in your MCP server config — shell exports do not reach MCP subprocesses.',
     }
   }
   let teamId: string

@@ -153,7 +153,7 @@ export function createLiveService(): TeamWorkspaceService {
       const teamId = await resolveLicenseTeamId(licenseKey)
       if (!teamId) {
         throw new Error(
-          'Unable to resolve team from license key. Ensure SKILLSMITH_LICENSE_KEY is set and corresponds to an active Team-tier subscription.'
+          'Unable to resolve team from the configured key. Ensure SKILLSMITH_LICENSE_KEY or SKILLSMITH_API_KEY (SMI-6080) is set and corresponds to an active Team-tier subscription.'
         )
       }
       return teamId

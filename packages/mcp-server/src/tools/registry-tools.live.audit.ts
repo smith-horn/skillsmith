@@ -49,7 +49,7 @@
  * one. Failures are logged to stderr (the MCP transport's log channel) and swallowed.
  */
 
-import { sha256Hex } from '@skillsmith/core'
+import { createHash } from 'node:crypto'
 import { getSupabaseAdminClient } from '../supabase-client.js'
 import { readLicenseKey } from './team-resolver.js'
 
@@ -120,16 +120,33 @@ const FINGERPRINT_LENGTH = 12
 const MAX_JWT_PAYLOAD_BYTES = 8192
 
 /**
- * One-way fingerprint of the presented license key.
+ * One-way fingerprint of the presented team credential.
  *
  * Correlates rows written by the same key (and matches nothing else) without storing the key or
  * anything that could be replayed. Returns null when no key is readable, so an absent credential
  * is recorded as absent rather than as some default bucket.
+ *
+ * SMI-6080: "the presented credential" is whatever `readLicenseKey()` resolved — a license key, or
+ * `SKILLSMITH_API_KEY` when that fallback applied. Both hash into the same `license_keys.key_hash`
+ * row, so a fingerprint stays a stable per-key correlator either way; it just no longer implies the
+ * caller configured `SKILLSMITH_LICENSE_KEY` specifically.
  */
 export function licenseKeyFingerprint(licenseKey?: string): string | null {
   const key = readLicenseKey(licenseKey)
   if (!key) return null
-  return sha256Hex(key).slice(0, FINGERPRINT_LENGTH)
+  // codeql[js/insufficient-password-hash] Not password storage — a truncated,
+  // one-way correlation fingerprint for audit rows (see doc comment above).
+  // SMI-6080 added SKILLSMITH_API_KEY as a second possible source for `key`,
+  // which is why this line is newly flagged; the same rationale that already
+  // applies to the SKILLSMITH_LICENSE_KEY path applies unchanged to it too —
+  // both hash into the identical license_keys.key_hash lookup, and neither
+  // is ever compared against a stored hash to authenticate anything. Calls
+  // node:crypto directly (not the shared sha256Hex() journal-chain helper)
+  // so this inline suppression sits at CodeQL's actual flagged sink — going
+  // through the shared wrapper reports the alert inside journal/hash.ts
+  // instead, a generic multi-purpose utility where a blanket suppression
+  // would be both wrong (too broad) and ineffective (wrong file).
+  return createHash('sha256').update(key).digest('hex').slice(0, FINGERPRINT_LENGTH)
 }
 
 /**

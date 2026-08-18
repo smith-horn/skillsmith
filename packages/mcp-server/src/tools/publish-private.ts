@@ -16,6 +16,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { getTeamWorkspaceService } from './team-workspace.js'
+import { readLicenseKey } from './team-resolver.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 
 // ============================================================================
@@ -77,10 +78,13 @@ async function executePublishPrivateImpl(
 ): Promise<PublishPrivateResult> {
   const { skillId } = input
 
-  // Resolve team_id from the license only -- never accept it from tool
+  // Resolve team_id from the team credential only -- never accept it from tool
   // input (ADR-116; matches the Enterprise registry-tools.ts path, which
   // never accepts teamId from input either). SMI-5882 W2.S5.
-  const licenseKey = process.env.SKILLSMITH_LICENSE_KEY ?? ''
+  // SMI-6080: read it through the shared `readLicenseKey()` resolver rather than
+  // `process.env.SKILLSMITH_LICENSE_KEY` directly, so this path picks up the
+  // SKILLSMITH_API_KEY fallback like every other team-resolution call site.
+  const licenseKey = readLicenseKey() ?? ''
   const svc = getTeamWorkspaceService()
   const teamId = await svc.resolveTeamId(licenseKey)
 

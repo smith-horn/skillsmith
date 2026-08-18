@@ -40,7 +40,8 @@
  *   cannot drift.
  *
  *   Cost, stated plainly: deprecate/undeprecate now require `skillsmith login` in addition to
- *   SKILLSMITH_LICENSE_KEY, and surface an actionable error when no user credential is present.
+ *   SKILLSMITH_LICENSE_KEY (or SKILLSMITH_API_KEY, SMI-6080), and surface an actionable error
+ *   when no user credential is present.
  *
  * - **Content reads** (`getContent`, SMI-5905 Wave 3) are a third path: the signed-in user's own
  *   JWT (so `_member_read` decides visibility against a real `auth.uid()`), but MEMBER-level, not

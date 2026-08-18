@@ -36,6 +36,27 @@ function makeContext(): ToolContext {
   return {} as unknown as ToolContext
 }
 
+/**
+ * Snapshot both team-credential env vars, clear them, and return a restore fn.
+ *
+ * SMI-6080: `readLicenseKey()` reads `SKILLSMITH_LICENSE_KEY` *and* `SKILLSMITH_API_KEY`, so a
+ * test asserting "no credential configured" must clear both — otherwise an ambient
+ * `SKILLSMITH_API_KEY` (a real one on a developer machine, or one leaked from a sibling test)
+ * silently satisfies the gate and the assertion becomes environment-order-dependent.
+ */
+function isolateCredentialEnv(): () => void {
+  const origLicense = process.env.SKILLSMITH_LICENSE_KEY
+  const origApiKey = process.env.SKILLSMITH_API_KEY
+  delete process.env.SKILLSMITH_LICENSE_KEY
+  delete process.env.SKILLSMITH_API_KEY
+  return () => {
+    if (origLicense === undefined) delete process.env.SKILLSMITH_LICENSE_KEY
+    else process.env.SKILLSMITH_LICENSE_KEY = origLicense
+    if (origApiKey === undefined) delete process.env.SKILLSMITH_API_KEY
+    else process.env.SKILLSMITH_API_KEY = origApiKey
+  }
+}
+
 // ============================================================================
 // Schema validation
 // ============================================================================
@@ -279,18 +300,40 @@ describe('executeTeamWorkspace', () => {
   })
 
   // SMI-4292: Typed error when Supabase live but license key missing
-  it('returns typed error in live mode when SKILLSMITH_LICENSE_KEY is missing', async () => {
+  // SMI-6080: BOTH credential env vars must be cleared — `readLicenseKey()` now also reads
+  // SKILLSMITH_API_KEY, so an ambient one would resolve a credential and this assertion would
+  // pass or fail depending on the developer's environment.
+  it('returns typed error in live mode when no team credential is set', async () => {
     const { isSupabaseConfigured } = await import('../supabase-client.js')
     vi.mocked(isSupabaseConfigured).mockReturnValueOnce(true)
-    const orig = process.env.SKILLSMITH_LICENSE_KEY
-    delete process.env.SKILLSMITH_LICENSE_KEY
+    const restoreEnv = isolateCredentialEnv()
     try {
       const result = await executeTeamWorkspace({ action: 'list' }, makeContext())
       expect(result.success).toBe(false)
       expect(result.dataSource).toBe('live')
       expect(result.error).toContain('SKILLSMITH_LICENSE_KEY')
+      expect(result.error).toContain('SKILLSMITH_API_KEY')
     } finally {
-      if (orig !== undefined) process.env.SKILLSMITH_LICENSE_KEY = orig
+      restoreEnv()
+    }
+  })
+
+  // SMI-6080: the fallback reaches this handler too — an admin-granted account holding only a
+  // plain API key gets past the credential gate instead of the "required" error.
+  it('accepts SKILLSMITH_API_KEY alone as the team credential in live mode', async () => {
+    const { isSupabaseConfigured } = await import('../supabase-client.js')
+    vi.mocked(isSupabaseConfigured).mockReturnValueOnce(true)
+    const restoreEnv = isolateCredentialEnv()
+    process.env.SKILLSMITH_API_KEY = 'sk_live_admin_granted'
+    try {
+      const result = await executeTeamWorkspace({ action: 'list' }, makeContext())
+      expect(result.dataSource).toBe('live')
+      // The stub service resolves any non-empty credential, so getting a successful list back
+      // proves the credential gate no longer rejects an API-key-only configuration.
+      expect(result.success).toBe(true)
+      expect(result.error).toBeUndefined()
+    } finally {
+      restoreEnv()
     }
   })
 })
@@ -353,18 +396,35 @@ describe('executeShareSkill', () => {
   })
 
   // SMI-4292: Typed error when Supabase live but license key missing
-  it('returns typed error in live mode when SKILLSMITH_LICENSE_KEY is missing', async () => {
+  // SMI-6080: clears both credential env vars — see isolateCredentialEnv().
+  it('returns typed error in live mode when no team credential is set', async () => {
     const { isSupabaseConfigured } = await import('../supabase-client.js')
     vi.mocked(isSupabaseConfigured).mockReturnValueOnce(true)
-    const orig = process.env.SKILLSMITH_LICENSE_KEY
-    delete process.env.SKILLSMITH_LICENSE_KEY
+    const restoreEnv = isolateCredentialEnv()
     try {
       const result = await executeShareSkill({ action: 'list', workspaceId: wsId }, makeContext())
       expect(result.success).toBe(false)
       expect(result.dataSource).toBe('live')
       expect(result.error).toContain('SKILLSMITH_LICENSE_KEY')
+      expect(result.error).toContain('SKILLSMITH_API_KEY')
     } finally {
-      if (orig !== undefined) process.env.SKILLSMITH_LICENSE_KEY = orig
+      restoreEnv()
+    }
+  })
+
+  // SMI-6080: an API-key-only configuration gets past the credential gate here too.
+  it('accepts SKILLSMITH_API_KEY alone as the team credential in live mode', async () => {
+    const { isSupabaseConfigured } = await import('../supabase-client.js')
+    vi.mocked(isSupabaseConfigured).mockReturnValueOnce(true)
+    const restoreEnv = isolateCredentialEnv()
+    process.env.SKILLSMITH_API_KEY = 'sk_live_admin_granted'
+    try {
+      const result = await executeShareSkill({ action: 'list', workspaceId: wsId }, makeContext())
+      expect(result.dataSource).toBe('live')
+      expect(result.success).toBe(true)
+      expect(result.error).toBeUndefined()
+    } finally {
+      restoreEnv()
     }
   })
 
