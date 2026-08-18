@@ -11,7 +11,7 @@
  * - community: Free tier (100 API calls/month)
  * - individual: Solo developers ($9.99/mo, 1,000 API calls/month)
  * - team: Teams ($25/user/mo, 10,000 API calls/month)
- * - enterprise: Full enterprise ($55/user/mo, unlimited)
+ * - enterprise: Full enterprise (Custom pricing — Contact Sales, unlimited)
  */
 export type LicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
 

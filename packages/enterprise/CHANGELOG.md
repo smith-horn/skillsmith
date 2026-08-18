@@ -4,6 +4,11 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: the shared `TIER_PRICING` runtime constant (`license/degradation-types.ts`), consumed
+  by both the MCP server's and CLI's own tier-gating/upgrade-nudge messages, plus several TSDoc
+  comments repeating the same figure, hardcoded the literal unpublished Enterprise price
+  (`$55/user/month`) — now `Custom pricing — Contact Sales`. This is the runtime-surface follow-up
+  to the README-only fix below (SMI-6069, GH#2368-adjacent follow-up from SMI-5893)
 - **Fix**: README's Enterprise Tier heading exposed a specific unpublished price
   (`$55/user/month`) contradicting the "Custom (Contact Sales)" pricing policy — now
   `Custom pricing — Contact Sales` (SMI-5893 Wave 11, GH#2368 C-19)

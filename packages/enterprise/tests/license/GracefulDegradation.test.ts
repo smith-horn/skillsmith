@@ -33,7 +33,7 @@ describe('Constants', () => {
     it('should have pricing for all tiers', () => {
       expect(TIER_PRICING.community).toBe('$0/month')
       expect(TIER_PRICING.team).toBe('$25/user/month')
-      expect(TIER_PRICING.enterprise).toBe('$55/user/month')
+      expect(TIER_PRICING.enterprise).toBe('Custom pricing — Contact Sales')
     })
   })
 
@@ -169,7 +169,7 @@ describe('Upgrade Prompts', () => {
       const prompt = createUpgradePrompt('sso_saml')
       expect(prompt).toContain('SSO/SAML Integration')
       expect(prompt).toContain('Enterprise tier')
-      expect(prompt).toContain('$55/user/month')
+      expect(prompt).toContain('Custom pricing — Contact Sales')
     })
 
     it('should include description when requested', () => {
@@ -179,7 +179,7 @@ describe('Upgrade Prompts', () => {
 
     it('should exclude pricing when requested', () => {
       const prompt = createUpgradePrompt('rbac', { includePricing: false })
-      expect(prompt).not.toContain('$55/user/month')
+      expect(prompt).not.toContain('Custom pricing — Contact Sales')
     })
 
     it('should include alternatives when requested', () => {
@@ -198,7 +198,7 @@ describe('Upgrade Prompts', () => {
       expect(prompt).toContain('Feature Unavailable: Audit Logging')
       expect(prompt).toContain('Comprehensive audit trail')
       expect(prompt).toContain('Current tier: Team ($25/user/month)')
-      expect(prompt).toContain('Required tier: Enterprise ($55/user/month)')
+      expect(prompt).toContain('Required tier: Enterprise (Custom pricing — Contact Sales)')
       expect(prompt).toContain('Upgrade to unlock')
       expect(prompt).toContain('Compare plans')
     })
@@ -224,7 +224,7 @@ describe('Tier Comparison', () => {
       expect(message).toContain('Skillsmith Pricing Tiers')
       expect(message).toContain('Community ($0/month)')
       expect(message).toContain('Team ($25/user/month)')
-      expect(message).toContain('Enterprise ($55/user/month)')
+      expect(message).toContain('Enterprise (Custom pricing — Contact Sales)')
       expect(message).toContain('search, install, recommend, validate, compare')
       expect(message).toContain('https://skillsmith.app/pricing')
     })
@@ -254,7 +254,7 @@ describe('Tier Comparison', () => {
 
       expect(comparison[0]!.pricing).toBe('$0/month')
       expect(comparison[1]!.pricing).toBe('$25/user/month')
-      expect(comparison[2]!.pricing).toBe('$55/user/month')
+      expect(comparison[2]!.pricing).toBe('Custom pricing — Contact Sales')
     })
 
     it('should have no features for community tier', () => {

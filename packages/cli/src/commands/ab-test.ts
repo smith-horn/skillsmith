@@ -81,7 +81,9 @@ function showUpgradePrompt(currentTier: LicenseTier): void {
   console.log('    \u2022 Team workspaces & private skills')
   console.log('    \u2022 Usage analytics & priority support')
   console.log()
-  console.log('  ' + chalk.magenta('Enterprise tier') + chalk.dim(' ($55/user/mo)'))
+  console.log(
+    '  ' + chalk.magenta('Enterprise tier') + chalk.dim(' (Custom pricing — Contact Sales)')
+  )
   console.log('    \u2022 Everything in Team, plus:')
   console.log('    \u2022 SSO/SAML, RBAC, audit logging')
   console.log('    \u2022 Private registry & custom integrations')
@@ -113,7 +115,7 @@ function showUpgradePromptJson(currentTier: LicenseTier): void {
         ],
       },
       enterprise: {
-        price: '$55/user/mo',
+        price: 'Custom pricing — Contact Sales',
         features: [
           'Everything in Team',
           'SSO/SAML, RBAC, audit logging',

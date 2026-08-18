@@ -46,7 +46,7 @@ export type FeatureFlag = IndividualFeatureFlag | TeamFeatureFlag | EnterpriseFe
  * - community: Free tier with no paid features (1,000 API calls/month)
  * - individual: Individual tier for solo developers ($9.99/mo, 10,000 API calls/month)
  * - team: Team tier with collaboration features ($25/user/mo, 100,000 API calls/month)
- * - enterprise: Full enterprise tier with all features ($55/user/mo, unlimited)
+ * - enterprise: Full enterprise tier with all features (Custom pricing — Contact Sales, unlimited)
  */
 export type LicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
 

@@ -89,7 +89,7 @@ export function getPricingUrl(options?: {
  * @example
  * ```typescript
  * createUpgradePrompt('sso_saml');
- * // "SSO/SAML Integration requires Enterprise tier ($55/user/month). Upgrade at https://skillsmith.app/upgrade?tier=enterprise&feature=sso_saml"
+ * // "SSO/SAML Integration requires Enterprise tier (Custom pricing — Contact Sales). Upgrade at https://skillsmith.app/upgrade?tier=enterprise&feature=sso_saml"
  * ```
  */
 export function createUpgradePrompt(feature: FeatureFlag, options?: UpgradePromptOptions): string {

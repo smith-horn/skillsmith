@@ -59,7 +59,7 @@ import {
  * ```typescript
  * const result = handleFeatureDenied('audit_logging', 'team');
  * console.log(result.message);
- * // "Audit Logging requires Enterprise tier ($55/user/month). Upgrade at https://skillsmith.app/upgrade?tier=enterprise&feature=audit_logging"
+ * // "Audit Logging requires Enterprise tier (Custom pricing — Contact Sales). Upgrade at https://skillsmith.app/upgrade?tier=enterprise&feature=audit_logging"
  * ```
  */
 export function handleFeatureDenied(

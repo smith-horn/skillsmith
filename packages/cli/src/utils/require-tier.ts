@@ -30,7 +30,7 @@ const TIER_PRICING: Record<LicenseTier, string> = {
   community: '$0/month',
   individual: '$9.99/month',
   team: '$25/user/month',
-  enterprise: '$55/user/month',
+  enterprise: 'Custom pricing — Contact Sales',
 }
 
 /**
