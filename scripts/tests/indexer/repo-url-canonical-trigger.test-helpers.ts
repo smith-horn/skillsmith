@@ -44,14 +44,19 @@ const MIGRATION_PATH = join(
 export const prePushNoLiveTestPg = !testConnParamsFromEnv()
 
 /**
- * Minimal `skills` fixture — only `id` + the two columns the trigger under
- * test reads/writes, not a verbatim copy of the shipped table (which carries
- * many NOT NULL columns unrelated to this trigger's own logic).
+ * Minimal `skills` fixture — `id` + the two columns the trigger under test
+ * reads/writes, plus one unrelated `name` column (pre-merge review finding
+ * #5, 2026-08-19: the trigger is BEFORE INSERT OR UPDATE, not
+ * UPDATE OF repo_url, so ANY column update recomputes repo_url_canonical —
+ * `name` exists solely to prove that). Not a verbatim copy of the shipped
+ * table, which carries many NOT NULL columns unrelated to this trigger's own
+ * logic.
  */
 const CREATE_FIXTURES_SQL = `
 CREATE TABLE skills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  repo_url TEXT
+  repo_url TEXT,
+  name TEXT
 );
 `
 
@@ -117,6 +122,20 @@ export async function updateSkillRepoUrl(
     conn,
     `UPDATE skills SET repo_url = ${expr} WHERE id = :'id'::uuid RETURNING repo_url_canonical;`,
     { ...vars, id }
+  )
+  return value
+}
+
+/** UPDATE an existing row's `name` (a column the trigger never reads) — fires BEFORE UPDATE regardless; returns the (re)computed canonical. */
+export async function updateSkillName(
+  conn: PgConnParams,
+  id: string,
+  name: string
+): Promise<string | null> {
+  const value = await queryScalar(
+    conn,
+    `UPDATE skills SET name = :'name' WHERE id = :'id'::uuid RETURNING repo_url_canonical;`,
+    { name, id }
   )
   return value
 }

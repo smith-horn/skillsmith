@@ -21,6 +21,7 @@ import {
   resetSchema,
   insertSkill,
   updateSkillRepoUrl,
+  updateSkillName,
 } from './repo-url-canonical-trigger.test-helpers.ts'
 
 if (prePushNoLiveTestPg) {
@@ -64,6 +65,13 @@ describe.skipIf(prePushNoLiveTestPg)('trg_set_repo_url_canonical — INSERT path
     )
     // Owner+repo lowercased; 'Main' branch and 'Foo' path segment must NOT be.
     expect(canonical).toBe('https://github.com/foo/bar/tree/Main/.claude/skills/Foo')
+  })
+
+  it('lowercases the HOST segment too (pre-merge review finding #1, 2026-08-19): mixed-case host produces the same canonical as a lowercase host', async () => {
+    const mixedCase = await insertSkill(conn, 'https://GitHub.Com/owner/repo')
+    const lowercase = await insertSkill(conn, 'https://github.com/owner/repo')
+    expect(mixedCase.canonical).toBe('https://github.com/owner/repo')
+    expect(mixedCase.canonical).toBe(lowercase.canonical)
   })
 
   it('trailing slash stripped', async () => {
@@ -111,5 +119,11 @@ describe.skipIf(prePushNoLiveTestPg)('trg_set_repo_url_canonical — UPDATE path
     const { id } = await insertSkill(conn, 'https://github.com/owner/repo')
     const updated = await updateSkillRepoUrl(conn, id, null)
     expect(updated).toBeNull()
+  })
+
+  it('updating an UNRELATED column (name) still recomputes canonical — the trigger is BEFORE INSERT OR UPDATE, not UPDATE OF repo_url (pre-merge review finding #5, 2026-08-19)', async () => {
+    const { id } = await insertSkill(conn, 'https://github.com/owner/repo')
+    const recomputed = await updateSkillName(conn, id, 'a-different-skill-name')
+    expect(recomputed).toBe('https://github.com/owner/repo')
   })
 })
