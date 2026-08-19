@@ -805,18 +805,50 @@ const tierLookup = Object.fromEntries(
 
     try {
       // Get profile and subscription
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('tier')
-        .eq('id', session.user.id)
-        .single()
+      //
+      // Resolve the effective entitlement first (SMI-6086) — its team_id
+      // identifies the exact team whose subscription won, correctly even for
+      // a user who belongs to more than one team.
+      const [{ data: profile }, { data: effectiveRows, error: effectiveError }] = await Promise.all(
+        [
+          supabase.from('profiles').select('tier').eq('id', session.user.id).single(),
+          supabase.rpc('get_effective_subscription_summary', {
+            user_uuid: session.user.id,
+          }),
+        ]
+      )
 
-      const { data: subscriptions } = await supabase.rpc('get_user_subscription', {
-        user_uuid: session.user.id,
-      })
+      if (effectiveError) throw effectiveError
 
-      const tier = profile?.tier || 'community'
-      const subscription = subscriptions?.[0]
+      const effectiveSubscription = effectiveRows?.[0]
+      let isNonOwnerTeamMember = false
+
+      if (effectiveSubscription?.team_id) {
+        const { data: winningMembership, error: membershipError } = await supabase
+          .from('team_members')
+          .select('role')
+          .eq('team_id', effectiveSubscription.team_id)
+          .eq('user_id', session.user.id)
+          .maybeSingle()
+
+        if (membershipError) throw membershipError
+        isNonOwnerTeamMember = winningMembership !== null && winningMembership.role !== 'owner'
+      }
+
+      // Owners and users whose winning entitlement is personal retain the
+      // existing full-billing RPC. Non-owner members never call it — they see
+      // tier/status only, from the summary RPC above.
+      let subscription = effectiveSubscription
+      if (!isNonOwnerTeamMember) {
+        const { data: subscriptions, error: subscriptionError } = await supabase.rpc(
+          'get_user_subscription',
+          { user_uuid: session.user.id }
+        )
+        if (subscriptionError) throw subscriptionError
+        subscription = subscriptions?.[0]
+      }
+
+      const tier = effectiveSubscription?.tier || profile?.tier || 'community'
 
       // Update UI elements
       const tierBadge = document.getElementById('current-tier-badge') as HTMLSpanElement
@@ -859,7 +891,6 @@ const tierLookup = Object.fromEntries(
       // Show subscription details for paid tiers
       if (subscription) {
         subscriptionDetails.style.display = 'block'
-        cancelSection.style.display = 'block'
 
         const billingPeriod = document.getElementById('billing-period') as HTMLSpanElement
         const nextBilling = document.getElementById('next-billing') as HTMLSpanElement
@@ -867,179 +898,193 @@ const tierLookup = Object.fromEntries(
         const seatCountRow = document.getElementById('seat-count-row') as HTMLDivElement
         const seatCount = document.getElementById('seat-count') as HTMLSpanElement
 
-        billingPeriod.textContent = subscription.billing_period === 'annual' ? 'Annual' : 'Monthly'
-        nextBilling.textContent = new Date(subscription.current_period_end).toLocaleDateString()
         subscriptionStatus.textContent =
           subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)
         subscriptionStatus.className = `status-badge ${subscription.status}`
 
-        if (subscription.seat_count > 1 || tier === 'team' || tier === 'enterprise') {
-          seatCountRow.style.display = 'flex'
-          seatCount.textContent = String(subscription.seat_count)
+        if (isNonOwnerTeamMember) {
+          // SMI-6086: non-owner team members see tier and status only — never
+          // the team purchaser's billing period, renewal date, seat count, or
+          // cancel/seat-management controls.
+          billingPeriod.parentElement!.style.display = 'none'
+          nextBilling.parentElement!.style.display = 'none'
+          seatCountRow.style.display = 'none'
+          seatManagementSection.style.display = 'none'
+          cancelSection.style.display = 'none'
+        } else {
+          cancelSection.style.display = 'block'
+          billingPeriod.textContent =
+            subscription.billing_period === 'annual' ? 'Annual' : 'Monthly'
+          nextBilling.textContent = new Date(subscription.current_period_end).toLocaleDateString()
 
-          // Show seat management for team/enterprise
-          seatManagementSection.style.display = 'block'
-          const currentSeats = document.getElementById('current-seats') as HTMLSpanElement
-          const newSeatCount = document.getElementById('new-seat-count') as HTMLInputElement
-          const updateSeatsBtn = document.getElementById('update-seats-btn') as HTMLButtonElement
-          const decreaseSeatsBtn = document.getElementById('decrease-seats') as HTMLButtonElement
-          const increaseSeatsBtn = document.getElementById('increase-seats') as HTMLButtonElement
-          const seatUnavailableNote = document.getElementById(
-            'seat-unavailable-note'
-          ) as HTMLParagraphElement | null
+          if (subscription.seat_count > 1 || tier === 'team' || tier === 'enterprise') {
+            seatCountRow.style.display = 'flex'
+            seatCount.textContent = String(subscription.seat_count)
 
-          // SMI-5153: complimentary/admin-granted plans have no Stripe subscription,
-          // so self-serve seat changes can't run. Surface the message inline and
-          // lock the controls instead of a misleading alert.
-          const showSeatUnavailable = (message: string): void => {
-            if (seatUnavailableNote) {
-              seatUnavailableNote.textContent = message
-              seatUnavailableNote.style.display = 'block'
+            // Show seat management for team/enterprise
+            seatManagementSection.style.display = 'block'
+            const currentSeats = document.getElementById('current-seats') as HTMLSpanElement
+            const newSeatCount = document.getElementById('new-seat-count') as HTMLInputElement
+            const updateSeatsBtn = document.getElementById('update-seats-btn') as HTMLButtonElement
+            const decreaseSeatsBtn = document.getElementById('decrease-seats') as HTMLButtonElement
+            const increaseSeatsBtn = document.getElementById('increase-seats') as HTMLButtonElement
+            const seatUnavailableNote = document.getElementById(
+              'seat-unavailable-note'
+            ) as HTMLParagraphElement | null
+
+            // SMI-5153: complimentary/admin-granted plans have no Stripe subscription,
+            // so self-serve seat changes can't run. Surface the message inline and
+            // lock the controls instead of a misleading alert.
+            const showSeatUnavailable = (message: string): void => {
+              if (seatUnavailableNote) {
+                seatUnavailableNote.textContent = message
+                seatUnavailableNote.style.display = 'block'
+              }
+              decreaseSeatsBtn.disabled = true
+              increaseSeatsBtn.disabled = true
+              newSeatCount.disabled = true
+              updateSeatsBtn.disabled = true
+              updateSeatsBtn.textContent = 'Update Seats'
             }
-            decreaseSeatsBtn.disabled = true
-            increaseSeatsBtn.disabled = true
-            newSeatCount.disabled = true
-            updateSeatsBtn.disabled = true
-            updateSeatsBtn.textContent = 'Update Seats'
-          }
 
-          currentSeats.textContent = String(subscription.seat_count)
-          newSeatCount.value = String(subscription.seat_count)
+            currentSeats.textContent = String(subscription.seat_count)
+            newSeatCount.value = String(subscription.seat_count)
 
-          const updateButtonState = () => {
-            const newVal = parseInt(newSeatCount.value)
-            updateSeatsBtn.disabled = newVal === subscription.seat_count || newVal < 1
-          }
+            const updateButtonState = () => {
+              const newVal = parseInt(newSeatCount.value)
+              updateSeatsBtn.disabled = newVal === subscription.seat_count || newVal < 1
+            }
 
-          decreaseSeatsBtn.addEventListener('click', () => {
-            const val = parseInt(newSeatCount.value)
-            if (val > 1) newSeatCount.value = String(val - 1)
-            updateButtonState()
-          })
+            decreaseSeatsBtn.addEventListener('click', () => {
+              const val = parseInt(newSeatCount.value)
+              if (val > 1) newSeatCount.value = String(val - 1)
+              updateButtonState()
+            })
 
-          increaseSeatsBtn.addEventListener('click', () => {
-            const val = parseInt(newSeatCount.value)
-            if (val < 1000) newSeatCount.value = String(val + 1)
-            updateButtonState()
-          })
+            increaseSeatsBtn.addEventListener('click', () => {
+              const val = parseInt(newSeatCount.value)
+              if (val < 1000) newSeatCount.value = String(val + 1)
+              updateButtonState()
+            })
 
-          newSeatCount.addEventListener('input', updateButtonState)
+            newSeatCount.addEventListener('input', updateButtonState)
 
-          updateSeatsBtn.addEventListener('click', async () => {
-            const newSeats = parseInt(newSeatCount.value)
-            if (newSeats === subscription.seat_count) return
+            updateSeatsBtn.addEventListener('click', async () => {
+              const newSeats = parseInt(newSeatCount.value)
+              if (newSeats === subscription.seat_count) return
 
-            // First preview the proration
-            updateSeatsBtn.disabled = true
-            updateSeatsBtn.textContent = 'Calculating...'
+              // First preview the proration
+              updateSeatsBtn.disabled = true
+              updateSeatsBtn.textContent = 'Calculating...'
 
-            try {
-              const previewRes = await fetch(`${supabaseUrl}/functions/v1/update-seat-count`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${session.access_token}`,
-                },
-                body: JSON.stringify({ newSeatCount: newSeats, preview: true }),
-              })
+              try {
+                const previewRes = await fetch(`${supabaseUrl}/functions/v1/update-seat-count`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`,
+                  },
+                  body: JSON.stringify({ newSeatCount: newSeats, preview: true }),
+                })
 
-              if (!previewRes.ok) {
-                const err = await previewRes.json()
-                if (isNoStripeSubscription(err)) {
-                  showSeatUnavailable(seatErrorMessage(err))
+                if (!previewRes.ok) {
+                  const err = await previewRes.json()
+                  if (isNoStripeSubscription(err)) {
+                    showSeatUnavailable(seatErrorMessage(err))
+                    return
+                  }
+                  throw new Error(seatErrorMessage(err, 'Failed to preview seat change'))
+                }
+
+                const preview = await previewRes.json()
+                const prorationText =
+                  preview.prorationAmount >= 0
+                    ? `You will be charged $${preview.prorationAmount.toFixed(2)} (prorated).`
+                    : `You will receive a credit of $${Math.abs(preview.prorationAmount).toFixed(2)}.`
+
+                const confirmMsg =
+                  `Changing from ${preview.currentSeatCount} to ${preview.newSeatCount} seats.\n\n` +
+                  `${prorationText}\n` +
+                  `New monthly total: $${preview.newMonthlyAmount.toFixed(2)}\n\n` +
+                  `Continue?`
+
+                if (!confirm(confirmMsg)) {
+                  updateSeatsBtn.disabled = false
+                  updateSeatsBtn.textContent = 'Update Seats'
                   return
                 }
-                throw new Error(seatErrorMessage(err, 'Failed to preview seat change'))
-              }
 
-              const preview = await previewRes.json()
-              const prorationText =
-                preview.prorationAmount >= 0
-                  ? `You will be charged $${preview.prorationAmount.toFixed(2)} (prorated).`
-                  : `You will receive a credit of $${Math.abs(preview.prorationAmount).toFixed(2)}.`
+                // Apply the change
+                updateSeatsBtn.textContent = 'Updating...'
+                const updateRes = await fetch(`${supabaseUrl}/functions/v1/update-seat-count`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`,
+                  },
+                  body: JSON.stringify({ newSeatCount: newSeats }),
+                })
 
-              const confirmMsg =
-                `Changing from ${preview.currentSeatCount} to ${preview.newSeatCount} seats.\n\n` +
-                `${prorationText}\n` +
-                `New monthly total: $${preview.newMonthlyAmount.toFixed(2)}\n\n` +
-                `Continue?`
+                if (!updateRes.ok) {
+                  const err = await updateRes.json()
+                  if (isNoStripeSubscription(err)) {
+                    showSeatUnavailable(seatErrorMessage(err))
+                    return
+                  }
+                  throw new Error(seatErrorMessage(err, 'Failed to update seat count'))
+                }
 
-              if (!confirm(confirmMsg)) {
+                const result = await updateRes.json()
+                alert(`Seats updated successfully! New seat count: ${result.newSeatCount}`)
+                window.location.reload()
+              } catch (error) {
+                console.error('Seat update error:', error)
+                alert(error instanceof Error ? error.message : 'Failed to update seats')
                 updateSeatsBtn.disabled = false
                 updateSeatsBtn.textContent = 'Update Seats'
-                return
               }
+            })
+          }
 
-              // Apply the change
-              updateSeatsBtn.textContent = 'Updating...'
-              const updateRes = await fetch(`${supabaseUrl}/functions/v1/update-seat-count`, {
+          // Cancel subscription handler - redirects to Stripe Billing Portal
+          const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement
+          cancelBtn.addEventListener('click', async () => {
+            if (
+              !confirm(
+                'Are you sure you want to manage your subscription? You will be redirected to the Stripe billing portal where you can cancel or update your subscription.'
+              )
+            ) {
+              return
+            }
+
+            cancelBtn.disabled = true
+            cancelBtn.textContent = 'Redirecting...'
+
+            try {
+              const res = await fetch(`${supabaseUrl}/functions/v1/create-portal-session`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   Authorization: `Bearer ${session.access_token}`,
                 },
-                body: JSON.stringify({ newSeatCount: newSeats }),
+                body: JSON.stringify({ returnUrl: window.location.href }),
               })
 
-              if (!updateRes.ok) {
-                const err = await updateRes.json()
-                if (isNoStripeSubscription(err)) {
-                  showSeatUnavailable(seatErrorMessage(err))
-                  return
-                }
-                throw new Error(seatErrorMessage(err, 'Failed to update seat count'))
+              if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err.error || 'Failed to create portal session')
               }
 
-              const result = await updateRes.json()
-              alert(`Seats updated successfully! New seat count: ${result.newSeatCount}`)
-              window.location.reload()
+              const { url } = await res.json()
+              window.location.href = url
             } catch (error) {
-              console.error('Seat update error:', error)
-              alert(error instanceof Error ? error.message : 'Failed to update seats')
-              updateSeatsBtn.disabled = false
-              updateSeatsBtn.textContent = 'Update Seats'
+              console.error('Portal error:', error)
+              alert(error instanceof Error ? error.message : 'Failed to open billing portal')
+              cancelBtn.disabled = false
+              cancelBtn.textContent = 'Cancel Subscription'
             }
           })
         }
-
-        // Cancel subscription handler - redirects to Stripe Billing Portal
-        const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement
-        cancelBtn.addEventListener('click', async () => {
-          if (
-            !confirm(
-              'Are you sure you want to manage your subscription? You will be redirected to the Stripe billing portal where you can cancel or update your subscription.'
-            )
-          ) {
-            return
-          }
-
-          cancelBtn.disabled = true
-          cancelBtn.textContent = 'Redirecting...'
-
-          try {
-            const res = await fetch(`${supabaseUrl}/functions/v1/create-portal-session`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${session.access_token}`,
-              },
-              body: JSON.stringify({ returnUrl: window.location.href }),
-            })
-
-            if (!res.ok) {
-              const err = await res.json()
-              throw new Error(err.error || 'Failed to create portal session')
-            }
-
-            const { url } = await res.json()
-            window.location.href = url
-          } catch (error) {
-            console.error('Portal error:', error)
-            alert(error instanceof Error ? error.message : 'Failed to open billing portal')
-            cancelBtn.disabled = false
-            cancelBtn.textContent = 'Cancel Subscription'
-          }
-        })
       }
 
       // Plan selection handlers
