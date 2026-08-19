@@ -373,7 +373,7 @@
     "watch": "npm run build -- --watch",
     "lint": "eslint src --ext ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run -c ../../vitest.config.vscode.ts",
     "test:integration": "vscode-test",
     "test:e2e": "npm run test:e2e:setup && wdio run ./e2e/wdio.conf.ts",
     "test:e2e:setup": "node e2e/scripts/fix-minimatch-esm.mjs",

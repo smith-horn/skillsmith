@@ -89,6 +89,8 @@ Worktree-local vscode tests (host-only, resolving through symlinked node_modules
 npm run test:vscode
 ```
 
+`npm test` run from inside this package (`cd packages/vscode-extension && npm test`) now runs the same suite via the shared config (SMI-6084) — it previously silently discovered 0 tests and exited green.
+
 Unit tests run inside the Skillsmith Docker dev container:
 
 ```bash

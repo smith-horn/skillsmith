@@ -1,13 +1,18 @@
 // SMI-5344 #2: standalone vscode-extension test config — the worktree-local path.
 //
-// Invoked ONLY by the root `test:vscode` script via `vitest run -c
-// vitest.config.vscode.ts`. It is intentionally NOT named `vitest.config.ts`
-// inside the package, so it never becomes the config that
-// `npm test --workspace=packages/vscode-extension` (CI matrix job) resolves —
-// that invocation keeps discovering 0 files (`--passWithNoTests`), and the
-// real vscode unit run stays in the `Test (root colocated)` job via
-// `vitest.config.colocated.ts`. CI discovery is therefore byte-identical to
-// `main`; this config only adds a host-runnable, worktree-correct convenience.
+// Invoked by BOTH the root `test:vscode` script (`vitest run -c
+// vitest.config.vscode.ts`) AND, as of SMI-6084, the vscode-extension
+// package's own `test` script (`vitest run -c ../../vitest.config.vscode.ts`)
+// — it is intentionally NOT named `vitest.config.ts` inside the package so
+// package-relative `-c` and root-relative `-c` both resolve to this single
+// file rather than a second, drifting copy. Before SMI-6084, `npm test
+// --workspace=packages/vscode-extension` (the CI matrix job) fell through to
+// the root `vitest.config.ts`'s root-relative globs and silently discovered 0
+// files (`--passWithNoTests`); the matrix job now genuinely runs this suite
+// (78 files / 896 tests), same as `publish-vscode.yml`'s pre-publish
+// validation step. This duplicates the `Test (root colocated)` job's
+// coverage of the same files — the same matrix+colocated duplication shape
+// every other package already has, not new drift.
 //
 // Worktree correctness: unlike the root `vitest.config.ts`, this config does
 // NOT exclude `.worktrees/**`. `root` is pinned to this file's own directory
