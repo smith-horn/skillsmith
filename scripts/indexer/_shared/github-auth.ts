@@ -8,7 +8,21 @@
  * `base64UrlEncode`, `createAppJwt`) — only the env access swaps
  * `Deno.env.get(...)` for `process.env...`. Parity check via grep-equivalence
  * documented in the Deno parent file's docblock.
+ *
+ * SMI-6015 follow-up (2026-08-18): `getInstallationToken()`'s fetch had no
+ * timeout — a long-running census process (hours, no platform-imposed wall
+ * clock, unlike a Deno edge function) could stall the ENTIRE branch-
+ * resolution pool indefinitely on a hung connection to GitHub's token-mint
+ * endpoint, with only the independent heartbeat mechanism masking the stall
+ * by still reporting the generation "alive." Now bounded by the same
+ * `resolveFetchTimeoutMs()` chokepoint `withRateLimitTracking` (SMI-5964)
+ * already uses for every other GitHub fetch in this codebase — a single
+ * source of truth for the timeout value/override, not a second one. Mirrored
+ * into the Deno twin via its own `fetchWithTimeout()` (`_shared/fetch-timeout.ts`,
+ * SMI-5150) for parity — that helper existed but was never adopted here.
  */
+
+import { resolveFetchTimeoutMs } from './rate-limit.ts'
 
 let cachedInstallationToken: { token: string; expiresAt: number } | null = null
 
@@ -156,6 +170,7 @@ export async function getInstallationToken(): Promise<string | null> {
   try {
     const jwt = await createAppJwt(appId, privateKey)
 
+    const timeoutMs = resolveFetchTimeoutMs()
     const response = await fetch(
       `https://api.github.com/app/installations/${installationId}/access_tokens`,
       {
@@ -165,6 +180,7 @@ export async function getInstallationToken(): Promise<string | null> {
           Authorization: `Bearer ${jwt}`,
           'User-Agent': 'skillsmith-indexer/1.0',
         },
+        ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       }
     )
 
