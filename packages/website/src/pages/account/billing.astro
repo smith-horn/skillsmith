@@ -621,18 +621,50 @@ const supabaseConfig = getSupabaseConfig()
 
     try {
       // Get profile and subscription
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('tier, email')
-        .eq('id', session.user.id)
-        .single()
+      //
+      // Resolve the effective entitlement first (SMI-6086) — its team_id
+      // identifies the exact team whose subscription won, correctly even for
+      // a user who belongs to more than one team.
+      const [{ data: profile }, { data: effectiveRows, error: effectiveError }] = await Promise.all(
+        [
+          supabase.from('profiles').select('tier, email').eq('id', session.user.id).single(),
+          supabase.rpc('get_effective_subscription_summary', {
+            user_uuid: session.user.id,
+          }),
+        ]
+      )
 
-      const { data: subscriptions } = await supabase.rpc('get_user_subscription', {
-        user_uuid: session.user.id,
-      })
+      if (effectiveError) throw effectiveError
 
-      const tier = profile?.tier || 'community'
-      const subscription = subscriptions?.[0]
+      const effectiveSubscription = effectiveRows?.[0]
+      let isNonOwnerTeamMember = false
+
+      if (effectiveSubscription?.team_id) {
+        const { data: winningMembership, error: membershipError } = await supabase
+          .from('team_members')
+          .select('role')
+          .eq('team_id', effectiveSubscription.team_id)
+          .eq('user_id', session.user.id)
+          .maybeSingle()
+
+        if (membershipError) throw membershipError
+        isNonOwnerTeamMember = winningMembership !== null && winningMembership.role !== 'owner'
+      }
+
+      // Owners and users whose winning entitlement is personal retain the
+      // existing full-billing RPC. Non-owner members never call it — they see
+      // tier/status only, from the summary RPC above.
+      let subscription = effectiveSubscription
+      if (!isNonOwnerTeamMember) {
+        const { data: subscriptions, error: subscriptionError } = await supabase.rpc(
+          'get_user_subscription',
+          { user_uuid: session.user.id }
+        )
+        if (subscriptionError) throw subscriptionError
+        subscription = subscriptions?.[0]
+      }
+
+      const tier = effectiveSubscription?.tier || profile?.tier || 'community'
 
       // Update UI
       const currentPlan = document.getElementById('current-plan') as HTMLSpanElement
@@ -649,88 +681,106 @@ const supabaseConfig = getSupabaseConfig()
           subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)
         subscriptionStatus.className = `status-badge ${subscription.status}`
 
-        const periodEnd = new Date(subscription.current_period_end)
-        nextPayment.textContent = periodEnd.toLocaleDateString()
+        if (isNonOwnerTeamMember) {
+          // SMI-6086: non-owner team members see tier and status only — never
+          // the team purchaser's next-payment date, amount, payment method, or
+          // invoice history.
+          nextPayment.textContent = 'Managed by team owner'
+          paymentAmount.textContent = '—'
 
-        const prices: Record<string, string> = {
-          individual: '$9.99',
-          team: `$${25 * (subscription.seat_count || 1)}`,
-          enterprise: `$${55 * (subscription.seat_count || 1)}`,
-        }
-        paymentAmount.textContent = prices[tier] || 'Free'
-
-        // Show payment method if we have one stored
-        const paymentMethod = document.getElementById('payment-method') as HTMLDivElement
-        // Note: Card details are managed via Stripe portal
-        paymentMethod.innerHTML = `
-          <div class="card-info">
-            <div class="card-icon">CARD</div>
-            <div class="card-details">
-              <div class="card-number">•••• •••• •••• ••••</div>
-              <div class="card-expiry">Click "Manage" to update payment method</div>
+          const paymentMethod = document.getElementById('payment-method') as HTMLDivElement
+          paymentMethod.innerHTML = `
+            <div class="card-info">
+              <p>Billing is managed by your team owner.</p>
             </div>
-          </div>
-        `
+          `
 
-        // Fetch invoices from Stripe via Edge Function
-        const invoicesList = document.getElementById('invoices-list') as HTMLDivElement
-        try {
-          const invoicesRes = await fetch(`${supabaseUrl}/functions/v1/list-invoices?limit=12`, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-            },
-          })
+          const invoicesList = document.getElementById('invoices-list') as HTMLDivElement
+          invoicesList.innerHTML = `<p>Invoices are available only to the team owner.</p>`
+        } else {
+          const periodEnd = new Date(subscription.current_period_end)
+          nextPayment.textContent = periodEnd.toLocaleDateString()
 
-          if (invoicesRes.ok) {
-            const { invoices } = await invoicesRes.json()
-
-            if (invoices && invoices.length > 0) {
-              invoicesList.innerHTML = invoices
-                .map(
-                  (invoice: {
-                    id: string
-                    number: string | null
-                    status: string
-                    amount: number
-                    currency: string
-                    date: string
-                    pdfUrl: string | null
-                  }) => {
-                    const date = new Date(invoice.date).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    })
-                    const amount = `$${invoice.amount.toFixed(2)}`
-                    const statusClass = invoice.status === 'paid' ? 'paid' : ''
-                    const statusText =
-                      invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)
-                    const invoiceNumber = invoice.number || invoice.id.slice(-8).toUpperCase()
-                    const downloadButton = invoice.pdfUrl
-                      ? `<a href="${escapeHtml(invoice.pdfUrl)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Download</a>`
-                      : `<span class="btn btn-ghost btn-sm" style="opacity: 0.5; cursor: not-allowed;">Generating...</span>`
-
-                    return `
-                  <div class="invoice-item">
-                    <div class="invoice-info">
-                      <span class="invoice-date">${escapeHtml(date)} <span class="text-muted">(#${escapeHtml(invoiceNumber)})</span></span>
-                      <span class="invoice-amount">${escapeHtml(amount)} ${escapeHtml(invoice.currency)}</span>
-                    </div>
-                    <div class="invoice-actions">
-                      <span class="invoice-status ${statusClass}">${escapeHtml(statusText)}</span>
-                      ${downloadButton}
-                    </div>
-                  </div>
-                `
-                  }
-                )
-                .join('')
-            }
+          const prices: Record<string, string> = {
+            individual: '$9.99',
+            team: `$${25 * (subscription.seat_count || 1)}`,
+            enterprise: `$${55 * (subscription.seat_count || 1)}`,
           }
-        } catch (invoiceErr) {
-          console.error('Failed to fetch invoices:', invoiceErr)
-          // Keep the empty state if invoices fail to load
+          paymentAmount.textContent = prices[tier] || 'Free'
+
+          // Show payment method if we have one stored
+          const paymentMethod = document.getElementById('payment-method') as HTMLDivElement
+          // Note: Card details are managed via Stripe portal
+          paymentMethod.innerHTML = `
+            <div class="card-info">
+              <div class="card-icon">CARD</div>
+              <div class="card-details">
+                <div class="card-number">•••• •••• •••• ••••</div>
+                <div class="card-expiry">Click "Manage" to update payment method</div>
+              </div>
+            </div>
+          `
+
+          // Fetch invoices from Stripe via Edge Function
+          const invoicesList = document.getElementById('invoices-list') as HTMLDivElement
+          try {
+            const invoicesRes = await fetch(`${supabaseUrl}/functions/v1/list-invoices?limit=12`, {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+            })
+
+            if (invoicesRes.ok) {
+              const { invoices } = await invoicesRes.json()
+
+              if (invoices && invoices.length > 0) {
+                invoicesList.innerHTML = invoices
+                  .map(
+                    (invoice: {
+                      id: string
+                      number: string | null
+                      status: string
+                      amount: number
+                      currency: string
+                      date: string
+                      pdfUrl: string | null
+                    }) => {
+                      const date = new Date(invoice.date).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })
+                      const amount = `$${invoice.amount.toFixed(2)}`
+                      const statusClass = invoice.status === 'paid' ? 'paid' : ''
+                      const statusText =
+                        invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)
+                      const invoiceNumber = invoice.number || invoice.id.slice(-8).toUpperCase()
+                      const downloadButton = invoice.pdfUrl
+                        ? `<a href="${escapeHtml(invoice.pdfUrl)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Download</a>`
+                        : `<span class="btn btn-ghost btn-sm" style="opacity: 0.5; cursor: not-allowed;">Generating...</span>`
+
+                      return `
+                    <div class="invoice-item">
+                      <div class="invoice-info">
+                        <span class="invoice-date">${escapeHtml(date)} <span class="text-muted">(#${escapeHtml(invoiceNumber)})</span></span>
+                        <span class="invoice-amount">${escapeHtml(amount)} ${escapeHtml(invoice.currency)}</span>
+                      </div>
+                      <div class="invoice-actions">
+                        <span class="invoice-status ${statusClass}">${escapeHtml(statusText)}</span>
+                        ${downloadButton}
+                      </div>
+                    </div>
+                  `
+                    }
+                  )
+                  .join('')
+              }
+            }
+          } catch (invoiceErr) {
+            console.error('Failed to fetch invoices:', invoiceErr)
+            // Keep the empty state if invoices fail to load
+          }
         }
       } else {
         subscriptionStatus.textContent = 'Free'
@@ -741,34 +791,40 @@ const supabaseConfig = getSupabaseConfig()
 
       // Manage payment button - redirect to Stripe portal
       const managePaymentBtn = document.getElementById('manage-payment-btn') as HTMLButtonElement
-      managePaymentBtn.addEventListener('click', async () => {
+      if (isNonOwnerTeamMember) {
+        // SMI-6086: only the team purchaser can manage payment/billing.
         managePaymentBtn.disabled = true
-        managePaymentBtn.textContent = 'Loading...'
+        managePaymentBtn.textContent = 'Contact owner'
+      } else {
+        managePaymentBtn.addEventListener('click', async () => {
+          managePaymentBtn.disabled = true
+          managePaymentBtn.textContent = 'Loading...'
 
-        try {
-          const res = await fetch(`${supabaseUrl}/functions/v1/create-portal-session`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ returnUrl: window.location.href }),
-          })
+          try {
+            const res = await fetch(`${supabaseUrl}/functions/v1/create-portal-session`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({ returnUrl: window.location.href }),
+            })
 
-          if (!res.ok) {
-            const err = await res.json()
-            throw new Error(err.error || 'Failed to create portal session')
+            if (!res.ok) {
+              const err = await res.json()
+              throw new Error(err.error || 'Failed to create portal session')
+            }
+
+            const { url } = await res.json()
+            window.location.href = url
+          } catch (error) {
+            console.error('Portal error:', error)
+            alert(error instanceof Error ? error.message : 'Failed to open billing portal')
+            managePaymentBtn.disabled = false
+            managePaymentBtn.textContent = 'Manage'
           }
-
-          const { url } = await res.json()
-          window.location.href = url
-        } catch (error) {
-          console.error('Portal error:', error)
-          alert(error instanceof Error ? error.message : 'Failed to open billing portal')
-          managePaymentBtn.disabled = false
-          managePaymentBtn.textContent = 'Manage'
-        }
-      })
+        })
+      }
 
       // Show content
       showState('content')

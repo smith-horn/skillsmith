@@ -813,9 +813,45 @@ const supabaseConfig = getSupabaseConfig()
         .single()
 
       // Get subscription
-      const { data: subscriptions } = await supabase.rpc('get_user_subscription', {
-        user_uuid: user.id,
-      })
+      //
+      // Resolve the effective entitlement first (SMI-6086) — its team_id
+      // identifies the exact team whose subscription won, correctly even for
+      // a user who belongs to more than one team.
+      const { data: effectiveRows, error: effectiveError } = await supabase.rpc(
+        'get_effective_subscription_summary',
+        { user_uuid: user.id }
+      )
+      if (effectiveError) throw effectiveError
+
+      const effectiveSubscription = effectiveRows?.[0]
+      let isNonOwnerTeamMember = false
+
+      if (effectiveSubscription?.team_id) {
+        const { data: winningMembership, error: membershipError } = await supabase
+          .from('team_members')
+          .select('role')
+          .eq('team_id', effectiveSubscription.team_id)
+          .eq('user_id', user.id)
+          .maybeSingle()
+
+        if (membershipError) throw membershipError
+        isNonOwnerTeamMember = winningMembership !== null && winningMembership.role !== 'owner'
+      }
+
+      // Owners and users whose winning entitlement is personal retain the
+      // existing full-billing RPC. Non-owner members never call it — they see
+      // tier/status only, from the summary RPC above.
+      let subscriptions: Array<{
+        current_period_end: string
+        cancel_at_period_end: boolean
+      }> | null = null
+      if (!isNonOwnerTeamMember) {
+        const { data, error: subscriptionError } = await supabase.rpc('get_user_subscription', {
+          user_uuid: user.id,
+        })
+        if (subscriptionError) throw subscriptionError
+        subscriptions = data
+      }
 
       // Get license keys (include usage_count for API usage display)
       const { data: licenseKeys } = await supabase
@@ -825,7 +861,7 @@ const supabaseConfig = getSupabaseConfig()
         .order('created_at', { ascending: false })
 
       // Update UI
-      const tier = profile?.tier || 'community'
+      const tier = effectiveSubscription?.tier || profile?.tier || 'community'
       const fullName = profile?.full_name || user.email?.split('@')[0] || 'User'
 
       // User info
@@ -981,7 +1017,7 @@ const supabaseConfig = getSupabaseConfig()
       const subscriptionDetails = document.getElementById('subscription-details')
       const subscriptionActions = document.getElementById('subscription-actions')
 
-      const subscription = subscriptions?.[0]
+      const subscription = isNonOwnerTeamMember ? effectiveSubscription : subscriptions?.[0]
 
       if (subscription) {
         const prices: Record<string, string> = {
@@ -989,20 +1025,34 @@ const supabaseConfig = getSupabaseConfig()
           team: '$25/user/mo',
           enterprise: '$55/user/mo',
         }
-        if (tierPriceEl) tierPriceEl.textContent = prices[tier] || 'Free'
 
-        const periodEnd = new Date(subscription.current_period_end)
-        if (subscriptionDetails) {
-          subscriptionDetails.innerHTML = `
-            <p>Next billing date: ${periodEnd.toLocaleDateString()}</p>
-            ${subscription.cancel_at_period_end ? '<p class="text-danger">Cancels at end of period</p>' : ''}
-          `
-        }
+        if (isNonOwnerTeamMember) {
+          // SMI-6086: non-owner team members see tier and status only — never
+          // the team purchaser's next-billing date or cancellation state.
+          if (tierPriceEl) tierPriceEl.textContent = 'Team plan'
+          if (subscriptionDetails) {
+            const status =
+              effectiveSubscription.status.charAt(0).toUpperCase() +
+              effectiveSubscription.status.slice(1)
+            subscriptionDetails.innerHTML = `<p>Team subscription status: ${status}</p>`
+          }
+          if (subscriptionActions) subscriptionActions.innerHTML = ''
+        } else {
+          if (tierPriceEl) tierPriceEl.textContent = prices[tier] || 'Free'
 
-        if (subscriptionActions) {
-          // The Subscription section header already has a "Manage" button, so
-          // skip a duplicate link here for subscribed users. (SMI-5153)
-          subscriptionActions.innerHTML = ''
+          const periodEnd = new Date(subscription.current_period_end)
+          if (subscriptionDetails) {
+            subscriptionDetails.innerHTML = `
+              <p>Next billing date: ${periodEnd.toLocaleDateString()}</p>
+              ${subscription.cancel_at_period_end ? '<p class="text-danger">Cancels at end of period</p>' : ''}
+            `
+          }
+
+          if (subscriptionActions) {
+            // The Subscription section header already has a "Manage" button, so
+            // skip a duplicate link here for subscribed users. (SMI-5153)
+            subscriptionActions.innerHTML = ''
+          }
         }
       } else {
         if (tierPriceEl) tierPriceEl.textContent = 'Free'
