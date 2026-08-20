@@ -457,15 +457,27 @@ const supabaseConfig = getSupabaseConfig()
   import {
     badgeForRegistryVersion,
     groupRegistryVersions,
+    loadRegistryDashboardData,
+    reviewRegistrySubmission,
+    setRegistryVersionDeprecated,
     type PrivateRegistryDashboardRow,
   } from '../../../lib/private-registry-dashboard'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
   function escapeHtml(text: string): string {
-    const div = document.createElement('div')
-    div.textContent = text
-    return div.innerHTML
+    // Replace-based rather than the DOM textContent/innerHTML idiom the
+    // sibling pages use: this page interpolates into quoted HTML attributes
+    // (data-skill-id, data-version, title), and the DOM idiom leaves quotes
+    // unescaped — an attribute-injection vector, since the DB CHECKs on
+    // skill_id/version don't forbid '"' and direct authenticated PostgREST
+    // inserts into private_registry_skills are possible (SMI-5882).
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
   }
 
   function formatDate(value: string): string {
@@ -557,42 +569,19 @@ const supabaseConfig = getSupabaseConfig()
       const canManage = role === 'admin' || role === 'owner'
 
       async function loadRegistry() {
-        const [
-          { data: namespaceRow, error: namespaceError },
-          { data: approvedRows, error: approvedError },
-          { data: pendingRows, error: pendingError },
-          { data: rejectedRows, error: rejectedError },
-        ] = await Promise.all([
-          supabase.from('teams').select('skill_namespace').eq('id', teamId).single(),
-          supabase
-            .from('private_registry_skills')
-            .select('skill_id, version, description, deprecated, published_by, published_at')
-            .eq('team_id', teamId)
-            .eq('approval_status', 'approved')
-            .order('skill_id')
-            .order('version'),
-          supabase.rpc('get_private_registry_submissions', {
-            p_team_id: teamId,
-            p_status: 'pending',
-          }),
-          supabase.rpc('get_private_registry_submissions', {
-            p_team_id: teamId,
-            p_status: 'rejected',
-          }),
-        ])
-
-        if (namespaceError) throw new Error(namespaceError.message)
-        if (approvedError) throw new Error(approvedError.message)
-        if (pendingError) throw new Error(pendingError.message)
-        if (rejectedError) throw new Error(rejectedError.message)
+        // Read-path split (SMI-6087): approved via RLS-scoped select,
+        // pending/rejected via the get_private_registry_submissions RPC —
+        // see loadRegistryDashboardData's invariant note.
+        const registryData = await loadRegistryDashboardData(supabase, teamId)
 
         const namespaceEl = document.getElementById('registry-namespace')!
-        const namespace = String(namespaceRow?.skill_namespace ?? '')
-        namespaceEl.textContent = namespace ? `${namespace}/` : 'Not configured'
+        namespaceEl.textContent = registryData.namespace
+          ? `${registryData.namespace}/`
+          : 'Not configured'
 
-        renderSkills((approvedRows ?? []) as PrivateRegistryDashboardRow[], canManage)
-        renderPending((pendingRows ?? []) as PrivateRegistryDashboardRow[], canManage)
-        renderRejected((rejectedRows ?? []) as PrivateRegistryDashboardRow[])
+        renderSkills(registryData.approved, canManage)
+        renderPending(registryData.pending, canManage)
+        renderRejected(registryData.rejected)
       }
 
       function renderSkills(rows: PrivateRegistryDashboardRow[], userCanManage: boolean) {
@@ -784,18 +773,12 @@ const supabaseConfig = getSupabaseConfig()
 
             let note: string | null = null
             if (decision === 'rejected') {
-              note = window.prompt('Optional rejection note:')?.trim() || null
+              const rawNote = window.prompt('Optional rejection note (Cancel aborts):')
+              if (rawNote === null) return
+              note = rawNote.trim() || null
             }
 
-            const { error } = await supabase.rpc('review_private_registry_submission', {
-              p_team_id: teamId,
-              p_skill_id: skillId,
-              p_version: version,
-              p_decision: decision,
-              p_note: note,
-            })
-
-            if (error) throw new Error(error.message)
+            await reviewRegistrySubmission(supabase, teamId, skillId, version, decision, note)
 
             showActionMessage(
               `${skillId} v${version} was ${decision === 'approved' ? 'approved' : 'rejected'}.`,
@@ -803,18 +786,7 @@ const supabaseConfig = getSupabaseConfig()
             )
           } else if (action === 'toggle-deprecated') {
             const deprecated = button.dataset.deprecated === 'true'
-            const { data, error } = await supabase
-              .from('private_registry_skills')
-              .update({ deprecated: !deprecated })
-              .eq('team_id', teamId)
-              .eq('skill_id', skillId)
-              .eq('version', version)
-              .select()
-
-            if (error) throw new Error(error.message)
-            if (!data || data.length === 0) {
-              throw new Error('The skill version could not be updated.')
-            }
+            await setRegistryVersionDeprecated(supabase, teamId, skillId, version, !deprecated)
 
             showActionMessage(
               `${skillId} v${version} was ${deprecated ? 'undeprecated' : 'deprecated'}.`,
