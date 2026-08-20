@@ -166,7 +166,7 @@ export const privateRegistryManageToolSchema = {
           'reject',
         ],
         description:
-          'Registry operation to perform. "namespace" returns your team\'s publish ' +
+          'Registry operation to perform. "namespace" returns your team\'s registry ' +
           'namespace (the required skill_id prefix) without attempting a publish. ' +
           '"install" downloads the skill and writes it to your skills directory. ' +
           '"submissions" lists review-gate items awaiting or already given a decision — ' +

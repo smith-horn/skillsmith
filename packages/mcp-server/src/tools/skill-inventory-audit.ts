@@ -66,7 +66,7 @@ export type SkillInventoryAuditValidatedInput = z.infer<typeof skillInventoryAud
 export const skillInventoryAuditToolSchema = {
   name: 'skill_inventory_audit',
   description:
-    "[Skillsmith — Maintain stage] Audit your installed AI coding clients' skill inventories (Claude Code, Cursor, Copilot, and every other Skillsmith-supported client) — plus Claude Code's own commands, agents, and CLAUDE.md trigger rules — for namespace collisions. Returns rename + prose-edit suggestions keyed by a fresh `auditId`. Read-only — performs no file mutations. Feed the returned suggestions into `apply_namespace_rename` / `apply_recommended_edit`.",
+    "[Skillsmith — Maintain stage] Audit your installed AI coding clients' skill inventories (Claude Code, Cursor, Copilot, and every other Skillsmith-supported client) — plus Claude Code's own commands, agents, and CLAUDE.md trigger rules — for local namespace-collision audit findings. Returns rename + prose-edit suggestions keyed by a fresh `auditId`. Read-only — performs no file mutations. Feed the returned suggestions into `apply_namespace_rename` / `apply_recommended_edit`.",
   inputSchema: {
     type: 'object' as const,
     properties: {

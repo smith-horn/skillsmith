@@ -111,7 +111,7 @@ export const applyNamespaceRenameInputSchema = z
 export const applyNamespaceRenameToolSchema = {
   name: 'apply_namespace_rename',
   description:
-    "[Skillsmith — Maintain stage] Apply a rename suggestion from a prior `skill_inventory_audit`, or revert one already applied. MUTATES `~/.claude` (renames a skill/command/agent file) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false, direction }) so the agent can show the change before committing. `action: 'apply'` uses the suggested name; `'custom'` uses `customName`; `'skip'` records a no-op; `'revert'` undoes a previously applied rename for the same auditId + collisionId — this is the durable, cross-session undo path (a fresh MCP server process, e.g. a new session, can still revert a rename applied by an earlier process, since the ledger persists to disk).",
+    "[Skillsmith — Maintain stage] Apply a rename suggestion from a prior local namespace-collision audit (`skill_inventory_audit`), or revert one already applied. MUTATES `~/.claude` (renames a skill/command/agent file) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false, direction }) so the agent can show the change before committing. `action: 'apply'` uses the suggested name; `'custom'` uses `customName`; `'skip'` records a no-op; `'revert'` undoes a previously applied rename for the same auditId + collisionId — this is the durable, cross-session undo path (a fresh MCP server process, e.g. a new session, can still revert a rename applied by an earlier process, since the ledger persists to disk).",
   inputSchema: {
     type: 'object' as const,
     properties: {

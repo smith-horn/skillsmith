@@ -459,9 +459,10 @@ EOF`}</code></pre>
   <h3 id="private-registry-manage">private_registry_manage</h3>
 
   <p>
-    List, get, install, deprecate, and review skills in your organization's private registry —
-    the <code>action</code> parameter selects the operation (including <code>submissions</code>,
-    <code>approve</code>, and <code>reject</code> for reviewing pending publishes). Enterprise
+    Manage your organization's private registry — list, get, install, deprecate, and review skills
+    via the <code>action</code> parameter (including <code>submissions</code>, <code>approve</code>,
+    and <code>reject</code> for reviewing pending publishes). The <code>namespace</code> action
+    returns your team's registry namespace (the required skill_id publish prefix). Enterprise
     tier. Full tool reference: <a href="/docs/private-registry">Private Registry</a>.
   </p>
 
@@ -479,7 +480,7 @@ EOF`}</code></pre>
     <li>"Use Skillsmith to approve my-org/deploy-helper version 1.0.0"</li>
   </ul>
 
-  <h2 id="namespace-audit-tools-team">Namespace Audit Tools</h2>
+  <h2 id="namespace-collision-tools-team">Local Namespace-Collision Audit Tools</h2>
 
   <p>
     These tools detect and resolve namespace collisions across your local skills, commands, agents, and CLAUDE.md files.
@@ -490,7 +491,7 @@ EOF`}</code></pre>
 
   <h3>skill_inventory_audit</h3>
 
-  <p>Audit the local <code>~/.claude/</code> inventory for namespace collisions; returns rename and edit suggestions.</p>
+  <p>Audit the local <code>~/.claude/</code> inventory for local namespace-collision findings; returns rename and edit suggestions.</p>
 
   <pre><code>{`// Tool: skill_inventory_audit
 // Parameters:
@@ -511,13 +512,13 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Use Skillsmith to audit my installed skills for namespace conflicts"</li>
-    <li>"Ask Skillsmith to run a deep namespace audit on my ~/.claude inventory"</li>
+    <li>"Use Skillsmith to audit my installed skills for local namespace collisions"</li>
+    <li>"Ask Skillsmith to run a deep collision audit on my ~/.claude inventory"</li>
   </ul>
 
   <h3>apply_namespace_rename</h3>
 
-  <p>Apply a rename suggestion from a prior <code>skill_inventory_audit</code> result; persists overrides via the namespace-overrides ledger.</p>
+  <p>Apply a rename suggestion from a prior local namespace-collision audit (<code>skill_inventory_audit</code>); persists overrides via the namespace-overrides ledger.</p>
 
   <pre><code>{`// Tool: apply_namespace_rename
 // Parameters:
