@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: `private_registry_manage`'s `namespace` action, `skill_inventory_audit`, and
+  `apply_namespace_rename` tool descriptions now disambiguate the three previously-conflated
+  meanings of "namespace" — the private registry's per-team publish prefix vs. the local
+  single-machine naming-collision audit vs. the public registry's author-prefix convention.
+  Wording-only; no identifier, RPC, column, or error code renamed. (SMI-6088)
 - **Fix**: the upgrade-nudge message shown to a non-Enterprise user hitting a gated feature
   (`getTierComparisonMessage`, `middleware/degradation.ts`) hardcoded the literal unpublished
   Enterprise price (`$55/user/month`) — told a prospect the number before they ever talk to
