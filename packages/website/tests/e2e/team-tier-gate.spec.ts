@@ -193,6 +193,7 @@ test.describe('Team tier-gate — applies identically to sibling pages', () => {
   for (const path of [
     '/account/team/members',
     '/account/team/workspaces',
+    '/account/team/registry',
     '/account/team/analytics',
   ] as const) {
     test(`${path} redirects on not_team_tier`, async ({ page }) => {
