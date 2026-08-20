@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: `private_registry_publish`'s description also qualified "your team namespace" to
+  "your team's registry namespace", closing a gap the previous SMI-6088 wording pass missed in
+  the same file. Wording-only. (SMI-6088)
 - **Docs**: `private_registry_manage`'s `namespace` action, `skill_inventory_audit`, and
   `apply_namespace_rename` tool descriptions now disambiguate the three previously-conflated
   meanings of "namespace" — the private registry's per-team publish prefix vs. the local
