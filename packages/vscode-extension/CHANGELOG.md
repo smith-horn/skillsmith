@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Docs**: `McpClient.skillInventoryAudit`'s JSDoc comment and the README's "Audit Skill
+  Inventory" row now state the tool's actual scope (every installed AI coding client's skill
+  inventory, not just `~/.claude/`), and use the "local namespace collisions" qualifier
+  consistent with the rest of the repo's SMI-6088 wording pass. Wording-only. (SMI-6088)
+
 ## v0.7.7
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.7.6).

@@ -391,7 +391,7 @@ export class McpClient {
   }
 
   /**
-   * Audit the local `~/.claude/` inventory for namespace collisions
+   * Audit every installed AI coding client's skill inventory for local namespace collisions
    * (SMI-5318 / #1459). UNGATED — never tier-denies. `deep` (default false)
    * gates the slower semantic-overlap pass.
    */

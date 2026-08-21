@@ -20,7 +20,7 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 | Recommend Skills | Contextual skill recommendations based on your installed skills, surfaced in a quick pick |
 | Compare Skills | Side-by-side comparison of two skills in a panel with quality, trust tier, key differences, and a recommendation |
 | Check for Updates | Compares an installed skill against the latest registry version and advises whether to update (Individual plan or higher) |
-| Audit Skill Inventory | Scans your local skill inventory for namespace collisions and shows a report with suggested renames |
+| Audit Skill Inventory | Scans every installed AI coding client's skill inventory for local namespace collisions and shows a report with suggested renames |
 | MCP Integration | Live data from the Skillsmith API via Model Context Protocol |
 | Offline Fallback | Works offline with cached local skill data |
 
