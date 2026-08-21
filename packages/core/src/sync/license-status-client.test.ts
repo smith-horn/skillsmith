@@ -135,4 +135,48 @@ describe('license-status-client', () => {
     fetchMock.mockResolvedValue(jsonResponse({ nope: true }, 200))
     await expect(resolveSessionTier()).rejects.toBeInstanceOf(SessionTierTransientError)
   })
+
+  it('UC-5d: authenticated:true with a missing tier -> SessionTierTransientError, never a silent community result', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(jsonResponse({ data: { authenticated: true } }, 200))
+    await expect(resolveSessionTier()).rejects.toBeInstanceOf(SessionTierTransientError)
+  })
+
+  it('UC-5e: authenticated:true with an unrecognized tier -> SessionTierTransientError', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(
+      jsonResponse({ data: { authenticated: true, tier: 'platinum' } }, 200)
+    )
+    await expect(resolveSessionTier()).rejects.toBeInstanceOf(SessionTierTransientError)
+  })
+
+  it('UC-6a: the request carries an AbortSignal (timeout wiring present)', async () => {
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockResolvedValue(jsonResponse({ data: { authenticated: false } }, 200))
+    await resolveSessionTier()
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('UC-6b: a stalled request is aborted after the timeout and reported as transient', async () => {
+    vi.useFakeTimers()
+    vi.mocked(loadCredentials).mockResolvedValue(futureCreds)
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = (init as RequestInit).signal
+          signal?.addEventListener('abort', () => {
+            const err = new Error('The operation was aborted.')
+            err.name = 'AbortError'
+            reject(err)
+          })
+        })
+    )
+
+    const promise = resolveSessionTier()
+    const assertion = expect(promise).rejects.toThrow(/timeout/)
+    await vi.advanceTimersByTimeAsync(5000)
+    await assertion
+    vi.useRealTimers()
+  })
 })

@@ -17,6 +17,16 @@ import { resolveAccessToken as resolveSessionToken } from './access-token.js'
 import { DEFAULT_BASE_URL, PRODUCTION_ANON_KEY } from '../api/utils.js'
 
 /**
+ * Timeout for the `license-status` request. Matches `license.tier.ts`'s
+ * `LICENSE_STATUS_TIMEOUT_MS` (the API-key resolver's own precedent) — a
+ * stalled connection here must not block `getLicenseInfo()` indefinitely.
+ */
+const LICENSE_STATUS_TIMEOUT_MS = 5000
+
+/** The tier values a genuine `authenticated: true` response can carry. */
+const KNOWN_TIERS = new Set(['community', 'individual', 'team', 'enterprise'])
+
+/**
  * No usable device session — none stored, or a refresh attempt failed. This
  * is a real, definitive "not authenticated this way" (same class as a
  * missing/bad API key): callers should fall back to community, cached at
@@ -68,18 +78,30 @@ export interface SessionTierResult {
 export async function resolveSessionTier(): Promise<SessionTierResult> {
   const accessToken = await resolveSessionToken(() => new SessionTierAuthError())
 
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), LICENSE_STATUS_TIMEOUT_MS)
+
   let res: Response
   try {
-    res = await fetch(`${DEFAULT_BASE_URL}/license-status`, {
-      method: 'GET',
-      headers: {
-        apikey: PRODUCTION_ANON_KEY,
-        Authorization: `Bearer ${accessToken}`,
-      },
-    })
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
-    throw new SessionTierTransientError(`license-status request failed: ${detail}`)
+    try {
+      res = await fetch(`${DEFAULT_BASE_URL}/license-status`, {
+        method: 'GET',
+        headers: {
+          apikey: PRODUCTION_ANON_KEY,
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: controller.signal,
+      })
+    } catch (error) {
+      const detail = controller.signal.aborted
+        ? 'timeout'
+        : error instanceof Error
+          ? error.message
+          : String(error)
+      throw new SessionTierTransientError(`license-status request failed: ${detail}`)
+    }
+  } finally {
+    clearTimeout(timeoutId)
   }
 
   // license-status's own abuse rate limit (429), or a server error — neither
@@ -99,6 +121,18 @@ export async function resolveSessionTier(): Promise<SessionTierResult> {
   if (!res.ok || !data || typeof data.authenticated !== 'boolean') {
     throw new SessionTierTransientError(
       `license-status returned an unexpected response (status ${res.status})`
+    )
+  }
+
+  // A genuine `authenticated: true` response must carry a recognized tier.
+  // Without this, a malformed/buggy response (authenticated:true, no tier,
+  // or a garbage tier string) would fall through the middleware's "no tier"
+  // branch and get silently cached as a DEFINITIVE community result — the
+  // exact anti-pattern the server side already guards against, mirrored
+  // here for defense-in-depth.
+  if (data.authenticated === true && !KNOWN_TIERS.has(data.tier ?? '')) {
+    throw new SessionTierTransientError(
+      `license-status returned authenticated:true with an unrecognized tier: ${String(data.tier)}`
     )
   }
 
