@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: the license middleware never resolved a real subscription tier for a caller
+  authenticated only via `skillsmith login` (device-session, no separately-configured
+  `SKILLSMITH_API_KEY`) — SMI-1953 covered the API-key path only, so every such caller silently
+  fell back to `community` regardless of real (including team-inherited) entitlement, blocking
+  Enterprise-gated tools like `private_registry_manage`/`private_registry_publish`. New
+  `createSessionTokenResolver` (`license.tier.ts`, SMI-6098) mirrors the API-key resolver, gated
+  on a device session actually existing (a cheap local check) so a never-logged-in community user
+  is unaffected. Server-side, `license-status` now accepts the session JWT as an alternate auth
+  mode and resolves entitlement via `get_effective_subscription_summary` (SMI-6086) — the same
+  live, team-inheritance-aware RPC the website uses — with a client scoped to the caller's own
+  verified JWT, never a service-role bypass. `getExpirationWarning` moved to `license.gate.ts`
+  (500-line limit).
 - **Docs**: `private_registry_publish`'s description also qualified "your team namespace" to
   "your team's registry namespace", closing a gap the previous SMI-6088 wording pass missed in
   the same file. Wording-only. (SMI-6088)
