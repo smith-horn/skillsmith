@@ -59,6 +59,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: '22'
+
 jobs:
   concurrency-test:
     name: Concurrency test (local Supabase)
@@ -75,7 +78,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
 
       # SMI-2159 pattern (ci.yml): fork PRs do not receive secrets.GIT_CRYPT_KEY.
       - name: Unlock git-crypt
