@@ -381,6 +381,20 @@ export async function processRow(
 // Main pass (moved from smi5879-simulate-full.ts — 500-line budget)
 // ---------------------------------------------------------------------------
 
+/** Return value of {@link runMainPass} — see `deadlineExceeded`'s doc comment there. */
+export interface RunMainPassResult {
+  /**
+   * True iff the pass stopped because `deadlineAtMs` was reached — an
+   * EXPECTED, non-fatal way to stop (mirrors `runCancellablePool`'s own
+   * `deadlineExceeded`/`abortedBy` distinction and
+   * `smi5879-census.branches.ts`'s `sweepTransientRepos` pattern). The
+   * caller decides what to do next (write a final checkpoint and exit with
+   * partial coverage for re-dispatch); never rethrown the way a fatal
+   * `abortedBy` condition is.
+   */
+  deadlineExceeded: boolean
+}
+
 /**
  * Run the main pass over every not-yet-attempted row (from the checkpoint, if
  * resuming), in concurrency-bounded batches, checkpointing after each batch.
@@ -395,6 +409,17 @@ export async function processRow(
  * before AND after each item, so an abort actually stops new work; whatever
  * partial progress a batch made before the abort is checkpointed via
  * `onBatchDone` BEFORE rethrowing (durable partial write, never data loss).
+ *
+ * SMI-6015 Wave 1 (plan-review High finding #6): `deadlineAtMs` (optional)
+ * threads straight into `runCancellablePool`'s own built-in deadline support
+ * — the SAME mechanism `smi5879-census.branches.ts`'s `sweepTransientRepos`
+ * already uses for its per-pass wall-clock cap, reused here rather than
+ * inventing a second, fatal-`abortedBy`-based mechanism (the original design
+ * for this Wave 1 item, corrected during plan review). A deadline hit between
+ * batches (checked at the top of the next `runCancellablePool` call) or
+ * mid-batch (checked per-worker) stops pulling new work; whatever the current
+ * batch completed is still checkpointed via `onBatchDone` before returning,
+ * exactly like a normal batch boundary — never a partial/corrupt write.
  */
 export async function runMainPass(
   rows: SimSnapshotRow[],
@@ -410,22 +435,26 @@ export async function runMainPass(
     // the census's own frozen-header bug.
     getHeaders: () => Promise<Record<string, string>>
   },
-  onBatchDone: (results: Map<string, SimRowResult>) => Promise<void>
-): Promise<void> {
+  onBatchDone: (results: Map<string, SimRowResult>) => Promise<void>,
+  deadlineAtMs?: number
+): Promise<RunMainPassResult> {
   const pending = rows.filter((r) => !alreadyResults.has(r.id))
   for (let i = 0; i < pending.length; i += CHECKPOINT_BATCH_SIZE) {
     const batch = pending.slice(i, i + CHECKPOINT_BATCH_SIZE)
     const outcomes: SimRowResult[] = []
-    const { abortedBy } = await runCancellablePool(
+    const { abortedBy, deadlineExceeded } = await runCancellablePool(
       batch,
       (row) => processRow(row, branchMap, scanDeps),
       (outcome) => {
         outcomes.push(outcome)
       },
-      PROCESS_CONCURRENCY
+      PROCESS_CONCURRENCY,
+      deadlineAtMs
     )
     for (const outcome of outcomes) alreadyResults.set(outcome.id, outcome)
     await onBatchDone(alreadyResults)
     if (abortedBy) throw abortedBy
+    if (deadlineExceeded) return { deadlineExceeded: true }
   }
+  return { deadlineExceeded: false }
 }

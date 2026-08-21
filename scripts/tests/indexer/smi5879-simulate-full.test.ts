@@ -11,6 +11,9 @@
  *   - `smi5879-simulate-full.sweep.test.ts` — `runTier3Sweep` (termination
  *     conditions + resume durability, review finding 2a).
  *   - `smi5879-simulate-full.checkpoint.test.ts` — checkpoint I/O.
+ *   - `smi5879-simulate-full.cli.test.ts` — `parseArgs` (SMI-6015 Wave 1).
+ *   - `smi5879-simulate-full.deadline-cohorts.test.ts` — `--max-elapsed-minutes`
+ *     / `--cohorts` end-to-end behavior (SMI-6015 Wave 1).
  *   - `smi5879-simulate-full.fixtures.ts` — shared fixtures/fakes.
  * @module scripts/tests/indexer/smi5879-simulate-full
  *
@@ -30,11 +33,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { HEARTBEAT_INTERVAL_MS } from '../../indexer/smi5879-simulate-full.helpers.ts'
-import {
-  readCheckpoint,
-  writeCheckpoint,
-  SWEEP_COOLDOWN_MS,
-} from '../../indexer/smi5879-simulate-full.sweep.ts'
+import { SWEEP_COOLDOWN_MS } from '../../indexer/smi5879-simulate-full.sweep.ts'
+import { readCheckpoint, writeCheckpoint } from '../../indexer/smi5879-simulate-full.checkpoint.ts'
 import { runSimulateFull, type CliArgs } from '../../indexer/smi5879-simulate-full.ts'
 import type {
   BranchMap,
@@ -152,6 +152,7 @@ describe('runSimulateFull', () => {
       purpose: args.purpose,
       baseline_commit: args.baselineCommit,
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: true,
       row_results: {
         'resume-a': {
@@ -204,6 +205,7 @@ describe('runSimulateFull', () => {
       purpose: args.purpose,
       baseline_commit: args.baselineCommit,
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: false, // abnormal prior termination
       row_results: {},
       sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -246,6 +248,7 @@ describe('runSimulateFull', () => {
       purpose: args.purpose,
       baseline_commit: args.baselineCommit,
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: true,
       row_results: {},
       sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -268,6 +271,7 @@ describe('runSimulateFull', () => {
       purpose: args.purpose,
       baseline_commit: args.baselineCommit,
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: true,
       row_results: {
         'row-from-a-different-generation': {
