@@ -113,7 +113,7 @@ export const privateRegistryPublishToolSchema = {
   description:
     "Publish a skill to your organization's private registry. " +
     'Requires Enterprise tier (private_registry feature). ' +
-    'Skills are scoped to your team namespace and published versions are immutable. ' +
+    "Skills are scoped to your team's registry namespace and published versions are immutable. " +
     'A published version is not installable by teammates until a team admin approves it — ' +
     'see private_registry_manage action "submissions" to check its status.',
   inputSchema: {

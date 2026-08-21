@@ -58,7 +58,8 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
         <td>MCP</td>
         <td><code>skill_inventory_audit</code></td>
         <td
-          >Audit local <code>~/.claude/</code> for namespace collisions; returns rename + edit suggestions</td
+          >Audit every installed AI coding client's skill inventory for local namespace
+          collisions; returns rename + edit suggestions</td
         >
         <td>All (results scoped by audit_mode)</td>
       </tr>
@@ -185,8 +186,10 @@ skillsmith pin --list                     # See all currently pinned skills`}</c
   </ul>
 
   <p>
-    The MCP tool <code>skill_inventory_audit</code> walks your local
-    <code>~/.claude/</code> tree (skills, commands, agents, CLAUDE.md contents) and returns:
+    The MCP tool <code>skill_inventory_audit</code> walks every installed AI coding client's
+    skill inventory (Claude Code, Cursor, Copilot, and every other Skillsmith-supported client) —
+    plus Claude Code's own <code>~/.claude/</code> commands, agents, and CLAUDE.md contents — and
+    returns:
   </p>
 
   <ul>
