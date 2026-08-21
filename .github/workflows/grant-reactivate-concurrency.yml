@@ -1,0 +1,146 @@
+# SMI-6093 -- true-concurrency regression test for
+# grant_or_reactivate_complimentary_subscription()'s pg_advisory_xact_lock
+# serialization. Spins up a genuinely local, ephemeral Supabase/Postgres
+# instance on the runner (never staging/prod) and runs
+# tests/integration/grant-reactivate-concurrency.test.ts against it -- the
+# only place in this repo's CI that proves this lock actually serializes two
+# real concurrent RPC calls, rather than relying on the migration's own
+# single-threaded smoke DO blocks or mocked edge-function unit tests.
+#
+# Fork/Dependabot PRs (no GIT_CRYPT_KEY secret): supabase/migrations/** is
+# git-crypt encrypted, so every step from unlock onward is gated on key
+# availability -- a fork PR skips with an explicit ::notice::, not a hard
+# failure (plan-review finding: gating only the unlock step is insufficient,
+# since `supabase start` would still try to apply the still-encrypted
+# migration files and fail outright). Mirrors ci.yml's own fork-PR pattern
+# (SMI-2159), extended from "skip one step" to "skip the whole
+# migration-dependent tail".
+#
+# Leaner supabase start: only Postgres, GoTrue/Auth, and PostgREST (routed
+# through Kong) are needed -- Storage/Realtime/imgproxy/Studio/Mailpit/Edge
+# Functions/Logflare/Vector/postgres-meta/Supavisor are excluded via the
+# CLI's own -x flag (verified against `supabase start --help`'s valid
+# container-name list and a real local run before this workflow was
+# written -- see docs/internal/implementation/
+# smi-6093-concurrency-test-harness.md).
+#
+# NOT added to branch-protection required checks by this PR -- a routinely
+# fork-PR-skipped job would be a misleading required check; that's a
+# separate, deliberate decision for whoever promotes this later.
+
+name: Grant/Reactivate Concurrency Test
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - 'tests/integration/**'
+      - 'supabase/migrations/**'
+      - 'supabase/config.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/actions/unlock-git-crypt/**'
+      - '.github/workflows/grant-reactivate-concurrency.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/integration/**'
+      - 'supabase/migrations/**'
+      - 'supabase/config.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/actions/unlock-git-crypt/**'
+      - '.github/workflows/grant-reactivate-concurrency.yml'
+
+concurrency:
+  group: grant-reactivate-concurrency-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  concurrency-test:
+    name: Concurrency test (local Supabase)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: '22'
+
+      # SMI-2159 pattern (ci.yml): fork PRs do not receive secrets.GIT_CRYPT_KEY.
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
+
+      - name: Install root dependencies
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        run: npm ci
+
+      - name: Resolve Supabase CLI pin
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        id: supabase-pin
+        run: |
+          PIN=$(node -p "require('./package.json').devDependencies.supabase")
+          if ! [[ "$PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::supabase devDependency pin '$PIN' is not an exact semver -- refusing to install an unvalidated version"
+            exit 1
+          fi
+          printf 'version=%s\n' "$PIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Supabase CLI
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        with:
+          version: ${{ steps.supabase-pin.outputs.version }}
+
+      - name: Verify installed Supabase CLI matches the pin
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        run: |
+          ACTUAL=$(supabase --version | tr -d '[:space:]')
+          EXPECTED="${{ steps.supabase-pin.outputs.version }}"
+          echo "Installed: $ACTUAL / Expected: $EXPECTED"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Supabase CLI resolved to '$ACTUAL', expected pinned '$EXPECTED' -- setup-cli action may have ignored the version input"
+            exit 1
+          fi
+
+      - name: Start local Supabase (leaner service set)
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        run: |
+          supabase start -x storage-api,realtime,imgproxy,mailpit,studio,edge-runtime,logflare,vector,postgres-meta,supavisor
+
+      - name: Capture service-role key
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        run: |
+          KEY=$(supabase status -o json | jq -er '.SERVICE_ROLE_KEY')
+          echo "::add-mask::$KEY"
+          {
+            echo "SUPABASE_SERVICE_ROLE_KEY=$KEY"
+            echo "SUPABASE_URL=http://127.0.0.1:54321"
+            echo "SKILLSMITH_GRANT_CONCURRENCY_TEST=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Run concurrency test
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        run: npx vitest run tests/integration/grant-reactivate-concurrency.test.ts
+
+      - name: Skip summary (no git-crypt key)
+        if: ${{ env.GIT_CRYPT_KEY == '' }}
+        run: |
+          echo "::notice::Live-DB coverage skipped -- no GIT_CRYPT_KEY secret available (fork/Dependabot PR). supabase/migrations/** stays encrypted for this run, so the concurrency test cannot execute. This is expected and not a failure."
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop || true
