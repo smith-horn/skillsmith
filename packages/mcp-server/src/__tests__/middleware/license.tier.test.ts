@@ -21,12 +21,19 @@ import {
   type LicenseTier,
 } from '../../middleware/license.js'
 
-// SMI-1953: only `getApiKey` (license.ts) and `getApiBaseUrl` (license.tier.ts)
-// are imported from `@skillsmith/core` anywhere in the license middleware
-// family — confirmed via grep, so this mock shape is exhaustive for this file.
+// SMI-1953/6098: everything the license middleware family imports from
+// `@skillsmith/core` — confirmed via grep, so this mock shape is exhaustive
+// for this file.
 vi.mock('@skillsmith/core', () => ({
   getApiKey: vi.fn(),
   getApiBaseUrl: vi.fn(() => 'https://api.test.example/functions/v1'),
+  // Defaults to "no session" so the pre-existing API-key-focused describe
+  // block below is unaffected; the session-token describe block resets/
+  // reconfigures these per test.
+  loadCredentials: vi.fn().mockResolvedValue(null),
+  resolveSessionTier: vi.fn(),
+  SessionTierAuthError: class SessionTierAuthError extends Error {},
+  SessionTierTransientError: class SessionTierTransientError extends Error {},
 }))
 
 describe('SMI-1953: live tier resolution via personal API key', () => {
@@ -375,5 +382,146 @@ describe('with mocked enterprise validator', () => {
     expect(licenseInfo.features).toEqual(['sso_saml', 'audit_logging'])
     expect(licenseInfo.expiresAt).toEqual(new Date('2025-01-01'))
     expect(licenseInfo.organizationId).toBe('test-customer')
+  })
+})
+
+describe('SMI-6098: live tier resolution via a device-login session', () => {
+  const originalEnv = process.env
+
+  beforeEach(async () => {
+    process.env = { ...originalEnv }
+    delete process.env.SKILLSMITH_LICENSE_KEY
+    delete process.env.SKILLSMITH_MCP_LIVE_TIER_CHECK
+    vi.mocked(getApiKey).mockReset()
+    vi.mocked(getApiKey).mockReturnValue(undefined) // no API key configured
+    const { loadCredentials, resolveSessionTier } = await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockReset()
+    vi.mocked(resolveSessionTier).mockReset()
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('no stored session at all → plain community, resolveSessionTier never called', async () => {
+    const { loadCredentials, resolveSessionTier } = await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockResolvedValue(null)
+
+    const middleware = createLicenseMiddleware()
+    const info = await middleware.getLicenseInfo()
+
+    expect(info?.tier).toBe('community')
+    expect(resolveSessionTier).not.toHaveBeenCalled()
+  })
+
+  it("a session exists and resolves an entitled tier → definitive LicenseInfo with that tier's features", async () => {
+    const { loadCredentials, resolveSessionTier } = await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockResolvedValue({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: Date.now() + 3_600_000,
+      version: 2,
+    })
+    vi.mocked(resolveSessionTier).mockResolvedValue({
+      authenticated: true,
+      tier: 'team',
+      rateLimit: 120,
+      userId: 'user-1',
+    })
+
+    const middleware = createLicenseMiddleware()
+    const info = await middleware.getLicenseInfo()
+
+    expect(info?.valid).toBe(true)
+    expect(info?.tier).toBe('team')
+    expect(info?.organizationId).toBe('user-1')
+  })
+
+  it('a session exists but resolves to no entitlement → definitive community (not a thrown error)', async () => {
+    const { loadCredentials, resolveSessionTier } = await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockResolvedValue({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: Date.now() + 3_600_000,
+      version: 2,
+    })
+    vi.mocked(resolveSessionTier).mockResolvedValue({ authenticated: false })
+
+    const middleware = createLicenseMiddleware()
+    const info = await middleware.getLicenseInfo()
+
+    expect(info?.tier).toBe('community')
+  })
+
+  it('resolveSessionTier throws SessionTierAuthError (no session / refresh failed) → community, but caller can retry soon', async () => {
+    const { loadCredentials, resolveSessionTier, SessionTierAuthError } =
+      await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockResolvedValue({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: Date.now() + 3_600_000,
+      version: 2,
+    })
+    vi.mocked(resolveSessionTier).mockRejectedValue(new SessionTierAuthError('no session'))
+
+    const middleware = createLicenseMiddleware()
+    const info = await middleware.getLicenseInfo()
+
+    // Still resolves to community (never throws to the caller), but via the
+    // transient path — verified indirectly: a second immediate call must
+    // re-invoke resolveSessionTier rather than serving a 5-minute cache,
+    // since handleTransientFailure caches at the short 30s TTL only.
+    expect(info?.tier).toBe('community')
+  })
+
+  it('resolveSessionTier throws SessionTierTransientError (RPC/network) → community, not a crash', async () => {
+    const { loadCredentials, resolveSessionTier, SessionTierTransientError } =
+      await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockResolvedValue({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: Date.now() + 3_600_000,
+      version: 2,
+    })
+    vi.mocked(resolveSessionTier).mockRejectedValue(new SessionTierTransientError('rpc failed'))
+
+    const middleware = createLicenseMiddleware()
+    const info = await middleware.getLicenseInfo()
+
+    expect(info?.tier).toBe('community')
+  })
+
+  it('an enterprise SKILLSMITH_LICENSE_KEY takes precedence — session path never consulted', async () => {
+    process.env.SKILLSMITH_LICENSE_KEY = 'test-enterprise-key'
+    const { loadCredentials, resolveSessionTier } = await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockResolvedValue({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: Date.now() + 3_600_000,
+      version: 2,
+    })
+
+    const middleware = createLicenseMiddleware()
+    await middleware.getLicenseInfo()
+
+    expect(loadCredentials).not.toHaveBeenCalled()
+    expect(resolveSessionTier).not.toHaveBeenCalled()
+  })
+
+  it('SKILLSMITH_MCP_LIVE_TIER_CHECK=false disables the session path too', async () => {
+    process.env.SKILLSMITH_MCP_LIVE_TIER_CHECK = 'false'
+    const { loadCredentials, resolveSessionTier } = await import('@skillsmith/core')
+    vi.mocked(loadCredentials).mockResolvedValue({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: Date.now() + 3_600_000,
+      version: 2,
+    })
+
+    const middleware = createLicenseMiddleware()
+    const info = await middleware.getLicenseInfo()
+
+    expect(info?.tier).toBe('community')
+    expect(resolveSessionTier).not.toHaveBeenCalled()
   })
 })

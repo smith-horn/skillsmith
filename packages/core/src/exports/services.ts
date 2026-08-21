@@ -375,6 +375,11 @@ export {
   type AuditDigestPushFinding,
   type AuditDigestPushPayload,
   type AuditDigestPushResult,
+  // Session-token tier self-check client (SMI-6098, umbrella SMI-6085)
+  resolveSessionTier,
+  SessionTierAuthError,
+  SessionTierTransientError,
+  type SessionTierResult,
 } from '../sync/index.js'
 
 // ============================================================================

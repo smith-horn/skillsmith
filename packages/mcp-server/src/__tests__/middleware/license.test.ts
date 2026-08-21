@@ -20,9 +20,13 @@ import {
 // SMI-1953: only `getApiKey` (license.ts) and `getApiBaseUrl` (license.tier.ts)
 // are imported from `@skillsmith/core` anywhere in the license middleware
 // family — confirmed via grep, so this mock shape is exhaustive for this file.
+// SMI-6098: loadCredentials mocked to resolve null (no device session) by
+// default, matching this file's scenarios — none of them exercise the
+// session-token path, covered separately in license.tier.test.ts.
 vi.mock('@skillsmith/core', () => ({
   getApiKey: vi.fn(),
   getApiBaseUrl: vi.fn(() => 'https://api.test.example/functions/v1'),
+  loadCredentials: vi.fn().mockResolvedValue(null),
 }))
 
 /**

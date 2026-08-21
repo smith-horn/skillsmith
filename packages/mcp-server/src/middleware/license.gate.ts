@@ -183,3 +183,16 @@ export async function withLicenseAndQuota<S extends ZodTypeAny>(
     }
   })
 }
+
+/**
+ * Check if a license is expiring soon (within 30 days).
+ * @internal Exported for testing. Moved here from license.ts (SMI-6098, 500-line limit).
+ */
+export function getExpirationWarning(expiresAt?: Date): string | undefined {
+  if (!expiresAt) return undefined
+  const daysUntilExpiry = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
+    return `Your license expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'}. Please renew to avoid service interruption.`
+  }
+  return undefined
+}

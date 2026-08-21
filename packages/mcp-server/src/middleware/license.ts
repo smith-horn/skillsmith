@@ -1,24 +1,21 @@
 /**
- * License validation middleware for MCP server
- *
- * Validates that the user has the required license features for enterprise tools.
- * Gracefully degrades if @smith-horn/enterprise is not installed.
- *
+ * License validation middleware for MCP server.
+ * Validates that the user has the required license features for enterprise
+ * tools; gracefully degrades if @smith-horn/enterprise is not installed.
  * @see SMI-1055: Add license middleware to MCP server
  */
 
-import { getApiKey } from '@skillsmith/core'
+import { getApiKey, loadCredentials } from '@skillsmith/core'
 import {
   TOOL_FEATURES,
   FEATURE_DISPLAY_NAMES,
   FEATURE_TIERS,
   type FeatureFlag,
 } from './toolFeatureMapping.js'
-import { createTierResolver } from './license.tier.js'
+import { createTierResolver, createSessionTokenResolver } from './license.tier.js'
+import { getExpirationWarning } from './license.gate.js'
 
-/**
- * Configuration for the upgrade URL
- */
+// Configuration for the upgrade URL
 const UPGRADE_URL = 'https://skillsmith.app/pricing'
 
 /**
@@ -157,18 +154,7 @@ export function getRequiredFeature(toolName: string): FeatureFlag | null {
   return TOOL_FEATURES[toolName] ?? null
 }
 
-/**
- * Check if license is expiring soon (within 30 days)
- * @internal Exported for testing
- */
-export function getExpirationWarning(expiresAt?: Date): string | undefined {
-  if (!expiresAt) return undefined
-  const daysUntilExpiry = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-  if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
-    return `Your license expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'}. Please renew to avoid service interruption.`
-  }
-  return undefined
-}
+// SMI-6098: getExpirationWarning moved to license.gate.ts (500-line limit).
 
 /**
  * License middleware context
@@ -242,6 +228,9 @@ export function createLicenseMiddleware(options?: {
   }
   let warnedSkippedLiveCheck = false
   const resolveTierViaApiKey = createTierResolver(context, cacheTtl)
+  // SMI-6098: device-session (`skillsmith login`) tier resolution — the
+  // API-key resolver's sibling for a caller with no SKILLSMITH_API_KEY.
+  const resolveTierViaSessionToken = createSessionTokenResolver(context, cacheTtl)
 
   // Initialize validator lazily
   let validatorPromise: Promise<EnterpriseValidator | null> | null = null
@@ -283,7 +272,17 @@ export function createLicenseMiddleware(options?: {
         )
       }
 
-      // No API key (or live check disabled) = community user.
+      // SMI-6098: no API key — try the device-session path before falling to
+      // community. Gated on a session existing (cheap local read, no
+      // network) so a never-logged-in community user is unaffected.
+      if (!apiKey && !liveTierCheckDisabled) {
+        const hasSession = (await loadCredentials()) !== null
+        if (hasSession) {
+          return resolveTierViaSessionToken()
+        }
+      }
+
+      // No API key, no device session (or live check disabled) = community user.
       const communityLicense: LicenseInfo = {
         valid: true,
         tier: 'community',
@@ -482,16 +481,17 @@ export function createLicenseErrorResponse(result: LicenseValidationResult): {
   }
 }
 
-// SMI-3911/4402: Gate helpers extracted to license.gate.ts (500-line limit)
+// SMI-3911/4402/6098: Gate helpers extracted to license.gate.ts (500-line limit)
 export {
   ok,
   errResponse,
   withLicenseAndQuota,
   createProfileIncompleteResponse,
+  getExpirationWarning,
 } from './license.gate.js'
 
-// SMI-1953: Live tier-resolution helpers extracted to license.tier.ts (500-line limit)
-export { featuresForTier, createTierResolver } from './license.tier.js'
+// SMI-1953/6098: Live tier-resolution helpers extracted to license.tier.ts (500-line limit)
+export { featuresForTier, createTierResolver, createSessionTokenResolver } from './license.tier.js'
 
 // Re-export types from toolFeatureMapping
 export type { FeatureFlag } from './toolFeatureMapping.js'
