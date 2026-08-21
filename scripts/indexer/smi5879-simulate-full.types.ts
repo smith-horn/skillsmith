@@ -15,6 +15,16 @@ import type { Smi5879Purpose, Smi5879RunStatus } from './smi5879-census.types.ts
 export type SimulatedCohort = 'C1' | 'C2' | 'C3' | 'C4'
 
 /**
+ * Canonical "all four cohorts" list — single source of truth for CLI
+ * validation/defaulting (smi5879-simulate-full.cli.ts), checkpoint identity
+ * defaulting, and report-summary printing (smi5879-simulate-full.ts),
+ * so a --cohorts= scope always resolves to an EXPLICIT list, never an
+ * implicit "undefined means all four" left to each call site to reinvent
+ * (SMI-6015 Wave 1).
+ */
+export const ALL_SIMULATED_COHORTS: readonly SimulatedCohort[] = ['C1', 'C2', 'C3', 'C4']
+
+/**
  * Closed tier-2 outcome vocabulary (plan §3b). `gate-check.ts` refuses an
  * unrecognised value — this union is the enforcement point on our side.
  */
@@ -27,6 +37,35 @@ export type SimRowOutcome =
   | 'bundle_absent'
   | 'unevaluable'
   | 'unfetchable'
+
+/**
+ * Single source of truth for the closed {@link SimRowOutcome} vocabulary at
+ * runtime — shared by `smi5879-simulate-full.sweep.ts`'s `summarizeCounts`
+ * and `smi5879-simulate-full.checkpoint.ts`'s shape validator (SMI-5879
+ * review finding 1), so the two can never drift apart. Lives here (not in
+ * either of those files) specifically to avoid a circular import between
+ * them (SMI-6015 Wave 1: `.sweep.ts` needs `writeCheckpoint` from
+ * `.checkpoint.ts`, so `.checkpoint.ts` cannot import anything back from
+ * `.sweep.ts`).
+ */
+export const EMPTY_OUTCOME_COUNTS: Record<SimRowOutcome, number> = {
+  newly_quarantined: 0,
+  newly_cleared: 0,
+  unchanged_clean: 0,
+  unchanged_quarantined: 0,
+  content_drifted: 0,
+  bundle_absent: 0,
+  unevaluable: 0,
+  unfetchable: 0,
+}
+
+export const SIM_ROW_OUTCOMES: readonly SimRowOutcome[] = Object.keys(
+  EMPTY_OUTCOME_COUNTS
+) as SimRowOutcome[]
+
+export function isValidSimRowOutcome(value: unknown): value is SimRowOutcome {
+  return typeof value === 'string' && (SIM_ROW_OUTCOMES as readonly string[]).includes(value)
+}
 
 /** One row read from the sealed generation's population (`smi5879_snapshot_pre`), cohort-tagged. */
 export interface SimSnapshotRow {
@@ -96,6 +135,16 @@ export interface Smi5879SimulateCheckpoint {
   purpose: Smi5879Purpose
   baseline_commit: string
   token_source: TokenSource
+  /**
+   * SMI-6015 Wave 1: the resolved cohort scope for this run — ALWAYS the
+   * explicit list (never left implicit; "all four" is stored as
+   * `ALL_SIMULATED_COHORTS`, not omitted), so a resumed dispatch with a
+   * DIFFERENT --cohorts filter than the original checkpoint is refused
+   * loudly (`assertCheckpointIdentity`) rather than silently accepted — a
+   * cohort-scoped rehearsal checkpoint must never be resumed as if it were
+   * a full-population run, or vice versa.
+   */
+  cohorts: SimulatedCohort[]
   /** True only immediately before a graceful exit; false at every interim write. */
   clean_shutdown: boolean
   /** Per-row outcomes recorded so far (main pass + all sweep passes), keyed by row id. */

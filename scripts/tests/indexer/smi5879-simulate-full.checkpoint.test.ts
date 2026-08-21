@@ -20,7 +20,8 @@ import {
   readCheckpoint,
   writeCheckpoint,
   isAbnormalResume,
-} from '../../indexer/smi5879-simulate-full.sweep.ts'
+  assertCheckpointIdentity,
+} from '../../indexer/smi5879-simulate-full.checkpoint.ts'
 import type { Smi5879SimulateCheckpoint } from '../../indexer/smi5879-simulate-full.types.ts'
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,7 @@ describe('checkpoint I/O', () => {
       purpose: 'decision',
       baseline_commit: 'abc123',
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: true,
       row_results: {},
       sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -64,6 +66,7 @@ describe('checkpoint I/O', () => {
       purpose: 'decision',
       baseline_commit: 'x',
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: true,
       row_results: {},
       sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -93,6 +96,7 @@ describe('checkpoint I/O', () => {
       purpose: 'decision',
       baseline_commit: 'abc123',
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: true,
       row_results: {
         'row-1': {
@@ -118,6 +122,34 @@ describe('checkpoint I/O', () => {
   })
 
   // -------------------------------------------------------------------------
+  // SMI-6015 Wave 1: `cohorts` is a new required field — shape validation
+  // must reject a missing/empty/invalid value, not silently accept it.
+  // -------------------------------------------------------------------------
+
+  it.each([
+    ['missing', undefined],
+    ['empty array', []],
+    ['containing an invalid cohort', ['C1', 'C99']],
+    ['not an array', 'C1'],
+  ])('readCheckpoint rejects a checkpoint with cohorts %s', (_label, cohorts) => {
+    const path = join(dir, 'bad-cohorts.json')
+    const raw: Record<string, unknown> = {
+      run_id: 'run-1',
+      purpose: 'decision',
+      baseline_commit: 'abc123',
+      token_source: 'pat',
+      clean_shutdown: true,
+      row_results: {},
+      sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    if (cohorts !== undefined) raw['cohorts'] = cohorts
+    writeFileSync(path, JSON.stringify(raw))
+    expect(() => readCheckpoint(path)).toThrow(/cohorts=/)
+  })
+
+  // -------------------------------------------------------------------------
   // SMI-5879 review finding 3: a corrupted checkpoint file is NOT the same
   // as "no checkpoint" (cold start) — it must fail loudly, since real
   // progress may have been lost, not be silently treated as absent.
@@ -138,6 +170,7 @@ describe('checkpoint I/O', () => {
       purpose: 'decision',
       baseline_commit: 'abc123',
       token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
       clean_shutdown: true,
       row_results: {},
       sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -152,5 +185,50 @@ describe('checkpoint I/O', () => {
     expect(loaded?.clean_shutdown).toBe(false)
     expect(() => readCheckpoint(`${path}.tmp-${process.pid}`)).not.toThrow()
     expect(readCheckpoint(`${path}.tmp-${process.pid}`)).toBeNull()
+  })
+
+  // -------------------------------------------------------------------------
+  // SMI-6015 Wave 1: assertCheckpointIdentity's cohorts comparison
+  // -------------------------------------------------------------------------
+
+  describe('assertCheckpointIdentity — cohorts', () => {
+    function identityCheckpoint(
+      cohorts: Smi5879SimulateCheckpoint['cohorts']
+    ): Smi5879SimulateCheckpoint {
+      return {
+        run_id: 'run-1',
+        purpose: 'decision',
+        baseline_commit: 'abc123',
+        token_source: 'pat',
+        cohorts,
+        clean_shutdown: true,
+        row_results: {},
+        sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+    }
+
+    it('treats the same cohorts in a different order as identical (not a mismatch)', () => {
+      const checkpoint = identityCheckpoint(['C4', 'C2'])
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { runId: 'run-1', purpose: 'decision', tokenSource: 'pat', cohorts: ['C2', 'C4'] },
+          'path'
+        )
+      ).not.toThrow()
+    })
+
+    it('refuses a genuinely different cohorts scope', () => {
+      const checkpoint = identityCheckpoint(['C1', 'C2', 'C3', 'C4'])
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { runId: 'run-1', purpose: 'decision', tokenSource: 'pat', cohorts: ['C4'] },
+          'path'
+        )
+      ).toThrow(/cohorts \(checkpoint=C1,C2,C3,C4, this run=C4\)/)
+    })
   })
 })
