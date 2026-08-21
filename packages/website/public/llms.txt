@@ -94,7 +94,7 @@ When using Skillsmith MCP server:
 - `skill_diff` (Individual+): Section-level diff between two versions of a skill
 - `skill_pack_audit` (Individual+): Audit all skills in a directory
 - `skill_audit` (Team+): Check skills for known security advisories
-- `skill_inventory_audit` (Team+): Audit local ~/.claude/ inventory for namespace collisions; returns rename + edit suggestions
+- `skill_inventory_audit` (Team+): Audit every installed AI coding client's skill inventory for local namespace collisions; returns rename + edit suggestions
 - `apply_namespace_rename` (Team+): Apply a rename suggestion from an inventory audit (apply/custom/skip)
 - `apply_recommended_edit` (Team+): Apply a recommended prose edit from an inventory audit
 - `undo_apply` (Team+): Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s)

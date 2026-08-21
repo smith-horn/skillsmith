@@ -63,7 +63,7 @@ When using the MCP server, these tools are available:
 | `skill_diff` (Individual+) | skillId, oldContent, newContent, oldRiskScore, newRiskScore, hasLocalModifications, trustTier | Section-level diff between two versions of a skill |
 | `skill_pack_audit` (Individual+) | pack_path, check_trigger_quality | Audit all skills in a directory |
 | `skill_audit` (Team+) | skillIds (optional) | Check skills for known security advisories |
-| `skill_inventory_audit` (Team+) | deep, homeDir, projectDir, applyExclusions | Audit local ~/.claude/ inventory for namespace collisions |
+| `skill_inventory_audit` (Team+) | deep, homeDir, projectDir, applyExclusions | Audit every installed AI coding client's skill inventory for local namespace collisions |
 | `apply_namespace_rename` (Team+) | auditId, collisionId, action (apply/custom/skip/revert), customName, confirmed | Apply a rename suggestion from an inventory audit |
 | `apply_recommended_edit` (Team+) | auditId, collisionId, confirmed | Apply a recommended prose edit from an inventory audit |
 | `undo_apply` (Team+) | count, suggestion_id | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s) |
