@@ -41,12 +41,21 @@ vi.mock('ora', () => ({
   })),
 }))
 
+// SMI-6103: the two new author-mismatch regression tests below are the first
+// tests in this file to fall through the cache-match rejection into the
+// manifest/SourceRecoveryService path — mocked the same way
+// manage.update.source-recovery.test.ts already does for that path.
+vi.mock('../src/utils/manifest.js', () => ({
+  loadManifest: vi.fn(),
+}))
+
 /** Loose shape for a mocked local-registry-cache row (SkillRepository.findAll items). */
 interface MockCachedSkill {
   id: string
   name: string
   version: string
   trustTier: string
+  author: string
 }
 
 /** Loose shape for mocked parsed SKILL.md front-matter (SkillParser.parse output). */
@@ -54,6 +63,7 @@ interface MockParsedSkill {
   name?: string
   version?: string | null
   id?: string | undefined
+  author?: string | undefined
 }
 
 // Hoisted mock state for SkillInstallationService and the update path
@@ -88,6 +98,20 @@ const mocks = vi.hoisted(() => ({
     isOffline: (): boolean => true,
     getSkill: vi.fn(),
   },
+  // SourceRecoveryService.recoverOne() mock — default "nothing recovered".
+  recoverOneFn: vi.fn(
+    async (): Promise<{
+      status: 'recovered' | 'unknown'
+      confidence: 'exact' | 'high' | 'medium' | 'low' | 'user-specified' | 'unknown'
+      registryId: string | null
+      recoveredSource: { owner: string; repo: string; url: string } | null
+    }> => ({
+      status: 'unknown',
+      confidence: 'unknown',
+      registryId: null,
+      recoveredSource: null,
+    })
+  ),
 }))
 
 // Mock core - use class implementations to avoid vitest warning
@@ -120,6 +144,18 @@ vi.mock('@skillsmith/core', () => ({
       inferTrustTier: vi.fn(() => 'unknown'),
     }
   }),
+  SourceRecoveryService: vi.fn().mockImplementation(function () {
+    return { recoverOne: mocks.recoverOneFn }
+  }),
+  // Mirrors production (skill-installation.helpers.ts's manifestKeyFor)
+  // exactly: canonical client keeps the bare name, any other client gets
+  // `name::client`.
+  manifestKeyFor: (name: string, client: string) =>
+    client === 'claude-code' ? name : `${name}::${client}`,
+  // Never actually invoked (SourceRecoveryService's constructor above is
+  // fully mocked and ignores its params) -- present only so the constructor
+  // call site's destructuring/typing has something to reference.
+  hashContent: vi.fn((content: string) => content),
   // Reached only via install.js's createApiBackedRegistryLookup(), which
   // updateSkill() now calls on every update — not the update path's main
   // logic, but must resolve without throwing.
@@ -138,7 +174,7 @@ vi.mock('@skillsmith/core', () => ({
 describe('SMI-5593: skillsmith update — real update path', () => {
   const SKILLS_DIR = join(homedir(), '.claude', 'skills')
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
 
     const mockDb = { close: mocks.dbClose }
@@ -158,6 +194,17 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     mocks.parseFn.mockReturnValue(undefined)
     mocks.apiClient.isOffline = () => true
     mocks.apiClient.getSkill = vi.fn()
+    mocks.recoverOneFn.mockResolvedValue({
+      status: 'unknown',
+      confidence: 'unknown',
+      registryId: null,
+      recoveredSource: null,
+    })
+
+    // SMI-6103: default empty manifest — the two author-mismatch regression
+    // tests fall through to this path and expect no manifest entry either.
+    const { loadManifest } = await import('../src/utils/manifest.js')
+    vi.mocked(loadManifest).mockResolvedValue({ version: '1.0.0', installedSkills: {} })
   })
 
   afterEach(() => {
@@ -167,7 +214,7 @@ describe('SMI-5593: skillsmith update — real update path', () => {
   /** Mock a single installed skill directory with the given SKILL.md front-matter. */
   async function mockInstalledSkill(
     name: string,
-    opts: { version?: string; id?: string } = {}
+    opts: { version?: string; id?: string; author?: string } = {}
   ): Promise<void> {
     const { readdir, stat } = await import('fs/promises')
     vi.mocked(readdir).mockImplementation(async (dirPath) => {
@@ -179,7 +226,12 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     vi.mocked(stat).mockResolvedValue({
       mtime: new Date('2026-01-01'),
     } as unknown as Awaited<ReturnType<typeof stat>>)
-    mocks.parseFn.mockReturnValue({ name, version: opts.version ?? null, id: opts.id })
+    mocks.parseFn.mockReturnValue({
+      name,
+      version: opts.version ?? null,
+      id: opts.id,
+      author: opts.author,
+    })
   }
 
   async function mockNoInstalledSkills(): Promise<void> {
@@ -207,10 +259,94 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       expect(result).toBe('not-installed')
     })
 
-    it('diffs against the local registry cache when the skill is indexed there', async () => {
-      await mockInstalledSkill('astro', { version: '1.0.0' })
+    it('diffs against the local registry cache when the skill is indexed there AND the installed skill claims the same author', async () => {
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
       mockCache([
-        { id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
+      ])
+
+      const { getSkillDiff } = await import('../src/commands/manage.js')
+      const result = await getSkillDiff('astro', '/fake/db.sqlite')
+
+      expect(result).not.toBe('not-installed')
+      expect(result).not.toBe('unresolvable')
+      if (typeof result === 'object') {
+        expect(result.skillId).toBe('wrsmith108/astro')
+        expect(result.changes.some((c) => c.includes('1.0.0 -> 2.0.0'))).toBe(true)
+      }
+    })
+
+    // SMI-6103: a bare-name cache match whose author does NOT match (or is
+    // absent from) the installed skill's own claimed front-matter must NOT
+    // be trusted — this is the exact shape of a real incident where two
+    // personal, unclaimed skills ("commit", "Linear") were silently
+    // overwritten with unrelated same-named registry skills. With no
+    // manifest entry and no SourceRecoveryService match configured in this
+    // test, the safe outcome is "unresolvable", never a confident diff
+    // against the wrong author's row.
+    it('does NOT trust a bare-name cache match when the installed skill has no claimed author', async () => {
+      await mockInstalledSkill('commit', { version: '1.0.0' }) // no author claimed
+      mockCache([
+        {
+          id: 'jinee525/react-component-generator',
+          name: 'commit',
+          version: '9.9.9',
+          trustTier: 'community',
+          author: 'jinee525',
+        },
+      ])
+
+      const { getSkillDiff } = await import('../src/commands/manage.js')
+      const result = await getSkillDiff('commit', '/fake/db.sqlite')
+
+      expect(result).toBe('unresolvable')
+    })
+
+    it('does NOT trust a bare-name cache match when the installed skill claims a DIFFERENT author', async () => {
+      await mockInstalledSkill('linear', { version: '3.2.0', author: 'wrsmith108' })
+      mockCache([
+        {
+          id: 'lobehub/lobehub',
+          name: 'linear',
+          version: '1.0.0',
+          trustTier: 'community',
+          author: 'lobehub',
+        },
+      ])
+
+      const { getSkillDiff } = await import('../src/commands/manage.js')
+      const result = await getSkillDiff('linear', '/fake/db.sqlite')
+
+      expect(result).toBe('unresolvable')
+    })
+
+    // SMI-6103 (PR #2465 review finding): the cache scan must check every
+    // same-name row for a matching author, not just the first one found —
+    // an unrelated author's row sorting first must not shadow a later,
+    // correct-author row and wrongly make a legitimate update unresolvable.
+    it('finds the correct-author row even when an unrelated-author row of the same name sorts first', async () => {
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
+      mockCache([
+        {
+          id: 'some-other-author/astro',
+          name: 'astro',
+          version: '5.0.0',
+          trustTier: 'community',
+          author: 'some-other-author',
+        },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
       ])
 
       const { getSkillDiff } = await import('../src/commands/manage.js')
@@ -245,10 +381,18 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     })
 
     it('reports already up to date without prompting when there is no diff', async () => {
-      await mockInstalledSkill('astro', { version: '2.0.0' })
+      await mockInstalledSkill('astro', { version: '2.0.0', author: 'wrsmith108' })
       // trustTier must match getInstalledSkills()'s mocked inferTrustTier()
       // (always 'unknown' in this file's SkillParser mock) for a true no-op diff.
-      mockCache([{ id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'unknown' }])
+      mockCache([
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'unknown',
+          author: 'wrsmith108',
+        },
+      ])
       const { confirm } = await import('@inquirer/prompts')
 
       const { updateSkill } = await import('../src/commands/manage.js')
@@ -260,9 +404,15 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     })
 
     it('--dry-run shows the diff without prompting or installing', async () => {
-      await mockInstalledSkill('astro', { version: '1.0.0' })
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
       mockCache([
-        { id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
       ])
       const { confirm } = await import('@inquirer/prompts')
 
@@ -275,9 +425,15 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     })
 
     it('force-installs the resolved skill id on confirmation', async () => {
-      await mockInstalledSkill('astro', { version: '1.0.0' })
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
       mockCache([
-        { id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
       ])
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
@@ -294,9 +450,15 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     // every SkillInstallationService construction site must pass companionBaseDir explicitly to
     // preserve this CLI command's existing cwd-relative behavior.
     it('constructs SkillInstallationService with companionBaseDir: process.cwd()', async () => {
-      await mockInstalledSkill('astro', { version: '1.0.0' })
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
       mockCache([
-        { id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
       ])
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
@@ -310,9 +472,15 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     })
 
     it('cancels without installing when the user declines the prompt', async () => {
-      await mockInstalledSkill('astro', { version: '1.0.0' })
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
       mockCache([
-        { id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
       ])
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(false)
@@ -325,9 +493,15 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     })
 
     it('reports install failure (e.g. a conflict) without throwing', async () => {
-      await mockInstalledSkill('astro', { version: '1.0.0' })
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
       mockCache([
-        { id: 'wrsmith108/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
       ])
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
@@ -359,10 +533,26 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       vi.mocked(stat).mockResolvedValue({
         mtime: new Date('2026-01-01'),
       } as unknown as Awaited<ReturnType<typeof stat>>)
-      mocks.parseFn.mockImplementation(() => ({ version: '1.0.0' }))
+      // A single shared claimed author across both installed skills — this
+      // mock's SkillParser stub can't distinguish which file is being
+      // parsed, so both cache rows below use the same author the blanket
+      // mock claims (SMI-6103: getSkillDiff now requires the match).
+      mocks.parseFn.mockImplementation(() => ({ version: '1.0.0', author: 'wrsmith108' }))
       mockCache([
-        { id: 'a/astro', name: 'astro', version: '2.0.0', trustTier: 'community' },
-        { id: 'b/ci-doctor', name: 'ci-doctor', version: '2.0.0', trustTier: 'community' },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
+        {
+          id: 'wrsmith108/ci-doctor',
+          name: 'ci-doctor',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
       ])
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
@@ -386,8 +576,8 @@ describe('SMI-5593: skillsmith update — real update path', () => {
     it('continues past a per-skill failure and reports a partial-failure summary', async () => {
       await mockTwoInstalledSkills()
       mocks.installFn.mockImplementation(async (skillId: unknown) =>
-        skillId === 'a/astro'
-          ? { success: true, skillId: 'a/astro', installPath: join(homedir(), 'astro') }
+        skillId === 'wrsmith108/astro'
+          ? { success: true, skillId: 'wrsmith108/astro', installPath: join(homedir(), 'astro') }
           : { success: false, error: 'ALREADY_INSTALLED: local modifications detected' }
       )
 
@@ -417,15 +607,23 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       vi.mocked(stat).mockResolvedValue({
         mtime: new Date('2026-01-01'),
       } as unknown as Awaited<ReturnType<typeof stat>>)
-      mocks.parseFn.mockReturnValue({ version: '1.0.0' })
-      mockCache([{ id: 'a/astro', name: 'astro', version: '2.0.0', trustTier: 'community' }])
+      mocks.parseFn.mockReturnValue({ version: '1.0.0', author: 'wrsmith108' })
+      mockCache([
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
+      ])
       const { confirm } = await import('@inquirer/prompts')
       vi.mocked(confirm).mockResolvedValue(true)
 
       const { updateSkills } = await import('../src/commands/manage.js')
       await updateSkills(undefined, '/fake/db.sqlite', false)
 
-      expect(mocks.installFn).toHaveBeenCalledWith('a/astro', { force: true })
+      expect(mocks.installFn).toHaveBeenCalledWith('wrsmith108/astro', { force: true })
     })
 
     it('prints "No skills installed" and does nothing when there is nothing to update', async () => {

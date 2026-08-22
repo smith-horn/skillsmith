@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `skillsmith update` no longer force-installs an unrelated same-named registry skill
+  over a locally-authored one it was never asked to replace. `getSkillDiff()` now reads the
+  installed skill's own claimed author from its `SKILL.md` front-matter (`readClaimedAuthor()`)
+  and only trusts a local-registry-cache bare-name match when it agrees with the cache row's
+  author — scanning every same-name cache row for the matching author, not just the first one
+  found — otherwise it falls through to the existing confidence-gated manifest/`SourceRecoveryService`
+  path instead of silently substituting the wrong author's skill. Confirmed real incident: two
+  personal, unclaimed skills were overwritten with unrelated registry content this way (SMI-6103)
 - **Fix**: the CLI's tier-gating messages (`require-tier.ts`) and `ab-test`'s upgrade prompt
   (console and JSON `price` field) hardcoded the literal unpublished Enterprise price
   (`$55/user/month`) — now `Custom pricing — Contact Sales`, matching the documented "unpublished"
