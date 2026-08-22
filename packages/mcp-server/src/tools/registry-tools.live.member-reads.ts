@@ -33,6 +33,17 @@ import { getMemberUserClient } from './registry-tools.live.auth.js'
 import { listSkills, getSkill } from './registry-tools.live.reads.js'
 import type { RegistrySkill } from './registry-tools.js'
 
+/**
+ * PostgREST's code for "no rows" (or >1 row) via `.single()` — a real absence, not a failure.
+ * Duplicated from registry-tools.live.ts's/registry-tools.live.reads.ts's own copies (same
+ * convention — see reads.ts's header for why this isn't a shared import) — only
+ * auditedGetNamespace() below needs it, to distinguish a genuine "no namespace configured" from a
+ * real query failure when auditing (cross-provider review finding, SMI-6109).
+ */
+function isNoRowsError(error: { code?: string } | null): boolean {
+  return error?.code === 'PGRST116'
+}
+
 /** D-4 surface 3 + SMI-5949 Wave 3 (deprecated read-filter closure) + SMI-6109 (this file). */
 export async function auditedList(
   teamId: string,
@@ -81,12 +92,15 @@ export async function auditedGet(
     const { client, actorUserId: uid } = await getMemberUserClient('get')
     actorUserId = uid
     const skill = await getSkill(client, teamId, skillId, version)
+    // Cross-provider review finding (SMI-6109): a null (genuinely not found / cross-team /
+    // pending-and-RLS-invisible) result was previously audited as 'success', which is misleading
+    // for a security-observability log — 'not_found' is an available, more accurate result value.
     await recordRegistryAudit({
       operation: 'get',
       teamId,
       skillId,
       version,
-      result: 'success',
+      result: skill ? 'success' : 'not_found',
       authPath: 'user_jwt',
       authRole: 'member',
       actorUserId,
@@ -119,11 +133,29 @@ export async function auditedGetNamespace(teamId: string): Promise<string | null
       .select('skill_namespace')
       .eq('id', teamId)
       .single()
+    // Cross-provider review finding (SMI-6109): the original draft collapsed EVERY resp.error —
+    // a genuine "no such team" (PGRST116) AND a real outage/RLS-denial — into `null` and then
+    // audited it as 'success'. That misreports an outage or a denial as a successful read in a
+    // log whose whole purpose is security observability. Only a genuine no-rows error is
+    // "success, no namespace" territory; anything else is a real error and must be audited (and
+    // returned) as such — matching this file's own not-found/error distinction on auditedGet().
+    if (resp.error && !isNoRowsError(resp.error)) {
+      await recordRegistryAudit({
+        operation: 'namespace',
+        teamId,
+        result: 'error',
+        authPath: 'user_jwt',
+        authRole: 'member',
+        actorUserId,
+        detail: resp.error.code ?? 'query_error',
+      })
+      return null
+    }
     const namespace = resp.error || !resp.data ? null : (resp.data.skill_namespace ?? null)
     await recordRegistryAudit({
       operation: 'namespace',
       teamId,
-      result: 'success',
+      result: namespace ? 'success' : 'not_found',
       authPath: 'user_jwt',
       authRole: 'member',
       actorUserId,

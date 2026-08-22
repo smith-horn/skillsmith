@@ -5,10 +5,9 @@
  * @see SMI-5816: Private skill registry — real implementation
  * @see ADR-129: Postgres-native (JSONB) storage + real team-auth (migration 071)
  *
- * Enables enterprise teams to publish and manage skills in a private registry
- * scoped to their organization. Both metadata and packaged content live in the
- * `private_registry_skills` Postgres table (JSONB content, not S3 — ADR-129);
- * team-scoped RLS + an in-query team_id filter (ADR-116, SMI-6109 addendum).
+ * Enables enterprise teams to publish and manage skills in a private registry scoped to their
+ * organization. Metadata + packaged content live in `private_registry_skills` (JSONB, not S3 —
+ * ADR-129); team-scoped RLS + an in-query team_id filter (ADR-116, SMI-6109 addendum).
  *
  * Backing service is selected at module load: the live Supabase-backed service
  * (registry-tools.live.ts) when Supabase is configured, else an in-memory stub
@@ -144,10 +143,9 @@ export interface PrivateRegistryManageResult {
 /**
  * PrivateRegistryService — team-scoped private registry CRUD.
  *
- * **Invariant (ADR-116, addendum SMI-6109)**: every method MUST treat `teamId` as the
- * authoritative scoping key and include an explicit `team_id = <teamId>` filter — still true even
- * though every live method now runs on the signed-in user's own JWT, not service-role (ADR
- * addendum: RLS alone isn't enough on `list`/`get`).
+ * **Invariant (ADR-116, addendum SMI-6109)**: every method MUST filter explicitly on `teamId` —
+ * still true though every live method now runs on the caller's own JWT, not service-role (RLS
+ * alone isn't enough on `list`/`get`, per the addendum).
  *
  * @see packages/mcp-server/src/tools/registry-tools.live.ts
  * @see docs/internal/adr/129-private-skill-registry-real-implementation.md
@@ -262,12 +260,9 @@ async function executePrivateRegistryPublishImpl(
     }
   }
 
-  // SMI-5852 UX pre-check: the DB trigger (enforce_private_skill_namespace) is the
-  // actual security boundary — this only surfaces a namespace mismatch as an
-  // actionable typed error instead of a raw 23514. getNamespace() never throws (its
-  // documented contract, registry-tools.live.member-reads.ts, SMI-6109) — a lookup
-  // failure resolves to `null` internally, so this pre-check is simply skipped and
-  // the DB trigger remains the sole gate, same as before SMI-6109 — no try/catch needed.
+  // SMI-5852 UX pre-check: the DB trigger (enforce_private_skill_namespace) is the actual
+  // security boundary. getNamespace() never throws (SMI-6109) — a lookup failure resolves to
+  // `null`, so this pre-check is simply skipped and the trigger remains the sole gate.
   let skillNamespace: string | undefined
   const namespace = await service.getNamespace(teamId)
   if (namespace) {
@@ -454,10 +449,15 @@ async function executePrivateRegistryManageImpl(
       case 'namespace': {
         const namespace = await service.getNamespace(teamId)
         if (!namespace) {
+          // getNamespace() never throws, so "not logged in" and "genuinely unconfigured" both
+          // collapse to this one message (unlike list/get's actionable login error) — hinting at
+          // login here is a partial fix for that UX gap (SMI-6109 cross-provider review).
           return {
             success: false,
             dataSource,
-            error: "Unable to resolve this team's private registry namespace.",
+            error:
+              "Unable to resolve this team's private registry namespace. If you haven't run " +
+              '`skillsmith login` yet, do that and try again.',
           }
         }
         return {

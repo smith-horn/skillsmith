@@ -128,9 +128,19 @@ export async function getSupabaseUserClient(accessToken: string): Promise<unknow
  * Check if Supabase is configured (real SUPABASE_URL + SUPABASE_ANON_KEY env vars present).
  *
  * Deliberately NOT affected by the anon-key fallback above (SMI-6109) — see that comment for why.
- * Only the private registry's list/get/getNamespace calls (registry-tools.live.ts) benefit from
- * the fallback, by calling getSupabaseClient()/getSupabaseUserClient() directly rather than
- * gating on this flag first.
+ *
+ * Cross-provider review correction (SMI-6109): this means the fallback does NOT make the private
+ * registry usable with zero Supabase config. `registry-tools.ts`'s own module-load service
+ * selection AND its `resolveTeamId()` both still gate on this exact flag, so a customer with
+ * neither `SUPABASE_URL` nor `SUPABASE_ANON_KEY` set gets the in-memory STUB service, never
+ * reaching `getMemberUserClient()`/the fallback at all — by design, so a genuinely unconfigured
+ * host still gets fast, offline-safe stub behavior instead of a live network call against a
+ * license key that was never set up. The fallback's real, narrower benefit: once a customer HAS
+ * set both vars (the expected Team/Enterprise setup — see the README), a *later* drift where one
+ * of the two is missing in some specific execution context (e.g. propagated inconsistently to an
+ * MCP subprocess) degrades gracefully instead of failing, and — matching
+ * packages/core/src/api/utils.ts's identical DEFAULT_BASE_URL pattern — the anon-key surface never
+ * needs a bespoke "not configured" error path of its own.
  */
 export function isSupabaseConfigured(): boolean {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)

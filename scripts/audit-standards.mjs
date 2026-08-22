@@ -5230,12 +5230,22 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
   // docs/internal/implementation (SMI-6109 plan)'s "Explicitly out of scope" section for the
   // full rationale on each. supabase-client.ts itself is excluded from the scan below (it is
   // the legitimate definition site for both the function and the env read), not allowlisted.
-  const MCP_SERVICE_ROLE_ALLOWLIST = new Set([
-    'team-workspace.live.ts', // identical list/get-shaped pattern across 8 methods, writes included — needs its own design (SMI-6109 plan)
-    'registry-tools.live.audit.ts', // audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read
-    'registry-tools.live.content.ts', // getContent()/install's Enterprise-entitlement check — subscriptions RLS blocks non-purchasers; needs a new SECURITY DEFINER RPC (SMI-6111)
-    'integration-tools.service.ts', // Custom Integration API-key hashing backend — unrelated credential family (SKILLSMITH_API_KEY_HMAC_SECRET)
-  ])
+  //
+  // Keyed by full repo-relative path, not basename (cross-provider review finding, SMI-6109):
+  // a basename-only allowlist would silently exempt any FUTURE file sharing one of these names in
+  // a different subdirectory. `integration-tools.service.ts` was deliberately dropped from an
+  // earlier draft of this list — it only has a narrative comment mentioning
+  // SUPABASE_SERVICE_ROLE_KEY, which neither pattern below actually matches, so it never needed
+  // an entry; keeping it would itself have been a silent, unnecessary allowlist grant.
+  const MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS = {
+    'packages/mcp-server/src/tools/team-workspace.live.ts':
+      'identical list/get-shaped pattern across 8 methods, writes included — needs its own design (SMI-6109 plan)',
+    'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
+      'audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read',
+    'packages/mcp-server/src/tools/registry-tools.live.content.ts':
+      "getContent()/install's Enterprise-entitlement check — subscriptions RLS blocks non-purchasers; needs a new SECURITY DEFINER RPC (SMI-6111)",
+  }
+  const MCP_SERVICE_ROLE_ALLOWLIST = new Set(Object.keys(MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS))
 
   const MCP_SERVER_SRC = join('packages', 'mcp-server', 'src')
   const SERVICE_ROLE_CALL = /getSupabaseAdminClient\s*\(/
@@ -5274,16 +5284,31 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
   }
 
   const mcpServiceRoleFindings = []
+  // Cross-provider review finding (SMI-6109): an allowlist entry whose file no longer actually
+  // matches either pattern is itself worth catching — it means the entry is stale (either the
+  // usage was since removed, a la integration-tools.service.ts's comment-only mention which never
+  // matched at all, or the file was renamed/moved). A silently-stale entry can mask a REAL future
+  // regression at that same path if the pattern's match state flips back later unnoticed.
+  const staleAllowlistEntries = []
+  const seenAllowlistPaths = new Set()
   for (const file of listMcpServerSourceFiles(MCP_SERVER_SRC)) {
-    const baseName = file.split('/').pop()
-    if (MCP_SERVICE_ROLE_ALLOWLIST.has(baseName)) continue
+    const relPath = relative(process.cwd(), file)
     const content = readFileSync(file, 'utf8')
-    if (SERVICE_ROLE_CALL.test(content) || SERVICE_ROLE_ENV_READ.test(content)) {
-      mcpServiceRoleFindings.push(file)
+    const matchesServiceRole =
+      SERVICE_ROLE_CALL.test(content) || SERVICE_ROLE_ENV_READ.test(content)
+    if (MCP_SERVICE_ROLE_ALLOWLIST.has(relPath)) {
+      seenAllowlistPaths.add(relPath)
+      if (!matchesServiceRole) staleAllowlistEntries.push(relPath)
+      continue
     }
+    if (matchesServiceRole) mcpServiceRoleFindings.push(relPath)
+  }
+  // An allowlisted path that was never visited at all (renamed/deleted) is equally stale.
+  for (const allowed of MCP_SERVICE_ROLE_ALLOWLIST) {
+    if (!seenAllowlistPaths.has(allowed)) staleAllowlistEntries.push(allowed)
   }
 
-  if (mcpServiceRoleFindings.length === 0) {
+  if (mcpServiceRoleFindings.length === 0 && staleAllowlistEntries.length === 0) {
     pass(
       'Check 62: no new service-role usage outside the SMI-6109 allowlist under packages/mcp-server/src/**'
     )
@@ -5294,9 +5319,20 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
         'Use getMemberUserClient()/getAdminUserClient() (registry-tools.live.auth.ts) instead, so the ' +
           "operation runs on the signed-in user's own JWT with RLS as the authorization boundary " +
           '(SMI-6109) — or, if this usage is genuinely a new, deliberately-scoped exception, add the ' +
-          "file's basename to MCP_SERVICE_ROLE_ALLOWLIST in scripts/audit-standards.mjs with a " +
-          "one-line justification, matching this repo's other named-allowlist conventions " +
-          '(e.g. NO_VERIFY_JWT_FUNCTIONS, SECDEF_ANON_ALLOWLIST).'
+          "file's full repo-relative path to MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS in " +
+          "scripts/audit-standards.mjs with a one-line justification, matching this repo's other " +
+          'named-allowlist conventions (e.g. NO_VERIFY_JWT_FUNCTIONS, SECDEF_ANON_ALLOWLIST).'
+      )
+    }
+    for (const stale of staleAllowlistEntries) {
+      fail(
+        `Check 62: ${stale} is allowlisted in MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS but no ` +
+          'longer contains a matching getSupabaseAdminClient()/SUPABASE_SERVICE_ROLE_KEY usage ' +
+          '(or the file no longer exists at that path)',
+        `Remove the stale entry for '${stale}' from MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS in ` +
+          'scripts/audit-standards.mjs — an unnecessary allowlist grant is itself a finding, not a ' +
+          'harmless no-op (SMI-6109 cross-provider review: integration-tools.service.ts was ' +
+          'allowlisted for a comment-only mention that never matched either pattern).'
       )
     }
   }
