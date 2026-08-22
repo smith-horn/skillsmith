@@ -195,42 +195,47 @@ async function getSkillDiff(
     // unclaimed skills were overwritten with unrelated registry content this
     // way). A skill with no claimed author at all ("Local", the website's
     // own term for this) must fall through to the confidence-gated
-    // manifest/recovery path below rather than be trusted here.
+    // manifest/recovery path below rather than be trusted here. Matching
+    // must scan every same-name row for one whose author agrees — not just
+    // the first same-name row found — otherwise an unrelated author's row
+    // that happens to sort first in the cache would make a legitimate
+    // same-name, correct-author update wrongly unresolvable (plan-review
+    // correction, GPT-5.6-Sol PR review on #2465).
     const allSkills = skillRepo.findAll(1000, 0)
-    const skill = allSkills.items.find(
+    const claimedAuthor = await readClaimedAuthor(installed.path)
+    const nameMatches = allSkills.items.filter(
       (s: Skill) => s.name.toLowerCase() === skillName.toLowerCase()
     )
+    const skill = claimedAuthor
+      ? nameMatches.find(
+          (s: Skill) => s.author && s.author.toLowerCase() === claimedAuthor.toLowerCase()
+        )
+      : undefined
 
     if (skill) {
-      const claimedAuthor = await readClaimedAuthor(installed.path)
-      if (
-        claimedAuthor &&
-        skill.author &&
-        claimedAuthor.toLowerCase() === skill.author.toLowerCase()
-      ) {
-        const changes: string[] = []
-        const skillWithVersion = skill as SkillWithVersion
+      const changes: string[] = []
+      const skillWithVersion = skill as SkillWithVersion
 
-        if (installed.version !== skillWithVersion.version) {
-          changes.push(
-            `Version: ${installed.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
-          )
-        }
-
-        if (installed.trustTier !== skill.trustTier) {
-          changes.push(`Trust Tier: ${installed.trustTier || 'unknown'} -> ${skill.trustTier}`)
-        }
-
-        return {
-          skillId: skill.id,
-          oldVersion: installed.version,
-          newVersion: skillWithVersion.version || null,
-          changes,
-        }
+      if (installed.version !== skillWithVersion.version) {
+        changes.push(
+          `Version: ${installed.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
+        )
       }
-      // Bare-name cache hit with no matching author claim — do not trust it.
-      // Fall through to the manifest / confidence-gated recovery path.
+
+      if (installed.trustTier !== skill.trustTier) {
+        changes.push(`Trust Tier: ${installed.trustTier || 'unknown'} -> ${skill.trustTier}`)
+      }
+
+      return {
+        skillId: skill.id,
+        oldVersion: installed.version,
+        newVersion: skillWithVersion.version || null,
+        changes,
+      }
     }
+    // No bare-name cache row whose author agrees with the installed skill's
+    // own claim (or no claim at all) — do not trust any bare-name match.
+    // Fall through to the manifest / confidence-gated recovery path.
 
     // Not in the local cache — consult the manifest first (SMI-5895 Wave 2
     // Step 1: the manifest entry install() already wrote is the source of

@@ -326,6 +326,40 @@ describe('SMI-5593: skillsmith update — real update path', () => {
       expect(result).toBe('unresolvable')
     })
 
+    // SMI-6103 (PR #2465 review finding): the cache scan must check every
+    // same-name row for a matching author, not just the first one found —
+    // an unrelated author's row sorting first must not shadow a later,
+    // correct-author row and wrongly make a legitimate update unresolvable.
+    it('finds the correct-author row even when an unrelated-author row of the same name sorts first', async () => {
+      await mockInstalledSkill('astro', { version: '1.0.0', author: 'wrsmith108' })
+      mockCache([
+        {
+          id: 'some-other-author/astro',
+          name: 'astro',
+          version: '5.0.0',
+          trustTier: 'community',
+          author: 'some-other-author',
+        },
+        {
+          id: 'wrsmith108/astro',
+          name: 'astro',
+          version: '2.0.0',
+          trustTier: 'community',
+          author: 'wrsmith108',
+        },
+      ])
+
+      const { getSkillDiff } = await import('../src/commands/manage.js')
+      const result = await getSkillDiff('astro', '/fake/db.sqlite')
+
+      expect(result).not.toBe('not-installed')
+      expect(result).not.toBe('unresolvable')
+      if (typeof result === 'object') {
+        expect(result.skillId).toBe('wrsmith108/astro')
+        expect(result.changes.some((c) => c.includes('1.0.0 -> 2.0.0'))).toBe(true)
+      }
+    })
+
     // SMI-5895 Wave 2 Step 1: the "local cache empty -> fall back to a
     // recorded source" and "unresolvable" cases now resolve via the
     // manifest / a confidence-gated SourceRecoveryService recovery instead
