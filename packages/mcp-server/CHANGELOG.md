@@ -4,6 +4,25 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Security**: `private_registry_manage`'s `list`, `get`, and `namespace` actions no longer
+  require `SUPABASE_SERVICE_ROLE_KEY` on the MCP host. They previously ran on the Supabase
+  service-role client — the backend's most powerful credential, which bypasses row-level security
+  entirely — and this package's own README instructed customers to configure it on their own
+  machines and distribute it via 1Password. Both the code path and that instruction are gone.
+  The three reads now run as the signed-in user (`skillsmith login`) via new audited wrappers
+  (`registry-tools.live.member-reads.ts`), the same `getMemberUserClient()` pattern already proven
+  by `publish`/`deprecate`/`undeprecate`/`getContent`. Every existing `team_id` /
+  `approval_status = 'approved'` / `deprecated = FALSE` query predicate is preserved byte-for-byte
+  — RLS does not enforce the latter two, so dropping them would have silently widened what a
+  member can read. All three now also write a `recordRegistryAudit()` row, making a
+  license-key-team-vs-signed-in-user mismatch observable instead of invisible. `@supabase/supabase-js`
+  is now a real dependency of this package (previously only a private root devDependency, so even
+  a fully-configured install failed with "Supabase client unavailable"), and the anon-key client
+  paths fall back to the production Supabase URL/anon key when those env vars are unset — an
+  explicit override still always wins. A new `audit:standards` Check 62 fails CI if a
+  service-role dependency reappears anywhere under `packages/mcp-server/src/**` outside a named,
+  justified allowlist. `install`/`getContent` still needs the service-role key for its Enterprise
+  entitlement check until SMI-6111 lands. (SMI-6109)
 - **Fix**: the license middleware never resolved a real subscription tier for a caller
   authenticated only via `skillsmith login` (device-session, no separately-configured
   `SKILLSMITH_API_KEY`) — SMI-1953 covered the API-key path only, so every such caller silently
