@@ -15,6 +15,7 @@ import {
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
+  SkillParser,
   SourceRecoveryService,
   hashContent,
   manifestKeyFor,
@@ -110,6 +111,23 @@ async function recoverConfidentSourceId(
   return result.recoveredSource?.url ?? result.registryId ?? null
 }
 
+/**
+ * SMI-6103: the installed skill's own claimed author, read directly from its
+ * SKILL.md front-matter (never null-defaulted to a directory/display name —
+ * an unclaimed "Local" skill, the website's own term, genuinely has none).
+ * Returns null on any read/parse failure or an absent `author` field.
+ */
+async function readClaimedAuthor(installedPath: string): Promise<string | null> {
+  try {
+    const skillMd = await readFile(join(installedPath, 'SKILL.md'), 'utf-8')
+    const parsed = new SkillParser().parse(skillMd)
+    const author = (parsed as unknown as Record<string, unknown> | undefined)?.['author']
+    return typeof author === 'string' && author.trim().length > 0 ? author.trim() : null
+  } catch {
+    return null
+  }
+}
+
 /** Resolved diff/update target for a single installed skill. */
 interface SkillDiff {
   /** Full `author/name` registry ID to pass to SkillInstallationService.install(). */
@@ -170,31 +188,48 @@ async function getSkillDiff(
 
   try {
     // Find skill in the local registry cache by name (case-insensitive search).
+    // SMI-6103: a bare-name match here is only trustworthy when the installed
+    // skill's OWN front-matter claims the same author as the matched cache
+    // row — otherwise this silently resolves to an unrelated same-named
+    // skill from a different author (confirmed data loss: two personal,
+    // unclaimed skills were overwritten with unrelated registry content this
+    // way). A skill with no claimed author at all ("Local", the website's
+    // own term for this) must fall through to the confidence-gated
+    // manifest/recovery path below rather than be trusted here.
     const allSkills = skillRepo.findAll(1000, 0)
     const skill = allSkills.items.find(
       (s: Skill) => s.name.toLowerCase() === skillName.toLowerCase()
     )
 
     if (skill) {
-      const changes: string[] = []
-      const skillWithVersion = skill as SkillWithVersion
+      const claimedAuthor = await readClaimedAuthor(installed.path)
+      if (
+        claimedAuthor &&
+        skill.author &&
+        claimedAuthor.toLowerCase() === skill.author.toLowerCase()
+      ) {
+        const changes: string[] = []
+        const skillWithVersion = skill as SkillWithVersion
 
-      if (installed.version !== skillWithVersion.version) {
-        changes.push(
-          `Version: ${installed.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
-        )
-      }
+        if (installed.version !== skillWithVersion.version) {
+          changes.push(
+            `Version: ${installed.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
+          )
+        }
 
-      if (installed.trustTier !== skill.trustTier) {
-        changes.push(`Trust Tier: ${installed.trustTier || 'unknown'} -> ${skill.trustTier}`)
-      }
+        if (installed.trustTier !== skill.trustTier) {
+          changes.push(`Trust Tier: ${installed.trustTier || 'unknown'} -> ${skill.trustTier}`)
+        }
 
-      return {
-        skillId: skill.id,
-        oldVersion: installed.version,
-        newVersion: skillWithVersion.version || null,
-        changes,
+        return {
+          skillId: skill.id,
+          oldVersion: installed.version,
+          newVersion: skillWithVersion.version || null,
+          changes,
+        }
       }
+      // Bare-name cache hit with no matching author claim — do not trust it.
+      // Fall through to the manifest / confidence-gated recovery path.
     }
 
     // Not in the local cache — consult the manifest first (SMI-5895 Wave 2
