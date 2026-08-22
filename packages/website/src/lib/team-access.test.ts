@@ -139,7 +139,7 @@ describe('checkTeamAccess', () => {
 })
 
 describe('resolveGateRedirect', () => {
-  const path = '/account/team'
+  const path = '/account'
 
   it('returns null when ok=true', () => {
     expect(
@@ -152,7 +152,7 @@ describe('resolveGateRedirect', () => {
       { ok: false, reason: 'not_authenticated', teamId: null, tier: 'community' },
       path
     )
-    expect(url).toBe('/login?redirect=%2Faccount%2Fteam')
+    expect(url).toBe('/login?redirect=%2Faccount')
   })
 
   it('returns null for not_member so the page can render inline state', () => {

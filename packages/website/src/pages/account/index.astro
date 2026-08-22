@@ -1,23 +1,26 @@
 ---
 /**
- * Account Dashboard
+ * Team Overview — the account hub's landing page at /account.
  *
- * SMI-1163: Account dashboard
+ * @see SMI-3897: Team Admin Dashboard (Wave 2b) — original Team Dashboard.
+ * @see SMI-4292: Wave 5A — live Supabase queries (closes GitHub #605).
+ * @see docs/internal/implementation/account-dashboard-ux-consolidation.md
+ *   Decision #1 — this page moved from /account/team; the old personal
+ *   dashboard content that used to live here moved to /account/summary.
  *
- * Shows user profile, subscription status, and license keys.
- * Requires authentication - redirects to login if not authenticated.
+ * Auth pattern: client-side JS queries via Supabase JS client — SSR auth is
+ * unreliable through the Cloudflare edge per ADR-111.
  */
 
-// Disable prerendering - this page needs SSR to read env vars and handle auth
 export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
-import { getSupabaseConfig } from '../../lib/supabase-config'
-import AccountSidebar from '../../components/AccountSidebar.astro'
 import Footer from '../../components/Footer.astro'
+import AccountSidebar from '../../components/AccountSidebar.astro'
+import AccountHubNav from '../../components/AccountHubNav.astro'
 import Nav from '../../components/Nav.astro'
+import { getSupabaseConfig } from '../../lib/supabase-config'
 
-// Read env vars at SSR time to inject into client script
 const supabaseConfig = getSupabaseConfig()
 ---
 
@@ -28,12 +31,8 @@ const supabaseConfig = getSupabaseConfig()
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
-
-    <meta
-      name="description"
-      content="Manage your Skillsmith account, subscription, and license keys"
-    />
-    <title>Account Dashboard | Skillsmith</title>
+    <meta name="description" content="Team dashboard overview" />
+    <title>Team Dashboard | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link
       href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
@@ -42,7 +41,6 @@ const supabaseConfig = getSupabaseConfig()
     <script is:inline define:vars={{ supabaseConfig }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
-    <!-- Enable smooth page transitions without full reload (SMI-2066) -->
     <ClientRouter />
   </head>
   <body>
@@ -50,148 +48,82 @@ const supabaseConfig = getSupabaseConfig()
 
     <div class="account-shell">
       <AccountSidebar currentPath={Astro.url.pathname} />
+
       <main class="dashboard-container">
-        <!-- SMI-4463: Quota banner — populated client-side after the
-           tier-aware billing-period RPC resolves. Hidden until then.
-           Placed above the page heading per WCAG landmark conventions. -->
-        <div id="quota-banner-container" aria-live="polite" style="display: none;"></div>
+        <h1>Team Dashboard</h1>
 
-        <!-- Loading State -->
+        <!-- L2-10: the tab row renders outside/above loading, error, and
+             gated states — visible immediately, never gated. -->
+        <AccountHubNav currentPath="/account" />
+
+        <!-- Loading skeleton -->
         <div id="loading-state" class="loading-state">
-          <div class="spinner-container">
-            <svg class="spinner" viewBox="0 0 24 24">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-                fill="none"
-                opacity="0.25"></circle>
-              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
-              ></path>
-            </svg>
-          </div>
-          <p>Loading your account...</p>
+          <p>Loading team data...</p>
         </div>
 
-        <!-- Error State -->
-        <div id="error-state" class="error-state" style="display: none;">
-          <div class="error-content">
-            <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.5"
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              ></path>
-            </svg>
-            <h3>Failed to load account data</h3>
-            <p id="error-message">Something went wrong</p>
-            <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
-          </div>
+        <!-- Error alert -->
+        <div
+          id="error-state"
+          class="error-state"
+          style="display: none;"
+          role="alert"
+          aria-live="polite"
+        >
+          <h3>Failed to load team</h3>
+          <p id="error-message">Something went wrong.</p>
+          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
         </div>
 
-        <!-- Dashboard Content (hidden until loaded) -->
-        <div id="dashboard-content" style="display: none;">
-          <!-- Welcome Section -->
-          <div class="welcome-section">
-            <h1>Welcome back, <span id="user-name">User</span></h1>
-            <p class="user-email" id="user-email">user@example.com</p>
-            <p class="github-username" id="github-username" style="display: none;">
-              <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path
-                  fill-rule="evenodd"
-                  clip-rule="evenodd"
-                  d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
-                ></path>
-              </svg>
-              <a
-                id="github-link"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="GitHub profile">GitHub</a
-              >
-            </p>
-          </div>
-
-          <!-- Stats Cards -->
-          <div class="stats-grid">
-            <div class="stat-card">
-              <div class="stat-label">Current Plan</div>
-              <div class="stat-value" id="current-tier">Community</div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-label">API Usage</div>
-              <div class="stat-value" id="api-usage">0 / 100</div>
-              <span class="stat-subtext">total API calls</span>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-label">License Keys</div>
-              <div class="stat-value" id="key-count">0 / 1</div>
-              <span class="stat-subtext">active keys</span>
-            </div>
-          </div>
-
-          <!-- Subscription Section -->
-          <section class="dashboard-section">
-            <div class="section-header">
-              <h2>Subscription</h2>
-              <a href="/account/subscription/" class="btn btn-secondary btn-sm">Manage</a>
-            </div>
-
-            <div class="subscription-card" id="subscription-card">
-              <div class="subscription-info">
-                <div class="subscription-tier">
-                  <span class="tier-badge community" id="tier-badge">Community</span>
-                  <span class="tier-price" id="tier-price">Free</span>
-                </div>
-                <div class="subscription-details" id="subscription-details">
-                  <p>Free forever with 100 API calls per month</p>
-                </div>
+        <!-- Content -->
+        <div id="team-content" style="display: none;">
+          <section class="section">
+            <h2>Team Overview</h2>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value" id="team-name">—</div>
+                <div class="stat-label">Team Name</div>
               </div>
-              <div class="subscription-actions" id="subscription-actions">
-                <a href="/pricing" class="btn btn-primary">Upgrade Plan</a>
+              <div class="stat-card">
+                <div class="stat-value" id="member-count">—</div>
+                <div class="stat-label">Members</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="workspace-count">—</div>
+                <div class="stat-label">Workspaces</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="skill-count">—</div>
+                <div class="stat-label">Shared Skills</div>
               </div>
             </div>
           </section>
 
-          <!-- License Keys Section -->
-          <section class="dashboard-section">
-            <div class="section-header">
-              <h2>License Keys</h2>
-              <button id="generate-key-btn" class="btn btn-primary btn-sm">Generate New Key</button>
-            </div>
-
-            <div id="keys-list" class="keys-list">
-              <div class="empty-state">
-                <p>No license keys yet.</p>
-                <p class="text-muted">Generate a key to authenticate your CLI or MCP server.</p>
+          <section class="section">
+            <h2>Usage Summary (Last 30 Days)</h2>
+            <div class="usage-grid" id="usage-grid">
+              <div class="usage-row">
+                <span class="usage-label">Total Events</span>
+                <span class="usage-value" id="total-events">—</span>
+              </div>
+              <div class="usage-row">
+                <span class="usage-label">API Calls</span>
+                <span class="usage-value" id="api-calls">—</span>
+              </div>
+              <div class="usage-row">
+                <span class="usage-label">Skills Installed</span>
+                <span class="usage-value" id="skills-installed">—</span>
+              </div>
+              <div class="usage-row">
+                <span class="usage-label">Security Audits</span>
+                <span class="usage-value" id="audits-run">—</span>
               </div>
             </div>
+          </section>
 
-            <!-- New Key Modal -->
-            <div id="new-key-modal" class="modal" style="display: none;">
-              <div class="modal-content">
-                <div class="modal-header">
-                  <h3>New License Key Generated</h3>
-                  <button class="modal-close" id="close-modal">&times;</button>
-                </div>
-                <div class="modal-body">
-                  <p class="warning-text">
-                    <strong>Important:</strong> Copy this key now. It will not be shown again.
-                  </p>
-                  <div class="key-display">
-                    <code id="new-key-value">sk_live_...</code>
-                    <button id="copy-key-btn" class="btn btn-secondary btn-sm">Copy</button>
-                  </div>
-                </div>
-                <div class="modal-footer">
-                  <button id="done-btn" class="btn btn-primary">Done</button>
-                </div>
-              </div>
+          <section class="section">
+            <h2>Recent Activity</h2>
+            <div class="activity-list" id="activity-list">
+              <p class="empty-text">No recent activity.</p>
             </div>
           </section>
         </div>
@@ -227,491 +159,215 @@ const supabaseConfig = getSupabaseConfig()
     flex-direction: column;
   }
 
-  /* Header */
-  .header {
-    background: rgba(13, 13, 15, 0.95);
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid #1f1f23;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-
-  .nav {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 1rem 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
-    font-weight: 700;
-    font-size: 1.25rem;
-    color: #fafafa;
-  }
-
-  .nav-links {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-  }
-
-  .nav-links a {
-    text-decoration: none;
-    color: #9ca3af;
-    font-weight: 500;
-    transition: color 0.2s;
-  }
-
-  .nav-links a:hover {
-    color: #e07a5f;
-  }
-
-  /* Dashboard Container */
   .dashboard-container {
     flex: 1;
-    max-width: 1024px;
+    max-width: 900px;
     margin: 0 auto;
     padding: 2rem;
     width: 100%;
   }
 
-  /* Loading State */
-  .loading-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 4rem 2rem;
-    color: #9ca3af;
-  }
-
-  .spinner-container {
-    margin-bottom: 1rem;
-  }
-
-  .spinner {
-    width: 2.5rem;
-    height: 2.5rem;
-    color: #e07a5f;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  /* Error State */
-  .error-state {
-    text-align: center;
-    padding: 3rem 1rem;
-  }
-
-  .error-content {
-    max-width: 400px;
-    margin: 0 auto;
-  }
-
-  .error-icon {
-    width: 4rem;
-    height: 4rem;
-    color: #ef4444;
-    margin: 0 auto 1rem;
-  }
-
-  .error-state h3 {
-    color: #fafafa;
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-  }
-
-  .error-state p {
-    color: #9ca3af;
+  .dashboard-container h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
     margin-bottom: 1.5rem;
   }
 
-  /* Welcome Section */
-  .welcome-section {
-    margin-bottom: 2rem;
-  }
-
-  .welcome-section h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin-bottom: 0.25rem;
-  }
-
-  .user-email {
-    color: #9ca3af;
-  }
-
-  .github-username {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    color: #9ca3af;
-    font-size: 0.875rem;
-    margin-top: 0.25rem;
-  }
-
-  .github-username .github-icon {
-    width: 1rem;
-    height: 1rem;
-    flex-shrink: 0;
-  }
-
-  .github-username a {
-    color: #9ca3af;
-    text-decoration: none;
-    transition: color 0.2s;
-  }
-
-  .github-username a:hover {
-    color: #e07a5f;
-  }
-
-  /* Stats Grid */
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }
-
-  .stat-card {
+  .section {
     background: #121214;
     border: 1px solid #2a2a2f;
     border-radius: 0.75rem;
-    padding: 1.25rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
   }
 
-  .stat-label {
-    font-size: 0.875rem;
-    color: #9ca3af;
-    margin-bottom: 0.5rem;
+  .section h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+  }
+
+  .stat-card {
+    background: #1a1a1f;
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+    text-align: center;
   }
 
   .stat-value {
     font-size: 1.5rem;
     font-weight: 700;
+    color: #fafafa;
     margin-bottom: 0.25rem;
   }
 
-  .stat-subtext {
-    font-size: 0.75rem;
-    color: #6b7280;
+  .stat-label {
+    font-size: 0.8125rem;
+    color: #9ca3af;
   }
 
-  /* Sections */
-  .dashboard-section {
-    background: #121214;
-    border: 1px solid #2a2a2f;
-    border-radius: 0.75rem;
+  .usage-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .usage-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #2a2a2f;
+  }
+
+  .usage-row:last-child {
+    border-bottom: none;
+  }
+
+  .usage-label {
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  .usage-value {
+    font-weight: 600;
+    font-size: 0.875rem;
+  }
+
+  .activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .activity-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #2a2a2f;
+    font-size: 0.875rem;
+    flex-wrap: wrap;
+  }
+
+  .activity-item:last-child {
+    border-bottom: none;
+  }
+
+  .activity-text {
+    color: #fafafa;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .activity-time {
+    color: #9ca3af;
+    margin-left: auto;
+    font-size: 0.8125rem;
+    white-space: nowrap;
+  }
+
+  .loading-state {
+    padding: 4rem 2rem;
+    text-align: center;
+    color: #9ca3af;
+  }
+
+  .error-state {
+    background: rgba(239, 68, 68, 0.08);
+    border-left: 3px solid #ef4444;
+    border-radius: 0.5rem;
     padding: 1.5rem;
     margin-bottom: 1.5rem;
   }
 
-  .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .section-header h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  /* Subscription Card */
-  .subscription-card {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-
-  .subscription-tier {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+  .error-state h3 {
+    color: #f87171;
     margin-bottom: 0.5rem;
   }
 
-  .tier-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  .tier-badge.community {
-    background: rgba(107, 114, 128, 0.2);
+  .error-state p {
     color: #9ca3af;
-  }
-
-  .tier-badge.individual {
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-  }
-
-  .tier-badge.team {
-    background: rgba(139, 92, 246, 0.2);
-    color: #a78bfa;
-  }
-
-  .tier-badge.enterprise {
-    background: rgba(224, 122, 95, 0.2);
-    color: #e07a5f;
-  }
-
-  .tier-price {
-    font-weight: 600;
-  }
-
-  .subscription-details {
-    color: #9ca3af;
-    font-size: 0.875rem;
-  }
-
-  /* Keys List */
-  .keys-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .key-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    background: #1a1a1f;
-    border-radius: 0.5rem;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  .key-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .key-name {
-    font-weight: 500;
-  }
-
-  .key-prefix {
-    font-family: monospace;
-    font-size: 0.875rem;
-    color: #9ca3af;
-  }
-
-  .key-meta {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .key-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 2rem;
-    color: #9ca3af;
-  }
-
-  .text-muted {
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  /* Buttons */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-decoration: none;
-    border-radius: 0.5rem;
-    transition: all 0.2s;
-    cursor: pointer;
-    border: none;
-  }
-
-  .btn-sm {
-    padding: 0.375rem 0.75rem;
-    font-size: 0.8125rem;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
-  }
-
-  .btn-secondary {
-    background: transparent;
-    border: 1px solid #2a2a2f;
-    color: #fafafa;
-  }
-
-  .btn-secondary:hover {
-    border-color: #e07a5f;
-    color: #e07a5f;
-  }
-
-  .btn-danger {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #f87171;
-  }
-
-  .btn-danger:hover {
-    background: rgba(239, 68, 68, 0.2);
-  }
-
-  /* Modal */
-  .modal {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 1rem;
-  }
-
-  .modal-content {
-    background: #121214;
-    border: 1px solid #2a2a2f;
-    border-radius: 0.75rem;
-    width: 100%;
-    max-width: 480px;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1.25rem 1.5rem;
-    border-bottom: 1px solid #2a2a2f;
-  }
-
-  .modal-header h3 {
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .modal-close {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    color: #9ca3af;
-    cursor: pointer;
-  }
-
-  .modal-close:hover {
-    color: #fafafa;
-  }
-
-  .modal-body {
-    padding: 1.5rem;
-  }
-
-  .warning-text {
-    background: rgba(251, 191, 36, 0.1);
-    border: 1px solid rgba(251, 191, 36, 0.3);
-    color: #fbbf24;
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
     margin-bottom: 1rem;
   }
 
-  .key-display {
-    display: flex;
-    gap: 0.5rem;
-    background: #1a1a1f;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-  }
-
-  .key-display code {
-    flex: 1;
-    font-family: monospace;
+  .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
     font-size: 0.875rem;
-    word-break: break-all;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
   }
 
-  .modal-footer {
-    padding: 1rem 1.5rem;
-    border-top: 1px solid #2a2a2f;
-    display: flex;
-    justify-content: flex-end;
+  .btn-primary {
+    background: #b8523a;
+    color: #fafafa;
   }
 
-  /* Responsive */
-  @media (max-width: 768px) {
-    .nav-links {
-      gap: 1rem;
-    }
+  .empty-text {
+    color: #9ca3af;
+    font-size: 0.875rem;
+    padding: 0.5rem 0;
+  }
 
-    .dashboard-container {
-      padding: 1.5rem 1rem;
-    }
-
-    .subscription-card {
-      flex-direction: column;
-      align-items: flex-start;
+  @media (max-width: 640px) {
+    .stats-grid {
+      grid-template-columns: repeat(2, 1fr);
     }
   }
 </style>
 
 <script>
   import { createClient } from '@supabase/supabase-js'
-  import { STRIPE_EMAIL_RESYNC_KEY } from '../../lib/account-flags'
+  import { checkTeamAccess } from '../../lib/team-access'
+  import {
+    loadTeamOverviewData,
+    resolveOverviewRedirect,
+    isTeamEntitled,
+  } from '../../lib/account-overview-data'
+  import { resyncStripeEmailIfPending } from '../../lib/account-flags'
 
-  // Read config injected by SSR script in head
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
-  const supabaseUrl = config.url
-  const supabaseAnonKey = config.anonKey
 
-  // Escape HTML to prevent XSS
   function escapeHtml(text: string): string {
     const div = document.createElement('div')
     div.textContent = text
     return div.innerHTML
   }
 
-  // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
+  function showState(state: 'loading' | 'content' | 'error', message?: string) {
+    const loading = document.getElementById('loading-state') as HTMLDivElement
+    const content = document.getElementById('team-content') as HTMLDivElement
+    const errorEl = document.getElementById('error-state') as HTMLDivElement
+    const errorMsg = document.getElementById('error-message') as HTMLParagraphElement
+    if (loading) loading.style.display = 'none'
+    if (content) content.style.display = 'none'
+    if (errorEl) errorEl.style.display = 'none'
+    if (state === 'loading' && loading) loading.style.display = 'block'
+    if (state === 'content' && content) content.style.display = 'block'
+    if (state === 'error' && errorEl) {
+      errorEl.style.display = 'block'
+      if (message && errorMsg) errorMsg.textContent = message
+    }
+  }
+
+  // M9: the tab row itself never fetches entitlement data — this page sets
+  // the signal on its nav root once the team gate resolves.
+  function setTeamEntitled(entitled: boolean) {
+    document.querySelector('.account-hub-nav')?.setAttribute('data-team-entitled', String(entitled))
+  }
+
   document.addEventListener('astro:page-load', async () => {
-    // Only run on this page — astro:page-load listeners persist on `document`
-    // across ClientRouter navigations and would re-fire here otherwise (SMI-4896).
+    // Only run on this page. L13: this guard used to accept /account/team
+    // and /account/team/ — it now accepts /account and /account/ since this
+    // page moved here (Decision #1).
     if (window.location.pathname !== '/account' && window.location.pathname !== '/account/') return
 
     // Bind CSP-safe reload handler (SMI-4311)
@@ -721,479 +377,83 @@ const supabaseConfig = getSupabaseConfig()
       })
     })
 
-    const loadingState = document.getElementById('loading-state') as HTMLDivElement
-    const dashboardContent = document.getElementById('dashboard-content') as HTMLDivElement
-    const errorState = document.getElementById('error-state') as HTMLDivElement
-    const errorMessage = document.getElementById('error-message') as HTMLParagraphElement
-    // Note: Logout is now handled by Nav component's UserMenu dropdown
-    const generateKeyBtn = document.getElementById('generate-key-btn') as HTMLButtonElement
-    const newKeyModal = document.getElementById('new-key-modal') as HTMLDivElement
-    const closeModalBtn = document.getElementById('close-modal') as HTMLButtonElement
-    const doneBtn = document.getElementById('done-btn') as HTMLButtonElement
-    const copyKeyBtn = document.getElementById('copy-key-btn') as HTMLButtonElement
-    const newKeyValue = document.getElementById('new-key-value') as HTMLElement
-
-    // On popstate-driven ClientRouter transitions (WebKit especially) the
-    // pathname can already read /account while the swapped-in DOM still
-    // belongs to the previous page, so the guard above passes against a
-    // foreign DOM and the lookups return null. Bail out; the transition's
-    // own astro:page-load re-fires this handler once the real dashboard
-    // DOM is in place. Caught by account-page-load-guards.spec.ts (SMI-5475).
-    if (
-      !loadingState ||
-      !dashboardContent ||
-      !errorState ||
-      !errorMessage ||
-      !generateKeyBtn ||
-      !newKeyModal ||
-      !closeModalBtn ||
-      !doneBtn ||
-      !copyKeyBtn ||
-      !newKeyValue
-    ) {
+    if (!config.url || !config.anonKey) {
+      showState('error', 'Configuration error — Supabase is not set up.')
       return
     }
 
-    // State management function for consistent UI transitions
-    function showState(state: 'loading' | 'content' | 'error') {
-      loadingState.style.display = 'none'
-      dashboardContent.style.display = 'none'
-      errorState.style.display = 'none'
+    const supabase = createClient(config.url, config.anonKey)
 
-      if (state === 'loading') loadingState.style.display = 'flex'
-      if (state === 'content') dashboardContent.style.display = 'block'
-      if (state === 'error') errorState.style.display = 'block'
-    }
+    // SMI-4321: tier-gate runs before any team data query. Authoritative
+    // check lives in the check_team_tier_access RPC — a stale session
+    // cookie cannot grant access because the RPC reads live
+    // profiles/subscriptions at request time. Frozen per the plan; only
+    // this call site's branching on the result changed (Decision #4/C1).
+    const gate = await checkTeamAccess(supabase)
+    setTeamEntitled(isTeamEntitled(gate))
 
-    if (!supabaseUrl || !supabaseAnonKey) {
-      errorMessage.textContent = 'Configuration error. Please try again later.'
-      showState('error')
+    if (!gate.ok) {
+      const redirect = resolveOverviewRedirect(gate)
+      if (redirect) {
+        // L2-10: fires from this loading state — never a flash of team
+        // content or a gated notice.
+        window.location.href = redirect
+        return
+      }
+      showState('error', 'You are not a member of any team yet.')
       return
     }
 
-    const supabase = createClient(supabaseUrl, supabaseAnonKey)
+    const teamId = gate.teamId as string
 
-    // Check authentication
+    // Session still needed for user_id on downstream queries; RPC already
+    // validated auth.uid() so this call is effectively guaranteed.
     const {
       data: { session },
-      error: sessionError,
     } = await supabase.auth.getSession()
-
-    if (!session || sessionError) {
+    if (!session) {
+      // L13: this literal used to read /account/team.
       window.location.href = '/login?redirect=/account'
       return
     }
 
-    const user = session.user
+    // SMI-5168: after a confirmed email change, best-effort resync the new
+    // email to the user's Stripe customer.
+    void resyncStripeEmailIfPending(config.url, session.access_token)
 
-    // SMI-5168: after a confirmed email change (flagged by /auth/confirm), push the
-    // new email to the user's Stripe customer. Best-effort, fire-and-forget — the
-    // gateway-verified function is idempotent and no-ops for free-tier users.
     try {
-      if (sessionStorage.getItem(STRIPE_EMAIL_RESYNC_KEY)) {
-        sessionStorage.removeItem(STRIPE_EMAIL_RESYNC_KEY)
-        void fetch(`${supabaseUrl}/functions/v1/sync-stripe-email`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        }).catch(() => {
-          /* non-fatal */
-        })
-      }
-    } catch {
-      /* sessionStorage unavailable — non-fatal */
-    }
+      const data = await loadTeamOverviewData(supabase, teamId)
 
-    // Load user data
-    try {
-      // Get profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('tier, full_name, github_username, auth_provider')
-        .eq('id', user.id)
-        .single()
+      document.getElementById('team-name')!.textContent = data.teamName
+      document.getElementById('member-count')!.textContent = String(data.memberCount)
+      document.getElementById('workspace-count')!.textContent = String(data.workspaceCount)
+      document.getElementById('skill-count')!.textContent = String(data.skillCount)
 
-      // Get subscription
-      //
-      // Resolve the effective entitlement first (SMI-6086) — its team_id
-      // identifies the exact team whose subscription won, correctly even for
-      // a user who belongs to more than one team.
-      const { data: effectiveRows, error: effectiveError } = await supabase.rpc(
-        'get_effective_subscription_summary',
-        { user_uuid: user.id }
-      )
-      if (effectiveError) throw effectiveError
-
-      const effectiveSubscription = effectiveRows?.[0]
-      let isNonOwnerTeamMember = false
-
-      if (effectiveSubscription?.team_id) {
-        const { data: winningMembership, error: membershipError } = await supabase
-          .from('team_members')
-          .select('role')
-          .eq('team_id', effectiveSubscription.team_id)
-          .eq('user_id', user.id)
-          .maybeSingle()
-
-        if (membershipError) throw membershipError
-        isNonOwnerTeamMember = winningMembership !== null && winningMembership.role !== 'owner'
-      }
-
-      // Owners and users whose winning entitlement is personal retain the
-      // existing full-billing RPC. Non-owner members never call it — they see
-      // tier/status only, from the summary RPC above.
-      let subscriptions: Array<{
-        current_period_end: string
-        cancel_at_period_end: boolean
-      }> | null = null
-      if (!isNonOwnerTeamMember) {
-        const { data, error: subscriptionError } = await supabase.rpc('get_user_subscription', {
-          user_uuid: user.id,
-        })
-        if (subscriptionError) throw subscriptionError
-        subscriptions = data
-      }
-
-      // Get license keys (include usage_count for API usage display)
-      const { data: licenseKeys } = await supabase
-        .from('license_keys')
-        .select('id, key_prefix, name, tier, status, created_at, last_used_at, usage_count')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-
-      // Update UI
-      const tier = effectiveSubscription?.tier || profile?.tier || 'community'
-      const fullName = profile?.full_name || user.email?.split('@')[0] || 'User'
-
-      // User info
-      const userNameEl = document.getElementById('user-name')
-      const userEmailEl = document.getElementById('user-email')
-      const githubUsernameEl = document.getElementById('github-username')
-      const githubLinkEl = document.getElementById('github-link')
-      if (userNameEl) userNameEl.textContent = fullName
-      if (userEmailEl) userEmailEl.textContent = user.email || ''
-
-      // Show GitHub username if user signed in with GitHub
-      if (profile?.github_username && githubUsernameEl && githubLinkEl) {
-        githubLinkEl.textContent = `@${profile.github_username}`
-        githubLinkEl.setAttribute('href', `https://github.com/${profile.github_username}`)
-        githubUsernameEl.style.display = 'flex'
-      }
-
-      // Current tier
-      const currentTierEl = document.getElementById('current-tier')
-      if (currentTierEl) currentTierEl.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
-
-      // Key count
-      const activeKeys = licenseKeys?.filter((k) => k.status === 'active') || []
-      const maxKeys =
-        tier === 'community' ? 1 : tier === 'individual' ? 3 : tier === 'team' ? 10 : 50
-      const keyCountEl = document.getElementById('key-count')
-      if (keyCountEl) keyCountEl.textContent = `${activeKeys.length} / ${maxKeys}`
-
-      // SMI-4463: API usage now reads from get_user_usage_for_billing_period
-      // (migration 084) which returns a tier-aware window — calendar month
-      // for community/null, Stripe subscription period for paid tiers — so a
-      // mid-month upgrade buys 30 days, not "until the 1st".
-      // SMI-4461 originally pointed this at get_user_usage_summary; that
-      // helper still exists for backwards compat but the dashboard prefers
-      // the billing-period-aware variant.
-      const { data: usageSummary, error: usageError } = await supabase.rpc(
-        'get_user_usage_for_billing_period',
-        {
-          p_user_id: user.id,
-        }
-      )
-      if (usageError) {
-        console.error('[dashboard] get_user_usage_for_billing_period failed:', usageError)
-      }
-      const totalUsage = Number(usageSummary?.[0]?.total_requests ?? 0)
-      const periodEnd = usageSummary?.[0]?.period_end || ''
-      const quotaLimits: Record<string, number> = {
-        community: 100,
-        individual: 1000,
-        team: 10000,
-        enterprise: -1, // unlimited
-      }
-      const quota = quotaLimits[tier] || 100
-      const apiUsageEl = document.getElementById('api-usage')
-      if (apiUsageEl) {
-        if (quota === -1) {
-          apiUsageEl.textContent = `${totalUsage.toLocaleString()} / Unlimited`
-        } else {
-          apiUsageEl.textContent = `${totalUsage.toLocaleString()} / ${quota.toLocaleString()}`
-        }
-      }
-
-      // SMI-4463: render quota banner above the page heading at >=80% usage.
-      // SMI-5558: quota-cut grandfathering (plan-review C2) — a user who was
-      // well within the OLD (pre-cut) quota should not see the alarming
-      // "calls will fail" error banner the instant this ships, purely
-      // because their already-accrued usage now reads as over the NEW,
-      // smaller quota. Grandfathering is naturally scoped to the CURRENT
-      // billing period only: once it rolls over, `totalUsage` resets to 0
-      // and is evaluated fresh against the new quota with no old-quota
-      // comparison involved.
-      const oldQuotaLimits: Record<string, number> = {
-        community: 1000,
-        individual: 10000,
-        team: 100000,
-        enterprise: -1,
-      }
-      const oldQuota = oldQuotaLimits[tier] || 1000
-      const bannerEl = document.getElementById('quota-banner-container')
-      if (bannerEl && quota > 0) {
-        const percentUsed = totalUsage / quota
-        const percentUsedOld = oldQuota > 0 ? totalUsage / oldQuota : 0
-        const isGrandfathered = percentUsed >= 1.0 && percentUsedOld < 1.0
-        const resetsHuman = periodEnd
-          ? new Date(periodEnd).toUTCString().replace('GMT', 'UTC')
-          : 'next period'
-        const tierName = tier.charAt(0).toUpperCase() + tier.slice(1)
-        const isCommunity = tier === 'community'
-        if (percentUsed >= 1.0 && !isGrandfathered) {
-          const ctaHtml = isCommunity
-            ? `<a href="/pricing" class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">Upgrade</a>`
-            : `<a href="mailto:support@skillsmith.app" class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">Contact support</a>`
-          const bodyHtml = isCommunity
-            ? `New API calls will fail until your quota resets on <span class="text-white">${resetsHuman}</span>, or upgrade for higher limits.`
-            : `Contact support to extend your limit before your next billing cycle (${resetsHuman}).`
-          bannerEl.innerHTML = `
-            <div class="quota-banner quota-banner-error mb-6 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm" role="alert" data-resets-at="${periodEnd}">
-              <div class="flex items-start gap-3">
-                <svg class="h-6 w-6 flex-shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-                <div class="flex-1">
-                  <p class="font-medium text-white">You've used 100% of your <strong>${tierName}</strong> tier monthly quota.</p>
-                  <p class="mt-1 text-dark-300">${bodyHtml}</p>
-                  <p class="mt-3">${ctaHtml}</p>
-                </div>
-              </div>
-            </div>`
-          bannerEl.style.display = 'block'
-        } else if (isGrandfathered) {
-          const upgradeLink = isCommunity
-            ? ` <a href="/pricing" class="text-yellow-300 underline hover:text-yellow-200">View plans</a>`
-            : ''
-          bannerEl.innerHTML = `
-            <div class="quota-banner quota-banner-warn mb-6 rounded-xl border border-yellow-500/50 bg-yellow-500/10 p-4 text-sm" role="status" data-resets-at="${periodEnd}">
-              <div class="flex items-start gap-3">
-                <svg class="h-6 w-6 flex-shrink-0 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-                <div class="flex-1">
-                  <p class="font-medium text-white">Your <strong>${tierName}</strong> tier's monthly quota has changed.</p>
-                  <p class="mt-1 text-dark-300">This billing cycle's usage is grandfathered at your prior limit and won't be interrupted. The new, lower quota applies starting ${resetsHuman}.${upgradeLink}</p>
-                </div>
-              </div>
-            </div>`
-          bannerEl.style.display = 'block'
-        } else if (percentUsed >= 0.8) {
-          const percentDisplay = Math.round(percentUsed * 100)
-          const upgradeLink = isCommunity
-            ? ` <a href="/pricing" class="text-yellow-300 underline hover:text-yellow-200">Upgrade for more headroom</a>`
-            : ''
-          bannerEl.innerHTML = `
-            <div class="quota-banner quota-banner-warn mb-6 rounded-xl border border-yellow-500/50 bg-yellow-500/10 p-4 text-sm" role="status" data-resets-at="${periodEnd}">
-              <div class="flex items-start gap-3">
-                <svg class="h-6 w-6 flex-shrink-0 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-                <div class="flex-1">
-                  <p class="font-medium text-white">You've used <strong>${percentDisplay}%</strong> of your monthly quota.</p>
-                  <p class="mt-1 text-dark-300">Resets ${resetsHuman}.${upgradeLink}</p>
-                </div>
-              </div>
-            </div>`
-          bannerEl.style.display = 'block'
-        } else {
-          bannerEl.style.display = 'none'
-        }
-      }
-
-      // Tier badge
-      const tierBadge = document.getElementById('tier-badge')
-      if (tierBadge) {
-        tierBadge.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
-        tierBadge.className = `tier-badge ${tier}`
-      }
-
-      // Tier price and details
-      const tierPriceEl = document.getElementById('tier-price')
-      const subscriptionDetails = document.getElementById('subscription-details')
-      const subscriptionActions = document.getElementById('subscription-actions')
-
-      const subscription = isNonOwnerTeamMember ? effectiveSubscription : subscriptions?.[0]
-
-      if (subscription) {
-        const prices: Record<string, string> = {
-          individual: '$9.99/mo',
-          team: '$25/user/mo',
-          enterprise: '$55/user/mo',
-        }
-
-        if (isNonOwnerTeamMember) {
-          // SMI-6086: non-owner team members see tier and status only — never
-          // the team purchaser's next-billing date or cancellation state.
-          if (tierPriceEl) tierPriceEl.textContent = 'Team plan'
-          if (subscriptionDetails) {
-            const status =
-              effectiveSubscription.status.charAt(0).toUpperCase() +
-              effectiveSubscription.status.slice(1)
-            subscriptionDetails.innerHTML = `<p>Team subscription status: ${status}</p>`
-          }
-          if (subscriptionActions) subscriptionActions.innerHTML = ''
-        } else {
-          if (tierPriceEl) tierPriceEl.textContent = prices[tier] || 'Free'
-
-          const periodEnd = new Date(subscription.current_period_end)
-          if (subscriptionDetails) {
-            subscriptionDetails.innerHTML = `
-              <p>Next billing date: ${periodEnd.toLocaleDateString()}</p>
-              ${subscription.cancel_at_period_end ? '<p class="text-danger">Cancels at end of period</p>' : ''}
-            `
-          }
-
-          if (subscriptionActions) {
-            // The Subscription section header already has a "Manage" button, so
-            // skip a duplicate link here for subscribed users. (SMI-5153)
-            subscriptionActions.innerHTML = ''
-          }
-        }
-      } else {
-        if (tierPriceEl) tierPriceEl.textContent = 'Free'
-        if (subscriptionDetails) {
-          subscriptionDetails.innerHTML = '<p>Free forever with 100 API calls per month</p>'
-        }
-      }
-
-      // Check for pending key from signup (one-time display)
-      // This calls decrypt_pending_key RPC which auto-deletes after retrieval
-      try {
-        const { data: pendingKey, error: pendingKeyError } = await supabase.rpc(
-          'decrypt_pending_key',
-          { user_id_input: user.id }
+      if (data.usage) {
+        document.getElementById('total-events')!.textContent = String(data.usage.totalEvents)
+        document.getElementById('api-calls')!.textContent = String(data.usage.apiCalls)
+        document.getElementById('skills-installed')!.textContent = String(
+          data.usage.skillsInstalled
         )
-
-        if (pendingKey && !pendingKeyError) {
-          // Show the pending key in modal (same modal used for new key generation)
-          newKeyValue.textContent = pendingKey
-          // Update modal header to indicate this is from signup
-          const modalHeader = document.querySelector('#new-key-modal .modal-header h3')
-          if (modalHeader) {
-            modalHeader.textContent = 'Your API Key'
-          }
-          newKeyModal.style.display = 'flex'
-        }
-      } catch {
-        // Non-fatal: pending key may not exist or already retrieved
-        // Silently ignore - this is expected for users without pending keys
+        document.getElementById('audits-run')!.textContent = String(data.usage.auditsRun)
       }
 
-      // License keys list (only show active keys)
-      const keysList = document.getElementById('keys-list')
-      if (keysList && activeKeys.length > 0) {
-        keysList.innerHTML = activeKeys
+      const list = document.getElementById('activity-list')!
+      if (data.activity.length > 0) {
+        list.innerHTML = data.activity
           .map(
-            (key) => `
-          <div class="key-item" data-key-id="${escapeHtml(key.id)}">
-            <div class="key-info">
-              <div class="key-name">${escapeHtml(key.name)}</div>
-              <div class="key-prefix">${escapeHtml(key.key_prefix)}</div>
-              <div class="key-meta">
-                Created ${new Date(key.created_at).toLocaleDateString()}
-                ${key.last_used_at ? ` • Last used ${new Date(key.last_used_at).toLocaleDateString()}` : ''}
-              </div>
-            </div>
-            <div class="key-actions">
-              <span class="tier-badge ${escapeHtml(key.tier)}">${escapeHtml(key.tier)}</span>
-              <button class="btn btn-danger btn-sm revoke-btn" data-key-id="${escapeHtml(key.id)}">Revoke</button>
-            </div>
-          </div>
-        `
+            ({ text, iso, relative }) => `<div class="activity-item">
+              <span class="activity-text">${escapeHtml(text)}</span>
+              <span class="activity-time" title="${escapeHtml(iso)}">${escapeHtml(relative)}</span>
+            </div>`
           )
           .join('')
-
-        // Add revoke handlers
-        document.querySelectorAll('.revoke-btn').forEach((btn) => {
-          btn.addEventListener('click', async (e) => {
-            const keyId = (e.target as HTMLButtonElement).dataset.keyId
-            if (
-              !keyId ||
-              !confirm('Are you sure you want to revoke this key? This cannot be undone.')
-            )
-              return
-
-            const { error } = await supabase
-              .from('license_keys')
-              .update({ status: 'revoked', revoked_at: new Date().toISOString() })
-              .eq('id', keyId)
-
-            if (!error) {
-              location.reload()
-            }
-          })
-        })
       }
 
-      // Show dashboard
       showState('content')
-    } catch (error) {
-      console.error('Failed to load account data:', error)
-      errorMessage.textContent = error instanceof Error ? error.message : 'Please try again'
-      showState('error')
+    } catch (err) {
+      console.error('Team dashboard load failed:', err)
+      showState('error', err instanceof Error ? err.message : 'Unexpected error.')
     }
-
-    // Generate key handler
-    generateKeyBtn.addEventListener('click', async () => {
-      generateKeyBtn.disabled = true
-      generateKeyBtn.textContent = 'Generating...'
-
-      try {
-        // Refresh session to get a fresh access token (fixes stale token after 1hr+ on page)
-        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession()
-        if (refreshError || !refreshData.session) {
-          // Session expired and couldn't be refreshed - redirect to login
-          window.location.href = '/login?redirect=/account&reason=session_expired'
-          return
-        }
-
-        const response = await fetch(`${supabaseUrl}/functions/v1/generate-license`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${refreshData.session.access_token}`,
-          },
-          body: JSON.stringify({ name: 'API Key' }),
-        })
-
-        const data = await response.json()
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Failed to generate key')
-        }
-
-        // Show the new key in modal
-        newKeyValue.textContent = data.key
-        newKeyModal.style.display = 'flex'
-      } catch (error) {
-        alert(error instanceof Error ? error.message : 'Failed to generate key')
-      } finally {
-        generateKeyBtn.disabled = false
-        generateKeyBtn.textContent = 'Generate New Key'
-      }
-    })
-
-    // Modal handlers
-    const closeModal = () => {
-      newKeyModal.style.display = 'none'
-      location.reload() // Refresh to show new key in list
-    }
-
-    closeModalBtn.addEventListener('click', closeModal)
-    doneBtn.addEventListener('click', closeModal)
-
-    copyKeyBtn.addEventListener('click', async () => {
-      const key = newKeyValue.textContent || ''
-      await navigator.clipboard.writeText(key)
-      copyKeyBtn.textContent = 'Copied!'
-      setTimeout(() => {
-        copyKeyBtn.textContent = 'Copy'
-      }, 2000)
-    })
   })
 </script>

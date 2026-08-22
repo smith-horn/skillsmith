@@ -90,6 +90,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Account Dashboard UX Consolidation** (2026-08-22): The account information
+  architecture now uses a unified hub with a persistent tab row visible on every
+  account page. `/account` now lands on the Team Overview page (team-gated content;
+  non-team users are redirected to their personal Summary at `/account/summary`).
+  Subscription and Email Address tabs moved from the top-right authenticated menu
+  into the hub tab row, improving discoverability and consistency. The personal
+  Summary page consolidates identity, current plan, API usage quota, and license
+  key count; detailed subscription management remains at `/account/subscription`.
+  The persistent account sidebar now shows only operational destinations (CLI Token,
+  Skill Inventory, Billing History, and Preferences), removing duplicates. Legacy
+  `/account/team` permanently redirects to `/account` via HTTP 301. Team member
+  roles, subscription tiers, personal usage quotas, and entitlement-scoped content
+  remain unchanged.
 - **Compatibility filter demoted from exclusion to ranking signal** (2026-08-11, SMI-5929,
   **breaking response-contract change**): `search` (MCP tool and the `skills-search` edge
   function — the CLI does not currently expose a compatibility filter of its own, see

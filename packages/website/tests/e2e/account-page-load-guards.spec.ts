@@ -25,30 +25,46 @@ import { refireAstroPageLoad } from './astro-helpers'
 // The bug surfaces as a null property access, phrased differently per engine.
 const NULL_DEREF = /Cannot read properties of null|null is not an object|reading 'style'/
 
-// Sibling pages reachable via a real `<a>` in the account sidebar (SMI-5475 —
-// replaced the Quick Links grid), so ClientRouter (not a full reload) performs
-// the transition that re-fires `astro:page-load` on the previously-visited
-// page's leaked listener.
+// Sibling pages reachable via a real `<a>` in either the account sidebar
+// (SMI-5475 — replaced the Quick Links grid) or the AccountHubNav tab row
+// (SMI-6110 — Subscription and Email Address moved out of the sidebar and
+// into the hub tabs, mounted on every account page including /account
+// itself), so ClientRouter (not a full reload) performs the transition that
+// re-fires `astro:page-load` on the previously-visited page's leaked
+// listener. /account (Team Overview) is the loop's anchor page — it is not
+// its own sibling, so it is not listed here; its own leaked-listener
+// coverage comes from being the page every iteration navigates back to.
 const SIBLINGS = [
-  { href: '/account/team', url: '/account/team' },
-  { href: '/account/billing', url: '/account/billing' },
-  { href: '/account/subscription', url: '/account/subscription' },
-  { href: '/account/profile', url: '/account/profile' },
-  { href: '/account/cli-token/', url: '/account/cli-token' },
-  { href: '/account/outreach-preferences', url: '/account/outreach-preferences' },
-  { href: '/account/telemetry', url: '/account/telemetry' },
-  { href: '/account/skills', url: '/account/skills' },
+  { href: '/account/billing', url: '/account/billing', nav: 'sidebar' as const },
+  { href: '/account/subscription', url: '/account/subscription', nav: 'hub' as const },
+  { href: '/account/profile', url: '/account/profile', nav: 'hub' as const },
+  { href: '/account/cli-token/', url: '/account/cli-token', nav: 'sidebar' as const },
+  {
+    href: '/account/outreach-preferences',
+    url: '/account/outreach-preferences',
+    nav: 'sidebar' as const,
+  },
+  { href: '/account/telemetry', url: '/account/telemetry', nav: 'sidebar' as const },
+  { href: '/account/skills', url: '/account/skills', nav: 'sidebar' as const },
 ]
 
 /**
- * Click a sidebar link through ClientRouter. Below 1024px the sidebar is
- * CSS-hidden (matches /docs — SMI-5475 product decision), so on the mobile
- * project we dispatch a programmatic click: it still bubbles to ClientRouter's
- * document-level listener and drives a real SPA navigation, preserving the
- * leaked-listener regression net at both viewports.
+ * Click a sidebar or hub-tab link through ClientRouter. Below 1024px the
+ * sidebar is CSS-hidden (matches /docs — SMI-5475 product decision) while
+ * the hub tab row stays horizontally-scrollable-visible at every width
+ * (H5), so on the mobile project a sidebar link needs a programmatic click
+ * to still bubble to ClientRouter's document-level listener and drive a
+ * real SPA navigation, preserving the leaked-listener regression net at
+ * both viewports. Hub-tab links are always visible, so a normal click
+ * suffices there.
  */
-async function clickAccountNav(page: Page, href: string): Promise<void> {
-  const link = page.locator(`.account-sidebar a[href="${href}"]`)
+async function clickAccountNav(
+  page: Page,
+  href: string,
+  nav: 'sidebar' | 'hub' = 'sidebar'
+): Promise<void> {
+  const containerClass = nav === 'hub' ? '.account-hub-nav' : '.account-sidebar'
+  const link = page.locator(`${containerClass} a[href="${href}"]`)
   if (await link.isVisible()) {
     await link.click()
   } else {
@@ -87,7 +103,7 @@ test.describe('account pages — astro:page-load path guards (SMI-5158)', () => 
       // Forward: ClientRouter SPA-nav. The /account (index) listener — and every
       // sibling listener registered on a prior iteration — re-fires here on the
       // foreign DOM. Pre-fix the index handler throws the null-deref.
-      await clickAccountNav(page, sibling.href)
+      await clickAccountNav(page, sibling.href, sibling.nav)
       await expect(page).toHaveURL(new RegExp(`${sibling.url}/?$`))
 
       // Back to /account via history (ClientRouter intercepts popstate): the
@@ -101,11 +117,5 @@ test.describe('account pages — astro:page-load path guards (SMI-5158)', () => 
     await refireAstroPageLoad(page)
 
     expect(hits, hits.join('\n')).toEqual([])
-  })
-
-  test('the Team sidebar link navigates to /account/team', async ({ page }) => {
-    await page.goto('/account')
-    await clickAccountNav(page, '/account/team')
-    await expect(page).toHaveURL(/\/account\/team\/?$/)
   })
 })

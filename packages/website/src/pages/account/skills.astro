@@ -18,6 +18,7 @@ import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import Footer from '../../components/Footer.astro'
 import AccountSidebar from '../../components/AccountSidebar.astro'
+import AccountHubNav from '../../components/AccountHubNav.astro'
 import Nav from '../../components/Nav.astro'
 
 const supabaseConfig = getSupabaseConfig()
@@ -52,6 +53,10 @@ const supabaseConfig = getSupabaseConfig()
       <AccountSidebar currentPath={Astro.url.pathname} />
 
       <main class="page-container">
+        <!-- Not a canonical hub destination (H4) — tab row renders with no
+             active tab, matching the hub mounting contract (L2-10). -->
+        <AccountHubNav currentPath={Astro.url.pathname} />
+
         <div id="loading-state" class="state-block">
           <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
             <circle
@@ -150,10 +155,9 @@ const supabaseConfig = getSupabaseConfig()
 </html>
 
 <script>
-  import { buildInventoryView, detectEmptyState } from '../../lib/inventory-view'
-  import type { InventoryRow } from '../../lib/inventory-view'
   import { getSupabaseClient } from '../../lib/supabase-client'
   import { buildDeviceCardHtml, injectSkillsPageStyles } from '../../lib/skills-page-render'
+  import { loadSkillsInventoryData } from '../../lib/account-skills-data'
 
   document.addEventListener('astro:page-load', async () => {
     // Pathname guard — listeners persist across ClientRouter navigations (SMI-5158).
@@ -199,27 +203,18 @@ const supabaseConfig = getSupabaseConfig()
 
     const user = session.user
 
-    // Parallel fetch: consent preference + inventory rows.
-    const [consentResult, invResult] = await Promise.all([
-      supabase
-        .from('user_telemetry_preferences')
-        .select('inventory_sync_enabled')
-        .eq('user_id', user.id)
-        .maybeSingle(),
-      supabase.rpc('get_user_inventory'),
-    ])
-
-    if (invResult.error || consentResult.error) {
-      // Surface the error rather than defaulting consent to off — otherwise a
-      // user with sync ON + devices would be wrongly shown the "turn it on" prompt.
-      showError('Could not load inventory. Check your connection and try again.')
+    // Parallel fetch: consent preference + inventory rows, shaped by
+    // account-skills-data.ts. Surfaces the error rather than defaulting
+    // consent to off — otherwise a user with sync ON + devices would be
+    // wrongly shown the "turn it on" prompt.
+    let devices: Awaited<ReturnType<typeof loadSkillsInventoryData>>['devices']
+    let emptyState: Awaited<ReturnType<typeof loadSkillsInventoryData>>['emptyState']
+    try {
+      ;({ devices, emptyState } = await loadSkillsInventoryData(supabase, user.id))
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Could not load inventory.')
       return
     }
-
-    const consentEnabled = (consentResult.data?.inventory_sync_enabled as boolean | null) ?? false
-    const rows = (invResult.data as InventoryRow[]) ?? []
-    const devices = buildInventoryView(rows)
-    const emptyState = detectEmptyState(consentEnabled, devices.length)
     // Observability hook: exposes the resolved activation state (typed EmptyState
     // enum, no user input) as one attribute. The e2e deliberately does NOT assert
     // on it — it is device-count-derived and would be flaky across shared-user

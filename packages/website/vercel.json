@@ -52,6 +52,11 @@
       "source": "/docs/authoring",
       "destination": "/docs/tutorials/author",
       "permanent": true
+    },
+    {
+      "source": "/account/team",
+      "destination": "/account",
+      "statusCode": 301
     }
   ],
   "headers": [
