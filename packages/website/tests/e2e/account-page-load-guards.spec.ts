@@ -9,7 +9,9 @@
  * `index.astro` listener firing on `/account/subscription`).
  *
  * Regression: each unguarded handler now early-returns unless the pathname matches
- * its own page (canonical guard, see `account/team/index.astro`). This spec drives
+ * its own page (canonical guard, see the `astro:page-load` handler in
+ * `account/index.astro` — SMI-6110 moved this pattern's reference page from the
+ * now-deleted `account/team/index.astro`). This spec drives
  * real ClientRouter navigations between account pages and asserts the null-deref
  * signature never appears on the console or as an uncaught error.
  *
