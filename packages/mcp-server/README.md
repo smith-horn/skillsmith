@@ -451,7 +451,7 @@ Index local skills from `~/.claude/skills/` directory.
 
 The `webhook_configure` and `api_key_manage` tools hash secrets server-side via HMAC-SHA-256 before persisting to the shared `api_keys` table. The HMAC key lives in `SKILLSMITH_API_KEY_HMAC_SECRET` rather than as a hardcoded constant — defense-in-depth so a leaked DB cannot be reverse-cracked offline.
 
-**Distribution model**: identical to `SUPABASE_SERVICE_ROLE_KEY`. The same secret value must be set on every MCP host that creates or verifies Custom Integration API keys, otherwise hashes computed on host A won't match hashes verified on host B.
+**Distribution model**: a single shared secret. The same secret value must be set on every MCP host that creates or verifies Custom Integration API keys, otherwise hashes computed on host A won't match hashes verified on host B.
 
 ### Error Logging (SMI-5615)
 
@@ -508,7 +508,7 @@ before integration tools can be used. Generate one via: openssl rand -base64 48
 openssl rand -base64 48
 ```
 
-Distribute that value through the same secure channel used for `SUPABASE_SERVICE_ROLE_KEY` (e.g., 1Password vault, encrypted onboarding email). Each Team-tier admin sets it on their own MCP host alongside their other secrets:
+Distribute that value through a secure channel (e.g., 1Password vault, encrypted onboarding email). Each Team-tier admin sets it on their own MCP host alongside their other secrets — no Supabase credential of any kind is required here; the private registry and Custom Integration tools authenticate as the signed-in user (`skillsmith login`) plus your personal/team key, never a shared database credential:
 
 ```jsonc
 // ~/.claude/settings.json
@@ -520,7 +520,6 @@ Distribute that value through the same secure channel used for `SUPABASE_SERVICE
       "env": {
         "SKILLSMITH_API_KEY": "sk_live_your_personal_key",
         "SKILLSMITH_LICENSE_KEY": "sklic_your_team_license",
-        "SUPABASE_SERVICE_ROLE_KEY": "eyJ...your_service_role_jwt",
         "SKILLSMITH_API_KEY_HMAC_SECRET": "<the shared 32+ char secret>"
       }
     }

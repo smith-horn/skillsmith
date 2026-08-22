@@ -5208,6 +5208,100 @@ console.log(`\n${BOLD}Check 61: git-crypt filter --unset remediation ban (SMI-57
   }
 }
 
+// Check 62: MCP server service-role usage lockdown (SMI-6109)
+//
+// SMI-6109 removed the customer-facing README instructions to configure
+// SUPABASE_SERVICE_ROLE_KEY on an MCP host, and moved list()/get()/
+// getNamespace() (registry-tools.live.ts) off the service-role client onto
+// the signed-in user's own JWT. This check is the mechanical backstop that
+// keeps a NEW customer-facing service-role dependency from silently
+// reappearing under packages/mcp-server/src/** — the exact class of gap
+// SMI-6109 itself was created to close.
+//
+// Matches only real usage (a getSupabaseAdminClient(...) CALL, or a literal
+// process.env.SUPABASE_SERVICE_ROLE_KEY read) — not narrative mentions of
+// the string in a doc comment (e.g. registry-tools.live.ts's own header,
+// explaining the history of this exact fix), which would otherwise
+// false-positive on the very file that fixed this.
+console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109)${RESET}`)
+{
+  // Every CURRENT, pre-existing, deliberately-out-of-scope service-role usage under
+  // packages/mcp-server/src/**, each with its own one-line justification — see
+  // docs/internal/implementation (SMI-6109 plan)'s "Explicitly out of scope" section for the
+  // full rationale on each. supabase-client.ts itself is excluded from the scan below (it is
+  // the legitimate definition site for both the function and the env read), not allowlisted.
+  const MCP_SERVICE_ROLE_ALLOWLIST = new Set([
+    'team-workspace.live.ts', // identical list/get-shaped pattern across 8 methods, writes included — needs its own design (SMI-6109 plan)
+    'registry-tools.live.audit.ts', // audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read
+    'registry-tools.live.content.ts', // getContent()/install's Enterprise-entitlement check — subscriptions RLS blocks non-purchasers; needs a new SECURITY DEFINER RPC (SMI-6111)
+    'integration-tools.service.ts', // Custom Integration API-key hashing backend — unrelated credential family (SKILLSMITH_API_KEY_HMAC_SECRET)
+  ])
+
+  const MCP_SERVER_SRC = join('packages', 'mcp-server', 'src')
+  const SERVICE_ROLE_CALL = /getSupabaseAdminClient\s*\(/
+  const SERVICE_ROLE_ENV_READ = /process\.env\.SUPABASE_SERVICE_ROLE_KEY/
+
+  function listMcpServerSourceFiles(dir) {
+    const out = []
+    if (!existsSync(dir)) return out
+    const stack = [dir]
+    while (stack.length) {
+      const cur = stack.pop()
+      let entries
+      try {
+        entries = readdirSync(cur, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const ent of entries) {
+        const full = join(cur, ent.name)
+        if (ent.isDirectory()) {
+          if (ent.name === 'node_modules' || ent.name === 'dist') continue
+          stack.push(full)
+        } else if (
+          ent.isFile() &&
+          ent.name.endsWith('.ts') &&
+          !ent.name.endsWith('.test.ts') &&
+          !ent.name.endsWith('.spec.ts') &&
+          !ent.name.endsWith('.test-helpers.ts') &&
+          ent.name !== 'supabase-client.ts'
+        ) {
+          out.push(full)
+        }
+      }
+    }
+    return out
+  }
+
+  const mcpServiceRoleFindings = []
+  for (const file of listMcpServerSourceFiles(MCP_SERVER_SRC)) {
+    const baseName = file.split('/').pop()
+    if (MCP_SERVICE_ROLE_ALLOWLIST.has(baseName)) continue
+    const content = readFileSync(file, 'utf8')
+    if (SERVICE_ROLE_CALL.test(content) || SERVICE_ROLE_ENV_READ.test(content)) {
+      mcpServiceRoleFindings.push(file)
+    }
+  }
+
+  if (mcpServiceRoleFindings.length === 0) {
+    pass(
+      'Check 62: no new service-role usage outside the SMI-6109 allowlist under packages/mcp-server/src/**'
+    )
+  } else {
+    for (const f of mcpServiceRoleFindings) {
+      fail(
+        `Check 62: ${f} calls getSupabaseAdminClient()/reads SUPABASE_SERVICE_ROLE_KEY directly`,
+        'Use getMemberUserClient()/getAdminUserClient() (registry-tools.live.auth.ts) instead, so the ' +
+          "operation runs on the signed-in user's own JWT with RLS as the authorization boundary " +
+          '(SMI-6109) — or, if this usage is genuinely a new, deliberately-scoped exception, add the ' +
+          "file's basename to MCP_SERVICE_ROLE_ALLOWLIST in scripts/audit-standards.mjs with a " +
+          "one-line justification, matching this repo's other named-allowlist conventions " +
+          '(e.g. NO_VERIFY_JWT_FUNCTIONS, SECDEF_ANON_ALLOWLIST).'
+      )
+    }
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)

@@ -169,10 +169,13 @@ function createRecordingClient(): { client: unknown; calls: Recorded[] } {
 /**
  * Point BOTH client factories at the same recorder.
  *
- * The service now uses two credentials (SMI-5822): service-role for reads/publish, the
- * signed-in user's JWT for deprecate/undeprecate. Wiring both to one recorder keeps every
- * `teamId` assertion below phrased in terms of what reaches the query builder, which is the
- * property this suite is about, independent of which credential carried it.
+ * As of SMI-6109, every method here runs on the signed-in user's own JWT — `list`/`get`/
+ * `getNamespace` moved off the service-role client in that wave, joining `publish` (SMI-5949) and
+ * `deprecate`/`undeprecate` (SMI-5822), which had already made the same move. Wiring both client
+ * factories to one recorder keeps every `teamId` assertion below phrased in terms of what reaches
+ * the query builder, which is the property this suite is about, independent of which credential
+ * carried it — and future-proofs this fixture against a subsequent method making the same move
+ * without needing another rewrite here.
  */
 async function mockClient(client: unknown): Promise<void> {
   const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')

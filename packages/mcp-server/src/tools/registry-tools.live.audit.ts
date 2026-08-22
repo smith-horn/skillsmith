@@ -56,16 +56,25 @@ import { readLicenseKey } from './team-resolver.js'
 /**
  * Registry operations worth an audit row.
  *
- * Metadata reads (`list`/`get`) are still deliberately not audited — they carry no file bytes.
- * `content_read` (SMI-5905 Wave 3) is: it is the operation that hands a team's packaged skill
- * content to a caller, so it gets the same coverage the mutations do. `event_type` and `action`
- * are byte-identical to what the `private-registry-get` Edge Function writes
- * (supabase/functions/private-registry-get/access.ts), so both transports land in one queryable
- * stream and neither can be audited without the other showing up in the same query.
+ * `content_read` (SMI-5905 Wave 3) hands a team's packaged skill content to a caller, so it gets
+ * the same coverage the mutations do. `event_type` and `action` are byte-identical to what the
+ * `private-registry-get` Edge Function writes (supabase/functions/private-registry-get/access.ts),
+ * so both transports land in one queryable stream and neither can be audited without the other
+ * showing up in the same query.
+ *
+ * `list`/`get`/`namespace` (SMI-6109) were previously NOT audited here — "metadata reads carry no
+ * file bytes" was true, but stopped being the whole story once these three moved off the
+ * license-key-scoped service-role client onto the signed-in user's own JWT
+ * (`getMemberUserClient()`, `registry-tools.live.ts`). That move introduces a real dual-identity-
+ * signal gap: the license key resolves one team, the signed-in user's own membership can silently
+ * point at a different one (or none), and RLS fails closed on the mismatch indistinguishably from
+ * "genuinely not found." Recording `authRole`/`actorUserId` here is what makes that mismatch
+ * observable in the audit stream rather than invisible. `submissions` remains unaudited — it is a
+ * metadata read like the pre-SMI-6109 `list`/`get` were, with no comparable identity-mismatch
+ * concern (D-5's RPC already evaluates `auth.uid()` itself).
  *
  * `approve`/`reject` (SMI-5949 Wave 2 Step 4, D-5) are the two terminal decisions
- * `review_private_registry_submission()` can write. `submissions` (the read side, D-5's other RPC)
- * is deliberately NOT here — it is a metadata read like `list`/`get`, not a mutation.
+ * `review_private_registry_submission()` can write.
  */
 export type RegistryAuditOperation =
   | 'publish'
@@ -74,6 +83,9 @@ export type RegistryAuditOperation =
   | 'content_read'
   | 'approve'
   | 'reject'
+  | 'list'
+  | 'get'
+  | 'namespace'
 
 /**
  * Which credential authorized the call.
@@ -85,7 +97,9 @@ export type RegistryAuditAuthPath = 'license_key' | 'user_jwt'
 export interface RegistryAuditEvent {
   operation: RegistryAuditOperation
   teamId: string
-  skillId: string
+  /** Omitted for team-wide operations with no single skill in scope (SMI-6109) — `list` (bulk)
+   *  and `namespace` (queries the `teams` table, not `private_registry_skills` at all). */
+  skillId?: string
   version?: string
   result: 'success' | 'denied' | 'not_found' | 'error'
   authPath: RegistryAuditAuthPath
@@ -206,9 +220,15 @@ export async function recordRegistryAudit(event: RegistryAuditEvent): Promise<vo
   try {
     const fingerprint = licenseKeyFingerprint()
     const client = (await getSupabaseAdminClient()) as AuditInsertClient
-    const resource = event.version
-      ? `private_registry_skills/${event.teamId}/${event.skillId}@${event.version}`
-      : `private_registry_skills/${event.teamId}/${event.skillId}`
+    // SMI-6109: list/namespace carry no single skillId — fall back to a team-wide (or, for
+    // namespace, teams-table) resource string rather than embedding "undefined" in it.
+    const resource = !event.skillId
+      ? event.operation === 'namespace'
+        ? `teams/${event.teamId}`
+        : `private_registry_skills/${event.teamId}`
+      : event.version
+        ? `private_registry_skills/${event.teamId}/${event.skillId}@${event.version}`
+        : `private_registry_skills/${event.teamId}/${event.skillId}`
 
     const { error } = await client.from('audit_logs').insert({
       event_type: `private_registry:${event.operation}`,
@@ -218,7 +238,7 @@ export async function recordRegistryAudit(event: RegistryAuditEvent): Promise<vo
       result: event.result,
       metadata: {
         team_id: event.teamId,
-        skill_id: event.skillId,
+        skill_id: event.skillId ?? null,
         version: event.version ?? null,
         auth_path: event.authPath,
         // Kept on BOTH paths: on the user_jwt path the key is no longer the actor, but "which key
