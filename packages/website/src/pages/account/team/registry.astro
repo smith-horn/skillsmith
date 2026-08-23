@@ -218,33 +218,42 @@ const supabaseConfig = getSupabaseConfig()
     gap: 1rem;
   }
 
-  .skill-card,
-  .submission-card {
+  /* Astro's scoped-style attribute is only ever stamped onto elements that exist in THIS
+     component's static template. Everything below is built as an HTML string in the <script>
+     block (renderSkills/renderPending/renderRejected) and inserted via innerHTML — Astro never
+     sees those elements, so a plain scoped selector like `.version-row { ... }` silently never
+     matches them. :global() is the documented escape hatch: it emits the selector without the
+     scope attribute, so it still applies to this same client-rendered markup. Confirmed live
+     (2026-08-23): without :global(), .version-row computed to `display: block; gap: normal`
+     instead of the grid/gap declared here — the exact cause of a reported "no space between the
+     text and the button" bug, since every spacing rule in this block was silently inert. */
+  :global(.skill-card),
+  :global(.submission-card) {
     background: #1a1a1f;
     border: 1px solid #2a2a2f;
     border-radius: 0.75rem;
     padding: 1.25rem;
   }
 
-  .skill-card:hover,
-  .submission-card:hover {
+  :global(.skill-card:hover),
+  :global(.submission-card:hover) {
     border-color: #3a3a42;
   }
 
-  .skill-name,
-  .submission-name {
+  :global(.skill-name),
+  :global(.submission-name) {
     font-size: 1rem;
     font-weight: 600;
     overflow-wrap: anywhere;
   }
 
-  .version-list {
+  :global(.version-list) {
     display: flex;
     flex-direction: column;
     margin-top: 0.75rem;
   }
 
-  .version-row {
+  :global(.version-row) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 1rem;
@@ -253,32 +262,32 @@ const supabaseConfig = getSupabaseConfig()
     border-top: 1px solid #2a2a2f;
   }
 
-  .version-details {
+  :global(.version-details) {
     min-width: 0;
   }
 
-  .version-heading,
-  .badge-row,
-  .submission-header,
-  .submission-actions {
+  :global(.version-heading),
+  :global(.badge-row),
+  :global(.submission-header),
+  :global(.submission-actions) {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.5rem;
   }
 
-  .submission-header {
+  :global(.submission-header) {
     justify-content: space-between;
     margin-bottom: 0.5rem;
   }
 
-  .submission-actions {
+  :global(.submission-actions) {
     margin-top: 1rem;
   }
 
-  .version-description,
-  .submission-description,
-  .review-note {
+  :global(.version-description),
+  :global(.submission-description),
+  :global(.review-note) {
     color: #9ca3af;
     font-size: 0.875rem;
     line-height: 1.5;
@@ -286,16 +295,16 @@ const supabaseConfig = getSupabaseConfig()
     overflow-wrap: anywhere;
   }
 
-  .version-meta,
-  .submission-meta {
+  :global(.version-meta),
+  :global(.submission-meta) {
     color: #6b7280;
     font-size: 0.8125rem;
     margin-top: 0.5rem;
   }
 
-  .status-badge,
-  .version-badge,
-  .deprecated-badge {
+  :global(.status-badge),
+  :global(.version-badge),
+  :global(.deprecated-badge) {
     display: inline-flex;
     align-items: center;
     padding: 0.25rem 0.625rem;
@@ -304,38 +313,41 @@ const supabaseConfig = getSupabaseConfig()
     font-weight: 500;
   }
 
-  .version-badge {
+  :global(.version-badge) {
     color: #d1d5db;
     background: #2a2a2f;
   }
 
-  .status-approved {
+  :global(.status-approved) {
     color: #6ee7b7;
     background: rgba(16, 185, 129, 0.12);
   }
 
-  .status-pending {
+  :global(.status-pending) {
     color: #fcd34d;
     background: rgba(245, 158, 11, 0.12);
   }
 
-  .status-rejected {
+  :global(.status-rejected) {
     color: #fca5a5;
     background: rgba(239, 68, 68, 0.12);
   }
 
-  .deprecated-badge,
-  .status-deprecated {
+  :global(.deprecated-badge),
+  :global(.status-deprecated) {
     color: #c4b5fd;
     background: rgba(139, 92, 246, 0.14);
   }
 
-  .status-unknown {
+  :global(.status-unknown) {
     color: #d1d5db;
     background: #2a2a2f;
   }
 
-  .btn {
+  /* .btn/.btn-primary are also used by the static "Try Again" button in #error-state — :global()
+     matches that element too (it only drops the attribute requirement, never excludes anything),
+     so this is safe for both the static and client-rendered usages. */
+  :global(.btn) {
     padding: 0.5rem 1rem;
     border-radius: 8px;
     font-family: inherit;
@@ -348,41 +360,41 @@ const supabaseConfig = getSupabaseConfig()
       opacity 0.15s;
   }
 
-  .btn:disabled {
+  :global(.btn:disabled) {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
   /* Skillsmith's actual primary brand color is coral (--color-coral, global.css) — this page
      previously hardcoded an unrelated rust-orange (#b8523a) instead of the real brand token. */
-  .btn-primary {
+  :global(.btn-primary) {
     background: var(--color-coral);
     color: #fafafa;
   }
 
-  .btn-primary:hover:not(:disabled) {
+  :global(.btn-primary:hover:not(:disabled)) {
     background: var(--color-coral-dark);
   }
 
-  .btn-secondary {
+  :global(.btn-secondary) {
     background: var(--color-bg-tertiary);
     color: #fafafa;
   }
 
-  .btn-secondary:hover:not(:disabled) {
+  :global(.btn-secondary:hover:not(:disabled)) {
     background: #3a3a42;
   }
 
-  .btn-danger {
+  :global(.btn-danger) {
     color: #fca5a5;
     background: rgba(239, 68, 68, 0.14);
   }
 
-  .btn-danger:hover:not(:disabled) {
+  :global(.btn-danger:hover:not(:disabled)) {
     background: rgba(239, 68, 68, 0.24);
   }
 
-  .btn-small {
+  :global(.btn-small) {
     padding: 0.375rem 0.75rem;
     white-space: nowrap;
   }
@@ -442,16 +454,16 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   @media (max-width: 640px) {
-    .version-row {
+    :global(.version-row) {
       grid-template-columns: 1fr;
     }
 
-    .version-row > .btn {
+    :global(.version-row) > :global(.btn) {
       justify-self: start;
     }
 
     .section-header,
-    .submission-header {
+    :global(.submission-header) {
       align-items: flex-start;
       flex-direction: column;
     }
