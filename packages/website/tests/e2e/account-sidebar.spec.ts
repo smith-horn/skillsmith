@@ -66,6 +66,27 @@ const TEAM_GATED_HREFS = [
   '/account/team/workspaces',
 ]
 
+// SMI-6134 regression guard: populated by mockSupabase() whenever a request
+// reaches a real (non-stub) Supabase-shaped host — see mockSupabase()'s
+// catch-all route in complete-profile.helpers.ts. Reset before every test;
+// asserted empty after every test, file-wide (a top-level test.afterEach()
+// applies to every test in this file, including inside test.describe()
+// blocks below).
+let unexpectedSupabaseRequests: string[] = []
+
+test.beforeEach(() => {
+  unexpectedSupabaseRequests = []
+})
+
+test.afterEach(() => {
+  expect(
+    unexpectedSupabaseRequests,
+    `Unexpected request(s) reached a real (non-stub) Supabase host instead of the test stub — ` +
+      `window.__SUPABASE_CONFIG__ should be immutable (SMI-6134); something bypassed it. ` +
+      `Captured URL(s):\n${unexpectedSupabaseRequests.join('\n')}`
+  ).toEqual([])
+})
+
 test.describe('account navigation — Account/Admin/Tools/Preferences/Resources (SMI-6128)', () => {
   test.beforeEach(async ({ page }) => {
     await injectSupabaseStub(page, { session: buildSessionToken({ provider: 'email' }) })
@@ -76,7 +97,7 @@ test.describe('account navigation — Account/Admin/Tools/Preferences/Resources 
     // to `not_authenticated` (team-access.ts), which races /account's own
     // async redirect-to-login against this suite's assertions — an
     // unrelated flake source, not a structural nav regression.
-    await mockSupabase(page, {
+    ;({ unexpectedSupabaseRequests } = await mockSupabase(page, {
       rpcResponses: {
         check_team_tier_access: {
           ok: true,
@@ -85,7 +106,7 @@ test.describe('account navigation — Account/Admin/Tools/Preferences/Resources 
           tier: 'team',
         },
       },
-    })
+    }))
   })
 
   test('renders on /account with the Quick Links grid gone and no duplicate tab row', async ({
@@ -318,9 +339,9 @@ test.describe('team-gated lock affordance (SMI-6128, preserves SMI-6110 Decision
   test('confirmed non-entitled: Registry/Analytics/Members/Workspaces render locked; Overview never does', async ({
     page,
   }) => {
-    await mockSupabase(page, {
+    ;({ unexpectedSupabaseRequests } = await mockSupabase(page, {
       rpcResponses: { get_effective_subscription_summary: [{ tier: 'community' }] },
-    })
+    }))
 
     await page.goto('/account/summary')
     await expect(page.locator('.account-sidebar')).toHaveAttribute('data-team-entitled', 'false')
@@ -338,9 +359,9 @@ test.describe('team-gated lock affordance (SMI-6128, preserves SMI-6110 Decision
   })
 
   test('entitled: no lock styling, no stale lock announcement', async ({ page }) => {
-    await mockSupabase(page, {
+    ;({ unexpectedSupabaseRequests } = await mockSupabase(page, {
       rpcResponses: { get_effective_subscription_summary: [{ tier: 'team' }] },
-    })
+    }))
 
     await page.goto('/account/summary')
     await expect(page.locator('.account-sidebar')).toHaveAttribute('data-team-entitled', 'true')
@@ -358,7 +379,7 @@ test.describe('team-gated lock affordance (SMI-6128, preserves SMI-6110 Decision
   test('missing entitlement signal fails open: no producer page visited, no lock ever applied', async ({
     page,
   }) => {
-    await mockSupabase(page, {})
+    ;({ unexpectedSupabaseRequests } = await mockSupabase(page, {}))
 
     // Profile never calls setAccountNavTeamEntitled (pre-decided non-producer).
     await page.goto('/account/profile')
@@ -373,9 +394,9 @@ test.describe('team-gated lock affordance (SMI-6128, preserves SMI-6110 Decision
   test('activating a locked link still navigates — the lock is an affordance, not a disabled control', async ({
     page,
   }) => {
-    await mockSupabase(page, {
+    ;({ unexpectedSupabaseRequests } = await mockSupabase(page, {
       rpcResponses: { get_effective_subscription_summary: [{ tier: 'community' }] },
-    })
+    }))
 
     await page.goto('/account/summary')
     await expect(page.locator('.account-sidebar')).toHaveAttribute('data-team-entitled', 'false')
