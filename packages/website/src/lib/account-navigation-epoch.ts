@@ -51,6 +51,18 @@ export function advanceNavigationEpoch(): void {
  * multiple page scripts within the same browser session. No-ops outside a
  * browser (e.g. under the `node` vitest environment) — `advanceNavigationEpoch()`
  * remains directly callable there for tests.
+ *
+ * Why `listenerRegistered` is sufficient here (and the usual
+ * `window.__xInited` idempotency pattern for `astro:page-load` binds isn't
+ * needed): this call happens once at MODULE top-level, not from inside a
+ * page-load handler. Astro's ClientRouter swaps the DOM without a full page
+ * reload, so the browser's ES-module cache — which dedupes module
+ * evaluation by resolved URL within a single document — evaluates this
+ * module's top-level code (including this call) exactly once per SPA
+ * session, no matter how many pages import it across however many view
+ * transitions. `listenerRegistered` guards the reverse case (calling this
+ * function more than once within that single evaluation), not repeated
+ * evaluation across transitions.
  */
 function registerNavigationEpochListener(): void {
   if (listenerRegistered || typeof document === 'undefined') return
