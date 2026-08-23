@@ -470,6 +470,8 @@ const supabaseConfig = getSupabaseConfig()
     setRegistryVersionDeprecated,
     type PrivateRegistryDashboardRow,
   } from '../../../lib/private-registry-dashboard'
+  import { isCurrentAccountPath } from '../../../lib/account-page-path'
+  import { createNavigationEpochGuard } from '../../../lib/account-navigation-epoch'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -527,11 +529,14 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   document.addEventListener('astro:page-load', async () => {
-    if (
-      window.location.pathname !== '/account/team/registry' &&
-      window.location.pathname !== '/account/team/registry/'
-    )
-      return
+    if (!isCurrentAccountPath(window.location.pathname, '/account/team/registry')) return
+
+    // SMI-6112: see account/index.astro's identical comment for the full
+    // rationale — a single entry-path check cannot protect the
+    // continuations below (they each cross an `await`), nor close the
+    // A-B-A case (leaving and returning to this route before an earlier
+    // check resolves).
+    const nav = createNavigationEpochGuard()
 
     document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -547,6 +552,7 @@ const supabaseConfig = getSupabaseConfig()
     const supabase = createClient(config.url, config.anonKey)
 
     const gate = await checkTeamAccess(supabase)
+    if (nav.isStale()) return
     setTeamEntitled(isTeamEntitled(gate))
     if (!gate.ok) {
       const redirect = resolveGateRedirect(gate, '/account/team/registry')
@@ -563,6 +569,7 @@ const supabaseConfig = getSupabaseConfig()
     const {
       data: { session },
     } = await supabase.auth.getSession()
+    if (nav.isStale()) return
 
     if (!session) {
       window.location.href = '/login?redirect=/account/team/registry'
@@ -588,6 +595,9 @@ const supabaseConfig = getSupabaseConfig()
         // pending/rejected via the get_private_registry_submissions RPC —
         // see loadRegistryDashboardData's invariant note.
         const registryData = await loadRegistryDashboardData(supabase, teamId)
+        // Local closure (not an external lib call), so the stale-navigation
+        // guard can sit right next to the DOM writes it protects (SMI-6112).
+        if (nav.isStale()) return
 
         const namespaceEl = document.getElementById('registry-namespace')!
         namespaceEl.textContent = registryData.namespace
@@ -850,8 +860,10 @@ const supabaseConfig = getSupabaseConfig()
       }
 
       await loadRegistry()
+      if (nav.isStale()) return
       showState('content')
     } catch (error) {
+      if (nav.isStale()) return
       console.error('Private registry load failed:', error)
       showState('error', error instanceof Error ? error.message : 'Unexpected error.')
     }

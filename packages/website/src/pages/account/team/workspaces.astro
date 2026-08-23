@@ -412,6 +412,8 @@ const supabaseConfig = getSupabaseConfig()
   import { createClient } from '@supabase/supabase-js'
   import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
   import { isTeamEntitled } from '../../../lib/account-overview-data'
+  import { isCurrentAccountPath } from '../../../lib/account-page-path'
+  import { createNavigationEpochGuard } from '../../../lib/account-navigation-epoch'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -444,11 +446,14 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   document.addEventListener('astro:page-load', async () => {
-    if (
-      window.location.pathname !== '/account/team/workspaces' &&
-      window.location.pathname !== '/account/team/workspaces/'
-    )
-      return
+    if (!isCurrentAccountPath(window.location.pathname, '/account/team/workspaces')) return
+
+    // SMI-6112: see account/index.astro's identical comment for the full
+    // rationale — a single entry-path check cannot protect the
+    // continuations below (they each cross an `await`), nor close the
+    // A-B-A case (leaving and returning to this route before an earlier
+    // check resolves).
+    const nav = createNavigationEpochGuard()
 
     // Bind CSP-safe reload handler (SMI-4311)
     document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
@@ -466,6 +471,7 @@ const supabaseConfig = getSupabaseConfig()
 
     // SMI-4321: authoritative tier-gate via check_team_tier_access RPC.
     const gate = await checkTeamAccess(supabase)
+    if (nav.isStale()) return
     setTeamEntitled(isTeamEntitled(gate))
     if (!gate.ok) {
       const redirect = resolveGateRedirect(gate, '/account/team/workspaces')
@@ -484,6 +490,7 @@ const supabaseConfig = getSupabaseConfig()
     const {
       data: { session },
     } = await supabase.auth.getSession()
+    if (nav.isStale()) return
     if (!session) {
       window.location.href = '/login?redirect=/account/team/workspaces'
       return
@@ -496,6 +503,9 @@ const supabaseConfig = getSupabaseConfig()
         .eq('team_id', teamId)
         .order('created_at', { ascending: false })
       if (error) throw new Error(error.message)
+      // Local closure (not an external lib call), so the stale-navigation
+      // guard can sit right next to the DOM writes it protects (SMI-6112).
+      if (nav.isStale()) return
 
       const grid = document.getElementById('ws-grid')!
       const empty = document.getElementById('empty-state')!
@@ -518,6 +528,7 @@ const supabaseConfig = getSupabaseConfig()
           return count ?? 0
         })
       )
+      if (nav.isStale()) return
 
       empty.style.display = 'none'
       grid.innerHTML = workspaces
@@ -555,7 +566,9 @@ const supabaseConfig = getSupabaseConfig()
 
       const role = String(myMembership?.role ?? '').toLowerCase()
 
+      if (nav.isStale()) return
       await loadWorkspaces(teamId)
+      if (nav.isStale()) return
 
       // Wire create-workspace flow (admins/owners only per RLS)
       const createBtn = document.getElementById('create-workspace-btn') as HTMLButtonElement
@@ -619,6 +632,7 @@ const supabaseConfig = getSupabaseConfig()
 
       showState('content')
     } catch (err) {
+      if (nav.isStale()) return
       console.error('Workspaces load failed:', err)
       showState('error', err instanceof Error ? err.message : 'Unexpected error.')
     }

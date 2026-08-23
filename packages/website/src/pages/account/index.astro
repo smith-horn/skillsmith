@@ -333,6 +333,8 @@ const supabaseConfig = getSupabaseConfig()
     isTeamEntitled,
   } from '../../lib/account-overview-data'
   import { resyncStripeEmailIfPending } from '../../lib/account-flags'
+  import { isCurrentAccountPath } from '../../lib/account-page-path'
+  import { createNavigationEpochGuard } from '../../lib/account-navigation-epoch'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -368,7 +370,17 @@ const supabaseConfig = getSupabaseConfig()
     // Only run on this page. L13: this guard used to accept /account/team
     // and /account/team/ — it now accepts /account and /account/ since this
     // page moved here (Decision #1).
-    if (window.location.pathname !== '/account' && window.location.pathname !== '/account/') return
+    if (!isCurrentAccountPath(window.location.pathname, '/account')) return
+
+    // SMI-6112: navigation-epoch guard. The entry pathname check above only
+    // protects against a handler that fired for a route the user has
+    // already left. It cannot protect the continuations below — each
+    // crosses an `await`, during which a ClientRouter view transition can
+    // complete (including the A-B-A case: leaving and returning to /account
+    // before an earlier check resolves). Capture the epoch now, and check
+    // `nav.isStale()` immediately before every subsequent redirect,
+    // entitlement write, error render, or DOM write of loaded data.
+    const nav = createNavigationEpochGuard()
 
     // Bind CSP-safe reload handler (SMI-4311)
     document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
@@ -390,6 +402,7 @@ const supabaseConfig = getSupabaseConfig()
     // profiles/subscriptions at request time. Frozen per the plan; only
     // this call site's branching on the result changed (Decision #4/C1).
     const gate = await checkTeamAccess(supabase)
+    if (nav.isStale()) return
     setTeamEntitled(isTeamEntitled(gate))
 
     if (!gate.ok) {
@@ -411,6 +424,7 @@ const supabaseConfig = getSupabaseConfig()
     const {
       data: { session },
     } = await supabase.auth.getSession()
+    if (nav.isStale()) return
     if (!session) {
       // L13: this literal used to read /account/team.
       window.location.href = '/login?redirect=/account'
@@ -423,6 +437,7 @@ const supabaseConfig = getSupabaseConfig()
 
     try {
       const data = await loadTeamOverviewData(supabase, teamId)
+      if (nav.isStale()) return
 
       document.getElementById('team-name')!.textContent = data.teamName
       document.getElementById('member-count')!.textContent = String(data.memberCount)
@@ -452,6 +467,7 @@ const supabaseConfig = getSupabaseConfig()
 
       showState('content')
     } catch (err) {
+      if (nav.isStale()) return
       console.error('Team dashboard load failed:', err)
       showState('error', err instanceof Error ? err.message : 'Unexpected error.')
     }

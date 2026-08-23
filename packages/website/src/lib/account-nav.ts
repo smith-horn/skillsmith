@@ -6,6 +6,8 @@
  * src/components/AccountSidebar.astro.
  */
 
+import { normalizeAccountPath } from './account-page-path'
+
 export interface AccountNavItem {
   href: string
   label: string
@@ -46,19 +48,16 @@ export const ACCOUNT_NAV_SECTIONS: AccountNavSection[] = [
   },
 ]
 
-function stripTrailingSlash(path: string): string {
-  return path.length > 1 ? path.replace(/\/+$/, '') : path
-}
-
 /**
  * Whether a sidebar item should render as active for the current path.
  *
  * Every retained item is an exact match after trailing-slash normalization,
  * so `/account/cli-token/` matches both slash forms and no item lights up
- * on subpages it doesn't own.
+ * on subpages it doesn't own. Normalization is shared with
+ * `isCurrentAccountPath()` (`account-page-path.ts`) so the sidebar's
+ * active-link matching and the page-load entry guards can never drift into
+ * accepting different slash forms.
  */
 export function isActiveAccountNav(href: string, currentPath: string): boolean {
-  const current = stripTrailingSlash(currentPath)
-  const target = stripTrailingSlash(href)
-  return current === target
+  return normalizeAccountPath(currentPath) === normalizeAccountPath(href)
 }
