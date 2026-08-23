@@ -207,8 +207,8 @@ jobs:
         with:
           name: website-account-e2e-${{ github.run_id }}
           path: |
-            packages/website/playwright-report/
-            packages/website/test-results/
+            test-results/playwright-report/
+            test-results/playwright/
             test-results/preview.log
           retention-days: 7
           if-no-files-found: ignore
