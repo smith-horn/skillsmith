@@ -92,12 +92,59 @@ function collectNullDerefs(page: Page): string[] {
   return hits
 }
 
+// SMI-6134 regression guard: populated by mockSupabase() whenever a request
+// reaches a real (non-stub) Supabase-shaped host — see mockSupabase()'s
+// catch-all route in complete-profile.helpers.ts. Reset before every test;
+// asserted empty after every test, file-wide (a top-level test.afterEach()
+// applies to every test in this file, including inside test.describe()
+// blocks below). Tests in this file that never call mockSupabase() directly
+// (the SMI-6112 block, which uses its own mockDelayedTierCheck() route
+// instead) leave this at its reset [] and the assertion passes vacuously —
+// their coverage against this bug comes from Step 1's immutable-injection
+// fix itself, not from this collector.
+let unexpectedSupabaseRequests: string[] = []
+
+test.beforeEach(() => {
+  unexpectedSupabaseRequests = []
+})
+
+test.afterEach(() => {
+  expect(
+    unexpectedSupabaseRequests,
+    `Unexpected request(s) reached a real (non-stub) Supabase host instead of the test stub — ` +
+      `window.__SUPABASE_CONFIG__ should be immutable (SMI-6134); something bypassed it. ` +
+      `Captured URL(s):\n${unexpectedSupabaseRequests.join('\n')}`
+  ).toEqual([])
+})
+
 test.describe('account pages — astro:page-load path guards (SMI-5158)', () => {
   test.beforeEach(async ({ page }) => {
     await injectSupabaseStub(page, { session: buildSessionToken({ provider: 'email' }) })
-    // Closed-default mocks: tables resolve to [] and RPCs 404 — enough for each
-    // page's inline script (and thus its astro:page-load listener) to register.
-    await mockSupabase(page, {})
+    // SMI-6134 correction: previously `mockSupabase(page, {})` (fully
+    // closed-default — check_team_tier_access unmocked, 404) was enough
+    // because the pre-fix bug (this very file's regression target) meant
+    // /account's own inline script silently emptied window.__SUPABASE_CONFIG__
+    // before its astro:page-load handler ran, so index.astro's own
+    // `if (!config.url || !config.anonKey)` guard (index.astro:390) bailed
+    // out before ever calling checkTeamAccess() — masking that this mock was
+    // always missing a check_team_tier_access response. Now that the stub
+    // config correctly survives (the fix under test here), /account's
+    // astro:page-load handler actually reaches checkTeamAccess(); an
+    // unmocked (404) RPC response there degrades to `not_authenticated`
+    // (team-access.ts) and immediately redirects to /login, which this
+    // test's own navigation loop never expects. An entitled response keeps
+    // /account rendering normally, matching account-sidebar.spec.ts's first
+    // describe block, which already does this for the same reason.
+    ;({ unexpectedSupabaseRequests } = await mockSupabase(page, {
+      rpcResponses: {
+        check_team_tier_access: {
+          ok: true,
+          reason: null,
+          team_id: 'team_smi5158_fixture',
+          tier: 'team',
+        },
+      },
+    }))
   })
 
   test('no leaked handler throws null-deref when navigating /account → siblings → back', async ({
