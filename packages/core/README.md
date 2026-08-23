@@ -6,13 +6,13 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## Contents
 
-- [What's New](#whats-new-in-v0117)
+- [What's New](#whats-new-in-v0118)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.11.7
+## What's New in v0.11.8
 
 - **Security-status reporting unified**: CLI and MCP now derive security-scan status (pass/fail, risk score, findings count) from one shared `deriveSecuritySummaryFromApiSkill`/`deriveSecuritySummaryFromSkillRow`, instead of two independently-maintained copies that could disagree on the same skill.
 - **`skill_compare` reuses `get_skill`'s resolution**: new shared `resolveSkillApiFirst()` fixes compare only ever hitting the local SQLite cache (no longer kept in sync with the remote-first registry), which made real, searchable skills report "not found."

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.8
+
+- **Docs**: SMI-6088 governance retro sweep — 4 more namespace-wording gaps (#2458)
 - **Docs**: `McpClient.skillInventoryAudit`'s JSDoc comment and the README's "Audit Skill
   Inventory" row now state the tool's actual scope (every installed AI coding client's skill
   inventory, not just `~/.claude/`), and use the "local namespace collisions" qualifier

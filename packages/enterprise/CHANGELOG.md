@@ -4,6 +4,9 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.8
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.3.7).
 - **Fix**: the shared `TIER_PRICING` runtime constant (`license/degradation-types.ts`), consumed
   by both the MCP server's and CLI's own tier-gating/upgrade-nudge messages, plus several TSDoc
   comments repeating the same figure, hardcoded the literal unpublished Enterprise price

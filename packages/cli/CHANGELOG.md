@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.8
+
+- **Fix**: reject bare-name registry match without author confirmation (#2465)
 - **Fix**: `skillsmith update` no longer force-installs an unrelated same-named registry skill
   over a locally-authored one it was never asked to replace. `getSkillDiff()` now reads the
   installed skill's own claimed author from its `SKILL.md` front-matter (`readClaimedAuthor()`)
