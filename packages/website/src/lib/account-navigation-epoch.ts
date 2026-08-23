@@ -19,7 +19,7 @@
  * module-level epoch counter. A gated page captures the epoch once, right
  * after its entry pathname guard passes and before its first `await`. Every
  * continuation that would otherwise mutate state — a redirect, a
- * `data-team-entitled`/`setTeamEntitled` write, an error/not-member render,
+ * `data-team-entitled`/`setAccountNavTeamEntitled` write, an error/not-member render,
  * or a DOM write of loaded data — checks `isStale()` immediately beforehand
  * and returns without acting if a newer navigation has since occurred.
  *

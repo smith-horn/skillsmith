@@ -61,8 +61,10 @@ on:
     paths:
       - 'packages/website/src/pages/account/**'
       - 'packages/website/src/components/AccountSidebar.astro'
+      - 'packages/website/src/components/AccountMobileNav.astro'
       - 'packages/website/src/components/Nav.astro'
       - 'packages/website/src/lib/account-nav.ts'
+      - 'packages/website/src/lib/account-nav-entitlement.ts'
       - 'packages/website/src/lib/supabase-config.ts'
       - 'packages/website/src/lib/supabase-client.ts'
       - 'packages/website/src/styles/account-profile.css'

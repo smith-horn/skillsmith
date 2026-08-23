@@ -1,9 +1,11 @@
 /**
- * Team Tier-Gate E2E Tests (SMI-4321, updated SMI-6110)
+ * Team Tier-Gate E2E Tests (SMI-4321, updated SMI-6110, SMI-6128)
  *
- * Verifies the client-side gate + redirect flow on /account (Team Overview,
- * formerly /account/team — SMI-6110 moved the page but froze
- * check_team_tier_access / resolveGateRedirect themselves) and the sibling
+ * Verifies the client-side gate + redirect flow on /account (page title
+ * "Account", Admin → Overview navigation label — formerly /account/team,
+ * then "Team Overview" under SMI-6110, renamed again under SMI-6128; both
+ * renames froze check_team_tier_access / resolveGateRedirect themselves)
+ * and the sibling
  * /account/team/** pages, which keep the original gate-redirect contract.
  *
  * SMI-6110 / Decision #4 (plan-review issue C1): on /account specifically,
@@ -88,7 +90,7 @@ async function mockSupabase(page: Page, rpcResponses: Record<string, unknown>): 
   })
 }
 
-test.describe('Team tier-gate — /account (Team Overview)', () => {
+test.describe('Team tier-gate — /account (Overview)', () => {
   test.beforeEach(async ({ page }) => {
     await injectSupabaseStub(page)
   })

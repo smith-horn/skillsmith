@@ -15,7 +15,7 @@ export const prerender = false
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import AccountSidebar from '../../components/AccountSidebar.astro'
-import AccountHubNav from '../../components/AccountHubNav.astro'
+import AccountMobileNav from '../../components/AccountMobileNav.astro'
 import Footer from '../../components/Footer.astro'
 import Nav from '../../components/Nav.astro'
 import '../../styles/account-profile.css'
@@ -48,9 +48,8 @@ const supabaseConfig = getSupabaseConfig()
     <div class="account-shell">
       <AccountSidebar currentPath={Astro.url.pathname} />
       <main class="container">
-        <!-- Tab row renders immediately, outside the loading/error/content
-             states, matching the hub mounting contract (L2-10). -->
-        <AccountHubNav currentPath="/account/profile" />
+        <!-- Renders immediately, outside the loading/error/content states. -->
+        <AccountMobileNav currentPath="/account/profile" />
 
         <div id="loading-state" class="center-state">
           <svg class="spinner" viewBox="0 0 24 24">

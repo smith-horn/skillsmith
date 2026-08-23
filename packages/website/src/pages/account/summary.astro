@@ -19,7 +19,7 @@ export const prerender = false
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import AccountSidebar from '../../components/AccountSidebar.astro'
-import AccountHubNav from '../../components/AccountHubNav.astro'
+import AccountMobileNav from '../../components/AccountMobileNav.astro'
 import Footer from '../../components/Footer.astro'
 import Nav from '../../components/Nav.astro'
 
@@ -51,9 +51,8 @@ const supabaseConfig = getSupabaseConfig()
     <div class="account-shell">
       <AccountSidebar currentPath={Astro.url.pathname} />
       <main class="dashboard-container">
-        <!-- Tab row renders immediately, outside the loading/error/content
-             states, matching the Team Overview mounting contract (L2-10). -->
-        <AccountHubNav currentPath="/account/summary" />
+        <!-- Renders immediately, outside the loading/error/content states. -->
+        <AccountMobileNav currentPath="/account/summary" />
 
         <!-- SMI-4463: Quota banner — populated client-side after the
            tier-aware billing-period RPC resolves. Hidden until then. -->
@@ -348,15 +347,12 @@ const supabaseConfig = getSupabaseConfig()
     isEntitledTier,
   } from '../../lib/account-summary-data'
   import { resyncStripeEmailIfPending } from '../../lib/account-flags'
+  import { setAccountNavTeamEntitled } from '../../lib/account-nav-entitlement'
 
   // Read config injected by SSR script in head
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
   const supabaseUrl = config.url
   const supabaseAnonKey = config.anonKey
-
-  function setTeamEntitled(entitled: boolean) {
-    document.querySelector('.account-hub-nav')?.setAttribute('data-team-entitled', String(entitled))
-  }
 
   // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
   document.addEventListener('astro:page-load', async () => {
@@ -428,7 +424,7 @@ const supabaseConfig = getSupabaseConfig()
     try {
       const data = await loadSummaryData(supabase, user.id, user.email ?? null)
 
-      setTeamEntitled(isEntitledTier(data.tier))
+      setAccountNavTeamEntitled(isEntitledTier(data.tier))
 
       const userNameEl = document.getElementById('user-name')
       const userEmailEl = document.getElementById('user-email')

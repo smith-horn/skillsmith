@@ -18,7 +18,7 @@ export const prerender = false
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import AccountSidebar from '../../components/AccountSidebar.astro'
-import AccountHubNav from '../../components/AccountHubNav.astro'
+import AccountMobileNav from '../../components/AccountMobileNav.astro'
 import Nav from '../../components/Nav.astro'
 
 const supabaseConfig = getSupabaseConfig()
@@ -68,9 +68,8 @@ const webPageSchema = {
       <AccountSidebar currentPath={Astro.url.pathname} />
 
       <main class="page-container">
-        <!-- Not a canonical hub destination (H4) — tab row renders with no
-             active tab, matching the hub mounting contract (L2-10). -->
-        <AccountHubNav currentPath={Astro.url.pathname} />
+        <!-- Renders immediately, outside the loading/error/content states. -->
+        <AccountMobileNav currentPath={Astro.url.pathname} />
 
         <!-- Loading State -->
         <div id="loading-state" class="loading-state">
