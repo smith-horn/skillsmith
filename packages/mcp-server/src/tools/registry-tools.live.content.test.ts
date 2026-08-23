@@ -103,6 +103,10 @@ let profileQueries = 0
 let adminRegistryQueries = 0
 let subscriptionIdsQueried: string[] = []
 let userCalls: Recorded[] = []
+/** SMI-6111: every `.rpc()` call, across both client kinds — proves check_registry_team_entitlement is only ever called via the MEMBER client. */
+let rpcCalls: { kind: 'user' | 'admin'; fn: string; params: Record<string, unknown> }[] = []
+/** Set to simulate the RPC call itself failing (network/outage), not a denial. */
+let entitlementRpcError: { message?: string } | null = null
 
 function resolve(kind: 'user' | 'admin', r: Recorded): { data: unknown[]; error: unknown } {
   if (r.table === 'private_registry_skills') {
@@ -147,8 +151,41 @@ function resolve(kind: 'user' | 'admin', r: Recorded): { data: unknown[]; error:
   return { data: [], error: null }
 }
 
+/**
+ * SMI-6111: mocks the `check_registry_team_entitlement` SECURITY DEFINER RPC. Mirrors the real
+ * SQL function's logic exactly (team_members/`not_member` is out of scope for this file — RLS
+ * already proves membership at the metadata-read layer before a team_id ever reaches here, and
+ * no test in this file exercises the not_member branch).
+ */
+function resolveRpc(
+  kind: 'user' | 'admin',
+  fn: string,
+  params: Record<string, unknown> | undefined
+): { data: unknown; error: unknown } {
+  rpcCalls.push({ kind, fn, params: params ?? {} })
+  if (fn !== 'check_registry_team_entitlement') return { data: null, error: null }
+  if (entitlementRpcError) return { data: null, error: entitlementRpcError }
+
+  const teamId = String(params?.p_team_id)
+  const team = teamsById[teamId]
+  if (!team?.subscription_id) {
+    return { data: { entitled: false, detail: 'team_has_no_subscription' }, error: null }
+  }
+  subscriptionIdsQueried.push(team.subscription_id)
+  const sub = subsById[team.subscription_id]
+  if (!sub) return { data: { entitled: false, detail: 'subscription_not_found' }, error: null }
+  if (sub.tier !== 'enterprise') {
+    return { data: { entitled: false, detail: 'team_tier_not_enterprise' }, error: null }
+  }
+  if (!['active', 'trialing', 'past_due'].includes(sub.status)) {
+    return { data: { entitled: false, detail: 'team_subscription_inactive' }, error: null }
+  }
+  return { data: { entitled: true, detail: 'entitled' }, error: null }
+}
+
 function createClient(kind: 'user' | 'admin'): unknown {
   return {
+    rpc: async (fn: string, params?: Record<string, unknown>) => resolveRpc(kind, fn, params),
     from: (table: string) => {
       const record: Recorded = { table, op: 'select', columns: '', filters: {} }
       if (kind === 'user') userCalls.push(record)
@@ -211,6 +248,8 @@ beforeEach(async () => {
   adminRegistryQueries = 0
   subscriptionIdsQueried = []
   userCalls = []
+  rpcCalls = []
+  entitlementRpcError = null
   await installClients()
 })
 
@@ -264,6 +303,10 @@ describe('getAdminUserClient / getMemberUserClient are never swapped at a call s
     await createLiveRegistryService().getContent(TEAM_A, SKILL)
     expect(adminRegistryQueries).toBe(0)
     expect(userCalls.filter((c) => c.table === 'private_registry_skills').length).toBe(2)
+    // SMI-6111: the entitlement RPC itself must also go through the user-bound client — no
+    // service-role client exists in this file anymore, so there is no "admin" leg to swap onto.
+    expect(rpcCalls.every((c) => c.kind === 'user')).toBe(true)
+    expect(rpcCalls.some((c) => c.fn === 'check_registry_team_entitlement')).toBe(true)
   })
 })
 
@@ -324,22 +367,22 @@ describe("getContent() entitlement is resolved against the ROW's own team", () =
   )
 
   it('surfaces an entitlement-lookup outage as an error, never as "not entitled"', async () => {
-    // Only the entitlement lookup is broken; the audit writer keeps its own working client, so the
-    // `error` outcome is still recorded (Sol review #8 wants all four outcomes covered).
-    const { getSupabaseAdminClient } = await import('../supabase-client.js')
-    let call = 0
-    vi.mocked(getSupabaseAdminClient).mockImplementation(async () => {
-      call += 1
-      if (call === 1) throw new Error('no service role key')
-      return createClient('admin')
-    })
+    // SMI-6111: the entitlement check is now a member-client RPC call, not a service-role table
+    // read — the outage now looks like `.rpc()` resolving with a non-null `error`, not a thrown
+    // "no service role key". The audit writer keeps its own working client, so the `error`
+    // outcome is still recorded (Sol review #8 wants all four outcomes covered).
+    entitlementRpcError = { message: 'connection refused' }
 
     await expect(createLiveRegistryService().getContent(TEAM_A, SKILL)).rejects.toThrow(
-      /SUPABASE_SERVICE_ROLE_KEY/
+      /Entitlement lookup failed: connection refused/
     )
     expect(contentQueries).toBe(0)
     expect(auditRows[auditRows.length - 1].result).toBe('error')
     expect(lastAuditMetadata().detail).toBe('entitlement_lookup_failed')
+    // The RPC was reached via the MEMBER client, never admin.
+    expect(rpcCalls).toEqual([
+      { kind: 'user', fn: 'check_registry_team_entitlement', params: { p_team_id: TEAM_A } },
+    ])
   })
 })
 
