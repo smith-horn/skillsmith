@@ -109,7 +109,11 @@ const howToSchema = {
     <li>
       <strong>Installing a skill's actual content</strong> runs as the signed-in member's own
       account instead, so row-level security applies directly; a service-role check afterward
-      confirms the owning team still holds an Enterprise entitlement.
+      confirms the owning team still holds an Enterprise entitlement. That service-role step is
+      wired up for the MCP tool's own install action only, and it isn't reliable there today
+      because a required credential is intentionally absent from the MCP server's environment.
+      Use <code>skillsmith registry install</code> instead: the CLI reaches a separate endpoint
+      under your own signed-in session, with no service-role step involved at all.
     </li>
     <li>
       <strong>Publishing, reviewing, and admin actions</strong> (<code>publish</code>,
@@ -191,6 +195,10 @@ const howToSchema = {
   <h2>Related Documentation</h2>
 
   <ul>
+    <li>
+      <a href="/docs/tutorials/private-registry">Tutorial: Publish to your team's private registry</a>
+      - the hands-on, step-by-step version of this page
+    </li>
     <li><a href="/docs/private-skills">Private Skills</a> - the lighter, single-device alternative</li>
     <li><a href="/docs/governance">Governance</a> - deprecation, audit trail, and compliance reporting</li>
     <li><a href="/docs/trust-tiers">Trust Tiers</a> - how skill trust is evaluated</li>
