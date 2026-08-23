@@ -21,8 +21,19 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   paths fall back to the production Supabase URL/anon key when those env vars are unset — an
   explicit override still always wins. A new `audit:standards` Check 62 fails CI if a
   service-role dependency reappears anywhere under `packages/mcp-server/src/**` outside a named,
-  justified allowlist. `install`/`getContent` still needs the service-role key for its Enterprise
-  entitlement check until SMI-6111 lands. (SMI-6109)
+  justified allowlist. `install`/`getContent`'s own remaining service-role dependency (its
+  Enterprise-entitlement check) is removed separately below. (SMI-6109)
+- **Security**: `private_registry_manage`'s `install` action (and the MCP twin of
+  `getContent()`) no longer requires `SUPABASE_SERVICE_ROLE_KEY` either — the last remaining
+  service-role dependency on this package's registry surface. The entitlement check ("does the
+  team that owns this row currently hold an active Enterprise subscription") now runs server-side
+  via a new narrowly-scoped `SECURITY DEFINER` RPC, `check_registry_team_entitlement(p_team_id)`,
+  called through the caller's own signed-in member client — no admin client exists anywhere in
+  `registry-tools.live.content.ts` anymore. Deliberately not built on the existing
+  `resolve_effective_entitlement()`: that function's personal-subscription fallback has no team
+  correlation and would let a caller with their own personal Enterprise subscription bypass the
+  entitlement check for an unrelated, non-Enterprise team they merely belong to — the new RPC has
+  no such fallback. (SMI-6111)
 - **Fix**: the license middleware never resolved a real subscription tier for a caller
   authenticated only via `skillsmith login` (device-session, no separately-configured
   `SKILLSMITH_API_KEY`) — SMI-1953 covered the API-key path only, so every such caller silently
