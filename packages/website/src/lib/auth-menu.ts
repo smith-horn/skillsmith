@@ -6,7 +6,10 @@
  * were reduced from Dashboard/Subscription/Email Address down to a single
  * "Account" link (relabeled from "Dashboard", H3) plus Sign out as part of
  * the account-dashboard-ux-consolidation plan's hub-tab-row rollout — those
- * two destinations moved into AccountHubNav instead. Extracting the item
+ * two destinations moved into the account area's own persistent navigation
+ * instead (originally the AccountHubNav tab row; SMI-6128 replaced it with
+ * AccountSidebar/AccountMobileNav, which still carry both destinations
+ * under the Admin group). Extracting the item
  * list/template here means a future edit that reintroduces Subscription or
  * Email Address into either surface is caught by the unit tests in
  * auth-menu.test.ts instead of silently drifting back in, the same

@@ -1,56 +1,59 @@
 ---
 /**
- * AccountSidebar — persistent left navigation for /account pages (SMI-5475,
- * reorganized SMI-6128 per
+ * AccountMobileNav — compact account navigation for viewports at and below
+ * 1024px, where `AccountSidebar.astro` is CSS-hidden (SMI-6128, replacing
+ * the retired `AccountHubNav.astro` tab row per
  * docs/internal/implementation/account-nav-admin-tools-reorg.md).
  *
- * Visual parity with DocsSidebar.astro, but in plain scoped CSS: account
- * pages hand-roll their documents and do not load global.css/Tailwind
- * (precedent: TeamNav.astro). Zero client JS — active state is computed
- * server-side per navigation, so the SMI-4896/5158 astro:page-load
- * handler-leak class cannot occur. No transition:persist for the same
- * reason. Hidden at and below 1024px — `AccountMobileNav.astro` covers
- * that range instead (SMI-6128; previously `AccountHubNav.astro`, retired).
+ * A native `<details>` disclosure — no custom client JavaScript for
+ * opening, closing, or selecting entries. Renders the exact same
+ * Admin/Tools/Preferences/Resources groups as the desktop sidebar, from the
+ * same `account-nav.ts` data contract: neither component owns a second
+ * hardcoded copy of labels, hrefs, order, or team-gated metadata.
  *
- * Renders a visible "Account" root heading (h2) above four static,
- * always-expanded groups (h3): Admin, Tools, Preferences, Resources. The
- * root heading and the groups are data-driven from `account-nav.ts` — this
- * component owns no second copy of labels, hrefs, order, or team-gated
- * metadata. Admin and Tools are grouping labels only, not routes (plan
- * Decision #2); there is no /account/admin or /account/tools page.
+ * The collapsed `<summary>` text is `Account navigation: {currentLabel}` —
+ * the current destination's label is a hard requirement of the summary
+ * text itself, not merely "in or adjacent to" it, so a collapsed disclosure
+ * never leaves the visited page unidentified.
  *
- * Team-gated items (Registry, Analytics, Members, Workspaces) render muted
- * with a decorative (aria-hidden) lock glyph plus visually hidden "requires
- * Team plan" text, but only when the nav root carries
- * `data-team-entitled="false"` — set by `setAccountNavTeamEntitled()`
- * (account-nav-entitlement.ts) after a consuming page's own tier/gate
- * check resolves. Absent the attribute (or any value other than the
- * literal string "false"), every link renders normally: fail-open by
- * design, matching SMI-6110's original entitlement contract.
+ * Mounted on all 13 substantive account pages, directly where
+ * `AccountHubNav` used to mount: as the first element inside `<main>`,
+ * before any loading, error, gated, or main content — visible immediately,
+ * never gated, so a user can leave a failing or gated page.
+ *
+ * Team-gated items and the `data-team-entitled` fail-open contract mirror
+ * `AccountSidebar.astro` exactly — see that component's doc comment for the
+ * full rationale. `setAccountNavTeamEntitled()` (account-nav-entitlement.ts)
+ * updates both navigation roots in one call.
+ *
+ * Disclosure open state is local to the current document and is expected
+ * to reset on navigation — no module/global state coordinates it.
  *
  * Usage:
- *   <div class="account-shell">
- *     <AccountSidebar currentPath={Astro.url.pathname} />
- *     <main class="...">...</main>
- *   </div>
+ *   <AccountMobileNav currentPath={Astro.url.pathname} />
  */
 
-import { ACCOUNT_NAV_GROUPS, ACCOUNT_NAV_ROOT_LABEL, isActiveAccountNav } from '../lib/account-nav'
+import {
+  ACCOUNT_NAV_GROUPS,
+  findCurrentAccountNavLabel,
+  isActiveAccountNav,
+} from '../lib/account-nav'
 
 interface Props {
   currentPath: string
 }
 
 const { currentPath } = Astro.props
-const rootHeadingId = 'account-nav-root-heading'
+const currentLabel = findCurrentAccountNavLabel(currentPath)
+const summaryText = currentLabel ? `Account navigation: ${currentLabel}` : 'Account navigation'
 ---
 
-<aside class="account-sidebar">
-  <nav aria-labelledby={rootHeadingId}>
-    <h2 id={rootHeadingId} class="account-nav-root-heading">{ACCOUNT_NAV_ROOT_LABEL}</h2>
+<details class="account-mobile-nav">
+  <summary class="account-mobile-nav-summary">{summaryText}</summary>
+  <nav aria-label="Account navigation">
     {
       ACCOUNT_NAV_GROUPS.map((group) => (
-        <div class="sidebar-section">
+        <div class="account-mobile-nav-group">
           <h3>{group.heading}</h3>
           <ul>
             {group.items.map((item) => {
@@ -59,7 +62,11 @@ const rootHeadingId = 'account-nav-root-heading'
                 <li>
                   <a
                     href={item.href}
-                    class:list={['account-nav-link', { active }, { 'team-gated': item.teamGated }]}
+                    class:list={[
+                      'account-mobile-nav-link',
+                      { active },
+                      { 'team-gated': item.teamGated },
+                    ]}
                     aria-current={active ? 'page' : undefined}
                   >
                     <span class="nav-icon" data-icon={item.icon} />
@@ -81,75 +88,71 @@ const rootHeadingId = 'account-nav-root-heading'
       ))
     }
   </nav>
-</aside>
+</details>
 
-<!-- The .account-shell wrapper lives in each page template, out of scoped-style
-     reach; one shared global definition here beats 13 drifting per-page copies.
-     The component only mounts on account pages, so the leak surface is nil. -->
-<style is:global>
-  .account-shell {
-    display: flex;
-    align-items: stretch;
-    width: 100%;
-    flex: 1;
-    min-height: calc(100vh - 4rem);
-  }
-
-  /* Supplies flex/min-width where page container CSS lacks it (cli-token,
-     telemetry). Astro compiles page-scoped styles with :where() (0-1-0),
-     so this 0-1-1 selector wins without !important. */
-  .account-shell > main {
-    flex: 1;
-    min-width: 0;
+<style>
+  .account-mobile-nav {
+    display: none;
   }
 
   @media (max-width: 1024px) {
-    .account-shell {
+    .account-mobile-nav {
       display: block;
-      min-height: 0;
+      margin-bottom: 1.5rem;
+      border: 1px solid #2a2a2f;
+      border-radius: 0.75rem;
+      background: #121214;
+      overflow: hidden;
     }
   }
-</style>
 
-<style>
-  .account-sidebar {
-    width: 16rem;
-    flex-shrink: 0;
-    border-right: 1px solid #1f1f23; /* dark-800 */
-    background: rgba(18, 18, 20, 0.5); /* dark-900/50 */
-  }
-
-  .account-sidebar > nav {
-    position: sticky;
-    top: 4rem; /* below the 4rem top Nav */
-    height: calc(100vh - 4rem);
-    overflow-y: auto;
-    padding: 1.5rem;
-  }
-
-  .account-nav-root-heading {
-    font-size: 1rem;
-    font-weight: 700;
+  .account-mobile-nav-summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.625rem 1rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
     color: #fafafa;
-    margin: 0 0 1.25rem;
-    padding: 0 0.75rem;
+    cursor: pointer;
+    list-style: none;
   }
 
-  .sidebar-section {
-    margin-bottom: 1.5rem;
+  .account-mobile-nav-summary::-webkit-details-marker {
+    display: none;
   }
 
-  .sidebar-section h3 {
+  .account-mobile-nav-summary::before {
+    content: '\25B8'; /* closed-state disclosure triangle */
+    display: inline-block;
+    margin-right: 0.625rem;
+    transition: transform 0.15s;
+  }
+
+  .account-mobile-nav[open] .account-mobile-nav-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .account-mobile-nav > nav {
+    padding: 0.5rem 0.75rem 1rem;
+    border-top: 1px solid #2a2a2f;
+  }
+
+  .account-mobile-nav-group {
+    margin-top: 1rem;
+  }
+
+  .account-mobile-nav-group h3 {
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #94a3b8; /* dark-400 */
-    margin: 0 0 0.75rem;
-    padding: 0 0.75rem;
+    color: #94a3b8;
+    margin: 0 0 0.5rem;
+    padding: 0 0.5rem;
   }
 
-  .sidebar-section ul {
+  .account-mobile-nav-group ul {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -158,60 +161,50 @@ const rootHeadingId = 'account-nav-root-heading'
     gap: 0.25rem;
   }
 
-  .account-nav-link {
+  .account-mobile-nav-link {
     display: flex;
     align-items: center;
     gap: 0.75rem;
     min-height: 44px;
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem;
     border-radius: 0.5rem;
     font-size: 0.875rem;
     font-weight: 500;
-    color: #cbd5e1; /* dark-300 */
+    color: #cbd5e1;
     text-decoration: none;
-    transition:
-      color 0.15s,
-      background-color 0.15s;
   }
 
-  .account-nav-link:hover {
-    background: #1f1f23; /* dark-800 */
+  .account-mobile-nav-link:hover {
+    background: #1f1f23;
     color: #ffffff;
   }
 
-  .account-nav-link.active {
-    background: rgba(224, 122, 95, 0.1); /* primary-500/10 */
-    color: #ec8b73; /* primary-400 */
+  .account-mobile-nav-link.active {
+    background: rgba(224, 122, 95, 0.1);
+    color: #ec8b73;
   }
 
-  /* Team-gated affordance: muted color + lock glyph, only when the nav root
-     carries data-team-entitled="false". Absent the attribute (or any other
-     value), every link — including team-gated ones — renders normally. */
+  /* Team-gated affordance — identical contract to AccountSidebar.astro. */
   .lock-icon {
     display: none;
   }
 
-  .account-sidebar[data-team-entitled='false'] .account-nav-link.team-gated {
-    color: #6b7280; /* muted */
+  .account-mobile-nav[data-team-entitled='false'] .account-mobile-nav-link.team-gated {
+    color: #6b7280;
   }
 
-  .account-sidebar[data-team-entitled='false'] .account-nav-link.team-gated .lock-icon {
+  .account-mobile-nav[data-team-entitled='false'] .account-mobile-nav-link.team-gated .lock-icon {
     display: inline-block;
     font-size: 0.75em;
     opacity: 0.8;
   }
 
-  /* Visually-hidden text equivalent — only enters the accessibility tree
-     when the link is actually locked, so a fully entitled user's screen
-     reader never hears "requires Team plan" on a link that works fine. The
-     lock glyph itself is aria-hidden (decorative); this text carries the
-     accessible name instead, so the lock is never announced twice. */
   .visually-hidden-lock-text {
     display: none;
   }
 
-  .account-sidebar[data-team-entitled='false']
-    .account-nav-link.team-gated
+  .account-mobile-nav[data-team-entitled='false']
+    .account-mobile-nav-link.team-gated
     .visually-hidden-lock-text {
     display: inline-block;
     position: absolute;
@@ -232,6 +225,7 @@ const rootHeadingId = 'account-nav-root-heading'
     align-items: center;
     justify-content: center;
     opacity: 0.7;
+    flex-shrink: 0;
   }
 
   .nav-icon::before {
@@ -298,11 +292,5 @@ const rootHeadingId = 'account-nav-root-heading'
 
   .nav-icon[data-icon='bar-chart-2']::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cline x1='18' y1='20' x2='18' y2='10'/%3E%3Cline x1='12' y1='20' x2='12' y2='4'/%3E%3Cline x1='6' y1='20' x2='6' y2='14'/%3E%3C/svg%3E");
-  }
-
-  @media (max-width: 1024px) {
-    .account-sidebar {
-      display: none;
-    }
   }
 </style>

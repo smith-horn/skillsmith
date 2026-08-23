@@ -11,7 +11,7 @@ import { ClientRouter } from 'astro:transitions'
 import Footer from '../../../components/Footer.astro'
 import AccountSidebar from '../../../components/AccountSidebar.astro'
 import Nav from '../../../components/Nav.astro'
-import AccountHubNav from '../../../components/AccountHubNav.astro'
+import AccountMobileNav from '../../../components/AccountMobileNav.astro'
 import { getSupabaseConfig } from '../../../lib/supabase-config'
 // This page builds its own <html> document rather than wrapping content in BaseLayout, so it
 // never picked up BaseLayout's `import '../styles/global.css'` — the page's button colors were
@@ -50,7 +50,7 @@ const supabaseConfig = getSupabaseConfig()
       <main class="registry-container">
         <h1>Private Registry</h1>
 
-        <AccountHubNav currentPath="/account/team/registry" />
+        <AccountMobileNav currentPath="/account/team/registry" />
 
         <div id="loading-state" class="loading-state">
           <p>Loading private registry...</p>
@@ -472,14 +472,9 @@ const supabaseConfig = getSupabaseConfig()
   } from '../../../lib/private-registry-dashboard'
   import { isCurrentAccountPath } from '../../../lib/account-page-path'
   import { createNavigationEpochGuard } from '../../../lib/account-navigation-epoch'
+  import { setAccountNavTeamEntitled } from '../../../lib/account-nav-entitlement'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
-
-  // M9: the tab row itself never fetches entitlement data — this page sets
-  // the signal on its nav root once the team gate resolves.
-  function setTeamEntitled(entitled: boolean) {
-    document.querySelector('.account-hub-nav')?.setAttribute('data-team-entitled', String(entitled))
-  }
 
   function escapeHtml(text: string): string {
     // Replace-based rather than the DOM textContent/innerHTML idiom the
@@ -553,7 +548,7 @@ const supabaseConfig = getSupabaseConfig()
 
     const gate = await checkTeamAccess(supabase)
     if (nav.isStale()) return
-    setTeamEntitled(isTeamEntitled(gate))
+    setAccountNavTeamEntitled(isTeamEntitled(gate))
     if (!gate.ok) {
       const redirect = resolveGateRedirect(gate, '/account/team/registry')
       if (redirect) {

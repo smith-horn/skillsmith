@@ -90,6 +90,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Account navigation reorganized into Admin/Tools groups** (2026-08-23,
+  SMI-6128): a second iteration on the account-area redesign shipped the day
+  before (2026-08-22, below). The persistent account sidebar now leads with a
+  visible "Account" root heading over two primary groups — Admin (Overview,
+  Summary, Subscription, Billing History, Email Address) and Tools (Registry,
+  Analytics, CLI Token, Skill Inventory, Members, Workspaces) — with
+  Preferences and Resources retained below. The horizontal tab row introduced
+  the day before is retired: every destination it carried now lives in the
+  sidebar, and a new native `<details>` disclosure below each page's heading
+  replaces it on narrow viewports so every destination stays reachable
+  without a sidebar. `/account`'s page title and heading are renamed from
+  "Team Overview" to "Account" ("Overview" is now its Admin-group navigation
+  label instead); its team-scoped content, gate redirects, and the
+  entitlement-based muted/lock affordance on Registry, Analytics, Members,
+  and Workspaces are unchanged.
 - **Account Dashboard UX Consolidation** (2026-08-22): The account information
   architecture now uses a unified hub with a persistent tab row visible on every
   account page. `/account` now lands on the Team Overview page (team-gated content;
