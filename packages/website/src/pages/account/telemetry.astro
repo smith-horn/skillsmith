@@ -18,6 +18,7 @@ import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import Footer from '../../components/Footer.astro'
 import AccountSidebar from '../../components/AccountSidebar.astro'
+import AccountHubNav from '../../components/AccountHubNav.astro'
 import Nav from '../../components/Nav.astro'
 
 const supabaseConfig = getSupabaseConfig()
@@ -52,6 +53,10 @@ const supabaseConfig = getSupabaseConfig()
       <AccountSidebar currentPath={Astro.url.pathname} />
 
       <main class="page-container">
+        <!-- Not a canonical hub destination (H4) — tab row renders with no
+             active tab, matching the hub mounting contract (L2-10). -->
+        <AccountHubNav currentPath={Astro.url.pathname} />
+
         <div id="loading-state" class="state-block">
           <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
             <circle

@@ -2,7 +2,8 @@
  * Team tier-gate helper (SMI-4321).
  *
  * Wraps the `check_team_tier_access` RPC (migration 078) and returns a
- * normalized result for the three /account/team/** pages to consume.
+ * normalized result for the Team Overview page at `/account` and the four
+ * team-admin pages (Members, Workspaces, Registry, Analytics) to consume.
  *
  * Why client-side: per ADR-111, SSR auth is unreliable through Cloudflare.
  * The authority is still the database — the RPC is SECURITY DEFINER and

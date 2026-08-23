@@ -420,6 +420,7 @@ const isActive = (href: string) => {
 
 <script>
   import { getSupabaseClient } from '../lib/supabase-client'
+  import { renderMobileAuthMenu } from '../lib/auth-menu'
 
   // Mobile menu toggle
   const menuButton = document.getElementById('nav-mobile-button')
@@ -457,11 +458,7 @@ const isActive = (href: string) => {
     if (session?.user) {
       // User is logged in - show account link instead
       mobileAuth.classList.add('logged-in')
-      mobileAuth.innerHTML = `
-        <a href="/account" class="nav-mobile-link">Dashboard</a>
-        <a href="/account/subscription/" class="nav-mobile-link">Subscription</a>
-        <button type="button" class="nav-mobile-link" style="color: #f87171; text-align: left; width: 100%; background: none; border: none; cursor: pointer;" id="nav-mobile-logout">Sign out</button>
-      `
+      mobileAuth.innerHTML = renderMobileAuthMenu()
 
       // Handle mobile logout
       document.getElementById('nav-mobile-logout')?.addEventListener('click', async () => {

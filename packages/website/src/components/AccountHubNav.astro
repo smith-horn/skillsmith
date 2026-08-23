@@ -1,0 +1,210 @@
+---
+/**
+ * AccountHubNav — unified account dashboard tab row (renamed/generalized
+ * from TeamNav.astro).
+ *
+ * @see docs/internal/implementation/account-dashboard-ux-consolidation.md
+ *   Section 3 ("Expand and rename the team tab component into hub
+ *   navigation"), Decision #9 (tab order), H5 (mobile interaction spec),
+ *   M9/L2-8/L2-9 (entitlement affordance), M10/L2-13 (divider).
+ *
+ * Plain server-rendered anchors with `aria-current="page"` — no ARIA
+ * tablist role, no client-side tab switching, no client-computed active
+ * state (L2-3). Exactly two narrowly-scoped fail-open progressive
+ * enhancements exist:
+ *
+ *   (a) M9 entitlement affordance — the tab row itself never fetches
+ *       entitlement data. Each consuming page's own session-resolution
+ *       script sets `data-team-entitled="true"|"false"` on the nav root
+ *       (`.account-hub-nav`) after it resolves the user's tier; CSS alone
+ *       renders the muted/lock treatment from that attribute. Absence of
+ *       the attribute renders every tab normally (fail-open).
+ *   (b) H5 scroll-active-tab-into-view — a few-line `astro:page-load`
+ *       handler below.
+ *
+ * Usage:
+ *   <AccountHubNav currentPath={Astro.url.pathname} />
+ *   <AccountHubNav currentPath="/account/subscription" />
+ */
+
+import {
+  ACCOUNT_HUB_TABS,
+  ACCOUNT_HUB_DIVIDER_AFTER_HREF,
+  isActiveHubTab,
+} from '../lib/account-hub-nav'
+
+interface Props {
+  currentPath: string
+}
+
+const { currentPath } = Astro.props
+---
+
+<nav class="account-hub-nav" aria-label="Account dashboard navigation">
+  <div class="account-hub-nav-tabs">
+    {
+      ACCOUNT_HUB_TABS.map((tab) => {
+        const active = isActiveHubTab(tab.href, currentPath)
+        return (
+          <Fragment>
+            <a
+              href={tab.href}
+              class:list={[
+                'account-hub-nav-tab',
+                { active },
+                { 'account-hub-nav-tab-teamadmin': tab.teamAdmin },
+              ]}
+              aria-current={active ? 'page' : undefined}
+            >
+              {tab.label}
+              {tab.teamAdmin && (
+                <span class="account-hub-nav-lock-text"> (requires Team plan)</span>
+              )}
+            </a>
+            {tab.href === ACCOUNT_HUB_DIVIDER_AFTER_HREF && (
+              <span class="account-hub-nav-divider" aria-hidden="true" />
+            )}
+          </Fragment>
+        )
+      })
+    }
+  </div>
+</nav>
+
+<style>
+  /* H5: overflow-x:auto at ALL widths — the real pinch point is
+     1024–1280px where the 16rem sidebar is still present alongside the
+     tab row, not just below the traditional mobile breakpoint. */
+  .account-hub-nav {
+    position: relative;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid #2a2a2f;
+  }
+
+  /* Static edge-fade scroll affordance (H5) — visible at every width so
+     tabs 5-8 are never undiscoverable on a narrow screen. */
+  .account-hub-nav::before,
+  .account-hub-nav::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 1px;
+    width: 1.5rem;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .account-hub-nav::before {
+    left: 0;
+    background: linear-gradient(to right, #0d0d0f, transparent);
+  }
+
+  .account-hub-nav::after {
+    right: 0;
+    background: linear-gradient(to left, #0d0d0f, transparent);
+  }
+
+  .account-hub-nav-tabs {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-padding-inline: 1rem;
+    scrollbar-width: thin;
+  }
+
+  .account-hub-nav-tab {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+    color: #9ca3af;
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    scroll-margin-inline: 1rem;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
+  }
+
+  .account-hub-nav-tab:hover {
+    color: #fafafa;
+  }
+
+  .account-hub-nav-tab.active {
+    color: #fafafa;
+    border-bottom-color: #b8523a;
+  }
+
+  /* M10/L2-13: presentational divider between Email Address and Members —
+     not a list item, aria-hidden, purely visual. */
+  .account-hub-nav-divider {
+    flex-shrink: 0;
+    width: 1.5rem;
+    position: relative;
+  }
+
+  .account-hub-nav-divider::after {
+    content: '';
+    position: absolute;
+    top: 0.6rem;
+    bottom: 0.6rem;
+    left: 50%;
+    width: 1px;
+    background: #2a2a2f;
+  }
+
+  /* M9/L2-8/L2-9: muted/lock affordance for the four team-administration
+     tabs, driven entirely by a page-set data-team-entitled attribute on
+     the nav root. Absence of the attribute renders normal tabs
+     (fail-open) — nothing below applies unless the attribute is present
+     and literally "false". */
+  .account-hub-nav-lock-text {
+    display: none;
+  }
+
+  .account-hub-nav[data-team-entitled='false'] .account-hub-nav-tab-teamadmin {
+    color: #6b7280;
+  }
+
+  .account-hub-nav[data-team-entitled='false'] .account-hub-nav-tab-teamadmin::after {
+    content: ' \1F512';
+    font-size: 0.75em;
+    margin-left: 0.25em;
+    opacity: 0.8;
+  }
+
+  /* Visually-hidden text equivalent (L2-9) — only enters the accessibility
+     tree when the tab is actually locked; a fully entitled user's screen
+     reader never hears "requires Team plan" on a tab that works fine. */
+  .account-hub-nav[data-team-entitled='false']
+    .account-hub-nav-tab-teamadmin
+    .account-hub-nav-lock-text {
+    display: inline-block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>
+
+<script>
+  // H5: scroll the active tab into view on load / view-transition, so a
+  // keyboard-focused or off-screen active tab is never hidden by the
+  // horizontal-scroll container.
+  document.addEventListener('astro:page-load', () => {
+    document.querySelectorAll('.account-hub-nav [aria-current="page"]').forEach((el) => {
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    })
+  })
+</script>
