@@ -82,6 +82,13 @@ describe('registry-tools.live.auth — direct unit coverage', () => {
     expect(thrown).toBeInstanceOf(Error)
     const message = (thrown as Error).message
     expect(message).toMatch(/skillsmith login/)
+    // Positively verify the member-scoped wording and the interpolated operation name, not just
+    // the absence of admin wording — a GPT-5.6-Sol cross-provider review of PR #2490 found the
+    // original version of this test would still pass even if either of these regressed.
+    expect(message).toMatch(
+      /^A private-registry publish runs as you, not as your team's shared license key/
+    )
+    expect(message).toMatch(/Any team member can do this once signed in/)
     // Must not claim to be an admin-only gate for a member-level operation (plan-review finding H5).
     expect(message).not.toMatch(/team admins/)
   })
