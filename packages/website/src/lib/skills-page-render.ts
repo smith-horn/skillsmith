@@ -14,6 +14,9 @@ import {
   computeDeviceBatchTip,
 } from './inventory-view'
 import type { SkillState, DeviceView, SkillView } from './inventory-view'
+import { escapeHtml } from './skills-utils'
+
+export { escapeHtml }
 
 // ─── Badge config (mirrors InventoryStateBadge.astro) ─────────────────────────
 // Distinct icon shape + WCAG-AA color pair per state — not color alone (WCAG 1.4.1).
@@ -78,22 +81,6 @@ export const BADGE_CONFIG: Record<SkillState, BadgeEntry> = {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * XSS-safe HTML escape for user-supplied strings placed in innerHTML.
- * Pure string-replace (no DOM) so it is safe in both browser and test/SSR
- * contexts and unit-testable. Escapes the five HTML-significant characters,
- * `&` first, covering both element-text and double/single-quoted attribute
- * contexts (the only two contexts the builders below use).
- */
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
 
 /**
  * Returns an HTML string for a WCAG-compliant skill-state badge.

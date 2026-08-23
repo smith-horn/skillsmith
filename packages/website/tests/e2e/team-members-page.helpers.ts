@@ -14,13 +14,26 @@ import type { Page, Route } from '@playwright/test'
 export const SUPABASE_HOST = 'https://stub.supabase.co'
 export const SUPABASE_ANON = 'stub-anon-key'
 
+/**
+ * SMI-6134 (code-health consolidation follow-up): every account page's own
+ * inline SSR script assigns `window.__SUPABASE_CONFIG__ = supabaseConfig` in
+ * its `<head>` — under a real CI harness that overwrites this stub with the
+ * page's own SSR-rendered environment config (a different Supabase project),
+ * silently defeating the mock below. Not yet observed failing here because
+ * this spec family isn't currently wired into any GitHub Actions workflow,
+ * but this is the exact same latent bug complete-profile.helpers.ts's
+ * injectSupabaseStub() had. Defining the property as immutable makes the
+ * page's later same-key assignment a silent no-op instead of a real overwrite.
+ */
 export async function injectSupabaseStub(page: Page): Promise<void> {
   await page.addInitScript(
     ({ url, anonKey }) => {
-      ;(window as unknown as Record<string, unknown>).__SUPABASE_CONFIG__ = {
-        url,
-        anonKey,
-      }
+      Object.defineProperty(window, '__SUPABASE_CONFIG__', {
+        value: { url, anonKey },
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      })
     },
     { url: SUPABASE_HOST, anonKey: SUPABASE_ANON }
   )
