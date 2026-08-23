@@ -166,12 +166,23 @@ const howToSchema = {
         <td>Install a skill from your team's private registry</td>
         <td>Enterprise</td>
       </tr>
+      <tr>
+        <td>Web</td>
+        <td>Private Registry dashboard (account settings)</td>
+        <td>
+          Review pending submissions and approve or reject them with a click; also shows every
+          approved skill and its status
+        </td>
+        <td>Enterprise</td>
+      </tr>
     </tbody>
   </table>
 
   <p>
-    Publishing, listing, and review are MCP-only today — there's no CLI command for any of them
-    yet, only for install.
+    Publishing and listing are MCP-only today — there's no CLI command for either yet, only for
+    install. Review can be done either way: the <code>private_registry_manage</code> MCP tool's
+    <code>approve</code>/<code>reject</code> actions, or the dashboard's Approve and Reject
+    buttons, which call the same underlying check.
   </p>
 
   <h2>Versioning</h2>

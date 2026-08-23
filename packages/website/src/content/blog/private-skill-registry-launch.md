@@ -14,7 +14,7 @@ Picture a platform engineer who spends an afternoon writing a Claude skill that 
 
 That gap is closed today. Skillsmith's private skill registry is live for Enterprise teams: your team gets a registry of its own, invisible to anyone outside the company, and every skill that lands in it gets checked by a second person before a single teammate can install it.
 
-Picture a supply closet with a lock on the door. Everyone on the team has a key. Nothing that goes in ever leaves the building. And before a new box lands on the shelf, someone else with a key has to open it and check what's inside first. That's the private registry: a shelf that's yours, gated by a review step that's mandatory, not optional.
+Picture a supply closet with a lock on the door. Everyone on the team has a key. Nothing that goes on the shelf is visible to anyone outside your team, and it never reaches the public index. And before a new box lands on the shelf, someone else with a key has to open it and check what's inside first. That's the private registry: a shelf that's yours, gated by a review step that's mandatory, not optional.
 
 Each team gets its own namespace, a short prefix like `acme-corp/`, so a skill published there can never collide with anything on the public index and can't even be seen by anyone outside the company.
 
