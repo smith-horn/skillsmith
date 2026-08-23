@@ -293,8 +293,7 @@ jobs:
         with:
           name: cross-harness-inventory-${{ github.run_id }}
           path: |
-            packages/website/playwright-report/
-            test-results/inventory-*.log
+            test-results/playwright/
           retention-days: 7
           if-no-files-found: ignore
 

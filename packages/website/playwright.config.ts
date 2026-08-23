@@ -11,6 +11,26 @@ export default defineConfig({
   testDir: 'tests',
   testMatch: '**/*.spec.ts',
 
+  /* SMI-6119: relocate Playwright's own output outside packages/website/ so
+   * neither this directory nor its per-worker `.playwright-artifacts-N/`
+   * scratch subdirectory (created/torn down at every project boundary --
+   * see WorkerHost in node_modules/playwright/lib/runner/index.js) ever
+   * falls inside the tree the watcher in the `vercel dev` process tree
+   * covers. That watcher's routine scandir of the default in-tree outputDir
+   * (`packages/website/test-results/`) could race the worker-teardown
+   * `removeFolders()` call at the desktop -> mobile project transition,
+   * crash `astro dev` with `ENOENT: no such file or directory, scandir
+   * '.../test-results/.playwright-artifacts-0/traces'`, and fail every
+   * subsequent test with `page.goto: Could not connect ... Connection
+   * refused` -- see SMI-6119 for the full CI-run evidence trail. Resolved
+   * relative to this file's directory (Playwright's own
+   * `path.resolve(configDir, outputDir)` rule), so this lands at
+   * `<repo-root>/test-results/playwright/` -- a sibling of the
+   * `test-results/preview.log` / `test-results/*.log` convention every
+   * vercel-dev-based e2e workflow already uses, already covered by root
+   * .gitignore, and already devcontainer-bind-mounted. */
+  outputDir: '../../test-results/playwright',
+
   /* Snapshot settings */
   snapshotPathTemplate: '{testDir}/visual/__snapshots__/{arg}-{projectName}{ext}',
 
@@ -27,7 +47,20 @@ export default defineConfig({
   workers: 1,
 
   /* Reporter */
-  reporter: [['list'], ['html', { open: 'never' }]],
+  /* HTML report folder relocated alongside outputDir above (SMI-6119) --
+   * both resolve relative to this config file's directory, land as
+   * siblings under <repo-root>/test-results/, and are never nested inside
+   * each other (Playwright's html reporter warns -- prints a Configuration
+   * Error and continues, does not fail the run -- if it detects that
+   * shape; see the `_isSubdirectory` check in
+   * node_modules/playwright/lib/runner/index.js). Note: two of the four
+   * CI workflows sharing this config pass --reporter=list on their
+   * `playwright test` invocation, which overrides this array entirely --
+   * this outputFolder only takes effect for invocations that don't. */
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: '../../test-results/playwright-report' }],
+  ],
 
   /* Shared settings for all projects */
   use: {
@@ -59,11 +92,13 @@ export default defineConfig({
   ],
 
   /* Start the preview server automatically when no server is already
-   * listening on the port. The device-login round-trip CI workflow
-   * (`.github/workflows/device-login-roundtrip.yml`) starts http-server
-   * against `dist/client` before invoking playwright (SMI-4494: the
-   * vercel adapter makes `astro preview` 404 every request, so the
-   * workflow can't rely on Playwright spinning up `npm run preview`).
+   * listening on the port. Every CI workflow that runs these specs
+   * (website-account-e2e.yml, website-skills-e2e.yml,
+   * cross-harness-inventory-e2e.yml, device-login-roundtrip.yml) instead
+   * starts `vercel dev` itself before invoking playwright (SMI-4508;
+   * device-login-roundtrip.yml switched to this from an earlier
+   * http-server/dist/client approach documented at SMI-4494 -- this
+   * comment previously described that superseded approach).
    * `reuseExistingServer: true` lets Playwright detect the externally-
    * started server and skip its own webServer command entirely. */
   webServer: {

@@ -267,8 +267,7 @@ jobs:
         with:
           name: device-login-roundtrip-${{ github.run_id }}
           path: |
-            packages/website/playwright-report/
-            packages/website/test-results/
+            test-results/playwright/
             test-results/cli-*.log
             test-results/preview.log
           retention-days: 7
