@@ -109,7 +109,11 @@ const howToSchema = {
     <li>
       <strong>Installing a skill's actual content</strong> runs as the signed-in member's own
       account instead, so row-level security applies directly; a service-role check afterward
-      confirms the owning team still holds an Enterprise entitlement.
+      confirms the owning team still holds an Enterprise entitlement. That service-role step is
+      wired up for the MCP tool's own install action only, and it isn't reliable there today
+      because a required credential is intentionally absent from the MCP server's environment.
+      Use <code>skillsmith registry install</code> instead: the CLI reaches a separate endpoint
+      under your own signed-in session, with no service-role step involved at all.
     </li>
     <li>
       <strong>Publishing, reviewing, and admin actions</strong> (<code>publish</code>,
@@ -162,12 +166,23 @@ const howToSchema = {
         <td>Install a skill from your team's private registry</td>
         <td>Enterprise</td>
       </tr>
+      <tr>
+        <td>Web</td>
+        <td>Private Registry dashboard (account settings)</td>
+        <td>
+          Review pending submissions and approve or reject them with a click; also shows every
+          approved skill and its status
+        </td>
+        <td>Enterprise</td>
+      </tr>
     </tbody>
   </table>
 
   <p>
-    Publishing, listing, and review are MCP-only today — there's no CLI command for any of them
-    yet, only for install.
+    Publishing and listing are MCP-only today — there's no CLI command for either yet, only for
+    install. Review can be done either way: the <code>private_registry_manage</code> MCP tool's
+    <code>approve</code>/<code>reject</code> actions, or the dashboard's Approve and Reject
+    buttons, which call the same underlying check.
   </p>
 
   <h2>Versioning</h2>
@@ -191,6 +206,10 @@ const howToSchema = {
   <h2>Related Documentation</h2>
 
   <ul>
+    <li>
+      <a href="/docs/tutorials/private-registry">Tutorial: Publish to your team's private registry</a>
+      - the hands-on, step-by-step version of this page
+    </li>
     <li><a href="/docs/private-skills">Private Skills</a> - the lighter, single-device alternative</li>
     <li><a href="/docs/governance">Governance</a> - deprecation, audit trail, and compliance reporting</li>
     <li><a href="/docs/trust-tiers">Trust Tiers</a> - how skill trust is evaluated</li>
