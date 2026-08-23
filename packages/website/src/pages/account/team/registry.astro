@@ -13,6 +13,11 @@ import AccountSidebar from '../../../components/AccountSidebar.astro'
 import Nav from '../../../components/Nav.astro'
 import AccountHubNav from '../../../components/AccountHubNav.astro'
 import { getSupabaseConfig } from '../../../lib/supabase-config'
+// This page builds its own <html> document rather than wrapping content in BaseLayout, so it
+// never picked up BaseLayout's `import '../styles/global.css'` — the page's button colors were
+// hand-rolled and drifted off-brand as a result. Import directly so the real brand tokens
+// (--color-coral, etc.) are available to this page's own <style> block below.
+import '../../../styles/global.css'
 
 const supabaseConfig = getSupabaseConfig()
 ---
@@ -332,7 +337,7 @@ const supabaseConfig = getSupabaseConfig()
 
   .btn {
     padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
+    border-radius: 8px;
     font-family: inherit;
     font-size: 0.875rem;
     font-weight: 500;
@@ -348,17 +353,19 @@ const supabaseConfig = getSupabaseConfig()
     cursor: not-allowed;
   }
 
+  /* Skillsmith's actual primary brand color is coral (--color-coral, global.css) — this page
+     previously hardcoded an unrelated rust-orange (#b8523a) instead of the real brand token. */
   .btn-primary {
-    background: #b8523a;
+    background: var(--color-coral);
     color: #fafafa;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #a04530;
+    background: var(--color-coral-dark);
   }
 
   .btn-secondary {
-    background: #2a2a2f;
+    background: var(--color-bg-tertiary);
     color: #fafafa;
   }
 
@@ -758,61 +765,89 @@ const supabaseConfig = getSupabaseConfig()
           .join('')
       }
 
-      document.getElementById('content')!.addEventListener('click', async (event) => {
-        const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
-          'button[data-action]'
-        )
-        if (!button || button.disabled || !canManage) return
-
-        const action = button.dataset.action
-        const skillId = button.dataset.skillId
-        const version = button.dataset.version
-
-        if (!skillId || !version) return
-
-        const originalText = button.textContent ?? ''
-        button.disabled = true
-        button.textContent = 'Saving...'
-
-        try {
-          if (action === 'review') {
-            const decision = button.dataset.decision
-            if (decision !== 'approved' && decision !== 'rejected') return
-
-            let note: string | null = null
-            if (decision === 'rejected') {
-              const rawNote = window.prompt('Optional rejection note (Cancel aborts):')
-              if (rawNote === null) return
-              note = rawNote.trim() || null
-            }
-
-            await reviewRegistrySubmission(supabase, teamId, skillId, version, decision, note)
-
-            showActionMessage(
-              `${skillId} v${version} was ${decision === 'approved' ? 'approved' : 'rejected'}.`,
-              'success'
+      // astro:page-load re-fires on every ClientRouter view transition back to this route.
+      // Without this guard, re-entering the page (e.g. navigating away via the account tab row
+      // and back)
+      // attaches a NEW click listener to the same #content element every time, on top of any
+      // still-live listener from the previous visit — each with its own now-stale `teamId`/
+      // `canManage`/`supabase` closure. Guarding on a marker on #content itself (not a module-level
+      // flag) means the listener is attached exactly once per DOM node, regardless of how many
+      // times this callback re-runs for the same node.
+      const contentEl = document.getElementById('content')!
+      if (contentEl.dataset.reviewListenerAttached !== 'true') {
+        contentEl.dataset.reviewListenerAttached = 'true'
+        contentEl.addEventListener('click', async (event) => {
+          const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+            'button[data-action]'
+          )
+          if (!button) return
+          if (button.disabled || !canManage) {
+            console.warn(
+              '[registry] click ignored: button disabled or caller lacks manage permission'
             )
-          } else if (action === 'toggle-deprecated') {
-            const deprecated = button.dataset.deprecated === 'true'
-            await setRegistryVersionDeprecated(supabase, teamId, skillId, version, !deprecated)
-
-            showActionMessage(
-              `${skillId} v${version} was ${deprecated ? 'undeprecated' : 'deprecated'}.`,
-              'success'
-            )
+            return
           }
 
-          await loadRegistry()
-        } catch (error) {
-          showActionMessage(
-            error instanceof Error ? error.message : 'The registry action failed.',
-            'error'
-          )
-        } finally {
-          button.disabled = false
-          button.textContent = originalText
-        }
-      })
+          const action = button.dataset.action
+          const skillId = button.dataset.skillId
+          const version = button.dataset.version
+
+          if (!skillId || !version) {
+            console.error(
+              '[registry] click ignored: button is missing skillId/version data attributes'
+            )
+            showActionMessage('Could not identify which skill this button refers to.', 'error')
+            return
+          }
+
+          const originalText = button.textContent ?? ''
+          button.disabled = true
+          button.textContent = 'Saving...'
+
+          try {
+            if (action === 'review') {
+              const decision = button.dataset.decision
+              if (decision !== 'approved' && decision !== 'rejected') {
+                console.error(`[registry] click ignored: unrecognized data-decision "${decision}"`)
+                showActionMessage('This button is misconfigured (unknown decision).', 'error')
+                return
+              }
+
+              let note: string | null = null
+              if (decision === 'rejected') {
+                const rawNote = window.prompt('Optional rejection note (Cancel aborts):')
+                if (rawNote === null) return
+                note = rawNote.trim() || null
+              }
+
+              await reviewRegistrySubmission(supabase, teamId, skillId, version, decision, note)
+
+              showActionMessage(
+                `${skillId} v${version} was ${decision === 'approved' ? 'approved' : 'rejected'}.`,
+                'success'
+              )
+            } else if (action === 'toggle-deprecated') {
+              const deprecated = button.dataset.deprecated === 'true'
+              await setRegistryVersionDeprecated(supabase, teamId, skillId, version, !deprecated)
+
+              showActionMessage(
+                `${skillId} v${version} was ${deprecated ? 'undeprecated' : 'deprecated'}.`,
+                'success'
+              )
+            }
+
+            await loadRegistry()
+          } catch (error) {
+            showActionMessage(
+              error instanceof Error ? error.message : 'The registry action failed.',
+              'error'
+            )
+          } finally {
+            button.disabled = false
+            button.textContent = originalText
+          }
+        })
+      }
 
       await loadRegistry()
       showState('content')
