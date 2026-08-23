@@ -758,7 +758,8 @@ const supabaseConfig = getSupabaseConfig()
       }
 
       // astro:page-load re-fires on every ClientRouter view transition back to this route.
-      // Without this guard, re-entering the page (e.g. navigating away via TeamNav and back)
+      // Without this guard, re-entering the page (e.g. navigating away via the account tab row
+      // and back)
       // attaches a NEW click listener to the same #content element every time, on top of any
       // still-live listener from the previous visit — each with its own now-stale `teamId`/
       // `canManage`/`supabase` closure. Guarding on a marker on #content itself (not a module-level

@@ -1,6 +1,8 @@
 /**
  * private-registry-dashboard-approve.spec.ts
  *
+ * Regression coverage for SMI-6121.
+ *
  * Live dogfooding (2026-08-22) found the Approve/Reject buttons on
  * `/account/team/registry` did nothing when clicked — no error, no network
  * request, no visible feedback. Root cause: `registry.astro`'s
@@ -67,7 +69,7 @@ async function mockRegistryPage(
   await expect(page.locator('#content')).toBeVisible()
 }
 
-test.describe('private registry dashboard — Approve button (SMI-6109 dogfood finding)', () => {
+test.describe('private registry dashboard — Approve button (SMI-6121 dogfood finding)', () => {
   test('clicking Approve issues exactly one review_private_registry_submission call', async ({
     page,
   }) => {
