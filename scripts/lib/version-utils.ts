@@ -4,7 +4,7 @@
  */
 
 import { execFileSync } from 'child_process'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, readdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -133,7 +133,7 @@ export const CORE_DEPENDENTS = [
 ]
 
 /**
- * SMI-5057: walk every PACKAGE_SPECS target (minus skipDepRangeUpdate ones)
+ * SMI-5057: walk every workspace package.json (minus skipDepRangeUpdate ones)
  * and update any workspace dep range whose key matches a freshly-bumped
  * package. Returns the list of files actually modified.
  *
@@ -146,6 +146,19 @@ export const CORE_DEPENDENTS = [
  * include an enterprise bump will correctly rewrite this range to
  * `^<newVersion>` rather than leaving it a no-op — the bump map is keyed
  * off the current call's `plans`, not off PACKAGE_SPECS membership.
+ *
+ * SMI-6098 (this bug's own release): the scan target used to be
+ * `PACKAGE_SPECS` alone — the four *published* packages. That silently
+ * excluded internal-only workspace packages (e.g. `doc-retrieval-mcp`,
+ * which depends on `@skillsmith/core` but is never itself bumped/published
+ * by this script). A core MINOR/MAJOR bump left doc-retrieval-mcp's pinned
+ * `^0.11.2`-style range unable to match the new local version — which
+ * broke npm's local-workspace-symlink resolution for it, and in turn
+ * Turborepo's build-ordering graph (dependsOn: ["^build"] has no edge to
+ * follow if npm no longer resolves the dep to the local workspace package),
+ * producing an intermittent core/doc-retrieval-mcp build race on fresh
+ * containers. Now scans every directory under `packages/*` so any workspace
+ * consumer's pin gets refreshed, published or not.
  */
 export function updateWorkspaceDependencies(
   plans: Array<{ spec: PackageSpec; newVersion: string }>
@@ -162,11 +175,19 @@ export function updateWorkspaceDependencies(
   // it today.
   const DEP_KINDS = ['dependencies', 'devDependencies', 'peerDependencies'] as const
 
-  for (const target of PACKAGE_SPECS) {
-    if (target.skipDepRangeUpdate) continue
-    const fullPath = join(ROOT_DIR, target.packageJsonPath)
-    // SMI-5057 M-7: the enterprise submodule may be uninitialized on
-    // external clones. Graceful skip — never throw.
+  const skipDepRangeUpdatePaths = new Set(
+    PACKAGE_SPECS.filter((s) => s.skipDepRangeUpdate).map((s) => s.packageJsonPath)
+  )
+  const packagesDir = join(ROOT_DIR, 'packages')
+  const targetPackageJsonPaths = readdirSync(packagesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join('packages', entry.name, 'package.json'))
+    .filter((relPath) => !skipDepRangeUpdatePaths.has(relPath))
+
+  for (const relPath of targetPackageJsonPaths) {
+    const fullPath = join(ROOT_DIR, relPath)
+    // SMI-5057 M-7: the enterprise submodule (or any package dir lacking a
+    // package.json) may be uninitialized/absent. Graceful skip — never throw.
     if (!existsSync(fullPath)) continue
 
     const pkg = JSON.parse(readFileSync(fullPath, 'utf-8'))
@@ -188,7 +209,7 @@ export function updateWorkspaceDependencies(
 
     if (changed) {
       writeFileSync(fullPath, JSON.stringify(pkg, null, 2) + '\n')
-      updated.push(target.packageJsonPath)
+      updated.push(relPath)
     }
   }
 
