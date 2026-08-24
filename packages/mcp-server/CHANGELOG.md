@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.11
+
+- **Fix**: 0.7.10 was uninstallable — `npx @skillsmith/mcp-server@latest --version` threw
+  `SyntaxError: The requested module '@skillsmith/core' does not provide an export named
+  'SessionTierAuthError'`. Root cause: 0.7.10's source imported `getApiBaseUrl`,
+  `resolveSessionTier`, `SessionTierAuthError`, and `SessionTierTransientError` from
+  `@skillsmith/core`, but core's published version was never bumped past 0.11.7 — the release
+  that predates those exports. This package's `@skillsmith/core` dependency floor is corrected to
+  `^0.12.0`, the first core release that actually contains them (SMI-6143).
+
 ## v0.7.10
 
 - **Fix**: remove SUPABASE_SERVICE_ROLE_KEY from registry install path (#2494)

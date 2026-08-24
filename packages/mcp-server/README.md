@@ -6,7 +6,11 @@ MCP (Model Context Protocol) server for agent skill publishing, installation, an
 
 Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
-## What's New in v0.7.10
+## What's New in v0.7.11
+
+- **Fix: 0.7.10 was uninstallable** — it imported `@skillsmith/core` exports (`SessionTierAuthError`, `SessionTierTransientError`, `resolveSessionTier`, `getApiBaseUrl`) that only shipped in core 0.12.0, but this package's own dependency floor still allowed the older, broken-for-this-purpose 0.11.7. The `@skillsmith/core` dependency is now `^0.12.0` (SMI-6143). No other changes in this release.
+
+### What's New in v0.7.10
 
 - **Security: `SUPABASE_SERVICE_ROLE_KEY` removed from every MCP-host code path**: `private_registry_manage`'s `list`, `get`, `namespace`, and `install` actions — plus the registry-install path — no longer run on the Supabase service-role client. They now run as the signed-in user (`skillsmith login`) or through a narrowly-scoped `SECURITY DEFINER` RPC, so there's no admin credential left to configure or distribute (SMI-6109/SMI-6111).
 - **Session-login users now get their real subscription tier**: callers authenticated only via `skillsmith login` (no separately-configured `SKILLSMITH_API_KEY`) previously fell back to `community` regardless of actual entitlement, silently blocking Enterprise-gated tools like `private_registry_manage`/`private_registry_publish` (SMI-6098).
