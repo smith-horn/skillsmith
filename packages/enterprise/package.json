@@ -50,7 +50,7 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
-    "@skillsmith/mcp-server": "^0.7.9",
+    "@skillsmith/mcp-server": "^0.7.10",
     "@smithy/config-resolver": "4.6.16",
     "@smithy/core": "3.31.1",
     "@smithy/middleware-endpoint": "4.6.16",
@@ -62,7 +62,7 @@
     "vitest": "4.1.10"
   },
   "peerDependencies": {
-    "@skillsmith/mcp-server": "^0.7.9"
+    "@skillsmith/mcp-server": "^0.7.10"
   },
   "peerDependenciesMeta": {
     "@skillsmith/mcp-server": {

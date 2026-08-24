@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.10
+
+- **Fix**: remove SUPABASE_SERVICE_ROLE_KEY from registry install path (#2494)
+- **Fix**: remove SUPABASE_SERVICE_ROLE_KEY from customer-facing private registry reads (#2472)
 - **Security**: `private_registry_manage`'s `list`, `get`, and `namespace` actions no longer
   require `SUPABASE_SERVICE_ROLE_KEY` on the MCP host. They previously ran on the Supabase
   service-role client — the backend's most powerful credential, which bypasses row-level security
