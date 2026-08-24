@@ -594,7 +594,7 @@ check_website_docs_tutorials_index_renders() {
     return 1
   fi
   if ! assert_contains "$body" 'How you use a skill, day to day' "tutorials-landing"; then
-    report_fail "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "lifecycle-fingerprint" "missing" "$ms"
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "tutorials-landing" "missing" "$ms"
     return 1
   fi
   report_pass "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "$ms"
