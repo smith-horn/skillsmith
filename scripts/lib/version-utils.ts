@@ -133,6 +133,26 @@ export const CORE_DEPENDENTS = [
 ]
 
 /**
+ * SMI-6098 follow-up: package.json paths under `packages/*` that must be
+ * excluded from `updateWorkspaceDependencies`'s scan even though they are
+ * NOT `PACKAGE_SPECS` entries (the `skipDepRangeUpdate` flag only reaches
+ * paths that ARE in that array).
+ *
+ * `packages/skillsmith-cli` (the unscoped `skillsmith-cli` npm wrapper,
+ * SMI-3561/SMI-5512/SMI-5513) depends on `@skillsmith/cli` but its own
+ * `version` field is bumped and published on a fully separate, manual
+ * cadence (`publish-skillsmith-cli` in `.github/workflows/publish.yml`
+ * skips publishing whenever its package.json version is already live on
+ * npm). Once the readdirSync-based scan (below) started walking every
+ * `packages/*` directory instead of only `PACKAGE_SPECS`, it would also
+ * catch this wrapper's `@skillsmith/cli` pin on the next `cli` version
+ * bump — rewriting the committed dependency range without also bumping
+ * the wrapper's own `version`, so the range would silently drift out of
+ * step with what's actually published, on every future `cli` release.
+ */
+const EXTRA_SKIP_DEP_RANGE_UPDATE_PATHS = ['packages/skillsmith-cli/package.json']
+
+/**
  * SMI-5057: walk every workspace package.json (minus skipDepRangeUpdate ones)
  * and update any workspace dep range whose key matches a freshly-bumped
  * package. Returns the list of files actually modified.
@@ -175,9 +195,10 @@ export function updateWorkspaceDependencies(
   // it today.
   const DEP_KINDS = ['dependencies', 'devDependencies', 'peerDependencies'] as const
 
-  const skipDepRangeUpdatePaths = new Set(
-    PACKAGE_SPECS.filter((s) => s.skipDepRangeUpdate).map((s) => s.packageJsonPath)
-  )
+  const skipDepRangeUpdatePaths = new Set([
+    ...PACKAGE_SPECS.filter((s) => s.skipDepRangeUpdate).map((s) => s.packageJsonPath),
+    ...EXTRA_SKIP_DEP_RANGE_UPDATE_PATHS,
+  ])
   const packagesDir = join(ROOT_DIR, 'packages')
   const targetPackageJsonPaths = readdirSync(packagesDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())

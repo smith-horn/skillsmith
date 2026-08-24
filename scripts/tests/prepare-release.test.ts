@@ -220,6 +220,28 @@ describe('updateWorkspaceDependencies (SMI-5057)', () => {
     expect(updated).not.toContain('packages/vscode-extension/package.json')
   })
 
+  it('skips packages/skillsmith-cli (unscoped wrapper, separate publish cadence) on a cli bump (SMI-6098 follow-up)', () => {
+    // packages/skillsmith-cli isn't a PACKAGE_SPECS entry (its own version is
+    // bumped/published manually, not by this script), so it can't be reached
+    // by the skipDepRangeUpdate flag alone once the scan walks every
+    // packages/* directory. Guard against a future cli bump silently
+    // rewriting its @skillsmith/cli pin out of step with its own unbumped
+    // version field.
+    const cliPlan = {
+      spec: PACKAGE_SPECS.find((s) => s.shortName === 'cli')!,
+      newVersion: '0.99.99',
+    }
+
+    const { updated } = updateWorkspaceDependencies([cliPlan])
+
+    expect(updated).not.toContain('packages/skillsmith-cli/package.json')
+    expect(
+      mockedWriteFileSync.mock.calls.find((c) =>
+        String(c[0]).endsWith('packages/skillsmith-cli/package.json')
+      )
+    ).toBeUndefined()
+  })
+
   it('treats peerDependencies with non-bumped key as a no-op (SMI-5057 M-5)', () => {
     // This test's `plans` array below deliberately omits an enterprise bump,
     // so "@smith-horn/enterprise" never lands in this call's bump map and is
