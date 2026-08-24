@@ -174,6 +174,35 @@ describe('updateWorkspaceDependencies (SMI-5057)', () => {
     expect(cliPkg.devDependencies['@skillsmith/core']).toBe('^0.7.3')
   })
 
+  it('updates @skillsmith/core dep range in internal-only doc-retrieval-mcp, not just PACKAGE_SPECS targets (SMI-6098 regression)', () => {
+    // doc-retrieval-mcp is never itself bumped/published by this script (it's
+    // not in PACKAGE_SPECS), but it does depend on @skillsmith/core — its pin
+    // must still get refreshed on a core bump, or npm stops resolving it as a
+    // local workspace symlink once the pin no longer covers the new version
+    // (breaking Turborepo's build-ordering graph for it — the real bug this
+    // guards against).
+    // Use a version guaranteed to differ from whatever's currently on disk
+    // (unmocked readFileSync reads the real, live package.json) — otherwise
+    // updateWorkspaceDependencies's `currentRange !== newRange` no-op guard
+    // would mask this test the moment the real repo happened to already be
+    // pinned to the same value.
+    const corePlan = {
+      spec: PACKAGE_SPECS.find((s) => s.shortName === 'core')!,
+      newVersion: '0.99.99',
+    }
+
+    const { updated } = updateWorkspaceDependencies([corePlan])
+
+    expect(updated).toContain('packages/doc-retrieval-mcp/package.json')
+
+    const docRetrievalWrite = mockedWriteFileSync.mock.calls.find((c) =>
+      String(c[0]).endsWith('packages/doc-retrieval-mcp/package.json')
+    )
+    expect(docRetrievalWrite).toBeDefined()
+    const docRetrievalPkg = JSON.parse(String(docRetrievalWrite![1]))
+    expect(docRetrievalPkg.dependencies['@skillsmith/core']).toBe('^0.99.99')
+  })
+
   it('skips skillsmith-vscode (skipDepRangeUpdate=true) even if a future contributor adds @skillsmith/* deps', () => {
     // Simulate the vscode entry having a hypothetical core dep.
     const vscodeSpec = PACKAGE_SPECS.find((s) => s.shortName === 'vscode')!
