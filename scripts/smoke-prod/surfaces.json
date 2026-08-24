@@ -216,7 +216,7 @@
         "check_website_docs_tutorials_maintain_renders",
         "check_website_docs_tutorials_author_renders",
         "check_website_docs_tutorials_govern_renders",
-        "check_website_docs_tutorials_retire_renders",
+        "check_website_docs_tutorials_uninstall_renders",
         "check_website_docs_vscode_extension_renders",
         "check_website_docs_authoring_redirect"
       ]
