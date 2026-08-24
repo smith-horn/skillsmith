@@ -43,7 +43,7 @@ const supabaseConfig = getSupabaseConfig()
     <div class="account-shell">
       <AccountSidebar currentPath={Astro.url.pathname} />
 
-      <main class="workspaces-container">
+      <main class="workspaces-container" data-account-page="/account/team/workspaces">
         <h1>Team Workspaces</h1>
 
         <AccountMobileNav currentPath="/account/team/workspaces" />
@@ -412,7 +412,7 @@ const supabaseConfig = getSupabaseConfig()
   import { createClient } from '@supabase/supabase-js'
   import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
   import { isTeamEntitled } from '../../../lib/account-overview-data'
-  import { isCurrentAccountPath } from '../../../lib/account-page-path'
+  import { isAccountPageMounted, isCurrentAccountPath } from '../../../lib/account-page-path'
   import { createNavigationEpochGuard } from '../../../lib/account-navigation-epoch'
   import { setAccountNavTeamEntitled } from '../../../lib/account-nav-entitlement'
 
@@ -441,7 +441,10 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   document.addEventListener('astro:page-load', async () => {
+    // SMI-6154: pathname alone isn't enough on a browser back/forward
+    // navigation — see account/index.astro's identical comment.
     if (!isCurrentAccountPath(window.location.pathname, '/account/team/workspaces')) return
+    if (!isAccountPageMounted('/account/team/workspaces')) return
 
     // SMI-6112: see account/index.astro's identical comment for the full
     // rationale — a single entry-path check cannot protect the

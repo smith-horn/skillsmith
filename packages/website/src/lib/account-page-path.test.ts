@@ -2,8 +2,12 @@
  * Tests for the shared account-area path normalization (SMI-6112).
  */
 
-import { describe, expect, it } from 'vitest'
-import { isCurrentAccountPath, normalizeAccountPath } from './account-page-path'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  isAccountPageMounted,
+  isCurrentAccountPath,
+  normalizeAccountPath,
+} from './account-page-path'
 
 /** The five team-gated account pages this predicate guards (SMI-6112). */
 const CANONICAL_PATHS = [
@@ -72,5 +76,53 @@ describe('isCurrentAccountPath', () => {
 
   it('is not fooled by a shared prefix', () => {
     expect(isCurrentAccountPath('/account/team/membersextra', '/account/team/members')).toBe(false)
+  })
+})
+
+describe('isAccountPageMounted', () => {
+  /** Minimal `{ querySelector }` stub — no real DOM in the `node` vitest environment. */
+  function fakeDoc(present: string[]): Pick<Document, 'querySelector'> {
+    return {
+      querySelector: vi.fn((selector: string) => {
+        for (const path of present) {
+          if (selector === `[data-account-page="${path}"]`) return {} as Element
+        }
+        return null
+      }),
+    }
+  }
+
+  it('reports true when the marker for the expected path is present', () => {
+    for (const path of CANONICAL_PATHS) {
+      expect(isAccountPageMounted(path, fakeDoc([path])), path).toBe(true)
+    }
+  })
+
+  it('reports false when the live document has no marker at all', () => {
+    expect(isAccountPageMounted('/account', fakeDoc([]))).toBe(false)
+  })
+
+  it('reports false when the live document has a DIFFERENT page marker (SMI-6154 core case: DOM belongs to another route)', () => {
+    expect(isAccountPageMounted('/account', fakeDoc(['/account/team/members']))).toBe(false)
+  })
+
+  it('queries the exact attribute selector, not a substring or prefix match', () => {
+    const doc = fakeDoc(['/account/team/members'])
+    expect(isAccountPageMounted('/account/team', doc)).toBe(false)
+    expect(doc.querySelector).toHaveBeenCalledWith('[data-account-page="/account/team"]')
+  })
+
+  it('defaults to the global document when none is injected', () => {
+    // No real DOM in the `node` vitest environment — stub a global
+    // `document` for the duration of this test so the omitted-second-arg
+    // call shape (the real production call site: `isAccountPageMounted('/account')`)
+    // is genuinely exercised, not just documented.
+    vi.stubGlobal('document', fakeDoc(['/account']))
+    try {
+      expect(isAccountPageMounted('/account')).toBe(true)
+      expect(isAccountPageMounted('/account/team/members')).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
