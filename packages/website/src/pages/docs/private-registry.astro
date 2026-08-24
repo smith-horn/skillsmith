@@ -102,18 +102,19 @@ const howToSchema = {
     </li>
     <li>
       <strong>Listing and metadata lookups</strong> (<code>list</code>, <code>get</code>,
-      looking up your namespace) run through a service-role connection that bypasses row-level
-      security by design, so team scoping — plus only ever surfacing approved versions — is
-      enforced explicitly in application code on every request.
+      looking up your namespace) run as your own signed-in account, no admin role required —
+      any team member can do these. Row-level security alone isn't the whole story here: you
+      can belong to more than one team, and row-level security doesn't hide deprecated versions
+      on its own, so team scoping and "approved, non-deprecated only" are also enforced
+      explicitly on every request, on top of row-level security rather than instead of it.
     </li>
     <li>
-      <strong>Installing a skill's actual content</strong> runs as the signed-in member's own
-      account instead, so row-level security applies directly; a service-role check afterward
-      confirms the owning team still holds an Enterprise entitlement. That service-role step is
-      wired up for the MCP tool's own install action only, and it isn't reliable there today
-      because a required credential is intentionally absent from the MCP server's environment.
-      Use <code>skillsmith registry install</code> instead: the CLI reaches a separate endpoint
-      under your own signed-in session, with no service-role step involved at all.
+      <strong>Installing a skill's actual content</strong> also runs entirely as your own
+      signed-in account — row-level security applies directly to both the metadata and content
+      reads, and a database-side check confirms the owning team still holds an Enterprise
+      entitlement before any content is returned. This holds whether you install via the CLI
+      (<code>skillsmith registry install</code>) or the MCP tool's own install action; neither
+      path needs anything beyond your own login.
     </li>
     <li>
       <strong>Publishing, reviewing, and admin actions</strong> (<code>publish</code>,

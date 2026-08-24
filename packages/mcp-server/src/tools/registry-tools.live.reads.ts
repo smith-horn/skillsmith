@@ -6,19 +6,25 @@
  *
  * Split out of `registry-tools.live.ts` (499/500 lines before this wave) — the established
  * `.live.auth.ts`/`.live.audit.ts`/`.live.content.ts`/`.live.submissions.ts` companion-module
- * convention. Holds `listSkills()`/`getSkill()`, the two service-role read paths that must carry
- * an explicit, mandatory in-query predicate for every column RLS does not enforce on this
- * credential (ADR-116's "service-role bypasses RLS, so tenant isolation is enforced here"
- * invariant, which SMI-5949 Wave 2 already extended once to `approval_status = 'approved'`, D-4
- * surfaces 3/4).
+ * convention. Holds `listSkills()`/`getSkill()`, the two read paths that must carry an explicit,
+ * mandatory in-query predicate for every column RLS does not enforce on the credential they run
+ * as (ADR-116's "tenant isolation is enforced here" invariant, which SMI-5949 Wave 2 already
+ * extended once to `approval_status = 'approved'`, D-4 surfaces 3/4). At the time this comment was
+ * first written, that credential was service-role; as of SMI-6109 it's the caller's own member
+ * JWT, bound by `registry-tools.live.member-reads.ts`'s `auditedList()`/`auditedGet()` wrappers
+ * (the actual callers — `registry-tools.live.ts` no longer calls into this file directly). The
+ * in-query predicate requirement itself is unchanged by that credential switch: RLS alone still
+ * isn't enough here, because a caller can belong to multiple teams and RLS does not scope
+ * `deprecated` at all (see below) — this module's mandatory filters are what actually enforce
+ * both, regardless of which client executes the query.
  *
  * **What Wave 3 adds**: `deprecated = FALSE`. Unlike `approval_status`, `deprecated` was NEVER
- * enforced anywhere on read — not even on the two RLS-protected surfaces (`getSkillContent()`,
- * the Edge Function), because RLS's `private_registry_skills_member_read` policy only ever scoped
+ * enforced anywhere on read — not even on the RLS-protected surfaces (`getSkillContent()`, the
+ * Edge Function), because RLS's `private_registry_skills_member_read` policy only ever scoped
  * `team_id` (and, since Wave 2, `approval_status`) — never `deprecated`. The plan doc's Context
  * section names this precisely: `deprecated` was documented ("hidden from search") and messaged
  * (`private_registry_manage(action:'deprecate')`'s response text) as hiding a skill, while no read
- * path actually filtered on it. This module closes that gap for the two service-role surfaces;
+ * path actually filtered on it. This module closes that gap for `list`/`get`;
  * `registry-tools.live.content.ts` and the Edge Function close it for their own two surfaces
  * separately, since neither imports from here.
  *
@@ -27,8 +33,8 @@
  * for why the asymmetry is intentional, not an inconsistency.
  *
  * Imports from `registry-tools.live.ts` are TYPE-ONLY, mirroring `registry-tools.live.content.ts`'s
- * own convention: `live.ts` imports `listSkills`/`getSkill` from here at runtime, so a value import
- * back would be a real cycle.
+ * own convention: `registry-tools.live.member-reads.ts` imports `listSkills`/`getSkill` from here
+ * at runtime, so a value import back to `.live.ts` would be a real cycle.
  */
 
 import { REGISTRY_METADATA_COLUMNS, REGISTRY_TABLE } from './registry-tools.content.types.js'

@@ -5242,8 +5242,11 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
       'identical list/get-shaped pattern across 8 methods, writes included — needs its own design (SMI-6109 plan)',
     'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
       'audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read',
-    'packages/mcp-server/src/tools/registry-tools.live.content.ts':
-      "getContent()/install's Enterprise-entitlement check — subscriptions RLS blocks non-purchasers; needs a new SECURITY DEFINER RPC (SMI-6111)",
+    // registry-tools.live.content.ts's entry was removed here (SMI-6111, 2026-08-24): its
+    // getContent()/install() entitlement check now uses check_registry_team_entitlement(), a
+    // SECURITY DEFINER RPC via the member client — no getSupabaseAdminClient() call remains in
+    // that file, so it needs no allowlist entry. If this Check ever fails on that file again,
+    // treat it as a real regression, not a stale-allowlist gap.
   }
   const MCP_SERVICE_ROLE_ALLOWLIST = new Set(Object.keys(MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS))
 
