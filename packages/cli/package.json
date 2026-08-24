@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@skillsmith/core": "^0.11.7",
-    "@skillsmith/mcp-server": "^0.7.9",
+    "@skillsmith/mcp-server": "^0.7.10",
     "@types/node": "^25.9.3",
     "esbuild": "0.28.1",
     "vitest": "4.1.10"

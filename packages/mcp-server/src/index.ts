@@ -7,10 +7,6 @@
  * @see SMI-XXXX: First-run integration and documentation delivery
  */
 
-import { createRequire } from 'node:module'
-
-// ESM-compatible require for dynamic module resolution
-const require = createRequire(import.meta.url)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
@@ -120,11 +116,15 @@ export type {
 } from './webhooks/stripe-webhook-endpoint.js'
 
 // Package version - keep in sync with package.json
-const PACKAGE_VERSION = '0.7.9'
+const PACKAGE_VERSION = '0.7.10'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 const logger = createLogger('mcp', { version: PACKAGE_VERSION }) // SMI-5615
 import { installBundledSkills, installUserDocs } from './onboarding/install-assets.js'
-import { handleDocsFlag, ensureSkillsmithSkillInstalled } from './index.startup-helpers.js'
+import {
+  handleDocsFlag,
+  ensureSkillsmithSkillInstalled,
+  runStartupDiagnostics,
+} from './index.startup-helpers.js'
 
 // SMI-2679: Quota enforcement middleware — module-level singletons, initialized once
 // licenseMiddleware uses a cache (TTL) so the first-call @smith-horn/enterprise lazy-load
@@ -249,87 +249,9 @@ export async function runFirstTimeSetup(): Promise<string[]> {
 // SMI-5582 (plan G): re-export so integration tests can drive it directly.
 export { maybeInstallMissingTier1Skills }
 
-/**
- * SMI-2163: Startup diagnostics for common installation issues
- * Detects native module problems and provides actionable error messages
- */
-function runStartupDiagnostics(): void {
-  // Check for native module issues by attempting dynamic import simulation
-  // The actual check happens when @skillsmith/core loads better-sqlite3
-  try {
-    // Verify core module can be loaded (will fail if native modules broken)
-    require.resolve('@skillsmith/core')
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-
-    if (msg.includes('NODE_MODULE_VERSION')) {
-      logger.error(`
-╔══════════════════════════════════════════════════════════════╗
-║  Skillsmith: Native Module Version Mismatch                  ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║  Your Node.js version (${process.version.padEnd(10)}) doesn't match the       ║
-║  pre-compiled native modules.                                ║
-║                                                              ║
-║  To fix, run one of:                                         ║
-║                                                              ║
-║    SKILLSMITH_FORCE_WASM=true to use WASM SQLite fallback    ║
-║                                                              ║
-║  Or reinstall completely:                                    ║
-║                                                              ║
-║    npm uninstall @skillsmith/mcp-server                      ║
-║    npm install @skillsmith/mcp-server                        ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-`)
-      process.exit(1)
-    }
-
-    if (msg.includes('GLIBC') || msg.includes('libc') || msg.includes('GLIBCXX')) {
-      logger.error(`
-╔══════════════════════════════════════════════════════════════╗
-║  Skillsmith: Missing System Library (glibc)                  ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║  Native modules require glibc which is not available on      ║
-║  Alpine Linux or some minimal containers.                    ║
-║                                                              ║
-║  Options:                                                    ║
-║    1. Use a Debian/Ubuntu-based environment                  ║
-║    2. Use Docker: docker run -it node:22 npx @skillsmith/... ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-`)
-      process.exit(1)
-    }
-
-    if (msg.includes('invalid ELF header')) {
-      logger.error(`
-╔══════════════════════════════════════════════════════════════╗
-║  Skillsmith: Architecture Mismatch                           ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║  Native modules were compiled for a different architecture.  ║
-║                                                              ║
-║  This can happen when:                                       ║
-║    - Copying node_modules between machines                   ║
-║    - Running x86 modules on ARM (or vice versa)              ║
-║                                                              ║
-║  To fix, reinstall:                                          ║
-║                                                              ║
-║    rm -rf node_modules                                       ║
-║    npm install                                               ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-`)
-      process.exit(1)
-    }
-
-    // Unknown module resolution error - log but don't exit
-    // The actual error will surface when the module is used
-    logger.warn(`[Skillsmith] Warning: Could not resolve @skillsmith/core: ${msg}`)
-  }
-}
+// SMI-2163: Startup diagnostics (native module errors) extracted to
+// index.startup-helpers.ts's runStartupDiagnostics() to keep this file under
+// the 500-LOC gate (SMI-6111). Call site unchanged, in main() below.
 
 // SMI-5009 (origin) / SMI-5039 (extraction): the embedding capability probe
 // now lives in @skillsmith/core/embeddings/probe. See that file for the
