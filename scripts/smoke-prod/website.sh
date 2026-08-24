@@ -593,8 +593,8 @@ check_website_docs_tutorials_index_renders() {
     report_fail "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "200" "$status" "$ms"
     return 1
   fi
-  if ! assert_contains "$body" 'The Skillsmith lifecycle' "tutorials-landing"; then
-    report_fail "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "lifecycle-fingerprint" "missing" "$ms"
+  if ! assert_contains "$body" 'How you use a skill, day to day' "tutorials-landing"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "tutorials-landing" "missing" "$ms"
     return 1
   fi
   report_pass "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "$ms"
@@ -727,8 +727,8 @@ check_website_docs_tutorials_govern_renders() {
   return 0
 }
 
-check_website_docs_tutorials_retire_renders() {
-  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/retire"
+check_website_docs_tutorials_uninstall_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/uninstall"
   local t0 t1 ms resp status body
   t0=$(now_ms)
   resp=$(with_retry http_body GET "$url") || true
@@ -737,14 +737,14 @@ check_website_docs_tutorials_retire_renders() {
   status=$(printf '%s' "$resp" | head -n1)
   body=$(printf '%s' "$resp" | tail -n +2)
   if [ "$status" != "200" ]; then
-    report_fail "website-docs-tutorials" "check_website_docs_tutorials_retire_renders" "$url" "200" "$status" "$ms"
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_uninstall_renders" "$url" "200" "$status" "$ms"
     return 1
   fi
-  if ! assert_contains "$body" 'Tutorial: Retire skills' "retire-fingerprint"; then
-    report_fail "website-docs-tutorials" "check_website_docs_tutorials_retire_renders" "$url" "retire-fingerprint" "missing" "$ms"
+  if ! assert_contains "$body" 'Tutorial: Uninstall skills' "uninstall-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_uninstall_renders" "$url" "uninstall-fingerprint" "missing" "$ms"
     return 1
   fi
-  report_pass "website-docs-tutorials" "check_website_docs_tutorials_retire_renders" "$url" "$ms"
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_uninstall_renders" "$url" "$ms"
   return 0
 }
 
