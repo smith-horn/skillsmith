@@ -41,8 +41,19 @@ import {
 } from './complete-profile.helpers'
 import { refireAstroPageLoad } from './astro-helpers'
 
-// The bug surfaces as a null property access, phrased differently per engine.
-const NULL_DEREF = /Cannot read properties of null|null is not an object|reading 'style'/
+// The bug surfaces as a null property access, phrased differently per
+// engine AND per read-vs-write (SMI-6154 discovery: V8/Chromium phrases a
+// null property WRITE — e.g. `document.getElementById(x)!.textContent =
+// ...` — as "Cannot set properties of null (setting '...')", distinct from
+// its own "Cannot read properties of null (reading '...')" wording for a
+// null property READ; WebKit uses "null is not an object (evaluating
+// '...')" for both. Every null-deref this file's tests were written
+// against before SMI-6154 happened to be WebKit-only or a read, so this
+// gap went undetected — a Chromium-side null-property-WRITE crash would
+// have silently passed collectNullDerefs() as "no hits" instead of
+// failing loudly.
+const NULL_DEREF =
+  /Cannot read properties of null|Cannot set properties of null|null is not an object|reading 'style'/
 
 // Sibling pages reachable via a real `<a>` in the account sidebar (SMI-5475
 // — replaced the Quick Links grid; SMI-6128 — reorganized into Account /
@@ -589,6 +600,107 @@ test.describe('SMI-6112 — navigation-epoch guard against stale async continuat
     // above. #billing-content starts `display: none` and only becomes
     // visible once billing.astro's own astro:page-load handler completes
     // (`billing.astro:97`, `showState('content')`).
+    await expect(page.locator('#billing-content')).toBeVisible()
+  })
+})
+
+// ─── SMI-6154: orphaned astro:page-load dispatch during a URL/DOM desync ──
+//
+// Distinct from SMI-6137 (a stale continuation racing a completed
+// navigation) and from SMI-5158 (leaked listeners re-firing on a foreign
+// route). Root cause (see the SMI-6154 Linear issue for the full traced
+// investigation): on a browser back/forward navigation, `location.href`
+// reverts to the destination URL natively, before Astro's ClientRouter has
+// swapped the DOM to match. Astro's own `updateCallbackDone.finally(...)`
+// continuation (`runScripts()` + `onPageLoad()`,
+// `node_modules/astro/dist/transitions/router.js` as of `astro@7.2.0`) is
+// never awaited, cancelled, or checked against a newer navigation — so an
+// EARLIER, already-superseded transition's `astro:page-load` dispatch can
+// arrive late and land squarely in that desync window: `location.pathname`
+// already reads the destination route, but the live DOM still belongs to
+// whatever page the user was leaving. `isCurrentAccountPath()` passes on
+// the reverted URL; the SMI-6112/SMI-6137 navigation-epoch guard also can't
+// catch it, since the orphaned dispatch's own firing is itself the most
+// recent epoch-advancing event — a guard captured inside it is fresh by
+// construction. Fixed by `isAccountPageMounted()` (`account-page-path.ts`):
+// each of the five gated pages also checks a `data-account-page` DOM
+// marker is actually live before proceeding, closing the gap the pathname-
+// only entry check cannot.
+test.describe('SMI-6154 — orphaned astro:page-load dispatch during URL/DOM desync', () => {
+  test.beforeEach(async ({ page }) => {
+    await injectSupabaseStub(page, { session: buildSessionToken({ provider: 'email' }) })
+    await mockSupabase(page, {
+      rpcResponses: {
+        check_team_tier_access: {
+          ok: true,
+          reason: null,
+          team_id: 'team_smi6154_fixture',
+          tier: 'team',
+        },
+        // billing.astro's own astro:page-load handler makes these two RPC
+        // calls independently of /account's — mockSupabase()'s closed-
+        // default is a 404 for any unmocked RPC, which billing.astro's
+        // `if (effectiveError) throw effectiveError` / `if (subscriptionError)
+        // throw` turn into its error state (not a bug — just this test's
+        // own fixture needing to cover the destination page's requests
+        // too, since the test navigates there and asserts its content
+        // rendered).
+        get_effective_subscription_summary: [],
+        get_user_subscription: [],
+      },
+    })
+  })
+
+  test('an orphaned dispatch landing while the URL already reads /account but the DOM is still a sibling page is rejected', async ({
+    page,
+  }) => {
+    const hits = collectNullDerefs(page)
+
+    await page.goto('/account')
+    await expect(page).toHaveURL(/\/account\/?$/)
+    // Confirm /account's own handler actually ran successfully first —
+    // otherwise a false pass below could just mean nothing ever loaded.
+    await expect(page.locator('#team-name')).not.toHaveText('—')
+
+    // Real ClientRouter transition away — the DOM is now billing's, and
+    // index.astro's leaked `astro:page-load` listener persists (SMI-5158).
+    await clickAccountNav(page, '/account/billing')
+    await expect(page).toHaveURL(/\/account\/billing\/?$/)
+    // Confirm billing's own handler actually finished rendering before we
+    // manipulate anything below — checked here, right after the real
+    // navigation, rather than after the pushState maneuver next: under
+    // `astro dev` a route's first-hit SSR compile can add lag (see
+    // `injectPageLoadCounter()`'s doc comment above), and this is a real
+    // async load worth giving room to settle on its own timeline.
+    await expect(page.locator('#billing-content')).toBeVisible()
+
+    // Engineer the exact desync state deterministically, rather than
+    // racing the real timing that produces it in the wild (a page.goBack()
+    // colliding with a still-in-flight forward transition's orphaned
+    // page-load tail — flaky by nature, and already covered non-
+    // deterministically by the SMI-5158 test above). history.pushState()
+    // updates location.href WITHOUT firing `popstate` or triggering any
+    // Astro transition — exactly the "URL says /account, DOM is billing's"
+    // state a real orphaned dispatch lands in, isolated from the timing
+    // that produces it.
+    await page.evaluate(() => history.pushState({}, '', '/account'))
+    await expect(page).toHaveURL(/\/account\/?$/)
+
+    // Fire the orphaned dispatch itself. Pre-fix, index.astro's leaked
+    // handler passes isCurrentAccountPath() (pathname already reverted)
+    // and crashes on `document.getElementById('team-name')` being null —
+    // billing's DOM has no such element.
+    await refireAstroPageLoad(page)
+    await page.waitForTimeout(300)
+
+    expect(hits, hits.join('\n')).toEqual([])
+    // Still genuinely showing billing's own content, undisturbed by the
+    // orphaned dispatch — the URL itself stays at /account (this test's
+    // own history.pushState() call above set it there and nothing reverts
+    // it; that's expected, not a bug: pushState never triggered a real
+    // Astro transition, so the DOM was never touched by anything other
+    // than the orphaned dispatch this test fires next).
+    await expect(page).toHaveURL(/\/account\/?$/)
     await expect(page.locator('#billing-content')).toBeVisible()
   })
 })

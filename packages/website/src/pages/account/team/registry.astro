@@ -47,7 +47,7 @@ const supabaseConfig = getSupabaseConfig()
     <div class="account-shell">
       <AccountSidebar currentPath={Astro.url.pathname} />
 
-      <main class="registry-container">
+      <main class="registry-container" data-account-page="/account/team/registry">
         <h1>Private Registry</h1>
 
         <AccountMobileNav currentPath="/account/team/registry" />
@@ -482,7 +482,7 @@ const supabaseConfig = getSupabaseConfig()
     setRegistryVersionDeprecated,
     type PrivateRegistryDashboardRow,
   } from '../../../lib/private-registry-dashboard'
-  import { isCurrentAccountPath } from '../../../lib/account-page-path'
+  import { isAccountPageMounted, isCurrentAccountPath } from '../../../lib/account-page-path'
   import { createNavigationEpochGuard } from '../../../lib/account-navigation-epoch'
   import { setAccountNavTeamEntitled } from '../../../lib/account-nav-entitlement'
 
@@ -536,7 +536,10 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   document.addEventListener('astro:page-load', async () => {
+    // SMI-6154: pathname alone isn't enough on a browser back/forward
+    // navigation — see account/index.astro's identical comment.
     if (!isCurrentAccountPath(window.location.pathname, '/account/team/registry')) return
+    if (!isAccountPageMounted('/account/team/registry')) return
 
     // SMI-6112: see account/index.astro's identical comment for the full
     // rationale — a single entry-path check cannot protect the

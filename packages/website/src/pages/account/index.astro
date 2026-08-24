@@ -52,7 +52,7 @@ const supabaseConfig = getSupabaseConfig()
     <div class="account-shell">
       <AccountSidebar currentPath={Astro.url.pathname} />
 
-      <main class="dashboard-container">
+      <main class="dashboard-container" data-account-page="/account">
         <h1>Account</h1>
 
         <!-- Renders outside/above loading, error, and gated states —
@@ -336,7 +336,7 @@ const supabaseConfig = getSupabaseConfig()
     isTeamEntitled,
   } from '../../lib/account-overview-data'
   import { resyncStripeEmailIfPending } from '../../lib/account-flags'
-  import { isCurrentAccountPath } from '../../lib/account-page-path'
+  import { isAccountPageMounted, isCurrentAccountPath } from '../../lib/account-page-path'
   import { createNavigationEpochGuard } from '../../lib/account-navigation-epoch'
   import { setAccountNavTeamEntitled } from '../../lib/account-nav-entitlement'
 
@@ -368,7 +368,14 @@ const supabaseConfig = getSupabaseConfig()
     // Only run on this page. L13: this guard used to accept /account/team
     // and /account/team/ — it now accepts /account and /account/ since this
     // page moved here (Decision #1).
+    //
+    // SMI-6154: pathname alone isn't enough — on a browser back/forward
+    // navigation, `location.pathname` can already read `/account` before
+    // Astro's ClientRouter has actually swapped the DOM to match (see
+    // isCurrentAccountPath()'s doc comment). isAccountPageMounted() checks
+    // that this page's own DOM marker is actually live before proceeding.
     if (!isCurrentAccountPath(window.location.pathname, '/account')) return
+    if (!isAccountPageMounted('/account')) return
 
     // SMI-6112: navigation-epoch guard. The entry pathname check above only
     // protects against a handler that fired for a route the user has
