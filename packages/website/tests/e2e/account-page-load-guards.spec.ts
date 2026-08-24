@@ -290,6 +290,130 @@ async function waitForPageLoadCount(page: Page, expected: number): Promise<void>
     .toBeGreaterThanOrEqual(expected)
 }
 
+/**
+ * SMI-6137: instrument the page to count real `astro:before-swap`
+ * firings — mirrors `injectPageLoadCounter()` above but for the earlier
+ * lifecycle event the SMI-6137 fix also advances the navigation epoch on.
+ * `astro:before-swap` fires once per real SPA transition, strictly before
+ * `astro:page-load` (never after, and never on the very first non-SPA
+ * `page.goto()` load — see `account-navigation-epoch.ts`'s module doc
+ * comment). Used to release a held response inside the specific
+ * pre-`astro:page-load` window SMI-6137 closes, rather than after it
+ * (which is what the existing SMI-6112 tests below do via
+ * `waitForPageLoadCount`, and why they don't exercise this gap).
+ */
+async function injectBeforeSwapCounter(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    ;(window as unknown as { __e2eBeforeSwapCount: number }).__e2eBeforeSwapCount = 0
+    document.addEventListener('astro:before-swap', () => {
+      ;(window as unknown as { __e2eBeforeSwapCount: number }).__e2eBeforeSwapCount += 1
+    })
+  })
+}
+
+async function waitForBeforeSwapCount(page: Page, expected: number): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __e2eBeforeSwapCount: number }).__e2eBeforeSwapCount
+      )
+    )
+    .toBeGreaterThanOrEqual(expected)
+}
+
+/**
+ * SMI-6137: route Supabase calls so `check_team_tier_access` resolves
+ * immediately with an entitled response (getting `/account`'s handler
+ * past the tier gate quickly) while the `team_members` REST call —
+ * `loadTeamOverviewData()`'s own first network request
+ * (`account-overview-data.ts`) — is held open behind a release gate. This
+ * targets the DOM-write path specifically (`index.astro:440`,
+ * `document.getElementById('team-name')!.textContent = data.teamName`),
+ * unlike `mockDelayedTierCheck()` above, which targets the redirect path
+ * by holding the tier check itself. Every other REST/RPC call gets a
+ * fixed, immediate closed-default response — this test only cares about
+ * timing the one call that gates the DOM write.
+ */
+async function mockDelayedTeamData(
+  page: Page
+): Promise<{ release: () => void; callCount: () => number }> {
+  const gate = makeDeferred()
+  let callCount = 0
+
+  await page.route(`${SUPABASE_HOST}/**`, async (route: Route) => {
+    const url = new URL(route.request().url())
+    const rpcMatch = url.pathname.match(/\/rest\/v1\/rpc\/([^/]+)/)
+
+    if (rpcMatch && rpcMatch[1] === 'check_team_tier_access') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          reason: null,
+          team_id: 'team_smi6137_fixture',
+          tier: 'team',
+        }),
+      })
+      return
+    }
+
+    if (rpcMatch) {
+      // Closed-default `[]`, not `{}`: every RPC this route doesn't
+      // special-case (e.g. `get_effective_subscription_summary`,
+      // `get_user_subscription` on /account/billing's own handler) is
+      // consumed as an array (`rows?.[0]`) by its caller — `[]` makes that
+      // access resolve to `undefined` explicitly, same as a real "no rows"
+      // response, rather than relying on `{}[0]` coincidentally doing the
+      // same thing.
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+      return
+    }
+
+    if (url.pathname.startsWith('/auth/v1/')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+      return
+    }
+
+    const restMatch = url.pathname.match(/\/rest\/v1\/([^/?]+)/)
+    // Scoped to /account's own loadTeamOverviewData() query specifically
+    // (`select=team_id,role&team_id=eq.<id>`, no `user_id` filter) — NOT
+    // /account/billing's own, differently-shaped `team_members` query
+    // (`.eq('team_id', ...).eq('user_id', ...).maybeSingle()`), which must
+    // reach its own closed-default below undisturbed so the destination
+    // page's own handler isn't accidentally held by this gate too.
+    if (restMatch && restMatch[1] === 'team_members' && !url.searchParams.has('user_id')) {
+      callCount += 1
+      await gate.promise
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ team_id: 'team_smi6137_fixture', role: 'member' }]),
+      })
+      return
+    }
+
+    if (restMatch && restMatch[1] === 'teams') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'team_smi6137_fixture',
+          name: 'SMI-6137 Fixture Team',
+          slug: 'smi-6137-fixture',
+          max_members: 10,
+        }),
+      })
+      return
+    }
+
+    // Closed-default: empty array for any other REST table.
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+  })
+
+  return { release: () => gate.resolve(), callCount: () => callCount }
+}
+
 test.describe('SMI-6112 — navigation-epoch guard against stale async continuations', () => {
   test.beforeEach(async ({ page }) => {
     await injectPageLoadCounter(page)
@@ -385,5 +509,86 @@ test.describe('SMI-6112 — navigation-epoch guard against stale async continuat
     gates[1].resolve()
     await page.waitForTimeout(300)
     await expect(page).toHaveURL(/\/account\/?$/)
+  })
+
+  test('SMI-6137: a stale team-data write never lands on the destination DOM after navigating away', async ({
+    page,
+  }) => {
+    await injectBeforeSwapCounter(page)
+    const hits = collectNullDerefs(page)
+    const { release, callCount } = await mockDelayedTeamData(page)
+
+    // In-page-triggered release, not expect.poll(): `expect.poll()`'s
+    // ~100ms default interval is real wall-clock latency between the
+    // moment `astro:before-swap` actually fires and the moment Node
+    // observes it and calls `release()` — on this route, `runScripts()`
+    // has no external-`src` script to await (verified via grep, see the
+    // plan doc), so the in-page `runScripts()` -> `astro:page-load` chain
+    // has no I/O of its own and could plausibly complete inside that
+    // ~100ms window regardless of which counter a poll waited on, making
+    // the test pass vacuously even against the pre-fix code. Exposing the
+    // release directly to an `astro:before-swap` listener cuts that gap
+    // to a single CDP round-trip instead.
+    let released = false
+    await page.exposeFunction('__smi6137ReleaseGate', () => {
+      released = true
+      release()
+    })
+    await page.addInitScript(() => {
+      document.addEventListener(
+        'astro:before-swap',
+        () => {
+          ;(window as unknown as { __smi6137ReleaseGate: () => void }).__smi6137ReleaseGate()
+        },
+        { once: true }
+      )
+    })
+
+    await page.goto('/account')
+    await waitForPageLoadCount(page, 1)
+    await expect.poll(callCount).toBe(1)
+
+    // Real ClientRouter transition away from /account while
+    // loadTeamOverviewData()'s team_members query is still held open. The
+    // in-page listener above releases it the instant astro:before-swap
+    // fires for this transition — the earlier point in the window
+    // SMI-6137's fix closes (contrast with the three tests above, which
+    // correctly target the redirect path by waiting for the later
+    // astro:page-load count instead).
+    await clickAccountNav(page, '/account/billing')
+    await expect(page).toHaveURL(/\/account\/billing\/?$/)
+    await expect
+      .poll(() => released, {
+        message: 'astro:before-swap never fired for this transition (release never triggered)',
+      })
+      .toBe(true)
+
+    // Independent sanity check that the release really was tied to a real
+    // astro:before-swap firing (not, say, a typo'd event name that
+    // happened to leave `released` stuck false in a way `expect.poll`
+    // above would already have caught, but this pins the specific event
+    // rather than only the exposeFunction side effect).
+    await waitForBeforeSwapCount(page, 1)
+
+    // Give the released response's network round-trip and the handler's
+    // remaining continuation a moment to actually run before asserting.
+    await page.waitForTimeout(300)
+
+    // Pre-fix, /account's handler would still reach
+    // `document.getElementById('team-name')!.textContent = data.teamName`
+    // (index.astro:440) here — even though the browser is already on
+    // /account/billing — throwing because #team-name no longer exists in
+    // the live document, caught and logged at index.astro:467-471
+    // (`console.error('Team dashboard load failed:', err)`, matched by
+    // `NULL_DEREF` above).
+    expect(hits, hits.join('\n')).toEqual([])
+    await expect(page).toHaveURL(/\/account\/billing\/?$/)
+    // Destination page's own content actually rendered (plan review, VP
+    // Design) — guards against a self-invalidation timing bug on
+    // /account/billing's own handler going uncaught by the assertions
+    // above. #billing-content starts `display: none` and only becomes
+    // visible once billing.astro's own astro:page-load handler completes
+    // (`billing.astro:97`, `showState('content')`).
+    await expect(page.locator('#billing-content')).toBeVisible()
   })
 })
