@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.0
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.11.7).
 - **Feature**: new `resolveSessionTier` client (`sync/license-status-client.ts`, SMI-6098) —
   authenticates the stored device-login session against `/license-status` (proactively refreshing
   via the existing `resolveAccessToken` helper) so the MCP server can resolve a real subscription
