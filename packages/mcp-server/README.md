@@ -8,12 +8,12 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## What's New in v0.7.10
 
-- **`search`'s `limit` parameter actually works now**: previously advertised in the tool description but silently dropped — no `limit` field existed in the input schema at all. Now threaded through both the API and local-fallback paths, clamped to `[1, 100]`.
-- **`skill_compare` and `skill_recommend` fixed**: compare now resolves any skill `search`/`get_skill` can find (was local-cache-only); recommend no longer 400s or silently zeroes on an empty derived stack — both return a structured, actionable result instead.
-- **`skill_updates` scoped to your installed skills**: was running an unfiltered registry-wide scan (`updatesAvailable: 2833` for a handful of installs); now bounded to the local manifest, sharing derivation with `skill_outdated` so the two can't drift apart again.
-- **Trust-tier vocabulary fixed**: `mapTrustTierFromDb` was silently collapsing `official` and `unverified` to `unknown`; all `TrustTier` values now round-trip correctly across `search`, `get_skill`, `skill_recommend`, `skill_compare`, and `skill_suggest`.
-- **New local security-acceptance allowlist**: mark a reviewed false-positive finding as accepted so it stops re-surfacing in future audits, without affecting rug-pull/hostile-update detection.
-- **`private_registry_manage` gains `install`**: installs a previously-published private-registry skill to disk, closing the publish→install gap.
+- **Security: `SUPABASE_SERVICE_ROLE_KEY` removed from every MCP-host code path**: `private_registry_manage`'s `list`, `get`, `namespace`, and `install` actions — plus the registry-install path — no longer run on the Supabase service-role client. They now run as the signed-in user (`skillsmith login`) or through a narrowly-scoped `SECURITY DEFINER` RPC, so there's no admin credential left to configure or distribute (SMI-6109/SMI-6111).
+- **Session-login users now get their real subscription tier**: callers authenticated only via `skillsmith login` (no separately-configured `SKILLSMITH_API_KEY`) previously fell back to `community` regardless of actual entitlement, silently blocking Enterprise-gated tools like `private_registry_manage`/`private_registry_publish` (SMI-6098).
+- **`skill_validate` now flags likely typosquats**: warns (non-blocking) when a candidate skill's name is suspiciously close to a high-trust author or top-starred skill (SMI-6033).
+- **`get_skill`/`search`/`skill_recommend` surface a partial-scan caveat**: an informational note when the registry's extended scan couldn't cover every file for a skill — never affects the Security/Installable verdict.
+- **Pricing and quota numbers corrected**: several bundled skills, tool descriptions, and error messages were off by 10x or referenced the unpublished Enterprise price; now consistent with the actual tier table (SMI-5893).
+- **Auto-update notification no longer silently drops** on an invalid `SKILLSMITH_CLIENT` value.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 

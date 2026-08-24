@@ -251,7 +251,9 @@ export { maybeInstallMissingTier1Skills }
 
 // SMI-2163: Startup diagnostics (native module errors) extracted to
 // index.startup-helpers.ts's runStartupDiagnostics() to keep this file under
-// the 500-LOC gate (SMI-6111). Call site unchanged, in main() below.
+// the 500-LOC gate (SMI-6111). Call site in main() below now passes
+// PACKAGE_VERSION explicitly so the extracted logger keeps the real version
+// stamp instead of createLogger's 'unknown' default.
 
 // SMI-5009 (origin) / SMI-5039 (extraction): the embedding capability probe
 // now lives in @skillsmith/core/embeddings/probe. See that file for the
@@ -295,7 +297,7 @@ async function main() {
   }
 
   // SMI-2163: Run startup diagnostics before anything else
-  runStartupDiagnostics()
+  runStartupDiagnostics(PACKAGE_VERSION)
 
   // Handle --docs flag
   if (process.argv.includes('--docs') || process.argv.includes('-d')) {
@@ -341,7 +343,7 @@ async function main() {
     // idempotent — it skips skills already present at the runtime path resolved
     // by `SKILLSMITH_CLIENT`. Opt out via SKILLSMITH_SKIP_SKILL_INSTALL=1.
     if (process.env.SKILLSMITH_SKIP_SKILL_INSTALL !== '1') {
-      ensureSkillsmithSkillInstalled()
+      ensureSkillsmithSkillInstalled(PACKAGE_VERSION)
     }
   }
 
