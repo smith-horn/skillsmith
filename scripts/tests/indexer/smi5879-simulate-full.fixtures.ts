@@ -147,6 +147,16 @@ export function makeFakeDb(
       return new Date().toISOString()
     },
     async releaseRun() {},
+    // SMI-6015 Wave 1: shard-aware siblings, default to the same trivially-
+    // successful behavior as their unsharded counterparts above — sharding-
+    // specific tests override these via `overrides`.
+    async claimRunShard() {
+      return { claimed: true }
+    },
+    async heartbeatShard() {
+      return new Date().toISOString()
+    },
+    async releaseRunShard() {},
     async verifyDigest() {
       return { populationMatches: true, branchMatches: true }
     },

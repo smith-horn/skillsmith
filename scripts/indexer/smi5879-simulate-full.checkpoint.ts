@@ -16,6 +16,7 @@
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { ALL_SIMULATED_COHORTS, isValidSimRowOutcome } from './smi5879-simulate-full.types.ts'
+import { shardOf } from './smi5879-simulate-full.shard.ts'
 import type {
   SimSnapshotRow,
   SimulatedCohort,
@@ -27,6 +28,46 @@ import type { Smi5879Purpose } from './smi5879-census.types.ts'
 
 export function checkpointPathFor(runId: string): string {
   return `smi5879-simulate-checkpoint-${runId}.json`
+}
+
+/**
+ * SMI-6015 Wave 1 (PAT-sharded fetch plan §2): shard-aware checkpoint path
+ * convention, matching the Wave 3 dispatch runbook's own naming
+ * (`smi5879-simulate-checkpoint-${runId}-shard${i}.json`). Callers pass an
+ * explicit `--checkpoint-path` per shard in production (this function is a
+ * convenience default, same relationship {@link checkpointPathFor} has to
+ * `--checkpoint-path`) — {@link assertCheckpointIdentity} cross-checks
+ * whatever path IS used against the checkpoint's own `shard_index` when the
+ * path matches this naming pattern.
+ */
+export function checkpointPathForShard(runId: string, shardIndex: number): string {
+  return `smi5879-simulate-checkpoint-${runId}-shard${shardIndex}.json`
+}
+
+/**
+ * Extract the shard index embedded in a checkpoint path by
+ * {@link checkpointPathForShard}'s own naming convention, or `null` if the
+ * path doesn't match it (e.g. a fully custom `--checkpoint-path`) — in which
+ * case there is no path-implied identity to cross-check, and
+ * {@link assertCheckpointIdentity} skips that specific sub-check rather than
+ * treating "doesn't match the convention" as itself an error.
+ *
+ * SHARD-INDEX ONLY, deliberately not run-id-aware (round-1 GPT-5.6-Sol
+ * review, Low finding): `run_id` values are not fixed-shape (they can
+ * themselves contain dashes and digit runs — see real examples in this
+ * generation's own `run_id` values), so reliably reverse-parsing a `run_id`
+ * back out of `smi5879-simulate-checkpoint-${runId}-shard${i}.json` without
+ * the same ambiguity is not possible in general. This is not a gap in
+ * practice: {@link assertCheckpointIdentity}'s own `checkpoint.run_id !==
+ * expected.runId` content-based comparison (checked unconditionally, not
+ * only when the path matches this convention) already catches a genuinely
+ * wrong `run_id`, regardless of what the path's own name happens to imply.
+ */
+function parseShardIndexFromPath(path: string): number | null {
+  const match = /-shard(\d+)\.json$/.exec(path)
+  const captured = match?.[1]
+  if (captured === undefined) return null
+  return Number(captured)
 }
 
 const VALID_PURPOSES_FOR_SHAPE_CHECK: readonly Smi5879Purpose[] = [
@@ -106,6 +147,26 @@ function assertValidCheckpointShape(
     !cohorts.every((c) => ALL_SIMULATED_COHORTS.includes(c as SimulatedCohort))
   ) {
     errors.push(`cohorts=${JSON.stringify(cohorts)}`)
+  }
+  // SMI-6015 Wave 1: shard_index/shard_count are both-or-neither, and when
+  // present must be a valid (index, count) pair — same rigor as the CLI
+  // parser's own validation (smi5879-simulate-full.cli.ts), re-applied here
+  // because a hand-edited or stale checkpoint file bypasses the CLI parser
+  // entirely.
+  const shardIndex = value['shard_index']
+  const shardCount = value['shard_count']
+  if (shardIndex !== undefined || shardCount !== undefined) {
+    if (
+      typeof shardCount !== 'number' ||
+      !Number.isInteger(shardCount) ||
+      shardCount < 1 ||
+      typeof shardIndex !== 'number' ||
+      !Number.isInteger(shardIndex) ||
+      shardIndex < 0 ||
+      shardIndex >= shardCount
+    ) {
+      errors.push(`shard_index=${String(shardIndex)}/shard_count=${String(shardCount)}`)
+    }
   }
   if (typeof cleanShutdown !== 'boolean') errors.push('clean_shutdown')
   if (typeof startedAt !== 'string') errors.push('started_at')
@@ -204,6 +265,21 @@ function sameCohorts(a: readonly SimulatedCohort[], b: readonly SimulatedCohort[
  * (a cohort-scoped rehearsal checkpoint resumed as if it were the full
  * population, or vice versa, would silently corrupt that generation's
  * coverage accounting).
+ *
+ * SMI-6015 Wave 1 (PAT-sharded fetch plan §2): `shardIndex`/`shardCount` are
+ * checked the same way, both-or-neither with `expected.shardIndex`/
+ * `expected.shardCount` — a resume against a checkpoint written for a
+ * different shard index, a different shard count, or crossing between
+ * sharded and unsharded, is refused loudly rather than silently corrupting
+ * that shard's row assignment. ADDITIONALLY, when `path` matches
+ * {@link checkpointPathForShard}'s naming convention, the shard index
+ * embedded in the PATH itself is cross-checked against the checkpoint
+ * content's own `shard_index` — this catches a copy/rename mistake (a
+ * checkpoint file physically moved/copied to a path implying a different
+ * shard than its own content) that the plain content-vs-`expected` check
+ * above cannot: if the operator's `--shard-index` flag and the checkpoint's
+ * content happen to agree with each other but NEITHER agrees with what the
+ * file's own name implies, the flag-vs-content check alone would pass.
  */
 export function assertCheckpointIdentity(
   checkpoint: Smi5879SimulateCheckpoint,
@@ -212,6 +288,8 @@ export function assertCheckpointIdentity(
     purpose: Smi5879Purpose
     tokenSource: TokenSource
     cohorts: SimulatedCohort[]
+    shardIndex?: number
+    shardCount?: number
   },
   path: string
 ): void {
@@ -232,11 +310,29 @@ export function assertCheckpointIdentity(
       `cohorts (checkpoint=${checkpoint.cohorts.join(',')}, this run=${expected.cohorts.join(',')})`
     )
   }
+  if (
+    checkpoint.shard_index !== expected.shardIndex ||
+    checkpoint.shard_count !== expected.shardCount
+  ) {
+    mismatches.push(
+      `shard (checkpoint=index ${checkpoint.shard_index ?? '(unsharded)'}/count ${checkpoint.shard_count ?? '(unsharded)'}, ` +
+        `this run=index ${expected.shardIndex ?? '(unsharded)'}/count ${expected.shardCount ?? '(unsharded)'})`
+    )
+  }
+  const pathShardIndex = parseShardIndexFromPath(path)
+  if (pathShardIndex !== null && pathShardIndex !== checkpoint.shard_index) {
+    mismatches.push(
+      `shard index embedded in --checkpoint-path (${pathShardIndex}) does not match the checkpoint's ` +
+        `own shard_index (${checkpoint.shard_index ?? '(unsharded)'}) — this file was likely copied ` +
+        'or renamed to this path from a different shard'
+    )
+  }
   if (mismatches.length > 0) {
     throw new Error(
       `SMI-5879: checkpoint at ${path} does not match this invocation — ${mismatches.join('; ')}. ` +
-        'A resume must reuse a checkpoint from the SAME run_id/purpose/token_source/cohorts — use a ' +
-        'fresh --checkpoint-path for a different generation or cohort scope instead of pointing at this one.'
+        'A resume must reuse a checkpoint from the SAME run_id/purpose/token_source/cohorts/shard — ' +
+        'use a fresh --checkpoint-path for a different generation, cohort scope, or shard instead of ' +
+        'pointing at this one.'
     )
   }
 }
@@ -247,20 +343,98 @@ export function assertCheckpointIdentity(
  * from a different generation whose row ids happen to overlap with
  * globally-stable skill ids from this one. Must be called only after the
  * real row set for this generation has been loaded (SMI-5879 review finding 1).
+ *
+ * SMI-6015 PAT-sharded fetch plan Wave 1 (round-1 GPT-5.6-Sol review, High
+ * finding): generation membership alone is NOT sufficient once shards
+ * exist. `assertCheckpointIdentity` only compares the checkpoint's OWN
+ * declared `shard_index`/`cohorts` against this invocation's — it says
+ * nothing about whether each INDIVIDUAL `row_results` entry actually
+ * belongs to that declared scope. A structurally valid checkpoint could
+ * declare `shard_index: 1` while its `row_results` (corrupted, hand-edited,
+ * or produced by some future bug) actually contains shard-0 or
+ * excluded-cohort rows — resume would silently accept them, producing a
+ * shard report with rows outside its own partition and breaking the
+ * row-id-disjointness invariant Wave 2's merge tool depends on. Every
+ * `row_results` entry is now checked against: (1) `result.id === key` (the
+ * dictionary key matches its own stored result — catches a corrupted/
+ * mismatched entry), (2) `result.cohort`/`result.author`/`result.name`
+ * (round-2/round-3 review findings — every field `processRow` derives from
+ * the canonical row, not just `id`) each agree with the CANONICAL row's own
+ * values — `report.rows`/`counts` are built from the stored results
+ * directly, not re-derived from the canonical row set, so any of these
+ * disagreeing would otherwise survive into the report unverified, (3) the
+ * row's cohort is within `scope.cohorts`, and (4) when sharded,
+ * `shardOf(id, scope.shardCount) === scope.shardIndex` (the row genuinely
+ * belongs to THIS shard's partition, not just this generation).
  */
 export function assertCheckpointRowsBelongToGeneration(
   checkpoint: Smi5879SimulateCheckpoint,
   rows: readonly SimSnapshotRow[],
-  path: string
+  path: string,
+  scope: { cohorts: SimulatedCohort[]; shardIndex?: number; shardCount?: number }
 ): void {
-  const validIds = new Set(rows.map((r) => r.id))
-  const staleIds = Object.keys(checkpoint.row_results).filter((id) => !validIds.has(id))
-  if (staleIds.length > 0) {
+  const rowById = new Map(rows.map((r) => [r.id, r]))
+  const problems: string[] = []
+  for (const [key, result] of Object.entries(checkpoint.row_results)) {
+    const row = rowById.get(key)
+    if (!row) {
+      problems.push(`${key} (not in this generation's row set)`)
+      continue
+    }
+    if (result.id !== key) {
+      problems.push(`${key} (row_results key does not match its own result.id=${result.id})`)
+      continue
+    }
+    // Round-2 GPT-5.6-Sol review, High finding: the FIRST-round fix checked
+    // the CANONICAL loaded row's cohort against scope, but never checked
+    // that the STORED result's OWN `cohort` field actually agrees with that
+    // canonical row — `report.rows`/`counts` are built directly from the
+    // stored results (`summarizeCounts(results.values())`), not re-derived
+    // from the canonical row set, so a malformed entry with a real row id
+    // but a WRONG `result.cohort` would survive into the report untouched,
+    // even though `coverage[cohort].total` (keyed off the canonical rows)
+    // stayed correct — a real corruption path this closes.
+    if (result.cohort !== row.cohort) {
+      problems.push(
+        `${key} (stored result.cohort=${result.cohort} does not match this row's real cohort=${row.cohort})`
+      )
+      continue
+    }
+    // Round-3 GPT-5.6-Sol review, Medium finding: `author`/`name` are the
+    // same class of gap as `cohort` above — `processRow` (helpers.ts)
+    // derives both directly from the canonical row, but resume never
+    // cross-checks the stored values against it, and both flow unchanged
+    // into `report.rows`. Not gate-relevant (unlike `cohort`, which feeds
+    // `coverage`/`counts`) — these are purely informational/display fields
+    // for a human reviewer reading the report — but a malformed stored
+    // value would still silently misattribute a row in the report.
+    if (result.author !== row.author || result.name !== row.name) {
+      problems.push(
+        `${key} (stored result.author/name=${result.author}/${result.name} does not match this row's real author/name=${row.author}/${row.name})`
+      )
+      continue
+    }
+    if (!scope.cohorts.includes(row.cohort)) {
+      problems.push(`${key} (cohort ${row.cohort} outside this run's cohort scope)`)
+      continue
+    }
+    if (scope.shardIndex !== undefined && scope.shardCount !== undefined) {
+      const expectedShard = shardOf(key, scope.shardCount)
+      if (expectedShard !== scope.shardIndex) {
+        problems.push(
+          `${key} (belongs to shard ${expectedShard}, not this shard ${scope.shardIndex})`
+        )
+      }
+    }
+  }
+  if (problems.length > 0) {
     throw new Error(
-      `SMI-5879: checkpoint at ${path} has ${staleIds.length} row_results key(s) that are not in ` +
-        `this generation's row set (e.g. ${staleIds.slice(0, 5).join(', ')}) — this checkpoint was ` +
-        'likely written for a different generation. Refusing to reuse stale verdicts; use a fresh ' +
-        '--checkpoint-path for this generation instead.'
+      `SMI-5879: checkpoint at ${path} has ${problems.length} row_results entr` +
+        `${problems.length === 1 ? 'y' : 'ies'} that don't belong to this invocation's scope: ` +
+        `${problems.slice(0, 5).join('; ')}` +
+        `${problems.length > 5 ? `, and ${problems.length - 5} more` : ''} — this checkpoint was ` +
+        'likely written for a different generation, cohort scope, or shard. Refusing to reuse ' +
+        'stale/foreign verdicts; use a fresh --checkpoint-path instead.'
     )
   }
 }

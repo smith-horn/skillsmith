@@ -31,11 +31,19 @@
  * self-checkpoint-and-exit) and `--cohorts=<comma-list>` (cohort-scoped
  * rehearsal dispatches) — see `smi5879-simulate-full.cli.ts` for parsing.
  *
+ * SMI-6015 PAT-sharded fetch plan Wave 1 added `--shard-index=<i>
+ * --shard-count=<N>` (row-level sharding, both-or-neither) so N independent
+ * processes can each fetch a disjoint slice of one decision generation's
+ * population in parallel — see `smi5879-simulate-full.shard.ts`'s `shardOf()`
+ * for the partition function. A sharded dispatch claims via the shard-aware
+ * claim/heartbeat/release trio (Wave 0 migration) instead of the plain
+ * single-holder ones — mutually exclusive per invocation, never both.
+ *
  * Usage:
  *   varlock run -- npx tsx scripts/indexer/smi5879-simulate-full.ts \
  *     --run-id=<sealed generation run_id> --purpose=<decision|window|rehearsal> \
  *     [--apply] [--checkpoint-path=<path>] [--report-path=<path>] [--baseline-commit=<sha>] \
- *     [--max-elapsed-minutes=<N>] [--cohorts=<comma-list>]
+ *     [--max-elapsed-minutes=<N>] [--cohorts=<comma-list>] [--shard-index=<i> --shard-count=<N>]
  */
 
 import { hostname } from 'node:os'
@@ -44,8 +52,9 @@ import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import { newRateLimitTelemetry } from './_shared/rate-limit.ts'
-import { poolerSessionConnParams, runPsql } from './smi5879-census.pg.ts'
+import { poolerSessionConnParams } from './smi5879-census.pg.ts'
 import { createSmi5879SimulateFullDbDeps } from './smi5879-simulate-full.db.ts'
+import { printSummary, dryRun } from './smi5879-simulate-full.output.ts'
 import {
   materializeBaseline,
   importBaselineScanSkillBundle,
@@ -66,12 +75,14 @@ import {
 } from './smi5879-simulate-full.sweep.ts'
 import {
   checkpointPathFor,
+  checkpointPathForShard,
   readCheckpoint,
   writeCheckpoint,
   isAbnormalResume,
   assertCheckpointIdentity,
   assertCheckpointRowsBelongToGeneration,
 } from './smi5879-simulate-full.checkpoint.ts'
+import { shardOf } from './smi5879-simulate-full.shard.ts'
 import { ALL_SIMULATED_COHORTS } from './smi5879-simulate-full.types.ts'
 import type {
   Smi5879SimulateFullDbDeps,
@@ -130,7 +141,18 @@ export async function runSimulateFull(
   // checkpoint identity/coverage code never has to special-case "omitted."
   const cohorts: SimulatedCohort[] = args.cohorts ?? [...ALL_SIMULATED_COHORTS]
 
-  const checkpointPath = args.checkpointPath ?? checkpointPathFor(args.runId)
+  // SMI-6015 PAT-sharded fetch plan Wave 1: `shardIndex`/`shardCount` are
+  // destructured to LOCAL consts (not read off `args` at each use site) so
+  // TypeScript's narrowing from `isSharded`'s both-defined check holds
+  // reliably everywhere they're used below, including inside closures
+  // (the heartbeat tick, the release-on-exit path) — narrowing a `const`
+  // local survives closure capture; narrowing an object property does not.
+  const { shardIndex, shardCount } = args
+  const isSharded = shardIndex !== undefined && shardCount !== undefined
+
+  const checkpointPath =
+    args.checkpointPath ??
+    (isSharded ? checkpointPathForShard(args.runId, shardIndex) : checkpointPathFor(args.runId))
   const existingCheckpoint = readCheckpoint(checkpointPath)
   const isColdStart = existingCheckpoint === null
 
@@ -141,7 +163,7 @@ export async function runSimulateFull(
     // trusted (SMI-5879 review finding 1).
     assertCheckpointIdentity(
       existingCheckpoint,
-      { runId: args.runId, purpose: args.purpose, tokenSource, cohorts },
+      { runId: args.runId, purpose: args.purpose, tokenSource, cohorts, shardIndex, shardCount },
       checkpointPath
     )
     if (existingCheckpoint.baseline_commit !== args.baselineCommit) {
@@ -155,10 +177,19 @@ export async function runSimulateFull(
 
   const token = randomUUID()
   const holder = buildHolder()
-  const claimed = await db.claimRun(args.runId, token, holder)
+  // SMI-6015 PAT-sharded fetch plan Wave 0 Files: mutually exclusive claim
+  // paths — a sharded dispatch claims via smi5879_claim_run_shard (holds an
+  // independent per-shard claim, protected from the parent run's own
+  // smi5879_abandon_unclaimed_run by the Wave 0 migration's C1 fix), never
+  // the plain single-holder smi5879_claim_run.
+  const claimed = isSharded
+    ? await db.claimRunShard(args.runId, shardIndex, shardCount, token, holder)
+    : await db.claimRun(args.runId, token, holder)
   if (!claimed.claimed) {
     throw new Error(
-      `SMI-5879: claim of generation ${args.runId} was refused — held by another runner.`
+      isSharded
+        ? `SMI-5879: claim of generation ${args.runId} shard ${shardIndex}/${shardCount} was refused — held by another runner.`
+        : `SMI-5879: claim of generation ${args.runId} was refused — held by another runner.`
     )
   }
 
@@ -177,6 +208,7 @@ export async function runSimulateFull(
     baseline_commit: args.baselineCommit,
     token_source: tokenSource,
     cohorts,
+    ...(isSharded ? { shard_index: shardIndex, shard_count: shardCount } : {}),
     clean_shutdown: false,
     row_results: {},
     sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -214,20 +246,33 @@ export async function runSimulateFull(
     if (heartbeatStopped) return
     let result: string | null
     try {
-      result = await db.heartbeat(args.runId, token)
+      result = isSharded
+        ? await db.heartbeatShard(args.runId, shardIndex, token)
+        : await db.heartbeat(args.runId, token)
     } catch (err) {
+      // PR #2525 review (GPT-5.6-Sol) High finding: `finally` below can flip
+      // `heartbeatStopped` to true WHILE this call is in flight — clearing the
+      // timer only stops a FUTURE tick, it does not cancel this one. Without
+      // this re-check, a heartbeat that throws/loses its claim in that exact
+      // window would call fatalHeartbeatAbort() -> process.exit(1) on a run
+      // that already completed and is mid-release, discarding the report
+      // `main()` was about to write. Re-checking immediately after the await
+      // (rather than tracking/awaiting the in-flight promise from `finally`)
+      // keeps release from paying an arbitrary extra RPC round trip.
+      if (heartbeatStopped) return
       fatalHeartbeatAbort(
         `heartbeat call threw for run_id=${args.runId}: ${(err as Error).message}`
       )
       return
     }
+    if (heartbeatStopped) return
     if (result === null) {
       fatalHeartbeatAbort(
-        `heartbeat lost for run_id=${args.runId} — claim was stolen or the run was abandoned.`
+        `heartbeat lost for run_id=${args.runId}${isSharded ? ` shard ${shardIndex}` : ''} — claim was stolen, the run was abandoned, or (sharded only) the parent run is no longer open/sealed.`
       )
       return
     }
-    if (!heartbeatStopped) scheduleHeartbeat()
+    scheduleHeartbeat()
   }
 
   scheduleHeartbeat()
@@ -252,7 +297,11 @@ export async function runSimulateFull(
       // Must run only after the real row set for this generation is loaded
       // (SMI-5879 review finding 1) — refuses a checkpoint whose row_results
       // keys don't correspond to any row in THIS generation.
-      assertCheckpointRowsBelongToGeneration(existingCheckpoint, rows, checkpointPath)
+      assertCheckpointRowsBelongToGeneration(existingCheckpoint, rows, checkpointPath, {
+        cohorts,
+        shardIndex,
+        shardCount,
+      })
     }
     const branchMap = await db.loadBranchMap(args.runId)
     // SMI-6015 Wave 1 correctness guard-rail: `rowsByCohort` stays built
@@ -264,8 +313,16 @@ export async function runSimulateFull(
       SimSnapshotRow[]
     >
     for (const row of rows) rowsByCohort[row.cohort].push(row)
-    const rowsForMainPass =
+    const cohortFilteredRows =
       args.cohorts !== undefined ? rows.filter((r) => cohorts.includes(r.cohort)) : rows
+    // SMI-6015 PAT-sharded fetch plan §1: applied ALONGSIDE (not replacing)
+    // the cohort filter above — a row is processed by THIS invocation iff
+    // shardOf(row.id) === shardIndex. `rowsByCohort`'s own `.total` stays
+    // unaffected by sharding for the same reason it already stays unaffected
+    // by --cohorts (comment above): only `rowsForMainPass` is filtered.
+    const rowsForMainPass = isSharded
+      ? cohortFilteredRows.filter((r) => shardOf(r.id, shardCount) === shardIndex)
+      : cohortFilteredRows
 
     const telemetry = newRateLimitTelemetry()
     // SMI-6015: getHeaders is invoked fresh on every fetch attempt (inside
@@ -383,44 +440,16 @@ export async function runSimulateFull(
   } finally {
     heartbeatStopped = true
     if (heartbeatTimer) clearTimeout(heartbeatTimer)
-    await db.releaseRun(args.runId, token).catch((err) => {
+    const release = isSharded
+      ? db.releaseRunShard(args.runId, shardIndex, token)
+      : db.releaseRun(args.runId, token)
+    await release.catch((err) => {
       console.error(`[smi5879-simulate-full] release failed (non-fatal): ${(err as Error).message}`)
     })
   }
 }
 
-function printSummary(report: Smi5879SimulateFullReport): void {
-  console.log(
-    `\n── Simulation Summary (${report.run_id}) ──\n` +
-      `  report_kind:       ${report.report_kind}\n` +
-      `  token_source:      ${report.token_source}\n` +
-      `  baseline_commit:   ${report.baseline_commit}\n` +
-      `  sweep:             ${report.sweep.passes_run} pass(es), hard_stopped=${report.sweep.hard_stopped ?? 'none'}\n` +
-      ALL_SIMULATED_COHORTS.map(
-        (c) =>
-          `  coverage.${c}:       ${report.coverage[c].status} (${report.coverage[c].scanned}/${report.coverage[c].total}, unevaluable=${report.coverage[c].unevaluable}, unfetchable=${report.coverage[c].unfetchable})`
-      ).join('\n') +
-      `\n  counts: ${JSON.stringify(report.counts)}\n`
-  )
-}
-
-async function dryRun(args: CliArgs): Promise<void> {
-  console.log(
-    `[DRY-RUN] run-id=${args.runId} purpose=${args.purpose} baseline-commit=${args.baselineCommit}`
-  )
-  assertPatTokenSource()
-  const conn = poolerSessionConnParams()
-  await runPsql(conn, 'SELECT 1;')
-  console.log('[DRY-RUN] DB connectivity OK (session pooler).')
-  const headers = await buildGitHubHeaders('skillsmith-smi5879-simulate/1.0')
-  console.log(
-    `[DRY-RUN] GitHub auth headers built (Authorization present: ${'Authorization' in headers}).`
-  )
-  console.log(
-    '[DRY-RUN] No generation claimed, no GitHub fetches performed, no checkpoint/report written. ' +
-      'Re-run with --apply to perform the real simulation.'
-  )
-}
+// printSummary/dryRun live in smi5879-simulate-full.output.ts (500-line budget)
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
@@ -434,7 +463,16 @@ async function main(): Promise<void> {
   const { scanSkillBundle: scanPrePort } = await importBaselineScanSkillBundle(baselineDir)
 
   const report = await runSimulateFull(db, headScanSkillBundle, scanPrePort, args)
-  const reportPath = args.reportPath ?? `smi5879-simulate-report-${args.runId}.json`
+  // SMI-6015 PAT-sharded fetch plan Wave 1 (round-1 GPT-5.6-Sol review,
+  // Medium finding): without a shard-aware default, N shards run without an
+  // explicit --report-path would all default to the SAME file — concurrent
+  // overwrites, or silently losing every shard's report but the last one to
+  // finish. Mirrors checkpointPathForShard's own naming convention.
+  const reportPath =
+    args.reportPath ??
+    (args.shardIndex !== undefined
+      ? `smi5879-simulate-report-${args.runId}-shard${args.shardIndex}.json`
+      : `smi5879-simulate-report-${args.runId}.json`)
   writeFileSync(reportPath, JSON.stringify(report, null, 2))
   printSummary(report)
   console.log(`Report written to ${reportPath}`)

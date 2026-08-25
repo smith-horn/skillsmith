@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   checkpointPathFor,
+  checkpointPathForShard,
   readCheckpoint,
   writeCheckpoint,
   isAbnormalResume,
@@ -150,6 +151,77 @@ describe('checkpoint I/O', () => {
   })
 
   // -------------------------------------------------------------------------
+  // SMI-6015 PAT-sharded fetch plan Wave 1: shard_index/shard_count shape
+  // validation — both-or-neither, and a valid (index, count) pair when present.
+  // -------------------------------------------------------------------------
+
+  it.each([
+    ['shard_index without shard_count', { shard_index: 0 }],
+    ['shard_count without shard_index', { shard_count: 3 }],
+    ['shard_index out of bounds', { shard_index: 3, shard_count: 3 }],
+    ['negative shard_index', { shard_index: -1, shard_count: 3 }],
+    ['non-integer shard_count', { shard_index: 0, shard_count: 1.5 }],
+    ['shard_count < 1', { shard_index: 0, shard_count: 0 }],
+  ])('readCheckpoint rejects a checkpoint with %s', (_label, extra) => {
+    const path = join(dir, 'bad-shard.json')
+    const raw: Record<string, unknown> = {
+      run_id: 'run-1',
+      purpose: 'decision',
+      baseline_commit: 'abc123',
+      token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
+      clean_shutdown: true,
+      row_results: {},
+      sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      ...extra,
+    }
+    writeFileSync(path, JSON.stringify(raw))
+    expect(() => readCheckpoint(path)).toThrow(/shard_index=.*shard_count=/)
+  })
+
+  it('round-trips a checkpoint with a valid shard_index/shard_count pair', () => {
+    const path = join(dir, 'sharded-ckpt.json')
+    const checkpoint: Smi5879SimulateCheckpoint = {
+      run_id: 'run-1',
+      purpose: 'decision',
+      baseline_commit: 'abc123',
+      token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
+      shard_index: 1,
+      shard_count: 3,
+      clean_shutdown: true,
+      row_results: {},
+      sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    writeCheckpoint(path, checkpoint)
+    expect(readCheckpoint(path)).toEqual(checkpoint)
+  })
+
+  it('an unsharded checkpoint (no shard_index/shard_count at all) is still valid', () => {
+    const path = join(dir, 'unsharded-ckpt.json')
+    const checkpoint: Smi5879SimulateCheckpoint = {
+      run_id: 'run-1',
+      purpose: 'decision',
+      baseline_commit: 'abc123',
+      token_source: 'pat',
+      cohorts: ['C1', 'C2', 'C3', 'C4'],
+      clean_shutdown: true,
+      row_results: {},
+      sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    writeCheckpoint(path, checkpoint)
+    const loaded = readCheckpoint(path)
+    expect(loaded?.shard_index).toBeUndefined()
+    expect(loaded?.shard_count).toBeUndefined()
+  })
+
+  // -------------------------------------------------------------------------
   // SMI-5879 review finding 3: a corrupted checkpoint file is NOT the same
   // as "no checkpoint" (cold start) — it must fail loudly, since real
   // progress may have been lost, not be silently treated as absent.
@@ -229,6 +301,141 @@ describe('checkpoint I/O', () => {
           'path'
         )
       ).toThrow(/cohorts \(checkpoint=C1,C2,C3,C4, this run=C4\)/)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // SMI-6015 PAT-sharded fetch plan Wave 1 Step 3: assertCheckpointIdentity's
+  // shard comparison, and checkpointPathForShard/parseShardIndexFromPath.
+  // Test spec per the plan: resuming shard 1 against a checkpoint written as
+  // shard 2 is refused loudly; resuming shard 1-of-3 against a checkpoint
+  // written as shard 1-of-4 is refused loudly.
+  // -------------------------------------------------------------------------
+
+  describe('assertCheckpointIdentity — shard', () => {
+    function shardCheckpoint(
+      shardIndex: number | undefined,
+      shardCount: number | undefined
+    ): Smi5879SimulateCheckpoint {
+      return {
+        run_id: 'run-1',
+        purpose: 'decision',
+        baseline_commit: 'abc123',
+        token_source: 'pat',
+        cohorts: ['C1', 'C2', 'C3', 'C4'],
+        ...(shardIndex !== undefined ? { shard_index: shardIndex } : {}),
+        ...(shardCount !== undefined ? { shard_count: shardCount } : {}),
+        clean_shutdown: true,
+        row_results: {},
+        sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+    }
+    const BASE_EXPECTED = { runId: 'run-1', purpose: 'decision', tokenSource: 'pat' } as const
+
+    it('accepts a matching shard index/count', () => {
+      const checkpoint = shardCheckpoint(1, 3)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'], shardIndex: 1, shardCount: 3 },
+          'some-path.json'
+        )
+      ).not.toThrow()
+    })
+
+    it('refuses resuming shard 1 against a checkpoint written as shard 2 (same shard_count)', () => {
+      const checkpoint = shardCheckpoint(2, 3)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'], shardIndex: 1, shardCount: 3 },
+          'some-path.json'
+        )
+      ).toThrow(/shard \(checkpoint=index 2\/count 3, this run=index 1\/count 3\)/)
+    })
+
+    it('refuses resuming shard 1-of-3 against a checkpoint written as shard 1-of-4', () => {
+      const checkpoint = shardCheckpoint(1, 4)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'], shardIndex: 1, shardCount: 3 },
+          'some-path.json'
+        )
+      ).toThrow(/shard \(checkpoint=index 1\/count 4, this run=index 1\/count 3\)/)
+    })
+
+    it('refuses resuming an UNSHARDED checkpoint as if it were sharded', () => {
+      const checkpoint = shardCheckpoint(undefined, undefined)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'], shardIndex: 0, shardCount: 3 },
+          'some-path.json'
+        )
+      ).toThrow(
+        /shard \(checkpoint=index \(unsharded\)\/count \(unsharded\), this run=index 0\/count 3\)/
+      )
+    })
+
+    it('refuses resuming a SHARDED checkpoint as if it were unsharded', () => {
+      const checkpoint = shardCheckpoint(0, 3)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'] },
+          'some-path.json'
+        )
+      ).toThrow(
+        /shard \(checkpoint=index 0\/count 3, this run=index \(unsharded\)\/count \(unsharded\)\)/
+      )
+    })
+
+    it('refuses a --checkpoint-path whose embedded shard index disagrees with the checkpoint content (copy/rename mistake)', () => {
+      // Flag (shardIndex=2) and checkpoint content (shard_index=2) AGREE with
+      // each other, but the PATH implies shard 1 — the exact compounding
+      // mistake the path-embedded cross-check exists to catch, which the
+      // flag-vs-content check above cannot (both already agree).
+      const checkpoint = shardCheckpoint(2, 3)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'], shardIndex: 2, shardCount: 3 },
+          checkpointPathForShard('run-1', 1)
+        )
+      ).toThrow(/shard index embedded in --checkpoint-path \(1\) does not match/)
+    })
+
+    it('accepts a --checkpoint-path whose embedded shard index matches the checkpoint content', () => {
+      const checkpoint = shardCheckpoint(1, 3)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'], shardIndex: 1, shardCount: 3 },
+          checkpointPathForShard('run-1', 1)
+        )
+      ).not.toThrow()
+    })
+
+    it('skips the path-embedded cross-check entirely for a non-canonical custom path', () => {
+      const checkpoint = shardCheckpoint(1, 3)
+      expect(() =>
+        assertCheckpointIdentity(
+          checkpoint,
+          { ...BASE_EXPECTED, cohorts: ['C1', 'C2', 'C3', 'C4'], shardIndex: 1, shardCount: 3 },
+          'my-custom-checkpoint-name.json'
+        )
+      ).not.toThrow()
+    })
+  })
+
+  describe('checkpointPathForShard', () => {
+    it('is deterministic per (run_id, shard_index) and distinct from checkpointPathFor', () => {
+      expect(checkpointPathForShard('run-a', 0)).toBe(checkpointPathForShard('run-a', 0))
+      expect(checkpointPathForShard('run-a', 0)).not.toBe(checkpointPathForShard('run-a', 1))
+      expect(checkpointPathForShard('run-a', 0)).not.toBe(checkpointPathFor('run-a'))
     })
   })
 })

@@ -84,6 +84,42 @@ export function createSmi5879SimulateFullDbDeps(conn: PgConnParams): Smi5879Simu
       })
     },
 
+    // SMI-6015 Wave 1: shard-aware siblings, backed by the Wave 0 migration's
+    // smi5879_claim_run_shard/smi5879_heartbeat_shard/smi5879_release_run_shard.
+    // shardIndex/shardCount are INTEGER SQL params — psql's `-v` mechanism
+    // only carries strings, so each is cast `::integer` after quoting,
+    // matching the pattern the Wave 0 migration's own test suite uses.
+    async claimRunShard(runId, shardIndex, shardCount, token, holder) {
+      const rows = await queryRows(
+        conn,
+        `SELECT run_id FROM smi5879_claim_run_shard(:'run_id', :'shard_index'::integer, :'shard_count'::integer, :'token', :'holder');`,
+        {
+          run_id: runId,
+          shard_index: String(shardIndex),
+          shard_count: String(shardCount),
+          token,
+          holder,
+        }
+      )
+      return { claimed: rows.length > 0 }
+    },
+
+    async heartbeatShard(runId, shardIndex, token) {
+      return queryScalar(
+        conn,
+        `SELECT smi5879_heartbeat_shard(:'run_id', :'shard_index'::integer, :'token');`,
+        { run_id: runId, shard_index: String(shardIndex), token }
+      )
+    },
+
+    async releaseRunShard(runId, shardIndex, token) {
+      await runPsql(
+        conn,
+        `SELECT smi5879_release_run_shard(:'run_id', :'shard_index'::integer, :'token');`,
+        { run_id: runId, shard_index: String(shardIndex), token }
+      )
+    },
+
     async verifyDigest(runId) {
       const rows = await queryRows(
         conn,

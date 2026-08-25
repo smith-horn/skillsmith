@@ -14,6 +14,12 @@ import type { Smi5879Purpose } from './smi5879-census.types.ts'
 
 const VALID_PURPOSES: readonly Smi5879Purpose[] = ['rehearsal', 'decision', 'window']
 
+// PR #2525 review (GPT-5.6-Sol) Low finding: the DB adapter casts both
+// --shard-index/--shard-count to Postgres `::integer` (smi5879-simulate-full.db.ts),
+// so a value that passes CLI validation but exceeds this range would fail
+// opaquely at claim time instead of at parse time.
+const POSTGRES_INTEGER_MAX = 2_147_483_647
+
 export interface CliArgs {
   runId: string
   purpose: Smi5879Purpose
@@ -40,6 +46,17 @@ export interface CliArgs {
    * gate no matter what it found.
    */
   cohorts?: SimulatedCohort[]
+  /**
+   * SMI-6015 Wave 1 (PAT-sharded fetch plan §1): this dispatch's shard
+   * assignment for a PAT-sharded fetch. Both-or-neither with `shardCount` —
+   * undefined means unsharded (the pre-existing single-process behavior).
+   * Row-level, not cohort-level: every shard processes a slice of EVERY
+   * cohort (see `shardOf()`'s own doc comment) — orthogonal to, and
+   * composable with, `cohorts` above.
+   */
+  shardIndex?: number
+  /** SMI-6015 Wave 1: total number of shards for this decision run. Both-or-neither with `shardIndex`. */
+  shardCount?: number
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -95,6 +112,44 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
+  // SMI-6015 Wave 1: --shard-index/--shard-count, both-or-neither. Row-level
+  // sharding, orthogonal to --cohorts (plan §1) — no cross-validation against
+  // `cohorts`/`purpose` needed here; every shard processes a slice of every
+  // cohort regardless of the cohort scope.
+  const shardIndexRaw = find('shard-index')
+  const shardCountRaw = find('shard-count')
+  let shardIndex: number | undefined
+  let shardCount: number | undefined
+  if (shardIndexRaw !== undefined || shardCountRaw !== undefined) {
+    if (shardIndexRaw === undefined || shardCountRaw === undefined) {
+      throw new Error(
+        'SMI-6015: --shard-index and --shard-count must both be present or both be absent, got ' +
+          `--shard-index=${shardIndexRaw ?? '(missing)'} --shard-count=${shardCountRaw ?? '(missing)'}.`
+      )
+    }
+    const parsedCount = Number(shardCountRaw)
+    if (!Number.isInteger(parsedCount) || parsedCount < 1 || parsedCount > POSTGRES_INTEGER_MAX) {
+      throw new Error(
+        `SMI-6015: --shard-count=<N> must be an integer between 1 and ${POSTGRES_INTEGER_MAX} ` +
+          `(Postgres integer range), got "${shardCountRaw}".`
+      )
+    }
+    const parsedIndex = Number(shardIndexRaw)
+    // Also covers the degenerate --shard-count=1 case correctly: with
+    // parsedCount=1, the only value satisfying 0 <= i < 1 is 0, so
+    // --shard-index=0 --shard-count=1 (a no-op single-shard run, useful for
+    // the merge tool's own tests) passes, and any other --shard-index with
+    // --shard-count=1 is naturally rejected by this same bound — no separate
+    // special case needed.
+    if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= parsedCount) {
+      throw new Error(
+        `SMI-6015: --shard-index=<i> must be an integer with 0 <= i < --shard-count (${parsedCount}), got "${shardIndexRaw}".`
+      )
+    }
+    shardIndex = parsedIndex
+    shardCount = parsedCount
+  }
+
   // `checkpointPath`/`reportPath` are genuinely optional (downstream defaults via
   // `?? checkpointPathFor(...)` / `?? 'smi5879-simulate-report-...'`) — under
   // `exactOptionalPropertyTypes`, an optional property means "may be omitted",
@@ -111,5 +166,7 @@ export function parseArgs(argv: string[]): CliArgs {
     baselineCommit: find('baseline-commit') ?? BASELINE_COMMIT_SHA,
     ...(maxElapsedMinutes !== undefined ? { maxElapsedMinutes } : {}),
     ...(cohorts !== undefined ? { cohorts } : {}),
+    ...(shardIndex !== undefined ? { shardIndex } : {}),
+    ...(shardCount !== undefined ? { shardCount } : {}),
   }
 }

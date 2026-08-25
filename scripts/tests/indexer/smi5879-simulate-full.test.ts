@@ -289,8 +289,14 @@ describe('runSimulateFull', () => {
     writeCheckpoint(args.checkpointPath as string, seeded)
     const db = makeFakeDb({ loadCohortRows: async () => rows })
     const scanner = makeVerdictScanner(new Map())
+    // SMI-6015 Wave 1 (round-1 GPT-5.6-Sol review, High finding): error
+    // wording broadened when assertCheckpointRowsBelongToGeneration gained
+    // shard/cohort scope validation on top of the original generation-
+    // membership check — the per-problem message for THIS case
+    // ("not in this generation's row set") is unchanged, only the wrapping
+    // summary sentence's wording changed.
     await expect(runSimulateFull(db, scanner, scanner, args, {})).rejects.toThrow(
-      /row_results key\(s\) that are not in this generation/
+      /row-from-a-different-generation \(not in this generation's row set\)/
     )
   })
 })
@@ -465,5 +471,61 @@ describe('runSimulateFull — heartbeat (SMI-5879 review finding 4)', () => {
 
     resolveDigest({ populationMatches: true, branchMatches: true })
     await runPromise
+  })
+
+  // ---------------------------------------------------------------------
+  // PR #2525 review (GPT-5.6-Sol) High finding: `finally`'s `heartbeatStopped
+  // = true` only cancels a FUTURE tick (via clearTimeout) — it does not
+  // cancel a heartbeat call already in flight. If that in-flight call
+  // resolves to `null` (or throws) AFTER release has already run, the old
+  // code called fatalHeartbeatAbort() -> process.exit(1) on a run that had
+  // already completed successfully, discarding the report main() was about
+  // to write.
+  // ---------------------------------------------------------------------
+
+  it('an in-flight heartbeat that resolves null AFTER the run has already completed and released must not abort the process', async () => {
+    vi.useFakeTimers()
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined as never) as typeof process.exit)
+
+    let resolveDigest: (v: {
+      populationMatches: boolean
+      branchMatches: boolean
+    }) => void = () => {}
+    const digestPromise = new Promise<{ populationMatches: boolean; branchMatches: boolean }>(
+      (resolve) => {
+        resolveDigest = resolve
+      }
+    )
+    let resolveHeartbeat: (v: string | null) => void = () => {}
+    const heartbeatPromise = new Promise<string | null>((resolve) => {
+      resolveHeartbeat = resolve
+    })
+    const heartbeat = vi.fn().mockReturnValue(heartbeatPromise)
+    const db = makeFakeDb({ verifyDigest: () => digestPromise, heartbeat })
+    const scanner = makeVerdictScanner(new Map())
+    const args = heartbeatArgs()
+
+    const runPromise = runSimulateFull(db, scanner, scanner, args, {})
+    await flushMicrotasks()
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+    expect(heartbeat).toHaveBeenCalledTimes(1) // tick fired, now in flight
+
+    // Let the (empty-population) main pass run to completion and reach
+    // `finally` — release runs, heartbeatStopped flips true, the run
+    // resolves — all while the heartbeat call above is STILL pending.
+    resolveDigest({ populationMatches: true, branchMatches: true })
+    const report = await runPromise
+    expect(report.report_kind).toBe('full_simulation')
+    expect(exitSpy).not.toHaveBeenCalled()
+
+    // Only now does the in-flight heartbeat resolve to null (lost claim) —
+    // the exact race window. Must be swallowed, not treated as fatal.
+    resolveHeartbeat(null)
+    await flushMicrotasks()
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    exitSpy.mockRestore()
   })
 })
