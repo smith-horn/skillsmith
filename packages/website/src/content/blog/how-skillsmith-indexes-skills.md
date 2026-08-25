@@ -6,7 +6,6 @@ date: 2026-02-02
 updated: 2026-05-01
 category: "Engineering"
 tags: ["indexer", "search", "embeddings", "github", "scoring", "developers"]
-featured: true
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/indexer/indexer-pipeline-hero"
 ---
 

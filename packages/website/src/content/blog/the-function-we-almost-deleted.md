@@ -6,7 +6,6 @@ date: 2026-08-14
 updated: 2026-08-15
 category: "Engineering"
 tags: ["dead-code", "code-health", "developer-tooling", "open-source", "engineering-culture", "monorepo", "code-quality"]
-featured: false
 draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/the-function-we-almost-deleted/01-hero"
 ---

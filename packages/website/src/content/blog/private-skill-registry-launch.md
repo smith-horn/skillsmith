@@ -5,7 +5,6 @@ author: "Skillsmith Team"
 date: 2026-08-23
 category: "News"
 tags: ["private-registry", "enterprise", "product-launch"]
-featured: true
 draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/private-registry/01-skills-list-approved"
 ---

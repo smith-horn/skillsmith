@@ -5,7 +5,6 @@ author: "Skillsmith Team"
 date: 2026-08-23
 category: "Tutorials"
 tags: ["private-registry", "enterprise", "tutorial", "skills"]
-featured: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/private-registry/01-skills-list-approved"
 schemaType: "HowTo"
 howToSteps:

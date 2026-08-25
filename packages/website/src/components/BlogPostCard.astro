@@ -7,7 +7,6 @@ interface Props {
   author?: string | undefined
   category?: string | undefined
   tags?: string[] | undefined
-  featured?: boolean | undefined
   readingTime?: number | undefined
   ogImage?: string | undefined
 }
@@ -20,7 +19,6 @@ const {
   author = 'Skillsmith Team',
   category,
   tags = [],
-  featured = false,
   readingTime,
   ogImage,
 } = Astro.props
@@ -37,22 +35,24 @@ const formattedDate = new Intl.DateTimeFormat('en-US', {
   class:list={[
     'block group rounded-xl border transition-all duration-200',
     'bg-dark-900 hover:bg-dark-800/50',
-    featured
-      ? 'border-primary-500/30 hover:border-primary-500/50'
-      : 'border-dark-800 hover:border-dark-700',
+    'border-dark-800 hover:border-dark-700',
   ]}
 >
   {
-    ogImage && (
-      <div class="aspect-video overflow-hidden rounded-t-xl">
+    ogImage ? (
+      <div class="aspect-[1200/630] overflow-hidden rounded-t-xl">
         <img
           src={ogImage}
           alt={title}
           width="640"
-          height="360"
+          height="336"
           class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           loading="lazy"
         />
+      </div>
+    ) : (
+      <div class="aspect-[1200/630] overflow-hidden rounded-t-xl bg-gradient-to-br from-dark-800 to-dark-900 relative">
+        <div class="absolute inset-0 bg-primary-500/5" />
       </div>
     )
   }
@@ -63,13 +63,6 @@ const formattedDate = new Intl.DateTimeFormat('en-US', {
         category && (
           <span class="px-2 py-1 text-xs font-medium rounded-full bg-primary-500/10 text-primary-400">
             {category}
-          </span>
-        )
-      }
-      {
-        featured && (
-          <span class="px-2 py-1 text-xs font-medium rounded-full bg-amber-500/10 text-amber-400">
-            Featured
           </span>
         )
       }

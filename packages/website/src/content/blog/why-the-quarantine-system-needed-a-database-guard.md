@@ -6,7 +6,6 @@ date: 2026-06-25
 updated: 2026-06-25
 category: "Engineering"
 tags: ["security", "quarantine", "data-integrity", "infrastructure", "engineering", "database"]
-featured: true
 draft: true
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-hardening/quarantine-audit-hero"
 ---

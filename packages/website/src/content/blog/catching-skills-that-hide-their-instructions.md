@@ -6,7 +6,6 @@ date: 2026-06-27
 updated: 2026-06-27
 category: "Engineering"
 tags: ["security", "quarantine", "threat-detection", "unicode", "agent-skills", "engineering"]
-featured: true
 draft: true
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-detection/disguised-instructions-hero"
 ---
