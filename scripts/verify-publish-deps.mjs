@@ -14,6 +14,18 @@
  *   node scripts/verify-publish-deps.mjs          # Check all packages
  *   node scripts/verify-publish-deps.mjs --ci     # CI mode (GitHub annotations)
  *
+ * SMI-6146 note: this script (and audit:standards Check 58) prove
+ * VERSION-RANGE coherence — that a consumer's declared dependency range is
+ * internally consistent with its sibling's version string. Neither opens a
+ * source file, so neither can prove the imported symbols actually EXIST in
+ * the sibling — that's a structurally different question, answered by
+ * audit:standards Check 63 (export-surface coherence,
+ * scripts/audit-export-surface-resolver-helpers.mjs /
+ * scripts/audit-export-surface-consumer-helpers.mjs), which reads source
+ * and reasons about the real export surface independent of what either
+ * package's version field says. See
+ * docs/internal/implementation/smi-6146-export-surface-coherence-check.md.
+ *
  * @see docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md
  */
 import { readFileSync, existsSync } from 'fs'

@@ -52,6 +52,12 @@ import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 import { countToolDefinitions } from './audit-mcp-tool-count-helpers.mjs'
 import { extractWhatsNewVersion } from './audit-readme-whats-new-helpers.mjs'
 import { evaluateInternalVersionCoherence } from './audit-internal-version-coherence-helpers.mjs'
+import { resolveExportSetForSubpath } from './audit-export-surface-resolver-helpers.mjs'
+import {
+  groupConsumerWorkspaceImports,
+  evaluateExportSurfaceCoherence,
+  evaluateExportSurfaceShadowGate,
+} from './audit-export-surface-consumer-helpers.mjs'
 import { findGitCryptUnsetRemediations } from './audit-git-crypt-remediation-helpers.mjs'
 import {
   findFloatingSupabaseCliInstalls,
@@ -5339,6 +5345,265 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
       )
     }
   }
+}
+
+// Check 63: Export-surface coherence for @skillsmith/*/@smith-horn/*
+// workspace-sibling imports (SMI-6146)
+//
+// Background: SMI-6143 shipped @skillsmith/mcp-server@0.7.10 depending on
+// @skillsmith/core exports (getApiBaseUrl, resolveSessionTier,
+// SessionTierAuthError, SessionTierTransientError) that core's *published*
+// version didn't yet have — every fresh install broke immediately. Both
+// verify-publish-deps.mjs Check 2 and this file's own Check 58 were
+// supposed to catch exactly this and didn't, for the same reason: at that
+// point core's *local* package.json version was still unchanged, so both
+// checks compared the same version string to itself and passed. Neither
+// check has ever opened a source file, a dist/, or a declaration file —
+// they reason only about version-range STRINGS.
+//
+// Version-range coherence (Checks 2/58) proves the DECLARED RANGES are
+// internally consistent with each other. Export-surface coherence (this
+// check) proves the IMPORTED SYMBOLS actually exist in the sibling's
+// source, independent of what either package's version field says — the
+// two are complementary, not redundant: a consumer can have a perfectly
+// satisfied version range (Check 58 green) while still importing a name
+// the sibling's source has never exported (this check, red), which is
+// exactly the SMI-6143 shape. See
+// docs/internal/implementation/smi-6146-export-surface-coherence-check.md
+// for the full design, including why scripts/smoke-test-published.ts was
+// the only existing mechanism that actually caught SMI-6143 in practice
+// (it's the only thing that installs and imports the real published npm
+// tarball) — and only after `npm publish` had already run. This check
+// closes that gap earlier: it reads source, not dist/ or a published
+// tarball, so it runs pre-merge in the existing `quality-checks` job with
+// no new CI job and no new install/build step.
+//
+// Reuses the existing parseTsExports/collectTsEntryExports helpers
+// (scripts/audit-standards-helpers.mjs, Check 29/SMI-4193) via the new
+// scripts/audit-export-surface-resolver-helpers.mjs (sibling export-surface
+// resolution across a package's full `exports` map, generic dist->src
+// mapping) and scripts/audit-export-surface-consumer-helpers.mjs (consumer
+// import extraction — ImportDeclaration + ImportTypeNode — plus the
+// comparison/violation logic).
+//
+// Ships warn-level through a shadow burn-in (CHECK_63_SHADOW_END_DATE
+// below, matching Check 59/60's convention) — this is genuinely new
+// detection logic (multi-entry-point resolution, alias/type-query
+// handling, dist->src path convention) with real false-positive surface,
+// unlike Check 58's immediate fail(). Shortened to 1 week (not the usual
+// 2) given the incident's severity — leaving the exact SMI-6143 failure
+// class undetected for longer than necessary isn't the right default.
+console.log(
+  `\n${BOLD}Check 63: Export-surface coherence for workspace-sibling imports (SMI-6146)${RESET}`
+)
+{
+  const CHECK_63_SHADOW_END_DATE = '2026-09-01'
+  // [skip-export-surface-check] — a DEDICATED marker, deliberately not a
+  // reuse of [skip-version-coherence-check]: a legitimate reason to skip
+  // version-range coherence (e.g. an intentional pre-release range) says
+  // nothing about whether the actual import target exists, so conflating
+  // the two escape hatches would let a real missing-export bug hide behind
+  // an unrelated skip marker. Registered in
+  // docs/internal/process/guards-and-opt-outs.md.
+  const SKIP_MARKER = '[skip-export-surface-check]'
+  const PR_BODY = process.env.PR_BODY || ''
+
+  // Gate/marker decision logic lives in evaluateExportSurfaceShadowGate
+  // (audit-export-surface-consumer-helpers.mjs) — extracted out of this
+  // inline block so it's unit-testable in isolation, matching the pattern
+  // already inlined for Check 59/60 above but factored out here.
+  const {
+    report: reportLevel,
+    shadowSuffix,
+    skipAcknowledged,
+  } = evaluateExportSurfaceShadowGate({
+    shadowEndDate: CHECK_63_SHADOW_END_DATE,
+    now: new Date(),
+    prBody: PR_BODY,
+    skipMarker: SKIP_MARKER,
+  })
+  const report = reportLevel === 'warn' ? warn : fail
+  if (skipAcknowledged) {
+    console.log(
+      `::notice::${SKIP_MARKER} opt-out found in PR body — Check 63 will report findings but not fail.`
+    )
+  }
+
+  const WORKSPACE_SCOPE_PREFIXES = ['@skillsmith/', '@smith-horn/']
+
+  const pkgDirs = existsSync('packages')
+    ? readdirSync('packages').filter((d) => existsSync(join('packages', d, 'package.json')))
+    : []
+
+  // packageName -> { dir, pkgJson, tsconfigJson } for every workspace
+  // package with a scoped @skillsmith/*/@smith-horn/* name — the set of
+  // resolvable "siblings" a consumer's import can be checked against.
+  const packageInfoByName = new Map()
+  for (const d of pkgDirs) {
+    let pkgJson
+    try {
+      pkgJson = JSON.parse(readFileSync(join('packages', d, 'package.json'), 'utf8'))
+    } catch (e) {
+      warn(`Check 63: could not parse packages/${d}/package.json: ${e.message}`)
+      continue
+    }
+    if (typeof pkgJson.name !== 'string') continue
+    let tsconfigJson = null
+    const tsconfigPath = join('packages', d, 'tsconfig.json')
+    if (existsSync(tsconfigPath)) {
+      try {
+        tsconfigJson = JSON.parse(readFileSync(tsconfigPath, 'utf8'))
+      } catch (e) {
+        warn(`Check 63: could not parse packages/${d}/tsconfig.json: ${e.message}`)
+      }
+    }
+    packageInfoByName.set(pkgJson.name, { dir: d, pkgJson, tsconfigJson })
+  }
+
+  const readFileIfExists = (absPath) => (existsSync(absPath) ? readFileSync(absPath, 'utf8') : null)
+  // Same .js-in-source convention as Check 29's resolveModule
+  // (scripts/audit-standards.mjs's own Check 29 block) — generic across
+  // every package since it only ever resolves relative to the CURRENT
+  // file's own directory.
+  const resolveModule = (fromFile, spec) => {
+    if (!spec.startsWith('.')) return null
+    const base = resolvePath(dirname(fromFile), spec.replace(/\.(m?js)$/, ''))
+    for (const candidate of [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`]) {
+      if (existsSync(candidate)) return candidate
+    }
+    return null
+  }
+
+  // Per (package, export-entry) cache, shared across every consumer
+  // processed in this run — a run touching multiple consumers of the same
+  // sibling+subpath only parses that sibling's source once.
+  const exportSetCache = new Map()
+  const resolveExportSet = (packageName, subpath) => {
+    const info = packageInfoByName.get(packageName)
+    if (!info) return { status: 'no-exports-surface' }
+    return resolveExportSetForSubpath({
+      pkgDirAbs: resolvePath('packages', info.dir),
+      pkgJson: info.pkgJson,
+      tsconfigJson: info.tsconfigJson,
+      subpath,
+      readFile: readFileIfExists,
+      resolveModule,
+      cache: exportSetCache,
+    })
+  }
+
+  let filesChecked = 0
+  let importsChecked = 0
+  let missingExportCount = 0
+  let subpathViolationCount = 0
+  let unresolvableSurfaceCount = 0
+  let uncheckedTotal = 0
+  const uncheckedFiles = new Set()
+
+  for (const consumerDir of pkgDirs) {
+    const srcDir = join('packages', consumerDir, 'src')
+    if (!existsSync(srcDir)) continue
+    const tsFiles = getFilesRecursive(srcDir, ['.ts']).filter(
+      (f) => !f.endsWith('.test.ts') && !f.endsWith('.spec.ts')
+    )
+    if (tsFiles.length === 0) continue
+
+    const srcByPath = {}
+    for (const f of tsFiles) {
+      srcByPath[f] = readFileSync(f, 'utf8')
+      filesChecked++
+    }
+
+    const { groups, unchecked } = groupConsumerWorkspaceImports(srcByPath, WORKSPACE_SCOPE_PREFIXES)
+
+    // Only compare against KNOWN workspace siblings — an
+    // @skillsmith/*/@smith-horn/* specifier that doesn't resolve to any
+    // packages/* package.json `name` is out of this check's scope (not
+    // currently possible in this monorepo; the filter is defensive).
+    const resolvableGroups = new Map()
+    for (const [key, group] of groups) {
+      if (packageInfoByName.has(group.packageName)) {
+        resolvableGroups.set(key, group)
+        importsChecked += group.occurrences.length
+      }
+    }
+
+    uncheckedTotal += unchecked.length
+    for (const u of unchecked) uncheckedFiles.add(u.file)
+
+    const { missingExportViolations, subpathViolations, unresolvableSurfaceWarnings } =
+      evaluateExportSurfaceCoherence(resolvableGroups, resolveExportSet)
+
+    for (const v of missingExportViolations) {
+      missingExportCount++
+      const relEntry = relative(process.cwd(), v.entrySourcePath)
+      const msg =
+        `Check 63: ${v.file}:${v.line} imports '${v.name}' from '${v.specifier}', which does not export it${shadowSuffix}\n` +
+        `  (checked ${relEntry} and its export * chain — ${v.exportCount} name(s) found, '${v.name}' not among them)`
+      const fix =
+        `Three likely causes, in order: (1) typo in the import name — fix it; ` +
+        `(2) '${v.packageName}' genuinely needs to export '${v.name}' yet (the SMI-6143 shape) — add the export to its source in this PR, ` +
+        `or land a preceding PR that does, before this one merges; ` +
+        `(3) known false-positive (e.g. an unchecked default/namespace import misclassified, or a Known Limitation) — ` +
+        `add '[skip-export-surface-check]' plus a reason paragraph to the PR body — see docs/internal/process/guards-and-opt-outs.md.`
+      if (skipAcknowledged) {
+        warn(msg + ' — [skip-export-surface-check] acknowledged', fix)
+      } else {
+        report(msg, fix)
+      }
+    }
+
+    for (const v of subpathViolations) {
+      for (const occ of v.occurrences) {
+        subpathViolationCount++
+        const msg = `Check 63: ${occ.file}:${occ.line} imports from '${v.specifier}', but ${v.packageName}'s package.json declares no '${v.subpath}' export entry${shadowSuffix}`
+        const fix =
+          `Either fix the import path to a subpath '${v.packageName}' actually declares in its 'exports' map, ` +
+          `or add the '${v.subpath}' entry to ${v.packageName}'s package.json 'exports' map if it's meant to be public. ` +
+          `Known false-positive: add '[skip-export-surface-check]' plus a reason paragraph to the PR body.`
+        if (skipAcknowledged) {
+          warn(msg + ' — [skip-export-surface-check] acknowledged', fix)
+        } else {
+          report(msg, fix)
+        }
+      }
+    }
+
+    for (const w of unresolvableSurfaceWarnings) {
+      for (const occ of w.occurrences) {
+        unresolvableSurfaceCount++
+        warn(
+          `Check 63: ${occ.file}:${occ.line} imports from '${w.specifier}', but ${w.packageName}'s export surface could not be resolved (${w.status})`,
+          w.status === 'no-exports-surface'
+            ? `'${w.packageName}' has no 'exports'/'main'/'types' field in its package.json — this check cannot verify imports from it (see Known Limitations).`
+            : `'${w.packageName}'s tsconfig.json outDir doesn't match its declared dist path for '${w.subpath}' — check that package's build config.`
+        )
+      }
+    }
+  }
+
+  if (missingExportCount === 0 && subpathViolationCount === 0) {
+    pass(
+      `Check 63: all ${importsChecked} workspace-sibling import(s) across ${filesChecked} checked file(s) resolve in their sibling's export surface` +
+        (unresolvableSurfaceCount > 0
+          ? ` (${unresolvableSurfaceCount} unresolvable-surface warning(s) above)`
+          : '')
+    )
+  }
+
+  // Default/namespace/unresolved-dynamic-import rollup tally — plain
+  // console.log, matching Check 54's M7 precedent: NOT a second
+  // pass()/warn()/fail() call, which would double-increment the global
+  // counters and let an earlier per-violation pass/fail be misread as the
+  // overall verdict. Includes dynamic `import(...)` occurrences whose
+  // imported names can't be determined statically (e.g. the whole
+  // namespace object bound to a plain identifier and used elsewhere, the
+  // packages/enterprise/src/audit/scheduled-scan.ts shape) alongside
+  // static default/namespace imports — same reporting treatment, not
+  // silently dropped.
+  console.log(
+    `Check 63: ${uncheckedTotal} default/namespace/dynamic-import unchecked import(s) across ${uncheckedFiles.size} file(s) not symbol-checked — see Known Limitations`
+  )
 }
 
 // Summary
