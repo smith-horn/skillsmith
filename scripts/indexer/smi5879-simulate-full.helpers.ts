@@ -259,24 +259,53 @@ export async function processRow(
     }
   }
 
+  // SMI-6015 rehearsal finding (unevaluable-routing bug — SMI-6157): the
+  // census's branch-resolution
+  // table is consulted for EVERY row's repo, regardless of whether `repo_url`
+  // embeds its own ref (`/tree/<ref>/`) — a `not-found`/`unparseable`
+  // resolution means the census already confirmed the REPO itself is gone or
+  // its branch-resolution response was structurally unusable, a fact that has
+  // nothing to do with which ref within that (now nonexistent/unusable) repo
+  // a given row's URL happens to name. This check previously ran ONLY inside
+  // the `!parsed.ref` branch below — an unreconsidered "JUDGMENT CALL" carve-out
+  // made at implementation time and never reconsidered against real base
+  // rates. An embedded-ref row whose repo the census already knew was dead
+  // fell straight through to a live fetch attempt, 404'd, and landed in the
+  // primary-fetch-404 `unevaluable` branch further down instead of here. A
+  // rehearsal run measured 7,538 of 12,867 C4 primary-404 rows were exactly
+  // this already-known-dead-repo case, wrongly blocking G-2 on a false
+  // positive.
+  //
+  // `transient` is deliberately NOT checked here (it still is, unchanged,
+  // inside the `!parsed.ref` branch below): an embedded-ref row never needs
+  // `default_branch` to be resolved at all — it already names its own ref —
+  // so a census-side transient failure resolving some OTHER attribute of the
+  // repo must not newly block a row it was never relevant to. Widening this
+  // check to `transient` would convert previously-successful embedded-ref
+  // rows into newly-blocked ones, the opposite of this fix's intent. A
+  // missing `branchMap` entry is likewise not an error here (unlike the
+  // `!parsed.ref` branch's I-5 assertion below) — an embedded-ref row doesn't
+  // depend on that entry to determine its fetch target, only (when present)
+  // to short-circuit an already-known-dead repo.
+  const info = branchMap.get(`${parsed.owner}/${parsed.repo}`)
+  if (info && (info.resolution === 'not-found' || info.resolution === 'unparseable')) {
+    return {
+      ...base,
+      outcome: 'unfetchable',
+      reason: `default_branch resolution=${info.resolution}`,
+    }
+  }
+
   let branch: string
   if (parsed.ref) {
     branch = parsed.ref
   } else {
-    const info = branchMap.get(`${parsed.owner}/${parsed.repo}`)
     if (!info) {
       throw new Error(
         `SMI-5879 simulator bug: no smi5879_repo_branch row for ${parsed.owner}/${parsed.repo} ` +
           `(row id=${row.id}) — I-5 branch coverage should have refused the census before this ` +
           `generation could be sealed. Never silently falls back to 'main'.`
       )
-    }
-    if (info.resolution === 'not-found' || info.resolution === 'unparseable') {
-      return {
-        ...base,
-        outcome: 'unfetchable',
-        reason: `default_branch resolution=${info.resolution}`,
-      }
     }
     if (info.resolution === 'transient') {
       return { ...base, outcome: 'unevaluable', reason: 'default_branch resolution=transient' }

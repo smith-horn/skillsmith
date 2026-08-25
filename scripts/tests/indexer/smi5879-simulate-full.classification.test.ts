@@ -92,6 +92,70 @@ describe('processRow — tier-2 outcome classification', () => {
     expect(result.outcome).toBe('unevaluable')
   })
 
+  // -------------------------------------------------------------------------
+  // Census-known-dead-repo routing for embedded-ref `repo_url`s (regression
+  // coverage for the not-found-with-embedded-ref routing bug, SMI-6015
+  // rehearsal finding — see `processRow`'s own doc comment for the fix).
+  // `makeRow()`'s default `repo_url` is `.../${id}/tree/main` — an
+  // embedded-ref URL (`parsed.ref = 'main'`) — so these tests use the default
+  // row shape rather than the bare-repo shape the three tests above use.
+  // -------------------------------------------------------------------------
+
+  it('unfetchable: repo_url embeds a ref but census already confirmed the repo not-found (bypass fix)', async () => {
+    const row = makeRow()
+    const branchMap: BranchMap = new Map([
+      [`acme/${row.id}`, { resolution: 'not-found', default_branch: null }],
+    ])
+    // No registerPrimary() call: if the bypass bug regressed, this row would
+    // fall through to a live fetch attempt and the fetch mock would throw on
+    // an unregistered URL, failing this test before the outcome assertion
+    // even runs.
+    const result = await processRow(row, branchMap, baseDeps(cleanScanner, cleanScanner))
+    expect(result.outcome).toBe('unfetchable')
+    expect(result.reason).toMatch(/not-found/)
+  })
+
+  it('unfetchable: repo_url embeds a ref but census found the branch-resolution response unparseable (same terminal treatment as not-found)', async () => {
+    const row = makeRow()
+    const branchMap: BranchMap = new Map([
+      [`acme/${row.id}`, { resolution: 'unparseable', default_branch: null }],
+    ])
+    const result = await processRow(row, branchMap, baseDeps(cleanScanner, cleanScanner))
+    expect(result.outcome).toBe('unfetchable')
+    expect(result.reason).toMatch(/unparseable/)
+  })
+
+  it('unevaluable: repo_url embeds a ref, census resolved the repo fine, but SKILL.md itself still 404s (file-level absence is NOT reclassified by this fix)', async () => {
+    const row = makeRow()
+    const branchMap: BranchMap = new Map([
+      [`acme/${row.id}`, { resolution: 'resolved', default_branch: 'main' }],
+    ])
+    registerPrimary(row, [new Response('Not Found', { status: 404 })])
+    const result = await processRow(row, branchMap, baseDeps(cleanScanner, cleanScanner))
+    expect(result.outcome).toBe('unevaluable')
+    expect(result.reason).toMatch(/confirmed absent/)
+  })
+
+  it('unchanged_clean: repo_url embeds a ref and census reports transient — transient does not block an embedded-ref row (it never needed default_branch)', async () => {
+    const row = makeRow()
+    const branchMap: BranchMap = new Map([
+      [`acme/${row.id}`, { resolution: 'transient', default_branch: null }],
+    ])
+    registerPrimary(row, [contentsApiResponse('# SKILL')])
+    const result = await processRow(row, branchMap, baseDeps(cleanScanner, cleanScanner))
+    expect(result.outcome).toBe('unchanged_clean')
+  })
+
+  it('unfetchable: repo_url has NO embedded ref and census reports not-found — existing no-ref behavior is unchanged by this fix', async () => {
+    const row = makeRow({ repo_url: 'https://github.com/acme/bare-repo4' })
+    const branchMap: BranchMap = new Map([
+      ['acme/bare-repo4', { resolution: 'not-found', default_branch: null }],
+    ])
+    const result = await processRow(row, branchMap, baseDeps(cleanScanner, cleanScanner))
+    expect(result.outcome).toBe('unfetchable')
+    expect(result.reason).toMatch(/not-found/)
+  })
+
   it('unevaluable: primary fetch exhausts retries', async () => {
     const row = makeRow()
     registerPrimary(row, [
