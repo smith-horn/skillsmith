@@ -382,6 +382,17 @@ Authoritative auth/JWT-verification table for every edge function. CLAUDE.md kee
 
 When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (under `varlock run --`) or the literal `https://vrcnzpmndtroqxxoqkzy.supabase.co`. Hardcoding `ovhcifugwqnzoebwfuku` will make a healthy prod deploy look stale — a 2026-04-17 session burned ~7 minutes on this.
 
+## External webhook registration
+
+Signed server-to-server webhooks — where the vendor's own signature is the auth mechanism (Stripe, Resend, and any future one) — register the raw Supabase URL directly, `https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/<fn>`, and never `api.skillsmith.app`. The `api.skillsmith.app` proxy (`apps/api-proxy/api/proxy.ts`) exists for client-facing traffic; it silently drops non-allowlisted headers and re-serializes request bodies, which breaks HMAC-signature verification for webhook traffic (SMI-6148). Two live registrations follow this convention — grep `vrcnzpmndtroqxxoqkzy` in `docs/internal/` to find both in one sweep if the Supabase project ref ever migrates:
+
+| Vendor | Function | Endpoint |
+|--------|----------|----------|
+| Stripe | `stripe-webhook` | `https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/stripe-webhook` |
+| Resend | `email-inbound` | `https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/email-inbound` |
+
+See [ADR-132](../../docs/internal/adr/132-signed-webhooks-bypass-api-proxy.md) for the full rationale and the applicability criteria for future integrations.
+
 ## Auto-deploy
 
 Edge functions are automatically deployed to **both** prod (`vrcnzpmndtroqxxoqkzy`) and staging (`ovhcifugwqnzoebwfuku`) when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and runs `deploy-prod` and `deploy-staging` jobs in parallel; failure of one does not block the other. `_shared/` changes trigger a full deploy of all 32 functions to both refs. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`. (SMI-4528)
