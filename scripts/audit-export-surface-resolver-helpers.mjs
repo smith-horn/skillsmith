@@ -172,7 +172,7 @@ function resolveWildcardTarget(wildcardEntries, subpath) {
     if (captured === null) continue
     const prefixLen = pattern.indexOf('*')
     if (!best || prefixLen > best.prefixLen) {
-      best = { prefixLen, target: targetTemplate.replace('*', captured) }
+      best = { prefixLen, target: targetTemplate.replaceAll('*', captured) }
     }
   }
   return best ? best.target : null

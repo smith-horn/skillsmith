@@ -377,6 +377,30 @@ describe('resolveExportSetForSubpath: export * recursion, subpath resolution, an
     expect([...result.names]).toEqual(['X'])
   })
 
+  it('substitutes every "*" occurrence in a wildcard target template, not just the first (CodeQL js/incomplete-string-escaping)', () => {
+    const pkgJson = {
+      name: '@skillsmith/wildcard-multi-star',
+      exports: { './*': './dist/*/index-*.js' },
+    }
+    const files: Record<string, string> = {
+      [join(PKG_DIR_ABS, 'foo/index-foo.ts')]: `export { X }`,
+    }
+    const result = resolveExportSetForSubpath({
+      pkgDirAbs: PKG_DIR_ABS,
+      pkgJson,
+      tsconfigJson: outDirTsconfig,
+      subpath: './foo',
+      readFile: (p: string) => files[p] ?? null,
+      resolveModule: () => null,
+    })
+    expect(result.status).toBe('ok')
+    // A single-'*'-replace bug would resolve to '.../foo/index-*.js' (second '*'
+    // left literal), missing this file entirely and falling through to a
+    // different status or an empty export set instead of reading it.
+    expect(result.entrySourcePath).not.toContain('*')
+    expect([...result.names]).toEqual(['X'])
+  })
+
   it('an unmatched wildcard subpath is still "subpath-not-declared", not silently accepted', () => {
     const pkgJson = {
       name: '@skillsmith/wildcard-sibling',
