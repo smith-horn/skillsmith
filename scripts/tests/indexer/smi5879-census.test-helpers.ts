@@ -53,6 +53,14 @@ const MIGRATION_PATH = join(
   process.cwd(),
   'supabase/migrations/20260808000000_smi5879_snapshot_generations.sql'
 )
+// SMI-6015 Wave 0: additive sibling migration (shard-aware claim). Applied
+// after the parent migration, same schema-substitution treatment — purely
+// additive DDL, so this does not change behavior for any existing test file
+// that only exercises the parent migration's own objects.
+const SHARD_CLAIM_MIGRATION_PATH = join(
+  process.cwd(),
+  'supabase/migrations/20260825000000_smi5879_shard_claim.sql'
+)
 
 /** Resolve test connection params or throw with the exact standup command. */
 export function requireTestConn(): PgConnParams {
@@ -232,6 +240,14 @@ export async function resetSchema(conn: PgConnParams, schemaName: string): Promi
   await runPsql(scoped, CREATE_SKILLS_FIXTURE_SQL)
   const migrationSql = readFileSync(MIGRATION_PATH, 'utf8').replace(/\bpublic\b/g, schemaName)
   await runPsql(scoped, migrationSql)
+  // SMI-6015 Wave 0: purely additive sibling — new tables/functions plus one
+  // CREATE OR REPLACE of an existing function, same schema-substitution
+  // treatment as the parent migration above.
+  const shardClaimSql = readFileSync(SHARD_CLAIM_MIGRATION_PATH, 'utf8').replace(
+    /\bpublic\b/g,
+    schemaName
+  )
+  await runPsql(scoped, shardClaimSql)
   return scoped
 }
 
@@ -348,5 +364,25 @@ export async function backdateHeartbeat(
     conn,
     `UPDATE smi5879_run SET runner_heartbeat_at = now() - (:'minutes' || ' minutes')::interval WHERE run_id = :'run_id';`,
     { run_id: runId, minutes: String(minutesAgo) }
+  )
+}
+
+/**
+ * SMI-6015 Wave 0: backdate a SHARD claim's `runner_heartbeat_at` (test-only
+ * escape hatch, for shard-GC staleness tests) — distinct from
+ * {@link backdateHeartbeat}, which targets the parent `smi5879_run` row.
+ */
+export async function backdateShardHeartbeat(
+  conn: PgConnParams,
+  runId: string,
+  shardIndex: number,
+  minutesAgo: number
+): Promise<void> {
+  await runPsql(
+    conn,
+    `UPDATE smi5879_run_shard_claim
+        SET runner_heartbeat_at = now() - (:'minutes' || ' minutes')::interval
+      WHERE run_id = :'run_id' AND shard_index = :'shard_index'::integer;`,
+    { run_id: runId, shard_index: String(shardIndex), minutes: String(minutesAgo) }
   )
 }
