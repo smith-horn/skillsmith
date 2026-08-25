@@ -250,18 +250,29 @@ export async function runSimulateFull(
         ? await db.heartbeatShard(args.runId, shardIndex, token)
         : await db.heartbeat(args.runId, token)
     } catch (err) {
+      // PR #2525 review (GPT-5.6-Sol) High finding: `finally` below can flip
+      // `heartbeatStopped` to true WHILE this call is in flight — clearing the
+      // timer only stops a FUTURE tick, it does not cancel this one. Without
+      // this re-check, a heartbeat that throws/loses its claim in that exact
+      // window would call fatalHeartbeatAbort() -> process.exit(1) on a run
+      // that already completed and is mid-release, discarding the report
+      // `main()` was about to write. Re-checking immediately after the await
+      // (rather than tracking/awaiting the in-flight promise from `finally`)
+      // keeps release from paying an arbitrary extra RPC round trip.
+      if (heartbeatStopped) return
       fatalHeartbeatAbort(
         `heartbeat call threw for run_id=${args.runId}: ${(err as Error).message}`
       )
       return
     }
+    if (heartbeatStopped) return
     if (result === null) {
       fatalHeartbeatAbort(
         `heartbeat lost for run_id=${args.runId}${isSharded ? ` shard ${shardIndex}` : ''} — claim was stolen, the run was abandoned, or (sharded only) the parent run is no longer open/sealed.`
       )
       return
     }
-    if (!heartbeatStopped) scheduleHeartbeat()
+    scheduleHeartbeat()
   }
 
   scheduleHeartbeat()

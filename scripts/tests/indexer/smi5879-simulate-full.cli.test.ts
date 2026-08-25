@@ -142,6 +142,24 @@ describe('parseArgs', () => {
     )
   })
 
+  // ---------------------------------------------------------------------
+  // PR #2525 review (GPT-5.6-Sol) Low finding: the DB adapter casts
+  // --shard-count to Postgres ::integer — a value that passes the
+  // integer/positivity check here but exceeds that range would otherwise
+  // fail opaquely at claim time instead of at parse time.
+  // ---------------------------------------------------------------------
+
+  it('rejects --shard-count above the Postgres integer range', () => {
+    expect(() => parseArgs([...REQUIRED, '--shard-index=0', '--shard-count=2147483648'])).toThrow(
+      /--shard-count/
+    )
+  })
+
+  it('accepts --shard-count exactly at the Postgres integer max', () => {
+    const args = parseArgs([...REQUIRED, '--shard-index=0', '--shard-count=2147483647'])
+    expect(args.shardCount).toBe(2147483647)
+  })
+
   it('--shard-index/--shard-count are undefined when omitted', () => {
     const args = parseArgs(REQUIRED)
     expect(args.shardIndex).toBeUndefined()

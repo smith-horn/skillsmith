@@ -14,6 +14,12 @@ import type { Smi5879Purpose } from './smi5879-census.types.ts'
 
 const VALID_PURPOSES: readonly Smi5879Purpose[] = ['rehearsal', 'decision', 'window']
 
+// PR #2525 review (GPT-5.6-Sol) Low finding: the DB adapter casts both
+// --shard-index/--shard-count to Postgres `::integer` (smi5879-simulate-full.db.ts),
+// so a value that passes CLI validation but exceeds this range would fail
+// opaquely at claim time instead of at parse time.
+const POSTGRES_INTEGER_MAX = 2_147_483_647
+
 export interface CliArgs {
   runId: string
   purpose: Smi5879Purpose
@@ -122,9 +128,10 @@ export function parseArgs(argv: string[]): CliArgs {
       )
     }
     const parsedCount = Number(shardCountRaw)
-    if (!Number.isInteger(parsedCount) || parsedCount < 1) {
+    if (!Number.isInteger(parsedCount) || parsedCount < 1 || parsedCount > POSTGRES_INTEGER_MAX) {
       throw new Error(
-        `SMI-6015: --shard-count=<N> must be an integer >= 1, got "${shardCountRaw}".`
+        `SMI-6015: --shard-count=<N> must be an integer between 1 and ${POSTGRES_INTEGER_MAX} ` +
+          `(Postgres integer range), got "${shardCountRaw}".`
       )
     }
     const parsedIndex = Number(shardIndexRaw)

@@ -350,5 +350,52 @@ describe('runSimulateFull — SMI-6015 PAT-sharded fetch plan Wave 1', () => {
       await runPromise
       exitSpy.mockRestore()
     })
+
+    // -----------------------------------------------------------------------
+    // PR #2525 review (GPT-5.6-Sol) High finding: same race as the unsharded
+    // twin in smi5879-simulate-full.test.ts — an in-flight heartbeatShard
+    // call that resolves null AFTER release must not abort a completed run.
+    // -----------------------------------------------------------------------
+
+    it('an in-flight heartbeatShard that resolves null AFTER the run has already completed and released must not abort the process', async () => {
+      vi.useFakeTimers()
+      const exitSpy = vi
+        .spyOn(process, 'exit')
+        .mockImplementation((() => undefined as never) as typeof process.exit)
+
+      let resolveDigest: (v: {
+        populationMatches: boolean
+        branchMatches: boolean
+      }) => void = () => {}
+      const digestPromise = new Promise<{ populationMatches: boolean; branchMatches: boolean }>(
+        (resolve) => {
+          resolveDigest = resolve
+        }
+      )
+      let resolveHeartbeatShard: (v: string | null) => void = () => {}
+      const heartbeatShardPromise = new Promise<string | null>((resolve) => {
+        resolveHeartbeatShard = resolve
+      })
+      const heartbeatShard = vi.fn().mockReturnValue(heartbeatShardPromise)
+      const db = makeFakeDb({ verifyDigest: () => digestPromise, heartbeatShard })
+      const scanner = makeVerdictScanner(new Map())
+      const args = shardArgs({ shardIndex: 0, shardCount: 3 })
+
+      const runPromise = runSimulateFull(db, scanner, scanner, args, {})
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+      expect(heartbeatShard).toHaveBeenCalledTimes(1) // tick fired, now in flight
+
+      resolveDigest({ populationMatches: true, branchMatches: true })
+      const report = await runPromise
+      expect(report.report_kind).toBe('full_simulation')
+      expect(exitSpy).not.toHaveBeenCalled()
+
+      resolveHeartbeatShard(null)
+      await flushMicrotasks()
+
+      expect(exitSpy).not.toHaveBeenCalled()
+      exitSpy.mockRestore()
+    })
   })
 })
