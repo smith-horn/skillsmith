@@ -145,6 +145,17 @@ export interface Smi5879SimulateCheckpoint {
    * a full-population run, or vice versa.
    */
   cohorts: SimulatedCohort[]
+  /**
+   * SMI-6015 Wave 1 (PAT-sharded fetch plan §2): this run's shard assignment,
+   * or both undefined for an unsharded run — always the explicit pair when
+   * present (never one without the other; `assertValidCheckpointShape`
+   * enforces this), so a resume that changes shard assignment, or crosses
+   * between sharded and unsharded, is refused loudly rather than silently
+   * corrupting that shard's row assignment (the same class of guard the
+   * existing `cohorts` field provides).
+   */
+  shard_index?: number
+  shard_count?: number
   /** True only immediately before a graceful exit; false at every interim write. */
   clean_shutdown: boolean
   /** Per-row outcomes recorded so far (main pass + all sweep passes), keyed by row id. */
@@ -195,6 +206,23 @@ export interface Smi5879SimulateFullDbDeps {
   /** Returns the new heartbeat timestamp, or null when the claim was lost (fatal — see design 8.3.5.2.5). */
   heartbeat(runId: string, token: string): Promise<string | null>
   releaseRun(runId: string, token: string): Promise<void>
+  /**
+   * SMI-6015 Wave 1: shard-aware sibling of {@link claimRun}, backed by
+   * `smi5879_claim_run_shard` (Wave 0 migration). Mutually exclusive with
+   * `claimRun`/`heartbeat`/`releaseRun` per invocation — a dispatch is
+   * either sharded or not, never both claim paths (plan §Wave 0 Files).
+   */
+  claimRunShard(
+    runId: string,
+    shardIndex: number,
+    shardCount: number,
+    token: string,
+    holder: string
+  ): Promise<{ claimed: boolean }>
+  /** Shard-aware sibling of {@link heartbeat}, backed by `smi5879_heartbeat_shard`. */
+  heartbeatShard(runId: string, shardIndex: number, token: string): Promise<string | null>
+  /** Shard-aware sibling of {@link releaseRun}, backed by `smi5879_release_run_shard`. */
+  releaseRunShard(runId: string, shardIndex: number, token: string): Promise<void>
   /** Recomputes and compares both digests against the sealed values recorded at seal time. */
   verifyDigest(runId: string): Promise<{ populationMatches: boolean; branchMatches: boolean }>
   loadCohortRows(runId: string): Promise<SimSnapshotRow[]>

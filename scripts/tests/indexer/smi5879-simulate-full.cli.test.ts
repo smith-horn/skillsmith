@@ -92,4 +92,72 @@ describe('parseArgs', () => {
     const args = parseArgs(['--run-id=run-1', '--purpose=window', '--cohorts=C1,C2'])
     expect(args.cohorts).toEqual(['C1', 'C2'])
   })
+
+  // ---------------------------------------------------------------------
+  // SMI-6015 PAT-sharded fetch plan Wave 1: --shard-index/--shard-count
+  // ---------------------------------------------------------------------
+
+  it('parses a valid --shard-index/--shard-count pair', () => {
+    const args = parseArgs([...REQUIRED, '--shard-index=1', '--shard-count=3'])
+    expect(args.shardIndex).toBe(1)
+    expect(args.shardCount).toBe(3)
+  })
+
+  it('rejects --shard-index without --shard-count', () => {
+    expect(() => parseArgs([...REQUIRED, '--shard-index=0'])).toThrow(
+      /--shard-index and --shard-count must both be present/
+    )
+  })
+
+  it('rejects --shard-count without --shard-index', () => {
+    expect(() => parseArgs([...REQUIRED, '--shard-count=3'])).toThrow(
+      /--shard-index and --shard-count must both be present/
+    )
+  })
+
+  it.each(['0', '-1', '1.5', 'not-a-number'])('rejects an invalid --shard-count=%s', (bad) => {
+    expect(() => parseArgs([...REQUIRED, `--shard-index=0`, `--shard-count=${bad}`])).toThrow(
+      /--shard-count/
+    )
+  })
+
+  it.each(['-1', '3', '1.5', 'not-a-number'])(
+    'rejects --shard-index=%s out of [0, shard-count) bounds',
+    (bad) => {
+      expect(() => parseArgs([...REQUIRED, `--shard-index=${bad}`, '--shard-count=3'])).toThrow(
+        /--shard-index/
+      )
+    }
+  )
+
+  it('--shard-count=1 --shard-index=0 is a valid degenerate no-op single-shard run', () => {
+    const args = parseArgs([...REQUIRED, '--shard-index=0', '--shard-count=1'])
+    expect(args.shardIndex).toBe(0)
+    expect(args.shardCount).toBe(1)
+  })
+
+  it('rejects --shard-count=1 with any --shard-index other than 0', () => {
+    expect(() => parseArgs([...REQUIRED, '--shard-index=1', '--shard-count=1'])).toThrow(
+      /--shard-index/
+    )
+  })
+
+  it('--shard-index/--shard-count are undefined when omitted', () => {
+    const args = parseArgs(REQUIRED)
+    expect(args.shardIndex).toBeUndefined()
+    expect(args.shardCount).toBeUndefined()
+  })
+
+  it('--shard-index/--shard-count compose with --cohorts (row-level, orthogonal to cohort scope)', () => {
+    const args = parseArgs([
+      '--run-id=run-1',
+      '--purpose=rehearsal',
+      '--cohorts=C4',
+      '--shard-index=0',
+      '--shard-count=3',
+    ])
+    expect(args.cohorts).toEqual(['C4'])
+    expect(args.shardIndex).toBe(0)
+    expect(args.shardCount).toBe(3)
+  })
 })

@@ -289,8 +289,14 @@ describe('runSimulateFull', () => {
     writeCheckpoint(args.checkpointPath as string, seeded)
     const db = makeFakeDb({ loadCohortRows: async () => rows })
     const scanner = makeVerdictScanner(new Map())
+    // SMI-6015 Wave 1 (round-1 GPT-5.6-Sol review, High finding): error
+    // wording broadened when assertCheckpointRowsBelongToGeneration gained
+    // shard/cohort scope validation on top of the original generation-
+    // membership check — the per-problem message for THIS case
+    // ("not in this generation's row set") is unchanged, only the wrapping
+    // summary sentence's wording changed.
     await expect(runSimulateFull(db, scanner, scanner, args, {})).rejects.toThrow(
-      /row_results key\(s\) that are not in this generation/
+      /row-from-a-different-generation \(not in this generation's row set\)/
     )
   })
 })
