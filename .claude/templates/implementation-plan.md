@@ -137,6 +137,7 @@ If the audit surfaces a producer/consumer pair without an explicit invariant, **
 - [ ] PL/pgSQL name-collision audit (P-3) completed _if_ plan touches a `RETURNS TABLE` function
 - [ ] Smoke path (P-4) specified and run post-deploy (or `scripts/smoke-prod.sh` invoked once it exists)
 - [ ] Shared-state audit (P-5) completed _if_ plan touches browser/Node globals, event listeners on shared targets, computed-key caches, row-shape extensions, or new async producer/consumer pairs
+- [ ] If this plan includes a genuine architecture decision (not just an implementation detail), flag it and confirm whether it warrants its own `docs/internal/adr/` entry — `plan-review-skill`'s VP Engineering rubric checks for this (standing rule since 2026-08-24, see CLAUDE.md § Infrastructure Change Policy)
 - [ ] **If this change targets a non-Docker CI workflow** (e.g. `post-merge-verify.yml`,
       any workflow running on `ubuntu-latest` without the Docker dev container):
       verify in a clean-install environment — `npm ci` in a fresh clone or after

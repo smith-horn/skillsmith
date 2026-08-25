@@ -411,6 +411,8 @@ Trigger paths: `docker-entrypoint.sh`, `Dockerfile`, `docker-compose.yml`, `.git
 
 Application code (`packages/*/src/**`) and docs do not require this. See [ADR-109](docs/internal/adr/109-sparc-plan-review-for-infra-changes.md).
 
+**Architecture decisions get their own ADR (standing rule since 2026-08-24, prospective only).** A plan doc capturing *what* changed isn't the same as an ADR capturing *why one structurally different approach was chosen over another*. When a plan's own architecture decision is genuine (not just an implementation detail), flag it and ask whether it warrants a dedicated `docs/internal/adr/` entry — `plan-review-skill`'s VP Engineering rubric checks for this.
+
 ---
 
 ## Important Instruction Reminders
