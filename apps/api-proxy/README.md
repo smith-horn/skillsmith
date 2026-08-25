@@ -10,6 +10,8 @@ Supabase custom domains require a paid add-on ($10/month). Using Vercel as a pro
 - CORS headers managed centrally
 - Health check endpoint
 
+**Not for signed webhooks.** This proxy is not fit for server-to-server webhook traffic whose own signature is the auth mechanism (Stripe, Resend). Two fidelity bugs drop the exact bytes a signature check needs: a hardcoded header allowlist (`forwardHeaders` at `api/proxy.ts:131`) silently discards any header not in the list — e.g. Resend's `svix-*` trio — and every non-`GET`/`HEAD` body is re-serialized via `JSON.stringify(req.body)` (`api/proxy.ts:150`), which does not byte-match the original payload an HMAC signature was computed over. Signed webhooks register the raw Supabase URL directly instead — see [ADR-132](../../docs/internal/adr/132-signed-webhooks-bypass-api-proxy.md) (SMI-6148).
+
 ## Architecture
 
 ```
