@@ -11,8 +11,13 @@ import { ClientRouter } from 'astro:transitions'
 import Footer from '../../../components/Footer.astro'
 import AccountSidebar from '../../../components/AccountSidebar.astro'
 import Nav from '../../../components/Nav.astro'
-import TeamNav from '../../../components/TeamNav.astro'
+import AccountMobileNav from '../../../components/AccountMobileNav.astro'
 import { getSupabaseConfig } from '../../../lib/supabase-config'
+// This page builds its own <html> document rather than wrapping content in BaseLayout, so it
+// never picked up BaseLayout's `import '../styles/global.css'` — the page's button colors were
+// hand-rolled and drifted off-brand as a result. Import directly so the real brand tokens
+// (--color-coral, etc.) are available to this page's own <style> block below.
+import '../../../styles/global.css'
 
 const supabaseConfig = getSupabaseConfig()
 ---
@@ -42,10 +47,10 @@ const supabaseConfig = getSupabaseConfig()
     <div class="account-shell">
       <AccountSidebar currentPath={Astro.url.pathname} />
 
-      <main class="registry-container">
+      <main class="registry-container" data-account-page="/account/team/registry">
         <h1>Private Registry</h1>
 
-        <TeamNav activePath="/account/team/registry" />
+        <AccountMobileNav currentPath="/account/team/registry" />
 
         <div id="loading-state" class="loading-state">
           <p>Loading private registry...</p>
@@ -213,33 +218,42 @@ const supabaseConfig = getSupabaseConfig()
     gap: 1rem;
   }
 
-  .skill-card,
-  .submission-card {
+  /* Astro's scoped-style attribute is only ever stamped onto elements that exist in THIS
+     component's static template. Everything below is built as an HTML string in the <script>
+     block (renderSkills/renderPending/renderRejected) and inserted via innerHTML — Astro never
+     sees those elements, so a plain scoped selector like `.version-row { ... }` silently never
+     matches them. :global() is the documented escape hatch: it emits the selector without the
+     scope attribute, so it still applies to this same client-rendered markup. Confirmed live
+     (2026-08-23): without :global(), .version-row computed to `display: block; gap: normal`
+     instead of the grid/gap declared here — the exact cause of a reported "no space between the
+     text and the button" bug, since every spacing rule in this block was silently inert. */
+  :global(.skill-card),
+  :global(.submission-card) {
     background: #1a1a1f;
     border: 1px solid #2a2a2f;
     border-radius: 0.75rem;
     padding: 1.25rem;
   }
 
-  .skill-card:hover,
-  .submission-card:hover {
+  :global(.skill-card:hover),
+  :global(.submission-card:hover) {
     border-color: #3a3a42;
   }
 
-  .skill-name,
-  .submission-name {
+  :global(.skill-name),
+  :global(.submission-name) {
     font-size: 1rem;
     font-weight: 600;
     overflow-wrap: anywhere;
   }
 
-  .version-list {
+  :global(.version-list) {
     display: flex;
     flex-direction: column;
     margin-top: 0.75rem;
   }
 
-  .version-row {
+  :global(.version-row) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 1rem;
@@ -248,32 +262,32 @@ const supabaseConfig = getSupabaseConfig()
     border-top: 1px solid #2a2a2f;
   }
 
-  .version-details {
+  :global(.version-details) {
     min-width: 0;
   }
 
-  .version-heading,
-  .badge-row,
-  .submission-header,
-  .submission-actions {
+  :global(.version-heading),
+  :global(.badge-row),
+  :global(.submission-header),
+  :global(.submission-actions) {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.5rem;
   }
 
-  .submission-header {
+  :global(.submission-header) {
     justify-content: space-between;
     margin-bottom: 0.5rem;
   }
 
-  .submission-actions {
+  :global(.submission-actions) {
     margin-top: 1rem;
   }
 
-  .version-description,
-  .submission-description,
-  .review-note {
+  :global(.version-description),
+  :global(.submission-description),
+  :global(.review-note) {
     color: #9ca3af;
     font-size: 0.875rem;
     line-height: 1.5;
@@ -281,16 +295,16 @@ const supabaseConfig = getSupabaseConfig()
     overflow-wrap: anywhere;
   }
 
-  .version-meta,
-  .submission-meta {
+  :global(.version-meta),
+  :global(.submission-meta) {
     color: #6b7280;
     font-size: 0.8125rem;
     margin-top: 0.5rem;
   }
 
-  .status-badge,
-  .version-badge,
-  .deprecated-badge {
+  :global(.status-badge),
+  :global(.version-badge),
+  :global(.deprecated-badge) {
     display: inline-flex;
     align-items: center;
     padding: 0.25rem 0.625rem;
@@ -299,40 +313,43 @@ const supabaseConfig = getSupabaseConfig()
     font-weight: 500;
   }
 
-  .version-badge {
+  :global(.version-badge) {
     color: #d1d5db;
     background: #2a2a2f;
   }
 
-  .status-approved {
+  :global(.status-approved) {
     color: #6ee7b7;
     background: rgba(16, 185, 129, 0.12);
   }
 
-  .status-pending {
+  :global(.status-pending) {
     color: #fcd34d;
     background: rgba(245, 158, 11, 0.12);
   }
 
-  .status-rejected {
+  :global(.status-rejected) {
     color: #fca5a5;
     background: rgba(239, 68, 68, 0.12);
   }
 
-  .deprecated-badge,
-  .status-deprecated {
+  :global(.deprecated-badge),
+  :global(.status-deprecated) {
     color: #c4b5fd;
     background: rgba(139, 92, 246, 0.14);
   }
 
-  .status-unknown {
+  :global(.status-unknown) {
     color: #d1d5db;
     background: #2a2a2f;
   }
 
-  .btn {
+  /* .btn/.btn-primary are also used by the static "Try Again" button in #error-state — :global()
+     matches that element too (it only drops the attribute requirement, never excludes anything),
+     so this is safe for both the static and client-rendered usages. */
+  :global(.btn) {
     padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
+    border-radius: 8px;
     font-family: inherit;
     font-size: 0.875rem;
     font-weight: 500;
@@ -343,39 +360,41 @@ const supabaseConfig = getSupabaseConfig()
       opacity 0.15s;
   }
 
-  .btn:disabled {
+  :global(.btn:disabled) {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .btn-primary {
-    background: #b8523a;
+  /* Skillsmith's actual primary brand color is coral (--color-coral, global.css) — this page
+     previously hardcoded an unrelated rust-orange (#b8523a) instead of the real brand token. */
+  :global(.btn-primary) {
+    background: var(--color-coral);
     color: #fafafa;
   }
 
-  .btn-primary:hover:not(:disabled) {
-    background: #a04530;
+  :global(.btn-primary:hover:not(:disabled)) {
+    background: var(--color-coral-dark);
   }
 
-  .btn-secondary {
-    background: #2a2a2f;
+  :global(.btn-secondary) {
+    background: var(--color-bg-tertiary);
     color: #fafafa;
   }
 
-  .btn-secondary:hover:not(:disabled) {
+  :global(.btn-secondary:hover:not(:disabled)) {
     background: #3a3a42;
   }
 
-  .btn-danger {
+  :global(.btn-danger) {
     color: #fca5a5;
     background: rgba(239, 68, 68, 0.14);
   }
 
-  .btn-danger:hover:not(:disabled) {
+  :global(.btn-danger:hover:not(:disabled)) {
     background: rgba(239, 68, 68, 0.24);
   }
 
-  .btn-small {
+  :global(.btn-small) {
     padding: 0.375rem 0.75rem;
     white-space: nowrap;
   }
@@ -435,16 +454,16 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   @media (max-width: 640px) {
-    .version-row {
+    :global(.version-row) {
       grid-template-columns: 1fr;
     }
 
-    .version-row > .btn {
+    :global(.version-row) > :global(.btn) {
       justify-self: start;
     }
 
     .section-header,
-    .submission-header {
+    :global(.submission-header) {
       align-items: flex-start;
       flex-direction: column;
     }
@@ -454,6 +473,7 @@ const supabaseConfig = getSupabaseConfig()
 <script>
   import { createClient } from '@supabase/supabase-js'
   import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
+  import { isTeamEntitled } from '../../../lib/account-overview-data'
   import {
     badgeForRegistryVersion,
     groupRegistryVersions,
@@ -462,6 +482,9 @@ const supabaseConfig = getSupabaseConfig()
     setRegistryVersionDeprecated,
     type PrivateRegistryDashboardRow,
   } from '../../../lib/private-registry-dashboard'
+  import { isAccountPageMounted, isCurrentAccountPath } from '../../../lib/account-page-path'
+  import { createNavigationEpochGuard } from '../../../lib/account-navigation-epoch'
+  import { setAccountNavTeamEntitled } from '../../../lib/account-nav-entitlement'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -513,11 +536,17 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   document.addEventListener('astro:page-load', async () => {
-    if (
-      window.location.pathname !== '/account/team/registry' &&
-      window.location.pathname !== '/account/team/registry/'
-    )
-      return
+    // SMI-6154: pathname alone isn't enough on a browser back/forward
+    // navigation — see account/index.astro's identical comment.
+    if (!isCurrentAccountPath(window.location.pathname, '/account/team/registry')) return
+    if (!isAccountPageMounted('/account/team/registry')) return
+
+    // SMI-6112: see account/index.astro's identical comment for the full
+    // rationale — a single entry-path check cannot protect the
+    // continuations below (they each cross an `await`), nor close the
+    // A-B-A case (leaving and returning to this route before an earlier
+    // check resolves).
+    const nav = createNavigationEpochGuard()
 
     document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -533,6 +562,8 @@ const supabaseConfig = getSupabaseConfig()
     const supabase = createClient(config.url, config.anonKey)
 
     const gate = await checkTeamAccess(supabase)
+    if (nav.isStale()) return
+    setAccountNavTeamEntitled(isTeamEntitled(gate))
     if (!gate.ok) {
       const redirect = resolveGateRedirect(gate, '/account/team/registry')
       if (redirect) {
@@ -548,6 +579,7 @@ const supabaseConfig = getSupabaseConfig()
     const {
       data: { session },
     } = await supabase.auth.getSession()
+    if (nav.isStale()) return
 
     if (!session) {
       window.location.href = '/login?redirect=/account/team/registry'
@@ -573,6 +605,9 @@ const supabaseConfig = getSupabaseConfig()
         // pending/rejected via the get_private_registry_submissions RPC —
         // see loadRegistryDashboardData's invariant note.
         const registryData = await loadRegistryDashboardData(supabase, teamId)
+        // Local closure (not an external lib call), so the stale-navigation
+        // guard can sit right next to the DOM writes it protects (SMI-6112).
+        if (nav.isStale()) return
 
         const namespaceEl = document.getElementById('registry-namespace')!
         namespaceEl.textContent = registryData.namespace
@@ -750,65 +785,95 @@ const supabaseConfig = getSupabaseConfig()
           .join('')
       }
 
-      document.getElementById('content')!.addEventListener('click', async (event) => {
-        const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
-          'button[data-action]'
-        )
-        if (!button || button.disabled || !canManage) return
-
-        const action = button.dataset.action
-        const skillId = button.dataset.skillId
-        const version = button.dataset.version
-
-        if (!skillId || !version) return
-
-        const originalText = button.textContent ?? ''
-        button.disabled = true
-        button.textContent = 'Saving...'
-
-        try {
-          if (action === 'review') {
-            const decision = button.dataset.decision
-            if (decision !== 'approved' && decision !== 'rejected') return
-
-            let note: string | null = null
-            if (decision === 'rejected') {
-              const rawNote = window.prompt('Optional rejection note (Cancel aborts):')
-              if (rawNote === null) return
-              note = rawNote.trim() || null
-            }
-
-            await reviewRegistrySubmission(supabase, teamId, skillId, version, decision, note)
-
-            showActionMessage(
-              `${skillId} v${version} was ${decision === 'approved' ? 'approved' : 'rejected'}.`,
-              'success'
+      // astro:page-load re-fires on every ClientRouter view transition back to this route.
+      // Without this guard, re-entering the page (e.g. navigating away via the account tab row
+      // and back)
+      // attaches a NEW click listener to the same #content element every time, on top of any
+      // still-live listener from the previous visit — each with its own now-stale `teamId`/
+      // `canManage`/`supabase` closure. Guarding on a marker on #content itself (not a module-level
+      // flag) means the listener is attached exactly once per DOM node, regardless of how many
+      // times this callback re-runs for the same node.
+      const contentEl = document.getElementById('content')!
+      if (contentEl.dataset.reviewListenerAttached !== 'true') {
+        contentEl.dataset.reviewListenerAttached = 'true'
+        contentEl.addEventListener('click', async (event) => {
+          const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+            'button[data-action]'
+          )
+          if (!button) return
+          if (button.disabled || !canManage) {
+            console.warn(
+              '[registry] click ignored: button disabled or caller lacks manage permission'
             )
-          } else if (action === 'toggle-deprecated') {
-            const deprecated = button.dataset.deprecated === 'true'
-            await setRegistryVersionDeprecated(supabase, teamId, skillId, version, !deprecated)
-
-            showActionMessage(
-              `${skillId} v${version} was ${deprecated ? 'undeprecated' : 'deprecated'}.`,
-              'success'
-            )
+            return
           }
 
-          await loadRegistry()
-        } catch (error) {
-          showActionMessage(
-            error instanceof Error ? error.message : 'The registry action failed.',
-            'error'
-          )
-        } finally {
-          button.disabled = false
-          button.textContent = originalText
-        }
-      })
+          const action = button.dataset.action
+          const skillId = button.dataset.skillId
+          const version = button.dataset.version
+
+          if (!skillId || !version) {
+            console.error(
+              '[registry] click ignored: button is missing skillId/version data attributes'
+            )
+            showActionMessage('Could not identify which skill this button refers to.', 'error')
+            return
+          }
+
+          const originalText = button.textContent ?? ''
+          button.disabled = true
+          button.textContent = 'Saving...'
+
+          try {
+            if (action === 'review') {
+              const decision = button.dataset.decision
+              if (decision !== 'approved' && decision !== 'rejected') {
+                console.error(`[registry] click ignored: unrecognized data-decision "${decision}"`)
+                showActionMessage('This button is misconfigured (unknown decision).', 'error')
+                return
+              }
+
+              let note: string | null = null
+              if (decision === 'rejected') {
+                const rawNote = window.prompt('Optional rejection note (Cancel aborts):')
+                if (rawNote === null) return
+                note = rawNote.trim() || null
+              }
+
+              await reviewRegistrySubmission(supabase, teamId, skillId, version, decision, note)
+
+              showActionMessage(
+                `${skillId} v${version} was ${decision === 'approved' ? 'approved' : 'rejected'}.`,
+                'success'
+              )
+            } else if (action === 'toggle-deprecated') {
+              const deprecated = button.dataset.deprecated === 'true'
+              await setRegistryVersionDeprecated(supabase, teamId, skillId, version, !deprecated)
+
+              showActionMessage(
+                `${skillId} v${version} was ${deprecated ? 'undeprecated' : 'deprecated'}.`,
+                'success'
+              )
+            }
+
+            await loadRegistry()
+          } catch (error) {
+            showActionMessage(
+              error instanceof Error ? error.message : 'The registry action failed.',
+              'error'
+            )
+          } finally {
+            button.disabled = false
+            button.textContent = originalText
+          }
+        })
+      }
 
       await loadRegistry()
+      if (nav.isStale()) return
       showState('content')
     } catch (error) {
+      if (nav.isStale()) return
       console.error('Private registry load failed:', error)
       showState('error', error instanceof Error ? error.message : 'Unexpected error.')
     }

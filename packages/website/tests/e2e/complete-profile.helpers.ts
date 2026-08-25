@@ -49,6 +49,17 @@ export function buildSessionToken(
 /**
  * Inject the `__SUPABASE_CONFIG__` stub + optional session before the page
  * script runs. Mirrors the pattern used by team-tier-gate.spec.ts.
+ *
+ * SMI-6134: every account page's own inline SSR script assigns
+ * `window.__SUPABASE_CONFIG__ = supabaseConfig` in its `<head>` — under real
+ * CI (`vercel dev`) that assigns CI's real preview Supabase project config,
+ * silently overwriting this stub (plain writable properties allow later
+ * assignments to win) before the page's client module reads it. RPC/auth
+ * calls then go to the real project instead of the intercepted stub host, so
+ * `mockSupabase()`'s route interception never fires. Defining the property as
+ * immutable makes that later same-key assignment a silent no-op in
+ * non-strict inline scripts (Astro's `is:inline` scripts aren't
+ * `'use strict'`) instead of a real overwrite.
  */
 export async function injectSupabaseStub(
   page: Page,
@@ -56,10 +67,12 @@ export async function injectSupabaseStub(
 ): Promise<void> {
   await page.addInitScript(
     ({ url, anonKey, ref, session }) => {
-      ;(window as unknown as Record<string, unknown>).__SUPABASE_CONFIG__ = {
-        url,
-        anonKey,
-      }
+      Object.defineProperty(window, '__SUPABASE_CONFIG__', {
+        value: { url, anonKey },
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      })
       if (session) {
         try {
           window.localStorage.setItem(`sb-${ref}-auth-token`, session)
@@ -93,8 +106,40 @@ export interface MockShape {
   onRequest?: (url: string) => void
 }
 
-export async function mockSupabase(page: Page, shape: MockShape): Promise<void> {
+export interface MockSupabaseResult {
+  /**
+   * Populated by the SMI-6134 regression guard below when a request reaches a
+   * real (non-stub) Supabase-shaped host instead of `SUPABASE_HOST`. Should
+   * always stay empty — a non-empty array means something bypassed
+   * `injectSupabaseStub()`'s immutable `__SUPABASE_CONFIG__` injection.
+   */
+  unexpectedSupabaseRequests: string[]
+}
+
+export async function mockSupabase(page: Page, shape: MockShape): Promise<MockSupabaseResult> {
   const { rpcResponses = {}, restResponses = {}, functionsResponses = {}, onRequest } = shape
+  const unexpectedSupabaseRequests: string[] = []
+
+  // SMI-6134 regression guard: if the immutable __SUPABASE_CONFIG__ injection
+  // in injectSupabaseStub() is ever weakened, bypassed, or a new page
+  // introduces a different overwrite path, requests silently go to a real
+  // Supabase project instead of this stub — and the original bug's confusing
+  // downstream symptom (an unrelated assertion failing for reasons that have
+  // nothing to do with what it appears to test) recurs. Catch that here
+  // instead: collect the URL and abort the request so it can never actually
+  // reach a real project, regardless of whether anything reads the array.
+  //
+  // Registered BEFORE the stub-host route below on purpose: Playwright checks
+  // routes in the reverse of registration order (the most-recently-registered
+  // matching route runs first), so the stub-host route registered second
+  // below still wins for legitimate stub traffic — this catch-all only
+  // actually fires for a request to a genuinely different host, since
+  // `stub.supabase.co` matches both patterns and the later registration wins
+  // the tie.
+  await page.route('https://*.supabase.co/**', async (route: Route) => {
+    unexpectedSupabaseRequests.push(route.request().url())
+    await route.abort()
+  })
 
   await page.route(`${SUPABASE_HOST}/**`, async (route: Route) => {
     const url = new URL(route.request().url())
@@ -174,4 +219,6 @@ export async function mockSupabase(page: Page, shape: MockShape): Promise<void> 
       body: '{}',
     })
   })
+
+  return { unexpectedSupabaseRequests }
 }

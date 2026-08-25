@@ -72,9 +72,11 @@ All scoped to the `e2e-staging` environment. Other workflows cannot read them.
 - No `set -x` or `echo` of secret-bearing commands. GitHub Actions log masking
   redacts the keys themselves but env vars in `set -x` traces can still leak
   surface (e.g. URL host paths). Never trace.
-- Artifact upload allowlist: `playwright-report/`, `test-results/cli-*.log`,
+- Artifact upload allowlist: `test-results/playwright/`, `test-results/cli-*.log`,
   `test-results/preview.log`. Never `*.env`, never the bare `test-results/**`
-  glob.
+  glob. (SMI-6119: Playwright's own output relocated to `test-results/playwright/`;
+  this workflow passes `--reporter=list`, so no HTML report is ever produced
+  and there is no `playwright-report/` entry to list.)
 - Prod-ref grep gate: workflow refuses to run if
   `vrcnzpmndtroqxxoqkzy` appears anywhere in the test surface.
 - Migration drift preflight: refuses to run if the staging

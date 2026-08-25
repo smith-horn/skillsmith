@@ -5208,6 +5208,139 @@ console.log(`\n${BOLD}Check 61: git-crypt filter --unset remediation ban (SMI-57
   }
 }
 
+// Check 62: MCP server service-role usage lockdown (SMI-6109)
+//
+// SMI-6109 removed the customer-facing README instructions to configure
+// SUPABASE_SERVICE_ROLE_KEY on an MCP host, and moved list()/get()/
+// getNamespace() (registry-tools.live.ts) off the service-role client onto
+// the signed-in user's own JWT. This check is the mechanical backstop that
+// keeps a NEW customer-facing service-role dependency from silently
+// reappearing under packages/mcp-server/src/** — the exact class of gap
+// SMI-6109 itself was created to close.
+//
+// Matches only real usage (a getSupabaseAdminClient(...) CALL, or a literal
+// process.env.SUPABASE_SERVICE_ROLE_KEY read) — not narrative mentions of
+// the string in a doc comment (e.g. registry-tools.live.ts's own header,
+// explaining the history of this exact fix), which would otherwise
+// false-positive on the very file that fixed this.
+console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109)${RESET}`)
+{
+  // Every CURRENT, pre-existing, deliberately-out-of-scope service-role usage under
+  // packages/mcp-server/src/**, each with its own one-line justification — see
+  // docs/internal/implementation (SMI-6109 plan)'s "Explicitly out of scope" section for the
+  // full rationale on each. supabase-client.ts itself is excluded from the scan below (it is
+  // the legitimate definition site for both the function and the env read), not allowlisted.
+  //
+  // Keyed by full repo-relative path, not basename (cross-provider review finding, SMI-6109):
+  // a basename-only allowlist would silently exempt any FUTURE file sharing one of these names in
+  // a different subdirectory. `integration-tools.service.ts` was deliberately dropped from an
+  // earlier draft of this list — it only has a narrative comment mentioning
+  // SUPABASE_SERVICE_ROLE_KEY, which neither pattern below actually matches, so it never needed
+  // an entry; keeping it would itself have been a silent, unnecessary allowlist grant.
+  const MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS = {
+    'packages/mcp-server/src/tools/team-workspace.live.ts':
+      'identical list/get-shaped pattern across 8 methods, writes included — needs its own design (SMI-6109 plan)',
+    'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
+      'audit-log write path — a system-table insert, fail-soft, structurally different from a tenant-data read',
+    // registry-tools.live.content.ts's entry was removed here (SMI-6111, 2026-08-24): its
+    // getContent()/install() entitlement check now uses check_registry_team_entitlement(), a
+    // SECURITY DEFINER RPC via the member client — no getSupabaseAdminClient() call remains in
+    // that file, so it needs no allowlist entry. If this Check ever fails on that file again,
+    // treat it as a real regression, not a stale-allowlist gap.
+  }
+  const MCP_SERVICE_ROLE_ALLOWLIST = new Set(Object.keys(MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS))
+
+  const MCP_SERVER_SRC = join('packages', 'mcp-server', 'src')
+  const SERVICE_ROLE_CALL = /getSupabaseAdminClient\s*\(/
+  const SERVICE_ROLE_ENV_READ = /process\.env\.SUPABASE_SERVICE_ROLE_KEY/
+
+  function listMcpServerSourceFiles(dir) {
+    const out = []
+    if (!existsSync(dir)) return out
+    const stack = [dir]
+    while (stack.length) {
+      const cur = stack.pop()
+      let entries
+      try {
+        entries = readdirSync(cur, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const ent of entries) {
+        const full = join(cur, ent.name)
+        if (ent.isDirectory()) {
+          if (ent.name === 'node_modules' || ent.name === 'dist') continue
+          stack.push(full)
+        } else if (
+          ent.isFile() &&
+          ent.name.endsWith('.ts') &&
+          !ent.name.endsWith('.test.ts') &&
+          !ent.name.endsWith('.spec.ts') &&
+          !ent.name.endsWith('.test-helpers.ts') &&
+          ent.name !== 'supabase-client.ts'
+        ) {
+          out.push(full)
+        }
+      }
+    }
+    return out
+  }
+
+  const mcpServiceRoleFindings = []
+  // Cross-provider review finding (SMI-6109): an allowlist entry whose file no longer actually
+  // matches either pattern is itself worth catching — it means the entry is stale (either the
+  // usage was since removed, a la integration-tools.service.ts's comment-only mention which never
+  // matched at all, or the file was renamed/moved). A silently-stale entry can mask a REAL future
+  // regression at that same path if the pattern's match state flips back later unnoticed.
+  const staleAllowlistEntries = []
+  const seenAllowlistPaths = new Set()
+  for (const file of listMcpServerSourceFiles(MCP_SERVER_SRC)) {
+    const relPath = relative(process.cwd(), file)
+    const content = readFileSync(file, 'utf8')
+    const matchesServiceRole =
+      SERVICE_ROLE_CALL.test(content) || SERVICE_ROLE_ENV_READ.test(content)
+    if (MCP_SERVICE_ROLE_ALLOWLIST.has(relPath)) {
+      seenAllowlistPaths.add(relPath)
+      if (!matchesServiceRole) staleAllowlistEntries.push(relPath)
+      continue
+    }
+    if (matchesServiceRole) mcpServiceRoleFindings.push(relPath)
+  }
+  // An allowlisted path that was never visited at all (renamed/deleted) is equally stale.
+  for (const allowed of MCP_SERVICE_ROLE_ALLOWLIST) {
+    if (!seenAllowlistPaths.has(allowed)) staleAllowlistEntries.push(allowed)
+  }
+
+  if (mcpServiceRoleFindings.length === 0 && staleAllowlistEntries.length === 0) {
+    pass(
+      'Check 62: no new service-role usage outside the SMI-6109 allowlist under packages/mcp-server/src/**'
+    )
+  } else {
+    for (const f of mcpServiceRoleFindings) {
+      fail(
+        `Check 62: ${f} calls getSupabaseAdminClient()/reads SUPABASE_SERVICE_ROLE_KEY directly`,
+        'Use getMemberUserClient()/getAdminUserClient() (registry-tools.live.auth.ts) instead, so the ' +
+          "operation runs on the signed-in user's own JWT with RLS as the authorization boundary " +
+          '(SMI-6109) — or, if this usage is genuinely a new, deliberately-scoped exception, add the ' +
+          "file's full repo-relative path to MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS in " +
+          "scripts/audit-standards.mjs with a one-line justification, matching this repo's other " +
+          'named-allowlist conventions (e.g. NO_VERIFY_JWT_FUNCTIONS, SECDEF_ANON_ALLOWLIST).'
+      )
+    }
+    for (const stale of staleAllowlistEntries) {
+      fail(
+        `Check 62: ${stale} is allowlisted in MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS but no ` +
+          'longer contains a matching getSupabaseAdminClient()/SUPABASE_SERVICE_ROLE_KEY usage ' +
+          '(or the file no longer exists at that path)',
+        `Remove the stale entry for '${stale}' from MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS in ` +
+          'scripts/audit-standards.mjs — an unnecessary allowlist grant is itself a finding, not a ' +
+          'harmless no-op (SMI-6109 cross-provider review: integration-tools.service.ts was ' +
+          'allowlisted for a comment-only mention that never matched either pattern).'
+      )
+    }
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)

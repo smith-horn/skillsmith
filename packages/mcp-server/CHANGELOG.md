@@ -4,6 +4,62 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.11
+
+- **Fix**: 0.7.10 was uninstallable — `npx @skillsmith/mcp-server@latest --version` threw
+  `SyntaxError: The requested module '@skillsmith/core' does not provide an export named
+  'SessionTierAuthError'`. Root cause: 0.7.10's source imported `getApiBaseUrl`,
+  `resolveSessionTier`, `SessionTierAuthError`, and `SessionTierTransientError` from
+  `@skillsmith/core`, but core's published version was never bumped past 0.11.7 — the release
+  that predates those exports. This package's `@skillsmith/core` dependency floor is corrected to
+  `^0.12.0`, the first core release that actually contains them (SMI-6143).
+
+## v0.7.10
+
+- **Fix**: remove SUPABASE_SERVICE_ROLE_KEY from registry install path (#2494)
+- **Fix**: remove SUPABASE_SERVICE_ROLE_KEY from customer-facing private registry reads (#2472)
+- **Security**: `private_registry_manage`'s `list`, `get`, and `namespace` actions no longer
+  require `SUPABASE_SERVICE_ROLE_KEY` on the MCP host. They previously ran on the Supabase
+  service-role client — the backend's most powerful credential, which bypasses row-level security
+  entirely — and this package's own README instructed customers to configure it on their own
+  machines and distribute it via 1Password. Both the code path and that instruction are gone.
+  The three reads now run as the signed-in user (`skillsmith login`) via new audited wrappers
+  (`registry-tools.live.member-reads.ts`), the same `getMemberUserClient()` pattern already proven
+  by `publish`/`deprecate`/`undeprecate`/`getContent`. Every existing `team_id` /
+  `approval_status = 'approved'` / `deprecated = FALSE` query predicate is preserved byte-for-byte
+  — RLS does not enforce the latter two, so dropping them would have silently widened what a
+  member can read. All three now also write a `recordRegistryAudit()` row, making a
+  license-key-team-vs-signed-in-user mismatch observable instead of invisible. `@supabase/supabase-js`
+  is now a real dependency of this package (previously only a private root devDependency, so even
+  a fully-configured install failed with "Supabase client unavailable"), and the anon-key client
+  paths fall back to the production Supabase URL/anon key when those env vars are unset — an
+  explicit override still always wins. A new `audit:standards` Check 62 fails CI if a
+  service-role dependency reappears anywhere under `packages/mcp-server/src/**` outside a named,
+  justified allowlist. `install`/`getContent`'s own remaining service-role dependency (its
+  Enterprise-entitlement check) is removed separately below. (SMI-6109)
+- **Security**: `private_registry_manage`'s `install` action (and the MCP twin of
+  `getContent()`) no longer requires `SUPABASE_SERVICE_ROLE_KEY` either — the last remaining
+  service-role dependency on this package's registry surface. The entitlement check ("does the
+  team that owns this row currently hold an active Enterprise subscription") now runs server-side
+  via a new narrowly-scoped `SECURITY DEFINER` RPC, `check_registry_team_entitlement(p_team_id)`,
+  called through the caller's own signed-in member client — no admin client exists anywhere in
+  `registry-tools.live.content.ts` anymore. Deliberately not built on the existing
+  `resolve_effective_entitlement()`: that function's personal-subscription fallback has no team
+  correlation and would let a caller with their own personal Enterprise subscription bypass the
+  entitlement check for an unrelated, non-Enterprise team they merely belong to — the new RPC has
+  no such fallback. (SMI-6111)
+- **Fix**: the license middleware never resolved a real subscription tier for a caller
+  authenticated only via `skillsmith login` (device-session, no separately-configured
+  `SKILLSMITH_API_KEY`) — SMI-1953 covered the API-key path only, so every such caller silently
+  fell back to `community` regardless of real (including team-inherited) entitlement, blocking
+  Enterprise-gated tools like `private_registry_manage`/`private_registry_publish`. New
+  `createSessionTokenResolver` (`license.tier.ts`, SMI-6098) mirrors the API-key resolver, gated
+  on a device session actually existing (a cheap local check) so a never-logged-in community user
+  is unaffected. Server-side, `license-status` now accepts the session JWT as an alternate auth
+  mode and resolves entitlement via `get_effective_subscription_summary` (SMI-6086) — the same
+  live, team-inheritance-aware RPC the website uses — with a client scoped to the caller's own
+  verified JWT, never a service-role bypass. `getExpirationWarning` moved to `license.gate.ts`
+  (500-line limit).
 - **Docs**: `private_registry_publish`'s description also qualified "your team namespace" to
   "your team's registry namespace", closing a gap the previous SMI-6088 wording pass missed in
   the same file. Wording-only. (SMI-6088)

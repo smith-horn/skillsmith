@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.12.0
+
+- **Feature**: new `resolveSessionTier` client (`sync/license-status-client.ts`, SMI-6098) —
+  authenticates the stored device-login session against `/license-status` (proactively refreshing
+  via the existing `resolveAccessToken` helper) so the MCP server can resolve a real subscription
+  tier for a `skillsmith login` session with no separately-configured `SKILLSMITH_API_KEY`.
+  Throws `SessionTierAuthError` (no session / refresh failed) or `SessionTierTransientError`
+  (network error, HTTP 429/5xx, unexpected response) so callers never conflate "couldn't check"
+  with a definitive `community` result.
 - **Fix**: `analyzeMarkdownContext`'s indented-code-block heuristic (4+ spaces or a tab = a
   markdown documentation example) was being applied unconditionally to every scanned file,
   including the new Gap 8 extended siblings — real, non-markdown source files. Since virtually all

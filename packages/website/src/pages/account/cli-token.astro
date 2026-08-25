@@ -18,6 +18,7 @@ export const prerender = false
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
 import AccountSidebar from '../../components/AccountSidebar.astro'
+import AccountMobileNav from '../../components/AccountMobileNav.astro'
 import Nav from '../../components/Nav.astro'
 
 const supabaseConfig = getSupabaseConfig()
@@ -67,6 +68,9 @@ const webPageSchema = {
       <AccountSidebar currentPath={Astro.url.pathname} />
 
       <main class="page-container">
+        <!-- Renders immediately, outside the loading/error/content states. -->
+        <AccountMobileNav currentPath={Astro.url.pathname} />
+
         <!-- Loading State -->
         <div id="loading-state" class="loading-state">
           <div class="spinner-container">
@@ -325,9 +329,41 @@ const webPageSchema = {
           return trimmed.slice(-6)
         }
 
+        // SMI-4401 Wave 2 C2 follow-up: check for a pending key from signup (one-time
+        // display). decrypt_pending_key() decrypts and returns a user's signup
+        // auto-provisioned API key exactly once, then deletes the pending record
+        // server-side — if nothing ever calls this, that key becomes permanently
+        // unrecoverable (the user would have to revoke and regenerate). This surface
+        // moved here from the old /account dashboard per the account-UX-consolidation
+        // plan's Decision #6 (this page is the sole full license-key management surface).
+        // Non-fatal: most visits have no pending key, so an error or empty result here
+        // must fail open into the normal generate-button/existing-keys flow below.
+        let pendingKey: string | null = null
+        try {
+          const { data: pendingKeyData, error: pendingKeyError } = await supabase.rpc(
+            'decrypt_pending_key',
+            { user_id_input: session.user.id }
+          )
+          if (pendingKeyData && !pendingKeyError) {
+            pendingKey = pendingKeyData as string
+          }
+        } catch {
+          // Silently ignore — this is expected for users without pending keys.
+        }
+
         // Render active CLI tokens section — SMI-4401 Wave 2 return-visit state.
         const tokenCard = document.querySelector('.token-card')
-        if (cliKeys && cliKeys.length > 0 && tokenCard) {
+        if (pendingKey && cliKeys && cliKeys.length > 0) {
+          // A pending signup key takes priority over both the generate-button state and
+          // the existing-keys list below — decrypt_pending_key() already deleted the
+          // server-side record above, so this is the only chance to show it. Reuse the
+          // same first-visit key-display UI as a freshly generated/regenerated key
+          // (showFreshKey, SMI-4401 Wave 2 C2). cliKeys is ordered created_at descending
+          // and generate_api_key_for_user() inserts the license_keys row before the
+          // pending_key_display row in the same function call, so cliKeys[0] is
+          // guaranteed to be the key decrypt_pending_key just returned.
+          showFreshKey(pendingKey, cliKeys[0].key_prefix)
+        } else if (cliKeys && cliKeys.length > 0 && tokenCard) {
           // SMI-4447: heading pluralizes on count; origin-note surfaces when any key
           // has a non-default name (signals legacy auto-generated key from
           // pre-migration-080 handle_new_user trigger).

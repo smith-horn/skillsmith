@@ -1,7 +1,20 @@
 /**
- * Team Tier-Gate E2E Tests (SMI-4321)
+ * Team Tier-Gate E2E Tests (SMI-4321, updated SMI-6110, SMI-6128)
  *
- * Verifies the client-side gate + redirect flow on /account/team/** pages.
+ * Verifies the client-side gate + redirect flow on /account (page title
+ * "Account", Admin → Overview navigation label — formerly /account/team,
+ * then "Team Overview" under SMI-6110, renamed again under SMI-6128; both
+ * renames froze check_team_tier_access / resolveGateRedirect themselves)
+ * and the sibling
+ * /account/team/** pages, which keep the original gate-redirect contract.
+ *
+ * SMI-6110 / Decision #4 (plan-review issue C1): on /account specifically,
+ * the three tier/subscription reasons (not_team_tier, no_active_subscription,
+ * subscription_paused) now redirect to /account/summary instead of
+ * /account/subscription?gated=<reason> — no gated notice is shown on this
+ * path. The four sibling team-administration pages (members/workspaces/
+ * registry/analytics) are unchanged and still redirect to
+ * /account/subscription?gated=<reason> with the banner.
  *
  * Boundary: we mock the Supabase `check_team_tier_access` RPC via page.route()
  * rather than provisioning a real downgraded test user. Rationale: (a) downgrading
@@ -29,14 +42,26 @@ const SUPABASE_ANON = 'stub-anon-key'
 /**
  * Inject a fake __SUPABASE_CONFIG__ before Astro's page script runs.
  * Must run via addInitScript so it's available by the time astro:page-load fires.
+ *
+ * SMI-6134 (code-health consolidation follow-up): every account page's own
+ * inline SSR script assigns `window.__SUPABASE_CONFIG__ = supabaseConfig` in
+ * its `<head>` — under a real CI harness that overwrites this stub with the
+ * page's own SSR-rendered environment config (a different Supabase project),
+ * silently defeating the mock below. Not yet observed failing here because
+ * this spec isn't currently wired into any GitHub Actions workflow, but this
+ * is the exact same latent bug complete-profile.helpers.ts's injectSupabaseStub()
+ * had. Defining the property as immutable makes the page's later same-key
+ * assignment a silent no-op instead of a real overwrite.
  */
 async function injectSupabaseStub(page: Page): Promise<void> {
   await page.addInitScript(
     ({ url, anonKey }) => {
-      ;(window as unknown as Record<string, unknown>).__SUPABASE_CONFIG__ = {
-        url,
-        anonKey,
-      }
+      Object.defineProperty(window, '__SUPABASE_CONFIG__', {
+        value: { url, anonKey },
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      })
     },
     { url: SUPABASE_HOST, anonKey: SUPABASE_ANON }
   )
@@ -77,7 +102,7 @@ async function mockSupabase(page: Page, rpcResponses: Record<string, unknown>): 
   })
 }
 
-test.describe('Team tier-gate — /account/team', () => {
+test.describe('Team tier-gate — /account (Overview)', () => {
   test.beforeEach(async ({ page }) => {
     await injectSupabaseStub(page)
   })
@@ -91,15 +116,17 @@ test.describe('Team tier-gate — /account/team', () => {
         tier: 'team',
       },
     })
-    await page.goto('/account/team')
-    // The page should stay on /account/team (no redirect to /login or
-    // /account/subscription). It may show an internal error banner because
-    // downstream REST calls return empty — that is expected for this stub
-    // and does not invalidate the tier-gate assertion.
-    await expect(page).toHaveURL(/\/account\/team\/?$/)
+    await page.goto('/account')
+    // The page should stay on /account (no redirect to /login,
+    // /account/summary, or /account/subscription). It may show an internal
+    // error banner because downstream REST calls return empty — that is
+    // expected for this stub and does not invalidate the tier-gate assertion.
+    await expect(page).toHaveURL(/\/account\/?$/)
   })
 
-  test('downgraded tier redirects to subscription with gated=not_team_tier', async ({ page }) => {
+  test('downgraded tier redirects to /account/summary, no gated notice (Decision #4/C1)', async ({
+    page,
+  }) => {
     await mockSupabase(page, {
       check_team_tier_access: {
         ok: false,
@@ -108,20 +135,14 @@ test.describe('Team tier-gate — /account/team', () => {
         tier: 'community',
       },
     })
-    await page.goto('/account/team')
-    await page.waitForURL(/\/account\/subscription\?gated=not_team_tier/, {
-      timeout: 10_000,
-    })
-    // Banner should render.
-    await expect(page.locator('#team-gated-notice')).toBeVisible()
-    await expect(page.locator('#team-gated-notice-text')).toContainText(
-      /no longer includes team features/i
-    )
+    await page.goto('/account')
+    await page.waitForURL(/\/account\/summary\/?$/, { timeout: 10_000 })
+    // No gated notice on this path — the user lands somewhere useful
+    // instead (the personal Summary dashboard), per Decision #4.
+    await expect(page.locator('#team-gated-notice')).toHaveCount(0)
   })
 
-  test('expired subscription redirects to subscription with gated=no_active_subscription', async ({
-    page,
-  }) => {
+  test('expired subscription redirects to /account/summary, no gated notice', async ({ page }) => {
     await mockSupabase(page, {
       check_team_tier_access: {
         ok: false,
@@ -130,15 +151,12 @@ test.describe('Team tier-gate — /account/team', () => {
         tier: 'team',
       },
     })
-    await page.goto('/account/team')
-    await page.waitForURL(/\/account\/subscription\?gated=no_active_subscription/, {
-      timeout: 10_000,
-    })
-    await expect(page.locator('#team-gated-notice')).toBeVisible()
-    await expect(page.locator('#team-gated-notice-text')).toContainText(/not currently active/i)
+    await page.goto('/account')
+    await page.waitForURL(/\/account\/summary\/?$/, { timeout: 10_000 })
+    await expect(page.locator('#team-gated-notice')).toHaveCount(0)
   })
 
-  test('paused subscription redirects with gated=subscription_paused', async ({ page }) => {
+  test('paused subscription redirects to /account/summary, no gated notice', async ({ page }) => {
     await mockSupabase(page, {
       check_team_tier_access: {
         ok: false,
@@ -147,10 +165,9 @@ test.describe('Team tier-gate — /account/team', () => {
         tier: 'team',
       },
     })
-    await page.goto('/account/team')
-    await page.waitForURL(/\/account\/subscription\?gated=subscription_paused/, { timeout: 10_000 })
-    await expect(page.locator('#team-gated-notice')).toBeVisible()
-    await expect(page.locator('#team-gated-notice-text')).toContainText(/paused.*contact support/i)
+    await page.goto('/account')
+    await page.waitForURL(/\/account\/summary\/?$/, { timeout: 10_000 })
+    await expect(page.locator('#team-gated-notice')).toHaveCount(0)
   })
 
   test('not_authenticated redirects to /login with the current path', async ({ page }) => {
@@ -162,8 +179,8 @@ test.describe('Team tier-gate — /account/team', () => {
         tier: 'community',
       },
     })
-    await page.goto('/account/team')
-    await page.waitForURL(/\/login\?redirect=%2Faccount%2Fteam/, {
+    await page.goto('/account')
+    await page.waitForURL(/\/login\?redirect=%2Faccount/, {
       timeout: 10_000,
     })
   })
@@ -177,9 +194,9 @@ test.describe('Team tier-gate — /account/team', () => {
         tier: 'team',
       },
     })
-    await page.goto('/account/team')
+    await page.goto('/account')
     // URL should not change.
-    await expect(page).toHaveURL(/\/account\/team\/?$/)
+    await expect(page).toHaveURL(/\/account\/?$/)
     await expect(page.locator('#error-state')).toBeVisible()
     await expect(page.locator('#error-message')).toContainText(/not a member/i)
   })

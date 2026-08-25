@@ -1,0 +1,178 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Publish to your team's private registry"
+  description="Walk through publishing a skill to your Enterprise-tier private registry, getting it approved by a teammate, and installing it."
+>
+  <script
+    is:inline
+    type="application/ld+json"
+    slot="head"
+    set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'HowTo',
+      name: "How to Publish, Approve, and Install a Skill in Your Team's Private Registry",
+      description:
+        "Publish a versioned skill to your organization's Enterprise-tier private registry, have a teammate approve it, then install it with the Skillsmith CLI.",
+      totalTime: 'PT10M',
+      tool: [
+        { '@type': 'HowToTool', name: 'Skillsmith CLI' },
+        { '@type': 'HowToTool', name: 'Skillsmith MCP server' },
+      ],
+      step: [
+        {
+          '@type': 'HowToStep',
+          position: 1,
+          name: 'Sign in and check your namespace',
+          text: 'Run skillsmith login, then ask the private_registry_manage MCP tool for your namespace. Every skill ID you publish must start with it.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 2,
+          name: 'Publish a version',
+          text: 'Use the private_registry_publish MCP tool with your skill ID, version, and packaged files. This creates a pending submission.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 3,
+          name: 'A teammate reviews it',
+          text: 'A different team admin sees the submission on the private registry dashboard and approves or rejects it. The publisher cannot approve their own submission.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 4,
+          name: 'Install it',
+          text: 'Once approved, run skillsmith registry install <skillId> in your terminal.',
+        },
+      ],
+    })}
+  />
+
+  <h1>Tutorial: Publish to your team's private registry</h1>
+
+  <p class="lead">
+    This walks through the full loop for Skillsmith's Enterprise-tier private registry: publish a
+    skill under your team's namespace, have a teammate approve it, then install it. Reference
+    documentation for the underlying concepts and access-control model lives on the
+    <a href="/docs/private-registry">Private Registry</a> page; this tutorial is the hands-on version.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Sign in personally and look up your team's registry namespace</li>
+    <li>Publish a skill version as a pending submission</li>
+    <li>See how a teammate reviews and approves it on the dashboard</li>
+    <li>Install the approved skill with the CLI</li>
+  </ul>
+
+  <h2>Prerequisites</h2>
+
+  <ul>
+    <li>An Enterprise-tier team subscription with the private registry feature enabled.</li>
+    <li>
+      A personal, signed-in identity: run <code>skillsmith login</code>. Publishing and reviewing
+      both require this, so every submission and every approval is tied to a real person, not just
+      "the team."
+    </li>
+    <li>At least one other team admin available to review your submission (see step 3 below).</li>
+  </ul>
+
+  <h2 id="step-1-namespace">Step 1: Find your namespace</h2>
+
+  <p>
+    Every team gets one fixed registry namespace. Ask the <code>private_registry_manage</code> MCP
+    tool for it with <code>action: "namespace"</code>, or open the private registry dashboard under
+    your account settings, which shows it at the top of the page as a short prefix, something like
+    <code>your-team/</code>. Every skill ID you publish has to start with that exact prefix, checked
+    at the database level on every publish, so there's no accidentally landing in someone else's
+    namespace.
+  </p>
+
+  <h2 id="step-2-publish">Step 2: Publish a version</h2>
+
+  <p>
+    Call the <code>private_registry_publish</code> MCP tool with your skill ID in
+    <code>your-team/skill-name</code> format, a semver version, and the packaged files as a
+    <code>{'{ path: text }'}</code> map (must include <code>SKILL.md</code>). A real publish looks
+    like this:
+  </p>
+
+  <pre><code>{`{
+  "success": true,
+  "skill": {
+    "skillId": "your-team/skill-name",
+    "version": "0.1.0",
+    "approvalStatus": "pending",
+    "approvalMode": "review"
+  },
+  "message": "Submitted your-team/skill-name@0.1.0 for review — an admin must approve it before teammates can install it."
+}`}</code></pre>
+
+  <p>
+    The version is now a <strong>pending submission</strong>. It's invisible to search,
+    <code>get</code>, and install, even to you, the person who just published it, until a teammate
+    reviews it.
+  </p>
+
+  <h2 id="step-3-review">Step 3: A teammate reviews it</h2>
+
+  <p>
+    The submission shows up in the "Pending Submissions" section of the private registry dashboard
+    (under your account's Team tools), with the skill ID, version, description, and two buttons:
+    Approve and Reject. Only team admins and owners can act on either button, and critically,
+    <strong>the person who published a submission cannot approve or reject it themselves</strong>,
+    even if they hold an admin role. This is enforced at the database level, not just hidden in the
+    interface, so it can't be worked around by calling the underlying tool directly either. A
+    different admin has to make the call.
+  </p>
+
+  <p>
+    Once a teammate approves it, the version becomes immediately visible and installable to the
+    whole team, and it shows up under "Skills" on the dashboard with an "Approved" badge. Both
+    approve and reject are terminal decisions: a rejected version can't be re-reviewed, only
+    superseded by publishing a new version under a new version number.
+  </p>
+
+  <h2 id="step-4-install">Step 4: Install it</h2>
+
+  <p>
+    Install approved private-registry skills either with the CLI or the MCP tool's own install
+    action — both authenticate with your own signed-in session and need nothing beyond that.
+    This tutorial uses the CLI. In your terminal:
+  </p>
+
+  <pre><code>skillsmith registry install your-team/skill-name</code></pre>
+
+  <p>A successful install looks like this:</p>
+
+  <pre><code>{`- Fetching skill from private registry...
+✔ Skill installed
+
+Skill installed successfully!
+  Path: /Users/you/.claude/skills/skill-name
+  Trust tier: community`}</code></pre>
+
+  <p>
+    The CLI authenticates with your own signed-in session (the same one from <code>skillsmith
+    login</code>), reaches a dedicated private-registry endpoint, and writes the skill straight to
+    your skills directory. No admin credentials are ever needed on your machine for this: your own
+    login is enough.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    For the full access-control model, how versioning and deprecation work, and every tool this
+    tutorial touched, see the <a href="/docs/private-registry">Private Registry</a> reference page.
+    If you want the lighter, single-device alternative with no team sharing at all, see
+    <a href="/docs/private-skills">Private Skills</a>.
+  </p>
+</DocsLayout>

@@ -1,0 +1,296 @@
+---
+/**
+ * AccountMobileNav — compact account navigation for viewports at and below
+ * 1024px, where `AccountSidebar.astro` is CSS-hidden (SMI-6128, replacing
+ * the retired `AccountHubNav.astro` tab row per
+ * docs/internal/implementation/account-nav-admin-tools-reorg.md).
+ *
+ * A native `<details>` disclosure — no custom client JavaScript for
+ * opening, closing, or selecting entries. Renders the exact same
+ * Admin/Tools/Preferences/Resources groups as the desktop sidebar, from the
+ * same `account-nav.ts` data contract: neither component owns a second
+ * hardcoded copy of labels, hrefs, order, or team-gated metadata.
+ *
+ * The collapsed `<summary>` text is `Account navigation: {currentLabel}` —
+ * the current destination's label is a hard requirement of the summary
+ * text itself, not merely "in or adjacent to" it, so a collapsed disclosure
+ * never leaves the visited page unidentified.
+ *
+ * Mounted on all 13 substantive account pages, directly where
+ * `AccountHubNav` used to mount: as the first element inside `<main>`,
+ * before any loading, error, gated, or main content — visible immediately,
+ * never gated, so a user can leave a failing or gated page.
+ *
+ * Team-gated items and the `data-team-entitled` fail-open contract mirror
+ * `AccountSidebar.astro` exactly — see that component's doc comment for the
+ * full rationale. `setAccountNavTeamEntitled()` (account-nav-entitlement.ts)
+ * updates both navigation roots in one call.
+ *
+ * Disclosure open state is local to the current document and is expected
+ * to reset on navigation — no module/global state coordinates it.
+ *
+ * Usage:
+ *   <AccountMobileNav currentPath={Astro.url.pathname} />
+ */
+
+import {
+  ACCOUNT_NAV_GROUPS,
+  findCurrentAccountNavLabel,
+  isActiveAccountNav,
+} from '../lib/account-nav'
+
+interface Props {
+  currentPath: string
+}
+
+const { currentPath } = Astro.props
+const currentLabel = findCurrentAccountNavLabel(currentPath)
+const summaryText = currentLabel ? `Account navigation: ${currentLabel}` : 'Account navigation'
+---
+
+<details class="account-mobile-nav">
+  <summary class="account-mobile-nav-summary">{summaryText}</summary>
+  <nav aria-label="Account navigation">
+    {
+      ACCOUNT_NAV_GROUPS.map((group) => (
+        <div class="account-mobile-nav-group">
+          <h3>{group.heading}</h3>
+          <ul>
+            {group.items.map((item) => {
+              const active = isActiveAccountNav(item.href, currentPath)
+              return (
+                <li>
+                  <a
+                    href={item.href}
+                    class:list={[
+                      'account-mobile-nav-link',
+                      { active },
+                      { 'team-gated': item.teamGated },
+                    ]}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <span class="nav-icon" data-icon={item.icon} />
+                    <span>{item.label}</span>
+                    {item.teamGated && (
+                      <Fragment>
+                        <span class="lock-icon" aria-hidden="true">
+                          &#128274;
+                        </span>
+                        <span class="visually-hidden-lock-text"> (requires Team plan)</span>
+                      </Fragment>
+                    )}
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))
+    }
+  </nav>
+</details>
+
+<style>
+  .account-mobile-nav {
+    display: none;
+  }
+
+  @media (max-width: 1024px) {
+    .account-mobile-nav {
+      display: block;
+      margin-bottom: 1.5rem;
+      border: 1px solid #2a2a2f;
+      border-radius: 0.75rem;
+      background: #121214;
+      overflow: hidden;
+    }
+  }
+
+  .account-mobile-nav-summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.625rem 1rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: #fafafa;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .account-mobile-nav-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .account-mobile-nav-summary::before {
+    content: '\25B8'; /* closed-state disclosure triangle */
+    display: inline-block;
+    margin-right: 0.625rem;
+    transition: transform 0.15s;
+  }
+
+  .account-mobile-nav[open] .account-mobile-nav-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .account-mobile-nav > nav {
+    padding: 0.5rem 0.75rem 1rem;
+    border-top: 1px solid #2a2a2f;
+  }
+
+  .account-mobile-nav-group {
+    margin-top: 1rem;
+  }
+
+  .account-mobile-nav-group h3 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    margin: 0 0 0.5rem;
+    padding: 0 0.5rem;
+  }
+
+  .account-mobile-nav-group ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .account-mobile-nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 44px;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #cbd5e1;
+    text-decoration: none;
+  }
+
+  .account-mobile-nav-link:hover {
+    background: #1f1f23;
+    color: #ffffff;
+  }
+
+  .account-mobile-nav-link.active {
+    background: rgba(224, 122, 95, 0.1);
+    color: #ec8b73;
+  }
+
+  /* Team-gated affordance — identical contract to AccountSidebar.astro. */
+  .lock-icon {
+    display: none;
+  }
+
+  .account-mobile-nav[data-team-entitled='false'] .account-mobile-nav-link.team-gated {
+    color: #6b7280;
+  }
+
+  .account-mobile-nav[data-team-entitled='false'] .account-mobile-nav-link.team-gated .lock-icon {
+    display: inline-block;
+    font-size: 0.75em;
+    opacity: 0.8;
+  }
+
+  .visually-hidden-lock-text {
+    display: none;
+  }
+
+  .account-mobile-nav[data-team-entitled='false']
+    .account-mobile-nav-link.team-gated
+    .visually-hidden-lock-text {
+    display: inline-block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .nav-icon {
+    width: 1.125rem;
+    height: 1.125rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+
+  .nav-icon::before {
+    content: '';
+    width: 1rem;
+    height: 1rem;
+    background: currentColor;
+    mask-size: contain;
+    mask-repeat: no-repeat;
+    mask-position: center;
+  }
+
+  .nav-icon[data-icon='home']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3Cpolyline points='9 22 9 12 15 12 15 22'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='mail']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z'/%3E%3Cpolyline points='22,6 12,13 2,6'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='terminal']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='4 17 10 11 4 5'/%3E%3Cline x1='12' y1='19' x2='20' y2='19'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='grid']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Crect x='3' y='3' width='7' height='7'/%3E%3Crect x='14' y='3' width='7' height='7'/%3E%3Crect x='14' y='14' width='7' height='7'/%3E%3Crect x='3' y='14' width='7' height='7'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='repeat']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='17 1 21 5 17 9'/%3E%3Cpath d='M3 11V9a4 4 0 0 1 4-4h14'/%3E%3Cpolyline points='7 23 3 19 7 15'/%3E%3Cpath d='M21 13v2a4 4 0 0 1-4 4H3'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='credit-card']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Crect x='1' y='4' width='22' height='16' rx='2' ry='2'/%3E%3Cline x1='1' y1='10' x2='23' y2='10'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='users']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M23 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='bell']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9'/%3E%3Cpath d='M13.73 21a2 2 0 0 1-3.46 0'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='activity']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='22 12 18 12 15 21 9 3 6 12 2 12'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='play-circle']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpolygon points='10 8 16 12 10 16 10 8'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='code']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='16 18 22 12 16 6'/%3E%3Cpolyline points='8 6 2 12 8 18'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='database']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cellipse cx='12' cy='5' rx='9' ry='3'/%3E%3Cpath d='M21 12c0 1.66-4 3-9 3s-9-1.34-9-3'/%3E%3Cpath d='M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='layers']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolygon points='12 2 2 7 12 12 22 7 12 2'/%3E%3Cpolyline points='2 17 12 22 22 17'/%3E%3Cpolyline points='2 12 12 17 22 12'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='bar-chart-2']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cline x1='18' y1='20' x2='18' y2='10'/%3E%3Cline x1='12' y1='20' x2='12' y2='4'/%3E%3Cline x1='6' y1='20' x2='6' y2='14'/%3E%3C/svg%3E");
+  }
+</style>

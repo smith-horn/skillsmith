@@ -81,6 +81,23 @@ export default defineConfig({
   // Build output configuration - static with SSR adapter for dynamic routes
   output: 'static',
 
+  // SMI-6110: account dashboard UX consolidation (H2) — the `/account/team`
+  // → `/account` true HTTP 301 is declared in vercel.json (both the root and
+  // packages/website copies, per SMI-4641 structural sync), NOT here.
+  // Astro's own `redirects` config was tried first (the plan's original H2
+  // proposal) but @astrojs/vercel@11.0.5's astro:build:done routes.json
+  // generation throws `Error generating redirects: Route at index 0 must
+  // define either \`handle\` or \`src\` property` for this exact
+  // source/destination pair — a real adapter bug, confirmed by reproducing
+  // with the build succeeding once the entry is removed and failing
+  // identically with both the object and string redirect-value forms.
+  // vercel.json's own native redirects array (already used for /changelog
+  // and /docs/authoring) delivers the same true-3xx requirement without
+  // going through the adapter's routes.json code path at all. No page file
+  // may exist at src/pages/account/team/index.astro — a retained file would
+  // take route priority over the vercel.json redirect and silently
+  // reinstate a meta-refresh/404 in its place (L2-4).
+
   // SMI-5892: default compressHTML "jsx" mode applies JSX whitespace
   // semantics to .astro templates — it removes (not collapses) a
   // newline-containing whitespace-only text node at an inline-tag

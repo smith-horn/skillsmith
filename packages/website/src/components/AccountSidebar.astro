@@ -1,14 +1,32 @@
 ---
 /**
- * AccountSidebar — persistent left navigation for /account pages (SMI-5475).
+ * AccountSidebar — persistent left navigation for /account pages (SMI-5475,
+ * reorganized SMI-6128 per
+ * docs/internal/implementation/account-nav-admin-tools-reorg.md).
  *
  * Visual parity with DocsSidebar.astro, but in plain scoped CSS: account
  * pages hand-roll their documents and do not load global.css/Tailwind
  * (precedent: TeamNav.astro). Zero client JS — active state is computed
  * server-side per navigation, so the SMI-4896/5158 astro:page-load
  * handler-leak class cannot occur. No transition:persist for the same
- * reason. Hidden below 1024px, matching the docs sidebar (product
- * decision, SMI-5475).
+ * reason. Hidden at and below 1024px — `AccountMobileNav.astro` covers
+ * that range instead (SMI-6128; previously `AccountHubNav.astro`, retired).
+ *
+ * Renders a visible "Account" root heading (h2) above four static,
+ * always-expanded groups (h3): Admin, Tools, Preferences, Resources. The
+ * root heading and the groups are data-driven from `account-nav.ts` — this
+ * component owns no second copy of labels, hrefs, order, or team-gated
+ * metadata. Admin and Tools are grouping labels only, not routes (plan
+ * Decision #2); there is no /account/admin or /account/tools page.
+ *
+ * Team-gated items (Registry, Analytics, Members, Workspaces) render muted
+ * with a decorative (aria-hidden) lock glyph plus visually hidden "requires
+ * Team plan" text, but only when the nav root carries
+ * `data-team-entitled="false"` — set by `setAccountNavTeamEntitled()`
+ * (account-nav-entitlement.ts) after a consuming page's own tier/gate
+ * check resolves. Absent the attribute (or any value other than the
+ * literal string "false"), every link renders normally: fail-open by
+ * design, matching SMI-6110's original entitlement contract.
  *
  * Usage:
  *   <div class="account-shell">
@@ -17,37 +35,47 @@
  *   </div>
  */
 
-import { ACCOUNT_NAV_SECTIONS, isActiveAccountNav } from '../lib/account-nav'
+import { ACCOUNT_NAV_GROUPS, ACCOUNT_NAV_ROOT_LABEL, isActiveAccountNav } from '../lib/account-nav'
 
 interface Props {
   currentPath: string
 }
 
 const { currentPath } = Astro.props
+const rootHeadingId = 'account-nav-root-heading'
 ---
 
 <aside class="account-sidebar">
-  <nav aria-label="Account navigation">
+  <nav aria-labelledby={rootHeadingId}>
+    <h2 id={rootHeadingId} class="account-nav-root-heading">{ACCOUNT_NAV_ROOT_LABEL}</h2>
     {
-      ACCOUNT_NAV_SECTIONS.map((section) => (
+      ACCOUNT_NAV_GROUPS.map((group) => (
         <div class="sidebar-section">
-          <h3>{section.heading}</h3>
+          <h3>{group.heading}</h3>
           <ul>
-            {section.items.map((item) => (
-              <li>
-                <a
-                  href={item.href}
-                  class:list={[
-                    'account-nav-link',
-                    { active: isActiveAccountNav(item.href, currentPath) },
-                  ]}
-                  aria-current={isActiveAccountNav(item.href, currentPath) ? 'page' : undefined}
-                >
-                  <span class="nav-icon" data-icon={item.icon} />
-                  <span>{item.label}</span>
-                </a>
-              </li>
-            ))}
+            {group.items.map((item) => {
+              const active = isActiveAccountNav(item.href, currentPath)
+              return (
+                <li>
+                  <a
+                    href={item.href}
+                    class:list={['account-nav-link', { active }, { 'team-gated': item.teamGated }]}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <span class="nav-icon" data-icon={item.icon} />
+                    <span>{item.label}</span>
+                    {item.teamGated && (
+                      <Fragment>
+                        <span class="lock-icon" aria-hidden="true">
+                          &#128274;
+                        </span>
+                        <span class="visually-hidden-lock-text"> (requires Team plan)</span>
+                      </Fragment>
+                    )}
+                  </a>
+                </li>
+              )
+            })}
           </ul>
         </div>
       ))
@@ -56,7 +84,7 @@ const { currentPath } = Astro.props
 </aside>
 
 <!-- The .account-shell wrapper lives in each page template, out of scoped-style
-     reach; one shared global definition here beats 11 drifting per-page copies.
+     reach; one shared global definition here beats 13 drifting per-page copies.
      The component only mounts on account pages, so the leak surface is nil. -->
 <style is:global>
   .account-shell {
@@ -99,6 +127,14 @@ const { currentPath } = Astro.props
     padding: 1.5rem;
   }
 
+  .account-nav-root-heading {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fafafa;
+    margin: 0 0 1.25rem;
+    padding: 0 0.75rem;
+  }
+
   .sidebar-section {
     margin-bottom: 1.5rem;
   }
@@ -126,6 +162,7 @@ const { currentPath } = Astro.props
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    min-height: 44px;
     padding: 0.5rem 0.75rem;
     border-radius: 0.5rem;
     font-size: 0.875rem;
@@ -145,6 +182,47 @@ const { currentPath } = Astro.props
   .account-nav-link.active {
     background: rgba(224, 122, 95, 0.1); /* primary-500/10 */
     color: #ec8b73; /* primary-400 */
+  }
+
+  /* Team-gated affordance: muted color + lock glyph, only when the nav root
+     carries data-team-entitled="false". Absent the attribute (or any other
+     value), every link — including team-gated ones — renders normally. */
+  .lock-icon {
+    display: none;
+  }
+
+  .account-sidebar[data-team-entitled='false'] .account-nav-link.team-gated {
+    color: #6b7280; /* muted */
+  }
+
+  .account-sidebar[data-team-entitled='false'] .account-nav-link.team-gated .lock-icon {
+    display: inline-block;
+    font-size: 0.75em;
+    opacity: 0.8;
+  }
+
+  /* Visually-hidden text equivalent — only enters the accessibility tree
+     when the link is actually locked, so a fully entitled user's screen
+     reader never hears "requires Team plan" on a link that works fine. The
+     lock glyph itself is aria-hidden (decorative); this text carries the
+     accessible name instead, so the lock is never announced twice. */
+  .visually-hidden-lock-text {
+    display: none;
+  }
+
+  .account-sidebar[data-team-entitled='false']
+    .account-nav-link.team-gated
+    .visually-hidden-lock-text {
+    display: inline-block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .nav-icon {
@@ -208,6 +286,18 @@ const { currentPath } = Astro.props
 
   .nav-icon[data-icon='code']::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='16 18 22 12 16 6'/%3E%3Cpolyline points='8 6 2 12 8 18'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='database']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cellipse cx='12' cy='5' rx='9' ry='3'/%3E%3Cpath d='M21 12c0 1.66-4 3-9 3s-9-1.34-9-3'/%3E%3Cpath d='M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='layers']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolygon points='12 2 2 7 12 12 22 7 12 2'/%3E%3Cpolyline points='2 17 12 22 22 17'/%3E%3Cpolyline points='2 12 12 17 22 12'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='bar-chart-2']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cline x1='18' y1='20' x2='18' y2='10'/%3E%3Cline x1='12' y1='20' x2='12' y2='4'/%3E%3Cline x1='6' y1='20' x2='6' y2='14'/%3E%3C/svg%3E");
   }
 
   @media (max-width: 1024px) {

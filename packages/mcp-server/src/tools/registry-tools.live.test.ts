@@ -152,8 +152,14 @@ describe('private_registry_publish live mode — SMI-5816', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/2 MB|limit/i)
-    // Size guard runs before any insert.
-    expect(calls.find((c) => c.op === 'insert')).toBeUndefined()
+    // Size guard runs before any skill-row insert. Scoped to `private_registry_skills`
+    // specifically (not "any insert") since SMI-6109: the namespace pre-check's getNamespace()
+    // call still runs first regardless of the eventual size-cap rejection, and — with no
+    // getSupabaseUserClient mock configured in this test — fails internally and records its own
+    // (unrelated, expected) `audit_logs` insert via the fail-soft recordRegistryAudit() path.
+    expect(
+      calls.find((c) => c.op === 'insert' && c.table === 'private_registry_skills')
+    ).toBeUndefined()
   })
 
   it('rejects content missing a SKILL.md entry', async () => {
@@ -195,7 +201,14 @@ describe('private_registry_publish live mode — SMI-5816', () => {
 
   it('publish fails with an actionable error, and writes nothing, when no user is signed in (D-7)', async () => {
     const { resolveUserAccessToken } = await import('./team-resolver.js')
-    vi.mocked(resolveUserAccessToken).mockResolvedValueOnce(null)
+    // SMI-6109: the namespace pre-check (registry-tools.ts) now calls getNamespace(), which itself
+    // resolves a user token before publish() gets its own turn. A genuinely-not-signed-in caller
+    // has no token for EITHER call, so both of this test's two calls need to see null — queuing
+    // two `Once` responses (not a persistent mockResolvedValue(null), which would outlive this
+    // test: vi.clearAllMocks() in afterEach clears call history, not a configured implementation,
+    // so a persistent override here would silently leak "not logged in" into every later test in
+    // this file).
+    vi.mocked(resolveUserAccessToken).mockResolvedValueOnce(null).mockResolvedValueOnce(null)
     const { client } = createFakeClient()
     const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
     vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
@@ -225,8 +238,12 @@ describe('private_registry_publish namespace pre-check — SMI-5852', () => {
     const { client, calls } = createFakeClient({
       singleResponder: () => ({ data: { skill_namespace: 'myteam' }, error: null }),
     })
-    const { getSupabaseAdminClient } = await import('../supabase-client.js')
+    // SMI-6109: the pre-check's getNamespace() call now runs on the signed-in user's own JWT
+    // (getMemberUserClient), not the service-role client — both getters need mocking now, matching
+    // this describe block's other two tests below.
+    const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
     vi.mocked(getSupabaseAdminClient).mockResolvedValue(client)
+    vi.mocked(getSupabaseUserClient).mockResolvedValue(client)
 
     const result = await executePrivateRegistryPublish(
       { skillId: 'anthropic/commit', version: '1.0.0', content: SAMPLE_CONTENT },
@@ -235,8 +252,13 @@ describe('private_registry_publish namespace pre-check — SMI-5852', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/myteam/)
-    // The UX pre-check short-circuits — the DB trigger never needs to reject it.
-    expect(calls.find((c) => c.op === 'insert')).toBeUndefined()
+    // The UX pre-check short-circuits — the DB trigger never needs to reject it. Scoped to
+    // `private_registry_skills` specifically (not "any insert"): SMI-6109 added audit logging to
+    // getNamespace() itself, so a successful pre-check now legitimately writes one `audit_logs`
+    // row (recordRegistryAudit, fail-soft) even though the skill row is never inserted.
+    expect(
+      calls.find((c) => c.op === 'insert' && c.table === 'private_registry_skills')
+    ).toBeUndefined()
   })
 
   it('includes the team namespace on a successful publish (AC-11)', async () => {

@@ -6,19 +6,18 @@ Part of Skillsmith: a lifecycle layer for agent skills across teams.
 
 ## Contents
 
-- [What's New](#whats-new-in-v0117)
+- [What's New](#whats-new-in-v0120)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.11.7
+## What's New in v0.12.0
 
-- **Security-status reporting unified**: CLI and MCP now derive security-scan status (pass/fail, risk score, findings count) from one shared `deriveSecuritySummaryFromApiSkill`/`deriveSecuritySummaryFromSkillRow`, instead of two independently-maintained copies that could disagree on the same skill.
-- **`skill_compare` reuses `get_skill`'s resolution**: new shared `resolveSkillApiFirst()` fixes compare only ever hitting the local SQLite cache (no longer kept in sync with the remote-first registry), which made real, searchable skills report "not found."
-- **New two-level owned-lock primitive** (`config/owned-lock`) replacing the single-level, age-based config lock — closes a case where two concurrent reclaimers could both treat a stale lock as safe to unlink.
-- **Private-registry install support**: `SkillInstallationService.installFromContent()` installs an already-resolved skill (e.g. from a private registry) through the same scan/write/manifest pipeline as a GitHub-fetched install.
-- **Quiet mode covers one more warning path**: `SKILLSMITH_QUIET` now also suppresses the WASM-SQLite-driver fallback notice, previously printed unconditionally.
+- **New `resolveSessionTier` client** (`sync/license-status-client.ts`): authenticates a stored `skillsmith login` session against `/license-status` so the MCP server can resolve a real subscription tier without a separately-configured `SKILLSMITH_API_KEY`, instead of silently falling back to `community`.
+- **Scanner: bundled-file scan expanded to operational code** (Gap 8 of the ClawHavoc remediation): the indexer now reads `scripts/`, `src/`, and `bin/` alongside `SKILL.md`, closing a blind spot where a backdoor buried mid-function in working operational code was structurally invisible.
+- **Scanner fix**: the markdown indented-code-block heuristic was silently downgrading real non-markdown source findings from `high` to `medium` — `analyzeMarkdownContext`/`SecurityScanner.scan()` now take an explicit `isMarkdown` parameter instead of assuming every scanned file is documentation.
+- **Five new scanner detectors** (SMI-6033 Waves 3–4): `gatekeeper_bypass` (macOS quarantine-attribute stripping), `archive_evasion` (password-protected archives correlated with a fetch), a paste/snippet-host reputation detector, an encoded-payload decode-and-recursively-rescan detector, and `decoy_misdirection` (a fetch domain that doesn't match a nearby vendor-authority claim) — plus a stronger multi-signal co-signal escalation model so several individually sub-threshold findings can now jointly escalate a weak `code_execution` finding to critical.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 

@@ -39,8 +39,8 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@skillsmith/core": "^0.11.7",
-    "@skillsmith/mcp-server": "^0.7.9",
+    "@skillsmith/core": "^0.12.0",
+    "@skillsmith/mcp-server": "^0.7.11",
     "@types/node": "^25.9.3",
     "esbuild": "0.28.1",
     "vitest": "4.1.10"

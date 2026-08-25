@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/mcp-server",
-  "version": "0.7.9",
+  "version": "0.7.11",
   "mcpName": "io.github.smith-horn/skillsmith",
   "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
   "type": "module",
@@ -36,7 +36,8 @@
   "dependencies": {
     "@cyclonedx/cyclonedx-library": "10.1.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@skillsmith/core": "^0.11.7",
+    "@skillsmith/core": "^0.12.0",
+    "@supabase/supabase-js": "2.112.2",
     "ajv-formats-draft2019": "1.6.1",
     "ulid": "3.0.1",
     "zod": "3.25.76"

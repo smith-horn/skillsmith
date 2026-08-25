@@ -12,25 +12,29 @@
  * `auth.uid()` resolves to a person and `published_by` lands non-NULL. That is a deliberate
  * credential move, not an incidental one: D-6's self-approval check (`review_private_registry_
  * submission()`) can only refuse a submitter approving their own work if it can name the
- * submitter, and a shared team license key never could. `license`/`content_read` still exist as
- * distinct auth paths on OTHER private-registry operations — `list`/`get`/`getNamespace` remain
- * license-key (team-scoped, no person needed); `deprecate`/`undeprecate`/`getContent` were already
- * `user_jwt` before this change (SMI-5822/SMI-5905).
+ * submitter, and a shared team license key never could. `deprecate`/`undeprecate`/`getContent`
+ * were already `user_jwt` before that change (SMI-5822/SMI-5905), and SMI-6109 moved the last
+ * three holdouts — `list`/`get`/`getNamespace` — over as well. **As of SMI-6109 no MCP-path
+ * private-registry operation is license-key-scoped any more**: every `recordRegistryAudit()` call
+ * site in this package now passes `authPath: 'user_jwt'`. The `'license_key'` arm of
+ * `RegistryAuditAuthPath`/`resolveActor()` is kept deliberately — `audit_logs` still holds
+ * historical rows written on that path, and the type is what makes reading them unambiguous — but
+ * nothing writes it today.
  *
  * A pre-D-7 service-role publish (an old client, or any path that still presented only a license
  * key) left `published_by` NULL, and this module's job was to record what WAS known — the team,
  * plus a one-way fingerprint of which license key was presented — rather than fabricate a
- * plausible-looking actor. That reasoning still holds for every operation that remains
- * license-key-scoped; it just no longer describes `publish`. `license_keys.user_id` was never a
- * usable substitute either way: a team's resolvable key is the single row the checkout webhook
- * created for the *purchaser*, then shared with the team, so it names the buyer rather than the
- * caller.
+ * plausible-looking actor. That reasoning is what the `'license_key'` arm still exists to explain
+ * for those historical rows; it no longer describes any operation this package writes today.
+ * `license_keys.user_id` was never a usable substitute either way: a team's resolvable key is the
+ * single row the checkout webhook created for the *purchaser*, then shared with the team, so it
+ * names the buyer rather than the caller.
  *
  * Before this module existed, there were zero `audit_logs` writes on any private-registry path,
- * so an Enterprise customer asking "who published this" had no answer at all. `publish` now has
- * an exact one (a real `actorUserId`, same as `deprecate`/`undeprecate`); the license-key-scoped
- * operations still have the bounded one this module was built for: which key, which team, which
- * skill, when.
+ * so an Enterprise customer asking "who published this" had no answer at all. Every operation now
+ * has an exact one (a real `actorUserId`); historical rows written before their operation moved to
+ * the JWT path carry only the bounded answer this module was originally built for: which key,
+ * which team, which skill, when.
  *
  * ONE ACTOR PER PATH, NEVER THE WRONG ONE (cross-provider review finding #3).
  *
@@ -56,16 +60,25 @@ import { readLicenseKey } from './team-resolver.js'
 /**
  * Registry operations worth an audit row.
  *
- * Metadata reads (`list`/`get`) are still deliberately not audited — they carry no file bytes.
- * `content_read` (SMI-5905 Wave 3) is: it is the operation that hands a team's packaged skill
- * content to a caller, so it gets the same coverage the mutations do. `event_type` and `action`
- * are byte-identical to what the `private-registry-get` Edge Function writes
- * (supabase/functions/private-registry-get/access.ts), so both transports land in one queryable
- * stream and neither can be audited without the other showing up in the same query.
+ * `content_read` (SMI-5905 Wave 3) hands a team's packaged skill content to a caller, so it gets
+ * the same coverage the mutations do. `event_type` and `action` are byte-identical to what the
+ * `private-registry-get` Edge Function writes (supabase/functions/private-registry-get/access.ts),
+ * so both transports land in one queryable stream and neither can be audited without the other
+ * showing up in the same query.
+ *
+ * `list`/`get`/`namespace` (SMI-6109) were previously NOT audited here — "metadata reads carry no
+ * file bytes" was true, but stopped being the whole story once these three moved off the
+ * license-key-scoped service-role client onto the signed-in user's own JWT
+ * (`getMemberUserClient()`, `registry-tools.live.ts`). That move introduces a real dual-identity-
+ * signal gap: the license key resolves one team, the signed-in user's own membership can silently
+ * point at a different one (or none), and RLS fails closed on the mismatch indistinguishably from
+ * "genuinely not found." Recording `authRole`/`actorUserId` here is what makes that mismatch
+ * observable in the audit stream rather than invisible. `submissions` remains unaudited — it is a
+ * metadata read like the pre-SMI-6109 `list`/`get` were, with no comparable identity-mismatch
+ * concern (D-5's RPC already evaluates `auth.uid()` itself).
  *
  * `approve`/`reject` (SMI-5949 Wave 2 Step 4, D-5) are the two terminal decisions
- * `review_private_registry_submission()` can write. `submissions` (the read side, D-5's other RPC)
- * is deliberately NOT here — it is a metadata read like `list`/`get`, not a mutation.
+ * `review_private_registry_submission()` can write.
  */
 export type RegistryAuditOperation =
   | 'publish'
@@ -74,6 +87,9 @@ export type RegistryAuditOperation =
   | 'content_read'
   | 'approve'
   | 'reject'
+  | 'list'
+  | 'get'
+  | 'namespace'
 
 /**
  * Which credential authorized the call.
@@ -85,7 +101,9 @@ export type RegistryAuditAuthPath = 'license_key' | 'user_jwt'
 export interface RegistryAuditEvent {
   operation: RegistryAuditOperation
   teamId: string
-  skillId: string
+  /** Omitted for team-wide operations with no single skill in scope (SMI-6109) — `list` (bulk)
+   *  and `namespace` (queries the `teams` table, not `private_registry_skills` at all). */
+  skillId?: string
   version?: string
   result: 'success' | 'denied' | 'not_found' | 'error'
   authPath: RegistryAuditAuthPath
@@ -206,9 +224,15 @@ export async function recordRegistryAudit(event: RegistryAuditEvent): Promise<vo
   try {
     const fingerprint = licenseKeyFingerprint()
     const client = (await getSupabaseAdminClient()) as AuditInsertClient
-    const resource = event.version
-      ? `private_registry_skills/${event.teamId}/${event.skillId}@${event.version}`
-      : `private_registry_skills/${event.teamId}/${event.skillId}`
+    // SMI-6109: list/namespace carry no single skillId — fall back to a team-wide (or, for
+    // namespace, teams-table) resource string rather than embedding "undefined" in it.
+    const resource = !event.skillId
+      ? event.operation === 'namespace'
+        ? `teams/${event.teamId}`
+        : `private_registry_skills/${event.teamId}`
+      : event.version
+        ? `private_registry_skills/${event.teamId}/${event.skillId}@${event.version}`
+        : `private_registry_skills/${event.teamId}/${event.skillId}`
 
     const { error } = await client.from('audit_logs').insert({
       event_type: `private_registry:${event.operation}`,
@@ -218,7 +242,7 @@ export async function recordRegistryAudit(event: RegistryAuditEvent): Promise<vo
       result: event.result,
       metadata: {
         team_id: event.teamId,
-        skill_id: event.skillId,
+        skill_id: event.skillId ?? null,
         version: event.version ?? null,
         auth_path: event.authPath,
         // Kept on BOTH paths: on the user_jwt path the key is no longer the actor, but "which key

@@ -17,6 +17,7 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import AccountSidebar from '../../components/AccountSidebar.astro'
+import AccountMobileNav from '../../components/AccountMobileNav.astro'
 import Nav from '../../components/Nav.astro'
 import Footer from '../../components/Footer.astro'
 import { getSupabaseConfig } from '../../lib/supabase-config'
@@ -53,6 +54,9 @@ const supabaseConfig = getSupabaseConfig()
       <AccountSidebar currentPath={Astro.url.pathname} />
 
       <main class="billing-container">
+        <!-- Renders immediately, outside the loading/error/content states. -->
+        <AccountMobileNav currentPath={Astro.url.pathname} />
+
         <!-- Loading State -->
         <div id="loading-state" class="loading-state">
           <div class="spinner-container">
@@ -555,6 +559,8 @@ const supabaseConfig = getSupabaseConfig()
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { isEntitledTier } from '../../lib/account-summary-data'
+  import { setAccountNavTeamEntitled } from '../../lib/account-nav-entitlement'
 
   // Get config from SSR-injected window global (consistent with other auth pages)
   const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
@@ -665,6 +671,7 @@ const supabaseConfig = getSupabaseConfig()
       }
 
       const tier = effectiveSubscription?.tier || profile?.tier || 'community'
+      setAccountNavTeamEntitled(isEntitledTier(tier))
 
       // Update UI
       const currentPlan = document.getElementById('current-plan') as HTMLSpanElement

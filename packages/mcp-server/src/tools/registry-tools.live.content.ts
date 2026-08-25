@@ -14,7 +14,7 @@
  * shared constants live in `registry-tools.content.types.ts` for that reason.
  *
  * ============================================================================
- * TEAM-SCOPED ENTITLEMENT (Sol plan-review finding #1, critical, confirmed)
+ * TEAM-SCOPED ENTITLEMENT (Sol plan-review finding #1, critical, confirmed; SMI-6111)
  * ============================================================================
  * `profiles.tier` is `MAX(tier_rank)` over the user's own subscription AND every team they belong
  * to (`20260524000002_team_member_tier_sync.sql`, `recompute_user_tier`). A user who is Enterprise
@@ -31,24 +31,32 @@
  *
  * So: the metadata read is RLS-scoped AND explicitly `team_id`-filtered (the ADR-116 invariant
  * every method on this service honors), and the entitlement check is then resolved against
- * `row.team_id` — the value read back off the row — via `teams.subscription_id →
- * subscriptions.tier/status`. Reading it back off the row rather than reusing the parameter keeps
- * this function's logic identical to the Edge Function's, where RLS is the only tenant scope; the
- * two transports cannot drift into disagreeing about which team is being checked.
+ * `row.team_id` — the value read back off the row — via the `check_registry_team_entitlement`
+ * SECURITY DEFINER RPC. Reading it back off the row rather than reusing the parameter keeps this
+ * function's logic identical to the Edge Function's, where RLS is the only tenant scope; the two
+ * transports cannot drift into disagreeing about which team is being checked.
  *
- * That subscription lookup uses the SERVICE-ROLE client, and must: `subscriptions`' only read
+ * SMI-6111: this used to require the SERVICE-ROLE client, because `subscriptions`' only read
  * policy is "Users can view own subscriptions" (`011_users_subscriptions.sql`, `user_id =
  * auth.uid()`), so a team member who is not the subscription's purchaser sees zero rows through
- * their own JWT and every non-owner would be spuriously denied. This is the ADR-116 pattern —
- * service-role plus an explicit tenant filter — and the tenant it filters on is the team RLS has
- * already proven the caller belongs to, never one taken from tool input. The service-role client
- * is never used to read `content`.
+ * their own JWT and every non-owner would be spuriously denied. That's now handled server-side by
+ * `check_registry_team_entitlement(p_team_id)` (`20260824000000_check_registry_team_entitlement
+ * .sql`), a narrowly-scoped `SECURITY DEFINER` function callable by `authenticated` — it answers
+ * only "is team X's own subscription Enterprise-entitled," with no personal-subscription
+ * fallback. It is deliberately NOT built on `resolve_effective_entitlement(p_user_id, p_team_id)`
+ * (`20260819000001_resolve_effective_entitlement.sql`): that function's personal-subscription
+ * UNION leg has no team correlation and ranks ahead of team-correlated candidates by tier, so a
+ * caller with their own personal Enterprise subscription who is merely a member of some other,
+ * non-Enterprise team would resolve to entitled=true for that team via their personal leg —
+ * reintroducing the exact cross-team leak `profiles.tier` was excluded above to prevent. See
+ * `docs/internal/implementation/smi-6111-registry-content-install-entitlement-rpc.md` for the
+ * full design rationale. The member-authenticated client is used for the RPC call, same as the
+ * metadata and content reads — no service-role client exists anywhere in this file anymore.
  *
  * ORDER IS LOAD-BEARING: metadata (no `content` column) → entitlement → content. A denied read
  * therefore never transfers a byte of content, and a not-found never reads one.
  */
 
-import { getSupabaseAdminClient } from '../supabase-client.js'
 import { recordRegistryAudit } from './registry-tools.live.audit.js'
 import {
   REGISTRY_METADATA_COLUMNS,
@@ -62,86 +70,38 @@ import type { UserClientBinding } from './registry-tools.live.auth.js'
 /** Audit `operation` for this path. Matches the Edge Function's `action: 'content_read'`. */
 const OPERATION = 'content_read' as const
 
-/** The only tier that may read private-registry content (ADR-129). */
-const REQUIRED_TIER = 'enterprise'
-
-/**
- * Subscription statuses that mean "currently entitled".
- *
- * The SAME whitelist every other entitlement surface in this repo uses — `recompute_user_tier`
- * (`20260524000002_team_member_tier_sync.sql`, i.e. the very function that computes
- * `profiles.tier`), `stripe-webhook/handlers/subscription-updated.ts`,
- * `admin-grant-subscription/index.ts`, and Wave 2's `private-registry-get/access.ts`. Narrowing it
- * here (e.g. dropping `past_due`) would make this path disagree with the tier the same customer
- * sees everywhere else, including through the CLI transport.
- */
-const ENTITLED_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
-  'active',
-  'trialing',
-  'past_due',
-])
-
-/**
- * Service-role client for the entitlement lookup only.
- *
- * Mirrors `registry-tools.live.ts`'s own `getClient()` (not imported, to keep this module free of
- * runtime imports from that file — see the header). Same failure message, so a missing
- * SUPABASE_SERVICE_ROLE_KEY reads identically whichever path surfaced it.
- */
-async function getAdminClient(): Promise<MinimalSupabaseClient> {
-  try {
-    return (await getSupabaseAdminClient()) as MinimalSupabaseClient
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error'
-    throw new Error(
-      `Private registry operations require SUPABASE_SERVICE_ROLE_KEY on the MCP host: ${message}`
-    )
-  }
+/** Shape of `check_registry_team_entitlement`'s JSONB return value. */
+interface RegistryTeamEntitlement {
+  entitled: boolean
+  detail: string
 }
 
 /**
- * Is THIS team currently entitled to Enterprise? See the header — resolved from the team that owns
- * the row, never from the caller's denormalized `profiles.tier`.
+ * Is THIS team currently entitled to Enterprise? See the header — resolved server-side, from the
+ * team that owns the row, never from the caller's denormalized `profiles.tier`.
  *
- * A lookup failure throws rather than returning `{entitled: false}`: an unreachable `teams` or
- * `subscriptions` read is an outage, and reporting it as "not entitled" would tell a paying
- * customer their subscription had lapsed. Fail loud, not fail-wrong.
+ * A lookup failure throws rather than returning `{entitled: false}`: an unreachable
+ * `check_registry_team_entitlement` call is an outage, and reporting it as "not entitled" would
+ * tell a paying customer their subscription had lapsed. Fail loud, not fail-wrong.
  *
  * @param teamId - the row's own `team_id`, already RLS-authorized for this caller.
+ * @param client - the caller's own member-authenticated client (from `UserClientBinding`); no
+ *   service-role client exists in this file (SMI-6111).
  */
 export async function isTeamEnterpriseEntitled(
-  teamId: string
-): Promise<{ entitled: boolean; detail: string }> {
-  const admin = await getAdminClient()
-
-  const teamResp = await admin
-    .from<{ subscription_id: string | null }>('teams')
-    .select('subscription_id')
-    .eq('id', teamId)
-  if (teamResp.error) {
-    throw new Error(`Team lookup failed: ${teamResp.error.message ?? 'unknown error'}`)
+  teamId: string,
+  client: MinimalSupabaseClient
+): Promise<RegistryTeamEntitlement> {
+  const resp = await client.rpc<RegistryTeamEntitlement>('check_registry_team_entitlement', {
+    p_team_id: teamId,
+  })
+  if (resp.error) {
+    throw new Error(`Entitlement lookup failed: ${resp.error.message ?? 'unknown error'}`)
   }
-  const subscriptionId = teamResp.data?.[0]?.subscription_id
-  if (!subscriptionId) {
-    // A team with no linked subscription is not entitled. Also the state a hard-deleted
-    // subscription leaves behind (`teams.subscription_id` is ON DELETE SET NULL).
-    return { entitled: false, detail: 'team_has_no_subscription' }
+  if (!resp.data) {
+    throw new Error('Entitlement lookup failed: check_registry_team_entitlement returned no data')
   }
-
-  const subResp = await admin
-    .from<{ tier: string; status: string }>('subscriptions')
-    .select('tier, status')
-    .eq('id', subscriptionId)
-  if (subResp.error) {
-    throw new Error(`Subscription lookup failed: ${subResp.error.message ?? 'unknown error'}`)
-  }
-  const sub = subResp.data?.[0]
-  if (!sub) return { entitled: false, detail: 'subscription_not_found' }
-  if (sub.tier !== REQUIRED_TIER) return { entitled: false, detail: 'team_tier_not_enterprise' }
-  if (!ENTITLED_SUBSCRIPTION_STATUSES.has(sub.status)) {
-    return { entitled: false, detail: 'team_subscription_inactive' }
-  }
-  return { entitled: true, detail: 'entitled' }
+  return resp.data
 }
 
 export interface GetSkillContentParams {
@@ -224,7 +184,7 @@ export async function getSkillContent(
   // (2) Entitlement, scoped to the ROW's team — not the caller's global tier.
   let entitlement: { entitled: boolean; detail: string }
   try {
-    entitlement = await isTeamEnterpriseEntitled(row.team_id)
+    entitlement = await isTeamEnterpriseEntitled(row.team_id, binding.client)
   } catch (err) {
     // An outage in the entitlement lookup is an `error` outcome, not a denial — audited as such
     // (Sol review #8 wants all four outcomes covered) and rethrown unchanged.

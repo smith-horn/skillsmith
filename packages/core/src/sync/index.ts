@@ -72,3 +72,11 @@ export {
   type AuditDigestPushPayload,
   type AuditDigestPushResult,
 } from './audit-notify-client.js'
+
+// Session-token tier self-check client (SMI-6098, umbrella SMI-6085)
+export {
+  resolveSessionTier,
+  SessionTierAuthError,
+  SessionTierTransientError,
+  type SessionTierResult,
+} from './license-status-client.js'

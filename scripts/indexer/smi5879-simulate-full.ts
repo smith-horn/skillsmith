@@ -27,10 +27,15 @@
  * report/checkpoint files, plus the generation's own claim/heartbeat/release
  * fields" — never a `skills` row.
  *
+ * SMI-6015 Wave 1 added `--max-elapsed-minutes=<N>` (wall-clock
+ * self-checkpoint-and-exit) and `--cohorts=<comma-list>` (cohort-scoped
+ * rehearsal dispatches) — see `smi5879-simulate-full.cli.ts` for parsing.
+ *
  * Usage:
  *   varlock run -- npx tsx scripts/indexer/smi5879-simulate-full.ts \
  *     --run-id=<sealed generation run_id> --purpose=<decision|window|rehearsal> \
- *     [--apply] [--checkpoint-path=<path>] [--report-path=<path>] [--baseline-commit=<sha>]
+ *     [--apply] [--checkpoint-path=<path>] [--report-path=<path>] [--baseline-commit=<sha>] \
+ *     [--max-elapsed-minutes=<N>] [--cohorts=<comma-list>]
  */
 
 import { hostname } from 'node:os'
@@ -38,35 +43,36 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { buildGitHubHeaders } from './_shared/github-auth.ts'
-import { newRateLimitTelemetry, runCancellablePool } from './_shared/rate-limit.ts'
+import { newRateLimitTelemetry } from './_shared/rate-limit.ts'
 import { poolerSessionConnParams, runPsql } from './smi5879-census.pg.ts'
 import { createSmi5879SimulateFullDbDeps } from './smi5879-simulate-full.db.ts'
 import {
   materializeBaseline,
   importBaselineScanSkillBundle,
-  BASELINE_COMMIT_SHA,
 } from './smi5879-simulate-full.baseline.ts'
 import { scanSkillBundle as headScanSkillBundle } from './skill-processor.security.ts'
+import { parseArgs, type CliArgs } from './smi5879-simulate-full.cli.ts'
 import {
-  processRow,
   runMainPass,
   assertPatTokenSource,
-  PROCESS_CONCURRENCY,
   HEARTBEAT_INTERVAL_MS,
 } from './smi5879-simulate-full.helpers.ts'
 import {
   computeCoverage,
   summarizeCounts,
   estimateCompletionAt,
+  runSweepPhase,
+  decideExitCode,
+} from './smi5879-simulate-full.sweep.ts'
+import {
   checkpointPathFor,
   readCheckpoint,
   writeCheckpoint,
   isAbnormalResume,
-  runTier3Sweep,
-  decideExitCode,
   assertCheckpointIdentity,
   assertCheckpointRowsBelongToGeneration,
-} from './smi5879-simulate-full.sweep.ts'
+} from './smi5879-simulate-full.checkpoint.ts'
+import { ALL_SIMULATED_COHORTS } from './smi5879-simulate-full.types.ts'
 import type {
   Smi5879SimulateFullDbDeps,
   Smi5879SimulateCheckpoint,
@@ -75,50 +81,8 @@ import type {
   SimulatedCohort,
   ScanSkillBundleFn,
 } from './smi5879-simulate-full.types.ts'
-import type { Smi5879Purpose } from './smi5879-census.types.ts'
 
-const SIMULATED_COHORTS: readonly SimulatedCohort[] = ['C1', 'C2', 'C3', 'C4']
-const VALID_PURPOSES: readonly Smi5879Purpose[] = ['rehearsal', 'decision', 'window']
-
-export interface CliArgs {
-  runId: string
-  purpose: Smi5879Purpose
-  apply: boolean
-  checkpointPath?: string
-  reportPath?: string
-  baselineCommit: string
-}
-
-export function parseArgs(argv: string[]): CliArgs {
-  const find = (name: string): string | undefined => {
-    const prefix = `--${name}=`
-    const hit = argv.find((a) => a.startsWith(prefix))
-    return hit ? hit.slice(prefix.length) : undefined
-  }
-  const runId = find('run-id')
-  if (!runId) throw new Error('SMI-5879: --run-id=<generation run_id> is required.')
-  const purpose = find('purpose')
-  if (!purpose || !VALID_PURPOSES.includes(purpose as Smi5879Purpose)) {
-    throw new Error(
-      `SMI-5879: --purpose=<${VALID_PURPOSES.join('|')}> is required, got ${purpose ?? '(missing)'}.`
-    )
-  }
-  // `checkpointPath`/`reportPath` are genuinely optional (downstream defaults via
-  // `?? checkpointPathFor(...)` / `?? 'smi5879-simulate-report-...'`) — under
-  // `exactOptionalPropertyTypes`, an optional property means "may be omitted",
-  // not "may be omitted OR explicitly `undefined`", so the key must be left off
-  // entirely when the flag wasn't passed rather than assigned `undefined`.
-  const checkpointPath = find('checkpoint-path')
-  const reportPath = find('report-path')
-  return {
-    runId,
-    purpose: purpose as Smi5879Purpose,
-    apply: argv.includes('--apply'),
-    ...(checkpointPath !== undefined ? { checkpointPath } : {}),
-    ...(reportPath !== undefined ? { reportPath } : {}),
-    baselineCommit: find('baseline-commit') ?? BASELINE_COMMIT_SHA,
-  }
-}
+export { parseArgs, type CliArgs }
 
 /** `host:pid:git-head`, for `smi5879_run.runner_holder` — mirrors smi5879-census.ts's buildHolder(). */
 function buildHolder(): string {
@@ -161,6 +125,11 @@ export async function runSimulateFull(
     )
   }
 
+  // SMI-6015 Wave 1: the resolved cohort scope for THIS invocation — always
+  // explicit (never left as an implicit "undefined means all four"), so
+  // checkpoint identity/coverage code never has to special-case "omitted."
+  const cohorts: SimulatedCohort[] = args.cohorts ?? [...ALL_SIMULATED_COHORTS]
+
   const checkpointPath = args.checkpointPath ?? checkpointPathFor(args.runId)
   const existingCheckpoint = readCheckpoint(checkpointPath)
   const isColdStart = existingCheckpoint === null
@@ -172,7 +141,7 @@ export async function runSimulateFull(
     // trusted (SMI-5879 review finding 1).
     assertCheckpointIdentity(
       existingCheckpoint,
-      { runId: args.runId, purpose: args.purpose, tokenSource },
+      { runId: args.runId, purpose: args.purpose, tokenSource, cohorts },
       checkpointPath
     )
     if (existingCheckpoint.baseline_commit !== args.baselineCommit) {
@@ -194,12 +163,20 @@ export async function runSimulateFull(
   }
 
   const startedAt = new Date(existingCheckpoint?.started_at ?? new Date().toISOString())
+  // SMI-6015 Wave 1: THIS invocation's own deadline (Date.now() now +
+  // --max-elapsed-minutes) — deliberately independent of `startedAt` above
+  // (the checkpoint's persisted, cross-dispatch start, used only for ETA).
+  // Mirrors `smi5879-census.branches.ts`'s `sweepTransientRepos`: a GHA
+  // `timeout-minutes` ceiling bounds THIS dispatch, not the whole effort.
+  const deadlineAtMs =
+    args.maxElapsedMinutes !== undefined ? Date.now() + args.maxElapsedMinutes * 60_000 : undefined
 
   let checkpoint: Smi5879SimulateCheckpoint = existingCheckpoint ?? {
     run_id: args.runId,
     purpose: args.purpose,
     baseline_commit: args.baselineCommit,
     token_source: tokenSource,
+    cohorts,
     clean_shutdown: false,
     row_results: {},
     sweep: { pass: 0, residual_history: [], non_decrease_streak: 0, hard_stopped: null },
@@ -270,6 +247,7 @@ export async function runSimulateFull(
     }
 
     const rows = await db.loadCohortRows(args.runId)
+    const totalRows = rows.length
     if (existingCheckpoint) {
       // Must run only after the real row set for this generation is loaded
       // (SMI-5879 review finding 1) — refuses a checkpoint whose row_results
@@ -277,11 +255,17 @@ export async function runSimulateFull(
       assertCheckpointRowsBelongToGeneration(existingCheckpoint, rows, checkpointPath)
     }
     const branchMap = await db.loadBranchMap(args.runId)
+    // SMI-6015 Wave 1 correctness guard-rail: `rowsByCohort` stays built
+    // from the FULL `rows` regardless of `--cohorts` — an excluded cohort
+    // must report its real `total` (scanned: 0, status: 'partial'), never a
+    // spuriously-`full` total: 0. Only `rowsForMainPass` is filtered.
     const rowsByCohort = { C1: [], C2: [], C3: [], C4: [] } as Record<
       SimulatedCohort,
       SimSnapshotRow[]
     >
     for (const row of rows) rowsByCohort[row.cohort].push(row)
+    const rowsForMainPass =
+      args.cohorts !== undefined ? rows.filter((r) => cohorts.includes(r.cohort)) : rows
 
     const telemetry = newRateLimitTelemetry()
     // SMI-6015: getHeaders is invoked fresh on every fetch attempt (inside
@@ -293,124 +277,109 @@ export async function runSimulateFull(
 
     const results = new Map(Object.entries(checkpoint.row_results))
 
-    await runMainPass(rows, results, branchMap, scanDeps, async (current) => {
-      checkpoint = {
-        ...checkpoint,
-        clean_shutdown: false,
-        row_results: Object.fromEntries(current),
-        updated_at: new Date().toISOString(),
+    /** Assemble the gate-eligible report from current state — shared by the normal-completion and deadline-exit paths. */
+    const buildReport = (
+      scannedRows: number,
+      sweepInfo: {
+        passes_run: number
+        hard_stopped: Smi5879SimulateFullReport['sweep']['hard_stopped']
       }
-      writeCheckpoint(checkpointPath, checkpoint)
-    })
-
-    // Resume state threaded into the sweep (SMI-5879 review finding 2a) —
-    // a crash mid-sweep must not reset the MAX_SWEEP_PASSES budget or the
-    // non-decrease hard-stop streak. `priorResidualHistory` is captured ONCE
-    // here and `sweepResidualHistory` grows it incrementally via `onPass`
-    // (below) as the single source of truth for every per-pass checkpoint
-    // write — the final write after the sweep returns reuses the exact same
-    // running total rather than re-deriving/re-adding it (finding 2b).
-    const priorSweepPass = checkpoint.sweep.pass
-    const priorNonDecreaseStreak = checkpoint.sweep.non_decrease_streak
-    const priorResidualHistory = [...checkpoint.sweep.residual_history]
-    const sweepResidualHistory: number[] = [...priorResidualHistory]
-
-    const residual = [...results.values()].filter((r) => r.outcome === 'unevaluable')
-    const sweep = await runTier3Sweep(
-      residual,
-      async (residualIds) => {
-        const idSet = new Set(residualIds)
-        const targets = rows.filter((r) => idSet.has(r.id))
-        const outcomes: import('./smi5879-simulate-full.types.ts').SimRowResult[] = []
-        // SMI-6015: same cooperative-cancellation fix as runMainPass above —
-        // see that call site's comment for the full rationale.
-        const { abortedBy } = await runCancellablePool(
-          targets,
-          (row) => processRow(row, branchMap, scanDeps),
-          (outcome) => {
-            outcomes.push(outcome)
-          },
-          PROCESS_CONCURRENCY
-        )
-        const updated = new Map(outcomes.map((o) => [o.id, o]))
-        for (const [id, result] of updated) results.set(id, result)
-        if (abortedBy) {
-          // SMI-6015 (GPT-5.6-Sol review round 2, 2026-08-14): throwing here
-          // rejects runTier3Sweep's own `await runPass(...)` before it ever
-          // reaches `options.onPass` — the ONLY place that normally writes a
-          // checkpoint after a pass. Without this, `results` above is
-          // updated in memory but the process is about to exit on this
-          // thrown error, so that partial progress would be lost on disk.
-          // Write it explicitly, matching onPass's shape but WITHOUT
-          // advancing pass/residual_history/non_decrease_streak — this pass
-          // never cleanly completed, so it must not be counted as if it had.
-          checkpoint = {
-            ...checkpoint,
-            clean_shutdown: false,
-            row_results: Object.fromEntries(results),
-            updated_at: new Date().toISOString(),
-          }
-          writeCheckpoint(checkpointPath, checkpoint)
-          throw abortedBy
-        }
-        return updated
-      },
-      {
-        startingPass: priorSweepPass,
-        startingNonDecreaseStreak: priorNonDecreaseStreak,
-        onPass: (pass, residualSize, nonDecreaseStreak) => {
-          sweepResidualHistory.push(residualSize)
-          checkpoint = {
-            ...checkpoint,
-            clean_shutdown: false,
-            row_results: Object.fromEntries(results),
-            sweep: {
-              pass,
-              residual_history: [...sweepResidualHistory],
-              non_decrease_streak: nonDecreaseStreak,
-              hard_stopped: null,
-            },
-            updated_at: new Date().toISOString(),
-          }
-          writeCheckpoint(checkpointPath, checkpoint)
-        },
-      }
-    )
-
-    const coverage = computeCoverage(rowsByCohort, results)
-    const counts = summarizeCounts(results.values())
-    const totalRows = rows.length
-    const scannedRows = results.size
-
-    checkpoint = {
-      ...checkpoint,
-      clean_shutdown: true,
-      row_results: Object.fromEntries(results),
-      sweep: {
-        pass: sweep.passesRun,
-        residual_history: [...priorResidualHistory, ...sweep.residualHistory],
-        non_decrease_streak: sweep.nonDecreaseStreak,
-        hard_stopped: sweep.hardStopped,
-      },
-      updated_at: new Date().toISOString(),
-    }
-    writeCheckpoint(checkpointPath, checkpoint)
-
-    const report: Smi5879SimulateFullReport = {
+    ): Smi5879SimulateFullReport => ({
       report_kind: 'full_simulation',
       run_id: args.runId,
       purpose: args.purpose,
       status: summary.status,
       token_source: tokenSource,
       baseline_commit: args.baselineCommit,
-      coverage,
+      coverage: computeCoverage(rowsByCohort, results),
       estimated_completion_at: estimateCompletionAt(startedAt, new Date(), totalRows, scannedRows),
-      sweep: { passes_run: checkpoint.sweep.pass, hard_stopped: sweep.hardStopped },
+      sweep: sweepInfo,
       rows: [...results.values()],
-      counts,
+      counts: summarizeCounts(results.values()),
       generated_at: new Date().toISOString(),
+    })
+
+    const mainPassResult = await runMainPass(
+      rowsForMainPass,
+      results,
+      branchMap,
+      scanDeps,
+      async (current) => {
+        checkpoint = {
+          ...checkpoint,
+          clean_shutdown: false,
+          row_results: Object.fromEntries(current),
+          updated_at: new Date().toISOString(),
+        }
+        writeCheckpoint(checkpointPath, checkpoint)
+      },
+      deadlineAtMs
+    )
+
+    // SMI-6015 Wave 1: a deadline hit is an EXPECTED, non-fatal stop, never
+    // a crash — `clean_shutdown: true` is correct (the checkpoint is fully
+    // consistent, so a resume should not pay the abnormal-resume digest
+    // re-verification cost for something that isn't actually suspect).
+    // `decideExitCode` naturally returns 1 on the resulting partial
+    // coverage, which the workflow interprets as "continues, re-dispatch."
+    const exitOnDeadline = (reason: string): Smi5879SimulateFullReport => {
+      console.log(
+        `[smi5879-simulate-full] run_id=${args.runId} ${reason} — ${results.size}/${totalRows} ` +
+          'rows scanned. Writing checkpoint and exiting for re-dispatch (never a hard failure).'
+      )
+      checkpoint = {
+        ...checkpoint,
+        clean_shutdown: true,
+        row_results: Object.fromEntries(results),
+        updated_at: new Date().toISOString(),
+      }
+      writeCheckpoint(checkpointPath, checkpoint)
+      return buildReport(results.size, {
+        passes_run: checkpoint.sweep.pass,
+        hard_stopped: checkpoint.sweep.hard_stopped,
+      })
     }
-    return report
+
+    if (mainPassResult.deadlineExceeded) {
+      return exitOnDeadline(
+        `wall-clock deadline (--max-elapsed-minutes=${args.maxElapsedMinutes}) reached mid-main-pass`
+      )
+    }
+    // Deadline reached exactly as the main pass finished — skip the tier-3
+    // sweep this dispatch (its own SWEEP_COOLDOWN_MS cooldown is not itself
+    // deadline-aware; a documented Wave 1 bound, not a silent gap — the
+    // sweep only reprocesses the smaller `unevaluable` residual and stays
+    // separately bounded by MAX_SWEEP_PASSES/SWEEP_COOLDOWN_MS).
+    // TESTING NOTE: this exact branch shares 100% of its behavior with the
+    // `mainPassResult.deadlineExceeded` branch above (the same `exitOnDeadline`
+    // helper) — only the triggering condition differs. It sits in the same
+    // synchronous continuation as that check (no `await` between them), so a
+    // black-box test cannot advance the clock into the narrow window between
+    // them without mocking `runMainPass` itself; deliberately not covered by
+    // a dedicated test for that reason — reviewed by inspection instead.
+    if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+      return exitOnDeadline(
+        'wall-clock deadline reached after the main pass — skipping the tier-3 sweep'
+      )
+    }
+
+    // Tier-3 sweep phase — extracted to smi5879-simulate-full.sweep.ts's
+    // `runSweepPhase` (SMI-6015 Wave 1: 500-line budget). See its own doc
+    // comments for the resume/finding-2a/2b and abort-checkpoint rationale.
+    const sweepResult = await runSweepPhase(
+      rows,
+      branchMap,
+      scanDeps,
+      results,
+      checkpoint,
+      checkpointPath
+    )
+    checkpoint = sweepResult.checkpoint
+
+    return buildReport(results.size, {
+      passes_run: checkpoint.sweep.pass,
+      hard_stopped: sweepResult.hardStopped,
+    })
   } finally {
     heartbeatStopped = true
     if (heartbeatTimer) clearTimeout(heartbeatTimer)
@@ -427,7 +396,7 @@ function printSummary(report: Smi5879SimulateFullReport): void {
       `  token_source:      ${report.token_source}\n` +
       `  baseline_commit:   ${report.baseline_commit}\n` +
       `  sweep:             ${report.sweep.passes_run} pass(es), hard_stopped=${report.sweep.hard_stopped ?? 'none'}\n` +
-      SIMULATED_COHORTS.map(
+      ALL_SIMULATED_COHORTS.map(
         (c) =>
           `  coverage.${c}:       ${report.coverage[c].status} (${report.coverage[c].scanned}/${report.coverage[c].total}, unevaluable=${report.coverage[c].unevaluable}, unfetchable=${report.coverage[c].unfetchable})`
       ).join('\n') +

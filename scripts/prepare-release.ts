@@ -155,9 +155,13 @@ function updateServerJson(relPath: string, newVersion: string): void {
 }
 
 // SMI-5057: `updateCoreDependency` removed — superseded by
-// `updateWorkspaceDependencies` (in version-utils.ts), which walks every
-// PACKAGE_SPECS target and updates any dep range matching a bumped package.
-// This fixes the missing @skillsmith/mcp-server dep bump in @skillsmith/cli.
+// `updateWorkspaceDependencies` (in version-utils.ts), which updates any dep
+// range matching a bumped package. This fixes the missing
+// @skillsmith/mcp-server dep bump in @skillsmith/cli. SMI-6098 broadened the
+// scan target from PACKAGE_SPECS-only to every packages/* directory (minus
+// skipDepRangeUpdate / EXTRA_SKIP_DEP_RANGE_UPDATE_PATHS), so an internal-only
+// consumer's pin (e.g. doc-retrieval-mcp -> @skillsmith/core) also gets
+// refreshed, not just the four published packages.
 
 // --- Main ---
 
@@ -264,11 +268,12 @@ async function main(): Promise<void> {
 
   // Step 6: Update workspace dep ranges in all sibling packages.
   //
-  // SMI-5057: Replaces the older core-only updateCoreDependency. Walks every
-  // PACKAGE_SPECS target (minus skipDepRangeUpdate ones) and updates any dep
-  // range whose key matches a freshly-bumped package. Catches the
+  // SMI-5057: Replaces the older core-only updateCoreDependency. Updates any
+  // dep range whose key matches a freshly-bumped package. Catches the
   // @skillsmith/mcp-server stale-range bug in @skillsmith/cli that bit
-  // PR #1268.
+  // PR #1268. SMI-6098: walks every packages/* directory (minus
+  // skipDepRangeUpdate / EXTRA_SKIP_DEP_RANGE_UPDATE_PATHS), not just
+  // PACKAGE_SPECS targets — see version-utils.ts for the full rationale.
   const { updated: updatedDepFiles } = updateWorkspaceDependencies(plans)
   if (updatedDepFiles.length > 0) {
     console.log(`  ✓ Updated workspace dep ranges in ${updatedDepFiles.length} package(s):`)
