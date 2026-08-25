@@ -235,6 +235,15 @@ describe('getPackageExportEntries: Node exports-field shape normalization (Findi
     expect(entries.get('.')).toBe('./dist/index.js')
   })
 
+  it('a top-level array-form exports field ("exports": [...]) resolves the "." entry, not degraded to main/types fallback', () => {
+    const { hasExportsSurface, entries } = getPackageExportEntries({
+      exports: ['./dist/index.js', './dist/index.cjs'],
+      main: './dist/wrong-fallback.js',
+    })
+    expect(hasExportsSurface).toBe(true)
+    expect(entries.get('.')).toBe('./dist/index.js')
+  })
+
   it('a wildcard subpath key ("./*") is kept separate from exact-match entries, not stored as a literal "./*" key', () => {
     const { entries, wildcardEntries } = getPackageExportEntries({
       exports: { '.': './dist/index.js', './*': './dist/src/*.js' },
@@ -401,6 +410,39 @@ describe('resolveExportSetForSubpath: export * recursion, subpath resolution, an
     expect([...result.names]).toEqual(['X'])
   })
 
+  it('when two wildcard patterns tie on prefix length, the one with the longer literal suffix wins (Node PATTERN_KEY_COMPARE)', () => {
+    const pkgJson = {
+      name: '@skillsmith/wildcard-suffix-tiebreak',
+      exports: {
+        // Both patterns share the identical './features/' prefix; only the
+        // second has a literal suffix after '*', making it more specific.
+        // A prefix-length-only comparator picks whichever was declared
+        // first regardless of suffix -- Node's real rule requires the
+        // longer-suffix pattern to win the tie.
+        './features/*': './dist/features/*.js',
+        './features/*.json': './dist/features/*-data.js',
+      },
+    }
+    const files: Record<string, string> = {
+      [join(PKG_DIR_ABS, 'features/x-data.ts')]: `export { Y }`,
+    }
+    const result = resolveExportSetForSubpath({
+      pkgDirAbs: PKG_DIR_ABS,
+      pkgJson,
+      tsconfigJson: outDirTsconfig,
+      subpath: './features/x.json',
+      readFile: (p: string) => files[p] ?? null,
+      resolveModule: () => null,
+    })
+    // A prefix-only tiebreak would resolve via the less-specific pattern
+    // (declared first) to '.../features/x.json.ts', which this test doesn't
+    // provide -- so the bug surfaces as a status other than 'ok' or an
+    // empty export set, not just a wrong-but-plausible path.
+    expect(result.status).toBe('ok')
+    expect(result.entrySourcePath).toContain('features/x-data.ts')
+    expect([...result.names]).toEqual(['Y'])
+  })
+
   it('an unmatched wildcard subpath is still "subpath-not-declared", not silently accepted', () => {
     const pkgJson = {
       name: '@skillsmith/wildcard-sibling',
@@ -559,6 +601,17 @@ describe('extractWorkspaceImportsFromSource: static ImportDeclaration + ImportTy
     const { named, unchecked } = extractWorkspaceImportsFromSource('f.ts', src, SCOPE_PREFIXES)
     expect(named).toEqual([])
     expect(unchecked.map((u: { kind: string }) => u.kind).sort()).toEqual(['default', 'namespace'])
+  })
+
+  it('a combined default+named import (import Default, { Named } from pkg) checks Named AND counts Default unchecked, not silently dropped', () => {
+    const src = "import Foo, { Bar } from '@skillsmith/sibling'\n"
+    const { named, unchecked } = extractWorkspaceImportsFromSource('f.ts', src, SCOPE_PREFIXES)
+    // A bug that only fires the standalone-default branch when there are NO
+    // named bindings would drop 'Foo' from both buckets entirely -- it
+    // would neither appear in 'named' (correct, defaults aren't checked)
+    // nor in 'unchecked' (wrong -- it silently vanishes from the tally).
+    expect(named.map((n: { name: string }) => n.name)).toEqual(['Bar'])
+    expect(unchecked.map((u: { kind: string }) => u.kind)).toEqual(['default'])
   })
 
   it('a side-effect-only import (no clause) is neither checked nor counted', () => {

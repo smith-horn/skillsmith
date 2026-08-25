@@ -158,6 +158,22 @@ export function extractWorkspaceImportsFromSource(filePath, sourceText, scopePre
           kind: 'named',
         })
       }
+      // A combined `import Default, { Named } from 'pkg'` still carries a
+      // default import alongside the named bindings handled above — without
+      // this, `clause.name` here is silently dropped from both `named` and
+      // `unchecked` (the standalone-default branch below requires
+      // `!clause.namedBindings`, which is false in the combined case),
+      // undercounting the informational unchecked-import tally.
+      if (clause.name) {
+        unchecked.push({
+          file: filePath,
+          line,
+          packageName: split.packageName,
+          subpath: split.subpath,
+          specifier,
+          kind: 'default',
+        })
+      }
     } else if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
       unchecked.push({
         file: filePath,

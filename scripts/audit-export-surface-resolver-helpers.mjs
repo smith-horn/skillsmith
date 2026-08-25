@@ -158,8 +158,12 @@ function matchWildcardSubpath(pattern, subpath) {
  * Resolve a requested subpath against a package's wildcard export entries
  * (e.g. `"./*": "./dist/*.js"`), substituting the captured segment into
  * the target template's own '*'. When more than one wildcard pattern
- * matches, the pattern with the longest literal prefix wins (most
- * specific), matching Node's own precedence rule.
+ * matches, Node's own precedence rule (PATTERN_KEY_COMPARE) applies: the
+ * pattern with the longest literal PREFIX (before '*') wins; when two
+ * patterns tie on prefix length, the one with the longer literal SUFFIX
+ * (after '*') wins as the tiebreak -- e.g. './features/*' vs
+ * './features/*.json' both have prefix 'features/', but the latter is
+ * more specific and must win for a subpath like './features/x.json'.
  *
  * @param {Array<{ pattern: string, targetTemplate: string }>} wildcardEntries
  * @param {string} subpath
@@ -170,9 +174,15 @@ function resolveWildcardTarget(wildcardEntries, subpath) {
   for (const { pattern, targetTemplate } of wildcardEntries) {
     const captured = matchWildcardSubpath(pattern, subpath)
     if (captured === null) continue
-    const prefixLen = pattern.indexOf('*')
-    if (!best || prefixLen > best.prefixLen) {
-      best = { prefixLen, target: targetTemplate.replaceAll('*', captured) }
+    const starIdx = pattern.indexOf('*')
+    const prefixLen = starIdx
+    const suffixLen = pattern.length - starIdx - 1
+    const isMoreSpecific =
+      !best ||
+      prefixLen > best.prefixLen ||
+      (prefixLen === best.prefixLen && suffixLen > best.suffixLen)
+    if (isMoreSpecific) {
+      best = { prefixLen, suffixLen, target: targetTemplate.replaceAll('*', captured) }
     }
   }
   return best ? best.target : null
@@ -221,7 +231,22 @@ export function getPackageExportEntries(pkgJson) {
     }
   }
 
-  if (rawExports && typeof rawExports === 'object' && !Array.isArray(rawExports)) {
+  if (Array.isArray(rawExports)) {
+    // Node's array-exports form for the root '.' entry (fallback targets in
+    // preference order, e.g. `"exports": ["./dist/index.js"]`) -- a
+    // legitimate shape pickDistTarget() already knows how to walk; without
+    // this branch it fell through to the object-shape check below (which
+    // explicitly excludes arrays) and degraded to a main/types fallback or
+    // hasExportsSurface: false, silently skipping validation.
+    const target = pickDistTarget(rawExports)
+    return {
+      hasExportsSurface: true,
+      entries: target ? new Map([['.', target]]) : new Map(),
+      wildcardEntries: [],
+    }
+  }
+
+  if (rawExports && typeof rawExports === 'object') {
     const keys = Object.keys(rawExports)
     const dotKeys = keys.filter((k) => k.startsWith('.'))
 
