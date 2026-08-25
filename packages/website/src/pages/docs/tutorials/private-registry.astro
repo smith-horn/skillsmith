@@ -89,9 +89,10 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
 
   <p>
     Every team gets one fixed registry namespace. Ask the <code>private_registry_manage</code> MCP
-    tool for it with <code>action: "namespace"</code>, or open the private registry dashboard under
-    your account settings, which shows it at the top of the page as a short prefix, something like
-    <code>your-team/</code>. Every skill ID you publish has to start with that exact prefix, checked
+    tool for it with <code>action: "namespace"</code>, or open the private registry dashboard, which
+    lives on your account's Registry page (left sidebar, under Tools), and shows the namespace at the
+    top of the page as a short prefix, something like <code>your-team/</code>. Every skill ID you
+    publish has to start with that exact prefix, checked
     at the database level on every publish, so there's no accidentally landing in someone else's
     namespace.
   </p>
@@ -107,13 +108,20 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
 
   <pre><code>{`{
   "success": true,
+  "dataSource": "live",
   "skill": {
     "skillId": "your-team/skill-name",
     "version": "0.1.0",
+    "description": "Formats commit messages to match our team's changelog conventions.",
+    "deprecated": false,
+    "publishedAt": "2026-08-23T14:32:07.000Z",
+    "publishedBy": "4e2f6a8c-9d31-4b7a-8e5f-1c6a9d2f7b30",
+    "registryUrl": null,
     "approvalStatus": "pending",
     "approvalMode": "review"
   },
-  "message": "Submitted your-team/skill-name@0.1.0 for review — an admin must approve it before teammates can install it."
+  "skillNamespace": "your-team",
+  "message": "Submitted your-team/skill-name@0.1.0 for review — an admin must approve it before teammates can install it. Review confirms who published this and what version/description was submitted; it does not include a full content read by the approver."
 }`}</code></pre>
 
   <p>
@@ -125,13 +133,14 @@ import DocsLayout from '../../../layouts/DocsLayout.astro'
   <h2 id="step-3-review">Step 3: A teammate reviews it</h2>
 
   <p>
-    The submission shows up in the "Pending Submissions" section of the private registry dashboard
-    (under your account's Team tools), with the skill ID, version, description, and two buttons:
-    Approve and Reject. Only team admins and owners can act on either button, and critically,
+    The submission shows up in the "Pending Submissions" section of that same dashboard, with the
+    skill ID, version, description, and two buttons: Approve and Reject. Only team admins and owners
+    can act on either button, and critically,
     <strong>the person who published a submission cannot approve or reject it themselves</strong>,
-    even if they hold an admin role. This is enforced at the database level, not just hidden in the
-    interface, so it can't be worked around by calling the underlying tool directly either. A
-    different admin has to make the call.
+    even if they hold an admin role. This is enforced at the database level, so it can't be worked
+    around by calling the underlying tool directly either. Even the interface's own Approve and
+    Reject buttons don't stop you from clicking them on your own submission; they simply fail with an
+    error if you try. A different admin has to make the call.
   </p>
 
   <p>

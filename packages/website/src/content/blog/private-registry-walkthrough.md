@@ -31,13 +31,20 @@ Publishing goes through the `private_registry_publish` MCP tool: your skill ID (
 ```json
 {
   "success": true,
+  "dataSource": "live",
   "skill": {
     "skillId": "your-team/skill-name",
     "version": "0.1.0",
+    "description": "Formats commit messages to match our team's changelog conventions.",
+    "deprecated": false,
+    "publishedAt": "2026-08-23T14:32:07.000Z",
+    "publishedBy": "4e2f6a8c-9d31-4b7a-8e5f-1c6a9d2f7b30",
+    "registryUrl": null,
     "approvalStatus": "pending",
     "approvalMode": "review"
   },
-  "message": "Submitted your-team/skill-name@0.1.0 for review — an admin must approve it before teammates can install it."
+  "skillNamespace": "your-team",
+  "message": "Submitted your-team/skill-name@0.1.0 for review — an admin must approve it before teammates can install it. Review confirms who published this and what version/description was submitted; it does not include a full content read by the approver."
 }
 ```
 
@@ -57,7 +64,7 @@ Once a teammate approves it, the skill moves into the "Skills" section with an "
 
 ## Install it with the CLI
 
-For installing, reach for your terminal, not the MCP tool:
+For installing, the CLI is the simplest path:
 
 ```
 skillsmith registry install your-team/skill-name
