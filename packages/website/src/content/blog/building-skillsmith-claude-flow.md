@@ -6,7 +6,6 @@ date: 2026-02-20
 updated: 2026-02-20
 category: "Engineering"
 tags: ["claude-flow", "claude-flow-v3", "multi-agent", "hive-mind", "sparc", "sparc-methodology", "wave-planner", "launchpad", "plan-review", "agentic-engineering", "ai-development", "claude-code", "ai-engineering", "developer-productivity", "mcp-server"]
-featured: true
 draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/claude-flow-v3-presentation/slide-01-cover"
 ---

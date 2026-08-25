@@ -6,7 +6,6 @@ date: 2026-05-15
 updated: 2026-05-15
 category: "Engineering"
 tags: ["memory", "architecture", "agents", "retrieval", "embeddings", "mcp", "claude-code"]
-featured: true
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/agent-memory-architecture/01-three-layer-architecture"
 ---
 

@@ -19,7 +19,6 @@ const blog = defineCollection({
       .enum(['Guides', 'Tutorials', 'Case Studies', 'News', 'Engineering'])
       .default('Guides'),
     tags: z.array(z.string()).default([]),
-    featured: z.boolean().default(false),
     draft: z.boolean().default(false),
     ogImage: z.string().optional(),
     schemaType: z.enum(['HowTo', 'FAQ']).optional(),

@@ -6,7 +6,6 @@ date: 2026-02-02
 updated: 2026-02-12
 category: "Engineering"
 tags: ["security", "trust-tiers", "static-analysis", "quarantine", "installation", "safety"]
-featured: true
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/security/security-shield-hero"
 ---
 

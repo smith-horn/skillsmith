@@ -13,10 +13,6 @@ const posts = (await getCollection('blog', ({ data }) => !data.draft)).sort(
   (a, b) => b.data.date.valueOf() - a.data.date.valueOf()
 )
 
-// Separate featured and regular posts
-const featuredPosts = posts.filter((post) => post.data.featured)
-const regularPosts = posts.filter((post) => !post.data.featured)
-
 // Get unique categories
 const categories = [...new Set(posts.map((post) => post.data.category).filter(Boolean))]
 
@@ -101,54 +97,26 @@ const blogJsonLd = {
         </div>
       ) : (
         <>
-          {/* Featured Posts */}
-          {featuredPosts.length > 0 && (
-            <section class="mb-16">
-              <h2 class="text-sm font-semibold uppercase tracking-wider text-dark-400 mb-6">
-                Featured
-              </h2>
-              <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-1">
-                {featuredPosts.map((post) => (
-                  <BlogPostCard
-                    title={post.data.title}
-                    description={post.data.description}
-                    slug={post.id}
-                    date={post.data.date}
-                    author={post.data.author}
-                    category={post.data.category}
-                    tags={post.data.tags}
-                    featured={true}
-                    readingTime={calculateReadingTime(post.body ?? '')}
-                    ogImage={post.data.ogImage}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* All Posts */}
-          {regularPosts.length > 0 && (
-            <section>
-              <h2 class="text-sm font-semibold uppercase tracking-wider text-dark-400 mb-6">
-                {featuredPosts.length > 0 ? 'All Articles' : 'Articles'}
-              </h2>
-              <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {regularPosts.map((post) => (
-                  <BlogPostCard
-                    title={post.data.title}
-                    description={post.data.description}
-                    slug={post.id}
-                    date={post.data.date}
-                    author={post.data.author}
-                    category={post.data.category}
-                    tags={post.data.tags}
-                    readingTime={calculateReadingTime(post.body ?? '')}
-                    ogImage={post.data.ogImage}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
+          <section>
+            <h2 class="text-sm font-semibold uppercase tracking-wider text-dark-400 mb-6">
+              Articles
+            </h2>
+            <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {posts.map((post) => (
+                <BlogPostCard
+                  title={post.data.title}
+                  description={post.data.description}
+                  slug={post.id}
+                  date={post.data.date}
+                  author={post.data.author}
+                  category={post.data.category}
+                  tags={post.data.tags}
+                  readingTime={calculateReadingTime(post.body ?? '')}
+                  ogImage={post.data.ogImage}
+                />
+              ))}
+            </div>
+          </section>
 
           {/* Categories */}
           {categories.length > 1 && (

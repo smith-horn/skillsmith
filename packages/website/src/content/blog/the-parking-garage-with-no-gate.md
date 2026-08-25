@@ -6,7 +6,6 @@ date: 2026-08-15
 updated: 2026-08-16
 category: "Engineering"
 tags: ["docker", "developer-tooling", "engineering-culture", "infrastructure", "agentic-engineering"]
-featured: false
 draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/the-parking-garage-with-no-gate/01-hero"
 ---

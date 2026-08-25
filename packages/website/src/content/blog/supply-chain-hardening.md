@@ -5,7 +5,6 @@ author: "Skillsmith Team"
 date: 2026-04-03
 category: "Engineering"
 tags: ["security", "supply-chain", "infrastructure", "dependencies"]
-featured: true
 draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/supply-chain/supply-chain-hero"
 ---
