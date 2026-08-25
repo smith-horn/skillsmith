@@ -286,3 +286,22 @@ guaranteed for every model/prompt.
   real failure back to success). A missing or corrupt `stdout.txt` never
   changes the outcome or exit code by itself — extraction failure degrades
   to "treat it as having no answer," not to a crash.
+- **A `bf` bead ends up `closed` with NO trace directory at all under
+  `.beads/traces/<bead-id>/`** (SMI-6015 retro, 2026-08-25) — a different,
+  earlier failure mode than the `success-without-agent-message` case above
+  (that one still gets a trace directory; this one gets none). Observed
+  after running a foreground `dispatch.sh` call piped through `head -N` to
+  preview the output: `head` closes its end of the pipe once it has read N
+  lines, and `dispatch.sh`'s own verbose NEEDLE-boot logging can produce
+  more than N lines almost immediately, so the pipe can close — and
+  SIGPIPE the still-running `dispatch.sh`/worker process — before the
+  dispatch has even claimed its bead, let alone produced output. The
+  Codex-side dispatch never actually ran to completion in this case, so
+  there is no useful result to recover. Fix: don't pipe a foreground
+  `dispatch.sh` invocation through `head`/`tail`/anything that can close
+  its stdout early. Run it with a background-task mechanism (so its full
+  output is captured to a file regardless of when you look at it) or let
+  it print to a terminal/log directly; if you only want to sanity-check
+  that dispatch is starting cleanly (e.g. that the secret-scanner pre-check
+  passes), that's fine to pipe through `head` — just re-run the real
+  dispatch afterward rather than trusting that piped attempt's outcome.
