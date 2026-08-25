@@ -6,7 +6,7 @@ date: 2026-08-23
 category: "News"
 tags: ["private-registry", "enterprise", "product-launch"]
 draft: false
-ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/private-registry/01-skills-list-approved"
+ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/private-registry/02-private-shelf-hero"
 ---
 
 Picture a platform engineer who spends an afternoon writing a Claude skill that walks through her team's exact deploy runbook: which Terraform workspace to touch first, which Slack channel gets the rollback plan, who to page when the database owner is asleep. It's a genuinely useful skill. It's also full of internal service names, channel handles, and a company acronym that means nothing outside her building. Publishing it to Skillsmith's public registry was never an option, so it would have sat on her laptop, shared the old way: a Slack message with a zip file attached, hoping the next person remembered to ask for it.
@@ -19,7 +19,7 @@ Each team gets its own namespace, a short prefix like `acme-corp/`, so a skill p
 
 Here's what changed on the day-to-day: a team member writes a skill and submits it through Claude. It doesn't go live. It lands on the team admin's dashboard as a pending submission, sitting in a waiting room until someone reviews it.
 
-![The private registry dashboard showing an approved skill listing](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/private-registry/01-skills-list-approved)
+![A locked vault of skills at the center of a team's private registry, connected to review, approval, and security icons](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/private-registry/02-private-shelf-hero)
 
 An admin reads the description, checks the version, and approves it. Only then does the skill move from submitted to installable. Reject it, and it never reaches a single laptop. Nobody, not even the person who wrote it, can approve their own submission: a second set of eyes is built into the door, not bolted on after the fact.
 

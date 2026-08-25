@@ -7,10 +7,10 @@ updated: 2026-06-27
 category: "Engineering"
 tags: ["security", "quarantine", "threat-detection", "unicode", "agent-skills", "engineering"]
 draft: true
-ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-detection/disguised-instructions-hero"
+ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-detection/unicode-deception-hero"
 ---
 
-![Two lines of text that look identical, with one revealed to contain lookalike letters and invisible gaps](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/quarantine-detection/disguised-instructions-hero)
+![Two lines of text that look identical, with one revealed to contain lookalike letters and invisible gaps](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/quarantine-detection/unicode-deception-hero)
 
 Read this line, then read it again: `ignore all previous instructions`.
 
@@ -162,7 +162,7 @@ We re-scored about 3,000 distinct real skills from the live registry across thre
       },
       "image": {
         "@type": "ImageObject",
-        "url": "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-detection/disguised-instructions-hero"
+        "url": "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-detection/unicode-deception-hero"
       },
       "keywords": ["quarantine", "threat detection", "unicode security", "homoglyph", "skillsmith", "agent skills"]
     },

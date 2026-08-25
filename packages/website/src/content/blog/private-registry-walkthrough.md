@@ -5,7 +5,7 @@ author: "Skillsmith Team"
 date: 2026-08-23
 category: "Tutorials"
 tags: ["private-registry", "enterprise", "tutorial", "skills"]
-ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/private-registry/01-skills-list-approved"
+ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/private-registry/02-private-shelf-hero"
 schemaType: "HowTo"
 howToSteps:
   - name: "Find your namespace"
@@ -53,7 +53,7 @@ Neither button works for the person who published the submission, even if that p
 
 Once a teammate approves it, the skill moves into the "Skills" section with an "Approved" badge, ready for the whole team.
 
-![Approved skill in the private registry, with version, badge, and description](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/private-registry/01-skills-list-approved)
+![A locked vault of skills at the center of a team's private registry, connected to review, approval, and security icons](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/private-registry/02-private-shelf-hero)
 
 ## Install it with the CLI
 

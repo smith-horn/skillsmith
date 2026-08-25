@@ -7,10 +7,10 @@ updated: 2026-06-25
 category: "Engineering"
 tags: ["security", "quarantine", "data-integrity", "infrastructure", "engineering", "database"]
 draft: true
-ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-hardening/quarantine-audit-hero"
+ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-hardening/database-guard-hero"
 ---
 
-![Database rows with warning indicators and a CHECK constraint guard](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/quarantine-hardening/quarantine-audit-hero)
+![Database rows with warning indicators and a CHECK constraint guard](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/quarantine-hardening/database-guard-hero)
 
 Skillsmith's quarantine system sits between the public registry and the skills you can install. It blocks malicious content, stale references, and dead repositories from reaching your agent. Going into our June 2026 audit, it held ~5,582 quarantined records across a registry of ~73,347 skills.
 
@@ -206,7 +206,7 @@ No alert was configured for `quarantine_reason IS NULL`. The rows were written b
       },
       "image": {
         "@type": "ImageObject",
-        "url": "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-hardening/quarantine-audit-hero"
+        "url": "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/quarantine-hardening/database-guard-hero"
       },
       "keywords": ["quarantine", "data integrity", "database", "security", "skillsmith", "agent skills"]
     },
