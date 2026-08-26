@@ -2,7 +2,8 @@
 /**
  * Skillsmith Pricing Page
  *
- * Pricing tiers from ADR-013 (Open Core Licensing) and ADR-017 (Quota Enforcement)
+ * Pricing tiers: quota figures per ADR-017 (Quota Enforcement); feature-tier
+ * gating ground truth is code (see pricing-data.ts), not ADR-013 (superseded)
  * License: Elastic License 2.0
  * SMI-1071: Annual billing toggle support
  * SMI-1554: Migrated to BaseLayout for layout consistency
@@ -227,17 +228,15 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
             <td>Analytics Dashboard</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td>Basic</td>
-            <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
+            <td class="highlighted">Per-user</td>
             <td>Advanced</td>
           </tr>
           <tr>
             <td>Team Workspaces</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
-            <td class="highlighted"
-              ><span class="roadmap" aria-label="On roadmap">&#128336;</span></td
-            >
-            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
+            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
           </tr>
           <tr>
             <td>Private Skill Registry</td>
@@ -253,14 +252,14 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
           </tr>
           <tr>
             <td>Role-Based Access Control</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
           </tr>
           <tr>
             <td>Audit Logging</td>
@@ -300,6 +299,10 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
         </tbody>
       </table>
     </div>
+    <p class="roadmap-legend">
+      SSO/SAML and Role-Based Access Control are included with Enterprise, configured as part of
+      your onboarding engagement. Contact sales for details.
+    </p>
   </section>
 
   <section class="pricing-roadmap" id="roadmap">
@@ -311,19 +314,14 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
       <div class="roadmap-column">
         <h3>Team tier</h3>
         <ul>
-          <li>Team workspaces</li>
           <li>
             Private skills (team-wide sync -- a local-only, single-device version ships today)
           </li>
-          <li>Skill sharing controls</li>
-          <li>Usage analytics</li>
         </ul>
       </div>
       <div class="roadmap-column">
         <h3>Enterprise tier</h3>
         <ul>
-          <li>SSO / SAML integration</li>
-          <li>Role-based access control</li>
           <li>Custom integrations</li>
         </ul>
       </div>
