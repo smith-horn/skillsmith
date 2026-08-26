@@ -253,8 +253,15 @@ if (!isCategory && decodedId) {
     // itself a contributor to the "crawled, not indexed" bucket, since
     // Google had no way to distinguish a gone skill from a slow-loading one.
     Astro.response.status = 404
-  } else if (shouldCacheSkillPage(skillMeta)) {
-    Astro.response.headers.set('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
+  } else {
+    // Explicit either way, rather than only setting a header on success and
+    // relying on Vercel's default (unset-header) behavior for the degraded
+    // case — the whole point of shouldCacheSkillPage() is "never cache a
+    // degraded response," so that intent should be stated, not implied.
+    Astro.response.headers.set(
+      'Cache-Control',
+      shouldCacheSkillPage(skillMeta) ? 's-maxage=300, stale-while-revalidate=60' : 'no-store'
+    )
   }
 }
 
