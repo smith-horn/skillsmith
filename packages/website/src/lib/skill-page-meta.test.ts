@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  buildCategorySkillsUrl,
   buildSkillCanonicalUrl,
   buildSkillGetUrl,
   deriveSkillPageMeta,
@@ -89,6 +90,24 @@ describe('buildSkillGetUrl + buildSkillCanonicalUrl (encode round-trip)', () => 
 
   it('falls back to an empty-id canonical URL when decodedId is undefined', () => {
     expect(buildSkillCanonicalUrl(undefined)).toBe('https://www.skillsmith.app/skills/')
+  })
+})
+
+describe('buildCategorySkillsUrl', () => {
+  it('routes through /functions/v1/skills-search, not a bare /v1/ path', () => {
+    // SMI-6195 regression: the prior inline URL used `/v1/skills`, a path
+    // api.skillsmith.app's Vercel rewrite never routes (confirmed live —
+    // 404 at the routing layer, before Supabase). Only `/functions/v1/<fn>`
+    // paths are routed; skills-search is the function, not "skills".
+    const url = buildCategorySkillsUrl('https://api.skillsmith.app', 'testing')
+    expect(url).toBe(
+      'https://api.skillsmith.app/functions/v1/skills-search?category=testing&limit=12&sort=score'
+    )
+  })
+
+  it('URL-encodes the category slug', () => {
+    const url = buildCategorySkillsUrl('https://api.skillsmith.app', 'a slug/weird')
+    expect(url).toContain('category=a%20slug%2Fweird')
   })
 })
 
