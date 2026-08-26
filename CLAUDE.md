@@ -293,6 +293,8 @@ High-cadence: Skill Indexer (maintenance 00:00 UTC + recheck 03:00 UTC + discove
 
 **Worktrees are the default workspace.** Doing implementation work directly on `main` (or in the main checkout) requires an **explicitly approved exception** — state the rationale and get sign-off before proceeding. This keeps parallel sessions from colliding (SMI-4776) and keeps `main` clean.
 
+**A `fork`-type subagent cannot itself act as the queen for model-tiered delegation.** Forks share the parent's context and always run on the parent's model by design, and are barred from spawning their own Agent-tool subagents — so a fork told to delegate work across the model tiers below will instead do all of it itself, in one long single-model run (observed: a fork handed a 4-PR queen-coordination task did exactly this, needing ~250 tool uses and two turn-limit resumes across ~2 hours). If the queen role itself needs to run in the background, keep the top-level/foreground session as the queen issuing model-tiered `Agent` calls directly, or use a fresh (non-fork) background subagent as the queen instead. A fork is still the right call for a single large task that doesn't need further fan-out.
+
 **Route worker tasks by difficulty across model tiers** (the queen assigns each task to the cheapest tier that can do it well):
 
 | Model | Role | Tasks |
