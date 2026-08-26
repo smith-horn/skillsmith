@@ -21,6 +21,7 @@ import {
   buildSkillGetUrl,
   deriveSkillPageMeta,
   resolveSkillId,
+  safeJsonLdScript,
   type SkillMeta,
 } from '../../lib/skill-page-meta'
 
@@ -272,7 +273,12 @@ const {
     >
       {categoryJsonLd &&
         categoryJsonLd.map((ld) => (
-          <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(ld)} />
+          <script
+            is:inline
+            type="application/ld+json"
+            slot="head"
+            set:html={safeJsonLdScript(ld)}
+          />
         ))}
       {/* SMI-6180: no explicit canonical prop is passed to BaseLayout above, so its
         own self-referencing default (Astro.url.pathname, correct for this SSR route —
@@ -378,7 +384,7 @@ const {
           is:inline
           type="application/ld+json"
           slot="head"
-          set:html={JSON.stringify(skillJsonLd)}
+          set:html={safeJsonLdScript(skillJsonLd)}
         />
       )}
       <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">

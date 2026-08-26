@@ -4,8 +4,30 @@ import {
   buildSkillGetUrl,
   deriveSkillPageMeta,
   resolveSkillId,
+  safeJsonLdScript,
   type SkillMeta,
 } from './skill-page-meta'
+
+describe('safeJsonLdScript', () => {
+  it('escapes </script> so it cannot break out of the surrounding script tag', () => {
+    const payload = { name: 'evil</script><script>alert(1)</script>' }
+    const serialized = safeJsonLdScript(payload)
+    expect(serialized).not.toContain('</script>')
+    expect(serialized).toContain('\\u003c/script>')
+  })
+
+  it('round-trips back to the original value once un-escaped and parsed', () => {
+    const payload = { name: 'evil</script><script>alert(1)</script>' }
+    const serialized = safeJsonLdScript(payload)
+    const parsed = JSON.parse(serialized.replace(/\\u003c/g, '<'))
+    expect(parsed).toEqual(payload)
+  })
+
+  it('leaves ordinary payloads unaffected', () => {
+    const payload = { name: 'Example Skill', description: 'Does something useful.' }
+    expect(safeJsonLdScript(payload)).toBe(JSON.stringify(payload))
+  })
+})
 
 describe('resolveSkillId', () => {
   it('returns undefined for an undefined id', () => {

@@ -46,6 +46,23 @@ export function resolveSkillId(rawId: string | undefined): string | undefined {
   return decodeURIComponent(rawId)
 }
 
+/**
+ * Serializes a JSON-LD payload for safe injection into a
+ * `<script type="application/ld+json" set:html={...}>` tag.
+ *
+ * `JSON.stringify()` alone does NOT escape `</script>` — if any field in the
+ * payload originates from external, semi-trusted content (a skill or
+ * category name/description, scraped from a GitHub repo) and happens to
+ * contain that literal sequence, it breaks out of the surrounding
+ * `<script>` tag and injects arbitrary markup/script into the page. `<`
+ * is a valid escape inside a JSON string and is never re-interpreted by a
+ * JSON-LD consumer, so this is safe for every reader while closing the HTML
+ * parser's `</script>` escape hatch.
+ */
+export function safeJsonLdScript(payload: unknown): string {
+  return JSON.stringify(payload).replace(/</g, '\\u003c')
+}
+
 /** Builds the server-side skills-get fetch URL from an already-decoded id. */
 export function buildSkillGetUrl(apiBaseUrl: string, decodedId: string): string {
   return `${apiBaseUrl}/functions/v1/skills-get/${encodeURIComponent(decodedId)}`
