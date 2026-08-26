@@ -9,20 +9,26 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { type PgConnParams, queryRows, queryScalar, nullable } from './smi5879-census.pg.ts'
+import {
+  GUARDRAIL_MAX_LOSERS,
+  DEPENDENT_TABLES,
+  type DuplicateGroup,
+  type SkillRow,
+  type TableMovement,
+  type ReversalManifest,
+} from './merge-duplicate-skills.types.ts'
 
-/** R4 guardrail (design doc §B.3.3) — abort if the key ever selects more than a hand-count of rows. */
-export const GUARDRAIL_MAX_LOSERS = 500
-
-/** The six tables with a real or soft reference into `skills.id`, per design doc §B.3.2. */
-export const DEPENDENT_TABLES = [
-  'skill_categories',
-  'skills_optimized',
-  'skill_transformations',
-  'outreach_suppressions',
-  'outreach_events',
-  'quarantine_approvals',
-] as const
-export type DependentTable = (typeof DEPENDENT_TABLES)[number]
+export {
+  GUARDRAIL_MAX_LOSERS,
+  DEPENDENT_TABLES,
+  type DependentTable,
+  type SkillRow,
+  type DuplicateGroup,
+  type TableMovement,
+  type QuarantineApprovalDelta,
+  type ReversalManifest,
+  type MergeCounts,
+} from './merge-duplicate-skills.types.ts'
 
 /** UUID-shaped guard for any id interpolated directly into a generated SQL script (defense-in-depth — these come from our own prior read, never external input). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -36,61 +42,6 @@ export function assertUuid(id: string, label: string): string {
 export function idArrayLiteral(ids: string[], label: string): string {
   const quoted = ids.map((id) => `'${assertUuid(id, label)}'`)
   return `ARRAY[${quoted.join(',')}]::text[]`
-}
-
-/** A single `skills` row as read for grouping/ranking. */
-export interface SkillRow {
-  id: string
-  repo_url_canonical: string
-  repo_url: string | null
-  author: string | null
-  name: string
-  quarantined: boolean
-  last_seen_at: string | null
-  trust_tier: string | null
-  stars: number | null
-  updated_at: string | null
-}
-
-/** One duplicate group: a survivor plus its losers, ranked per the canonical survivor-selection order. */
-export interface DuplicateGroup {
-  repoUrlCanonical: string
-  survivor: SkillRow
-  losers: SkillRow[]
-}
-
-/** Per-table row-movement counts for one group, for the dry-run report. */
-export interface TableMovement {
-  table: DependentTable
-  rePointed: number
-  discarded: number
-  skippedOnConflict: number
-}
-
-export interface QuarantineApprovalDelta {
-  skillId: string
-  before: boolean
-  after: boolean
-}
-
-export interface ReversalManifest {
-  createdAt: string
-  groups: Array<{
-    repoUrlCanonical: string
-    survivorId: string
-    loserIds: string[]
-  }>
-  /** Full pre-merge row snapshots, keyed by table name. */
-  rows: Record<'skills' | DependentTable, unknown[]>
-}
-
-export interface MergeCounts {
-  groups: number
-  losersRemoved: number
-  tableMovements: TableMovement[]
-  isCompleteDeltas: QuarantineApprovalDelta[]
-  suppressionCountBefore: number
-  suppressionCountAfter: number
 }
 
 const RANKING_ORDER_SQL = `
@@ -351,17 +302,28 @@ export async function planGroup(
   return movements
 }
 
-/** `quarantine_approvals.is_complete` before-state for a skill, per design doc §B.3.2: `COUNT(DISTINCT reviewer_id) >= required_approvals`. */
-export async function isCompleteFor(conn: PgConnParams, skillId: string): Promise<boolean | null> {
-  const id = assertUuid(skillId, 'skill id')
+/**
+ * `quarantine_approvals.is_complete` over the UNION of `ids`' rows, per
+ * design doc §B.3.2: `COUNT(DISTINCT reviewer_id) >= MAX(required_approvals)`.
+ * Uniform "before"/"after" computation for both dry-run and apply: "before"
+ * is always `[survivorId]` alone (current state); "after" during dry-run is
+ * `[survivorId, ...loserIds]` (a read-only simulation of the post-re-point
+ * union, since nothing has moved yet); "after" during apply is
+ * `[survivorId]` alone AGAIN, but queried post-mutation, once every loser's
+ * rows already carry the survivor's id — the same query, different moment.
+ */
+export async function isCompleteForIds(conn: PgConnParams, ids: string[]): Promise<boolean | null> {
+  if (ids.length === 0) return null
+  const arr = idArrayLiteral(ids, 'skill id')
   const row = (
     await queryRows(
       conn,
-      `SELECT bool_or(is_complete) FROM quarantine_approvals WHERE skill_id = '${id}';`
+      `SELECT (count(DISTINCT reviewer_id) >= max(required_approvals))::text
+       FROM quarantine_approvals WHERE skill_id = ANY(${arr});`
     )
   )[0]
   if (!row) return null
-  return nullable(row[0]) === null ? null : row[0] === 't'
+  return nullable(row[0]) === null ? null : row[0] === 'true'
 }
 
 /** Count distinct suppressed skill_ids among the given ids — used for the pre/post suppression-preservation proof. */
@@ -375,8 +337,41 @@ export async function suppressedSkillCount(conn: PgConnParams, ids: string[]): P
   return Number(n ?? '0')
 }
 
-/** Build the SQL mutation block for one group's per-table merge rules, per design doc §B.3.2. */
-export function buildGroupMutationSql(group: DuplicateGroup): string {
+/**
+ * Whether ANY member of the group (survivor or any loser) currently has a
+ * suppression row — read BEFORE the merge mutates anything. Feeds the
+ * per-group in-transaction assertion in {@link buildGroupMutationSql}: a
+ * GLOBAL distinct-suppressed-id count comparison (the original design) is
+ * unsound here, because collapsing N suppressed skill_ids in one group down
+ * to 1 (the survivor) legitimately changes that count even when the
+ * invariant holds — the correct check is per-group ("did this group have
+ * suppression, and if so, does its survivor have exactly one now"), caught
+ * by GPT-5.6-Sol/NEEDLE review before --apply (2026-08-26).
+ */
+export async function groupHadSuppression(
+  conn: PgConnParams,
+  group: DuplicateGroup
+): Promise<boolean> {
+  const ids = [group.survivor.id, ...group.losers.map((l) => l.id)]
+  const arr = idArrayLiteral(ids, 'skill id')
+  const n = await queryScalar(
+    conn,
+    `SELECT count(*) FROM outreach_suppressions WHERE skill_id = ANY(${arr});`
+  )
+  return Number(n ?? '0') > 0
+}
+
+/**
+ * Build the SQL mutation block for one group's per-table merge rules, per
+ * design doc §B.3.2. `hadSuppression` (from {@link groupHadSuppression},
+ * read BEFORE any mutation) gates an in-transaction, per-group hard-abort
+ * assertion: if the group had any suppression before, its survivor must
+ * have EXACTLY ONE suppression row after — checked and enforced (via
+ * RAISE EXCEPTION, which rolls back the whole transaction) INSIDE this same
+ * script, not as a separate post-COMMIT check that can no longer prevent
+ * anything.
+ */
+export function buildGroupMutationSql(group: DuplicateGroup, hadSuppression: boolean): string {
   const survivorId = assertUuid(group.survivor.id, 'survivor id')
   const loserIds = group.losers.map((l) => assertUuid(l.id, 'loser id'))
   const loserArr = idArrayLiteral(loserIds, 'loser id')
@@ -423,6 +418,23 @@ UPDATE outreach_suppressions SET skill_id = '${survivorId}'
 WHERE id IN (SELECT id FROM adopt)
   AND NOT EXISTS (SELECT 1 FROM outreach_suppressions WHERE skill_id = '${survivorId}');
 DELETE FROM outreach_suppressions WHERE skill_id = ANY(${loserArr});
+
+-- 4b. In-transaction suppression-preservation assertion (per-group, not a
+-- global count comparison -- see groupHadSuppression's doc comment for why
+-- a global diff is unsound here). Rolls back the WHOLE transaction if this
+-- group's suppression state was lost, before COMMIT ever runs.
+${
+  hadSuppression
+    ? `DO $$
+DECLARE n int;
+BEGIN
+  SELECT count(*) INTO n FROM outreach_suppressions WHERE skill_id = '${survivorId}';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'ABORT: suppression-preservation invariant violated for survivor ${survivorId} -- expected exactly 1 suppression row, found %', n;
+  END IF;
+END $$;`
+    : ''
+}
 
 -- 5. outreach_events: re-point all, dedupe none (append-only event log).
 UPDATE outreach_events SET skill_id = '${survivorId}' WHERE skill_id = ANY(${loserArr});

@@ -158,6 +158,14 @@ describe.skipIf(prePushNoLiveTestPg)('merge-duplicate-skills (live Postgres)', (
       manifestPath: '/tmp/smi5898-merge-test-dry.json',
     })
     expect(dryRun.groups).toBeGreaterThanOrEqual(1)
+    // Prospective delta: dry-run must compute this WITHOUT applying anything —
+    // the GPT-5.6-Sol/NEEDLE finding this fixes (dry-run previously always
+    // returned an empty array here, regardless of the true prospective delta).
+    const dryRunDelta = dryRun.isCompleteDeltas.find((d) => d.skillId === survivorId)
+    expect(dryRunDelta).toEqual({ skillId: survivorId, before: false, after: true })
+    // And dry-run must not have mutated anything — the loser is still there.
+    const loserStillThere = await queryRows(conn, `SELECT 1 FROM skills WHERE id = '${loserId}';`)
+    expect(loserStillThere).toHaveLength(1)
 
     const result = await runMerge(conn, db, {
       apply: true,
@@ -230,6 +238,50 @@ describe.skipIf(prePushNoLiveTestPg)('merge-duplicate-skills (live Postgres)', (
     const catMovement = movements.find((m) => m.table === 'skill_categories')!
     expect(catMovement.rePointed).toBe(0)
     expect(catMovement.skippedOnConflict).toBe(1)
+  })
+
+  it('--apply survives BOTH survivor and loser being independently suppressed — the exact GPT-5.6-Sol/NEEDLE finding: a global distinct-suppressed-id count comparison is unsound here (2 suppressed skill_ids collapsing to 1 is correct, not a violation)', async () => {
+    const survivorId = await insertSkill(conn, {
+      repoUrl: 'https://github.com/multisuppress/Repo/tree/main/w',
+      lastSeenAt: '2026-06-01T00:00:00Z',
+    })
+    const loserId = await insertSkill(conn, {
+      repoUrl: 'https://github.com/multisuppress/repo/tree/main/w',
+      lastSeenAt: '2026-01-01T00:00:00Z',
+    })
+    // BOTH the survivor and the loser are independently suppressed —
+    // pre-merge this group has 2 distinct suppressed skill_ids.
+    await queryRows(
+      conn,
+      `INSERT INTO outreach_suppressions (skill_id, suppressed_at) VALUES
+         ('${survivorId}', '2026-02-01T00:00:00Z'),
+         ('${loserId}', '2026-01-01T00:00:00Z');`
+    )
+
+    const db = {
+      from: () => ({ insert: async () => ({ data: null, error: null }) }),
+    } as unknown as Parameters<typeof runMerge>[1]
+
+    // Must NOT throw — the fixed per-group check only requires exactly one
+    // suppression row survive for THIS group, not that the global count stay
+    // identical (it legitimately drops from 2 to 1 here).
+    await expect(
+      runMerge(conn, db, {
+        apply: true,
+        manifestPath: '/tmp/smi5898-merge-test-multisuppress.json',
+      })
+    ).resolves.toBeDefined()
+
+    const survivorSuppressions = await queryRows(
+      conn,
+      `SELECT 1 FROM outreach_suppressions WHERE skill_id = '${survivorId}';`
+    )
+    expect(survivorSuppressions).toHaveLength(1)
+    const loserSuppressions = await queryRows(
+      conn,
+      `SELECT 1 FROM outreach_suppressions WHERE skill_id = '${loserId}';`
+    )
+    expect(loserSuppressions).toEqual([])
   })
 
   it('buildReversalManifest captures full before-images of loser rows and touched dependent-table rows', async () => {

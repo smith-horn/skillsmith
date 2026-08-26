@@ -78,8 +78,9 @@ import {
   buildReversalManifest,
   writeReversalManifest,
   planGroup,
-  isCompleteFor,
+  isCompleteForIds,
   suppressedSkillCount,
+  groupHadSuppression,
   buildGroupMutationSql,
 } from './merge-duplicate-skills.helpers.ts'
 
@@ -124,12 +125,34 @@ export async function runMerge(
   writeReversalManifest(manifest, opts.manifestPath)
   console.log(`\nReversal manifest written: ${opts.manifestPath}`)
 
+  // "Before" is always the survivor's OWN current rows. "After" (prospective,
+  // computed here BEFORE any mutation) simulates the post-re-point union for
+  // dry-run — a read-only query, safe to run without touching anything.
+  // Apply overwrites isCompleteAfter with a real post-mutation read below.
   const isCompleteBefore = new Map<string, boolean | null>()
-  for (const g of groups)
-    isCompleteBefore.set(g.survivor.id, await isCompleteFor(conn, g.survivor.id))
+  const isCompleteAfter = new Map<string, boolean | null>()
+  const groupHadSuppressionMap = new Map<string, boolean>()
+  for (const g of groups) {
+    isCompleteBefore.set(g.survivor.id, await isCompleteForIds(conn, [g.survivor.id]))
+    isCompleteAfter.set(
+      g.survivor.id,
+      await isCompleteForIds(conn, [g.survivor.id, ...g.losers.map((l) => l.id)])
+    )
+    groupHadSuppressionMap.set(g.survivor.id, await groupHadSuppression(conn, g))
+  }
 
   const movements: TableMovement[] = []
-  for (const g of groups) movements.push(...(await planGroup(conn, g)))
+  console.log(`\n── Per-table movement plan ──`)
+  for (const g of groups) {
+    const groupMovements = await planGroup(conn, g)
+    movements.push(...groupMovements)
+    console.log(`  ${g.repoUrlCanonical}`)
+    for (const m of groupMovements) {
+      console.log(
+        `    ${m.table.padEnd(22)} rePointed=${m.rePointed} discarded=${m.discarded} skippedOnConflict=${m.skippedOnConflict}`
+      )
+    }
+  }
 
   if (opts.apply) {
     // Re-derive with a LIVE read and re-check the guardrail INSIDE the same
@@ -149,7 +172,9 @@ BEGIN
   END IF;
 END $$;
 `
-    const mutationBlocks = groups.map(buildGroupMutationSql).join('\n')
+    const mutationBlocks = groups
+      .map((g) => buildGroupMutationSql(g, groupHadSuppressionMap.get(g.survivor.id) ?? false))
+      .join('\n')
     const script = `
 BEGIN;
 SET LOCAL lock_timeout = '3s';
@@ -158,32 +183,35 @@ ${mutationBlocks}
 COMMIT;
 `
     await runPsql(conn, script)
-  }
 
-  const isCompleteDeltas: QuarantineApprovalDelta[] = []
-  if (opts.apply) {
+    // Real post-mutation read, replacing the pre-mutation simulation above —
+    // by now every loser's quarantine_approvals row already carries the
+    // survivor's id, so querying [survivorId] alone is the true after-state.
     for (const g of groups) {
-      const after = await isCompleteFor(conn, g.survivor.id)
-      const before = isCompleteBefore.get(g.survivor.id) ?? false
-      if ((before ?? false) !== (after ?? false)) {
-        isCompleteDeltas.push({
-          skillId: g.survivor.id,
-          before: before ?? false,
-          after: after ?? false,
-        })
-      }
+      isCompleteAfter.set(g.survivor.id, await isCompleteForIds(conn, [g.survivor.id]))
     }
   }
 
+  const isCompleteDeltas: QuarantineApprovalDelta[] = []
+  for (const g of groups) {
+    const before = isCompleteBefore.get(g.survivor.id) ?? false
+    const after = isCompleteAfter.get(g.survivor.id) ?? false
+    if ((before ?? false) !== (after ?? false)) {
+      isCompleteDeltas.push({
+        skillId: g.survivor.id,
+        before: before ?? false,
+        after: after ?? false,
+      })
+    }
+  }
+
+  // Informational only, post-commit — the authoritative, transaction-rolling-back
+  // check is the per-group in-transaction assertion buildGroupMutationSql emits
+  // (see groupHadSuppression's doc comment for why a global count comparison is
+  // unsound and was removed as the enforcement mechanism here).
   const suppressionCountAfter = opts.apply
     ? await suppressedSkillCount(conn, allSurvivorIds(groups))
     : suppressionCountBefore
-
-  if (opts.apply && suppressionCountAfter !== suppressionCountBefore) {
-    throw new Error(
-      `[merge-duplicate-skills] suppression-preservation invariant violated post-commit (before=${suppressionCountBefore}, after=${suppressionCountAfter}) — the transaction's own suppression check should have caught this; investigate immediately.`
-    )
-  }
 
   if (opts.apply) {
     await db.from('audit_logs').insert({
