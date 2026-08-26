@@ -15,6 +15,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro'
 // the bundled <script> below (no longer injected via define:vars). The frontmatter keeps
 // TRUST_TIER_PILL_CLASSES + DEFAULT_TRUST_TIER for the SSR related-skills pill.
 import { TRUST_TIER_PILL_CLASSES, DEFAULT_TRUST_TIER } from '../../constants/trust-tier-badges'
+// SMI-6180: server-side skill metadata fetch for individual skill pages (see below).
+import { getSupabaseConfig } from '../../lib/supabase-config'
+import {
+  buildSkillGetUrl,
+  deriveSkillPageMeta,
+  resolveSkillId,
+  safeJsonLdScript,
+  shouldCacheSkillPage,
+  type SkillMeta,
+} from '../../lib/skill-page-meta'
 
 export const prerender = false
 
@@ -201,6 +211,59 @@ const categoryJsonLd =
           : []),
       ]
     : null
+
+// ─── Individual Skill Detail Page — Server-Side Metadata (SMI-6180) ────────
+// Individual skill pages used to render a fully generic client-only shell
+// with no per-skill metadata in the initial HTML — every skill page looked
+// like a near-identical duplicate to Googlebot, the root cause of the
+// "Crawled - currently not indexed" bucket in the Search Console audit
+// (docs/internal/analysis/2026-08-25-search-console-indexing-audit.md, the
+// largest bucket in that report). This fetches real metadata server-side,
+// mirroring the category-page pattern above; the full interactive detail
+// (README, tags, related skills, install commands) stays on the existing
+// client-side fetch below, since that part doesn't affect indexability and
+// doesn't need duplicating server-side.
+let skillMeta: SkillMeta | null = null
+let skillNotFound = false
+
+const decodedId = resolveSkillId(id)
+
+if (!isCategory && decodedId) {
+  try {
+    const { apiBaseUrl, anonKey } = getSupabaseConfig()
+    const res = await fetch(buildSkillGetUrl(apiBaseUrl, decodedId), {
+      headers: { Authorization: `Bearer ${anonKey}` },
+    })
+    if (res.status === 404) {
+      skillNotFound = true
+    } else if (res.ok) {
+      const body = (await res.json()) as { data?: SkillMeta }
+      skillMeta = body.data ?? null
+    }
+    // Any other non-OK status (5xx, rate limit, etc.) falls through with
+    // skillMeta null and skillNotFound false — degrades to the pre-SMI-6180
+    // generic-shell + client-side fetch/retry rather than a false 404.
+  } catch {
+    // Network error server-side — same degrade-to-generic-shell fallback.
+  }
+
+  if (skillNotFound) {
+    // A real 404 for genuinely-removed/nonexistent skills, instead of a 200
+    // that eventually shows a client-rendered "not found" message — this was
+    // itself a contributor to the "crawled, not indexed" bucket, since
+    // Google had no way to distinguish a gone skill from a slow-loading one.
+    Astro.response.status = 404
+  } else if (shouldCacheSkillPage(skillMeta)) {
+    Astro.response.headers.set('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
+  }
+}
+
+const {
+  title: skillTitle,
+  description: skillDescription,
+  canonical: skillCanonical,
+  jsonLd: skillJsonLd,
+} = deriveSkillPageMeta(skillMeta, skillNotFound, decodedId)
 ---
 
 {
@@ -211,13 +274,19 @@ const categoryJsonLd =
     >
       {categoryJsonLd &&
         categoryJsonLd.map((ld) => (
-          <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(ld)} />
+          <script
+            is:inline
+            type="application/ld+json"
+            slot="head"
+            set:html={safeJsonLdScript(ld)}
+          />
         ))}
-      <link
-        rel="canonical"
-        href={`https://www.skillsmith.app/skills/${categoryMeta.slug}/`}
-        slot="head"
-      />
+      {/* SMI-6180: no explicit canonical prop is passed to BaseLayout above, so its
+        own self-referencing default (Astro.url.pathname, correct for this SSR route —
+        no trailing slash) already renders the canonical tag. A hardcoded trailing-slash
+        <link rel="canonical"> used to be injected here too, producing two conflicting
+        canonical tags on the same page (confirmed live via curl) — removed rather than
+        fixed in place, since BaseLayout's own default already does this correctly. */}
 
       <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <nav aria-label="Breadcrumb" class="mb-8">
@@ -306,9 +375,19 @@ const categoryJsonLd =
 {
   !isCategory && (
     <BaseLayout
-      title="Skill Details"
-      description="View skill details and installation instructions"
+      title={skillTitle}
+      description={skillDescription}
+      canonical={skillCanonical}
+      noindex={skillNotFound}
     >
+      {skillJsonLd && (
+        <script
+          is:inline
+          type="application/ld+json"
+          slot="head"
+          set:html={safeJsonLdScript(skillJsonLd)}
+        />
+      )}
       <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <nav class="mb-8">
           <ol class="flex items-center space-x-2 text-sm">
@@ -325,17 +404,48 @@ const categoryJsonLd =
             </li>
             <li class="text-dark-600">/</li>
             <li id="breadcrumb-name" class="text-dark-300">
-              Loading...
+              {skillMeta?.name || (skillNotFound ? 'Not found' : 'Loading...')}
             </li>
           </ol>
         </nav>
 
-        <div id="loading-state" class="text-center py-20" data-skill-id={id}>
+        {/* SMI-6180: server-rendered preview — real, visible content in the initial
+          HTML response so each skill page is distinguishable to a crawler without
+          executing JS. The client script below hides this once it finishes rendering
+          the fully interactive #skill-content section (readme, tags, related skills). */}
+        {skillMeta && (
+          <div
+            id="skill-ssr-preview"
+            class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8"
+          >
+            <div class="flex items-center gap-4 mb-4">
+              <h1 class="text-3xl md:text-4xl font-bold text-white">
+                {skillMeta.name || decodedId}
+              </h1>
+              {skillMeta.trust_tier && (
+                <span class="px-3 py-1 text-sm font-medium rounded-full border border-dark-700 text-dark-300">
+                  {skillMeta.trust_tier}
+                </span>
+              )}
+            </div>
+            {skillMeta.author && <p class="text-dark-400 text-lg mb-4">by {skillMeta.author}</p>}
+            <p class="text-dark-300 leading-relaxed">{skillDescription}</p>
+          </div>
+        )}
+
+        <div
+          id="loading-state"
+          class={skillNotFound ? 'hidden' : 'text-center py-20'}
+          data-skill-id={id}
+        >
           <div class="inline-block animate-spin rounded-full h-12 w-12 border-2 border-primary-500 border-t-transparent" />
           <p class="text-dark-400 mt-6">Loading skill details...</p>
         </div>
 
-        <div id="error-state" class="hidden text-center py-20">
+        <div
+          id="error-state"
+          class={skillNotFound ? 'text-center py-20' : 'hidden text-center py-20'}
+        >
           <svg
             class="w-20 h-20 mx-auto text-red-500 mb-6"
             fill="none"
@@ -845,6 +955,11 @@ const categoryJsonLd =
       loadingState.classList.add('hidden')
       errorState.classList.add('hidden')
       skillContent.classList.remove('hidden')
+
+      // SMI-6180: hide the server-rendered preview (name/author/description)
+      // now that the fully interactive #skill-content section above has taken
+      // over rendering the same fields, so nothing appears twice.
+      document.getElementById('skill-ssr-preview')?.classList.add('hidden')
 
       // GA4: Track skill view (SMI-2453)
       if (typeof window.gtag === 'function') {

@@ -81,6 +81,30 @@ export default defineConfig({
   // Build output configuration - static with SSR adapter for dynamic routes
   output: 'static',
 
+  // SMI-6180: with trailingSlash left at its default ('ignore'), Astro's own
+  // default build.format ('directory') makes Astro.url.pathname carry a
+  // trailing slash for every prerendered page during the static build —
+  // BaseLayout's self-referencing canonical (src/layouts/BaseLayout.astro)
+  // inherits that slash, while Vercel serves every page WITHOUT one. Every
+  // page's own canonical tag ends up pointing at a trailing-slash duplicate
+  // of itself, confirmed live against production (curl'd multiple pages: 200
+  // at the no-slash URL, canonical pointing to .../<path>/, which also
+  // resolves 200).
+  //
+  // build.format: 'file' alone does NOT fix this under @astrojs/vercel —
+  // confirmed by building both ways: the adapter's own static-output
+  // structure (still page/index.html either way) overrides build.format's
+  // effect on Astro.url.pathname for these pages. trailingSlash: 'never' is
+  // unconditional in Astro's own core build-format helper (see
+  // astro/dist/core/build/util.js's slash-append decision) regardless of
+  // buildFormat — confirmed this is what actually removes the trailing
+  // slash from the rendered canonical tag.
+  // vercel.json's own top-level "trailingSlash": false (both copies) is the
+  // complementary fix: it stops Vercel itself from serving a page at both
+  // the slash and no-slash URL with no redirect between them, which is the
+  // other half of this bug (verified live: both forms returned 200).
+  trailingSlash: 'never',
+
   // SMI-6110: account dashboard UX consolidation (H2) — the `/account/team`
   // → `/account` true HTTP 301 is declared in vercel.json (both the root and
   // packages/website copies, per SMI-4641 structural sync), NOT here.
