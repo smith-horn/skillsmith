@@ -71,7 +71,7 @@ const howToSchema = {
   <p>
     Data flows one way: from a machine you control, through the Skillsmith cloud, into your
     browser. There is no channel back — nothing you do at
-    <a href="/account/skills">skillsmith.app/account/skills</a> can install, remove, or change a
+    <a href="/account/skills">www.skillsmith.app/account/skills</a> can install, remove, or change a
     file on any machine. Each device's row is a snapshot as of that device's last
     <code>skillsmith inventory push</code>, not a live view.
   </p>
@@ -135,7 +135,7 @@ const howToSchema = {
   <h2 id="setup">Setup</h2>
 
   <ol>
-    <li>Create a free account, or sign in if you already have one, at <a href="/signup">skillsmith.app</a>.</li>
+    <li>Create a free account, or sign in if you already have one, at <a href="/signup">www.skillsmith.app</a>.</li>
     <li>Install the CLI: <code>npm install -g @skillsmith/cli</code> (requires Node.js 22.22 or newer).</li>
     <li>
       Run <code>skillsmith login</code>. It opens a device login page in your browser and links the
@@ -143,10 +143,10 @@ const howToSchema = {
     </li>
     <li>
       Enable <strong>"Cross-machine skill inventory"</strong> at
-      <a href="/account/telemetry">skillsmith.app/account/telemetry</a> and press <strong>Save</strong>.
+      <a href="/account/telemetry">www.skillsmith.app/account/telemetry</a> and press <strong>Save</strong>.
     </li>
     <li>Run <code>skillsmith inventory push</code>.</li>
-    <li>View the result at <a href="/account/skills">skillsmith.app/account/skills</a>.</li>
+    <li>View the result at <a href="/account/skills">www.skillsmith.app/account/skills</a>.</li>
   </ol>
 
   <p>
@@ -286,13 +286,13 @@ skillsmith inventory purge --yes`}</code></pre>
     <code>./.claude/skills</code> folder of the directory you run it from — handy for checking a
     project-scoped skills folder locally. That count is local-only:
     <code>skillsmith inventory push</code> does not upload it, so repo-local skills never appear at
-    <a href="/account/skills">skillsmith.app/account/skills</a>.
+    <a href="/account/skills">www.skillsmith.app/account/skills</a>.
   </p>
 
   <h2 id="state-badges">State Badges</h2>
 
   <p>
-    Every skill shown at <a href="/account/skills">skillsmith.app/account/skills</a> carries one of
+    Every skill shown at <a href="/account/skills">www.skillsmith.app/account/skills</a> carries one of
     eight states. Each pairs a distinct icon shape with its own color, so the badge stays meaningful
     without relying on color alone.
   </p>
