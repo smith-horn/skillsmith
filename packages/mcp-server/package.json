@@ -71,13 +71,14 @@
     "model-context-protocol",
     "claude-code",
     "agent-skills",
-    "lifecycle",
     "registry",
     "skill-management",
     "autonomous-agents",
     "openclaw",
     "multi-agent",
-    "tool-management"
+    "tool-management",
+    "shared-skills",
+    "governance"
   ],
   "engines": {
     "node": ">=22.22.0"

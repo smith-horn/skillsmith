@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.smith-horn/skillsmith",
   "title": "Skillsmith",
-  "description": "Publish versioned agent skills to a team-scoped registry, track drift, and deprecate stale ones.",
+  "description": "Share agent skills across your team, scan them for risk, and track what's actually used.",
   "websiteUrl": "https://skillsmith.app",
   "repository": {
     "url": "https://github.com/smith-horn/skillsmith",

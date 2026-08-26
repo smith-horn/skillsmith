@@ -4,7 +4,7 @@
 
 Once more than one team is publishing agent skills, the problem stops being finding them and starts being managing them. Which team is this scoped to? Which version is installed where? Has it been flagged by a security scan? What happens to the ones nobody maintains anymore?
 
-Skillsmith is a lifecycle layer for agent skills. Skills are published to a registry scoped to your team and versioned immutably, so drift across installs is visible instead of silent. Flagged or suspicious skills are quarantined pending security review. Skills that go stale can be deprecated instead of quietly rotting in someone's repo.
+Skillsmith is a registry for sharing, scanning, and tracking agent skills across teams. Skills are published to a registry scoped to your team and versioned immutably, so drift across installs is visible instead of silent. Flagged or suspicious skills are quarantined pending security review. Skills that go stale can be deprecated instead of quietly rotting in someone's repo.
 
 ## Installation
 

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Docs**: README's framing sentence updated from the "lifecycle layer" tagline to a plain
+  descriptive sentence ("a registry for sharing, scanning, and tracking agent skills across
+  teams") as part of the site-wide positioning reframe. Wording-only. (SMI-6194)
 - **Docs**: `McpClient.skillInventoryAudit`'s JSDoc comment and the README's "Audit Skill
   Inventory" row now state the tool's actual scope (every installed AI coding client's skill
   inventory, not just `~/.claude/`), and use the "local namespace collisions" qualifier

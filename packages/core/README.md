@@ -2,7 +2,7 @@
 
 Core library for Skillsmith — database operations, search, caching, security, analytics, and **multi-language codebase analysis** for agent skill management.
 
-Part of Skillsmith: a lifecycle layer for agent skills across teams.
+Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills across teams.
 
 ## Contents
 
