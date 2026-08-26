@@ -5,8 +5,10 @@
  *
  * SMI-2081: Extracted from pricing.astro to comply with 500-line limit
  * SMI-3909: Consolidated as single canonical source for all pricing data
- * Source of truth for pricing tiers from ADR-013 (Open Core Licensing)
- * and ADR-017 (Quota Enforcement).
+ * Feature-tier gating ground truth lives in code, not ADR-013 (superseded
+ * by ADR-119): see packages/enterprise/src/license/FeatureFlags.ts and
+ * packages/mcp-server/src/middleware/toolFeatureMapping.ts. Quota figures
+ * per ADR-017 (Quota Enforcement).
  */
 
 import type { PricingTier, PricingFeature } from '../types/index.js'
@@ -122,7 +124,15 @@ export const pricingTiers: PricingTier[] = [
     description: 'The lifecycle layer for teams — publish, version, and deprecate together.',
     apiCalls: 10000,
     apiCallsFormatted: '10,000 API calls/month',
-    features: [{ name: 'Everything in Individual' }, { name: 'Priority support' }],
+    features: [
+      { name: 'Everything in Individual' },
+      { name: 'Private skill publishing (local, single-device)' },
+      { name: 'Team workspaces & skill sharing' },
+      { name: 'Team usage analytics' },
+      { name: 'Skill security audits' },
+      { name: 'Compliance reports (SOC 2 / CycloneDX AI-BOM)' },
+      { name: 'Priority support' },
+    ],
     cta: 'Start Trial',
     ctaHref: '/signup?tier=team',
     highlighted: true,
@@ -139,6 +149,9 @@ export const pricingTiers: PricingTier[] = [
     apiCallsFormatted: 'Unlimited API calls',
     features: [
       { name: 'Everything in Team' },
+      { name: 'Private team registry (shared, versioned)' },
+      { name: 'Audit logging & SIEM export' },
+      { name: 'SSO/SAML & RBAC (configured during onboarding)' },
       { name: '99.9% SLA guarantee' },
       { name: 'Dedicated support' },
     ],

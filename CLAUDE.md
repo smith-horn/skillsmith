@@ -217,7 +217,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `rbac_manage` | Manage RBAC roles: create, list, get, delete (Enterprise) |
 | `rbac_assign_role` | Assign or revoke roles for users (Enterprise) |
 | `rbac_create_policy` | Create and manage RBAC access policies (Enterprise) |
-| `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports (Enterprise) |
+| `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports (Team+) |
 
 **Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min), No Auth (10 trial). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env. Shell exports don't reach MCP subprocesses. Team-tool resolution chain (SMI-4312/ADR-116), trust tiers, CLI surface: see [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md).
 
