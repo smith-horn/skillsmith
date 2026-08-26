@@ -1,0 +1,99 @@
+/**
+ * Row-outcome-label coherence check for `smi5879-merge-shards.ts`. Split
+ * into its own module per CLAUDE.md's <500-line-per-file convention —
+ * `.merge-rules.ts` was at 499/500 lines once this check was added, too
+ * tight a margin to leave in place.
+ * @module scripts/indexer/smi5879-merge-shards.outcome-coherence
+ *
+ * Plan: docs/internal/implementation/smi-6015-pat-sharded-fetch-plan.md
+ *       ("### 3. N-way checkpoint/report merge tool (new script)")
+ *
+ * WHY THIS CHECK EXISTS
+ * ----------------------
+ * Wave 2 adversarial review finding: none of `.merge-rules.ts`'s checks —
+ * id disjointness, population set-equality, per-cohort/author/name
+ * agreement — verify that a row's `outcome` LABEL is actually consistent
+ * with its own `prePortQuarantine`/`postPortQuarantine` fields. A row with
+ * a genuine population id (so it passes every check in `.merge-rules.ts`
+ * and `.population.ts`) but a wrong `outcome` — e.g. `unchanged_clean` on a
+ * row whose quarantine booleans say `unchanged_quarantined` — would make
+ * G-1's review set `R` (`computeR`, `smi5879-gate-check.helpers.ts`,
+ * filters on `outcome === 'newly_quarantined' | 'newly_cleared'`) silently
+ * omit or include the wrong rows, while every coverage/count number this
+ * tool checks still balances perfectly, because `counts` is recomputed
+ * from the SAME (already-wrong) `outcome` field the label itself carries.
+ */
+
+import type { SimRowOutcome, SimRowResult } from './smi5879-simulate-full.types.ts'
+import { MAX_IDS_IN_ERROR } from './smi5879-merge-shards.merge-rules.ts'
+
+/**
+ * The four "verdict-delta" outcomes — the only ones `classifyVerdictDelta`
+ * (`smi5879-simulate-full.helpers.ts`) ever produces. `bundle_absent` also
+ * carries `prePortQuarantine`/`postPortQuarantine` but is NOT one of these:
+ * its outcome label is deliberately overridden past whatever those booleans
+ * would classify to (`processRow`'s `isBundleAbsent` branch), so checking it
+ * here would flag a correct row as a false positive.
+ */
+const VERDICT_DELTA_OUTCOMES: readonly SimRowOutcome[] = [
+  'newly_quarantined',
+  'newly_cleared',
+  'unchanged_clean',
+  'unchanged_quarantined',
+]
+
+/**
+ * `classifyVerdictDelta`'s own four-branch logic is deliberately
+ * REIMPLEMENTED here rather than imported (same rationale as
+ * `.merge-rules.ts`'s `recomputeCounts`: a verifier calling the producer's
+ * own function cannot detect a fault IN that function) — and reimplementing
+ * avoids pulling `smi5879-simulate-full.helpers.ts`'s network/fetch/
+ * rate-limit dependency graph into a tool that must stay a pure local
+ * aggregation step.
+ */
+function expectedVerdictDeltaOutcome(
+  prePortQuarantine: boolean,
+  postPortQuarantine: boolean
+): SimRowOutcome {
+  if (!prePortQuarantine && postPortQuarantine) return 'newly_quarantined'
+  if (prePortQuarantine && !postPortQuarantine) return 'newly_cleared'
+  if (!prePortQuarantine && !postPortQuarantine) return 'unchanged_clean'
+  return 'unchanged_quarantined'
+}
+
+/**
+ * Assert every merged row whose `outcome` is a verdict-delta outcome
+ * actually agrees with its own `prePortQuarantine`/`postPortQuarantine`
+ * fields. Applied to the merged rows (after `mergeRows`, before population
+ * verification) — a cheap, purely local structural check, same tier as
+ * `.merge-rules.ts`'s numeric-sanity check.
+ */
+export function assertRowOutcomeCoherence(rows: readonly SimRowResult[]): void {
+  const mismatches: string[] = []
+  for (const row of rows) {
+    if (!VERDICT_DELTA_OUTCOMES.includes(row.outcome)) continue
+    if (row.prePortQuarantine === undefined || row.postPortQuarantine === undefined) {
+      mismatches.push(
+        `${row.id} (outcome=${row.outcome} but prePortQuarantine/postPortQuarantine is missing)`
+      )
+      continue
+    }
+    const expected = expectedVerdictDeltaOutcome(row.prePortQuarantine, row.postPortQuarantine)
+    if (expected !== row.outcome) {
+      mismatches.push(
+        `${row.id} (outcome=${row.outcome}, but prePortQuarantine=${row.prePortQuarantine}/` +
+          `postPortQuarantine=${row.postPortQuarantine} implies ${expected})`
+      )
+    }
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      `SMI-6015: ${mismatches.length} row(s) have an outcome label that disagrees with their own ` +
+        `prePortQuarantine/postPortQuarantine fields: ${mismatches.slice(0, MAX_IDS_IN_ERROR).join('; ')}` +
+        `${mismatches.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. G-1's review set and G-3's counts ` +
+        'are derived directly from the outcome label — a row whose label disagrees with its own ' +
+        'quarantine fields would corrupt both without any coverage/count arithmetic ever detecting it. ' +
+        'Refusing to merge a shard report containing an internally-inconsistent row.'
+    )
+  }
+}

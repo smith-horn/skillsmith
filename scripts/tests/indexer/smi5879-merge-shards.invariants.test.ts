@@ -205,3 +205,91 @@ describe('runMergeShards — shard-report numeric sanity (hard fail)', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// Row-outcome coherence (Wave 2 adversarial review High finding): none of
+// the checks above catch a row whose `outcome` label disagrees with its own
+// prePortQuarantine/postPortQuarantine fields — this can pass id
+// disjointness, population set-equality, and every coverage/count arithmetic
+// check, because `counts` is recomputed from the SAME (already-wrong)
+// `outcome` field the label itself carries.
+// ---------------------------------------------------------------------------
+
+describe('runMergeShards — row-outcome coherence (hard fail)', () => {
+  it('throws when a verdict-delta outcome disagrees with its own prePortQuarantine/postPortQuarantine', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    // Real quarantine booleans say unchanged_quarantined (true/true), but the
+    // row's own outcome label claims unchanged_clean — a genuine population
+    // id, so id-disjointness and set-equality both pass; the label itself is
+    // the only thing wrong.
+    const tampered = fixtureRow('row-c2-1', 'C2', {
+      outcome: 'unchanged_clean',
+      prePortQuarantine: true,
+      postPortQuarantine: true,
+    })
+
+    const path0 = writeShardReport(
+      dir,
+      0,
+      [tampered.reportRow, fixture.shardRows[0][1]],
+      fixture.totals
+    )
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    await expect(runMergeShards(db, args)).rejects.toThrow(
+      /row-c2-1.*outcome=unchanged_clean.*prePortQuarantine=true.*postPortQuarantine=true.*implies unchanged_quarantined/s
+    )
+  })
+
+  it('throws when a verdict-delta outcome is missing its prePortQuarantine/postPortQuarantine fields', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    const tampered = {
+      ...fixtureRow('row-c2-1', 'C2', { outcome: 'newly_quarantined' }).reportRow,
+    }
+    delete tampered['prePortQuarantine']
+    delete tampered['postPortQuarantine']
+
+    const path0 = writeShardReport(dir, 0, [tampered, fixture.shardRows[0][1]], fixture.totals)
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    await expect(runMergeShards(db, args)).rejects.toThrow(
+      /row-c2-1.*outcome=newly_quarantined but prePortQuarantine\/postPortQuarantine is missing/s
+    )
+  })
+
+  it('does NOT flag bundle_absent rows, whose outcome is deliberately overridden past what the quarantine booleans would classify to', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    // bundle_absent with prePortQuarantine/postPortQuarantine that would
+    // classify to something else entirely (unchanged_clean) if this row's
+    // outcome were a verdict-delta bucket — must NOT be flagged, since
+    // bundle_absent is not in VERDICT_DELTA_OUTCOMES.
+    const bundleAbsent = fixtureRow('row-c2-1', 'C2', {
+      outcome: 'bundle_absent',
+      prePortQuarantine: false,
+      postPortQuarantine: false,
+    })
+
+    const path0 = writeShardReport(
+      dir,
+      0,
+      [bundleAbsent.reportRow, fixture.shardRows[0][1]],
+      fixture.totals
+    )
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    const report = await runMergeShards(db, args)
+    expect(report.rows.find((r) => r.id === 'row-c2-1')?.outcome).toBe('bundle_absent')
+  })
+})

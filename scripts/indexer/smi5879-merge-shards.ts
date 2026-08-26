@@ -64,6 +64,7 @@ import {
   recomputeCounts,
   type ShardReportInput,
 } from './smi5879-merge-shards.merge-rules.ts'
+import { assertRowOutcomeCoherence } from './smi5879-merge-shards.outcome-coherence.ts'
 import {
   assertCoverageTotalsMatchPopulation,
   assertMergedRowsMatchPopulation,
@@ -191,6 +192,12 @@ export async function runMergeShards(
   const inputs = loadShardReports(args.reportPaths)
   const identity = assertIdenticalIdentityFields(inputs)
   const mergedRows = mergeRows(inputs)
+  // Wave 2 adversarial review finding: a row can pass id-disjointness and
+  // (later) population set-equality while still carrying an `outcome` label
+  // that disagrees with its own prePortQuarantine/postPortQuarantine fields
+  // — neither check above would catch that. Cheap, purely local, so it runs
+  // before the DB round trip alongside the other structural checks.
+  assertRowOutcomeCoherence(mergedRows)
 
   const { population, summary } = await loadVerifiedPopulation(db, args.runId)
   assertReportsBindToGeneration(identity, args.runId, summary)

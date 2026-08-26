@@ -212,6 +212,9 @@ export function mergeRows(inputs: readonly ShardReportInput[]): SimRowResult[] {
   return merged
 }
 
+// `assertRowOutcomeCoherence` lives in the `.outcome-coherence.ts` sibling
+// (500-line budget — this file was at 499/500 with it inline).
+
 /**
  * Plan merge-rule table, `coverage` rows.
  *

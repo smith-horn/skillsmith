@@ -60,7 +60,7 @@ export interface FixtureRowPair {
 export function fixtureRow(
   id: string,
   cohort: SimulatedCohort = 'C2',
-  overrides: { outcome?: string } = {}
+  overrides: { outcome?: string; prePortQuarantine?: boolean; postPortQuarantine?: boolean } = {}
 ): FixtureRowPair {
   return {
     population: makeRow({ id, cohort, author: 'acme', name: id }),
@@ -70,6 +70,12 @@ export function fixtureRow(
       author: 'acme',
       name: id,
       outcome: overrides.outcome ?? 'unchanged_clean',
+      ...(overrides.prePortQuarantine !== undefined
+        ? { prePortQuarantine: overrides.prePortQuarantine }
+        : {}),
+      ...(overrides.postPortQuarantine !== undefined
+        ? { postPortQuarantine: overrides.postPortQuarantine }
+        : {}),
     }),
   }
 }
