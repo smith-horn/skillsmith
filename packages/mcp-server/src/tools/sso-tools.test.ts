@@ -214,4 +214,48 @@ describe('sso-tools', () => {
       expect(result.config!.idpMetadataUrl).toBe('https://idp.example.com/metadata')
     })
   })
+
+  // ==========================================================================
+  // SMI-6184: dataSource must reflect the actual service, not Supabase config,
+  // and the simulated connection test must be clearly marked as such.
+  // ==========================================================================
+
+  describe('SMI-6184: dataSource and simulated-test labeling', () => {
+    it('reports dataSource "stub" for configure_sso and sso_settings even when Supabase env vars are set', async () => {
+      const prevUrl = process.env.SUPABASE_URL
+      const prevKey = process.env.SUPABASE_ANON_KEY
+      process.env.SUPABASE_URL = 'https://example.supabase.co'
+      process.env.SUPABASE_ANON_KEY = 'anon-key'
+      try {
+        const configureResult = await executeConfigureSso(
+          { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+          mockContext
+        )
+        const settingsResult = await executeSsoSettings({ includeMetadata: false }, mockContext)
+        expect(configureResult.dataSource).toBe('stub')
+        expect(settingsResult.dataSource).toBe('stub')
+      } finally {
+        if (prevUrl === undefined) delete process.env.SUPABASE_URL
+        else process.env.SUPABASE_URL = prevUrl
+        if (prevKey === undefined) delete process.env.SUPABASE_ANON_KEY
+        else process.env.SUPABASE_ANON_KEY = prevKey
+      }
+    })
+
+    it('marks a successful test-connection result as simulated', async () => {
+      await executeConfigureSso(
+        { action: 'set', idpMetadataUrl: 'https://idp.example.com/metadata', protocol: 'saml' },
+        mockContext
+      )
+      const result = await executeConfigureSso({ action: 'test', protocol: 'saml' }, mockContext)
+      expect(result.test?.simulated).toBe(true)
+      expect(result.test?.message).toMatch(/simulated/i)
+    })
+
+    it('marks a no-config test-connection result as simulated too', async () => {
+      const result = await executeConfigureSso({ action: 'test', protocol: 'saml' }, mockContext)
+      expect(result.success).toBe(false)
+      expect(result.test?.simulated).toBe(true)
+    })
+  })
 })

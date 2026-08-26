@@ -423,4 +423,30 @@ describe('rbac-tools', () => {
       expect(result.error).toContain('not found')
     })
   })
+
+  // ==========================================================================
+  // SMI-6184: dataSource must reflect the actual service, not Supabase config
+  // ==========================================================================
+
+  describe('SMI-6184: dataSource reflects the actual service', () => {
+    it('reports dataSource "stub" across all three RBAC tools even when Supabase env vars are set', async () => {
+      const prevUrl = process.env.SUPABASE_URL
+      const prevKey = process.env.SUPABASE_ANON_KEY
+      process.env.SUPABASE_URL = 'https://example.supabase.co'
+      process.env.SUPABASE_ANON_KEY = 'anon-key'
+      try {
+        const manage = await executeRbacManage({ action: 'list_roles' }, mockContext)
+        const assign = await executeRbacAssignRole({ action: 'list_assignments' }, mockContext)
+        const policy = await executeRbacCreatePolicy({ action: 'list' }, mockContext)
+        expect(manage.dataSource).toBe('stub')
+        expect(assign.dataSource).toBe('stub')
+        expect(policy.dataSource).toBe('stub')
+      } finally {
+        if (prevUrl === undefined) delete process.env.SUPABASE_URL
+        else process.env.SUPABASE_URL = prevUrl
+        if (prevKey === undefined) delete process.env.SUPABASE_ANON_KEY
+        else process.env.SUPABASE_ANON_KEY = prevKey
+      }
+    })
+  })
 })

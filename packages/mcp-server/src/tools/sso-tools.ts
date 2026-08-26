@@ -15,8 +15,8 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
-import { isSupabaseConfigured } from '../supabase-client.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+import { markAsStub, dataSourceFor } from './stub-data-source.js'
 
 // ============================================================================
 // Input schemas
@@ -119,7 +119,7 @@ export interface SSOConfigService {
     idpEntityId?: string
     protocol: 'saml' | 'oidc'
   }): Promise<SSOConfig>
-  test(): Promise<{ success: boolean; latencyMs: number; message: string }>
+  test(): Promise<{ success: boolean; latencyMs: number; message: string; simulated?: boolean }>
   remove(): Promise<boolean>
   get(includeMetadata: boolean): Promise<SSOConfig | null>
 }
@@ -132,7 +132,7 @@ export interface SSOConfigService {
 export function createStubSSOService(): SSOConfigService {
   let currentConfig: SSOConfig | null = null
 
-  return {
+  return markAsStub({
     async set(config) {
       const entityId =
         config.idpEntityId ?? new URL(config.idpMetadataUrl).origin + '/saml/metadata'
@@ -151,14 +151,22 @@ export function createStubSSOService(): SSOConfigService {
         return {
           success: false,
           latencyMs: 0,
+          simulated: true,
           message: 'No SSO configuration found. Use configure_sso with action "set" first.',
         }
       }
-      // Simulated connection test
+      // SMI-6184: no live SSO service exists yet, so this can only simulate a
+      // connection test — it never actually contacts the IdP. `simulated: true`
+      // and the message wording make that explicit rather than reporting a
+      // fabricated real success.
       return {
         success: true,
         latencyMs: 142,
-        message: `Connection to ${currentConfig.idpEntityId} successful (${currentConfig.protocol.toUpperCase()}).`,
+        simulated: true,
+        message:
+          `Simulated connection to ${currentConfig.idpEntityId} succeeded ` +
+          `(${currentConfig.protocol.toUpperCase()}). This is stub data — no live SSO ` +
+          `service is configured, so the IdP was never actually contacted.`,
       }
     },
 
@@ -176,7 +184,7 @@ export function createStubSSOService(): SSOConfigService {
       }
       return currentConfig
     },
-  }
+  })
 }
 
 // Module-level singleton
@@ -200,7 +208,7 @@ export interface ConfigureSsoResult {
   success: boolean
   dataSource: 'stub' | 'live'
   config?: SSOConfig
-  test?: { success: boolean; latencyMs: number; message: string }
+  test?: { success: boolean; latencyMs: number; message: string; simulated?: boolean }
   message?: string
   error?: string
 }
@@ -219,7 +227,7 @@ async function executeConfigureSsoImpl(
   input: ConfigureSsoInput,
   _context: ToolContext
 ): Promise<ConfigureSsoResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  const dataSource: 'stub' | 'live' = dataSourceFor(service)
 
   switch (input.action) {
     case 'set': {
@@ -269,7 +277,7 @@ async function executeSsoSettingsImpl(
   input: SsoSettingsInput,
   _context: ToolContext
 ): Promise<SsoSettingsResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  const dataSource: 'stub' | 'live' = dataSourceFor(service)
   const config = await service.get(input.includeMetadata ?? false)
   if (!config) {
     return {
