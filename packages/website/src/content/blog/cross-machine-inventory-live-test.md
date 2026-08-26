@@ -6,7 +6,7 @@ date: 2026-08-21
 updated: 2026-08-21
 category: "Guides"
 tags: ["cross-machine-inventory", "skill-management", "cli", "mcp", "developer-productivity", "skill-updates"]
-draft: true
+draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/cross-machine-inventory-live-test/skill-inventory-list"
 ---
 
