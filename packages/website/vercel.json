@@ -3,6 +3,7 @@
   "framework": "astro",
   "installCommand": "npm install",
   "buildCommand": "npm run build",
+  "trailingSlash": false,
   "git": {
     "deploymentEnabled": {
       "main": false
@@ -38,6 +39,11 @@
       "permanent": true
     },
     {
+      "source": "/changelog/",
+      "destination": "https://github.com/smith-horn/skillsmith/releases",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [
         {
@@ -50,6 +56,11 @@
     },
     {
       "source": "/docs/authoring",
+      "destination": "/docs/tutorials/author",
+      "permanent": true
+    },
+    {
+      "source": "/docs/authoring/",
       "destination": "/docs/tutorials/author",
       "permanent": true
     },
