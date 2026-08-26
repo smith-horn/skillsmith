@@ -17,9 +17,10 @@ for that — what the pieces are, how they fit, and what changes when Skillsmith
 runs on infrastructure you control.
 
 A note on honesty up front: **this is a target-state blueprint.** The discovery,
-indexing, and distribution layers ship today. The access-control layer —
-IAM/RBAC and SSO — is partially built: the tools and a Supabase-backed data path
-exist, but maturity varies. Where that matters, the text says so.
+indexing, and distribution layers ship today. The private registry has a real
+Supabase-backed live mode. IAM/RBAC and SSO are further behind: the MCP tool
+surface exists, but the backing service is stub-only today, with no live mode
+yet. Where that matters, the text says so.
 
 ![Architecture diagram of Skillsmith showing three developer surfaces — CLI, MCP server, and VS Code extension — reading from a per-developer local SQLite database, which is synced from a hosted Supabase registry of Postgres tables and edge functions.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/enterprise-reference-architecture/01-system-overview)
 
@@ -57,7 +58,7 @@ service. That is the whole model.
 | Per-developer local SQLite index | Shipped |
 | GitHub indexer + `skillsmith sync` | Shipped |
 | Private internal registry | Tooling shipped; backend matures with a configured database |
-| IAM/RBAC enforcement, SSO/SAML | Designed; Supabase-backed mode exists, maturity varies |
+| IAM/RBAC enforcement, SSO/SAML | Designed; MCP tool surface exists, backing service is stub-only |
 
 ## The entities that make up Skillsmith
 
@@ -141,11 +142,13 @@ and the model lets you treat them differently. Every action is written to an
 audit log, queryable and exportable to a SIEM.
 
 To be straight about maturity: the RBAC, SSO, and private-registry **tools**
-exist and are wired into the MCP server, with a Supabase-backed live mode that
-activates when a database is configured and a stub fallback when one is not.
-Treat this layer as the *designed* access-control model of the reference
-architecture — real, in progress, and not yet something to put in front of an
-auditor as finished.
+all exist and are wired into the MCP server, but they are not equally far
+along. The private registry has a real Supabase-backed live mode that
+activates when a database is configured, with a stub fallback when one is
+not. RBAC and SSO are stub-only right now — no live backing service exists
+yet, database or not. Treat this layer as the *designed* access-control model
+of the reference architecture — real for the registry, not yet for RBAC and
+SSO, and none of it something to put in front of an auditor as finished.
 
 ## Why this matters for partners
 

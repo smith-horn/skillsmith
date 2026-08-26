@@ -128,7 +128,7 @@ export const pricingTiers: PricingTier[] = [
       { name: 'Everything in Individual' },
       { name: 'Private skill publishing (local, single-device)' },
       { name: 'Team workspaces & skill sharing' },
-      { name: 'Team usage analytics' },
+      { name: 'Usage analytics & reporting (per-user)' },
       { name: 'Skill security audits' },
       { name: 'Compliance reports (SOC 2 / CycloneDX AI-BOM)' },
       { name: 'Priority support' },
