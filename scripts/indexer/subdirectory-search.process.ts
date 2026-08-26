@@ -148,7 +148,9 @@ function checkBudget(
  * repo is enumerated ONCE via the Trees API (`enumerateRepoSkillPaths`) and EVERY
  * valid SKILL.md parent dir becomes its own `GitHubRepository`, with a DISTINCT
  * per-skill tree URL (`buildSkillTreeUrl`) so N skills in one repo yield N distinct
- * `repo_url` rows that never collide on `onConflict: 'repo_url'`. Each per-path row
+ * `repo_url` rows that never collide on the upsert's onConflict target
+ * (`repo_url_canonical` as of SMI-5898 Wave 2 Step 6; was `repo_url` when this
+ * comment was written). Each per-path row
  * is validated independently (sec#4 strict gate) before it is collected; validated
  * rows are `installable:true` (`skill-processor.ts:440` then persists the non-null
  * tree URL).
