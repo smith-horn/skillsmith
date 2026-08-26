@@ -82,6 +82,7 @@ import {
 
 const PINNED_SHAPE1 = [
   'dequarantine-false-positives.ts',
+  'merge-duplicate-skills.ts',
   'purge-dead-quarantines.ts',
   'repair-latched-name-rows.ts',
   'revalidate-stale-quarantines.ts',
@@ -100,6 +101,7 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
 
 const PINNED_SHEBANG_FILES = [
   'dequarantine-false-positives.ts',
+  'merge-duplicate-skills.ts',
   'purge-dead-quarantines.ts',
   'recheck.ts',
   'repair-latched-name-rows.ts',
