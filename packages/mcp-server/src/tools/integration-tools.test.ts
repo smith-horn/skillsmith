@@ -370,4 +370,31 @@ describe('integration-tools', () => {
       expect(result.error).toContain('already revoked')
     })
   })
+
+  // ==========================================================================
+  // SMI-6184: dataSource must reflect the actual service, not Supabase config
+  // ==========================================================================
+
+  describe('SMI-6184: dataSource reflects the actual service', () => {
+    it('reports dataSource "stub" for webhooks and API keys even when Supabase env vars are set', async () => {
+      const prevUrl = process.env.SUPABASE_URL
+      const prevKey = process.env.SUPABASE_ANON_KEY
+      process.env.SUPABASE_URL = 'https://example.supabase.co'
+      process.env.SUPABASE_ANON_KEY = 'anon-key'
+      try {
+        const webhookResult = await executeWebhookConfigure({ action: 'list' }, mockContext)
+        const keyResult = await executeApiKeyManage(
+          { action: 'list', expiresIn: '90d' },
+          mockContext
+        )
+        expect(webhookResult.dataSource).toBe('stub')
+        expect(keyResult.dataSource).toBe('stub')
+      } finally {
+        if (prevUrl === undefined) delete process.env.SUPABASE_URL
+        else process.env.SUPABASE_URL = prevUrl
+        if (prevKey === undefined) delete process.env.SUPABASE_ANON_KEY
+        else process.env.SUPABASE_ANON_KEY = prevKey
+      }
+    })
+  })
 })

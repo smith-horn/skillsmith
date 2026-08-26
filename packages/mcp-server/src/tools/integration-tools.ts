@@ -11,9 +11,9 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
-import { isSupabaseConfigured } from '../supabase-client.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { createStubIntegrationService } from './integration-tools.stub.js'
+import { dataSourceFor } from './stub-data-source.js'
 
 // Re-export stub factory for external consumers and tests
 export { createStubIntegrationService } from './integration-tools.stub.js'
@@ -216,9 +216,9 @@ export interface ApiKeyManageResult {
 // Handlers
 // ============================================================================
 
-/** Resolve the current data source based on Supabase configuration */
+/** Resolve the current data source from the service actually wired in (SMI-6184) */
 function getDataSource(): 'stub' | 'live' {
-  return isSupabaseConfigured() ? 'live' : 'stub'
+  return dataSourceFor(service)
 }
 
 async function executeWebhookConfigureImpl(

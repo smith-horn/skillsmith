@@ -14,8 +14,8 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
-import { isSupabaseConfigured } from '../supabase-client.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
+import { dataSourceFor } from './stub-data-source.js'
 import type {
   RBACService,
   RbacManageResult,
@@ -177,7 +177,7 @@ async function executeRbacManageImpl(
   input: RbacManageInput,
   _context: ToolContext
 ): Promise<RbacManageResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  const dataSource: 'stub' | 'live' = dataSourceFor(service)
 
   switch (input.action) {
     case 'create_role': {
@@ -238,7 +238,7 @@ async function executeRbacAssignRoleImpl(
   input: RbacAssignRoleInput,
   _context: ToolContext
 ): Promise<RbacAssignRoleResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  const dataSource: 'stub' | 'live' = dataSourceFor(service)
 
   switch (input.action) {
     case 'assign': {
@@ -300,7 +300,7 @@ async function executeRbacCreatePolicyImpl(
   input: RbacCreatePolicyInput,
   _context: ToolContext
 ): Promise<RbacCreatePolicyResult> {
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  const dataSource: 'stub' | 'live' = dataSourceFor(service)
 
   switch (input.action) {
     case 'create': {

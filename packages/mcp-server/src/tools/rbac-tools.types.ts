@@ -6,6 +6,8 @@
  * Extracted from rbac-tools.ts to stay under the 500-line file-size gate.
  */
 
+import { markAsStub } from './stub-data-source.js'
+
 // ============================================================================
 // Service types
 // ============================================================================
@@ -132,7 +134,7 @@ export function createStubRBACService(): RBACService {
   const policies = new Map<string, RBACPolicy>()
   let nextId = 1
 
-  return {
+  return markAsStub({
     async createRole(name, permissions, description) {
       const id = `role_custom_${nextId++}`
       const role: RBACRole = {
@@ -197,5 +199,5 @@ export function createStubRBACService(): RBACService {
     async deletePolicy(policyId) {
       return policies.delete(policyId)
     },
-  }
+  })
 }

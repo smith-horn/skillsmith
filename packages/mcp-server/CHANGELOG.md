@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fix**: `rbac_manage`/`rbac_assign_role`/`rbac_create_policy`, `configure_sso`/`sso_settings`,
+  `webhook_configure`/`api_key_manage`, and `compliance_report` reported `dataSource: 'live'`
+  whenever Supabase env vars were configured, even when the underlying service was still the
+  in-memory stub (RBAC and SSO have no live implementation at all today). `dataSource` now
+  reflects which service is actually wired in. The SSO stub's connection-test action also
+  returned a fabricated real-looking success — it now carries `simulated: true` and says so
+  explicitly (SMI-6184).
+
 ## v0.7.11
 
 - **Fix**: 0.7.10 was uninstallable — `npx @skillsmith/mcp-server@latest --version` threw

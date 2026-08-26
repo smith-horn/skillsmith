@@ -16,6 +16,7 @@ import type {
   ApiKey,
   ApiKeyMasked,
 } from './integration-tools.js'
+import { markAsStub } from './stub-data-source.js'
 
 // ============================================================================
 // Mock data generation helpers
@@ -72,7 +73,7 @@ export function createStubIntegrationService(): IntegrationService {
     }
   }
 
-  return {
+  return markAsStub({
     async createWebhook(url, events, description) {
       const id = `wh_${nextId++}`
       const wh: Webhook = {
@@ -138,5 +139,5 @@ export function createStubIntegrationService(): IntegrationService {
       key.revoked = true
       return true
     },
-  }
+  })
 }
