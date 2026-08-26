@@ -88,59 +88,77 @@ function expectedVerdictDeltaOutcome(
 }
 
 /**
- * Round-2 fix: assert `prePortQuarantine`/`postPortQuarantine` are present
- * if and only if `outcome` is in `SCORED_OUTCOMES`. Closes the class of
- * attack independent of which non-scored outcome is used — a row cannot
- * carry quarantine fields while claiming to be `unfetchable`/`unevaluable`/
- * `content_drifted` (fields present where the real producer never puts
- * them), and cannot omit them while claiming a scored outcome (already
- * covered for the verdict-delta subset by {@link assertRowOutcomeCoherence}
- * below, extended here to `bundle_absent` too).
+ * The four fields `processRow` (`smi5879-simulate-full.helpers.ts`) ONLY
+ * ever sets as one unit — both of its scored construction sites (the
+ * `bundle_absent` branch and the final `classifyVerdictDelta` branch) set
+ * all four in the SAME object literal, from the SAME `preVerdict`/
+ * `postVerdict` pair, never independently. Round-4 confirmation review:
+ * the round-3 fix checked only the quarantine pair — a row could have a
+ * fully-coherent quarantine pair but a partially-present (or wrongly
+ * present/absent) risk-score pair, a shape the real producer can never
+ * emit, unchecked by round 3.
+ */
+const SCORED_FIELD_PAIRS = [
+  ['prePortQuarantine', 'postPortQuarantine'],
+  ['prePortRiskScore', 'postPortRiskScore'],
+] as const
+
+/**
+ * Round-2 fix: assert `prePortQuarantine`/`postPortQuarantine` (round 4:
+ * and `prePortRiskScore`/`postPortRiskScore`) are present if and only if
+ * `outcome` is in `SCORED_OUTCOMES`. Closes the class of attack independent
+ * of which non-scored outcome is used — a row cannot carry these fields
+ * while claiming to be `unfetchable`/`unevaluable`/`content_drifted`
+ * (fields present where the real producer never puts them), and cannot
+ * omit them while claiming a scored outcome (already covered for the
+ * verdict-delta subset by {@link assertRowOutcomeCoherence} below,
+ * extended here to `bundle_absent` too).
  *
- * Round-3 confirmation review found a gap IN this fix: the original
- * `hasFields` test used OR, so a row with EXACTLY ONE of the two fields
- * present (the other omitted) was treated as "has fields" and passed —
- * `assertRowOutcomeCoherence` below rescues this shape for the four
- * verdict-delta outcomes (its own missing-field check uses OR the other
- * way, catching "at least one absent"), but it deliberately does NOT cover
- * `bundle_absent`, so a `bundle_absent` row with only one field present
- * slipped through both checks entirely. `prePortQuarantine`/
- * `postPortQuarantine` are ALWAYS set together in the same object literal
- * by every real producer site (`processRow`, `smi5879-simulate-full.helpers.ts`)
- * — never independently — so "exactly one present" is now its own,
- * outcome-independent violation, checked before the scored/unscored
- * comparison even runs.
+ * Round-3 confirmation review found a gap IN the original (quarantine-only)
+ * fix: its `hasFields` test used OR, so a row with EXACTLY ONE of a pair's
+ * two fields present (the other omitted) was treated as "has fields" and
+ * passed — `assertRowOutcomeCoherence` below rescues this shape for the
+ * four verdict-delta outcomes (its own missing-field check uses OR the
+ * other way, catching "at least one absent"), but it deliberately does NOT
+ * cover `bundle_absent`, so a `bundle_absent` row with only one field
+ * present slipped through both checks entirely. Every field pair in
+ * {@link SCORED_FIELD_PAIRS} is now checked "both present together, or
+ * both absent together" as its own outcome-independent violation, before
+ * the scored/unscored comparison even runs — round 4 generalized this from
+ * the quarantine pair alone to every pair the real producer sets as a unit.
  */
 export function assertRowOutcomeFieldPresence(rows: readonly SimRowResult[]): void {
   const violations: string[] = []
   for (const row of rows) {
     const isScored = (SCORED_OUTCOMES as readonly SimRowOutcome[]).includes(row.outcome)
-    const preDefined = row.prePortQuarantine !== undefined
-    const postDefined = row.postPortQuarantine !== undefined
-    if (preDefined !== postDefined) {
-      violations.push(
-        `${row.id} (outcome=${row.outcome} has exactly one of prePortQuarantine/` +
-          'postPortQuarantine present — the real simulator always sets both together, never ' +
-          'independently)'
-      )
-      continue
-    }
-    const hasBoth = preDefined && postDefined
-    if (isScored && !hasBoth) {
-      violations.push(
-        `${row.id} (outcome=${row.outcome} is a scored outcome, but has neither field)`
-      )
-    } else if (!isScored && hasBoth) {
-      violations.push(
-        `${row.id} (outcome=${row.outcome} is NOT a scored outcome, but carries ` +
-          `prePortQuarantine=${row.prePortQuarantine}/postPortQuarantine=${row.postPortQuarantine} — ` +
-          'the real simulator never attaches these fields to this outcome)'
-      )
+    for (const [preField, postField] of SCORED_FIELD_PAIRS) {
+      const preDefined = row[preField] !== undefined
+      const postDefined = row[postField] !== undefined
+      if (preDefined !== postDefined) {
+        violations.push(
+          `${row.id} (outcome=${row.outcome} has exactly one of ${preField}/${postField} present ` +
+            '— the real simulator always sets both together, never independently)'
+        )
+        continue
+      }
+      const hasBoth = preDefined && postDefined
+      if (isScored && !hasBoth) {
+        violations.push(
+          `${row.id} (outcome=${row.outcome} is a scored outcome, but has neither ${preField} nor ` +
+            `${postField})`
+        )
+      } else if (!isScored && hasBoth) {
+        violations.push(
+          `${row.id} (outcome=${row.outcome} is NOT a scored outcome, but carries ` +
+            `${preField}=${row[preField]}/${postField}=${row[postField]} — the real simulator never ` +
+            'attaches these fields to this outcome)'
+        )
+      }
     }
   }
   if (violations.length > 0) {
     throw new Error(
-      `SMI-6015: ${violations.length} row(s) have quarantine-field presence inconsistent with their ` +
+      `SMI-6015: ${violations.length} row(s) have scored-field presence inconsistent with their ` +
         `outcome: ${violations.slice(0, MAX_IDS_IN_ERROR).join('; ')}` +
         `${violations.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. A row outside SCORED_OUTCOMES that ` +
         'still carries these fields could otherwise masquerade as a non-blocking, non-reviewed ' +

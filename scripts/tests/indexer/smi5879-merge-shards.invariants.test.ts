@@ -261,7 +261,7 @@ describe('runMergeShards — row-outcome coherence (hard fail)', () => {
     const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
 
     await expect(runMergeShards(db, args)).rejects.toThrow(
-      /row-c2-1.*outcome=newly_quarantined is a scored outcome, but has neither field/s
+      /row-c2-1.*outcome=newly_quarantined is a scored outcome, but has neither prePortQuarantine nor postPortQuarantine/s
     )
   })
 
@@ -324,6 +324,27 @@ describe('runMergeShards — row-outcome coherence (hard fail)', () => {
 
     await expect(runMergeShards(db, args)).rejects.toThrow(
       /row-c2-1.*has exactly one of prePortQuarantine\/postPortQuarantine present/s
+    )
+  })
+
+  it('throws (round-4 confirmation review finding) when a row has a coherent quarantine pair but a partial risk-score pair', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    // Quarantine pair is fully present and coherent (unchanged_clean,
+    // false/false) — the round-1/2/3 checks all pass this row. Only ONE
+    // risk-score field is present, a shape the real simulator can never
+    // emit (processRow always sets all four fields together).
+    const partial = { ...fixtureRow('row-c2-1', 'C2').reportRow }
+    delete partial['postPortRiskScore']
+
+    const path0 = writeShardReport(dir, 0, [partial, fixture.shardRows[0][1]], fixture.totals)
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    await expect(runMergeShards(db, args)).rejects.toThrow(
+      /row-c2-1.*has exactly one of prePortRiskScore\/postPortRiskScore present/s
     )
   })
 
