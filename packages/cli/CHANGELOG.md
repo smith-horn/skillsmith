@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: README's framing sentence updated from the "lifecycle layer" tagline to a plain
+  descriptive sentence ("a registry for sharing, scanning, and tracking agent skills across
+  teams") as part of the site-wide positioning reframe. Wording-only. (SMI-6194)
 - **Fix**: `skillsmith update` no longer force-installs an unrelated same-named registry skill
   over a locally-authored one it was never asked to replace. `getSkillDiff()` now reads the
   installed skill's own claimed author from its `SKILL.md` front-matter (`readClaimedAuthor()`)

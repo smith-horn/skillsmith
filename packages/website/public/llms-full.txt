@@ -4,7 +4,7 @@
 
 ## Product Overview
 
-Skills spread across teams faster than anyone can govern them. Skillsmith gives them a lifecycle: publish immutable versions to your team's registry, catch drift before it spreads, and deprecate what's gone stale. It also provides a searchable registry of hundreds of thousands of indexed skills — reusable prompts, workflows, and configurations that extend AI assistant capabilities.
+Agent builders need the same vetted skills, not one-off files nobody's reviewed. Skillsmith shares them across your team, scans them for risk before they ship, and shows you which ones are actually being used. It also provides a searchable registry of hundreds of thousands of indexed skills, reusable prompts, workflows, and configurations that extend AI assistant capabilities.
 
 Skills are YAML files installed to `~/.claude/skills/` that provide:
 - Domain-specific knowledge and best practices

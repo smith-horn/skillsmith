@@ -29,10 +29,10 @@ const supabaseConfig = getSupabaseConfig()
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Skillsmith - Lifecycle Management for Agent Skills</title>
+    <title>Skillsmith - Shared Agent Skills, Safe for Production</title>
     <meta
       name="description"
-      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
+      content="Share agent skills across your team, scan them for risk before they ship, and track which ones are actually being used."
     />
     <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href={`${import.meta.env.SITE}/`} />
@@ -87,10 +87,10 @@ const supabaseConfig = getSupabaseConfig()
     </script>
 
     <!-- Open Graph -->
-    <meta property="og:title" content="Skillsmith - Lifecycle Management for Agent Skills" />
+    <meta property="og:title" content="Skillsmith - Shared Agent Skills, Safe for Production" />
     <meta
       property="og:description"
-      content="Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale."
+      content="Share agent skills across your team, scan them for risk before they ship, and track which ones are actually being used."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://www.skillsmith.app/" />
@@ -123,20 +123,28 @@ const supabaseConfig = getSupabaseConfig()
       <!-- Hero Section — identical to control (index.astro) -->
       <section class="relative min-h-screen flex items-center justify-center pt-[72px]">
         <div class="max-w-[800px] mx-auto px-6 py-24 text-center">
+          <!-- Eyebrow (messaging reframe, SMI-6194: see
+               docs/internal/implementation/messaging-multiplayer-reframe.md) -->
+          <p
+            class="text-sm font-semibold tracking-wide uppercase text-[#A1A1AA] mb-4 opacity-0 animate-fade-up"
+            style="animation-delay: 0.02s;"
+          >
+            For AI platform and compliance teams with agent workflows
+          </p>
           <h1
             class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up"
             style="animation-delay: 0.05s;"
           >
-            Lifecycle management for agent skills.
+            Shared skills, safe for production.
           </h1>
 
           <p
             class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
             style="animation-delay: 0.08s;"
           >
-            Skills spread across teams faster than anyone can govern them. Skillsmith gives them a
-            lifecycle: publish immutable versions to your team's registry, catch drift before it
-            spreads, and deprecate what's gone stale.
+            Agent builders need the same vetted skills, not one-off files nobody's reviewed.
+            Skillsmith shares them across your team, scans them for risk before they ship, and shows
+            you which ones are actually being used.
           </p>
 
           <!-- CTA Buttons -->

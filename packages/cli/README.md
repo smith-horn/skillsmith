@@ -4,7 +4,7 @@
 
 Command-line interface for Skillsmith — publish, manage, and author agent skills.
 
-Part of Skillsmith: a lifecycle layer for agent skills across teams.
+Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills across teams.
 
 ## Contents
 

@@ -1,6 +1,6 @@
 # @smith-horn/enterprise
 
-Enterprise features for Skillsmith, a lifecycle layer for agent skills across teams.
+Enterprise features for Skillsmith, a registry for sharing, scanning, and tracking agent skills across teams.
 
 ## Overview
 

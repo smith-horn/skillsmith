@@ -1,6 +1,6 @@
-# Skillsmith - Lifecycle Management for Agent Skills
+# Skillsmith - Shared skills, safe for production.
 > For complete reference including full API docs, CLI commands, and FAQ, see: https://www.skillsmith.app/llms-full.txt
-> Skills spread across teams faster than anyone can govern them. Skillsmith gives them a lifecycle: publish immutable versions to your team's registry, catch drift before it spreads, and deprecate what's gone stale. Skills are reusable prompts and workflows that extend AI assistant capabilities.
+> Agent builders need the same vetted skills, not one-off files nobody's reviewed. Skillsmith shares them across your team, scans them for risk before they ship, and shows you which ones are actually being used. Skills are reusable prompts and workflows that extend AI assistant capabilities.
 
 ## Quick Start
 Install Skillsmith MCP server to publish, install, and manage agent skills using natural language:
