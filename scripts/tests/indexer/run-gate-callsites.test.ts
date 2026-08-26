@@ -48,10 +48,21 @@
  *     to run anywhere except a clean checkout of the pinned pre-port SHA
  *     (its own module doc's preconditions), which is a narrower, unrelated
  *     safety mechanism from the change-window freeze this census concerns
- *     itself with. Pinned as its own explicit set (Shape 1's "exactly N"
- *     assertion below is `PINNED_SHAPE1 ∪ PINNED_SHAPE4_UNGATED_GUARD`)
- *     rather than silently absorbed, so a FUTURE guard-shaped file that
- *     SHOULD be gated cannot hide behind this exclusion.
+ *     itself with. SMI-6015 Wave 2's `smi5879-merge-shards.ts` is the same
+ *     shape for the same reason as `smi5879-simulate-full.ts`/
+ *     `smi5879-gate-check.ts` above: it is a pure READER (its
+ *     `Smi5879MergeShardsDbDeps` is a structural `Pick` of
+ *     `getRunSummary`/`verifyDigest`/`loadCohortRows` only — no claim,
+ *     heartbeat, or write method — and it never touches `skills`; it writes
+ *     only its own `--output` report file), and it runs strictly BETWEEN
+ *     `smi5879-simulate-full.ts` and `smi5879-gate-check.ts` in the same
+ *     T-3d/T-0 freeze-window pipeline those two already run inside — gating
+ *     the merge step on the same freeze mechanism its neighbors on both
+ *     sides are already exempted from would be exactly as circular. Pinned
+ *     as its own explicit set (Shape 1's "exactly N" assertion below is
+ *     `PINNED_SHAPE1 ∪ PINNED_SHAPE4_UNGATED_GUARD`) rather than silently
+ *     absorbed, so a FUTURE guard-shaped file that SHOULD be gated cannot
+ *     hide behind this exclusion.
  *
  * Each shape's set is pinned exactly (not just "at least") so a new file in
  * any shape fails this suite with a message naming the new file, rather than
@@ -84,6 +95,7 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
   'smi5879-simulate-preflight-estimate.ts',
   'smi5879-gate-check.ts',
   'smi5879-corroboration-generate.ts',
+  'smi5879-merge-shards.ts',
 ].sort()
 
 const PINNED_SHEBANG_FILES = [
@@ -120,7 +132,7 @@ describe('Shape 1 — guarded direct-entry census', () => {
 })
 
 describe('Shape 4 — guarded direct entry that is deliberately NOT an indexer writer', () => {
-  it('is EXACTLY the pinned set {smi5879-census.ts, smi5879-simulate-full.ts, smi5879-simulate-preflight-estimate.ts, smi5879-gate-check.ts, smi5879-corroboration-generate.ts}', () => {
+  it('is EXACTLY the pinned set {smi5879-census.ts, smi5879-simulate-full.ts, smi5879-simulate-preflight-estimate.ts, smi5879-gate-check.ts, smi5879-corroboration-generate.ts, smi5879-merge-shards.ts}', () => {
     const files = listIndexerSourceFiles()
     const shape4Files = files
       .filter(
