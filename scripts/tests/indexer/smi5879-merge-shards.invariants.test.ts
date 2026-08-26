@@ -294,6 +294,39 @@ describe('runMergeShards — row-outcome coherence (hard fail)', () => {
     )
   })
 
+  it('throws (round-3 confirmation review finding) when a bundle_absent row has exactly ONE of the two quarantine fields present', async () => {
+    const dir = scratch()
+    const fixture = buildThreeShardFixture()
+    // The exact round-3 attack: `hasFields` was OR-based, so a scored-outcome
+    // row with only ONE field present passed the round-2 fix, and
+    // assertRowOutcomeCoherence can't rescue bundle_absent (it's outside
+    // VERDICT_DELTA_OUTCOMES by design) — this shape slipped through BOTH
+    // checks before this fix.
+    const partial = fixtureRow('row-c2-1', 'C2', {
+      outcome: 'bundle_absent',
+      prePortQuarantine: false,
+      // postPortQuarantine deliberately left present-by-default from
+      // makeSimRow, then removed below to construct the exact "only one
+      // field" shape.
+    })
+    delete (partial.reportRow as Record<string, unknown>)['postPortQuarantine']
+
+    const path0 = writeShardReport(
+      dir,
+      0,
+      [partial.reportRow, fixture.shardRows[0][1]],
+      fixture.totals
+    )
+    const path1 = writeShardReport(dir, 1, fixture.shardRows[1], fixture.totals)
+    const path2 = writeShardReport(dir, 2, fixture.shardRows[2], fixture.totals)
+    const db = makeMergeShardsDb(fixture.population)
+    const args = mergeArgs([path0, path1, path2], join(dir, 'merged.json'))
+
+    await expect(runMergeShards(db, args)).rejects.toThrow(
+      /row-c2-1.*has exactly one of prePortQuarantine\/postPortQuarantine present/s
+    )
+  })
+
   it('does NOT flag a genuine unfetchable/unevaluable/content_drifted row with no quarantine fields at all', async () => {
     const dir = scratch()
     const fixture = buildThreeShardFixture()

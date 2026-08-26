@@ -96,17 +96,41 @@ function expectedVerdictDeltaOutcome(
  * them), and cannot omit them while claiming a scored outcome (already
  * covered for the verdict-delta subset by {@link assertRowOutcomeCoherence}
  * below, extended here to `bundle_absent` too).
+ *
+ * Round-3 confirmation review found a gap IN this fix: the original
+ * `hasFields` test used OR, so a row with EXACTLY ONE of the two fields
+ * present (the other omitted) was treated as "has fields" and passed —
+ * `assertRowOutcomeCoherence` below rescues this shape for the four
+ * verdict-delta outcomes (its own missing-field check uses OR the other
+ * way, catching "at least one absent"), but it deliberately does NOT cover
+ * `bundle_absent`, so a `bundle_absent` row with only one field present
+ * slipped through both checks entirely. `prePortQuarantine`/
+ * `postPortQuarantine` are ALWAYS set together in the same object literal
+ * by every real producer site (`processRow`, `smi5879-simulate-full.helpers.ts`)
+ * — never independently — so "exactly one present" is now its own,
+ * outcome-independent violation, checked before the scored/unscored
+ * comparison even runs.
  */
 export function assertRowOutcomeFieldPresence(rows: readonly SimRowResult[]): void {
   const violations: string[] = []
   for (const row of rows) {
     const isScored = (SCORED_OUTCOMES as readonly SimRowOutcome[]).includes(row.outcome)
-    const hasFields = row.prePortQuarantine !== undefined || row.postPortQuarantine !== undefined
-    if (isScored && !hasFields) {
+    const preDefined = row.prePortQuarantine !== undefined
+    const postDefined = row.postPortQuarantine !== undefined
+    if (preDefined !== postDefined) {
+      violations.push(
+        `${row.id} (outcome=${row.outcome} has exactly one of prePortQuarantine/` +
+          'postPortQuarantine present — the real simulator always sets both together, never ' +
+          'independently)'
+      )
+      continue
+    }
+    const hasBoth = preDefined && postDefined
+    if (isScored && !hasBoth) {
       violations.push(
         `${row.id} (outcome=${row.outcome} is a scored outcome, but has neither field)`
       )
-    } else if (!isScored && hasFields) {
+    } else if (!isScored && hasBoth) {
       violations.push(
         `${row.id} (outcome=${row.outcome} is NOT a scored outcome, but carries ` +
           `prePortQuarantine=${row.prePortQuarantine}/postPortQuarantine=${row.postPortQuarantine} — ` +
@@ -121,7 +145,8 @@ export function assertRowOutcomeFieldPresence(rows: readonly SimRowResult[]): vo
         `${violations.length > MAX_IDS_IN_ERROR ? ', ...' : ''}. A row outside SCORED_OUTCOMES that ` +
         'still carries these fields could otherwise masquerade as a non-blocking, non-reviewed ' +
         "outcome while smuggling a real quarantine verdict's fields past G-1's review set and G-5's " +
-        'delta-bound check. Refusing to merge.'
+        'delta-bound check; a row with only one field present is malformed regardless of outcome. ' +
+        'Refusing to merge.'
     )
   }
 }
