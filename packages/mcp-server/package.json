@@ -2,7 +2,7 @@
   "name": "@skillsmith/mcp-server",
   "version": "0.7.11",
   "mcpName": "io.github.smith-horn/skillsmith",
-  "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
+  "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",

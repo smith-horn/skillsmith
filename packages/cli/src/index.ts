@@ -89,7 +89,7 @@ const commandName = process.argv[1]?.endsWith('sklx') ? 'sklx' : 'skillsmith'
 program
   .name(commandName)
   .description(
-    "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale. (alias: sklx)"
+    'A registry for sharing, scanning, and tracking agent skills across teams. (alias: sklx)'
   )
   .version(CLI_VERSION)
   // SMI-5893 (Wave 7 Step 4): a single root-level --quiet, wired once via

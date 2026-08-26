@@ -1,6 +1,6 @@
 # Skillsmith
 
-**Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.**
+**Shared skills, safe for production.**
 
 Once more than one team is publishing agent skills, the problem stops being finding them and starts being managing them. Which team is this scoped to? Which version is installed where? Has it been flagged by a security scan? What happens to the ones nobody maintains anymore?
 

@@ -1,7 +1,7 @@
 {
   "name": "@skillsmith/cli",
   "version": "0.8.7",
-  "description": "Publish versioned agent skills to a team-scoped registry, catch drift across installs, and deprecate what's gone stale.",
+  "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "type": "module",
   "bin": {
     "skillsmith": "dist/cli.js",
