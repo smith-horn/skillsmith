@@ -141,8 +141,16 @@ describe.skipIf(prePushNoLiveTestPg)('merge-duplicate-skills (live Postgres)', (
        VALUES ('${loserId}', gen_random_uuid(), 2, false), ('${loserId}', gen_random_uuid(), 2, false);`
     )
 
+    // Spy, not a bare stub returning success unconditionally — asserted below
+    // so a broken audit_logs call shape would actually fail this test.
+    const auditInserts: Array<Record<string, unknown>> = []
     const db = {
-      from: () => ({ insert: async () => ({ data: null, error: null }) }),
+      from: (table: string) => ({
+        insert: async (row: Record<string, unknown>) => {
+          if (table === 'audit_logs') auditInserts.push(row)
+          return { data: null, error: null }
+        },
+      }),
     } as unknown as Parameters<typeof runMerge>[1]
 
     const dryRun = await runMerge(conn, db, {
@@ -157,6 +165,16 @@ describe.skipIf(prePushNoLiveTestPg)('merge-duplicate-skills (live Postgres)', (
     })
     expect(result.losersRemoved).toBeGreaterThanOrEqual(1)
     expect(result.suppressionCountBefore).toBe(result.suppressionCountAfter)
+    expect(auditInserts).toHaveLength(1)
+    expect(auditInserts[0]).toMatchObject({
+      event_type: 'skills:merge_duplicates',
+      resource: 'skills',
+      action: 'merge_duplicate_skills',
+      result: 'success',
+    })
+    expect((auditInserts[0].metadata as { losersRemoved: number }).losersRemoved).toBe(
+      result.losersRemoved
+    )
 
     const loserGone = await queryRows(conn, `SELECT 1 FROM skills WHERE id = '${loserId}';`)
     expect(loserGone).toEqual([])

@@ -380,9 +380,14 @@ export function buildGroupMutationSql(group: DuplicateGroup): string {
   const survivorId = assertUuid(group.survivor.id, 'survivor id')
   const loserIds = group.losers.map((l) => assertUuid(l.id, 'loser id'))
   const loserArr = idArrayLiteral(loserIds, 'loser id')
+  // Defense-in-depth: repoUrlCanonical only ever appears inside a `--` SQL
+  // comment here, never in executable SQL, but a stray newline would still
+  // let it "break out" of the comment onto the next line of the generated
+  // script — strip any control characters before interpolating.
+  const commentSafeKey = group.repoUrlCanonical.replace(/[\r\n]/g, ' ')
 
   return `
--- Group: ${group.repoUrlCanonical}
+-- Group: ${commentSafeKey}
 -- 1. skill_categories: union insert, then drop losers' rows.
 INSERT INTO skill_categories (skill_id, category_id)
   SELECT '${survivorId}', category_id FROM skill_categories WHERE skill_id = ANY(${loserArr})
