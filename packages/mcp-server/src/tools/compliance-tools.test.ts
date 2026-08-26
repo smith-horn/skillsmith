@@ -180,4 +180,31 @@ describe('compliance-tools', () => {
       expect(result.period).toBe('90d')
     })
   })
+
+  // ==========================================================================
+  // SMI-6184: dataSource must reflect the actual service, not Supabase config
+  // ==========================================================================
+
+  describe('SMI-6184: dataSource reflects the actual service', () => {
+    it('reports dataSource "stub" when no db is available even though Supabase env vars are set', async () => {
+      const prevUrl = process.env.SUPABASE_URL
+      const prevKey = process.env.SUPABASE_ANON_KEY
+      process.env.SUPABASE_URL = 'https://example.supabase.co'
+      process.env.SUPABASE_ANON_KEY = 'anon-key'
+      try {
+        // mockContext has no `db`, so the handler cannot use the real
+        // service — it must fall back to the stub regardless of Supabase
+        // env config (this was the SMI-6184 bug: it used to report 'live'
+        // here purely because Supabase env vars were set).
+        const parsed = complianceReportInputSchema.parse({ format: 'json' })
+        const result = await executeComplianceReport(parsed, mockContext)
+        expect(result.dataSource).toBe('stub')
+      } finally {
+        if (prevUrl === undefined) delete process.env.SUPABASE_URL
+        else process.env.SUPABASE_URL = prevUrl
+        if (prevKey === undefined) delete process.env.SUPABASE_ANON_KEY
+        else process.env.SUPABASE_ANON_KEY = prevKey
+      }
+    })
+  })
 })
