@@ -21,13 +21,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * The seven run-type identifiers the gate understands. Five (`discovery`,
+ * The eight run-type identifiers the gate understands. Five (`discovery`,
  * `maintenance`, `recheck`, `dequarantine`, `purge`) mirror `parse-env.ts`'s
- * `RUN_TYPE` union exactly; `revalidate` and `repair` exist only in the
- * gate's own vocabulary, for host-only writers
- * (`revalidate-stale-quarantines.ts`, `repair-latched-name-rows.ts`),
- * deliberately kept out of `parse-env.ts`'s union so the workflow-facing
- * surface is unchanged.
+ * `RUN_TYPE` union exactly; `revalidate`, `repair`, and `merge` exist only in
+ * the gate's own vocabulary, for host-only writers
+ * (`revalidate-stale-quarantines.ts`, `repair-latched-name-rows.ts`,
+ * `merge-duplicate-skills.ts`), deliberately kept out of `parse-env.ts`'s
+ * union so the workflow-facing surface is unchanged.
  *
  * SMI-5930 (code-review finding): `repair` was added because
  * `repair-latched-name-rows.ts` is a genuine one-time WRITER against the
@@ -39,6 +39,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  * psql/session-pooler connection instead of PostgREST doesn't change
  * whether a script needs this gate — what matters is read vs. write to
  * `skills`, not the connection mechanism.
+ *
+ * SMI-5898 Wave 2: `merge` added for the same reason as `repair` —
+ * `merge-duplicate-skills.ts` deletes/re-points rows against `skills` and
+ * six dependent tables, a genuine one-time writer, distinct in kind from
+ * `repair` (which corrects stale values on existing rows rather than
+ * deleting/re-pointing them) so it gets its own explicit vocabulary entry
+ * rather than overloading `repair`.
  */
 export const GATED_RUN_TYPES = [
   'discovery',
@@ -48,6 +55,7 @@ export const GATED_RUN_TYPES = [
   'purge',
   'revalidate',
   'repair',
+  'merge',
 ] as const
 
 export type GatedRunType = (typeof GATED_RUN_TYPES)[number]
